@@ -25,6 +25,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository visibility and collaboration features
   - GitHub Actions enabled
   - latest main CI run corresponds to current HEAD and succeeded
+  - workflow run history does not expose commits outside public git history
   - public issue/comment/discussion text has no high-risk launch leaks
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
@@ -153,6 +154,51 @@ scan_github_public_text_surface() {
     printf '%s\n' "$findings" | sed 's/^/  - /'
   else
     ok "no high-risk text found in issues, PR comments, or discussions"
+  fi
+}
+
+scan_github_workflow_run_history() {
+  local repo_name="$1"
+  local reachable_shas
+  local run_lines
+  local stale_runs=""
+  local run_count=0
+  local run_id
+  local sha
+  local title
+  local url
+
+  echo
+  echo "== Workflow run history surface =="
+
+  reachable_shas="$(git rev-list --all)"
+
+  if ! run_lines="$(gh run list --repo "$repo_name" --limit 1000 \
+    --json databaseId,headSha,displayTitle,url \
+    --jq '.[] | [.databaseId, .headSha, .displayTitle, .url] | @tsv' 2>/dev/null)"; then
+    note "could not scan GitHub workflow run history"
+    return
+  fi
+
+  while IFS=$'\t' read -r run_id sha title url; do
+    [ -n "$run_id" ] || continue
+    run_count=$((run_count + 1))
+    if [ -z "$sha" ]; then
+      stale_runs="$(append_findings "$stale_runs" "run ${run_id}\t(no head SHA)\t${url}")"
+    elif ! printf '%s\n' "$reachable_shas" | grep -Fqx "$sha"; then
+      stale_runs="$(append_findings "$stale_runs" "run ${run_id}\t${sha:0:12}\t${title}\t${url}")"
+    fi
+  done <<< "$run_lines"
+
+  if [ -n "$stale_runs" ]; then
+    note "workflow runs reference commits outside current public git history"
+    printf '%s\n' "$stale_runs" | sed 's/^/  - /'
+  else
+    ok "no workflow runs reference commits outside current git history"
+  fi
+
+  if [ "$run_count" -ge 1000 ]; then
+    warn "only scanned the latest 1000 workflow runs; delete old runs or extend the audit before launch"
   fi
 }
 
@@ -327,6 +373,7 @@ if [ -n "$repo" ]; then
     fi
   fi
 
+  scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
 
   echo
