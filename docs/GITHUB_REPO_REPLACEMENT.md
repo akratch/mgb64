@@ -37,6 +37,15 @@ outside that history.
 
 ## Option A: GitHub Support Purge
 
+Generate a local evidence report:
+
+```sh
+scripts/prepare_github_launch_evidence.sh --repo akratch/mgb64
+```
+
+The generated report is written under `/tmp` by default and can include stale
+hidden-ref SHAs, so do not commit it.
+
 Send GitHub Support:
 
 - repository: `akratch/mgb64`;
