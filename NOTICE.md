@@ -1,0 +1,40 @@
+# MGB64 Notice
+
+This file is the short-form licensing and provenance summary for public mirrors,
+archives, and release pages. It does not replace the full project documents:
+read `LICENSE`, `DISCLAIMER.md`, and `THIRD_PARTY.md` before redistributing the
+project.
+
+## First-party project code
+
+MGB64's original first-party work is licensed under the MIT License. This covers
+the native port layer, project-specific build system, project-specific tooling,
+documentation, and other original contributions by MGB64 contributors.
+
+The MIT License does not grant rights in the original game, its code, its assets,
+its trademarks, or any third-party SDK material.
+
+## Original game and assets
+
+This repository ships no ROM and no bulk copyrighted game assets. To build or
+run the native port, users must supply their own legally dumped copy of the
+original game. Extracted assets generated from a user's ROM are local build
+artifacts and must not be committed or redistributed.
+
+## Decompiled game code
+
+The decompiled game code is provided for research, preservation, and educational
+purposes. MGB64 claims no ownership over the original game. The project is
+unofficial and is not affiliated with, sponsored by, or endorsed by any rights
+holder.
+
+## SDK and third-party material
+
+The tree currently contains inventoried Nintendo 64 SDK/libultra-lineage
+compatibility material for the in-progress matching target. Tracked proprietary
+SDK notice text has been removed or replaced, but not all compatibility material
+is original MGB64 work or offered under the MGB64 MIT License. This remains a
+cleanup priority.
+
+Third-party tools and libraries are listed in `THIRD_PARTY.md` with their
+origins and licenses.

@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+#
+# check_github_launch_ready.sh -- verify GitHub-side launch readiness.
+#
+# This intentionally lives outside CI: it checks repository settings and the
+# latest GitHub Actions run, so it needs an authenticated `gh` session.
+#
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+fail=0
+warn_count=0
+
+note() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; fail=1; }
+warn() { printf '  \033[33m[WARN]\033[0m %s\n' "$1"; warn_count=$((warn_count + 1)); }
+ok()   { printf '  \033[32m[OK]\033[0m %s\n' "$1"; }
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/check_github_launch_ready.sh [--repo OWNER/REPO] [--allow-private]
+
+Checks GitHub-side launch gates that local CI cannot prove:
+  - gh authentication
+  - repository metadata, topics, and contributor workflow settings
+  - repository visibility and collaboration features
+  - GitHub Actions enabled
+  - latest main CI run corresponds to current HEAD and succeeded
+  - branch protection is readable and enforces the required CI checks
+  - vulnerability-alert/private-reporting endpoints are available
+  - secret-scanning endpoint is available when GitHub exposes it
+
+Use --allow-private for a pre-public dry run; final launch should omit it.
+USAGE
+}
+
+repo=""
+allow_private=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      repo="$2"
+      shift 2
+      ;;
+    --allow-private)
+      allow_private=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub launch readiness FAILED: gh CLI is not installed." >&2
+  exit 1
+fi
+
+echo "== GitHub launch readiness =="
+
+if gh auth status -h github.com >/dev/null 2>&1; then
+  ok "gh is authenticated for github.com"
+else
+  note "gh is not authenticated for github.com"
+fi
+
+if [ -z "$repo" ]; then
+  repo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+fi
+if [ -z "$repo" ]; then
+  note "could not resolve GitHub repository; pass --repo OWNER/REPO"
+else
+  ok "repository resolved: $repo"
+fi
+
+head_sha="$(git rev-parse HEAD)"
+branch="$(git branch --show-current)"
+origin_main_sha="$(git rev-parse origin/main 2>/dev/null || true)"
+
+if [ "$branch" = "main" ]; then
+  ok "current branch is main"
+else
+  note "current branch is '$branch', expected main"
+fi
+
+if [ -n "$origin_main_sha" ] && [ "$head_sha" = "$origin_main_sha" ]; then
+  ok "HEAD matches origin/main ($head_sha)"
+elif [ -n "$origin_main_sha" ]; then
+  note "HEAD ($head_sha) does not match origin/main ($origin_main_sha)"
+else
+  warn "origin/main is not available locally; run git fetch before final launch"
+fi
+
+if [ -n "$repo" ]; then
+  echo
+  echo "== Repository settings =="
+  is_private="$(gh repo view "$repo" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo unknown)"
+  has_issues="$(gh repo view "$repo" --json hasIssuesEnabled --jq '.hasIssuesEnabled' 2>/dev/null || echo unknown)"
+  has_discussions="$(gh repo view "$repo" --json hasDiscussionsEnabled --jq '.hasDiscussionsEnabled' 2>/dev/null || echo unknown)"
+  has_wiki="$(gh repo view "$repo" --json hasWikiEnabled --jq '.hasWikiEnabled' 2>/dev/null || echo unknown)"
+  description="$(gh repo view "$repo" --json description --jq '.description // ""' 2>/dev/null || true)"
+  topics="$(gh repo view "$repo" --json repositoryTopics --jq '.repositoryTopics[].name' 2>/dev/null || true)"
+  remote_default_branch="$(gh api "repos/${repo}" --jq '.default_branch // ""' 2>/dev/null || true)"
+  allow_update_branch="$(gh api "repos/${repo}" --jq '.allow_update_branch // false' 2>/dev/null || echo false)"
+  delete_branch_on_merge="$(gh api "repos/${repo}" --jq '.delete_branch_on_merge // false' 2>/dev/null || echo false)"
+  allow_squash_merge="$(gh api "repos/${repo}" --jq '.allow_squash_merge // false' 2>/dev/null || echo false)"
+  allow_merge_commit="$(gh api "repos/${repo}" --jq '.allow_merge_commit // false' 2>/dev/null || echo false)"
+  allow_rebase_merge="$(gh api "repos/${repo}" --jq '.allow_rebase_merge // false' 2>/dev/null || echo false)"
+
+  case "$is_private" in
+    false) ok "repository is public" ;;
+    true)
+      if [ "$allow_private" -eq 1 ]; then
+        warn "repository is still private (--allow-private dry run)"
+      else
+        note "repository is private; final public launch requires public visibility"
+      fi
+      ;;
+    *) note "could not determine repository visibility" ;;
+  esac
+
+  [ "$has_issues" = "true" ] && ok "Issues are enabled" || note "Issues are not enabled"
+  [ "$has_discussions" = "true" ] && ok "Discussions are enabled" || note "Discussions are not enabled"
+  [ "$has_wiki" = "false" ] && ok "Wiki is disabled" || warn "Wiki is enabled; verify this is intentional"
+  [ "$remote_default_branch" = "main" ] && ok "default branch is main" || note "default branch is '$remote_default_branch', expected main"
+  [ "$delete_branch_on_merge" = "true" ] && ok "delete branch on merge is enabled" || warn "delete branch on merge is not enabled"
+  [ "$allow_update_branch" = "true" ] && ok "PR update-branch button is enabled" || warn "PR update-branch button is not enabled"
+  [ "$allow_squash_merge" = "true" ] && ok "squash merge is enabled" || warn "squash merge is not enabled"
+  [ "$allow_merge_commit" = "true" ] && ok "merge commit is enabled" || warn "merge commit is not enabled"
+  [ "$allow_rebase_merge" = "true" ] && ok "rebase merge is enabled" || warn "rebase merge is not enabled"
+
+  if [ -n "$description" ]; then
+    ok "repository description is set"
+    case "$(printf '%s' "$description" | tr '[:upper:]' '[:lower:]')" in
+      *"bring your own rom"*|*"no copyrighted assets"*|*"no game data"*)
+        ok "repository description mentions asset/ROM expectations"
+        ;;
+      *)
+        warn "repository description does not mention bring-your-own-ROM/no-assets expectations"
+        ;;
+    esac
+  else
+    note "repository description is empty"
+  fi
+
+  missing_topics=""
+  for topic in bring-your-own-rom decompilation game-preservation n64 native-port source-port; do
+    if printf '%s\n' "$topics" | grep -Fxq "$topic"; then
+      :
+    else
+      missing_topics="${missing_topics} ${topic}"
+    fi
+  done
+  if [ -z "$missing_topics" ]; then
+    ok "required repository topics are present"
+  else
+    warn "missing recommended repository topic(s):${missing_topics}"
+  fi
+
+  actions_enabled="$(gh api "repos/${repo}/actions/permissions" --jq '.enabled' 2>/dev/null || echo unknown)"
+  [ "$actions_enabled" = "true" ] && ok "GitHub Actions are enabled" || note "GitHub Actions are not enabled"
+
+  echo
+  echo "== Latest main CI run =="
+  run_id="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json databaseId --jq '.[0].databaseId // ""' 2>/dev/null || true)"
+  if [ -z "$run_id" ]; then
+    note "no CI run found on main"
+  else
+    run_sha="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json headSha --jq '.[0].headSha // ""')"
+    run_status="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json status --jq '.[0].status // ""')"
+    run_conclusion="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+    run_url="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json url --jq '.[0].url // ""')"
+
+    if [ "$run_sha" = "$head_sha" ]; then
+      ok "latest main CI run is for current HEAD"
+    else
+      note "latest main CI run is for $run_sha, but current HEAD is $head_sha"
+    fi
+
+    if [ "$run_status" = "completed" ] && [ "$run_conclusion" = "success" ]; then
+      ok "latest main CI run succeeded: $run_url"
+    else
+      note "latest main CI run is not green: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
+      echo
+      echo "  Job summary:"
+      gh api "repos/${repo}/actions/runs/${run_id}/jobs" \
+        --jq '.jobs[] | "  - \(.name): status=\(.status) conclusion=\(.conclusion) runner_id=\(.runner_id // 0) steps=\((.steps // []) | length) id=\(.id)"' \
+        2>/dev/null || warn "could not fetch CI job summary"
+
+      job_ids="$(gh api "repos/${repo}/actions/runs/${run_id}/jobs" --jq '.jobs[].id' 2>/dev/null || true)"
+      if [ -n "$job_ids" ]; then
+        echo
+        echo "  Failed-run annotations:"
+        while IFS= read -r job_id; do
+          [ -n "$job_id" ] || continue
+          gh api "repos/${repo}/check-runs/${job_id}/annotations" \
+            --jq '.[] | "  - " + .message' 2>/dev/null || true
+        done <<< "$job_ids"
+      fi
+    fi
+  fi
+
+  echo
+  echo "== Protection and security settings =="
+  protection_tmp="$(mktemp "${TMPDIR:-/tmp}/mgb64-branch-protection.XXXXXX")"
+  protection_json="$(mktemp "${TMPDIR:-/tmp}/mgb64-branch-protection-json.XXXXXX")"
+  if gh api "repos/${repo}/branches/main/protection" >"$protection_json" 2>"$protection_tmp"; then
+    ok "main branch protection is enabled/readable"
+    protection_eval="$(mktemp "${TMPDIR:-/tmp}/mgb64-branch-protection-eval.XXXXXX")"
+    protection_eval_status=0
+    python3 tools/check_github_branch_protection.py \
+      "$protection_json" \
+      --format tabs \
+      >"$protection_eval" || protection_eval_status=$?
+    while IFS=$'\t' read -r level message; do
+      case "$level" in
+        ok) ok "$message" ;;
+        warn) warn "$message" ;;
+        fail) note "$message" ;;
+      esac
+    done < "$protection_eval"
+    if [ "$protection_eval_status" -gt 1 ]; then
+      note "could not evaluate branch protection details"
+    fi
+    rm -f "$protection_eval"
+  else
+    protection_msg="$(tr '\n' ' ' < "$protection_tmp" | sed 's/[[:space:]]\+/ /g')"
+    if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
+      warn "main branch protection is not readable in private dry run: $protection_msg"
+    else
+      note "main branch protection is not enabled/readable: $protection_msg"
+    fi
+  fi
+  rm -f "$protection_tmp" "$protection_json"
+
+  if gh api "repos/${repo}/vulnerability-alerts" --silent 2>/dev/null; then
+    ok "Dependabot vulnerability alerts endpoint is available"
+  else
+    note "Dependabot vulnerability alerts endpoint is not available"
+  fi
+
+  secret_scanning_tmp="$(mktemp "${TMPDIR:-/tmp}/mgb64-secret-scanning.XXXXXX")"
+  if gh api "repos/${repo}/secret-scanning/alerts" --silent 2>"$secret_scanning_tmp"; then
+    ok "secret scanning endpoint is available"
+  else
+    secret_scanning_msg="$(tr '\n' ' ' < "$secret_scanning_tmp" | sed 's/[[:space:]]\+/ /g')"
+    if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
+      warn "secret scanning endpoint is not available in private dry run: $secret_scanning_msg"
+    else
+      warn "secret scanning endpoint is not available; enable secret scanning/push protection if GitHub exposes it: $secret_scanning_msg"
+    fi
+  fi
+  rm -f "$secret_scanning_tmp"
+
+  private_vuln_tmp="$(mktemp "${TMPDIR:-/tmp}/mgb64-private-vuln.XXXXXX")"
+  if gh api "repos/${repo}/private-vulnerability-reporting" --silent 2>"$private_vuln_tmp"; then
+    ok "private vulnerability reporting endpoint is available"
+  else
+    private_vuln_msg="$(tr '\n' ' ' < "$private_vuln_tmp" | sed 's/[[:space:]]\+/ /g')"
+    if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
+      warn "private vulnerability reporting endpoint is not available in private dry run: $private_vuln_msg"
+    else
+      note "private vulnerability reporting endpoint is not available: $private_vuln_msg"
+    fi
+  fi
+  rm -f "$private_vuln_tmp"
+fi
+
+echo
+if [ "$fail" -ne 0 ]; then
+  echo "GitHub launch readiness FAILED (${warn_count} warning(s))."
+  exit 1
+fi
+
+echo "GitHub launch readiness passed (${warn_count} warning(s))."
