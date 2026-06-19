@@ -19,7 +19,7 @@ Usage: scripts/prepare_github_launch_evidence.sh [--repo OWNER/REPO] [--out PATH
 Collects a local Markdown report with:
   - current branch/head and origin/main state
   - local reachable-history provenance blockers
-  - stale hidden refs/pull/* refs outside current public history
+  - stale hidden refs/pull/* refs outside current branch history
   - latest main CI run/job/annotation summary
   - full scripts/check_github_launch_ready.sh --allow-private transcript
 
@@ -87,7 +87,7 @@ history_paths_output="$tmpdir/history_paths.txt"
 jobs_output="$tmpdir/jobs.txt"
 annotations_output="$tmpdir/annotations.txt"
 
-git rev-list --all > "$reachable"
+git rev-list HEAD > "$reachable"
 
 remote_url="$(gh repo view "$repo" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
 if [ -z "$remote_url" ]; then
@@ -164,6 +164,7 @@ fi
   printf '## Support Request Summary\n\n'
   printf 'Please purge the hidden pull-request refs listed below, any closed PR diff caches that keep them reachable, and any unreachable commit objects that are not reachable from current `main`.\n\n'
   printf 'Current public branch head to preserve: `%s`.\n\n' "$head_sha"
+  printf 'Important: this support request can only address hidden GitHub refs and caches. If the local reachable-history provenance section below fails, preserving the current `main` history is not sufficient for public launch; publish from a fresh single-root launch repository or complete an approved history rewrite as well.\n\n'
 
   printf '## Stale Hidden Pull-Request Refs\n\n'
   if [ -s "$stale_refs" ]; then

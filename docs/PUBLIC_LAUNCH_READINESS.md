@@ -69,9 +69,11 @@ will inspect first.
    `scripts/create_public_launch_repo.sh --smoke-archive`, or by an approved
    history rewrite.
 3. Resolve hidden stale PR refs through GitHub Support or the repository
-   replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. The replacement
-   path fixes both stale PR refs and reachable-history provenance when it uses a
-   fresh single-root launch repository.
+   replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
+   only purge hidden refs/caches; it does not fix launch-blocking paths in
+   preserved branch history. The replacement path fixes both stale PR refs and
+   reachable-history provenance when it uses a fresh single-root launch
+   repository.
 4. From a clean or scrubbed checkout, run:
 
 ```sh

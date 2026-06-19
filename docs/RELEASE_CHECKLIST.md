@@ -201,6 +201,8 @@ not a bit-perfect N64 audio proof.
   refs remain after a history rewrite, purge them through GitHub support or
   recreate/replace the public repository before launch. Use
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.
+  GitHub Support purge only addresses hidden refs/caches; it does not make an
+  otherwise unsafe preserved branch history suitable for public launch.
   The script also checks that the contributor triage labels used by the issue
   templates and launch roadmap are present.
 - If `tools/check_public_history_paths.py` reports removed local-only tool

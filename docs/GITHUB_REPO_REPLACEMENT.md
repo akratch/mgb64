@@ -21,12 +21,17 @@ refs point at pre-public commits, a public repository can still reveal old commi
 objects and PR diffs even when `main` itself is clean. Likewise, deleting a
 local-only tool from `HEAD` does not remove it from reachable git history.
 
-There are two acceptable fixes:
+There are two acceptable fixes for stale hidden pull-request refs:
 
 - ask GitHub Support to purge the stale hidden PR refs and associated unreachable
   objects; or
 - replace the GitHub repository with a fresh repository populated from a
   single-root launch commit created from the current clean tree.
+
+If reachable branch history itself contains launch-blocking provenance paths,
+GitHub Support purge is not enough. In that case, publish from the fresh
+single-root launch repository or complete an approved history rewrite, then
+verify hidden refs separately.
 
 ## Verify The Problem
 
@@ -74,6 +79,10 @@ git ls-remote origin 'refs/pull/*'
 ```
 
 The pull-ref section must pass before launch.
+
+If the local reachable-history provenance section still fails after support
+purges hidden refs, do not publish that repository history. Use Option B or an
+approved history rewrite.
 
 ## Option B: Replace The Repository
 

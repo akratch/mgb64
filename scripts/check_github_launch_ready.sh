@@ -11,9 +11,21 @@ cd "$(git rev-parse --show-toplevel)"
 fail=0
 warn_count=0
 
-note() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; fail=1; }
-warn() { printf '  \033[33m[WARN]\033[0m %s\n' "$1"; warn_count=$((warn_count + 1)); }
-ok()   { printf '  \033[32m[OK]\033[0m %s\n' "$1"; }
+if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
+  RED=""
+  YELLOW=""
+  GREEN=""
+  NC=""
+else
+  RED="$(printf '\033[31m')"
+  YELLOW="$(printf '\033[33m')"
+  GREEN="$(printf '\033[32m')"
+  NC="$(printf '\033[0m')"
+fi
+
+note() { printf '  %s[FAIL]%s %s\n' "$RED" "$NC" "$1"; fail=1; }
+warn() { printf '  %s[WARN]%s %s\n' "$YELLOW" "$NC" "$1"; warn_count=$((warn_count + 1)); }
+ok()   { printf '  %s[OK]%s %s\n' "$GREEN" "$NC" "$1"; }
 
 usage() {
   cat <<'USAGE'
