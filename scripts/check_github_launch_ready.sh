@@ -758,6 +758,8 @@ if [ -n "$repo" ]; then
 
     if [ "$run_status" = "completed" ] && [ "$run_conclusion" = "success" ]; then
       ok "latest hosted CI run succeeded: $run_url"
+    elif [ "$actions_enabled" = "false" ]; then
+      ok "latest recorded hosted CI run is not green, but hosted CI is disabled and not a launch gate: $run_url"
     else
       warn "latest hosted CI run is not green and is not a launch gate: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
       echo
