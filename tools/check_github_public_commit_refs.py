@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Check GitHub-visible text for stale commit references.
 
-After a public-history rewrite, issue/PR bodies and comments can still mention
-old commit SHAs. If GitHub can resolve those SHAs, public readers can follow
-them into pre-public history. This guard scans public GitHub text and fails on
-commit-like tokens that resolve to commits outside the current local history.
+After a public-history rewrite, issue/PR bodies, review summaries, milestones,
+and comments can still mention old commit SHAs. If GitHub can resolve those
+SHAs, public readers can follow them into pre-public history. This guard scans
+public GitHub text and fails on commit-like tokens that resolve to commits
+outside the current local history.
 """
 
 from __future__ import annotations
@@ -197,6 +198,134 @@ def release_items(repo: str) -> list[TextItem]:
     return items
 
 
+def milestone_items(repo: str) -> list[TextItem]:
+    try:
+        rows = run_json_lines(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{repo}/milestones?state=all&per_page=100",
+                "--jq",
+                ".[] | @json",
+            ]
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not fetch milestone text: {exc.stderr.strip() or exc}"
+        ) from exc
+
+    items: list[TextItem] = []
+    for row in rows:
+        title = row.get("title") or ""
+        description = row.get("description") or ""
+        items.append(
+            TextItem(
+                kind="milestone",
+                url=(
+                    row.get("html_url")
+                    or row.get("url")
+                    or f"https://github.com/{repo}/milestones"
+                ),
+                label=title or str(row.get("id", "unknown")),
+                text=f"{title}\n{description}",
+            )
+        )
+    return items
+
+
+def commit_comment_items(repo: str) -> list[TextItem]:
+    try:
+        rows = run_json_lines(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{repo}/comments?per_page=100",
+                "--jq",
+                ".[] | @json",
+            ]
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not fetch commit comments: {exc.stderr.strip() or exc}"
+        ) from exc
+
+    items: list[TextItem] = []
+    for row in rows:
+        author = row.get("user", {}).get("login") or str(row.get("id", "unknown"))
+        items.append(
+            TextItem(
+                kind="commit-comment",
+                url=row.get("html_url") or row.get("url") or "",
+                label=author,
+                text=row.get("body") or "",
+            )
+        )
+    return items
+
+
+def pull_review_items(repo: str) -> list[TextItem]:
+    try:
+        pull_rows = run_json_lines(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{repo}/pulls?state=all&per_page=100",
+                "--jq",
+                ".[] | @json",
+            ]
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "could not fetch pull requests for review summaries: "
+            f"{exc.stderr.strip() or exc}"
+        ) from exc
+
+    items: list[TextItem] = []
+    for pull in pull_rows:
+        number = pull.get("number")
+        if number is None:
+            continue
+        try:
+            review_rows = run_json_lines(
+                [
+                    "gh",
+                    "api",
+                    "--paginate",
+                    f"repos/{repo}/pulls/{number}/reviews?per_page=100",
+                    "--jq",
+                    ".[] | @json",
+                ]
+        )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"could not fetch review summaries for PR #{number}: "
+                f"{exc.stderr.strip() or exc}"
+            ) from exc
+
+        for review in review_rows:
+            author = review.get("user", {}).get("login") or str(
+                review.get("id", "unknown")
+            )
+            body = review.get("body") or ""
+            items.append(
+                TextItem(
+                    kind="pr-review",
+                    url=(
+                        review.get("html_url")
+                        or review.get("pull_request_url")
+                        or pull.get("html_url")
+                        or ""
+                    ),
+                    label=author,
+                    text=body,
+                )
+            )
+    return items
+
+
 def discussion_items(repo: str) -> tuple[list[TextItem], list[str]]:
     owner, name = repo.split("/", 1)
     query = """
@@ -277,10 +406,13 @@ def fetch_items(repo: str) -> tuple[list[TextItem], list[str]]:
     items: list[TextItem] = []
     items.extend(repository_items(repo))
     items.extend(label_items(repo))
+    items.extend(milestone_items(repo))
     items.extend(release_items(repo))
     items.extend(rest_items(f"repos/{repo}/issues?state=all&per_page=100", "issue-or-pr"))
     items.extend(rest_items(f"repos/{repo}/issues/comments?per_page=100", "issue-comment"))
+    items.extend(commit_comment_items(repo))
     items.extend(rest_items(f"repos/{repo}/pulls/comments?per_page=100", "pr-review-comment"))
+    items.extend(pull_review_items(repo))
     discussions, incomplete = discussion_items(repo)
     items.extend(discussions)
     return items, incomplete

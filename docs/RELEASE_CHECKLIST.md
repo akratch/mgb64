@@ -205,10 +205,11 @@ not a bit-perfect N64 audio proof.
   reachable git history for launch-blocking public paths,
   scans GitHub branch, tag, pull-request, and workflow-run history surfaces for
   commits outside the current public branch, and scans public repository
-  metadata, labels, release notes/assets, issue text, PR comments, and
-  Discussion text for high-risk private paths, stale handoff language,
-  token-shaped strings, proprietary notice fragments, and resolvable stale
-  commit references. Uploaded release assets are also checked for ROM-shaped,
+  metadata, labels, milestones, release notes/assets, issue text, PR/commit
+  comments, PR review summaries, and Discussion text for high-risk private
+  paths, stale handoff language, token-shaped strings, proprietary notice
+  fragments, and resolvable stale commit references. Uploaded release assets are
+  also checked for ROM-shaped,
   media, archive, and binary payload names; treat findings there like
   repository-history contamination. GitHub keeps closed PR refs read-only; if
   any stale `refs/pull/*`

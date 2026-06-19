@@ -41,8 +41,8 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
-  - public repository metadata/label/release/issue/comment/discussion text has no high-risk launch leaks
-  - public repository metadata/label/release/issue/comment/discussion text has no stale commit references
+  - public repository metadata/label/milestone/release/issue/comment/discussion text has no high-risk launch leaks
+  - public repository metadata/label/milestone/release/issue/comment/discussion text has no stale commit references
   - contributor-facing GitHub labels needed for launch triage are present
   - GitHub release assets do not expose ROM, media, archive, or binary payloads
   - branch protection is readable and enforces the required CI checks
@@ -115,6 +115,14 @@ scan_github_public_text_surface() {
   fi
 
   if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/milestones?state=all&per_page=100" \
+    --jq '.[] | select(((.title // "") + "\n" + (.description // "")) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "milestone\t\(.html_url)\t\(.title)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub milestone titles and descriptions"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
     --paginate "repos/${repo_name}/releases?per_page=100" \
     --jq '.[] | select(((.tag_name // "") + "\n" + (.name // "") + "\n" + (.body // "") + "\n" + ([(.assets // [])[] | (.name // "")] | join("\n"))) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "release\t\(.html_url)\t\(.tag_name)"' 2>/dev/null)"; then
     findings="$(append_findings "$findings" "$scan_output")"
@@ -139,11 +147,37 @@ scan_github_public_text_surface() {
   fi
 
   if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/comments?per_page=100" \
+    --jq '.[] | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "commit-comment\t\(.html_url)\t\(.user.login)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub commit comments"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
     --paginate "repos/${repo_name}/pulls/comments?per_page=100" \
     --jq '.[] | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "pr-review-comment\t\(.html_url)\t\(.user.login)"' 2>/dev/null)"; then
     findings="$(append_findings "$findings" "$scan_output")"
   else
     note "could not scan GitHub PR review comments"
+  fi
+
+  pull_numbers=""
+  if pull_numbers="$(gh api \
+    --paginate "repos/${repo_name}/pulls?state=all&per_page=100" \
+    --jq '.[].number' 2>/dev/null)"; then
+    while IFS= read -r pr_number; do
+      [ -n "$pr_number" ] || continue
+      if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+        --paginate "repos/${repo_name}/pulls/${pr_number}/reviews?per_page=100" \
+        --jq '.[] | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "pr-review\t\(.html_url // .pull_request_url)\t\(.user.login)"' 2>/dev/null)"; then
+        findings="$(append_findings "$findings" "$scan_output")"
+      else
+        note "could not scan GitHub PR review summaries for pull request #${pr_number}"
+      fi
+    done <<< "$pull_numbers"
+  else
+    note "could not list GitHub pull requests for review-summary scan"
   fi
 
   owner="${repo_name%%/*}"
@@ -196,10 +230,10 @@ scan_github_public_text_surface() {
   fi
 
   if [ -n "$findings" ]; then
-    note "high-risk text found in public GitHub metadata/label/release/issue/comment/discussion surface"
+    note "high-risk text found in public GitHub metadata/label/milestone/release/issue/comment/discussion surface"
     printf '%s\n' "$findings" | sed 's/^/  - /'
   else
-    ok "no high-risk text found in repository metadata, labels, releases, issues, PR comments, or discussions"
+    ok "no high-risk text found in repository metadata, labels, milestones, releases, issues, PR/commit comments, PR review summaries, or discussions"
   fi
 }
 

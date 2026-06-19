@@ -33,9 +33,10 @@ Desired end state:
   current public history;
 - `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
   history;
-- public repository metadata, label, release note/asset, issue, comment,
-  Discussion, workflow-history, and commit-reference surfaces expose no
-  pre-public commit links or high-risk private/provenance text;
+- public repository metadata, label, milestone, release note/asset, issue,
+  PR/commit comment, PR review summary, Discussion, workflow-history, and
+  commit-reference surfaces expose no pre-public commit links or high-risk
+  private/provenance text;
 - contributor triage labels for audio, renderer, parity, validation,
   provenance, build, and newcomer-friendly work are present after the repository
   replacement/migration step;
