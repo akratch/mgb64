@@ -25,6 +25,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository visibility and collaboration features
   - GitHub Actions enabled
   - latest main CI run corresponds to current HEAD and succeeded
+  - public issue/comment/discussion text has no high-risk launch leaks
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
@@ -35,6 +36,125 @@ USAGE
 
 repo=""
 allow_private=0
+
+public_surface_pattern() {
+  local private_text
+  local secret_text
+  local sdk_notice_text
+
+  private_text="(/U""sers/[^[:space:]]+|Desktop/""dev|/home/""adam|github[.]com/akratch/0""07|private ""dev repo|contaminated ""private|Clau""de|session ""handoff|agent ""memory|must never go ""public)"
+  secret_text="(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z_]{36,}|github_pat_[0-9A-Za-z_]+|xox[baprs]-[0-9A-Za-z-]+|sk-[A-Za-z0-9]{20,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY)"
+  sdk_notice_text="(UNPUBLISHED[[:space:]]+PROPRI""ETARY|may not be disclo""sed|without the prior written (permission|cons""ent)|RESTRICTED[[:space:]]+RIG""HTS|subparagraph [(]c[)][(]1[)][(]ii[)] of the Rig""hts)"
+
+  printf '(%s|%s|%s)' "$private_text" "$secret_text" "$sdk_notice_text"
+}
+
+append_findings() {
+  local existing="$1"
+  local new_findings="$2"
+
+  if [ -z "$new_findings" ]; then
+    printf '%s' "$existing"
+  elif [ -z "$existing" ]; then
+    printf '%s' "$new_findings"
+  else
+    printf '%s\n%s' "$existing" "$new_findings"
+  fi
+}
+
+scan_github_public_text_surface() {
+  local repo_name="$1"
+  local pattern
+  local findings=""
+  local scan_output
+  local owner
+  local name
+
+  pattern="$(public_surface_pattern)"
+
+  echo
+  echo "== Public GitHub text surface =="
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/issues?state=all&per_page=100" \
+    --jq '.[] | select(((.title // "") + "\n" + (.body // "")) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "issue-or-pr\t\(.html_url)\t\(.title)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub issue/PR titles and bodies"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/issues/comments?per_page=100" \
+    --jq '.[] | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "issue-comment\t\(.html_url)\t\(.user.login)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub issue/PR comments"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/pulls/comments?per_page=100" \
+    --jq '.[] | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "pr-review-comment\t\(.html_url)\t\(.user.login)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub PR review comments"
+  fi
+
+  owner="${repo_name%%/*}"
+  name="${repo_name#*/}"
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api graphql --paginate \
+    -F owner="$owner" \
+    -F name="$name" \
+    -f query='
+      query($owner: String!, $name: String!, $endCursor: String) {
+        repository(owner: $owner, name: $name) {
+          discussions(first: 100, after: $endCursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              number
+              title
+              body
+              url
+              comments(first: 100) {
+                totalCount
+                nodes {
+                  body
+                  url
+                  author { login }
+                }
+              }
+            }
+          }
+        }
+      }' \
+    --jq '
+      .data.repository.discussions.nodes[]? as $discussion
+      | (
+          if ((($discussion.title // "") + "\n" + ($discussion.body // "")) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) then
+            "discussion\t\($discussion.url)\t\($discussion.title)"
+          else empty end
+        ),
+        (
+          $discussion.comments.nodes[]?
+          | select((.body // "") | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i"))
+          | "discussion-comment\t\(.url)\t\(.author.login // "unknown")"
+        ),
+        (
+          if (($discussion.comments.totalCount // 0) > (($discussion.comments.nodes // []) | length)) then
+            "discussion-comment-scan-incomplete\t\($discussion.url)\tloaded \((($discussion.comments.nodes // []) | length)) of \($discussion.comments.totalCount) comments"
+          else empty end
+        )' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub Discussions text"
+  fi
+
+  if [ -n "$findings" ]; then
+    note "high-risk text found in public GitHub issue/comment/discussion surface"
+    printf '%s\n' "$findings" | sed 's/^/  - /'
+  else
+    ok "no high-risk text found in issues, PR comments, or discussions"
+  fi
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -206,6 +326,8 @@ if [ -n "$repo" ]; then
       fi
     fi
   fi
+
+  scan_github_public_text_surface "$repo"
 
   echo
   echo "== Protection and security settings =="
