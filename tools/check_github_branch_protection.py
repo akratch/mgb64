@@ -9,9 +9,6 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_REQUIRED_CHECKS = ("Release hygiene", "CMake build (Linux)")
-
-
 def nested_enabled(node: dict[str, object], keys: tuple[str, ...]) -> bool:
     value: object = node
     for key in keys:
@@ -32,15 +29,35 @@ def check_branch_protection(
     findings: list[tuple[str, str]] = []
     status_checks = protection.get("required_status_checks")
 
-    if not isinstance(status_checks, dict):
-        emit(findings, "fail", "main branch protection does not require status checks")
-    else:
-        emit(findings, "ok", "main branch protection requires status checks")
-        if status_checks.get("strict") is True:
-            emit(findings, "ok", "required status checks must be up to date before merge")
+    if required_checks:
+        if not isinstance(status_checks, dict):
+            emit(findings, "fail", "main branch protection does not require status checks")
         else:
-            emit(findings, "fail", "required status checks are not set to strict/up-to-date")
+            emit(findings, "ok", "main branch protection requires status checks")
+            if status_checks.get("strict") is True:
+                emit(findings, "ok", "required status checks must be up to date before merge")
+            else:
+                emit(findings, "fail", "required status checks are not set to strict/up-to-date")
 
+            contexts = set()
+            for context in status_checks.get("contexts") or []:
+                if isinstance(context, str):
+                    contexts.add(context)
+            for check in status_checks.get("checks") or []:
+                if isinstance(check, dict) and isinstance(check.get("context"), str):
+                    contexts.add(str(check["context"]))
+
+            missing = sorted(required_checks - contexts)
+            if missing:
+                emit(
+                    findings,
+                    "fail",
+                    "main branch protection is missing required status check(s): "
+                    + ", ".join(missing),
+                )
+            else:
+                emit(findings, "ok", "main branch protection requires configured status checks")
+    elif isinstance(status_checks, dict):
         contexts = set()
         for context in status_checks.get("contexts") or []:
             if isinstance(context, str):
@@ -48,21 +65,19 @@ def check_branch_protection(
         for check in status_checks.get("checks") or []:
             if isinstance(check, dict) and isinstance(check.get("context"), str):
                 contexts.add(str(check["context"]))
-
-        missing = sorted(required_checks - contexts)
-        if missing:
+        if contexts:
             emit(
                 findings,
                 "fail",
-                "main branch protection is missing required CI check(s): "
-                + ", ".join(missing),
+                "main branch protection requires hosted status check(s), but launch policy is local-CI only: "
+                + ", ".join(sorted(contexts)),
             )
         else:
-            emit(
-                findings,
-                "ok",
-                "main branch protection requires release hygiene and Linux build checks",
-            )
+            emit(findings, "ok", "main branch protection has no required hosted status checks")
+        if status_checks.get("strict") is True:
+            emit(findings, "warn", "strict status-check mode is enabled without required hosted checks")
+    else:
+        emit(findings, "ok", "main branch protection has no required hosted status checks")
 
     pr_reviews = protection.get("required_pull_request_reviews")
     if isinstance(pr_reviews, dict):
@@ -105,7 +120,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="append",
         dest="required_checks",
         default=[],
-        help="required status-check context; may be repeated",
+        help=(
+            "required status-check context; may be repeated. Defaults to none "
+            "because public launch uses local preflight evidence instead of hosted CI."
+        ),
     )
     parser.add_argument(
         "--format",
@@ -118,7 +136,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    required_checks = set(args.required_checks or DEFAULT_REQUIRED_CHECKS)
+    required_checks = set(args.required_checks)
     try:
         with Path(args.json).open("r", encoding="utf-8") as handle:
             protection = json.load(handle)
