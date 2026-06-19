@@ -58,7 +58,7 @@ will inspect first.
 | Intro camera parity | Bond is still absent from authored level intro cameras such as Dam's early establishing camera. | #18 |
 | Renderer parity | Several compatibility defaults are intentionally approximate and need reference-backed scenes before promotion. | #21 |
 | Linux/Windows validation | Linux CI must go green, and Windows/MSYS2 instructions still need outside verification. | #20, #28, #29 |
-| macOS distribution | Local unsigned app bundle is asset-free; signed/notarized DMG release path is not yet proven. | #22 |
+| macOS distribution | Local unsigned app bundle is asset-free; signed/notarized DMG release path and controlled SDL2 deployment target are not yet proven. | #22 |
 | Warning backlog | Local and CI release builds should stay warning-clean; any recurring GCC backlog should be triaged in public. | #25 |
 
 ## Final Launch Sequence

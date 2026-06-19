@@ -78,9 +78,10 @@ you know what to expect and where help is most valuable.
   linker surfaces cannot grow without a deliberate inventory/docs update.
 - **Renderer/audio accuracy** and assorted gameplay parity vs. original
   hardware (see below).
-- **Signed/notarized macOS distribution:** the local `.app` build exists, but
-  Developer ID signing, notarization, DMG polish, and any prebuilt release
-  artifact remain deferred.
+- **Signed/notarized macOS distribution:** the local `.app` build exists and
+  remains asset-free, but it links against the builder's local SDL2 dylib.
+  Developer ID signing, notarization, a controlled SDL2 deployment target, DMG
+  polish, and any prebuilt release artifact remain deferred.
 
 ## Known issues
 

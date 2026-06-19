@@ -236,6 +236,9 @@ SDL2 install and is meant for source builds, not as a redistributable binary.
 Desired end state:
 
 - signed/notarized Developer ID builds are wired for maintainers;
+- the SDL2 runtime/deployment target is controlled so signed builds do not
+  inherit an unexpectedly high minimum macOS version from a local Homebrew
+  dylib;
 - DMG creation is verified against the signed app bundle;
 - any prebuilt macOS release artifact passes asset-free verification before it
   is attached to a release.

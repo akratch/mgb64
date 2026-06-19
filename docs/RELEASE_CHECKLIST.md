@@ -114,7 +114,8 @@ For the local macOS app shell, verify the unsigned source-built bundle:
 
 This proves the universal static library lane used by the macOS workflow, local
 `.app` assembly, and asset hygiene. It does not prove signing, notarization,
-DMG creation, or end-user redistributable packaging.
+DMG creation, a controlled SDL2 runtime/deployment target, or end-user
+redistributable packaging.
 For `.app` inputs, `verify_asset_free.sh` checks both the executable and the
 bundle resource allowlist, so accidental ROMs, captures, audio dumps, or
 unexpected media resources fail the gate.
