@@ -233,7 +233,9 @@ scripts/configure_github_launch_settings.sh --repo "$repo" --yes
 The helper configures repository settings, disables hosted GitHub Actions for
 the local-CI launch policy, configures recommended security endpoints when
 GitHub exposes them, and applies `main` branch protection without required
-hosted status checks.
+hosted status checks when GitHub exposes the branch-protection endpoint. Endpoint
+warnings are acceptable in the private dry run only if the final public checker
+later passes.
 
 9. Recreate launch issues and labels from the scrubbed export:
 

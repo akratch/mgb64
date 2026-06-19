@@ -57,7 +57,10 @@ Options:
   -h, --help              Show this help.
 
 This helper is intended for the fresh replacement repository. It does not change
-repository visibility; use scripts/check_github_launch_ready.sh after applying.
+repository visibility. Some security and branch-protection endpoints may not be
+available while a repository is private or account-limited; the helper warns for
+those cases and scripts/check_github_launch_ready.sh is the final enforcement
+gate.
 USAGE
 }
 
@@ -252,7 +255,7 @@ PY
     sed 's/^/  /' "$protection_json"
     echo "DRY-RUN: gh api -X PUT repos/${repo}/branches/main/protection --input <branch-protection-json-above>"
   else
-    run_or_print gh api -X PUT "repos/${repo}/branches/main/protection" --input "$protection_json" --silent
+    run_or_warn gh api -X PUT "repos/${repo}/branches/main/protection" --input "$protection_json" --silent
   fi
 fi
 
