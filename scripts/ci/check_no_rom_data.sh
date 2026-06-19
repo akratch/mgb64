@@ -6,7 +6,7 @@
 # This is the safeguard that keeps MGB64 legally publishable. It fails if any
 # tracked file looks like a ROM, an extracted asset, a compiled binary, an
 # embedded binary/data-URI asset, or a direct SDK/devkit source-path copy note.
-# Run locally before pushing, and in CI on every PR.
+# Run locally before pushing or opening a PR.
 #
 set -euo pipefail
 

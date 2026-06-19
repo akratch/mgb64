@@ -1,9 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -54,7 +51,8 @@ jobs:
           python3 tools/check_shell_syntax.py
 
   # Build the native executable without ROM-derived assets. The port loads game
-  # media from the user's ROM at runtime, so public CI can still compile/link.
+  # media from the user's ROM at runtime, so this manual hosted mirror can still
+  # compile/link without bundled game data if Actions are deliberately enabled.
   linux-build:
     name: CMake build (Linux)
     runs-on: ubuntu-latest

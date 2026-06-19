@@ -6,14 +6,12 @@
 # maintainer credentials and distributable packaging are wired.
 #
 # The active job requires no Apple Developer credentials or repository secrets.
-# Triggered on version tags (e.g., v0.1.0) and manual workflow dispatch.
+# This is a manual hosted mirror of the local release lane; public launch uses
+# local preflight evidence, not hosted GitHub Actions.
 
 name: macOS Asset-Free Build
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 env:

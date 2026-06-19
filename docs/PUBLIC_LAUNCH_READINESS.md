@@ -13,16 +13,16 @@ Do not make the repository public until all hard blockers are closed:
 
 | Area | Status | Evidence | Required action |
 | --- | --- | --- | --- |
-| Hosted CI | Blocked | Current-head GitHub Actions jobs fail before runner startup with billing/spending-limit annotations. | Fix account billing/spending settings, rerun CI on `main`, and require a green current-head run. |
+| Local release/preflight proof | Passing locally | Public launch uses strict local preflight evidence instead of hosted GitHub Actions. The current tree passes the release guard locally; the final replacement bundle must be refreshed for the exact launch commit. | Keep `scripts/release_preflight.sh` and the strict clean-launch bundle passing before launch. |
 | Reachable git history provenance | Blocked | `tools/check_public_history_paths.py` reports old `tools/ido5.3_recomp/*` source/tooling paths in the current preserved history. The generated fresh single-root launch repository must pass this guard before publication. | Publish from a fresh single-root launch repository created from the current clean tree, or perform an approved history rewrite before launch. |
 | Branch/tag refs | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies advertised `refs/heads/*` and `refs/tags/*` point into current public history. | Keep passing before launch; do not create public release tags from any other history. |
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
 | Current-tree/source-archive hygiene | Passing locally | The strict clean-launch bundle path generates a one-commit launch repo, passes release/history guards, builds a warning-clean source archive, and records exact commit/archive hashes in the generated bundle manifest. | Keep passing before launch. |
-| ROM-free source test suite | Passing locally | Clean launch repo and source-archive smoke both pass ROM-free CTest `7/7` during the strict bundle proof. | Keep passing before launch and in hosted CI. |
+| ROM-free source test suite | Passing locally | Clean launch repo and source-archive smoke both pass ROM-free CTest `7/7` during the strict bundle proof. | Keep passing before launch through local preflight and archive smoke. |
 | GitHub public text/artifact hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, unexpired Actions artifacts, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, workflow artifact upload, issue edit, or PR review. |
 | Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
-| Branch protection, Actions policy, and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. The launch checker also enforces read-only default workflow tokens, no workflow PR approval, full-SHA action pins, and Actions artifact/log retention of 14 days or less. | Configure after CI can run and before or immediately after the public flip. |
+| Branch protection, Actions policy, and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. The launch checker enforces GitHub Actions disabled for the local-CI launch policy. If Actions are deliberately re-enabled later, workflow tokens must stay read-only, workflow PR approval must stay disabled, action pins must remain full-SHA, and artifact/log retention must stay 14 days or less. | Configure before or immediately after the public flip. |
 
 ## Full Local Launch Proof
 
@@ -52,8 +52,8 @@ issue count, and GitHub blocker evidence. A launch-ready bundle must prove:
 
 This proof shows the current tree can be turned into an asset-free clean public
 launch repository. It does **not** make the preserved current GitHub repository
-safe to flip public directly; hosted CI, preserved-history, hidden PR ref, and
-branch/security setting gates still apply.
+safe to flip public directly; preserved-history, hidden PR ref, Actions policy,
+and branch/security setting gates still apply.
 
 ## What Is Already In Good Shape
 
@@ -88,14 +88,13 @@ will inspect first.
 | Audio/music parity | SFX mapping is much improved, but startup music still needs emulator or hardware reference comparison before fidelity claims get stronger. | #17 |
 | Intro camera parity | Bond is still absent from authored level intro cameras such as Dam's early establishing camera. | #18 |
 | Renderer parity | Several compatibility defaults are intentionally approximate and need reference-backed scenes before promotion. | #21 |
-| Linux/Windows validation | Linux CI must go green, and Windows/MSYS2 instructions still need outside verification. | #20, #28, #29 |
+| Linux/Windows validation | Local Linux/GCC validation and Windows/MSYS2 instructions still need outside verification. | #20, #28, #29 |
 | macOS distribution | Local unsigned app bundle is asset-free; signed/notarized DMG release path and controlled SDL2 deployment target are not yet proven. | #22 |
-| Warning backlog | Local and CI release builds should stay warning-clean; any recurring GCC backlog should be triaged in public. | #25 |
+| Warning backlog | Local release and source-archive smoke builds should stay warning-clean; any recurring GCC backlog should be triaged in public. | #25 |
 
 ## Final Launch Sequence
 
-1. Fix GitHub Actions billing/spending so hosted runners can start.
-2. Resolve reachable-history provenance by publishing from a fresh single-root
+1. Resolve reachable-history provenance by publishing from a fresh single-root
    launch repository created from the current clean tree with
    `scripts/create_public_launch_repo.sh --smoke-archive` or the fuller
    non-destructive `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64`,
@@ -103,13 +102,13 @@ will inspect first.
    When a local ROM is available outside the generated launch checkout, prefer
    the fuller strict dry run:
    `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app`.
-3. Resolve hidden stale PR refs through GitHub Support or the repository
+2. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
    only purge hidden refs/caches; it does not fix launch-blocking paths in
    preserved branch history. The replacement path fixes both stale PR refs and
    reachable-history provenance when it uses a fresh single-root launch
    repository.
-4. From a clean or scrubbed checkout, run:
+3. From a clean or scrubbed checkout, run:
 
 ```sh
 scripts/release_preflight.sh \
@@ -120,24 +119,24 @@ scripts/release_preflight.sh \
   --github
 ```
 
-5. Confirm the latest `main` CI run is green for the exact launch commit.
-6. Configure GitHub Actions policy so default workflow tokens are read-only,
-   workflow PR approval is disabled, action SHA pinning is required, and
-   artifact/log retention is 14 days or less.
-7. Configure branch protection so `Release hygiene` and `CMake build (Linux)`
-   are required and up to date before merge.
-8. Enable or confirm Discussions, Dependabot vulnerability alerts, private
+4. Configure GitHub Actions policy for the launch repository so hosted Actions
+   are disabled. The checked-in workflows remain manual-only, SHA-pinned local
+   CI mirrors for future maintainers who deliberately re-enable Actions.
+5. Configure branch protection without required hosted status checks; require
+   reviews/conversation resolution and keep force-push/deletion protections.
+6. Enable or confirm Discussions, Dependabot vulnerability alerts, private
    vulnerability reporting, and secret scanning/push protection where GitHub
    exposes them.
-9. Flip public only after `scripts/check_github_launch_ready.sh` passes without
+7. Flip public only after `scripts/check_github_launch_ready.sh` passes without
    `--allow-private`.
-10. Announce with the same constraints used in the README: bring your own ROM, no
+8. Announce with the same constraints used in the README: bring your own ROM, no
    copyrighted assets, experimental native port, matching target in progress,
    and SDK/libultra compatibility provenance still inventoried.
 
 ## Do Not Announce Yet If
 
-- GitHub Actions is red or stuck before runner startup.
+- The strict local release preflight or clean-launch bundle proof has not been
+  run for the exact launch commit.
 - `tools/check_public_history_paths.py` reports launch-blocking paths in
   reachable git history.
 - `git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'` exposes

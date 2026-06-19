@@ -241,7 +241,62 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 echo
-echo "== GitHub Actions supply-chain pinning =="
+echo "== GitHub Actions local-CI policy =="
+workflow_trigger_hits="$(
+  python3 - <<'PY'
+from pathlib import Path
+import re
+
+bad = {"push", "pull_request", "pull_request_target", "schedule"}
+workflow_dir = Path(".github/workflows")
+if not workflow_dir.is_dir():
+    raise SystemExit
+
+def strip_comment(line: str) -> str:
+    # Good enough for this repo's workflow files: comments are not embedded in
+    # quoted scalars in the `on:` block.
+    return line.split("#", 1)[0].rstrip()
+
+for workflow in sorted(workflow_dir.glob("*.y*ml")):
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    in_on = False
+    on_indent = 0
+    for number, line in enumerate(lines, 1):
+        clean = strip_comment(line)
+        if not clean.strip():
+            continue
+        indent = len(clean) - len(clean.lstrip(" "))
+        text = clean.strip()
+
+        if in_on and indent <= on_indent:
+            in_on = False
+
+        if not in_on:
+            if text.startswith("on:"):
+                rest = text[3:].strip()
+                if rest:
+                    tokens = re.findall(r"[A-Za-z_]+", rest)
+                    if any(token in bad for token in tokens):
+                        print(f"{workflow}:{number}:{text}")
+                else:
+                    in_on = True
+                    on_indent = indent
+            continue
+
+        key = text.split(":", 1)[0].strip().strip("'\"")
+        list_item = text[1:].strip().strip("'\"") if text.startswith("-") else ""
+        if key in bad or list_item in bad:
+            print(f"{workflow}:{number}:{text}")
+PY
+)"
+if [ -n "$workflow_trigger_hits" ]; then
+  while IFS= read -r hit; do
+    note "GitHub Actions workflow has an automatic hosted trigger; launch policy is local-CI only: $hit"
+  done <<< "$workflow_trigger_hits"
+else
+  echo "  OK -- GitHub Actions workflows are manual-only local-CI mirrors."
+fi
+
 workflow_action_hits="$(
   if [ -d .github/workflows ]; then
     while IFS= read -r workflow; do

@@ -378,7 +378,7 @@ PY
   printf '%s\n' "NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo} --allow-private"
   printf '```\n'
   printf '\n## Final Public Flip Gate\n\n'
-  printf '%s\n' "Do not change visibility to public until hosted CI runs green on the exact launch commit, branch/security settings are configured, and \`scripts/check_github_launch_ready.sh --repo ${repo} --allow-private\` has no launch blockers other than private visibility."
+  printf '%s\n' "Do not change visibility to public until the strict local launch proof passes on the exact launch commit, branch/security settings are configured, GitHub Actions are disabled for the local-CI launch policy, and \`scripts/check_github_launch_ready.sh --repo ${repo} --allow-private\` has no launch blockers other than private visibility."
   printf '\n```sh\n'
   printf '%s\n' "gh repo edit ${repo} --visibility public --accept-visibility-change-consequences"
   printf '%s\n' "NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo}"

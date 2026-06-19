@@ -13,8 +13,8 @@ you know what to expect and where help is most valuable.
   `cmake -B build && cmake --build build` produces `ge007`; running it loads
   your ROM, decodes its audio, brings up the OpenGL renderer, and enters the
   game loop. Verified end-to-end on macOS/arm64. The repository also wires a
-  Linux/GCC native build plus ROM-free CTest suite in GitHub Actions, but the
-  current-head hosted run must be green before public launch.
+  Linux/GCC native build plus ROM-free CTest suite through local preflight and
+  source-archive smoke. Hosted GitHub Actions is not a public-launch gate.
 - The port is **asset-free**: no ROM media is compiled into the binary. All bulk
   game data — textures, audio, animation frames, fonts, the Rareware logo — is
   read from *your* ROM at runtime (`rom_io.c`) and served through the
@@ -108,7 +108,7 @@ you know what to expect and where help is most valuable.
   emulator).
 - Expand organic menu/mission-flow validation beyond the current deterministic
   multi-folder EEPROM persistence smoke check.
-- Port build ergonomics: CI build coverage on more platforms, packaging.
+- Port build ergonomics: local build coverage on more platforms, packaging.
 - Documentation: expand build notes for your platform.
 
 For the fuller pre-public and contributor roadmap, see

@@ -56,8 +56,8 @@ pacman -S --needed base-devel git make mingw-w64-x86_64-{toolchain,cmake,pkgconf
 python3 --version
 ```
 
-Linux/GCC configure, build, and ROM-free CTest are wired in GitHub Actions and
-must be green on current `main` before a public launch. Windows/MSYS2 setup is
+Linux/GCC configure, build, and ROM-free CTest are covered by the local
+preflight/source-archive smoke lane before public launch. Windows/MSYS2 setup is
 expected to work but is not yet maintainer-verified; please file a platform
 validation or build issue with exact text logs if it does not. If you use MSYS2
 UCRT64 instead of MINGW64, use the matching `mingw-w64-ucrt-x86_64-*` package

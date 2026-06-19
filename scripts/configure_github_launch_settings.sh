@@ -4,7 +4,7 @@
 # repository settings required before public launch.
 #
 # Default mode is a dry run. Pass --yes only after the fresh launch repository
-# exists, hosted CI can start, and the printed operations have been reviewed.
+# exists and the printed operations have been reviewed.
 #
 set -euo pipefail
 
@@ -15,7 +15,8 @@ apply=0
 skip_branch_protection=0
 skip_security=0
 actions_retention_days=14
-required_checks=("Release hygiene" "CMake build (Linux)")
+enable_actions=0
+required_checks=()
 topics=(
   bring-your-own-rom
   decompilation
@@ -44,9 +45,12 @@ Options:
                           Do not configure main branch protection.
   --skip-security         Do not attempt Dependabot/secret-scanning/private
                           vulnerability-reporting setup.
+  --enable-actions        Enable hosted GitHub Actions. The default public
+                          launch policy keeps Actions disabled and uses local
+                          release_preflight evidence instead.
   --required-check NAME   Required status check for branch protection. Repeat
-                          to override defaults. Defaults are Release hygiene
-                          and CMake build (Linux).
+                          to add checks. Defaults to none because public launch
+                          uses local CI/preflight evidence.
   --actions-retention-days DAYS
                           Artifact/log retention for GitHub Actions. Defaults
                           to 14 and must be between 1 and 90 for public repos.
@@ -105,6 +109,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-security)
       skip_security=1
+      shift
+      ;;
+    --enable-actions)
+      enable_actions=1
       shift
       ;;
     --required-check)
@@ -180,12 +188,6 @@ run_or_print gh repo edit "$repo" \
   --enable-rebase-merge \
   "${topic_args[@]}"
 
-run_or_warn gh api -X PUT "repos/${repo}/actions/permissions" \
-  -F enabled=true \
-  -f allowed_actions=all \
-  -F sha_pinning_required=true \
-  --silent
-
 run_or_warn gh api -X PUT "repos/${repo}/actions/permissions/workflow" \
   -f default_workflow_permissions=read \
   -F can_approve_pull_request_reviews=false \
@@ -194,6 +196,18 @@ run_or_warn gh api -X PUT "repos/${repo}/actions/permissions/workflow" \
 run_or_warn gh api -X PUT "repos/${repo}/actions/permissions/artifact-and-log-retention" \
   -F "days=${actions_retention_days}" \
   --silent
+
+if [ "$enable_actions" -eq 1 ]; then
+  run_or_warn gh api -X PUT "repos/${repo}/actions/permissions" \
+    -F enabled=true \
+    -f allowed_actions=all \
+    -F sha_pinning_required=true \
+    --silent
+else
+  run_or_warn gh api -X PUT "repos/${repo}/actions/permissions" \
+    -F enabled=false \
+    --silent
+fi
 
 if [ "$skip_security" -eq 0 ]; then
   run_or_warn gh api -X PUT "repos/${repo}/vulnerability-alerts" --silent
@@ -216,7 +230,7 @@ payload = {
     "required_status_checks": {
         "strict": True,
         "contexts": checks,
-    },
+    } if checks else None,
     "enforce_admins": True,
     "required_pull_request_reviews": {
         "dismiss_stale_reviews": True,

@@ -20,7 +20,7 @@ Collects a local Markdown report with:
   - current branch/head and origin/main state
   - local reachable-history provenance blockers
   - stale hidden refs/pull/* refs outside current branch history
-  - latest main CI run/job/annotation summary
+  - latest hosted CI run/job/annotation summary, if any, for context only
   - full scripts/check_github_launch_ready.sh --allow-private transcript
 
 The report is intended for GitHub Support tickets or launch/replacement
@@ -183,7 +183,7 @@ fi
   cat "$history_paths_output"
   printf '```\n\n'
 
-  printf '## Latest Main CI Run\n\n'
+  printf '## Latest Hosted CI Run (Informational)\n\n'
   if [ -n "$run_id" ]; then
     printf '%s\n' "- Run id: \`${run_id}\`"
     printf '%s\n' "- Run URL: ${run_url}"
@@ -201,7 +201,7 @@ fi
       printf '\n\n'
     fi
   else
-    printf 'No main CI run was found.\n\n'
+    printf 'No hosted CI run was found.\n\n'
   fi
 
   printf '## Full Launch Readiness Transcript\n\n'

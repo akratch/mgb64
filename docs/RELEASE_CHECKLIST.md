@@ -20,12 +20,11 @@ scripts/release_preflight.sh \
   --macos-app
 ```
 
-After GitHub billing/settings are fixed and the repository is ready to flip
-public, run the same preflight from a fresh or scrubbed launch checkout with
-`--strict-ignored --github` so the final pass also verifies there are no local
-ignored ROM/media/capture artifacts, and checks current-head CI, branch
-protection, and security settings. In strict mode, keep the ROM outside the
-repository checkout:
+Before the repository is ready to flip public, run the same preflight from a
+fresh or scrubbed launch checkout with `--strict-ignored --github` so the final
+pass also verifies there are no local ignored ROM/media/capture artifacts and
+checks GitHub metadata/ref/artifact/security settings. Hosted GitHub Actions is
+not a launch gate. In strict mode, keep the ROM outside the repository checkout:
 
 ```sh
 scripts/release_preflight.sh \
@@ -79,7 +78,7 @@ scripts/prepare_public_launch_bundle.sh \
 ```
 
 Review `/tmp/mgb64-build-warnings.json` before posting a release announcement:
-local release builds and the public Linux CI build are expected to be
+local release builds and the source-archive smoke build are expected to be
 warning-clean. Treat any compiler/linker warning as a launch blocker unless the
 threshold is deliberately changed with an accompanying issue and rationale.
 Use `scripts/make_public_source_archive.sh` for source archives; it uses
@@ -95,8 +94,8 @@ runs after the short quick-validation spawn smoke.
 `docker build --check .` validates the Dockerfile and `.dockerignore` parse
 without needing to install packages or include local ignored files in a build
 context. If local Docker storage is healthy, a full Docker image build is a
-useful extra check, but the release requirement is that hosted Linux CI can
-actually run and pass on current `main`.
+useful extra check, but the release requirement is the local preflight and
+source-archive smoke proof for the exact launch commit.
 
 For a stronger local pass when a ROM and native binary are available:
 
@@ -188,27 +187,20 @@ not a bit-perfect N64 audio proof.
 - Enable private vulnerability reporting if available.
 - Enable secret scanning and secret-scanning push protection if GitHub exposes
   them for the repository/account.
-- Keep the default GitHub Actions token read-only, disallow workflow approval of
-  pull requests, require full-SHA action pins, and set Actions artifact/log
-  retention to 14 days or less. The active workflows pin external actions, and
-  the release guard fails if a future workflow adds a tag- or branch-pinned
-  action.
-- Protect `main` with required status checks for `Release hygiene` and
-  `CMake build (Linux)`, with checks required to be up to date before merge.
-  The launch-readiness script fails if those required checks are missing once
-  branch protection is readable. Use
+- Disable hosted GitHub Actions for the launch repository. The checked-in
+  workflows are manual-only local-CI mirrors and pin external actions to full
+  SHAs. The release guard fails if a future workflow adds an automatic hosted
+  trigger or a tag-/branch-pinned action.
+- Protect `main` without required hosted status checks. Require review and
+  conversation resolution, and disallow force pushes/deletions. Use
   `scripts/configure_github_launch_settings.sh --repo akratch/mgb64` to preview
   the repository/security/branch-protection settings before applying them with
   `--yes`.
-- Confirm GitHub Actions can actually start on `main` and the latest CI run is
-  green. A billing/spending-limit failure is a launch blocker even if local
-  checks pass.
 - Run `scripts/check_github_launch_ready.sh` after GitHub settings are final.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking that local `HEAD` matches GitHub
-  `main` and that current-head CI is healthy. The script also scans local
-  reachable git history for launch-blocking public paths, verifies the
-  repository Actions permission policy,
+  `main`. The script also scans local reachable git history for launch-blocking
+  public paths, verifies the repository Actions/local-CI policy,
   scans GitHub branch, tag, pull-request, and workflow-run history surfaces for
   commits outside the current public branch, and scans public repository
   metadata, labels, milestones, release notes/assets, issue text, PR/commit

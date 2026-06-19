@@ -19,7 +19,7 @@ data is included ([DISCLAIMER.md](DISCLAIMER.md)).
 - 🔒 **Asset-free.** Builds and runs from a clean checkout + *your* ROM; no ROM
   media is committed or compiled into the binary. The release guard
   (`scripts/ci/check_release_ready.sh`) checks for ROM/media contamination and
-  is wired into CI; GitHub Actions startup must be green before public launch.
+  is wired into the local release guard and source-archive smoke lane.
 - 🖥️ **macOS app shell sources** and a local unsigned `.app` build script are
   included. Locally built app bundles can be verified asset-free; signing and
   notarization remain deferred.
@@ -44,9 +44,9 @@ data is included ([DISCLAIMER.md](DISCLAIMER.md)).
 - No packaged prebuilt distributables are attached for this release. Build from
   source; the macOS `.app` can be built locally, but signed/notarized
   distribution is still deferred.
-- Linux/GCC full native build plus ROM-free CTest is wired in GitHub Actions and
-  must be green on current `main` before public launch; Linux ROM-backed runtime
-  play smoke and Windows/MSYS2 setup are still less exercised than macOS.
+- Linux/GCC full native build plus ROM-free CTest is covered by the local
+  preflight/source-archive smoke lane for launch; Linux ROM-backed runtime play
+  smoke and Windows/MSYS2 setup are still less exercised than macOS.
 
 ### Reporting bugs
 

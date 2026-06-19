@@ -5,7 +5,7 @@
 # This is intentionally stricter than ordinary contributor validation. It
 # checks a clean tracked tree, release hygiene, warning-clean native build,
 # ROM-free tests, Dockerfile context parsing, source-archive packaging, and
-# optional ROM-backed runtime, macOS app, and GitHub launch gates.
+# optional ROM-backed runtime, macOS app, and GitHub metadata/ref gates.
 #
 set -euo pipefail
 
@@ -58,7 +58,9 @@ Options:
                           from a fresh or scrubbed checkout. If runtime smoke is
                           required, pass --rom outside the repository checkout.
   --skip-docker-check     Skip docker build --check . (not for final launch).
-  --github                Also run scripts/check_github_launch_ready.sh.
+  --github                Also run scripts/check_github_launch_ready.sh for
+                          GitHub metadata/ref/artifact gates. This does not use
+                          hosted CI as a launch gate.
   --allow-private         Pass --allow-private to the GitHub readiness check.
   --repo OWNER/REPO       Pass a repository to the GitHub readiness check.
   -h, --help              Show this help.

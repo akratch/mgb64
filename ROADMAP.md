@@ -9,15 +9,16 @@ hardware, or make contributions easier to review.
 
 The current go/no-go matrix lives in
 [`docs/PUBLIC_LAUNCH_READINESS.md`](docs/PUBLIC_LAUNCH_READINESS.md). As of the
-latest pre-public audit, the hard blockers are operational GitHub release gates,
-not local source hygiene:
+latest pre-public audit, the hard blockers are repository publication gates,
+not ordinary source hygiene:
 
-- hosted GitHub Actions must start and pass on the exact `main` launch commit;
 - reachable public git history must not contain removed local-only matching-tool
   source; publish from a fresh single-root launch repository or approved history
   rewrite before flipping public;
 - stale hidden `refs/pull/*` refs must be purged by GitHub Support or removed by
   replacing the GitHub repository from the clean single-root launch branch;
+- hosted GitHub Actions must remain disabled for launch, with local preflight
+  evidence serving as the CI gate;
 - branch protection and security settings must be configured once the repository
   state allows GitHub to expose those endpoints.
 
@@ -26,7 +27,8 @@ not local source hygiene:
 Desired end state:
 
 - `scripts/check_github_launch_ready.sh` passes without `--allow-private`;
-- the latest `main` CI run is green for the exact launch commit;
+- the strict local release preflight and clean-launch bundle pass for the exact
+  launch commit;
 - `tools/check_public_history_paths.py` passes against the exact public git
   history;
 - advertised `refs/heads/*` and `refs/tags/*` refs point only at commits inside
@@ -37,13 +39,13 @@ Desired end state:
   Actions artifact, issue, PR/commit comment, PR review summary, Discussion,
   workflow-history, and commit-reference surfaces expose no pre-public commit
   links or high-risk private/provenance text;
-- GitHub Actions uses read-only default workflow tokens, disallows workflow PR
-  approval, requires full-SHA action pins, and keeps artifact/log retention to
-  14 days or less;
+- GitHub Actions is disabled for launch; checked-in workflows are manual-only
+  local-CI mirrors with full-SHA action pins;
 - contributor triage labels for audio, renderer, parity, validation,
   provenance, build, and newcomer-friendly work are present after the repository
   replacement/migration step;
-- branch protection requires the release hygiene and Linux CMake build checks.
+- branch protection requires reviews/conversation resolution and does not depend
+  on hosted status checks.
 
 ### SDK/libultra provenance cleanup
 
@@ -216,14 +218,14 @@ Desired end state:
 - `COMPARE=1 make` verifies the expected SHA-1 for supported regions;
 - matching-target gaps are listed by file/function instead of described broadly.
 
-### CI and validation
+### Local validation
 
-Public CI cannot use a ROM, but it should still catch the mistakes public
-contributors are most likely to make.
+Public validation cannot ship or depend on a ROM, but the local lanes should
+still catch the mistakes public contributors are most likely to make.
 
 Desired end state:
 
-- release hygiene and no-ROM-data checks run on every PR;
+- release hygiene and no-ROM-data checks are easy to run before every PR;
 - Python and shell validation tools get syntax checks;
 - Linux CMake configure, GCC build, and ROM-free CTest remain green without
   extracted assets;

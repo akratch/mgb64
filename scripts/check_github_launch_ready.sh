@@ -2,8 +2,8 @@
 #
 # check_github_launch_ready.sh -- verify GitHub-side launch readiness.
 #
-# This intentionally lives outside CI: it checks repository settings and the
-# latest GitHub Actions run, so it needs an authenticated `gh` session.
+# This intentionally lives outside CI: it checks repository settings and public
+# GitHub surfaces, so it needs an authenticated `gh` session.
 #
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -36,9 +36,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - gh authentication
   - repository metadata, topics, and contributor workflow settings
   - repository visibility and collaboration features
-  - GitHub Actions enabled
-  - GitHub Actions require full-SHA action pins, read-only default workflow tokens, and short artifact/log retention
-  - latest main CI run corresponds to current HEAD and succeeded
+  - GitHub Actions disabled for local-CI launch policy
   - local reachable git history does not expose launch-blocking provenance paths
   - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
@@ -48,7 +46,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - contributor-facing GitHub labels needed for launch triage are present
   - GitHub release assets do not expose ROM, media, archive, or binary payloads
   - GitHub Actions artifacts do not expose ROM, media, archive, app, or binary payloads
-  - branch protection is readable and enforces the required CI checks
+  - branch protection is readable and does not depend on hosted status checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
 
@@ -714,48 +712,54 @@ if [ -n "$repo" ]; then
   workflow_default_permissions="$(gh api "repos/${repo}/actions/permissions/workflow" --jq '.default_workflow_permissions // "unknown"' 2>/dev/null || echo unknown)"
   workflow_can_approve_prs="$(gh api "repos/${repo}/actions/permissions/workflow" --jq 'if has("can_approve_pull_request_reviews") then (.can_approve_pull_request_reviews | tostring) else "unknown" end' 2>/dev/null || echo unknown)"
   actions_retention_days="$(gh api "repos/${repo}/actions/permissions/artifact-and-log-retention" --jq '.days // "unknown"' 2>/dev/null || echo unknown)"
-  [ "$actions_enabled" = "true" ] && ok "GitHub Actions are enabled" || note "GitHub Actions are not enabled"
-  case "$actions_allowed" in
-    all|selected) ok "GitHub Actions allowed-actions policy is ${actions_allowed}" ;;
-    *) warn "could not confirm GitHub Actions allowed-actions policy" ;;
-  esac
-  [ "$actions_sha_pinning" = "true" ] && ok "GitHub Actions require full-SHA action pins" || note "GitHub Actions do not require full-SHA action pins"
-  [ "$workflow_default_permissions" = "read" ] && ok "default GitHub Actions token permissions are read-only" || note "default GitHub Actions token permissions are '${workflow_default_permissions}', expected read"
-  [ "$workflow_can_approve_prs" = "false" ] && ok "GitHub Actions cannot approve pull requests by default" || note "GitHub Actions can approve pull requests by default"
-  case "$actions_retention_days" in
-    ''|*[!0-9]*)
-      note "could not determine GitHub Actions artifact/log retention"
-      ;;
-    *)
-      if [ "$actions_retention_days" -le "$max_actions_retention_days" ]; then
-        ok "GitHub Actions artifact/log retention is ${actions_retention_days} day(s)"
-      else
-        note "GitHub Actions artifact/log retention is ${actions_retention_days} day(s), expected ${max_actions_retention_days} or less"
-      fi
-      ;;
-  esac
+  if [ "$actions_enabled" = "false" ]; then
+    ok "GitHub Actions are disabled for local-CI launch policy"
+  else
+    note "GitHub Actions are enabled; launch policy is local-CI only"
+    case "$actions_allowed" in
+      all|selected) ok "GitHub Actions allowed-actions policy is ${actions_allowed}" ;;
+      *) warn "could not confirm GitHub Actions allowed-actions policy" ;;
+    esac
+    [ "$actions_sha_pinning" = "true" ] && ok "GitHub Actions require full-SHA action pins" || note "GitHub Actions do not require full-SHA action pins"
+    [ "$workflow_default_permissions" = "read" ] && ok "default GitHub Actions token permissions are read-only" || note "default GitHub Actions token permissions are '${workflow_default_permissions}', expected read"
+    [ "$workflow_can_approve_prs" = "false" ] && ok "GitHub Actions cannot approve pull requests by default" || note "GitHub Actions can approve pull requests by default"
+    case "$actions_retention_days" in
+      ''|*[!0-9]*)
+        note "could not determine GitHub Actions artifact/log retention"
+        ;;
+      *)
+        if [ "$actions_retention_days" -le "$max_actions_retention_days" ]; then
+          ok "GitHub Actions artifact/log retention is ${actions_retention_days} day(s)"
+        else
+          note "GitHub Actions artifact/log retention is ${actions_retention_days} day(s), expected ${max_actions_retention_days} or less"
+        fi
+        ;;
+    esac
+  fi
 
   echo
-  echo "== Latest main CI run =="
+  echo "== Hosted GitHub Actions run status =="
   run_id="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json databaseId --jq '.[0].databaseId // ""' 2>/dev/null || true)"
   if [ -z "$run_id" ]; then
-    note "no CI run found on main"
+    ok "no hosted CI run is required for local-CI launch policy"
   else
     run_sha="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json headSha --jq '.[0].headSha // ""')"
     run_status="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json status --jq '.[0].status // ""')"
     run_conclusion="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
     run_url="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json url --jq '.[0].url // ""')"
 
-    if [ "$run_sha" = "$head_sha" ]; then
-      ok "latest main CI run is for current HEAD"
+    if [ "$actions_enabled" = "false" ]; then
+      ok "hosted CI is disabled; latest recorded run is informational only"
+    elif [ "$run_sha" = "$head_sha" ]; then
+      warn "latest hosted CI run is for current HEAD, but hosted CI is not a launch gate"
     else
-      note "latest main CI run is for $run_sha, but current HEAD is $head_sha"
+      warn "latest hosted CI run is for $run_sha, not current HEAD $head_sha"
     fi
 
     if [ "$run_status" = "completed" ] && [ "$run_conclusion" = "success" ]; then
-      ok "latest main CI run succeeded: $run_url"
+      ok "latest hosted CI run succeeded: $run_url"
     else
-      note "latest main CI run is not green: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
+      warn "latest hosted CI run is not green and is not a launch gate: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
       echo
       echo "  Job summary:"
       gh api "repos/${repo}/actions/runs/${run_id}/jobs" \

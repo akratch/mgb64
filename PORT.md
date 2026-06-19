@@ -80,8 +80,8 @@ for the tooling:
 Not yet validated end-to-end: long-session stability, exhaustive organic
 save/menu mission flows, exhaustive per-level visual parity, Linux ROM-backed
 runtime play smoke, and Windows/MSYS2 setup. Linux/GCC configure/build plus the
-ROM-free CTest suite is wired in GitHub Actions and must be green on current
-`main` before public launch.
+ROM-free CTest suite is wired into the local preflight and source-archive smoke
+lanes and must pass for the exact public launch commit.
 
 ## Feature maturity
 
