@@ -320,6 +320,15 @@ else
   echo "  OK -- no stale signed/prebuilt macOS release claims found in public docs."
 fi
 
+macos_workflow_claim_hits=$(grep -RInE \
+  'handle the full release pipeline|Requires the following repository secrets|skip_notarize|name:[[:space:]]+macOS Build$|Build macOS Artifacts|Upload library artifact|Triggered on version tags \(e\.g\., v1\.0\.0\)' \
+  .github/workflows/macos-release.yml macos/README.md 2>/dev/null || true)
+if [ -n "$macos_workflow_claim_hits" ]; then
+  while IFS= read -r hit; do note "stale macOS workflow/distribution claim: $hit"; done <<< "$macos_workflow_claim_hits"
+else
+  echo "  OK -- no stale macOS workflow/distribution claims found."
+fi
+
 packaging_placeholder_hits=$(grep -RInE \
   'PLACEHOLDER_SHA256|github\.com/mgb64/mgb64|mgb64\.dev|release/download/.+\.dmg|brew install --cask mgb64|Metal rendering' \
   Casks .github README.md RELEASE_NOTES.md PORT.md docs/*.md macos/README.md macos/Resources/*.plist 2>/dev/null || true)

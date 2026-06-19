@@ -205,7 +205,11 @@ push.
 
 ## Distribution
 
-Scripts in `Scripts/` handle the full release pipeline:
+Scripts in `Scripts/` cover the local unsigned build and the deferred signing /
+packaging helpers. The only verified distribution-adjacent path today is the
+asset-free local source-built `.app`; signed/notarized DMG distribution still
+needs maintainer credentials, a controlled SDL2 runtime, and release-policy
+validation.
 
 | Script | Purpose |
 |--------|---------|
