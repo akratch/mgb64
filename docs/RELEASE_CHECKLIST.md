@@ -189,11 +189,13 @@ not a bit-perfect N64 audio proof.
   gives a dry-run view while still checking current-head CI health. The script
   also scans GitHub branch, tag, pull-request, and workflow-run history surfaces
   for commits outside the current public branch, and scans public repository
-  metadata, labels, issue text, PR comments, and Discussion text for high-risk
-  private paths, stale handoff language, token-shaped strings, proprietary
-  notice fragments, and resolvable stale commit references; treat findings there
-  like repository-history contamination. GitHub keeps closed PR refs read-only;
-  if any stale `refs/pull/*`
+  metadata, labels, release notes/assets, issue text, PR comments, and
+  Discussion text for high-risk private paths, stale handoff language,
+  token-shaped strings, proprietary notice fragments, and resolvable stale
+  commit references. Uploaded release assets are also checked for ROM-shaped,
+  media, archive, and binary payload names; treat findings there like
+  repository-history contamination. GitHub keeps closed PR refs read-only; if
+  any stale `refs/pull/*`
   refs remain after a history rewrite, purge them through GitHub support or
   recreate/replace the public repository before launch. Use
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.

@@ -28,8 +28,9 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
-  - public repository metadata/label/issue/comment/discussion text has no high-risk launch leaks
-  - public repository metadata/label/issue/comment/discussion text has no stale commit references
+  - public repository metadata/label/release/issue/comment/discussion text has no high-risk launch leaks
+  - public repository metadata/label/release/issue/comment/discussion text has no stale commit references
+  - GitHub release assets do not expose ROM, media, archive, or binary payloads
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
@@ -93,6 +94,14 @@ scan_github_public_text_surface() {
     findings="$(append_findings "$findings" "$scan_output")"
   else
     note "could not scan GitHub label names and descriptions"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/releases?per_page=100" \
+    --jq '.[] | select(((.tag_name // "") + "\n" + (.name // "") + "\n" + (.body // "") + "\n" + ([(.assets // [])[] | (.name // "")] | join("\n"))) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "release\t\(.html_url)\t\(.tag_name)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub release notes and asset names"
   fi
 
   if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
@@ -169,10 +178,60 @@ scan_github_public_text_surface() {
   fi
 
   if [ -n "$findings" ]; then
-    note "high-risk text found in public GitHub metadata/label/issue/comment/discussion surface"
+    note "high-risk text found in public GitHub metadata/label/release/issue/comment/discussion surface"
     printf '%s\n' "$findings" | sed 's/^/  - /'
   else
-    ok "no high-risk text found in repository metadata, labels, issues, PR comments, or discussions"
+    ok "no high-risk text found in repository metadata, labels, releases, issues, PR comments, or discussions"
+  fi
+}
+
+scan_github_release_assets() {
+  local repo_name="$1"
+  local release_asset_lines
+  local blocked_assets=""
+  local review_assets=""
+  local forbidden_asset_pattern
+  local tag
+  local url
+  local asset_name
+  local asset_size
+
+  echo
+  echo "== GitHub release asset surface =="
+
+  if ! release_asset_lines="$(gh api \
+    --paginate "repos/${repo_name}/releases?per_page=100" \
+    --jq '.[] as $release | ($release.assets // [])[]? | [($release.tag_name // ""), ($release.html_url // ""), (.name // ""), ((.size // 0) | tostring)] | @tsv' 2>/dev/null)"; then
+    note "could not scan GitHub release assets"
+    return
+  fi
+
+  if [ -z "$release_asset_lines" ]; then
+    ok "no GitHub release assets are published"
+    return
+  fi
+
+  forbidden_asset_pattern='(^|/)(base)?rom([._-]|$)|\.(z64|n64|v64|rom|cdata|eeprom|rz|ctl|tbl|sbk|seq|aifc|aiff|seg|raw|bmp|png|jpg|jpeg|gif|wav|mp3|ogg|flac|dmg|pkg|app|zip|7z|tar|tgz|gz|bz2|xz|exe|msi|dll|so|dylib)$'
+
+  while IFS=$'\t' read -r tag url asset_name asset_size; do
+    [ -n "$asset_name" ] || continue
+    if printf '%s\n' "$asset_name" | grep -Eiq "$forbidden_asset_pattern"; then
+      blocked_assets="$(append_findings "$blocked_assets" "${tag}\t${asset_name}\t${asset_size} bytes\t${url}")"
+    else
+      review_assets="$(append_findings "$review_assets" "${tag}\t${asset_name}\t${asset_size} bytes\t${url}")"
+    fi
+  done <<< "$release_asset_lines"
+
+  if [ -n "$blocked_assets" ]; then
+    note "GitHub release assets include ROM/media/archive/binary-shaped payloads"
+    printf '%s\n' "$blocked_assets" | sed 's/^/  - /'
+  fi
+
+  if [ -n "$review_assets" ]; then
+    warn "GitHub release assets are published; manually verify they contain no generated, ROM-derived, or platform-binary payloads"
+    printf '%s\n' "$review_assets" | sed 's/^/  - /'
+  elif [ -z "$blocked_assets" ]; then
+    ok "GitHub release assets do not need review"
   fi
 }
 
@@ -530,6 +589,7 @@ if [ -n "$repo" ]; then
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
   scan_github_public_commit_refs "$repo"
+  scan_github_release_assets "$repo"
 
   echo
   echo "== Protection and security settings =="

@@ -169,6 +169,34 @@ def label_items(repo: str) -> list[TextItem]:
     return items
 
 
+def release_items(repo: str) -> list[TextItem]:
+    try:
+        rows = run_json_lines(
+            ["gh", "api", "--paginate", f"repos/{repo}/releases?per_page=100", "--jq", ".[] | @json"]
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not fetch release text: {exc.stderr.strip() or exc}"
+        ) from exc
+
+    items: list[TextItem] = []
+    for row in rows:
+        tag_name = row.get("tag_name") or ""
+        name = row.get("name") or ""
+        body = row.get("body") or ""
+        asset_names = "\n".join(asset.get("name") or "" for asset in row.get("assets") or [])
+        label = name or tag_name or str(row.get("id", "unknown"))
+        items.append(
+            TextItem(
+                kind="release",
+                url=row.get("html_url") or f"https://github.com/{repo}/releases",
+                label=label,
+                text=f"{tag_name}\n{name}\n{body}\n{asset_names}",
+            )
+        )
+    return items
+
+
 def discussion_items(repo: str) -> tuple[list[TextItem], list[str]]:
     owner, name = repo.split("/", 1)
     query = """
@@ -249,6 +277,7 @@ def fetch_items(repo: str) -> tuple[list[TextItem], list[str]]:
     items: list[TextItem] = []
     items.extend(repository_items(repo))
     items.extend(label_items(repo))
+    items.extend(release_items(repo))
     items.extend(rest_items(f"repos/{repo}/issues?state=all&per_page=100", "issue-or-pr"))
     items.extend(rest_items(f"repos/{repo}/issues/comments?per_page=100", "issue-comment"))
     items.extend(rest_items(f"repos/{repo}/pulls/comments?per_page=100", "pr-review-comment"))

@@ -183,11 +183,11 @@ git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
 ./scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
 ```
 
-The pull-ref, workflow-history, public-text, and public commit-reference sections
-must pass. The remaining expected dry-run failures before launch are repository
-privacy, hosted Actions startup if billing/settings are still blocked, and
-private/pro-only security settings that GitHub does not expose until public/pro
-settings are available.
+The pull-ref, workflow-history, public-text, release-asset, and public
+commit-reference sections must pass. The remaining expected dry-run failures
+before launch are repository privacy, hosted Actions startup if billing/settings
+are still blocked, and private/pro-only security settings that GitHub does not
+expose until public/pro settings are available.
 
 ## Final Public Flip
 

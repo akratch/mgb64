@@ -18,7 +18,7 @@ Do not make the repository public until both hard blockers are closed:
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
 | Repository source hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | `ctest --test-dir build --output-on-failure` passes after CMake configure. | Keep passing before launch and in hosted CI. |
-| GitHub public text hygiene | Passing | Public repository metadata, labels, issues, PR comments, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label change, or issue edit. |
+| GitHub public text/release hygiene | Passing | Public repository metadata, labels, release notes/assets, issues, PR comments, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label change, release edit, or issue edit. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
 | Branch protection and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. | Configure after CI can run and before or immediately after the public flip. |
 
@@ -91,8 +91,8 @@ scripts/release_preflight.sh \
 - GitHub Actions is red or stuck before runner startup.
 - `git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'` exposes
   commits outside current public history.
-- `scripts/check_github_launch_ready.sh` reports public text, workflow-history,
-  or commit-reference contamination.
+- `scripts/check_github_launch_ready.sh` reports public text, release asset,
+  workflow-history, or commit-reference contamination.
 - A source archive smoke has not been run for the exact launch commit.
 - Public docs imply signed binaries, a DMG, Homebrew package, full clean-room
   provenance, bundled assets, or byte-matching ROM rebuild support that is not

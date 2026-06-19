@@ -28,9 +28,9 @@ Desired end state:
   current public history;
 - `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
   history;
-- public repository metadata, label, issue, comment, Discussion,
-  workflow-history, and commit-reference surfaces expose no pre-public commit
-  links or high-risk private/provenance text;
+- public repository metadata, label, release note/asset, issue, comment,
+  Discussion, workflow-history, and commit-reference surfaces expose no
+  pre-public commit links or high-risk private/provenance text;
 - branch protection requires the release hygiene and Linux CMake build checks.
 
 ### SDK/libultra provenance cleanup
