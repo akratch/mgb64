@@ -229,7 +229,7 @@ scan_github_release_assets() {
     return
   fi
 
-  forbidden_asset_pattern='(^|/)(base)?rom([._-]|$)|\.(z64|n64|v64|rom|cdata|eeprom|rz|ctl|tbl|sbk|seq|aifc|aiff|seg|raw|bmp|png|jpg|jpeg|gif|wav|mp3|ogg|flac|dmg|pkg|app|zip|7z|tar|tgz|gz|bz2|xz|exe|msi|dll|so|dylib)$'
+  forbidden_asset_pattern='(^|/)(base)?rom([._-]|$)|\.(z64|n64|v64|rom|cdata|eeprom|rz|ctl|tbl|sbk|seq|aifc|aiff|seg|raw|bmp|png|jpg|jpeg|gif|webp|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|dmg|pkg|app|zip|7z|tar|tgz|gz|bz2|xz|exe|msi|dll|so|dylib)$'
 
   while IFS=$'\t' read -r tag url asset_name asset_size; do
     [ -n "$asset_name" ] || continue
