@@ -235,6 +235,7 @@ for f in \
   scripts/release_preflight.sh \
   scripts/ci/check_high_risk_ignored_artifacts.sh \
   scripts/ci/check_public_history_text.sh \
+  scripts/create_public_launch_repo.sh \
   scripts/make_public_source_archive.sh \
   scripts/smoke_public_source_archive.sh \
   scripts/check_github_launch_ready.sh \

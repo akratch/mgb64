@@ -13,8 +13,11 @@ latest pre-public audit, the hard blockers are operational GitHub release gates,
 not local source hygiene:
 
 - hosted GitHub Actions must start and pass on the exact `main` launch commit;
+- reachable public git history must not contain removed local-only matching-tool
+  source; publish from a fresh single-root launch repository or approved history
+  rewrite before flipping public;
 - stale hidden `refs/pull/*` refs must be purged by GitHub Support or removed by
-  replacing the GitHub repository from the clean branch;
+  replacing the GitHub repository from the clean single-root launch branch;
 - branch protection and security settings must be configured once the repository
   state allows GitHub to expose those endpoints.
 
@@ -24,6 +27,8 @@ Desired end state:
 
 - `scripts/check_github_launch_ready.sh` passes without `--allow-private`;
 - the latest `main` CI run is green for the exact launch commit;
+- `tools/check_public_history_paths.py` passes against the exact public git
+  history;
 - advertised `refs/heads/*` and `refs/tags/*` refs point only at commits inside
   current public history;
 - `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public

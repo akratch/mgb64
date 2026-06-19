@@ -1,26 +1,32 @@
 # GitHub Repository Replacement Runbook
 
-Use this only when GitHub-side metadata exposes pre-public history that cannot be
-removed with normal git commands. The current known case is closed PR refs under
-`refs/pull/*`: GitHub keeps these refs read-only, and they can continue to point
-at commits outside the current public branch after a history rewrite.
+Use this when GitHub-side metadata or reachable git history exposes pre-public
+or local-only material that should not become public. Known cases are:
+
+- closed PR refs under `refs/pull/*`: GitHub keeps these refs read-only, and
+  they can continue to point at commits outside the current public branch after
+  a history rewrite;
+- removed local-only matching-tool source in reachable history, such as the old
+  `tools/ido5.3_recomp/*` source files.
 
 Do not flip the repository public while
-`scripts/check_github_launch_ready.sh --allow-private` reports stale pull refs.
+`scripts/check_github_launch_ready.sh --allow-private` reports stale pull refs
+or `tools/check_public_history_paths.py` reports launch-blocking paths.
 
 ## Why This Exists
 
 `git push origin :refs/pull/8/head` and the equivalent GitHub API ref deletion
 fail because GitHub treats pull-request refs as hidden/read-only refs. If those
 refs point at pre-public commits, a public repository can still reveal old commit
-objects and PR diffs even when `main` itself is clean.
+objects and PR diffs even when `main` itself is clean. Likewise, deleting a
+local-only tool from `HEAD` does not remove it from reachable git history.
 
 There are two acceptable fixes:
 
 - ask GitHub Support to purge the stale hidden PR refs and associated unreachable
   objects; or
-- replace the GitHub repository with a fresh repository populated only from the
-  current clean branch.
+- replace the GitHub repository with a fresh repository populated from a
+  single-root launch commit created from the current clean tree.
 
 ## Verify The Problem
 
@@ -33,7 +39,12 @@ git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
 
 The launch check must fail if any advertised branch, tag, or `refs/pull/*` ref
 points at a commit outside the current public history, or if public GitHub text
-links to resolvable commits outside that history.
+links to resolvable commits outside that history. The local history check must
+also pass:
+
+```sh
+python3 tools/check_public_history_paths.py --repo-root .
+```
 
 ## Option A: GitHub Support Purge
 
@@ -107,23 +118,19 @@ python3 tools/export_github_launch_items.py apply \
 
 Add `--yes` only after the fresh repository exists and the preview is correct.
 
-3. Create and verify a local clean mirror:
+3. Create and verify a local clean launch repository:
 
 ```sh
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/mgb64-replacement.XXXXXX")"
-git init --bare "$tmp/remote.git"
-git push "$tmp/remote.git" HEAD:refs/heads/main
-git ls-remote "$tmp/remote.git" 'refs/pull/*'
-git clone "$tmp/remote.git" "$tmp/clone"
-(
-  cd "$tmp/clone"
-  ./scripts/ci/check_release_ready.sh
-  git rev-parse HEAD
-  git rev-list --all --count
-)
+scripts/create_public_launch_repo.sh
 ```
 
-`git ls-remote "$tmp/remote.git" 'refs/pull/*'` must print nothing.
+The helper prints a fresh local repository path. It creates a single root commit
+from the current committed tree and runs the release and history-path guards
+inside that repository. The resulting repository must have exactly one commit:
+
+```sh
+git -C /path/from/helper rev-list --all --count
+```
 
 4. Rename the current private GitHub repository out of the way:
 
@@ -140,11 +147,11 @@ gh repo create akratch/mgb64 \
   --description "A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included."
 ```
 
-6. Push only the clean public branch:
+6. Push only the clean single-root public branch:
 
 ```sh
-git remote add launch-clean git@github.com:akratch/mgb64.git
-git push launch-clean HEAD:refs/heads/main
+git -C /path/from/helper remote add launch-clean git@github.com:akratch/mgb64.git
+git -C /path/from/helper push launch-clean HEAD:refs/heads/main
 gh repo edit akratch/mgb64 --default-branch main
 ```
 
@@ -181,13 +188,14 @@ current-repo evidence.
 ```sh
 git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
 ./scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
+python3 tools/check_public_history_paths.py --repo-root /path/from/helper
 ```
 
-The pull-ref, workflow-history, public-text, release-asset, and public
-commit-reference sections must pass. The remaining expected dry-run failures
-before launch are repository privacy, hosted Actions startup if billing/settings
-are still blocked, and private/pro-only security settings that GitHub does not
-expose until public/pro settings are available.
+The local history-provenance, pull-ref, workflow-history, public-text,
+release-asset, and public commit-reference sections must pass. The remaining
+expected dry-run failures before launch are repository privacy, hosted Actions
+startup if billing/settings are still blocked, and private/pro-only security
+settings that GitHub does not expose until public/pro settings are available.
 
 ## Final Public Flip
 

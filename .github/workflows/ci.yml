@@ -43,6 +43,7 @@ jobs:
             tools/check_shell_syntax.py \
             tools/check_github_branch_protection.py \
             tools/check_github_public_commit_refs.py \
+            tools/check_public_history_paths.py \
             tools/check_third_party_notices.py \
             tools/check_sdk_inventory.py \
             tools/check_native_switch_access.py \

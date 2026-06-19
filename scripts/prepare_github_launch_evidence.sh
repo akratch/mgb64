@@ -18,6 +18,7 @@ Usage: scripts/prepare_github_launch_evidence.sh [--repo OWNER/REPO] [--out PATH
 
 Collects a local Markdown report with:
   - current branch/head and origin/main state
+  - local reachable-history provenance blockers
   - stale hidden refs/pull/* refs outside current public history
   - latest main CI run/job/annotation summary
   - full scripts/check_github_launch_ready.sh --allow-private transcript
@@ -82,6 +83,7 @@ reachable="$tmpdir/reachable.txt"
 pull_refs="$tmpdir/pull_refs.tsv"
 stale_refs="$tmpdir/stale_refs.tsv"
 launch_output="$tmpdir/launch_check.txt"
+history_paths_output="$tmpdir/history_paths.txt"
 jobs_output="$tmpdir/jobs.txt"
 annotations_output="$tmpdir/annotations.txt"
 
@@ -108,6 +110,8 @@ done < "$pull_refs"
 set +e
 scripts/check_github_launch_ready.sh --repo "$repo" --allow-private > "$launch_output" 2>&1
 launch_status=$?
+python3 tools/check_public_history_paths.py --repo-root . > "$history_paths_output" 2>&1
+history_paths_status=$?
 set -e
 
 run_id="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 \
@@ -152,9 +156,10 @@ fi
   if [ -n "$origin_main_sha" ]; then
     printf '%s\n' "- Local \`origin/main\`: \`${origin_main_sha}\`"
   else
-    printf '%s\n' "- Local \`origin/main\`: unavailable"
+  printf '%s\n' "- Local \`origin/main\`: unavailable"
   fi
   printf '%s\n\n' "- Launch check exit status: \`${launch_status}\`"
+  printf '%s\n\n' "- Local history-provenance check exit status: \`${history_paths_status}\`"
 
   printf '## Support Request Summary\n\n'
   printf 'Please purge the hidden pull-request refs listed below, any closed PR diff caches that keep them reachable, and any unreachable commit objects that are not reachable from current `main`.\n\n'
@@ -171,6 +176,11 @@ fi
     printf 'No stale `refs/pull/*` refs were found outside current git history.\n'
   fi
   printf '\n'
+
+  printf '## Local Reachable-History Provenance\n\n'
+  printf '```text\n'
+  cat "$history_paths_output"
+  printf '```\n\n'
 
   printf '## Latest Main CI Run\n\n'
   if [ -n "$run_id" ]; then

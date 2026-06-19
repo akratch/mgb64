@@ -187,8 +187,9 @@ not a bit-perfect N64 audio proof.
 - Run `scripts/check_github_launch_ready.sh` after GitHub settings are final.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking current-head CI health. The script
-  also scans GitHub branch, tag, pull-request, and workflow-run history surfaces
-  for commits outside the current public branch, and scans public repository
+  also scans local reachable git history for launch-blocking public paths,
+  scans GitHub branch, tag, pull-request, and workflow-run history surfaces for
+  commits outside the current public branch, and scans public repository
   metadata, labels, release notes/assets, issue text, PR comments, and
   Discussion text for high-risk private paths, stale handoff language,
   token-shaped strings, proprietary notice fragments, and resolvable stale
@@ -199,6 +200,10 @@ not a bit-perfect N64 audio proof.
   refs remain after a history rewrite, purge them through GitHub support or
   recreate/replace the public repository before launch. Use
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.
+- If `tools/check_public_history_paths.py` reports removed local-only tool
+  source in reachable history, do not publish the existing commit graph. Use
+  `scripts/create_public_launch_repo.sh` to produce and validate a fresh
+  single-root launch repository, or perform an approved history rewrite.
 - Set repository topics that make the project discoverable without implying an
   official affiliation.
 - Keep issue and PR templates enabled.

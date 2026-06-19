@@ -9,14 +9,15 @@ overstating its legal, technical, or parity status.
 
 ## Launch Decision
 
-Do not make the repository public until both hard blockers are closed:
+Do not make the repository public until all hard blockers are closed:
 
 | Area | Status | Evidence | Required action |
 | --- | --- | --- | --- |
 | Hosted CI | Blocked | Current-head GitHub Actions jobs fail before runner startup with billing/spending-limit annotations. | Fix account billing/spending settings, rerun CI on `main`, and require a green current-head run. |
+| Reachable git history provenance | Blocked | `tools/check_public_history_paths.py` reports old `tools/ido5.3_recomp/*` source/tooling paths in reachable history. | Publish from a fresh single-root launch repository created from the current clean tree, or perform an approved history rewrite before launch. |
 | Branch/tag refs | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies advertised `refs/heads/*` and `refs/tags/*` point into current public history. | Keep passing before launch; do not create public release tags from any other history. |
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
-| Repository source hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes. | Keep passing before launch. |
+| Current-tree/source-archive hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes and exact-head source archive smoke passes. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | `ctest --test-dir build --output-on-failure` passes after CMake configure. | Keep passing before launch and in hosted CI. |
 | GitHub public text/release hygiene | Passing | Public repository metadata, labels, release notes/assets, issues, PR comments, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label change, release edit, or issue edit. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
@@ -27,7 +28,8 @@ Do not make the repository public until both hard blockers are closed:
 - The repo is asset-free: no ROM, extracted assets, media captures, save files,
   or generated asset data are tracked.
 - The public source guard scans current files and reachable git history for ROM
-  and high-risk provenance contamination.
+  contamination, and the launch checker now also flags launch-blocking public
+  history paths such as removed local-only tool source.
 - Native play is the supported path: clean checkout plus a user-supplied ROM can
   build and run the port locally.
 - The local release lane covers release hygiene, CMake configure/build/test,
@@ -61,9 +63,14 @@ will inspect first.
 ## Final Launch Sequence
 
 1. Fix GitHub Actions billing/spending so hosted runners can start.
-2. Resolve hidden stale PR refs through GitHub Support or the repository
-   replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`.
-3. From a clean or scrubbed checkout, run:
+2. Resolve reachable-history provenance by publishing from a fresh single-root
+   launch repository created from the current clean tree, or by an approved
+   history rewrite.
+3. Resolve hidden stale PR refs through GitHub Support or the repository
+   replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. The replacement
+   path fixes both stale PR refs and reachable-history provenance when it uses a
+   fresh single-root launch repository.
+4. From a clean or scrubbed checkout, run:
 
 ```sh
 scripts/release_preflight.sh \
@@ -74,21 +81,23 @@ scripts/release_preflight.sh \
   --github
 ```
 
-4. Confirm the latest `main` CI run is green for the exact launch commit.
-5. Configure branch protection so `Release hygiene` and `CMake build (Linux)`
+5. Confirm the latest `main` CI run is green for the exact launch commit.
+6. Configure branch protection so `Release hygiene` and `CMake build (Linux)`
    are required and up to date before merge.
-6. Enable or confirm Discussions, Dependabot vulnerability alerts, private
+7. Enable or confirm Discussions, Dependabot vulnerability alerts, private
    vulnerability reporting, and secret scanning/push protection where GitHub
    exposes them.
-7. Flip public only after `scripts/check_github_launch_ready.sh` passes without
+8. Flip public only after `scripts/check_github_launch_ready.sh` passes without
    `--allow-private`.
-8. Announce with the same constraints used in the README: bring your own ROM, no
+9. Announce with the same constraints used in the README: bring your own ROM, no
    copyrighted assets, experimental native port, matching target in progress,
    and SDK/libultra compatibility provenance still inventoried.
 
 ## Do Not Announce Yet If
 
 - GitHub Actions is red or stuck before runner startup.
+- `tools/check_public_history_paths.py` reports launch-blocking paths in
+  reachable git history.
 - `git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'` exposes
   commits outside current public history.
 - `scripts/check_github_launch_ready.sh` reports public text, release asset,

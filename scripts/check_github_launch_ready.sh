@@ -25,6 +25,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository visibility and collaboration features
   - GitHub Actions enabled
   - latest main CI run corresponds to current HEAD and succeeded
+  - local reachable git history does not expose launch-blocking provenance paths
   - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
@@ -291,6 +292,20 @@ scan_github_public_commit_refs() {
     ok "$scan_output"
   else
     note "public GitHub text references stale or unverified commits"
+    printf '%s\n' "$scan_output" | sed 's/^/  /'
+  fi
+}
+
+scan_local_public_history_provenance() {
+  local scan_output
+
+  echo
+  echo "== Local public git history provenance =="
+
+  if scan_output="$(python3 tools/check_public_history_paths.py --repo-root . 2>&1)"; then
+    ok "$scan_output"
+  else
+    note "local reachable git history exposes launch-blocking provenance paths"
     printf '%s\n' "$scan_output" | sed 's/^/  /'
   fi
 }
@@ -584,6 +599,7 @@ if [ -n "$repo" ]; then
     fi
   fi
 
+  scan_local_public_history_provenance
   scan_github_branch_tag_refs "$repo"
   scan_github_pull_refs "$repo"
   scan_github_workflow_run_history "$repo"
