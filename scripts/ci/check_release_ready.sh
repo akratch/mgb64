@@ -113,6 +113,8 @@ for f in \
   docs/STATUS.md \
   docs/INSTRUMENTATION.md \
   docs/PROVENANCE_AUDIT.md \
+  docs/PUBLIC_LAUNCH_READINESS.md \
+  docs/GITHUB_REPO_REPLACEMENT.md \
   docs/RELEASE_CHECKLIST.md \
   macos/README.md; do
   if [ ! -s "$f" ]; then
