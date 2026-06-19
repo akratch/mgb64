@@ -172,41 +172,62 @@ Add `--strict-preflight-macos-app-strict-deployment-target` only when
 `pkg-config` points at a controlled SDL2 build with the intended minimum macOS
 version.
 
-4. Rename the current private GitHub repository out of the way:
+4. Before any destructive operation, verify the clean launch checkout and the
+   current GitHub `main` still match the reviewed bundle:
 
 ```sh
-gh repo rename -R akratch/mgb64 "mgb64-prepublic-$(date +%Y%m%d)" --yes
+repo=akratch/mgb64
+clean_repo=/path/from/helper
+expected_source_head="SOURCE_HEAD_FROM_PUBLIC_LAUNCH_BUNDLE"
+expected_clean_head="CLEAN_LAUNCH_HEAD_FROM_PUBLIC_LAUNCH_BUNDLE"
+expected_clean_tree="CLEAN_LAUNCH_TREE_FROM_PUBLIC_LAUNCH_BUNDLE"
+test "$(git -C "$clean_repo" rev-list --all --count)" = "1"
+test -z "$(git -C "$clean_repo" status --porcelain --untracked-files=all)"
+test "$(gh api "repos/${repo}/git/ref/heads/main" --jq .object.sha)" = "$expected_source_head"
+test "$(git -C "$clean_repo" rev-parse HEAD)" = "$expected_clean_head"
+test "$(git -C "$clean_repo" rev-parse HEAD^{tree})" = "$expected_clean_tree"
 ```
 
-5. Create a fresh private repository with the launch name:
+The generated `PUBLIC_LAUNCH_BUNDLE.md` includes these concrete values and a
+copy/pasteable guarded command block. Use those generated commands for the
+actual replacement so a stale bundle cannot pass accidentally.
+
+5. Rename the current private GitHub repository out of the way:
 
 ```sh
-gh repo create akratch/mgb64 \
+backup_name="mgb64-prepublic-$(date -u +%Y%m%d-%H%M%S)"
+gh repo rename -R "$repo" "$backup_name" --yes
+```
+
+6. Create a fresh private repository with the launch name:
+
+```sh
+gh repo create "$repo" \
   --private \
   --disable-wiki \
   --description "A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included."
 ```
 
-6. Push only the clean single-root public branch:
+7. Push only the clean single-root public branch:
 
 ```sh
-git -C /path/from/helper remote add launch-clean git@github.com:akratch/mgb64.git
-git -C /path/from/helper push launch-clean HEAD:refs/heads/main
-gh repo edit akratch/mgb64 --default-branch main
-cd /path/from/helper
+git -C "$clean_repo" remote add launch-clean "git@github.com:${repo}.git"
+git -C "$clean_repo" push launch-clean HEAD:refs/heads/main
+gh repo edit "$repo" --default-branch main
+cd "$clean_repo"
 ```
 
-7. Restore repository settings:
+8. Restore repository settings:
 
 ```sh
-scripts/configure_github_launch_settings.sh --repo akratch/mgb64
+scripts/configure_github_launch_settings.sh --repo "$repo"
 ```
 
 Review the dry-run output. Add `--yes` only after the fresh repository exists
 and the planned settings match the local-CI launch policy:
 
 ```sh
-scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes
+scripts/configure_github_launch_settings.sh --repo "$repo" --yes
 ```
 
 The helper configures repository settings, disables hosted GitHub Actions for
@@ -214,11 +235,11 @@ the local-CI launch policy, configures recommended security endpoints when
 GitHub exposes them, and applies `main` branch protection without required
 hosted status checks.
 
-8. Recreate launch issues and labels from the scrubbed export:
+9. Recreate launch issues and labels from the scrubbed export:
 
 ```sh
 python3 tools/export_github_launch_items.py apply \
-  --repo akratch/mgb64 \
+  --repo "$repo" \
   --input-dir /tmp/mgb64-launch-items \
   --yes
 ```
@@ -227,7 +248,7 @@ Do not migrate closed PRs, old generated status comments, or pre-rewrite commit
 references. Recreate any still-relevant launch blockers manually with fresh
 current-repo evidence.
 
-9. Verify the fresh repository:
+10. Verify the fresh repository:
 
 ```sh
 git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'

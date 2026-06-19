@@ -402,16 +402,28 @@ PY
   printf '\n## Replacement Commands To Review\n\n'
   printf '```sh\n'
   printf '%s\n' "# Rename or replace the old private repository only after explicit approval."
-  printf '%s\n' "gh repo rename -R ${repo} \"mgb64-prepublic-\$(date +%Y%m%d)\" --yes"
-  printf '%s\n' "gh repo create ${repo} --private --disable-wiki --description \"A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included.\""
-  printf '%s\n' "git -C \"$clean_repo\" remote add launch-clean git@github.com:${repo}.git"
-  printf '%s\n' "git -C \"$clean_repo\" push launch-clean HEAD:refs/heads/main"
-  printf '%s\n' "gh repo edit ${repo} --default-branch main"
-  printf '%s\n' "cd \"$clean_repo\""
-  printf '%s\n' "scripts/configure_github_launch_settings.sh --repo ${repo} --yes"
-  printf '%s\n' "python3 tools/export_github_launch_items.py apply --repo ${repo} --input-dir \"$items_dir\" --yes"
+  printf '%s\n' "repo=${repo}"
+  printf '%s\n' "clean_repo=\"$clean_repo\""
+  printf '%s\n' "items_dir=\"$items_dir\""
+  printf '%s\n' "expected_source_head=$source_head"
+  printf '%s\n' "expected_clean_head=$launch_head"
+  printf '%s\n' "expected_clean_tree=$launch_tree"
+  printf '%s\n' "backup_name=\"mgb64-prepublic-\$(date -u +%Y%m%d-%H%M%S)\""
+  printf '%s\n' 'test "$(git -C "$clean_repo" rev-parse HEAD)" = "$expected_clean_head"'
+  printf '%s\n' 'test "$(git -C "$clean_repo" rev-parse HEAD^{tree})" = "$expected_clean_tree"'
+  printf '%s\n' 'test "$(git -C "$clean_repo" rev-list --all --count)" = "1"'
+  printf '%s\n' 'test -z "$(git -C "$clean_repo" status --porcelain --untracked-files=all)"'
+  printf '%s\n' 'test "$(gh api "repos/${repo}/git/ref/heads/main" --jq .object.sha)" = "$expected_source_head"'
+  printf '%s\n' 'gh repo rename -R "$repo" "$backup_name" --yes'
+  printf '%s\n' "gh repo create \"\$repo\" --private --disable-wiki --description \"A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included.\""
+  printf '%s\n' 'git -C "$clean_repo" remote add launch-clean "git@github.com:${repo}.git"'
+  printf '%s\n' 'git -C "$clean_repo" push launch-clean HEAD:refs/heads/main'
+  printf '%s\n' 'gh repo edit "$repo" --default-branch main'
+  printf '%s\n' 'cd "$clean_repo"'
+  printf '%s\n' 'scripts/configure_github_launch_settings.sh --repo "$repo" --yes'
+  printf '%s\n' 'python3 tools/export_github_launch_items.py apply --repo "$repo" --input-dir "$items_dir" --yes'
   printf '%s\n' "git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'"
-  printf '%s\n' "NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo} --allow-private"
+  printf '%s\n' 'NO_COLOR=1 scripts/check_github_launch_ready.sh --repo "$repo" --allow-private'
   printf '```\n'
   printf '\n## Final Public Flip Gate\n\n'
   printf '%s\n' "Do not change visibility to public until the strict local launch proof passes on the exact launch commit, branch/security settings are configured, GitHub Actions are disabled for the local-CI launch policy, and \`scripts/check_github_launch_ready.sh --repo ${repo} --allow-private\` has no launch blockers other than private visibility."
