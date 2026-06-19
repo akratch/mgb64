@@ -188,6 +188,7 @@ gh repo create akratch/mgb64 \
 git -C /path/from/helper remote add launch-clean git@github.com:akratch/mgb64.git
 git -C /path/from/helper push launch-clean HEAD:refs/heads/main
 gh repo edit akratch/mgb64 --default-branch main
+cd /path/from/helper
 ```
 
 7. Restore repository settings:
@@ -225,7 +226,7 @@ current-repo evidence.
 ```sh
 git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
 ./scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
-python3 tools/check_public_history_paths.py --repo-root /path/from/helper
+python3 tools/check_public_history_paths.py --repo-root .
 ```
 
 The local history-provenance, pull-ref, workflow-history, public-text,
