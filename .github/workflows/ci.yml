@@ -42,10 +42,12 @@ jobs:
             tools/check_markdown_links.py \
             tools/check_shell_syntax.py \
             tools/check_github_branch_protection.py \
+            tools/check_github_public_commit_refs.py \
             tools/check_sdk_inventory.py \
             tools/check_native_switch_access.py \
             tools/check_native_sdk_surface.py \
             tools/check_native_stub_surface.py \
+            tools/export_github_launch_items.py \
             macos/Scripts/generate_app_icon.py
           python3 tools/check_shell_syntax.py
 
