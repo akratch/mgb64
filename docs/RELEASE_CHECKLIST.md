@@ -21,10 +21,11 @@ scripts/release_preflight.sh \
 ```
 
 Before the repository is ready to flip public, run the same preflight from a
-fresh or scrubbed launch checkout with `--strict-ignored --github` so the final
-pass also verifies there are no local ignored ROM/media/capture artifacts and
-checks GitHub metadata/ref/artifact/security settings. Hosted GitHub Actions is
-not a launch gate. In strict mode, keep the ROM outside the repository checkout:
+fresh or scrubbed launch checkout with the strict GitHub dry-run options shown
+below. The final pre-public pass also verifies there are no local ignored
+ROM/media/capture artifacts and checks GitHub metadata/ref/artifact/security
+settings. Hosted GitHub Actions is not a launch gate. In strict mode, keep the
+ROM outside the repository checkout:
 
 ```sh
 scripts/release_preflight.sh \
@@ -32,7 +33,8 @@ scripts/release_preflight.sh \
   --rom /path/outside/repo/baserom.u.z64 \
   --macos-app-bundle-sdl2 \
   --strict-ignored \
-  --github
+  --github \
+  --allow-private
 ```
 
 Omit `--macos-app-bundle-sdl2` when running the source/native preflight from
@@ -213,7 +215,9 @@ not a bit-perfect N64 audio proof.
   conversation resolution, and disallow force pushes/deletions. Use
   `scripts/configure_github_launch_settings.sh --repo akratch/mgb64` to preview
   the repository/security/branch-protection settings before applying them with
-  `--yes`.
+  `--yes`. If GitHub does not expose branch protection while the repository is
+  private, treat that as a pre-public warning only; apply protection immediately
+  after the public flip and verify it with the final checker.
 - Run `scripts/check_github_launch_ready.sh` after GitHub settings are final.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking that local `HEAD` matches GitHub
@@ -236,6 +240,8 @@ not a bit-perfect N64 audio proof.
   otherwise unsafe preserved branch history suitable for public launch.
   The script also checks that the contributor triage labels used by the issue
   templates and launch roadmap are present.
+  After the public flip, run the checker again without `--allow-private`; that
+  final public check must pass.
 - If `tools/check_public_history_paths.py` reports removed local-only tool
   source in reachable history, do not publish the existing commit graph. Use
   `scripts/create_public_launch_repo.sh --smoke-archive` to produce, archive

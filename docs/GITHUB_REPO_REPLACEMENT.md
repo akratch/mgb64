@@ -268,7 +268,9 @@ temporary validation remote.
 
 ## Final Public Flip
 
-After the fresh/purged repository has branch/security settings configured:
+After the fresh/purged repository has hosted Actions disabled and any
+GitHub-exposed branch/security settings configured, run the final pre-public
+local gate:
 
 ```sh
 scripts/release_preflight.sh \
@@ -276,7 +278,8 @@ scripts/release_preflight.sh \
   --rom /path/outside/repo/baserom.u.z64 \
   --macos-app-bundle-sdl2 \
   --strict-ignored \
-  --github
+  --github \
+  --allow-private
 ```
 
 Add `--macos-app-strict-deployment-target` only when `pkg-config` points at a
@@ -288,7 +291,8 @@ Then run the launch checker one more time while the repository is still private:
 NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
 ```
 
-Only after that dry run has no launch blockers other than private visibility,
+Only after that dry run has no launch blockers other than private visibility
+plus branch/security endpoints that GitHub only exposes after the public flip,
 change visibility to public:
 
 ```sh
@@ -297,8 +301,11 @@ gh repo edit akratch/mgb64 \
   --accept-visibility-change-consequences
 ```
 
-Finally verify the public surface without the private-repo allowance:
+Immediately re-apply repository settings in case branch/security endpoints were
+unavailable while private, then verify the public surface without the
+private-repo allowance:
 
 ```sh
+scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes
 NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64
 ```

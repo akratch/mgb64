@@ -74,8 +74,11 @@ Options:
   --repo OWNER/REPO       Pass a repository to the GitHub readiness check.
   -h, --help              Show this help.
 
-For final public launch on macOS, use at least:
-  scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --macos-app-bundle-sdl2 --strict-ignored --github
+For the final pre-public macOS dry run, use at least:
+  scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --macos-app-bundle-sdl2 --strict-ignored --github --allow-private
+
+After the repository is public, repeat the GitHub readiness check without
+--allow-private.
 
 For a redistributable macOS app candidate, add
 --macos-app-strict-deployment-target and point pkg-config at a controlled SDL2
@@ -271,7 +274,7 @@ fi
 if [ "$strict_ignored" -eq 1 ] && [ "$require_rom_smoke" -eq 1 ] && path_is_inside_repo "$rom"; then
   echo "--strict-ignored with ROM-backed validation requires --rom outside the repository checkout." >&2
   echo "Use a fresh/scrubbed checkout plus an external ROM path, for example:" >&2
-  echo "  scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --macos-app-bundle-sdl2 --strict-ignored --github" >&2
+  echo "  scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --macos-app-bundle-sdl2 --strict-ignored --github --allow-private" >&2
   exit 2
 fi
 

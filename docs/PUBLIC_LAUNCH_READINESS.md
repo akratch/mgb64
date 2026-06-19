@@ -22,7 +22,7 @@ Do not make the repository public until all hard blockers are closed:
 | GitHub public text/artifact hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, unexpired Actions artifacts, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, workflow artifact upload, issue edit, or PR review. |
 | Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
-| Branch protection, Actions policy, and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. The launch checker enforces GitHub Actions disabled for the local-CI launch policy. If Actions are deliberately re-enabled later, workflow tokens must stay read-only, workflow PR approval must stay disabled, action pins must remain full-SHA, and artifact/log retention must stay 14 days or less. | Configure before or immediately after the public flip. |
+| Branch protection, Actions policy, and security settings | Partially gated | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. The launch checker enforces GitHub Actions disabled for the local-CI launch policy. If Actions are deliberately re-enabled later, workflow tokens must stay read-only, workflow PR approval must stay disabled, action pins must remain full-SHA, and artifact/log retention must stay 14 days or less. | Disable Actions before launch. Apply branch/security settings before the public flip when GitHub exposes them; otherwise apply them immediately after the flip and verify with the final public checker. |
 
 ## Full Local Launch Proof
 
@@ -120,7 +120,8 @@ scripts/release_preflight.sh \
   --rom /path/outside/repo/baserom.u.z64 \
   --macos-app-bundle-sdl2 \
   --strict-ignored \
-  --github
+  --github \
+  --allow-private
 ```
 
 Add `--macos-app-strict-deployment-target` only when `pkg-config` points at a
@@ -131,12 +132,23 @@ controlled SDL2 build with the intended minimum macOS version.
    CI mirrors for future maintainers who deliberately re-enable Actions.
 5. Configure branch protection without required hosted status checks; require
    reviews/conversation resolution and keep force-push/deletion protections.
+   If GitHub does not expose branch protection while the repository is private,
+   the pre-public checker may warn; apply protection immediately after the
+   public flip and verify it in the final checker.
 6. Enable or confirm Discussions, Dependabot vulnerability alerts, private
    vulnerability reporting, and secret scanning/push protection where GitHub
-   exposes them.
-7. Flip public only after `scripts/check_github_launch_ready.sh` passes without
-   `--allow-private`.
-8. Announce with the same constraints used in the README: bring your own ROM, no
+   exposes them. Private-repo endpoint warnings are acceptable only for settings
+   GitHub does not expose until public/pro settings are available.
+7. Before the flip, run
+   `NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private`.
+   Do not proceed unless it has no failures and no warnings except private
+   visibility plus branch/security endpoints that GitHub only exposes after the
+   public flip.
+8. Change visibility to public, re-run
+   `scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes`,
+   then run `NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64`
+   without `--allow-private`; that final public check must pass.
+9. Announce with the same constraints used in the README: bring your own ROM, no
    copyrighted assets, experimental native port, matching target in progress,
    and SDK/libultra compatibility provenance still inventoried.
 
