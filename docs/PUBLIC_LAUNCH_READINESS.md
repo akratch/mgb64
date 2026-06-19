@@ -14,15 +14,46 @@ Do not make the repository public until all hard blockers are closed:
 | Area | Status | Evidence | Required action |
 | --- | --- | --- | --- |
 | Hosted CI | Blocked | Current-head GitHub Actions jobs fail before runner startup with billing/spending-limit annotations. | Fix account billing/spending settings, rerun CI on `main`, and require a green current-head run. |
-| Reachable git history provenance | Blocked | `tools/check_public_history_paths.py` reports old `tools/ido5.3_recomp/*` source/tooling paths in reachable history. | Publish from a fresh single-root launch repository created from the current clean tree, or perform an approved history rewrite before launch. |
+| Reachable git history provenance | Blocked | `tools/check_public_history_paths.py` reports old `tools/ido5.3_recomp/*` source/tooling paths in the current preserved history. The generated fresh single-root launch repository must pass this guard before publication. | Publish from a fresh single-root launch repository created from the current clean tree, or perform an approved history rewrite before launch. |
 | Branch/tag refs | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies advertised `refs/heads/*` and `refs/tags/*` point into current public history. | Keep passing before launch; do not create public release tags from any other history. |
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
-| Current-tree/source-archive hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes and exact-head source archive smoke passes. | Keep passing before launch. |
-| ROM-free source test suite | Passing locally | `ctest --test-dir build --output-on-failure` passes after CMake configure. | Keep passing before launch and in hosted CI. |
+| Current-tree/source-archive hygiene | Passing locally | The strict clean-launch bundle path generates a one-commit launch repo, passes release/history guards, builds a warning-clean source archive, and records exact commit/archive hashes in the generated bundle manifest. | Keep passing before launch. |
+| ROM-free source test suite | Passing locally | Clean launch repo and source-archive smoke both pass ROM-free CTest `7/7` during the strict bundle proof. | Keep passing before launch and in hosted CI. |
 | GitHub public text/release hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, issue edit, or PR review. |
 | Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
 | Branch protection and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. | Configure after CI can run and before or immediately after the public flip. |
+
+## Full Local Launch Proof
+
+For the final local proof, run the strict bundle path from a clean/scrubbed
+workspace with a ROM path outside the generated clean launch checkout:
+
+```sh
+scripts/prepare_public_launch_bundle.sh \
+  --repo akratch/mgb64 \
+  --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
+  --strict-preflight-macos-app
+```
+
+The generated `PUBLIC_LAUNCH_BUNDLE.md` is the place to record exact source
+HEAD, clean-launch HEAD, tree hash, archive path, archive SHA-256, exported
+issue count, and GitHub blocker evidence. A launch-ready bundle must prove:
+
+- the clean launch repository has exactly one root commit;
+- the clean launch tree matches the source HEAD tree;
+- release guard and public-history path guard pass inside the clean launch repo;
+- the clean source archive builds warning-free and passes ROM-free CTest;
+- strict preflight passes ROM-backed quick validation, all 20 single-player
+  level spawn checks, save persistence, Dockerfile context check, source-archive
+  smoke, and macOS unsigned app asset-free verification;
+- GitHub launch labels/issues export and apply dry-run pass after excluding
+  repo-replacement-only issues `#7` and `#30`.
+
+This proof shows the current tree can be turned into an asset-free clean public
+launch repository. It does **not** make the preserved current GitHub repository
+safe to flip public directly; hosted CI, preserved-history, hidden PR ref, and
+branch/security setting gates still apply.
 
 ## What Is Already In Good Shape
 
