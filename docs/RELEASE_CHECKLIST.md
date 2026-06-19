@@ -210,7 +210,10 @@ not a bit-perfect N64 audio proof.
   source in reachable history, do not publish the existing commit graph. Use
   `scripts/create_public_launch_repo.sh --smoke-archive` to produce, archive
   smoke-test, and validate a fresh single-root launch repository, or perform an
-  approved history rewrite.
+  approved history rewrite. For the full replacement handoff, use
+  `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64`; it prepares
+  the clean repo, source-archive smoke evidence, scrubbed issue/label export,
+  GitHub blocker report, and a manifest of commands without modifying GitHub.
 - Set repository topics that make the project discoverable without implying an
   official affiliation.
 - Keep issue and PR templates enabled.

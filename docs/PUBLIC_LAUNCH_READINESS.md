@@ -66,8 +66,9 @@ will inspect first.
 1. Fix GitHub Actions billing/spending so hosted runners can start.
 2. Resolve reachable-history provenance by publishing from a fresh single-root
    launch repository created from the current clean tree with
-   `scripts/create_public_launch_repo.sh --smoke-archive`, or by an approved
-   history rewrite.
+   `scripts/create_public_launch_repo.sh --smoke-archive` or the fuller
+   non-destructive `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64`,
+   or by an approved history rewrite.
 3. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
    only purge hidden refs/caches; it does not fix launch-blocking paths in

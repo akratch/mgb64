@@ -144,6 +144,18 @@ exactly one commit:
 git -C /path/from/helper rev-list --all --count
 ```
 
+For the least error-prone replacement dry run, prepare the whole local launch
+bundle instead:
+
+```sh
+scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64
+```
+
+That helper is non-destructive. It creates the clean single-root repository,
+smoke-tests its source archive, exports scrubbed launch labels/issues, captures
+GitHub-side blocker evidence, and writes a `PUBLIC_LAUNCH_BUNDLE.md` manifest
+with the exact commands to review before any destructive repository operation.
+
 4. Rename the current private GitHub repository out of the way:
 
 ```sh
