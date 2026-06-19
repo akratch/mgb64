@@ -19,7 +19,7 @@ preserved, and run natively on modern machines.
 > [!IMPORTANT]
 > **This project ships no game.** It contains decompiled code and an original
 > port layer — **no ROM and no copyrighted assets** (graphics, audio, models,
-> fonts, level data). To build or run anything you must supply your **own**
+> fonts, level data). To run the port you must supply your **own**
 > legally-dumped copy of the game. Please read **[DISCLAIMER.md](DISCLAIMER.md)**.
 
 ## What is this?
@@ -67,17 +67,20 @@ reports and PRs are very welcome.
 
 ## Building
 
-Full instructions — toolchain, dependencies, asset extraction, and the native
-port build — are in **[docs/BUILDING.md](docs/BUILDING.md)**. In brief:
+Full instructions — toolchain, dependencies, native-port setup, and the
+matching-target asset-extraction path — are in
+**[docs/BUILDING.md](docs/BUILDING.md)**. In brief:
 
 1. Install the build dependencies for your platform (see the build doc).
-2. Place a ROM **you legally own** at the repository root (e.g. `baserom.u.z64`).
-3. The build extracts the assets it needs from that ROM into git-ignored paths.
-4. Build the native port with CMake; matching-target contributors can use the
+2. Build the native port with CMake; the public checkout compiles without ROM
+   media or extracted assets.
+3. Run the port with a ROM **you legally own** using `--rom /path/to/rom.z64`,
+   or place it at the repository root for auto-detection.
+4. Matching-target contributors can use the asset-extraction and
    Makefile path described in the build docs.
 
 ```sh
-# Native port (PC/macOS), once your ROM is in place:
+# Native port (PC/macOS):
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```

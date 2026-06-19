@@ -1,8 +1,9 @@
 # Building MGB64
 
 > **You must supply your own legally-dumped ROM.** This repository contains no
-> ROM and no game assets. Nothing here will produce a playable game without a
-> ROM you already own. Please read [../DISCLAIMER.md](../DISCLAIMER.md).
+> ROM and no game assets. The native port can compile without ROM media, but
+> nothing here will produce a playable game without a ROM you already own.
+> Please read [../DISCLAIMER.md](../DISCLAIMER.md).
 
 There are two build targets:
 
@@ -16,7 +17,17 @@ builds today and the one area that is still a work in progress.
 
 ## 1. Get a ROM
 
-Place a ROM you legally own at the repository root. The USA build expects:
+You need a ROM you legally own to run the native port, but you do not need ROM
+media or extracted assets to compile it. The most explicit runtime path is to
+keep the ROM wherever you store local game data and pass it with `--rom`:
+
+```sh
+./build/ge007 --rom "/path/to/baserom.u.z64"
+```
+
+For convenience, the port also auto-detects a few common filenames in the
+working directory and nearby user folders. The USA build's conventional local
+filename is:
 
 ```
 baserom.u.z64
@@ -26,19 +37,7 @@ baserom.u.z64
 auto-detected by the port at runtime.) Expected SHA-1s are in `ge007.u.sha1`,
 `ge007.e.sha1`, `ge007.j.sha1`.
 
-## 2. Extract assets from your ROM
-
-The build extracts the assets it needs from *your* ROM into git-ignored paths;
-none of it is committed.
-
-```sh
-# Extract everything from baserom.u.z64:
-scripts/extract_baserom.u.sh
-```
-
-(The N64 `make` target also runs extraction automatically via `extractassets`.)
-
-## 3. Build the native port
+## 2. Build the native port
 
 **Dependencies:**
 
@@ -73,6 +72,10 @@ cmake --build build -j
 
 For cross-platform copy/paste, `cmake --build build --parallel` is equivalent to
 the `-j` form above.
+
+CMake may print messages such as `ROM-derived asset data not present`. That is
+expected for the public checkout. The native port reads bulk game data from your
+ROM at runtime instead of compiling ROM media into the executable.
 
 To capture and summarize compiler/linker warning noise during a local build:
 
@@ -118,6 +121,19 @@ docker run --rm -it -v "$PWD":/home/dev/mgb64 -w /home/dev/mgb64 mgb64-dev
 The `.dockerignore` file excludes ROMs, extracted assets, build outputs, and
 local captures from Docker build context. Keep your ROM on the host and pass it
 at runtime; do not bake ROMs or extracted assets into a Docker image.
+
+## 3. Optional: extract assets for matching-target work
+
+The native port does not require this step. It is useful for contributors
+working on the N64 matching target or generated-data/linker tasks. Extraction
+writes ROM-derived data into git-ignored paths; none of it may be committed.
+
+```sh
+# Extract everything from baserom.u.z64:
+scripts/extract_baserom.u.sh
+```
+
+(The N64 `make` target also runs extraction automatically via `extractassets`.)
 
 ## 4. N64 ROM matching target (decompilation / matching)
 
