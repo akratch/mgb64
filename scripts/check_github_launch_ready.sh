@@ -708,11 +708,11 @@ if [ -n "$repo" ]; then
     warn "missing recommended repository topic(s):${missing_topics}"
   fi
 
-  actions_enabled="$(gh api "repos/${repo}/actions/permissions" --jq '.enabled' 2>/dev/null || echo unknown)"
+  actions_enabled="$(gh api "repos/${repo}/actions/permissions" --jq 'if has("enabled") then (.enabled | tostring) else "unknown" end' 2>/dev/null || echo unknown)"
   actions_allowed="$(gh api "repos/${repo}/actions/permissions" --jq '.allowed_actions // "unknown"' 2>/dev/null || echo unknown)"
-  actions_sha_pinning="$(gh api "repos/${repo}/actions/permissions" --jq '.sha_pinning_required // false' 2>/dev/null || echo unknown)"
+  actions_sha_pinning="$(gh api "repos/${repo}/actions/permissions" --jq 'if has("sha_pinning_required") then (.sha_pinning_required | tostring) else "unknown" end' 2>/dev/null || echo unknown)"
   workflow_default_permissions="$(gh api "repos/${repo}/actions/permissions/workflow" --jq '.default_workflow_permissions // "unknown"' 2>/dev/null || echo unknown)"
-  workflow_can_approve_prs="$(gh api "repos/${repo}/actions/permissions/workflow" --jq '.can_approve_pull_request_reviews // true' 2>/dev/null || echo unknown)"
+  workflow_can_approve_prs="$(gh api "repos/${repo}/actions/permissions/workflow" --jq 'if has("can_approve_pull_request_reviews") then (.can_approve_pull_request_reviews | tostring) else "unknown" end' 2>/dev/null || echo unknown)"
   actions_retention_days="$(gh api "repos/${repo}/actions/permissions/artifact-and-log-retention" --jq '.days // "unknown"' 2>/dev/null || echo unknown)"
   [ "$actions_enabled" = "true" ] && ok "GitHub Actions are enabled" || note "GitHub Actions are not enabled"
   case "$actions_allowed" in
