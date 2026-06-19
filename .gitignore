@@ -65,10 +65,27 @@ bin/*
 
 # --- Logs, captures, dumps (often contain ROM-derived imagery) ---
 *.log
+*.jsonl
 *.bmp
 *.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
 *.ppm
 *.raw
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.aac
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.avi
+*.webm
 san_output*.txt
 frame_trace*
 screenshot_*

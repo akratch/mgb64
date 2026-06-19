@@ -46,7 +46,7 @@ if [ "$HAVE_GIT" -eq 1 ]; then
   history_hits=$(git log --all --name-only --pretty=format: \
     | awk 'NF' \
     | sort -u \
-    | grep -E '\.(z64|n64|v64|rom|bin|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|ctl|tbl|aifc|aiff|sbk|seq|cdata|dmg|zip|7z|tar|tgz|gz)$|(^|/)baserom|(^|/)[^/]+\.app(/|$)|ge007_eeprom|ge007\.ini|screenshot_' \
+    | grep -E '\.(z64|n64|v64|rom|bin|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|ctl|tbl|aifc|aiff|sbk|seq|cdata|dmg|zip|7z|tar|tgz|gz)$|(^|/)baserom|(^|/)[^/]+\.app(/|$)|ge007_eeprom|ge007\.ini|screenshot_' \
     || true)
   if [ -n "$history_hits" ]; then
     while IFS= read -r f; do note "ROM/media/build artifact path found in git history: $f"; done <<< "$history_hits"
@@ -152,9 +152,36 @@ for pattern in \
   "*.v64" \
   "baserom*" \
   "*.bin" \
+  "*.cdata*" \
+  "*.eeprom" \
   "*.ctl" \
   "*.tbl" \
   "*.seq" \
+  "*.aifc" \
+  "*.aiff" \
+  "*.seg" \
+  "*.log" \
+  "*.jsonl" \
+  "*.bmp" \
+  "*.png" \
+  "*.jpg" \
+  "*.jpeg" \
+  "*.gif" \
+  "*.webp" \
+  "*.ppm" \
+  "*.raw" \
+  "*.wav" \
+  "*.mp3" \
+  "*.ogg" \
+  "*.flac" \
+  "*.m4a" \
+  "*.aac" \
+  "*.mp4" \
+  "*.mov" \
+  "*.m4v" \
+  "*.mkv" \
+  "*.avi" \
+  "*.webm" \
   "assets/images/split/" \
   "assets/obseg/bg/*_all_p.c" \
   "tools/ido5.3_recomp/*" \

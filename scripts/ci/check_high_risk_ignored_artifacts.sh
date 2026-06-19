@@ -108,7 +108,16 @@ is_high_risk_path() {
     *.bin|*.rz|*.ctl|*.tbl|*.sbk|*.seq|*.aifc|*.aiff|*.seg)
       return 0
       ;;
-    *.bmp|*.png|*.ppm|*.raw|*.wav|*.mp3|*.ogg|*.flac)
+    *.log|*.jsonl)
+      return 0
+      ;;
+    *.bmp|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.ppm|*.raw)
+      return 0
+      ;;
+    *.wav|*.mp3|*.ogg|*.flac|*.m4a|*.aac)
+      return 0
+      ;;
+    *.mp4|*.mov|*.m4v|*.mkv|*.avi|*.webm)
       return 0
       ;;
   esac
