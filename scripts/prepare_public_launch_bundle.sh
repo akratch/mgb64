@@ -18,6 +18,9 @@ jobs="${GE007_BUILD_JOBS:-4}"
 max_warnings=0
 message="Initial public source release"
 exclude_numbers=(7 30)
+strict_preflight_rom=""
+strict_preflight_macos_app=0
+strict_preflight_skip_docker_check=0
 
 usage() {
   cat <<'USAGE'
@@ -41,6 +44,17 @@ Options:
   --exclude-number N      Open issue number to exclude from export. Defaults to
                           7 and 30; repeat to add more exclusions.
   --no-default-excludes   Do not automatically exclude issues 7 and 30.
+  --strict-preflight-rom PATH
+                          Also run release_preflight.sh --deep-runtime
+                          --strict-ignored inside the clean launch repo using
+                          this ROM path. PATH must be outside the generated
+                          clean launch repo.
+  --strict-preflight-macos-app
+                          Include the macOS app asset gate in the optional
+                          strict clean-launch preflight.
+  --strict-preflight-skip-docker-check
+                          Skip docker build --check in the optional strict
+                          preflight. Do not use for the final launch gate.
   -h, --help              Show this help.
 
 The script is intentionally non-destructive. It prepares evidence and commands;
@@ -96,6 +110,27 @@ run_logged() {
   fi
 }
 
+run_logged_in() {
+  local cwd="$1"
+  local log="$2"
+  shift 2
+
+  {
+    printf '+ cd %q &&' "$cwd"
+    printf ' %q' "$@"
+    printf '\n'
+  } | tee "$log"
+
+  set +e
+  (cd "$cwd" && "$@") 2>&1 | tee -a "$log"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "Command failed with exit status ${rc}; see ${log}" >&2
+    exit "$rc"
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
@@ -133,6 +168,19 @@ while [ "$#" -gt 0 ]; do
       exclude_numbers=()
       shift
       ;;
+    --strict-preflight-rom)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      strict_preflight_rom="$(abs_path "$2")"
+      shift 2
+      ;;
+    --strict-preflight-macos-app)
+      strict_preflight_macos_app=1
+      shift
+      ;;
+    --strict-preflight-skip-docker-check)
+      strict_preflight_skip_docker_check=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -147,6 +195,10 @@ done
 
 require_positive_int "--jobs" "$jobs"
 require_non_negative_int "--max-warnings" "$max_warnings"
+if [ -n "$strict_preflight_rom" ] && [ ! -f "$strict_preflight_rom" ]; then
+  echo "Strict preflight ROM does not exist: $strict_preflight_rom" >&2
+  exit 2
+fi
 
 if [ -z "$repo" ]; then
   repo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
@@ -175,6 +227,7 @@ clean_report="$out/clean-launch-report.md"
 github_evidence="$out/github-launch-evidence.md"
 dry_run_log="$out/github-launch-items-apply-dry-run.txt"
 manifest="$out/PUBLIC_LAUNCH_BUNDLE.md"
+strict_preflight_log=""
 mkdir -p "$logs"
 
 source_repo="$(pwd)"
@@ -190,6 +243,27 @@ run_logged "$logs/create-public-launch-repo.log" \
   --jobs "$jobs" \
   --max-warnings "$max_warnings" \
   --report "$clean_report"
+
+if [ -n "$strict_preflight_rom" ]; then
+  strict_preflight_log="$logs/strict-clean-launch-preflight.log"
+  strict_preflight_args=(
+    env
+    "GE007_BUILD_JOBS=$jobs"
+    scripts/release_preflight.sh
+    --deep-runtime
+    --rom "$strict_preflight_rom"
+    --strict-ignored
+    --jobs "$jobs"
+    --max-warnings "$max_warnings"
+  )
+  if [ "$strict_preflight_macos_app" -eq 1 ]; then
+    strict_preflight_args+=(--macos-app)
+  fi
+  if [ "$strict_preflight_skip_docker_check" -eq 1 ]; then
+    strict_preflight_args+=(--skip-docker-check)
+  fi
+  run_logged_in "$clean_repo" "$strict_preflight_log" "${strict_preflight_args[@]}"
+fi
 
 export_args=(
   python3
@@ -264,15 +338,29 @@ PY
   printf '%s\n' "- \`${items_dir}/github_launch_items.md\`"
   printf '%s\n' "- \`${dry_run_log}\`"
   printf '%s\n' "- \`${logs}\`"
+  if [ -n "$strict_preflight_log" ]; then
+    printf '%s\n' "- \`${strict_preflight_log}\`"
+  fi
   printf '\n## Non-Destructive Checks Completed\n\n'
   printf '%s\n' "- Clean launch repository has exactly one root commit."
   printf '%s\n' "- Clean launch tree matches the source HEAD tree."
   printf '%s\n' "- Release guard passed inside the clean launch repository."
   printf '%s\n' "- Public history path guard passed inside the clean launch repository."
   printf '%s\n' "- Clean source archive was created, built, warning-gated, and passed ROM-free CTest."
+  if [ -n "$strict_preflight_log" ]; then
+    printf '%s\n' "- Strict clean-launch preflight passed from the generated repository."
+  fi
   printf '%s\n' "- GitHub launch labels/open issues were exported through the scrubber."
   printf '%s\n' "- GitHub launch item apply dry-run completed without modifying GitHub."
   printf '%s\n' "- GitHub-side blocker evidence was captured as plain Markdown."
+  if [ -z "$strict_preflight_log" ]; then
+    printf '\n## Optional Strict Clean-Launch Preflight\n\n'
+    printf '%s\n' "This bundle did not run ROM-backed strict preflight. For the final local launch proof, run:"
+    printf '\n```sh\n'
+    printf '%s\n' "cd \"$clean_repo\""
+    printf '%s\n' "scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --strict-ignored --macos-app"
+    printf '```\n'
+  fi
   printf '\n## Destructive Steps Not Performed\n\n'
   printf '%s\n' "This bundle does not rename repositories, create repositories, push refs, change visibility, import issues, or edit branch protection."
   printf '\n## Replacement Commands To Review\n\n'

@@ -68,6 +68,16 @@ from a fresh checkout or scrubbed workspace, with any ROM-backed validation
 using `--rom` outside the repository. That stricter gate allows normal build
 output but fails on ignored ROMs, extracted assets, saves, screenshots, audio
 dumps, and other high-risk media outside build directories.
+For the repository-replacement launch path, the same strict gate can be captured
+inside the non-destructive launch bundle:
+
+```sh
+scripts/prepare_public_launch_bundle.sh \
+  --repo akratch/mgb64 \
+  --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
+  --strict-preflight-macos-app
+```
+
 Review `/tmp/mgb64-build-warnings.json` before posting a release announcement:
 local release builds and the public Linux CI build are expected to be
 warning-clean. Treat any compiler/linker warning as a launch blocker unless the

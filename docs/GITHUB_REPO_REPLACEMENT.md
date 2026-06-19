@@ -155,6 +155,17 @@ That helper is non-destructive. It creates the clean single-root repository,
 smoke-tests its source archive, exports scrubbed launch labels/issues, captures
 GitHub-side blocker evidence, and writes a `PUBLIC_LAUNCH_BUNDLE.md` manifest
 with the exact commands to review before any destructive repository operation.
+When a local ROM is available outside the generated launch checkout, use the
+stronger form to also run strict ignored-artifact, deep runtime, archive, Docker
+context, and macOS app asset-free validation from inside the generated clean
+repository:
+
+```sh
+scripts/prepare_public_launch_bundle.sh \
+  --repo akratch/mgb64 \
+  --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
+  --strict-preflight-macos-app
+```
 
 4. Rename the current private GitHub repository out of the way:
 

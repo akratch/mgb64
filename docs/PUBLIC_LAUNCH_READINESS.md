@@ -69,6 +69,9 @@ will inspect first.
    `scripts/create_public_launch_repo.sh --smoke-archive` or the fuller
    non-destructive `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64`,
    or by an approved history rewrite.
+   When a local ROM is available outside the generated launch checkout, prefer
+   the fuller strict dry run:
+   `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app`.
 3. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
    only purge hidden refs/caches; it does not fix launch-blocking paths in
