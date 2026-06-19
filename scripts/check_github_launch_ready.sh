@@ -25,6 +25,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository visibility and collaboration features
   - GitHub Actions enabled
   - latest main CI run corresponds to current HEAD and succeeded
+  - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
   - public issue/comment/discussion text has no high-risk launch leaks
   - branch protection is readable and enforces the required CI checks
@@ -202,6 +203,43 @@ scan_github_workflow_run_history() {
   fi
 }
 
+scan_github_pull_refs() {
+  local reachable_shas
+  local ref_lines
+  local stale_refs=""
+  local ref_count=0
+  local sha
+  local ref
+
+  echo
+  echo "== Pull request ref surface =="
+
+  reachable_shas="$(git rev-list --all)"
+
+  if ! ref_lines="$(git ls-remote origin 'refs/pull/*' 2>/dev/null)"; then
+    note "could not scan GitHub pull request refs"
+    return
+  fi
+
+  while IFS=$'\t' read -r sha ref; do
+    [ -n "$sha" ] || continue
+    ref_count=$((ref_count + 1))
+    if ! printf '%s\n' "$reachable_shas" | grep -Fqx "$sha"; then
+      stale_refs="$(append_findings "$stale_refs" "${ref} ${sha:0:12}")"
+    fi
+  done <<< "$ref_lines"
+
+  if [ -n "$stale_refs" ]; then
+    note "pull request refs expose commits outside current public git history"
+    printf '%s\n' "$stale_refs" | sed 's/^/  - /'
+    echo "  GitHub keeps closed PR refs read-only; purge them through GitHub support or recreate the public repository before launch."
+  elif [ "$ref_count" -eq 0 ]; then
+    ok "no pull request refs are advertised"
+  else
+    ok "all advertised pull request refs are reachable from current git history"
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
@@ -373,6 +411,7 @@ if [ -n "$repo" ]; then
     fi
   fi
 
+  scan_github_pull_refs
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
 

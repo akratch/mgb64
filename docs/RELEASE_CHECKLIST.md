@@ -183,10 +183,13 @@ not a bit-perfect N64 audio proof.
 - Run `scripts/check_github_launch_ready.sh` after GitHub settings are final.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking current-head CI health. The script
-  also scans workflow-run history for commits outside the current public branch,
-  and scans public issue, PR-comment, and Discussion text for high-risk private
-  paths, stale handoff language, token-shaped strings, and proprietary notice
-  fragments; treat findings there like repository-history contamination.
+  also scans GitHub pull-request refs and workflow-run history for commits outside
+  the current public branch, and scans public issue, PR-comment, and Discussion
+  text for high-risk private paths, stale handoff language, token-shaped strings,
+  and proprietary notice fragments; treat findings there like repository-history
+  contamination. GitHub keeps closed PR refs read-only; if any stale `refs/pull/*`
+  refs remain after a history rewrite, purge them through GitHub support or
+  recreate/replace the public repository before launch.
 - Set repository topics that make the project discoverable without implying an
   official affiliation.
 - Keep issue and PR templates enabled.
