@@ -1,32 +1,20 @@
-# macOS build pipeline
+# macOS asset-free build pipeline
 #
 # Builds the universal (arm64 + x86_64) C engine library for the macOS app shell
 # and verifies a host-architecture unsigned local `.app` bundle. Signing,
 # notarization, DMG creation, and GitHub Release upload remain deferred until
 # maintainer credentials and distributable packaging are wired.
 #
-# Triggered on version tags (e.g., v1.0.0).
-# Requires the following repository secrets:
-#   - DEVELOPER_ID_APPLICATION: Code signing identity
-#   - APPLE_ID: Apple ID for notarization
-#   - APPLE_TEAM_ID: Apple Developer Team ID
-#   - APPLE_APP_PASSWORD: App-specific password for notarytool
-#   - MACOS_CERTIFICATE: Base64-encoded .p12 certificate
-#   - MACOS_CERTIFICATE_PASSWORD: Password for the .p12
+# The active job requires no Apple Developer credentials or repository secrets.
+# Triggered on version tags (e.g., v0.1.0) and manual workflow dispatch.
 
-name: macOS Build
+name: macOS Asset-Free Build
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      skip_notarize:
-        description: 'Skip notarization (for testing)'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   DEPLOYMENT_TARGET: '13.0'
@@ -36,7 +24,7 @@ permissions:
 
 jobs:
   build:
-    name: Build macOS Artifacts
+    name: Build asset-free macOS artifacts
     runs-on: macos-14  # Apple Silicon runner
     timeout-minutes: 30
 
@@ -71,7 +59,7 @@ jobs:
           echo "=== Size ==="
           size build-macos-universal/libge007_lib.a
 
-      - name: Upload library artifact
+      - name: Upload asset-free library artifact
         uses: actions/upload-artifact@v4
         with:
           name: ge007-lib-universal
