@@ -45,6 +45,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - public repository metadata/label/milestone/release/issue/comment/discussion text has no stale commit references
   - contributor-facing GitHub labels needed for launch triage are present
   - GitHub release assets do not expose ROM, media, archive, or binary payloads
+  - GitHub Actions artifacts do not expose ROM, media, archive, app, or binary payloads
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
@@ -284,6 +285,57 @@ scan_github_release_assets() {
     printf '%s\n' "$review_assets" | sed 's/^/  - /'
   elif [ -z "$blocked_assets" ]; then
     ok "GitHub release assets do not need review"
+  fi
+}
+
+scan_github_actions_artifacts() {
+  local repo_name="$1"
+  local artifact_lines
+  local blocked_artifacts=""
+  local review_artifacts=""
+  local forbidden_artifact_pattern
+  local name
+  local size
+  local url
+  local sha
+  local workflow_url
+
+  echo
+  echo "== GitHub Actions artifact surface =="
+
+  if ! artifact_lines="$(gh api \
+    --paginate "repos/${repo_name}/actions/artifacts?per_page=100" \
+    --jq '.artifacts[]? | select(.expired != true) | [(.name // ""), ((.size_in_bytes // 0) | tostring), (.archive_download_url // ""), ((.workflow_run.head_sha // "")[0:12]), (.workflow_run.html_url // "")] | @tsv' 2>/dev/null)"; then
+    note "could not scan GitHub Actions artifacts"
+    return
+  fi
+
+  if [ -z "$artifact_lines" ]; then
+    ok "no unexpired GitHub Actions artifacts are published"
+    return
+  fi
+
+  forbidden_artifact_pattern='(^|[-_.])(base)?rom([-_.]|$)|(^|[-_.])(cdata|eeprom|save|saves|screenshot|screenshots|capture|captures|audio|music|sfx|dmg|pkg|app|binary|binaries|exe|library|lib|universal)([-_.]|$)|\.(z64|n64|v64|rom|cdata|eeprom|rz|ctl|tbl|sbk|seq|aifc|aiff|seg|raw|bmp|png|jpg|jpeg|gif|webp|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|dmg|pkg|app|zip|7z|tar|tgz|gz|bz2|xz|exe|msi|dll|so|dylib|a)$'
+
+  while IFS=$'\t' read -r name size url sha workflow_url; do
+    [ -n "$name" ] || continue
+    if printf '%s\n' "$name" | grep -Eiq "$forbidden_artifact_pattern"; then
+      blocked_artifacts="$(append_findings "$blocked_artifacts" "${name}\t${size} bytes\thead=${sha:-unknown}\t${workflow_url:-$url}")"
+    else
+      review_artifacts="$(append_findings "$review_artifacts" "${name}\t${size} bytes\thead=${sha:-unknown}\t${workflow_url:-$url}")"
+    fi
+  done <<< "$artifact_lines"
+
+  if [ -n "$blocked_artifacts" ]; then
+    note "GitHub Actions artifacts include ROM/media/archive/app/binary-shaped payloads"
+    printf '%s\n' "$blocked_artifacts" | sed 's/^/  - /'
+  fi
+
+  if [ -n "$review_artifacts" ]; then
+    warn "GitHub Actions artifacts are published; manually verify they contain only logs or other non-generated text"
+    printf '%s\n' "$review_artifacts" | sed 's/^/  - /'
+  elif [ -z "$blocked_artifacts" ]; then
+    ok "GitHub Actions artifacts do not need review"
   fi
 }
 
@@ -705,6 +757,7 @@ if [ -n "$repo" ]; then
   scan_github_public_commit_refs "$repo"
   scan_github_launch_labels "$repo"
   scan_github_release_assets "$repo"
+  scan_github_actions_artifacts "$repo"
 
   echo
   echo "== Protection and security settings =="

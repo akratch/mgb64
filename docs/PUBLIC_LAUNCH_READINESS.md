@@ -19,7 +19,7 @@ Do not make the repository public until all hard blockers are closed:
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
 | Current-tree/source-archive hygiene | Passing locally | The strict clean-launch bundle path generates a one-commit launch repo, passes release/history guards, builds a warning-clean source archive, and records exact commit/archive hashes in the generated bundle manifest. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | Clean launch repo and source-archive smoke both pass ROM-free CTest `7/7` during the strict bundle proof. | Keep passing before launch and in hosted CI. |
-| GitHub public text/release hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, issue edit, or PR review. |
+| GitHub public text/artifact hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, unexpired Actions artifacts, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, workflow artifact upload, issue edit, or PR review. |
 | Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
 | Branch protection and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. | Configure after CI can run and before or immediately after the public flip. |
@@ -140,7 +140,7 @@ scripts/release_preflight.sh \
 - `git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'` exposes
   commits outside current public history.
 - `scripts/check_github_launch_ready.sh` reports public text, release asset,
-  workflow-history, or commit-reference contamination.
+  Actions artifact, workflow-history, or commit-reference contamination.
 - A source archive smoke has not been run for the exact launch commit.
 - Public docs imply signed binaries, a DMG, Homebrew package, full clean-room
   provenance, bundled assets, or byte-matching ROM rebuild support that is not

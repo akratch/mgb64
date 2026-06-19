@@ -59,13 +59,6 @@ jobs:
           echo "=== Size ==="
           size build-macos-universal/libge007_lib.a
 
-      - name: Upload asset-free library artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ge007-lib-universal
-          path: build-macos-universal/libge007_lib.a
-          retention-days: 5
-
       - name: Build unsigned local app bundle
         run: |
           chmod +x macos/Scripts/build_app_bundle.sh
@@ -88,11 +81,6 @@ jobs:
   #   needs: build
   #   runs-on: macos-14
   #   steps:
-  #     - name: Download library
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: ge007-lib-universal
-  #
   #     - name: Import signing certificate
   #       env:
   #         MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}

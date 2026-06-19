@@ -208,9 +208,9 @@ not a bit-perfect N64 audio proof.
   metadata, labels, milestones, release notes/assets, issue text, PR/commit
   comments, PR review summaries, and Discussion text for high-risk private
   paths, stale handoff language, token-shaped strings, proprietary notice
-  fragments, and resolvable stale commit references. Uploaded release assets are
-  also checked for ROM-shaped,
-  media, archive, and binary payload names; treat findings there like
+  fragments, and resolvable stale commit references. Uploaded release assets and
+  unexpired GitHub Actions artifacts are also checked for ROM-shaped media,
+  archive, app, and binary payload names; treat findings there like
   repository-history contamination. GitHub keeps closed PR refs read-only; if
   any stale `refs/pull/*`
   refs remain after a history rewrite, purge them through GitHub support or

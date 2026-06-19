@@ -82,15 +82,6 @@ jobs:
               --json-out build/mgb64-build-warnings.json \
               --max-total 0
           fi
-      - name: Upload build warning summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build-warnings
-          path: |
-            build/mgb64-build.log
-            build/mgb64-build-warnings.json
-          if-no-files-found: ignore
       - name: Run ROM-free CTest suite
         run: ctest --test-dir build --output-on-failure
       - name: Smoke public source archive
