@@ -204,9 +204,10 @@ hosted CI can start, and the planned settings match the launch policy:
 scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes
 ```
 
-The helper configures repository settings, recommended security endpoints when
-GitHub exposes them, and `main` branch protection with `Release hygiene` and
-`CMake build (Linux)` required and up to date before merge.
+The helper configures repository settings, repository Actions permissions,
+recommended security endpoints when GitHub exposes them, and `main` branch
+protection with `Release hygiene` and `CMake build (Linux)` required and up to
+date before merge.
 
 8. Recreate launch issues and labels from the scrubbed export:
 

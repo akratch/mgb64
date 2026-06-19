@@ -15,7 +15,18 @@ apply=0
 skip_branch_protection=0
 skip_security=0
 required_checks=("Release hygiene" "CMake build (Linux)")
-topics="bring-your-own-rom,decompilation,game-preservation,n64,native-port,nintendo-64,opengl,reverse-engineering,sdl2,source-port"
+topics=(
+  bring-your-own-rom
+  decompilation
+  game-preservation
+  n64
+  native-port
+  nintendo-64
+  opengl
+  reverse-engineering
+  sdl2
+  source-port
+)
 description="A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included."
 
 usage() {
@@ -132,6 +143,11 @@ else
   echo "Applying GitHub launch settings to ${repo}."
 fi
 
+topic_args=()
+for topic in "${topics[@]}"; do
+  topic_args+=(--add-topic "$topic")
+done
+
 run_or_print gh repo edit "$repo" \
   --description "$description" \
   --enable-issues \
@@ -142,7 +158,12 @@ run_or_print gh repo edit "$repo" \
   --enable-squash-merge \
   --enable-merge-commit \
   --enable-rebase-merge \
-  --add-topic "$topics"
+  "${topic_args[@]}"
+
+run_or_warn gh api -X PUT "repos/${repo}/actions/permissions" \
+  -F enabled=true \
+  -f allowed_actions=all \
+  --silent
 
 if [ "$skip_security" -eq 0 ]; then
   run_or_warn gh api -X PUT "repos/${repo}/vulnerability-alerts" --silent
