@@ -14,6 +14,7 @@ repo=""
 apply=0
 skip_branch_protection=0
 skip_security=0
+actions_retention_days=14
 required_checks=("Release hygiene" "CMake build (Linux)")
 topics=(
   bring-your-own-rom
@@ -46,6 +47,9 @@ Options:
   --required-check NAME   Required status check for branch protection. Repeat
                           to override defaults. Defaults are Release hygiene
                           and CMake build (Linux).
+  --actions-retention-days DAYS
+                          Artifact/log retention for GitHub Actions. Defaults
+                          to 14 and must be between 1 and 90 for public repos.
   -h, --help              Show this help.
 
 This helper is intended for the fresh replacement repository. It does not change
@@ -112,6 +116,11 @@ while [ "$#" -gt 0 ]; do
       required_checks+=("$2")
       shift 2
       ;;
+    --actions-retention-days)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      actions_retention_days="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -134,6 +143,17 @@ if [ -z "$repo" ]; then
 fi
 if [ -z "$repo" ]; then
   echo "Could not resolve GitHub repository; pass --repo OWNER/REPO." >&2
+  exit 2
+fi
+
+case "$actions_retention_days" in
+  ''|*[!0-9]*)
+    echo "--actions-retention-days must be an integer." >&2
+    exit 2
+    ;;
+esac
+if [ "$actions_retention_days" -lt 1 ] || [ "$actions_retention_days" -gt 90 ]; then
+  echo "--actions-retention-days must be between 1 and 90 for a public launch repository." >&2
   exit 2
 fi
 
@@ -163,6 +183,16 @@ run_or_print gh repo edit "$repo" \
 run_or_warn gh api -X PUT "repos/${repo}/actions/permissions" \
   -F enabled=true \
   -f allowed_actions=all \
+  -F sha_pinning_required=true \
+  --silent
+
+run_or_warn gh api -X PUT "repos/${repo}/actions/permissions/workflow" \
+  -f default_workflow_permissions=read \
+  -F can_approve_pull_request_reviews=false \
+  --silent
+
+run_or_warn gh api -X PUT "repos/${repo}/actions/permissions/artifact-and-log-retention" \
+  -F "days=${actions_retention_days}" \
   --silent
 
 if [ "$skip_security" -eq 0 ]; then

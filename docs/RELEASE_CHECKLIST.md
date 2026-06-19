@@ -188,6 +188,11 @@ not a bit-perfect N64 audio proof.
 - Enable private vulnerability reporting if available.
 - Enable secret scanning and secret-scanning push protection if GitHub exposes
   them for the repository/account.
+- Keep the default GitHub Actions token read-only, disallow workflow approval of
+  pull requests, require full-SHA action pins, and set Actions artifact/log
+  retention to 14 days or less. The active workflows pin external actions, and
+  the release guard fails if a future workflow adds a tag- or branch-pinned
+  action.
 - Protect `main` with required status checks for `Release hygiene` and
   `CMake build (Linux)`, with checks required to be up to date before merge.
   The launch-readiness script fails if those required checks are missing once
@@ -202,7 +207,8 @@ not a bit-perfect N64 audio proof.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking that local `HEAD` matches GitHub
   `main` and that current-head CI is healthy. The script also scans local
-  reachable git history for launch-blocking public paths,
+  reachable git history for launch-blocking public paths, verifies the
+  repository Actions permission policy,
   scans GitHub branch, tag, pull-request, and workflow-run history surfaces for
   commits outside the current public branch, and scans public repository
   metadata, labels, milestones, release notes/assets, issue text, PR/commit

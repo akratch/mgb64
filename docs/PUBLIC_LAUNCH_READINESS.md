@@ -22,7 +22,7 @@ Do not make the repository public until all hard blockers are closed:
 | GitHub public text/artifact hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, unexpired Actions artifacts, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, workflow artifact upload, issue edit, or PR review. |
 | Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
-| Branch protection and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. | Configure after CI can run and before or immediately after the public flip. |
+| Branch protection, Actions policy, and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. The launch checker also enforces read-only default workflow tokens, no workflow PR approval, full-SHA action pins, and Actions artifact/log retention of 14 days or less. | Configure after CI can run and before or immediately after the public flip. |
 
 ## Full Local Launch Proof
 
@@ -121,14 +121,17 @@ scripts/release_preflight.sh \
 ```
 
 5. Confirm the latest `main` CI run is green for the exact launch commit.
-6. Configure branch protection so `Release hygiene` and `CMake build (Linux)`
+6. Configure GitHub Actions policy so default workflow tokens are read-only,
+   workflow PR approval is disabled, action SHA pinning is required, and
+   artifact/log retention is 14 days or less.
+7. Configure branch protection so `Release hygiene` and `CMake build (Linux)`
    are required and up to date before merge.
-7. Enable or confirm Discussions, Dependabot vulnerability alerts, private
+8. Enable or confirm Discussions, Dependabot vulnerability alerts, private
    vulnerability reporting, and secret scanning/push protection where GitHub
    exposes them.
-8. Flip public only after `scripts/check_github_launch_ready.sh` passes without
+9. Flip public only after `scripts/check_github_launch_ready.sh` passes without
    `--allow-private`.
-9. Announce with the same constraints used in the README: bring your own ROM, no
+10. Announce with the same constraints used in the README: bring your own ROM, no
    copyrighted assets, experimental native port, matching target in progress,
    and SDK/libultra compatibility provenance still inventoried.
 

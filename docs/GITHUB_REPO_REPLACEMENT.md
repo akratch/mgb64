@@ -204,10 +204,11 @@ hosted CI can start, and the planned settings match the launch policy:
 scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes
 ```
 
-The helper configures repository settings, repository Actions permissions,
-recommended security endpoints when GitHub exposes them, and `main` branch
-protection with `Release hygiene` and `CMake build (Linux)` required and up to
-date before merge.
+The helper configures repository settings, repository Actions permissions
+including read-only default workflow tokens, full-SHA action pinning, and
+14-day artifact/log retention, recommended security endpoints when GitHub
+exposes them, and `main` branch protection with `Release hygiene` and
+`CMake build (Linux)` required and up to date before merge.
 
 8. Recreate launch issues and labels from the scrubbed export:
 
@@ -231,10 +232,11 @@ python3 tools/check_public_history_paths.py --repo-root .
 ```
 
 The local history-provenance, pull-ref, workflow-history, public-text,
-release-asset, and public commit-reference sections must pass. The remaining
-expected dry-run failures before launch are repository privacy, hosted Actions
-startup if billing/settings are still blocked, and private/pro-only security
-settings that GitHub does not expose until public/pro settings are available.
+release-asset, Actions-artifact, Actions-permission, and public
+commit-reference sections must pass. The remaining expected dry-run failures
+before launch are repository privacy, hosted Actions startup if billing/settings
+are still blocked, and private/pro-only security settings that GitHub does not
+expose until public/pro settings are available.
 The launch-readiness check compares the local `HEAD` directly against the
 GitHub repository's `main` ref, so it is safe to run from the generated clean
 launch repository even if that checkout's local `origin` still points at a

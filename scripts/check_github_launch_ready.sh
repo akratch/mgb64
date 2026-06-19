@@ -10,6 +10,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 fail=0
 warn_count=0
+max_actions_retention_days=14
 
 if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
   RED=""
@@ -36,6 +37,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository metadata, topics, and contributor workflow settings
   - repository visibility and collaboration features
   - GitHub Actions enabled
+  - GitHub Actions require full-SHA action pins, read-only default workflow tokens, and short artifact/log retention
   - latest main CI run corresponds to current HEAD and succeeded
   - local reachable git history does not expose launch-blocking provenance paths
   - GitHub branch and tag refs do not expose commits outside public git history
@@ -707,7 +709,31 @@ if [ -n "$repo" ]; then
   fi
 
   actions_enabled="$(gh api "repos/${repo}/actions/permissions" --jq '.enabled' 2>/dev/null || echo unknown)"
+  actions_allowed="$(gh api "repos/${repo}/actions/permissions" --jq '.allowed_actions // "unknown"' 2>/dev/null || echo unknown)"
+  actions_sha_pinning="$(gh api "repos/${repo}/actions/permissions" --jq '.sha_pinning_required // false' 2>/dev/null || echo unknown)"
+  workflow_default_permissions="$(gh api "repos/${repo}/actions/permissions/workflow" --jq '.default_workflow_permissions // "unknown"' 2>/dev/null || echo unknown)"
+  workflow_can_approve_prs="$(gh api "repos/${repo}/actions/permissions/workflow" --jq '.can_approve_pull_request_reviews // true' 2>/dev/null || echo unknown)"
+  actions_retention_days="$(gh api "repos/${repo}/actions/permissions/artifact-and-log-retention" --jq '.days // "unknown"' 2>/dev/null || echo unknown)"
   [ "$actions_enabled" = "true" ] && ok "GitHub Actions are enabled" || note "GitHub Actions are not enabled"
+  case "$actions_allowed" in
+    all|selected) ok "GitHub Actions allowed-actions policy is ${actions_allowed}" ;;
+    *) warn "could not confirm GitHub Actions allowed-actions policy" ;;
+  esac
+  [ "$actions_sha_pinning" = "true" ] && ok "GitHub Actions require full-SHA action pins" || note "GitHub Actions do not require full-SHA action pins"
+  [ "$workflow_default_permissions" = "read" ] && ok "default GitHub Actions token permissions are read-only" || note "default GitHub Actions token permissions are '${workflow_default_permissions}', expected read"
+  [ "$workflow_can_approve_prs" = "false" ] && ok "GitHub Actions cannot approve pull requests by default" || note "GitHub Actions can approve pull requests by default"
+  case "$actions_retention_days" in
+    ''|*[!0-9]*)
+      note "could not determine GitHub Actions artifact/log retention"
+      ;;
+    *)
+      if [ "$actions_retention_days" -le "$max_actions_retention_days" ]; then
+        ok "GitHub Actions artifact/log retention is ${actions_retention_days} day(s)"
+      else
+        note "GitHub Actions artifact/log retention is ${actions_retention_days} day(s), expected ${max_actions_retention_days} or less"
+      fi
+      ;;
+  esac
 
   echo
   echo "== Latest main CI run =="

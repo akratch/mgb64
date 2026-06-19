@@ -37,6 +37,9 @@ Desired end state:
   Actions artifact, issue, PR/commit comment, PR review summary, Discussion,
   workflow-history, and commit-reference surfaces expose no pre-public commit
   links or high-risk private/provenance text;
+- GitHub Actions uses read-only default workflow tokens, disallows workflow PR
+  approval, requires full-SHA action pins, and keeps artifact/log retention to
+  14 days or less;
 - contributor triage labels for audio, renderer, parity, validation,
   provenance, build, and newcomer-friendly work are present after the repository
   replacement/migration step;

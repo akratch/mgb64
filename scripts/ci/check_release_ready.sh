@@ -241,6 +241,40 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 echo
+echo "== GitHub Actions supply-chain pinning =="
+workflow_action_hits="$(
+  if [ -d .github/workflows ]; then
+    while IFS= read -r workflow; do
+      line_no=0
+      while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        no_comment="${line%%#*}"
+        ref="$(printf '%s\n' "$no_comment" | sed -nE 's/^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*([^[:space:]]+).*/\2/p')"
+        [ -n "$ref" ] || continue
+        case "$ref" in
+          ./*|../*) continue ;;
+        esac
+        if [[ "$ref" != *@* ]]; then
+          printf '%s:%s:%s\n' "$workflow" "$line_no" "$ref"
+          continue
+        fi
+        action_ref="${ref##*@}"
+        if [[ ! "$action_ref" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+          printf '%s:%s:%s\n' "$workflow" "$line_no" "$ref"
+        fi
+      done < "$workflow"
+    done < <(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+  fi
+)"
+if [ -n "$workflow_action_hits" ]; then
+  while IFS= read -r hit; do
+    note "GitHub Actions workflow reference is not pinned to a full commit SHA: $hit"
+  done <<< "$workflow_action_hits"
+else
+  echo "  OK -- GitHub Actions workflow references are pinned to full commit SHAs."
+fi
+
+echo
 echo "== Public documentation links =="
 if python3 tools/check_markdown_links.py --repo-root .; then
   :
