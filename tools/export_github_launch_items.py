@@ -55,6 +55,7 @@ SDK_NOTICE_RE = re.compile(
     re.IGNORECASE,
 )
 COMMIT_LIKE_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{7,12}|[0-9A-Fa-f]{40})(?![0-9A-Fa-f])")
+LABEL_COLOR_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,6 +172,64 @@ def validate_text(label: str, text: str, reachable: set[str]) -> list[str]:
     return problems
 
 
+def validate_payload(payload: dict[str, Any], reachable: set[str]) -> list[str]:
+    problems: list[str] = []
+    labels = payload.get("labels", [])
+    issues = payload.get("issues", [])
+    if not isinstance(labels, list):
+        return ["payload: labels must be a list"]
+    if not isinstance(issues, list):
+        return ["payload: issues must be a list"]
+
+    seen_labels: set[str] = set()
+    for index, label in enumerate(labels):
+        if not isinstance(label, dict):
+            problems.append(f"label:{index}: label entry must be an object")
+            continue
+        name = str(label.get("name", ""))
+        color = str(label.get("color", ""))
+        description = str(label.get("description", ""))
+        if not name:
+            problems.append(f"label:{index}: missing name")
+        elif name in seen_labels:
+            problems.append(f"label:{name}: duplicate label")
+        else:
+            seen_labels.add(name)
+        if not LABEL_COLOR_RE.match(color):
+            problems.append(f"label:{name or index}: invalid color")
+        problems.extend(validate_text(f"label:{name}", name, reachable))
+        problems.extend(validate_text(f"label:{name}:description", description, reachable))
+
+    for index, issue in enumerate(issues):
+        if not isinstance(issue, dict):
+            problems.append(f"issue:{index}: issue entry must be an object")
+            continue
+        source_number = issue.get("source_number", index)
+        title = str(issue.get("title", ""))
+        body = str(issue.get("body", ""))
+        issue_labels = issue.get("labels", [])
+        if not title:
+            problems.append(f"issue:{source_number}: missing title")
+        if not isinstance(issue_labels, list):
+            problems.append(f"issue:{source_number}: labels must be a list")
+            issue_labels = []
+        for label in issue_labels:
+            label_name = str(label)
+            if label_name not in seen_labels:
+                problems.append(f"issue:{source_number}: unknown label reference: {label_name}")
+            problems.extend(validate_text(f"issue:{source_number}:label:{label_name}", label_name, reachable))
+        problems.extend(validate_text(f"issue:{source_number}:title", title, reachable))
+        problems.extend(validate_text(f"issue:{source_number}:body", body, reachable))
+
+    return problems
+
+
+def print_validation_problems(problems: list[str], action: str) -> None:
+    print(f"{action} refused because launch issue data is not clean:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+
+
 def fetch_labels(repo: str) -> list[dict[str, str]]:
     labels = run_json(["gh", "api", f"repos/{repo}/labels", "--paginate"])
     labels = [
@@ -240,25 +299,6 @@ def export_items(args: argparse.Namespace) -> int:
     reachable = git_reachable_shas()
     labels = fetch_labels(args.repo)
     issues = fetch_open_issues(args.repo, set(args.exclude_number))
-
-    problems: list[str] = []
-    for label in labels:
-        problems.extend(validate_text(f"label:{label['name']}", label["name"], reachable))
-        problems.extend(
-            validate_text(f"label:{label['name']}:description", label["description"], reachable)
-        )
-    for issue in issues:
-        problems.extend(validate_text(f"issue:{issue['source_number']}:title", issue["title"], reachable))
-        problems.extend(validate_text(f"issue:{issue['source_number']}:body", issue["body"], reachable))
-
-    if problems:
-        print("Export refused because launch issue data is not clean:", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
-        return 1
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "format": "mgb64-github-launch-items-v1",
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -267,6 +307,14 @@ def export_items(args: argparse.Namespace) -> int:
         "labels": labels,
         "issues": issues,
     }
+
+    problems = validate_payload(payload, reachable)
+    if problems:
+        print_validation_problems(problems, "Export")
+        return 1
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "github_launch_items.json"
     md_path = out_dir / "github_launch_items.md"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -367,6 +415,10 @@ def apply_items(args: argparse.Namespace) -> int:
     if payload.get("format") != "mgb64-github-launch-items-v1":
         print("Unrecognized export format.", file=sys.stderr)
         return 2
+    problems = validate_payload(payload, git_reachable_shas())
+    if problems:
+        print_validation_problems(problems, "Apply")
+        return 1
 
     dry_run = not args.yes
     if dry_run:
