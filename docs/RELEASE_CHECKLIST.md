@@ -188,11 +188,12 @@ not a bit-perfect N64 audio proof.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
   gives a dry-run view while still checking current-head CI health. The script
   also scans GitHub pull-request refs and workflow-run history for commits outside
-  the current public branch, and scans public issue, PR-comment, and Discussion
-  text for high-risk private paths, stale handoff language, token-shaped strings,
-  proprietary notice fragments, and resolvable stale commit references; treat
-  findings there like repository-history contamination. GitHub keeps closed PR refs
-  read-only; if any stale `refs/pull/*`
+  the current public branch, and scans public repository metadata, labels, issue
+  text, PR comments, and Discussion text for high-risk private paths, stale
+  handoff language, token-shaped strings, proprietary notice fragments, and
+  resolvable stale commit references; treat findings there like
+  repository-history contamination. GitHub keeps closed PR refs read-only; if any
+  stale `refs/pull/*`
   refs remain after a history rewrite, purge them through GitHub support or
   recreate/replace the public repository before launch. Use
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.

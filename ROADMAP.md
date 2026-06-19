@@ -26,9 +26,9 @@ Desired end state:
 - the latest `main` CI run is green for the exact launch commit;
 - `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
   history;
-- public issue, comment, Discussion, workflow-history, and commit-reference
-  surfaces expose no pre-public commit links or high-risk private/provenance
-  text;
+- public repository metadata, label, issue, comment, Discussion,
+  workflow-history, and commit-reference surfaces expose no pre-public commit
+  links or high-risk private/provenance text;
 - branch protection requires the release hygiene and Linux CMake build checks.
 
 ### SDK/libultra provenance cleanup

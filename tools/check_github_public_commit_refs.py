@@ -120,6 +120,55 @@ def rest_items(endpoint: str, kind: str) -> list[TextItem]:
     return items
 
 
+def repository_items(repo: str) -> list[TextItem]:
+    try:
+        row = json.loads(run_text(["gh", "api", f"repos/{repo}", "--jq", "@json"]))
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not fetch repository metadata: {exc.stderr.strip() or exc}"
+        ) from exc
+
+    full_name = row.get("full_name") or repo
+    return [
+        TextItem(
+            kind="repository",
+            url=row.get("html_url") or f"https://github.com/{repo}",
+            label=full_name,
+            text="\n".join(
+                (
+                    full_name,
+                    row.get("description") or "",
+                    row.get("homepage") or "",
+                )
+            ),
+        )
+    ]
+
+
+def label_items(repo: str) -> list[TextItem]:
+    try:
+        rows = run_json_lines(
+            ["gh", "api", "--paginate", f"repos/{repo}/labels?per_page=100", "--jq", ".[] | @json"]
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not fetch label text: {exc.stderr.strip() or exc}"
+        ) from exc
+
+    items: list[TextItem] = []
+    for row in rows:
+        name = row.get("name") or ""
+        items.append(
+            TextItem(
+                kind="label",
+                url=row.get("url") or f"https://github.com/{repo}/labels",
+                label=name,
+                text=f"{name}\n{row.get('description') or ''}",
+            )
+        )
+    return items
+
+
 def discussion_items(repo: str) -> tuple[list[TextItem], list[str]]:
     owner, name = repo.split("/", 1)
     query = """
@@ -198,6 +247,8 @@ def discussion_items(repo: str) -> tuple[list[TextItem], list[str]]:
 
 def fetch_items(repo: str) -> tuple[list[TextItem], list[str]]:
     items: list[TextItem] = []
+    items.extend(repository_items(repo))
+    items.extend(label_items(repo))
     items.extend(rest_items(f"repos/{repo}/issues?state=all&per_page=100", "issue-or-pr"))
     items.extend(rest_items(f"repos/{repo}/issues/comments?per_page=100", "issue-comment"))
     items.extend(rest_items(f"repos/{repo}/pulls/comments?per_page=100", "pr-review-comment"))

@@ -27,8 +27,8 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - latest main CI run corresponds to current HEAD and succeeded
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
-  - public issue/comment/discussion text has no high-risk launch leaks
-  - public issue/comment/discussion text has no stale commit references
+  - public repository metadata/label/issue/comment/discussion text has no high-risk launch leaks
+  - public repository metadata/label/issue/comment/discussion text has no stale commit references
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
@@ -77,6 +77,22 @@ scan_github_public_text_surface() {
 
   echo
   echo "== Public GitHub text surface =="
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    "repos/${repo_name}" \
+    --jq 'select(((.full_name // "") + "\n" + (.description // "") + "\n" + (.homepage // "")) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "repository\t\(.html_url)\t\(.full_name)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub repository metadata"
+  fi
+
+  if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
+    --paginate "repos/${repo_name}/labels?per_page=100" \
+    --jq '.[] | select(((.name // "") + "\n" + (.description // "")) | test(env.GE007_PUBLIC_SURFACE_PATTERN; "i")) | "label\t\(.url)\t\(.name)"' 2>/dev/null)"; then
+    findings="$(append_findings "$findings" "$scan_output")"
+  else
+    note "could not scan GitHub label names and descriptions"
+  fi
 
   if scan_output="$(GE007_PUBLIC_SURFACE_PATTERN="$pattern" gh api \
     --paginate "repos/${repo_name}/issues?state=all&per_page=100" \
@@ -152,10 +168,10 @@ scan_github_public_text_surface() {
   fi
 
   if [ -n "$findings" ]; then
-    note "high-risk text found in public GitHub issue/comment/discussion surface"
+    note "high-risk text found in public GitHub metadata/label/issue/comment/discussion surface"
     printf '%s\n' "$findings" | sed 's/^/  - /'
   else
-    ok "no high-risk text found in issues, PR comments, or discussions"
+    ok "no high-risk text found in repository metadata, labels, issues, PR comments, or discussions"
   fi
 }
 
