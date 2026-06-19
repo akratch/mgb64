@@ -110,7 +110,7 @@ def run_lines(args: list[str]) -> list[str]:
 
 def git_reachable_shas() -> set[str]:
     try:
-        return set(run_lines(["git", "rev-list", "--all"]))
+        return set(run_lines(["git", "rev-list", "HEAD"]))
     except (OSError, subprocess.CalledProcessError):
         return set()
 

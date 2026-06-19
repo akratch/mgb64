@@ -60,7 +60,7 @@ def run_json_lines(args: list[str]) -> list[dict[str, Any]]:
 
 
 def reachable_shas() -> set[str]:
-    return set(run_text(["git", "rev-list", "--all"]).splitlines())
+    return set(run_text(["git", "rev-list", "HEAD"]).splitlines())
 
 
 def plausible_commit_token(token: str) -> bool:

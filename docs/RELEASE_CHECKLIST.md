@@ -200,6 +200,8 @@ not a bit-perfect N64 audio proof.
   refs remain after a history rewrite, purge them through GitHub support or
   recreate/replace the public repository before launch. Use
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.
+  The script also checks that the contributor triage labels used by the issue
+  templates and launch roadmap are present.
 - If `tools/check_public_history_paths.py` reports removed local-only tool
   source in reachable history, do not publish the existing commit graph. Use
   `scripts/create_public_launch_repo.sh --smoke-archive` to produce, archive

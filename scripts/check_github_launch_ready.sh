@@ -31,6 +31,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - workflow run history does not expose commits outside public git history
   - public repository metadata/label/release/issue/comment/discussion text has no high-risk launch leaks
   - public repository metadata/label/release/issue/comment/discussion text has no stale commit references
+  - contributor-facing GitHub labels needed for launch triage are present
   - GitHub release assets do not expose ROM, media, archive, or binary payloads
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
@@ -66,6 +67,10 @@ append_findings() {
   else
     printf '%s\n%s' "$existing" "$new_findings"
   fi
+}
+
+public_history_shas() {
+  git rev-list HEAD
 }
 
 scan_github_public_text_surface() {
@@ -236,6 +241,49 @@ scan_github_release_assets() {
   fi
 }
 
+scan_github_launch_labels() {
+  local repo_name="$1"
+  local labels
+  local missing=""
+  local label
+
+  echo
+  echo "== Contributor label surface =="
+
+  if ! labels="$(gh api --paginate "repos/${repo_name}/labels?per_page=100" --jq '.[].name' 2>/dev/null)"; then
+    note "could not scan GitHub labels"
+    return
+  fi
+
+  for label in \
+    audio \
+    bug \
+    build \
+    documentation \
+    "good first issue" \
+    "help wanted" \
+    macos \
+    matching \
+    parity \
+    provenance \
+    release-hygiene \
+    renderer \
+    validation; do
+    if printf '%s\n' "$labels" | grep -Fxq "$label"; then
+      :
+    else
+      missing="${missing}"$'\n'"${label}"
+    fi
+  done
+
+  if [ -n "$missing" ]; then
+    warn "recommended launch triage label(s) are missing"
+    printf '%s\n' "$missing" | awk 'NF { print "  - " $0 }'
+  else
+    ok "recommended launch triage labels are present"
+  fi
+}
+
 scan_github_workflow_run_history() {
   local repo_name="$1"
   local reachable_shas
@@ -250,7 +298,7 @@ scan_github_workflow_run_history() {
   echo
   echo "== Workflow run history surface =="
 
-  reachable_shas="$(git rev-list --all)"
+  reachable_shas="$(public_history_shas)"
 
   if ! run_lines="$(gh run list --repo "$repo_name" --limit 1000 \
     --json databaseId,headSha,displayTitle,url \
@@ -325,7 +373,7 @@ scan_github_branch_tag_refs() {
   echo
   echo "== Branch and tag ref surface =="
 
-  reachable_shas="$(git rev-list --all)"
+  reachable_shas="$(public_history_shas)"
   remote_url="$(gh repo view "$repo_name" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
   if [ -z "$remote_url" ]; then
     remote_url="https://github.com/${repo_name}.git"
@@ -398,7 +446,7 @@ scan_github_pull_refs() {
   echo
   echo "== Pull request ref surface =="
 
-  reachable_shas="$(git rev-list --all)"
+  reachable_shas="$(public_history_shas)"
   remote_url="$(gh repo view "$repo_name" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
   if [ -z "$remote_url" ]; then
     remote_url="https://github.com/${repo_name}.git"
@@ -605,6 +653,7 @@ if [ -n "$repo" ]; then
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
   scan_github_public_commit_refs "$repo"
+  scan_github_launch_labels "$repo"
   scan_github_release_assets "$repo"
 
   echo

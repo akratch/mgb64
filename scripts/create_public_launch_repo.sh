@@ -134,6 +134,7 @@ launch_commit="$(
   git commit-tree HEAD^{tree} -m "$message"
 )"
 git push --quiet "$bare" "${launch_commit}:refs/heads/main"
+git --git-dir="$bare" symbolic-ref HEAD refs/heads/main
 if [ -n "$(git ls-remote "$bare" 'refs/pull/*' 'refs/tags/*')" ]; then
   echo "Temporary launch remote unexpectedly advertises pull-request or tag refs." >&2
   git ls-remote "$bare" 'refs/pull/*' 'refs/tags/*' >&2

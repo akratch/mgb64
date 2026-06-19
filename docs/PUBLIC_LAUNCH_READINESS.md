@@ -20,6 +20,7 @@ Do not make the repository public until all hard blockers are closed:
 | Current-tree/source-archive hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes and exact-head source archive smoke passes. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | `ctest --test-dir build --output-on-failure` passes after CMake configure. | Keep passing before launch and in hosted CI. |
 | GitHub public text/release hygiene | Passing | Public repository metadata, labels, release notes/assets, issues, PR comments, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label change, release edit, or issue edit. |
+| Contributor triage labels | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies the launch labels for audio, renderer, parity, validation, provenance, build, and newcomer triage are present. | Re-run after repository replacement or label migration. |
 | Public claims | Passing locally | Release guard rejects overbroad clean-room, signed-binary, packaged-release, and proprietary-notice claims. | Keep `README.md`, `PORT.md`, `ROADMAP.md`, `docs/STATUS.md`, and release notes aligned. |
 | Branch protection and security settings | Deferred | GitHub branch-protection and some security endpoints are not fully readable while private/account-limited. | Configure after CI can run and before or immediately after the public flip. |
 
@@ -38,7 +39,7 @@ Do not make the repository public until all hard blockers are closed:
   `scripts/release_preflight.sh`.
 - Public contributor scaffolding exists: issue templates, PR template,
   contributing guide, code of conduct, security policy, roadmap, status docs,
-  instrumentation docs, and labeled launch issues.
+  instrumentation docs, launch labels, and labeled launch issues.
 - GitHub issue migration tooling exists for the fresh-repository path:
   `tools/export_github_launch_items.py` exports only open launch issues and
   labels, not comments, closed PRs, Actions history, or hidden refs.
