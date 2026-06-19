@@ -20,6 +20,8 @@ message="Initial public source release"
 exclude_numbers=(7 30)
 strict_preflight_rom=""
 strict_preflight_macos_app=0
+strict_preflight_macos_app_bundle_sdl2=0
+strict_preflight_macos_app_strict_deployment_target=0
 strict_preflight_skip_docker_check=0
 
 usage() {
@@ -52,6 +54,13 @@ Options:
   --strict-preflight-macos-app
                           Include the macOS app asset gate in the optional
                           strict clean-launch preflight.
+  --strict-preflight-macos-app-bundle-sdl2
+                          Also copy the linked SDL2 dylib into the app bundle
+                          during the optional macOS app preflight.
+  --strict-preflight-macos-app-strict-deployment-target
+                          Fail the optional macOS app preflight if the local
+                          SDL2 dylib requires a newer macOS version than the
+                          requested app deployment target.
   --strict-preflight-skip-docker-check
                           Skip docker build --check in the optional strict
                           preflight. Do not use for the final launch gate.
@@ -177,6 +186,16 @@ while [ "$#" -gt 0 ]; do
       strict_preflight_macos_app=1
       shift
       ;;
+    --strict-preflight-macos-app-bundle-sdl2)
+      strict_preflight_macos_app=1
+      strict_preflight_macos_app_bundle_sdl2=1
+      shift
+      ;;
+    --strict-preflight-macos-app-strict-deployment-target)
+      strict_preflight_macos_app=1
+      strict_preflight_macos_app_strict_deployment_target=1
+      shift
+      ;;
     --strict-preflight-skip-docker-check)
       strict_preflight_skip_docker_check=1
       shift
@@ -258,6 +277,12 @@ if [ -n "$strict_preflight_rom" ]; then
   )
   if [ "$strict_preflight_macos_app" -eq 1 ]; then
     strict_preflight_args+=(--macos-app)
+  fi
+  if [ "$strict_preflight_macos_app_bundle_sdl2" -eq 1 ]; then
+    strict_preflight_args+=(--macos-app-bundle-sdl2)
+  fi
+  if [ "$strict_preflight_macos_app_strict_deployment_target" -eq 1 ]; then
+    strict_preflight_args+=(--macos-app-strict-deployment-target)
   fi
   if [ "$strict_preflight_skip_docker_check" -eq 1 ]; then
     strict_preflight_args+=(--skip-docker-check)
@@ -349,6 +374,16 @@ PY
   printf '%s\n' "- Clean source archive was created, built, warning-gated, and passed ROM-free CTest."
   if [ -n "$strict_preflight_log" ]; then
     printf '%s\n' "- Strict clean-launch preflight passed from the generated repository."
+    if [ "$strict_preflight_macos_app" -eq 1 ]; then
+      if [ "$strict_preflight_macos_app_strict_deployment_target" -eq 1 ]; then
+        printf '%s\n' "- macOS app preflight enforced the requested deployment target."
+      else
+        printf '%s\n' "- macOS app preflight verified asset hygiene, but did not enforce a distributable deployment target."
+      fi
+      if [ "$strict_preflight_macos_app_bundle_sdl2" -eq 1 ]; then
+        printf '%s\n' "- macOS app preflight bundled the linked SDL2 dylib."
+      fi
+    fi
   fi
   printf '%s\n' "- GitHub launch labels/open issues were exported through the scrubber."
   printf '%s\n' "- GitHub launch item apply dry-run completed without modifying GitHub."

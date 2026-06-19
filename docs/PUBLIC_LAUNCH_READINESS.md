@@ -47,6 +47,9 @@ issue count, and GitHub blocker evidence. A launch-ready bundle must prove:
 - strict preflight passes ROM-backed quick validation, all 20 single-player
   level spawn checks, save persistence, Dockerfile context check, source-archive
   smoke, and macOS unsigned app asset-free verification;
+- if claiming a redistributable macOS app rather than source/local packaging,
+  the macOS app lane also passes with `--macos-app-strict-deployment-target`
+  and `--macos-app-bundle-sdl2` using a controlled SDL2 build;
 - GitHub launch labels/issues export and apply dry-run pass after excluding
   repo-replacement-only issues `#7` and `#30`.
 

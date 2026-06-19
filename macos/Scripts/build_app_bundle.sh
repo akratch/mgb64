@@ -97,12 +97,18 @@ Options:
   --arch ARCH            Build one architecture: native, arm64, or x86_64
                          (default: native)
   --deployment-target V  Minimum macOS version (default: 13.0)
+  --strict-deployment-target
+                         Fail if the local SDL2 dylib requires a newer macOS
+                         version than --deployment-target.
+  --bundle-sdl2          Copy the linked SDL2 dylib into Contents/Frameworks
+                         and rewrite the executable load path to the bundle.
   --no-cmake             Reuse an existing build-macos/libge007_lib.a
   -h, --help             Show this help
 
-The resulting bundle is unsigned and still depends on SDL2 being available at
-the path reported by pkg-config. For distributable builds, sign/notarize/package
-the bundle with the separate scripts in macos/Scripts/.
+By default the resulting bundle is unsigned and still depends on SDL2 being
+available at the path reported by pkg-config. For distributable build
+candidates, use --strict-deployment-target --bundle-sdl2, then sign,
+notarize, and package the bundle with the separate scripts in macos/Scripts/.
 EOF
 }
 
@@ -111,6 +117,8 @@ BUILD_DIR=""
 OUTPUT_APP=""
 ARCH="native"
 DEPLOYMENT_TARGET="13.0"
+STRICT_DEPLOYMENT_TARGET=false
+BUNDLE_SDL2=false
 RUN_CMAKE=true
 APP_NAME="MGB64"
 EXECUTABLE_NAME="MGB64"
@@ -139,6 +147,8 @@ while [[ $# -gt 0 ]]; do
             DEPLOYMENT_TARGET="$2"
             shift 2
             ;;
+        --strict-deployment-target) STRICT_DEPLOYMENT_TARGET=true; shift ;;
+        --bundle-sdl2) BUNDLE_SDL2=true; shift ;;
         --no-cmake) RUN_CMAKE=false; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown argument: $1. Use --help." ;;
@@ -168,6 +178,9 @@ for tool in cmake swiftc pkg-config plutil ditto iconutil python3 /usr/libexec/P
         die "Required tool '${tool}' not found."
     fi
 done
+if [[ "${BUNDLE_SDL2}" == true ]] && ! command -v install_name_tool &>/dev/null; then
+    die "Required tool 'install_name_tool' not found."
+fi
 
 if ! pkg-config --exists sdl2; then
     die "SDL2 was not found by pkg-config. Install it with: brew install sdl2"
@@ -176,12 +189,25 @@ fi
 REQUESTED_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}"
 SDL2_DYLIB="$(sdl2_dylib_path || true)"
 SDL2_MINOS=""
+if [[ "${STRICT_DEPLOYMENT_TARGET}" == true && -z "${SDL2_DYLIB}" ]]; then
+    die "Could not resolve the SDL2 dylib from pkg-config; cannot enforce --strict-deployment-target."
+fi
 if [[ -n "${SDL2_DYLIB}" ]]; then
     SDL2_MINOS="$(macos_dylib_minos "${SDL2_DYLIB}")"
-    if [[ -n "${SDL2_MINOS}" ]] && version_gt "${SDL2_MINOS}" "${DEPLOYMENT_TARGET}"; then
-        warn "SDL2 dylib requires macOS ${SDL2_MINOS}; raising local bundle target from ${DEPLOYMENT_TARGET}."
-        DEPLOYMENT_TARGET="${SDL2_MINOS}"
+    if [[ "${STRICT_DEPLOYMENT_TARGET}" == true && -z "${SDL2_MINOS}" ]]; then
+        die "Could not determine the SDL2 dylib minimum macOS version; cannot enforce --strict-deployment-target."
     fi
+    if [[ -n "${SDL2_MINOS}" ]] && version_gt "${SDL2_MINOS}" "${DEPLOYMENT_TARGET}"; then
+        if [[ "${STRICT_DEPLOYMENT_TARGET}" == true ]]; then
+            die "SDL2 dylib requires macOS ${SDL2_MINOS}, newer than requested target ${DEPLOYMENT_TARGET}. Use an SDL2 build with a compatible minimum deployment target, or omit --strict-deployment-target for local-only builds."
+        else
+            warn "SDL2 dylib requires macOS ${SDL2_MINOS}; raising local bundle target from ${DEPLOYMENT_TARGET}."
+            DEPLOYMENT_TARGET="${SDL2_MINOS}"
+        fi
+    fi
+fi
+if [[ "${BUNDLE_SDL2}" == true && -z "${SDL2_DYLIB}" ]]; then
+    die "Could not resolve the SDL2 dylib from pkg-config; cannot bundle SDL2."
 fi
 
 info "Project root      : ${PROJECT_ROOT}"
@@ -195,6 +221,12 @@ fi
 info "Deployment target : ${DEPLOYMENT_TARGET}"
 if [[ -n "${SDL2_DYLIB}" ]]; then
     info "SDL2 dylib        : ${SDL2_DYLIB}${SDL2_MINOS:+ (min macOS ${SDL2_MINOS})}"
+fi
+if [[ "${STRICT_DEPLOYMENT_TARGET}" == true ]]; then
+    info "Strict target     : enabled"
+fi
+if [[ "${BUNDLE_SDL2}" == true ]]; then
+    info "Bundle SDL2       : enabled"
 fi
 
 if [[ "${RUN_CMAKE}" == true ]]; then
@@ -285,6 +317,41 @@ swiftc -o "${EXECUTABLE_PATH}" \
 
 chmod +x "${EXECUTABLE_PATH}"
 
+SDL2_BUNDLED_PATH=""
+SDL2_BUNDLE_LOAD_PATH=""
+if [[ "${BUNDLE_SDL2}" == true ]]; then
+    FRAMEWORKS_DIR="${OUTPUT_APP}/Contents/Frameworks"
+    SDL2_BASENAME="$(basename "${SDL2_DYLIB}")"
+    SDL2_BUNDLED_PATH="${FRAMEWORKS_DIR}/${SDL2_BASENAME}"
+    SDL2_BUNDLE_LOAD_PATH="@executable_path/../Frameworks/${SDL2_BASENAME}"
+
+    info "Bundling SDL2 dylib..."
+    mkdir -p "${FRAMEWORKS_DIR}"
+    ditto "${SDL2_DYLIB}" "${SDL2_BUNDLED_PATH}" \
+        || die "Failed to copy SDL2 dylib into the app bundle."
+    chmod u+w "${SDL2_BUNDLED_PATH}" 2>/dev/null || true
+
+    SDL2_LOAD_PATHS=()
+    while IFS= read -r load_path; do
+        [[ -n "${load_path}" ]] && SDL2_LOAD_PATHS+=("${load_path}")
+    done < <(
+        otool -L "${EXECUTABLE_PATH}" \
+            | awk '/libSDL2[^[:space:]]*\.dylib/ { print $1 }' \
+            | sort -u
+    )
+    if [[ "${#SDL2_LOAD_PATHS[@]}" -eq 0 ]]; then
+        die "The app executable does not link an SDL2 dylib; cannot rewrite bundle load path."
+    fi
+    for load_path in "${SDL2_LOAD_PATHS[@]}"; do
+        install_name_tool -change "${load_path}" "${SDL2_BUNDLE_LOAD_PATH}" "${EXECUTABLE_PATH}" \
+            || die "Failed to rewrite SDL2 load path: ${load_path}"
+    done
+
+    if ! otool -L "${EXECUTABLE_PATH}" | grep -Fq "${SDL2_BUNDLE_LOAD_PATH}"; then
+        die "SDL2 bundle load path was not recorded in the app executable."
+    fi
+fi
+
 echo "APPL????" > "${OUTPUT_APP}/Contents/PkgInfo"
 
 echo ""
@@ -295,6 +362,9 @@ info "Architectures : $(lipo -info "${EXECUTABLE_PATH}" 2>/dev/null || file "${E
 info "Bundle size   : $(du -sh "${OUTPUT_APP}" | cut -f1)"
 info "App icon      : ${APP_ICON}"
 info "SDL2 link     : $(otool -L "${EXECUTABLE_PATH}" | grep -E 'libSDL2' | sed 's/^[[:space:]]*//' || echo 'not found')"
+if [[ -n "${SDL2_BUNDLED_PATH}" ]]; then
+    info "SDL2 bundled  : ${SDL2_BUNDLED_PATH}"
+fi
 info "Verify assets : ${PROJECT_ROOT}/macos/Scripts/verify_asset_free.sh '${OUTPUT_APP}'"
 info "========================================"
 

@@ -101,6 +101,11 @@ requires a newer macOS version than the script's requested deployment target,
 the script raises the local bundle target to match and prints both values. See
 [`../macos/README.md`](../macos/README.md).
 
+For maintainer packaging work, `build_app_bundle.sh` also supports
+`--strict-deployment-target` and `--bundle-sdl2`. Use those with a controlled
+SDL2 build before signing or notarizing a distributable app; ordinary source
+builds do not need them.
+
 A GPU supporting OpenGL 3.0 / ES 3.0 or above is required at runtime.
 
 ### Optional Docker dev shell

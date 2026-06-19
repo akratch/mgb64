@@ -125,6 +125,19 @@ This proves the universal static library lane used by the macOS workflow, local
 `.app` assembly, and asset hygiene. It does not prove signing, notarization,
 DMG creation, a controlled SDL2 runtime/deployment target, or end-user
 redistributable packaging.
+For a redistributable macOS app candidate, rebuild the app with a controlled
+SDL2 prefix and fail closed on the deployment target before signing:
+
+```sh
+PKG_CONFIG_PATH=/path/to/controlled-sdl2/lib/pkgconfig \
+  ./macos/Scripts/build_app_bundle.sh --release \
+    --build-dir build-macos-app \
+    --output build-macos-app/MGB64.app \
+    --deployment-target 13.0 \
+    --strict-deployment-target \
+    --bundle-sdl2
+```
+
 For `.app` inputs, `verify_asset_free.sh` checks both the executable and the
 bundle resource allowlist, so accidental ROMs, captures, audio dumps, or
 unexpected media resources fail the gate.

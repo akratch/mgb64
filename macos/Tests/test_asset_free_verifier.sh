@@ -74,6 +74,18 @@ EOF
         --icns "${resources}/AppIcon.icns"
 }
 
+add_test_dylib() {
+    local app="$1"
+    local name="$2"
+    local frameworks="${app}/Contents/Frameworks"
+
+    mkdir -p "$frameworks"
+    cat >"${TMPDIR}/framework.c" <<'EOF'
+int mgb64_verifier_test_dylib(void) { return 0; }
+EOF
+    cc -dynamiclib "${TMPDIR}/framework.c" -o "${frameworks}/${name}"
+}
+
 copy_app() {
     local dst="$1"
     rm -rf "$dst"
@@ -115,6 +127,12 @@ echo "=== Asset-free verifier regression tests ==="
 assert_pass "$BASE_APP" "${TMPDIR}/clean.log"
 echo "  clean bundle: PASS"
 
+SDL_APP="${TMPDIR}/BundledSDL.app"
+copy_app "$SDL_APP"
+add_test_dylib "$SDL_APP" "libSDL2-2.0.0.dylib"
+assert_pass "$SDL_APP" "${TMPDIR}/bundled_sdl.log"
+echo "  bundled SDL2 dylib allowlist: PASS"
+
 BAD_APP="${TMPDIR}/ForbiddenResource.app"
 copy_app "$BAD_APP"
 touch "${BAD_APP}/Contents/Resources/accidental.z64"
@@ -138,5 +156,18 @@ copy_app "$BAD_APP"
 printf '\200\067\022\100' >>"${BAD_APP}/Contents/Resources/PrivacyInfo.xcprivacy"
 assert_fail_contains "$BAD_APP" "Embedded N64 ROM bootstrap magic" "${TMPDIR}/rom_magic.log"
 echo "  embedded ROM magic in resource: PASS"
+
+BAD_APP="${TMPDIR}/UnexpectedFramework.app"
+copy_app "$BAD_APP"
+add_test_dylib "$BAD_APP" "libUnexpected.dylib"
+assert_fail_contains "$BAD_APP" "Unexpected app framework/library payload" "${TMPDIR}/unexpected_framework.log"
+echo "  unexpected framework allowlist: PASS"
+
+BAD_APP="${TMPDIR}/FrameworkRomMagic.app"
+copy_app "$BAD_APP"
+add_test_dylib "$BAD_APP" "libSDL2-2.0.0.dylib"
+printf '\200\067\022\100' >>"${BAD_APP}/Contents/Frameworks/libSDL2-2.0.0.dylib"
+assert_fail_contains "$BAD_APP" "Embedded N64 ROM bootstrap magic found in app framework/library" "${TMPDIR}/framework_rom_magic.log"
+echo "  embedded ROM magic in framework: PASS"
 
 echo "=== Asset-free verifier tests: PASS ==="

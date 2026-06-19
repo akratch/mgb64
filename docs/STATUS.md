@@ -80,8 +80,10 @@ you know what to expect and where help is most valuable.
   hardware (see below).
 - **Signed/notarized macOS distribution:** the local `.app` build exists and
   remains asset-free, but it links against the builder's local SDL2 dylib.
-  Developer ID signing, notarization, a controlled SDL2 deployment target, DMG
-  polish, and any prebuilt release artifact remain deferred.
+  The build script can fail closed on a requested deployment target and bundle
+  SDL2 for app-candidate testing, but Developer ID signing, notarization, a
+  controlled SDL2 deployment target, DMG polish, and any prebuilt release
+  artifact remain deferred.
 
 ## Known issues
 

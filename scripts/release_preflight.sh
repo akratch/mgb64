@@ -20,6 +20,8 @@ binary=""
 require_rom_smoke=0
 deep_runtime=0
 run_macos_app=0
+macos_app_bundle_sdl2=0
+macos_app_strict_deployment_target=0
 skip_docker_check=0
 run_github_check=0
 github_allow_private=0
@@ -53,6 +55,13 @@ Options:
                           Implies --require-rom-smoke.
   --macos-app             Build build-macos/MGB64.app and verify the app bundle
                           and engine library are asset-free.
+  --macos-app-bundle-sdl2 Copy the linked SDL2 dylib into the local .app and
+                          rewrite the executable load path. Use with signing
+                          and notarization work, not source-only launch proof.
+  --macos-app-strict-deployment-target
+                          Fail if the local SDL2 dylib requires a newer macOS
+                          version than the app build's requested deployment
+                          target.
   --strict-ignored        Fail if ignored ROM/media/capture artifacts are present
                           outside normal build output. Use for final launch
                           from a fresh or scrubbed checkout. If runtime smoke is
@@ -181,6 +190,16 @@ while [ "$#" -gt 0 ]; do
       run_macos_app=1
       shift
       ;;
+    --macos-app-bundle-sdl2)
+      run_macos_app=1
+      macos_app_bundle_sdl2=1
+      shift
+      ;;
+    --macos-app-strict-deployment-target)
+      run_macos_app=1
+      macos_app_strict_deployment_target=1
+      shift
+      ;;
     --strict-ignored)
       strict_ignored=1
       shift
@@ -234,6 +253,12 @@ echo "  runtime ROM:   $rom"
 echo "  runtime binary: $binary"
 if [ "$run_macos_app" -eq 1 ]; then
   echo "  macOS app:      enabled"
+  if [ "$macos_app_bundle_sdl2" -eq 1 ]; then
+    echo "  macOS SDL2:     bundled"
+  fi
+  if [ "$macos_app_strict_deployment_target" -eq 1 ]; then
+    echo "  macOS target:   strict"
+  fi
 fi
 if [ "$strict_ignored" -eq 1 ]; then
   echo "  strict ignored: enabled"
@@ -334,10 +359,19 @@ if [ "$run_macos_app" -eq 1 ]; then
   fi
   run ./macos/Scripts/build_universal.sh "$macos_build_mode" --build-dir build-macos-universal
   run ./macos/Scripts/verify_asset_free.sh build-macos-universal/libge007_lib.a
-  run ./macos/Scripts/build_app_bundle.sh \
-    "$macos_build_mode" \
-    --build-dir build-macos-app \
+  macos_app_args=(
+    ./macos/Scripts/build_app_bundle.sh
+    "$macos_build_mode"
+    --build-dir build-macos-app
     --output build-macos-app/MGB64.app
+  )
+  if [ "$macos_app_bundle_sdl2" -eq 1 ]; then
+    macos_app_args+=(--bundle-sdl2)
+  fi
+  if [ "$macos_app_strict_deployment_target" -eq 1 ]; then
+    macos_app_args+=(--strict-deployment-target)
+  fi
+  run "${macos_app_args[@]}"
   run ./macos/Scripts/verify_asset_free.sh build-macos-app/libge007_lib.a
   run ./macos/Scripts/verify_asset_free.sh build-macos-app/MGB64.app
 fi

@@ -132,6 +132,22 @@ effective deployment target to match SDL2 and reports both values. This keeps
 the unsigned source-build bundle honest about the host dependency it links
 against, but it is still not a redistributable release asset.
 
+For a distributable app candidate, use a controlled SDL2 build with the intended
+minimum macOS version and make the packaging check fail closed:
+
+```bash
+PKG_CONFIG_PATH=/path/to/controlled-sdl2/lib/pkgconfig \
+  ./macos/Scripts/build_app_bundle.sh --release \
+    --deployment-target 13.0 \
+    --strict-deployment-target \
+    --bundle-sdl2
+```
+
+`--strict-deployment-target` fails if SDL2 would force the app above the
+requested minimum macOS version. `--bundle-sdl2` copies the linked SDL2 dylib
+into `Contents/Frameworks` and rewrites the app executable to load that bundled
+copy, which is the shape expected before signing and notarization.
+
 Verify the packaged app carries no ROM media:
 
 ```bash
@@ -207,9 +223,10 @@ push.
 
 Scripts in `Scripts/` cover the local unsigned build and the deferred signing /
 packaging helpers. The only verified distribution-adjacent path today is the
-asset-free local source-built `.app`; signed/notarized DMG distribution still
-needs maintainer credentials, a controlled SDL2 runtime, and release-policy
-validation.
+asset-free local source-built `.app`. The scripts now support the stricter
+app-candidate shape (`--strict-deployment-target --bundle-sdl2`), but signed /
+notarized DMG distribution still needs maintainer credentials, a controlled SDL2
+runtime, and release-policy validation.
 
 | Script | Purpose |
 |--------|---------|

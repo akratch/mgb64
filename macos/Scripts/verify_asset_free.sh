@@ -372,6 +372,66 @@ PY
     fi
 
     echo ""
+
+    echo "--- Check 7: App bundle frameworks ---"
+
+    FRAMEWORK_FAIL=0
+    FRAMEWORKS_DIR="${APP_BUNDLE}/Contents/Frameworks"
+
+    if [[ ! -d "${FRAMEWORKS_DIR}" ]]; then
+        pass "No embedded Frameworks directory present."
+    else
+        while IFS= read -r FRAMEWORK_FILE; do
+            REL="${FRAMEWORK_FILE#${APP_BUNDLE}/}"
+            BASE="$(basename "${FRAMEWORK_FILE}")"
+
+            case "${REL}" in
+                Contents/Frameworks/libSDL2-2.0.0.dylib|\
+                Contents/Frameworks/libSDL2.dylib)
+                    ;;
+                *)
+                    fail "Unexpected app framework/library payload in asset-free bundle: ${REL}"
+                    FRAMEWORK_FAIL=1
+                    ;;
+            esac
+
+            case "${BASE}" in
+                *.z64|*.Z64|*.n64|*.N64|*.v64|*.V64|baserom*|\
+                *.bin|*.BIN|*.cdata|*.CDATA|*.ctl|*.CTL|*.tbl|*.TBL|*.sbk|*.SBK|*.seq|*.SEQ|\
+                *.aifc|*.AIFC|*.aiff|*.AIFF|*.bmp|*.BMP|*.png|*.PNG|*.jpg|*.JPG|*.jpeg|*.JPEG|\
+                *.gif|*.GIF|*.webp|*.WEBP|*.ppm|*.PPM|*.raw|*.RAW|*.wav|*.WAV|*.mp3|*.MP3|\
+                *.ogg|*.OGG|*.flac|*.FLAC)
+                    fail "Forbidden ROM/media-like framework payload in app bundle: ${REL}"
+                    FRAMEWORK_FAIL=1
+                    ;;
+            esac
+
+            if python3 - "${FRAMEWORK_FILE}" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+sys.exit(0 if b"\x80\x37\x12\x40" not in data else 1)
+PY
+            then
+                :
+            else
+                fail "Embedded N64 ROM bootstrap magic found in app framework/library: ${REL}"
+                FRAMEWORK_FAIL=1
+            fi
+
+            ASSET_FRAMEWORK_SYMBOLS=$(nm -P "${FRAMEWORK_FILE}" 2>/dev/null \
+                | grep -E '^_?(ANIM_DATA_|imgRAre_)' || true)
+            if [[ -n "${ASSET_FRAMEWORK_SYMBOLS}" ]]; then
+                fail "Asset-data symbol found in app framework/library: ${REL}"
+                FRAMEWORK_FAIL=1
+            fi
+        done < <(find "${FRAMEWORKS_DIR}" -type f -print)
+
+        if (( FRAMEWORK_FAIL == 0 )); then
+            pass "No unexpected ROM/media framework payloads detected."
+        fi
+    fi
+
+    echo ""
 fi
 
 # ---------------------------------------------------------------------------
