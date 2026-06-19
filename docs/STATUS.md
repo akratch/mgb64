@@ -110,6 +110,7 @@ you know what to expect and where help is most valuable.
 - Documentation: expand build notes for your platform.
 
 For the fuller pre-public and contributor roadmap, see
-[../ROADMAP.md](../ROADMAP.md). If you want to help but aren't sure where to
-start, open a discussion or a draft PR and ask. See
-[../CONTRIBUTING.md](../CONTRIBUTING.md).
+[../ROADMAP.md](../ROADMAP.md). For the current public-launch decision matrix,
+see [PUBLIC_LAUNCH_READINESS.md](PUBLIC_LAUNCH_READINESS.md). If you want to
+help but aren't sure where to start, open a discussion or a draft PR and ask.
+See [../CONTRIBUTING.md](../CONTRIBUTING.md).

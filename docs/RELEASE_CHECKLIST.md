@@ -5,6 +5,10 @@ public announcement. The goal is to make the same promises other credible
 decompilation projects make: bring your own ROM, no bundled assets, clear
 provenance, and honest status.
 
+For the dated go/no-go matrix, see
+[PUBLIC_LAUNCH_READINESS.md](PUBLIC_LAUNCH_READINESS.md). If that matrix lists a
+hard blocker as open, do not treat this checklist as sufficient by itself.
+
 ## Required Checks
 
 For the maintainer launch path, prefer the one-command preflight:

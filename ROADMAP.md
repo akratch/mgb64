@@ -7,6 +7,30 @@ hardware, or make contributions easier to review.
 
 ## Launch blockers
 
+The current go/no-go matrix lives in
+[`docs/PUBLIC_LAUNCH_READINESS.md`](docs/PUBLIC_LAUNCH_READINESS.md). As of the
+latest pre-public audit, the hard blockers are operational GitHub release gates,
+not local source hygiene:
+
+- hosted GitHub Actions must start and pass on the exact `main` launch commit;
+- stale hidden `refs/pull/*` refs must be purged by GitHub Support or removed by
+  replacing the GitHub repository from the clean branch;
+- branch protection and security settings must be configured once the repository
+  state allows GitHub to expose those endpoints.
+
+### Operational GitHub release gates
+
+Desired end state:
+
+- `scripts/check_github_launch_ready.sh` passes without `--allow-private`;
+- the latest `main` CI run is green for the exact launch commit;
+- `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
+  history;
+- public issue, comment, Discussion, workflow-history, and commit-reference
+  surfaces expose no pre-public commit links or high-risk private/provenance
+  text;
+- branch protection requires the release hygiene and Linux CMake build checks.
+
 ### SDK/libultra provenance cleanup
 
 The public tree no longer tracks proprietary SDK notice text, but it still
