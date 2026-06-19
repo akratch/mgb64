@@ -125,19 +125,22 @@ This is for contributors working on byte-matching the original ROM, not the
 supported way to play the native port today. It needs a MIPS toolchain
 (`binutils-mips-*`), `python3`, the in-tree matching tools, and local
 user-supplied SGI IDO/IRIX compiler files. Those proprietary compiler files are
-not redistributed here. The default matching build uses
-`tools/ido5.3_recomp`, but generating that recompiled compiler locally expects
-an ignored IRIX root under `tools/irix/root` (for example
-`tools/irix/root/usr/bin/cc` and `tools/irix/root/usr/lib/err.english.cc`).
-The native CMake port does not need any of this.
+not redistributed here. The public checkout also does not vendor IDO
+static-recompilation source; `tools/ido5.3_recomp` is an ignored local
+placeholder that matching-target contributors can populate from external tooling
+they are legally comfortable using. Generating that recompiled compiler locally
+also expects an ignored IRIX root under `tools/irix/root` (for example
+`tools/irix/root/usr/bin/cc` and `tools/irix/root/usr/lib/err.english.cc`). The
+native CMake port does not need any of this.
 
 ```sh
 make            # matching target; see docs/STATUS.md for current gaps
 ```
 
-The current public-checkout gaps are the local proprietary IDO/IRIX toolchain
-input and wiring the extracted animation/image-table data into the N64 link. Set
-`COMPARE=1` when working on that path to verify output SHA-1s.
+The current public-checkout gaps are the local IDO static-recompilation tooling,
+the proprietary IDO/IRIX toolchain input, and wiring the extracted
+animation/image-table data into the N64 link. Set `COMPARE=1` when working on
+that path to verify output SHA-1s.
 
 ## Running
 

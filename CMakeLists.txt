@@ -48,6 +48,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_shell_syntax.py"
             "${CMAKE_SOURCE_DIR}/tools/check_github_branch_protection.py"
             "${CMAKE_SOURCE_DIR}/tools/check_github_public_commit_refs.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_third_party_notices.py"
             "${CMAKE_SOURCE_DIR}/tools/check_sdk_inventory.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_switch_access.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_sdk_surface.py"

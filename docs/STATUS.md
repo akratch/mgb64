@@ -33,12 +33,13 @@ you know what to expect and where help is most valuable.
 
 - **N64 ROM (byte-matching) build:** the native port is the supported target.
   Rebuilding the original N64 ROM from source additionally requires local,
-  user-supplied SGI IDO/IRIX compiler files for the matching toolchain; those
-  proprietary files are not redistributed here. It also requires the ROM-derived
-  data tables to be laid out at their ROM addresses; wiring the extracted `.bin`
-  of the animation / image tables into the N64 link (the repo's existing
-  `.incbin` pattern, as used by `music.s`/`ob_seg.s`) is the main code/data-link
-  task there.
+  external IDO static-recompilation tooling plus user-supplied SGI IDO/IRIX
+  compiler files for the matching toolchain; neither the recompilation source
+  nor the proprietary compiler inputs are redistributed here. It also requires
+  the ROM-derived data tables to be laid out at their ROM addresses; wiring the
+  extracted `.bin` of the animation / image tables into the N64 link (the repo's
+  existing `.incbin` pattern, as used by `music.s`/`ob_seg.s`) is the main
+  code/data-link task there.
 - **Release hygiene / SDK replacement:** the tree no longer tracks proprietary
   SDK notice text, but it still contains inventoried SDK/libultra-lineage
   compatibility material for the in-progress matching target. This remains the

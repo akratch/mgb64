@@ -157,6 +157,7 @@ for pattern in \
   "*.seq" \
   "assets/images/split/" \
   "assets/obseg/bg/*_all_p.c" \
+  "tools/ido5.3_recomp/*" \
   "build/" \
   "dist/"; do
   if ! grep -Fxq -- "$pattern" .dockerignore; then
@@ -170,19 +171,23 @@ fi
 echo
 echo "== Third-party provenance files =="
 for f in \
+  lib/glad/LICENSE \
   lib/glad/README.md \
   tools/asm-processor/LICENSE \
   tools/extractor/README.md \
   tools/gzipsrc/COPYING \
   tools/gzipsrc/README.md \
   tools/ido5.3_recomp/README.md \
+  tools/mktex/LICENSE.perfect_dark \
   tools/mktex/PROVENANCE.md; do
   if [ ! -s "$f" ]; then
     note "missing or empty third-party provenance file: $f"
   fi
 done
-if [ "$fail" -eq 0 ]; then
+if python3 tools/check_third_party_notices.py --repo-root .; then
   echo "  OK -- required third-party provenance files are present."
+else
+  note "third-party notice guard failed"
 fi
 
 echo

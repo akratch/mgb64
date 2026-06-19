@@ -27,6 +27,7 @@ ifneq ($(IDO_RECOMP), NO)
 
 IDO53 := ido5.3_recomp/cc
 IDO_IRIX_SENTINELS := irix/root/usr/bin/cc irix/root/usr/lib/err.english.cc
+IDO_RECOMP_SENTINELS := ido5.3_recomp/Makefile ido5.3_recomp/recomp.cpp
 
 $(IDO53):
 	@missing=0; \
@@ -39,6 +40,19 @@ $(IDO53):
 	if [ "$$missing" -ne 0 ]; then \
 		echo "MGB64: the public repo does not redistribute proprietary SGI IDO/IRIX compiler files." >&2; \
 		echo "MGB64: the native CMake port does not need them; the N64 matching target does." >&2; \
+		echo "MGB64: see docs/BUILDING.md and tools/ido5.3_recomp/README.md." >&2; \
+		exit 1; \
+	fi; \
+	for path in $(IDO_RECOMP_SENTINELS); do \
+		if [ ! -e "$$path" ]; then \
+			echo "MGB64: missing local matching-target IDO recompilation tooling: tools/$$path" >&2; \
+			missing=1; \
+		fi; \
+	done; \
+	if [ "$$missing" -ne 0 ]; then \
+		echo "MGB64: the public repo does not vendor IDO static-recompilation source." >&2; \
+		echo "MGB64: populate tools/ido5.3_recomp locally from external tooling, or use IDO_RECOMP=NO with qemu-irix." >&2; \
+		echo "MGB64: the native CMake port does not need this matching-target toolchain." >&2; \
 		echo "MGB64: see docs/BUILDING.md and tools/ido5.3_recomp/README.md." >&2; \
 		exit 1; \
 	fi

@@ -16,6 +16,9 @@ ge007_eeprom*
 ge007.ini
 goldeneye-soundpack/
 tools/irix/
+tools/ido5.3_recomp/*
+!tools/ido5.3_recomp/.gitignore
+!tools/ido5.3_recomp/README.md
 
 # Extracted assets and ROM-derived media.
 *.bin

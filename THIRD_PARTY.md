@@ -90,13 +90,13 @@ See `ROADMAP.md` for the staged cleanup plan.
 
 | Path | Component | License | Upstream |
 | --- | --- | --- | --- |
-| `lib/glad/` | glad OpenGL loader (generated, v0.1.36) + Khronos `khrplatform.h` | Public domain / MIT (Khronos headers MIT) | https://github.com/Dav1dde/glad |
+| `lib/glad/` | glad OpenGL loader (generated, v0.1.36) + Khronos `khrplatform.h` | MIT and Khronos notices — see `lib/glad/LICENSE` | https://github.com/Dav1dde/glad |
 | `tools/asm-processor/` | asm-processor (MIPS asm pre/post-processor) | The Unlicense (public domain) — see `tools/asm-processor/LICENSE` | https://github.com/simonlindholm/asm-processor |
-| `tools/ido5.3_recomp/` | Static recompilation of SGI's IDO 5.3 C compiler | Recompilation tooling MIT; the IDO compiler itself is © Silicon Graphics, Inc. and is **not** redistributed here as a binary | https://github.com/decompals/ido-static-recomp |
+| `tools/ido5.3_recomp/` | Local-only placeholder for an external static recompilation of SGI's IDO 5.3 C compiler | No recompilation source or IDO/IRIX compiler input files are redistributed here; this ignored directory must be populated locally for matching-target work | https://github.com/decompals/ido-static-recomp |
 | `tools/gzipsrc/` | gzip source (DEFLATE compression used by the asset pipeline) | GNU GPL v2 or later — see `tools/gzipsrc/COPYING` and `tools/gzipsrc/README.md` | https://www.gnu.org/software/gzip/ |
 | `tools/extractor/puff.c`, `tools/extractor/puff.h` | Mark Adler's `puff` inflate implementation, locally modified as noted in-file | zlib-style license retained in `puff.h`; see `tools/extractor/README.md` | https://zlib.net/puff/ |
-| `tools/mktex/src/libpdtex/reader.c` | Texture decompression routines copied/adapted from Perfect Dark decompilation `texdecompress.c` | MIT, via upstream Perfect Dark decompilation; see `tools/mktex/PROVENANCE.md` | https://github.com/n64decomp/perfect_dark |
-| `tools/armips/` (`tools/armips.cpp`) | armips assembler | MIT | https://github.com/Kingcom/armips |
+| `tools/mktex/src/libpdtex/reader.c` | Texture decompression routines copied/adapted from Perfect Dark decompilation `texdecompress.c` | MIT, via upstream Perfect Dark decompilation; see `tools/mktex/LICENSE.perfect_dark` and `tools/mktex/PROVENANCE.md` | https://github.com/n64decomp/perfect_dark |
+| `tools/armips/` (`tools/armips.cpp`) | armips assembler, including embedded tinyformat formatting helper | armips MIT and tinyformat Boost Software License; notices retained in `tools/armips.cpp` | https://github.com/Kingcom/armips |
 
 See each component's directory for its own license/README where present.
 

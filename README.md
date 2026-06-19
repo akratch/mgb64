@@ -154,8 +154,8 @@ hygiene reports are covered in **[SECURITY.md](SECURITY.md)**.
 This project stands on the shoulders of the N64 decompilation community. Thanks
 to the SM64, Ocarina of Time, and Perfect Dark decomp/port projects for the
 tooling, conventions, and trail-blazing that make work like this possible, and
-to the authors of [`asm-processor`](tools/asm-processor) and the other vendored
-tools.
+to the authors of [`asm-processor`](tools/asm-processor) and the other bundled
+or locally referenced tools.
 
 ## License & legal
 
@@ -170,8 +170,9 @@ distributed.** All trademarks are the property of their respective owners, and
 this project is not affiliated with or endorsed by any rights holder. Please
 read **[DISCLAIMER.md](DISCLAIMER.md)** in full before using this project.
 
-Third-party components (including N64 SDK compatibility headers/source and
-vendored tools/libraries) and their provenance are inventoried in
+Third-party components (including N64 SDK compatibility headers/source, bundled
+tools/libraries, and local-only matching-target tool placeholders) and their
+provenance are inventoried in
 **[THIRD_PARTY.md](THIRD_PARTY.md)**.
 
 Public release hygiene checks are documented in
