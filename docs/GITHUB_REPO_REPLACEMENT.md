@@ -253,4 +253,23 @@ scripts/release_preflight.sh \
   --github
 ```
 
-Only then change visibility to public.
+Then run the launch checker one more time while the repository is still private:
+
+```sh
+NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
+```
+
+Only after that dry run has no launch blockers other than private visibility,
+change visibility to public:
+
+```sh
+gh repo edit akratch/mgb64 \
+  --visibility public \
+  --accept-visibility-change-consequences
+```
+
+Finally verify the public surface without the private-repo allowance:
+
+```sh
+NO_COLOR=1 scripts/check_github_launch_ready.sh --repo akratch/mgb64
+```
