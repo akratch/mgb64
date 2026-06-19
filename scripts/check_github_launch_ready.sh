@@ -28,6 +28,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
   - public issue/comment/discussion text has no high-risk launch leaks
+  - public issue/comment/discussion text has no stale commit references
   - branch protection is readable and enforces the required CI checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
@@ -200,6 +201,21 @@ scan_github_workflow_run_history() {
 
   if [ "$run_count" -ge 1000 ]; then
     warn "only scanned the latest 1000 workflow runs; delete old runs or extend the audit before launch"
+  fi
+}
+
+scan_github_public_commit_refs() {
+  local repo_name="$1"
+  local scan_output
+
+  echo
+  echo "== Public GitHub commit-reference surface =="
+
+  if scan_output="$(python3 tools/check_github_public_commit_refs.py --repo "$repo_name" 2>&1)"; then
+    ok "$scan_output"
+  else
+    note "public GitHub text references stale or unverified commits"
+    printf '%s\n' "$scan_output" | sed 's/^/  /'
   fi
 }
 
@@ -420,6 +436,7 @@ if [ -n "$repo" ]; then
   scan_github_pull_refs "$repo"
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
+  scan_github_public_commit_refs "$repo"
 
   echo
   echo "== Protection and security settings =="
