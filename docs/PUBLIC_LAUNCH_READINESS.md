@@ -14,6 +14,7 @@ Do not make the repository public until both hard blockers are closed:
 | Area | Status | Evidence | Required action |
 | --- | --- | --- | --- |
 | Hosted CI | Blocked | Current-head GitHub Actions jobs fail before runner startup with billing/spending-limit annotations. | Fix account billing/spending settings, rerun CI on `main`, and require a green current-head run. |
+| Branch/tag refs | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies advertised `refs/heads/*` and `refs/tags/*` point into current public history. | Keep passing before launch; do not create public release tags from any other history. |
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
 | Repository source hygiene | Passing locally | `./scripts/ci/check_release_ready.sh` passes. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | `ctest --test-dir build --output-on-failure` passes after CMake configure. | Keep passing before launch and in hosted CI. |
@@ -88,8 +89,8 @@ scripts/release_preflight.sh \
 ## Do Not Announce Yet If
 
 - GitHub Actions is red or stuck before runner startup.
-- `git ls-remote origin 'refs/pull/*'` exposes commits outside current public
-  history.
+- `git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'` exposes
+  commits outside current public history.
 - `scripts/check_github_launch_ready.sh` reports public text, workflow-history,
   or commit-reference contamination.
 - A source archive smoke has not been run for the exact launch commit.

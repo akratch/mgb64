@@ -28,12 +28,12 @@ There are two acceptable fixes:
 git fetch origin main
 git status --short --branch
 ./scripts/check_github_launch_ready.sh --allow-private
-git ls-remote origin 'refs/pull/*'
+git ls-remote origin 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
 ```
 
-The launch check must fail if any `refs/pull/*` ref points at a commit outside
-the current public history, or if public GitHub text links to resolvable commits
-outside that history.
+The launch check must fail if any advertised branch, tag, or `refs/pull/*` ref
+points at a commit outside the current public history, or if public GitHub text
+links to resolvable commits outside that history.
 
 ## Option A: GitHub Support Purge
 

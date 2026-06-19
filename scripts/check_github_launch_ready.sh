@@ -25,6 +25,7 @@ Checks GitHub-side launch gates that local CI cannot prove:
   - repository visibility and collaboration features
   - GitHub Actions enabled
   - latest main CI run corresponds to current HEAD and succeeded
+  - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
   - public repository metadata/label/issue/comment/discussion text has no high-risk launch leaks
@@ -232,6 +233,81 @@ scan_github_public_commit_refs() {
   else
     note "public GitHub text references stale or unverified commits"
     printf '%s\n' "$scan_output" | sed 's/^/  /'
+  fi
+}
+
+scan_github_branch_tag_refs() {
+  local repo_name="$1"
+  local remote_url
+  local reachable_shas
+  local ref_lines
+  local peeled_tag_refs=""
+  local stale_refs=""
+  local ref_count=0
+  local sha
+  local ref
+  local base_ref
+
+  echo
+  echo "== Branch and tag ref surface =="
+
+  reachable_shas="$(git rev-list --all)"
+  remote_url="$(gh repo view "$repo_name" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
+  if [ -z "$remote_url" ]; then
+    remote_url="https://github.com/${repo_name}.git"
+  fi
+
+  if ! ref_lines="$(git ls-remote "$remote_url" 'refs/heads/*' 'refs/tags/*' 2>/dev/null)"; then
+    note "could not scan GitHub branch and tag refs"
+    return
+  fi
+
+  while IFS=$'\t' read -r sha ref; do
+    [ -n "$sha" ] || continue
+    case "$ref" in
+      *'^{}')
+        base_ref="${ref%^\{\}}"
+        peeled_tag_refs="$(append_findings "$peeled_tag_refs" "$base_ref")"
+        ;;
+    esac
+  done <<< "$ref_lines"
+
+  while IFS=$'\t' read -r sha ref; do
+    [ -n "$sha" ] || continue
+    case "$ref" in
+      *'^{}')
+        ref_count=$((ref_count + 1))
+        base_ref="${ref%^\{\}}"
+        if ! printf '%s\n' "$reachable_shas" | grep -Fqx "$sha"; then
+          stale_refs="$(append_findings "$stale_refs" "${base_ref} ${sha:0:12}")"
+        fi
+        ;;
+      refs/tags/*)
+        if printf '%s\n' "$peeled_tag_refs" | grep -Fqx "$ref"; then
+          :
+        else
+          ref_count=$((ref_count + 1))
+          if ! printf '%s\n' "$reachable_shas" | grep -Fqx "$sha"; then
+            stale_refs="$(append_findings "$stale_refs" "${ref} ${sha:0:12}")"
+          fi
+        fi
+        ;;
+      *)
+        ref_count=$((ref_count + 1))
+        if ! printf '%s\n' "$reachable_shas" | grep -Fqx "$sha"; then
+          stale_refs="$(append_findings "$stale_refs" "${ref} ${sha:0:12}")"
+        fi
+        ;;
+    esac
+  done <<< "$ref_lines"
+
+  if [ -n "$stale_refs" ]; then
+    note "branch or tag refs expose commits outside current public git history"
+    printf '%s\n' "$stale_refs" | sed 's/^/  - /'
+  elif [ "$ref_count" -eq 0 ]; then
+    warn "no branch or tag refs are advertised"
+  else
+    ok "all advertised branch and tag refs are reachable from current git history"
   fi
 }
 
@@ -449,6 +525,7 @@ if [ -n "$repo" ]; then
     fi
   fi
 
+  scan_github_branch_tag_refs "$repo"
   scan_github_pull_refs "$repo"
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"

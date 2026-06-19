@@ -24,6 +24,8 @@ Desired end state:
 
 - `scripts/check_github_launch_ready.sh` passes without `--allow-private`;
 - the latest `main` CI run is green for the exact launch commit;
+- advertised `refs/heads/*` and `refs/tags/*` refs point only at commits inside
+  current public history;
 - `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
   history;
 - public repository metadata, label, issue, comment, Discussion,
