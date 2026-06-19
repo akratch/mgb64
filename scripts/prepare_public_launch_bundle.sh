@@ -393,8 +393,9 @@ PY
     printf '%s\n' "This bundle did not run ROM-backed strict preflight. For the final local launch proof, run:"
     printf '\n```sh\n'
     printf '%s\n' "cd \"$clean_repo\""
-    printf '%s\n' "scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --strict-ignored --macos-app"
+    printf '%s\n' "scripts/release_preflight.sh --deep-runtime --rom /path/outside/repo/baserom.u.z64 --strict-ignored --macos-app-bundle-sdl2"
     printf '```\n'
+    printf '\n%s\n' "For a redistributable macOS app candidate, add \`--macos-app-strict-deployment-target\` with a controlled SDL2 build."
   fi
   printf '\n## Destructive Steps Not Performed\n\n'
   printf '%s\n' "This bundle does not rename repositories, create repositories, push refs, change visibility, import issues, or edit branch protection."

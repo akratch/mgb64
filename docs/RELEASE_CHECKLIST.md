@@ -17,7 +17,7 @@ For the maintainer launch path, prefer the one-command preflight:
 scripts/release_preflight.sh \
   --deep-runtime \
   --rom baserom.u.z64 \
-  --macos-app
+  --macos-app-bundle-sdl2
 ```
 
 Before the repository is ready to flip public, run the same preflight from a
@@ -30,13 +30,13 @@ not a launch gate. In strict mode, keep the ROM outside the repository checkout:
 scripts/release_preflight.sh \
   --deep-runtime \
   --rom /path/outside/repo/baserom.u.z64 \
-  --macos-app \
+  --macos-app-bundle-sdl2 \
   --strict-ignored \
   --github
 ```
 
-Omit `--macos-app` when running the source/native preflight from Linux or
-Windows; the macOS app-bundle lane is only available on macOS.
+Omit `--macos-app-bundle-sdl2` when running the source/native preflight from
+Linux or Windows; the macOS app-bundle lane is only available on macOS.
 
 The equivalent lower-level checks are:
 
@@ -74,8 +74,13 @@ inside the non-destructive launch bundle:
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
-  --strict-preflight-macos-app
+  --strict-preflight-macos-app \
+  --strict-preflight-macos-app-bundle-sdl2
 ```
+
+Add `--strict-preflight-macos-app-strict-deployment-target` only when
+`pkg-config` points at a controlled SDL2 build with the intended minimum macOS
+version.
 
 Review `/tmp/mgb64-build-warnings.json` before posting a release announcement:
 local release builds and the source-archive smoke build are expected to be

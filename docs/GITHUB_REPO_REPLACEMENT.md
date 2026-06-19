@@ -164,8 +164,13 @@ repository:
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
-  --strict-preflight-macos-app
+  --strict-preflight-macos-app \
+  --strict-preflight-macos-app-bundle-sdl2
 ```
+
+Add `--strict-preflight-macos-app-strict-deployment-target` only when
+`pkg-config` points at a controlled SDL2 build with the intended minimum macOS
+version.
 
 4. Rename the current private GitHub repository out of the way:
 
@@ -248,10 +253,13 @@ After the fresh/purged repository has branch/security settings configured:
 scripts/release_preflight.sh \
   --deep-runtime \
   --rom /path/outside/repo/baserom.u.z64 \
-  --macos-app \
+  --macos-app-bundle-sdl2 \
   --strict-ignored \
   --github
 ```
+
+Add `--macos-app-strict-deployment-target` only when `pkg-config` points at a
+controlled SDL2 build with the intended minimum macOS version.
 
 Then run the launch checker one more time while the repository is still private:
 

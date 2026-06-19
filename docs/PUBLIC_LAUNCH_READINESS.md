@@ -33,7 +33,8 @@ workspace with a ROM path outside the generated clean launch checkout:
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
-  --strict-preflight-macos-app
+  --strict-preflight-macos-app \
+  --strict-preflight-macos-app-bundle-sdl2
 ```
 
 The generated `PUBLIC_LAUNCH_BUNDLE.md` is the place to record exact source
@@ -104,7 +105,7 @@ will inspect first.
    or by an approved history rewrite.
    When a local ROM is available outside the generated launch checkout, prefer
    the fuller strict dry run:
-   `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app`.
+   `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app --strict-preflight-macos-app-bundle-sdl2`.
 2. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
    only purge hidden refs/caches; it does not fix launch-blocking paths in
@@ -117,10 +118,13 @@ will inspect first.
 scripts/release_preflight.sh \
   --deep-runtime \
   --rom /path/outside/repo/baserom.u.z64 \
-  --macos-app \
+  --macos-app-bundle-sdl2 \
   --strict-ignored \
   --github
 ```
+
+Add `--macos-app-strict-deployment-target` only when `pkg-config` points at a
+controlled SDL2 build with the intended minimum macOS version.
 
 4. Configure GitHub Actions policy for the launch repository so hosted Actions
    are disabled. The checked-in workflows remain manual-only, SHA-pinned local
