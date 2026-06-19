@@ -534,7 +534,6 @@ fi
 
 head_sha="$(git rev-parse HEAD)"
 branch="$(git branch --show-current)"
-origin_main_sha="$(git rev-parse origin/main 2>/dev/null || true)"
 
 if [ "$branch" = "main" ]; then
   ok "current branch is main"
@@ -542,15 +541,20 @@ else
   note "current branch is '$branch', expected main"
 fi
 
-if [ -n "$origin_main_sha" ] && [ "$head_sha" = "$origin_main_sha" ]; then
-  ok "HEAD matches origin/main ($head_sha)"
-elif [ -n "$origin_main_sha" ]; then
-  note "HEAD ($head_sha) does not match origin/main ($origin_main_sha)"
-else
-  warn "origin/main is not available locally; run git fetch before final launch"
-fi
-
 if [ -n "$repo" ]; then
+  remote_url_for_head="$(gh repo view "$repo" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
+  if [ -z "$remote_url_for_head" ]; then
+    remote_url_for_head="https://github.com/${repo}.git"
+  fi
+  github_main_sha="$(git ls-remote "$remote_url_for_head" 'refs/heads/main' 2>/dev/null | awk '{ print $1 }')"
+  if [ -n "$github_main_sha" ] && [ "$head_sha" = "$github_main_sha" ]; then
+    ok "HEAD matches GitHub main ($head_sha)"
+  elif [ -n "$github_main_sha" ]; then
+    note "HEAD ($head_sha) does not match GitHub main ($github_main_sha)"
+  else
+    note "could not read GitHub main ref from $remote_url_for_head"
+  fi
+
   echo
   echo "== Repository settings =="
   is_private="$(gh repo view "$repo" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo unknown)"

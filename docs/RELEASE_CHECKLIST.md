@@ -187,8 +187,9 @@ not a bit-perfect N64 audio proof.
   checks pass.
 - Run `scripts/check_github_launch_ready.sh` after GitHub settings are final.
   Before flipping public, `scripts/check_github_launch_ready.sh --allow-private`
-  gives a dry-run view while still checking current-head CI health. The script
-  also scans local reachable git history for launch-blocking public paths,
+  gives a dry-run view while still checking that local `HEAD` matches GitHub
+  `main` and that current-head CI is healthy. The script also scans local
+  reachable git history for launch-blocking public paths,
   scans GitHub branch, tag, pull-request, and workflow-run history surfaces for
   commits outside the current public branch, and scans public repository
   metadata, labels, release notes/assets, issue text, PR comments, and

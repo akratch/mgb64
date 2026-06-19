@@ -208,6 +208,10 @@ release-asset, and public commit-reference sections must pass. The remaining
 expected dry-run failures before launch are repository privacy, hosted Actions
 startup if billing/settings are still blocked, and private/pro-only security
 settings that GitHub does not expose until public/pro settings are available.
+The launch-readiness check compares the local `HEAD` directly against the
+GitHub repository's `main` ref, so it is safe to run from the generated clean
+launch repository even if that checkout's local `origin` still points at a
+temporary validation remote.
 
 ## Final Public Flip
 
