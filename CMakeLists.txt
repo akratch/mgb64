@@ -51,6 +51,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_native_switch_access.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_sdk_surface.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_stub_surface.py"
+            "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(

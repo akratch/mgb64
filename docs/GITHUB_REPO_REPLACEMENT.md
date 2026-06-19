@@ -70,7 +70,34 @@ clean branch you intend to publish.
 ctest --test-dir build --output-on-failure
 ```
 
-2. Create and verify a local clean mirror:
+2. Export launch issues and labels that should be recreated:
+
+```sh
+python3 tools/export_github_launch_items.py export \
+  --repo akratch/mgb64 \
+  --out-dir /tmp/mgb64-launch-items \
+  --exclude-number 7 \
+  --exclude-number 30
+```
+
+Issues #7 and #30 are old-repository launch blockers. Recreate them manually in
+the fresh repository only if the same blocker still exists after replacement.
+The exporter copies only labels and open issue bodies; it does not copy closed
+PRs, comments, Actions runs, or hidden refs. It fails if exported text contains
+private paths, token-shaped strings, proprietary notice fragments, or
+non-current commit-like references.
+
+Preview the import before modifying a fresh repository:
+
+```sh
+python3 tools/export_github_launch_items.py apply \
+  --repo akratch/mgb64 \
+  --input-dir /tmp/mgb64-launch-items
+```
+
+Add `--yes` only after the fresh repository exists and the preview is correct.
+
+3. Create and verify a local clean mirror:
 
 ```sh
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mgb64-replacement.XXXXXX")"
@@ -88,13 +115,13 @@ git clone "$tmp/remote.git" "$tmp/clone"
 
 `git ls-remote "$tmp/remote.git" 'refs/pull/*'` must print nothing.
 
-3. Rename the current private GitHub repository out of the way:
+4. Rename the current private GitHub repository out of the way:
 
 ```sh
 gh repo rename -R akratch/mgb64 "mgb64-prepublic-$(date +%Y%m%d)" --yes
 ```
 
-4. Create a fresh private repository with the launch name:
+5. Create a fresh private repository with the launch name:
 
 ```sh
 gh repo create akratch/mgb64 \
@@ -103,7 +130,7 @@ gh repo create akratch/mgb64 \
   --description "A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included."
 ```
 
-5. Push only the clean public branch:
+6. Push only the clean public branch:
 
 ```sh
 git remote add launch-clean git@github.com:akratch/mgb64.git
@@ -111,7 +138,7 @@ git push launch-clean HEAD:refs/heads/main
 gh repo edit akratch/mgb64 --default-branch main
 ```
 
-6. Restore repository settings:
+7. Restore repository settings:
 
 ```sh
 gh repo edit akratch/mgb64 \
@@ -126,11 +153,20 @@ gh repo edit akratch/mgb64 \
   --add-topic bring-your-own-rom,decompilation,game-preservation,n64,native-port,nintendo-64,opengl,reverse-engineering,sdl2,source-port
 ```
 
-7. Recreate any desired launch issues from `ROADMAP.md`, `docs/STATUS.md`, and
-   the current open issue list. Do not migrate closed PRs, old generated status
-   comments, or pre-rewrite commit references.
+8. Recreate launch issues and labels from the scrubbed export:
 
-8. Verify the fresh repository:
+```sh
+python3 tools/export_github_launch_items.py apply \
+  --repo akratch/mgb64 \
+  --input-dir /tmp/mgb64-launch-items \
+  --yes
+```
+
+Do not migrate closed PRs, old generated status comments, or pre-rewrite commit
+references. Recreate any still-relevant launch blockers manually with fresh
+current-repo evidence.
+
+9. Verify the fresh repository:
 
 ```sh
 git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
