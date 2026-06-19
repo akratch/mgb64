@@ -121,12 +121,15 @@ Add `--yes` only after the fresh repository exists and the preview is correct.
 3. Create and verify a local clean launch repository:
 
 ```sh
-scripts/create_public_launch_repo.sh
+scripts/create_public_launch_repo.sh --smoke-archive
 ```
 
 The helper prints a fresh local repository path. It creates a single root commit
-from the current committed tree and runs the release and history-path guards
-inside that repository. The resulting repository must have exactly one commit:
+from the current committed tree, verifies tree equality and one-commit history,
+runs the release and history-path guards inside that repository, and writes a
+local evidence report. With `--smoke-archive`, it also creates and smoke-tests a
+source archive from the clean repository. The resulting repository must have
+exactly one commit:
 
 ```sh
 git -C /path/from/helper rev-list --all --count

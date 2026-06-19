@@ -202,8 +202,9 @@ not a bit-perfect N64 audio proof.
   [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.
 - If `tools/check_public_history_paths.py` reports removed local-only tool
   source in reachable history, do not publish the existing commit graph. Use
-  `scripts/create_public_launch_repo.sh` to produce and validate a fresh
-  single-root launch repository, or perform an approved history rewrite.
+  `scripts/create_public_launch_repo.sh --smoke-archive` to produce, archive
+  smoke-test, and validate a fresh single-root launch repository, or perform an
+  approved history rewrite.
 - Set repository topics that make the project discoverable without implying an
   official affiliation.
 - Keep issue and PR templates enabled.

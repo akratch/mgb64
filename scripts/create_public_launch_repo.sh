@@ -13,17 +13,50 @@ cd "$(git rev-parse --show-toplevel)"
 
 out=""
 message="Initial public source release"
+smoke_archive=0
+jobs="${GE007_BUILD_JOBS:-4}"
+max_warnings=0
+report=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/create_public_launch_repo.sh [--out DIR] [--message MESSAGE]
+Usage: scripts/create_public_launch_repo.sh [--out DIR] [--message MESSAGE] [--smoke-archive]
 
 Creates a fresh local git repository with a single root commit containing the
 current HEAD tree, then runs public release/history guards inside that repo.
 
 The output repository is intended for replacement dry runs. It does not include
 old commits, hidden pull-request refs, local ignored files, or generated assets.
+
+Options:
+  --out DIR             Output repository directory. Must be empty or absent.
+  --message MESSAGE     Root commit message.
+  --smoke-archive       Build and test the source archive from the clean repo.
+  --jobs N              Parallel jobs for archive smoke (default: GE007_BUILD_JOBS or 4).
+  --max-warnings N      Archive warning threshold (default: 0).
+  --report PATH         Write a Markdown evidence report to PATH.
 USAGE
+}
+
+require_non_negative_int() {
+  local name="$1"
+  local value="$2"
+  case "$value" in
+    ''|*[!0-9]*)
+      echo "${name} must be a non-negative integer, got: ${value}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+  require_non_negative_int "$name" "$value"
+  if [ "$value" -eq 0 ]; then
+    echo "${name} must be a positive integer, got: ${value}" >&2
+    exit 2
+  fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -38,6 +71,25 @@ while [ "$#" -gt 0 ]; do
       message="$2"
       shift 2
       ;;
+    --smoke-archive)
+      smoke_archive=1
+      shift
+      ;;
+    --jobs)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      jobs="$2"
+      shift 2
+      ;;
+    --max-warnings)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      max_warnings="$2"
+      shift 2
+      ;;
+    --report)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      report="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -48,6 +100,9 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+require_positive_int "--jobs" "$jobs"
+require_non_negative_int "--max-warnings" "$max_warnings"
 
 dirty="$(git status --porcelain --untracked-files=all)"
 if [ -n "$dirty" ]; then
@@ -69,6 +124,7 @@ fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mgb64-public-launch-objects.XXXXXX")"
 bare="$tmp/remote.git"
+archive_info="$tmp/archive-info.tsv"
 git init --bare "$bare" >/dev/null
 launch_commit="$(
   GIT_AUTHOR_NAME="MGB64 Launch Builder" \
@@ -122,7 +178,55 @@ git clone --quiet "$bare" "$out"
 
   ./scripts/ci/check_release_ready.sh
   python3 tools/check_public_history_paths.py --repo-root .
+
+  if [ "$smoke_archive" -eq 1 ]; then
+    echo
+    echo "== Clean launch source archive smoke =="
+    ./scripts/make_public_source_archive.sh --force
+    archive="dist/mgb64-$(git rev-parse --short=12 HEAD).tar.gz"
+    ./scripts/smoke_public_source_archive.sh "$archive" --jobs "$jobs" --max-warnings "$max_warnings"
+    archive_sha="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
+    printf '%s\t%s\n' "$archive" "$archive_sha" > "$archive_info"
+  fi
 )
+
+if [ -z "$report" ]; then
+  report="$(dirname "$out")/mgb64-clean-launch-report.md"
+fi
+mkdir -p "$(dirname "$report")"
+
+archive_path=""
+archive_sha=""
+if [ -s "$archive_info" ]; then
+  IFS=$'\t' read -r archive_path archive_sha < "$archive_info"
+fi
+
+{
+  printf '# MGB64 Clean Launch Repository Evidence\n\n'
+  printf '%s\n' "- Generated: \`$(date -u '+%Y-%m-%dT%H:%M:%SZ')\`"
+  printf '%s\n' "- Source repository: \`$(pwd)\`"
+  printf '%s\n' "- Source HEAD: \`${source_head}\`"
+  printf '%s\n' "- Source tree: \`${source_tree}\`"
+  printf '%s\n' "- Launch repository: \`${out}\`"
+  printf '%s\n' "- Launch HEAD: \`$(git -C "$out" rev-parse HEAD)\`"
+  printf '%s\n' "- Launch tree: \`$(git -C "$out" rev-parse HEAD^{tree})\`"
+  printf '%s\n' "- Launch reachable commits: \`$(git -C "$out" rev-list --all --count)\`"
+  printf '%s\n' "- Launch HEAD parent count: \`$(git -C "$out" rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')\`"
+  printf '%s\n' "- Launch working tree status: \`clean\`"
+  if [ -n "$archive_path" ]; then
+    printf '%s\n' "- Source archive: \`${out}/${archive_path}\`"
+    printf '%s\n' "- Source archive SHA-256: \`${archive_sha}\`"
+  else
+    printf '%s\n' "- Source archive smoke: not requested"
+  fi
+  printf '\n## Required Follow-Up\n\n'
+  printf '%s\n' "Before publishing, push only this launch repository to a fresh GitHub repository and verify:"
+  printf '\n```sh\n'
+  printf '%s\n' "git -C \"$out\" ls-remote <new-remote> 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'"
+  printf '%s\n' "cd \"$out\""
+  printf '%s\n' "scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private"
+  printf '```\n'
+} > "$report"
 
 cat <<EOF
 
@@ -134,6 +238,9 @@ Launch HEAD:
 
 Source HEAD used:
   $source_head
+
+Evidence report:
+  $report
 
 Verify remote refs before publishing from this repository:
   git -C "$out" ls-remote <new-remote> 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'

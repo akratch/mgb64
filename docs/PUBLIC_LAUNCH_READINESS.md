@@ -64,7 +64,8 @@ will inspect first.
 
 1. Fix GitHub Actions billing/spending so hosted runners can start.
 2. Resolve reachable-history provenance by publishing from a fresh single-root
-   launch repository created from the current clean tree, or by an approved
+   launch repository created from the current clean tree with
+   `scripts/create_public_launch_repo.sh --smoke-archive`, or by an approved
    history rewrite.
 3. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. The replacement
