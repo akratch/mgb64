@@ -4,7 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 2
+    # Public launch uses local preflight evidence and starts with no hosted
+    # automation branches. Vulnerability alerts are enabled in repo settings.
+    open-pull-requests-limit: 0
     groups:
       github-actions:
         patterns:
@@ -17,7 +19,9 @@ updates:
     directory: "/tools/asm-processor/rust"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 2
+    # Keep version-update PRs disabled until maintainers deliberately enable
+    # hosted automation after launch.
+    open-pull-requests-limit: 0
     groups:
       asm-processor-rust:
         patterns:
