@@ -182,17 +182,19 @@ gh repo edit akratch/mgb64 --default-branch main
 7. Restore repository settings:
 
 ```sh
-gh repo edit akratch/mgb64 \
-  --enable-issues \
-  --enable-discussions \
-  --enable-wiki=false \
-  --delete-branch-on-merge \
-  --allow-update-branch \
-  --enable-squash-merge \
-  --enable-merge-commit \
-  --enable-rebase-merge \
-  --add-topic bring-your-own-rom,decompilation,game-preservation,n64,native-port,nintendo-64,opengl,reverse-engineering,sdl2,source-port
+scripts/configure_github_launch_settings.sh --repo akratch/mgb64
 ```
+
+Review the dry-run output. Add `--yes` only after the fresh repository exists,
+hosted CI can start, and the planned settings match the launch policy:
+
+```sh
+scripts/configure_github_launch_settings.sh --repo akratch/mgb64 --yes
+```
+
+The helper configures repository settings, recommended security endpoints when
+GitHub exposes them, and `main` branch protection with `Release hygiene` and
+`CMake build (Linux)` required and up to date before merge.
 
 8. Recreate launch issues and labels from the scrubbed export:
 

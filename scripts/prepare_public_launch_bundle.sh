@@ -283,7 +283,7 @@ PY
   printf '%s\n' "git -C \"$clean_repo\" remote add launch-clean git@github.com:${repo}.git"
   printf '%s\n' "git -C \"$clean_repo\" push launch-clean HEAD:refs/heads/main"
   printf '%s\n' "gh repo edit ${repo} --default-branch main"
-  printf '%s\n' "gh repo edit ${repo} --enable-issues --enable-discussions --enable-wiki=false --delete-branch-on-merge --allow-update-branch --enable-squash-merge --enable-merge-commit --enable-rebase-merge --add-topic bring-your-own-rom,decompilation,game-preservation,n64,native-port,nintendo-64,opengl,reverse-engineering,sdl2,source-port"
+  printf '%s\n' "scripts/configure_github_launch_settings.sh --repo ${repo} --yes"
   printf '%s\n' "python3 \"$clean_repo/tools/export_github_launch_items.py\" apply --repo ${repo} --input-dir \"$items_dir\" --yes"
   printf '%s\n' "git -C \"$clean_repo\" ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'"
   printf '%s\n' "cd \"$clean_repo\""

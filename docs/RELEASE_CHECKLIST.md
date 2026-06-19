@@ -181,7 +181,10 @@ not a bit-perfect N64 audio proof.
 - Protect `main` with required status checks for `Release hygiene` and
   `CMake build (Linux)`, with checks required to be up to date before merge.
   The launch-readiness script fails if those required checks are missing once
-  branch protection is readable.
+  branch protection is readable. Use
+  `scripts/configure_github_launch_settings.sh --repo akratch/mgb64` to preview
+  the repository/security/branch-protection settings before applying them with
+  `--yes`.
 - Confirm GitHub Actions can actually start on `main` and the latest CI run is
   green. A billing/spending-limit failure is a launch blocker even if local
   checks pass.

@@ -240,6 +240,7 @@ for f in \
   scripts/make_public_source_archive.sh \
   scripts/smoke_public_source_archive.sh \
   scripts/check_github_launch_ready.sh \
+  scripts/configure_github_launch_settings.sh \
   scripts/prepare_github_launch_evidence.sh \
   macos/Scripts/build_app_bundle.sh \
   macos/Scripts/build_universal.sh \
