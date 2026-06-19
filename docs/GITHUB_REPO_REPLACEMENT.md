@@ -1,0 +1,159 @@
+# GitHub Repository Replacement Runbook
+
+Use this only when GitHub-side metadata exposes pre-public history that cannot be
+removed with normal git commands. The current known case is closed PR refs under
+`refs/pull/*`: GitHub keeps these refs read-only, and they can continue to point
+at commits outside the current public branch after a history rewrite.
+
+Do not flip the repository public while
+`scripts/check_github_launch_ready.sh --allow-private` reports stale pull refs.
+
+## Why This Exists
+
+`git push origin :refs/pull/8/head` and the equivalent GitHub API ref deletion
+fail because GitHub treats pull-request refs as hidden/read-only refs. If those
+refs point at pre-public commits, a public repository can still reveal old commit
+objects and PR diffs even when `main` itself is clean.
+
+There are two acceptable fixes:
+
+- ask GitHub Support to purge the stale hidden PR refs and associated unreachable
+  objects; or
+- replace the GitHub repository with a fresh repository populated only from the
+  current clean branch.
+
+## Verify The Problem
+
+```sh
+git fetch origin main
+git status --short --branch
+./scripts/check_github_launch_ready.sh --allow-private
+git ls-remote origin 'refs/pull/*'
+```
+
+The launch check must fail if any `refs/pull/*` ref points at a commit outside
+the current public history.
+
+## Option A: GitHub Support Purge
+
+Send GitHub Support:
+
+- repository: `akratch/mgb64`;
+- current public branch head: `git rev-parse HEAD`;
+- stale refs from the `Pull request ref surface` section of
+  `scripts/check_github_launch_ready.sh --allow-private`;
+- request: purge the listed hidden `refs/pull/*` refs, closed PR diff caches, and
+  unreachable commit objects that are not reachable from current `main`.
+
+After support confirms the purge:
+
+```sh
+git ls-remote origin 'refs/pull/*'
+./scripts/check_github_launch_ready.sh --allow-private
+```
+
+The pull-ref section must pass before launch.
+
+## Option B: Replace The Repository
+
+This is destructive to the GitHub repository identity. Use it only after deciding
+that preserving current GitHub issues/PR numbers is less important than removing
+all pre-public GitHub metadata.
+
+Do not use `git push --mirror` from the old GitHub repository. Push only the
+clean branch you intend to publish.
+
+1. Final local source validation:
+
+```sh
+./scripts/ci/check_release_ready.sh
+ctest --test-dir build --output-on-failure
+```
+
+2. Create and verify a local clean mirror:
+
+```sh
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/mgb64-replacement.XXXXXX")"
+git init --bare "$tmp/remote.git"
+git push "$tmp/remote.git" HEAD:refs/heads/main
+git ls-remote "$tmp/remote.git" 'refs/pull/*'
+git clone "$tmp/remote.git" "$tmp/clone"
+(
+  cd "$tmp/clone"
+  ./scripts/ci/check_release_ready.sh
+  git rev-parse HEAD
+  git rev-list --all --count
+)
+```
+
+`git ls-remote "$tmp/remote.git" 'refs/pull/*'` must print nothing.
+
+3. Rename the current private GitHub repository out of the way:
+
+```sh
+gh repo rename -R akratch/mgb64 "mgb64-prepublic-$(date +%Y%m%d)" --yes
+```
+
+4. Create a fresh private repository with the launch name:
+
+```sh
+gh repo create akratch/mgb64 \
+  --private \
+  --disable-wiki \
+  --description "A decompilation and native source port of a 1997 Nintendo 64 first-person shooter, for research & preservation. Bring your own ROM - no copyrighted assets included."
+```
+
+5. Push only the clean public branch:
+
+```sh
+git remote add launch-clean git@github.com:akratch/mgb64.git
+git push launch-clean HEAD:refs/heads/main
+gh repo edit akratch/mgb64 --default-branch main
+```
+
+6. Restore repository settings:
+
+```sh
+gh repo edit akratch/mgb64 \
+  --enable-issues \
+  --enable-discussions \
+  --enable-wiki=false \
+  --delete-branch-on-merge \
+  --allow-update-branch \
+  --enable-squash-merge \
+  --enable-merge-commit \
+  --enable-rebase-merge \
+  --add-topic bring-your-own-rom,decompilation,game-preservation,n64,native-port,nintendo-64,opengl,reverse-engineering,sdl2,source-port
+```
+
+7. Recreate any desired launch issues from `ROADMAP.md`, `docs/STATUS.md`, and
+   the current open issue list. Do not migrate closed PRs, old generated status
+   comments, or pre-rewrite commit references.
+
+8. Verify the fresh repository:
+
+```sh
+git ls-remote launch-clean 'refs/heads/*' 'refs/tags/*' 'refs/pull/*'
+./scripts/check_github_launch_ready.sh --repo akratch/mgb64 --allow-private
+```
+
+The pull-ref, workflow-history, and public-text sections must pass. The remaining
+expected dry-run failures before launch are repository privacy, hosted Actions
+startup if billing/settings are still blocked, and private/pro-only security
+settings that GitHub does not expose until public/pro settings are available.
+
+## Final Public Flip
+
+After the fresh/purged repository has green current-head CI and branch/security
+settings are configured:
+
+```sh
+scripts/release_preflight.sh \
+  --deep-runtime \
+  --rom /path/outside/repo/baserom.u.z64 \
+  --macos-app \
+  --strict-ignored \
+  --github
+```
+
+Only then change visibility to public.

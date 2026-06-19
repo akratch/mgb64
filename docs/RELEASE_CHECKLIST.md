@@ -189,7 +189,8 @@ not a bit-perfect N64 audio proof.
   and proprietary notice fragments; treat findings there like repository-history
   contamination. GitHub keeps closed PR refs read-only; if any stale `refs/pull/*`
   refs remain after a history rewrite, purge them through GitHub support or
-  recreate/replace the public repository before launch.
+  recreate/replace the public repository before launch. Use
+  [GITHUB_REPO_REPLACEMENT.md](GITHUB_REPO_REPLACEMENT.md) for that runbook.
 - Set repository topics that make the project discoverable without implying an
   official affiliation.
 - Keep issue and PR templates enabled.

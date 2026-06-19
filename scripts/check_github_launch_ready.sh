@@ -204,6 +204,8 @@ scan_github_workflow_run_history() {
 }
 
 scan_github_pull_refs() {
+  local repo_name="$1"
+  local remote_url
   local reachable_shas
   local ref_lines
   local stale_refs=""
@@ -215,8 +217,12 @@ scan_github_pull_refs() {
   echo "== Pull request ref surface =="
 
   reachable_shas="$(git rev-list --all)"
+  remote_url="$(gh repo view "$repo_name" --json sshUrl --jq '.sshUrl // ""' 2>/dev/null || true)"
+  if [ -z "$remote_url" ]; then
+    remote_url="https://github.com/${repo_name}.git"
+  fi
 
-  if ! ref_lines="$(git ls-remote origin 'refs/pull/*' 2>/dev/null)"; then
+  if ! ref_lines="$(git ls-remote "$remote_url" 'refs/pull/*' 2>/dev/null)"; then
     note "could not scan GitHub pull request refs"
     return
   fi
@@ -411,7 +417,7 @@ if [ -n "$repo" ]; then
     fi
   fi
 
-  scan_github_pull_refs
+  scan_github_pull_refs "$repo"
   scan_github_workflow_run_history "$repo"
   scan_github_public_text_surface "$repo"
 
