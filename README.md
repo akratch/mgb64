@@ -3,9 +3,8 @@
 
 <p align="center">
 A <strong>decompilation</strong> and <strong>native source port</strong>
-of the 1997 Nintendo&nbsp;64 first-person shooter developed by Rare,
-<em>GoldenEye&nbsp;007</em> — reimplemented in portable C so it can be studied,
-preserved, and run natively on modern machines.
+of a 1997 Nintendo&nbsp;64 first-person shooter, reimplemented in portable C so
+it can be studied, preserved, and run natively on modern machines.
 </p>
 
 <p align="center">
@@ -15,10 +14,10 @@ preserved, and run natively on modern machines.
 </p>
 
 <p align="center">
-🎬 <a href="https://youtu.be/Pob6Itc7rCQ">Gameplay example (video)</a>
+🎬 Gameplay examples:
+<a href="https://youtu.be/Pob6Itc7rCQ">Cradle</a> ·
+<a href="https://youtu.be/Jh3GOirvobI">Runway</a>
 </p>
-
----
 
 > [!IMPORTANT]
 > **This project ships no game.** It contains decompiled code and an original
@@ -41,9 +40,8 @@ MGB64 is two things in one repository, in the tradition of the
   lists to a modern GPU, and provides audio, input, and file I/O. No copyrighted
   data is compiled into the binary ("bring your own ROM").
 
-The project name is a deliberately trademark-safe codename — a play on the Bond
-film *The Man with the Golden Gun*, reframed around the *build* process, with
-"64" nodding to the SM64 decomp lineage.
+The project name is a deliberately neutral codename centered on the build
+process, with "64" nodding to the SM64 decomp lineage.
 
 ## Status
 
@@ -98,9 +96,9 @@ data is bundled.
 ./build/ge007 --rom "/path/to/baserom.u.z64"
 ```
 
-If you don't pass `--rom`, the port auto-detects a GoldenEye ROM in the working
+If you don't pass `--rom`, the port auto-detects a compatible ROM in the working
 directory and common locations (`~/Downloads`, `~/Documents`, `~/Desktop`, `~`)
-by size + N64 header + internal cartridge name. See
+by size, N64 header, and internal cartridge name. See
 [docs/BUILDING.md](docs/BUILDING.md#running) for the save directory and options.
 
 ### Controls (default)
