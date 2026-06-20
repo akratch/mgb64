@@ -2,10 +2,9 @@
 
 ## Name
 
-**The Man with the Golden Build** (short form: **MGB64**) — a neutral,
-engineering-focused codename framed around the build process. "MGB" abbreviates
-naturally. "64" signals N64 heritage and the SM64 decompilation precedent
-without using the original game's title as the project name.
+**MGB64** is a neutral, engineering-focused codename framed around the build
+process. "64" signals N64 heritage and the SM64 decompilation precedent without
+using the original game's title as the project name.
 
 Bundle identifier: `com.mgb64.app`
 

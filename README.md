@@ -1,5 +1,4 @@
 <h1 align="center">MGB64</h1>
-<p align="center"><em>The Man with the Golden Build</em></p>
 
 <p align="center">
 A <strong>decompilation</strong> and <strong>native source port</strong>
@@ -11,12 +10,6 @@ it can be studied, preserved, and run natively on modern machines.
 <a href="LICENSE"><img alt="License: MIT (first-party)" src="https://img.shields.io/badge/license-MIT%20(first--party)-blue.svg"></a>
 <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange.svg">
 <img alt="Bring your own ROM" src="https://img.shields.io/badge/assets-bring%20your%20own%20ROM-red.svg">
-</p>
-
-<p align="center">
-🎬 Gameplay examples:
-<a href="https://youtu.be/Pob6Itc7rCQ">Cradle</a> ·
-<a href="https://youtu.be/Jh3GOirvobI">Runway</a>
 </p>
 
 > [!IMPORTANT]
