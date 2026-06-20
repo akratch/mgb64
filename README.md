@@ -19,6 +19,13 @@ it can be studied, preserved, and run natively on modern machines.
 > fonts, level data). To run the port you must supply your **own**
 > legally-dumped copy of the game. Please read **[DISCLAIMER.md](DISCLAIMER.md)**.
 
+## Gameplay Examples
+
+| Runway | Cradle |
+| --- | --- |
+| [![Runway gameplay example](https://img.youtube.com/vi/Jh3GOirvobI/hqdefault.jpg)](https://youtu.be/Jh3GOirvobI) | [![Cradle gameplay example](https://img.youtube.com/vi/Pob6Itc7rCQ/hqdefault.jpg)](https://youtu.be/Pob6Itc7rCQ) |
+| [Watch on YouTube](https://youtu.be/Jh3GOirvobI) | [Watch on YouTube](https://youtu.be/Pob6Itc7rCQ) |
+
 ## What is this?
 
 MGB64 combines the decompiled game code with a native PC/macOS port. It builds
