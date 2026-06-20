@@ -177,21 +177,87 @@ static void portMusicTraceEvent(const char *event, s32 slot, s32 track, s32 prev
     fflush(g_musicTraceFile);
 }
 
+static int portMusicTraceVoiceCount(ALCSPlayer *seqp)
+{
+    int count = 0;
+    ALVoiceState *voice;
+
+    if (seqp == NULL)
+    {
+        return 0;
+    }
+
+    for (voice = seqp->vAllocHead; voice != NULL; voice = voice->next)
+    {
+        count++;
+    }
+
+    return count;
+}
+
+static int portMusicTraceQueueCount(ALCSPlayer *seqp)
+{
+    int count = 0;
+    ALLink *node;
+
+    if (seqp == NULL)
+    {
+        return 0;
+    }
+
+    for (node = seqp->evtq.allocList.next; node != NULL; node = node->next)
+    {
+        count++;
+    }
+
+    return count;
+}
+
 static void portMusicTraceSnapshotSlot(s32 slot, s32 track, u16 volume, s32 fade, s32 fadeRemaining, ALCSPlayer *seqp)
 {
     int state = -1;
     int seqpVol = -1;
+    int curTime = -1;
+    int nextDelta = -1;
+    int uspt = -1;
+    int frameTime = -1;
+    int nextEventType = -1;
+    int seqTicks = -1;
+    int seqLastDeltaTicks = -1;
+    int seqDeltaFlag = -1;
+    unsigned int seqValidTracks = 0;
+    int activeVoices = 0;
+    int queuedEvents = 0;
 
     if (seqp != NULL)
     {
         state = alCSPGetState(seqp);
         seqpVol = seqp->vol;
+        curTime = seqp->curTime;
+        nextDelta = seqp->nextDelta;
+        uspt = seqp->uspt;
+        frameTime = seqp->frameTime;
+        nextEventType = seqp->nextEvent.type;
+        activeVoices = portMusicTraceVoiceCount(seqp);
+        queuedEvents = portMusicTraceQueueCount(seqp);
+
+        if (seqp->target != NULL)
+        {
+            seqTicks = seqp->target->lastTicks;
+            seqLastDeltaTicks = seqp->target->lastDeltaTicks;
+            seqDeltaFlag = seqp->target->deltaFlag;
+            seqValidTracks = seqp->target->validTracks;
+        }
     }
 
     fprintf(g_musicTraceFile,
             "{\"frame\":%d,\"event\":\"snapshot\",\"slot\":%d,"
             "\"track\":%d,\"state\":%d,\"volume\":%u,\"seqp_volume\":%d,\"fade\":%d,"
-            "\"fade_remaining\":%d}\n",
+            "\"fade_remaining\":%d,\"cur_time\":%d,\"next_delta\":%d,"
+            "\"uspt\":%d,\"frame_time\":%d,\"next_event_type\":%d,"
+            "\"seq_ticks\":%d,\"seq_last_delta_ticks\":%d,"
+            "\"seq_delta_flag\":%d,\"seq_valid_tracks\":%u,"
+            "\"active_voices\":%d,\"queued_events\":%d}\n",
             g_frame_count_diag,
             slot,
             track,
@@ -199,7 +265,18 @@ static void portMusicTraceSnapshotSlot(s32 slot, s32 track, u16 volume, s32 fade
             volume,
             seqpVol,
             fade,
-            fadeRemaining);
+            fadeRemaining,
+            curTime,
+            nextDelta,
+            uspt,
+            frameTime,
+            nextEventType,
+            seqTicks,
+            seqLastDeltaTicks,
+            seqDeltaFlag,
+            seqValidTracks,
+            activeVoices,
+            queuedEvents);
 }
 
 static void portMusicWaitForCspStopped(ALCSPlayer *seqp)

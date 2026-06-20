@@ -168,16 +168,33 @@ For music-fidelity changes, also compare against an emulator/hardware reference
 capture when one is available:
 
 ```sh
+tools/prepare_ares_audio_dump_build.sh
+
+tools/ares_startup_audio_reference.sh \
+  --ares-bin build/ares-audio-dump/ares/build-audio-dump/desktop-ui/ares.app/Contents/MacOS/ares \
+  --rom baserom.u.z64 \
+  --out-dir /tmp/mgb64_audio_ref \
+  --seconds 110 \
+  --rate 22050 \
+  --dump-frames 1984500
+
 tools/startup_music_reference_check.sh \
   --no-build \
   --rom baserom.u.z64 \
   --out-dir /tmp/mgb64_audio_ref \
-  --reference /tmp/mgb64_audio_ref/reference_boot.wav
+  --frames 2700 \
+  --reference /tmp/mgb64_audio_ref/ares_boot_22050.raw \
+  --reference-format raw \
+  --reference-raw-rate 22050 \
+  --min-compared-seconds 80 \
+  --report-only
 ```
 
-Treat this as a spectral/envelope regression lane: it catches thin, overly
-bright, or missing-frequency output without requiring human listening, but it is
-not a bit-perfect N64 audio proof.
+Treat this as a spectral/envelope/stereo regression lane: it catches thin,
+overly bright, missing-frequency, gain-staging, and L/R-bus mistakes without
+requiring human listening, but it is not a bit-perfect N64 audio proof. Drop
+`--report-only` once the reference and thresholds describe an accepted baseline
+that should fail future regressions.
 
 ## Public Claims
 

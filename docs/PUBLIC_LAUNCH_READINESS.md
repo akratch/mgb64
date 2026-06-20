@@ -89,7 +89,7 @@ will inspect first.
 | --- | --- | --- |
 | SDK/libultra provenance | Do not call the project fully clean-room while matching-target SDK/libultra-lineage compatibility material remains inventoried in-tree. | #26 |
 | N64 byte-matching target | Native play is supported; byte-matching ROM rebuild still needs local matching toolchain files and extracted data-table link work. | #2 |
-| Audio/music parity | SFX mapping is much improved, but startup music still needs emulator or hardware reference comparison before fidelity claims get stronger. | #17 |
+| Audio/music parity | SFX mapping is much improved and startup music now has a local Ares-backed spectral/envelope comparison lane. The intro/gunbarrel music still has a known custom-FX pole-filter parity gap in program-34-heavy windows, so avoid bit-perfect N64 audio claims. | #17 |
 | Intro camera parity | Bond is still absent from authored level intro cameras such as Dam's early establishing camera. | #18 |
 | Renderer parity | Several compatibility defaults are intentionally approximate and need reference-backed scenes before promotion. | #21 |
 | Linux/Windows validation | Local Linux/GCC validation and Windows/MSYS2 instructions still need outside verification. | #20, #28, #29 |

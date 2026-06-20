@@ -45,13 +45,18 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state);
 
 typedef struct PortMixerStats {
     uint32_t adpcmDecCalls;
+    uint32_t adpcmClampHits;
     uint32_t resampleCalls;
+    uint32_t resampleClampHits;
     uint32_t envMixerCalls;
     uint32_t envMixerSampleFrames;
+    uint32_t envMixerClampHits;
     uint32_t envSampleXor;
     uint32_t mixCalls;
+    uint32_t mixClampHits;
     uint32_t poleFilterCalls;
     uint32_t poleFilterSampleFrames;
+    uint32_t poleFilterClampHits;
     uint32_t poleSampleXor;
     uint32_t poleFilterPeak;
     uint32_t saveBufferCalls;

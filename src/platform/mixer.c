@@ -15,6 +15,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ultra64.h>
@@ -35,14 +36,8 @@
 #define OFS_AUX_L       0x6C0   /* AL_AUX_L_OUT  */
 #define OFS_AUX_R       0x800   /* AL_AUX_R_OUT  */
 
-#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
-#define MIXER_SAMPLE_XOR 0
-#else
-#define MIXER_SAMPLE_XOR 1
-#endif
-
-#define MIXER_ENV_SAMPLE_XOR MIXER_SAMPLE_XOR
-#define MIXER_POLE_SAMPLE_XOR MIXER_SAMPLE_XOR
+#define MIXER_ENV_SAMPLE_XOR_DEFAULT 0
+#define MIXER_POLE_SAMPLE_XOR_DEFAULT 0
 
 /* ===== Helpers ===== */
 
@@ -61,6 +56,18 @@ static inline int16_t clamp16(int32_t v) {
     return (int16_t)v;
 }
 
+static inline int16_t clamp16Counted(int32_t v, uint32_t *hits) {
+    if (v < -0x8000) {
+        if (hits != NULL) (*hits)++;
+        return -0x8000;
+    }
+    if (v > 0x7fff) {
+        if (hits != NULL) (*hits)++;
+        return 0x7fff;
+    }
+    return (int16_t)v;
+}
+
 static inline uint32_t abs16_peak(int16_t v) {
     return (v < 0) ? (uint32_t)(-(int32_t)v) : (uint32_t)v;
 }
@@ -68,6 +75,70 @@ static inline uint32_t abs16_peak(int16_t v) {
 /* Sign-extend 4-bit ADPCM nibble to int (branchless, no UB) */
 static inline int adpcm_sext4(int v) {
     return ((v & 0xf) ^ 8) - 8;
+}
+
+static uint8_t mixerEnvFlagBit(const char *name, uint8_t fallback) {
+    const char *value = getenv(name);
+
+    if (value == NULL || *value == '\0') {
+        return fallback & 1;
+    }
+
+    return (uint8_t)((strtol(value, NULL, 0) != 0) ? 1 : 0);
+}
+
+static FILE *mixerPoleTraceFile(void) {
+    static int initialized = 0;
+    static FILE *fp = NULL;
+    const char *path;
+
+    if (initialized) {
+        return fp;
+    }
+
+    initialized = 1;
+    path = getenv("GE007_AUDIO_POLE_TRACE_JSONL");
+    if (path != NULL && *path != '\0') {
+        fp = fopen(path, "w");
+    }
+
+    return fp;
+}
+
+static uint8_t mixerPoleSectionXor(int16_t fc, uint8_t fallback) {
+    static int initialized = 0;
+    static int has_mask = 0;
+    static long mask = 0;
+    int section = -1;
+
+    if (!initialized) {
+        const char *value = getenv("GE007_MIXER_POLE_FC_XOR_MASK");
+
+        initialized = 1;
+        if (value != NULL && *value != '\0') {
+            mask = strtol(value, NULL, 0);
+            has_mask = 1;
+        }
+    }
+
+    if (!has_mask) {
+        return fallback & 1;
+    }
+
+    switch (fc) {
+    case 4736: section = 0; break;
+    case 6144: section = 1; break;
+    case 6784: section = 2; break;
+    case 8192: section = 3; break;
+    case 8832: section = 4; break;
+    default: break;
+    }
+
+    if (section < 0) {
+        return fallback & 1;
+    }
+
+    return (uint8_t)((mask >> section) & 1);
 }
 
 /* ===== RSP emulator state ===== */
@@ -101,6 +172,9 @@ static struct {
 
     /* Runtime validation counters for custom FX DSP coverage. */
     PortMixerStats stats;
+    uint8_t env_sample_xor;
+    uint8_t pole_sample_xor;
+    uint8_t disable_pole_filter;
 
     /* Virtual DMEM */
     union {
@@ -150,8 +224,14 @@ static int16_t resample_table[64][4] = {
 
 void mixerInit(void) {
     memset(&rspa, 0, sizeof(rspa));
-    rspa.stats.envSampleXor = MIXER_ENV_SAMPLE_XOR;
-    rspa.stats.poleSampleXor = MIXER_POLE_SAMPLE_XOR;
+    rspa.env_sample_xor = mixerEnvFlagBit("GE007_MIXER_ENV_SAMPLE_XOR",
+                                          MIXER_ENV_SAMPLE_XOR_DEFAULT);
+    rspa.pole_sample_xor = mixerEnvFlagBit("GE007_MIXER_POLE_SAMPLE_XOR",
+                                           MIXER_POLE_SAMPLE_XOR_DEFAULT);
+    rspa.disable_pole_filter =
+        mixerEnvFlagBit("GE007_DISABLE_NATIVE_POLE_FILTER", 0);
+    rspa.stats.envSampleXor = rspa.env_sample_xor;
+    rspa.stats.poleSampleXor = rspa.pole_sample_xor;
 }
 
 /* ===== Segment addressing ===== */
@@ -311,7 +391,7 @@ void mixerADPCMdec(unsigned int flags, void *state) {
                     acc += tbl[1][((j - k) - 1)] * ins[k];
                 }
                 acc >>= 11;
-                *out++ = clamp16(acc);
+                *out++ = clamp16Counted(acc, &rspa.stats.adpcmClampHits);
             }
         }
 
@@ -364,7 +444,7 @@ void mixerResample(unsigned int flags, unsigned int pitch, void *state) {
                      ((in[1] * tbl[1] + 0x4000) >> 15) +
                      ((in[2] * tbl[2] + 0x4000) >> 15) +
                      ((in[3] * tbl[3] + 0x4000) >> 15);
-            *out++ = clamp16(sample);
+            *out++ = clamp16Counted(sample, &rspa.stats.resampleClampHits);
 
             pitch_accumulator += (pitch << 1);
             in += pitch_accumulator >> 16;
@@ -475,7 +555,7 @@ void mixerEnvMixer(unsigned int flags, void *state) {
     {
         int i;
         for (i = 0; i < nsamples; ++i) {
-            int sample_idx = i ^ MIXER_ENV_SAMPLE_XOR;
+            int sample_idx = i ^ rspa.env_sample_xor;
             int16_t gain[4];
             int16_t vol[2];
             int j;
@@ -497,10 +577,18 @@ void mixerEnvMixer(unsigned int flags, void *state) {
 
             {
                 const int16_t insamp = in[sample_idx];
-                dry[0][sample_idx] = clamp16(dry[0][sample_idx] + ((insamp * gain[0]) >> 15));
-                dry[1][sample_idx] = clamp16(dry[1][sample_idx] + ((insamp * gain[1]) >> 15));
-                wet[0][sample_idx] = clamp16(wet[0][sample_idx] + ((insamp * gain[2]) >> 15));
-                wet[1][sample_idx] = clamp16(wet[1][sample_idx] + ((insamp * gain[3]) >> 15));
+                dry[0][sample_idx] = clamp16Counted(
+                    dry[0][sample_idx] + ((insamp * gain[0]) >> 15),
+                    &rspa.stats.envMixerClampHits);
+                dry[1][sample_idx] = clamp16Counted(
+                    dry[1][sample_idx] + ((insamp * gain[1]) >> 15),
+                    &rspa.stats.envMixerClampHits);
+                wet[0][sample_idx] = clamp16Counted(
+                    wet[0][sample_idx] + ((insamp * gain[2]) >> 15),
+                    &rspa.stats.envMixerClampHits);
+                wet[1][sample_idx] = clamp16Counted(
+                    wet[1][sample_idx] + ((insamp * gain[3]) >> 15),
+                    &rspa.stats.envMixerClampHits);
             }
         }
     }
@@ -539,7 +627,7 @@ void mixerMix(unsigned int flags, int16_t gain,
         while (nbytes > 0) {
             for (i = 0; i < 8; i++) {
                 sample = *out - *in++;
-                *out++ = clamp16(sample);
+                *out++ = clamp16Counted(sample, &rspa.stats.mixClampHits);
             }
             nbytes -= 8 * sizeof(int16_t);
         }
@@ -548,8 +636,8 @@ void mixerMix(unsigned int flags, int16_t gain,
 
     while (nbytes > 0) {
         for (i = 0; i < 8; i++) {
-            sample = *out + (((int32_t)*in++ * gain) >> 15);
-            *out++ = clamp16(sample);
+            sample = ((*out * 0x7fff + *in++ * gain) + 0x4000) >> 15;
+            *out++ = clamp16Counted(sample, &rspa.stats.mixClampHits);
         }
         nbytes -= 8 * sizeof(int16_t);
     }
@@ -574,12 +662,21 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state) {
     int16_t h2_scaled[8];
     int16_t l1;
     int16_t l2;
+    int16_t saved_l1;
+    int16_t saved_l2;
     uint16_t ugain = (uint16_t)gain;
+    uint8_t sample_xor;
+    uint32_t input_peak = 0;
     uint32_t peak = 0;
     int i;
 
     if (state == NULL || nbytes <= 0) return;
     if (rspa.sb_dmemin + nbytes > DMEM_SIZE || rspa.sb_dmemout + nbytes > DMEM_SIZE) return;
+    if (rspa.disable_pole_filter) {
+        rspa.stats.poleFilterCalls++;
+        rspa.stats.poleFilterSampleFrames += (uint32_t)nsamples;
+        return;
+    }
 
     in = BUF_S16(rspa.sb_dmemin);
     out = BUF_S16(rspa.sb_dmemout);
@@ -595,11 +692,14 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state) {
         l1 = saved[2];
         l2 = saved[3];
     }
+    saved_l1 = l1;
+    saved_l2 = l2;
 
     for (i = 0; i < 8; i++) {
         h2_original[i] = h2_src[i];
         h2_scaled[i] = (int16_t)(((int32_t)h2_src[i] * ugain) >> 14);
     }
+    sample_xor = mixerPoleSectionXor(h2_original[0], rspa.pole_sample_xor);
 
     while (nbytes > 0) {
         int16_t frame[8];
@@ -607,7 +707,13 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state) {
         int j;
 
         for (i = 0; i < 8; i++) {
-            frame[i] = in[i ^ MIXER_POLE_SAMPLE_XOR];
+            frame[i] = in[i ^ sample_xor];
+            {
+                uint32_t sample_peak = abs16_peak(frame[i]);
+                if (sample_peak > input_peak) {
+                    input_peak = sample_peak;
+                }
+            }
         }
 
         for (i = 0; i < 8; i++) {
@@ -617,8 +723,8 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state) {
             for (j = 0; j < i; j++) {
                 acc += (int32_t)h2_scaled[j] * frame[i - 1 - j];
             }
-            filtered[i] = clamp16(acc >> 14);
-            out[i ^ MIXER_POLE_SAMPLE_XOR] = filtered[i];
+            filtered[i] = clamp16Counted(acc >> 14, &rspa.stats.poleFilterClampHits);
+            out[i ^ sample_xor] = filtered[i];
             {
                 uint32_t sample_peak = abs16_peak(filtered[i]);
                 if (sample_peak > peak) {
@@ -643,6 +749,40 @@ void mixerPoleFilter(unsigned int flags, int16_t gain, void *state) {
     rspa.stats.poleFilterSampleFrames += (uint32_t)nsamples;
     if (peak > rspa.stats.poleFilterPeak) {
         rspa.stats.poleFilterPeak = peak;
+    }
+    {
+        FILE *trace = mixerPoleTraceFile();
+        if (trace != NULL) {
+            fprintf(trace,
+                    "{\"event\":\"pole_filter\",\"call\":%u,"
+                    "\"flags\":%u,\"gain\":%d,\"ugain\":%u,"
+                    "\"dmemin\":%u,\"dmemout\":%u,\"count_bytes\":%u,"
+                    "\"sample_frames\":%d,\"sample_xor\":%u,"
+                    "\"section_sample_xor\":%u,"
+                    "\"fc\":%d,\"h2_1\":%d,\"h2_7\":%d,"
+                    "\"state_l1_in\":%d,\"state_l2_in\":%d,"
+                    "\"state_l1_out\":%d,\"state_l2_out\":%d,"
+                    "\"input_peak\":%u,\"output_peak\":%u}\n",
+                    rspa.stats.poleFilterCalls,
+                    flags,
+                    gain,
+                    ugain,
+                    rspa.sb_dmemin,
+                    rspa.sb_dmemout,
+                    rspa.sb_count,
+                    nsamples,
+                    rspa.pole_sample_xor,
+                    sample_xor,
+                    h2_original[0],
+                    h2_original[1],
+                    h2_original[7],
+                    saved_l1,
+                    saved_l2,
+                    l1,
+                    l2,
+                    input_peak,
+                    peak);
+        }
     }
 }
 

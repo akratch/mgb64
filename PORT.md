@@ -45,7 +45,7 @@ prevent normal play.
 
 | Area | Divergence | Status |
 | --- | --- | --- |
-| Audio | Synthesis-based and asset-free; SFX mapping/owner-slot playback is validated, and the native ABI1 mixer now uses little-endian sample-lane ordering for envmixer/pole-filter stages plus additive aux-return mixing. Music still differs from hardware/reference output in final reverb balance and remaining command-level edge cases. | Playable; fidelity work ongoing. |
+| Audio | Synthesis-based and asset-free; SFX mapping/owner-slot playback is validated, and the native ABI1 mixer exposes reference-backed diagnostics for envmixer, resampler, ADPCM, and custom-FX pole-filter stages. Startup/gunbarrel music still differs from hardware/reference output in program-34-heavy windows, most likely in the custom-FX pole-filter HLE. | Playable; fidelity work ongoing. |
 | Bullet-impact decals | Prop-attached impacts render shade-only by default — the original textured path can corrupt world texture state on the PC renderer. | Compat default; opt-in via `GE007_TEXTURED_PROP_BULLET_IMPACTS=1`. |
 | Room visibility | Portal-BFS room admission with a frustum-all fallback for debugging. | Default on; fallback via `GE007_PORTAL_BFS=0`. |
 | Room scissoring | Per-room N64 scissor boxes disabled by default (they can under-cover interior seams on the PC renderer). | Compat default; exact via `GE007_EXACT_ROOM_SCISSOR=1`. |

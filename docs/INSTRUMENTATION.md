@@ -161,8 +161,9 @@ For music-fidelity work, `tools/compare_audio_reference.py` compares an MGB64
 audio dump against a WAV/raw capture from an emulator or hardware reference. It
 does not require sample-exact timing: the tool aligns the captures by amplitude
 envelope, then reports RMS level, envelope correlation, broad spectral-band
-similarity, and high-frequency band drift. This is the preferred non-listening
-check for changes that affect music/reverb/mixer behavior.
+similarity, gain-normalized spectral tilt, stereo balance/width, and
+high-frequency band drift. This is the preferred non-listening check for changes
+that affect music/reverb/mixer behavior.
 
 Keep reference captures local. Raw/WAV captures of game audio are generated from
 your ROM or hardware output and must not be committed, attached to issues, or
@@ -170,7 +171,7 @@ redistributed.
 
 #### Startup music A/B workflow
 
-1. Capture the MGB64 pre-SFX music stream.
+1. Capture the MGB64 pre-SFX music stream and local gain-staging evidence.
 
 ```sh
 mkdir -p /tmp/mgb64_audio_ref
@@ -185,8 +186,9 @@ This 2400-frame window captures roughly 80 seconds of boot audio on the port:
 legal screen, Nintendo logo, Rare logo, eye intro, GoldenEye logo, and the first
 unattended display-cast/attract loop. It intentionally does not synthesize a
 Start press; do not set `GE007_AUTO_START` for this reference lane. The wrapper
-keeps the local raw dump, log, save directory, and screenshot under the output
-directory so ROM-derived validation artifacts do not land in the repo root.
+keeps the local pre-SFX raw dump, final mixed raw dump, audio trace, log, save
+directory, summary, and screenshot under the output directory so ROM-derived
+validation artifacts do not land in the repo root.
 
 2. Capture the same no-input startup window from a reference path.
 
@@ -202,20 +204,44 @@ ffmpeg -i reference_startup_capture.mov -vn -ac 2 -ar 44100 \
 ```
 
 For a local instrumented ares build, use the same no-input startup sequence and
-dump mixed N64 AI audio before host playback. Stock ares may not expose these
-environment variables; they refer to a local instrumentation patch around
-`Program::audio()`:
+dump mixed N64 AI audio before host playback. Stock ares builds normally do
+not expose this dump hook; the wrapper below fails clearly if the selected
+binary does not honor `ARES_AUDIO_DUMP`.
 
 ```sh
-SDL_AUDIODRIVER=dummy \
-ARES_AUDIO_DUMP=/tmp/mgb64_audio_ref/ares_boot_44100.raw \
-ARES_AUDIO_DUMP_FRAMES=3532800 \
-/path/to/instrumented/ares /path/to/baserom.u.z64
+tools/prepare_ares_audio_dump_build.sh
+
+tools/ares_startup_audio_reference.sh \
+  --ares-bin build/ares-audio-dump/ares/build-audio-dump/desktop-ui/ares.app/Contents/MacOS/ares \
+  --rom baserom.u.z64 \
+  --out-dir /tmp/mgb64_audio_ref
 ```
 
-`ARES_AUDIO_DUMP_FRAMES=3532800` is about 80 seconds at 44100 Hz stereo. If your
-reference dump uses a different rate or length, pass the correct raw rate and
-use `--duration`/start offsets in the comparison command.
+`prepare_ares_audio_dump_build.sh` clones ares into ignored local build space,
+applies a small `ARES_AUDIO_DUMP` hook, and builds a local frontend binary. It
+does not vendor ares and it does not create redistributable audio. The capture
+wrapper runs ares with an isolated settings file, an isolated blank save
+directory, kiosk mode, and `Input/Defocus=Allow` so background captures keep
+advancing without picking up a local `.eeprom` next to the ROM.
+
+For the longer startup reference used while tuning the title sequence music,
+capture about 90 seconds of 22050 Hz stereo PCM and allow extra wall-clock time
+for shader compilation/startup overhead:
+
+```sh
+tools/ares_startup_audio_reference.sh \
+  --ares-bin build/ares-audio-dump/ares/build-audio-dump/desktop-ui/ares.app/Contents/MacOS/ares \
+  --rom baserom.u.z64 \
+  --out-dir /tmp/mgb64_audio_ref \
+  --seconds 110 \
+  --rate 22050 \
+  --dump-frames 1984500
+```
+
+`1984500` frames is 90 seconds at 22050 Hz stereo. If your reference dump uses a
+different rate, channel count, endian, or length, pass the correct raw metadata
+and use `--duration`/start offsets in the comparison command. A 44100 Hz
+reference also works; it just adds a reference-resampling step to the comparison.
 
 3. Compare the captures and write segmented JSON output.
 
@@ -226,20 +252,29 @@ tools/startup_music_reference_check.sh \
   --no-build \
   --rom baserom.u.z64 \
   --out-dir /tmp/mgb64_audio_ref \
-  --reference /tmp/mgb64_audio_ref/reference_boot.wav
+  --reference /tmp/mgb64_audio_ref/reference_boot.wav \
+  --min-compared-seconds 60 \
+  --report-only
 ```
 
-For a raw 44100 Hz ares reference:
+For a raw 22050 Hz ares reference:
 
 ```sh
 tools/startup_music_reference_check.sh \
   --no-build \
   --rom baserom.u.z64 \
   --out-dir /tmp/mgb64_audio_ref \
-  --reference /tmp/mgb64_audio_ref/ares_boot_44100.raw \
+  --frames 2700 \
+  --reference /tmp/mgb64_audio_ref/ares_boot_22050.raw \
   --reference-format raw \
-  --reference-raw-rate 44100
+  --reference-raw-rate 22050 \
+  --min-compared-seconds 80 \
+  --report-only
 ```
+
+Use `--report-only` while tuning or when first onboarding a new reference
+capture. Omit it once the current thresholds describe an accepted baseline that
+should fail on future regressions.
 
 The lower-level commands below are equivalent and useful when comparing
 previously captured files with custom offsets or durations.
@@ -252,6 +287,7 @@ python3 tools/compare_audio_reference.py \
   /tmp/mgb64_audio_ref/mgb64_boot_music.raw \
   --test-format raw --test-raw-rate 22050 \
   --target-rate 22050 --max-offset-seconds 20 \
+  --min-compared-seconds 60 \
   --segment-seconds 10 --segment-hop-seconds 5 \
   --print-bands --print-segments \
   --json-out /tmp/mgb64_audio_ref/boot_audio_compare.json
@@ -266,6 +302,7 @@ python3 tools/compare_audio_reference.py \
   --reference-format raw --reference-raw-rate 44100 \
   --test-format raw --test-raw-rate 22050 \
   --target-rate 22050 --max-offset-seconds 20 \
+  --min-compared-seconds 60 \
   --segment-seconds 10 --segment-hop-seconds 5 \
   --print-bands --print-segments \
   --json-out /tmp/mgb64_audio_ref/boot_audio_compare.json
@@ -285,10 +322,20 @@ Use the metrics as a regression signal, not a proof of bit-perfect N64 audio.
   it is less sensitive to simple volume changes.
 - `band_mae_db` is the average absolute per-band energy error. Lower is better;
   a sudden increase after an audio change is a regression signal.
+- `relative_band_mae_db` removes the overall band bias first. Use it when a
+  hardware/movie capture has a different recording level but you still need to
+  compare tone.
 - `high_band_mae_db` isolates the upper bands. High values are useful for
   catching thin, harsh, overly bright, or missing-frequency output.
-- `high_band_delta_db` preserves direction. Positive values mean the port is
-  brighter than the reference; negative values mean the port is duller.
+- `high_relative_band_delta_db` preserves the high-frequency direction after
+  removing simple level mismatch. Positive values mean the port is relatively
+  brighter than the reference; negative values mean the port is relatively
+  duller.
+- `stereo.balance_delta_db`, `stereo.width_delta_db`, and
+  `stereo.possible_channel_swap` catch L/R bus, panning, or channel-order
+  mistakes that a mono downmix can hide.
+- The top-level `diagnosis` block is a triage hint. Treat it as a pointer to the
+  next mixer/sequence area to inspect, not as proof by itself.
 - The `segments` JSON and `--print-segments` output identify the worst 10-second
   windows. Use those windows to map a mismatch back to a logo, intro, or
   attract-loop portion of the startup sequence.
@@ -311,6 +358,7 @@ One JSON object per frame, one per line. Common fields:
 | `geom` | geometry-mode bits (hex string; cull bits ignored by comparator) |
 | `segs` | segment-load mask (hex string) |
 | `combat` | aim / autoaim / crosshair / health / shots |
+| `move` | speed, raw gait inputs, boost, head/previous positions, and timers |
 | `scan.nearest`, `target_x`, `target_y` | per-guard AI / sense / visibility / damage |
 | `wr_*` / `wl_*` | right/left-hand weapon-render state and switch-node bases |
 | `front` | frontend / menu state (folder, gamemode, stage, briefing, cursor…) |
@@ -337,7 +385,16 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_MUSIC_AUDIO_DUMP=path.raw` | dump first 300 libaudio/music PCM frames before native SFX mixing |
 | `GE007_AUDIO_TRACE=path.jsonl` | trace per-frame audio queue, final PCM peak/rail hits, mixer, and SFX/player counters |
 | `GE007_MUSIC_TRACE=path.jsonl` | trace music slot play/stop events |
-| `GE007_MUSIC_TRACE_SNAPSHOT=1` | add per-frame music slot snapshots to `GE007_MUSIC_TRACE` |
+| `GE007_MUSIC_TRACE_SNAPSHOT=1` | add per-frame music slot snapshots, including CSP ticks, tempo-derived `uspt`, queued events, and active voices |
+| `GE007_MUSIC_MIDI_TRACE_JSONL=path.jsonl` | trace CSP MIDI note/control events with program, keymap, envelope, pitch, and wavetable metadata |
+| `GE007_MUSIC_MUTE_PROGRAMS=list` / `GE007_MUSIC_SOLO_PROGRAMS=list` | mute or solo comma-separated music program numbers for local A/B diagnosis |
+| `GE007_ENABLE_LIBAUDIO_LOWPASS=1` | opt into the experimental final libaudio/music de-emphasis filter |
+| `GE007_DISABLE_LIBAUDIO_LOWPASS=1` | force the experimental final libaudio/music de-emphasis filter off even if enabled |
+| `GE007_AUDIO_FILTER_TRACE_JSONL=path.jsonl` | trace ADPCM/resampler pulls; pair with `GE007_AUDIO_FILTER_TRACE_WAVE_BASE=0x...` to focus on one wavetable |
+| `GE007_AUDIO_POLE_TRACE_JSONL=path.jsonl` | trace custom-FX pole-filter calls by coefficient, gain, state, and peak levels |
+| `GE007_MIXER_POLE_SAMPLE_XOR=0|1` | diagnostic ABI1 pole-filter sample-lane override for A/B comparison |
+| `GE007_MIXER_POLE_FC_XOR_MASK=mask` | diagnostic per-pole-section lane mask for startup music experiments; bits map to filter coefficients 4736, 6144, 6784, 8192, 8832 |
+| `GE007_DISABLE_NATIVE_POLE_FILTER=1` | bypass native custom-FX pole filters for diagnosis |
 | `GE007_SFX_TRACE_JSONL=path.jsonl` | trace SFX submits, voice starts/stops, volume/pan updates, owner-slot clears, stale post ignores, and native caller/line tags |
 | `GE007_TRACE_CHRNUM=N` | add one guard's AI/action/render state to `--trace-state` |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |
@@ -411,22 +468,38 @@ explosions are worth comparing against a known-good baseline before treating as
 a regression. Mixer counters such as `adpcm_dec_calls`, `resample_calls`,
 `env_mixer_calls`, `mix_calls`, and `pole_filter_calls` identify which native
 RSP-audio command families ran during the capture. `env_sample_xor` and
-`pole_sample_xor` record the host-endian ABI1 sample-lane swizzles used for that
-build (`1` on little-endian hosts).
+`pole_sample_xor` record the active ABI1 sample-lane diagnostics for that run;
+the default is `0` unless a `GE007_MIXER_*` override is set. The
+`*_clamp_hits` mixer fields are cumulative sample-saturation counters per
+command family; the matching `*_clamp_delta` fields report only the current
+audio frame. Use the deltas with `output_rail_hits` to distinguish final-output
+rail hits from earlier ADPCM, resample, envmixer, aux-return mix, or pole-filter
+saturation.
 
 Relevant `ge007` command-line flags: `--rom PATH`, `--level N`
 (33=Dam, 34=Facility, 24=Archives, 36=Surface 1), `--deterministic`,
 `--background`, `--no-input-grab`, `--trace-state path.jsonl`,
 `--screenshot-frame N` / `--screenshot-label L` / `--screenshot-exit`.
 
+## ROM movement oracle
+
+The public ROM-comparison lane for player movement is documented in
+[ROM_COMPARISON.md](ROM_COMPARISON.md). It uses authored route specs from
+`tools/rom_oracle_routes/`, native `--trace-state` captures, and an optional
+local instrumented ares checkout that dumps the same movement fields from stock
+RDRAM. Generated traces, screenshots, saves, emulator logs, and the local ares
+checkout are ROM-derived/local artifacts and must stay out of git.
+
 ## Advanced / dev-only (not shipped)
 
 These families live in the development tree only. They depend on artifacts that
 aren't part of a contributor checkout, so they're intentionally excluded:
 
-- **Emulator parity / oracle** (`ares_*`, `compare_texrect_trace.py`,
-  `parse_ares_dyn_gfx_dump.py`) — need a local ares emulator build, a GDB stack,
-  screen-capture permissions, and a stock ROM driven through GDB.
+- **Broad emulator parity / oracle** (`compare_texrect_trace.py`,
+  `parse_ares_dyn_gfx_dump.py`, legacy GDB-driven `ares_*`) — need a local ares
+  emulator build, a GDB stack, screen-capture permissions, and a stock ROM
+  driven through GDB. The public movement-only ares hook is the narrow supported
+  exception; see the ROM movement oracle section above.
 - **RAMROM replay** (`ramrom_*`, `build_ramrom_*_rom.py`,
   `native_ramrom_playback_smoke.sh`) — need stock-ROM demo tables, generated
   steering ROMs, the N64 toolchain, and `/tmp` golden artifacts.

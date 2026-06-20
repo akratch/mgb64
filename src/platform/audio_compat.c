@@ -22,6 +22,7 @@
 
 extern void *memset(void *dest, int value, size_t count);
 #else
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3209,6 +3210,256 @@ static void native_csp_handle_meta(ALCSPlayer *seqp, ALEvent *event)
     }
 }
 
+#ifdef NATIVE_PORT
+static FILE *s_native_csp_trace_fp = NULL;
+static int s_native_csp_trace_init = 0;
+
+static FILE *native_csp_trace_fp(void)
+{
+    const char *path;
+
+    if (s_native_csp_trace_init) {
+        return s_native_csp_trace_fp;
+    }
+
+    s_native_csp_trace_init = 1;
+    path = getenv("GE007_MUSIC_MIDI_TRACE_JSONL");
+    if (path != NULL && *path != '\0') {
+        s_native_csp_trace_fp = fopen(path, "w");
+    }
+
+    return s_native_csp_trace_fp;
+}
+
+static s32 native_csp_program_for_instrument(ALCSPlayer *seqp,
+                                             ALInstrument *instrument)
+{
+    s32 i;
+
+    if (seqp == NULL || seqp->bank == NULL || instrument == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < seqp->bank->instCount; i++) {
+        if (seqp->bank->instArray[i] == instrument) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static int native_csp_program_list_contains(const char *list, s32 program)
+{
+    const char *cursor = list;
+
+    if (program < 0 || list == NULL || *list == '\0') {
+        return 0;
+    }
+
+    while (*cursor != '\0') {
+        char *end = NULL;
+        long value;
+
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == ',') {
+            cursor++;
+        }
+
+        if (*cursor == '\0') {
+            break;
+        }
+
+        value = strtol(cursor, &end, 10);
+        if (end == cursor) {
+            while (*cursor != '\0' && *cursor != ',') {
+                cursor++;
+            }
+            continue;
+        }
+
+        if (value == program) {
+            return 1;
+        }
+
+        cursor = end;
+    }
+
+    return 0;
+}
+
+static int native_csp_program_should_play(ALCSPlayer *seqp, u8 chan)
+{
+    static int initialized = 0;
+    static const char *solo_programs = NULL;
+    static const char *mute_programs = NULL;
+    ALInstrument *instrument;
+    s32 program;
+
+    if (!initialized) {
+        initialized = 1;
+        solo_programs = getenv("GE007_MUSIC_SOLO_PROGRAMS");
+        mute_programs = getenv("GE007_MUSIC_MUTE_PROGRAMS");
+    }
+
+    if ((solo_programs == NULL || *solo_programs == '\0') &&
+        (mute_programs == NULL || *mute_programs == '\0')) {
+        return 1;
+    }
+
+    if (seqp == NULL || seqp->chanState == NULL || chan >= seqp->maxChannels) {
+        return 1;
+    }
+
+    instrument = seqp->chanState[chan].instrument;
+    program = native_csp_program_for_instrument(seqp, instrument);
+
+    if (solo_programs != NULL && *solo_programs != '\0' &&
+        !native_csp_program_list_contains(solo_programs, program)) {
+        return 0;
+    }
+
+    if (native_csp_program_list_contains(mute_programs, program)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static s32 native_csp_sound_index(ALInstrument *instrument, ALSound *sound)
+{
+    s32 i;
+
+    if (instrument == NULL || sound == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < instrument->soundCount; i++) {
+        if (instrument->soundArray[i] == sound) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static void native_csp_trace_control(ALCSPlayer *seqp, const char *event,
+                                     u8 chan, u8 key, u8 value)
+{
+    FILE *fp = native_csp_trace_fp();
+
+    if (fp == NULL || seqp == NULL) {
+        return;
+    }
+
+    fprintf(fp,
+            "{\"event\":\"%s\",\"cur_time\":%d,\"seq_ticks\":%u,"
+            "\"chan\":%u,\"key\":%u,\"value\":%u}\n",
+            event,
+            seqp->curTime,
+            seqp->target != NULL ? seqp->target->lastTicks : 0,
+            (u32)chan,
+            (u32)key,
+            (u32)value);
+}
+
+static void native_csp_trace_note_on(ALCSPlayer *seqp, u8 chan, u8 key,
+                                     u8 vel, ALSound *sound, f32 pitch,
+                                     s16 vol, ALPan pan, u8 fxmix,
+                                     ALMicroTime delta_time,
+                                     u32 duration_ticks)
+{
+    ALInstrument *instrument = NULL;
+    ALKeyMap *keymap = NULL;
+    ALEnvelope *envelope = NULL;
+    ALWaveTable *wave = NULL;
+    ALADPCMloop *adpcm_loop = NULL;
+    ALRawLoop *raw_loop = NULL;
+    FILE *fp = native_csp_trace_fp();
+
+    if (fp == NULL || seqp == NULL || sound == NULL) {
+        return;
+    }
+
+    if (seqp->chanState != NULL && chan < seqp->maxChannels) {
+        instrument = seqp->chanState[chan].instrument;
+    }
+    keymap = sound->keyMap;
+    envelope = sound->envelope;
+    wave = sound->wavetable;
+    if (wave != NULL && wave->type == AL_ADPCM_WAVE) {
+        adpcm_loop = wave->waveInfo.adpcmWave.loop;
+    } else if (wave != NULL && wave->type == AL_RAW16_WAVE) {
+        raw_loop = wave->waveInfo.rawWave.loop;
+    }
+
+    fprintf(fp,
+            "{\"event\":\"note_on\",\"cur_time\":%d,\"seq_ticks\":%u,"
+            "\"chan\":%u,\"key\":%u,\"velocity\":%u,\"duration_ticks\":%u,"
+            "\"program\":%d,\"sound_index\":%d,"
+            "\"chan_volume\":%u,\"chan_pan\":%u,\"chan_fxmix\":%u,"
+            "\"computed_pitch\":%.9g,\"computed_volume\":%d,"
+            "\"computed_pan\":%u,\"attack_delta_usec\":%d,"
+            "\"sample_pan\":%u,\"sample_volume\":%u,"
+            "\"key_min\":%u,\"key_max\":%u,\"vel_min\":%u,\"vel_max\":%u,"
+            "\"key_base\":%u,\"detune\":%d,"
+            "\"attack_time\":%d,\"decay_time\":%d,\"release_time\":%d,"
+            "\"attack_volume\":%u,\"decay_volume\":%u,"
+            "\"wave_type\":%u,\"wave_base\":%llu,\"wave_len\":%d,"
+            "\"loop_start\":%d,\"loop_end\":%d,\"loop_count\":%d}\n",
+            seqp->curTime,
+            seqp->target != NULL ? seqp->target->lastTicks : 0,
+            (u32)chan,
+            (u32)key,
+            (u32)vel,
+            duration_ticks,
+            native_csp_program_for_instrument(seqp, instrument),
+            native_csp_sound_index(instrument, sound),
+            (seqp->chanState != NULL && chan < seqp->maxChannels)
+                ? seqp->chanState[chan].vol
+                : 0,
+            (seqp->chanState != NULL && chan < seqp->maxChannels)
+                ? seqp->chanState[chan].pan
+                : 0,
+            fxmix,
+            pitch,
+            vol,
+            (u32)pan,
+            delta_time,
+            sound->samplePan,
+            sound->sampleVolume,
+            keymap != NULL ? keymap->keyMin : 0,
+            keymap != NULL ? keymap->keyMax : 0,
+            keymap != NULL ? keymap->velocityMin : 0,
+            keymap != NULL ? keymap->velocityMax : 0,
+            keymap != NULL ? keymap->keyBase : 0,
+            keymap != NULL ? keymap->detune : 0,
+            envelope != NULL ? envelope->attackTime : 0,
+            envelope != NULL ? envelope->decayTime : 0,
+            envelope != NULL ? envelope->releaseTime : 0,
+            envelope != NULL ? envelope->attackVolume : 0,
+            envelope != NULL ? envelope->decayVolume : 0,
+            wave != NULL ? wave->type : 0,
+            wave != NULL ? (unsigned long long)(uintptr_t)wave->base : 0ULL,
+            wave != NULL ? wave->len : 0,
+            adpcm_loop != NULL ? adpcm_loop->start
+                : raw_loop != NULL ? raw_loop->start : 0,
+            adpcm_loop != NULL ? adpcm_loop->end
+                : raw_loop != NULL ? raw_loop->end : 0,
+            adpcm_loop != NULL ? adpcm_loop->count
+                : raw_loop != NULL ? raw_loop->count : 0);
+}
+
+static void native_csp_trace_note_off(ALCSPlayer *seqp, u8 chan, u8 key)
+{
+    native_csp_trace_control(seqp, "note_off", chan, key, 0);
+}
+#else
+#define native_csp_trace_control(seqp, event, chan, key, value) ((void)0)
+#define native_csp_trace_note_on(seqp, chan, key, vel, sound, pitch, vol, pan, fxmix, delta_time, duration_ticks) ((void)0)
+#define native_csp_trace_note_off(seqp, chan, key) ((void)0)
+#define native_csp_program_should_play(seqp, chan) (1)
+#endif
+
 static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
 {
     ALMIDIEvent *midi;
@@ -3256,6 +3507,10 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                     return;
                 }
 
+                if (!native_csp_program_should_play(seqp, chan)) {
+                    return;
+                }
+
                 voice_state =
                     __mapVoice((ALSeqPlayer *)seqp, key, vel, chan);
                 if (voice_state == NULL) {
@@ -3293,6 +3548,17 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 pan = __vsPan(voice_state, (ALSeqPlayer *)seqp);
                 vol = __vsVol(voice_state, (ALSeqPlayer *)seqp);
                 delta_time = sound->envelope->attackTime;
+                native_csp_trace_note_on(seqp,
+                                         chan,
+                                         key,
+                                         vel,
+                                         sound,
+                                         pitch,
+                                         vol,
+                                         pan,
+                                         seqp->chanState[chan].fxmix,
+                                         delta_time,
+                                         midi->duration);
                 alSynStartVoiceParams(seqp->drvr, voice, sound->wavetable,
                                       pitch, vol, pan,
                                       seqp->chanState[chan].fxmix,
@@ -3322,6 +3588,7 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
             ALVoiceState *voice_state =
                 __lookupVoice((ALSeqPlayer *)seqp, key, chan);
 
+            native_csp_trace_note_off(seqp, chan, key);
             if (voice_state == NULL || voice_state->sound == NULL ||
                 voice_state->sound->envelope == NULL) {
                 return;
@@ -3377,6 +3644,8 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 {
                     ALVoiceState *voice_state;
 
+                    native_csp_trace_control(seqp, "control_change", chan,
+                                             key, vel);
                     seqp->chanState[chan].pan = vel;
                     for (voice_state = seqp->vAllocHead; voice_state != NULL;
                          voice_state = voice_state->next) {
@@ -3391,11 +3660,15 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 }
 
                 case AL_MIDI_VOLUME_CTRL:
+                    native_csp_trace_control(seqp, "control_change", chan,
+                                             key, vel);
                     seqp->chanState[chan].vol = vel;
                     native_csp_update_channel_volumes(seqp, chan);
                     break;
 
                 case AL_MIDI_PRIORITY_CTRL:
+                    native_csp_trace_control(seqp, "control_change", chan,
+                                             key, vel);
                     seqp->chanState[chan].priority = vel;
                     break;
 
@@ -3403,6 +3676,8 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 {
                     ALVoiceState *voice_state;
 
+                    native_csp_trace_control(seqp, "control_change", chan,
+                                             key, vel);
                     seqp->chanState[chan].sustain = vel;
                     for (voice_state = seqp->vAllocHead; voice_state != NULL;
                          voice_state = voice_state->next) {
@@ -3433,6 +3708,8 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 {
                     ALVoiceState *voice_state;
 
+                    native_csp_trace_control(seqp, "control_change", chan,
+                                             key, vel);
                     seqp->chanState[chan].fxmix = vel;
                     for (voice_state = seqp->vAllocHead; voice_state != NULL;
                          voice_state = voice_state->next) {
@@ -3445,11 +3722,14 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
                 }
 
                 default:
+                    native_csp_trace_control(seqp, "control_change_unhandled",
+                                             chan, key, vel);
                     break;
             }
             break;
 
         case AL_MIDI_ProgramChange:
+            native_csp_trace_control(seqp, "program_change", chan, key, 0);
             if (seqp->bank != NULL && key < seqp->bank->instCount &&
                 seqp->bank->instArray[key] != NULL) {
                 __setInstChanState((ALSeqPlayer *)seqp,
@@ -3466,6 +3746,7 @@ static void native_csp_handle_midi(ALCSPlayer *seqp, ALEvent *event)
             f32 ratio = alCents2Ratio(cents);
 
             seqp->chanState[chan].pitchBend = ratio;
+            native_csp_trace_control(seqp, "pitch_bend", chan, key, vel);
             for (voice_state = seqp->vAllocHead; voice_state != NULL;
                  voice_state = voice_state->next) {
                 if (voice_state->channel == chan) {
@@ -3760,6 +4041,166 @@ void alFilterNew(ALFilter *filter, ALCmdHandler handler, ALSetParam set_param,
 #define NATIVE_ADPCM_FRAME_BYTES 9
 #define NATIVE_ADPCM_FRAME_SHIFT 4
 
+#ifdef NATIVE_PORT
+static FILE *s_native_audio_filter_trace_fp = NULL;
+static int s_native_audio_filter_trace_init = 0;
+static uintptr_t s_native_audio_filter_trace_wave_base = 0;
+static int s_native_audio_filter_trace_has_wave_base = 0;
+
+static FILE *native_audio_filter_trace_fp(void)
+{
+    const char *path;
+    const char *wave_base;
+
+    if (s_native_audio_filter_trace_init) {
+        return s_native_audio_filter_trace_fp;
+    }
+
+    s_native_audio_filter_trace_init = 1;
+    path = getenv("GE007_AUDIO_FILTER_TRACE_JSONL");
+    if (path != NULL && *path != '\0') {
+        s_native_audio_filter_trace_fp = fopen(path, "w");
+    }
+
+    wave_base = getenv("GE007_AUDIO_FILTER_TRACE_WAVE_BASE");
+    if (wave_base != NULL && *wave_base != '\0') {
+        s_native_audio_filter_trace_wave_base =
+            (uintptr_t)strtoull(wave_base, NULL, 0);
+        s_native_audio_filter_trace_has_wave_base = 1;
+    }
+
+    return s_native_audio_filter_trace_fp;
+}
+
+static int native_audio_filter_trace_matches(ALWaveTable *table)
+{
+    if (native_audio_filter_trace_fp() == NULL || table == NULL) {
+        return 0;
+    }
+
+    if (!s_native_audio_filter_trace_has_wave_base) {
+        return 1;
+    }
+
+    return (uintptr_t)table->base == s_native_audio_filter_trace_wave_base;
+}
+
+static void native_audio_filter_trace_adpcm(ALLoadFilter *load,
+                                            s32 out_count,
+                                            s32 requested_samples,
+                                            s32 samples_to_decode,
+                                            s32 frame_count,
+                                            s32 byte_count,
+                                            s32 overflow,
+                                            s32 overflow_samples,
+                                            s32 samples_left_from_frame,
+                                            s32 looped)
+{
+    FILE *fp;
+    ALWaveTable *table;
+    ALADPCMBook *book = NULL;
+
+    if (load == NULL) {
+        return;
+    }
+
+    table = load->table;
+    if (!native_audio_filter_trace_matches(table)) {
+        return;
+    }
+
+    fp = native_audio_filter_trace_fp();
+    if (fp == NULL) {
+        return;
+    }
+
+    if (table != NULL && table->type == AL_ADPCM_WAVE) {
+        book = table->waveInfo.adpcmWave.book;
+    }
+
+    fprintf(fp,
+            "{\"event\":\"adpcm_pull\",\"wave_base\":%llu,"
+            "\"wave_len\":%d,\"out_count\":%d,\"requested_samples\":%d,"
+            "\"samples_to_decode\":%d,\"frame_count\":%d,"
+            "\"byte_count\":%d,\"overflow\":%d,"
+            "\"overflow_samples\":%d,\"samples_left_from_frame\":%d,"
+            "\"load_sample\":%d,\"lastsam\":%d,\"first\":%d,"
+            "\"looped\":%d,\"loop_start\":%d,\"loop_end\":%d,"
+            "\"loop_count\":%d,\"memin\":%llu,"
+            "\"book_order\":%d,\"book_np\":%d,\"book_size\":%d}\n",
+            table != NULL ? (unsigned long long)(uintptr_t)table->base : 0ULL,
+            table != NULL ? table->len : 0,
+            out_count,
+            requested_samples,
+            samples_to_decode,
+            frame_count,
+            byte_count,
+            overflow,
+            overflow_samples,
+            samples_left_from_frame,
+            load->sample,
+            load->lastsam,
+            load->first,
+            looped,
+            load->loop.start,
+            load->loop.end,
+            load->loop.count,
+            (unsigned long long)(uintptr_t)load->memin,
+            book != NULL ? book->order : 0,
+            book != NULL ? book->npredictors : 0,
+            load->bookSize);
+}
+
+static void native_audio_filter_trace_resample(ALResampler *resampler,
+                                               ALLoadFilter *load,
+                                               s32 out_count,
+                                               s32 input_count,
+                                               s32 increment,
+                                               f32 float_input_count,
+                                               f32 previous_delta)
+{
+    FILE *fp;
+    ALWaveTable *table = NULL;
+
+    if (load != NULL) {
+        table = load->table;
+    }
+    if (!native_audio_filter_trace_matches(table)) {
+        return;
+    }
+
+    fp = native_audio_filter_trace_fp();
+    if (fp == NULL) {
+        return;
+    }
+
+    fprintf(fp,
+            "{\"event\":\"resample_pull\",\"wave_base\":%llu,"
+            "\"wave_len\":%d,\"out_count\":%d,\"input_count\":%d,"
+            "\"ratio\":%.9g,\"increment\":%d,\"first\":%d,"
+            "\"upitch\":%d,\"previous_delta\":%.9g,"
+            "\"float_input_count\":%.9g,\"next_delta\":%.9g,"
+            "\"load_sample\":%d,\"lastsam\":%d,\"memin\":%llu}\n",
+            table != NULL ? (unsigned long long)(uintptr_t)table->base : 0ULL,
+            table != NULL ? table->len : 0,
+            out_count,
+            input_count,
+            resampler != NULL ? resampler->ratio : 0.0f,
+            increment,
+            resampler != NULL ? resampler->first : 0,
+            resampler != NULL ? resampler->upitch : 0,
+            previous_delta,
+            float_input_count,
+            resampler != NULL ? resampler->delta : 0.0f,
+            load != NULL ? load->sample : 0,
+            load != NULL ? load->lastsam : 0,
+            load != NULL ? (unsigned long long)(uintptr_t)load->memin : 0ULL);
+}
+#else
+#define native_audio_filter_trace_adpcm(load, out_count, requested_samples, samples_to_decode, frame_count, byte_count, overflow, overflow_samples, samples_left_from_frame, looped) ((void)0)
+#define native_audio_filter_trace_resample(resampler, load, out_count, input_count, increment, float_input_count, previous_delta) ((void)0)
+#endif
+
 static s32 min_s32(s32 a, s32 b)
 {
     return a < b ? a : b;
@@ -3899,6 +4340,10 @@ Acmd *alAdpcmPull(void *filter, s16 *outp, s32 out_count,
         load->lastsam = (out_count + load->lastsam) & 0xf;
         load->sample += out_count;
         load->memin += NATIVE_ADPCM_FRAME_BYTES * frame_count;
+        native_audio_filter_trace_adpcm(load, out_count, requested_samples,
+                                        samples_to_decode, frame_count,
+                                        byte_count, 0, 0,
+                                        samples_left_from_frame, looped);
         return ptr;
     }
 
@@ -3916,6 +4361,10 @@ Acmd *alAdpcmPull(void *filter, s16 *outp, s32 out_count,
     }
 
     byte_count -= overflow;
+    native_audio_filter_trace_adpcm(load, out_count, requested_samples,
+                                    samples_to_decode, frame_count,
+                                    byte_count, overflow, overflow_samples,
+                                    samples_left_from_frame, looped);
 
     if ((overflow_samples - (overflow_samples & 0xf)) < out_count) {
         decoded = 1;
@@ -4301,10 +4750,12 @@ Acmd *alResamplePull(void *filter, s16 *outp, s32 out_count,
 {
     ALResampler *resampler = (ALResampler *)filter;
     ALFilter *source;
+    ALLoadFilter *load = NULL;
     Acmd *ptr = cmd;
     s16 input = AL_DECODER_OUT;
     s32 input_count;
     f32 float_input_count;
+    f32 previous_delta;
     s32 increment;
 
     if (resampler == NULL || ptr == NULL || out_count == 0) {
@@ -4314,6 +4765,9 @@ Acmd *alResamplePull(void *filter, s16 *outp, s32 out_count,
     source = resampler->filter.source;
     if (source == NULL || source->handler == NULL) {
         return ptr;
+    }
+    if (source->type == AL_ADPCM || source->type == AL_BUFFER) {
+        load = (ALLoadFilter *)source;
     }
 
     if (resampler->upitch) {
@@ -4329,13 +4783,16 @@ Acmd *alResamplePull(void *filter, s16 *outp, s32 out_count,
     resampler->ratio = (s32)(resampler->ratio * UNITY_PITCH);
     resampler->ratio = resampler->ratio / UNITY_PITCH;
 
-    float_input_count =
-        resampler->delta + (resampler->ratio * (f32)out_count);
+    previous_delta = resampler->delta;
+    float_input_count = previous_delta + (resampler->ratio * (f32)out_count);
     input_count = (s32)float_input_count;
     resampler->delta = float_input_count - (f32)input_count;
 
     ptr = source->handler(source, &input, input_count, sample_offset, ptr);
     increment = (s32)(resampler->ratio * UNITY_PITCH);
+    native_audio_filter_trace_resample(resampler, load, out_count,
+                                       input_count, increment,
+                                       float_input_count, previous_delta);
     aSetBuffer(ptr++, 0, input, *outp, out_count << 1);
     aResample(ptr++, resampler->first, increment,
               osVirtualToPhysical(resampler->state));

@@ -9,6 +9,7 @@
 #ifdef NATIVE_PORT
 
 #include <ultra64.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +39,9 @@ extern int g_deterministic;
 #define AUDIO_DMA_QUEUE_SIZE           66
 #define PORT_AUDIO_CUSTOM_FX_SECTION_COUNT 6
 #define PORT_AUDIO_FX_MS               *(((s32)((f32)44.1f)) & ~0x7)
+/* Default-off compatibility filter for A/B experiments. Current Ares startup
+ * captures match better with the direct libaudio output path. */
+#define PORT_AUDIO_LIBAUDIO_LOWPASS_ALPHA_Q15 26840
 
 static s32 s_portAudioCustomFxParams[PORT_AUDIO_CUSTOM_FX_SECTION_COUNT * 8 + 2] = {
     6,     160 PORT_AUDIO_FX_MS,
@@ -76,6 +80,10 @@ static struct {
 static DMAState  g_DmaState;
 static DMABuffer g_DmaBuffers[NUMBER_DMA_BUFFERS];
 static u32       g_FrameSize;
+static u32       g_NominalFrameSizeBase;
+static u32       g_NominalFrameSizeRemainder;
+static u32       g_NominalFrameSizeQuantum;
+static u32       g_NominalFrameSizeAccumulator;
 static u32       g_MaxFrameSize;
 static s32       g_CommandLength;
 static u32       g_CurrentAcmdList;
@@ -88,9 +96,76 @@ static s32       g_portAudioReady;
 static AudioInfo *g_lastInfo;
 static ALFxId    g_portAudioFxType;
 static u8        g_portAudioFxCustom;
+static s32       g_LibaudioLowPassState[2];
+static s32       g_LibaudioLowPassInitialized;
+static s32       g_LibaudioLowPassEnabled;
 
 static u32 portAudioAlign16(u32 samples) {
     return samples & ~0xfU;
+}
+
+static s16 portAudioClampS16(s32 value) {
+    if (value < -0x8000) return -0x8000;
+    if (value > 0x7fff) return 0x7fff;
+    return (s16)value;
+}
+
+static u32 portAudioNextNominalFrameSize(void) {
+    u32 samples = g_NominalFrameSizeBase;
+
+    if (samples == 0) {
+        return g_FrameSize;
+    }
+
+    if (g_NominalFrameSizeRemainder != 0 && g_NominalFrameSizeQuantum != 0) {
+        g_NominalFrameSizeAccumulator += g_NominalFrameSizeRemainder;
+        if (g_NominalFrameSizeAccumulator >= g_NominalFrameSizeQuantum) {
+            samples += 0x10;
+            g_NominalFrameSizeAccumulator -= g_NominalFrameSizeQuantum;
+        }
+    }
+
+    return samples;
+}
+
+static void portAudioApplyLibaudioLowPass(s16 *samples, s32 sampleFrames) {
+    s32 i;
+
+    if (samples == NULL || sampleFrames <= 0) {
+        return;
+    }
+
+    if (g_LibaudioLowPassEnabled < 0) {
+        const char *enabled = getenv("GE007_ENABLE_LIBAUDIO_LOWPASS");
+        const char *disabled = getenv("GE007_DISABLE_LIBAUDIO_LOWPASS");
+        g_LibaudioLowPassEnabled =
+            (enabled != NULL && *enabled != '\0' && *enabled != '0' &&
+             (disabled == NULL || *disabled == '\0' || *disabled == '0'))
+                ? 1
+                : 0;
+    }
+    if (!g_LibaudioLowPassEnabled) {
+        return;
+    }
+
+    if (!g_LibaudioLowPassInitialized) {
+        g_LibaudioLowPassState[0] = (s32)samples[0] << 15;
+        g_LibaudioLowPassState[1] = (s32)samples[1] << 15;
+        g_LibaudioLowPassInitialized = 1;
+    }
+
+    for (i = 0; i < sampleFrames; i++) {
+        s32 ch;
+
+        for (ch = 0; ch < 2; ch++) {
+            s32 *state = &g_LibaudioLowPassState[ch];
+            s32 target = (s32)samples[(i << 1) + ch] << 15;
+            int64_t delta = (int64_t)target - (int64_t)*state;
+
+            *state += (s32)((delta * PORT_AUDIO_LIBAUDIO_LOWPASS_ALPHA_Q15) >> 15);
+            samples[(i << 1) + ch] = portAudioClampS16(*state >> 15);
+        }
+    }
 }
 
 static intptr_t amDmaCallback(s32 addr, s32 len, void *state) {
@@ -220,6 +295,7 @@ static void portAudioMeasureOutput(const s16 *samples, s32 sampleFrames,
 void amCreateAudioManager(ALSynConfig *alconf) {
     u32 j;
     f32 fsize;
+    u32 exactFrameNumerator;
 
     printf("[AUDIO-PORT] Initializing audio synthesizer...\n");
     mixerInit();
@@ -232,6 +308,17 @@ void amCreateAudioManager(ALSynConfig *alconf) {
     if (g_FrameSize < fsize) g_FrameSize++;
     if (g_FrameSize & 0xf) g_FrameSize = (g_FrameSize & ~0xf) + 0x10;
     g_MaxFrameSize = g_FrameSize + EXTRA_SAMPLES + 0x10;
+    exactFrameNumerator = alconf->outputRate << FRAMES_PER_FIELD_AS_POW2;
+    g_NominalFrameSizeBase =
+        portAudioAlign16(exactFrameNumerator / MAYBE_FRAME_RATE);
+    g_NominalFrameSizeRemainder =
+        exactFrameNumerator - (g_NominalFrameSizeBase * MAYBE_FRAME_RATE);
+    g_NominalFrameSizeQuantum = 0x10 * MAYBE_FRAME_RATE;
+    g_NominalFrameSizeAccumulator = 0;
+    g_LibaudioLowPassState[0] = 0;
+    g_LibaudioLowPassState[1] = 0;
+    g_LibaudioLowPassInitialized = 0;
+    g_LibaudioLowPassEnabled = -1;
 
     if (getenv("GE007_DISABLE_NATIVE_REVERB") != NULL) {
         alconf->fxType = AL_FX_NONE;
@@ -299,8 +386,10 @@ void portAudioFrame(void) {
      * ended up leaning on the hard drop cap. */
     {
         if (g_deterministic) {
-            /* Deterministic mode: fixed frame size for reproducible traces */
-            info->frameSamples = (s16)g_FrameSize;
+            /* Deterministic mode still needs the exact average output rate.
+             * Use an aligned Bresenham cadence: NTSC alternates 720/736
+             * samples to average 735 samples per 30 Hz game frame. */
+            info->frameSamples = (s16)portAudioNextNominalFrameSize();
         } else {
             const u32 queued_bytes = osAiGetLength();
             const s32 queued_samples = (s32)(queued_bytes >> 2);  /* stereo s16 -> sample frames */
@@ -323,6 +412,7 @@ void portAudioFrame(void) {
 
     alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
                  &g_CommandLength, info->data, info->frameSamples);
+    portAudioApplyLibaudioLowPass(info->data, info->frameSamples);
 
     {
         static int s_musicDumpEnabled = -1;
@@ -349,6 +439,8 @@ void portAudioFrame(void) {
         static u32 s_minQueue = 0xFFFFFFFF, s_maxQueue = 0;
         static u32 s_underruns = 0, s_overTarget = 0;
         static u32 s_queuePrimed = 0;
+        static PortMixerStats s_prevMixerStats = {0};
+        static int s_prevMixerStatsValid = 0;
         if (s_verbose < 0) s_verbose = (getenv("GE007_VERBOSE") != NULL) ? 1 : 0;
         if (!s_trace_init) {
             const char *trace_path = getenv("GE007_AUDIO_TRACE");
@@ -363,6 +455,7 @@ void portAudioFrame(void) {
             PortAiStats ai_stats = {0};
             PortSfxMixStats sfx_stats = {0};
             PortMixerStats mixer_stats = {0};
+            PortMixerStats mixer_delta = {0};
             PortSndPlayerStats sndp_stats = {0};
             u32 qb = 0;
             u32 post_queue = 0;
@@ -380,6 +473,27 @@ void portAudioFrame(void) {
             sndGetPlayerStats(&sndp_stats);
             portAudioMeasureOutput(info->data, info->frameSamples,
                                    &output_peak, &output_rail_hits);
+
+            if (s_prevMixerStatsValid) {
+                mixer_delta.adpcmClampHits =
+                    mixer_stats.adpcmClampHits - s_prevMixerStats.adpcmClampHits;
+                mixer_delta.resampleClampHits =
+                    mixer_stats.resampleClampHits - s_prevMixerStats.resampleClampHits;
+                mixer_delta.envMixerClampHits =
+                    mixer_stats.envMixerClampHits - s_prevMixerStats.envMixerClampHits;
+                mixer_delta.mixClampHits =
+                    mixer_stats.mixClampHits - s_prevMixerStats.mixClampHits;
+                mixer_delta.poleFilterClampHits =
+                    mixer_stats.poleFilterClampHits - s_prevMixerStats.poleFilterClampHits;
+            } else {
+                mixer_delta.adpcmClampHits = mixer_stats.adpcmClampHits;
+                mixer_delta.resampleClampHits = mixer_stats.resampleClampHits;
+                mixer_delta.envMixerClampHits = mixer_stats.envMixerClampHits;
+                mixer_delta.mixClampHits = mixer_stats.mixClampHits;
+                mixer_delta.poleFilterClampHits = mixer_stats.poleFilterClampHits;
+            }
+            s_prevMixerStats = mixer_stats;
+            s_prevMixerStatsValid = 1;
 
             if (!g_deterministic) {
                 qb = ai_stats.queue_before_bytes;
@@ -408,10 +522,18 @@ void portAudioFrame(void) {
                         "\"target_bytes\":%u,\"soft_target_bytes\":%u,\"limit_bytes\":%u,\"primed\":%u,"
                         "\"fx_type\":%u,\"fx_custom\":%u,"
                         "\"output_peak\":%u,\"output_rail_hits\":%u,"
-                        "\"adpcm_dec_calls\":%u,\"resample_calls\":%u,"
+                        "\"adpcm_dec_calls\":%u,\"adpcm_clamp_hits\":%u,"
+                        "\"adpcm_clamp_delta\":%u,"
+                        "\"resample_calls\":%u,\"resample_clamp_hits\":%u,"
+                        "\"resample_clamp_delta\":%u,"
                         "\"env_mixer_calls\":%u,\"env_mixer_sample_frames\":%u,"
-                        "\"env_sample_xor\":%u,\"mix_calls\":%u,"
+                        "\"env_mixer_clamp_hits\":%u,\"env_sample_xor\":%u,"
+                        "\"env_mixer_clamp_delta\":%u,"
+                        "\"mix_calls\":%u,\"mix_clamp_hits\":%u,"
+                        "\"mix_clamp_delta\":%u,"
                         "\"pole_filter_calls\":%u,\"pole_filter_sample_frames\":%u,"
+                        "\"pole_filter_clamp_hits\":%u,"
+                        "\"pole_filter_clamp_delta\":%u,"
                         "\"pole_sample_xor\":%u,\"pole_filter_peak\":%u,"
                         "\"save_buffer_calls\":%u,\"save_buffer_bytes\":%u,"
                         "\"save_buffer_dmemout_calls\":%u,"
@@ -434,13 +556,23 @@ void portAudioFrame(void) {
                         output_peak,
                         output_rail_hits,
                         mixer_stats.adpcmDecCalls,
+                        mixer_stats.adpcmClampHits,
+                        mixer_delta.adpcmClampHits,
                         mixer_stats.resampleCalls,
+                        mixer_stats.resampleClampHits,
+                        mixer_delta.resampleClampHits,
                         mixer_stats.envMixerCalls,
                         mixer_stats.envMixerSampleFrames,
+                        mixer_stats.envMixerClampHits,
                         mixer_stats.envSampleXor,
+                        mixer_delta.envMixerClampHits,
                         mixer_stats.mixCalls,
+                        mixer_stats.mixClampHits,
+                        mixer_delta.mixClampHits,
                         mixer_stats.poleFilterCalls,
                         mixer_stats.poleFilterSampleFrames,
+                        mixer_stats.poleFilterClampHits,
+                        mixer_delta.poleFilterClampHits,
                         mixer_stats.poleSampleXor,
                         mixer_stats.poleFilterPeak,
                         mixer_stats.saveBufferCalls,

@@ -158,6 +158,19 @@ Useful tools:
 - `tools/compare_audio_reference.py` for spectral/envelope comparison against an
   emulator or hardware reference.
 
+Current known issue:
+
+- The startup intro/gunbarrel music still has a focused parity gap in the
+  program-34-heavy windows around the Bond shooting-camera sequence. A local
+  YouTube-derived reference and the local Ares audio dump agree closely enough
+  to treat the port as the outlier. The current trace evidence points at the
+  native custom-FX pole-filter HLE: changing pole-filter lane ordering improves
+  the dull high-band loss in the gunbarrel windows, but causes adjacent
+  over-bright regressions, so no lane/mask override has been promoted to the
+  default. Continue from the `GE007_MUSIC_MIDI_TRACE_JSONL`,
+  `GE007_AUDIO_FILTER_TRACE_JSONL`, and `GE007_AUDIO_POLE_TRACE_JSONL`
+  diagnostics rather than hand-tuning by ear.
+
 Desired end state:
 
 - startup music has stable segmented comparison metrics against a reference;
