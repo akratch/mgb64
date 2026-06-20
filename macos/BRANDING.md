@@ -80,7 +80,8 @@ SF Symbols throughout:
 - "An N64 game engine ported natively to macOS, built on a faithful decompilation"
 - Be honest about status: a work-in-progress, community-iteration port — not a
   1:1 replacement for original hardware. Point to `PORT.md` for known limitations.
-- Never: "GoldenEye port", "Bond game", "Nintendo game player"
+- Never: original-title-forward marketing, film-title phrasing, publisher-title
+  phrasing, or claims that imply affiliation with any rights holder.
 - Emphasis on the engineering achievement, not the game content
 
 ### About Panel
