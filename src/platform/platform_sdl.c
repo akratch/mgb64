@@ -1,0 +1,1317 @@
+/**
+ * platform_sdl.c — SDL2 window, OpenGL context, and frame timing.
+ *
+ * Provides the display window and frame pacing for the PC port.
+ * The N64's VI retrace interrupt is replaced by SDL frame timing.
+ */
+#include <ultra64.h>
+#include <sched.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
+#include <SDL.h>
+#ifdef __APPLE__
+#define GL_SILENCE_DEPRECATION
+#include <OpenGL/gl3.h>
+#else
+#include <glad/glad.h>
+#endif
+#include "config_pc.h"
+#include "game/front.h"
+#include "game/title.h"
+
+/* Forward declarations */
+void platformShutdownSDL(void);
+void platformSetWindowTitle(const char *title);
+
+/* ===== Gamepad state ===== */
+SDL_GameController *g_gameController = NULL;
+static SDL_JoystickID g_gameControllerID = -1;
+
+/* ===== Window state ===== */
+SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
+static SDL_GLContext  g_glContext  = NULL;
+static int g_sdlQuit = 0;
+static int g_forceNoVsync = 0;
+static int g_backgroundWindow = 0;
+static int g_disableInputGrab = 0;
+static int g_traceRequested = -1;
+
+/* ===== Frame timing ===== */
+#define TARGET_FPS 60
+#define FRAME_TIME_MS (1000 / TARGET_FPS)
+static u32 g_lastFrameTime = 0;
+static int g_frameSyncCallCount = 0;
+
+static int platformTraceRequested(void) {
+    extern const char *g_traceStatePath;
+
+    if (g_traceRequested >= 0) {
+        return g_traceRequested;
+    }
+
+    g_traceRequested =
+        g_traceStatePath != NULL
+        || getenv("GE007_GUARD_ORACLE_TRACE") != NULL
+        || getenv("GE007_DUMP_MISSION_GATES") != NULL
+        || getenv("GE007_DUMP_STAGE_PADS") != NULL
+        || getenv("GE007_DUMP_STAGE_CHRS") != NULL;
+
+    return g_traceRequested;
+}
+
+/* ===== Fly camera state ===== */
+/* Initial position (stan-space coords, overridden by gameplay camera sync) */
+float g_pcCamX = 0.0f, g_pcCamY = 50.0f, g_pcCamZ = -400.0f;
+float g_pcCamYaw = 0.0f, g_pcCamPitch = 0.0f;
+static int g_mouseGrabbed = 0;
+int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1. */
+#define FLY_SPEED 50.0f
+#define MOUSE_SENSITIVITY 0.003f
+
+/* ===== Fullscreen state ===== */
+static int g_fullscreen = 0;
+
+/* ===== Configurable window/display settings ===== */
+static s32 g_cfgWindowW = 1440;
+static s32 g_cfgWindowH = 810;
+
+/* ===== Screenshot support ===== */
+#define SCREENSHOT_W 640
+#define SCREENSHOT_H 480
+static int g_screenshotRequested = 0;
+static int g_screenshotCounter = 0;
+int g_autoScreenshotFrame = -1;  /* frame number to auto-capture (-1 = disabled) */
+int g_autoScreenshotExit = 0;    /* exit after auto-screenshot */
+static char g_screenshotLabelStorage[96];
+static const char *g_screenshotLabel = NULL; /* label for screenshot filename */
+int g_freezeInput = 0;           /* zero all controller input for deterministic screenshots */
+
+extern s32 g_diagDisplayCastLastIndex;
+extern s32 g_diagDisplayCastLastAnimIndex;
+extern s32 g_diagDisplayCastLastCameraPreset;
+extern s32 g_diagDisplayCastLastTimer;
+
+static void platformResampleFramebufferToScreenshot(const unsigned char *src,
+                                                    int src_w, int src_h,
+                                                    unsigned char *dst,
+                                                    int dst_w, int dst_h) {
+    int scaled_w;
+    int scaled_h;
+    int offset_x;
+    int offset_y;
+
+    memset(dst, 0, (size_t)dst_w * (size_t)dst_h * 3);
+
+    if (src == NULL || src_w <= 0 || src_h <= 0 || dst == NULL || dst_w <= 0 || dst_h <= 0) {
+        return;
+    }
+
+    if ((int64_t)dst_w * src_h <= (int64_t)dst_h * src_w) {
+        scaled_w = dst_w;
+        scaled_h = (src_h * dst_w + src_w / 2) / src_w;
+    } else {
+        scaled_h = dst_h;
+        scaled_w = (src_w * dst_h + src_h / 2) / src_h;
+    }
+
+    if (scaled_w < 1) {
+        scaled_w = 1;
+    } else if (scaled_w > dst_w) {
+        scaled_w = dst_w;
+    }
+
+    if (scaled_h < 1) {
+        scaled_h = 1;
+    } else if (scaled_h > dst_h) {
+        scaled_h = dst_h;
+    }
+
+    offset_x = (dst_w - scaled_w) / 2;
+    offset_y = (dst_h - scaled_h) / 2;
+
+    for (int y = 0; y < scaled_h; y++) {
+        int src_y = ((y * 2 + 1) * src_h) / (scaled_h * 2);
+
+        if (src_y < 0) {
+            src_y = 0;
+        } else if (src_y >= src_h) {
+            src_y = src_h - 1;
+        }
+
+        for (int x = 0; x < scaled_w; x++) {
+            int src_x = ((x * 2 + 1) * src_w) / (scaled_w * 2);
+            int dst_index;
+            int src_index;
+
+            if (src_x < 0) {
+                src_x = 0;
+            } else if (src_x >= src_w) {
+                src_x = src_w - 1;
+            }
+
+            dst_index = ((y + offset_y) * dst_w + (x + offset_x)) * 3;
+            src_index = (src_y * src_w + src_x) * 3;
+            dst[dst_index + 0] = src[src_index + 0];
+            dst[dst_index + 1] = src[src_index + 1];
+            dst[dst_index + 2] = src[src_index + 2];
+        }
+    }
+}
+
+static void platformResizeRgbBilinear(const unsigned char *src,
+                                      int src_w, int src_h,
+                                      unsigned char *dst,
+                                      int dst_w, int dst_h) {
+    if (src == NULL || dst == NULL || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
+        return;
+    }
+
+    for (int y = 0; y < dst_h; y++) {
+        float src_y = ((float)y + 0.5f) * (float)src_h / (float)dst_h - 0.5f;
+        int y0 = (int)floorf(src_y);
+        float fy = src_y - (float)y0;
+
+        if (y0 < 0) {
+            y0 = 0;
+            fy = 0.0f;
+        } else if (y0 >= src_h - 1) {
+            y0 = src_h - 1;
+            fy = 0.0f;
+        }
+
+        int y1 = y0 + 1;
+        if (y1 >= src_h) {
+            y1 = y0;
+        }
+
+        for (int x = 0; x < dst_w; x++) {
+            float src_x = ((float)x + 0.5f) * (float)src_w / (float)dst_w - 0.5f;
+            int x0 = (int)floorf(src_x);
+            float fx = src_x - (float)x0;
+
+            if (x0 < 0) {
+                x0 = 0;
+                fx = 0.0f;
+            } else if (x0 >= src_w - 1) {
+                x0 = src_w - 1;
+                fx = 0.0f;
+            }
+
+            int x1 = x0 + 1;
+            if (x1 >= src_w) {
+                x1 = x0;
+            }
+
+            int dst_index = (y * dst_w + x) * 3;
+            int idx00 = (y0 * src_w + x0) * 3;
+            int idx10 = (y0 * src_w + x1) * 3;
+            int idx01 = (y1 * src_w + x0) * 3;
+            int idx11 = (y1 * src_w + x1) * 3;
+
+            for (int c = 0; c < 3; c++) {
+                float v0 = (float)src[idx00 + c] + ((float)src[idx10 + c] - (float)src[idx00 + c]) * fx;
+                float v1 = (float)src[idx01 + c] + ((float)src[idx11 + c] - (float)src[idx01 + c]) * fx;
+                float v = v0 + (v1 - v0) * fy;
+                int out = (int)(v + 0.5f);
+
+                if (out < 0) {
+                    out = 0;
+                } else if (out > 255) {
+                    out = 255;
+                }
+                dst[dst_index + c] = (unsigned char)out;
+            }
+        }
+    }
+}
+
+static void platformApplyScreenshotViFilter(unsigned char *pixels, int width, int height) {
+    const char *env = getenv("GE007_DIAG_SCREENSHOT_VI_FILTER");
+    int filter_w = 0;
+    int filter_h = 0;
+    unsigned char *small = NULL;
+    unsigned char *filtered = NULL;
+
+    if (env == NULL || env[0] == '\0' || strcmp(env, "0") == 0) {
+        return;
+    }
+
+    if (sscanf(env, "%dx%d", &filter_w, &filter_h) != 2 ||
+        filter_w <= 0 || filter_h <= 0 ||
+        filter_w > width || filter_h > height) {
+        fprintf(stderr,
+                "[SDL] Ignoring invalid GE007_DIAG_SCREENSHOT_VI_FILTER=%s "
+                "(expected WxH within %dx%d)\n",
+                env, width, height);
+        return;
+    }
+
+    small = (unsigned char *)malloc((size_t)filter_w * (size_t)filter_h * 3);
+    filtered = (unsigned char *)malloc((size_t)width * (size_t)height * 3);
+    if (small == NULL || filtered == NULL) {
+        free(small);
+        free(filtered);
+        return;
+    }
+
+    platformResizeRgbBilinear(pixels, width, height, small, filter_w, filter_h);
+    platformResizeRgbBilinear(small, filter_w, filter_h, filtered, width, height);
+    memcpy(pixels, filtered, (size_t)width * (size_t)height * 3);
+    printf("[SDL] Screenshot VI filter %dx%d -> %dx%d (GE007_DIAG_SCREENSHOT_VI_FILTER)\n",
+           filter_w, filter_h, width, height);
+
+    free(small);
+    free(filtered);
+}
+
+void platformSetScreenshotLabel(const char *label) {
+    size_t out = 0;
+
+    if (label == NULL || *label == '\0') {
+        g_screenshotLabelStorage[0] = '\0';
+        g_screenshotLabel = NULL;
+        return;
+    }
+
+    while (*label != '\0' && out < sizeof(g_screenshotLabelStorage) - 1) {
+        char c = *label++;
+        if ((c >= 'a' && c <= 'z')
+            || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9')
+            || c == '-'
+            || c == '_'
+            || c == '.') {
+            g_screenshotLabelStorage[out++] = c;
+        }
+    }
+
+    g_screenshotLabelStorage[out] = '\0';
+    g_screenshotLabel = out > 0 ? g_screenshotLabelStorage : NULL;
+}
+
+void platformSaveScreenshot(void) {
+    int w = SCREENSHOT_W, h = SCREENSHOT_H;
+    int src_w = w;
+    int src_h = h;
+    int row_size;
+    int data_size;
+    int file_size;
+    unsigned char *pixels = NULL;
+    unsigned char *source_pixels = NULL;
+    int native_size_screenshot = getenv("GE007_DIAG_SCREENSHOT_NATIVE_SIZE") != NULL;
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
+    }
+
+    if (src_w < 1) {
+        src_w = w;
+    }
+
+    if (src_h < 1) {
+        src_h = h;
+    }
+
+    if (native_size_screenshot) {
+        w = src_w;
+        h = src_h;
+    }
+
+    row_size = ((w * 3 + 3) & ~3);  /* BMP rows must be 4-byte aligned */
+    data_size = row_size * h;
+    file_size = 54 + data_size;
+
+    source_pixels = (unsigned char *)malloc((size_t)src_w * (size_t)src_h * 3);
+    pixels = (unsigned char *)malloc((size_t)w * (size_t)h * 3);
+
+    if (!source_pixels || !pixels) {
+        free(source_pixels);
+        free(pixels);
+        return;
+    }
+
+    glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+
+    if (src_w == w && src_h == h) {
+        memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);
+    } else {
+        platformResampleFramebufferToScreenshot(source_pixels, src_w, src_h, pixels, w, h);
+    }
+    platformApplyScreenshotViFilter(pixels, w, h);
+
+    char filename[128];
+    if (g_screenshotLabel) {
+        snprintf(filename, sizeof(filename), "screenshot_%s.bmp", g_screenshotLabel);
+    } else {
+        snprintf(filename, sizeof(filename), "screenshot_%03d.bmp", g_screenshotCounter++);
+    }
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        fprintf(stderr, "[SDL] Failed to save screenshot %s: %s\n",
+                filename, strerror(errno));
+        free(source_pixels);
+        free(pixels);
+        return;
+    }
+
+    /* BMP header (54 bytes) */
+    unsigned char hdr[54] = {0};
+    hdr[0] = 'B'; hdr[1] = 'M';
+    hdr[2] = file_size; hdr[3] = file_size >> 8; hdr[4] = file_size >> 16; hdr[5] = file_size >> 24;
+    hdr[10] = 54;  /* data offset */
+    hdr[14] = 40;  /* DIB header size */
+    hdr[18] = w; hdr[19] = w >> 8;
+    hdr[22] = h; hdr[23] = h >> 8;
+    hdr[26] = 1;   /* planes */
+    hdr[28] = 24;  /* bpp */
+    hdr[34] = data_size; hdr[35] = data_size >> 8; hdr[36] = data_size >> 16; hdr[37] = data_size >> 24;
+    fwrite(hdr, 1, 54, f);
+
+    /* BMP stores rows bottom-to-top (OpenGL gives us bottom-to-top), RGB→BGR */
+    unsigned char *row_buf = (unsigned char *)malloc(row_size);
+    for (int y = 0; y < h; y++) {
+        unsigned char *src = pixels + y * w * 3;
+        memset(row_buf, 0, row_size);
+        for (int x = 0; x < w; x++) {
+            row_buf[x * 3 + 0] = src[x * 3 + 2];  /* B */
+            row_buf[x * 3 + 1] = src[x * 3 + 1];  /* G */
+            row_buf[x * 3 + 2] = src[x * 3 + 0];  /* R */
+        }
+        fwrite(row_buf, 1, row_size, f);
+    }
+    free(row_buf);
+    fclose(f);
+    free(source_pixels);
+    free(pixels);
+    printf("[SDL] Screenshot saved: %s\n", filename);
+}
+
+static int platformParseDiagS32Env(const char *name, s32 *out) {
+    const char *env = getenv(name);
+    char *end = NULL;
+    long value;
+
+    if (env == NULL || env[0] == '\0') {
+        return 0;
+    }
+
+    value = strtol(env, &end, 10);
+    if (end == env) {
+        fprintf(stderr, "[SDL] Ignoring invalid %s=%s\n", name, env);
+        return 0;
+    }
+    if (value < INT_MIN) value = INT_MIN;
+    if (value > INT_MAX) value = INT_MAX;
+    *out = (s32)value;
+    return 1;
+}
+
+static int platformParseDiagF32Env(const char *name, f32 *out) {
+    const char *env = getenv(name);
+    char *end = NULL;
+    double value;
+
+    if (env == NULL || env[0] == '\0') {
+        return 0;
+    }
+
+    value = strtod(env, &end);
+    if (end == env) {
+        fprintf(stderr, "[SDL] Ignoring invalid %s=%s\n", name, env);
+        return 0;
+    }
+    *out = (f32)value;
+    return 1;
+}
+
+static void platformApplyWindowSizeEnv(void) {
+    const char *env = getenv("GE007_WINDOW_SIZE");
+    char *end = NULL;
+    long width;
+    long height;
+
+    if (env == NULL || env[0] == '\0') {
+        return;
+    }
+
+    width = strtol(env, &end, 10);
+    if (end == env || (*end != 'x' && *end != 'X')) {
+        fprintf(stderr, "[SDL] Ignoring invalid GE007_WINDOW_SIZE=%s\n", env);
+        return;
+    }
+
+    height = strtol(end + 1, &end, 10);
+    if (height <= 0 || width <= 0 || (*end != '\0' && *end != ' ' && *end != '\t')) {
+        fprintf(stderr, "[SDL] Ignoring invalid GE007_WINDOW_SIZE=%s\n", env);
+        return;
+    }
+
+    if (width < 320) width = 320;
+    if (width > 3840) width = 3840;
+    if (height < 240) height = 240;
+    if (height > 2160) height = 2160;
+    g_cfgWindowW = (s32)width;
+    g_cfgWindowH = (s32)height;
+    fprintf(stderr,
+            "[SDL] Window size override %dx%d (GE007_WINDOW_SIZE)\n",
+            g_cfgWindowW, g_cfgWindowH);
+}
+
+static int platformFloatWithinTolerance(f32 actual, f32 expected, f32 tolerance) {
+    return fabsf(actual - expected) <= tolerance;
+}
+
+static int platformDiagDisplayCastScreenshotDue(void) {
+    static int checked;
+    static int done;
+    static s32 target_timer = INT_MIN;
+    static s32 target_index = INT_MIN;
+    static s32 target_anim_index = INT_MIN;
+    static s32 target_camera_preset = INT_MIN;
+    static s32 capture_delay = 0;
+    static s32 pending_delay = -1;
+
+    if (done) {
+        return 0;
+    }
+
+    if (pending_delay >= 0) {
+        if (pending_delay > 0) {
+            pending_delay--;
+        }
+        if (pending_delay == 0) {
+            pending_delay = -1;
+            done = 1;
+            fprintf(stderr,
+                    "[SDL] DIAG DISPLAYCAST SCREENSHOT capture frame=%d timer=%d index=%d anim=%d camera=%d\n",
+                    g_frameSyncCallCount,
+                    g_diagDisplayCastLastTimer,
+                    g_diagDisplayCastLastIndex,
+                    g_diagDisplayCastLastAnimIndex,
+                    g_diagDisplayCastLastCameraPreset);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (!checked) {
+        checked = 1;
+        if (!platformParseDiagS32Env("GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER", &target_timer)) {
+            return 0;
+        }
+        platformParseDiagS32Env("GE007_DIAG_DISPLAYCAST_SCREENSHOT_INDEX", &target_index);
+        platformParseDiagS32Env("GE007_DIAG_DISPLAYCAST_SCREENSHOT_ANIM_INDEX", &target_anim_index);
+        platformParseDiagS32Env("GE007_DIAG_DISPLAYCAST_SCREENSHOT_CAMERA_PRESET", &target_camera_preset);
+        platformParseDiagS32Env("GE007_DIAG_DISPLAYCAST_SCREENSHOT_DELAY", &capture_delay);
+        if (capture_delay < 0) {
+            capture_delay = 0;
+        }
+        fprintf(stderr,
+                "[SDL] DIAG DISPLAYCAST SCREENSHOT armed timer=%d index=%d anim=%d camera=%d delay=%d\n",
+                target_timer, target_index, target_anim_index, target_camera_preset, capture_delay);
+    }
+
+    if (target_timer == INT_MIN || g_diagDisplayCastLastTimer != target_timer) {
+        return 0;
+    }
+    if (target_index != INT_MIN && g_diagDisplayCastLastIndex != target_index) {
+        return 0;
+    }
+    if (target_anim_index != INT_MIN && g_diagDisplayCastLastAnimIndex != target_anim_index) {
+        return 0;
+    }
+    if (target_camera_preset != INT_MIN && g_diagDisplayCastLastCameraPreset != target_camera_preset) {
+        return 0;
+    }
+
+    fprintf(stderr,
+            "[SDL] DIAG DISPLAYCAST SCREENSHOT matched frame=%d timer=%d index=%d anim=%d camera=%d\n",
+            g_frameSyncCallCount,
+            g_diagDisplayCastLastTimer,
+            g_diagDisplayCastLastIndex,
+            g_diagDisplayCastLastAnimIndex,
+            g_diagDisplayCastLastCameraPreset);
+    if (capture_delay > 0) {
+        pending_delay = capture_delay;
+        return 0;
+    }
+
+    done = 1;
+    return 1;
+}
+
+static int platformDiagMenuScreenshotDue(void) {
+    static int checked;
+    static int done;
+    static s32 target_menu = INT_MIN;
+    static s32 target_timer = INT_MIN;
+    static s32 timer_min = INT_MIN;
+    static s32 timer_max = INT_MIN;
+    static s32 target_wave = INT_MIN;
+    static f32 target_title_x = 0.0f;
+    static f32 target_title_y = 0.0f;
+    static f32 target_rare_rotation = 0.0f;
+    static f32 target_nintendo_rotation = 0.0f;
+    static f32 target_nintendo_scale = 0.0f;
+    static f32 tolerance = 0.5f;
+    static int has_title_x;
+    static int has_title_y;
+    static int has_rare_rotation;
+    static int has_nintendo_rotation;
+    static int has_nintendo_scale;
+    static s32 capture_delay = 0;
+    static s32 pending_delay = -1;
+
+    if (done) {
+        return 0;
+    }
+
+    if (pending_delay >= 0) {
+        if (pending_delay > 0) {
+            pending_delay--;
+        }
+        if (pending_delay == 0) {
+            pending_delay = -1;
+            done = 1;
+            fprintf(stderr,
+                    "[SDL] DIAG MENU SCREENSHOT capture frame=%d menu=%d timer=%d "
+                    "title=(x=%.4f y=%.4f rare=%.4f nintendo=%.4f scale=%.6f wave=%d)\n",
+                    g_frameSyncCallCount,
+                    (int)current_menu,
+                    (int)g_MenuTimer,
+                    g_TitleX,
+                    g_TitleY,
+                    D_8002A89C,
+                    ninLogoRotRate,
+                    ninLogoScale,
+                    (int)word_CODE_bss_80069584);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (!checked) {
+        checked = 1;
+        if (!platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_MENU", &target_menu)) {
+            return 0;
+        }
+        if (platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_TIMER", &target_timer)) {
+            timer_min = target_timer;
+            timer_max = target_timer;
+        }
+        platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_TIMER_MIN", &timer_min);
+        platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_TIMER_MAX", &timer_max);
+        platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_WAVE", &target_wave);
+        platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_TOLERANCE", &tolerance);
+        has_title_x = platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_TITLE_X", &target_title_x);
+        has_title_y = platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_TITLE_Y", &target_title_y);
+        has_rare_rotation = platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_RARE_ROTATION", &target_rare_rotation);
+        has_nintendo_rotation = platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_NINTENDO_ROTATION", &target_nintendo_rotation);
+        has_nintendo_scale = platformParseDiagF32Env("GE007_DIAG_MENU_SCREENSHOT_NINTENDO_SCALE", &target_nintendo_scale);
+        platformParseDiagS32Env("GE007_DIAG_MENU_SCREENSHOT_DELAY", &capture_delay);
+        if (capture_delay < 0) {
+            capture_delay = 0;
+        }
+        if (tolerance < 0.0f) {
+            tolerance = 0.0f;
+        }
+        fprintf(stderr,
+                "[SDL] DIAG MENU SCREENSHOT armed menu=%d timer=%d min=%d max=%d "
+                "rare=%s nintendo=%s scale=%s tolerance=%.4f delay=%d\n",
+                (int)target_menu,
+                (int)target_timer,
+                (int)timer_min,
+                (int)timer_max,
+                has_rare_rotation ? "set" : "-",
+                has_nintendo_rotation ? "set" : "-",
+                has_nintendo_scale ? "set" : "-",
+                tolerance,
+                (int)capture_delay);
+    }
+
+    if (target_menu == INT_MIN || (s32)current_menu != target_menu) {
+        return 0;
+    }
+    if (timer_min != INT_MIN && g_MenuTimer < timer_min) {
+        return 0;
+    }
+    if (timer_max != INT_MIN && g_MenuTimer > timer_max) {
+        return 0;
+    }
+    if (target_wave != INT_MIN && (s32)word_CODE_bss_80069584 != target_wave) {
+        return 0;
+    }
+    if (has_title_x && !platformFloatWithinTolerance(g_TitleX, target_title_x, tolerance)) {
+        return 0;
+    }
+    if (has_title_y && !platformFloatWithinTolerance(g_TitleY, target_title_y, tolerance)) {
+        return 0;
+    }
+    if (has_rare_rotation && !platformFloatWithinTolerance(D_8002A89C, target_rare_rotation, tolerance)) {
+        return 0;
+    }
+    if (has_nintendo_rotation && !platformFloatWithinTolerance(ninLogoRotRate, target_nintendo_rotation, tolerance)) {
+        return 0;
+    }
+    if (has_nintendo_scale && !platformFloatWithinTolerance(ninLogoScale, target_nintendo_scale, tolerance)) {
+        return 0;
+    }
+
+    fprintf(stderr,
+            "[SDL] DIAG MENU SCREENSHOT matched frame=%d menu=%d timer=%d "
+            "title=(x=%.4f y=%.4f rare=%.4f nintendo=%.4f scale=%.6f wave=%d)\n",
+            g_frameSyncCallCount,
+            (int)current_menu,
+            (int)g_MenuTimer,
+            g_TitleX,
+            g_TitleY,
+            D_8002A89C,
+            ninLogoRotRate,
+            ninLogoScale,
+            (int)word_CODE_bss_80069584);
+    if (capture_delay > 0) {
+        pending_delay = capture_delay;
+        return 0;
+    }
+
+    done = 1;
+    return 1;
+}
+
+static void platformFinishAutoScreenshotIfRequested(void) {
+    if (g_autoScreenshotExit) {
+        extern int g_crashRecoveryCount;
+        if (g_crashRecoveryCount > 0) {
+            printf("[GE007-PC] Auto-screenshot complete, but %d crash recoveries occurred; build needed recovery, exiting with error.\n",
+                   g_crashRecoveryCount);
+            platformShutdownSDL();
+            exit(3);
+        }
+        printf("[GE007-PC] Auto-screenshot complete, exiting.\n");
+        platformShutdownSDL();
+        exit(0);
+    }
+}
+
+/* ===== Mouse delta for N64 controller emulation ===== */
+static int g_mouseDeltaX = 0;
+static int g_mouseDeltaY = 0;
+
+/* ===== PC input state (consumed by game-side NATIVE_PORT blocks) ===== */
+static int g_mouseWheelY = 0;       /* scroll wheel accumulator */
+int g_pcEscapePressed = 0;          /* Escape key edge-detect flag */
+int g_pcCrouchToggle = 0;           /* C/Ctrl edge-detect flag */
+int g_pcMouseRegrabFrame = 0;       /* suppress mouse buttons for 1 frame after regrab */
+float g_pcMouseSensitivity = 0.15f; /* configurable mouse sensitivity */
+float g_pcMouseSensAim = 0.05f;     /* aim-mode mouse sensitivity */
+int g_pcInvertY = 0;                /* invert Y axis */
+float g_pcGamepadLookSpeed = 8.0f;  /* gamepad right stick scaling */
+extern int g_pcScriptedMouseDeltaX;
+extern int g_pcScriptedMouseDeltaY;
+#ifdef MACOS_APP_BUNDLE
+extern int g_pcBridgeRightStickX;
+extern int g_pcBridgeRightStickY;
+#endif
+
+static int platformEnvFlagEnabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    if (value == NULL || value[0] == '\0') {
+        return 0;
+    }
+
+    if (value[0] == '0' && value[1] == '\0') {
+        return 0;
+    }
+
+    return 1;
+}
+
+#define AUTO_MUTE_TOGGLE_MAX 16
+
+static int g_audioMuted = -1;
+static int g_autoMuteToggleParsed = 0;
+static int g_autoMuteToggleCount = 0;
+static int g_autoMuteToggleFrames[AUTO_MUTE_TOGGLE_MAX];
+static int g_autoMuteToggleFired[AUTO_MUTE_TOGGLE_MAX];
+
+static int platformAudioMuteTraceEnabled(void)
+{
+    return platformEnvFlagEnabled("GE007_AUDIO_MUTE_TRACE");
+}
+
+static void platformToggleAudioMute(const char *source)
+{
+    extern SDL_AudioDeviceID portAudioGetDevice(void);
+    extern SDL_AudioDeviceID portAiGetDevice(void);
+    extern int portAudioShouldStartMuted(void);
+    SDL_AudioDeviceID audio_dev;
+    SDL_AudioDeviceID ai_dev;
+
+    if (g_audioMuted < 0) {
+        g_audioMuted = portAudioShouldStartMuted();
+    }
+
+    g_audioMuted = !g_audioMuted;
+    audio_dev = portAudioGetDevice();
+    ai_dev = portAiGetDevice();
+
+    if (audio_dev) {
+        SDL_PauseAudioDevice(audio_dev, g_audioMuted);
+    }
+    if (ai_dev && ai_dev != audio_dev) {
+        SDL_PauseAudioDevice(ai_dev, g_audioMuted);
+    }
+
+    printf("[AUDIO] %s (%s)\n", g_audioMuted ? "MUTED" : "UNMUTED", source);
+    if (platformAudioMuteTraceEnabled()) {
+        printf("[AUDIO_MUTE_TRACE] frame=%d source=%s muted=%d audio_dev=%u ai_dev=%u unified=%d\n",
+               g_frameSyncCallCount,
+               source,
+               g_audioMuted ? 1 : 0,
+               (unsigned int)audio_dev,
+               (unsigned int)ai_dev,
+               (audio_dev != 0 && ai_dev == audio_dev) ? 1 : 0);
+    }
+}
+
+static void platformAddAutoMuteToggleFrame(long frame)
+{
+    if (frame < 0 || g_autoMuteToggleCount >= AUTO_MUTE_TOGGLE_MAX) {
+        return;
+    }
+
+    g_autoMuteToggleFrames[g_autoMuteToggleCount] = (int)frame;
+    g_autoMuteToggleFired[g_autoMuteToggleCount] = 0;
+    g_autoMuteToggleCount++;
+}
+
+static void platformParseAutoMuteToggleValue(const char *value)
+{
+    const char *cursor = value;
+
+    while (cursor != NULL && *cursor != '\0' && g_autoMuteToggleCount < AUTO_MUTE_TOGGLE_MAX) {
+        char *end = NULL;
+        long frame;
+
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == ',' || *cursor == ';') {
+            cursor++;
+        }
+        if (*cursor == '\0') {
+            break;
+        }
+
+        frame = strtol(cursor, &end, 10);
+        if (end == cursor) {
+            break;
+        }
+
+        platformAddAutoMuteToggleFrame(frame);
+        cursor = end;
+    }
+}
+
+static void platformParseAutoMuteToggles(void)
+{
+    g_autoMuteToggleParsed = 1;
+    platformParseAutoMuteToggleValue(getenv("GE007_AUTO_MUTE_TOGGLE_FRAME"));
+    platformParseAutoMuteToggleValue(getenv("GE007_AUTO_MUTE_TOGGLE_SCRIPT"));
+}
+
+static void platformApplyAutoMuteToggles(void)
+{
+    int i;
+
+    if (!g_autoMuteToggleParsed) {
+        platformParseAutoMuteToggles();
+    }
+
+    for (i = 0; i < g_autoMuteToggleCount; i++) {
+        if (!g_autoMuteToggleFired[i] && g_frameSyncCallCount == g_autoMuteToggleFrames[i]) {
+            g_autoMuteToggleFired[i] = 1;
+            platformToggleAudioMute("auto mute toggle");
+        }
+    }
+}
+
+/* Register platform settings with the config system.
+ * Called from main_pc.c before configInit(). */
+void platformRegisterConfig(void)
+{
+    configRegisterInt("Video.WindowWidth",  &g_cfgWindowW, 320, 3840);
+    configRegisterInt("Video.WindowHeight", &g_cfgWindowH, 240, 2160);
+    configRegisterInt("Video.Fullscreen",   &g_fullscreen, 0, 1);
+    configRegisterFloat("Input.MouseSensitivity",    &g_pcMouseSensitivity, 0.01f, 2.0f);
+    configRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.005f, 1.0f);
+    configRegisterInt("Input.InvertY",               &g_pcInvertY, 0, 1);
+    configRegisterFloat("Input.GamepadLookSpeed",    &g_pcGamepadLookSpeed, 1.0f, 30.0f);
+}
+
+void platformGetMouseDelta(int *dx, int *dy) {
+    *dx = g_mouseDeltaX + g_pcScriptedMouseDeltaX;
+    *dy = g_mouseDeltaY + g_pcScriptedMouseDeltaY;
+    g_mouseDeltaX = 0;
+    g_mouseDeltaY = 0;
+    g_pcScriptedMouseDeltaX = 0;
+    g_pcScriptedMouseDeltaY = 0;
+}
+
+int platformGetMouseWheel(void) {
+    int v = g_mouseWheelY;
+    g_mouseWheelY = 0;
+    return v;
+}
+
+/* Right stick raw values for direct aim injection (bypasses C-button acceleration) */
+void platformGetRightStick(int *rx_out, int *ry_out) {
+    int rx = 0, ry = 0;
+    if (g_gameController) {
+        rx = SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_RIGHTX);
+        ry = SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_RIGHTY);
+        /* Apply deadzone */
+        if (rx > -8000 && rx < 8000) rx = 0;
+        if (ry > -8000 && ry < 8000) ry = 0;
+    }
+#ifdef MACOS_APP_BUNDLE
+    rx += g_pcBridgeRightStickX;
+    ry += g_pcBridgeRightStickY;
+    if (rx > 32767) rx = 32767;
+    if (rx < -32767) rx = -32767;
+    if (ry > 32767) ry = 32767;
+    if (ry < -32767) ry = -32767;
+#endif
+    *rx_out = rx;
+    *ry_out = ry;
+}
+
+/* ===== Scheduler references ===== */
+/* We need access to the scheduler's client list to send retrace messages */
+extern OSSched os_scheduler;
+
+/**
+ * Initialize SDL2 and create a window with OpenGL context.
+ * Returns 0 on success, -1 on failure.
+ */
+int platformInitSDL(void) {
+    if (getenv("GE007_FLYCAM") != NULL) {
+        g_pcDebugFlyCamera = 1;
+    }
+    if (getenv("GE007_NO_VSYNC") != NULL) {
+        g_forceNoVsync = 1;
+    }
+    g_backgroundWindow = platformEnvFlagEnabled("GE007_BACKGROUND");
+    g_disableInputGrab = g_backgroundWindow || platformEnvFlagEnabled("GE007_NO_INPUT_GRAB");
+    platformApplyWindowSizeEnv();
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) < 0) {
+        fprintf(stderr, "[SDL] Init failed: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    /* Request OpenGL Core Profile for shader-based rendering */
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+
+    {
+        int disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
+        Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+
+        if (!disable_highdpi) {
+            window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+        }
+
+        if (g_backgroundWindow) {
+            window_flags |= SDL_WINDOW_HIDDEN;
+        } else {
+            window_flags |= SDL_WINDOW_SHOWN;
+        }
+
+        g_sdlWindow = SDL_CreateWindow(
+        "MGB64",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        g_cfgWindowW, g_cfgWindowH,
+        window_flags
+        );
+    }
+
+    if (g_sdlWindow && g_fullscreen) {
+        SDL_SetWindowFullscreen(g_sdlWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    }
+
+    if (!g_sdlWindow) {
+        fprintf(stderr, "[SDL] Window creation failed: %s\n", SDL_GetError());
+        SDL_Quit();
+        return -1;
+    }
+
+    g_glContext = SDL_GL_CreateContext(g_sdlWindow);
+    if (!g_glContext) {
+        fprintf(stderr, "[SDL] GL context creation failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(g_sdlWindow);
+        SDL_Quit();
+        return -1;
+    }
+
+    /* Load OpenGL function pointers via glad (not needed on macOS) */
+#ifndef __APPLE__
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "[SDL] Failed to load OpenGL functions via glad\n");
+        SDL_GL_DeleteContext(g_glContext);
+        SDL_DestroyWindow(g_sdlWindow);
+        SDL_Quit();
+        return -1;
+    }
+#endif
+
+    /* macOS can block indefinitely in SwapWindow when the test window never
+     * receives focus. Allow explicit no-vsync runs for automated capture. */
+    if (g_forceNoVsync) {
+        SDL_GL_SetSwapInterval(0);
+        printf("[SDL] VSync disabled (GE007_NO_VSYNC)\n");
+    } else if (SDL_GL_SetSwapInterval(-1) < 0) {
+        SDL_GL_SetSwapInterval(1);
+    }
+
+    g_lastFrameTime = SDL_GetTicks();
+    printf("[SDL] Window created (OpenGL %s, GLSL %s)\n",
+           glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
+    if (platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI")) {
+        printf("[SDL] HiDPI window mode disabled (GE007_DIAG_DISABLE_HIGHDPI)\n");
+    }
+    if (g_backgroundWindow) {
+        printf("[SDL] Background window mode enabled (GE007_BACKGROUND)\n");
+    }
+    if (g_disableInputGrab) {
+        printf("[SDL] Input grab disabled (GE007_NO_INPUT_GRAB)\n");
+    }
+
+    /* Open first available game controller */
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        if (SDL_IsGameController(i)) {
+            g_gameController = SDL_GameControllerOpen(i);
+            if (g_gameController) {
+                g_gameControllerID = SDL_JoystickInstanceID(
+                    SDL_GameControllerGetJoystick(g_gameController));
+                printf("[SDL] Gamepad connected: %s\n",
+                       SDL_GameControllerName(g_gameController));
+                break;
+            }
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Process SDL events and check for quit.
+ */
+void platformPollEvents(void) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+            case SDL_QUIT:
+                g_sdlQuit = 1;
+                break;
+            case SDL_WINDOWEVENT:
+                if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                    /* Re-enable vsync when window gains focus */
+                    if (!g_forceNoVsync) {
+                        if (SDL_GL_SetSwapInterval(-1) < 0) {
+                            SDL_GL_SetSwapInterval(1);
+                        }
+                    }
+                } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    /* Disable vsync when unfocused to prevent macOS SwapWindow hang */
+                    SDL_GL_SetSwapInterval(0);
+                } else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    extern void gfx_set_window_size(int w, int h);
+                    gfx_set_window_size(event.window.data1, event.window.data2);
+                }
+                break;
+            case SDL_KEYDOWN:
+                if (event.key.keysym.sym == SDLK_RETURN &&
+                    (event.key.keysym.mod & KMOD_ALT)) {
+                    g_fullscreen = !g_fullscreen;
+                    SDL_SetWindowFullscreen(g_sdlWindow,
+                        g_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
+                    if (g_mouseGrabbed) {
+                        /* In gameplay: pause (START_BUTTON) and ungrab mouse */
+                        g_pcEscapePressed = 1;  /* 1 = was in gameplay → START */
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                        g_mouseGrabbed = 0;
+                    } else {
+                        /* In menus: back (B_BUTTON) */
+                        g_pcEscapePressed = 2;  /* 2 = was in menus → B */
+                    }
+                } else if (event.key.keysym.sym == SDLK_c ||
+                           event.key.keysym.sym == SDLK_LCTRL) {
+                    if (!event.key.repeat) {
+                        g_pcCrouchToggle = 1;
+                    }
+                } else if (event.key.keysym.sym == SDLK_F1) {
+                    g_pcDebugFlyCamera = !g_pcDebugFlyCamera;
+                    printf("[SDL] Fly camera %s (F1 toggle)\n",
+                           g_pcDebugFlyCamera ? "ON" : "OFF — gameplay input active");
+                } else if (event.key.keysym.sym == SDLK_F2) {
+                    g_screenshotRequested = 1;
+                } else if (event.key.keysym.sym == SDLK_h && !event.key.repeat) {
+                    printf("\n"
+                        "=== CONTROLS ===\n"
+                        "WASD        Move\n"
+                        "Mouse       Look\n"
+                        "L Click     Fire\n"
+                        "R Click     Aim (hold)\n"
+                        "Scroll      Cycle weapon\n"
+                        "R           Reload\n"
+                        "F           Interact\n"
+                        "C / LCtrl   Crouch toggle\n"
+                        "Q / E       Lean L/R (aim mode)\n"
+                        "Esc         Pause\n"
+                        "Tab         Watch menu\n"
+                        "M           Mute audio\n"
+                        "H           Show this help\n"
+                        "\n"
+                        "GAMEPAD: LT=Aim RT=Fire Y=Next weapon Back=Prev weapon L3=Crouch\n"
+                        "================\n");
+                } else if (event.key.keysym.sym == SDLK_m && !event.key.repeat) {
+                    /* M key: toggle audio mute on the unified queue device. */
+                    platformToggleAudioMute("M key toggle");
+                } else if (event.key.keysym.sym == SDLK_BACKQUOTE) {
+                    extern void debugDumpRequest(void);
+                    debugDumpRequest();
+                } else if (event.key.keysym.sym >= SDLK_F3 && event.key.keysym.sym <= SDLK_F12) {
+                    /* F3-F12: Quick level switch.
+                     * F3=Dam(33), F4=Facility(34), F5=Runway(35), F6=Surface(36),
+                     * F7=Bunker1(9), F8=Silo(20), F9=Frigate(26), F10=Surface2(43),
+                     * F11=Jungle(37), F12=Cradle(41) */
+                    static const int levelMap[10] = {33,34,35,36,9,20,26,43,37,41};
+                    int idx = event.key.keysym.sym - SDLK_F3;
+                    extern int g_pcStartLevel;
+                    extern void bossSetLoadedStage(int);
+                    extern void set_solo_and_ptr_briefing(int);
+                    extern int selected_stage;
+                    g_pcStartLevel = levelMap[idx];
+                    selected_stage = levelMap[idx];
+                    set_solo_and_ptr_briefing(selected_stage);
+                    bossSetLoadedStage(selected_stage);
+                    printf("[SDL] Level switch requested: LEVELID %d (F%d)\n",
+                           levelMap[idx], idx + 3);
+                }
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+                if (!g_disableInputGrab && !g_mouseGrabbed) {
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    g_mouseGrabbed = 1;
+                    g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
+                }
+                break;
+            case SDL_MOUSEWHEEL: {
+                int wy = event.wheel.y;
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+                g_mouseWheelY += wy;
+                break;
+            }
+            case SDL_CONTROLLERDEVICEADDED:
+                if (!g_gameController) {
+                    g_gameController = SDL_GameControllerOpen(event.cdevice.which);
+                    if (g_gameController) {
+                        g_gameControllerID = SDL_JoystickInstanceID(
+                            SDL_GameControllerGetJoystick(g_gameController));
+                        printf("[SDL] Gamepad connected: %s\n",
+                               SDL_GameControllerName(g_gameController));
+                    }
+                }
+                break;
+            case SDL_CONTROLLERDEVICEREMOVED:
+                if (g_gameController &&
+                    event.cdevice.which == g_gameControllerID) {
+                    printf("[SDL] Gamepad disconnected\n");
+                    SDL_GameControllerClose(g_gameController);
+                    g_gameController = NULL;
+                    g_gameControllerID = -1;
+                }
+                break;
+            case SDL_MOUSEMOTION:
+                if (g_mouseGrabbed) {
+                    if (g_pcDebugFlyCamera) {
+                        /* Mouse look for fly camera */
+                        g_pcCamYaw   += event.motion.xrel * MOUSE_SENSITIVITY;
+                        g_pcCamPitch -= event.motion.yrel * MOUSE_SENSITIVITY;
+                        if (g_pcCamPitch > 1.5f)  g_pcCamPitch = 1.5f;
+                        if (g_pcCamPitch < -1.5f) g_pcCamPitch = -1.5f;
+                    } else {
+                        /* Accumulate for N64 controller emulation only */
+                        g_mouseDeltaX += event.motion.xrel;
+                        g_mouseDeltaY += event.motion.yrel;
+                    }
+                }
+                break;
+        }
+    }
+
+    /* WASD fly camera movement (only when fly camera is active) */
+    if (g_pcDebugFlyCamera) {
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        float sx = sinf(g_pcCamYaw), cx = cosf(g_pcCamYaw);
+        /* Forward/backward along yaw direction */
+        if (keys[SDL_SCANCODE_W]) { g_pcCamX -= sx * FLY_SPEED; g_pcCamZ -= cx * FLY_SPEED; }
+        if (keys[SDL_SCANCODE_S]) { g_pcCamX += sx * FLY_SPEED; g_pcCamZ += cx * FLY_SPEED; }
+        /* Strafe left/right */
+        if (keys[SDL_SCANCODE_A]) { g_pcCamX -= cx * FLY_SPEED; g_pcCamZ += sx * FLY_SPEED; }
+        if (keys[SDL_SCANCODE_D]) { g_pcCamX += cx * FLY_SPEED; g_pcCamZ -= sx * FLY_SPEED; }
+        /* Up/down */
+        if (keys[SDL_SCANCODE_SPACE])  g_pcCamY -= FLY_SPEED;
+        if (keys[SDL_SCANCODE_LSHIFT]) g_pcCamY += FLY_SPEED;
+    }
+}
+
+/**
+ * Drain any stale SDL events (e.g. macOS sends SDL_QUIT during long init).
+ * Call right before entering the game loop.
+ */
+void platformDrainEvents(void) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        /* discard all queued events */
+    }
+    g_sdlQuit = 0;
+}
+
+/**
+ * Check if user requested quit.
+ */
+int platformShouldQuit(void) {
+    return g_sdlQuit;
+}
+
+/**
+ * Wait for next frame boundary and send retrace messages to scheduler clients.
+ * This replaces the N64 VI retrace interrupt.
+ */
+/* Defined in stubs.c — check and fire expired OS timers */
+extern void platformCheckTimers(void);
+
+void platformSetWindowTitle(const char *title) {
+    if (g_sdlWindow) {
+        SDL_SetWindowTitle(g_sdlWindow, title);
+    }
+}
+
+void platformFrameSync(void) {
+    OSScClient *client;
+
+    g_frameSyncCallCount++;
+    {
+        extern void pcAdvanceDeterministicCountForFrame(void);
+        pcAdvanceDeterministicCountForFrame();
+    }
+
+    /* Fire any expired OS timers */
+    platformCheckTimers();
+
+    /* Process SDL events */
+    platformPollEvents();
+    platformApplyAutoMuteToggles();
+
+    if (g_sdlQuit) {
+        printf("[GE007-PC] Quit requested, shutting down.\n");
+        platformShutdownSDL();
+        exit(0);
+    }
+
+#ifdef MACOS_APP_BUNDLE
+    /* Check if the Swift app shell requested shutdown via game_request_shutdown() */
+    {
+        extern int gameBridgeCheckShutdown(void);
+        if (gameBridgeCheckShutdown()) {
+            printf("[GameBridge] Shutdown requested by app shell.\n");
+            platformShutdownSDL();
+            exit(0);
+        }
+    }
+#endif
+
+    /* Frame pacing — wait until next frame boundary */
+    u32 now = SDL_GetTicks();
+    u32 elapsed = now - g_lastFrameTime;
+    if (elapsed < FRAME_TIME_MS) {
+        SDL_Delay(FRAME_TIME_MS - elapsed);
+    }
+    g_lastFrameTime = SDL_GetTicks();
+
+    /* Swap the GL framebuffer (shows whatever was rendered) */
+    if (g_sdlWindow) {
+        if (platformDiagDisplayCastScreenshotDue()) {
+            platformSaveScreenshot();
+            platformFinishAutoScreenshotIfRequested();
+        }
+        if (platformDiagMenuScreenshotDue()) {
+            platformSaveScreenshot();
+            platformFinishAutoScreenshotIfRequested();
+        }
+        /* Auto-screenshot at specified frame */
+        if (g_autoScreenshotFrame >= 0 && g_frameSyncCallCount == g_autoScreenshotFrame) {
+            platformSaveScreenshot();
+            platformFinishAutoScreenshotIfRequested();
+        }
+        /* Manual screenshot (F2) */
+        if (g_screenshotRequested) {
+            platformSaveScreenshot();
+            g_screenshotRequested = 0;
+        }
+        /* Swap is now handled by gfx_end_frame() — don't double-swap */
+    }
+
+    { extern void portAudioFrame(void); portAudioFrame(); }
+    /* Only call trace if tracing was requested. Dump-only trace modes do not
+     * set g_traceStatePath, so include their env gates here too. */
+    if (platformTraceRequested()) {
+        extern void portTraceFrame(void);
+        portTraceFrame();
+    }
+
+    /* Send retrace message to all registered scheduler clients */
+    os_scheduler.frameCount++;
+    for (client = os_scheduler.clientList; client != NULL; client = client->next) {
+        osSendMesg(client->msgQ, (OSMesg)&os_scheduler.retraceMsg, OS_MESG_NOBLOCK);
+    }
+}
+
+/**
+ * Shutdown SDL2.
+ */
+void platformShutdownSDL(void) {
+    /* Save config on clean shutdown */
+    configSave();
+    /* NOTE: portTraceShutdown() is NOT called here. DL buffer overruns
+     * can corrupt static FILE pointers in port_trace.c, causing fclose()
+     * to SIGSEGV. The OS reclaims all file handles on process exit.
+     * The trace file is flushed every 60 frames, so data loss is minimal. */
+    if (g_gameController) SDL_GameControllerClose(g_gameController);
+    /* After SIGSEGV recovery via siglongjmp, the GL context may be corrupt.
+     * Skip GL cleanup and just destroy the window + quit SDL. The OS will
+     * reclaim the GL resources on process exit anyway. */
+    extern volatile int g_gfxRecoveryActive;
+    extern int g_crashRecoveryCount;
+    if (g_crashRecoveryCount == 0 && g_glContext) {
+        SDL_GL_DeleteContext(g_glContext);
+    }
+    if (g_sdlWindow) SDL_DestroyWindow(g_sdlWindow);
+    SDL_Quit();
+}

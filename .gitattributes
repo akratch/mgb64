@@ -1,0 +1,38 @@
+# Normalize text files across platforms.
+* text=auto eol=lf
+
+# Common ROM/media/build artifacts should stay binary if they ever appear
+# locally; the release guards still forbid committing them.
+*.z64 binary
+*.n64 binary
+*.v64 binary
+*.rom binary
+*.bin binary
+*.bmp binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.raw binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.flac binary
+*.dmg binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.tgz binary
+*.gz binary
+
+# Keep GitHub language statistics focused on MGB64-owned code. These paths are
+# inventoried in THIRD_PARTY.md and retained for build/tooling compatibility.
+lib/glad/** linguist-vendored
+tools/armips.cpp linguist-vendored
+tools/asm-processor/** linguist-vendored
+tools/extractor/puff.c linguist-vendored
+tools/extractor/puff.h linguist-vendored
+tools/gzipsrc/** linguist-vendored
+tools/ido5.3_recomp/** linguist-vendored
+tools/mktex/src/libpdtex/** linguist-vendored
