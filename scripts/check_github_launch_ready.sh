@@ -661,7 +661,7 @@ if [ -n "$repo" ]; then
     false) ok "repository is public" ;;
     true)
       if [ "$allow_private" -eq 1 ]; then
-        warn "repository is still private (--allow-private dry run)"
+        warn "repository is private and --allow-private was supplied"
       else
         note "repository is private; public repository hygiene checks expect public visibility"
       fi
@@ -818,7 +818,7 @@ if [ -n "$repo" ]; then
   else
     protection_msg="$(tr '\n' ' ' < "$protection_tmp" | sed 's/[[:space:]]\+/ /g')"
     if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
-      warn "main branch protection is not readable in private dry run: $protection_msg"
+      warn "main branch protection is not readable for this private repository check: $protection_msg"
     else
       note "main branch protection is not enabled/readable: $protection_msg"
     fi
@@ -837,7 +837,7 @@ if [ -n "$repo" ]; then
   else
     secret_scanning_msg="$(tr '\n' ' ' < "$secret_scanning_tmp" | sed 's/[[:space:]]\+/ /g')"
     if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
-      warn "secret scanning endpoint is not available in private dry run: $secret_scanning_msg"
+      warn "secret scanning endpoint is not available for this private repository check: $secret_scanning_msg"
     else
       warn "secret scanning endpoint is not available; enable secret scanning/push protection if GitHub exposes it: $secret_scanning_msg"
     fi
@@ -850,7 +850,7 @@ if [ -n "$repo" ]; then
   else
     private_vuln_msg="$(tr '\n' ' ' < "$private_vuln_tmp" | sed 's/[[:space:]]\+/ /g')"
     if [ "$allow_private" -eq 1 ] && [ "$is_private" = "true" ]; then
-      warn "private vulnerability reporting endpoint is not available in private dry run: $private_vuln_msg"
+      warn "private vulnerability reporting endpoint is not available for this private repository check: $private_vuln_msg"
     else
       note "private vulnerability reporting endpoint is not available: $private_vuln_msg"
     fi
