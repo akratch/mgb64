@@ -1,4 +1,5 @@
 <h1 align="center">MGB64</h1>
+<p align="center"><em>Man with the Golden Build</em></p>
 
 <p align="center">
 A <strong>decompilation</strong> and <strong>native source port</strong>
@@ -20,7 +21,8 @@ it can be studied, preserved, and run natively on modern machines.
 
 ## What is this?
 
-MGB64 is two things in one repository, in the tradition of the
+MGB64 combines the decompiled game code with a native PC/macOS port. It builds
+on the same N64 decompilation ecosystem as
 [Super Mario 64](https://github.com/n64decomp/sm64) and
 [Ocarina of Time](https://github.com/zeldaret/oot) decompilations and the
 [Perfect Dark](https://github.com/fgsfdsfgs/perfect_dark) port:
@@ -32,9 +34,6 @@ MGB64 is two things in one repository, in the tradition of the
   code on PC/macOS: it loads *your* ROM at runtime, translates the N64 display
   lists to a modern GPU, and provides audio, input, and file I/O. No copyrighted
   data is compiled into the binary ("bring your own ROM").
-
-The project name is a deliberately neutral codename centered on the build
-process, with "64" nodding to the SM64 decomp lineage.
 
 ## Status
 
@@ -83,16 +82,53 @@ cmake --build build -j
 ## Running
 
 You must already own and supply the ROM — the port reads it at runtime; no game
-data is bundled.
+data is bundled. The default command boots normally into the game frontend:
 
 ```sh
 ./build/ge007 --rom "/path/to/baserom.u.z64"
 ```
 
+Common startup examples:
+
+```sh
+# Boot normally with an explicit ROM path:
+./build/ge007 --rom "/path/to/baserom.u.z64"
+
+# Direct-boot a solo stage by name:
+./build/ge007 --rom "/path/to/baserom.u.z64" --level dam
+
+# Direct-boot mission 2 on Secret Agent:
+./build/ge007 --rom "/path/to/baserom.u.z64" --mission 2 --difficulty secret
+
+# Direct-boot by raw internal LEVELID, useful for validation:
+./build/ge007 --rom "/path/to/baserom.u.z64" --level 33
+
+# Keep saves/config in a dedicated directory:
+./build/ge007 --rom "/path/to/baserom.u.z64" --savedir "$HOME/.mgb64"
+```
+
 If you don't pass `--rom`, the port auto-detects a compatible ROM in the working
 directory and common locations (`~/Downloads`, `~/Documents`, `~/Desktop`, `~`)
-by size, N64 header, and internal cartridge name. See
-[docs/BUILDING.md](docs/BUILDING.md#running) for the save directory and options.
+by size, N64 header, and internal cartridge name.
+
+Useful runtime options:
+
+| Option | Purpose |
+| --- | --- |
+| `--rom PATH` | Load the ROM from `PATH`. A positional ROM path also works. |
+| `--level NAME` | Direct-boot a supported solo stage by slug, for example `dam`, `facility`, `runway`, `surface1`, `bunker1`, or `egypt`. |
+| `--level N` | Direct-boot a raw internal `LEVELID`. Example: `33` is Dam. These numbers are not mission-order numbers. |
+| `--mission N` | Direct-boot solo mission order `1` through `20`. Use this when you mean "mission 2", "mission 3", etc. |
+| `--difficulty VALUE` | Select the direct-boot difficulty. Values: `agent`, `secret`, `00`, `007`, or numeric `0` through `3`. Defaults to Agent. |
+| `--savedir PATH` | Store `ge007.ini` and save data in `PATH`. Without this, the port uses the current directory when writable, then falls back to a per-user directory. |
+| `--no-input-grab` | Do not capture the mouse. Useful while testing windowed startup. |
+| `--background` | Run without grabbing input and with background-friendly settings. Useful for smoke tests. |
+
+If you pass no direct-boot option, the game starts normally. `--level` accepts
+stage slugs or raw internal `LEVELID` values; `--mission` accepts campaign order.
+For example, use `--mission 2` or `--level facility` for mission 2, not
+`--level 2`. See [docs/BUILDING.md](docs/BUILDING.md#running) for more platform
+setup detail.
 
 ### Controls (default)
 
