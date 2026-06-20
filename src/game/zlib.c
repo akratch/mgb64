@@ -33,6 +33,9 @@ u32 rz_bb;
 u32 rz_bk;
 //bss:8008D36C
 u32 rz_hufts;
+#ifdef NATIVE_PORT
+s32 rz_last_error;
+#endif
 
 
 //.data
@@ -295,11 +298,14 @@ s32 zlib_inflate_codes(struct huft *tl, struct huft *td, s32 bl, s32 bd)
 #endif
     for (;;)                      /* do until end of block */
     {
-#ifdef NATIVE_PORT
-        if (++_safety_iter > 0x200000) {
-            fprintf(stderr, "[ZLIB] inflate_codes safety limit reached (2M iterations), aborting\n");
-            break;
-        }
+	#ifdef NATIVE_PORT
+	        if (++_safety_iter > 0x200000) {
+	            fprintf(stderr, "[ZLIB] inflate_codes safety limit reached (2M iterations), aborting\n");
+	            rz_wp = w;
+	            rz_bb = b;
+	            rz_bk = k;
+	            return -1;
+	        }
 #endif
         NEEDBITS((u32)bl)
 
@@ -321,12 +327,15 @@ s32 zlib_inflate_codes(struct huft *tl, struct huft *td, s32 bl, s32 bd)
 #ifdef NATIVE_PORT
             if (&rz_outbuf[w] >= &rz_inbuf[rz_inptr])
             {
-                if ((uintptr_t)(&rz_outbuf[w] - &rz_inbuf[rz_inptr]) < WSIZE)
-                {
-                    fprintf(stderr, "[ZLIB] overlap error (literal) w=%u inptr=%u\n", w, rz_inptr);
-                    return -1;
-                }
-            }
+	                if ((uintptr_t)(&rz_outbuf[w] - &rz_inbuf[rz_inptr]) < WSIZE)
+	                {
+	                    fprintf(stderr, "[ZLIB] overlap error (literal) w=%u inptr=%u\n", w, rz_inptr);
+	                    rz_wp = w;
+	                    rz_bb = b;
+	                    rz_bk = k;
+	                    return -1;
+	                }
+	            }
 #else
             if ((u32)(s32)&rz_outbuf[w] >= (u32)(s32)&rz_inbuf[rz_inptr])
             {
@@ -382,12 +391,15 @@ s32 zlib_inflate_codes(struct huft *tl, struct huft *td, s32 bl, s32 bd)
 #ifdef NATIVE_PORT
                     if (&rz_outbuf[w+e-1] >= &rz_inbuf[rz_inptr])
                     {
-                        if ((uintptr_t)(&rz_outbuf[w+e-1] - &rz_inbuf[rz_inptr]) < WSIZE)
-                        {
-                            fprintf(stderr, "[ZLIB] overlap error (copy block) w=%u e=%u inptr=%u\n", w, e, rz_inptr);
-                            return -1;
-                        }
-                    }
+	                        if ((uintptr_t)(&rz_outbuf[w+e-1] - &rz_inbuf[rz_inptr]) < WSIZE)
+	                        {
+	                            fprintf(stderr, "[ZLIB] overlap error (copy block) w=%u e=%u inptr=%u\n", w, e, rz_inptr);
+	                            rz_wp = w;
+	                            rz_bb = b;
+	                            rz_bk = k;
+	                            return -1;
+	                        }
+	                    }
 #else
                     if ((u32)(s32)&rz_outbuf[w+e-1] >= (u32)(s32)&rz_inbuf[rz_inptr])
                     {
@@ -559,9 +571,7 @@ s32 zlib_inflate_fixed(void)
 	/* decompress until an end-of-block code */
 	zlib_huft_build(l, 30, 0, rz_cpdist, rz_cpdext, &td, &bd);
 
-	zlib_inflate_codes(tl, td, bl, bd);
-
-	return 0;
+	return zlib_inflate_codes(tl, td, bl, bd);
 }
 
 
@@ -675,9 +685,7 @@ s32 zlib_inflate_dynamic(void)
 	zlib_huft_build(ll + nl, nd, 0, rz_cpdist, rz_cpdext, &td, &bd);
 
 	/* decompress until an end-of-block code */
-	zlib_inflate_codes(tl, td, bl, bd);
-
-	return 0;
+	return zlib_inflate_codes(tl, td, bl, bd);
 }
 
 
@@ -739,6 +747,9 @@ int zlib_inflate(void)
     unsigned h;
 
     /* initialize window, bit buffer */
+#ifdef NATIVE_PORT
+    rz_last_error = 0;
+#endif
     rz_wp = 0;
     rz_bk = 0;
     rz_bb = 0;
@@ -752,17 +763,21 @@ int zlib_inflate(void)
     do
     {
 #ifdef NATIVE_PORT
-        if (++_block_iter > 4096) {
-            fprintf(stderr, "[ZLIB] inflate safety: too many blocks (%u), aborting\n", _block_iter);
-            return 1;
-        }
+	        if (++_block_iter > 4096) {
+	            fprintf(stderr, "[ZLIB] inflate safety: too many blocks (%u), aborting\n", _block_iter);
+	            rz_last_error = 1;
+	            return 1;
+	        }
 #endif
         rz_hufts = 0;
 
-        if ((r = zlib_inflate_block(&e)) != 0)
-        {
-            return r;
-        }
+	        if ((r = zlib_inflate_block(&e)) != 0)
+	        {
+#ifdef NATIVE_PORT
+	            rz_last_error = r;
+#endif
+	            return r;
+	        }
 
         if (rz_hufts > h)
         {

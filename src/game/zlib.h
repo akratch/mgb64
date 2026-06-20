@@ -7,6 +7,9 @@ extern u8 *rz_outbuf;
 extern u32 rz_inptr;
 extern u32 rz_wp;
 extern struct huft *rz_hlist;
+#ifdef NATIVE_PORT
+extern s32 rz_last_error;
+#endif
 
 /* Huffman code lookup table entry--this entry is four bytes for machines
    that have 16-bit pointers (e.g. PC's in the small or medium model).

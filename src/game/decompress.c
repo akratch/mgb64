@@ -23,6 +23,9 @@ const u8 rz_header_bytes[40] = {
 u32 decompressdata(u8 *arg0, u8 *arg1, struct huft *arg2)
 {
     s32 unused = 0;
+#ifdef NATIVE_PORT
+    s32 inflate_result;
+#endif
 
     rz_inbuf = arg0;
     rz_outbuf = arg1;
@@ -43,7 +46,16 @@ u32 decompressdata(u8 *arg0, u8 *arg1, struct huft *arg2)
     rz_wp = 0;
     rz_inptr = 0;
 
+#ifdef NATIVE_PORT
+    inflate_result = zlib_inflate();
+    if (inflate_result != 0)
+    {
+        rz_last_error = inflate_result;
+        return 0;
+    }
+#else
     zlib_inflate();
+#endif
 
     return rz_wp;
 }
@@ -112,6 +124,5 @@ s32 rzipGetSomething(void) {
     return (rz_inbuf + rz_inptr);
 }
 #endif
-
 
 
