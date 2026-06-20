@@ -28,6 +28,11 @@ purposes. MGB64 claims no ownership over the original game. The project is
 unofficial and is not affiliated with, sponsored by, or endorsed by any rights
 holder.
 
+The decompiled game code originates from the upstream
+[n64decomp/007](https://github.com/n64decomp/007) decompilation, which MGB64
+started from and continues to work off of. See `THIRD_PARTY.md` for the upstream
+provenance and licensing of those sources.
+
 ## SDK and third-party material
 
 The tree currently contains inventoried Nintendo 64 SDK/libultra-lineage

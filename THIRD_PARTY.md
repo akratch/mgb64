@@ -16,6 +16,13 @@ of its assets remain the property of their respective rights holders (see
 this repository** — see that file and the CI contamination guard
 (`scripts/ci/check_no_rom_data.sh`).
 
+The decompiled game code in this repository originates from the upstream
+[**n64decomp/007**](https://github.com/n64decomp/007) decompilation, which MGB64
+started from and continues to work off of. That project carries its own license
+and contributor history; MGB64's native port layer and project tooling are
+layered on top of it. Refer to the upstream repository for the provenance and
+licensing of the decompiled sources it provides.
+
 ## Nintendo 64 SDK compatibility material (libultra / SGI)
 
 | Path | Origin | Notes |
@@ -107,8 +114,11 @@ See each component's directory for its own license/README where present.
 
 ## Attribution & thanks
 
-This project follows the conventions established by the N64 decompilation
-community — the [Super Mario 64](https://github.com/n64decomp/sm64),
+This project is built directly on the
+[**n64decomp/007**](https://github.com/n64decomp/007) decompilation — the
+foundation MGB64 started from and continues to extend — and follows the
+conventions established by the wider N64 decompilation community, the
+[Super Mario 64](https://github.com/n64decomp/sm64),
 [Ocarina of Time](https://github.com/zeldaret/oot), and
 [Perfect Dark](https://github.com/fgsfdsfgs/perfect_dark) projects in particular.
 Their tooling and approach made this work possible.
