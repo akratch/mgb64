@@ -60,7 +60,8 @@ authoritative inventory for SDK/libultra-lineage matching-target material.
 
 The native build no longer compiles known proprietary-notice-bearing SDK source,
 and this audit did not identify a native-compiled external SDK/demo
-implementation that must be replaced before public launch. The most conservative
-remaining provenance work is still the broader SDK/libultra-lineage material
-kept for the in-progress N64 matching target, plus future replacement of any
-SDK-shaped native declarations that can be retired without breaking the game.
+implementation that blocks the current public source release. The most
+conservative remaining provenance work is still the broader SDK/libultra-lineage
+material kept for the in-progress N64 matching target, plus future replacement
+of any SDK-shaped native declarations that can be retired without breaking the
+game.

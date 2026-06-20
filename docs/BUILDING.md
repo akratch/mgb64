@@ -57,7 +57,7 @@ python3 --version
 ```
 
 Linux/GCC configure, build, and ROM-free CTest are covered by the local
-preflight/source-archive smoke lane before public launch. Windows/MSYS2 setup is
+preflight/source-archive smoke lane. Windows/MSYS2 setup is
 expected to work but is not yet maintainer-verified; please file a platform
 validation or build issue with exact text logs if it does not. If you use MSYS2
 UCRT64 instead of MINGW64, use the matching `mingw-w64-ucrt-x86_64-*` package
@@ -177,9 +177,9 @@ per-user data directory.
 
 ## Reporting platform validation
 
-If you are validating a platform for public-release confidence, open the
-**Platform validation report** issue template and include text output only. Do
-not attach ROMs, extracted assets, save files, screenshots, video, or audio.
+If you are validating a platform, open the **Platform validation report** issue
+template and include text output only. Do not attach ROMs, extracted assets,
+save files, screenshots, video, or audio.
 
 Please include:
 

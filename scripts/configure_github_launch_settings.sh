@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# configure_github_launch_settings.sh -- apply or preview the final GitHub
-# repository settings required before public launch.
+# configure_github_launch_settings.sh -- apply or preview recommended GitHub
+# repository settings for public maintenance.
 #
-# Default mode is a dry run. Pass --yes only after the fresh launch repository
-# exists and the printed operations have been reviewed.
+# Default mode is a dry run. Pass --yes only after the printed operations have
+# been reviewed.
 #
 set -euo pipefail
 
@@ -35,8 +35,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/configure_github_launch_settings.sh [options]
 
-Dry-runs the GitHub repository settings expected for final public launch. Pass
---yes to actually apply settings.
+Dry-runs the recommended GitHub repository settings for public maintenance.
+Pass --yes to actually apply settings.
 
 Options:
   --repo OWNER/REPO       Repository to configure (default: gh repo view).
@@ -45,22 +45,21 @@ Options:
                           Do not configure main branch protection.
   --skip-security         Do not attempt Dependabot/secret-scanning/private
                           vulnerability-reporting setup.
-  --enable-actions        Enable hosted GitHub Actions. The default public
-                          launch policy keeps Actions disabled and uses local
+  --enable-actions        Enable hosted GitHub Actions. The default public repo
+                          policy keeps Actions disabled and uses local
                           release_preflight evidence instead.
   --required-check NAME   Required status check for branch protection. Repeat
-                          to add checks. Defaults to none because public launch
-                          uses local CI/preflight evidence.
+                          to add checks. Defaults to none because the public
+                          repo policy uses local CI/preflight evidence.
   --actions-retention-days DAYS
                           Artifact/log retention for GitHub Actions. Defaults
                           to 14 and must be between 1 and 90 for public repos.
   -h, --help              Show this help.
 
-This helper is intended for the fresh replacement repository. It does not change
-repository visibility. Some security and branch-protection endpoints may not be
-available while a repository is private or account-limited; the helper warns for
-those cases and scripts/check_github_launch_ready.sh is the final enforcement
-gate.
+This helper does not change repository visibility. Some security and
+branch-protection endpoints may not be available for every repository/account;
+the helper warns for those cases and scripts/check_github_launch_ready.sh is the
+public-surface verification gate.
 USAGE
 }
 
@@ -164,14 +163,14 @@ case "$actions_retention_days" in
     ;;
 esac
 if [ "$actions_retention_days" -lt 1 ] || [ "$actions_retention_days" -gt 90 ]; then
-  echo "--actions-retention-days must be between 1 and 90 for a public launch repository." >&2
+  echo "--actions-retention-days must be between 1 and 90 for a public repository." >&2
   exit 2
 fi
 
 if [ "$apply" -eq 0 ]; then
   echo "Dry run only. Pass --yes to modify GitHub."
 else
-  echo "Applying GitHub launch settings to ${repo}."
+  echo "Applying GitHub repository settings to ${repo}."
 fi
 
 topic_args=()
@@ -262,6 +261,7 @@ fi
 cat <<EOF
 
 Next verification commands:
-  NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo} --allow-private
   NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo}
+  # For private mirrors or dry runs only:
+  NO_COLOR=1 scripts/check_github_launch_ready.sh --repo ${repo} --allow-private
 EOF
