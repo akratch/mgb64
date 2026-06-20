@@ -14,6 +14,10 @@ preserved, and run natively on modern machines.
 <img alt="Bring your own ROM" src="https://img.shields.io/badge/assets-bring%20your%20own%20ROM-red.svg">
 </p>
 
+<p align="center">
+🎬 <a href="https://youtu.be/Pob6Itc7rCQ">Gameplay example (video)</a>
+</p>
+
 ---
 
 > [!IMPORTANT]
