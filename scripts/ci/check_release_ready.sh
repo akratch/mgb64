@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# check_release_ready.sh -- public-release hygiene checks for MGB64.
+# check_release_ready.sh -- public source-release hygiene checks for MGB64.
 #
 # This wraps the current-tree contamination guard and adds checks that matter
-# specifically before making the repository public: no obvious ROM/media paths
-# anywhere in git history, required provenance docs present, and no stale public
-# claims about packaging or provenance.
+# for public releases: no obvious ROM/media paths anywhere in git history,
+# required provenance docs present, and no stale public claims about packaging
+# or provenance.
 #
 set -euo pipefail
 
@@ -113,8 +113,6 @@ for f in \
   docs/STATUS.md \
   docs/INSTRUMENTATION.md \
   docs/PROVENANCE_AUDIT.md \
-  docs/PUBLIC_LAUNCH_READINESS.md \
-  docs/GITHUB_REPO_REPLACEMENT.md \
   docs/RELEASE_CHECKLIST.md \
   macos/README.md; do
   if [ ! -s "$f" ]; then
@@ -313,7 +311,7 @@ PY
 )"
 if [ -n "$workflow_trigger_hits" ]; then
   while IFS= read -r hit; do
-    note "GitHub Actions workflow has an automatic hosted trigger; launch policy is local-CI only: $hit"
+    note "GitHub Actions workflow has an automatic hosted trigger; public repo policy is local-CI only: $hit"
   done <<< "$workflow_trigger_hits"
 else
   echo "  OK -- GitHub Actions workflows are manual-only local-CI mirrors."
@@ -373,13 +371,9 @@ for f in \
   scripts/release_preflight.sh \
   scripts/ci/check_high_risk_ignored_artifacts.sh \
   scripts/ci/check_public_history_text.sh \
-  scripts/create_public_launch_repo.sh \
-  scripts/prepare_public_launch_bundle.sh \
   scripts/make_public_source_archive.sh \
   scripts/smoke_public_source_archive.sh \
   scripts/check_github_launch_ready.sh \
-  scripts/configure_github_launch_settings.sh \
-  scripts/prepare_github_launch_evidence.sh \
   macos/Scripts/build_app_bundle.sh \
   macos/Scripts/build_universal.sh \
   macos/Scripts/verify_asset_free.sh \

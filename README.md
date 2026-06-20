@@ -222,7 +222,5 @@ tools/libraries, and local-only matching-target tool placeholders) and their
 provenance are inventoried in
 **[THIRD_PARTY.md](THIRD_PARTY.md)**.
 
-Public release hygiene checks are documented in
-**[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)**, with the current
-pre-public launch decision matrix in
-**[docs/PUBLIC_LAUNCH_READINESS.md](docs/PUBLIC_LAUNCH_READINESS.md)**.
+Maintainer release hygiene checks are documented in
+**[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)**.

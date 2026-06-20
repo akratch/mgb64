@@ -1,51 +1,11 @@
 # MGB64 Roadmap
 
-This roadmap tracks the work that matters most for a credible public release and
-for new contributors. It is intentionally practical: each item should either
-reduce legal/provenance risk, improve playability, improve parity with original
-hardware, or make contributions easier to review.
+This roadmap tracks the work that matters most for public development. It is
+intentionally practical: each item should either reduce legal/provenance risk,
+improve playability, improve parity with original hardware, or make
+contributions easier to review.
 
-## Launch blockers
-
-The current go/no-go matrix lives in
-[`docs/PUBLIC_LAUNCH_READINESS.md`](docs/PUBLIC_LAUNCH_READINESS.md). As of the
-latest pre-public audit, the hard blockers are repository publication gates,
-not ordinary source hygiene:
-
-- reachable public git history must not contain removed local-only matching-tool
-  source; publish from a fresh single-root launch repository or approved history
-  rewrite before flipping public;
-- stale hidden `refs/pull/*` refs must be purged by GitHub Support or removed by
-  replacing the GitHub repository from the clean single-root launch branch;
-- hosted GitHub Actions must remain disabled for launch, with local preflight
-  evidence serving as the CI gate;
-- branch protection and security settings must be configured once the repository
-  state allows GitHub to expose those endpoints.
-
-### Operational GitHub release gates
-
-Desired end state:
-
-- `scripts/check_github_launch_ready.sh` passes without `--allow-private`;
-- the strict local release preflight and clean-launch bundle pass for the exact
-  launch commit;
-- `tools/check_public_history_paths.py` passes against the exact public git
-  history;
-- advertised `refs/heads/*` and `refs/tags/*` refs point only at commits inside
-  current public history;
-- `git ls-remote origin 'refs/pull/*'` exposes no commits outside current public
-  history;
-- public repository metadata, label, milestone, release note/asset, unexpired
-  Actions artifact, issue, PR/commit comment, PR review summary, Discussion,
-  workflow-history, and commit-reference surfaces expose no pre-public commit
-  links or high-risk private/provenance text;
-- GitHub Actions is disabled for launch; checked-in workflows are manual-only
-  local-CI mirrors with full-SHA action pins;
-- contributor triage labels for audio, renderer, parity, validation,
-  provenance, build, and newcomer-friendly work are present after the repository
-  replacement/migration step;
-- branch protection requires reviews/conversation resolution and does not depend
-  on hosted status checks.
+## Current Priorities
 
 ### SDK/libultra provenance cleanup
 
@@ -140,8 +100,8 @@ Desired end state:
 
 - release notes, `PORT.md`, `docs/STATUS.md`, and `macos/README.md` agree;
 - every public status claim has a local command or document backing it;
-- the release checklist is run from a clean checkout before the repository is
-  flipped public.
+- the release checklist is run from a clean checkout before tagging releases or
+  posting major announcements.
 
 ## High-priority parity work
 
@@ -264,11 +224,11 @@ Desired end state:
 
 ## Contributor on-ramps
 
-Before a broad public announcement:
+Keep the public contributor path easy to use:
 
-- enable GitHub Discussions;
-- enable private vulnerability reporting;
-- add labels such as `good first issue`, `audio`, `renderer`, `matching`,
+- keep GitHub Discussions available for contributor questions;
+- keep private vulnerability reporting available when GitHub exposes it;
+- keep labels such as `good first issue`, `audio`, `renderer`, `matching`,
   `provenance`, `macos`, `validation`, and `docs`;
-- seed issues from the roadmap with focused reproduction steps and expected
+- seed new issues from the roadmap with focused reproduction steps and expected
   validation commands.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# check_github_launch_ready.sh -- verify GitHub-side launch readiness.
+# check_github_launch_ready.sh -- verify GitHub-side public repository hygiene.
 #
 # This intentionally lives outside CI: it checks repository settings and public
 # GitHub surfaces, so it needs an authenticated `gh` session.
@@ -32,25 +32,26 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check_github_launch_ready.sh [--repo OWNER/REPO] [--allow-private]
 
-Checks GitHub-side launch gates that local CI cannot prove:
+Checks GitHub-side public repository state that local CI cannot prove:
   - gh authentication
   - repository metadata, topics, and contributor workflow settings
   - repository visibility and collaboration features
-  - GitHub Actions disabled for local-CI launch policy
-  - local reachable git history does not expose launch-blocking provenance paths
+  - GitHub Actions disabled for the local-CI public repo policy
+  - local reachable git history does not expose public-blocking provenance paths
   - GitHub branch and tag refs do not expose commits outside public git history
   - GitHub pull request refs do not expose commits outside public git history
   - workflow run history does not expose commits outside public git history
-  - public repository metadata/label/milestone/release/issue/comment/discussion text has no high-risk launch leaks
+  - public repository metadata/label/milestone/release/issue/comment/discussion text has no high-risk leaks
   - public repository metadata/label/milestone/release/issue/comment/discussion text has no stale commit references
-  - contributor-facing GitHub labels needed for launch triage are present
+  - contributor-facing GitHub labels needed for triage are present
   - GitHub release assets do not expose ROM, media, archive, or binary payloads
   - GitHub Actions artifacts do not expose ROM, media, archive, app, or binary payloads
   - branch protection is readable and does not depend on hosted status checks
   - vulnerability-alert/private-reporting endpoints are available
   - secret-scanning endpoint is available when GitHub exposes it
 
-Use --allow-private for a pre-public dry run; final launch should omit it.
+Use --allow-private only for private mirrors or dry runs. Public repository
+checks should omit it.
 USAGE
 }
 
@@ -375,10 +376,10 @@ scan_github_launch_labels() {
   done
 
   if [ -n "$missing" ]; then
-    warn "recommended launch triage label(s) are missing"
+    warn "recommended contributor triage label(s) are missing"
     printf '%s\n' "$missing" | awk 'NF { print "  - " $0 }'
   else
-    ok "recommended launch triage labels are present"
+    ok "recommended contributor triage labels are present"
   fi
 }
 
@@ -423,7 +424,7 @@ scan_github_workflow_run_history() {
   fi
 
   if [ "$run_count" -ge 1000 ]; then
-    warn "only scanned the latest 1000 workflow runs; delete old runs or extend the audit before launch"
+    warn "only scanned the latest 1000 workflow runs; delete old runs or extend the audit before release"
   fi
 }
 
@@ -451,7 +452,7 @@ scan_local_public_history_provenance() {
   if scan_output="$(python3 tools/check_public_history_paths.py --repo-root . 2>&1)"; then
     ok "$scan_output"
   else
-    note "local reachable git history exposes launch-blocking provenance paths"
+    note "local reachable git history exposes public-blocking provenance paths"
     printf '%s\n' "$scan_output" | sed 's/^/  /'
   fi
 }
@@ -566,7 +567,7 @@ scan_github_pull_refs() {
   if [ -n "$stale_refs" ]; then
     note "pull request refs expose commits outside current public git history"
     printf '%s\n' "$stale_refs" | sed 's/^/  - /'
-    echo "  GitHub keeps closed PR refs read-only; purge them through GitHub support or recreate the public repository before launch."
+    echo "  GitHub keeps closed PR refs read-only; do not assume deleting local branches removes this surface."
   elif [ "$ref_count" -eq 0 ]; then
     ok "no pull request refs are advertised"
   else
@@ -597,11 +598,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if ! command -v gh >/dev/null 2>&1; then
-  echo "GitHub launch readiness FAILED: gh CLI is not installed." >&2
+  echo "GitHub public readiness FAILED: gh CLI is not installed." >&2
   exit 1
 fi
 
-echo "== GitHub launch readiness =="
+echo "== GitHub public readiness =="
 
 if gh auth status -h github.com >/dev/null 2>&1; then
   ok "gh is authenticated for github.com"
@@ -662,7 +663,7 @@ if [ -n "$repo" ]; then
       if [ "$allow_private" -eq 1 ]; then
         warn "repository is still private (--allow-private dry run)"
       else
-        note "repository is private; final public launch requires public visibility"
+        note "repository is private; public repository hygiene checks expect public visibility"
       fi
       ;;
     *) note "could not determine repository visibility" ;;
@@ -713,9 +714,9 @@ if [ -n "$repo" ]; then
   workflow_can_approve_prs="$(gh api "repos/${repo}/actions/permissions/workflow" --jq 'if has("can_approve_pull_request_reviews") then (.can_approve_pull_request_reviews | tostring) else "unknown" end' 2>/dev/null || echo unknown)"
   actions_retention_days="$(gh api "repos/${repo}/actions/permissions/artifact-and-log-retention" --jq '.days // "unknown"' 2>/dev/null || echo unknown)"
   if [ "$actions_enabled" = "false" ]; then
-    ok "GitHub Actions are disabled for local-CI launch policy"
+    ok "GitHub Actions are disabled for local-CI public repo policy"
   else
-    note "GitHub Actions are enabled; launch policy is local-CI only"
+    note "GitHub Actions are enabled; public repo policy is local-CI only"
     case "$actions_allowed" in
       all|selected) ok "GitHub Actions allowed-actions policy is ${actions_allowed}" ;;
       *) warn "could not confirm GitHub Actions allowed-actions policy" ;;
@@ -741,7 +742,7 @@ if [ -n "$repo" ]; then
   echo "== Hosted GitHub Actions run status =="
   run_id="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json databaseId --jq '.[0].databaseId // ""' 2>/dev/null || true)"
   if [ -z "$run_id" ]; then
-    ok "no hosted CI run is required for local-CI launch policy"
+    ok "no hosted CI run is required for the local-CI public repo policy"
   else
     run_sha="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json headSha --jq '.[0].headSha // ""')"
     run_status="$(gh run list --repo "$repo" --workflow CI --branch main --limit 1 --json status --jq '.[0].status // ""')"
@@ -751,7 +752,7 @@ if [ -n "$repo" ]; then
     if [ "$actions_enabled" = "false" ]; then
       ok "hosted CI is disabled; latest recorded run is informational only"
     elif [ "$run_sha" = "$head_sha" ]; then
-      warn "latest hosted CI run is for current HEAD, but hosted CI is not a launch gate"
+      warn "latest hosted CI run is for current HEAD, but hosted CI is not a required release gate"
     else
       warn "latest hosted CI run is for $run_sha, not current HEAD $head_sha"
     fi
@@ -759,9 +760,9 @@ if [ -n "$repo" ]; then
     if [ "$run_status" = "completed" ] && [ "$run_conclusion" = "success" ]; then
       ok "latest hosted CI run succeeded: $run_url"
     elif [ "$actions_enabled" = "false" ]; then
-      ok "latest recorded hosted CI run is not green, but hosted CI is disabled and not a launch gate: $run_url"
+      ok "latest recorded hosted CI run is not green, but hosted CI is disabled and not a release gate: $run_url"
     else
-      warn "latest hosted CI run is not green and is not a launch gate: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
+      warn "latest hosted CI run is not green and is not a required release gate: status=${run_status:-unknown}, conclusion=${run_conclusion:-unknown}, url=$run_url"
       echo
       echo "  Job summary:"
       gh api "repos/${repo}/actions/runs/${run_id}/jobs" \
@@ -859,8 +860,8 @@ fi
 
 echo
 if [ "$fail" -ne 0 ]; then
-  echo "GitHub launch readiness FAILED (${warn_count} warning(s))."
+  echo "GitHub public readiness FAILED (${warn_count} warning(s))."
   exit 1
 fi
 
-echo "GitHub launch readiness passed (${warn_count} warning(s))."
+echo "GitHub public readiness passed (${warn_count} warning(s))."
