@@ -218,6 +218,28 @@ else
 fi
 
 echo
+echo "== N64 IPL3 boot placeholder =="
+if [ ! -s src/bootcode.s ]; then
+  note "missing public IPL3 boot placeholder: src/bootcode.s"
+else
+  if grep -Fq 'Super Mario 64 (J) disassembly' src/bootcode.s; then
+    note "src/bootcode.s contains old SM64/n64split provenance text"
+  fi
+  if grep -Eq '^[[:space:]]*\.byte[[:space:]]+0x' src/bootcode.s; then
+    note "src/bootcode.s contains tracked boot/font byte payloads; keep it as a placeholder"
+  fi
+  if ! grep -Fq 'IPL3 boot-font data removed' src/bootcode.s; then
+    note "src/bootcode.s does not state that IPL3 boot-font data was removed"
+  fi
+  if ! grep -Fq 'src/bootcode.s' NOTICE.md || ! grep -Fq 'src/bootcode.s' THIRD_PARTY.md; then
+    note "src/bootcode.s placeholder is not disclosed in NOTICE.md and THIRD_PARTY.md"
+  fi
+fi
+if [ "$fail" -eq 0 ]; then
+  echo "  OK -- public bootcode source path is an asset-free placeholder."
+fi
+
+echo
 echo "== GitHub contributor scaffolding =="
 for f in \
   .github/CODEOWNERS \

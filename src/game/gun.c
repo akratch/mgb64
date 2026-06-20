@@ -5034,13 +5034,40 @@ void sub_GAME_7F05FB00(enum GUNHAND hand)
     struct hand* hand_ptr;
     ObjectRecord* hand_obj_record;
 
+#ifdef NATIVE_PORT
+    if (g_CurrentPlayer == NULL || hand < GUNRIGHT || hand > GUNLEFT)
+    {
+        return;
+    }
+#endif
+
     hand_ptr = &g_CurrentPlayer->hands[hand];
     hand_obj_record = hand_ptr->rocket;
 
     if (hand_obj_record != NULL)
     {
+#ifdef NATIVE_PORT
+        if (getPlayerCount() >= 2)
+        {
+            hand_ptr->rocket = NULL;
+            hand_ptr->firedrocket = 0;
+            return;
+        }
+
+        if (hand_obj_record->type != PROPDEF_COLLECTABLE
+            || hand_obj_record->obj != PROP_CHRROCKET
+            || ((WeaponObjRecord *)hand_obj_record)->weaponnum != ITEM_NULL86
+            || hand_obj_record->prop == NULL
+            || hand_obj_record->prop->obj != hand_obj_record)
+        {
+            hand_ptr->rocket = NULL;
+            hand_ptr->firedrocket = 0;
+            return;
+        }
+#endif
         objFreePermanently(hand_obj_record, 1);
         hand_ptr->rocket = NULL;
+        hand_ptr->firedrocket = 0;
     }
 }
 

@@ -16,7 +16,8 @@ build and their own ROM.
 - A built native port at `build/ge007` (see [BUILDING.md](BUILDING.md)).
 - Your own GoldenEye ROM at `baserom.u.z64` in the repo root.
 - `python3` (standard library only) for the static check and the state/audio lanes.
-- `python3` with **Pillow** (`pip install pillow`) only if you want the pixel lane.
+- `python3` with **Pillow** (`pip install pillow`) for screenshot-health and
+  pixel-comparison lanes.
 
 The instrumentation runs the game headless and deterministically. The shipped
 scripts set `GE007_DETERMINISTIC_STABLE_COUNT=1` so synthetic frame time advances
@@ -32,13 +33,16 @@ export PYTHONDONTWRITEBYTECODE=1
 
 ## The validation lanes
 
-The pipeline thinks in three parallel lanes plus a static guard:
+The public validation surface is organized into these lanes:
 
 | Lane | What it catches | Tool |
 |------|-----------------|------|
 | Static | Raw native switch-node dereferences (no ROM) | `check_native_switch_access.py` |
-| Boot | Spawn invariants, asserts, crashes on level load | `spawn_health_check.sh` |
+| Boot | Spawn invariants, asserts, crashes, render-health counters on level load | `spawn_health_check.sh` |
+| Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
+| Route contract | ROM-oracle route spec/adapters, optional native route captures | `route_contract_smoke.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
+| Screenshot | Missing, wrong-size, blank, or nearly monochrome frame captures | `audit_screenshot_health.py` |
 | Pixel | Renderer regressions (fog, texture, geometry) | `compare_screenshots.py` |
 | State | Spawn pos, facing, floor height, collision, NaN | `compare_state.py` |
 | Audio | Static/noise, silence, synth-chain breakage | `compare_audio.py` |
@@ -79,8 +83,54 @@ source scan: no ROM, no build, standard-library Python only.
 
 For each level it boots deterministically with `GE007_DEBUG=1` and checks:
 camera-handoff seed, an initialized `standheight`, zero `[GEASSERT]` failures,
-presence of guard `CHR_RENDER` calls, and a clean exit. Exit code = number of
-failed levels.
+presence of guard `CHR_RENDER` calls, a clean exit, and a strict
+`tools/audit_render_trace.py` pass over the generated JSONL trace. The render
+audit fails on crash recoveries, unhandled GBI commands, display-list resolve
+failures, room-render fallback records, or non-finite trace values. Exit code =
+number of failed levels.
+
+### Gameplay playability smoke
+
+```sh
+./tools/playability_smoke.sh                 # Dam + Cradle
+./tools/playability_smoke.sh --all           # all 20 stages
+./tools/playability_smoke.sh --level 33      # single raw LEVELID
+./tools/playability_smoke.sh --no-build      # reuse an existing build
+```
+
+This direct-native lane disables authored intros explicitly, holds a deterministic
+gameplay stick window, captures a state trace plus screenshot, and requires:
+clean process exit, zero `[GEASSERT]` failures, a valid 640x480 nonblank
+screenshot, strict render-health audit, target player records for the requested
+raw `LEVELID`, at least the configured nonzero `move.speed` record count, no
+watch/pause state, and a minimum horizontal player position delta. The default
+route tries `forward`, `right`, `back`, then `left` for each level and accepts
+the first pattern that satisfies all checks. Use `--pattern`, `--input-window`,
+`--min-moving-records`, and `--min-horizontal-delta` when validating a narrower
+route.
+
+The output directory defaults to `/tmp/mgb64_playability_smoke_*`. It includes a
+`summary.tsv` row for each level's accepted pattern, a top-level `summary.json`
+with the accepted-level list and pass/fail counts, plus per-attempt screenshot,
+render, and movement audit JSON files. Movement audit JSON contains
+moving-record counts, displacement, target-player record counts, input-event
+counts, and any failures. Keep generated JSONL traces, screenshots, summaries,
+and audit logs local.
+
+### ROM-oracle route contract smoke
+
+```sh
+./tools/route_contract_smoke.sh
+./tools/route_contract_smoke.sh --native-smoke --no-build --rom baserom.u.z64 --binary build/ge007
+```
+
+The ROM-free mode validates every built-in route spec plus generated native-env
+and ares-input adapters. `--native-smoke` runs each route through the native side
+of `tools/movement_oracle_capture.sh`, so route-level screenshots, render
+audits, movement audits, and intro actor/animation audits execute without a
+stock ares oracle build. The output directory defaults to
+`/tmp/mgb64_route_contract_smoke_*`; generated traces, screenshots, logs, and
+summaries are ROM-derived local artifacts and must not be committed.
 
 ### Save persistence
 
@@ -121,10 +171,16 @@ For known renderer compatibility defaults, capture compact local A/B scenes:
 ./tools/renderer_parity_capture.sh --no-build
 ```
 
-The script writes screenshots, traces, and logs to `/tmp/mgb64_renderer_parity_*`
-by default. Those artifacts are generated from your ROM and must not be
-committed or redistributed. Each scene prints exact local comparison commands
-using `tools/compare_screenshots.py` and `tools/compare_state.py`.
+The script writes screenshots, traces, comparison logs, screenshot-comparison
+JSON, capture logs, per-capture JSON health files, and a top-level `summary.json` to
+`/tmp/mgb64_renderer_parity_*` by default. Those artifacts are generated from
+your ROM and must not be committed or redistributed. Each capture runs
+`tools/audit_screenshot_health.py` and `tools/audit_render_trace.py` so
+missing/blank screenshots, crash recoveries, unhandled GBI commands,
+display-list resolve failures, non-finite trace values, and unexpected
+room-render fallback records fail immediately. Scene comparisons are still
+observational because they intentionally compare compatibility defaults against
+diagnostic alternatives.
 
 Current scenes:
 
@@ -140,16 +196,83 @@ Run one scene with:
 ./tools/renderer_parity_capture.sh --scene surface_sky_fog --no-build
 ```
 
+### Level-intro census
+
+To map native authored-intro coverage across direct-boot stages, run:
+
+```sh
+./tools/intro_census_capture.sh --no-build
+./tools/intro_census_capture.sh --all --no-build
+```
+
+The default quick run captures Dam and Cradle; `--all` captures the 20 supported
+solo stages. Each trace is captured with `GE007_ENABLE_LEVEL_INTRO=1`; its
+screenshot is audited with `tools/audit_screenshot_health.py`; its trace is
+audited with `tools/audit_render_trace.py`; then it is summarized by
+`tools/summarize_intro_census.py`. The summary reports active intro camera
+records, decoded swirl setup hashes, selected-camera fingerprints, Bond
+render/animation counts, animation header hashes, held right-item counts, and
+render-health maxima. The output directory defaults to
+`/tmp/mgb64_intro_census_*` and includes both `summary.txt` and structured
+`summary.json`, per-level screenshot/render audit JSON, a `captures.tsv` index,
+and `capture_summary.json` for the capture-health layer; screenshots, JSONL
+traces, logs, and summaries are ROM-derived local artifacts and must not be
+committed.
+
+For per-trace fingerprints that can be compared against a stock-ROM oracle trace,
+use:
+
+```sh
+./tools/intro_trace_summary.py /tmp/mgb64_intro_census_*/level_33.jsonl
+
+./tools/summarize_intro_census.py \
+  --require-active-intro \
+  --require-swirl \
+  --require-selected-camera \
+  --require-bond-rendered \
+  --require-bond-anim \
+  --require-bond-anim-hash \
+  --json-out /tmp/intro_census_summary.json \
+  /tmp/mgb64_intro_census_*/level_*.jsonl
+
+./tools/intro_trace_summary.py \
+  --baseline /tmp/stock_dam_intro_swirl_bond_anim.jsonl \
+  --test /tmp/native_dam_intro_swirl_bond_anim.jsonl \
+  --require-frozen \
+  --camera-modes swirl \
+  --start-intro-timer 11 \
+  --end-intro-timer 97 \
+  --compare-profile setup,selected-camera,bond-anim \
+  --min-matched-timers 20
+```
+
+`intro_trace_summary.py` emits stable setup, selected-camera, camera-path,
+Bond-animation, and full-active digests. Bond-animation digests include the
+animation header hash and frame count in addition to frame progression. In
+compare mode it aligns records by `intro.timer` and checks the selected fields
+with explicit tolerances. Use this as the lightweight inventory/diff layer while
+adding new stock-backed intro routes; keep `tools/compare_intro_trace.py` for
+strict vector/path parity on a specific aligned route window.
+
+`tools/audit_oracle_trace.py --json-out PATH` writes the same movement/control
+metrics that it prints, including failure counts. Validation wrappers use this
+for compact evidence files instead of scraping human-readable audit output.
+
 ## Reading the artifacts
 
 `regression_test.sh` captures per level into a temp dir (kept on failure or with
 `--keep-artifacts`):
 
-- `screenshot_<lvl>.bmp` — frame capture. `compare_screenshots.py` reports
-  changed-pixel %, unique colors, and a sample grid; default fail threshold is
-  3.0% changed pixels.
+- `screenshot_<lvl>.bmp` — frame capture. `audit_screenshot_health.py` checks
+  basic validity; `compare_screenshots.py` reports changed-pixel %, unique
+  colors, and a sample grid; default fail threshold is 3.0% changed pixels in
+  `regression_test.sh`. The comparator itself exits nonzero for invalid inputs
+  such as size mismatches and supports `--json-out` plus
+  `--max-changed-pct N` for strict standalone gates.
 - `trace_<lvl>.jsonl` — per-frame state trace (schema below). `compare_state.py`
-  reports the first divergent frame and field path.
+  reports the first divergent frame and field path. `regression_test.sh` also
+  runs `tools/audit_render_trace.py` against every captured trace, even when
+  baselines are missing and state comparison is skipped.
 - `audio_<lvl>.raw` — first 300 frames of PCM by default, s16le stereo
   22050 Hz. Set `GE007_AUDIO_DUMP_FRAMES=N` to capture a longer window.
   `compare_audio.py` fails on large RMS delta, a noise-like zero-crossing jump,
@@ -487,8 +610,25 @@ The public ROM-comparison lane for player movement is documented in
 [ROM_COMPARISON.md](ROM_COMPARISON.md). It uses authored route specs from
 `tools/rom_oracle_routes/`, native `--trace-state` captures, and an optional
 local instrumented ares checkout that dumps the same movement fields from stock
-RDRAM. Generated traces, screenshots, saves, emulator logs, and the local ares
-checkout are ROM-derived/local artifacts and must stay out of git.
+RDRAM. The route audit rejects captures that keep frontend/menu input active
+after gameplay starts and can require minimum gameplay-input and moving-record
+counts before comparison. Movement counts are scoped to the requested
+target-stage player. It can also require a minimum horizontal player position
+delta for native/direct gameplay smokes; standard ROM movement routes cap
+suppressed menu attempts and require a clean menu-to-gameplay gap so the
+bootstrap script cannot keep trying to press Start/A after handoff. Stock-backed
+movement and intro comparisons emit `compare_<route>.json` artifacts with the
+same pass/fail, alignment, threshold, and max-delta evidence used by the text
+logs. Intro routes can compare the decoded swirl setup
+fingerprint, stock-selected authored camera fingerprint, authored camera timer,
+and Bond actor/action/animation fields before checking camera-path vectors. The
+Dam coverage is split into a static selected-camera path route and a
+timer-aligned swirl/Bond-animation route so duplicate stock video samples do not
+masquerade as game ticks. Routes can also opt into the native render-health
+audit, which fails on crash recoveries, bad GBI commands, display-list resolve
+failures, room-render fallbacks, or non-finite trace values.
+Generated traces, screenshots, saves, emulator logs, and the local ares checkout
+are ROM-derived/local artifacts and must stay out of git.
 
 ## Advanced / dev-only (not shipped)
 

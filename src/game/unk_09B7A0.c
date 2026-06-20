@@ -603,11 +603,20 @@ void *sub_GAME_7F09BE4C(s32 count, s32 pool_id, s32 arg2, s32 arg3) {
         return NULL;
     }
 
+    if (entries == NULL || avail_ptr == NULL || max_entries <= 0 || count <= 0 || count > *avail_ptr) {
+        return NULL;
+    }
+
     found = 0;
     iter = 0;
     idx = 0;
 
     do {
+        if (idx < 0 || idx >= max_entries) {
+            found = -1;
+            break;
+        }
+
         entry = &entries[idx];
 
         if (entry->unk0E != 0) {
@@ -620,7 +629,7 @@ void *sub_GAME_7F09BE4C(s32 count, s32 pool_id, s32 arg2, s32 arg3) {
 
         if (found == 0) {
             iter++;
-            if (idx == -1 || max_entries < iter) {
+            if (idx == -1 || idx >= max_entries || max_entries < iter) {
                 found = -1;
             }
         }
@@ -1044,5 +1053,4 @@ glabel sub_GAME_7F09C044
 /* 0D0D74 7F09C244 00000000 */   nop   
 )
 #endif
-
 

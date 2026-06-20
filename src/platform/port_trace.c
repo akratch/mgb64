@@ -50,6 +50,7 @@
 #include "game/chr.h"
 #include "game/chrobjhandler.h"
 #include "game/chrlv.h"
+#include "game/initanitable.h"
 #include "game/lvl.h"
 #include "game/loadobjectmodel.h"
 #include "game/mp_music.h"
@@ -124,6 +125,69 @@ static int s_bondIntroRenderCount = 0;
 static int s_bondIntroLastTraceFrame = -1;
 static int s_bondIntroLastChrnum = -1;
 static int s_bondIntroLastPass = -1;
+
+static u64 traceIntroHashU32(u64 hash, u32 value) {
+    hash ^= (u64)value;
+    hash *= 1099511628211ULL;
+    return hash;
+}
+
+static u16 traceAnimReadU16(const ModelAnimation *anim, size_t offset) {
+    u16 value = 0;
+    if (anim != NULL) {
+        memcpy(&value, ((const u8 *)anim) + offset, sizeof(value));
+    }
+    return value;
+}
+
+static u32 traceAnimReadU32(const ModelAnimation *anim, size_t offset) {
+    u32 value = 0;
+    if (anim != NULL) {
+        memcpy(&value, ((const u8 *)anim) + offset, sizeof(value));
+    }
+    return value;
+}
+
+static int traceModelAnimationTableOffset(const ModelAnimation *anim) {
+    uintptr_t base;
+    uintptr_t ptr;
+    uintptr_t delta;
+
+    if (anim == NULL || ptr_animation_table == NULL) {
+        return -1;
+    }
+
+    base = (uintptr_t)ptr_animation_table;
+    ptr = (uintptr_t)anim;
+    if (ptr < base) {
+        return -1;
+    }
+
+    delta = ptr - base;
+    if (delta > 0xffffu) {
+        return -1;
+    }
+
+    return (int)delta;
+}
+
+static u64 traceModelAnimationHeaderHash(const ModelAnimation *anim) {
+    u64 hash;
+
+    if (anim == NULL) {
+        return 0;
+    }
+
+    hash = 1469598103934665603ULL;
+    hash = traceIntroHashU32(hash, (u32)traceAnimReadU16(anim, 0x04));
+    hash = traceIntroHashU32(hash, (u32)*(((const u8 *)anim) + 0x06));
+    hash = traceIntroHashU32(hash, (u32)*(((const u8 *)anim) + 0x07));
+    hash = traceIntroHashU32(hash, traceAnimReadU32(anim, 0x08));
+    hash = traceIntroHashU32(hash, (u32)traceAnimReadU16(anim, 0x0c));
+    hash = traceIntroHashU32(hash, (u32)traceAnimReadU16(anim, 0x0e));
+    hash = traceIntroHashU32(hash, traceAnimReadU32(anim, 0x10));
+    return hash;
+}
 
 void portTraceBondIntroRendered(const ChrRecord *chr, s32 withalpha) {
     if (chr == NULL) {
@@ -3758,6 +3822,12 @@ void portTraceFrame(void) {
     float col_x = 0, col_y = 0, col_z = 0;
     float cam_dx = 0, cam_dy = 0, cam_dz = 0;
     float theta0 = 0, theta1 = 0, theta2 = 0;
+    float move_speed_forwards = 0.0f, move_speed_sideways = 0.0f;
+    float move_speed_go = 0.0f, move_speed_strafe = 0.0f, move_speed_boost = 0.0f;
+    float move_speed_theta = 0.0f, move_speed_verta = 0.0f;
+    float move_head_x = 0.0f, move_head_y = 0.0f, move_head_z = 0.0f;
+    float move_prev_x = 0.0f, move_prev_y = 0.0f, move_prev_z = 0.0f;
+    int move_speed_max_time60 = 0;
     int tile_room = -1, portal_room = -1, room_ptr_room = -1, render_room = -1, prop_room = -1;
     int lookup_room = -1, nearest_room = -1;
     int cam_lookup_room = -1, cam_nearest_room = -1;
@@ -4080,6 +4150,20 @@ void portTraceFrame(void) {
         col_x = g_CurrentPlayer->field_488.collision_position.x;
         col_y = g_CurrentPlayer->field_488.collision_position.y;
         col_z = g_CurrentPlayer->field_488.collision_position.z;
+        move_speed_forwards = g_CurrentPlayer->speedforwards;
+        move_speed_sideways = g_CurrentPlayer->speedsideways;
+        move_speed_go = g_CurrentPlayer->speedgo;
+        move_speed_strafe = g_CurrentPlayer->speedstrafe;
+        move_speed_boost = g_CurrentPlayer->speedboost;
+        move_speed_theta = g_CurrentPlayer->speedtheta;
+        move_speed_verta = g_CurrentPlayer->speedverta;
+        move_speed_max_time60 = g_CurrentPlayer->speedmaxtime60;
+        move_head_x = g_CurrentPlayer->headpos.f[0];
+        move_head_y = g_CurrentPlayer->headpos.f[1];
+        move_head_z = g_CurrentPlayer->headpos.f[2];
+        move_prev_x = g_CurrentPlayer->bondprevpos.f[0];
+        move_prev_y = g_CurrentPlayer->bondprevpos.f[1];
+        move_prev_z = g_CurrentPlayer->bondprevpos.f[2];
         if (frozen_intro_camera) {
             cam_x = g_CurrentPlayer->pos.x;
             cam_y = g_CurrentPlayer->pos.y;
@@ -4831,6 +4915,7 @@ void portTraceFrame(void) {
     int cam_mode = (int)g_CameraMode;
     int cam_after = (int)g_CameraAfterCinema;
     int icam = intro_camera_index;
+    float intro_timer = camera_transition_timer;
     vi_view_left = viGetViewLeft();
     vi_view_top = viGetViewTop();
     vi_view_w = viGetViewWidth();
@@ -4901,7 +4986,119 @@ void portTraceFrame(void) {
     int intro_bond_onscreen = 0;
     int intro_bond_seen_onscreen = 0;
     int intro_bond_rendered = (s_bondIntroLastTraceFrame == s_traceFrame) ? 1 : 0;
+    int intro_bond_anim_valid = 0;
+    float intro_bond_anim_frame = 0.0f;
+    float intro_bond_anim_end = 0.0f;
+    float intro_bond_anim_speed = 0.0f;
+    float intro_bond_anim_abs_speed = 0.0f;
+    int intro_bond_anim_looping = 0;
+    int intro_bond_anim_gunhand = -1;
+    int intro_bond_anim_offset = -1;
+    int intro_bond_anim_frames = -1;
+    int intro_bond_anim_entry_offset = -1;
+    int intro_bond_anim_bits_offset = -1;
+    u64 intro_bond_anim_hash = 0;
+    int intro_setup_anim_index = g_IntroAnimationIndex;
+    int intro_swirl_present = g_IntroSwirl != NULL ? 1 : 0;
+    int intro_swirl_count = 0;
+    u64 intro_swirl_hash = 0;
+    int intro_swirl_current_index = -1;
+    int intro_swirl_current_flags = 0;
+    float intro_swirl_current_x = 0.0f;
+    float intro_swirl_current_y = 0.0f;
+    float intro_swirl_current_z = 0.0f;
+    float intro_swirl_current_curve = 0.0f;
+    float intro_swirl_current_duration = 0.0f;
+    int intro_swirl_current_pad = -1;
+    int intro_selected_camera_present = 0;
+    int intro_selected_camera_index = -1;
+    int intro_selected_camera_count = g_SetupIntroCameraCount;
+    float intro_selected_camera_x = 0.0f;
+    float intro_selected_camera_y = 0.0f;
+    float intro_selected_camera_z = 0.0f;
+    float intro_selected_camera_yaw = 0.0f;
+    float intro_selected_camera_pitch = 0.0f;
+    int intro_selected_camera_pad = -1;
+    int intro_selected_camera_pad_room = -1;
+    float intro_selected_camera_pad_x = 0.0f;
+    float intro_selected_camera_pad_y = 0.0f;
+    float intro_selected_camera_pad_z = 0.0f;
+    TraceHeldPropSnapshot intro_bond_held_right;
+    TraceHeldPropSnapshot intro_bond_held_left;
     pc_ramrom_trace_state ramrom_trace;
+
+    memset(&intro_bond_held_right, 0, sizeof(intro_bond_held_right));
+    memset(&intro_bond_held_left, 0, sizeof(intro_bond_held_left));
+    intro_bond_held_right.obj = -1;
+    intro_bond_held_right.item = -1;
+    intro_bond_held_left.obj = -1;
+    intro_bond_held_left.item = -1;
+
+    if (g_IntroSwirl != NULL) {
+        int i;
+
+        intro_swirl_hash = 1469598103934665603ULL;
+        for (i = 0; i < 64 && g_IntroSwirl[i].type == INTROTYPE_SWIRL; i++) {
+            const struct SetupIntroSwirl *entry = &g_IntroSwirl[i];
+
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->type);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk04);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk08.ival);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk0C.ival);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk10.ival);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk14.ival);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk18.ival);
+            intro_swirl_hash = traceIntroHashU32(intro_swirl_hash, (u32)entry->unk1C);
+            intro_swirl_count++;
+        }
+
+        if (intro_swirl_count > 0) {
+            const struct SetupIntroSwirl *entry;
+
+            intro_swirl_current_index = intro_camera_index;
+            if (intro_swirl_current_index < 0 || intro_swirl_current_index >= intro_swirl_count) {
+                intro_swirl_current_index = 0;
+            }
+
+            entry = &g_IntroSwirl[intro_swirl_current_index];
+            intro_swirl_current_flags = entry->unk04;
+            intro_swirl_current_x = entry->unk08.fval;
+            intro_swirl_current_y = entry->unk0C.fval;
+            intro_swirl_current_z = entry->unk10.fval;
+            intro_swirl_current_curve = entry->unk14.fval;
+            intro_swirl_current_duration = entry->unk18.fval;
+            intro_swirl_current_pad = entry->unk1C;
+        }
+    }
+
+    if (ptr_random06cam_entry != NULL) {
+        struct SetupIntroCamera *iter;
+        int reverse_index = 0;
+
+        intro_selected_camera_present = 1;
+        intro_selected_camera_x = ptr_random06cam_entry->unk04.fval;
+        intro_selected_camera_y = ptr_random06cam_entry->unk08.fval;
+        intro_selected_camera_z = ptr_random06cam_entry->unk0C.fval;
+        intro_selected_camera_yaw = ptr_random06cam_entry->unk10.fval;
+        intro_selected_camera_pitch = ptr_random06cam_entry->unk14.fval;
+        intro_selected_camera_pad = ptr_random06cam_entry->unk18;
+
+        for (iter = g_CurrentSetupIntroCamera; iter != NULL; iter = iter->prev) {
+            if (iter == ptr_random06cam_entry) {
+                intro_selected_camera_index = (intro_selected_camera_count - 1) - reverse_index;
+                break;
+            }
+            reverse_index++;
+        }
+
+        if (g_CurrentSetup.pads != NULL && intro_selected_camera_pad >= 0) {
+            PadRecord *pad = &g_CurrentSetup.pads[intro_selected_camera_pad];
+            intro_selected_camera_pad_x = pad->pos.f[0];
+            intro_selected_camera_pad_y = pad->pos.f[1];
+            intro_selected_camera_pad_z = pad->pos.f[2];
+            intro_selected_camera_pad_room = pad->stan != NULL ? pad->stan->room : -1;
+        }
+    }
 
     pcRamromGetTraceState(&ramrom_trace);
     snprintf(ramrom_field_json,
@@ -4991,6 +5188,11 @@ void portTraceFrame(void) {
                 &cam_floor_x, &cam_floor_y, &cam_floor_z,
                 &cam_dx, &cam_dy, &cam_dz,
                 &theta0, &theta1, &theta2,
+                &move_speed_forwards, &move_speed_sideways,
+                &move_speed_go, &move_speed_strafe, &move_speed_boost,
+                &move_speed_theta, &move_speed_verta,
+                &move_head_x, &move_head_y, &move_head_z,
+                &move_prev_x, &move_prev_y, &move_prev_z,
                 &room_basis_x, &room_basis_y, &room_basis_z
             };
             size_t check_count = sizeof(checks) / sizeof(checks[0]);
@@ -5002,6 +5204,10 @@ void portTraceFrame(void) {
         int len = snprintf(linebuf, sizeof(linebuf),
             "{\"f\":%d,\"p\":%d,"
             "\"pos\":[%.2f,%.2f,%.2f],"
+            "\"move\":{\"speed\":[%.5f,%.5f],\"raw\":[%.5f,%.5f],\"boost\":%.5f,"
+            "\"turn\":%.5f,\"pitch\":%.5f,\"max_t\":%d,"
+            "\"head\":[%.3f,%.3f,%.3f],\"prev\":[%.2f,%.2f,%.2f],"
+            "\"clock\":%d,\"dt\":%.2f,\"global\":%d},"
             "\"tris\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
@@ -5019,6 +5225,12 @@ void portTraceFrame(void) {
             "\"nan\":%d}\n",
             s_traceFrame, has_player,
             px, py, pz,
+            move_speed_forwards, move_speed_sideways,
+            move_speed_go, move_speed_strafe, move_speed_boost,
+            move_speed_theta, move_speed_verta, move_speed_max_time60,
+            move_head_x, move_head_y, move_head_z,
+            move_prev_x, move_prev_y, move_prev_z,
+            g_ClockTimer, g_GlobalTimerDelta, g_GlobalTimer,
             tris, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
@@ -5070,6 +5282,26 @@ void portTraceFrame(void) {
         if (intro_chr->model != NULL && intro_chr->model->render_pos != NULL) {
             intro_bond_model_mtx = modelGetRenderPosCount(intro_chr->model);
         }
+
+        if (intro_chr->model != NULL && intro_chr->model->anim != NULL) {
+            ModelAnimation *intro_anim = intro_chr->model->anim;
+
+            intro_bond_anim_valid = 1;
+            intro_bond_anim_offset = traceModelAnimationTableOffset(intro_anim);
+            intro_bond_anim_frames = (int)traceAnimReadU16(intro_anim, 0x04);
+            intro_bond_anim_entry_offset = (int)traceAnimReadU32(intro_anim, 0x08);
+            intro_bond_anim_bits_offset = (int)traceAnimReadU32(intro_anim, 0x10);
+            intro_bond_anim_hash = traceModelAnimationHeaderHash(intro_anim);
+            intro_bond_anim_frame = objecthandlerGetModelField28(intro_chr->model);
+            intro_bond_anim_end = sub_GAME_7F06F5C4(intro_chr->model);
+            intro_bond_anim_speed = modelGetAnimSpeed(intro_chr->model);
+            intro_bond_anim_abs_speed = modelGetAbsAnimSpeed(intro_chr->model);
+            intro_bond_anim_looping = intro_chr->model->animlooping;
+            intro_bond_anim_gunhand = objecthandlerGetModelGunhand(intro_chr->model);
+        }
+
+        traceHeldPropSnapshot(intro_chr->weapons_held[GUNRIGHT], &intro_bond_held_right);
+        traceHeldPropSnapshot(intro_chr->weapons_held[GUNLEFT], &intro_bond_held_left);
     }
 
     memset(&weapon_left, 0, sizeof(weapon_left));
@@ -5114,6 +5346,11 @@ void portTraceFrame(void) {
             &cam_floor_x, &cam_floor_y, &cam_floor_z,
             &cam_dx, &cam_dy, &cam_dz,
             &theta0, &theta1, &theta2,
+            &move_speed_forwards, &move_speed_sideways,
+            &move_speed_go, &move_speed_strafe, &move_speed_boost,
+            &move_speed_theta, &move_speed_verta,
+            &move_head_x, &move_head_y, &move_head_z,
+            &move_prev_x, &move_prev_y, &move_prev_z,
             &room_basis_x, &room_basis_y, &room_basis_z
         };
         size_t check_count = sizeof(checks) / sizeof(checks[0]);
@@ -5174,6 +5411,10 @@ void portTraceFrame(void) {
             "\"floor\":%.2f,\"stan_h\":%.2f,"
             "\"col\":[%.2f,%.2f,%.2f],"
             "\"facing\":[%.4f,%.4f,%.4f],"
+            "\"move\":{\"speed\":[%.5f,%.5f],\"raw\":[%.5f,%.5f],\"boost\":%.5f,"
+            "\"turn\":%.5f,\"pitch\":%.5f,\"max_t\":%d,"
+            "\"head\":[%.3f,%.3f,%.3f],\"prev\":[%.2f,%.2f,%.2f],"
+            "\"clock\":%d,\"dt\":%.2f,\"global\":%d},"
             "\"rooms\":{\"tile\":%d,\"portal\":%d,\"room_ptr\":%d,\"prop\":%d,\"cur\":%d,\"render\":%d,\"lookup\":%d,\"nearest\":%d,\"cam_lookup\":%d,\"cam_nearest\":%d,"
             "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s},"
             "\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
@@ -5239,9 +5480,21 @@ void portTraceFrame(void) {
             "\"loaded_stage\":%d,\"pending_stage\":%d,\"active_stage\":%d,\"mission_state\":%d,\"entered\":%d,"
             "\"cursor\":[%.2f,%.2f],\"folder\":%d,\"hover_folder\":%d,\"folder_option\":%d,\"folder_delete\":%d,\"folder_delete_choice\":%d,"
             "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d},"
-            "\"intro\":{\"bond_present\":%d,\"bond_chrnum\":%d,\"bond_action\":%d,\"bond_sleep\":%d,"
+            "\"intro\":{\"timer\":%.2f,"
+            "\"setup\":{\"anim_index\":%d,\"swirl\":{\"present\":%d,\"count\":%d,\"hash\":\"0x%016llX\","
+            "\"current\":{\"index\":%d,\"flags\":%d,\"pos\":[%.4f,%.4f,%.4f],"
+            "\"curve\":%.4f,\"duration\":%.4f,\"pad\":%d}}},"
+            "\"bond_present\":%d,\"bond_chrnum\":%d,\"bond_action\":%d,\"bond_sleep\":%d,"
             "\"bond_field20\":%d,\"bond_model_mtx\":%d,\"bond_onscreen\":%d,\"bond_seen_onscreen\":%d,"
-            "\"bond_rendered\":%d,\"bond_render_count\":%d,\"bond_render_chrnum\":%d,\"bond_render_pass\":%d},"
+            "\"bond_rendered\":%d,\"bond_render_count\":%d,\"bond_render_chrnum\":%d,\"bond_render_pass\":%d,"
+            "\"bond_anim\":{\"valid\":%d,\"offset\":%d,\"frames\":%d,\"hash\":\"0x%016llX\","
+            "\"entry_offset\":%d,\"bits_offset\":%d,\"frame\":%.2f,\"end\":%.2f,\"speed\":%.4f,"
+            "\"abs_speed\":%.4f,\"looping\":%d,\"gunhand\":%d},"
+            "\"bond_held\":{\"right\":{\"present\":%d,\"item\":%d,\"obj\":%d,\"has_mtx\":%d},"
+            "\"left\":{\"present\":%d,\"item\":%d,\"obj\":%d,\"has_mtx\":%d}},"
+            "\"selected_camera\":{\"present\":%d,\"index\":%d,\"count\":%d,"
+            "\"pos\":[%.2f,%.2f,%.2f],\"yaw\":%.6f,\"pitch\":%.6f,"
+            "\"pad\":%d,\"pad_room\":%d,\"pad_pos\":[%.2f,%.2f,%.2f]}},"
             "\"title\":{\"gunbarrel_mode\":%d,\"eye_counter\":%d,\"blood_state\":%d,"
             "\"title_x\":%.4f,\"title_y\":%.4f,\"transition_x\":%.4f,\"transition_y\":%.4f,"
             "\"wave\":%d,\"rare_rotation\":%.4f,\"nintendo_rotation\":%.4f,\"nintendo_scale\":%.6f},"
@@ -5304,6 +5557,12 @@ void portTraceFrame(void) {
             field_70, stanHeight,
             col_x, col_y, col_z,
             theta0, theta1, theta2,
+            move_speed_forwards, move_speed_sideways,
+            move_speed_go, move_speed_strafe, move_speed_boost,
+            move_speed_theta, move_speed_verta, move_speed_max_time60,
+            move_head_x, move_head_y, move_head_z,
+            move_prev_x, move_prev_y, move_prev_z,
+            g_ClockTimer, g_GlobalTimerDelta, g_GlobalTimer,
             tile_room, portal_room, room_ptr_room, prop_room, cur_room, render_room, lookup_room, nearest_room,
             cam_lookup_room, cam_nearest_room,
             rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf,
@@ -5389,10 +5648,32 @@ void portTraceFrame(void) {
             menu_cursor_x, menu_cursor_y, menu_selected_folder, menu_hover_folder, menu_folder_option,
             menu_folder_delete, menu_folder_delete_choice, menu_highlight, menu_briefing, menu_briefing_page,
             mission_failed, bond_kia,
+            intro_timer,
+            intro_setup_anim_index,
+            intro_swirl_present, intro_swirl_count, (unsigned long long)intro_swirl_hash,
+            intro_swirl_current_index, intro_swirl_current_flags,
+            intro_swirl_current_x, intro_swirl_current_y, intro_swirl_current_z,
+            intro_swirl_current_curve, intro_swirl_current_duration, intro_swirl_current_pad,
             intro_bond_present, intro_bond_chrnum, intro_bond_action, intro_bond_sleep,
             intro_bond_field20, intro_bond_model_mtx, intro_bond_onscreen,
             intro_bond_seen_onscreen, intro_bond_rendered, s_bondIntroRenderCount,
             s_bondIntroLastChrnum, s_bondIntroLastPass,
+            intro_bond_anim_valid, intro_bond_anim_offset, intro_bond_anim_frames,
+            (unsigned long long)intro_bond_anim_hash,
+            intro_bond_anim_entry_offset, intro_bond_anim_bits_offset,
+            intro_bond_anim_frame, intro_bond_anim_end,
+            intro_bond_anim_speed, intro_bond_anim_abs_speed, intro_bond_anim_looping,
+            intro_bond_anim_gunhand,
+            intro_bond_held_right.present, intro_bond_held_right.item,
+            intro_bond_held_right.obj, intro_bond_held_right.has_mtx,
+            intro_bond_held_left.present, intro_bond_held_left.item,
+            intro_bond_held_left.obj, intro_bond_held_left.has_mtx,
+            intro_selected_camera_present, intro_selected_camera_index,
+            intro_selected_camera_count,
+            intro_selected_camera_x, intro_selected_camera_y, intro_selected_camera_z,
+            intro_selected_camera_yaw, intro_selected_camera_pitch,
+            intro_selected_camera_pad, intro_selected_camera_pad_room,
+            intro_selected_camera_pad_x, intro_selected_camera_pad_y, intro_selected_camera_pad_z,
             title_gunbarrel_mode, title_eye_counter, title_blood_state,
             title_x, title_y, title_transition_x, title_transition_y,
             title_wave, title_rare_rotation, title_nintendo_rotation, title_nintendo_scale,

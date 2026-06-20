@@ -1,6 +1,6 @@
 # Public Launch Readiness
 
-Snapshot date: 2026-06-19.
+Snapshot date: 2026-06-20.
 
 This document is the maintainer-facing source of truth for deciding when MGB64
 is ready to flip public and announce broadly. It intentionally separates hard
@@ -17,6 +17,7 @@ Do not make the repository public until all hard blockers are closed:
 | Reachable git history provenance | Blocked | `tools/check_public_history_paths.py` reports old `tools/ido5.3_recomp/*` source/tooling paths in the current preserved history. The generated fresh single-root launch repository must pass this guard before publication. | Publish from a fresh single-root launch repository created from the current clean tree, or perform an approved history rewrite before launch. |
 | Branch/tag refs | Passing | `scripts/check_github_launch_ready.sh --allow-private` verifies advertised `refs/heads/*` and `refs/tags/*` point into current public history. | Keep passing before launch; do not create public release tags from any other history. |
 | Hidden pull-request refs | Blocked | `scripts/check_github_launch_ready.sh --allow-private` reports stale `refs/pull/*` refs outside current public history. | Get GitHub Support to purge the hidden refs and unreachable objects, or replace the GitHub repository from the clean branch. |
+| N64 IPL3/boot material | Passing locally | `src/bootcode.s` is now an asset-free public placeholder. It no longer redistributes IPL3 boot ROM code, the old SM64/n64split text, or boot-font bytes; the native build does not compile it. | Keep the placeholder and provenance notices intact. Matching-target contributors must supply any required boot material locally and keep it out of git. |
 | Current-tree/source-archive hygiene | Passing locally | The strict clean-launch bundle path generates a one-commit launch repo, passes release/history guards, builds a warning-clean source archive, and records exact commit/archive hashes in the generated bundle manifest. | Keep passing before launch. |
 | ROM-free source test suite | Passing locally | Clean launch repo and source-archive smoke both pass ROM-free CTest `7/7` during the strict bundle proof. | Keep passing before launch through local preflight and archive smoke. |
 | GitHub public text/artifact hygiene | Passing | Public repository metadata, labels, milestones, release notes/assets, unexpired Actions artifacts, issues, PR/commit comments, PR review summaries, Discussions, workflow history, and commit-reference surfaces pass the launch checker. | Re-run after any GitHub metadata migration, label/milestone change, release edit, workflow artifact upload, issue edit, or PR review. |
@@ -32,6 +33,8 @@ workspace with a ROM path outside the generated clean launch checkout:
 ```sh
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
+  --author-name "akratch" \
+  --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com" \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
   --strict-preflight-macos-app \
   --strict-preflight-macos-app-bundle-sdl2
@@ -39,15 +42,20 @@ scripts/prepare_public_launch_bundle.sh \
 
 The generated `PUBLIC_LAUNCH_BUNDLE.md` is the place to record exact source
 HEAD, clean-launch HEAD, tree hash, archive path, archive SHA-256, exported
-issue count, and GitHub blocker evidence. A launch-ready bundle must prove:
+issue count, clean-launch author/committer identity, and GitHub blocker
+evidence. A launch-ready bundle must prove:
 
 - the clean launch repository has exactly one root commit;
 - the clean launch tree matches the source HEAD tree;
+- `src/bootcode.s` remains an asset-free placeholder and no tracked file
+  contains the old SM64/n64split bootcode provenance text or IPL3 font bytes;
 - release guard and public-history path guard pass inside the clean launch repo;
 - the clean source archive builds warning-free and passes ROM-free CTest;
-- strict preflight passes ROM-backed quick validation, all 20 single-player
-  level spawn checks, save persistence, Dockerfile context check, source-archive
-  smoke, and macOS unsigned app asset-free verification;
+- strict preflight passes ROM-backed quick validation, ROM-oracle route contract
+  smoke, all 20 single-player render-health-audited level spawn checks,
+  all-level deterministic playability smoke with screenshot-health gates,
+  renderer parity scene capture, save persistence, Dockerfile context check,
+  source-archive smoke, and macOS unsigned app asset-free verification;
 - if claiming a redistributable macOS app rather than source/local packaging,
   the macOS app lane also passes with `--macos-app-strict-deployment-target`
   and `--macos-app-bundle-sdl2` using a controlled SDL2 build;
@@ -63,14 +71,18 @@ and branch/security setting gates still apply.
 
 - The repo is asset-free: no ROM, extracted assets, media captures, save files,
   or generated asset data are tracked.
+- The public N64 bootcode source path is a placeholder only. IPL3 boot material
+  for matching-target experiments must be supplied locally and kept out of git.
 - The public source guard scans current files and reachable git history for ROM
   contamination, and the launch checker now also flags launch-blocking public
   history paths such as removed local-only tool source.
 - Native play is the supported path: clean checkout plus a user-supplied ROM can
   build and run the port locally.
 - The local release lane covers release hygiene, CMake configure/build/test,
-  source-archive smoke, all-level spawn health, save persistence, Dockerfile
-  parse checks, and macOS asset-free bundle verification when invoked through
+  source-archive smoke, ROM-oracle route contracts, all-level spawn health,
+  deterministic playability with screenshot-health gates, renderer parity scene
+  capture, save persistence, Dockerfile parse checks, and macOS asset-free
+  bundle verification when invoked through
   `scripts/release_preflight.sh`.
 - Public contributor scaffolding exists: issue templates, PR template,
   contributing guide, code of conduct, security policy, roadmap, status docs,
@@ -90,8 +102,9 @@ will inspect first.
 | SDK/libultra provenance | Do not call the project fully clean-room while matching-target SDK/libultra-lineage compatibility material remains inventoried in-tree. | #26 |
 | N64 byte-matching target | Native play is supported; byte-matching ROM rebuild still needs local matching toolchain files and extracted data-table link work. | #2 |
 | Audio/music parity | SFX mapping is much improved and startup music now has a local Ares-backed spectral/envelope comparison lane. The intro/gunbarrel music still has a known custom-FX pole-filter parity gap in program-34-heavy windows, so avoid bit-perfect N64 audio claims. | #17 |
-| Intro camera parity | Bond is still absent from authored level intro cameras such as Dam's early establishing camera. | #18 |
-| Renderer parity | Several compatibility defaults are intentionally approximate and need reference-backed scenes before promotion. | #21 |
+| Movement/playability parity | Dam movement speed dynamics have stock-vs-native scalar-speed route coverage, and all-level deterministic native playability smoke can prove controlled movement plus clean screenshot/render-health gates. This is still targeted route coverage, not a complete reference-backed proof for every movement state, mission-flow path, menu transition, or combat interaction. | #18, #21 |
+| Intro camera parity | Dam now has ROM-vs-native selected-camera/static-camera coverage plus timer-aligned swirl/Bond-animation coverage that includes animation header identity, plus native actor/render/held-item auditing and structured comparison artifacts; a native intro-census lane can sweep direct-boot stages for setup/render/animation coverage, but broader level-intro parity still needs reference-backed expansion. | #18 |
+| Renderer parity | Several compatibility defaults are intentionally approximate and need reference-backed scenes before promotion. The local renderer parity lane now has strict screenshot/render-health gates and structured summaries for the current scissor and sky/fog scenes, but it is not a full hardware-rendering oracle. | #21 |
 | Linux/Windows validation | Local Linux/GCC validation and Windows/MSYS2 instructions still need outside verification. | #20, #28, #29 |
 | macOS distribution | Local unsigned app bundle is asset-free; signed/notarized DMG release path and controlled SDL2 deployment target are not yet proven. | #22 |
 | Warning backlog | Local release and source-archive smoke builds should stay warning-clean; any recurring GCC backlog should be triaged in public. | #25 |
@@ -103,9 +116,12 @@ will inspect first.
    `scripts/create_public_launch_repo.sh --smoke-archive` or the fuller
    non-destructive `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64`,
    or by an approved history rewrite.
+   Use `--author-email` / `--committer-email` with a GitHub noreply address, or
+   leave the default `mgb64-launch@example.invalid`; never use a personal email
+   address for the public root commit.
    When a local ROM is available outside the generated launch checkout, prefer
    the fuller strict dry run:
-   `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app --strict-preflight-macos-app-bundle-sdl2`.
+   `scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64 --author-name "akratch" --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com" --strict-preflight-rom /path/outside/repo/baserom.u.z64 --strict-preflight-macos-app --strict-preflight-macos-app-bundle-sdl2`.
 2. Resolve hidden stale PR refs through GitHub Support or the repository
    replacement runbook in `docs/GITHUB_REPO_REPLACEMENT.md`. GitHub Support can
    only purge hidden refs/caches; it does not fix launch-blocking paths in

@@ -23,12 +23,17 @@ this repository** — see that file and the CI contamination guard
 | `include/PR/*.h`, except the clean-room compatibility headers listed below | Nintendo 64 SDK (libultra), © Silicon Graphics, Inc. 1994–1999 | Platform/ABI interface headers (RCP/GBI, OS, audio, etc.). |
 | `src/libultra/**`, except the clean-room compatibility sources listed below | Nintendo 64 SDK (libultra), © Silicon Graphics, Inc. | SDK-lineage implementation source used primarily by the matching target and non-native compatibility paths. |
 | `src/libultrare/**`, except the clean-room/unused audio paths listed below | Rare-modified libultra routines, derived from the Nintendo 64 SDK | SDK-lineage implementation source used primarily by the matching target and non-native compatibility paths. |
+| `src/bootcode.s` | Public placeholder for N64 IPL3 boot material | The public file intentionally contains no IPL3 boot ROM code or boot-font bytes. Matching-target contributors must provide any required boot material locally from a legally obtained source and must not commit or redistribute it. |
 
 These files are the standard Nintendo 64 / SGI development interface and
 implementation material used by the decompiled code's original platform. They
 are **not** original to this project and remain the property of Silicon Graphics,
 Inc. / Nintendo. MGB64 claims no ownership of them and they are not offered under
 MGB64's MIT license.
+
+The public `src/bootcode.s` file is kept only so the matching-target linker has a
+stable source path. It is asset-free and non-bootable by itself; the native port
+does not compile or link it.
 
 This is the largest remaining conservative provenance area in the tree. The
 native port already re-implements platform behavior in `src/platform/`, and the

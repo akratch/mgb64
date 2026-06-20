@@ -8,6 +8,7 @@
 #   3. No GEASSERT failures
 #   4. Guard CHR_RENDER lines present (guards visible)
 #   5. No crashes (clean exit)
+#   6. Render-health counters stay clean in the per-frame JSON trace
 #
 # Usage:
 #   ./tools/spawn_health_check.sh              # test Dam + Cradle
@@ -29,6 +30,9 @@ TIMEOUT_BIN="$(validation_resolve_timeout_cmd)"
 # Dam(33) and Cradle(41) are the primary regression targets
 LEVELS="33 41"
 ALL_LEVELS="33 34 22 26 36 35 9 20 43 27 24 29 30 25 37 23 39 41 28 32"
+# Frigate's deterministic direct-boot spawn camera has no guard in view during
+# the first 60-frame smoke window, even though the level boots and renders.
+NO_EARLY_GUARD_RENDER_LEVELS="26"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,33 +81,49 @@ trap cleanup EXIT INT TERM
 
 SCREENSHOT_TMPDIR="$(mktemp -d /tmp/ge007_spawn_screens.XXXXXX)"
 
+level_in_list() {
+    local needle="$1"
+    local item
+    shift
+    for item in "$@"; do
+        if [[ "$item" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 for lvl in $LEVELS; do
     echo ""
     echo "=== Spawn Health: Level $lvl ==="
     TOTAL=$((TOTAL + 1))
     LOGFILE="/tmp/ge007_spawn_${lvl}_$$.log"
     SCREENSHOT_LABEL="spawn_${lvl}_$$"
+    TRACE="$SCREENSHOT_TMPDIR/trace_${lvl}.jsonl"
     rm -f "${SCREENSHOT_TMPDIR}/screenshot_${SCREENSHOT_LABEL}.bmp"
+    rm -f "$TRACE"
 
     # Run with GE007_DEBUG to get GEDBG output on stderr
     GAME_EXIT=0
     if [[ -n "$TIMEOUT_BIN" ]]; then
         (
             cd "$SCREENSHOT_TMPDIR"
-            env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 \
+            env -u GE007_DEBUG SDL_AUDIODRIVER="${GE007_VALIDATION_SDL_AUDIODRIVER:-dummy}" GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 \
                 "$TIMEOUT_BIN" --kill-after=5 "$TIMEOUT_SECONDS" "$BINARY" \
                 --rom "$ROM" \
                 --level "$lvl" --deterministic \
+                --trace-state "$TRACE" \
                 --screenshot-frame "$FRAME" --screenshot-label "$SCREENSHOT_LABEL" --screenshot-exit
         ) \
             >"$LOGFILE" 2>&1 || GAME_EXIT=$?
     else
         (
             cd "$SCREENSHOT_TMPDIR"
-            env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 \
+            env -u GE007_DEBUG SDL_AUDIODRIVER="${GE007_VALIDATION_SDL_AUDIODRIVER:-dummy}" GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 \
                 "$BINARY" \
                 --rom "$ROM" \
                 --level "$lvl" --deterministic \
+                --trace-state "$TRACE" \
                 --screenshot-frame "$FRAME" --screenshot-label "$SCREENSHOT_LABEL" --screenshot-exit
         ) \
             >"$LOGFILE" 2>&1 || GAME_EXIT=$?
@@ -166,11 +186,26 @@ sys.exit(0 if -50000 < v < 50000 and v != 0 else 1)
         LEVEL_FAIL=1
     fi
 
-    # Check 5: Guard rendering present (CHR_RENDER lines)
+    # Check 5: Per-frame renderer health trace
+    if [[ ! -s "$TRACE" ]]; then
+        echo "  FAIL: render trace missing or empty"
+        LEVEL_FAIL=1
+    elif python3 tools/audit_render_trace.py --label "spawn level $lvl" "$TRACE" >/tmp/ge007_spawn_render_${lvl}_$$.log 2>&1; then
+        echo "  render_health: PASS"
+    else
+        echo "  FAIL: render health audit failed"
+        sed -n '1,12p' "/tmp/ge007_spawn_render_${lvl}_$$.log" | sed 's/^/    /'
+        LEVEL_FAIL=1
+    fi
+    rm -f "/tmp/ge007_spawn_render_${lvl}_$$.log"
+
+    # Check 6: Guard rendering present (CHR_RENDER lines)
     CHR_COUNT=$(grep -cF "CHR_RENDER" "$LOGFILE" 2>/dev/null || true)
     CHR_COUNT="${CHR_COUNT:-0}"
     if [[ "$CHR_COUNT" -gt 0 ]]; then
         echo "  guard_render: PASS ($CHR_COUNT CHR_RENDER calls)"
+    elif level_in_list "$lvl" $NO_EARLY_GUARD_RENDER_LEVELS; then
+        echo "  guard_render: SKIP (no guard in deterministic first-view window)"
     else
         echo "  guard_render: WARN (0 CHR_RENDER — may be expected if no guards in view)"
     fi

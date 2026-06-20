@@ -109,6 +109,8 @@ extern void portTraceForcedGuardHitEvent(s32 chrnum, s32 hitpart, const char *so
 static s32 chrpropNativeShouldRenderViewerModel(void)
 {
     switch (bondviewGetCameraMode()) {
+        case CAMERAMODE_INTRO:
+        case CAMERAMODE_FADESWIRL:
         case CAMERAMODE_SWIRL:
         case CAMERAMODE_DEATH_CAM_SP:
         case CAMERAMODE_DEATH_CAM_MP:

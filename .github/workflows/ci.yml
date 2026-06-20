@@ -30,10 +30,19 @@ jobs:
       - name: Check validation tool syntax
         run: |
           python3 -m py_compile \
+            tools/audit_intro_trace.py \
+            tools/audit_oracle_trace.py \
+            tools/audit_render_trace.py \
+            tools/audit_screenshot_health.py \
             tools/compare_audio.py \
             tools/compare_audio_reference.py \
+            tools/compare_intro_trace.py \
+            tools/compare_movement_trace.py \
             tools/compare_screenshots.py \
             tools/compare_state.py \
+            tools/intro_trace_summary.py \
+            tools/rom_oracle_route.py \
+            tools/summarize_intro_census.py \
             tools/summarize_build_warnings.py \
             tools/assert_stub_hits_zero.py \
             tools/check_markdown_links.py \

@@ -51,7 +51,8 @@ Options:
   --rom PATH              ROM path for runtime smoke (default: baserom.u.z64).
   --binary PATH           Native binary path for runtime smoke (default: build/ge007).
   --require-rom-smoke     Fail if a ROM-backed quick validation cannot run.
-  --deep-runtime          Also run all-level spawn health and save persistence.
+  --deep-runtime          Also run route contract, all-level spawn health,
+                          playability, renderer parity, and save persistence.
                           Implies --require-rom-smoke.
   --macos-app             Build build-macos/MGB64.app and verify the app bundle
                           and engine library are asset-free.
@@ -337,7 +338,10 @@ run ./tools/validate_quick.sh "${quick_args[@]}"
 
 if [ "$deep_runtime" -eq 1 ]; then
   section "Deep ROM-backed runtime validation"
+  run ./tools/route_contract_smoke.sh --native-smoke --all --no-build --binary "$binary" --rom "$rom"
   run ./tools/spawn_health_check.sh --all --no-build --binary "$binary" --rom "$rom"
+  run ./tools/playability_smoke.sh --all --no-build --binary "$binary" --rom "$rom"
+  run ./tools/renderer_parity_capture.sh --no-build --binary "$binary" --rom "$rom"
   run ./tools/save_persistence_check.sh --no-build --binary "$binary" --rom "$rom"
 fi
 

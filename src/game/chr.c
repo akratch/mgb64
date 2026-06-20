@@ -80,6 +80,8 @@ static void chrNativeTransformRenderPosIfReady(Model *model)
 static s32 chrNativeShouldTraceViewerRender(void)
 {
     switch (bondviewGetCameraMode()) {
+        case CAMERAMODE_INTRO:
+        case CAMERAMODE_FADESWIRL:
         case CAMERAMODE_SWIRL:
         case CAMERAMODE_DEATH_CAM_SP:
         case CAMERAMODE_DEATH_CAM_MP:
@@ -8405,6 +8407,89 @@ static ModelNode *chrResolveCollisionLinkedNode(ModelFileHeader *header, const u
 
     return NULL;
 }
+
+static s32 chrNativeDlColRecordLooksSafe(const ModelRoData_DisplayList_CollisionRecord *rodata)
+{
+    if (rodata == NULL ||
+        rodata->Vertices == NULL ||
+        rodata->CollisionVertices == NULL ||
+        rodata->PointUsage == NULL)
+    {
+        return FALSE;
+    }
+
+    if (rodata->numVertices <= 0 ||
+        rodata->numCollisionVertices <= 0 ||
+        rodata->numCollisionVertices > rodata->numVertices)
+    {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static Vertex *chrNativeEnsureDlColRuntimeVertices(Model *model, ModelNode *node, ModelRoData_DisplayList_CollisionRecord *rodata)
+{
+    Vertex *runtime_vertices;
+    Gfx *runtime_gdl;
+    Vertex *new_verts;
+
+    if (!chrNativeDlColRecordLooksSafe(rodata)) {
+        return NULL;
+    }
+
+    runtime_vertices = NULL;
+    runtime_gdl = NULL;
+    modelGetDlColRuntimePointers(model, node, &runtime_vertices, &runtime_gdl);
+
+    if (runtime_vertices != NULL && runtime_vertices != rodata->Vertices) {
+        return runtime_vertices;
+    }
+
+    new_verts = (Vertex *)sub_GAME_7F09BE4C(rodata->numVertices, 0xCCCC, 0, 0);
+    if (new_verts == NULL) {
+        return NULL;
+    }
+
+    memcpy(new_verts, rodata->Vertices, (size_t)rodata->numVertices * 16);
+    modelSetDlColRuntimePointers(model, node, new_verts, runtime_gdl);
+
+    return new_verts;
+}
+
+static void chrNativeApplyDetailTimer(ModelRoData_DisplayList_CollisionRecord *rodata,
+                                      Vertex *runtime_vertices,
+                                      s32 collision_index,
+                                      s32 timer)
+{
+    const u8 *coll_vtx;
+    u8 *rw_raw;
+    s32 idx;
+    s32 guard;
+
+    if (!chrNativeDlColRecordLooksSafe(rodata) ||
+        runtime_vertices == NULL ||
+        runtime_vertices == rodata->Vertices ||
+        collision_index < 0 ||
+        collision_index >= rodata->numCollisionVertices)
+    {
+        return;
+    }
+
+    coll_vtx = (const u8 *)rodata->CollisionVertices + (collision_index << 4);
+    rw_raw = (u8 *)runtime_vertices;
+    idx = read_be16(coll_vtx + 6);
+    guard = 0;
+
+    while (idx >= 0) {
+        if (idx >= rodata->numVertices || guard++ >= rodata->numVertices) {
+            break;
+        }
+
+        rw_raw[idx * 16 + 15] = (u8)timer;
+        idx = read_be16((const u8 *)rodata->PointUsage + idx * 2);
+    }
+}
 #endif
 void sub_GAME_7F0221DC(Model *model, s32 arg1, ModelNode *node, coord3d *pos) {
     static int s_chrDetailDbgBudget = 40;
@@ -8431,6 +8516,14 @@ void sub_GAME_7F0221DC(Model *model, s32 arg1, ModelNode *node, coord3d *pos) {
     s32 dist;
     s16 idx;
     s32 t0;
+#ifdef NATIVE_PORT
+    Vertex *runtime_vertices;
+    Vertex *linked_runtime_vertices;
+
+    if (model == NULL || model->obj == NULL || pos == NULL) {
+        return;
+    }
+#endif
 
     pos_x = (s32)pos->x;
     pos_y = (s32)pos->y;
@@ -8462,6 +8555,11 @@ void sub_GAME_7F0221DC(Model *model, s32 arg1, ModelNode *node, coord3d *pos) {
             s16 num_coll_verts;
 
             coll_data = (ModelRoData_DisplayList_CollisionRecord *)cur->Data;
+#ifdef NATIVE_PORT
+            if (!chrNativeDlColRecordLooksSafe(coll_data)) {
+                goto next_node;
+            }
+#endif
             num_coll_verts = coll_data->numCollisionVertices;
 
             if (num_coll_verts > 0) {
@@ -8487,6 +8585,9 @@ void sub_GAME_7F0221DC(Model *model, s32 arg1, ModelNode *node, coord3d *pos) {
             }
         }
 
+#ifdef NATIVE_PORT
+next_node:
+#endif
         /* Tree traversal */
         if (cur->Child != NULL) {
             if (cur == start || (opcode != 10 && opcode != 17)) {
@@ -8533,6 +8634,18 @@ done_tree:
     linked_node_ptr = NULL;
     linked_rwdata = NULL;
     linked_vtx_index = 0;
+#ifdef NATIVE_PORT
+    runtime_vertices = NULL;
+    linked_runtime_vertices = NULL;
+
+    if (!chrNativeDlColRecordLooksSafe(&rodata->DisplayListCollisions) ||
+        rwdata == NULL ||
+        best_index < 0 ||
+        best_index >= rodata->DisplayListCollisions.numCollisionVertices)
+    {
+        return;
+    }
+#endif
 
     timer = randomGetNext() % 50 + 20;
     if (arg1 == 8) {
@@ -8555,13 +8668,37 @@ done_tree:
         }
 #endif
         if (linked_node_ptr != NULL) {
+#ifdef NATIVE_PORT
+            if ((((u16)linked_node_ptr->Opcode) & 0xFF) == MODELNODE_OPCODE_DLCOLLISION) {
+                linked_rodata = linked_node_ptr->Data;
+                linked_rwdata = modelGetNodeRwData(model, linked_node_ptr);
+                linked_vtx_index = read_be16(best_vtx + 12);
+
+                if (!chrNativeDlColRecordLooksSafe(&linked_rodata->DisplayListCollisions) ||
+                    linked_rwdata == NULL ||
+                    linked_vtx_index < 0 ||
+                    linked_vtx_index >= linked_rodata->DisplayListCollisions.numCollisionVertices)
+                {
+                    linked_rodata = NULL;
+                    linked_rwdata = NULL;
+                    linked_node_ptr = NULL;
+                    linked_vtx_index = 0;
+                }
+            } else {
+                linked_node_ptr = NULL;
+            }
+#else
             linked_rodata = linked_node_ptr->Data;
             linked_rwdata = modelGetNodeRwData(model, linked_node_ptr);
             linked_vtx_index = read_be16(best_vtx + 12);
+#endif
         }
     }
 
     /* Reallocate main node vertices if needed */
+#ifdef NATIVE_PORT
+    runtime_vertices = chrNativeEnsureDlColRuntimeVertices(model, best_node, &rodata->DisplayListCollisions);
+#else
     if (rwdata->DisplayListCollisions.Vertices == NULL ||
         rodata->DisplayListCollisions.Vertices == rwdata->DisplayListCollisions.Vertices) {
         Vertex *new_verts;
@@ -8572,9 +8709,13 @@ done_tree:
                    (size_t)rodata->DisplayListCollisions.numVertices * 16);
         }
     }
+#endif
 
     /* Reallocate linked node vertices if needed */
     if (linked_rwdata != NULL) {
+#ifdef NATIVE_PORT
+        linked_runtime_vertices = chrNativeEnsureDlColRuntimeVertices(model, linked_node_ptr, &linked_rodata->DisplayListCollisions);
+#else
         if (linked_rwdata->DisplayListCollisions.Vertices == NULL ||
             linked_rodata->DisplayListCollisions.Vertices == linked_rwdata->DisplayListCollisions.Vertices) {
             Vertex *new_verts;
@@ -8585,9 +8726,13 @@ done_tree:
                        (size_t)linked_rodata->DisplayListCollisions.numVertices * 16);
             }
         }
+#endif
     }
 
     /* Write timer to main node vertices */
+#ifdef NATIVE_PORT
+    chrNativeApplyDetailTimer(&rodata->DisplayListCollisions, runtime_vertices, best_index, timer);
+#else
     if (rwdata->DisplayListCollisions.Vertices != NULL &&
         rodata->DisplayListCollisions.Vertices != rwdata->DisplayListCollisions.Vertices) {
         u8 *rw_raw = (u8 *)rwdata->DisplayListCollisions.Vertices;
@@ -8608,9 +8753,16 @@ done_tree:
             } while (idx >= 0);
         }
     }
+#endif
 
     /* Write timer to linked node vertices */
     if (linked_rwdata != NULL) {
+#ifdef NATIVE_PORT
+        chrNativeApplyDetailTimer(&linked_rodata->DisplayListCollisions,
+                                  linked_runtime_vertices,
+                                  linked_vtx_index,
+                                  timer);
+#else
         if (linked_rwdata->DisplayListCollisions.Vertices != NULL &&
             linked_rodata->DisplayListCollisions.Vertices != linked_rwdata->DisplayListCollisions.Vertices) {
             u8 *rw_raw = (u8 *)linked_rwdata->DisplayListCollisions.Vertices;
@@ -8631,6 +8783,7 @@ done_tree:
                 } while (idx >= 0);
             }
         }
+#endif
     }
 }
 #else

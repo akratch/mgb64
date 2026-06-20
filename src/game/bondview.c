@@ -69,6 +69,8 @@ s32 sub_GAME_7F0C6048(void);
 s32 chrTickBeams(PropRecord *prop);
 
 #ifdef NATIVE_PORT
+static int s_nativeLoadingBondIntroChr = 0;
+
 static int portSuppressDamageFlash(void)
 {
     static int cached = -1;
@@ -88,8 +90,21 @@ static int portUseNativeSyntheticWalkMovement(void)
 
     if (cached < 0)
     {
-        const char *env = getenv("GE007_STOCK_HEADPOS_MOVEMENT");
-        cached = (env != NULL && env[0] != '\0' && !(env[0] == '0' && env[1] == '\0')) ? 0 : 1;
+        const char *stock_env = getenv("GE007_STOCK_HEADPOS_MOVEMENT");
+        const char *synthetic_env = getenv("GE007_SYNTHETIC_WALK_MOVEMENT");
+
+        if (stock_env != NULL
+            && stock_env[0] != '\0'
+            && !(stock_env[0] == '0' && stock_env[1] == '\0'))
+        {
+            cached = 0;
+        }
+        else
+        {
+            cached = (synthetic_env != NULL
+                && synthetic_env[0] != '\0'
+                && !(synthetic_env[0] == '0' && synthetic_env[1] == '\0')) ? 1 : 0;
+        }
     }
 
     return cached;
@@ -98,6 +113,31 @@ static int portUseNativeSyntheticWalkMovement(void)
 static int portIsFiniteF32(f32 value)
 {
     return value == value && value > -3.402823466e+38f && value < 3.402823466e+38f;
+}
+
+static f32 portNativeSyntheticWalkScale(void)
+{
+    static int cached = 0;
+    static f32 scale = 7.9f;
+
+    if (!cached)
+    {
+        const char *env = getenv("GE007_SYNTHETIC_WALK_SCALE");
+
+        if (env != NULL && env[0] != '\0')
+        {
+            f32 parsed = (f32)strtof(env, NULL);
+
+            if (portIsFiniteF32(parsed) && parsed > 0.1f && parsed < 30.0f)
+            {
+                scale = parsed;
+            }
+        }
+
+        cached = 1;
+    }
+
+    return scale;
 }
 
 static int portCoord3dHasUsableLength(const coord3d *coord, f32 min_len2)
@@ -2263,7 +2303,11 @@ void solo_char_load(void)
             head = get_player_mp_char_head(get_cur_playernum());
             body = get_player_mp_char_body(get_cur_playernum());
         }
+#ifdef NATIVE_PORT
+        if (g_CameraMode == CAMERAMODE_SWIRL || s_nativeLoadingBondIntroChr)
+#else
         if (g_CameraMode == CAMERAMODE_SWIRL)
+#endif
         {
             rhandweapID = starting_weapon[GUNRIGHT];
         }
@@ -4814,6 +4858,72 @@ static void bondviewFinalizeNativeFpHandoff(void)
         setsubroty(model, get_curplay_horizontal_rotation_in_degrees());
     }
 }
+
+static void bondviewPrepareNativeBondIntroChr(void)
+{
+    struct ModelAnimation *intro_anim;
+    f32 end_frame;
+    f32 start_frame;
+    f32 speed;
+    ChrRecord *chr;
+
+    if (g_CurrentPlayer == NULL
+        || g_CurrentPlayer->prop == NULL
+        || g_IntroSwirl == NULL
+        || get_recording_ramrom_flag() != 0
+        || get_is_ramrom_flag() != 0)
+    {
+        return;
+    }
+
+    chr = g_CurrentPlayer->prop->chr;
+
+    if (chr != NULL
+        && g_CurrentPlayer->ptr_char_objectinstance != NULL
+        && chr->actiontype == ACT_BONDINTRO)
+    {
+        chr->sleep = 0;
+        g_CurrentPlayer->room_pointer = NULL;
+        return;
+    }
+
+    currentPlayerStartChrFade(0.0f, 1.0f);
+    s_nativeLoadingBondIntroChr++;
+    solo_char_load();
+    s_nativeLoadingBondIntroChr--;
+
+    if (g_CurrentPlayer->ptr_char_objectinstance == NULL || g_CurrentPlayer->prop->chr == NULL)
+    {
+        return;
+    }
+
+    intro_anim = ANIM_FROM_OFFSET(stage_intro_anim_table[g_IntroAnimationIndex].anonymous_0);
+    end_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_2;
+    start_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_1;
+    speed = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_3;
+    /* Stock's first traceable swirl frame has already consumed the larger
+     * transition tick that creates the intro chr. Native installs the anim
+     * synchronously, so seed it to the same first visible frame. */
+    start_frame += speed * 3.0f;
+
+    modelSetAnimation(
+        g_CurrentPlayer->ptr_char_objectinstance,
+        intro_anim,
+        0,
+        start_frame,
+        speed,
+        0.0f);
+
+    if (end_frame > 0.0f)
+    {
+        modelSetAnimEndFrame(g_CurrentPlayer->ptr_char_objectinstance, end_frame);
+    }
+
+    chr = g_CurrentPlayer->prop->chr;
+    chr->actiontype = ACT_BONDINTRO;
+    chr->sleep = 0;
+    g_CurrentPlayer->room_pointer = NULL;
+}
 #endif
 
 // Address 0x7F07A9B8 NTSC.
@@ -4869,39 +4979,9 @@ void bondviewSetCameraMode(s32 arg0)
 #ifdef NATIVE_PORT
         if ((g_IntroSwirl != 0) && (get_recording_ramrom_flag() == 0) && (get_is_ramrom_flag() == 0))
         {
-            struct ModelAnimation *intro_anim;
-            f32 end_frame;
-            f32 start_frame;
-            f32 speed;
-            struct ChrRecord *temp_chr;
-
             camera_transition_timer = 0.0f;
             intro_camera_index = CAMERAMODE_INTRO;
-            currentPlayerStartChrFade(0.0f, 1.0f);
-            solo_char_load();
-
-            intro_anim = ANIM_FROM_OFFSET(stage_intro_anim_table[g_IntroAnimationIndex].anonymous_0);
-            end_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_2;
-            start_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_1;
-            speed = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_3;
-
-            modelSetAnimation(
-                g_CurrentPlayer->ptr_char_objectinstance,
-                intro_anim,
-                0,
-                start_frame,
-                speed,
-                0.0f);
-
-            if (end_frame > 0.0f)
-            {
-                modelSetAnimEndFrame(g_CurrentPlayer->ptr_char_objectinstance, end_frame);
-            }
-
-            temp_chr = g_CurrentPlayer->prop->chr;
-            temp_chr->actiontype = ACT_BONDINTRO;
-            temp_chr->sleep = 0;
-            g_CurrentPlayer->room_pointer = NULL;
+            bondviewPrepareNativeBondIntroChr();
         }
         else
         {
@@ -5648,59 +5728,10 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
             f32 dx;
             f32 dy;
             f32 dz;
-            f32 camera_push = 0.0f;
-#ifdef NATIVE_PORT
-            {
-                static int intro_yaw_mode = -1;
-                static int intro_push_loaded = 0;
-                static f32 intro_push = 0.0f;
-                if (intro_yaw_mode < 0) {
-                    const char *env = getenv("GE007_INTRO_YAW_MODE");
-                    intro_yaw_mode = env ? atoi(env) : 0;
-                }
-                if (!intro_push_loaded) {
-                    const char *env = getenv("GE007_INTRO_CAMERA_PUSH");
-                    intro_push = env ? (f32)atof(env) : 0.0f;
-                    intro_push_loaded = 1;
-                }
-                switch (intro_yaw_mode) {
-                case 1:
-                    /* Same pitch handling, horizontal look reversed so
-                     * yaw 0 faces +Z instead of -Z. */
-                    dx = -cosf(pitch) * sinf(yaw);
-                    dy = sinf(pitch);
-                    dz = cosf(pitch) * cosf(yaw);
-                    break;
-                case 2:
-                    /* Alternate axis convention: yaw 0 faces +X. */
-                    dx = cosf(pitch) * cosf(yaw);
-                    dy = sinf(pitch);
-                    dz = cosf(pitch) * sinf(yaw);
-                    break;
-                case 3:
-                    /* Alternate axis convention: yaw 0 faces -X. */
-                    dx = -cosf(pitch) * cosf(yaw);
-                    dy = sinf(pitch);
-                    dz = -cosf(pitch) * sinf(yaw);
-                    break;
-                default:
-                    dx = cosf(pitch) * sinf(yaw);
-                    dy = sinf(pitch);
-                    dz = -cosf(pitch) * cosf(yaw);
-                    break;
-                }
-                camera_push = intro_push;
-            }
-#else
+
             dx = cosf(pitch) * sinf(yaw);
             dy = sinf(pitch);
             dz = -cosf(pitch) * cosf(yaw);
-#endif
-            if (camera_push != 0.0f) {
-                pos->f[0] += dx * camera_push;
-                pos->f[1] += dy * camera_push;
-                pos->f[2] += dz * camera_push;
-            }
 
             pos2->f[0] = pos->f[0] + dx;
             pos2->f[1] = pos->f[1] + dy;
@@ -5714,28 +5745,6 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
         arg6->f[0] = setupPad->pos.f[0];
         arg6->f[1] = setupPad->pos.f[1];
         arg6->f[2] = setupPad->pos.f[2];
-
-#ifdef NATIVE_PORT
-        {
-            static int intro_look_at_pad = -1;
-            static int intro_look_use_paddir = -1;
-            if (intro_look_at_pad < 0) {
-                intro_look_at_pad = (getenv("GE007_INTRO_LOOK_AT_PAD") != NULL);
-            }
-            if (intro_look_use_paddir < 0) {
-                intro_look_use_paddir = (getenv("GE007_INTRO_LOOK_USE_PADDIR") != NULL);
-            }
-            if (intro_look_at_pad) {
-                pos2->f[0] = setupPad->pos.f[0];
-                pos2->f[1] = setupPad->pos.f[1];
-                pos2->f[2] = setupPad->pos.f[2];
-            } else if (intro_look_use_paddir) {
-                pos2->f[0] = pos->f[0] + setupPad->look.f[0];
-                pos2->f[1] = pos->f[1] + setupPad->look.f[1];
-                pos2->f[2] = pos->f[2] + setupPad->look.f[2];
-            }
-        }
-#endif
     }
     else if (g_CameraMode == CAMERAMODE_MP)
     {
@@ -10369,14 +10378,20 @@ static void bondviewApplyNativeMoveIntent(struct MoveData *moveData, s8 stick_x,
     }
 
     if (native_walk != 0 || native_lateral != 0) {
-        moveData->analogWalk = native_walk;
-        moveData->analogStrafe = native_lateral;
         moveData->canLookAhead = 1;
-        moveData->canTurnTank = 1; /* Shared flag used by on-foot strafe. */
-        moveData->digitalStepForward = 0;
-        moveData->digitalStepBack = 0;
-        moveData->digitalStepLeft = 0;
-        moveData->digitalStepRight = 0;
+
+        if (native_walk != 0) {
+            moveData->analogWalk = native_walk;
+            moveData->digitalStepForward = 0;
+            moveData->digitalStepBack = 0;
+        }
+
+        if (native_lateral != 0) {
+            moveData->analogStrafe = native_lateral;
+            moveData->canTurnTank = 1; /* Shared flag used by on-foot strafe. */
+            moveData->digitalStepLeft = 0;
+            moveData->digitalStepRight = 0;
+        }
     }
 
     moveData->canNaturalTurn = 0;
@@ -13073,6 +13088,14 @@ void MoveBond(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
         bondviewMoveAnimationTick(maxspeed, g_CurrentPlayer->speedforwards, sp3A0);
 
 #ifdef NATIVE_PORT
+        if (!portIsFiniteF32(g_CurrentPlayer->headpos.f[0])) {
+            g_CurrentPlayer->headpos.f[0] = 0.0f;
+        }
+
+        if (!portIsFiniteF32(g_CurrentPlayer->headpos.f[2])) {
+            g_CurrentPlayer->headpos.f[2] = 0.0f;
+        }
+
         if (portUseNativeSyntheticWalkMovement()) {
             g_CurrentPlayer->headpos.f[0] = 0.0f;
             g_CurrentPlayer->headpos.f[1] = portNativeFallbackHeadHeight();
@@ -13136,29 +13159,12 @@ void MoveBond(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
                 ) * g_GlobalTimerDelta * 10.0f;
         }
 #ifdef NATIVE_PORT
-        /* Native movement is driven by explicit speed intent, not gait-model
-         * X/Z displacement. The gait model can be initialized at different
-         * times depending on whether a level is launched directly or via the
-         * frontend, so using headpos X/Z for collision movement makes Bond's
-         * speed path-dependent. GE007_STOCK_HEADPOS_MOVEMENT=1 restores the
-         * old diagnostic behavior.
-         *
-         * Startup guard: skip the first few game ticks so the floor/tile
-         * system can settle from the spawn position. Count ticks rather than
-         * rendered frames so direct boot and frontend launch consume the same
-         * amount of in-game warmup time even if their first frame deltas differ. */
+        /* Native defaults to the original gait/head-position displacement:
+         * that carries the N64 acceleration, steady-state, and deceleration
+         * dynamics. The synthetic path is retained only as a diagnostic or
+         * safety fallback when the gait output is absent. */
         {
-            extern s32 D_80048394;
             f32 dt = g_GlobalTimerDelta;
-            f32 elapsed_before = (f32)D_80048394;
-            f32 elapsed_after = elapsed_before + dt;
-            const f32 warmup_ticks = 4.0f;
-
-            if (elapsed_after <= warmup_ticks) {
-                dt = 0.0f;
-            } else if (elapsed_before < warmup_ticks) {
-                dt = elapsed_after - warmup_ticks;
-            }
 
             if (dt > 4.0f) dt = 4.0f; /* match the global dt cap */
 
@@ -13166,11 +13172,7 @@ void MoveBond(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
                 && (g_CurrentPlayer->speedforwards != 0.0f || g_CurrentPlayer->speedsideways != 0.0f)
                 && (portUseNativeSyntheticWalkMovement()
                     || fabsf(native_headpos_dx) + fabsf(native_headpos_dz) < 0.001f)) {
-                /* N64 stock movement: headpos_z * theta * dt produces ~3-5
-                 * units/frame at full walk speed.  speedforwards is 0..1
-                 * (normalized), so speed_scale should match the N64 walk
-                 * displacement magnitude. */
-                f32 speed_scale = 4.0f;
+                f32 speed_scale = portNativeSyntheticWalkScale();
                 f32 dx = (g_CurrentPlayer->field_488.theta_transform.f[0] * g_CurrentPlayer->speedforwards -
                           g_CurrentPlayer->field_488.theta_transform.f[2] * g_CurrentPlayer->speedsideways)
                          * dt * speed_scale;

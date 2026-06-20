@@ -130,7 +130,10 @@ Add `--yes` only after the fresh repository exists and the preview is correct.
 3. Create and verify a local clean launch repository:
 
 ```sh
-scripts/create_public_launch_repo.sh --smoke-archive
+scripts/create_public_launch_repo.sh \
+  --author-name "akratch" \
+  --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com" \
+  --smoke-archive
 ```
 
 The helper prints a fresh local repository path. It creates a single root commit
@@ -148,7 +151,10 @@ For the least error-prone replacement dry run, prepare the whole local launch
 bundle instead:
 
 ```sh
-scripts/prepare_public_launch_bundle.sh --repo akratch/mgb64
+scripts/prepare_public_launch_bundle.sh \
+  --repo akratch/mgb64 \
+  --author-name "akratch" \
+  --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com"
 ```
 
 That helper is non-destructive. It creates the clean single-root repository,
@@ -163,6 +169,8 @@ repository:
 ```sh
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
+  --author-name "akratch" \
+  --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com" \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
   --strict-preflight-macos-app \
   --strict-preflight-macos-app-bundle-sdl2
@@ -191,6 +199,8 @@ test "$(git -C "$clean_repo" rev-parse HEAD^{tree})" = "$expected_clean_tree"
 The generated `PUBLIC_LAUNCH_BUNDLE.md` includes these concrete values and a
 copy/pasteable guarded command block. Use those generated commands for the
 actual replacement so a stale bundle cannot pass accidentally.
+Use a GitHub noreply address or the default `mgb64-launch@example.invalid` for
+the generated public root commit; do not use a personal email address.
 
 5. Rename the current private GitHub repository out of the way:
 

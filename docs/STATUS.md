@@ -24,6 +24,19 @@ you know what to expect and where help is most valuable.
 - **Save persistence has smoke coverage:** deterministic solo completions are
   written to two save folders across separate processes, then reloaded from disk
   after a final process restart (`tools/save_persistence_check.sh`).
+- **Direct gameplay input has smoke coverage:** `tools/playability_smoke.sh`
+  direct-boots levels deterministically, applies real gameplay stick input, and
+  requires movement records, horizontal player displacement, clean watch state,
+  zero assertions, screenshot-health-clean captures, and render-health-clean
+  traces. It writes per-attempt audit JSON plus a top-level `summary.json` so
+  local ROM-backed playability evidence can be reviewed without scraping logs.
+- **ROM-vs-native comparison tooling exists for targeted parity work:**
+  `docs/ROM_COMPARISON.md` documents route specs, native traces, optional
+  instrumented ares stock traces, movement/intro comparators, and structured
+  JSON artifacts. The built-in Dam routes cover forward/strafe scalar movement
+  speed dynamics plus selected-camera and timer-aligned swirl/Bond-animation
+  intro checks. Captured traces/screenshots remain local ROM-derived artifacts
+  and are not shipped.
 - **A local unsigned macOS app bundle can be built from source:**
   `macos/Scripts/build_app_bundle.sh` links the Swift/AppKit shell against
   `build-macos/libge007_lib.a`, assembles `build-macos/MGB64.app`, and keeps the
@@ -88,11 +101,21 @@ you know what to expect and where help is most valuable.
 ## Known issues
 
 - Graphical inaccuracies and occasional rendering glitches versus original
-  hardware.
-- Authored level intro camera parity is incomplete: on Dam, Bond is not visible
-  during the initial establishing camera and only appears once the later swirl
-  phase begins.
+  hardware. The renderer now has strict render-health counters, screenshot
+  health gates, and a small renderer parity scene lane, but visual accuracy is
+  still not claimed as hardware-perfect.
+- Authored level intro parity is still incomplete across the full game, but Dam
+  now has local ROM-vs-native selected-camera/static-camera coverage plus
+  timer-aligned swirl/Bond-animation coverage and native actor/render/held-item
+  trace auditing. A local native intro-census lane can now sweep direct-boot
+  stages for active intro cameras, decoded swirl setup hashes, Bond
+  render/animation coverage, animation header hashes, screenshot health, and
+  render-health counters.
 - Some gameplay/behavior differences and occasional instability or crashes.
+  Movement-speed parity has targeted ROM-backed Dam coverage and all-level
+  deterministic native playability smoke coverage, but broader movement edge
+  cases, mission flow, menus, combat behavior, and organic input paths still
+  need reference-backed expansion.
 - Audio is functional and the SFX mapping/owner-slot path has been validated.
   Native music now follows ABI1 little-endian sample-lane ordering for the
   envmixer and custom pole-filter paths, with additive aux-return mixing. It

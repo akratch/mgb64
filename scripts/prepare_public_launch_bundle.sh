@@ -23,6 +23,12 @@ strict_preflight_macos_app=0
 strict_preflight_macos_app_bundle_sdl2=0
 strict_preflight_macos_app_strict_deployment_target=0
 strict_preflight_skip_docker_check=0
+author_name="${MGB64_LAUNCH_AUTHOR_NAME:-MGB64 Launch Builder}"
+author_email="${MGB64_LAUNCH_AUTHOR_EMAIL:-mgb64-launch@example.invalid}"
+committer_name="${MGB64_LAUNCH_COMMITTER_NAME:-$author_name}"
+committer_email="${MGB64_LAUNCH_COMMITTER_EMAIL:-$author_email}"
+committer_name_explicit=0
+committer_email_explicit=0
 
 usage() {
   cat <<'USAGE'
@@ -41,6 +47,11 @@ Options:
   --repo OWNER/REPO       GitHub repository to inspect (default: gh repo view).
   --out DIR               Output bundle directory (default: /tmp/mgb64-public-launch-bundle.*).
   --message MESSAGE       Root commit message for the clean launch repo.
+  --author-name NAME      Root commit author name for the clean launch repo.
+  --author-email EMAIL    Root commit author email; use a GitHub noreply address
+                          for launch attribution.
+  --committer-name NAME   Root commit committer name (default: author name).
+  --committer-email EMAIL Root commit committer email (default: author email).
   --jobs N                Parallel jobs for archive smoke (default: GE007_BUILD_JOBS or 4).
   --max-warnings N        Archive warning threshold (default: 0).
   --exclude-number N      Open issue number to exclude from export. Defaults to
@@ -157,6 +168,34 @@ while [ "$#" -gt 0 ]; do
       message="$2"
       shift 2
       ;;
+    --author-name)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      author_name="$2"
+      if [ "$committer_name_explicit" -eq 0 ]; then
+        committer_name="$author_name"
+      fi
+      shift 2
+      ;;
+    --author-email)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      author_email="$2"
+      if [ "$committer_email_explicit" -eq 0 ]; then
+        committer_email="$author_email"
+      fi
+      shift 2
+      ;;
+    --committer-name)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      committer_name="$2"
+      committer_name_explicit=1
+      shift 2
+      ;;
+    --committer-email)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      committer_email="$2"
+      committer_email_explicit=1
+      shift 2
+      ;;
     --jobs)
       [ "$#" -ge 2 ] || { usage >&2; exit 2; }
       jobs="$2"
@@ -214,6 +253,16 @@ done
 
 require_positive_int "--jobs" "$jobs"
 require_non_negative_int "--max-warnings" "$max_warnings"
+if [ -z "$author_name" ] || [ -z "$author_email" ] || [ -z "$committer_name" ] || [ -z "$committer_email" ]; then
+  echo "Launch author/committer names and emails must be non-empty." >&2
+  exit 2
+fi
+case "${author_email} ${committer_email}" in
+  *kratch.adam@gmail.com*)
+    echo "Refusing to create public launch commit with personal Gmail address; use a GitHub noreply or placeholder email." >&2
+    exit 1
+    ;;
+esac
 if [ -n "$strict_preflight_rom" ] && [ ! -f "$strict_preflight_rom" ]; then
   echo "Strict preflight ROM does not exist: $strict_preflight_rom" >&2
   exit 2
@@ -258,6 +307,10 @@ run_logged "$logs/create-public-launch-repo.log" \
   scripts/create_public_launch_repo.sh \
   --out "$clean_repo" \
   --message "$message" \
+  --author-name "$author_name" \
+  --author-email "$author_email" \
+  --committer-name "$committer_name" \
+  --committer-email "$committer_email" \
   --smoke-archive \
   --jobs "$jobs" \
   --max-warnings "$max_warnings" \
@@ -348,6 +401,8 @@ PY
   printf '%s\n' "- Clean launch repository: \`${clean_repo}\`"
   printf '%s\n' "- Clean launch HEAD: \`${launch_head}\`"
   printf '%s\n' "- Clean launch tree: \`${launch_tree}\`"
+  printf '%s\n' "- Clean launch author: \`${author_name} <${author_email}>\`"
+  printf '%s\n' "- Clean launch committer: \`${committer_name} <${committer_email}>\`"
   printf '%s\n' "- Clean launch reachable commits: \`${launch_count}\`"
   printf '%s\n' "- Clean source archive: \`${archive_path}\`"
   if [ -n "$archive_sha" ]; then

@@ -67,6 +67,12 @@ validation_acquire_runtime_lock
 trap 'validation_release_runtime_lock' EXIT INT TERM
 
 mkdir -p "$OUT_DIR"
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+CAPTURE_INDEX="$OUT_DIR/captures.tsv"
+COMPARISON_INDEX="$OUT_DIR/comparisons.tsv"
+SUMMARY_JSON="$OUT_DIR/summary.json"
+printf 'scene\tvariant\tlevel\tframe\tallow_room_fallback\tscreenshot\ttrace\tlog\tscreenshot_json\trender_json\ttrace_summary_json\n' >"$CAPTURE_INDEX"
+printf 'scene\tscreenshot_status\tstate_status\tscreenshot_log\tscreenshot_json\tstate_log\n' >"$COMPARISON_INDEX"
 
 run_capture() {
     local scene_name="$1"
@@ -75,12 +81,16 @@ run_capture() {
     local frame="$4"
     local env_key="$5"
     local env_value="$6"
+    local allow_room_fallback="${7:-0}"
     local scene_dir="$OUT_DIR/$scene_name"
     local label="${scene_name}_${variant}_$$"
     local screenshot_src="screenshot_${label}.bmp"
     local screenshot_dst="$scene_dir/${variant}.bmp"
     local trace="$scene_dir/${variant}.jsonl"
     local log="$scene_dir/${variant}.log"
+    local screenshot_json="$scene_dir/${variant}.screenshot.json"
+    local render_json="$scene_dir/${variant}.render.json"
+    local trace_summary_json="$scene_dir/${variant}.trace-summary.json"
     local env_cmd=()
 
     mkdir -p "$scene_dir"
@@ -125,6 +135,11 @@ run_capture() {
         exit 1
     fi
     mv "$screenshot_src" "$screenshot_dst"
+    python3 tools/audit_screenshot_health.py \
+        --label "${scene_name}/${variant} screenshot" \
+        --expect-size 640x480 \
+        --json-out "$screenshot_json" \
+        "$screenshot_dst"
 
     if [[ ! -s "$trace" ]]; then
         echo "FAIL: missing state trace for ${scene_name}/${variant}: $trace"
@@ -137,7 +152,20 @@ run_capture() {
         exit 1
     fi
 
-    python3 - "$trace" <<'PY'
+    if [[ "$allow_room_fallback" -eq 1 ]]; then
+        python3 tools/audit_render_trace.py \
+            --label "${scene_name}/${variant}" \
+            --allow-room-fallback \
+            --json-out "$render_json" \
+            "$trace"
+    else
+        python3 tools/audit_render_trace.py \
+            --label "${scene_name}/${variant}" \
+            --json-out "$render_json" \
+            "$trace"
+    fi
+
+    python3 - "$trace" "$trace_summary_json" <<'PY'
 import json
 import sys
 
@@ -149,6 +177,7 @@ with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as handle:
 if not last:
     raise SystemExit("FAIL: no JSON state frames")
 summary = {
+    "trace": sys.argv[1],
     "frame": last.get("f"),
     "tris": last.get("tris"),
     "fog": last.get("fog"),
@@ -156,23 +185,66 @@ summary = {
     "fog_off": last.get("fog_off"),
     "rooms": last.get("rooms"),
 }
+with open(sys.argv[2], "w", encoding="utf-8") as out:
+    json.dump(summary, out, indent=2, sort_keys=True)
+    out.write("\n")
 print("    trace:", json.dumps(summary, sort_keys=True))
 PY
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$scene_name" \
+        "$variant" \
+        "$level" \
+        "$frame" \
+        "$allow_room_fallback" \
+        "$screenshot_dst" \
+        "$trace" \
+        "$log" \
+        "$screenshot_json" \
+        "$render_json" \
+        "$trace_summary_json" >>"$CAPTURE_INDEX"
 }
 
-print_compare_commands() {
+run_scene_comparisons() {
     local scene_name="$1"
     local a="$OUT_DIR/$scene_name/compat"
     local b="$OUT_DIR/$scene_name/diagnostic"
+    local screenshot_log="$OUT_DIR/$scene_name/screenshot_compare.txt"
+    local screenshot_json="$OUT_DIR/$scene_name/screenshot_compare.json"
+    local state_log="$OUT_DIR/$scene_name/state_compare.txt"
 
     echo ""
     echo "  compare ${scene_name}:"
-    echo "    python3 tools/compare_screenshots.py \\"
-    echo "      ${a}.bmp \\"
-    echo "      ${b}.bmp"
-    echo "    python3 tools/compare_state.py \\"
-    echo "      ${a}.jsonl \\"
-    echo "      ${b}.jsonl"
+    local screenshot_status="pass"
+    local state_status="pass"
+    if python3 tools/compare_screenshots.py "${a}.bmp" "${b}.bmp" \
+        --json-out "$screenshot_json" \
+        >"$screenshot_log" 2>&1; then
+        sed -n '1,8p' "$screenshot_log" | sed 's/^/    /'
+    else
+        screenshot_status="fail"
+        echo "    screenshot compare unavailable; see $screenshot_log"
+    fi
+
+    if python3 tools/compare_state.py "${a}.jsonl" "${b}.jsonl" \
+        >"$state_log" 2>&1; then
+        sed -n '1,8p' "$state_log" | sed 's/^/    /'
+    else
+        state_status="expected_diagnostic_divergence"
+        echo "    state compare reported expected diagnostic divergence:"
+        sed -n '1,12p' "$state_log" | sed 's/^/      /'
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$scene_name" \
+        "$screenshot_status" \
+        "$state_status" \
+        "$screenshot_log" \
+        "$screenshot_json" \
+        "$state_log" >>"$COMPARISON_INDEX"
+
+    echo "    logs: $screenshot_log"
+    echo "          $state_log"
 }
 
 run_facility_scissor() {
@@ -180,9 +252,9 @@ run_facility_scissor() {
     echo "=== Renderer Scene: facility_scissor ==="
     echo "Expected: compat keeps room scissor disabled; diagnostic enables exact N64 room scissor."
     echo "Use this to inspect interior seam/under-cover regressions."
-    run_capture "facility_scissor" "compat" "34" "180" "" ""
-    run_capture "facility_scissor" "diagnostic" "34" "180" "GE007_EXACT_ROOM_SCISSOR" "1"
-    print_compare_commands "facility_scissor"
+    run_capture "facility_scissor" "compat" "34" "180" "" "" 0
+    run_capture "facility_scissor" "diagnostic" "34" "180" "GE007_EXACT_ROOM_SCISSOR" "1" 0
+    run_scene_comparisons "facility_scissor"
 }
 
 run_surface_sky_fog() {
@@ -190,9 +262,9 @@ run_surface_sky_fog() {
     echo "=== Renderer Scene: surface_sky_fog ==="
     echo "Expected: compat uses portal-BFS room admission; diagnostic disables it as a broad fallback."
     echo "Use this to inspect outdoor sky/fog state and room-admission side effects."
-    run_capture "surface_sky_fog" "compat" "36" "180" "" ""
-    run_capture "surface_sky_fog" "diagnostic" "36" "180" "GE007_PORTAL_BFS" "0"
-    print_compare_commands "surface_sky_fog"
+    run_capture "surface_sky_fog" "compat" "36" "180" "" "" 0
+    run_capture "surface_sky_fog" "diagnostic" "36" "180" "GE007_PORTAL_BFS" "0" 1
+    run_scene_comparisons "surface_sky_fog"
 }
 
 echo "=== Renderer Parity Capture ==="
@@ -217,6 +289,83 @@ case "$SCENE" in
         exit 2
         ;;
 esac
+
+python3 - "$CAPTURE_INDEX" "$COMPARISON_INDEX" "$SUMMARY_JSON" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+capture_index = Path(sys.argv[1])
+comparison_index = Path(sys.argv[2])
+summary_path = Path(sys.argv[3])
+
+
+def load_json(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+captures = []
+with capture_index.open("r", encoding="utf-8", newline="") as handle:
+    for row in csv.DictReader(handle, delimiter="\t"):
+        captures.append(
+            {
+                "scene": row["scene"],
+                "variant": row["variant"],
+                "level": int(row["level"]),
+                "frame": int(row["frame"]),
+                "allow_room_fallback": row["allow_room_fallback"] == "1",
+                "screenshot": row["screenshot"],
+                "trace": row["trace"],
+                "log": row["log"],
+                "screenshot_health": load_json(row["screenshot_json"]),
+                "render_health": load_json(row["render_json"]),
+                "trace_summary": load_json(row["trace_summary_json"]),
+            }
+        )
+
+comparisons = []
+with comparison_index.open("r", encoding="utf-8", newline="") as handle:
+    for row in csv.DictReader(handle, delimiter="\t"):
+        row["screenshot_compare"] = load_json(row["screenshot_json"])
+        comparisons.append(row)
+
+failures = []
+for capture in captures:
+    if not capture["screenshot_health"].get("ok"):
+        failures.append(f"{capture['scene']}/{capture['variant']}: screenshot health failed")
+    if capture["render_health"].get("status") != "pass":
+        failures.append(f"{capture['scene']}/{capture['variant']}: render health failed")
+for comparison in comparisons:
+    if comparison["screenshot_status"] != "pass":
+        failures.append(f"{comparison['scene']}: screenshot comparison failed")
+
+summary = {
+    "status": "fail" if failures else "pass",
+    "capture_count": len(captures),
+    "comparison_count": len(comparisons),
+    "failures": failures,
+    "captures": captures,
+    "comparisons": comparisons,
+}
+with summary_path.open("w", encoding="utf-8") as handle:
+    json.dump(summary, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+print(f"summary_json: {summary_path}")
+print(
+    "summary:"
+    f" status={summary['status']}"
+    f" captures={summary['capture_count']}"
+    f" comparisons={summary['comparison_count']}"
+    f" failures={len(failures)}"
+)
+if failures:
+    for failure in failures[:8]:
+        print(f"  {failure}")
+    raise SystemExit(1)
+PY
 
 echo ""
 echo "=== Renderer Parity Capture: PASS ==="

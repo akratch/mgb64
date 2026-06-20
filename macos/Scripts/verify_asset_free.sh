@@ -44,6 +44,64 @@ warn() {
     (( WARN_COUNT++ )) || true
 }
 
+scan_bootstrap_magic_file() {
+    python3 - "$1" <<'PY'
+import pathlib
+import sys
+
+signatures = [
+    ("z64 big-endian", b"\x80\x37\x12\x40"),
+    ("v64 byte-swapped", b"\x37\x80\x40\x12"),
+    ("n64 little-endian", b"\x40\x12\x37\x80"),
+]
+
+try:
+    data = pathlib.Path(sys.argv[1]).read_bytes()
+except OSError:
+    sys.exit(2)
+
+for label, sig in signatures:
+    if sig in data:
+        print(f"{label} ({sig.hex(' ')})")
+        sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
+scan_bootstrap_magic_tree() {
+    python3 - "$1" <<'PY'
+import pathlib
+import sys
+
+signatures = [
+    ("z64 big-endian", b"\x80\x37\x12\x40"),
+    ("v64 byte-swapped", b"\x37\x80\x40\x12"),
+    ("n64 little-endian", b"\x40\x12\x37\x80"),
+]
+
+root = pathlib.Path(sys.argv[1])
+bad = []
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    try:
+        data = path.read_bytes()
+    except OSError:
+        continue
+    for label, sig in signatures:
+        if sig in data:
+            bad.append(f"{path.relative_to(root.parent.parent)}: {label} ({sig.hex(' ')})")
+            break
+
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+
+sys.exit(0)
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
@@ -162,16 +220,13 @@ echo "--- Check 3: embedded-ROM signature (bootstrap magic) ---"
 # evidence of leaked ROM data. Bulk leakage is caught by Check 4 (data segment
 # size) and Checks 1/2/5 (asset symbols); this check catches a raw ROM blob.
 
+# N64 bootstrap magic (PI register init) appears at the start of ROM images in
+# all common byte orders. In our source these bytes only exist as separate C
+# constants, never contiguously, so a contiguous match means an actual ROM image
+# or byte-swapped ROM dump is embedded.
 FOUND_SIG=0
-# N64 .z64 bootstrap magic (PI register init). In our source these four bytes
-# only exist as separate C constants (0x80, 0x37, 0x12, 0x40), never contiguous,
-# so a contiguous match means an actual ROM image is embedded.
-if python3 -c "
-import sys
-data = open(sys.argv[1], 'rb').read()
-sys.exit(0 if b'\x80\x37\x12\x40' in data else 1)
-" "$BINARY" 2>/dev/null; then
-    fail "N64 bootstrap magic (80 37 12 40) found contiguously — a ROM image is embedded!"
+if SIG_MATCH="$(scan_bootstrap_magic_file "$BINARY" 2>/dev/null)"; then
+    fail "N64 bootstrap magic (${SIG_MATCH}) found contiguously — a ROM image is embedded!"
     FOUND_SIG=1
 fi
 
@@ -339,29 +394,11 @@ if [[ "${APP_BUNDLE_INPUT}" == true ]]; then
             esac
         done < <(find "${RESOURCE_DIR}" -type f -print)
 
-        if python3 - "${RESOURCE_DIR}" <<'PY'
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-bad = []
-for path in root.rglob("*"):
-    if not path.is_file():
-        continue
-    try:
-        data = path.read_bytes()
-    except OSError:
-        continue
-    if b"\x80\x37\x12\x40" in data:
-        bad.append(str(path.relative_to(root.parent.parent)))
-
-if bad:
-    print("\n".join(bad))
-    sys.exit(1)
-PY
+        if RESOURCE_MAGIC_MATCHES="$(scan_bootstrap_magic_tree "${RESOURCE_DIR}" 2>/dev/null)"
         then
             :
         else
+            printf '%s\n' "${RESOURCE_MAGIC_MATCHES}"
             fail "Embedded N64 ROM bootstrap magic found in app resource(s)."
             RESOURCE_FAIL=1
         fi
@@ -406,15 +443,8 @@ PY
                     ;;
             esac
 
-            if python3 - "${FRAMEWORK_FILE}" <<'PY'
-import sys
-data = open(sys.argv[1], "rb").read()
-sys.exit(0 if b"\x80\x37\x12\x40" not in data else 1)
-PY
-            then
-                :
-            else
-                fail "Embedded N64 ROM bootstrap magic found in app framework/library: ${REL}"
+            if FRAMEWORK_SIG_MATCH="$(scan_bootstrap_magic_file "${FRAMEWORK_FILE}" 2>/dev/null)"; then
+                fail "Embedded N64 ROM bootstrap magic found in app framework/library: ${REL} (${FRAMEWORK_SIG_MATCH})"
                 FRAMEWORK_FAIL=1
             fi
 

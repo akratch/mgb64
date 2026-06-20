@@ -17,6 +17,12 @@ smoke_archive=0
 jobs="${GE007_BUILD_JOBS:-4}"
 max_warnings=0
 report=""
+author_name="${MGB64_LAUNCH_AUTHOR_NAME:-MGB64 Launch Builder}"
+author_email="${MGB64_LAUNCH_AUTHOR_EMAIL:-mgb64-launch@example.invalid}"
+committer_name="${MGB64_LAUNCH_COMMITTER_NAME:-$author_name}"
+committer_email="${MGB64_LAUNCH_COMMITTER_EMAIL:-$author_email}"
+committer_name_explicit=0
+committer_email_explicit=0
 
 usage() {
   cat <<'USAGE'
@@ -35,6 +41,11 @@ Options:
   --jobs N              Parallel jobs for archive smoke (default: GE007_BUILD_JOBS or 4).
   --max-warnings N      Archive warning threshold (default: 0).
   --report PATH         Write a Markdown evidence report to PATH.
+  --author-name NAME    Root commit author name (default: MGB64_LAUNCH_AUTHOR_NAME or placeholder).
+  --author-email EMAIL  Root commit author email (use a GitHub noreply address for launch attribution).
+  --committer-name NAME Root commit committer name (default: author name).
+  --committer-email EMAIL
+                        Root commit committer email (default: author email).
 USAGE
 }
 
@@ -90,6 +101,34 @@ while [ "$#" -gt 0 ]; do
       report="$2"
       shift 2
       ;;
+    --author-name)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      author_name="$2"
+      if [ "$committer_name_explicit" -eq 0 ]; then
+        committer_name="$author_name"
+      fi
+      shift 2
+      ;;
+    --author-email)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      author_email="$2"
+      if [ "$committer_email_explicit" -eq 0 ]; then
+        committer_email="$author_email"
+      fi
+      shift 2
+      ;;
+    --committer-name)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      committer_name="$2"
+      committer_name_explicit=1
+      shift 2
+      ;;
+    --committer-email)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      committer_email="$2"
+      committer_email_explicit=1
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -103,6 +142,16 @@ done
 
 require_positive_int "--jobs" "$jobs"
 require_non_negative_int "--max-warnings" "$max_warnings"
+if [ -z "$author_name" ] || [ -z "$author_email" ] || [ -z "$committer_name" ] || [ -z "$committer_email" ]; then
+  echo "Launch author/committer names and emails must be non-empty." >&2
+  exit 2
+fi
+case "${author_email} ${committer_email}" in
+  *kratch.adam@gmail.com*)
+    echo "Refusing to create public launch commit with personal Gmail address; use a GitHub noreply or placeholder email." >&2
+    exit 1
+    ;;
+esac
 
 dirty="$(git status --porcelain --untracked-files=all)"
 if [ -n "$dirty" ]; then
@@ -127,10 +176,10 @@ bare="$tmp/remote.git"
 archive_info="$tmp/archive-info.tsv"
 git init --bare "$bare" >/dev/null
 launch_commit="$(
-  GIT_AUTHOR_NAME="MGB64 Launch Builder" \
-  GIT_AUTHOR_EMAIL="mgb64-launch@example.invalid" \
-  GIT_COMMITTER_NAME="MGB64 Launch Builder" \
-  GIT_COMMITTER_EMAIL="mgb64-launch@example.invalid" \
+  GIT_AUTHOR_NAME="$author_name" \
+  GIT_AUTHOR_EMAIL="$author_email" \
+  GIT_COMMITTER_NAME="$committer_name" \
+  GIT_COMMITTER_EMAIL="$committer_email" \
   git commit-tree HEAD^{tree} -m "$message"
 )"
 git push --quiet "$bare" "${launch_commit}:refs/heads/main"
@@ -211,6 +260,8 @@ fi
   printf '%s\n' "- Launch repository: \`${out}\`"
   printf '%s\n' "- Launch HEAD: \`$(git -C "$out" rev-parse HEAD)\`"
   printf '%s\n' "- Launch tree: \`$(git -C "$out" rev-parse HEAD^{tree})\`"
+  printf '%s\n' "- Launch author: \`${author_name} <${author_email}>\`"
+  printf '%s\n' "- Launch committer: \`${committer_name} <${committer_email}>\`"
   printf '%s\n' "- Launch reachable commits: \`$(git -C "$out" rev-list --all --count)\`"
   printf '%s\n' "- Launch HEAD parent count: \`$(git -C "$out" rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')\`"
   printf '%s\n' "- Launch working tree status: \`clean\`"

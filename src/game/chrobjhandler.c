@@ -148,6 +148,59 @@ static int portPropRecordCanObjDrop(const PropRecord *prop)
         prop->voidp != NULL;
 }
 
+static int portPropRecordCanObjectTick(const PropRecord *prop)
+{
+    ObjectRecord *obj;
+
+    if (!portPropRecordCanObjDrop(prop)) {
+        return 0;
+    }
+
+    obj = prop->obj;
+    return obj != NULL && obj->prop == prop;
+}
+
+static int portPrepareObjectChildTick(PropRecord *parent, PropRecord *child, PropRecord **next, s32 *guard)
+{
+    *next = NULL;
+
+    if (guard != NULL) {
+        if (*guard >= POS_DATA_ENTRY_LEN) {
+            if (portPropRecordPointerLooksValid(child)) {
+                child->prev = NULL;
+            }
+            return 0;
+        }
+
+        (*guard)++;
+    }
+
+    if (!portPropRecordPointerLooksValid(parent) ||
+        !portPropRecordCanObjectTick(child) ||
+        child == parent ||
+        child->parent != parent)
+    {
+        if (portPropRecordPointerLooksValid(parent) && parent->child == child) {
+            parent->child = NULL;
+        }
+        return 0;
+    }
+
+    *next = child->prev;
+
+    if (*next != NULL &&
+        (*next == child ||
+            !portPropRecordPointerLooksValid(*next) ||
+            (*next)->parent != parent ||
+            !portPropRecordCanObjectTick(*next)))
+    {
+        child->prev = NULL;
+        *next = NULL;
+    }
+
+    return 1;
+}
+
 static int objDropTraceIsEnabled(void)
 {
     const char *value;
@@ -2925,7 +2978,11 @@ void objFreeEmbedmentOrProjectile(PropRecord *prop)
 
 void objFree(ObjectRecord* obj, s32 freeprop, s32 canregen)
 {
+    PropRecord *prop;
     PropRecord *child;
+#ifdef NATIVE_PORT
+    s32 child_guard;
+#endif
 
     if (obj == NULL)
     {
@@ -2995,49 +3052,39 @@ void objFree(ObjectRecord* obj, s32 freeprop, s32 canregen)
 
     if (obj->prop != NULL)
     {
-        explosionClearBulletImpactRoomByFlag(obj->prop, FALSE);
-        explosionClearBulletImpactRoomByFlag(obj->prop, TRUE);
+        prop = obj->prop;
+        explosionClearBulletImpactRoomByFlag(prop, FALSE);
+        explosionClearBulletImpactRoomByFlag(prop, TRUE);
 
         if (canregen == 0)
         {
-            if (freeprop == 0)
+            objFreeEmbedmentOrProjectile(prop);
+
+            if (prop->parent != NULL)
             {
-                objFreeEmbedmentOrProjectile(obj->prop);
+                objDetach(prop);
             }
 
-            if (freeprop == 0 && obj->prop->parent != NULL)
-            {
-                objDetach(obj->prop);
-            }
+            chrpropDeregisterRooms(prop);
 
-            chrpropDeregisterRooms(obj->prop);
-
-            child = obj->prop->child;
+            child = prop->child;
+#ifdef NATIVE_PORT
+            child_guard = 0;
+#endif
             while (child)
             {
                 PropRecord* next;
 #ifdef NATIVE_PORT
-                if (!portPropRecordPointerLooksValid(child) ||
-                    child == obj->prop ||
-                    child->parent != obj->prop ||
-                    !portPropRecordCanObjDrop(child) ||
-                    child->obj == NULL ||
-                    child->obj->prop != child)
+                if (!portPrepareObjectChildTick(prop, child, &next, &child_guard))
                 {
-                    obj->prop->child = NULL;
                     break;
-                }
-
-                next = child->prev;
-                if (next == child ||
-                    !portPropRecordPointerLooksValid(next) ||
-                    (next != NULL && next->parent != obj->prop))
-                {
-                    next = NULL;
                 }
 #else
                 next = child->prev;
 #endif
+#ifdef NATIVE_PORT
+                objFreePermanently(child->obj, TRUE);
+#else
                 if ((child->type == PROP_TYPE_OBJ
                     || child->type == PROP_TYPE_WEAPON
                     || child->type == PROP_TYPE_DOOR)
@@ -3046,10 +3093,13 @@ void objFree(ObjectRecord* obj, s32 freeprop, s32 canregen)
                 {
                     objFreePermanently(child->obj, TRUE);
                 }
+#endif
                 child = next;
             }
 
-            if (obj->prop->type != PROP_TYPE_DOOR)
+            prop->child = NULL;
+
+            if (prop->type != PROP_TYPE_DOOR)
             {
                 sub_GAME_7F050DE8(obj->model);
             }
@@ -3065,9 +3115,9 @@ void objFree(ObjectRecord* obj, s32 freeprop, s32 canregen)
 
             if (freeprop != 0)
             {
-                chrpropDelist(obj->prop);
-                chrpropDisable(obj->prop);
-                chrpropFree(obj->prop);
+                chrpropDelist(prop);
+                chrpropDisable(prop);
+                chrpropFree(prop);
             }
 
             obj->prop = NULL;
@@ -7353,7 +7403,7 @@ void objDropRecursively(PropRecord *prop)
         if (!portPropRecordPointerLooksValid(child) ||
                 child == prop ||
                 child->parent != prop ||
-                !portPropRecordCanObjDrop(child) ||
+                !portPropRecordCanObjectTick(child) ||
                 guard++ >= POS_DATA_ENTRY_LEN) {
             objDropTracePrintf("skip-child", depth, prop, child, NULL);
             if (prop->child == child) {
@@ -7365,8 +7415,10 @@ void objDropRecursively(PropRecord *prop)
 		PropRecord *prev = child->prev;
 #ifdef NATIVE_PORT
         if (prev == child ||
-                !portPropRecordPointerLooksValid(prev) ||
-                (prev != NULL && prev->parent != prop)) {
+                (prev != NULL &&
+                    (!portPropRecordPointerLooksValid(prev) ||
+                        prev->parent != prop ||
+                        !portPropRecordCanObjectTick(prev)))) {
             child->prev = NULL;
             prev = NULL;
         }
@@ -7394,7 +7446,13 @@ void sub_GAME_7F04424C(PropRecord* prop)
     ObjectRecord* obj;
     PropRecord* next;
     PropRecord* child;
+#ifdef NATIVE_PORT
+    s32 child_guard;
 
+    if (!portPropRecordCanObjectTick(prop)) {
+        return;
+    }
+#endif
     obj = prop->obj;
     if (obj->runtime_bitflags & RUNTIMEBITFLAG_REMOVE)
     {
@@ -7406,9 +7464,18 @@ void sub_GAME_7F04424C(PropRecord* prop)
     chrobjWeaponTick(prop);
 
     child = prop->child;
+#ifdef NATIVE_PORT
+    child_guard = 0;
+#endif
     while (child != NULL)
     {
+#ifdef NATIVE_PORT
+        if (!portPrepareObjectChildTick(prop, child, &next, &child_guard)) {
+            break;
+        }
+#else
         next = child->prev;
+#endif
         sub_GAME_7F04424C(child);
         child = next;
     }
@@ -7422,9 +7489,20 @@ void sub_GAME_7F0442DC(PropRecord* prop)
     PropRecord* child;
     PropRecord* prev;
     Mtxf* mtx;
+#ifdef NATIVE_PORT
+    s32 child_guard;
 
+    if (!portPropRecordCanObjectTick(prop)) {
+        return;
+    }
+#endif
     obj = prop->obj;
     model = obj->model;
+#ifdef NATIVE_PORT
+    if (model == NULL || model->obj == NULL) {
+        return;
+    }
+#endif
 
     if (obj->runtime_bitflags & RUNTIMEBITFLAG_REMOVE)
     {
@@ -7432,20 +7510,44 @@ void sub_GAME_7F0442DC(PropRecord* prop)
         return;
     }
 
-    if ((model->attachedto_objinst != NULL) && (obj->runtime_bitflags & RUNTIMEBITFLAG_EMBEDDED))
+    if ((model->attachedto_objinst != NULL) &&
+        (obj->runtime_bitflags & RUNTIMEBITFLAG_EMBEDDED) &&
+        obj->embedment != NULL)
     {
         mtx = modelFindNodeMtx(model->attachedto, model->attachedto_objinst, 0);
+#ifdef NATIVE_PORT
+        if (mtx == NULL) {
+            prop->flags &= ~(PROPFLAG_ONSCREEN);
+            chrobjWeaponTick(prop);
+            return;
+        }
+#endif
         prop->flags |= PROPFLAG_ONSCREEN;
         model->render_pos = modelAllocRenderPos(model);
+#ifdef NATIVE_PORT
+        if (model->render_pos == NULL) {
+            prop->flags &= ~(PROPFLAG_ONSCREEN);
+            return;
+        }
+#endif
 
         matrix_4x4_multiply_homogeneous(mtx, &obj->embedment->matrix, (Mtxf*)model->render_pos);
         modelUpdateRelationsQuick(model, model->obj->RootNode);
         chrobjWeaponTick(prop);
 
         child = prop->child;
+#ifdef NATIVE_PORT
+        child_guard = 0;
+#endif
         while (child != NULL)
         {
+#ifdef NATIVE_PORT
+            if (!portPrepareObjectChildTick(prop, child, &prev, &child_guard)) {
+                break;
+            }
+#else
             prev = child->prev;
+#endif
             sub_GAME_7F0442DC(child);
             child = prev;
         }
@@ -7456,9 +7558,18 @@ void sub_GAME_7F0442DC(PropRecord* prop)
         chrobjWeaponTick(prop);
 
         child = prop->child;
+#ifdef NATIVE_PORT
+        child_guard = 0;
+#endif
         while (child != NULL)
         {
+#ifdef NATIVE_PORT
+            if (!portPrepareObjectChildTick(prop, child, &prev, &child_guard)) {
+                break;
+            }
+#else
             prev = child->prev;
+#endif
             sub_GAME_7F04424C(child);
             child = prev;
         }
@@ -8636,6 +8747,9 @@ s32 object_interaction(struct PropRecord *arg0)
     struct coord3d sp530;
     f32 sp518;
     struct PropRecord* sp514;
+#ifdef NATIVE_PORT
+    s32 sp684_guard;
+#endif
     struct coord3d sp5xx; // temp variable, unknown stack position
     struct StandTile *sp4F0;
     f32 sp4D8;
@@ -11273,10 +11387,19 @@ obj_render_done:
         chrobjWeaponTick(arg0);
 
         sp684 = arg0->child;
+#ifdef NATIVE_PORT
+        sp684_guard = 0;
+#endif
 
         while (sp684 != NULL)
         {
+#ifdef NATIVE_PORT
+            if (!portPrepareObjectChildTick(arg0, sp684, &sp514, &sp684_guard)) {
+                break;
+            }
+#else
             sp514 = sp684->prev;
+#endif
             sub_GAME_7F0442DC(sp684);
             sp684 = sp514;
         }
@@ -11299,10 +11422,19 @@ obj_render_done:
         chrobjWeaponTick(arg0);
 
         sp684 = arg0->child;
+#ifdef NATIVE_PORT
+        sp684_guard = 0;
+#endif
 
         while (sp684 != NULL)
         {
+#ifdef NATIVE_PORT
+            if (!portPrepareObjectChildTick(arg0, sp684, &sp514, &sp684_guard)) {
+                break;
+            }
+#else
             sp514 = sp684->prev;
+#endif
             sub_GAME_7F04424C(sp684);
             sp684 = sp514;
         }
@@ -33447,18 +33579,31 @@ void propobjSetDropped(PropRecord *prop, DROPTYPE droptype)
 
 void objDetach(PropRecord *prop)
 {
-    PropRecord *parent = prop->parent;
+    PropRecord *parent;
+
+    if (prop == NULL)
+    {
+        return;
+    }
+
+    parent = prop->parent;
 
     if (parent)
     {
         ObjectRecord *obj = prop->obj;
-        Model *model = obj->model;
+        Model *model = obj != NULL ? obj->model : NULL;
 
         chrpropDetach(prop);
 
-        model->attachedto_objinst = NULL;
+        if (model != NULL)
+        {
+            model->attachedto_objinst = NULL;
+        }
 
-        obj->runtime_bitflags &= ~RUNTIMEBITFLAG_HASOWNER;
+        if (obj != NULL)
+        {
+            obj->runtime_bitflags &= ~RUNTIMEBITFLAG_HASOWNER;
+        }
 
         if (parent->type == PROP_TYPE_CHR || parent->type == PROP_TYPE_VIEWER)
         {

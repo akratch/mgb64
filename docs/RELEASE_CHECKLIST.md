@@ -44,13 +44,17 @@ The equivalent lower-level checks are:
 
 ```sh
 ./scripts/ci/check_release_ready.sh
+! grep -R "Super Mario 64 (J) disassembly" src/bootcode.s NOTICE.md THIRD_PARTY.md
 ./tools/validate_quick.sh
 cmake --build build --parallel 4 2>&1 | tee /tmp/mgb64-build.log
 python3 tools/summarize_build_warnings.py \
   /tmp/mgb64-build.log \
   --json-out /tmp/mgb64-build-warnings.json
 ctest --test-dir build --output-on-failure
+./tools/route_contract_smoke.sh --native-smoke --all --no-build --rom baserom.u.z64 --binary build/ge007
 ./tools/spawn_health_check.sh --all --no-build --rom baserom.u.z64 --binary build/ge007
+./tools/playability_smoke.sh --all --no-build --rom baserom.u.z64 --binary build/ge007
+./tools/renderer_parity_capture.sh --no-build --rom baserom.u.z64 --binary build/ge007
 ./tools/save_persistence_check.sh --no-build --rom baserom.u.z64 --binary build/ge007
 docker build --check .
 scripts/make_public_source_archive.sh --force
@@ -64,6 +68,9 @@ git status --short
 artifact from a local checkout, also review `git clean -ndX` so ignored ROMs,
 extracted assets, screenshots, audio dumps, and build outputs cannot be swept
 into an archive by mistake.
+`src/bootcode.s` must remain a public placeholder: no IPL3 boot ROM code,
+boot-font byte block, old SM64/n64split provenance text, or locally supplied
+matching-target boot material should be present in tracked source.
 For final public launch, prefer `scripts/release_preflight.sh --strict-ignored`
 from a fresh checkout or scrubbed workspace, with any ROM-backed validation
 using `--rom` outside the repository. That stricter gate allows normal build
@@ -75,6 +82,8 @@ inside the non-destructive launch bundle:
 ```sh
 scripts/prepare_public_launch_bundle.sh \
   --repo akratch/mgb64 \
+  --author-name "akratch" \
+  --author-email "YOUR_GITHUB_NOREPLY@users.noreply.github.com" \
   --strict-preflight-rom /path/outside/clean-launch-repo/baserom.u.z64 \
   --strict-preflight-macos-app \
   --strict-preflight-macos-app-bundle-sdl2
@@ -82,7 +91,9 @@ scripts/prepare_public_launch_bundle.sh \
 
 Add `--strict-preflight-macos-app-strict-deployment-target` only when
 `pkg-config` points at a controlled SDL2 build with the intended minimum macOS
-version.
+version. Use a GitHub noreply address or the default
+`mgb64-launch@example.invalid` for the clean public root commit; never use a
+personal email address.
 
 Review `/tmp/mgb64-build-warnings.json` before posting a release announcement:
 local release builds and the source-archive smoke build are expected to be
@@ -95,9 +106,17 @@ the user-facing tarball configures, builds, and passes the ROM-free CTest suite
 without relying on `.git` or ignored local files.
 For a launch gate, pass `--max-warnings 0` so the isolated archive build also
 fails on compiler/linker warnings.
-For a launch gate with a local ROM, include the all-level spawn health and save
-persistence lanes. Those are what `scripts/release_preflight.sh --deep-runtime`
-runs after the short quick-validation spawn smoke.
+For a launch gate with a local ROM, include the ROM-oracle route contract,
+all-level spawn health, playability smoke, renderer parity, and save persistence
+lanes. Those are what `scripts/release_preflight.sh --deep-runtime` runs after
+the short quick-validation spawn smoke.
+After a deep-runtime run, review the structured summaries in the generated
+`/tmp/mgb64_*` output directories before announcing: ROM-oracle
+`summary_<route>.json`, playability `summary.json`, renderer parity
+`summary.json`, intro-census `summary.json`/`capture_summary.json` when run, and
+any save-persistence logs. The traces, screenshots, emulator logs, saves, and
+JSON summaries are ROM-derived local evidence; keep them out of git and do not
+redistribute them.
 `docker build --check .` validates the Dockerfile and `.dockerignore` parse
 without needing to install packages or include local ignored files in a build
 context. If local Docker storage is healthy, a full Docker image build is a
@@ -108,13 +127,16 @@ For a stronger local pass when a ROM and native binary are available:
 
 ```sh
 ./tools/spawn_health_check.sh --all --no-build
+./tools/route_contract_smoke.sh --native-smoke --all --no-build
+./tools/playability_smoke.sh --all --no-build
 ./tools/save_persistence_check.sh --no-build
 ./tools/renderer_parity_capture.sh --no-build
 ```
 
-The renderer parity lane writes local ROM-derived screenshots/traces under
-`/tmp` and prints compare commands. Inspect the images locally; do not commit or
-attach the captured artifacts.
+The renderer parity lane writes local ROM-derived screenshots/traces and
+comparison logs under `/tmp`, and fails captures on screenshot-health or
+render-health defects. Inspect the images locally; do not commit or attach the
+captured artifacts.
 
 For the local macOS app shell, verify the unsigned source-built bundle:
 

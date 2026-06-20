@@ -38,10 +38,19 @@ if(BUILD_TESTING)
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
+            "${CMAKE_SOURCE_DIR}/tools/audit_oracle_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_intro_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_render_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_screenshot_health.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_audio.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_audio_reference.py"
+            "${CMAKE_SOURCE_DIR}/tools/compare_intro_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/compare_movement_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_screenshots.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_state.py"
+            "${CMAKE_SOURCE_DIR}/tools/intro_trace_summary.py"
+            "${CMAKE_SOURCE_DIR}/tools/rom_oracle_route.py"
+            "${CMAKE_SOURCE_DIR}/tools/summarize_intro_census.py"
             "${CMAKE_SOURCE_DIR}/tools/summarize_build_warnings.py"
             "${CMAKE_SOURCE_DIR}/tools/assert_stub_hits_zero.py"
             "${CMAKE_SOURCE_DIR}/tools/check_markdown_links.py"
@@ -124,13 +133,9 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_room_render_matrix_smoke room_render_matrix_smoke.sh 180)
     add_port_validation_smoke(port_room_transition_matrix_smoke room_transition_matrix_smoke.sh 180)
     add_port_validation_smoke(port_route_room_render_matrix_smoke route_room_render_matrix_smoke.sh 600)
-    add_port_validation_smoke(port_display_cast_oracle_routes route_contract_smoke.sh 180
-        --tag display_cast_oracle
-        --artifact-health
-        --artifact-report-lane display_cast_oracle_routes
-        --artifact-expected-route-label startup_display_cast_forced_zukovsky_state
-        --artifact-expected-route-label startup_display_cast_forced_zukovsky_timer_state
-        --artifact-expected-route-label startup_display_cast_forced_zukovsky_stock_follow_state
+    add_port_validation_smoke(port_rom_oracle_route_contract route_contract_smoke.sh 300
+        --native-smoke
+        --all
         --timeout 120
     )
     add_port_validation_smoke(port_weapon_viewmodel_smoke weapon_viewmodel_smoke.sh 180)
@@ -165,6 +170,8 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_door_behavior_smoke door_behavior_smoke.sh 120)
     add_port_validation_smoke(port_door_motion_smoke door_motion_smoke.sh 120)
     add_port_validation_smoke(port_interaction_smoke interaction_smoke.sh 120)
+    add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
+    add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
     add_port_validation_smoke(port_spawn_health_smoke spawn_health_check.sh 120)
     add_port_validation_smoke(port_audio_churn_smoke audio_soak_test.sh 90
         --seconds 3

@@ -225,6 +225,18 @@ for lvl in $LEVELS; do
         LANE_FAIL=1
     fi
 
+    if [[ -f "$TRACE" ]]; then
+        RENDER_EXIT=0
+        RENDER_RESULT=$(python3 tools/audit_render_trace.py --label "regression level $lvl" "$TRACE" 2>&1) || RENDER_EXIT=$?
+        if [[ "$RENDER_EXIT" -ne 0 ]]; then
+            echo "  RENDER HEALTH FAIL:"
+            printf '%s\n' "$RENDER_RESULT" | head -8 | sed 's/^/    /'
+            LANE_FAIL=1
+        else
+            echo "  render_health: PASS"
+        fi
+    fi
+
     if [[ "$ACCURACY_LANE" -eq 1 && -f "$TRACE" ]]; then
         STUB_EXIT=0
         STUB_RESULT=$(python3 tools/assert_stub_hits_zero.py "$TRACE" 2>&1) || STUB_EXIT=$?
