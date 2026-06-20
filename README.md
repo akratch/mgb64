@@ -156,7 +156,13 @@ hygiene reports are covered in **[SECURITY.md](SECURITY.md)**.
 
 ## Acknowledgements
 
-This project stands on the shoulders of the N64 decompilation community. Thanks
+This project builds directly on the
+[**n64decomp/007**](https://github.com/n64decomp/007) decompilation, which we
+started from and continue to work off of. Our thanks to its authors and
+contributors for the foundational reverse-engineering effort that this port
+extends.
+
+It also stands on the shoulders of the wider N64 decompilation community. Thanks
 to the SM64, Ocarina of Time, and Perfect Dark decomp/port projects for the
 tooling, conventions, and trail-blazing that make work like this possible, and
 to the authors of [`asm-processor`](tools/asm-processor) and the other bundled
