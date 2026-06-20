@@ -254,8 +254,17 @@ void load_object_fill_header(struct ModelFileHeader *objheader, const char *name
     {
         extern void modelConvertN64Binary(struct ModelFileHeader *header, void *filedata);
         extern void gfx_register_n64_dl_region(void *addr, size_t sz);
+        s32 loaded_size = get_pc_buffer_remaining_value(name);
+        if (loaded_size <= 0 && size > 0)
         {
-            size_t fsize = size > 0 ? (size_t)size : 0x20000;
+            loaded_size = size;
+        }
+        if (filedata == NULL || loaded_size <= 0)
+        {
+            return;
+        }
+        {
+            size_t fsize = (size_t)loaded_size;
             modelConvertN64Binary(objheader, filedata);
             objheader->n64_filedata_size = fsize;
             objheader->requiredRenderPosCount = 0;

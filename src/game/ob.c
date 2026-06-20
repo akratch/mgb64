@@ -8,6 +8,10 @@
 #include "assets/obseg/file_resource_id_enums.h"
 #include <ramrom.h>
 
+#ifdef NATIVE_PORT
+extern s32 rz_last_error;
+#endif
+
 //bss
 //800888b0
 
@@ -71,7 +75,18 @@ void load_resource(u8 *ptrdata, s32 bytes,  fileentry *srcfile,  resource_lookup
 #endif
 
         romCopy(source, srcfile->hw_address, lookupdata->rom_size);
+#ifdef NATIVE_PORT
+        rz_last_error = 0;
+#endif
         lookupdata->poolRemaining = decompressdata(source, ptrdata, buffer);
+#ifdef NATIVE_PORT
+        if (rz_last_error != 0)
+        {
+            printf("[LOAD-RES] WARNING: inflate failed for %s (err=%d) -> poolRemaining=0\n",
+                   srcfile->filename, rz_last_error);
+            lookupdata->poolRemaining = 0;
+        }
+#endif
         ;
 #if DEBUG
         if (result == 0)
@@ -118,7 +133,18 @@ void resource_load_from_indy(u8 *ptrdata, s32 bytes,  fileentry *srcfile,  resou
         indycommHostLoadFile(srcfile->filename, pPayload);
         if ((pPayload[0] == rz_header_1[0]) && (pPayload[1] == rz_header_2[1]))
         {
+#ifdef NATIVE_PORT
+            rz_last_error = 0;
+#endif
             size = decompressdata(pPayload, ptrdata, buffer);
+#ifdef NATIVE_PORT
+            if (rz_last_error != 0)
+            {
+                printf("[LOAD-RES] WARNING: indy inflate failed for %s (err=%d) -> poolRemaining=0\n",
+                       srcfile->filename, rz_last_error);
+                size = 0;
+            }
+#endif
         }
         else
         {

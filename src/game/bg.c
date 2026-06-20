@@ -58,6 +58,9 @@ s32 sub_GAME_7F0B9F14(s32 portalnum, coord3d *arg1, coord3d *arg2);
 extern void init_lightfixture_tables(void);
 extern void obLoadBGFileBytesAtOffset(u8 *bgname, u8 *target, s32 offset, s32 len);
 extern void setLevelScale(f32 ls);
+#ifdef NATIVE_PORT
+extern s32 rz_last_error;
+#endif
 extern void setDebugCameraScale(f32 scale);
 extern void sub_GAME_7F08976C(f32 scale);
 extern void bondviewUpdateCurrentRoomPosition(s32 room);
@@ -7446,10 +7449,21 @@ u32 bgDecompress(u8* source, u8 *target)
 #ifdef NATIVE_PORT
     /* struct huft is 16 bytes on 64-bit vs 8 on N64, so double the buffer */
     u8 buffer[0x4200];
+    u32 result;
 #else
     u8 buffer[0x2100];
 #endif
+#ifdef NATIVE_PORT
+    rz_last_error = 0;
+    result = decompressdata(source, target, (struct huft *)buffer);
+    if (rz_last_error != 0)
+    {
+        return (u32)-1;
+    }
+    return result;
+#else
     return decompressdata(source, target, (struct huft *)buffer);
+#endif
 }
 
 
@@ -7484,6 +7498,13 @@ s32 sub_GAME_7F0B5FAC(s32 roomID, u8 *data, s32 size)
     );
 
     roominfo->usize_point_index_binary = bgDecompress(source, data);
+#ifdef NATIVE_PORT
+    if ((s32)roominfo->usize_point_index_binary < 0) {
+        roominfo->usize_point_index_binary = 0;
+        roominfo->ptr_point_index = NULL;
+        return -1;
+    }
+#endif
     roominfo->ptr_point_index = (Vtx *)data;
 
     return roominfo->usize_point_index_binary;
@@ -7653,6 +7674,11 @@ u32 sub_GAME_7F0B609C(int roomID, int *data, u32 size)
                (s32)ptr_bgdata_room_fileposition_list[roomID].pPriMappingBin + (s32)0xF1000000,len);
     dest = bgDecompress(source,(u8 *)data);
 #ifdef NATIVE_PORT
+    if ((s32)dest < 0) {
+      g_BgRoomInfo[roomID].ptr_expanded_mapping_info = NULL;
+      g_BgRoomInfo[roomID].usize_primary_DL_binary = 0;
+      return dest;
+    }
     /* PC: skip texture processing — room DL data stays as raw N64 binary
      * and is interpreted by the N64 DL translator in gfx_pc.c */
     g_BgRoomInfo[roomID].ptr_expanded_mapping_info = data;
@@ -7882,6 +7908,11 @@ u32 sub_GAME_7F0B61DC(s32 roomID, u32 *data, s32 size)
 #endif
         dest = bgDecompress(source,(u8 *)data);
 #ifdef NATIVE_PORT
+        if ((s32)dest < 0) {
+            g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info = NULL;
+            g_BgRoomInfo[roomID].usize_secondary_DL_binary = 0;
+            return dest;
+        }
         /* PC: skip texture processing — secondary DL data stays as raw N64 binary
          * and is interpreted by the N64 DL translator in gfx_pc.c */
         g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info = data;

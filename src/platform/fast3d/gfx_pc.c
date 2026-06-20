@@ -652,6 +652,28 @@ static bool gfx_addr_is_pc_native_vertex_data(uintptr_t addr) {
     return false;
 }
 
+static bool gfx_addr_is_n64_model_vertex_segment(uint32_t token, uintptr_t addr, size_t size) {
+    uint32_t seg = (token >> 24) & 0x0F;
+    uint32_t offset = token & 0x00FFFFFFu;
+    uintptr_t base;
+
+    if (seg != SPSEGMENT_MODEL_VTX) {
+        return false;
+    }
+
+    base = gfx_segment_table[seg];
+    if (base == 0 || addr != base + offset) {
+        return false;
+    }
+
+    /* Runtime model vertex windows are packed N64 16-byte records. Reject
+     * impossible segment offsets so corrupt tokens such as 0x04FFFFFF cannot
+     * become host pointers. */
+    return offset <= 0x00040000u &&
+           size <= 0x00001000u &&
+           offset <= 0x00040000u - size;
+}
+
 static bool gfx_addr_is_n64_data_range(uintptr_t addr, size_t size) {
     if (size == 0) {
         return gfx_addr_is_n64_data(addr);
@@ -13091,6 +13113,9 @@ static inline uint32_t read_be32(const uint8_t *p) {
 
 void gfx_process_n64_dl(const uint8_t *data) {
     if (!data) return;
+    if (!gfx_addr_is_n64_data_range((uintptr_t)data, 8)) {
+        return;
+    }
     int n64_cmd_count = 0;
     int n64_vtx_count = 0, n64_tri_count = 0, n64_dl_count = 0, n64_settex_count = 0;
     uint32_t exec_seq = ++g_n64_dl_exec_seq;
@@ -13180,6 +13205,12 @@ void gfx_process_n64_dl(const uint8_t *data) {
                 rsp.projection_is_field_10e0, rsp.fog_mul, rsp.fog_offset);
         fflush(stderr);
     }
+#define ABORT_N64_DL() do { \
+        dl_depth--; \
+        g_executing_weapon_dl = was_weapon_dl; \
+        g_executing_guard_dl = was_guard_dl; \
+        return; \
+    } while (0)
     for (;;) {
         if (n64_cmd_count++ > 50000) {
             if (trace_active()) trace_log("} N64 CMD LIMIT (%d tris)", g_tri_count_diag - subtree_start);
@@ -13197,6 +13228,17 @@ void gfx_process_n64_dl(const uint8_t *data) {
             g_executing_weapon_dl = was_weapon_dl;
             g_executing_guard_dl = was_guard_dl;
             return;
+        }
+        if (!gfx_addr_is_n64_data_range((uintptr_t)data, 8)) {
+            static int n64_oob_cmd_log = 0;
+            if (n64_oob_cmd_log++ < 8) {
+                fprintf(stderr,
+                        "[N64_DL_OOB] frame=%d seq=%u cmd=%p parent=%p count=%d\n",
+                        g_frame_count_diag, exec_seq, (void *)data,
+                        (void *)parent_addr, n64_cmd_count);
+                fflush(stderr);
+            }
+            ABORT_N64_DL();
         }
         uint32_t w0 = read_be32(data);
         uint32_t w1 = read_be32(data + 4);
@@ -13288,13 +13330,39 @@ void gfx_process_n64_dl(const uint8_t *data) {
                 uint8_t params = (w0 >> 16) & 0xFF;
                 void *addr = gfx_resolve_addr(w1);
                 VALIDATE_ADDR_TYPED(addr, w1, "G_MTX", g_resolve_failures.mtx_fail);
+                bool addr_is_n64 = gfx_addr_is_n64_data((uintptr_t)addr);
+                if (addr_is_n64 && !gfx_addr_is_n64_data_range((uintptr_t)addr, 64)) {
+                    g_bad_cmd_count++;
+                    g_resolve_failures.mtx_fail++;
+                    if (g_resolve_failures.mtx_fail <= 5) {
+                        fprintf(stderr,
+                                "[GFX-BAD] G_MTX range: w1=0x%08X addr=%p frame=%d\n",
+                                w1, addr, g_frame_count_diag);
+                        fflush(stderr);
+                    }
+                    data += 8;
+                    continue;
+                }
+                if (!addr_is_n64 &&
+                    ((w1 & 0x00FFFFFFu) >= 0x00FFF000u || w1 == 0xFFFFFFFFu)) {
+                    g_bad_cmd_count++;
+                    g_resolve_failures.mtx_fail++;
+                    if (g_resolve_failures.mtx_fail <= 5) {
+                        fprintf(stderr,
+                                "[GFX-BAD] G_MTX impossible segment offset: w1=0x%08X addr=%p frame=%d\n",
+                                w1, addr, g_frame_count_diag);
+                        fflush(stderr);
+                    }
+                    data += 8;
+                    continue;
+                }
                 if (trace_target) {
                     const float (*mtxf)[4] = (const float (*)[4])addr;
                     fprintf(stderr,
                             "[N64_TARGET_MTX] frame=%d seq=%u index=%d dl=%p w1=0x%08X resolved=%p params=0x%02X n64=%d "
                             "M0=(%.4f,%.4f,%.4f,%.4f) M1=(%.4f,%.4f,%.4f,%.4f) M2=(%.4f,%.4f,%.4f,%.4f) M3=(%.4f,%.4f,%.4f,%.4f)\n",
                             g_frame_count_diag, exec_seq, frame_dl_index, (void *)g_n64_dl_stack[entry_depth],
-                            w1, addr, params, gfx_addr_is_n64_data((uintptr_t)addr) ? 1 : 0,
+                            w1, addr, params, addr_is_n64 ? 1 : 0,
                             mtxf[0][0], mtxf[0][1], mtxf[0][2], mtxf[0][3],
                             mtxf[1][0], mtxf[1][1], mtxf[1][2], mtxf[1][3],
                             mtxf[2][0], mtxf[2][1], mtxf[2][2], mtxf[2][3],
@@ -13309,7 +13377,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                             "M0=(%.4f,%.4f,%.4f,%.4f) M1=(%.4f,%.4f,%.4f,%.4f) M2=(%.4f,%.4f,%.4f,%.4f) M3=(%.2f,%.2f,%.2f,%.2f)\n",
                             g_frame_count_diag, exec_seq, (void *)data, w1,
                             (void *)gfx_segment_table[3], addr, params,
-                            gfx_addr_is_n64_data((uintptr_t)addr) ? 1 : 0,
+                            addr_is_n64 ? 1 : 0,
                             mtxf[0][0], mtxf[0][1], mtxf[0][2], mtxf[0][3],
                             mtxf[1][0], mtxf[1][1], mtxf[1][2], mtxf[1][3],
                             mtxf[2][0], mtxf[2][1], mtxf[2][2], mtxf[2][3],
@@ -13330,7 +13398,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                  *
                  * Detect via gfx_addr_is_n64_data: ROM regions are registered,
                  * dynamically-written render_pos is NOT. */
-                if (!gfx_addr_is_n64_data((uintptr_t)addr)) {
+                if (!addr_is_n64) {
                     /* PC-native float matrix — pass directly to RSP. */
                     gfx_sp_matrix(params | G_MTX_FLOAT_PORT, addr, addr);
                 } else {
@@ -13377,6 +13445,22 @@ void gfx_process_n64_dl(const uint8_t *data) {
                     }
                 }
                 VALIDATE_ADDR_TYPED(addr, w1, "G_VTX", g_resolve_failures.vtx_fail);
+                bool addr_is_pc_vtx = gfx_addr_is_pc_native_vertex_data((uintptr_t)addr);
+                bool addr_is_n64_model_vtx = gfx_addr_is_n64_model_vertex_segment(w1, (uintptr_t)addr, 16);
+                if (!addr_is_pc_vtx &&
+                    !addr_is_n64_model_vtx &&
+                    !gfx_addr_is_n64_data_range((uintptr_t)addr, 16)) {
+                    g_bad_cmd_count++;
+                    g_resolve_failures.vtx_fail++;
+                    if (g_resolve_failures.vtx_fail <= 5) {
+                        fprintf(stderr,
+                                "[GFX-BAD] G_VTX range: w1=0x%08X addr=%p frame=%d\n",
+                                w1, addr, g_frame_count_diag);
+                        fflush(stderr);
+                    }
+                    data += 8;
+                    continue;
+                }
                 /* Log G_VTX for non-room DLs to diagnose shard vertex provenance */
                 if (g_diag_trace_shards && g_diag_verbose > 0) {
                     const char *vtx_dl_which = NULL;
@@ -13437,7 +13521,24 @@ void gfx_process_n64_dl(const uint8_t *data) {
                         decode_mode = GFX_VTX_DECODE_N64_BASE;
                     }
                 }
-                if (gfx_addr_is_pc_native_vertex_data((uintptr_t)addr)) {
+                addr_is_pc_vtx = gfx_addr_is_pc_native_vertex_data((uintptr_t)addr);
+                addr_is_n64_model_vtx = gfx_addr_is_n64_model_vertex_segment(w1, (uintptr_t)addr,
+                                                                             (size_t)num_verts * 16);
+                if (num_verts <= 0 || num_verts > 16 ||
+                    dest_idx < 0 || dest_idx >= MAX_VERTICES ||
+                    dest_idx + num_verts > MAX_VERTICES) {
+                    g_bad_cmd_count++;
+                    g_resolve_failures.vtx_fail++;
+                    if (g_resolve_failures.vtx_fail <= 5) {
+                        fprintf(stderr,
+                                "[GFX-BAD] G_VTX count: w0=0x%08X w1=0x%08X count=%d dest=%d frame=%d\n",
+                                w0, w1, num_verts, dest_idx, g_frame_count_diag);
+                        fflush(stderr);
+                    }
+                    data += 8;
+                    continue;
+                }
+                if (addr_is_pc_vtx) {
                     if (trace_active() && num_verts > 0) {
                         trace_log("G_VTX_PC_FROM_N64 addr=%p count=%d dest=%d", addr, num_verts, dest_idx);
                     }
@@ -13447,6 +13548,19 @@ void gfx_process_n64_dl(const uint8_t *data) {
                 } else {
                     const uint8_t *src = (const uint8_t *)addr;
                     Vtx temp_verts[16];
+                    if (!addr_is_n64_model_vtx &&
+                        !gfx_addr_is_n64_data_range((uintptr_t)addr, (size_t)num_verts * 16)) {
+                        g_bad_cmd_count++;
+                        g_resolve_failures.vtx_fail++;
+                        if (g_resolve_failures.vtx_fail <= 5) {
+                            fprintf(stderr,
+                                    "[GFX-BAD] G_VTX n64 range: w1=0x%08X addr=%p bytes=%zu frame=%d\n",
+                                    w1, addr, (size_t)num_verts * 16, g_frame_count_diag);
+                            fflush(stderr);
+                        }
+                        data += 8;
+                        continue;
+                    }
                     for (int i = 0; i < num_verts && i < 16; i++) {
                         const uint8_t *vd = src + i * 16;
                         temp_verts[i].v.ob[0] = (int16_t)((vd[0] << 8) | vd[1]);
@@ -13604,7 +13718,19 @@ void gfx_process_n64_dl(const uint8_t *data) {
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else {
                     /* Jump to a PC DL from within an N64 DL */
-                    gfx_run_dl_pc((Gfx *)dl_addr);
+                    if (gfx_is_valid_pc_dl((uintptr_t)dl_addr) ||
+                        gfx_is_static_pc_dl((uintptr_t)dl_addr)) {
+                        gfx_run_dl_pc((Gfx *)dl_addr);
+                    } else {
+                        g_bad_cmd_count++;
+                        g_resolve_failures.dl_fail++;
+                        if (g_resolve_failures.dl_fail <= 5) {
+                            fprintf(stderr,
+                                    "[GFX-BAD] G_DL pc range: w1=0x%08X addr=%p frame=%d\n",
+                                    w1, dl_addr, g_frame_count_diag);
+                            fflush(stderr);
+                        }
+                    }
                 }
                 if ((w0 >> 16) & 1) {
                     /* Branch (nopush) — don't return to caller */
@@ -13870,6 +13996,16 @@ void gfx_process_n64_dl(const uint8_t *data) {
                 uint8_t tile = (w1 >> 24) & 7;
                 int32_t ulx = (w1 >> 12) & 0xFFF;
                 int32_t uly = w1 & 0xFFF;
+                if (!gfx_addr_is_n64_data_range((uintptr_t)(data + 8), 16)) {
+                    static int texrect_oob_log = 0;
+                    if (texrect_oob_log++ < 8) {
+                        fprintf(stderr,
+                                "[N64_DL_OOB] TEXRECT halves frame=%d seq=%u cmd=%p\n",
+                                g_frame_count_diag, exec_seq, (void *)data);
+                        fflush(stderr);
+                    }
+                    ABORT_N64_DL();
+                }
                 data += 8; /* RDPHALF_1 */
                 uint32_t h1w1 = read_be32(data + 4);
                 data += 8; /* RDPHALF_2 */
@@ -13956,11 +14092,12 @@ void gfx_process_n64_dl(const uint8_t *data) {
                            opcode, w0, w1, (void*)data, n64_cmd_count);
                     fflush(stdout);
                 }
-                break;
+                ABORT_N64_DL();
             }
         }
         data += 8;
     }
+#undef ABORT_N64_DL
 }
 
 /* ===== Public API ===== */
