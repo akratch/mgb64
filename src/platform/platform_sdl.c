@@ -22,6 +22,7 @@
 #include "config_pc.h"
 #include "settings.h"
 #include "game/front.h"
+#include "game/initmenus.h"
 #include "game/title.h"
 
 /* Forward declarations */
@@ -1314,6 +1315,7 @@ void platformPollEvents(void) {
                     selected_stage = levelMap[idx];
                     set_solo_and_ptr_briefing(selected_stage);
                     bossSetLoadedStage(selected_stage);
+                    pcPrimePostStageMenuForDirectBoot((LEVELID)selected_stage, FALSE);
                     printf("[SDL] Level switch requested: LEVELID %d (F%d)\n",
                            levelMap[idx], idx + 3);
                 }

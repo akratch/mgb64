@@ -29,6 +29,9 @@
 #include "fr.h"
 #include "game/image.h"
 #include "game/initgamedata.h"
+#ifdef NATIVE_PORT
+#include "game/initmenus.h"
+#endif
 #include "vi.h"
 #include "game/bg.h"
 #include "game/debugmenu_handler.h"
@@ -378,6 +381,10 @@ void bossMainloop(void)
             set_selected_difficulty(*(const unsigned char*)tokenFind(1, "-hard") - '0');
             lvlSetSelectedDifficulty(*(const unsigned char*)tokenFind(1, "-hard") - '0');
         }
+
+#ifdef NATIVE_PORT
+        pcPrimePostStageMenuForDirectBoot(g_StageNum, get_selected_num_players() >= 2);
+#endif
     }
 
     nowCount = osGetCount();

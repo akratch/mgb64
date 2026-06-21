@@ -5211,8 +5211,12 @@ void portTraceFrame(void) {
 
     if (!s_assertPostMissionTransition &&
         menu_entered &&
-        menu == MENU_MISSION_SELECT &&
-        (s_prevMenu == MENU_MISSION_COMPLETE || s_prevMenu == MENU_MISSION_FAILED)) {
+        (s_prevMenu == MENU_MISSION_COMPLETE || s_prevMenu == MENU_MISSION_FAILED) &&
+        (menu == MENU_MISSION_COMPLETE ||
+         menu == MENU_MISSION_SELECT ||
+         menu == MENU_BRIEFING ||
+         menu == MENU_RUN_STAGE ||
+         menu == MENU_DISPLAY_CAST)) {
         s_assertPostMissionTransition = 1;
     }
 
