@@ -1098,7 +1098,7 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
 static int g_diag_tex_only = -1;
 static int g_diag_force_point_filter = -1;
 static int g_diag_force_linear_filter = -1;
-static int g_diag_disable_room_point_filter = -1;
+static int g_diag_force_room_point_filter = -1;
 static int g_diag_convert_k4k5 = -1;
 static int g_diag_lod_fraction_override = INT32_MIN;
 static float g_diag_shade_scale = -1.0f;
@@ -1142,21 +1142,21 @@ static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
 {
     linear_filter = gfx_apply_texture_filter_override(linear_filter);
 
-    if (g_diag_disable_room_point_filter < 0) {
-        g_diag_disable_room_point_filter =
-            (getenv("GE007_DISABLE_ROOM_POINT_FILTER") != NULL) ? 1 : 0;
+    if (g_diag_force_room_point_filter < 0) {
+        g_diag_force_room_point_filter =
+            (getenv("GE007_FORCE_ROOM_POINT_FILTER") != NULL &&
+             getenv("GE007_DISABLE_ROOM_POINT_FILTER") == NULL) ? 1 : 0;
     }
 
     if (g_diag_force_linear_filter > 0) {
         return linear_filter;
     }
 
-    /* GE's room textures are authored as low-resolution repeating world
-     * surfaces. The N64 filter bits on those DLs are not a safe signal for
-     * modern GL bilinear/shader filtering; applying them broadly smears Dam and
-     * Cradle surfaces. Keep room geometry nearest-sampled by default while
-     * leaving sky, UI, props, weapons, and explicit diagnostics untouched. */
-    if (g_diag_disable_room_point_filter == 0 &&
+    /* N64 G_TF_BILERP room materials should use the shader-side N64 filter,
+     * not blanket nearest sampling. The old default point override made Dam,
+     * Cradle, Surface, and other room textures collapse to visibly lower color
+     * diversity. Keep point sampling available only as a focused diagnostic. */
+    if (g_diag_force_room_point_filter > 0 &&
         g_current_draw_class == DRAWCLASS_ROOM &&
         !g_sky_tri_mode &&
         !g_texrect_uv_mode) {
@@ -7010,6 +7010,9 @@ static void gfx_check_diag_env(void) {
         g_diag_tex_only = (getenv("GE007_TEX_ONLY") != NULL) ? 1 : 0;
         g_diag_force_point_filter = (getenv("GE007_FORCE_POINT_FILTER") != NULL) ? 1 : 0;
         g_diag_force_linear_filter = (getenv("GE007_FORCE_LINEAR_FILTER") != NULL) ? 1 : 0;
+        g_diag_force_room_point_filter =
+            (getenv("GE007_FORCE_ROOM_POINT_FILTER") != NULL &&
+             getenv("GE007_DISABLE_ROOM_POINT_FILTER") == NULL) ? 1 : 0;
         g_diag_convert_k4k5 = (getenv("GE007_DIAG_CONVERT_K4K5") != NULL) ? 1 : 0;
         (void)gfx_diag_lod_fraction_override();
         (void)gfx_diag_shade_scale();
@@ -7160,6 +7163,7 @@ static void gfx_check_diag_env(void) {
         if (g_diag_no_fog) printf("[fast3d] FOG DISABLED (GE007_NO_FOG)\n");
         if (g_diag_force_point_filter) printf("[fast3d] POINT FILTER FORCED (GE007_FORCE_POINT_FILTER)\n");
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
+        if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
         if (g_diag_convert_k4k5) printf("[fast3d] DIAG K4/K5 CONVERT ENABLED (GE007_DIAG_CONVERT_K4K5)\n");
         if (g_diag_lod_fraction_override >= 0) {
             printf("[fast3d] DIAG LOD FRACTION OVERRIDE %d (GE007_DIAG_LOD_FRACTION)\n",
