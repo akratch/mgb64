@@ -239,6 +239,7 @@ static int traceFlowOnlyEnabled(void) {
     return enabled;
 }
 
+/* Frontend/title transitions can leave stage pointers non-null after unload. */
 static int traceLiveStageGlobalsSafe(void) {
     int stage_menu_active;
 
