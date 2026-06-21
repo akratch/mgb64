@@ -30431,6 +30431,7 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
     f32 halfedxy[2];
     s32 tex_w = (s32)img->width;
     s32 tex_h = (s32)img->height;
+    s32 tex_mode = mode != 0 ? 2 : 1;
 
     halfedxy[0] = (f32)tex_w * 0.5f;
     halfedxy[1] = (f32)tex_h * 0.5f;
@@ -30444,7 +30445,7 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
         xypos[1] = height + unk_scale - (f32)tex_h * 0.5f;
     }
 
-    texSelect(&gdl, img, 4, 0, 0);
+    texSelect(&gdl, img, tex_mode, 0, 0);
     display_image_at_position(&gdl, xypos, halfedxy,
         tex_w, (u32)tex_h, 0, flipX ? 1 : 0, 1,
         (u32)r, (u32)g, (u32)b, (u32)a,
@@ -31056,23 +31057,96 @@ static struct sImageTableEntry *portGetAmmoImage(s32 ammo_type) {
     }
 }
 
-static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 x_clip, s32 x_reserve,
-                              s32 halign, s32 y_pos) {
+static f32 portGetAmmoIconYOffset(const AmmoStats *stats)
+{
+    u32 bits = ((u32)stats->field_08 << 16) | (u32)stats->field_0A;
+    f32 value;
+
+    memcpy(&value, &bits, sizeof(value));
+
+    return value;
+}
+
+static void portGetAmmoHudOffsets(s32 *left_offset, s32 *right_offset)
+{
+    if (getPlayerCount() < 3) {
+        *left_offset = 0x3b;
+        *right_offset = 0x3b;
+    } else if ((get_cur_playernum() & 1) != 0) {
+        *left_offset = 0x2b;
+        *right_offset = 0x7f;
+    } else {
+        *left_offset = 0x3b;
+        *right_offset = 0x6d;
+    }
+}
+
+static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
+{
     ITEM_IDS weapon = getCurrentPlayerWeaponId(hand);
     if ((s32)weapon <= 0) return gdl;
 
-    s32 clip = g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
+    s32 ammo_type = get_ammo_type_for_weapon(weapon);
+    if (ammo_type <= AMMO_NONE || ammo_type >= AMMO_RELATED_MAX) return gdl;
+    if (bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_HIDE_AMMO_DISPLAY) != 0) return gdl;
+
+    AmmoStats *stats = &ammo_related[ammo_type];
+    struct sImageTableEntry *image = portGetAmmoImage(ammo_type);
+    s32 icon_width = image ? (s32)image->width : 5;
+    bool no_clip_reloads = (bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_NO_CLIP_RELOADS) != 0);
+    s32 clip = no_clip_reloads ? 0 : g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
     s32 reserve = get_ammo_count_for_weapon(weapon);
+    bool is_left_hand = (hand == GUNLEFT);
 
     /* Weapons with no ammo tracking (e.g. unarmed) return negative */
     if (reserve < 0 && clip <= 0) return gdl;
 
-    if (clip >= 0) {
-        gdl = gunDrawHudInteger(gdl, clip, x_clip, halign, y_pos, HUDVALIGN_BOTTOM, 1);
+    if (image != NULL) {
+        gdl = (Gfx *)set_rgba_redirect_generate_microcode(
+            gdl,
+            image,
+            (f32)icon_x,
+            -1.0f,
+            (f32)y_pos,
+            is_left_hand ? 1 : 0,
+            portGetAmmoIconYOffset(stats),
+            1);
     }
-    if (reserve >= 0) {
-        gdl = gunDrawHudInteger(gdl, reserve, x_reserve, halign, y_pos, HUDVALIGN_BOTTOM, 0);
+
+    gdl = microcode_constructor(gdl);
+
+    if (!no_clip_reloads) {
+        s32 clip_x = is_left_hand
+            ? icon_x + (icon_width >> 1) + 3
+            : icon_x - (icon_width >> 1) - 4;
+
+        gdl = gunDrawHudInteger(
+            gdl,
+            clip,
+            clip_x,
+            is_left_hand ? HUDHALIGN_LEFT : HUDHALIGN_RIGHT,
+            y_pos,
+            HUDVALIGN_BOTTOM,
+            1);
     }
+
+    if (reserve > 0 || no_clip_reloads) {
+        s32 reserve_x = is_left_hand
+            ? icon_x - ((icon_width + 1) >> 1) - 4
+            : icon_x + ((icon_width + 1) >> 1) + 3;
+
+        gdl = gunDrawHudInteger(
+            gdl,
+            reserve,
+            reserve_x,
+            is_left_hand ? HUDHALIGN_RIGHT : HUDHALIGN_LEFT,
+            y_pos,
+            HUDVALIGN_BOTTOM,
+            0);
+    }
+
+    gdl = combiner_bayer_lod_perspective(gdl);
+
     return gdl;
 }
 
@@ -31081,13 +31155,16 @@ Gfx *generate_ammo_total_microcode(Gfx *gdl) {
      * Right-hand weapon at bottom-right, left-hand at bottom-left. */
     if (g_CurrentPlayer->gunammooff != 0) return gdl;
 
+    s32 left_offset;
+    s32 right_offset;
+    s32 view_left = viGetViewLeft();
+    s32 view_right = view_left + viGetViewWidth();
     s32 y_pos = viGetViewTop() + viGetViewHeight() - 20;
 
-    /* Right-hand weapon: clip at x=255, reserve at x=295 */
-    gdl = portDrawHandAmmo(gdl, GUNRIGHT, 255, 295, HUDHALIGN_RIGHT, y_pos);
+    portGetAmmoHudOffsets(&left_offset, &right_offset);
 
-    /* Left-hand weapon (dual-wield): clip at x=25, reserve at x=65 */
-    gdl = portDrawHandAmmo(gdl, GUNLEFT, 25, 65, HUDHALIGN_LEFT, y_pos);
+    gdl = portDrawHandAmmo(gdl, GUNRIGHT, view_right - right_offset, y_pos);
+    gdl = portDrawHandAmmo(gdl, GUNLEFT, view_left + left_offset, y_pos);
 
     return gdl;
 }
