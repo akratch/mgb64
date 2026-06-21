@@ -25,6 +25,7 @@ DEFAULTS = {
     "Video.Gamma": "1",
     "Video.RenderScale": "1",
     "Video.MSAA": "0",
+    "Video.FovY": "60",
     "Video.RetroFilter": "auto",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
@@ -51,6 +52,7 @@ FrameCap=60
 Gamma=1
 RenderScale=1
 MSAA=0
+FovY=60
 RetroFilter=auto
 FutureVideo=keep-me
 
@@ -181,6 +183,7 @@ def main() -> int:
                     "GE007_GAMMA": "1.2",
                     "GE007_RENDER_SCALE": "1.5",
                     "GE007_MSAA": "4",
+                    "GE007_FOV_Y": "70",
                     "GE007_RETRO_FILTER": "on",
                 },
             )
@@ -201,6 +204,7 @@ def main() -> int:
                 "Video.Gamma": "1.2",
                 "Video.RenderScale": "1.5",
                 "Video.MSAA": "4",
+                "Video.FovY": "70",
                 "Video.RetroFilter": "on",
             },
             "env override dump",
@@ -221,6 +225,7 @@ def main() -> int:
                 "Gamma=1",
                 "RenderScale=1",
                 "MSAA=0",
+                "FovY=60",
                 "RetroFilter=auto",
             ],
             "env override is not persisted",
@@ -257,6 +262,8 @@ def main() -> int:
                 "--config-override",
                 "Video.MSAA=2",
                 "--config-override",
+                "Video.FovY=75",
+                "--config-override",
                 "Video.RetroFilter=off",
                 "--dump-config",
             )
@@ -277,6 +284,7 @@ def main() -> int:
                 "Video.Gamma": "1.3",
                 "Video.RenderScale": "0.75",
                 "Video.MSAA": "2",
+                "Video.FovY": "75",
                 "Video.RetroFilter": "off",
             },
             "cli override dump",
@@ -297,6 +305,7 @@ def main() -> int:
                 "Gamma=1",
                 "RenderScale=1",
                 "MSAA=0",
+                "FovY=60",
                 "RetroFilter=auto",
             ],
             "cli override is not persisted",
@@ -348,6 +357,8 @@ def main() -> int:
             "--config-set",
             "Video.MSAA=8",
             "--config-set",
+            "Video.FovY=80",
+            "--config-set",
             "Video.RetroFilter=on",
         )
         assert_no_tmp(savedir)
@@ -392,6 +403,9 @@ def main() -> int:
                 "# MSAA",
                 "# type=enum scope=live default=0 range=0|2|4|8",
                 "MSAA=8",
+                "# Vertical FOV",
+                "# type=float scope=live default=60 range=45..90",
+                "FovY=80",
                 "# Retro filter",
                 "# type=enum scope=live default=auto range=auto|off|on",
                 "RetroFilter=on",
@@ -423,6 +437,7 @@ def main() -> int:
                 "Video.Gamma": "1.4",
                 "Video.RenderScale": "2",
                 "Video.MSAA": "8",
+                "Video.FovY": "80",
                 "Video.RetroFilter": "on",
                 "Input.MouseSensitivity": "0.25",
                 "Input.InvertY": "1",

@@ -143,6 +143,17 @@ static void lvlTracePhasePrintf(const char *phase, s32 before_tris)
     fflush(stderr);
 }
 
+static int lvlTraceFovEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        enabled = (getenv("GE007_TRACE_FOV") != NULL) ? 1 : 0;
+    }
+
+    return enabled;
+}
+
 /* Room loading functions from bg.c (not in header) */
 extern s32 sub_GAME_7F0B5FAC(s32 roomID, u8 *data, s32 size);
 extern u32 sub_GAME_7F0B609C(int roomID, int *data, u32 size);
@@ -1537,6 +1548,17 @@ Gfx* lvlRender(Gfx* DL)
             viSetViewPosition(g_CurrentPlayer->viewleft, g_CurrentPlayer->viewtop);
             viSetFovY(g_CurrentPlayer->fovy);
             viSetAspect(g_CurrentPlayer->aspect);
+#ifdef NATIVE_PORT
+            if (lvlTraceFovEnabled()) {
+                fprintf(stderr,
+                        "[FOV] frame=%d source=lvlRender player=%d player_fovy=%.6f vi_fovy=%.6f aspect=%.6f\n",
+                        g_frame_count_diag,
+                        i,
+                        g_CurrentPlayer->fovy,
+                        viGetFovY(),
+                        g_CurrentPlayer->aspect);
+            }
+#endif
 
 #ifdef NATIVE_PORT
             /* A3: Use original pipeline. viClearZBufCurrentPlayer skipped on PC

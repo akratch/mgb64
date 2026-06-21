@@ -157,6 +157,7 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 f32 g_pcVideoGamma = 1.0f;
 f32 g_pcRenderScale = 1.0f;
 s32 g_pcMsaaSamples = 0;
+f32 g_pcFovY = 60.0f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1419,6 +1420,11 @@ void platformRegisterConfig(void)
                          "--config-override Video.MSAA=VALUE",
                          "MSAA",
                          "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
+    settingsRegisterFloat("Video.FovY", &g_pcFovY, 60.0f, 45.0f, 90.0f,
+                          SETTING_SCOPE_LIVE, "GE007_FOV_Y",
+                          "--config-override Video.FovY=VALUE",
+                          "Vertical FOV",
+                          "Gameplay vertical field of view in degrees.");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),

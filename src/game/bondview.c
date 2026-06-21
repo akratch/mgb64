@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include <math.h>
 #ifdef NATIVE_PORT
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "gfx_pc.h"
@@ -70,6 +71,8 @@ s32 chrTickBeams(PropRecord *prop);
 
 #ifdef NATIVE_PORT
 static int s_nativeLoadingBondIntroChr = 0;
+static f32 bondviewGetNativeBaseFovY(void);
+static int bondviewTraceNativeFovEnabled(void);
 
 static int portSuppressDamageFlash(void)
 {
@@ -8114,7 +8117,11 @@ void bondviewTriggerWatchZoom(f32 zoominfovy)
  */
 void bondviewTriggerWatchZoomDefault(void)
 {
+#ifdef NATIVE_PORT
+    bondviewTriggerWatchZoom(bondviewGetNativeBaseFovY());
+#else
     bondviewTriggerWatchZoom(60.0f);
+#endif
 }
 
 
@@ -8152,11 +8159,16 @@ void bondviewZoomToWatchOnOpen(void)
 void bondviewZoomFromWatchOnExit(void)
 {
     f32 f;
+#ifdef NATIVE_PORT
+    f32 target = bondviewGetNativeBaseFovY();
+#else
+    f32 target = 60.0f;
+#endif
 
 #if defined(VERSION_EU)
-    f = ((60.0f - g_CurrentPlayer->zoominfovy) * 45.0f) / -53.9000015259f;
+    f = ((target - g_CurrentPlayer->zoominfovy) * 45.0f) / -53.9000015259f;
 #else
-    f = ((60.0f - g_CurrentPlayer->zoominfovy) * 45.0f) / -54.1f;
+    f = ((target - g_CurrentPlayer->zoominfovy) * 45.0f) / -54.1f;
 #endif
 
     if (f < 0.0f)
@@ -8164,7 +8176,7 @@ void bondviewZoomFromWatchOnExit(void)
         f = -f;
     }
 
-    trigger_watch_zoom(60.0f, f);
+    trigger_watch_zoom(target, f);
 }
 
 
@@ -11323,7 +11335,11 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 
     if (g_CurrentPlayer->watch_animation_state == WATCH_ANIMATION_0x0)
     {
+#ifdef NATIVE_PORT
+        ftemp_nostack_spE0 = bondviewGetNativeBaseFovY();
+#else
         ftemp_nostack_spE0 = 60.0f;
+#endif
 
         if (moveData.zooming)
         {
@@ -11331,7 +11347,11 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 
             if (ftemp_nostack_spE0 <= 0)
             {
+#ifdef NATIVE_PORT
+                ftemp_nostack_spE0 = bondviewGetNativeBaseFovY();
+#else
                 ftemp_nostack_spE0 = 60.0f;
+#endif
             }
         }
 
@@ -13912,19 +13932,62 @@ s16 bondviewGetCurrentPlayerViewportUly(void)
  * Address 0x7F0870BC (VERSION_EU).
  * Address 0x7F087668 (VERSION_JP).
  */
+#ifdef NATIVE_PORT
+static f32 bondviewGetNativeBaseFovY(void)
+{
+    extern f32 g_pcFovY;
+
+    if (g_pcFovY < 45.0f) {
+        return 45.0f;
+    }
+    if (g_pcFovY > 90.0f) {
+        return 90.0f;
+    }
+
+    return g_pcFovY;
+}
+
+static int bondviewTraceNativeFovEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        enabled = (getenv("GE007_TRACE_FOV") != NULL);
+    }
+
+    return enabled;
+}
+#endif
+
 void bondviewMovePlayerUpdateViewport(s8 stick_x, s8 stick_y, u16 buttons)
 {
 #ifdef VERSION_EU
     f32 faspect;
 #endif
+#ifdef NATIVE_PORT
+    f32 fovy = bondviewGetNativeBaseFovY();
+#else
+    f32 fovy = FOV_Y_F;
+#endif
 
-    set_cur_player_fovy(FOV_Y_F);
+    set_cur_player_fovy(fovy);
+#ifdef NATIVE_PORT
+    if (bondviewTraceNativeFovEnabled()) {
+        extern int g_frame_count_diag;
+
+        fprintf(stderr,
+                "[FOV] frame=%d source=bondview desired=%.6f player=%.6f\n",
+                g_frame_count_diag,
+                fovy,
+                g_CurrentPlayer->fovy);
+    }
+#endif
 
     // This call doesn't do anything, the call viSetFovY(g_CurrentPlayer->fovy); in lvlRender
     // will actually change the field of view.
     // The call above should set g_CurrentPlayer->fovy, but it doesn't seem to affect
     // the fov....
-    viSetFovY(FOV_Y_F);
+    viSetFovY(fovy);
 
     if (cameraFrameCounter1 != 0)
     {

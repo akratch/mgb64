@@ -26,6 +26,7 @@ EXPECTED_DEFAULTS = {
     "Video.Gamma": "1",
     "Video.RenderScale": "1",
     "Video.MSAA": "0",
+    "Video.FovY": "60",
     "Video.RetroFilter": "auto",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
@@ -51,6 +52,7 @@ FrameCap=display
 Gamma=1.25
 RenderScale=1.5
 MSAA=4
+FovY=75
 RetroFilter=on
 
 [Input]
@@ -177,6 +179,7 @@ def main() -> int:
                 "Video.Gamma": "1.25",
                 "Video.RenderScale": "1.5",
                 "Video.MSAA": "4",
+                "Video.FovY": "75",
                 "Video.RetroFilter": "on",
                 "Input.MouseSensitivity": "0.25",
                 "Input.MouseSensitivityAim": "0.125",

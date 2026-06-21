@@ -265,7 +265,7 @@ tolerance; `mp_smoke.sh` still green (FBO must not break split-screen).
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| `Video.FovY = 45…90` (default 60) | S | ⬜ | Store desired FOV in port settings and apply it after/inside `bondviewMovePlayerUpdateViewport`, which currently resets `g_CurrentPlayer->fovy` to `FOV_Y_F` every tick (`bondview.c:13921-13927`), then drives `viSetFovY` per live player. |
+| `Video.FovY = 45…90` (default 60) | S | ✅ | Schema-backed normal gameplay FOV. Native builds replace the base `FOV_Y_F` reset inside `bondviewMovePlayerUpdateViewport` and the non-zooming `bondviewTriggerWatchZoom(60)` path; `lvlRender` still applies `g_CurrentPlayer->fovy` per live player, so scoped/watch zoom values remain separate. |
 | Viewmodel FOV compensation | M | ⬜ | Gun draws in-scene (`DRAWCLASS_WEAPON`), so high FOV misframes it; apply a separate viewmodel FOV/position fix and test every weapon. |
 
 **Gate:** pixel/screenshot baselines at 4:3/16:9/16:10/21:9 — 3D widens hor+
@@ -446,7 +446,7 @@ Phase 0 (schema)  ──┬─> 1 (display)  ──┐
 |---|---|---|
 | Frame-coupled sim → any cap change alters game speed | 1a | Verify tick/render coupling first; ship only 30/60/display; defer high-refresh to the sim-decouple track. |
 | High FOV misframes the in-scene weapon | 2c | Separate viewmodel FOV; test every weapon before default-on. |
-| FOV setting gets overwritten by gameplay viewport update | 2c | Apply desired FOV at the same point that `bondviewMovePlayerUpdateViewport` updates player FOV/aspect, not only through a one-shot `viSetFovY`. |
+| FOV setting gets overwritten by gameplay viewport/zoom update | 2c | Apply desired FOV at the same point that `bondviewMovePlayerUpdateViewport` updates player FOV/aspect and at the normal gameplay watch-zoom target, not only through a one-shot `viSetFovY`. |
 | Active renderer evidence confused with excluded legacy renderer | 2a/2b | Treat `src/platform/gfx_pc.c` as reference only; CMake excludes it in favor of `src/platform/fast3d/gfx_pc.c`. |
 | DrawClass misses an art draw that doesn't set HUD | 2b | Per-aspect pixel baselines; `LEVELID_TITLE`/`current_menu` as secondary signal; default-to-pillarbox is the safe failure. |
 | Action-layer drifts from current feel | 3a | Byte-for-byte default-map golden + replay-invariant test before any rebinding lands. |
