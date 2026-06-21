@@ -21,6 +21,7 @@ EXPECTED_DEFAULTS = {
     "Video.VSync": "adaptive",
     "Video.FrameCap": "60",
     "Video.Gamma": "1",
+    "Video.RetroFilter": "auto",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -40,6 +41,7 @@ WindowMode=exclusive
 VSync=off
 FrameCap=display
 Gamma=1.25
+RetroFilter=on
 
 [Input]
 MouseSensitivity=0.25
@@ -160,6 +162,7 @@ def main() -> int:
                 "Video.VSync": "off",
                 "Video.FrameCap": "display",
                 "Video.Gamma": "1.25",
+                "Video.RetroFilter": "on",
                 "Input.MouseSensitivity": "0.25",
                 "Input.MouseSensitivityAim": "0.125",
                 "Input.InvertY": "1",

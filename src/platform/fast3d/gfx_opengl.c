@@ -33,6 +33,11 @@
 /* Verbose diagnostic flag from gfx_pc.c */
 extern int g_diag_verbose;
 extern float g_pcVideoGamma;
+extern int g_pcRetroFilterMode;
+
+#define PC_RETRO_FILTER_AUTO 0
+#define PC_RETRO_FILTER_OFF  1
+#define PC_RETRO_FILTER_ON   2
 
 /* GL_DEPTH_CLAMP support — defined in gfx_pc.c, set once here in
  * gfx_opengl_init() before any rendering, read by CPU clipper and
@@ -1035,7 +1040,8 @@ static bool gfx_opengl_auto_menu_vi_filter(int *filter_w, int *filter_h) {
         g_auto_menu_vi_filter_checked = 1;
     }
 
-    if (g_auto_menu_vi_filter_disabled ||
+    if (g_pcRetroFilterMode == PC_RETRO_FILTER_OFF ||
+        g_auto_menu_vi_filter_disabled ||
         !gfx_opengl_current_menu_uses_auto_vi_filter() ||
         viGetX() != 440 ||
         viGetY() != 330) {
@@ -1075,6 +1081,8 @@ static bool gfx_opengl_auto_gameplay_vi_filter(int framebuffer_w,
                                                int *filter_h) {
     const int target_h = 240;
     int target_w;
+    bool setting_enabled = g_pcRetroFilterMode == PC_RETRO_FILTER_ON;
+    bool setting_disabled = g_pcRetroFilterMode == PC_RETRO_FILTER_OFF;
 
     if (!g_auto_gameplay_vi_filter_checked) {
         /* The N64 VI filter bilinearly downsamples to 240p then upsamples, which
@@ -1085,16 +1093,19 @@ static bool gfx_opengl_auto_gameplay_vi_filter(int framebuffer_w,
             gfx_opengl_env_flag_enabled("GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER") ? 1 : 0;
         g_auto_gameplay_vi_filter_disabled =
             gfx_opengl_env_flag_enabled("GE007_DISABLE_AUTO_GAMEPLAY_VI_FILTER") ? 1 : 0;
-        if (g_auto_gameplay_vi_filter_enabled && !g_auto_gameplay_vi_filter_disabled) {
+        if ((setting_enabled || g_auto_gameplay_vi_filter_enabled) &&
+            !setting_disabled &&
+            !g_auto_gameplay_vi_filter_disabled) {
             fprintf(stderr,
                     "[fast3d] Auto gameplay/display-cast output VI filter enabled "
-                    "(GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER)\n");
+                    "(Video.RetroFilter or GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER)\n");
             fflush(stderr);
         }
         g_auto_gameplay_vi_filter_checked = 1;
     }
 
-    if (!g_auto_gameplay_vi_filter_enabled ||
+    if (setting_disabled ||
+        (!setting_enabled && !g_auto_gameplay_vi_filter_enabled) ||
         g_auto_gameplay_vi_filter_disabled ||
         framebuffer_w <= 0 ||
         framebuffer_h < target_h) {

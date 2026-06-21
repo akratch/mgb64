@@ -232,7 +232,7 @@ between temp write and rename.
 | `Video.RenderScale = 0.5…2.0` | S | ⬜ | SSAA above 1.0; perf headroom below. Resolve through the existing output-filter blit (`gfx_opengl.c:1437`). |
 | `Video.MSAA = 0\|2\|4\|8` | S | ⬜ | Multisampled scene target; resolve on present. High impact on N64's hard aliased edges. |
 | `Video.Gamma` | S | ✅ | Added a schema-backed gamma uniform to the output-filter shader; gamma 1.0 keeps the old no-op path, non-default gamma runs the full-resolution post pass. |
-| `Video.RetroFilter` | S | ⬜ | Expose the existing VI filter (`gfx_opengl.c:1040`) as a user toggle for an authentic soft look. |
+| `Video.RetroFilter` | S | ✅ | Exposes the existing VI filter as `auto|off|on`; `auto` preserves menu softening and opt-in gameplay behavior, `on` enables gameplay softening too. |
 
 **Gate:** `audit_screenshot_health.py` at 3840×2160 and at `RenderScale 2.0`
 asserts correct FBO dimensions + non-blank/non-monochrome; `compare_screenshots.py`

@@ -196,6 +196,19 @@ static const ConfigEnumOption k_frameCapOptions[] = {
     { "display", PLATFORM_FRAME_CAP_DISPLAY },
 };
 
+typedef enum PlatformRetroFilterMode {
+    PLATFORM_RETRO_FILTER_AUTO = 0,
+    PLATFORM_RETRO_FILTER_OFF = 1,
+    PLATFORM_RETRO_FILTER_ON = 2
+} PlatformRetroFilterMode;
+
+s32 g_pcRetroFilterMode = PLATFORM_RETRO_FILTER_AUTO;
+static const ConfigEnumOption k_retroFilterOptions[] = {
+    { "auto", PLATFORM_RETRO_FILTER_AUTO },
+    { "off", PLATFORM_RETRO_FILTER_OFF },
+    { "on", PLATFORM_RETRO_FILTER_ON },
+};
+
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
 static s32 g_cfgWindowH = 810;
@@ -1226,6 +1239,13 @@ void platformRegisterConfig(void)
                           "--config-override Video.Gamma=VALUE",
                           "Gamma",
                           "Output gamma correction. 1.0 leaves colors unchanged.");
+    settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
+                         k_retroFilterOptions,
+                         (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_RETRO_FILTER",
+                         "--config-override Video.RetroFilter=VALUE",
+                         "Retro filter",
+                         "Output VI soft-filter mode: auto, off, or on.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
