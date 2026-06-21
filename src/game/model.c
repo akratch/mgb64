@@ -8796,6 +8796,30 @@ void modelApplyRenderModeType1(ModelRenderData *renderdata)
     gDPSetCombineMode(renderdata->gdl++, G_CC_MODULATEIA, G_CC_MODULATEIA);
 }
 
+/*
+ * GoldenEye uses PropType 9 as a full prop material path for glass and
+ * similar object overlays, even though the enum name is PROP_TYPE_MAX.
+ */
+static void modelApplyFullPropMaterial(ModelRenderData *renderdata)
+{
+    u8 r = _SHIFTR(renderdata->fogcolour.word, 24, 8);
+    u8 g = _SHIFTR(renderdata->fogcolour.word, 16, 8);
+    u8 b = _SHIFTR(renderdata->fogcolour.word, 8, 8);
+    u8 a = _SHIFTR(renderdata->fogcolour.word, 0, 8);
+
+    gDPPipeSync(renderdata->gdl++);
+    gDPSetCycleType(renderdata->gdl++, G_CYC_2CYCLE);
+    gDPSetFogColor(renderdata->gdl++, r, g, b, a);
+    gDPSetEnvColor(renderdata->gdl++, 0xFF, 0xFF, 0xFF, 0xFF);
+    gDPSetPrimColor(renderdata->gdl++, 0, 0, 0, 0, 0,
+            (renderdata->envcolour.word >> 8) & 0xFF);
+    gDPSetCombineLERP(renderdata->gdl++,
+            TEXEL1, TEXEL0, LOD_FRACTION, TEXEL0,
+            TEXEL1, TEXEL0, LOD_FRACTION, TEXEL0,
+            COMBINED, 0, SHADE, 0,
+            COMBINED, 0, SHADE, PRIMITIVE);
+}
+
 /**
  * @brief Model Type 3: GunLighting - Reduced Secondary Commands (guns)
     This Type Uses Vertex Alpha for Secondary Surfaces and uses the FOG Alpha value for applying Fog/"Lighting".
@@ -8957,6 +8981,33 @@ void modelApplyRenderModeType3(ModelRenderData *renderdata, bool isPrimary)
                 {
                     gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_TEX_EDGE2);
                 }
+            }
+        }
+    }
+    else if (renderdata->PropType == PROP_TYPE_MAX)
+    {
+        if (isPrimary)
+        {
+            modelApplyFullPropMaterial(renderdata);
+
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_OPA_SURF2);
+            }
+        }
+        else
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_XLU_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_XLU_SURF2);
             }
         }
     }
@@ -9244,6 +9295,33 @@ void modelApplyRenderModeType4(ModelRenderData *renderdata, bool isPrimary)
                 {
                     gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_TEX_EDGE2);
                 }
+            }
+        }
+    }
+    else if (renderdata->PropType == PROP_TYPE_MAX)
+    {
+        modelApplyFullPropMaterial(renderdata);
+
+        if (isPrimary)
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_OPA_SURF2);
+            }
+        }
+        else
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_XLU_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_XLU_SURF2);
             }
         }
     }

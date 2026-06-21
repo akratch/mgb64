@@ -9125,6 +9125,24 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
             }
         }
 
+        {
+            const char *effect_label = gfx_effect_label_for_current_command();
+
+            if (effect_label != NULL &&
+                strstr(effect_label, "glass") != NULL &&
+                w < -GFX_NEAR_CLIP_EPSILON) {
+                /* Glass prop model matrices can produce an all-negative
+                 * homogeneous clip vector for visible panes. The projective
+                 * point is unchanged by flipping the sign, but the clipper and
+                 * backend require positive w to avoid treating the pane as
+                 * behind the camera. */
+                x = -x;
+                y = -y;
+                z = -z;
+                w = -w;
+            }
+        }
+
         x = gfx_adjust_x_for_aspect_ratio(x);
 
         short U = v->tc[0] * rsp.texture_scaling_factor.s >> 16;
@@ -9523,8 +9541,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
      * hand pathological mixed-W triangles to the backend. */
     static int g_no_cull = -1;
     if (g_no_cull < 0) g_no_cull = (getenv("GE007_NO_CULL") != NULL);
+    uint8_t common_clip_rej = v1->clip_rej & v2->clip_rej & v3->clip_rej;
+    if (g_depth_clamp_enabled) {
+        common_clip_rej &= (uint8_t)~32;
+    }
     if (!g_no_cull && v1->w > 0 && v2->w > 0 && v3->w > 0 &&
-        (v1->clip_rej & v2->clip_rej & v3->clip_rej)) {
+        common_clip_rej) {
         if (focus_match && ndc_metrics_ok) {
             gfx_diag_log_focus_event("GFX-FOCUS-REJECT",
                                      g_diag_current_cmd_addr, dl_room, dl_which,

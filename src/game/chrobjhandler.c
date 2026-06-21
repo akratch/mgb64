@@ -78,6 +78,8 @@ static int g_DoorTraceFilterObjCount = 0;
 static int g_TintedGlassTraceEnabled = -1;
 static int g_TintedGlassTraceBudget = -1;
 static int g_TintedGlassMinRenderOpacity = -1;
+static int g_GlassTraceEnabled = -1;
+static int g_GlassTraceBudget = -1;
 static int g_GlassShotDepthToleranceInitialized = 0;
 static f32 g_GlassShotDepthTolerance = 2.0f;
 static int g_InteractTraceEnabled = -1;
@@ -487,6 +489,47 @@ static void tintedGlassTracePrintf(const char *fmt, ...)
 
     va_start(ap, fmt);
     fprintf(stderr, "[TINTED_GLASS_TRACE] frame=%d ", g_frame_count_diag);
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    fflush(stderr);
+}
+
+static int glassTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_GlassTraceEnabled >= 0) {
+        return g_GlassTraceEnabled;
+    }
+
+    value = getenv("GE007_TRACE_GLASS");
+    g_GlassTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_TRACE_GLASS_BUDGET");
+    g_GlassTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 240;
+
+    return g_GlassTraceEnabled;
+}
+
+static void glassTracePrintf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!glassTraceEnabled()) {
+        return;
+    }
+
+    if (g_GlassTraceBudget == 0) {
+        return;
+    }
+
+    if (g_GlassTraceBudget > 0) {
+        g_GlassTraceBudget--;
+    }
+
+    va_start(ap, fmt);
+    fprintf(stderr, "[GLASS_TRACE] frame=%d ", g_frame_count_diag);
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -32130,6 +32173,8 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
     s32 shadeMultiplier;
 #ifdef NATIVE_PORT
     Gfx *traceStart = NULL;
+    const char *traceLabel = NULL;
+    bool traceGlassDl = false;
 #endif
 
     obj = prop->obj;
@@ -32141,6 +32186,12 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 
     if (spAC == 0)
     {
+#ifdef NATIVE_PORT
+        if (obj->type == PROPDEF_GLASS) {
+            glassTracePrintf("skip obj=%d pad=%d pass=%d reason=fog_dist_color_zero",
+                    obj->obj, obj->pad, arg2);
+        }
+#endif
         return gdl;
     }
 
@@ -32157,6 +32208,12 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 
         if (objAlpha <= 0)
         {
+#ifdef NATIVE_PORT
+            if (obj->type == PROPDEF_GLASS) {
+                glassTracePrintf("skip obj=%d pad=%d pass=%d reason=obj_alpha_zero alpha=%d",
+                        obj->obj, obj->pad, arg2, objAlpha);
+            }
+#endif
             return gdl;
         }
     }
@@ -32165,6 +32222,17 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
     {
         if (arg2 == 0)
         {
+#ifdef NATIVE_PORT
+            if (obj->type == PROPDEF_GLASS) {
+                glassTracePrintf(
+                        "skip obj=%d pad=%d pass=%d reason=alpha_only alpha=%d flags2=0x%08x",
+                        obj->obj,
+                        obj->pad,
+                        arg2,
+                        objAlpha,
+                        (unsigned int)obj->flags2);
+            }
+#endif
             return gdl;
         }
 
@@ -32282,7 +32350,43 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
     mrData.fogcolour.word = (sp48.rgba[0] << 0x18) | (sp48.rgba[1] << 0x10) | (sp48.rgba[2] << 0x08) | (sp48.rgba[3] << 0x00);
 
 #ifdef NATIVE_PORT
-    if (obj->type == PROPDEF_TINTED_GLASS && tintedGlassTraceEnabled())
+    if (obj->type == PROPDEF_GLASS)
+    {
+        glassTracePrintf(
+                "render obj=%d pad=%d pass=%d alpha=%d propType=%d env=0x%08x "
+                "fog=0x%08x shade=(%d,%d,%d,%d) shots=%d flags=0x%08x "
+                "flags2=0x%08x propFlags=0x%02x dlStart=%p model=%p",
+                obj->obj,
+                obj->pad,
+                arg2,
+                objAlpha,
+                mrData.PropType,
+                (unsigned int)mrData.envcolour.word,
+                (unsigned int)mrData.fogcolour.word,
+                sp48.rgba[0],
+                sp48.rgba[1],
+                sp48.rgba[2],
+                sp48.rgba[3],
+                temp_v0_4,
+                (unsigned int)obj->flags,
+                (unsigned int)obj->flags2,
+                (unsigned int)prop->flags,
+                (void *)mrData.gdl,
+                (void *)obj->model);
+    }
+
+    if (obj->type == PROPDEF_GLASS)
+    {
+        traceGlassDl = true;
+        traceLabel = "glass";
+    }
+    else if (obj->type == PROPDEF_TINTED_GLASS)
+    {
+        traceGlassDl = true;
+        traceLabel = "tinted_glass";
+    }
+
+    if (traceGlassDl)
     {
         traceStart = mrData.gdl;
     }
@@ -32293,7 +32397,7 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 #ifdef NATIVE_PORT
     if (traceStart != NULL && traceStart != mrData.gdl)
     {
-        gfx_register_effect_dl_range("tinted_glass", traceStart, mrData.gdl);
+        gfx_register_effect_dl_range(traceLabel, traceStart, mrData.gdl);
     }
 #endif
 
