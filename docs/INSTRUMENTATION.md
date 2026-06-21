@@ -40,6 +40,7 @@ The public validation surface is organized into these lanes:
 | Static | Raw native switch-node dereferences (no ROM) | `check_native_switch_access.py` |
 | Boot | Spawn invariants, asserts, crashes, render-health counters on level load | `spawn_health_check.sh` |
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
+| Damage HUD | Deterministic Bond damage, active health/damage timers, visible health/armor rings, optional HUD-class triangle check | `damage_hud_smoke.sh` |
 | Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
 | Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
 | Multiplayer | Split-screen deathmatch boot; asserts the two framebuffer halves are measurably dissimilar | `mp_smoke.sh` |
@@ -119,6 +120,26 @@ render, and movement audit JSON files. Movement audit JSON contains
 moving-record counts, displacement, target-player record counts, input-event
 counts, and any failures. Keep generated JSONL traces, screenshots, summaries,
 and audit logs local.
+
+### Damage HUD smoke
+
+```sh
+./tools/damage_hud_smoke.sh                 # Dam, Surface 1, Facility
+./tools/damage_hud_smoke.sh --level 33      # single raw LEVELID
+./tools/damage_hud_smoke.sh --no-build      # reuse an existing build
+```
+
+This focused lane injects deterministic Bond damage, captures a state trace plus
+screenshot, and requires: clean process exit, zero `[GEASSERT]` failures, valid
+screenshot health, strict render-health audit, active `damage_show` and
+`health_show` trace state, and visible warm health-ring plus cool armor-ring
+pixels. HUD-class triangle counting is optional via `--min-hud-tris`; the
+default level set includes Dam and Surface 1 because their level visibility scale
+is `0.2`, plus Facility as the normal-scale control.
+
+The output directory defaults to `/tmp/mgb64_damage_hud_smoke_*` and contains
+per-level screenshots, logs, JSONL traces, render audit JSON, damage-HUD audit
+JSON, and a `summary.tsv`. Keep these ROM-derived artifacts local.
 
 ### Stability soak
 

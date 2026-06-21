@@ -19364,6 +19364,9 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     s32 justdied;
 
     if (playerHasFrozenIntroCamera(g_CurrentPlayer)) {
+#ifdef NATIVE_PORT
+        gfx_set_draw_class(DRAWCLASS_HUD);
+#endif
         bondviewIntroCameraTextTick();
         arg0 = sub_GAME_7F08A5FC(arg0);
         bondviewUpperTextWindowTimerTick();
@@ -19378,6 +19381,10 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     sub_GAME_7F06908C(&arg0);
     sub_GAME_7F062BE4(&arg0);
     arg0 = sub_GAME_7F087E74(arg0);
+
+#ifdef NATIVE_PORT
+    gfx_set_draw_class(DRAWCLASS_HUD);
+#endif
 
     if (g_CurrentPlayer->mpmenuon != 0) {
         viewleft = viGetViewLeft();
