@@ -8896,6 +8896,9 @@ s32 object_interaction(struct PropRecord *arg0)
     f32 sp444;
     f32 sp440;
     f32 sp43C;
+#ifdef NATIVE_PORT
+    struct coord3d sp43C_vec;
+#endif
     f32 sp438;
     f32 sp434;
     f32 sp430;
@@ -10253,7 +10256,15 @@ s32 object_interaction(struct PropRecord *arg0)
                     sp440 = 0.0f;
                     sp444 = cosf(temp_s1->roty);
 
+#ifdef NATIVE_PORT
+                    /* The original stack used adjacent floats here; native builds need a real coord3d. */
+                    sp43C_vec.f[0] = sp43C;
+                    sp43C_vec.f[1] = sp440;
+                    sp43C_vec.f[2] = sp444;
+                    if (chrlvGeometryRelated7F02FC34(&temp_s1->runtime_pos, &sp43C_vec, sp478, 10.0f) != 0)
+#else
                     if (chrlvGeometryRelated7F02FC34(&temp_s1->runtime_pos, (struct coord3d *) &sp43C, sp478, 10.0f) != 0)
+#endif
                     {
                         sp47C = temp_s1->roty;
                     }
