@@ -115,6 +115,57 @@ void settingsRegisterFloat(const char *key, f32 *var, f32 def, f32 min, f32 max,
     configRegisterFloat(key, var, min, max);
 }
 
+void settingsRegisterEnum(const char *key, s32 *var, s32 def,
+                          const ConfigEnumOption *options, s32 option_count,
+                          SettingScope scope, const char *env, const char *cli,
+                          const char *label, const char *help)
+{
+    Setting *setting = settingsFindOrAdd(key);
+
+    if (setting != NULL) {
+        setting->type = SETTING_TYPE_ENUM;
+        setting->scope = scope;
+        setting->ptr = var;
+        setting->def.s32_value = def;
+        setting->min.s32_value = 0;
+        setting->max.s32_value = option_count > 0 ? option_count - 1 : 0;
+        setting->enum_options = options;
+        setting->enum_count = option_count;
+        setting->env = env;
+        setting->cli = cli;
+        setting->label = label;
+        setting->help = help;
+    }
+
+    configRegisterEnum(key, var, options, option_count);
+}
+
+void settingsRegisterString(const char *key, char *var, size_t capacity,
+                            const char *def,
+                            SettingScope scope, const char *env, const char *cli,
+                            const char *label, const char *help)
+{
+    Setting *setting = settingsFindOrAdd(key);
+
+    if (setting != NULL) {
+        setting->type = SETTING_TYPE_STRING;
+        setting->scope = scope;
+        setting->ptr = var;
+        setting->def_string = def;
+        setting->string_capacity = capacity;
+        setting->env = env;
+        setting->cli = cli;
+        setting->label = label;
+        setting->help = help;
+    }
+
+    if (var && capacity > 0 && def) {
+        snprintf(var, capacity, "%s", def);
+    }
+
+    configRegisterString(key, var, capacity);
+}
+
 s32 settingsCount(void)
 {
     return s_numSettings;
@@ -140,6 +191,8 @@ const char *settingsTypeName(SettingType type)
         case SETTING_TYPE_INT:   return "int";
         case SETTING_TYPE_UINT:  return "uint";
         case SETTING_TYPE_FLOAT: return "float";
+        case SETTING_TYPE_ENUM:  return "enum";
+        case SETTING_TYPE_STRING:return "string";
         default:                 return "unknown";
     }
 }
@@ -160,6 +213,55 @@ const char *settingsOverrideSourceName(SettingOverrideSource source)
         case SETTING_OVERRIDE_ENV:  return "env";
         case SETTING_OVERRIDE_CLI:  return "cli";
         default:                    return "unknown";
+    }
+}
+
+const char *settingsEnumTokenForValue(const Setting *setting, s32 value)
+{
+    if (setting != NULL) {
+        for (s32 i = 0; i < setting->enum_count; i++) {
+            if (setting->enum_options[i].value == value &&
+                setting->enum_options[i].token != NULL) {
+                return setting->enum_options[i].token;
+            }
+        }
+    }
+
+    return "?";
+}
+
+void settingsFormatEnumOptions(const Setting *setting, char *out, size_t out_size)
+{
+    size_t used = 0;
+
+    if (out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (setting == NULL || setting->enum_count <= 0) {
+        snprintf(out, out_size, "?");
+        return;
+    }
+
+    for (s32 i = 0; i < setting->enum_count; i++) {
+        const char *token = setting->enum_options[i].token;
+        int written;
+
+        if (token == NULL) {
+            token = "?";
+        }
+
+        written = snprintf(out + used, out_size - used, "%s%s",
+                           i == 0 ? "" : "|", token);
+        if (written < 0) {
+            break;
+        }
+        if ((size_t)written >= out_size - used) {
+            used = out_size - 1;
+            break;
+        }
+        used += (size_t)written;
     }
 }
 
@@ -212,6 +314,15 @@ void settingsResetAllToDefaults(void)
             case SETTING_TYPE_FLOAT:
                 *(f32 *)setting->ptr = setting->def.f32_value;
                 break;
+            case SETTING_TYPE_ENUM:
+                *(s32 *)setting->ptr = setting->def.s32_value;
+                break;
+            case SETTING_TYPE_STRING:
+                if (setting->ptr && setting->string_capacity > 0) {
+                    snprintf((char *)setting->ptr, setting->string_capacity, "%s",
+                             setting->def_string ? setting->def_string : "");
+                }
+                break;
             default:
                 break;
         }
@@ -260,6 +371,13 @@ static void settingsFormatCurrentValue(const Setting *setting, char *out, size_t
         case SETTING_TYPE_FLOAT:
             snprintf(out, out_size, "%g", (double)*(f32 *)setting->ptr);
             break;
+        case SETTING_TYPE_ENUM:
+            snprintf(out, out_size, "%s",
+                     settingsEnumTokenForValue(setting, *(s32 *)setting->ptr));
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "%s", setting->ptr ? (char *)setting->ptr : "");
+            break;
         default:
             snprintf(out, out_size, "?");
             break;
@@ -277,6 +395,13 @@ static void settingsFormatDefaultValue(const Setting *setting, char *out, size_t
             break;
         case SETTING_TYPE_FLOAT:
             snprintf(out, out_size, "%g", (double)setting->def.f32_value);
+            break;
+        case SETTING_TYPE_ENUM:
+            snprintf(out, out_size, "%s",
+                     settingsEnumTokenForValue(setting, setting->def.s32_value));
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "%s", setting->def_string ? setting->def_string : "");
             break;
         default:
             snprintf(out, out_size, "?");
@@ -297,6 +422,12 @@ static void settingsFormatRange(const Setting *setting, char *out, size_t out_si
             snprintf(out, out_size, "%g..%g",
                      (double)setting->min.f32_value,
                      (double)setting->max.f32_value);
+            break;
+        case SETTING_TYPE_ENUM:
+            settingsFormatEnumOptions(setting, out, out_size);
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "len<%u", (unsigned int)setting->string_capacity);
             break;
         default:
             snprintf(out, out_size, "?");

@@ -29,7 +29,9 @@ typedef enum {
     CFG_NONE,
     CFG_S32,
     CFG_F32,
-    CFG_U32
+    CFG_U32,
+    CFG_ENUM,
+    CFG_STRING
 } ConfigType;
 
 typedef struct {
@@ -42,6 +44,9 @@ typedef struct {
         struct { s32 min_s32, max_s32; };
         struct { u32 min_u32, max_u32; };
     };
+    const ConfigEnumOption *enum_options;
+    s32 enum_count;
+    size_t string_capacity;
 } ConfigEntry;
 
 #define CONFIG_MAX_UNKNOWN_SETTINGS 128
@@ -146,6 +151,28 @@ void configRegisterUInt(const char *key, u32 *var, u32 min, u32 max)
     if (e) { e->type = CFG_U32; e->ptr = var; e->min_u32 = min; e->max_u32 = max; }
 }
 
+void configRegisterEnum(const char *key, s32 *var,
+                        const ConfigEnumOption *options, s32 option_count)
+{
+    ConfigEntry *e = findOrAddEntry(key);
+    if (e) {
+        e->type = CFG_ENUM;
+        e->ptr = var;
+        e->enum_options = options;
+        e->enum_count = option_count;
+    }
+}
+
+void configRegisterString(const char *key, char *var, size_t capacity)
+{
+    ConfigEntry *e = findOrAddEntry(key);
+    if (e) {
+        e->type = CFG_STRING;
+        e->ptr = var;
+        e->string_capacity = capacity;
+    }
+}
+
 /* ===== Set from string (INI parsing) ===== */
 
 static s32 setFromString(const char *key, const char *val)
@@ -168,6 +195,25 @@ static s32 setFromString(const char *key, const char *val)
             u32 v = (u32)strtoul(val, NULL, 0);
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             *(u32 *)e->ptr = v;
+        } break;
+        case CFG_ENUM: {
+            s32 found = 0;
+            for (s32 i = 0; i < e->enum_count; i++) {
+                if (e->enum_options[i].token &&
+                    strcasecmp(e->enum_options[i].token, val) == 0) {
+                    *(s32 *)e->ptr = e->enum_options[i].value;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                *(s32 *)e->ptr = (s32)strtol(val, NULL, 0);
+            }
+        } break;
+        case CFG_STRING: {
+            if (e->ptr && e->string_capacity > 0) {
+                snprintf((char *)e->ptr, e->string_capacity, "%s", val);
+            }
         } break;
         default: break;
     }
@@ -236,6 +282,12 @@ static void formatSettingDefault(const Setting *setting, char *out, size_t out_s
         case SETTING_TYPE_FLOAT:
             snprintf(out, out_size, "%g", (double)setting->def.f32_value);
             break;
+        case SETTING_TYPE_ENUM:
+            snprintf(out, out_size, "%s", settingsEnumTokenForValue(setting, setting->def.s32_value));
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "%s", setting->def_string ? setting->def_string : "");
+            break;
         default:
             snprintf(out, out_size, "?");
             break;
@@ -254,6 +306,12 @@ static void formatSettingRange(const Setting *setting, char *out, size_t out_siz
             snprintf(out, out_size, "%g..%g",
                      (double)setting->min.f32_value,
                      (double)setting->max.f32_value);
+            break;
+        case SETTING_TYPE_ENUM:
+            settingsFormatEnumOptions(setting, out, out_size);
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "len<%u", (unsigned int)setting->string_capacity);
             break;
         default:
             snprintf(out, out_size, "?");
@@ -305,6 +363,24 @@ static void saveEntry(ConfigEntry *e, FILE *f) {
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             fprintf(f, "%s=%u\n", keyName, v);
         } break;
+        case CFG_ENUM: {
+            s32 v = *(s32 *)e->ptr;
+            const char *token = NULL;
+            for (s32 i = 0; i < e->enum_count; i++) {
+                if (e->enum_options[i].value == v) {
+                    token = e->enum_options[i].token;
+                    break;
+                }
+            }
+            if (token) {
+                fprintf(f, "%s=%s\n", keyName, token);
+            } else {
+                fprintf(f, "%s=%d\n", keyName, v);
+            }
+        } break;
+        case CFG_STRING:
+            fprintf(f, "%s=%s\n", keyName, e->ptr ? (char *)e->ptr : "");
+            break;
         default: break;
     }
 }
@@ -444,6 +520,8 @@ void *configFindEntry(const char *key, int *type_out)
             case CFG_S32: *type_out = 0; break;
             case CFG_F32: *type_out = 1; break;
             case CFG_U32: *type_out = 2; break;
+            case CFG_ENUM: *type_out = 3; break;
+            case CFG_STRING: *type_out = 4; break;
             default:      *type_out = -1; break;
         }
     }

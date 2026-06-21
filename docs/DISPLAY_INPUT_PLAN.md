@@ -190,8 +190,8 @@ The foundation (P1). Everything else is rows + apply callbacks.
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| 0a. `src/platform/settings.c` schema + `Setting` table | M | 🟡 | Baseline schema exists for current scalar settings; enum/string/bind rows and full env/CLI front-end replacement remain. |
-| 0b. `configRegisterEnum`/`configRegisterString` | S | ⬜ | Enums serialize as stable tokens (`borderless`), not ints. |
+| 0a. `src/platform/settings.c` schema + `Setting` table | M | 🟡 | Baseline schema exists for scalar, enum, and string settings; BIND rows and richer apply metadata remain. |
+| 0b. `configRegisterEnum`/`configRegisterString` | S | ✅ | Enums serialize as stable tokens (`borderless`), and strings round-trip with capacity-bounded storage. |
 | 0c. Unknown-key passthrough | S | 🟡 | Unregistered key/value entries survive load→save; exact comment/order raw-line preservation remains future work. |
 | 0d. Atomic save | S | ✅ | Write `ge007.ini.tmp` then `rename`; never truncate the live file (`config_pc.c:205`). |
 | 0e. Self-documenting save | S | ✅ | Emits schema comments with label, help, type, scope, default, and range above each registered key. |
@@ -204,8 +204,10 @@ The foundation (P1). Everything else is rows + apply callbacks.
 `tools/config_roundtrip_check.py` verifies `--config-set`, `--reset-config`,
 registered-value reload, transient env/CLI override precedence, self-documenting
 save comments, atomic-save temp cleanup, and unknown-key preservation.
-Next, extend the gate for enum/string tokens and a simulated crash between temp
-write and rename.
+`tools/config_schema_types_check.py` verifies enum/string registration, enum
+token load/save, string load/save, default reset, schema comments, and unknown
+key preservation. Next, extend the gate for BIND rows and a simulated crash
+between temp write and rename.
 
 ---
 

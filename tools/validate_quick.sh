@@ -6,7 +6,8 @@
 #   1. Static native switch-access guard        (always; no ROM, no build)
 #   2. Settings schema introspection            (only if build/ge007 exists; no ROM)
 #   3. Config round-trip/reset guard            (only if build/ge007 exists; no ROM)
-#   4. Short boot/spawn smoke on a few levels   (only if build/ge007 + ROM exist)
+#   4. Enum/string schema type harness          (always if python3 + cc exist)
+#   5. Short boot/spawn smoke on a few levels   (only if build/ge007 + ROM exist)
 #
 # This intentionally does NOT run the emulator parity, RAMROM, soundplayer, or
 # baseline-comparison lanes -- those are dev-only (see docs/INSTRUMENTATION.md).
@@ -14,7 +15,7 @@
 # Usage:
 #   ./tools/validate_quick.sh
 #   ./tools/validate_quick.sh --rom path/to/baserom.u.z64
-#   ./tools/validate_quick.sh --no-spawn        # static check only
+#   ./tools/validate_quick.sh --no-spawn        # skip the ROM boot/spawn lane
 #
 set -u
 
@@ -69,7 +70,7 @@ echo "=================================================="
 # Lane 1: static native switch-access guard (no prerequisites)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [1/4] static: native switch-access guard ---"
+echo "--- [1/5] static: native switch-access guard ---"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not found (required for the static guard)"
     SKIPS=$((SKIPS + 1))
@@ -89,7 +90,7 @@ fi
 # Lane 2: settings schema introspection (needs build/ge007, no ROM)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [2/4] config: settings schema introspection ---"
+echo "--- [2/5] config: settings schema introspection ---"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not found (required for settings schema check)"
     SKIPS=$((SKIPS + 1))
@@ -113,7 +114,7 @@ fi
 # Lane 3: config round-trip/reset guard (needs build/ge007, no ROM)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [3/4] config: round-trip/reset guard ---"
+echo "--- [3/5] config: round-trip/reset guard ---"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not found (required for config round-trip check)"
     SKIPS=$((SKIPS + 1))
@@ -134,10 +135,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Lane 4: short boot/spawn smoke (needs build/ge007 + ROM)
+# Lane 4: enum/string schema type harness (needs python3 + C compiler, no ROM)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [4/4] boot: spawn health smoke ---"
+echo "--- [4/5] config: enum/string schema types ---"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: python3 not found (required for enum/string schema check)"
+    SKIPS=$((SKIPS + 1))
+elif [[ ! -f "tools/config_schema_types_check.py" ]]; then
+    echo "SKIP: tools/config_schema_types_check.py not present"
+    SKIPS=$((SKIPS + 1))
+elif ! command -v "${CC:-cc}" >/dev/null 2>&1; then
+    echo "SKIP: C compiler not found: ${CC:-cc}"
+    SKIPS=$((SKIPS + 1))
+else
+    if python3 tools/config_schema_types_check.py; then
+        echo "PASS: enum/string schema types"
+    else
+        echo "FAIL: enum/string schema check reported violations"
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Lane 5: short boot/spawn smoke (needs build/ge007 + ROM)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- [5/5] boot: spawn health smoke ---"
 if [[ "${RUN_SPAWN}" -eq 0 ]]; then
     echo "SKIP: --no-spawn requested"
     SKIPS=$((SKIPS + 1))
