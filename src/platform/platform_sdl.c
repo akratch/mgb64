@@ -156,6 +156,7 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
 f32 g_pcRenderScale = 1.0f;
+s32 g_pcMsaaSamples = 0;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -195,6 +196,13 @@ static const ConfigEnumOption k_frameCapOptions[] = {
     { "30", PLATFORM_FRAME_CAP_30 },
     { "60", PLATFORM_FRAME_CAP_60 },
     { "display", PLATFORM_FRAME_CAP_DISPLAY },
+};
+
+static const ConfigEnumOption k_msaaOptions[] = {
+    { "0", 0 },
+    { "2", 2 },
+    { "4", 4 },
+    { "8", 8 },
 };
 
 typedef enum PlatformRetroFilterMode {
@@ -1245,6 +1253,13 @@ void platformRegisterConfig(void)
                           "--config-override Video.RenderScale=VALUE",
                           "Render scale",
                           "Scene framebuffer scale. 1.0 matches the window.");
+    settingsRegisterEnum("Video.MSAA", &g_pcMsaaSamples, 0,
+                         k_msaaOptions,
+                         (s32)(sizeof(k_msaaOptions) / sizeof(k_msaaOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_MSAA",
+                         "--config-override Video.MSAA=VALUE",
+                         "MSAA",
+                         "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),

@@ -167,6 +167,7 @@ is `Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example
 `on`, or `adaptive`; frame pacing is `Video.FrameCap` with `30`, `60`, or
 `display`. Output gamma is `Video.Gamma`, where `1.0` leaves colors unchanged.
 `Video.RenderScale` adjusts the internal scene framebuffer from `0.5` to `2.0`.
+`Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene anti-aliasing.
 `Video.RetroFilter` is `auto`, `off`, or `on` for the VI-style soft output
 filter. `Video.Display` selects the zero-based SDL display index and falls back
 to display 0 if the saved index is unavailable. `Video.WindowX` and

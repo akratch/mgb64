@@ -230,7 +230,7 @@ between temp write and rename.
 |---|---|---|---|
 | Scene render target | M | ✅ | Binds an offscreen color+depth FBO at frame start when render scale differs from 1.0, resolves to the window before output post-processing, and invalidates on resize. |
 | `Video.RenderScale = 0.5…2.0` | S | ✅ | Schema-backed render scale; Fast3D viewport/scissor math uses the scaled scene dimensions, then blits back to the drawable. |
-| `Video.MSAA = 0\|2\|4\|8` | S | ⬜ | Multisampled scene target; resolve on present. High impact on N64's hard aliased edges. |
+| `Video.MSAA = 0\|2\|4\|8` | S | ✅ | Schema-backed multisampled scene target. `MSAA=0` keeps the single-sample path; 2/4/8 render to MSAA renderbuffers, resolve to the scene target, then present through the existing output chain. |
 | `Video.Gamma` | S | ✅ | Added a schema-backed gamma uniform to the output-filter shader; gamma 1.0 keeps the old no-op path, non-default gamma runs the full-resolution post pass. |
 | `Video.RetroFilter` | S | ✅ | Exposes the existing VI filter as `auto|off|on`; `auto` preserves menu softening and opt-in gameplay behavior, `on` enables gameplay softening too. |
 

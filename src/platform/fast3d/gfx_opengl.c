@@ -35,6 +35,7 @@
 extern int g_diag_verbose;
 extern float g_pcVideoGamma;
 extern float g_pcRenderScale;
+extern int g_pcMsaaSamples;
 extern int g_pcRetroFilterMode;
 
 #define PC_RETRO_FILTER_AUTO 0
@@ -969,16 +970,67 @@ static float g_diag_output_filter_color_bias;
 static GLuint g_scene_fbo;
 static GLuint g_scene_color_tex;
 static GLuint g_scene_depth_rb;
+static GLuint g_scene_msaa_fbo;
+static GLuint g_scene_msaa_color_rb;
+static GLuint g_scene_msaa_depth_rb;
 static int g_scene_w;
 static int g_scene_h;
+static int g_scene_msaa_w;
+static int g_scene_msaa_h;
+static int g_scene_msaa_samples;
 static bool g_scene_target_bound;
+static bool g_scene_target_multisampled;
+
+static int gfx_opengl_effective_msaa_samples(void) {
+    static int max_samples = -1;
+    static int last_requested = -1;
+    static int last_effective = -1;
+    static int warned_clamp;
+    int requested = g_pcMsaaSamples;
+    int effective = 0;
+
+    if (requested < 2) {
+        return 0;
+    }
+
+    if (max_samples < 0) {
+        GLint gl_max_samples = 0;
+
+        glGetIntegerv(GL_MAX_SAMPLES, &gl_max_samples);
+        max_samples = gl_max_samples > 0 ? (int)gl_max_samples : 0;
+    }
+
+    if (requested >= 8 && max_samples >= 8) {
+        effective = 8;
+    } else if (requested >= 4 && max_samples >= 4) {
+        effective = 4;
+    } else if (requested >= 2 && max_samples >= 2) {
+        effective = 2;
+    }
+
+    if ((requested != last_requested || effective != last_effective) &&
+        requested > 0 && effective != requested && !warned_clamp) {
+        fprintf(stderr,
+                "[fast3d] Video.MSAA=%d clamped to %d (GL_MAX_SAMPLES=%d)\n",
+                requested, effective, max_samples);
+        fflush(stderr);
+        warned_clamp = 1;
+    }
+    last_requested = requested;
+    last_effective = effective;
+
+    return effective;
+}
 
 static bool gfx_opengl_scene_target_enabled(void) {
-    return g_pcRenderScale < 0.999f || g_pcRenderScale > 1.001f;
+    return g_pcRenderScale < 0.999f ||
+           g_pcRenderScale > 1.001f ||
+           gfx_opengl_effective_msaa_samples() > 0;
 }
 
 static bool gfx_opengl_ensure_scene_target(int width, int height) {
     GLenum status;
+    int samples = gfx_opengl_effective_msaa_samples();
 
     if (width <= 0 || height <= 0) {
         return false;
@@ -1028,6 +1080,54 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return false;
+    }
+
+    if (samples > 0) {
+        if (g_scene_msaa_fbo == 0) {
+            glGenFramebuffers(1, &g_scene_msaa_fbo);
+        }
+        if (g_scene_msaa_color_rb == 0) {
+            glGenRenderbuffers(1, &g_scene_msaa_color_rb);
+        }
+        if (g_scene_msaa_depth_rb == 0) {
+            glGenRenderbuffers(1, &g_scene_msaa_depth_rb);
+        }
+
+        if (g_scene_msaa_w != width ||
+            g_scene_msaa_h != height ||
+            g_scene_msaa_samples != samples) {
+            glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_color_rb);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8,
+                                             width, height);
+            glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                             GL_DEPTH_COMPONENT24,
+                                             width, height);
+            g_scene_msaa_w = width;
+            g_scene_msaa_h = height;
+            g_scene_msaa_samples = samples;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_msaa_fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  GL_RENDERBUFFER, g_scene_msaa_color_rb);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            static int warned_msaa;
+
+            if (!warned_msaa) {
+                fprintf(stderr,
+                        "[fast3d] MSAA scene render target incomplete: 0x%04X "
+                        "(samples=%d)\n",
+                        (unsigned int)status, samples);
+                fflush(stderr);
+                warned_msaa = 1;
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            return false;
+        }
     }
 
     return true;
@@ -1780,6 +1880,9 @@ static void gfx_opengl_init(void) {
 static void gfx_opengl_on_resize(void) {
     g_scene_w = 0;
     g_scene_h = 0;
+    g_scene_msaa_w = 0;
+    g_scene_msaa_h = 0;
+    g_scene_msaa_samples = 0;
 }
 
 static float g_clear_r = 0, g_clear_g = 0, g_clear_b = 0;
@@ -1793,12 +1896,15 @@ static int wireframe_checked = 0, wireframe_on = 0;
 static void gfx_opengl_start_frame(void) {
     frame_count++;
     g_scene_target_bound = false;
+    g_scene_target_multisampled = false;
 
     if (gfx_opengl_scene_target_enabled() &&
         gfx_opengl_ensure_scene_target((int)gfx_current_dimensions.width,
                                        (int)gfx_current_dimensions.height)) {
         g_scene_target_bound = true;
-        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+        g_scene_target_multisampled = gfx_opengl_effective_msaa_samples() > 0;
+        glBindFramebuffer(GL_FRAMEBUFFER,
+                          g_scene_target_multisampled ? g_scene_msaa_fbo : g_scene_fbo);
         glViewport(0, 0, g_scene_w, g_scene_h);
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1837,6 +1943,13 @@ static void gfx_opengl_resolve_scene_target(void) {
     }
 
     glDisable(GL_SCISSOR_TEST);
+    if (g_scene_target_multisampled) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
+        glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                          0, 0, g_scene_w, g_scene_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
