@@ -51,7 +51,7 @@ grep_public_files() {
 # 1) Forbidden file types (ROMs, extracted asset binaries, build/vendor binaries)
 if [ "$HAVE_GIT" -eq 1 ]; then
   forbidden=$(git ls-files \
-    '*.z64' '*.n64' '*.v64' '*.bin' '*.rz' '*.eeprom' '*.cdata*' \
+    '*.z64' '*.n64' '*.v64' '*.rom' '*.bin' '*.rz' '*.eeprom' '*.cdata*' \
     '*.ctl' '*.tbl' '*.sbk' '*.seq' '*.aifc' '*.aiff' '*.seg' \
     'baserom*' '*.o' '*.a' '*.so' '*.dll' '*.dylib' '*.exe' \
     '*.bmp' '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp' '*.ico' '*.icns' '*.ppm' \
