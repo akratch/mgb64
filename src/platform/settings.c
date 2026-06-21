@@ -152,6 +152,29 @@ const char *settingsScopeName(SettingScope scope)
     }
 }
 
+void settingsResetAllToDefaults(void)
+{
+    s32 i;
+
+    for (i = 0; i < s_numSettings; i++) {
+        Setting *setting = &s_settings[i];
+
+        switch (setting->type) {
+            case SETTING_TYPE_INT:
+                *(s32 *)setting->ptr = setting->def.s32_value;
+                break;
+            case SETTING_TYPE_UINT:
+                *(u32 *)setting->ptr = setting->def.u32_value;
+                break;
+            case SETTING_TYPE_FLOAT:
+                *(f32 *)setting->ptr = setting->def.f32_value;
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 static const char *settingsKeyName(const char *key)
 {
     const char *dot = strrchr(key, '.');

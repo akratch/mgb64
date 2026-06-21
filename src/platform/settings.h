@@ -51,6 +51,7 @@ const Setting *settingsFind(const char *key);
 
 const char *settingsTypeName(SettingType type);
 const char *settingsScopeName(SettingScope scope);
+void settingsResetAllToDefaults(void);
 void settingsPrintList(FILE *f);
 void settingsPrintDump(FILE *f);
 

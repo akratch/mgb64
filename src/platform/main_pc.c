@@ -17,6 +17,7 @@
 #include <dirent.h>
 #include "rom_io.h"
 #include "savedir.h"
+#include "config_pc.h"
 #include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
@@ -43,6 +44,8 @@ int g_pcStartMultiplayer = 0;
 int g_pcStartMpPlayers = 2;
 int g_pcStartMpStage = MP_STAGE_TEMPLE;
 int g_pcStartMpScenario = SCENARIO_NORMAL;
+
+#define PC_MAX_CONFIG_SET_ARGS 32
 
 static inline void pc_diag_write_stderr(const char *msg, int len)
 {
@@ -117,6 +120,38 @@ static const PcStartStage *pcFindStageByName(const char *name) {
     if (strcasecmp(name, "bunker") == 0) return pcFindStageByLevelId(LEVELID_BUNKER1);
     if (strcasecmp(name, "egyptian") == 0) return pcFindStageByLevelId(LEVELID_EGYPT);
     return NULL;
+}
+
+static int pcApplyConfigSetArg(const char *arg) {
+    const char *eq;
+    size_t key_len;
+    char key[CONFIG_MAX_KEYNAME + 1];
+
+    if (arg == NULL) {
+        return 0;
+    }
+
+    eq = strchr(arg, '=');
+    if (eq == NULL || eq == arg) {
+        fprintf(stderr, "[CONFIG] Invalid --config-set '%s'. Expected Section.Key=value.\n", arg);
+        return 0;
+    }
+
+    key_len = (size_t)(eq - arg);
+    if (key_len > CONFIG_MAX_KEYNAME) {
+        fprintf(stderr, "[CONFIG] --config-set key is too long: %s\n", arg);
+        return 0;
+    }
+
+    memcpy(key, arg, key_len);
+    key[key_len] = '\0';
+
+    if (!configSetValue(key, eq + 1)) {
+        fprintf(stderr, "[CONFIG] Unknown --config-set key: %s\n", key);
+        return 0;
+    }
+
+    return 1;
 }
 
 static int pcParseIntArg(const char *arg, int *out_value) {
@@ -463,6 +498,9 @@ int main(int argc, char **argv)
 {
     const char *romPath = NULL;
     const char *saveDirOverride = NULL;
+    const char *configSetArgs[PC_MAX_CONFIG_SET_ARGS];
+    int configSetCount = 0;
+    int resetConfig = 0;
     int listSettings = 0;
     int dumpConfig = 0;
     extern int g_autoScreenshotExit;
@@ -487,6 +525,14 @@ int main(int argc, char **argv)
             listSettings = 1;
         } else if (strcmp(argv[i], "--dump-config") == 0) {
             dumpConfig = 1;
+        } else if (strcmp(argv[i], "--reset-config") == 0) {
+            resetConfig = 1;
+        } else if (strcmp(argv[i], "--config-set") == 0 && i + 1 < argc) {
+            if (configSetCount >= PC_MAX_CONFIG_SET_ARGS) {
+                fprintf(stderr, "[CONFIG] Too many --config-set values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
+                return 2;
+            }
+            configSetArgs[configSetCount++] = argv[++i];
         } else if (strcmp(argv[i], "--background") == 0) {
             setenv("GE007_BACKGROUND", "1", 1);
             setenv("GE007_NO_INPUT_GRAB", "1", 1);
@@ -606,7 +652,7 @@ int main(int argc, char **argv)
         setenv("GE007_NO_INPUT_GRAB", "1", 1);
     }
 
-    if (!romPath && !listSettings && !dumpConfig) {
+    if (!romPath && !listSettings && !dumpConfig && !resetConfig && configSetCount == 0) {
         romPath = findRomFile();
     }
 
@@ -618,7 +664,21 @@ int main(int argc, char **argv)
     portAudioRegisterConfig();
     configInit();
 
-    if (listSettings || dumpConfig) {
+    if (resetConfig) {
+        settingsResetAllToDefaults();
+    }
+    for (int i = 0; i < configSetCount; i++) {
+        if (!pcApplyConfigSetArg(configSetArgs[i])) {
+            return 2;
+        }
+    }
+    if (resetConfig || configSetCount > 0) {
+        if (!configSave()) {
+            return 1;
+        }
+    }
+
+    if (listSettings || dumpConfig || resetConfig || configSetCount > 0) {
         if (listSettings) {
             settingsPrintList(stdout);
         }

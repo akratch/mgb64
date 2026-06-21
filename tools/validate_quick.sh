@@ -5,7 +5,8 @@
 # Runs ONLY the shipped, self-contained checks:
 #   1. Static native switch-access guard        (always; no ROM, no build)
 #   2. Settings schema introspection            (only if build/ge007 exists; no ROM)
-#   3. Short boot/spawn smoke on a few levels   (only if build/ge007 + ROM exist)
+#   3. Config round-trip/reset guard            (only if build/ge007 exists; no ROM)
+#   4. Short boot/spawn smoke on a few levels   (only if build/ge007 + ROM exist)
 #
 # This intentionally does NOT run the emulator parity, RAMROM, soundplayer, or
 # baseline-comparison lanes -- those are dev-only (see docs/INSTRUMENTATION.md).
@@ -68,7 +69,7 @@ echo "=================================================="
 # Lane 1: static native switch-access guard (no prerequisites)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [1/3] static: native switch-access guard ---"
+echo "--- [1/4] static: native switch-access guard ---"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not found (required for the static guard)"
     SKIPS=$((SKIPS + 1))
@@ -88,7 +89,7 @@ fi
 # Lane 2: settings schema introspection (needs build/ge007, no ROM)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [2/3] config: settings schema introspection ---"
+echo "--- [2/4] config: settings schema introspection ---"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not found (required for settings schema check)"
     SKIPS=$((SKIPS + 1))
@@ -109,10 +110,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Lane 3: short boot/spawn smoke (needs build/ge007 + ROM)
+# Lane 3: config round-trip/reset guard (needs build/ge007, no ROM)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [3/3] boot: spawn health smoke ---"
+echo "--- [3/4] config: round-trip/reset guard ---"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: python3 not found (required for config round-trip check)"
+    SKIPS=$((SKIPS + 1))
+elif [[ ! -f "tools/config_roundtrip_check.py" ]]; then
+    echo "SKIP: tools/config_roundtrip_check.py not present"
+    SKIPS=$((SKIPS + 1))
+elif [[ ! -x "${BINARY}" ]]; then
+    echo "SKIP: native binary not found/executable at: ${BINARY}"
+    echo "      Build it first (see docs/BUILDING.md), or pass --binary PATH."
+    SKIPS=$((SKIPS + 1))
+else
+    if python3 tools/config_roundtrip_check.py --binary "${BINARY}"; then
+        echo "PASS: config round-trip/reset guard"
+    else
+        echo "FAIL: config round-trip/reset guard reported violations"
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Lane 4: short boot/spawn smoke (needs build/ge007 + ROM)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- [4/4] boot: spawn health smoke ---"
 if [[ "${RUN_SPAWN}" -eq 0 ]]; then
     echo "SKIP: --no-spawn requested"
     SKIPS=$((SKIPS + 1))

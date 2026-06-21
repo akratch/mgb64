@@ -34,6 +34,9 @@ void configInit(void);
 /* Save current values to ge007.ini. Returns 1 on success. */
 s32 configSave(void);
 
+/* Set a registered setting from a string value. Returns 1 if the key exists. */
+s32 configSetValue(const char *key, const char *value);
+
 /* Find a registered setting by "Section.Key" name.
  * Returns the backing variable pointer, or NULL if not found.
  * type_out receives: 0=int, 1=float, 2=uint  (or -1 if not found) */

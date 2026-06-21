@@ -10,9 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include "config_pc.h"
 #include "savedir.h"
 #include <errno.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 /* ===== Types ===== */
 
@@ -35,10 +43,21 @@ typedef struct {
     };
 } ConfigEntry;
 
+#define CONFIG_MAX_UNKNOWN_SETTINGS 128
+#define CONFIG_MAX_VALUE_LENGTH 384
+
+typedef struct {
+    char key[CONFIG_MAX_KEYNAME + 1];   /* "Section.Key" */
+    s32 seclen;                         /* length of section prefix */
+    char value[CONFIG_MAX_VALUE_LENGTH + 1];
+} ConfigUnknownEntry;
+
 /* ===== State ===== */
 
 static ConfigEntry s_entries[CONFIG_MAX_SETTINGS];
 static s32 s_numEntries;
+static ConfigUnknownEntry s_unknownEntries[CONFIG_MAX_UNKNOWN_SETTINGS];
+static s32 s_numUnknownEntries;
 
 /* ===== Helpers ===== */
 
@@ -72,7 +91,7 @@ static ConfigEntry *findEntry(const char *key) {
 static ConfigEntry *addEntry(const char *key) {
     if (s_numEntries >= CONFIG_MAX_SETTINGS) return NULL;
     ConfigEntry *e = &s_entries[s_numEntries++];
-    snprintf(e->key, CONFIG_MAX_KEYNAME, "%s", key);
+    snprintf(e->key, sizeof(e->key), "%s", key);
     const char *dot = strrchr(e->key, '.');
     e->seclen = dot ? (s32)(dot - e->key) : 0;
     return e;
@@ -81,6 +100,29 @@ static ConfigEntry *addEntry(const char *key) {
 static ConfigEntry *findOrAddEntry(const char *key) {
     ConfigEntry *e = findEntry(key);
     return e ? e : addEntry(key);
+}
+
+static ConfigUnknownEntry *findUnknownEntry(const char *key) {
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        if (strcasecmp(s_unknownEntries[i].key, key) == 0)
+            return &s_unknownEntries[i];
+    }
+    return NULL;
+}
+
+static void rememberUnknownEntry(const char *key, const char *value) {
+    ConfigUnknownEntry *e = findUnknownEntry(key);
+
+    if (!e) {
+        if (s_numUnknownEntries >= CONFIG_MAX_UNKNOWN_SETTINGS) return;
+        e = &s_unknownEntries[s_numUnknownEntries++];
+        memset(e, 0, sizeof(*e));
+        snprintf(e->key, sizeof(e->key), "%s", key);
+        const char *dot = strrchr(e->key, '.');
+        e->seclen = dot ? (s32)(dot - e->key) : 0;
+    }
+
+    snprintf(e->value, sizeof(e->value), "%s", value);
 }
 
 /* ===== Registration ===== */
@@ -105,10 +147,10 @@ void configRegisterUInt(const char *key, u32 *var, u32 min, u32 max)
 
 /* ===== Set from string (INI parsing) ===== */
 
-static void setFromString(const char *key, const char *val)
+static s32 setFromString(const char *key, const char *val)
 {
     ConfigEntry *e = findEntry(key);
-    if (!e) return;
+    if (!e) return 0;
 
     switch (e->type) {
         case CFG_S32: {
@@ -128,6 +170,8 @@ static void setFromString(const char *key, const char *val)
         } break;
         default: break;
     }
+
+    return 1;
 }
 
 /* ===== Load ===== */
@@ -139,6 +183,7 @@ static s32 configLoad(const char *path)
 
     char line[512];
     char curSection[CONFIG_MAX_SECNAME + 1] = {0};
+    s_numUnknownEntries = 0;
 
     while (fgets(line, sizeof(line), f)) {
         char *p = trimWhitespace(line);
@@ -168,7 +213,9 @@ static s32 configLoad(const char *path)
         else
             snprintf(fullKey, CONFIG_MAX_KEYNAME, "%s", keyPart);
 
-        setFromString(fullKey, valPart);
+        if (!setFromString(fullKey, valPart)) {
+            rememberUnknownEntry(fullKey, valPart);
+        }
     }
 
     fclose(f);
@@ -199,12 +246,59 @@ static void saveEntry(ConfigEntry *e, FILE *f) {
     }
 }
 
+static const char *configKeyName(const char *key, s32 seclen) {
+    return key + seclen + (seclen > 0 ? 1 : 0);
+}
+
+static void configSectionName(const char *key, s32 seclen, char *out, size_t out_size) {
+    if (out_size == 0) return;
+
+    if (seclen > 0 && seclen <= CONFIG_MAX_SECNAME) {
+        memcpy(out, key, (size_t)seclen);
+        out[seclen] = '\0';
+    } else {
+        snprintf(out, out_size, "General");
+    }
+}
+
+static void saveUnknownEntry(ConfigUnknownEntry *e, FILE *f) {
+    fprintf(f, "%s=%s\n", configKeyName(e->key, e->seclen), e->value);
+}
+
+static void saveUnknownSection(const char *section, FILE *f, u8 *written) {
+    char sec[CONFIG_MAX_SECNAME + 1];
+
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        if (written[i]) continue;
+
+        configSectionName(s_unknownEntries[i].key, s_unknownEntries[i].seclen, sec, sizeof(sec));
+        if (strcmp(sec, section) == 0) {
+            saveUnknownEntry(&s_unknownEntries[i], f);
+            written[i] = 1;
+        }
+    }
+}
+
+static s32 replaceConfigFile(const char *tmp_path, const char *path) {
+#ifdef _WIN32
+    return MoveFileExA(tmp_path, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+#else
+    return rename(tmp_path, path);
+#endif
+}
+
 s32 configSave(void)
 {
-    const char *path = savedirPath(CONFIG_FILENAME);
-    FILE *f = fopen(path, "w");
+    char path[PATH_MAX];
+    char tmp_path[PATH_MAX];
+    u8 unknown_written[CONFIG_MAX_UNKNOWN_SETTINGS] = {0};
+    const char *saved_path = savedirPath(CONFIG_FILENAME);
+    snprintf(path, sizeof(path), "%s", saved_path);
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+    FILE *f = fopen(tmp_path, "w");
     if (!f) {
-        printf("[CONFIG] Failed to save %s: %s\n", path, strerror(errno));
+        printf("[CONFIG] Failed to save %s: %s\n", tmp_path, strerror(errno));
         return 0;
     }
 
@@ -215,23 +309,62 @@ s32 configSave(void)
     for (s32 i = 0; i < s_numEntries; i++) {
         ConfigEntry *e = &s_entries[i];
         char sec[CONFIG_MAX_SECNAME + 1];
-        if (e->seclen > 0 && e->seclen <= CONFIG_MAX_SECNAME) {
-            memcpy(sec, e->key, e->seclen);
-            sec[e->seclen] = '\0';
-        } else {
-            snprintf(sec, CONFIG_MAX_SECNAME, "%s", e->key);
-        }
+        configSectionName(e->key, e->seclen, sec, sizeof(sec));
 
         if (strcmp(curSec, sec) != 0) {
+            if (curSec[0] != '\0') {
+                saveUnknownSection(curSec, f, unknown_written);
+            }
             fprintf(f, "\n[%s]\n", sec);
-            snprintf(curSec, CONFIG_MAX_SECNAME, "%s", sec);
+            snprintf(curSec, sizeof(curSec), "%s", sec);
         }
         saveEntry(e, f);
     }
 
-    fclose(f);
+    if (curSec[0] != '\0') {
+        saveUnknownSection(curSec, f, unknown_written);
+    }
+
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        char sec[CONFIG_MAX_SECNAME + 1];
+        if (unknown_written[i]) continue;
+        configSectionName(s_unknownEntries[i].key, s_unknownEntries[i].seclen, sec, sizeof(sec));
+        fprintf(f, "\n[%s]\n", sec);
+        saveUnknownEntry(&s_unknownEntries[i], f);
+        unknown_written[i] = 1;
+    }
+
+    if (fclose(f) != 0) {
+        printf("[CONFIG] Failed to finish writing %s: %s\n", tmp_path, strerror(errno));
+        remove(tmp_path);
+        return 0;
+    }
+
+#ifdef _WIN32
+    if (replaceConfigFile(tmp_path, path) != 0) {
+        printf("[CONFIG] Failed to replace %s: Windows error %lu\n", path, (unsigned long)GetLastError());
+        remove(tmp_path);
+        return 0;
+    }
+#else
+    if (replaceConfigFile(tmp_path, path) != 0) {
+        printf("[CONFIG] Failed to replace %s: %s\n", path, strerror(errno));
+        remove(tmp_path);
+        return 0;
+    }
+#endif
+
     printf("[CONFIG] Saved %s\n", path);
     return 1;
+}
+
+s32 configSetValue(const char *key, const char *value)
+{
+    if (!key || !value) {
+        return 0;
+    }
+
+    return setFromString(key, value);
 }
 
 /* ===== Public Lookup ===== */
