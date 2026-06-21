@@ -190,6 +190,14 @@ or any ROM-derived assets.** Project conduct is covered in
 **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)**, and vulnerability / repository
 hygiene reports are covered in **[SECURITY.md](SECURITY.md)**.
 
+Maintainers should enable the tracked safety hooks once per checkout:
+
+```sh
+scripts/install_git_hooks.sh
+```
+
+The hooks run the ROM/data contamination guard before commits and pushes.
+
 ## Acknowledgements
 
 This project builds directly on the
