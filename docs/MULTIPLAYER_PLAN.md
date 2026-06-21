@@ -42,43 +42,46 @@ returns 1 and the MP menus bounce out (`front.c:3886`, `:5526`).
 Effort: S/M/L/XL. Every milestone has an evidence-backed acceptance gate that
 extends the existing validation lanes.
 
+Status legend: ✅ landed (evidence-backed), 🟡 in progress / wired but not fully
+validated, ⬜ not started.
+
 ### Phase 0 — Stability & viewport floor (prerequisite for 4-way)
 
-| Task | Effort | Detail |
-|---|---|---|
-| 0a. Soak/stability lane | M | `tools/soak_stability.sh`: long headless deterministic runs per stage piped to `audit_render_trace.py --max-crashes 0`. |
-| 0b. ASan/UBSan lane | M (lane) + L (triage) | `tools/asan_smoke.sh` over `build-asan` (`CMakeLists.txt:364`); **report-only first, off the MP critical path.** |
-| 0c. Render-cost telemetry | S (hard blocker for M2/M5 gates) | Emit `g_BgNumberOfRoomsDrawn` (`bg.c:1201`) + tri count into `port_trace` JSON so overdraw is measurable before MP loads it. |
-| 0d. Validate single-viewport scissor | S | Confirm `bgScissorCurrentPlayerViewDefault` (`front.c:5483`) composes with `gfx_ratio_x/y` at high-DPI. |
+| Task | Effort | Status | Detail |
+|---|---|---|---|
+| 0a. Soak/stability lane | M | ✅ | `tools/soak_stability.sh`: long headless deterministic runs per stage piped to `audit_render_trace.py --max-crashes 0`. |
+| 0b. ASan/UBSan lane | M (lane) + L (triage) | ✅ | `tools/asan_smoke.sh` over `build-asan` (`CMakeLists.txt:364`); **report-only first, off the MP critical path.** |
+| 0c. Render-cost telemetry | S (hard blocker for M2/M5 gates) | ✅ | Emits `g_BgNumberOfRoomsDrawn` as `rooms_drawn` alongside `tris` into `port_trace` JSON so overdraw is measurable before MP loads it. |
+| 0d. Validate single-viewport scissor | S | ⬜ | Confirm `bgScissorCurrentPlayerViewDefault` (`front.c:5483`) composes with `gfx_ratio_x/y` at high-DPI. |
 
 ### Phase 1 — Multi-controller input (the linchpin)
 
-| Task | Effort | Detail |
-|---|---|---|
-| 1a. Opened-pad table | M | Replace single `g_gameController` with an array `{instance_id, handle, slot}`; open all pads at init + `CONTROLLERDEVICEADDED`; handle removal. **Add `platformGetRightStick(k)` here** — per-player aim needs it. |
-| 1b. Fill `data[1..3]` | M | In `osContGetReadData` (`stubs.c:4738`) loop `k=1..3` from pad `k`. Keyboard+mouse stay on `data[0]`. |
-| 1c. Controller-count shim | S | Set `g_ConnectedControllers`/`g_ContStatus` (`joy.c:244`) from the opened-pad set so `joyGetControllerCount() >= 2` unblocks `front.c:3886`/`:5526`. |
+| Task | Effort | Status | Detail |
+|---|---|---|---|
+| 1a. Opened-pad table | M | ✅ | Replaced single `g_gameController` with `PlatformPad g_pads[PLATFORM_MAX_PADS]` `{handle, instance_id, slot}`; opens all pads at init + `CONTROLLERDEVICEADDED`; handles `CONTROLLERDEVICEREMOVED`. Added per-pad `platformGetPadCount/Buttons/LeftStick/RightStick/Triggers`. |
+| 1b. Fill `data[1..3]` | M | ✅ | `osContGetReadData` loops `k=1..MAXCONTROLLERS-1` filling each pad via `pcFillPadFromController`. Keyboard+mouse stay on `data[0]`. |
+| 1c. Controller-count shim | S | ✅ | `osContInit`/`osContGetQuery` set `g_ContStatus` from the opened-pad set so `joyGetControllerCount() >= 2` unblocks `front.c:3886`/`:5526`; hot-plug re-derived per frame. |
 
 ### Phase 2 — Deterministic MP launch + first 2-player match
 
-| Task | Effort | Detail |
-|---|---|---|
-| 2a. CLI + boot path | M | Add `--multiplayer/--players N/--mp-stage/--scenario` (`main_pc.c` ~378–460) + `pc_apply_mp_selection()` (mirror of `pc_apply_level_selection()` at `initmenus.c:468`). |
-| 2b. Menu-chain verification | S | Confirm the menu path renders two viewports + divider. |
+| Task | Effort | Status | Detail |
+|---|---|---|---|
+| 2a. CLI + boot path | M | ✅ | `--multiplayer`/`--players N`/`--mp-stage`/`--scenario` in `main_pc.c` + `pc_apply_mp_selection()` in `initmenus.c` (mirror of `pc_apply_level_selection()`). |
+| 2b. Menu-chain verification | S | 🟡 | Direct-boot path verified; menu-driven two-viewport render path not separately validated. |
 
 ### Phase 3 — Per-player look/aim routing
 
-| Task | Effort | Detail |
-|---|---|---|
-| 3a. Route aim by player | S/M (pad table from 1a) | Key mouse-look + right-stick aim off `get_cur_playernum()`: mouse+keyboard → P1, pad-`k` → player `k`. |
-| 3b. Frontend nav for mixed input | S | Per-player cursor routing in char/team/control-style menus. |
+| Task | Effort | Status | Detail |
+|---|---|---|---|
+| 3a. Route aim by player | S/M (pad table from 1a) | ✅ | Mouse-look gated to P1 (`local_player_number==0`); right-stick aim switched to `platformGetPadRightStick(local_player_number, ...)` in `lvl.c` so pad `k` aims player `k`. |
+| 3b. Frontend nav for mixed input | S | ⬜ | Per-player cursor routing in char/team/control-style menus. |
 
 ### Phase 4 — MP validation lane + end-of-round proof
 
-| Task | Effort | Detail |
-|---|---|---|
-| 4a. `tools/mp_smoke.sh` | M | Boot a 2-player deathmatch via CLI, drive scripted per-pad input, `--max-crashes 0`. |
-| 4b. End-of-round assertion | S | Match reaches limit → `mp_watch.c` results/scoreboard without crash. |
+| Task | Effort | Status | Detail |
+|---|---|---|---|
+| 4a. `tools/mp_smoke.sh` | M | ✅ | Green for 2-player: boots a Temple deathmatch via CLI, drives a scripted P1 window, `--max-crashes 0`, crops the framebuffer, and asserts the two halves are dissimilar (~97% delta — a duplicated-camera bug fails). 4-player also boots + renders distinct viewports in the smoke window; sustained-load/3-player-asymmetric rigor is Phase 5. |
+| 4b. End-of-round assertion | S | ⬜ | Match reaches limit → `mp_watch.c` results/scoreboard without crash. |
 
 ### Phase 5 — Split-screen performance + 3/4-player hardening (real hidden L)
 

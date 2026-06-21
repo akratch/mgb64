@@ -296,7 +296,9 @@ python3 tools/rom_oracle_route.py ares-input dam_forward_stop
 The movement comparator consumes JSONL records with:
 
 - `f`: provider frame index;
-- `p`: has-player flag;
+- `p`: current player number, 1-based (`0` = no current player, `1` in
+  single-player; `2`/`3`/`4` distinguish per-player viewpoints in split-screen).
+  Any `p >= 1` means a player is present, so existing presence checks still hold;
 - `pos`: player prop position;
 - `col`: player collision position, when available;
 - `move.speed`: `[speedforwards, speedsideways]`;

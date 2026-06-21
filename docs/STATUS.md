@@ -30,6 +30,20 @@ you know what to expect and where help is most valuable.
   zero assertions, screenshot-health-clean captures, and render-health-clean
   traces. It writes per-attempt audit JSON plus a top-level `summary.json` so
   local ROM-backed playability evidence can be reviewed without scraping logs.
+- **2-player split-screen multiplayer is wired (input + launch + aim):** the
+  native port opens every connected pad into its own player slot, fills
+  `data[1..3]` so `joyGetControllerCount() >= 2` unblocks the MP menus, direct-boots
+  a deterministic split-screen match via `--multiplayer/--players N/--mp-stage/
+  --scenario`, and routes aim per player (mouse-look → P1, pad `k` → player `k`).
+  `tools/mp_smoke.sh` is the 2-player measurement lane: it boots a deathmatch,
+  drives a scripted player-1 input window, and asserts the two framebuffer halves
+  are measurably dissimilar so a duplicated-camera bug fails. What is **proven**
+  today: the 2-player lane is **green** — boot, two distinct viewports (~97%
+  dissimilar halves), render-health clean, zero crashes; and 4-player boots and
+  renders distinct viewports in the same smoke window. What is **pending**:
+  sustained-load frame budget, the higher-risk 3-player asymmetric split, and a
+  full end-of-round scoreboard run are not yet validated. See
+  [../docs/MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md).
 - **ROM-vs-native comparison tooling exists for targeted parity work:**
   `docs/ROM_COMPARISON.md` documents route specs, native traces, optional
   instrumented ares stock traces, movement/intro comparators, and structured
@@ -115,7 +129,10 @@ you know what to expect and where help is most valuable.
   Movement-speed parity has targeted ROM-backed Dam coverage and all-level
   deterministic native playability smoke coverage, but broader movement edge
   cases, mission flow, menus, combat behavior, and organic input paths still
-  need reference-backed expansion.
+  need reference-backed expansion. `tools/soak_stability.sh` is the headless
+  deterministic measurement path for crash/render-health regressions over long
+  per-stage runs (no numeric stability budget is claimed yet); `tools/asan_smoke.sh`
+  adds a report-only ASan/UBSan lane.
 - Audio is functional and the SFX mapping/owner-slot path has been validated.
   Native music now follows ABI1 little-endian sample-lane ordering for the
   envmixer and custom pole-filter paths, with additive aux-return mixing. It

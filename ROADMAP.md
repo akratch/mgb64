@@ -105,6 +105,53 @@ Desired end state:
 
 ## High-priority parity work
 
+### Split-screen multiplayer
+
+GoldenEye's defining feature is local 2–4 player split-screen. The MP game logic,
+per-player data model, and split-screen renderer are already decompiled and
+running; the work is wiring multi-controller input and a deterministic MP launch
+path on the native port. The full plan, phase tables, and acceptance gates live in
+[docs/MULTIPLAYER_PLAN.md](docs/MULTIPLAYER_PLAN.md).
+
+Landed / in progress (2-player focus):
+
+- **Phase 0 telemetry + lanes (landed):** render-cost telemetry emits
+  `rooms_drawn` (`g_BgNumberOfRoomsDrawn`) alongside `tris` in the port trace, and
+  `tools/soak_stability.sh`, `tools/asan_smoke.sh`, and `tools/mp_smoke.sh` were
+  added as headless deterministic lanes.
+- **Phase 1 multi-controller input (landed):** the native port now opens every
+  connected pad into a stable per-player slot, fills `data[1..3]` in
+  `osContGetReadData`, and reports `joyGetControllerCount() >= 2` so the MP menus
+  stop bouncing.
+- **Phase 2 deterministic MP launch (landed):** `--multiplayer/--players N/
+  --mp-stage/--scenario` plus `pc_apply_mp_selection()` direct-boot a split-screen
+  match analogous to the solo `--level` path.
+- **Phase 3a aim routing (landed):** mouse-look is gated to player 1 and
+  right-stick aim is keyed off `get_cur_playernum()` so pad `k` aims player `k`.
+- **Phase 4a `tools/mp_smoke.sh` (landed, green):** a headless 2-player Temple
+  deathmatch boots, renders, and passes every gate — process, render-health,
+  screenshot-health, and a per-player dissimilar-halves check (~97% delta between
+  the two viewports, so a duplicated-camera bug fails). Three MP-only native
+  crashes found during bring-up (missing per-player char load, an enum-`PROP`
+  signedness OOB, and a raw N64 anim offset used as a pointer) were root-caused
+  and fixed under `NATIVE_PORT` guards; the solo lanes remain green.
+
+Validation status:
+
+- **2-player split-screen: green** in the deterministic `mp_smoke` window (boot +
+  two distinct viewports + render-health clean, zero crashes).
+- **4-player: boots and renders distinct viewports** in the `mp_smoke` window, but
+  sustained frame-budget, the higher-risk 3-player asymmetric split, and a full
+  end-of-round scoreboard run are **not** yet validated (Phase 4b/5).
+
+Next:
+
+- **Phase 5 — split-screen performance + 3/4-player hardening:** validate the
+  2-player frame budget, then the higher-risk 3-player asymmetric split and the
+  4-way viewport math, with `room_render_fallback_records==0` under load.
+- **Parallel polish track (default-off, config-gated):** drop-shadows, true
+  hor+ widescreen, FOV control, fullscreen modes, and input rebinding.
+
 ### Music and audio fidelity
 
 SFX mapping and owner-slot playback are validated, and the native mixer has been
@@ -148,8 +195,13 @@ renderer rewrites.
 Current known areas:
 
 - prop-attached bullet impacts use the safe shade-only path by default;
-- per-room N64 scissor boxes are disabled by default because they can expose PC
-  renderer seams;
+- room/portal visibility culling is live on the native path: the `NATIVE_PORT`
+  portal-BFS room-visibility walk runs by default (`GE007_PORTAL_BFS=0` is only a
+  fall-back-to-frustum-all escape hatch). The per-room N64 projected scissor boxes
+  are a separate fill-rate optimization that defaults off
+  (`GE007_EXACT_ROOM_SCISSOR`) because the projected bounds can under-cover
+  interior room seams on the PC path; this is a fill-rate option, not visibility
+  culling, and disabling it does not draw more rooms;
 - sky rendering falls back to fog color in some cases;
 - a frontend/menu material has a small brightness residual versus stock.
 

@@ -40,6 +40,9 @@ The public validation surface is organized into these lanes:
 | Static | Raw native switch-node dereferences (no ROM) | `check_native_switch_access.py` |
 | Boot | Spawn invariants, asserts, crashes, render-health counters on level load | `spawn_health_check.sh` |
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
+| Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
+| Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
+| Multiplayer | Split-screen deathmatch boot; asserts the two framebuffer halves are measurably dissimilar | `mp_smoke.sh` |
 | Route contract | ROM-oracle route spec/adapters, optional native route captures | `route_contract_smoke.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
 | Screenshot | Missing, wrong-size, blank, or nearly monochrome frame captures | `audit_screenshot_health.py` |
@@ -116,6 +119,57 @@ render, and movement audit JSON files. Movement audit JSON contains
 moving-record counts, displacement, target-player record counts, input-event
 counts, and any failures. Keep generated JSONL traces, screenshots, summaries,
 and audit logs local.
+
+### Stability soak
+
+```sh
+./tools/soak_stability.sh                 # Dam, Cradle, Caverns
+./tools/soak_stability.sh --all           # all 20 stages
+./tools/soak_stability.sh --frames 10800  # longer soak per stage
+./tools/soak_stability.sh --no-build      # reuse an existing build
+```
+
+This long headless deterministic lane boots each stage with `GE007_DEBUG=1`,
+runs it for `--frames` frames, captures the JSONL state trace, and pipes it
+through `tools/audit_render_trace.py --max-crashes 0`. Any crash, recovery,
+unhandled GBI command, non-finite trace value, or display-list resolve failure
+hard-fails the lane. Per-frame render cost is now part of the trace via the
+`tris` and `rooms_drawn` fields (triangle count and `g_BgNumberOfRoomsDrawn`),
+so soak summaries can track rendering load over time. The output directory
+defaults to `/tmp/mgb64_soak_stability_*`. Exit code = number of failed stages.
+
+### ASan/UBSan smoke
+
+```sh
+./tools/asan_smoke.sh                 # report-only, exits 0
+./tools/asan_smoke.sh --gate          # fail on any sanitizer finding
+./tools/asan_smoke.sh --no-build      # reuse an existing build-asan binary
+```
+
+This configures a separate `-DSANITIZE=ON` build directory (`build-asan`) and
+runs a short deterministic pass over a few stages with
+`ASAN_OPTIONS=halt_on_error=1:detect_leaks=0` and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. It is report-only by default
+and always exits 0; pass `--gate` to make sanitizer findings fail the lane. The
+output directory defaults to `/tmp/mgb64_asan_smoke_*`.
+
+### Multiplayer split-screen smoke
+
+```sh
+./tools/mp_smoke.sh                                   # 2P temple deathmatch
+./tools/mp_smoke.sh --players 4 --mp-stage complex    # 4P split-screen
+./tools/mp_smoke.sh --no-build                        # reuse an existing build
+```
+
+This boots a split-screen deathmatch via the native `--multiplayer`,
+`--players`, `--mp-stage`, and `--scenario` flags, drives a short deterministic
+P1 input window, and requires: clean process exit, zero `[GEASSERT]` failures,
+a strict render-health audit (`--max-crashes 0`), and a valid 640x480
+screenshot. It then crops the framebuffer at `SCREEN_HEIGHT/2` and uses
+`tools/compare_screenshots.py` to assert the top (P1) and bottom (P2) halves are
+measurably dissimilar; a duplicated-camera regression that renders identical
+halves fails the lane. The output directory defaults to
+`/tmp/mgb64_mp_smoke_*`.
 
 ### ROM-oracle route contract smoke
 
@@ -609,6 +663,28 @@ Relevant `ge007` command-line flags: `--rom PATH`, `--level N`
 (33=Dam, 34=Facility, 24=Archives, 36=Surface 1), `--deterministic`,
 `--background`, `--no-input-grab`, `--trace-state path.jsonl`,
 `--screenshot-frame N` / `--screenshot-label L` / `--screenshot-exit`.
+
+For headless split-screen multiplayer validation there is a parallel
+direct-boot path: `--multiplayer` enters a match directly (bypassing the
+frontend), `--players N` sets the player count (2-4), `--mp-stage NAME-or-id`
+picks a multiplayer stage (`temple`, `complex`, `caves`, `library`, `basement`,
+`stack`, `facility`, `bunker`, `archives`, `caverns`, `egypt`, or `random`; a
+raw `MP_STAGE` index also works), and `--scenario NAME-or-id` selects the combat
+mode (`normal` aka `deathmatch`/`combat`, `yolt`, `flagtag`, `goldengun`, `ltk`,
+`2v2`, `3v1`, `2v1`). Passing any of `--players`, `--mp-stage`, or `--scenario`
+implies `--multiplayer`. The MP direct-boot honors the same deterministic env
+knobs as the solo path (`GE007_DETERMINISTIC*`, `GE007_AUTO_*`, the screenshot
+and `--trace-state` hooks), so a 2-player run is scriptable:
+
+```sh
+env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
+  GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
+  --multiplayer --players 2 --mp-stage temple --scenario normal \
+  --deterministic --trace-state mp_state.jsonl \
+  --screenshot-frame 120 --screenshot-label mp_temple_2p \
+  --screenshot-exit > run.log 2>&1
+```
 
 ### Transparent room material probe
 
