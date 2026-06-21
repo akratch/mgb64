@@ -164,8 +164,9 @@ Mouse sensitivity, window size, display mode, and VSync are configurable in
 `ge007.ini` (written next to the executable on first run). The display mode key
 is `Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example:
 `--config-set Video.WindowMode=borderless`. VSync is `Video.VSync` with `off`,
-`on`, or `adaptive`. Pressing `H` also prints the full control list to the
-console.
+`on`, or `adaptive`. `Video.Display` selects the zero-based SDL display index
+and falls back to display 0 if the saved index is unavailable. Pressing `H` also
+prints the full control list to the console.
 
 ## Known limitations
 

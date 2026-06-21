@@ -13,6 +13,7 @@ from pathlib import Path
 DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
+    "Video.Display": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
     "Input.MouseSensitivity": "0.15",
@@ -28,6 +29,7 @@ SEED_CONFIG = """\
 [Video]
 WindowWidth=1024
 WindowHeight=768
+Display=0
 WindowMode=windowed
 VSync=adaptive
 FutureVideo=keep-me
@@ -147,6 +149,7 @@ def main() -> int:
                 "--dump-config",
                 env_extra={
                     "GE007_WINDOW_WIDTH": "1333",
+                    "GE007_DISPLAY": "1",
                     "GE007_WINDOW_MODE": "borderless",
                     "GE007_VSYNC": "on",
                 },
@@ -156,6 +159,7 @@ def main() -> int:
             env_dump,
             {
                 "Video.WindowWidth": "1333",
+                "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "on",
             },
@@ -163,7 +167,7 @@ def main() -> int:
         )
         assert_file_contains(
             config_path,
-            ["WindowWidth=1024", "WindowMode=windowed", "VSync=adaptive"],
+            ["WindowWidth=1024", "Display=0", "WindowMode=windowed", "VSync=adaptive"],
             "env override is not persisted",
         )
 
@@ -173,6 +177,8 @@ def main() -> int:
                 savedir,
                 "--config-override",
                 "Video.WindowHeight=720",
+                "--config-override",
+                "Video.Display=2",
                 "--config-override",
                 "Video.WindowMode=exclusive",
                 "--config-override",
@@ -184,6 +190,7 @@ def main() -> int:
             cli_dump,
             {
                 "Video.WindowHeight": "720",
+                "Video.Display": "2",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",
             },
@@ -191,7 +198,7 @@ def main() -> int:
         )
         assert_file_contains(
             config_path,
-            ["WindowHeight=768", "WindowMode=windowed", "VSync=adaptive"],
+            ["WindowHeight=768", "Display=0", "WindowMode=windowed", "VSync=adaptive"],
             "cli override is not persisted",
         )
 
@@ -217,6 +224,8 @@ def main() -> int:
             "--config-set",
             "Video.WindowWidth=1280",
             "--config-set",
+            "Video.Display=1",
+            "--config-set",
             "Video.WindowMode=borderless",
             "--config-set",
             "Video.VSync=off",
@@ -227,6 +236,9 @@ def main() -> int:
             [
                 "# Window width",
                 "# type=int scope=restart default=1440 range=320..3840",
+                "# Display",
+                "# type=int scope=restart default=0 range=0..31",
+                "Display=1",
                 "# Window mode",
                 "# type=enum scope=live default=windowed range=windowed|borderless|exclusive",
                 "WindowMode=borderless",
@@ -249,6 +261,7 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1280",
                 "Video.WindowHeight": "768",
+                "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "off",
                 "Input.MouseSensitivity": "0.25",

@@ -187,6 +187,7 @@ static const ConfigEnumOption k_vsyncOptions[] = {
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
 static s32 g_cfgWindowH = 810;
+static s32 g_cfgDisplayIndex = 0;
 
 /* ===== Screenshot support ===== */
 #define SCREENSHOT_W 640
@@ -974,6 +975,37 @@ static void platformSyncWindowSizeForRenderer(void)
     gfx_set_window_size(w, h);
 }
 
+static int platformConfiguredDisplayIndex(void)
+{
+    int display_count = SDL_GetNumVideoDisplays();
+
+    if (display_count <= 0) {
+        return 0;
+    }
+    if (g_cfgDisplayIndex < 0 || g_cfgDisplayIndex >= display_count) {
+        fprintf(stderr,
+                "[SDL] Display index %d is not available; using display 0 of %d.\n",
+                g_cfgDisplayIndex, display_count);
+        return 0;
+    }
+
+    return (int)g_cfgDisplayIndex;
+}
+
+static void platformMoveWindowToConfiguredDisplay(void)
+{
+    int display_index;
+    int centered_pos;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    display_index = platformConfiguredDisplayIndex();
+    centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(display_index);
+    SDL_SetWindowPosition(g_sdlWindow, centered_pos, centered_pos);
+}
+
 static void platformApplyWindowMode(void)
 {
     Uint32 fullscreen_flag;
@@ -983,6 +1015,7 @@ static void platformApplyWindowMode(void)
     }
 
     fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
+    platformMoveWindowToConfiguredDisplay();
     if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
         fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
                 g_windowMode, SDL_GetError());
@@ -1029,6 +1062,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.WindowHeight=VALUE",
                         "Window height",
                         "Initial SDL window height in pixels.");
+    settingsRegisterInt("Video.Display", &g_cfgDisplayIndex, 0, 0, 31,
+                        SETTING_SCOPE_RESTART, "GE007_DISPLAY",
+                        "--config-override Video.Display=VALUE",
+                        "Display",
+                        "Zero-based SDL display index for window and fullscreen placement.");
     settingsRegisterEnum("Video.WindowMode", &g_windowMode, PLATFORM_WINDOW_MODE_WINDOWED,
                          k_windowModeOptions,
                          (s32)(sizeof(k_windowModeOptions) / sizeof(k_windowModeOptions[0])),
@@ -1234,6 +1272,7 @@ int platformInitSDL(void) {
 
     {
         int disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
+        int centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(platformConfiguredDisplayIndex());
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 
         if (!disable_highdpi) {
@@ -1248,7 +1287,7 @@ int platformInitSDL(void) {
 
         g_sdlWindow = SDL_CreateWindow(
         "MGB64",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        centered_pos, centered_pos,
         g_cfgWindowW, g_cfgWindowH,
         window_flags
         );
