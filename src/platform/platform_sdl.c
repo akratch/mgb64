@@ -225,6 +225,80 @@ static s32 g_cfgWindowX = -1;
 static s32 g_cfgWindowY = -1;
 static s32 g_cfgDisplayIndex = 0;
 
+int platformPrintDisplays(FILE *f)
+{
+    int initialized_here = 0;
+    int display_count;
+
+    if (f == NULL) {
+        f = stdout;
+    }
+
+    if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
+            fprintf(stderr, "[SDL] Failed to initialize video for display listing: %s\n",
+                    SDL_GetError());
+            return 0;
+        }
+        initialized_here = 1;
+    }
+
+    display_count = SDL_GetNumVideoDisplays();
+    if (display_count < 0) {
+        fprintf(stderr, "[SDL] Failed to enumerate displays: %s\n", SDL_GetError());
+        if (initialized_here) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        }
+        return 0;
+    }
+
+    fprintf(f, "SDL displays (%d):\n", display_count);
+    for (int i = 0; i < display_count; i++) {
+        const char *name = SDL_GetDisplayName(i);
+        SDL_Rect bounds = {0, 0, 0, 0};
+        SDL_Rect usable = {0, 0, 0, 0};
+        SDL_DisplayMode current = {0};
+        int mode_count;
+
+        SDL_GetDisplayBounds(i, &bounds);
+        SDL_GetDisplayUsableBounds(i, &usable);
+        SDL_GetCurrentDisplayMode(i, &current);
+
+        fprintf(f,
+                "  [%d] %s bounds=%dx%d+%d+%d usable=%dx%d+%d+%d current=%dx%d@%dHz\n",
+                i,
+                (name != NULL && name[0] != '\0') ? name : "(unnamed)",
+                bounds.w, bounds.h, bounds.x, bounds.y,
+                usable.w, usable.h, usable.x, usable.y,
+                current.w, current.h, current.refresh_rate);
+
+        mode_count = SDL_GetNumDisplayModes(i);
+        if (mode_count < 0) {
+            fprintf(f, "      modes: unavailable (%s)\n", SDL_GetError());
+            continue;
+        }
+
+        for (int m = 0; m < mode_count; m++) {
+            SDL_DisplayMode mode = {0};
+
+            if (SDL_GetDisplayMode(i, m, &mode) != 0) {
+                continue;
+            }
+            fprintf(f, "      mode[%d] %dx%d@%dHz %s\n",
+                    m,
+                    mode.w,
+                    mode.h,
+                    mode.refresh_rate,
+                    SDL_GetPixelFormatName(mode.format));
+        }
+    }
+
+    if (initialized_here) {
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+    return 1;
+}
+
 /* ===== Screenshot support ===== */
 #define SCREENSHOT_W 640
 #define SCREENSHOT_H 480

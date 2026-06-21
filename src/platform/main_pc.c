@@ -379,6 +379,7 @@ extern void schedulerInitThread(void);
 
 /* SDL platform — defined in platform_sdl.c */
 extern int  platformInitSDL(void);
+extern int  platformPrintDisplays(FILE *f);
 extern void platformShutdownSDL(void);
 extern void platformSetScreenshotLabel(const char *label);
 extern void pcSetTraceStatePath(const char *path);
@@ -508,6 +509,7 @@ int main(int argc, char **argv)
     int configSetCount = 0;
     int resetConfig = 0;
     int listSettings = 0;
+    int listDisplays = 0;
     int dumpConfig = 0;
     extern int g_autoScreenshotExit;
     extern const char *g_traceStatePath;
@@ -529,6 +531,8 @@ int main(int argc, char **argv)
             romPath = argv[++i];
         } else if (strcmp(argv[i], "--list-settings") == 0) {
             listSettings = 1;
+        } else if (strcmp(argv[i], "--list-displays") == 0) {
+            listDisplays = 1;
         } else if (strcmp(argv[i], "--dump-config") == 0) {
             dumpConfig = 1;
         } else if (strcmp(argv[i], "--reset-config") == 0) {
@@ -664,7 +668,7 @@ int main(int argc, char **argv)
         setenv("GE007_NO_INPUT_GRAB", "1", 1);
     }
 
-    if (!romPath && !listSettings && !dumpConfig && !resetConfig && configSetCount == 0) {
+    if (!romPath && !listSettings && !listDisplays && !dumpConfig && !resetConfig && configSetCount == 0) {
         romPath = findRomFile();
     }
 
@@ -696,15 +700,21 @@ int main(int argc, char **argv)
         }
     }
 
-    if (listSettings || dumpConfig || resetConfig || configSetCount > 0) {
+    if (listSettings || listDisplays || dumpConfig || resetConfig || configSetCount > 0) {
         if (listSettings) {
             settingsPrintList(stdout);
         }
-        if (listSettings && dumpConfig) {
+        if (listSettings && (dumpConfig || listDisplays)) {
             printf("\n");
         }
         if (dumpConfig) {
             settingsPrintDump(stdout);
+        }
+        if (dumpConfig && listDisplays) {
+            printf("\n");
+        }
+        if (listDisplays && !platformPrintDisplays(stdout)) {
+            return 1;
         }
         return 0;
     }

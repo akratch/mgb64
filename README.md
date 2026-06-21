@@ -172,6 +172,7 @@ is `Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example
 filter. `Video.Display` selects the zero-based SDL display index and falls back
 to display 0 if the saved index is unavailable. `Video.WindowX` and
 `Video.WindowY` are relative to that display, with `-1` meaning centered.
+Run `ge007 --list-displays` to print detected SDL displays and fullscreen modes.
 Pressing `H` also prints the full control list to the console.
 
 ## Known limitations

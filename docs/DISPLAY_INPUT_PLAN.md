@@ -219,7 +219,7 @@ between temp write and rename.
 |---|---|---|---|
 | `Video.WindowMode = windowed\|borderless\|exclusive` | S | ✅ | Replaced the bool `Video.Fullscreen` with a token enum; startup and Alt+Enter use the shared `SDL_SetWindowFullscreen` apply path. Windowed remains default until the first-run display flow exists. |
 | Exclusive fullscreen + mode select | M | 🟡 | `exclusive` maps to `SDL_WINDOW_FULLSCREEN`; chosen `SDL_DisplayMode` selection still remains for true refresh ownership / lowest latency. |
-| Display enumeration + monitor select | S | 🟡 | `Video.Display` selects a zero-based SDL display index and clamps missing monitors to display 0; user-facing display/mode listing remains. |
+| Display enumeration + monitor select | S | ✅ | `Video.Display` selects a zero-based SDL display index and clamps missing monitors to display 0; `--list-displays` prints SDL display bounds, usable bounds, current mode, and fullscreen modes without loading a ROM. |
 | Remember + sanitize window geometry | S | ✅ | Persist `Video.WindowX/Y/W/H`; positions are relative to `Video.Display`, and startup clamps to the live display bounds. |
 | `Video.VSync = off\|on\|adaptive` | S | ✅ | Exposed the existing swap-interval path through the settings schema; focus regain restores the configured mode. |
 | `Video.FrameCap = 30\|60\|display` | S | ✅ | Exposes 30/60/software pacing plus display-backed pacing; if VSync is off, `display` falls back to the 60 fps software cap, so there is still no uncapped option. |
