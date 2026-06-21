@@ -2048,7 +2048,7 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
                 VehichleRecord *v = (VehichleRecord *)dst;
                 memset(v, 0, sizeof(VehichleRecord));
                 propdef_convert_objectrecord(src, (ObjectRecord *)v);
-                v->ailist = NULL;  /* N64 0x80: runtime pointer */
+                v->ailist = (AIRecord *)(uintptr_t)be_u32(src + 0x80);  /* setup AI-list id, resolved during spawn */
                 v->aioffset = be_u16(src + 0x84);
                 v->aireturnlist = be_s16(src + 0x86);
                 v->speed = be_float(src + 0x88);
@@ -2070,7 +2070,7 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
                 AircraftRecord *a = (AircraftRecord *)dst;
                 memset(a, 0, sizeof(AircraftRecord));
                 propdef_convert_objectrecord(src, (ObjectRecord *)a);
-                a->ailist = NULL;  /* N64 0x80: runtime pointer */
+                a->ailist = (AIRecord *)(uintptr_t)be_u32(src + 0x80);  /* setup AI-list id, resolved during spawn */
                 a->aioffset = be_u16(src + 0x84);
                 a->aireturnlist = be_s16(src + 0x86);
                 a->rotoryrot = be_float(src + 0x88);
@@ -3147,6 +3147,7 @@ void proplvreset2(s32 stageId)
                         pdef_veh->turnrot60 = 0.0f;
                         pdef_veh->roty = 0.0f;
                         pdef_veh->speedtime60 = -1.0f;
+                        pdef_veh->ailist = ailistFindById((s32)(uintptr_t)pdef_veh->ailist);
                         pdef_veh->aioffset = 0;
                         pdef_veh->aireturnlist = -1;
                         pdef_veh->path = NULL;
@@ -3167,6 +3168,7 @@ void proplvreset2(s32 stageId)
                         pdef_air->yrot = 0.0f;
                         pdef_air->speedtime60 = -1.0f;
                         pdef_air->rotaryspeedtime = -1.0f;
+                        pdef_air->ailist = ailistFindById((s32)(uintptr_t)pdef_air->ailist);
                         pdef_air->aioffset = 0;
                         pdef_air->aireturnlist = -1;
                         pdef_air->nextstep = 0;

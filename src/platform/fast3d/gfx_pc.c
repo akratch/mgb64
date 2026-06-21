@@ -6884,6 +6884,7 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint64_t cc_id, uint32_t
                         case G_CCMUX_TEXEL0: val = SHADER_TEXEL0; break;
                         case G_CCMUX_TEXEL1: val = SHADER_TEXEL1; break;
                         case G_CCMUX_TEXEL0_ALPHA: val = SHADER_TEXEL0A; break;
+                        case G_CCMUX_TEXEL1_ALPHA: val = SHADER_TEXEL1A; break;
                         case 0: val = (i > 0) ? SHADER_COMBINED : SHADER_0; break; /* COMBINED in cycle 1 */
                         case 6: val = SHADER_1; break; /* G_CCMUX_1 (in C slot) */
                         case G_CCMUX_NOISE:
@@ -6911,7 +6912,6 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint64_t cc_id, uint32_t
                         case G_CCMUX_PRIMITIVE:
                         case G_CCMUX_SHADE:
                         case G_CCMUX_ENVIRONMENT:
-                        case G_CCMUX_TEXEL1_ALPHA:
                         case G_CCMUX_PRIMITIVE_ALPHA:
                         case G_CCMUX_SHADE_ALPHA:
                         case G_CCMUX_ENV_ALPHA:
@@ -9491,6 +9491,13 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             case 0xC41049D8: /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
             case 0x00504240: /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu) */
             case 0xC0504240: /* fog-forced CLR_IN + XLU_SURF2 */
+                /* True translucent surfaces (glass, water, forcefields). Do
+                 * not force texture-edge here: N64 XLU_SURF lacks CVG_X_ALPHA,
+                 * and the shader's texture-edge path alpha-tests/discards
+                 * fragments instead of blending them. */
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
             case 0x0C184340: /* PASS + AA_ZB_OPA_INTER2 */
             case 0xC8104340: /* FOG_SHADE_A + AA_ZB_OPA_INTER2 */
             case 0x04104340: /* FOG_PRIM_A (de-fogged) + OPA_INTER2 */
@@ -10337,11 +10344,6 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                         break;
                     case G_CCMUX_PRIM_LOD_FRAC:
                         tmp.r = tmp.g = tmp.b = tmp.a = rdp.prim_lod_fraction;
-                        color = &tmp;
-                        break;
-                    case G_CCMUX_TEXEL1_ALPHA:
-                        /* TEXEL1_ALPHA as a shader input — approximate as shade alpha */
-                        tmp.r = tmp.g = tmp.b = tmp.a = v_arr[vi]->color.a;
                         color = &tmp;
                         break;
                     default:

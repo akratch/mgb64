@@ -80,6 +80,9 @@ static int g_AutogunPoseTraceEnabled = -1;
 static int g_AutogunPoseTraceBudget = -1;
 static int g_VehiclePoseTraceEnabled = -1;
 static int g_VehiclePoseTraceBudget = -1;
+static int g_VehicleStateTraceEnabled = -1;
+static int g_VehicleStateTraceBudget = -1;
+static int g_VehicleStateTraceInterval = 1;
 static int g_MonitorTraceEnabled = -1;
 static int g_MonitorTraceBudget = -1;
 static int g_PropSetupTraceEnabled = -1;
@@ -563,6 +566,123 @@ static void vehiclePoseTracePrintf(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+    fflush(stderr);
+}
+
+static int vehicleStateTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_VehicleStateTraceEnabled >= 0) {
+        return g_VehicleStateTraceEnabled;
+    }
+
+    value = getenv("GE007_TRACE_VEHICLE_STATE");
+    g_VehicleStateTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_TRACE_VEHICLE_STATE_BUDGET");
+    g_VehicleStateTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 500;
+
+    value = getenv("GE007_TRACE_VEHICLE_STATE_INTERVAL");
+    g_VehicleStateTraceInterval = (value != NULL && value[0] != '\0') ? atoi(value) : 1;
+    if (g_VehicleStateTraceInterval < 1) {
+        g_VehicleStateTraceInterval = 1;
+    }
+
+    return g_VehicleStateTraceEnabled;
+}
+
+static int vehicleStateTraceFrameAllowed(void)
+{
+    if (!vehicleStateTraceEnabled()) {
+        return 0;
+    }
+
+    return (g_frame_count_diag % g_VehicleStateTraceInterval) == 0;
+}
+
+static s32 vehicleTraceCurrentWaypoint(const VehichleRecord *vehicle)
+{
+    if (vehicle == NULL || vehicle->path == NULL || vehicle->path->waypoints == NULL || vehicle->nextstep < 0) {
+        return -1;
+    }
+
+    if (vehicle->path->len > 0 && vehicle->nextstep > (s32)vehicle->path->len) {
+        return -2;
+    }
+
+    return vehicle->path->waypoints[vehicle->nextstep];
+}
+
+static s32 vehicleTraceCurrentTargetPad(const VehichleRecord *vehicle)
+{
+    s32 waypoint_id = vehicleTraceCurrentWaypoint(vehicle);
+
+    if (waypoint_id < 0 || g_CurrentSetup.pathwaypoints == NULL) {
+        return -1;
+    }
+
+    return g_CurrentSetup.pathwaypoints[waypoint_id].padID;
+}
+
+static void vehicleStateTracePrintf(const char *event,
+                                    const ObjectRecord *obj,
+                                    const VehichleRecord *vehicle,
+                                    const coord3d *target,
+                                    const coord3d *candidate,
+                                    s32 aux0,
+                                    s32 aux1)
+{
+    if (!vehicleStateTraceEnabled()) {
+        return;
+    }
+
+    if (g_VehicleStateTraceBudget == 0) {
+        return;
+    }
+
+    if (g_VehicleStateTraceBudget > 0) {
+        g_VehicleStateTraceBudget--;
+    }
+
+    fprintf(stderr,
+            "[VEHICLE_STATE] frame=%d event=%s obj=%d type=%d pad=%d "
+            "pos=(%.2f,%.2f,%.2f) prop=(%.2f,%.2f,%.2f) speed=%.6f aim=%.6f time=%.6f "
+            "roty=%.6f turn=%.6f flags=0x%08x flags2=0x%08x path_id=%d path_len=%d path_loop=%d "
+            "nextstep=%d waypoint=%d target_pad=%d target=(%.2f,%.2f,%.2f) "
+            "candidate=(%.2f,%.2f,%.2f) aux0=%d aux1=%d\n",
+            g_frame_count_diag,
+            event != NULL ? event : "",
+            obj != NULL ? obj->obj : -1,
+            obj != NULL ? obj->type : -1,
+            obj != NULL ? obj->pad : -1,
+            vehicle != NULL ? vehicle->runtime_pos.x : 0.0f,
+            vehicle != NULL ? vehicle->runtime_pos.y : 0.0f,
+            vehicle != NULL ? vehicle->runtime_pos.z : 0.0f,
+            obj != NULL && obj->prop != NULL ? obj->prop->pos.x : 0.0f,
+            obj != NULL && obj->prop != NULL ? obj->prop->pos.y : 0.0f,
+            obj != NULL && obj->prop != NULL ? obj->prop->pos.z : 0.0f,
+            vehicle != NULL ? vehicle->speed : 0.0f,
+            vehicle != NULL ? vehicle->speedaim : 0.0f,
+            vehicle != NULL ? vehicle->speedtime60 : 0.0f,
+            vehicle != NULL ? vehicle->roty : 0.0f,
+            vehicle != NULL ? vehicle->turnrot60 : 0.0f,
+            vehicle != NULL ? (unsigned int)vehicle->flags : 0U,
+            vehicle != NULL ? (unsigned int)vehicle->flags2 : 0U,
+            vehicle != NULL && vehicle->path != NULL ? vehicle->path->ID : -1,
+            vehicle != NULL && vehicle->path != NULL ? vehicle->path->len : -1,
+            vehicle != NULL && vehicle->path != NULL ? vehicle->path->isLoop : -1,
+            vehicle != NULL ? vehicle->nextstep : -1,
+            vehicleTraceCurrentWaypoint(vehicle),
+            vehicleTraceCurrentTargetPad(vehicle),
+            target != NULL ? target->x : 0.0f,
+            target != NULL ? target->y : 0.0f,
+            target != NULL ? target->z : 0.0f,
+            candidate != NULL ? candidate->x : 0.0f,
+            candidate != NULL ? candidate->y : 0.0f,
+            candidate != NULL ? candidate->z : 0.0f,
+            aux0,
+            aux1);
     fflush(stderr);
 }
 
@@ -10110,6 +10230,13 @@ s32 object_interaction(struct PropRecord *arg0)
                 sub_GAME_7F044B38((ObjectRecord *)temp_s1);
             }
 
+#ifdef NATIVE_PORT
+            if (vehicleStateTraceFrameAllowed())
+            {
+                vehicleStateTracePrintf("tick", obj, temp_s1, sp478, NULL, var_s0, 0);
+            }
+#endif
+
             // mips2c line 1614
             if (temp_s1->speed > 0.0f)
             {
@@ -10156,6 +10283,9 @@ s32 object_interaction(struct PropRecord *arg0)
 
                 if (temp_s0_5 == NULL)
                 {
+#ifdef NATIVE_PORT
+                    vehicleStateTracePrintf("missing_switch_3", obj, temp_s1, sp478, NULL, var_s0, 0);
+#endif
                     goto obj_render_done;
                 }
 
@@ -10233,6 +10363,9 @@ s32 object_interaction(struct PropRecord *arg0)
 
                     if (var_s2_5 != 0)
                     {
+#ifdef NATIVE_PORT
+                        vehicleStateTracePrintf("move_accepted", obj, temp_s1, sp478, &sp694, var_s0, 0);
+#endif
                         sub_GAME_7F044B38((ObjectRecord *)temp_s1);
                         sub_GAME_7F0402B4(arg0, &temp_s1->nextcol);
                         detonate_proxmine_In_range(&temp_s1->runtime_pos);
@@ -10241,16 +10374,22 @@ s32 object_interaction(struct PropRecord *arg0)
                             && (chrlvIsArrivingLaterallyAtPos(&sp450, &sp694, sp478, 100.0f) != 0))
                         {
                             temp_s1->nextstep++;
-                            if (temp_s1->path[temp_s1->nextstep].waypoints[0] < 0)
+                            if (temp_s1->path->waypoints[temp_s1->nextstep] < 0)
                             {
                                 temp_s1->path = NULL;
                                 temp_s1->speedaim = 0.0f;
                                 temp_s1->speedtime60 = 60.0f;
                             }
+#ifdef NATIVE_PORT
+                            vehicleStateTracePrintf("path_step", obj, temp_s1, sp478, &sp694, temp_s1->path != NULL ? 1 : 0, 0);
+#endif
                         }
                     }
                     else
                     {
+#ifdef NATIVE_PORT
+                        vehicleStateTracePrintf("move_rejected_footprint", obj, temp_s1, sp478, &sp694, var_s0, 0);
+#endif
                         if (temp_s1->speedtime60 < 0.0f)
                         {
                             temp_s1->speedaim = (f32) temp_s1->speed;
@@ -10274,6 +10413,9 @@ s32 object_interaction(struct PropRecord *arg0)
                 }
                 else
                 {
+#ifdef NATIVE_PORT
+                    vehicleStateTracePrintf("move_rejected_nav", obj, temp_s1, sp478, &sp694, var_s0, 0);
+#endif
                     if (temp_s1->speedtime60 < 0.0f)
                     {
                         temp_s1->speedaim = (f32) temp_s1->speed;

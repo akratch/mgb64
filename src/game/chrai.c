@@ -1051,6 +1051,8 @@ static s32 g_AiTraceFrameMin = -1;
 static s32 g_AiTraceFrameMax = -1;
 static s32 g_AiTraceFilterLists[AI_TRACE_MAX_FILTER_LISTS];
 static s32 g_AiTraceFilterListCount = 0;
+static int g_VehicleAiTraceEnabled = -1;
+static int g_VehicleAiTraceBudget = 200;
 
 static void chraiTraceParseListFilter(const char *cursor)
 {
@@ -1284,6 +1286,108 @@ static void chraiTraceDoorStateCheck(AIRecord *AIList, const ChrRecord *chr, s32
             door != NULL ? door->maxFrac : 0.0f,
             door != NULL ? door->perimFrac : 0.0f,
             door != NULL ? door->maxSpeed : 0.0f);
+    fflush(stderr);
+}
+
+static s32 chraiTraceVehicleAiEnabled(void)
+{
+    const char *value;
+
+    if (g_VehicleAiTraceEnabled >= 0)
+    {
+        return g_VehicleAiTraceEnabled;
+    }
+
+    value = getenv("GE007_TRACE_VEHICLE_AI");
+    g_VehicleAiTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_TRACE_VEHICLE_AI_BUDGET");
+    g_VehicleAiTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 200;
+
+    return g_VehicleAiTraceEnabled;
+}
+
+static void chraiTraceVehicleStartPath(AIRecord *AIList,
+                                       s32 Offset,
+                                       const VehichleRecord *vehicle,
+                                       s32 path_id,
+                                       const PathRecord *path)
+{
+    extern int g_frame_count_diag;
+    bool isGlobalAIList = FALSE;
+    s32 listID;
+
+    if (!chraiTraceVehicleAiEnabled() || g_VehicleAiTraceBudget == 0)
+    {
+        return;
+    }
+
+    listID = chraiGetAIListID(AIList, &isGlobalAIList);
+
+    if (g_VehicleAiTraceBudget > 0)
+    {
+        g_VehicleAiTraceBudget--;
+    }
+
+    fprintf(stderr,
+            "[VEHICLE_AI] frame=%d event=start_path obj=%d pad=%d list=0x%04X global=%d offset=%d "
+            "path_id=%d found=%d path_len=%d path_loop=%d wp0=%d wp1=%d speed=%.6f aim=%.6f time=%.6f\n",
+            g_frame_count_diag,
+            vehicle != NULL ? vehicle->obj : -1,
+            vehicle != NULL ? vehicle->pad : -1,
+            (unsigned int)listID,
+            isGlobalAIList ? 1 : 0,
+            Offset,
+            path_id,
+            path != NULL ? 1 : 0,
+            path != NULL ? path->len : -1,
+            path != NULL ? path->isLoop : -1,
+            (path != NULL && path->waypoints != NULL) ? path->waypoints[0] : -1,
+            (path != NULL && path->waypoints != NULL && path->waypoints[0] >= 0) ? path->waypoints[1] : -1,
+            vehicle != NULL ? vehicle->speed : 0.0f,
+            vehicle != NULL ? vehicle->speedaim : 0.0f,
+            vehicle != NULL ? vehicle->speedtime60 : 0.0f);
+    fflush(stderr);
+}
+
+static void chraiTraceVehicleSpeed(AIRecord *AIList,
+                                   s32 Offset,
+                                   const VehichleRecord *vehicle,
+                                   s32 raw_speed,
+                                   f32 speedaim,
+                                   f32 speedtime)
+{
+    extern int g_frame_count_diag;
+    bool isGlobalAIList = FALSE;
+    s32 listID;
+
+    if (!chraiTraceVehicleAiEnabled() || g_VehicleAiTraceBudget == 0)
+    {
+        return;
+    }
+
+    listID = chraiGetAIListID(AIList, &isGlobalAIList);
+
+    if (g_VehicleAiTraceBudget > 0)
+    {
+        g_VehicleAiTraceBudget--;
+    }
+
+    fprintf(stderr,
+            "[VEHICLE_AI] frame=%d event=speed obj=%d pad=%d list=0x%04X global=%d offset=%d "
+            "raw_speed=%d speedaim=%.6f speedtime=%.6f current_speed=%.6f path_id=%d nextstep=%d\n",
+            g_frame_count_diag,
+            vehicle != NULL ? vehicle->obj : -1,
+            vehicle != NULL ? vehicle->pad : -1,
+            (unsigned int)listID,
+            isGlobalAIList ? 1 : 0,
+            Offset,
+            raw_speed,
+            speedaim,
+            speedtime,
+            vehicle != NULL ? vehicle->speed : 0.0f,
+            (vehicle != NULL && vehicle->path != NULL) ? vehicle->path->ID : -1,
+            vehicle != NULL ? vehicle->nextstep : -1);
     fflush(stderr);
 }
 #endif
@@ -4704,19 +4808,26 @@ void ai(PropDefHeaderRecord *Entityp, PROP_TYPE EntityType)
                         VehichleEntityp->path     = path;
                         VehichleEntityp->nextstep = 0;
                     }
+#ifdef NATIVE_PORT
+                    chraiTraceVehicleStartPath(AiListp, Offset, VehichleEntityp, ai->val[0], path);
+#endif
                     Offset += AI_VehicleStartPath_LENGTH;
                     break;
                 }
                 case AI_VehicleSpeed:
                 {
                     AIRecord *ai        = (void *)((u8 *)AiListp + Offset);
+                    s32       rawspeed  = CharArrayTo16(ai->val,0);
                     f32       speedtime = CharArrayTo16(ai->val,2);
-                    f32       speedaim  = CharArrayTo16(ai->val,0) * 100.0f / 15360.0f;
+                    f32       speedaim  = rawspeed * 100.0f / 15360.0f;
                     if (VehichleEntityp)
                     {
                         VehichleEntityp->speedaim    = speedaim;
                         VehichleEntityp->speedtime60 = speedtime;
                     }
+#ifdef NATIVE_PORT
+                    chraiTraceVehicleSpeed(AiListp, Offset, VehichleEntityp, rawspeed, speedaim, speedtime);
+#endif
                     Offset += AI_VehicleSpeed_LENGTH;
                     break;
                 }

@@ -574,6 +574,12 @@ smoke runs and human play sessions.
 | `GE007_TRACE_TRAVEL_ANIM=1` | log guard travel-animation state transitions |
 | `GE007_TRACE_DL_CONTEXT=1` | log display-list context overlap probes |
 | `GE007_TRACE_N64_OML=1` | log selected N64 `G_SETOTHERMODE_L` state transitions |
+| `GE007_TRACE_BG_ROOM_PTRS=1` | log primary/secondary room display-list pointers as rooms render |
+| `GE007_TRACE_ROOM_ALPHA=1` | log the first alpha-blended room triangles each frame, including raw/effective render mode, depth flags, texture-edge classification, and alpha sources |
+| `GE007_TRACE_BLEND_CLASSIFY=1` | log first-seen raw render-mode classifications |
+| `GE007_BLEND_AUDIT=1` / `GE007_BLEND_AUDIT_INTERVAL=N` | summarize all raw render modes seen by the Fast3D renderer; use the `edge` column to catch accidental alpha-test classification |
+| `GE007_TRACE_VEHICLE_AI=1` / `GE007_TRACE_VEHICLE_AI_BUDGET=N` | log vehicle AI commands as they bind authored paths and target speeds |
+| `GE007_TRACE_VEHICLE_STATE=1` / `GE007_TRACE_VEHICLE_STATE_BUDGET=N` / `GE007_TRACE_VEHICLE_STATE_INTERVAL=N` | log per-frame vehicle path, speed, waypoint, and movement decisions; use the interval to reduce noise |
 | `GE007_VERBOSE=1` | broad legacy diagnostic output, including the focused logs above |
 
 `GE007_SFX_TRACE_JSONL` uses public SFX ids for `public_sound` and one-based
@@ -603,6 +609,68 @@ Relevant `ge007` command-line flags: `--rom PATH`, `--level N`
 (33=Dam, 34=Facility, 24=Archives, 36=Surface 1), `--deterministic`,
 `--background`, `--no-input-grab`, `--trace-state path.jsonl`,
 `--screenshot-frame N` / `--screenshot-label L` / `--screenshot-exit`.
+
+### Transparent room material probe
+
+Glass, water, and similar authored level geometry live in secondary room display
+lists. When these vanish while collision still works, first prove whether the
+secondary room DL is missing or whether Fast3D classified the material wrong:
+
+```sh
+tmpdir="$(mktemp -d /tmp/mgb64_glass_probe.XXXXXX)"
+cd "$tmpdir"
+env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
+  GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  GE007_TRACE_BG_ROOM_PTRS=1 GE007_TRACE_ROOM_ALPHA=1 \
+  GE007_TRACE_BLEND_CLASSIFY=1 GE007_BLEND_AUDIT=1 \
+  GE007_BLEND_AUDIT_INTERVAL=120 \
+  /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
+  --level dam --deterministic \
+  --screenshot-frame 220 --screenshot-label dam_glass_probe \
+  --screenshot-exit > run.log 2>&1
+```
+
+The important `BLEND-AUDIT` invariant is that true XLU surface modes such as
+`0x0C1849D8`, `0xC41049D8`, and `0x00504240` remain `ALPHA` but report
+`edge no`. Explicit TEX_EDGE/cutout modes should still report `edge yes`. If
+`BG-ROOM-PTR` shows secondary pointers as null for rooms with nonzero secondary
+sizes, investigate room loading before touching renderer state.
+
+### Vehicle AI/path probe
+
+Scripted vehicles should receive their authored AI list from setup data, bind a
+path, then ramp toward the scripted speed while the object handler advances along
+waypoints. Dam's intro truck is a compact regression probe:
+
+```sh
+tmpdir="$(mktemp -d /tmp/mgb64_truck_probe.XXXXXX)"
+cd "$tmpdir"
+env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
+  GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  GE007_ENABLE_LEVEL_INTRO=1 GE007_INTRO_CAMERA_INDEX=5 \
+  GE007_TRACE_VEHICLE_AI=1 GE007_TRACE_VEHICLE_AI_BUDGET=40 \
+  GE007_TRACE_VEHICLE_STATE=1 GE007_TRACE_VEHICLE_STATE_BUDGET=160 \
+  GE007_TRACE_VEHICLE_STATE_INTERVAL=10 \
+  /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
+  --level dam --deterministic --trace-state state.jsonl \
+  --screenshot-frame 80 --screenshot-label dam_truck_probe \
+  --screenshot-exit > run.log 2>&1
+```
+
+The expected startup signature is `obj=279`, `pad=317`, AI list `0x040A`,
+`path_id=7`, `path_len=13`, `raw_speed=512`, `speedaim=3.333333`, and
+`speedtime=120`. Subsequent `VEHICLE_STATE` lines should keep `path_id=7`, point
+at `waypoint=17` / `target_pad=312` initially, emit `move_accepted`, and show the
+position changing as speed ramps up.
+
+If `VEHICLE_STATE` ticks appear with `path_id=-1`, `speed=0`, and `aim=0` while
+no `VEHICLE_AI` lines appear, inspect setup prop conversion and `ailistFindById`
+resolution for vehicle/aircraft props. If AI lines appear but movement stalls,
+look for `missing_switch_3`, `move_rejected_nav`, `move_rejected_footprint`, and
+waypoint-sentinel handling in the object handler. A longer Dam intro run
+currently reaches a separate render crash under investigation; the frame-80
+probe is intentionally short enough to prove vehicle startup movement without
+crossing into that failure.
 
 ## ROM movement oracle
 
