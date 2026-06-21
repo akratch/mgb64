@@ -33,6 +33,16 @@ int g_pcStartDifficulty = DIFFICULTY_AGENT;
 const char *g_pcStartRamrom = NULL;
 static int g_pcStartLevelForcedRaw = 0;
 
+/* Multiplayer direct-boot selection from command line.
+ * g_pcStartMultiplayer gates the GAMEMODE_MULTI direct-boot path in
+ * init_menus_or_reset(); the rest mirror the frontend MP option state.
+ * MP_stage value is a MP_STAGE_* index into multi_stage_setups[];
+ * scenario value is a SCENARIO_* (MPSCENARIOS) index. */
+int g_pcStartMultiplayer = 0;
+int g_pcStartMpPlayers = 2;
+int g_pcStartMpStage = MP_STAGE_TEMPLE;
+int g_pcStartMpScenario = SCENARIO_NORMAL;
+
 static inline void pc_diag_write_stderr(const char *msg, int len)
 {
     if (len > 0) {
@@ -150,6 +160,99 @@ static int pcParseDifficultyArg(const char *arg, int *out_value) {
 
     if (pcParseIntArg(arg, &parsed)) {
         if (parsed >= DIFFICULTY_AGENT && parsed <= DIFFICULTY_007) {
+            *out_value = parsed;
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+/* CLI-friendly names for the multiplayer stage table. The mp_stage index is a
+ * MP_STAGE_* enum value (an index into front.c's multi_stage_setups[]); we never
+ * embed ROM-derived stage data here, only the public enum index plus a slug. */
+typedef struct PcMpStage {
+    int mp_stage;         /* MP_STAGE_* index into multi_stage_setups[] */
+    const char *slug;     /* CLI-friendly name */
+} PcMpStage;
+
+static const PcMpStage kPcMpStages[] = {
+    { MP_STAGE_RANDOM,   "random" },
+    { MP_STAGE_TEMPLE,   "temple" },
+    { MP_STAGE_COMPLEX,  "complex" },
+    { MP_STAGE_CAVES,    "caves" },
+    { MP_STAGE_LIBRARY,  "library" },
+    { MP_STAGE_BASEMENT, "basement" },
+    { MP_STAGE_STACK,    "stack" },
+    { MP_STAGE_FACILITY, "facility" },
+    { MP_STAGE_BUNKER,   "bunker" },
+    { MP_STAGE_ARCHIVES, "archives" },
+    { MP_STAGE_CAVERNS,  "caverns" },
+    { MP_STAGE_EGYPT,    "egypt" },
+};
+
+/* CLI-friendly names for the multiplayer scenarios (combat modes). */
+typedef struct PcMpScenario {
+    int scenario;         /* SCENARIO_* (MPSCENARIOS) index */
+    const char *slug;     /* CLI-friendly name */
+} PcMpScenario;
+
+static const PcMpScenario kPcMpScenarios[] = {
+    { SCENARIO_NORMAL, "normal" },
+    { SCENARIO_NORMAL, "deathmatch" },
+    { SCENARIO_NORMAL, "combat" },
+    { SCENARIO_YOLT,   "yolt" },
+    { SCENARIO_TLD,    "flagtag" },
+    { SCENARIO_TLD,    "tld" },
+    { SCENARIO_MWTGG,  "goldengun" },
+    { SCENARIO_MWTGG,  "mwtgg" },
+    { SCENARIO_LTK,    "licencetokill" },
+    { SCENARIO_LTK,    "ltk" },
+    { SCENARIO_2v2,    "2v2" },
+    { SCENARIO_3v1,    "3v1" },
+    { SCENARIO_2v1,    "2v1" },
+};
+
+static int pcParseMpStageArg(const char *arg, int *out_value) {
+    size_t i;
+    int parsed;
+
+    if (!arg || !*arg) return 0;
+
+    for (i = 0; i < sizeof(kPcMpStages) / sizeof(kPcMpStages[0]); i++) {
+        if (strcasecmp(kPcMpStages[i].slug, arg) == 0) {
+            *out_value = kPcMpStages[i].mp_stage;
+            return 1;
+        }
+    }
+
+    if (pcParseIntArg(arg, &parsed)) {
+        if (parsed > MP_STAGE_RANDOM && parsed < MP_STAGE_SELECTED_MAX) {
+            *out_value = parsed;
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+static int pcParseMpScenarioArg(const char *arg, int *out_value) {
+    size_t i;
+    int parsed;
+
+    if (!arg || !*arg) return 0;
+
+    for (i = 0; i < sizeof(kPcMpScenarios) / sizeof(kPcMpScenarios[0]); i++) {
+        if (strcasecmp(kPcMpScenarios[i].slug, arg) == 0) {
+            *out_value = kPcMpScenarios[i].scenario;
+            return 1;
+        }
+    }
+
+    if (pcParseIntArg(arg, &parsed)) {
+        if (parsed >= SCENARIO_NORMAL && parsed < MPSCENARIOS_MAX) {
             *out_value = parsed;
             return 1;
         }
@@ -456,6 +559,33 @@ int main(int argc, char **argv)
             g_pcStartLevel = -1;
         } else if (strcmp(argv[i], "--savedir") == 0 && i + 1 < argc) {
             saveDirOverride = argv[++i];
+        } else if (strcmp(argv[i], "--multiplayer") == 0) {
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--players") == 0 && i + 1 < argc) {
+            int players = 0;
+            if (!pcParseIntArg(argv[++i], &players) || players < 2 || players > 4) {
+                fprintf(stderr, "[GE007-PC] Invalid --players value. Use 2, 3, or 4.\n");
+                return 2;
+            }
+            g_pcStartMpPlayers = players;
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--mp-stage") == 0 && i + 1 < argc) {
+            if (!pcParseMpStageArg(argv[++i], &g_pcStartMpStage)) {
+                fprintf(stderr,
+                        "[GE007-PC] Unknown --mp-stage. Use a stage name like 'temple' or 'complex',\n"
+                        "[GE007-PC] or a raw MP_STAGE index (1-%d).\n",
+                        MP_STAGE_SELECTED_MAX - 1);
+                return 2;
+            }
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--scenario") == 0 && i + 1 < argc) {
+            if (!pcParseMpScenarioArg(argv[++i], &g_pcStartMpScenario)) {
+                fprintf(stderr,
+                        "[GE007-PC] Unknown --scenario. Use 'normal' (combat deathmatch), 'yolt',\n"
+                        "[GE007-PC] 'flagtag', 'goldengun', 'ltk', '2v2', '3v1', or '2v1'.\n");
+                return 2;
+            }
+            g_pcStartMultiplayer = 1;
         } else if (argv[i][0] != '-') {
             romPath = argv[i];
         }
@@ -482,7 +612,26 @@ int main(int argc, char **argv)
     configInit();
 
     printf("[GE007-PC] Starting...\n");
-    if (g_pcStartLevel >= 0) {
+    if (g_pcStartMultiplayer) {
+        const char *stage_slug = "?";
+        const char *scenario_slug = "?";
+        size_t i;
+        for (i = 0; i < sizeof(kPcMpStages) / sizeof(kPcMpStages[0]); i++) {
+            if (kPcMpStages[i].mp_stage == g_pcStartMpStage) {
+                stage_slug = kPcMpStages[i].slug;
+                break;
+            }
+        }
+        for (i = 0; i < sizeof(kPcMpScenarios) / sizeof(kPcMpScenarios[0]); i++) {
+            if (kPcMpScenarios[i].scenario == g_pcStartMpScenario) {
+                scenario_slug = kPcMpScenarios[i].slug;
+                break;
+            }
+        }
+        printf("[GE007-PC] Start multiplayer: %d players, stage %s (MP_STAGE %d), scenario %s (SCENARIO %d)\n",
+               g_pcStartMpPlayers, stage_slug, g_pcStartMpStage,
+               scenario_slug, g_pcStartMpScenario);
+    } else if (g_pcStartLevel >= 0) {
         const PcStartStage *stage = pcFindStageByLevelId(g_pcStartLevel);
         if (stage) {
             printf("[GE007-PC] Start stage: %s (mission %d, LEVELID %d)\n",
