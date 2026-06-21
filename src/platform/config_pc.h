@@ -6,8 +6,8 @@
  * and saved back on shutdown or settings change.
  *
  * Usage:
- *   static s32 g_fullscreen = 0;
- *   configRegisterInt("Video.Fullscreen", &g_fullscreen, 0, 1);
+ *   static s32 g_window_mode = 0;
+ *   configRegisterEnum("Video.WindowMode", &g_window_mode, options, option_count);
  *   configInit();  // loads ge007.ini, applies values
  *   configSave();  // writes current values to ge007.ini
  */
@@ -28,7 +28,7 @@ typedef struct ConfigEnumOption {
 } ConfigEnumOption;
 
 /* Register a setting. Call before configInit().
- * key format: "Section.Key" (e.g., "Video.Fullscreen").
+ * key format: "Section.Key" (e.g., "Video.WindowMode").
  * min/max: validation range. Set min >= max to disable clamping. */
 void configRegisterInt(const char *key, s32 *var, s32 min, s32 max);
 void configRegisterFloat(const char *key, f32 *var, f32 min, f32 max);

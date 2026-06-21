@@ -14,7 +14,7 @@ from pathlib import Path
 EXPECTED_DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
-    "Video.Fullscreen": "0",
+    "Video.WindowMode": "windowed",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -27,7 +27,7 @@ CUSTOM_CONFIG = """\
 [Video]
 WindowWidth=1024
 WindowHeight=768
-Fullscreen=1
+WindowMode=exclusive
 
 [Input]
 MouseSensitivity=0.25
@@ -141,7 +141,7 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1024",
                 "Video.WindowHeight": "768",
-                "Video.Fullscreen": "1",
+                "Video.WindowMode": "exclusive",
                 "Input.MouseSensitivity": "0.25",
                 "Input.MouseSensitivityAim": "0.125",
                 "Input.InvertY": "1",

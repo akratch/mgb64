@@ -20,6 +20,7 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "gfx_pc.h"
 #include "settings.h"
 #include "game/front.h"
 #include "game/initmenus.h"
@@ -156,8 +157,19 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
 
-/* ===== Fullscreen state ===== */
-static int g_fullscreen = 0;
+/* ===== Window mode state ===== */
+typedef enum PlatformWindowMode {
+    PLATFORM_WINDOW_MODE_WINDOWED = 0,
+    PLATFORM_WINDOW_MODE_BORDERLESS = 1,
+    PLATFORM_WINDOW_MODE_EXCLUSIVE = 2
+} PlatformWindowMode;
+
+static s32 g_windowMode = PLATFORM_WINDOW_MODE_WINDOWED;
+static const ConfigEnumOption k_windowModeOptions[] = {
+    { "windowed", PLATFORM_WINDOW_MODE_WINDOWED },
+    { "borderless", PLATFORM_WINDOW_MODE_BORDERLESS },
+    { "exclusive", PLATFORM_WINDOW_MODE_EXCLUSIVE },
+};
 
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
@@ -923,6 +935,50 @@ static void platformApplyAutoMuteToggles(void)
     }
 }
 
+static Uint32 platformFullscreenFlagForWindowMode(s32 mode)
+{
+    switch (mode) {
+        case PLATFORM_WINDOW_MODE_BORDERLESS:
+            return SDL_WINDOW_FULLSCREEN_DESKTOP;
+        case PLATFORM_WINDOW_MODE_EXCLUSIVE:
+            return SDL_WINDOW_FULLSCREEN;
+        case PLATFORM_WINDOW_MODE_WINDOWED:
+        default:
+            return 0;
+    }
+}
+
+static void platformSyncWindowSizeForRenderer(void)
+{
+    int w;
+    int h;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    SDL_GetWindowSize(g_sdlWindow, &w, &h);
+    gfx_set_window_size(w, h);
+}
+
+static void platformApplyWindowMode(void)
+{
+    Uint32 fullscreen_flag;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
+    if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
+        fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
+                g_windowMode, SDL_GetError());
+        return;
+    }
+
+    platformSyncWindowSizeForRenderer();
+}
+
 /* Register platform settings with the config system.
  * Called from main_pc.c before configInit(). */
 void platformRegisterConfig(void)
@@ -937,11 +993,13 @@ void platformRegisterConfig(void)
                         "--config-override Video.WindowHeight=VALUE",
                         "Window height",
                         "Initial SDL window height in pixels.");
-    settingsRegisterInt("Video.Fullscreen", &g_fullscreen, 0, 0, 1,
-                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN",
-                        "--config-override Video.Fullscreen=VALUE",
-                        "Borderless fullscreen",
-                        "Start in SDL borderless fullscreen.");
+    settingsRegisterEnum("Video.WindowMode", &g_windowMode, PLATFORM_WINDOW_MODE_WINDOWED,
+                         k_windowModeOptions,
+                         (s32)(sizeof(k_windowModeOptions) / sizeof(k_windowModeOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_WINDOW_MODE",
+                         "--config-override Video.WindowMode=VALUE",
+                         "Window mode",
+                         "SDL display mode: windowed, borderless, or exclusive.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
@@ -1153,15 +1211,13 @@ int platformInitSDL(void) {
         );
     }
 
-    if (g_sdlWindow && g_fullscreen) {
-        SDL_SetWindowFullscreen(g_sdlWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
-    }
-
     if (!g_sdlWindow) {
         fprintf(stderr, "[SDL] Window creation failed: %s\n", SDL_GetError());
         SDL_Quit();
         return -1;
     }
+
+    platformApplyWindowMode();
 
     g_glContext = SDL_GL_CreateContext(g_sdlWindow);
     if (!g_glContext) {
@@ -1244,16 +1300,16 @@ void platformPollEvents(void) {
                     /* Disable vsync when unfocused to prevent macOS SwapWindow hang */
                     SDL_GL_SetSwapInterval(0);
                 } else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                    extern void gfx_set_window_size(int w, int h);
                     gfx_set_window_size(event.window.data1, event.window.data2);
                 }
                 break;
             case SDL_KEYDOWN:
                 if (event.key.keysym.sym == SDLK_RETURN &&
                     (event.key.keysym.mod & KMOD_ALT)) {
-                    g_fullscreen = !g_fullscreen;
-                    SDL_SetWindowFullscreen(g_sdlWindow,
-                        g_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    g_windowMode = (g_windowMode == PLATFORM_WINDOW_MODE_WINDOWED)
+                        ? PLATFORM_WINDOW_MODE_BORDERLESS
+                        : PLATFORM_WINDOW_MODE_WINDOWED;
+                    platformApplyWindowMode();
                 } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
                     if (g_mouseGrabbed) {
                         /* In gameplay: pause (START_BUTTON) and ungrab mouse */

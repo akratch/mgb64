@@ -13,7 +13,7 @@ from pathlib import Path
 DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
-    "Video.Fullscreen": "0",
+    "Video.WindowMode": "windowed",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -27,6 +27,7 @@ SEED_CONFIG = """\
 [Video]
 WindowWidth=1024
 WindowHeight=768
+WindowMode=windowed
 FutureVideo=keep-me
 
 [Input]
@@ -142,11 +143,25 @@ def main() -> int:
                 binary,
                 savedir,
                 "--dump-config",
-                env_extra={"GE007_WINDOW_WIDTH": "1333"},
+                env_extra={
+                    "GE007_WINDOW_WIDTH": "1333",
+                    "GE007_WINDOW_MODE": "borderless",
+                },
             )
         )
-        assert_values(env_dump, {"Video.WindowWidth": "1333"}, "env override dump")
-        assert_file_contains(config_path, ["WindowWidth=1024"], "env override is not persisted")
+        assert_values(
+            env_dump,
+            {
+                "Video.WindowWidth": "1333",
+                "Video.WindowMode": "borderless",
+            },
+            "env override dump",
+        )
+        assert_file_contains(
+            config_path,
+            ["WindowWidth=1024", "WindowMode=windowed"],
+            "env override is not persisted",
+        )
 
         cli_dump = parse_dump(
             run_binary(
@@ -154,11 +169,24 @@ def main() -> int:
                 savedir,
                 "--config-override",
                 "Video.WindowHeight=720",
+                "--config-override",
+                "Video.WindowMode=exclusive",
                 "--dump-config",
             )
         )
-        assert_values(cli_dump, {"Video.WindowHeight": "720"}, "cli override dump")
-        assert_file_contains(config_path, ["WindowHeight=768"], "cli override is not persisted")
+        assert_values(
+            cli_dump,
+            {
+                "Video.WindowHeight": "720",
+                "Video.WindowMode": "exclusive",
+            },
+            "cli override dump",
+        )
+        assert_file_contains(
+            config_path,
+            ["WindowHeight=768", "WindowMode=windowed"],
+            "cli override is not persisted",
+        )
 
         precedence_dump = parse_dump(
             run_binary(
@@ -181,6 +209,8 @@ def main() -> int:
             "Audio.MasterVolume=0.5",
             "--config-set",
             "Video.WindowWidth=1280",
+            "--config-set",
+            "Video.WindowMode=borderless",
         )
         assert_no_tmp(savedir)
         assert_file_contains(
@@ -188,6 +218,9 @@ def main() -> int:
             [
                 "# Window width",
                 "# type=int scope=restart default=1440 range=320..3840",
+                "# Window mode",
+                "# type=enum scope=live default=windowed range=windowed|borderless|exclusive",
+                "WindowMode=borderless",
                 "# Master volume",
                 "# type=float scope=live default=0.7 range=0..1",
                 "FutureVideo=keep-me",
@@ -204,6 +237,7 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1280",
                 "Video.WindowHeight": "768",
+                "Video.WindowMode": "borderless",
                 "Input.MouseSensitivity": "0.25",
                 "Input.InvertY": "1",
                 "Audio.MasterVolume": "0.5",

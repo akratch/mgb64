@@ -151,10 +151,10 @@ track also plugs into.
 
 | Capability | State | Evidence |
 |---|---|---|
-| INI config, clamp, round-trip save, public lookup | ✅ int/float/uint only | `config_pc.c:88-235`, `configFindEntry:239` |
+| INI config, clamp, round-trip save, public lookup | ✅ int/float/uint/enum/string | `config_pc.c:88-235`, `configFindEntry:239` |
 | Savedir (portable + `$HOME/.ge007`) | ✅ | `savedir.c:43-94` |
 | FBO + fullscreen-tri shader post-pass w/ GL state save/restore | ✅ | `gfx_opengl.c:1362-1565` |
-| Borderless fullscreen + Alt+Enter live toggle | 🟡 borderless only | `platform_sdl.c:1126-1226` |
+| Window mode enum + Alt+Enter live toggle | 🟡 windowed/borderless/exclusive token path; no mode picker yet | `platform_sdl.c:1126-1226` |
 | HiDPI drawable sizing per-frame | ✅ | `fast3d/gfx_pc.c:14345-14351` |
 | Active widescreen correction | 🟡 Fast3D screen-space X scale, not first-class aspect modes | `fast3d/gfx_pc.c:8246-8282`, applied to vertices at `:8816` and rectangles at `:11879`; the old projection tweak in `src/platform/gfx_pc.c:742-753` is excluded by `CMakeLists.txt:204-213` |
 | **DrawClass tags on 2D draws** | ✅ already set by game | `gfx_pc.h:68-76`, `lvl.c:1803`, `fast3d/gfx_pc.c:434/481` |
@@ -166,10 +166,10 @@ track also plugs into.
 
 ### Gaps this plan closes
 
-- No enum/string/bind config; unknown keys dropped on save; non-atomic write.
+- No bind config yet; exact comment/order raw-line preservation is still pending.
 - Env overrides hand-checked, CLI hand-parsed, no introspection/UI — no single schema.
 - Scene renders straight to the window (`on_resize` is a no-op `gfx_opengl.c:1662`); no render-scale, no MSAA, no gamma.
-- No exclusive fullscreen, display enumeration, monitor select, or remembered geometry.
+- No fullscreen mode picker, display enumeration, monitor select, or remembered geometry.
 - Split-screen aspect needs validation/hardening. `player_2.c:477` initializes
   `DEFAULT_ASPECT`, but `bondviewMovePlayerUpdateViewport` recomputes from the
   current viewport (`bondview.c:13982-13990`) before `lvl.c:1515-1522` consumes
@@ -217,8 +217,8 @@ between temp write and rename.
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| `Video.WindowMode = windowed\|borderless\|exclusive` | S | ⬜ | Migrate the bool `Video.Fullscreen` (`platform_sdl.c:930`) → enum; apply via existing `SDL_SetWindowFullscreen` path. Borderless stays default (safest on macOS). |
-| Exclusive fullscreen + mode select | M | ⬜ | `SDL_WINDOW_FULLSCREEN` + chosen `SDL_DisplayMode`; for true refresh ownership / lowest latency. |
+| `Video.WindowMode = windowed\|borderless\|exclusive` | S | ✅ | Replaced the bool `Video.Fullscreen` with a token enum; startup and Alt+Enter use the shared `SDL_SetWindowFullscreen` apply path. Windowed remains default until the first-run display flow exists. |
+| Exclusive fullscreen + mode select | M | 🟡 | `exclusive` maps to `SDL_WINDOW_FULLSCREEN`; chosen `SDL_DisplayMode` selection still remains for true refresh ownership / lowest latency. |
 | Display enumeration + monitor select | S | ⬜ | `SDL_GetNumVideoDisplays`/`SDL_GetDisplayMode`; `Video.Display` index. |
 | Remember + sanitize window geometry | S | ⬜ | Persist `Video.WindowX/Y/W/H`; on restore, clamp to a currently-connected display (handle a monitor that vanished). |
 | `Video.VSync = off\|on\|adaptive` | S | ⬜ | Wire the existing adaptive path (`platform_sdl.c:1160`). |

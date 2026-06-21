@@ -160,8 +160,10 @@ setup detail.
 | Mute audio | `M` | — |
 | Show controls | `H` | — |
 
-Mouse sensitivity, fullscreen, and window size are configurable in `ge007.ini`
-(written next to the executable on first run). Pressing `H` also prints the full
+Mouse sensitivity, window size, and display mode are configurable in `ge007.ini`
+(written next to the executable on first run). The display mode key is
+`Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example:
+`--config-set Video.WindowMode=borderless`. Pressing `H` also prints the full
 control list to the console.
 
 ## Known limitations
