@@ -4,330 +4,367 @@ GoldenEye 007's split-screen is the defining feature; **online** split-screen is
 the feature that turns this port from "the GoldenEye people remember" into "the
 GoldenEye people never got to have." The solo campaign plays start-to-finish and
 local 2–4-player split-screen is wired and validated
-([MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md)). This document is the plan to take
-that simulation online in an S-tier fashion.
+([MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md)). This document is the design of
+record for taking that simulation online.
 
-> Status: **planning**. No netcode is written yet (`grep -rE 'recvfrom|sendto|enet_|netplay' src/` → 0 hits). This is the design of record before any code lands.
+> **Status:** planning. No netcode exists yet (`grep -rE 'recvfrom|sendto|enet_|netplay' src/` → 0 hits).
 >
-> **Companion:** [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) is a verified
-> file-by-file map of the (MIT-licensed, same-engine-family) Perfect Dark PC
-> port netcode into `src/platform/net/`. Where its *ground-truth reading of the
-> shipped code* differs from the theory below, **the port map wins** — see the
-> reconciliation note in §1.
+> **Companion:** [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) — the file-by-file map
+> of the MIT-licensed Perfect Dark PC port netcode into `src/platform/net/`, with
+> every GoldenEye symbol grounded to a real `file:line`. This plan is the *what
+> and why*; the port map is the *where and how*.
 
 ---
 
-## 1. Decision: server-authoritative, input-driven, full-sim clients
+## 1. The decision
 
-We run **one authoritative simulation on the host**, forward every player's
-controller input to it, and keep every client's local simulation honest with
-periodic authoritative state reconciliation, plus client-side prediction for the
-local player. This is the Quake/Source FPS model, adapted to the engine.
+**Build the Perfect Dark port's proven model: a host-authoritative session with
+client-authoritative player movement, interpolated remote puppets, and a
+server-authoritative discrete event layer.** Adapt it from the MIT-licensed PD
+source (§11). Concretely, four mechanisms:
 
-We **reject deterministic lockstep / rollback as the v1 spine** (kept as a future
-LAN mode — §9). The reasons are concrete, not stylistic:
+1. **Client-authoritative movement.** Each peer simulates only *its own* player
+   and sends the result — position, view angles, analog crouch/lean, and a
+   `ucmd` command bitmask — to the host, which relays it to everyone.
+2. **Remote players are interpolated puppets.** On every machine, the other
+   players are normal engine players with **controller input disabled**, their
+   pawns positioned from received moves and **lerped** between the last two over
+   `Net.LerpTicks`. They are not simulated from injected input.
+3. **Server-authoritative event layer.** Everything that isn't a player body —
+   damage/kills, projectile spawns, pickups, doors, scores — is synced by
+   explicit host→client messages keyed by a **sync-ID equal to the object's
+   array index**. The host is the source of truth for the world.
+4. **Host pushes the RNG seed** so cosmetic/spawn randomness matches.
 
-| Property | Evidence in this codebase | Consequence |
+Transport is **enet** (UDP + selective reliability). GoldenEye MP caps at **4
+players**; "online split-screen" = up to 2 boxes each running 1–2 *local* couch
+players plus remote puppets.
+
+### Why this model (and not the alternatives)
+
+| Candidate | Verdict | Reason |
 |---|---|---|
-| Variable timestep | `g_ClockTimer ∈ [1,4]` derived from wall-clock, fed to **`f32 g_GlobalTimerDelta`** (`lvl.c:1977-1998`) | Two machines tick differently frame-to-frame. |
-| Float-scaled gameplay | `pos += 10.0f * lvupdate` etc. (`explosions.c:1539`, throughout) | Bit-identical cross-machine floats (x86 ↔ Apple-Silicon ARM) are a research wall. |
-| Default non-determinism | RNG/clock seeded from wall-clock unless `--deterministic` (`boss.c:390`, `stubs.c:247`) | Lockstep would need every nondeterminism source pinned and proven. |
+| **Deterministic lockstep / rollback** | ❌ v1 (✅ post-v1 LAN, §10) | Sim is variable-timestep and float-scaled: `g_ClockTimer ∈ [1,4]` → `f32 g_GlobalTimerDelta` (`lvl.c:1977-1998`), `pos += 10.0f*lvupdate` (`explosions.c:1539`); RNG/clock seeded from wall-clock (`boss.c:390`). Bit-identical cross-machine floats (x86 ↔ Apple-Silicon) are a research wall. Emulator rollback for GE [caps at 2P](https://www.xda-developers.com/someone-just-added-rollback-netcode-to-an-n64-emulator-making-goldeneye-actually-playable-online/). |
+| **Thin client (render from replicated state)** | ❌ | Must replicate *everything the renderer reads* — anim frames, muzzle flashes, effects. Maximizes the sync surface. |
+| **Full-sim clients + reconciliation** | ❌ v1 (✅ post-v1, §10) | Theoretically cleaner and cheat-resistant, but requires server-side pawn simulation + client prediction the engine isn't structured for. Higher risk, slower to first playable. |
+| **PD puppet + event model** | ✅ **v1** | Proven shipping on this exact engine family (PD port, 8P). Light wire surface. Robust to non-determinism. Gives **cross-platform play** (macOS/ARM ↔ x86) lockstep can't. |
 
-The deciding precedent: **Perfect Dark is built on this exact engine**, and the
-[fgsfdsfgs PD PC port](https://github.com/fgsfdsfgs/perfect_dark) shipped
-**8-player netplay** using a **host/client authoritative state-sync** model
-([`port-net`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/README.md)),
-*not* lockstep. Emulator-level rollback for GoldenEye (RMG-K / GekkoNet)
-[caps at 2 players](https://www.xda-developers.com/someone-just-added-rollback-netcode-to-an-n64-emulator-making-goldeneye-actually-playable-online/).
-The authoritative model also buys us **cross-platform play** (macOS/ARM ↔ x86)
-that lockstep cannot, and sidesteps the PD port's "same ROM required" limitation.
+**The deciding precedent:** Perfect Dark is built on GoldenEye's engine, and the
+[fgsfdsfgs PD PC port](https://github.com/fgsfdsfgs/perfect_dark) shipped this
+model for 8 players. We inherit a working design *and* its hard-won bug list
+(see §7). GoldenEye being **human-only** lets us skip PD's single biggest
+unsolved area — bot/simulant sync — entirely.
 
-### Reconciliation with the PD port's *actual* shipped model (ground truth)
-
-After reading the PD `port-net` source (see [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) §1),
-the shipped model is **neither thin-client replication nor full-sim reconcile**.
-It is a third thing, and it's the proven baseline we should port first:
-
-- **Movement is client-authoritative.** Each client simulates only *its own*
-  player and sends the result (position + angles + a `ucmd` command bitmask) to
-  the host, which relays it.
-- **Remote players are interpolated puppets** — normal engine players with input
-  disabled (`controlmode = CONTROLMODE_NA`), their pawns lerped between the last
-  two received moves over `Net.LerpTicks`. They are **not** simulated from
-  injected input and **not** reconciled.
-- **The world is kept correct by a discrete event layer** (`SVC_PROP_*`,
-  `SVC_CHR_*`, stats) keyed by a **sync-ID equal to the prop's array index** —
-  exactly the index-based serialization argued for in §3b.
-
-**Consequence for the split-screen seam (correction to §2):** the
-`osContGetReadData` `data[k]` injection is for **local couch players sharing one
-host**, *not* for remote players. Remote players are network puppets. "Online
-split-screen" = a host runs its 1–2 local players via `data[k]` **plus** N remote
-puppets via the net layer.
-
-The "full-sim clients + reconciliation" idea below is **retained as the post-v1
-hardening target** (it's where the prediction/reconciliation work in Phase N3
-actually pays off, and the only way to make movement server-authoritative and
-cheat-resistant). But **v1 ports the PD baseline**, because it works on this
-engine and ships fastest. The PD known-issues list (rocket rotation, cloak,
-per-weapon alt-fire) is exactly the long tail the §3c hash oracle is meant to
-surface early — and GoldenEye being human-only lets us skip PD's single biggest
-unsolved area (bot sync) entirely.
-
-#### Why not thin clients either
-
-A *thin client* (render only from replicated state) must replicate everything the
-renderer reads — positions, anim frames, muzzle flashes, effects. That maximizes
-the sync surface. The PD puppet+event model is lighter: each peer renders from
-its own local objects, and the wire carries only player moves + discrete events.
+> **Honest tradeoff:** client-authoritative movement is trivially cheatable and
+> causes minor position edge-cases. That is an accepted v1 cost for a
+> preservation/party port; the hardening path to server-authoritative movement is
+> §10.
 
 ---
 
-## 2. The seam is already built
-
-The split-screen work created the exact injection point online needs. The host
-already drives up to 4 independent players from 4 input sources via
-`osContGetReadData` filling `data[0..3]` (`stubs.c:4844`, per-slot fill at
-`stubs.c:5280`). Online **replaces the bytes of `data[k]` for remote players with
-bytes that arrived over the network** — nothing in game logic changes.
+## 2. Architecture in one picture
 
 ```
-   LOCAL split-screen            ONLINE (host)
-   pad k (USB)  → data[k]        net player k → data[k]
-                                 local player → data[0]
+        CLIENT  (player N)                         HOST  (authoritative)
+  ┌───────────────────────────┐             ┌──────────────────────────────┐
+  │ read local pad/kbm        │             │ run full MP sim (lvlManageMp- │
+  │ simulate MY player        │  CLC_MOVE   │   Game) for LOCAL players     │
+  │ (move/aim/fire)           │ ──pos+ucmd─▶│ apply remote clients' moves   │
+  │                           │             │   onto their puppets          │
+  │ apply OTHER players as     │◀─SVC_PLAYER_│ resolve hitscan/damage from   │
+  │   puppets (lerp)          │   MOVE      │   forwarded fire+aim          │
+  │ apply world events        │◀─SVC_PROP_*─│ emit world events (damage,    │
+  │ (damage/spawn/pickup/door)│  SVC_CHR_*  │   spawn, pickup, door, stats) │
+  │ adopt host RNG seed       │◀─RNG seed───│ own RNG, scoreboard, match end│
+  └───────────────────────────┘             └──────────────────────────────┘
+            enet: NETCHAN_DEFAULT (game, mixed)  +  NETCHAN_CONTROL (reliable)
 ```
 
-**Per-player input payload** (`OSContPad`, `platform_os.h:369`):
+**Master clock:** `g_NetTick`, a per-peer `u32` incremented once per advancing
+game frame. It is *not* a globally-agreed lockstep counter — moves carry their
+own tick and interpolation works on tick deltas. The host's tick is canonical
+for event ordering.
 
-| Field | Type | Bytes |
-|---|---|---|
-| `button` | `u16` | 2 |
-| `stick_x`, `stick_y` | `s8` ×2 | 2 |
-| right-stick aim (`platformGetPadRightStick`, `platform_os.h:629` — **not** in `OSContPad`) | `s16` ×2 | 4 |
-| **Total "player intent"** | | **~8–10 B / player / tick** |
-
-At a 30 Hz sim tick: 4 players ≈ **1.2 KB/s of input**. Negligible. Mouse-look
-for P1 is folded into the look-delta field so all players use one wire format.
+**The split-screen seam is for local couch players only.** The existing
+`osContGetReadData` `data[0..3]` routing (`stubs.c:5280`) feeds a host's *local*
+players. Remote players are puppets driven by the move-apply/interp path (§3b) —
+never by injected `OSContPad` bytes. Keep the two paths separate.
 
 ---
 
-## 3. Three refinements that make this tractable (the critical bits)
+## 3. The keystone pieces (grounded)
 
-These are the parts the naive "just sync the state" plan gets wrong.
+These six items are the real engine work. Everything else is transport/protocol
+that ports near-verbatim from PD (port map §6).
 
-### 3a. Pin the timestep in netplay — convert variable→fixed step for free
+### 3a. The `ucmd` adapter — *the single most important new code*
+PD threads a unified per-player command bitmask (`ucmd`, `net.h` `UCMD_*`)
+through the sim; **GoldenEye has no such field** — it reads `joyGetButtons()`
+ad hoc (`joy.c:876`). Build a two-way adapter:
+- **Encode** (local player → wire): derive `ucmd` from `joyGetButtons(p, …)`
+  using the verified button constants (`platform_os.h:183`): `Z_TRIG`(0x2000)→
+  FIRE, `R_TRIG`(0x0010)→AIMMODE, `B_BUTTON`→ACTIVATE/RELOAD, C-buttons/weapon
+  cycle→SELECT, plus `crouchpos`→DUCK/SQUAT.
+- **Decode** (wire → puppet): apply the actions a remote puppet must reproduce —
+  fire, reload, aim-mode, weapon switch (`hands[].weaponnum`), crouch.
 
-The clamp machinery already exists (`lvl.c:1988`). In netplay we force
-**`g_ClockTimer ≡ 1` per network tick**: one net tick = one sim step. This:
+Build and unit-test this first; phases N2–N4 depend on it.
 
-- removes the variable-dt nondeterminism *at the source* (each tick advances the
-  same amount on every peer),
-- makes host and client prediction agree far more tightly (less reconciliation
-  error to smooth), and
-- is the precondition that makes the optional §9 rollback mode realistic later.
+### 3b. The puppet gate — disable input for remote players
+GoldenEye has **no `controlmode == CONTROLMODE_NA` equivalent** (PD's mechanism).
+Add a per-player `g_NetPuppet[playernum]` flag and gate it in
+`bondviewMovePlayerUpdateViewport()` (`bondview.c:13915`, called from
+`lvl.c:5672`): for puppets, **skip** the `joyGetStickX/Y` + `platformGetPad-
+RightStick` reads and **set** `pos`/`vv_theta`/`vv_verta` from the interpolated
+network move instead of from `MoveBond()` (`bondview.c:14088`). The local player
+keeps the normal path.
 
-Cost: ~zero — it's a stricter case of code already on the `NATIVE_PORT` path. The
-host owns the tick clock; clients slave to it.
+### 3c. Sync-ID = prop array index
+`PropRecord` lives in the fixed array `pos_data_entry[POS_DATA_ENTRY_LEN]`
+(`chrprop.c:147`) on a doubly-linked active list
+(`ptr_obj_pos_list_current_entry`, `chrprop.c:468`). Add a `u16 syncid` field to
+`PropRecord` and assign `syncid = (rec - pos_data_entry) + 1` at stage start.
+The wire references objects by `syncid`; the receiver resolves it back by index.
+Never put a raw pointer on the wire.
 
-### 3b. Serialize by **stable array index**, never by raw pointer
+### 3d. Server-authoritative hit & damage resolution
+When a client's `ucmd` carries FIRE, the **host** reproduces the shot using that
+client's forwarded aim (`vv_theta`/`vv_verta`/crosshair) and applies damage
+through GoldenEye's existing path — `record_damage_kills()` (`bondview.c:20340`),
+death via `bondviewKillCurrentPlayer()` (`bondview.c:20279`). That call site is
+**wrapped to emit `SVC_CHR_DAMAGE`/kill events**. Clients never self-report
+kills; this is both correct and the main anti-cheat for scoring.
 
-The ~85 KB match state (§4) is "mostly contiguous" but **pointer-laden**:
-`PropRecord` has `parent/child/prev/next` and a `ChrRecord*` union
-(`bondtypes.h:2273`). A host-address-space `memcpy` is meaningless on a client.
+> GoldenEye health is **normalized** `bondhealth`/`bondarmour` (0..1) scaled by
+> per-player `actual_health`. `SVC_PLAYER_STATS` syncs the normalized values; the
+> scale is set at spawn from the synced scenario/handicap.
 
-Because the live state lives in **fixed-size arrays with stable indices**
-(`pos_data_entry[600]`, `g_Projectiles[20]`, `g_Embedments[40]`, the explosion/
-smoke buffers), the wire format encodes **indices, not addresses**, and the
-receiver relinks pointers from indices on apply. Pointer ↔ index conversion is
-mechanical and lossless. This is the real serialization work and it is bounded.
+### 3e. RNG push
+GoldenEye has **one** global seed `g_randomSeed` (`random.c:24`) — not PD's two.
+The host sends its seed; clients latch it. Used for cosmetic/spawn parity only,
+not for correctness (movement is client-auth, world is event-synced).
 
-> Corollary: the raw-`memcpy` snapshot **is** valid for *same-process* save/restore
-> (the §9 rollback path), just not for the wire. Don't conflate the two.
-
-### 3c. A state-hash desync oracle from day one
-
-The PD port's sync bugs lingered because nothing flagged divergence. We have a
-contiguous state region and an already-serialized RNG (`g_randomSeed`,
-`random.c:24`, persisted in `ramromreplay.c`). So from the first networked
-milestone, host and client **hash the canonical state each tick and exchange the
-hash**; any mismatch logs the tick + the first differing field/array immediately.
-Netcode that is desync-instrumented from the start is the difference between
-"ships" and "perpetual experimental branch."
-
----
-
-## 4. What gets synchronized (snapshot scope)
-
-Match-relevant mutable state, all in the stage arena (`memp.c`/`mema.c`), is
-**~85–90 KB** — cheap to snapshot (<1 ms) and to delta-encode:
-
-| State | Container | Max | Bytes | File |
-|---|---|---|---|---|
-| All game objects (players, doors, pickups) | `pos_data_entry[600]` | 600 × 48 B | 28.8 KB | `chrprop.c:147` |
-| Per-player character | `ChrRecord` (in prop union) | 4 × ~512 B | 2.0 KB | `bondtypes.h:2375` |
-| Projectiles (bullets/grenades/mines/rockets) | `g_Projectiles[20]` | 20 × 236 B | 4.7 KB | `chrprop.c:407` |
-| Embedments (stuck projectiles) | `g_Embedments[40]` | 40 × 72 B | 2.9 KB | `chrprop.c:412` |
-| Explosions / smoke / particles / impacts | stage buffers | — | ~32 KB | `explosions.h` |
-| Ground weapon/ammo pickups | `g_WeaponSlots[30]`, `g_AmmoCrates[20]` | — | ~3 KB | `chrai.h:239` |
-| Per-player stats / scoreboard | `g_playerPlayerData[4]` | 4 × 112 B | 0.4 KB | `player.h:83` |
-| RNG seed | `g_randomSeed` | 1 × 8 B | 8 B | `random.c:24` |
-| Match flags (pause/gameover/timer) | globals | — | <0.3 KB | `mp_watch.c:34` |
-
-Effects buffers (impacts/particles/smoke) are **cosmetic** — they can be
-excluded from the authoritative snapshot and reproduced locally from synced
-events to cut bandwidth, with the hash oracle scoped to gameplay state only.
+### 3f. Desync oracle — scoped correctly
+Hash and exchange the **server-authoritative subset only** — prop states by
+syncid, scores (`g_playerPlayerData`, `player.h:83`), door states, RNG seed —
+**not** player positions (those legitimately differ under client-auth movement +
+interpolation). A mismatch logs the tick and the first divergent object. PD
+shipped without this and paid for it in its known-issues list; we build it from
+N3 onward so the long tail (§7) becomes a fix-list instead of bug reports.
 
 ---
 
-## 5. Phased execution plan
+## 4. What's on the wire (v1)
 
-Effort: S/M/L/XL. Every milestone extends the existing validation lanes
-(`tools/mp_smoke.sh`, `soak_stability.sh`, `asan_smoke.sh`) — netcode that isn't
-CI-gated does not count as done.
+Two kinds of traffic — **not** a 85 KB state snapshot (that's the §10 rollback
+path, deliberately excluded here):
 
-### Phase N0 — Transport + loopback harness
-| Task | Effort | Detail |
+**Per-player move** (`netplayermove`, every ~tick per active player): tick,
+`ucmd`, analog lean/crouch, view angles, crosshair, selected weapon, position —
+**~50 B/player**, sent unreliable, upgraded to reliable when "important" bits
+change (fire/reload/aim/select/activate). The host relays each client's move to
+all others.
+
+**Discrete world events** (only when they happen), each keyed by `syncid`:
+
+| Event | Message | GoldenEye call site to wrap |
 |---|---|---|
-| N0a. Transport layer | M | Vendor **enet** (UDP + reliability/ordering; **MIT-licensed**, §10) under `src/platform/net/`. Packet framing, seq, ack, channels. |
-| N0b. Loopback mode | M | `--netplay loopback`: route input + snapshots through the net path on one machine. The whole pipeline testable with no second box. |
-| N0c. Sim-tick clock | S | Host-owned monotonic tick; pin `g_ClockTimer ≡ 1` in netplay (§3a). |
+| Damage / kill | `SVC_CHR_DAMAGE` | `record_damage_kills()` `bondview.c:20340` |
+| Weapon dropped on death | `SVC_CHR_DISARM` | death/disarm in `bondview.c` |
+| Projectile spawned | `SVC_PROP_SPAWN` | `projectileAllocate()` `chrobjhandler.c:2300` |
+| Projectile/object in flight | `SVC_PROP_MOVE` | projectile update tick |
+| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` | `object_interaction()` `chrobjhandler.c:8874` |
+| Door / lift | `SVC_PROP_DOOR/USE` | `propdoorInteract()` (`chrobjhandler.c`) |
+| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:844` |
+| Health/armor | `SVC_PLAYER_STATS` | periodic + on-change |
+| Scoreboard / match end | `SVC_STAGE_END` + stats | `mp_watch.c` |
 
-**Gate:** loopback 2-player match is byte-for-byte identical to local split-screen via the §3c hash; zero new crashes; CTest + solo lanes stay green.
-
-### Phase N1 — Input forwarding (host receives remote players)
-| Task | Effort | Detail |
-|---|---|---|
-| N1a. "Player intent" wire format | S | 8–10 B/player/tick (§2): buttons + move stick + look delta. |
-| N1b. Inject at `osContGetReadData` | M | For remote slots, fill `data[k]` from the network ring instead of `pcFillPadFromController` (`stubs.c:5280`); feed right-stick into the per-player aim path (`lvl.c`). |
-| N1c. Jitter buffer + input delay | M | Small fixed input delay `D` (configurable) so the host has tick-`T` input for all players before simulating `T`; last-known-input hold on a late packet. |
-
-**Gate:** over LAN, a remote player's real controller moves `g_playerPointers[PLAYER_k]` on the host; `CONTROLLERDEVICEREMOVED`-equivalent (peer drop) → no crash.
-
-### Phase N2 — Authoritative state + full-sim clients (first playable online match)
-| Task | Effort | Detail |
-|---|---|---|
-| N2a. Index-based (de)serializer | L | Encode/decode the §4 state with pointer↔index relink (§3b). |
-| N2b. Host broadcast | M | Host sends input-set(T) to all peers + a state snapshot every `UpdateFrames` ticks (start: every tick; tune later). |
-| N2c. Client apply (hard snap) | M | Client runs full local sim from input-set; **hard-snaps** to authoritative snapshots (visible but playable on LAN). Renders its single viewport; per-client local audio listener (easier than split-screen's single listener). |
-
-**Gate:** 2-player LAN deathmatch end-to-end into the `mp_watch.c` scoreboard, `--max-crashes 0`, hash divergence logged (allowed to be non-zero here — N3 closes it).
-
-### Phase N3 — Smoothing: prediction, reconciliation, interpolation
-| Task | Effort | Detail |
-|---|---|---|
-| N3a. Local-player prediction + reconciliation | L | Local sim runs ahead on local input; on snapshot, correct error **smoothly** (lerp) instead of hard-snap. |
-| N3b. Remote entity interpolation | M | Render remote players/projectiles interpolated between snapshots; back-pressure via interpolation delay. |
-| N3c. Delta snapshots + quantization | M | Send only changed fields; quantize positions/angles. Cosmetic effects → event-driven, off the authoritative path (§4). |
-
-**Gate:** feels responsive at 60–100 ms RTT (the PD port's stable range); steady-state hash divergence converges to 0 within `D + interp` ticks under injected latency/jitter/loss.
-
-### Phase N4 — Scale to 4–8 players + bandwidth budget
-| Task | Effort | Detail |
-|---|---|---|
-| N4a. `Net.UpdateFrames` cadence | M | Tunable snapshot rate (PD port uses `=2` for 4+ players). |
-| N4b. Relevancy/area-of-interest | M | Per-client snapshots can drop far/occluded entities (FPS levels are small; optional). |
-| N4c. Bandwidth instrumentation | S | Log bytes/s per phase into `port_trace` like `rooms_drawn`/`tris`. |
-
-**Gate:** 4-player WAN match within a logged bandwidth budget; soak-stable; `--max-crashes 0`.
-
-### Phase N5 — Matchmaking, NAT traversal, lobby UI
-| Task | Effort | Detail |
-|---|---|---|
-| N5a. Relay / matchmaking server | L | Lightweight relay for NAT punch + join-by-code (sm64coopdx's "CoopNet" TCP relay and the PD port's servegame.com are the references). |
-| N5b. Lobby UI | L | Host/join/character/stage/scenario hooked into the existing MP menu state machine (`front.c:14324`) and stage table (`front.c:1124+`). |
-| N5c. Compatibility handshake | S | Exchange ROM region (U/J/E) + build hash + protocol version; refuse mismatches with a clear message (avoids the PD port's silent "different ROM" desyncs). |
-
-**Gate:** two machines connect over the internet via join-code with no port-forwarding; mismatched builds are rejected cleanly.
+This event set *is* the correctness surface. Getting every weapon/door/pickup
+path wrapped is the bulk of the work — see the risk register (§7).
 
 ---
 
-## 6. Hard problems & how we beat them
+## 5. Session lifecycle
 
-| Problem | Approach |
-|---|---|
-| **Pointer-laden state on the wire** | Index-based serialization with relink (§3b); never ship addresses. |
-| **Non-determinism between peers** | Host is canonical; clients reconcile to it; timestep pinned (§3a) so drift is small and correction is cheap. |
-| **The "X not synced" long tail** (PD port's pain) | Hash oracle (§3c) names the first divergent field every tick — turns silent desyncs into a fix list. |
-| **Pause in an online match** | GoldenEye's `who_paused` (`mp_watch.c`) can't freeze the world for everyone. v1: pause opens a *local* menu overlay only; the match keeps running (standard online FPS behavior). |
-| **Host advantage / cheating** | Accepted tradeoff for a preservation/party port; host authority is the standard model. Document it; don't over-engineer anti-cheat. |
-| **Host migration / reconnection** | v1: host leaving ends the match (clear messaging). Migration is a post-v1 stretch. |
-| **MP unlocks/characters** (ride `file.c`) | Host's save provides the authoritative stage/character/unlock set; clients use host config for the session. |
-| **Effects flooding bandwidth** | Cosmetic effects are event-driven and locally simulated, excluded from the authoritative snapshot and the hash. |
+The concrete connect→play→repeat flow, grounded in the GoldenEye menu/stage path:
+
+1. **Connect & auth.** Client connects (enet), sends `CLC_AUTH` with name +
+   build/ROM identity; host validates against its own and admits to `LOBBY`
+   (state machine `CLSTATE_*`). Late joins rejected once in-game.
+2. **Lobby.** Host configures the match in the existing MP menu — stage
+   (`multi_stage_setups[]` `front.c:1123`), scenario (`scenario` `front.c:1322`,
+   the GE DM variants), player count. Clients wait; chat available.
+3. **Stage start.** Host triggers the load via the existing
+   `pc_apply_mp_selection()` → `bossSetLoadedStage()` (`boss.c:779`) path and
+   broadcasts `SVC_STAGE_START`. Every peer loads the **same** stage/scenario.
+4. **Allocate.** After load: assign sync-IDs to all props (§3c) and bind
+   clients↔`g_playerPointers[]`, flagging remote players as puppets (§3b). Enter
+   `GAME`; `g_NetTick` begins.
+5. **Play.** Per advancing frame: `netStartFrame()` (pump enet, apply inbound) →
+   `lvlManageMpGame()` (`boss.c:602`) → `netEndFrame()` (record local move, emit
+   events, flush). Single-threaded, no locks (§7).
+6. **End.** Match hits the limit → host runs `mp_watch.c` scoreboard
+   authoritatively, broadcasts `SVC_STAGE_END`; everyone returns to lobby and the
+   process repeats from step 2.
 
 ---
 
-## 7. Bandwidth sketch
+## 6. Phased execution plan
 
-- **Input:** ~8–10 B × 4 players × 30 Hz ≈ **1.2 KB/s** (constant, trivial).
-- **Snapshot:** worst case full ~85 KB; with delta + quantization (N3c) the
-  steady-state working set (moving players + active projectiles) is a few KB/tick;
-  at `UpdateFrames=2` that's well within a **64–256 KB/s** budget for 4 players —
-  comparable to a modern indie FPS and far inside home-broadband uplinks.
+Effort S/M/L/XL. Every milestone extends the existing lanes (`mp_smoke.sh`,
+`soak_stability.sh`, `asan_smoke.sh`); netcode that isn't CI-gated isn't done.
+Phases map 1:1 to the port map's port order (§5 there).
+
+### N0 — Transport + loopback harness
+| Task | Effort | Detail |
+|---|---|---|
+| N0a. Vendor enet + port `netbuf.[ch]` | M | enet (MIT) under `lib/enet/`; LE byte-buffer serializer (`src/platform/net/netbuf.[ch]`). |
+| N0b. Frame pump + connection FSM | M | `netStartFrame`/`netEndFrame` in `boss.c` around `lvlManageMpGame` (`boss.c:602`); `CLSTATE_*` machine; enet host create/service (non-blocking, §7). |
+| N0c. Loopback mode | M | `--netplay loopback`: two in-process peers on one box, the whole pipeline testable in CI with no second machine. |
+
+**Gate:** loopback connects, `g_NetTick` advances on both peers, clean disconnect, zero new crashes, CTest + solo + split-screen lanes green.
+
+### N1 — Auth, lobby, handshake
+| Task | Effort | Detail |
+|---|---|---|
+| N1a. `CLC_AUTH`/`SVC_AUTH` + settings | M | Name/body/head config exchange. |
+| N1b. Compatibility handshake | S | Build hash + ROM region (U/J/E) + protocol version; reject mismatches clearly (fixes PD's filename-only weakness). |
+| N1c. Lobby + chat | S | Host configures match; clients wait; console chat. |
+
+**Gate:** client joins to `LOBBY` over LAN; mismatched build rejected with a message; chat round-trips.
+
+### N2 — Player movement + puppets (first bodies online)
+| Task | Effort | Detail |
+|---|---|---|
+| N2a. `ucmd` adapter | M | Encode/decode + unit tests (§3a). |
+| N2b. Move record/send + apply/interp | L | Read local `struct player` → `netplayermove` → `CLC_MOVE`/`SVC_PLAYER_MOVE`; puppet gate + lerp (§3b). |
+| N2c. Player↔client allocation | M | Bind to `g_playerPointers[]`, flag puppets, sync names/skins. |
+
+**Gate:** over LAN, all players see each other move and aim smoothly (interpolated); no crashes on a peer dropping mid-match.
+
+### N3 — World event layer (matches become real)
+| Task | Effort | Detail |
+|---|---|---|
+| N3a. Sync-IDs + prop spawn/move | L | `syncid` field + assignment (§3c); `SVC_PROP_SPAWN/MOVE` for projectiles. |
+| N3b. Damage/kills server-authoritative | L | Wrap `record_damage_kills` (§3d); `SVC_CHR_DAMAGE`/disarm; scoreboard. |
+| N3c. Pickups, doors, explosions | L | Wrap `object_interaction`, `propdoorInteract`, `explosionCreate`. |
+| N3d. RNG push + stats + desync oracle | M | `SVC_PLAYER_STATS`; RNG latch (§3e); event-scoped hash oracle (§3f). |
+
+**Gate:** 2–4-player LAN deathmatch end-to-end into the `mp_watch.c` scoreboard, `--max-crashes 0`, kills/pickups/doors correct, event-scoped hash divergence 0.
+
+### N4 — Hardening, scale, polish
+| Task | Effort | Detail |
+|---|---|---|
+| N4a. `Net.*UpdateFrames` cadence + bandwidth instrumentation | M | Tunable send rate (PD uses `=2` for 4P); log bytes/s into `port_trace`. |
+| N4b. Interp tuning + F9 net stats | S | `Net.LerpTicks`; on-screen ping/throughput (`netDebugRender`). |
+| N4c. Adversarial-network CI lane | M | Latency/jitter/loss injection (§9). |
+
+**Gate:** 4-player match within a logged bandwidth budget; soak-stable; smooth at injected 80 ms/jitter/1% loss.
+
+### N5 — Internet play (matchmaking + NAT)
+| Task | Effort | Detail |
+|---|---|---|
+| N5a. Server browser / query | S | Port the connectionless query protocol (`NET_QUERY_MAGIC`, CRC) for LAN/direct. |
+| N5b. Relay / join-by-code | L | Lightweight relay for NAT traversal (sm64coopdx's CoopNet and PD's servegame.com are references). |
+
+**Gate:** two machines connect over the internet via join-code with no port-forwarding; cross-platform (macOS/ARM ↔ x86) confirmed.
 
 ---
 
-## 8. Testing & CI (the S-tier moat)
+## 7. Risk register (ranked) — "what could stall this"
 
-Reuse the existing deterministic harness as a netcode rig:
+| Risk | Likelihood × Impact | Mitigation |
+|---|---|---|
+| **`ucmd` adapter incompleteness** — a weapon action that doesn't map → that action desyncs | High × Med | Build/test it first (N2a); enumerate every weapon's inputs against the `UCMD_*` set; the desync oracle (§3f) flags gaps. |
+| **Per-weapon special behaviors** — remote/proximity/timed mines, throwing knives, auto-aim, Klobb spread | Med × High | These are exactly PD's known-issue class. Drive each through the event layer (N3), verify per-weapon; budget explicit time here. |
+| **Hitscan reproduction on host** — replaying a client's shot from forwarded aim couples to GE shot code | Med × High | Prototype with the hitscan path early in N3b; if coupling is deep, fall back to shooter-detects-hit + host-validates. |
+| **Door/lift/glass state edge cases** | Med × Med | Wrap `propdoorInteract`; cover breakable glass in the prop event set; soak test. |
+| **NAT traversal for internet** | High × Med | Relay (N5b) is separate infra; LAN/direct + ZeroTier works without it as an interim (as PD does). |
+| **Sync-ID instability if props re-pool mid-match** | Low × High | Explicit `syncid` field (not bare index); reassign only at stage start; assert uniqueness. |
+| **Cheating via client-auth movement/aim** | High × Low (v1) | Accepted for v1; kills are server-resolved so scoreboard can't be forged; §10 hardens movement. |
+| **Cross-platform float drift in cosmetic RNG** | Low × Low | Irrelevant to correctness (event-synced); only affects particle cosmetics. |
 
+**Two structural gaps to build (not just rename):** `PropRecord.syncid` (§3c) and
+the `ucmd` adapter (§3a). Everything else is renaming against the port map's
+symbol table.
+
+---
+
+## 8. Bandwidth sketch (move + event model)
+
+- **Moves:** ~50 B × 4 players × ~20–30 send-Hz ≈ **4–6 KB/s/peer** baseline,
+  mostly unreliable; the host relays, so its uplink ≈ N × that.
+- **Events:** bursty and small (a kill, a pickup, a door = tens of bytes each).
+- **Tuning:** `Net.Server.UpdateFrames=2` halves move traffic for 4P. Total sits
+  comfortably in a **<128 KB/s/peer** budget on home broadband — far below the
+  snapshot model's cost, which is the point of choosing puppets+events.
+
+---
+
+## 9. Testing & CI (the S-tier moat)
+
+Reuse the deterministic harness as a netcode rig:
 1. **Loopback CI lane** — `tools/net_smoke.sh`: two in-process peers, scripted
-   input (reuse `mp_smoke.sh`'s driver), assert **hash equality every tick** and
-   distinct viewports. Runs headless in CI with no second machine.
-2. **Adversarial network sim** — inject latency/jitter/packet-loss; assert the
-   match still converges (hash divergence → 0) and never crashes (`--max-crashes 0`).
-3. **RAMROM as a determinism oracle** — the existing replay system
-   (`ramromreplay.c`) records a match's inputs + RNG seed; replaying on one
-   machine proves the host sim is reproducible frame-to-frame, isolating *engine*
-   nondeterminism from *network* faults.
-4. **Soak** — long 2P/4P loopback runs through `soak_stability.sh` + ASan lane.
+   input (reuse `mp_smoke.sh`'s driver), assert the **event-scoped hash** matches
+   and both viewports render. Headless, no second machine.
+2. **Adversarial network sim** — injected latency/jitter/loss; assert no crash
+   (`--max-crashes 0`), correct scores, and event-hash convergence.
+3. **RAMROM determinism oracle** — the existing replay system (`ramromreplay.c`)
+   proves the *host* sim is reproducible frame-to-frame, isolating engine
+   nondeterminism from network faults.
+4. **Soak + ASan** — long 2P/4P loopback through `soak_stability.sh` + the ASan
+   lane.
 
 ---
 
-## 9. Future: same-build LAN rollback mode (stretch, post-v1)
+## 10. Post-v1 hardening (explicitly out of scope for v1)
 
-This engine has unusually strong assets for rollback that the authoritative spine
-doesn't need but a competitive LAN mode could exploit:
+Two upgrades the v1 baseline is deliberately built to *enable* later:
 
-- ~85 KB **contiguous** state → save/restore in <1 ms (cheap rollback).
-- RNG already serialized (`random.c` / `ramromreplay.c`).
-- Timestep already pinned to a fixed step in netplay (§3a).
-- An input-replay system already exists (RAMROM).
+**A. Server-authoritative movement + client prediction/reconciliation.** Make the
+host simulate remote pawns from `ucmd` (not trust client `pos`), with the client
+predicting its own player and reconciling to host corrections. This is the
+cheat-resistant, "true Source-model" upgrade — and the only place prediction/
+reconciliation actually applies. PD does **not** do this today.
 
-For **same-binary, same-arch LAN** (where cross-platform float divergence is a
-non-issue), a GGPO/GekkoNet-style rollback path becomes realistic for 2–4-player
-low-latency competitive play. It is explicitly **out of scope for v1** — the
-authoritative model ships first and serves cross-platform internet play; rollback
-is a later, opt-in mode for tournaments.
-
----
-
-## 10. Licensing
-
-MGB64's first-party code is **MIT** (`LICENSE`). **Verified:** the Perfect Dark
-PC port is also **MIT** (© 2022 Ryan Dwyer) and bundles **enet (MIT)** — both
-compatible with MGB64. So we may **adapt the PD netcode source directly** (not
-only clean-room), provided the copyright/permission notice is preserved and
-recorded in `THIRD_PARTY.md`/`NOTICE.md`. This supersedes the earlier
-clean-room-only assumption. Still avoid GPL-licensed net stacks. See
-[NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) for the file-by-file adaptation.
+**B. Same-build LAN rollback (tournament mode).** GoldenEye's state is unusually
+rollback-friendly: the match-relevant mutable state is **~85–90 KB and mostly
+contiguous** (`pos_data_entry[600]` 28.8 KB, `g_Projectiles[20]`, explosion
+buffers, `g_playerPlayerData[4]`, `g_randomSeed`), cheap to snapshot/restore
+(<1 ms). With the timestep pinned (`g_ClockTimer ≡ 1`) and RNG already serialized
+in `ramromreplay.c`, a GGPO/GekkoNet-style rollback path is realistic for
+**same-binary, same-arch LAN** 1v1–4P competitive play, where cross-platform
+float divergence is a non-issue. This is where the "snapshot the whole state"
+and "fixed timestep for determinism" ideas live — *not* in the v1 wire format.
 
 ---
 
-## 11. Definition of done (v1)
+## 11. Licensing
 
-`tools/net_smoke.sh` connects 4 peers (loopback + a LAN job), plays a complete
-deathmatch into the `mp_watch.c` scoreboard with `--max-crashes 0`, **steady-state
-state-hash divergence of 0** under injected 80 ms/jitter/1%-loss, each peer
-rendering its own predicted+interpolated viewport with responsive local aim —
-while every existing solo, split-screen, soak, and ASan lane stays green. Internet
-play works via join-code through the relay with cross-platform (macOS/ARM ↔ x86)
-peers, and mismatched builds are rejected at handshake.
+MGB64 first-party code is **MIT** (`LICENSE`). **Verified:** the Perfect Dark PC
+port is also **MIT** (© 2022 Ryan Dwyer) and bundles **enet (MIT)** — both
+compatible. We may **adapt the PD netcode source directly** (preserve the
+copyright/permission notice; record in `THIRD_PARTY.md`/`NOTICE.md`). Avoid
+GPL-licensed net stacks. See [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) for the
+file-by-file adaptation.
+
+---
+
+## 12. Definition of done (v1)
+
+A 4-player online GoldenEye deathmatch: players join via the lobby (or join-by-
+code over the internet), play a complete match into the `mp_watch.c` scoreboard
+with `--max-crashes 0`, with **remote players moving smoothly (interpolated)** and
+**kills, damage, pickups, doors, and scores all correct** (event-scoped hash
+divergence 0 under injected 80 ms/jitter/1% loss). Cross-platform peers
+(macOS/ARM ↔ x86) interoperate; mismatched builds are rejected at handshake; and
+every existing solo, split-screen, soak, and ASan lane stays green. `tools/net_smoke.sh`
+gates all of it in CI.
 
 ---
 
 ## References
-
-- [Perfect Dark PC port](https://github.com/fgsfdsfgs/perfect_dark) · [netplay branch](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/README.md) — same engine family; authoritative host/client, 8 players. **Read its `net/` design first.**
-- [sm64coopdx architecture](https://deepwiki.com/coop-deluxe/sm64coopdx/1-overview) — client-server, UDP P2P + TCP relay (CoopNet), reliability/compression, per-object ownership.
-- [N64 rollback netplay (RMG-K / GekkoNet)](https://www.xda-developers.com/someone-just-added-rollback-netcode-to-an-n64-emulator-making-goldeneye-actually-playable-online/) — reference for the §9 rollback stretch only.
-- Internal: [MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md) (split-screen seam), [PORT.md](../PORT.md) (timing/determinism caveats), [INSTRUMENTATION.md](INSTRUMENTATION.md) (trace tooling).
+- PD netcode (port-net): [`net.c`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/src/net/net.c) · [`netmsg.c`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/src/net/netmsg.c) · [`net.h`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/include/net/net.h) · [`netplay.md`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/docs/netplay.md)
+- [sm64coopdx architecture](https://deepwiki.com/coop-deluxe/sm64coopdx/1-overview) — client-server, UDP P2P + TCP relay (CoopNet), reliability/compression.
+- [N64 rollback netplay (RMG-K/GekkoNet)](https://www.xda-developers.com/someone-just-added-rollback-netcode-to-an-n64-emulator-making-goldeneye-actually-playable-online/) — §10 rollback reference only.
+- Internal: [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md), [MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md), [PORT.md](../PORT.md), [INSTRUMENTATION.md](INSTRUMENTATION.md).

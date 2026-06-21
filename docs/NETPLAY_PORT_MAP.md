@@ -1,225 +1,223 @@
 # Netplay Port Map — adapting the Perfect Dark port's netcode into MGB64
 
-Companion to [NETPLAY_PLAN.md](NETPLAY_PLAN.md). This is a concrete, file-by-file
-map of the **Perfect Dark PC port** netcode (`fgsfdsfgs/perfect_dark`,
+Companion to [NETPLAY_PLAN.md](NETPLAY_PLAN.md). This is the concrete, file-by-
+file map of the **Perfect Dark PC port** netcode (`fgsfdsfgs/perfect_dark`,
 [`port-net` branch](https://github.com/fgsfdsfgs/perfect_dark/tree/port-net))
-into MGB64's `src/platform/net/`. PD is built on the same engine family as
-GoldenEye, so its netcode is the closest working reference that exists.
+into MGB64's `src/platform/net/`. Every GoldenEye symbol below is grounded to a
+real `file:line` verified in this tree. PD is built on GoldenEye's engine family,
+so its netcode is the closest working reference that exists.
 
-> **Licensing (verified):** the PD port is **MIT** (Copyright © 2022 Ryan Dwyer)
-> and bundles **enet (MIT)**. Both are compatible with MGB64's MIT license, so we
-> may **adapt the source directly** (not only clean-room), provided we preserve
-> the copyright/permission notice and record it in `THIRD_PARTY.md` / `NOTICE.md`.
-> This is a significant accelerator over the clean-room assumption in
-> NETPLAY_PLAN §10.
+> **Licensing (verified):** PD port is **MIT** (© 2022 Ryan Dwyer) and bundles
+> **enet (MIT)**. Both compatible with MGB64's MIT license → **adapt the source
+> directly**, preserving the notice and recording it in `THIRD_PARTY.md` /
+> `NOTICE.md`.
 
 ---
 
 ## 1. The PD netcode, as actually shipped (ground truth)
 
-Reading the source corrects the architecture sketch in NETPLAY_PLAN §1. The
-shipped model is **not** full-sim-on-every-client with reconciliation. It is:
+The model (confirmed by reading the source, not the README):
 
-- **Master clock:** `g_NetTick`, a `u32` incremented once per game frame
+- **Master clock** `g_NetTick` (`u32`), incremented once per advancing game frame
   (`net.c:808`), pumped by `netStartFrame()`/`netEndFrame()` bracketing the sim.
-- **Client-authoritative movement.** Each client simulates **only its own**
-  player and sends the *result* — position, view angles, analog lean/crouch,
-  and a `ucmd` command bitmask — to the server (`netClientRecordMove`,
-  `net.c:185`; `CLC_MOVE`). The server trusts and relays it.
-- **Remote players are interpolated puppets, not simulations.** On every peer,
-  remote players are normal engine players with **input disabled**
-  (`controlmode = CONTROLMODE_NA`, `net.c:981`) and `isremote = true`. Their
-  pawn is driven by applying the received `netplayermove` and **lerping**
-  position/angles over `g_NetInterpTicks` (default 3) between the last two moves
-  (`inmove[2]`). A server-set **force-tick** (`UCMD_FL_FORCE*`) snaps them for
-  teleports/respawns (`net.c:255`, `netmsg.c:275`).
-- **Discrete world-event layer keyed by sync-ID.** Everything that isn't a
-  player body is synced by explicit server→client messages: prop spawn/move,
-  damage, pickup, door/lift use, chr damage/disarm, player stats (`SVC_PROP_*`,
-  `SVC_CHR_*`, `SVC_PLAYER_STATS`). Each references a prop by a **sync-ID that
-  equals its array index** (`prop->syncid = prop - g_Vars.props + 1`,
-  `net.c:1017`), resolved back with a linear scan (`netbufReadPropPtr`,
-  `netmsg.c:130`).
-- **RNG push for cosmetic determinism.** The server pushes its RNG seed
-  (`g_NetRngSeeds[]`) and clients latch it (`netClientSyncRng`, `net.c:780`).
-- **Transport:** enet, two channels — `NETCHAN_DEFAULT` (game, mixed
-  reliable/unreliable) and `NETCHAN_CONTROL` (auth/chat/settings, reliable).
-  `NET_BUFSIZE` 1440 (MTU-sized). Default port 27100. Little-endian wire.
-- **Connection state machine:** `DISCONNECTED → CONNECTING → AUTH → LOBBY →
-  GAME` (`net.h:CLSTATE_*`), with a connectionless **query protocol**
-  (`NET_QUERY_MAGIC`, CRC-checked) for a server browser (`net.c:338`).
+  Per-peer local — *not* a lockstep counter; moves carry their own tick.
+- **Client-authoritative movement.** Each client records only its own player and
+  sends pos + angles + a `ucmd` bitmask (`netClientRecordMove`, `net.c:185`;
+  `CLC_MOVE`). The host trusts and relays it.
+- **Remote players are interpolated puppets** — engine players with input
+  disabled (`controlmode = CONTROLMODE_NA`, `net.c:981`), lerped between the last
+  two moves (`inmove[2]`) over `g_NetInterpTicks`. A server **force-tick**
+  (`UCMD_FL_FORCE*`) snaps them for teleport/respawn (`net.c:255`, `netmsg.c:275`).
+- **Server-authoritative event layer.** Props/chrs/scores synced by explicit
+  `SVC_*` messages, each keyed by a **sync-ID = prop array index**
+  (`prop->syncid = prop - g_Vars.props + 1`, `net.c:1017`; resolver
+  `netbufReadPropPtr`, `netmsg.c:130`).
+- **RNG push** for cosmetic parity (`netClientSyncRng`, `net.c:780`).
+- **Transport:** enet, two channels — `NETCHAN_DEFAULT` (game, mixed) and
+  `NETCHAN_CONTROL` (auth/chat/settings, reliable). `NET_BUFSIZE` 1440. Default
+  port 27100. Little-endian wire (`PD_LE*`). Connection FSM
+  `DISCONNECTED→CONNECTING→AUTH→LOBBY→GAME`, with a connectionless query protocol
+  (`NET_QUERY_MAGIC`, CRC) for a server browser (`net.c:338`).
 
-### What this means for MGB64's split-screen seam
-
-NETPLAY_PLAN leaned on the `osContGetReadData` `data[k]` seam for **remote**
-input. Ground truth says: **don't.** The `data[k]` seam is for **local couch
-players sharing one host**; remote players are puppets driven by the
-move-apply + interpolation layer, never by injected `OSContPad` bytes. "Online
-split-screen" = a host runs its 1–2 *local* players through `data[k]` **and**
-N *remote* puppets through the net layer. Keep the two paths separate.
-
-> The honest tradeoff: client-authoritative movement is the reason PD has
-> position/where-am-I edge cases and is trivially cheatable. It's the fast,
-> proven v1. Making movement server-authoritative (server simulates pawns from
-> client `ucmd`) is a post-v1 hardening option — see §7.
+GoldenEye differences we inherit: **4 players max** (not 8), **one RNG stream**,
+**human-only** (we skip PD's unsolved bot sync), and **no `controlmode`/`ucmd`
+fields** (we add equivalents — §3, §4).
 
 ---
 
 ## 2. Source inventory → target layout
 
-| PD source (`port-net`) | Lines | Role | MGB64 target |
-|---|---|---|---|
-| `port/include/net/netbuf.h` | 50 | LE byte-buffer serializer API | `src/platform/net/netbuf.h` |
-| `port/src/net/netbuf.c` | 305 | bounds-checked read/write primitives | `src/platform/net/netbuf.c` |
-| `port/include/net/net.h` | 163 | `netplayermove`, `netclient`, globals, API, `UCMD_*` | `src/platform/net/net.h` |
-| `port/src/net/net.c` | 1127 | enet host, conn FSM, frame pump, move record, syncid/player alloc, RNG, config, query | `src/platform/net/net.c` |
-| `port/include/net/netmsg.h` | 74 | `SVC_*`/`CLC_*` ids + per-message proto | `src/platform/net/netmsg.h` |
-| `port/src/net/netmsg.c` | 1582 | per-message (de)serialize + apply; syncid↔prop | `src/platform/net/netmsg.c` |
-| `port/src/net/netmenu.c` | 422 | host/join lobby UI | **glue into `src/game/front.c`** MP menu FSM (`front.c:14324`) |
-| `port/include/net/netenet.h` | 10 | enet include shim (`#undef bool/near/far`) | `src/platform/net/netenet.h` |
-| `port/external/enet.c` + `port/include/external/enet.h` | vendored | UDP transport (MIT) | `lib/enet/` (vendor as-is) |
+| PD source (`port-net`) | Lines | Role | MGB64 target | Action |
+|---|---|---|---|---|
+| `port/include/net/netbuf.h` + `port/src/net/netbuf.c` | 50/305 | LE byte-buffer serializer | `src/platform/net/netbuf.[ch]` | **port verbatim** |
+| `port/include/net/net.h` | 163 | `netplayermove`, `netclient`, globals, `UCMD_*`, API | `src/platform/net/net.h` | port, light edit |
+| `port/src/net/net.c` | 1127 | enet host, conn FSM, frame pump, move record, syncid/player alloc, RNG, config, query | `src/platform/net/net.c` | port + rewrite engine bits |
+| `port/include/net/netmsg.h` + `port/src/net/netmsg.c` | 74/1582 | `SVC_*`/`CLC_*` (de)serialize + apply | `src/platform/net/netmsg.[ch]` | port framing, rewrite apply |
+| `port/src/net/netmenu.c` | 422 | host/join lobby UI | glue into `src/game/front.c` (MP FSM `front.c:14324`) | **reimplement** |
+| `port/include/net/netenet.h` | 10 | enet include shim | `src/platform/net/netenet.h` | port verbatim |
+| `port/external/enet.c` + `include/external/enet.h` | vendored | UDP transport (MIT) | `lib/enet/` | **vendor as-is** |
 
-`netbuf` and `enet` port **verbatim**. `net.c`/`netmsg.c` are ~70% transport/
-protocol (ports cleanly) and ~30% engine-coupling (the rewrite — §3/§4).
-`netmenu.c` is best **reimplemented** against GE's existing MP menu rather than
-ported, since the frontends differ.
+`netbuf` + enet port verbatim. `net.c`/`netmsg.c` are ~70% transport/protocol
+(ports cleanly) and ~30% engine coupling (the rewrite — §3/§4). `netmenu.c` is
+reimplemented against GoldenEye's existing MP menu.
 
 ---
 
-## 3. Engine-symbol correspondence (PD → MGB64/GoldenEye)
+## 3. Engine-symbol correspondence (PD → MGB64/GoldenEye) — fully grounded
 
-The rewrite is mostly find-and-replace against this table. Verified GE symbols
-cited; a few marked *(locate)* need a grep during implementation.
-
-| Concept | PD symbol | MGB64 / GE symbol | Where |
+| Concept | PD symbol | MGB64 / GoldenEye symbol | Where (verified) |
 |---|---|---|---|
 | Prop array + count | `g_Vars.props[]`, `g_Vars.maxprops` | `pos_data_entry[POS_DATA_ENTRY_LEN]` | `chrprop.c:147` |
 | Prop struct | `struct prop` | `PropRecord` | `bondtypes.h:2273` |
-| **Prop sync-ID** | `prop->syncid` (`u16`) | **add `u16 syncid` to `PropRecord`** (or use `rec - pos_data_entry + 1` directly) | — |
-| Active/paused prop lists | `g_Vars.activeprops`, `pausedprops` | GE prop list heads *(locate in `chrprop.c`)* | — |
-| Player array | `g_Vars.players[]` | `g_playerPointers[PLAYER_1..4]` | `player_2.c:68` |
-| Player struct | `struct player` | GE player record *(the struct behind `g_playerPointers`)* | `player.h` |
+| **Prop sync-ID** | `prop->syncid` | **add `u16 syncid` to `PropRecord`** | — (new field) |
+| Active prop list | `g_Vars.activeprops`/`pausedprops` | `ptr_obj_pos_list_current_entry` / `_first_entry` / `_final_entry` (doubly-linked, iterate via `->prev`) | `chrprop.c:468` |
+| Prop alloc/free/activate | (PD equivalents) | `chrpropAllocate()` / `chrpropFree()` / `chrpropActivate()` | `chrprop.c:595` / `:620` / `:629` |
+| Player array | `g_Vars.players[]` | `g_playerPointers[4]` | `player.h:76`; init `player_2.c:154` `initBONDdataforPlayer()` |
+| Player struct | `struct player` | `struct player` | `bondview.h:334` |
+| Player fields (pos/aim/move/crouch/lean/health) | various | `pos` (coord3d), `vv_theta` (yaw), `vv_verta` (pitch), `speedforwards`/`speedsideways`, `crouchpos`, `swaytarget`, `bondhealth`/`bondarmour` (normalized), `bonddead`, `hands[2].weaponnum`, crosshair pos | `struct player`, `bondview.h:334` |
 | Current-player select | `g_Vars.currentplayernum`, `setCurrentPlayerNum()` | `get_cur_playernum()`, `set_current_player*()` | many callsites |
-| Live player count | `g_MpSetup.chrslots` | `getPlayerCount()` | `player_2.c` |
-| Coord type | `struct coord` | `coord3d` / `vec3d` | `bondtypes.h:233` |
-| Matrix type | `Mtxf` | `Mtxf` | `bondtypes.h:106` |
-| RNG seed(s) | `g_RngSeed`, `g_Rng2Seed` (two streams) | `g_randomSeed` (**one** `u64`) | `random.c:24` |
+| Live player count | `g_MpSetup.chrslots` | `getPlayerCount()` / `get_selected_num_players()` | `player_2.c` / `front.c:5306` |
+| Coord / matrix | `struct coord` / `Mtxf` | `coord3d` (`vec3d`) / `Mtxf` | `bondtypes.h:233` / `:106` |
+| RNG seed | `g_RngSeed`, `g_Rng2Seed` (two) | `g_randomSeed` (**one** `u64`); `randomGetNext()`/`randomSetSeed()` | `random.c:24` / `:116` / `:183` |
 | Frame-advance count | `g_Vars.diffframe60` | `speedgraphframes` / `g_ClockTimer` | `lvl.c:1977` |
-| Frame pump site | `schedStartFrame`/`schedEndFrame` (`pdsched.c:242/281`) | `boss.c` mainloop around `lvlManageMpGame()` | `boss.c:567` |
-| Stage id | `g_StageNum` | `g_CurrentStageToLoad` / stage id | `lvl.c` |
-| MP setup | `g_MpSetup` (scenario, chrslots) | `multi_stage_setups[].stage_id` + MP globals | `front.c:1124` |
-| Player config array | `g_PlayerConfigsArray[]`, `g_PlayerExtCfg[]` | GE char/handicap config | `file.c`/`file2.c` |
-| Player input command | `pl->ucmd` (unified bitmask) | **no GE equivalent — derive** from `joyGetButtons()` | `joy.c:827` |
-| Gun/weapon state | `pl->gunctrl`, `struct gset` | GE gun/weapon state *(bondgun-family)* | *(locate)* |
-| Stage load/teardown | `mainEndStage()`, `mainChangeToStage()`, `titleSetNextStage()` | GE loader + `pc_apply_mp_selection()` | `initmenus.c` |
+| Frame pump site | `schedStartFrame`/`schedEndFrame` (`pdsched.c:242/281`) | `boss.c` mainloop: `joyPoll`(`:568`) → `joyConsumeSamplesWrapper`(`:572`) → `lvlManageMpGame`(`:602`) → `lvlRender`(`:629`) — **single-threaded** | `boss.c:567-629` |
+| Player input read | `pl->ucmd` (unified) | `joyGetButtons(p,mask)` / `joyGetStickX/Y` / `joyGetButtonsPressedThisFrame` | `joy.c:876` / `:827` / `:887` |
+| Button constants | `UCMD_*` | `Z_TRIG`(0x2000)/`R_TRIG`(0x0010)/`A_BUTTON`(0x8000)/`B_BUTTON`/C-buttons; `ANY_BUTTON`(0xFFFF) | `platform_os.h:183` |
+| Player move/aim apply | (in PD player update) | `bondviewMovePlayerUpdateViewport()` → `MoveBond()`; aim `platformGetPadRightStick`→`vv_theta`/`vv_verta` | `bondview.c:13915`/`:14088`; `lvl.c:5672`/`:5703-5757` |
+| Damage / death | (server applies) | `record_damage_kills()`; `bondviewKillCurrentPlayer()` | `bondview.c:20340` / `:20279` |
+| Projectile spawn | `SVC_PROP_SPAWN` site | `projectileAllocate()` / `projectileReset()` | `chrobjhandler.c:2300` / `:2266` |
+| Pickup | `SVC_PROP_PICKUP` site | `object_interaction()`; `g_WeaponSlots[30]`/`g_AmmoCrates[20]` | `chrobjhandler.c:8874`; `chrprop.c:392`/`:402` |
+| Door / lift | `SVC_PROP_DOOR/USE` site | `propdoorInteract()` (called from `chrprop.c:5294`) | `chrobjhandler.c` |
+| Explosion | (spawn/damage) | `explosionCreate()`; `g_ExplosionBuffer` | `explosions.c:844` / `:642` |
+| MP stage table | (PD mpsetups) | `multi_stage_setups[]` (`struct mp_stage_setup`) | `front.c:1123`; `front.h:70` |
+| MP active state | `g_MpSetup` | `MP_stage_selected`/`scenario`/`selected_num_players`/`selected_stage`; `get_scenario()` | `front.c:1319`/`:1322`/`:1317`/`:851`; `:7705` |
+| Stage load / teardown | `mainChangeToStage`/`mainEndStage` | `pc_apply_mp_selection()` → `bossSetLoadedStage()` (`g_MainStageNum`) → `frontChangeMenu(MENU_RUN_STAGE)` | `initmenus.c:263`; `boss.c:779` |
 | Config registration | `configRegisterUInt("Net.*")` | `settings.c` / `config_pc.c` runtime-override system | `settings.c` |
-| CLI args | `sysArgGetInt("--port"/"--connect"/"--host")` | `main_pc.c` arg parse (joins `--multiplayer`/`--players`) | `main_pc.c` |
-| Logging | `sysLogPrintf(LOG_*)` | GE logging / `port_trace` | `port_trace.c` |
+| CLI args | `sysArgGetInt("--port"/"--connect"/"--host")` | `main_pc.c` (joins `--multiplayer`/`--players`/`--mp-stage`) | `main_pc.c` |
 | Endian helpers | `PD_LE16/32/64` | `byteswap.h` | `src/platform/byteswap.h` |
+| Logging | `sysLogPrintf` | GE logging / `port_trace` | `port_trace.c` |
 
-**The two structural gaps** that need engineering, not renaming:
+### The two structural gaps to build
 
-1. **`prop->syncid`** — GE `PropRecord` lacks it. Add a `u16 syncid` field (low
-   risk; props are pooled in a fixed array), populated by the `netSyncIdsAllocate`
-   port. (Don't rely on the bare index for the *wire* if props can be re-pooled
-   mid-match; the explicit field matches PD and is safer.)
-2. **`pl->ucmd`** — PD threads a unified per-player command bitmask through the
-   sim; GE reads `joyGetButtons()` ad hoc. Build a small adapter that derives a
-   `ucmd` (the `UCMD_*` set in `net.h:46`) from GE's `joyGet*` for the local
-   player at record time, and that maps an incoming `ucmd` to the actions a
-   remote puppet must reproduce (fire/reload/aim/select/duck/squat). This adapter
-   is the single most important piece of new code.
+1. **`PropRecord.syncid`** — add a `u16`; assign `(rec - pos_data_entry) + 1` at
+   stage start (port of `netSyncIdsAllocate`, `net.c:1004`). Walk the active list
+   via `ptr_obj_pos_list_current_entry` (`chrprop.c:468`).
+2. **The `ucmd` adapter** — no GoldenEye equivalent of PD's unified command
+   bitmask. The keystone (§4d).
 
 ---
 
-## 4. Integration points (where MGB64 code must change)
+## 4. Integration points (where MGB64 code changes)
 
 ### 4a. Frame pump — `src/boss.c`
-Mirror `pdsched.c:242/281`. In the native mainloop, around `lvlManageMpGame()`
-(`boss.c:567`, after `joyPoll()`):
-- call `netStartFrame()` **before** the sim (pumps enet events, applies inbound
-  messages, `++g_NetTick`), gated on the frame actually advancing
-  (`g_ClockTimer > 0`), and
-- call `netEndFrame()` **after** the sim (records local player move, writes
-  `CLC_MOVE`/`SVC_PLAYER_MOVE`, flushes enet).
-Pin the netplay timestep per NETPLAY_PLAN §3a (`g_ClockTimer ≡ 1`) so one net
-tick = one sim step.
+Mirror `pdsched.c:242/281`. In `bossMainloop` (single-threaded — `boss.c:568`
+confirms `joyPoll()` is called explicitly on PC, so a network poll here needs no
+locks): call **`netStartFrame()` before** `lvlManageMpGame()` (`boss.c:602`) and
+**`netEndFrame()` after**, gated on the frame advancing (`g_ClockTimer > 0`).
+Optionally pin `g_ClockTimer ≡ 1` in netplay (cheap; mainly helps the §10
+rollback path — not load-bearing for the puppet+event baseline).
 
-### 4b. Player allocation — after MP players spawn
-Port `netPlayersAllocate()` (`net.c:954`): map clients↔`g_playerPointers[]`, set
-remote players to the GE equivalent of `CONTROLMODE_NA` + `isremote`, and apply
-their name/body/head config. Call it right after the MP match constructs its
-players (`init_player_data_ptrs_construct_viewports`, `player_2.c:68`).
+### 4b. Player↔client allocation — after MP players spawn
+Port `netPlayersAllocate()` (`net.c:954`): bind clients to `g_playerPointers[]`,
+set the puppet flag (§4c) for remote players, apply their name/skin. Call after
+`init_player_data_ptrs_construct_viewports` (`player_2.c:68`).
 
-### 4c. Sync-ID allocation — after stage load
-Port `netSyncIdsAllocate()` (`net.c:1004`): walk the active+paused prop lists and
-assign `syncid`. Call once per stage start (server authoritative; clients adopt
-the server's mapping). Includes PD's client/server player-prop swap hack
-(`net.c:1036`) since the local player is always index 0 locally.
+### 4c. The puppet gate — *new* per-player flag
+GoldenEye has no `CONTROLMODE_NA`. Add `g_NetPuppet[playernum]` and gate it in
+`bondviewMovePlayerUpdateViewport()` (`bondview.c:13915`): for a puppet, **skip**
+`joyGetStickX/Y` (`lvl.c:5672`) and `platformGetPadRightStick` (`lvl.c:5703`),
+and **set** `pos`/`vv_theta`/`vv_verta` from the interpolated network move instead
+of `MoveBond()` (`bondview.c:14088`). Drive the puppet's actions (fire/reload/
+switch) from the decoded `ucmd` (§4d).
 
-### 4d. Local-player move record — `netClientRecordMove` rewrite (`net.c:185`)
-This reads PD player fields into `netplayermove`. Rewrite each field against the
-GE player struct: `crouchoffset`, `swaytarget/75`, `speedforwards/sideways`,
-`vv_theta/vv_verta`, `crosspos[]`, `prop->pos`, and the derived `ucmd`. This is
-~40 lines and is where most "field doesn't exist" friction lives.
+### 4d. The `ucmd` adapter — keystone
+Two-way mapping between GoldenEye input/state and the wire `ucmd` (`net.h:46`):
 
-### 4e. Remote-puppet apply + interpolation — *new* GE code
-PD applies `inmove` and lerps inside its player update. MGB64 needs the
-equivalent in the per-player update path (`lvl.c` player loop): for `isremote`
-players, set pos/angles from `inmove`, lerp over `g_NetInterpTicks`, and trigger
-the `ucmd`-derived actions (fire/reload/switch). This is the consumer side of the
-§3 `ucmd` adapter.
-
-### 4f. World-event hooks — the correctness long tail
-PD emits `SVC_*` at gameplay moments; the **server** must call the matching
-`netmsg…Write` at the equivalent GE call sites, and the **client** read-handlers
-apply them. These are the wraps to add (and the PD "known issues" list is the
-evidence of which are fiddly):
-
-| Event | PD message | GE call site to wrap *(locate during impl)* |
+| `UCMD_*` | Local encode (from `joyGetButtons`, `bondview.h` state) | Puppet decode (apply) |
 |---|---|---|
-| Projectile / thrown / dropped prop created | `SVC_PROP_SPAWN` (`netmsg.c:912`) | `g_Projectiles[]` alloc, weapon-drop (`chrprop.c:407`) |
-| Dynamic prop per-tick update | `SVC_PROP_MOVE` (`netmsg.c:781`) | projectile-in-flight / moving-object update |
-| Damage to a prop/chr | `SVC_PROP_DAMAGE` / `SVC_CHR_DAMAGE` (`netmsg.c:1161/1397`) | GE damage application (chr-damage fn, `bondview.c`/`chr*.c`) |
-| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` (`netmsg.c:1197`) | GE pickup handler |
-| Door / lift use | `SVC_PROP_USE/DOOR/LIFT` (`netmsg.c:1230/1278/1331`) | GE door/lift update |
-| Weapon dropped on death/disarm | `SVC_CHR_DISARM` (`netmsg.c:1485`) | GE disarm / death drop |
-| Health/armor sync | `SVC_PLAYER_STATS` (`netmsg.c:664`) | periodic + on-change |
-| Match RNG seed | latch via `netClientSyncRng` | once per tick where server advances RNG |
+| `FIRE` | `Z_TRIG` (0x2000) held | trigger weapon fire |
+| `AIMMODE` | `R_TRIG` (0x0010) held | enter aim/sight mode |
+| `ACTIVATE` | action/use button | use/activate |
+| `RELOAD` | reload input | reload |
+| `SELECT`/`SELECT_DUAL` | weapon-cycle / dual input → set `weaponnum` | switch `hands[].weaponnum` |
+| `DUCK`/`SQUAT` | `crouchpos` state | set `crouchpos` |
+| `SECONDARY` | secondary-fire active | secondary fire |
+| analog `leanofs`/`crouchofs`/angles/crosspos | read from `struct player` | apply to puppet |
 
-### 4g. Config + CLI — `settings.c` / `main_pc.c`
-Port the `configRegister*("Net.*")` block (`net.c:1114`) into the runtime-override
-system, and the `--host/--connect/--port/--maxclients` args (`net.c:421`) into
-`main_pc.c` alongside the existing `--multiplayer/--players/--mp-stage`.
+Build + unit-test this before N2b. It is where most "field doesn't exist"
+friction lives (~40-line rewrite of `netClientRecordMove`, `net.c:185`).
 
-### 4h. Lobby/menu — `front.c`
-Reimplement `netmenu.c`'s host/join/address-entry against the existing MP menu
-state machine (`front.c:14324`) and stage table (`front.c:1124`). Auth/ROM-check
-(`netmsgClcAuthRead`, `netmsg.c:179`) becomes MGB64's compatibility handshake
-(NETPLAY_PLAN N5c) — but compare a **build hash + ROM region**, not PD's
-filename-only check (its documented weakness).
+### 4e. Move record/apply + interpolation
+- **Record** (local): rewrite `netClientRecordMove` (`net.c:185`) to read
+  GoldenEye `struct player` fields (`pos`, `vv_theta/verta`, `speedforwards/
+  sideways`, `crouchpos`, `swaytarget`, crosshair) + the encoded `ucmd`.
+- **Apply** (puppet): new code in the per-player update — set pos/angles from
+  `inmove`, lerp over `g_NetInterpTicks`, fire the decoded `ucmd` actions.
+  Force-tick handling per `netmsg.c:275`.
+
+### 4f. Server-authoritative hit & damage
+When a client's `ucmd` has FIRE, the **host** reproduces the shot from the
+client's forwarded aim and applies it through GoldenEye's path — wrap
+`record_damage_kills()` (`bondview.c:20340`) / `bondviewKillCurrentPlayer()`
+(`bondview.c:20279`) to emit `SVC_CHR_DAMAGE` + kill/score events. Clients never
+self-report kills. *(If the hitscan path proves too coupled to reproduce host-
+side, fall back to shooter-detects-hit + host-validates — see plan §7.)*
+Health is normalized (`bondhealth`/`bondarmour` 0..1, scaled by per-player
+`actual_health`); `SVC_PLAYER_STATS` syncs the normalized values.
+
+### 4g. World-event hooks — the correctness long tail
+The **host** calls the matching `netmsg…Write` at these grounded call sites; the
+**client** read-handlers apply them (PD's known-issues list = which are fiddly):
+
+| Event | PD message | GoldenEye call site to wrap |
+|---|---|---|
+| Projectile created (grenade/rocket/mine) | `SVC_PROP_SPAWN` (`netmsg.c:912`) | `projectileAllocate()` `chrobjhandler.c:2300` |
+| Projectile/object in flight | `SVC_PROP_MOVE` (`netmsg.c:781`) | projectile update tick |
+| Damage / kill | `SVC_CHR_DAMAGE` (`netmsg.c:1397`) | `record_damage_kills()` `bondview.c:20340` |
+| Weapon dropped on death | `SVC_CHR_DISARM` (`netmsg.c:1485`) | death/disarm `bondview.c:20279` |
+| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` (`netmsg.c:1197`) | `object_interaction()` `chrobjhandler.c:8874` |
+| Door / lift | `SVC_PROP_DOOR/USE` (`netmsg.c:1278/1230`) | `propdoorInteract()` `chrobjhandler.c` |
+| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:844` |
+| Health/armor | `SVC_PLAYER_STATS` (`netmsg.c:664`) | periodic + on-change |
+| Match start/end | `SVC_STAGE_START/END` (`netmsg.c:410/568`) | stage flow (§4h) + `mp_watch.c` scoreboard |
+
+### 4h. Session/stage flow — `front.c` + `initmenus.c` + `boss.c`
+Port the host-drives-stage handshake:
+1. Host configures the match in the MP menu (`multi_stage_setups[]` `front.c:1123`,
+   `scenario` `front.c:1322`, player count).
+2. Host load via `pc_apply_mp_selection()` (`initmenus.c:263`) → `bossSetLoadedStage()`
+   (`boss.c:779`) → `frontChangeMenu(MENU_RUN_STAGE)`, and broadcast
+   `SVC_STAGE_START`. Clients load the **same** stage/scenario.
+3. After load: `netSyncIdsAllocate` (§3.1) + `netPlayersAllocate` (§4b) → `GAME`.
+4. Match end → host runs `mp_watch.c` scoreboard authoritatively, `SVC_STAGE_END`
+   → all peers return to lobby; repeat.
+
+### 4i. Config + CLI + lobby UI
+Port `configRegister*("Net.*")` (`net.c:1114`) into `settings.c`; `--host/
+--connect/--port/--maxclients` (`net.c:421`) into `main_pc.c`; reimplement
+`netmenu.c` host/join against the MP menu FSM (`front.c:14324`). Replace PD's
+filename-only ROM check (`netmsg.c:197`) with build-hash + region.
 
 ---
 
 ## 5. Port order (maps to NETPLAY_PLAN phases)
 
-1. **Vendor enet + port `netbuf.[ch]` + `net.h` types + frame-pump skeleton +
-   connection FSM + loopback.** No gameplay yet; loopback connect/disconnect +
-   `g_NetTick` advancing. → *NETPLAY_PLAN N0.*
-2. **Auth/lobby:** `CLC_AUTH`/`SVC_AUTH`, settings, ROM/build handshake. → *N5c (early).*
-3. **Player move:** `ucmd` adapter (§3), `netClientRecordMove` rewrite,
-   `CLC_MOVE`/`SVC_PLAYER_MOVE`, `netPlayersAllocate` (remote = puppets),
-   apply + interp (§4e). → **bodies move correctly.** *N1+N2.*
-4. **Props:** `syncid` field + `netSyncIdsAllocate` + `SVC_PROP_SPAWN/MOVE` for
-   projectiles. → *N2.*
-5. **Event layer:** damage, pickup, door/lift, chr damage/disarm, stats. →
-   **matches are correct.** *N2/N3.*
-6. **Polish:** RNG push, interpolation tuning (`Net.LerpTicks`),
-   `Net.Server.UpdateFrames` bandwidth knob, F9 net stats (`netDebugRender`,
-   `net.c:1085`), stats screen, server browser/query, lobby UI. → *N4/N5.*
+1. **enet + `netbuf.[ch]` + `net.h` types + frame-pump skeleton + connection FSM
+   + loopback.** No gameplay; loopback connect/disconnect, `g_NetTick` advancing.
+   → *plan N0.*
+2. **Auth/lobby:** `CLC_AUTH`/`SVC_AUTH`, settings, build-hash handshake, chat.
+   → *plan N1.*
+3. **Player movement:** `ucmd` adapter (§4d), `netClientRecordMove` rewrite
+   (§4e), `CLC_MOVE`/`SVC_PLAYER_MOVE`, `netPlayersAllocate` + puppet gate (§4c),
+   apply+interp. → **bodies move.** *plan N2.*
+4. **Props:** `syncid` field + `netSyncIdsAllocate` + `SVC_PROP_SPAWN/MOVE`.
+   → *plan N3a.*
+5. **Event layer:** damage/kills (§4f), pickups, doors, explosions, stats, RNG
+   push, desync oracle. → **matches correct.** *plan N3b–d.*
+6. **Polish + internet:** interp tuning, `UpdateFrames`, F9 stats, server query,
+   relay/NAT. → *plan N4–N5.*
 
-Layer the **state-hash desync oracle** (NETPLAY_PLAN §3c) over steps 3–5 — PD
-shipped without it and paid for it in the known-issues list.
+Layer the **event-scoped desync hash** (plan §3f) over steps 4–5.
 
 ---
 
@@ -227,53 +225,45 @@ shipped without it and paid for it in the known-issues list.
 
 | Component | Action | Why |
 |---|---|---|
-| `netbuf.[ch]` | **Port verbatim** | Pure LE serialization; only dep is `byteswap.h` + `coord3d`/`Mtxf` names. |
-| enet + `netenet.h` | **Vendor verbatim** | MIT, self-contained. |
-| `net.c` transport/FSM/query/config | **Port, light edits** | enet calls, conn state, send buffers, parse-addr are engine-agnostic. |
-| `net.c` move-record / player-alloc / syncid-alloc | **Rewrite** | Touch GE player/prop structs (§3 gaps). |
-| `netmsg.c` framing + read/write scaffolding | **Port** | The `netbuf` call patterns transfer directly. |
-| `netmsg.c` apply-to-engine bodies | **Rewrite** | Each applies to GE structs / call sites (§4f). |
-| `netmenu.c` | **Reimplement** | Against GE's `front.c` MP menu, not PD's. |
+| `netbuf.[ch]`, enet, `netenet.h` | **port/vendor verbatim** | engine-agnostic; only deps are `byteswap.h` + `coord3d`/`Mtxf`. |
+| `net.c` transport/FSM/query/config/send | **port, light edits** | enet calls, conn state, parse-addr are engine-agnostic. |
+| `net.c` move-record / player-alloc / syncid-alloc | **rewrite** | touch `struct player` / `PropRecord` (§3 gaps). |
+| `netmsg.c` framing + read/write scaffolding | **port** | `netbuf` call patterns transfer directly. |
+| `netmsg.c` apply-to-engine bodies | **rewrite** | each applies to GoldenEye structs / call sites (§4g). |
+| `netmenu.c` | **reimplement** | against `front.c` MP menu. |
 
 ---
 
-## 7. Gotchas & deviations to plan for
+## 7. Gotchas & deviations
 
-- **One RNG stream, not two.** GE has `g_randomSeed`; PD syncs `g_RngSeed` +
-  `g_Rng2Seed`. Collapse `g_NetRngSeeds[2]` to what GE actually has.
-- **`ucmd` is the keystone.** No GE equivalent exists; the derive/apply adapter
-  (§3.2) gates steps 3–5. Build and unit-test it first.
-- **Linear sync-ID lookup.** `netbufReadPropPtr` scans up to `maxprops`
-  (`netmsg.c:138`, flagged `// TODO: make a map`). With GE's 600-prop array it's
-  fine; if it shows up in profiles, add an index map.
-- **Filename-only ROM check is unsafe.** Replace with build-hash + region
-  (NETPLAY_PLAN N5c).
-- **Client-authoritative movement = cheatable + edge-case desyncs.** Acceptable
-  for a v1 party port; document it. Server-authoritative pawns (server simulates
-  from client `ucmd`, client predicts + reconciles) is the post-v1 hardening
-  path — and the one place NETPLAY_PLAN's prediction/reconciliation design (N3)
-  actually applies. PD does **not** do this today.
-- **Bots aren't synced** ("Sims don't work in netgames"). Irrelevant to us —
-  GoldenEye MP is human-only (MULTIPLAYER_PLAN scope guard), so we **dodge PD's
-  single biggest unsolved area** entirely.
-- **Per-weapon special modes** (PD's FarSight alt-fire, fly-by-wire) desync in
-  PD. GE's analogues to watch: remote mines, the Klobb/auto-aim quirks, throwing
-  knives — verify each through the event layer, not movement.
-- **`diffframe60` gating.** PD only nets on advancing frames; respect GE's
-  `g_ClockTimer > 0` equivalently so paused/loading frames don't desync the tick.
+- **`ucmd` is the keystone** (§4d) — build/test first.
+- **No `CONTROLMODE_NA`** — must add the `g_NetPuppet` gate (§4c).
+- **One RNG stream** — collapse PD's `g_NetRngSeeds[2]` to GoldenEye's single
+  `g_randomSeed`.
+- **Normalized health** — sync `bondhealth`/`bondarmour` (0..1) + the
+  `actual_health` scale, not raw HP.
+- **Linear sync-ID lookup** scans `pos_data_entry` (PD's `netmsg.c:138` flags
+  `// TODO: make a map`); fine at 600 props, add a map only if profiled.
+- **Client-authoritative movement is cheatable** — accepted v1; kills are
+  host-resolved (§4f) so scores can't be forged. Server-auth movement is plan §10.
+- **Bots not synced** in PD — irrelevant; GoldenEye MP is human-only.
+- **Per-weapon specials** (remote/proximity/timed mines, throwing, auto-aim) are
+  PD's known-issue class — verify each through the event layer, not movement.
+- **Door line** — `propdoorInteract()` is in `chrobjhandler.c` (called from
+  `chrprop.c:5294`); confirm the definition line during implementation.
 
 ---
 
 ## 8. Bottom line
 
-The PD port hands us a **complete, MIT-licensed, same-engine-family netcode** we
-can largely adapt rather than invent. The transport (`netbuf` + enet), the
-protocol (`SVC_*`/`CLC_*`), the tick/connection model, and the sync-ID scheme
-port directly. The real work is the **~30% engine coupling** — the `ucmd`
-adapter, the move record/apply against GE's player struct, the `syncid` field,
-and wrapping GE's damage/pickup/door/projectile call sites. GoldenEye being
-human-only lets us skip PD's worst unsolved problem (bot sync). Build the
-desync-hash oracle alongside it and we exceed the reference's quality.
+The MIT-licensed PD port hands us a complete, same-engine-family netcode to
+**adapt, not invent**. Transport (`netbuf` + enet), protocol (`SVC_*`/`CLC_*`),
+the tick/connection model, and the sync-ID scheme port directly. The real work is
+the **~30% engine coupling** — the `ucmd` adapter, the puppet gate, the move
+record/apply against `struct player`, the `syncid` field, and wrapping
+GoldenEye's grounded damage/pickup/door/projectile call sites. Human-only MP lets
+us skip PD's worst unsolved problem. Build the event-scoped desync oracle
+alongside and we exceed the reference's quality.
 
 ## References
 - PD netcode (port-net): [`net.c`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/src/net/net.c) · [`netmsg.c`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/src/net/netmsg.c) · [`net.h`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/include/net/net.h) · [`netbuf.c`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/port/src/net/netbuf.c) · [`netplay.md`](https://github.com/fgsfdsfgs/perfect_dark/blob/port-net/docs/netplay.md)
