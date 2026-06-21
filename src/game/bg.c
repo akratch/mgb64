@@ -8141,7 +8141,7 @@ void sub_GAME_7F0B6368(s32 room) {
     if (room < 0 || room >= g_MaxNumRooms) return;
     if (g_BgRoomInfo[room].model_bin_loaded) {
         /* Primary already loaded (e.g. by preloader). Check if secondary
-         * DL data still needs loading — the preloader doesn't load it. */
+         * DL data still needs loading. */
         if (g_BgRoomInfo[room].csize_secondary_DL_binary > 0 &&
             g_BgRoomInfo[room].ptr_secondary_expanded_mapping_info == NULL) {
             u8 *sec_buf = (u8 *)malloc(PC_ROOM_LOAD_BUF_SIZE);
@@ -8149,10 +8149,24 @@ void sub_GAME_7F0B6368(s32 room) {
                 u32 sec_result = sub_GAME_7F0B61DC(room, (u32 *)sec_buf, PC_ROOM_LOAD_BUF_SIZE);
                 if ((s32)sec_result >= 0) {
                     gfx_register_n64_dl_region(g_BgRoomInfo[room].ptr_secondary_expanded_mapping_info, sec_result);
+                    {
+                        extern s32 g_FogSkyIsEnabled;
+                        s_room_info *ri = &g_BgRoomInfo[room];
+
+                        if (!g_FogSkyIsEnabled) {
+                            fogLoadLevelEnvironment(bossGetStageNum(), 0);
+                        }
+                        bgLoadFromDynamicCCRMLUT(
+                            ri->ptr_secondary_expanded_mapping_info,
+                            (Gfx *)((u8 *)ri->ptr_secondary_expanded_mapping_info +
+                                    ri->usize_secondary_DL_binary),
+                            g_FogSkyIsEnabled ? CCRMLUT_SECONDARY_ADDFOG : CCRMLUT_SECONDARY);
+                    }
                     s_pc_room_sec_bufs[room] = sec_buf;
                 } else {
                     free(sec_buf);
                     g_BgRoomInfo[room].ptr_secondary_expanded_mapping_info = NULL;
+                    g_BgRoomInfo[room].usize_secondary_DL_binary = 0;
                 }
             }
         }

@@ -2756,6 +2756,168 @@ static inline bool gfx_tile_has_live_texture(uint8_t tile_desc)
            gfx_loaded_texture_decode_footprint_is_plausible(loaded_texture);
 }
 
+static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc)
+{
+    if (!settex_active ||
+        g_texrect_uv_mode ||
+        g_current_draw_class != DRAWCLASS_ROOM ||
+        tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+
+    return tile->line_size_bytes != 0 &&
+           tile->width != 0 &&
+           tile->height != 0;
+}
+
+static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
+                                                int unit,
+                                                struct SetTexTileState *out)
+{
+    if (!settex_active || out == NULL) {
+        return false;
+    }
+
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+        const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+
+        out->valid = true;
+        out->cms = tile->cms;
+        out->cmt = tile->cmt;
+        out->shifts = tile->shifts;
+        out->shiftt = tile->shiftt;
+        out->uls = tile->uls;
+        out->ult = tile->ult;
+        out->lrs = tile->lrs;
+        out->lrt = tile->lrt;
+        out->width = tile->width;
+        out->height = tile->height;
+        return true;
+    }
+
+    const struct SetTexTileState *fallback =
+        (unit == 1 && settex_tile_state[1].valid) ?
+            &settex_tile_state[1] : &settex_tile_state[0];
+
+    if (fallback->valid) {
+        *out = *fallback;
+        return true;
+    }
+
+    memset(out, 0, sizeof(*out));
+    return false;
+}
+
+static bool gfx_get_settex_authoritative_tile_desc(uint8_t tex_tile_base,
+                                                   int unit,
+                                                   uint8_t *out_tile_desc)
+{
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (!gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+        return false;
+    }
+
+    if (out_tile_desc != NULL) {
+        *out_tile_desc = tile_desc;
+    }
+    return true;
+}
+
+static bool gfx_get_settex_authoritative_render_dimensions(uint8_t tex_tile_base,
+                                                           int unit,
+                                                           uint32_t *out_width,
+                                                           uint32_t *out_height)
+{
+    uint8_t tile_desc;
+    if (!gfx_get_settex_authoritative_tile_desc(tex_tile_base, unit, &tile_desc)) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    uint32_t width = gfx_texture_width_texels_from_line(tile->line_size_bytes,
+                                                        tile->siz);
+    uint32_t height = (uint32_t)(settex_tex_h + 0.5f);
+
+    if (width == 0) {
+        width = tile->width;
+    }
+    if (height == 0) {
+        height = tile->height;
+    }
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (out_width != NULL) {
+        *out_width = width;
+    }
+    if (out_height != NULL) {
+        *out_height = height;
+    }
+    return true;
+}
+
+static inline uint32_t gfx_clamp_extent_from_tile_delta(uint16_t lo,
+                                                        uint16_t hi)
+{
+    if (hi < lo) {
+        return 0;
+    }
+
+    return (((uint32_t)hi - (uint32_t)lo) + 4U) / 4U;
+}
+
+static inline bool gfx_shader_clamp_enabled(uint32_t cc_options,
+                                            int tex_unit,
+                                            int axis)
+{
+    uint32_t bit;
+
+    if (tex_unit == 0) {
+        bit = axis == 0 ? SHADER_OPT_TEXEL0_CLAMP_S :
+                          SHADER_OPT_TEXEL0_CLAMP_T;
+    } else {
+        bit = axis == 0 ? SHADER_OPT_TEXEL1_CLAMP_S :
+                          SHADER_OPT_TEXEL1_CLAMP_T;
+    }
+
+    return (cc_options & bit) != 0;
+}
+
+static inline uint8_t gfx_sampler_cm_for_shader_clamp(uint8_t cm,
+                                                      uint32_t cc_options,
+                                                      int tex_unit,
+                                                      int axis)
+{
+    return gfx_shader_clamp_enabled(cc_options, tex_unit, axis)
+        ? (uint8_t)(cm & ~G_TX_CLAMP)
+        : cm;
+}
+
+static inline float gfx_shader_clamp_coord(uint32_t logical_size,
+                                           uint32_t texture_size)
+{
+    if (texture_size == 0) {
+        texture_size = 1;
+    }
+    if (logical_size == 0) {
+        logical_size = texture_size;
+    }
+
+    return ((float)logical_size - 0.5f) / (float)texture_size;
+}
+
 static void gfx_compute_vbo_texcoord_for_unit(const struct LoadedVertex *vertex,
                                               int ti,
                                               uint8_t tex_tile_base,
@@ -2770,25 +2932,24 @@ static void gfx_compute_vbo_texcoord_for_unit(const struct LoadedVertex *vertex,
     float v = vertex->v / 32.0f;
     bool use_settex_uv = (ti == 0 && settex_active) ||
                          (ti == 1 && (settex_mirror_tex1 || mirror_tex1_from_tex0));
+    struct SetTexTileState settex_tile;
 
-    if (!g_texrect_uv_mode && ti == 0 && settex_active && settex_tile_state[0].valid) {
+    if (!g_texrect_uv_mode && ti == 0 &&
+        gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile)) {
         gfx_apply_tile_uv_transform(&u, &v,
-                                    settex_tile_state[0].shifts,
-                                    settex_tile_state[0].shiftt,
-                                    settex_tile_state[0].uls,
-                                    settex_tile_state[0].ult,
+                                    settex_tile.shifts,
+                                    settex_tile.shiftt,
+                                    settex_tile.uls,
+                                    settex_tile.ult,
                                     rdp.other_mode_h);
-    } else if (!g_texrect_uv_mode && ti == 1 && settex_mirror_tex1) {
-        const struct SetTexTileState *tile_state =
-            settex_tile_state[1].valid ? &settex_tile_state[1] : &settex_tile_state[0];
-        if (tile_state->valid) {
-            gfx_apply_tile_uv_transform(&u, &v,
-                                        tile_state->shifts,
-                                        tile_state->shiftt,
-                                        tile_state->uls,
-                                        tile_state->ult,
-                                        rdp.other_mode_h);
-        }
+    } else if (!g_texrect_uv_mode && ti == 1 && settex_mirror_tex1 &&
+               gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile)) {
+        gfx_apply_tile_uv_transform(&u, &v,
+                                    settex_tile.shifts,
+                                    settex_tile.shiftt,
+                                    settex_tile.uls,
+                                    settex_tile.ult,
+                                    rdp.other_mode_h);
     } else if (!use_settex_uv && !g_texrect_uv_mode) {
         uint8_t td = tex_tile_base + ti;
         if (td >= 8) td = 0;
@@ -2877,7 +3038,7 @@ static int gfx_scaled_dimension(int value) {
     return rounded > 0 ? rounded : 1;
 }
 
-static float buf_vbo[MAX_BUFFERED * (40 * 3)]; /* 40 = 4 pos + 2 tex + 4 fog + 7*4 inputs + 2 headroom */
+static float buf_vbo[MAX_BUFFERED * (48 * 3)]; /* 48 = pos + 2 texcoords + clamp extents + fog + inputs */
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
 
@@ -3781,10 +3942,16 @@ static bool gfx_sample_settex_unit_center(const struct LoadedVertex *v1,
         return false;
     }
 
-    tile_state = (ti == 1 && settex_tile_state[1].valid) ?
-        &settex_tile_state[1] : &settex_tile_state[0];
-    cms = tile_state->valid ? tile_state->cms : G_TX_WRAP;
-    cmt = tile_state->valid ? tile_state->cmt : G_TX_WRAP;
+    struct SetTexTileState effective_tile_state;
+    if (gfx_get_settex_effective_tile_state(tex_tile_base, ti, &effective_tile_state)) {
+        tile_state = &effective_tile_state;
+        cms = tile_state->cms;
+        cmt = tile_state->cmt;
+    } else {
+        tile_state = NULL;
+        cms = G_TX_WRAP;
+        cmt = G_TX_WRAP;
+    }
 
     sx = out->u * (float)settex_rgba_w;
     sy = out->v * (float)settex_rgba_h;
@@ -6285,7 +6452,7 @@ static bool gfx_mode_in_range(uint32_t mode, uint32_t min_mode, uint32_t max_mod
     return mode >= min_mode && mode <= max_mode;
 }
 
-static bool gfx_mode_is_secondary_room_xlu(uint32_t mode) {
+static bool gfx_mode_is_room_xlu(uint32_t mode) {
     switch (mode) {
         case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
         case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
@@ -6307,30 +6474,115 @@ static bool gfx_mode_is_secondary_room_xlu(uint32_t mode) {
     }
 }
 
-static uint64_t gfx_apply_secondary_room_alpha_lut(uint64_t cc_id,
-                                                   uint32_t raw_mode,
-                                                   bool room_matrix,
-                                                   const char *dl_which,
-                                                   enum GfxBlendMode blend_mode) {
+static inline uint64_t gfx_pack_cc_id(uint32_t rgb0,
+                                      uint32_t alpha0,
+                                      uint32_t rgb1,
+                                      uint32_t alpha1) {
+    return (uint64_t)rgb0 |
+           ((uint64_t)alpha0 << 16) |
+           ((uint64_t)rgb1 << 28) |
+           ((uint64_t)alpha1 << 44);
+}
+
+static uint64_t gfx_apply_room_alpha_lut(uint64_t cc_id,
+                                         uint32_t raw_mode,
+                                         bool room_matrix,
+                                         enum GfxBlendMode blend_mode) {
+    const uint32_t trilerp_rgb =
+        color_comb(G_CCMUX_TEXEL1, G_CCMUX_TEXEL0,
+                   G_CCMUX_LOD_FRACTION, G_CCMUX_TEXEL0);
+    const uint32_t trilerp_alpha =
+        alpha_comb(G_ACMUX_TEXEL1, G_ACMUX_TEXEL0,
+                   G_ACMUX_LOD_FRACTION, G_ACMUX_TEXEL0);
+    const uint32_t modulatei_rgb =
+        color_comb(G_CCMUX_TEXEL0, G_CCMUX_COMBINED,
+                   G_CCMUX_SHADE, G_CCMUX_COMBINED);
+    const uint32_t modulatei_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t modulateia_alpha =
+        alpha_comb(G_ACMUX_TEXEL0, G_ACMUX_COMBINED,
+                   G_ACMUX_SHADE, G_ACMUX_COMBINED);
+    const uint32_t modulatei2_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_SHADE, G_CCMUX_COMBINED);
+    const uint32_t modulatei2_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t modulateia2_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_SHADE, G_ACMUX_COMBINED);
+    const uint32_t shade_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_COMBINED, G_CCMUX_SHADE);
+    const uint32_t shade_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t pass_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_COMBINED, G_CCMUX_COMBINED);
+    const uint32_t pass_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_COMBINED);
+    const uint32_t custom06_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_ENVIRONMENT, G_ACMUX_COMBINED);
+    const uint32_t custom07_alpha =
+        alpha_comb(G_ACMUX_TEXEL0, G_ACMUX_COMBINED,
+                   G_ACMUX_ENVIRONMENT, G_ACMUX_COMBINED);
+    const uint32_t custom08_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_ENVIRONMENT);
+    const uint32_t custom10_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_ENVIRONMENT);
+    const uint32_t custom11_alpha =
+        alpha_comb(G_ACMUX_1, G_ACMUX_COMBINED,
+                   G_ACMUX_TEXEL1, G_ACMUX_COMBINED);
+
     if (!room_matrix ||
-        dl_which == NULL ||
-        strcmp(dl_which, "secondary") != 0 ||
         blend_mode != GFX_BLEND_ALPHA ||
-        !gfx_mode_is_secondary_room_xlu(raw_mode)) {
+        !gfx_mode_is_room_xlu(raw_mode)) {
         return cc_id;
     }
 
-    switch (cc_id) {
-        /* DL_LUT_SECONDARY(_ADDFOG) swaps shade alpha to environment alpha for
-         * transparent room DLs. Native room DLs can still reach the translator
-         * with the pre-LUT combiner, so mirror the authored replacement here. */
-        case 0x00f38e4f020a2d12ULL: /* G_CC_TRILERP, G_CC_MODULATEIA2 */
-            return 0x00f78e4f020a2d12ULL;
-        case 0x009ffe4f020a2d12ULL: /* G_CC_TRILERP, G_CC_MODULATEI2 */
-            return 0x00bffe4f020a2d12ULL;
-        default:
-            return cc_id;
+    /* DL_LUT_PRIMARY/SECONDARY(_ADDFOG) swap SHADE alpha to ENVIRONMENT
+     * alpha for room XLU passes. If a native room DL reaches the translator
+     * before that raw-data rewrite, mirror the authored replacement here. */
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                                modulatei2_rgb, modulateia2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                              modulatei2_rgb, custom06_alpha);
     }
+    if (cc_id == gfx_pack_cc_id(modulatei_rgb, modulateia_alpha,
+                                modulatei_rgb, modulateia_alpha)) {
+        return gfx_pack_cc_id(modulatei_rgb, custom07_alpha,
+                              modulatei_rgb, custom07_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                                modulatei2_rgb, modulatei2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                              modulatei2_rgb, custom08_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(modulatei_rgb, modulatei_alpha,
+                                modulatei_rgb, modulatei_alpha)) {
+        return gfx_pack_cc_id(modulatei_rgb, custom08_alpha,
+                              modulatei_rgb, custom08_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(shade_rgb, shade_alpha, pass_rgb, pass_alpha)) {
+        return gfx_pack_cc_id(shade_rgb, custom10_alpha, pass_rgb, pass_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(shade_rgb, shade_alpha, shade_rgb, shade_alpha)) {
+        return gfx_pack_cc_id(shade_rgb, custom10_alpha,
+                              shade_rgb, custom10_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, custom11_alpha,
+                                modulatei2_rgb, modulateia2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, custom11_alpha,
+                              modulatei2_rgb, custom06_alpha);
+    }
+
+    return cc_id;
 }
 
 static bool gfx_parse_rgba(const char *value, struct RGBA *out) {
@@ -9874,9 +10126,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             (cc_features_for_options.used_textures[0] !=
              cc_features_for_options.used_textures[1]);
         uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
-        if (settex_active && settex_tile_state[0].valid) {
-            if (settex_tile_state[0].cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            if (settex_tile_state[0].cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+        struct SetTexTileState settex_tile0;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
+            if (settex_tile0.cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            if (settex_tile0.cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         } else if (td0 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td0);
@@ -9887,9 +10140,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                 cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         }
         uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
-        if (settex_active && settex_tile_state[1].valid) {
-            if (settex_tile_state[1].cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            if (settex_tile_state[1].cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+        struct SetTexTileState settex_tile1;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
+            if (settex_tile1.cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            if (settex_tile1.cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         } else if (td1 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td1);
@@ -9904,11 +10158,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
         (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
     uint64_t effective_cc_id = cc_id;
-    effective_cc_id = gfx_apply_secondary_room_alpha_lut(effective_cc_id,
-                                                         rdp.other_mode_l_raw,
-                                                         room_matrix,
-                                                         dl_which,
-                                                         blend_mode);
+    effective_cc_id = gfx_apply_room_alpha_lut(effective_cc_id,
+                                               rdp.other_mode_l_raw,
+                                               room_matrix,
+                                               blend_mode);
     struct RGBA diag_tint_color = g_diag_tint_rgba;
     bool eye_intro_strip = gfx_is_eye_intro_strip_material(tex_tile_base);
     bool trace_eye_material = (g_diag_trace_eye_bind > 0 && gfx_is_eye_intro_diag_material());
@@ -10033,6 +10286,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     /* Per-tile texture setup (PD pattern: tile array with first_tile_index).
      * TEXEL0 uses tile[first_tile_index+0], TEXEL1 uses tile[first_tile_index+1]. */
     uint32_t tex_width[2] = {1, 1}, tex_height[2] = {1, 1};
+    uint32_t tex_clamp_width[2] = {1, 1}, tex_clamp_height[2] = {1, 1};
     bool settex_mirror_tex1 = false;
     bool mirror_tex1_from_tex0 = false;
     bool allow_lod_redirect = (g_texrect_tile_override < 0);
@@ -10044,8 +10298,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
         bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0;
         bool sampler_linear_filter;
-        uint8_t cms = settex_tile_state[0].valid ? settex_tile_state[0].cms : G_TX_WRAP;
-        uint8_t cmt = settex_tile_state[0].valid ? settex_tile_state[0].cmt : G_TX_WRAP;
+        struct SetTexTileState tile_state;
+        bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 0, &tile_state);
+        uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+        uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
         linear_filter = gfx_apply_texture_filter_override(linear_filter);
         sampler_linear_filter = linear_filter && !shader_n64_filter;
         if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
@@ -10060,6 +10318,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
         tex_width[0] = (uint32_t)settex_tex_w;
         tex_height[0] = (uint32_t)settex_tex_h;
+        (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 0,
+                                                             &tex_width[0],
+                                                             &tex_height[0]);
     }
 
     {
@@ -10076,10 +10337,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
             bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0;
             bool sampler_linear_filter;
-            const struct SetTexTileState *tile_state =
-                settex_tile_state[1].valid ? &settex_tile_state[1] : &settex_tile_state[0];
-            uint8_t cms = tile_state->valid ? tile_state->cms : G_TX_WRAP;
-            uint8_t cmt = tile_state->valid ? tile_state->cmt : G_TX_WRAP;
+            struct SetTexTileState tile_state;
+            bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 1, &tile_state);
+            uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+            uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+            cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
+            cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
             linear_filter = gfx_apply_texture_filter_override(linear_filter);
             sampler_linear_filter = linear_filter && !shader_n64_filter;
             if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
@@ -10094,6 +10357,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             }
             tex_width[1] = (uint32_t)settex_tex_w;
             tex_height[1] = (uint32_t)settex_tex_h;
+            (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 1,
+                                                                 &tex_width[1],
+                                                                 &tex_height[1]);
             settex_mirror_tex1 = true;
         }
 
@@ -10138,6 +10404,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             cms = G_TX_CLAMP;
             cmt = G_TX_CLAMP;
         }
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, ti, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, ti, 1);
         if (is_font_texture && gfx_font_force_point_filter()) {
             linear_filter = false;
         }
@@ -10209,6 +10477,66 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
         tex_width[1] = tex_width[0];
         tex_height[1] = tex_height[0];
+    }
+
+    for (int ti = 0; ti < 2; ti++) {
+        struct SetTexTileState settex_tile_state_effective;
+        uint32_t logical_width;
+        uint32_t logical_height;
+        bool unit_uses_settex =
+            (ti == 0 && settex_active) ||
+            (ti == 1 && settex_mirror_tex1);
+
+        if (!used_textures[ti]) {
+            continue;
+        }
+
+        tex_clamp_width[ti] = tex_width[ti] != 0 ? tex_width[ti] : 1U;
+        tex_clamp_height[ti] = tex_height[ti] != 0 ? tex_height[ti] : 1U;
+
+        if (unit_uses_settex &&
+            gfx_get_settex_effective_tile_state(tex_tile_base, ti,
+                                                &settex_tile_state_effective)) {
+            logical_width = settex_tile_state_effective.width != 0
+                ? settex_tile_state_effective.width
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.uls,
+                                                   settex_tile_state_effective.lrs);
+            logical_height = settex_tile_state_effective.height != 0
+                ? settex_tile_state_effective.height
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.ult,
+                                                   settex_tile_state_effective.lrt);
+            if (logical_width != 0) {
+                tex_clamp_width[ti] = logical_width;
+            }
+            if (logical_height != 0) {
+                tex_clamp_height[ti] = logical_height;
+            }
+        } else {
+            uint8_t tile_desc =
+                gfx_effective_tile_desc_for_unit(tex_tile_base, ti,
+                                                 allow_lod_redirect);
+            if (tile_desc < 8) {
+                logical_width = rdp.texture_tile[tile_desc].width != 0
+                    ? rdp.texture_tile[tile_desc].width
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].uls,
+                                                       rdp.texture_tile[tile_desc].lrs);
+                logical_height = rdp.texture_tile[tile_desc].height != 0
+                    ? rdp.texture_tile[tile_desc].height
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].ult,
+                                                       rdp.texture_tile[tile_desc].lrt);
+                if (logical_width != 0) {
+                    tex_clamp_width[ti] = logical_width;
+                }
+                if (logical_height != 0) {
+                    tex_clamp_height[ti] = logical_height;
+                }
+            }
+        }
+    }
+
+    if (mirror_tex1_from_tex0 && used_textures[0] && used_textures[1]) {
+        tex_clamp_width[1] = tex_clamp_width[0];
+        tex_clamp_height[1] = tex_clamp_height[0];
     }
 
     /* Footprint-derived LOD is valid only when TEXEL1 is an independent
@@ -10421,6 +10749,16 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               &u, &v);
             buf_vbo[buf_vbo_len++] = u;
             buf_vbo[buf_vbo_len++] = v;
+            if (gfx_shader_clamp_enabled(cc_options, ti, 0)) {
+                buf_vbo[buf_vbo_len++] =
+                    gfx_shader_clamp_coord(tex_clamp_width[ti],
+                                           tex_width[ti]);
+            }
+            if (gfx_shader_clamp_enabled(cc_options, ti, 1)) {
+                buf_vbo[buf_vbo_len++] =
+                    gfx_shader_clamp_coord(tex_clamp_height[ti],
+                                           tex_height[ti]);
+            }
         }
 
         if (use_fog) {

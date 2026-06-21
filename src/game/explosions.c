@@ -196,7 +196,7 @@ static float portBulletImpactNormalOffset(PropRecord *prop, s32 impact_type)
         return global_offset;
     }
 
-    if (portPropIsGlassLike(prop) && portImpactIsGlassCrack(impact_type)) {
+    if (portImpactIsGlassCrack(impact_type)) {
         return portGlassBulletImpactNormalOffset();
     }
 

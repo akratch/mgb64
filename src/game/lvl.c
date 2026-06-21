@@ -226,10 +226,35 @@ static int pc_load_room(int roomID) {
         return 0;
     }
 
+    /* Register data as N64-format for the GFX translator */
+    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_expanded_mapping_info, dl_result);
+    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_point_index, vtx_result);
+
+    u8 *sec_buf = NULL;
+    u32 sec_result = 0;
+
+    if (g_BgRoomInfo[roomID].csize_secondary_DL_binary > 0) {
+        sec_buf = (u8 *)malloc(PC_ROOM_BUF_SIZE);
+        if (sec_buf) {
+            sec_result = sub_GAME_7F0B61DC(roomID, (u32 *)sec_buf, PC_ROOM_BUF_SIZE);
+            if ((s32)sec_result >= 0) {
+                gfx_register_n64_dl_region(
+                    g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info,
+                    sec_result);
+            } else {
+                free(sec_buf);
+                sec_buf = NULL;
+                sec_result = 0;
+                g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info = NULL;
+                g_BgRoomInfo[roomID].usize_secondary_DL_binary = 0;
+            }
+        }
+    }
+
     if (trace_pc_room_loads) {
         fprintf(stderr,
                 "[PC-ROOM-LOAD] room=%d vtx_buf=%p stored_vtx=%p vtx_size=0x%X "
-                "dl_buf=%p stored_dl=%p dl_size=0x%X model=%d\n",
+                "dl_buf=%p stored_dl=%p dl_size=0x%X sec_buf=%p stored_sec=%p sec_size=0x%X model=%d\n",
                 roomID,
                 vtx_buf,
                 g_BgRoomInfo[roomID].ptr_point_index,
@@ -237,26 +262,18 @@ static int pc_load_room(int roomID) {
                 dl_buf,
                 g_BgRoomInfo[roomID].ptr_expanded_mapping_info,
                 (unsigned)g_BgRoomInfo[roomID].usize_primary_DL_binary,
+                sec_buf,
+                g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info,
+                (unsigned)g_BgRoomInfo[roomID].usize_secondary_DL_binary,
                 g_BgRoomInfo[roomID].model_bin_loaded);
         fflush(stderr);
     }
-
-    /* Register data as N64-format for the GFX translator */
-    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_expanded_mapping_info, dl_result);
-    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_point_index, vtx_result);
-
-    /* Secondary display list data (transparent geometry: glass, water, etc.)
-     * is loaded on-demand by the gameplay path (sub_GAME_7F0B6368) when
-     * rendering the secondary room DL. We don't preload it here because
-     * sub_GAME_7F0B61DC depends on BG file state that may not be fully
-     * initialized during early preload. */
-    u8 *sec_buf = NULL;
 
     /* Mark as loaded so the gameplay path (bgCheckIfRoomModelNeedsLoad)
      * won't redundantly reload this room via sub_GAME_7F0B6368.
      * Also set cur_room_totalsize so delete_room_data() is consistent. */
     g_BgRoomInfo[roomID].model_bin_loaded = 1;
-    g_BgRoomInfo[roomID].cur_room_totalsize = vtx_result + dl_result;
+    g_BgRoomInfo[roomID].cur_room_totalsize = vtx_result + dl_result + sec_result;
 
     /* Post-load fixups matching original N64 path (bg.c:6900-6995) */
     {
@@ -1288,6 +1305,13 @@ Gfx* lvlRender(Gfx* DL)
                                     (uintptr_t)g_BgRoomInfo[rm].usize_primary_DL_binary),
                             CCRMLUT_PRIMARY_ADDFOG);
                     }
+                    if (g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info) {
+                        bgLoadFromDynamicCCRMLUT(
+                            g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info,
+                            (Gfx *)((u8 *)g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info +
+                                    (uintptr_t)g_BgRoomInfo[rm].usize_secondary_DL_binary),
+                            CCRMLUT_SECONDARY_ADDFOG);
+                    }
                 }
                 if (getenv("GE007_VERBOSE")) {
                     printf("[LVL_FOG_REWRITE] Applied fog LUT to %d rooms\n", pc_num_loaded_rooms);
@@ -1453,6 +1477,10 @@ Gfx* lvlRender(Gfx* DL)
                                g_BgRoomInfo[rm].ptr_point_index);
                     gSPDisplayList(DL++,
                                    g_BgRoomInfo[rm].ptr_expanded_mapping_info);
+                    if (g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info) {
+                        gSPDisplayList(DL++,
+                                       g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info);
+                    }
                     rendered++;
                 }
                 {

@@ -389,8 +389,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     struct CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
 
-    char vs_buf[4096];
-    char fs_buf[8192];
+    char vs_buf[8192];
+    char fs_buf[12288];
     size_t vs_len = 0;
     size_t fs_len = 0;
     size_t num_floats = 4;
@@ -416,6 +416,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             vs_len += ge007_sprintf(vs_buf + vs_len, "%sout vec2 vTexCoord%d;\n",
                                      texcoord_interp, i);
             num_floats += 2;
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "in float aTexClamp%c%d;\n",
+                                             axis_name, i);
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "%sout float vTexClamp%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                    num_floats += 1;
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -434,6 +446,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "vTexClamp%c%d = aTexClamp%c%d;\n",
+                                             axis_name, i, axis_name, i);
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -465,6 +485,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
             fs_len += ge007_sprintf(fs_buf + fs_len, "%sin vec2 vTexCoord%d;\n",
                                      texcoord_interp, i);
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    fs_len += ge007_sprintf(fs_buf + fs_len,
+                                             "%sin float vTexClamp%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -537,32 +565,40 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "void main() {");
 
-    /* Shader-side UV clamping (PD pattern): clamp tex coords before sampling
-     * when the N64 tile descriptor has G_TX_CLAMP set per-axis. */
+    /* Shader-side UV clamping (PD pattern): clamp tex coords to the live
+     * N64 tile's logical window, not blindly to the GL texture's 0..1 range. */
     for (int i = 0; i < 2; i++) {
         if (!cc_features.used_textures[i]) continue;
+        fs_len += ge007_sprintf(fs_buf + fs_len,
+                                 "vec2 sampleTexCoord%d = vTexCoord%d;\n",
+                                 i, i);
         if (cc_features.clamp[i][0] || cc_features.clamp[i][1]) {
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec2 clampedTexCoord%d = vTexCoord%d;\n", i, i);
-            if (cc_features.clamp[i][0])
-                fs_len += ge007_sprintf(fs_buf + fs_len, "clampedTexCoord%d.s = clamp(clampedTexCoord%d.s, 0.0, 1.0);\n", i, i);
-            if (cc_features.clamp[i][1])
-                fs_len += ge007_sprintf(fs_buf + fs_len, "clampedTexCoord%d.t = clamp(clampedTexCoord%d.t, 0.0, 1.0);\n", i, i);
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                     "vec2 texSize%d = vec2(textureSize(uTex%d, 0));\n",
+                                     i, i);
+            if (cc_features.clamp[i][0] && cc_features.clamp[i][1]) {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d = clamp(vTexCoord%d, 0.5 / texSize%d, vec2(vTexClampS%d, vTexClampT%d));\n",
+                                         i, i, i, i, i);
+            } else if (cc_features.clamp[i][0]) {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d.s = clamp(vTexCoord%d.s, 0.5 / texSize%d.s, vTexClampS%d);\n",
+                                         i, i, i, i);
+            } else {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d.t = clamp(vTexCoord%d.t, 0.5 / texSize%d.t, vTexClampT%d);\n",
+                                         i, i, i, i);
+            }
         }
     }
 
     if (cc_features.used_textures[0]) {
         const char *sample_fn = cc_features.n64_filter[0] ? "n64TextureFilter" : "texture";
-        if (cc_features.clamp[0][0] || cc_features.clamp[0][1])
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, clampedTexCoord0);\n", sample_fn);
-        else
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, vTexCoord0);\n", sample_fn);
+        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, sampleTexCoord0);\n", sample_fn);
     }
     if (cc_features.used_textures[1]) {
         const char *sample_fn = cc_features.n64_filter[1] ? "n64TextureFilter" : "texture";
-        if (cc_features.clamp[1][0] || cc_features.clamp[1][1])
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, clampedTexCoord1);\n", sample_fn);
-        else
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, vTexCoord1);\n", sample_fn);
+        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, sampleTexCoord1);\n", sample_fn);
     }
 
     /* 2-cycle combiner: emit formula for each cycle.
@@ -713,6 +749,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
             prg->attrib_sizes[cnt] = 2;
             ++cnt;
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    ge007_sprintf(name, "aTexClamp%c%d", axis == 0 ? 'S' : 'T', i);
+                    prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
+                    prg->attrib_sizes[cnt] = 1;
+                    ++cnt;
+                }
+            }
         }
     }
 
