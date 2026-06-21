@@ -17521,11 +17521,13 @@ Gfx *sub_GAME_7F088618(Gfx *gdl) {
     modelview = dynAllocate(sizeof(Mtxf));
     projection = dynAllocate(sizeof(Mtxf));
 
+    /* Native HUD bar vertices are screen-space overlay geometry. Do not apply
+     * room visibility scale here, or Dam/Surface (0.2 scale) clip the bars. */
     guOrthoF(projection->m,
-             -800.0f * D_800364CC,
-             800.0f * D_800364CC,
-             -600.0f * D_800364CC,
-             600.0f * D_800364CC,
+             -800.0f,
+             800.0f,
+             -600.0f,
+             600.0f,
              -100.0f,
              1000.0f,
              1.0f);
