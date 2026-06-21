@@ -31473,6 +31473,23 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
         isVisibleThroughPortal = get_BONDdata_field_10E0() != 0;
     }
 
+#ifdef NATIVE_PORT
+    if (isVisibleThroughPortal &&
+        (obj->type == PROPDEF_GLASS || obj->type == PROPDEF_TINTED_GLASS))
+    {
+        /* Native object render_pos matrices are already camera-space. The
+         * native field_10E0 matrix is a room combined projection, so applying
+         * it to prop glass double-applies the room camera basis in gameplay. */
+        glassTracePrintf(
+            "portal-projection-skip obj=%d pad=%d flags=0x%08x field10e0=%p",
+            obj->obj,
+            obj->pad,
+            (unsigned int)obj->flags,
+            (void *)(uintptr_t)get_BONDdata_field_10E0());
+        isVisibleThroughPortal = 0;
+    }
+#endif
+
     gdl = mrData->gdl;
     type = obj->type;
 
