@@ -171,6 +171,19 @@ static const ConfigEnumOption k_windowModeOptions[] = {
     { "exclusive", PLATFORM_WINDOW_MODE_EXCLUSIVE },
 };
 
+typedef enum PlatformVSyncMode {
+    PLATFORM_VSYNC_OFF = 0,
+    PLATFORM_VSYNC_ON = 1,
+    PLATFORM_VSYNC_ADAPTIVE = 2
+} PlatformVSyncMode;
+
+static s32 g_vsyncMode = PLATFORM_VSYNC_ADAPTIVE;
+static const ConfigEnumOption k_vsyncOptions[] = {
+    { "off", PLATFORM_VSYNC_OFF },
+    { "on", PLATFORM_VSYNC_ON },
+    { "adaptive", PLATFORM_VSYNC_ADAPTIVE },
+};
+
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
 static s32 g_cfgWindowH = 810;
@@ -979,6 +992,29 @@ static void platformApplyWindowMode(void)
     platformSyncWindowSizeForRenderer();
 }
 
+static void platformApplyVSync(void)
+{
+    if (g_forceNoVsync) {
+        SDL_GL_SetSwapInterval(0);
+        return;
+    }
+
+    switch (g_vsyncMode) {
+        case PLATFORM_VSYNC_OFF:
+            SDL_GL_SetSwapInterval(0);
+            break;
+        case PLATFORM_VSYNC_ON:
+            SDL_GL_SetSwapInterval(1);
+            break;
+        case PLATFORM_VSYNC_ADAPTIVE:
+        default:
+            if (SDL_GL_SetSwapInterval(-1) < 0) {
+                SDL_GL_SetSwapInterval(1);
+            }
+            break;
+    }
+}
+
 /* Register platform settings with the config system.
  * Called from main_pc.c before configInit(). */
 void platformRegisterConfig(void)
@@ -1000,6 +1036,13 @@ void platformRegisterConfig(void)
                          "--config-override Video.WindowMode=VALUE",
                          "Window mode",
                          "SDL display mode: windowed, borderless, or exclusive.");
+    settingsRegisterEnum("Video.VSync", &g_vsyncMode, PLATFORM_VSYNC_ADAPTIVE,
+                         k_vsyncOptions,
+                         (s32)(sizeof(k_vsyncOptions) / sizeof(k_vsyncOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_VSYNC",
+                         "--config-override Video.VSync=VALUE",
+                         "VSync",
+                         "Swap interval: off, on, or adaptive.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
@@ -1240,11 +1283,9 @@ int platformInitSDL(void) {
 
     /* macOS can block indefinitely in SwapWindow when the test window never
      * receives focus. Allow explicit no-vsync runs for automated capture. */
+    platformApplyVSync();
     if (g_forceNoVsync) {
-        SDL_GL_SetSwapInterval(0);
         printf("[SDL] VSync disabled (GE007_NO_VSYNC)\n");
-    } else if (SDL_GL_SetSwapInterval(-1) < 0) {
-        SDL_GL_SetSwapInterval(1);
     }
 
     g_lastFrameTime = SDL_GetTicks();
@@ -1290,12 +1331,8 @@ void platformPollEvents(void) {
                 break;
             case SDL_WINDOWEVENT:
                 if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
-                    /* Re-enable vsync when window gains focus */
-                    if (!g_forceNoVsync) {
-                        if (SDL_GL_SetSwapInterval(-1) < 0) {
-                            SDL_GL_SetSwapInterval(1);
-                        }
-                    }
+                    /* Restore the configured swap interval when focus returns. */
+                    platformApplyVSync();
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                     /* Disable vsync when unfocused to prevent macOS SwapWindow hang */
                     SDL_GL_SetSwapInterval(0);

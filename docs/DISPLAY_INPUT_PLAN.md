@@ -162,7 +162,7 @@ track also plugs into.
 | Mouse sens / aim-sens / invert-Y | ✅ configurable | `platform_sdl.c:791-793,931-933`, applied `lvl.c:5726-5744` |
 | Single authoritative live-button write point | ✅ | `osContGetReadData` `stubs.c:5269-5272` |
 | Replay isolation (separate cont buffer) | ✅ | `joy.c:71`, `joySetContDataIndex:1149`, `ramromreplay.c:1494` |
-| Adaptive-vsync logic | ✅ not exposed | `platform_sdl.c:1160-1162` |
+| Adaptive-vsync logic | ✅ exposed as `Video.VSync` | `platform_sdl.c:1160-1162` |
 
 ### Gaps this plan closes
 
@@ -221,7 +221,7 @@ between temp write and rename.
 | Exclusive fullscreen + mode select | M | 🟡 | `exclusive` maps to `SDL_WINDOW_FULLSCREEN`; chosen `SDL_DisplayMode` selection still remains for true refresh ownership / lowest latency. |
 | Display enumeration + monitor select | S | ⬜ | `SDL_GetNumVideoDisplays`/`SDL_GetDisplayMode`; `Video.Display` index. |
 | Remember + sanitize window geometry | S | ⬜ | Persist `Video.WindowX/Y/W/H`; on restore, clamp to a currently-connected display (handle a monitor that vanished). |
-| `Video.VSync = off\|on\|adaptive` | S | ⬜ | Wire the existing adaptive path (`platform_sdl.c:1160`). |
+| `Video.VSync = off\|on\|adaptive` | S | ✅ | Exposed the existing swap-interval path through the settings schema; focus regain restores the configured mode. |
 | `Video.FrameCap = 30\|60\|display` | S | ⬜ | **No uncapped option** — sim is frame-coupled (`bossMainloop`); see Risks. |
 
 ### 1b. Render-scale, MSAA, gamma (M) — extends the existing FBO chain (P5)

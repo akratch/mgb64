@@ -15,6 +15,7 @@ EXPECTED_DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
     "Video.WindowMode": "windowed",
+    "Video.VSync": "adaptive",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -28,6 +29,7 @@ CUSTOM_CONFIG = """\
 WindowWidth=1024
 WindowHeight=768
 WindowMode=exclusive
+VSync=off
 
 [Input]
 MouseSensitivity=0.25
@@ -142,6 +144,7 @@ def main() -> int:
                 "Video.WindowWidth": "1024",
                 "Video.WindowHeight": "768",
                 "Video.WindowMode": "exclusive",
+                "Video.VSync": "off",
                 "Input.MouseSensitivity": "0.25",
                 "Input.MouseSensitivityAim": "0.125",
                 "Input.InvertY": "1",

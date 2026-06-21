@@ -14,6 +14,7 @@ DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
     "Video.WindowMode": "windowed",
+    "Video.VSync": "adaptive",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -28,6 +29,7 @@ SEED_CONFIG = """\
 WindowWidth=1024
 WindowHeight=768
 WindowMode=windowed
+VSync=adaptive
 FutureVideo=keep-me
 
 [Input]
@@ -146,6 +148,7 @@ def main() -> int:
                 env_extra={
                     "GE007_WINDOW_WIDTH": "1333",
                     "GE007_WINDOW_MODE": "borderless",
+                    "GE007_VSYNC": "on",
                 },
             )
         )
@@ -154,12 +157,13 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1333",
                 "Video.WindowMode": "borderless",
+                "Video.VSync": "on",
             },
             "env override dump",
         )
         assert_file_contains(
             config_path,
-            ["WindowWidth=1024", "WindowMode=windowed"],
+            ["WindowWidth=1024", "WindowMode=windowed", "VSync=adaptive"],
             "env override is not persisted",
         )
 
@@ -171,6 +175,8 @@ def main() -> int:
                 "Video.WindowHeight=720",
                 "--config-override",
                 "Video.WindowMode=exclusive",
+                "--config-override",
+                "Video.VSync=off",
                 "--dump-config",
             )
         )
@@ -179,12 +185,13 @@ def main() -> int:
             {
                 "Video.WindowHeight": "720",
                 "Video.WindowMode": "exclusive",
+                "Video.VSync": "off",
             },
             "cli override dump",
         )
         assert_file_contains(
             config_path,
-            ["WindowHeight=768", "WindowMode=windowed"],
+            ["WindowHeight=768", "WindowMode=windowed", "VSync=adaptive"],
             "cli override is not persisted",
         )
 
@@ -211,6 +218,8 @@ def main() -> int:
             "Video.WindowWidth=1280",
             "--config-set",
             "Video.WindowMode=borderless",
+            "--config-set",
+            "Video.VSync=off",
         )
         assert_no_tmp(savedir)
         assert_file_contains(
@@ -221,6 +230,9 @@ def main() -> int:
                 "# Window mode",
                 "# type=enum scope=live default=windowed range=windowed|borderless|exclusive",
                 "WindowMode=borderless",
+                "# VSync",
+                "# type=enum scope=live default=adaptive range=off|on|adaptive",
+                "VSync=off",
                 "# Master volume",
                 "# type=float scope=live default=0.7 range=0..1",
                 "FutureVideo=keep-me",
@@ -238,6 +250,7 @@ def main() -> int:
                 "Video.WindowWidth": "1280",
                 "Video.WindowHeight": "768",
                 "Video.WindowMode": "borderless",
+                "Video.VSync": "off",
                 "Input.MouseSensitivity": "0.25",
                 "Input.InvertY": "1",
                 "Audio.MasterVolume": "0.5",
