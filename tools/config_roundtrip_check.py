@@ -18,6 +18,7 @@ DEFAULTS = {
     "Video.Display": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
+    "Video.FrameCap": "60",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -36,6 +37,7 @@ WindowY=-1
 Display=0
 WindowMode=windowed
 VSync=adaptive
+FrameCap=60
 FutureVideo=keep-me
 
 [Input]
@@ -158,6 +160,7 @@ def main() -> int:
                     "GE007_DISPLAY": "1",
                     "GE007_WINDOW_MODE": "borderless",
                     "GE007_VSYNC": "on",
+                    "GE007_FRAME_CAP": "30",
                 },
             )
         )
@@ -170,6 +173,7 @@ def main() -> int:
                 "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "on",
+                "Video.FrameCap": "30",
             },
             "env override dump",
         )
@@ -182,6 +186,7 @@ def main() -> int:
                 "Display=0",
                 "WindowMode=windowed",
                 "VSync=adaptive",
+                "FrameCap=60",
             ],
             "env override is not persisted",
         )
@@ -202,6 +207,8 @@ def main() -> int:
                 "Video.WindowMode=exclusive",
                 "--config-override",
                 "Video.VSync=off",
+                "--config-override",
+                "Video.FrameCap=display",
                 "--dump-config",
             )
         )
@@ -214,6 +221,7 @@ def main() -> int:
                 "Video.Display": "2",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",
+                "Video.FrameCap": "display",
             },
             "cli override dump",
         )
@@ -226,6 +234,7 @@ def main() -> int:
                 "Display=0",
                 "WindowMode=windowed",
                 "VSync=adaptive",
+                "FrameCap=60",
             ],
             "cli override is not persisted",
         )
@@ -261,6 +270,8 @@ def main() -> int:
             "Video.WindowMode=borderless",
             "--config-set",
             "Video.VSync=off",
+            "--config-set",
+            "Video.FrameCap=30",
         )
         assert_no_tmp(savedir)
         assert_file_contains(
@@ -283,6 +294,9 @@ def main() -> int:
                 "# VSync",
                 "# type=enum scope=live default=adaptive range=off|on|adaptive",
                 "VSync=off",
+                "# Frame cap",
+                "# type=enum scope=live default=60 range=30|60|display",
+                "FrameCap=30",
                 "# Master volume",
                 "# type=float scope=live default=0.7 range=0..1",
                 "FutureVideo=keep-me",
@@ -304,6 +318,7 @@ def main() -> int:
                 "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "off",
+                "Video.FrameCap": "30",
                 "Input.MouseSensitivity": "0.25",
                 "Input.InvertY": "1",
                 "Audio.MasterVolume": "0.5",

@@ -19,6 +19,7 @@ EXPECTED_DEFAULTS = {
     "Video.Display": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
+    "Video.FrameCap": "60",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
@@ -36,6 +37,7 @@ WindowY=20
 Display=1
 WindowMode=exclusive
 VSync=off
+FrameCap=display
 
 [Input]
 MouseSensitivity=0.25
@@ -154,6 +156,7 @@ def main() -> int:
                 "Video.Display": "1",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",
+                "Video.FrameCap": "display",
                 "Input.MouseSensitivity": "0.25",
                 "Input.MouseSensitivityAim": "0.125",
                 "Input.InvertY": "1",

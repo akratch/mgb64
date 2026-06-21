@@ -126,8 +126,6 @@ static int g_disableInputGrab = 0;
 static int g_traceRequested = -1;
 
 /* ===== Frame timing ===== */
-#define TARGET_FPS 60
-#define FRAME_TIME_MS (1000 / TARGET_FPS)
 static u32 g_lastFrameTime = 0;
 static int g_frameSyncCallCount = 0;
 
@@ -182,6 +180,19 @@ static const ConfigEnumOption k_vsyncOptions[] = {
     { "off", PLATFORM_VSYNC_OFF },
     { "on", PLATFORM_VSYNC_ON },
     { "adaptive", PLATFORM_VSYNC_ADAPTIVE },
+};
+
+typedef enum PlatformFrameCapMode {
+    PLATFORM_FRAME_CAP_DISPLAY = 0,
+    PLATFORM_FRAME_CAP_30 = 30,
+    PLATFORM_FRAME_CAP_60 = 60
+} PlatformFrameCapMode;
+
+static s32 g_frameCapMode = PLATFORM_FRAME_CAP_60;
+static const ConfigEnumOption k_frameCapOptions[] = {
+    { "30", PLATFORM_FRAME_CAP_30 },
+    { "60", PLATFORM_FRAME_CAP_60 },
+    { "display", PLATFORM_FRAME_CAP_DISPLAY },
 };
 
 /* ===== Configurable window/display settings ===== */
@@ -1143,6 +1154,22 @@ static void platformApplyVSync(void)
     }
 }
 
+static u32 platformFrameDelayMs(void)
+{
+    switch (g_frameCapMode) {
+        case PLATFORM_FRAME_CAP_30:
+            return 1000 / 30;
+        case PLATFORM_FRAME_CAP_DISPLAY:
+            if (!g_forceNoVsync && g_vsyncMode != PLATFORM_VSYNC_OFF) {
+                return 0;
+            }
+            return 1000 / 60;
+        case PLATFORM_FRAME_CAP_60:
+        default:
+            return 1000 / 60;
+    }
+}
+
 /* Register platform settings with the config system.
  * Called from main_pc.c before configInit(). */
 void platformRegisterConfig(void)
@@ -1186,6 +1213,13 @@ void platformRegisterConfig(void)
                          "--config-override Video.VSync=VALUE",
                          "VSync",
                          "Swap interval: off, on, or adaptive.");
+    settingsRegisterEnum("Video.FrameCap", &g_frameCapMode, PLATFORM_FRAME_CAP_60,
+                         k_frameCapOptions,
+                         (s32)(sizeof(k_frameCapOptions) / sizeof(k_frameCapOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_FRAME_CAP",
+                         "--config-override Video.FrameCap=VALUE",
+                         "Frame cap",
+                         "Frame pacing cap: 30, 60, or display.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
@@ -1684,11 +1718,12 @@ void platformFrameSync(void) {
     }
 #endif
 
-    /* Frame pacing — wait until next frame boundary */
+    /* Frame pacing — wait until next configured frame boundary. */
     u32 now = SDL_GetTicks();
     u32 elapsed = now - g_lastFrameTime;
-    if (elapsed < FRAME_TIME_MS) {
-        SDL_Delay(FRAME_TIME_MS - elapsed);
+    u32 frame_delay_ms = platformFrameDelayMs();
+    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
+        SDL_Delay(frame_delay_ms - elapsed);
     }
     g_lastFrameTime = SDL_GetTicks();
 
