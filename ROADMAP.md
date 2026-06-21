@@ -149,8 +149,10 @@ Next:
 - **Phase 5 — split-screen performance + 3/4-player hardening:** validate the
   2-player frame budget, then the higher-risk 3-player asymmetric split and the
   4-way viewport math, with `room_render_fallback_records==0` under load.
-- **Parallel polish track (default-off, config-gated):** drop-shadows, true
-  hor+ widescreen, FOV control, fullscreen modes, and input rebinding.
+- **Parallel display/input polish track (default-off, config-gated):** true
+  hor+ widescreen, FOV control, fullscreen modes, render scale/MSAA/gamma,
+  settings UI, and input rebinding. The execution plan and regression matrix
+  live in [docs/DISPLAY_INPUT_PLAN.md](docs/DISPLAY_INPUT_PLAN.md).
 
 ### Music and audio fidelity
 

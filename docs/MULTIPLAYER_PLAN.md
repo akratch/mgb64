@@ -93,11 +93,12 @@ validated, ⬜ not started.
 
 ## Parallel polish track (default-off, config-gated)
 
-- P-1. Drop-shadows — unstub `doshadow` (`model.c:10608`). M.
-- P-2. True hor+ widescreen — port `projection[0][0]` correction (`gfx_pc.c:742`). M.
-- P-3. FOV control (`Video.Fov`). S.
-- P-4. Fullscreen modes (`platform_sdl.c:952`). S.
-- P-5. Input rebinding (`stubs.c:4994`). M.
+The display/input portion of the old polish list now has its own execution plan:
+[DISPLAY_INPUT_PLAN.md](DISPLAY_INPUT_PLAN.md). That plan covers true hor+
+widescreen, FOV control, fullscreen modes, render scale/MSAA/gamma, settings UI,
+and input rebinding, with concrete regression lanes for split-screen safety.
+
+Drop-shadows remain renderer-parity work, separate from the display/input track.
 
 Hard constraint: every render-math change is default-off, and the ares 4:3
 movement/intro oracle must stay **bit-stable** as a regression gate.
