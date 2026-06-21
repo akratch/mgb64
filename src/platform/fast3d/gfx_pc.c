@@ -6190,6 +6190,54 @@ static bool gfx_mode_in_range(uint32_t mode, uint32_t min_mode, uint32_t max_mod
     return mode >= min_mode && mode <= max_mode;
 }
 
+static bool gfx_mode_is_secondary_room_xlu(uint32_t mode) {
+    switch (mode) {
+        case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
+        case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
+        case 0x00504240: /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu) */
+        case 0x0C1849D8: /* PASS + AA_ZB_XLU_SURF2 */
+        case 0x0C184DD8: /* PASS + AA_ZB_XLU_DECAL2 */
+        case 0x041049D8: /* FOG_PRIM_A (de-fogged) + XLU_SURF2 */
+        case 0x04104DD8: /* FOG_PRIM_A (de-fogged) + XLU_DECAL2 */
+        case 0x081049D8: /* FOG_SHADE_A (de-fogged) + XLU_SURF2 */
+        case 0x08104DD8: /* FOG_SHADE_A (de-fogged) + XLU_DECAL2 */
+        case 0xC0504240: /* fog-forced CLR_IN + XLU_SURF2 */
+        case 0xC41049D8: /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
+        case 0xC4104DD8: /* FOG_PRIM_A + AA_ZB_XLU_DECAL2 */
+        case 0xC81049D8: /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
+        case 0xC8104DD8: /* FOG_SHADE_A + AA_ZB_XLU_DECAL2 */
+            return true;
+        default:
+            return false;
+    }
+}
+
+static uint64_t gfx_apply_secondary_room_alpha_lut(uint64_t cc_id,
+                                                   uint32_t raw_mode,
+                                                   bool room_matrix,
+                                                   const char *dl_which,
+                                                   enum GfxBlendMode blend_mode) {
+    if (!room_matrix ||
+        dl_which == NULL ||
+        strcmp(dl_which, "secondary") != 0 ||
+        blend_mode != GFX_BLEND_ALPHA ||
+        !gfx_mode_is_secondary_room_xlu(raw_mode)) {
+        return cc_id;
+    }
+
+    switch (cc_id) {
+        /* DL_LUT_SECONDARY(_ADDFOG) swaps shade alpha to environment alpha for
+         * transparent room DLs. Native room DLs can still reach the translator
+         * with the pre-LUT combiner, so mirror the authored replacement here. */
+        case 0x00f38e4f020a2d12ULL: /* G_CC_TRILERP, G_CC_MODULATEIA2 */
+            return 0x00f78e4f020a2d12ULL;
+        case 0x009ffe4f020a2d12ULL: /* G_CC_TRILERP, G_CC_MODULATEI2 */
+            return 0x00bffe4f020a2d12ULL;
+        default:
+            return cc_id;
+    }
+}
+
 static bool gfx_parse_rgba(const char *value, struct RGBA *out) {
     unsigned long comps[4] = {0, 0, 0, 255};
     char *end = NULL;
@@ -9761,6 +9809,11 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
         (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
     uint64_t effective_cc_id = cc_id;
+    effective_cc_id = gfx_apply_secondary_room_alpha_lut(effective_cc_id,
+                                                         rdp.other_mode_l_raw,
+                                                         room_matrix,
+                                                         dl_which,
+                                                         blend_mode);
     struct RGBA diag_tint_color = g_diag_tint_rgba;
     bool eye_intro_strip = gfx_is_eye_intro_strip_material(tex_tile_base);
     bool trace_eye_material = (g_diag_trace_eye_bind > 0 && gfx_is_eye_intro_diag_material());
