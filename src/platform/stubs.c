@@ -554,9 +554,43 @@ OSYieldResult osSpTaskYielded(OSTask *task) { (void)task; return 0; }
 
 /* ===== Controller stubs ===== */
 
+/* Effective connected-player count on the native port. Player 1 (slot 0) is
+ * always present because the keyboard/mouse drives it even with no pad; opened
+ * pads beyond the first add players for split-screen. Clamped to MAXCONTROLLERS.
+ * This is what makes joyGetControllerCount() report >=2 once a 2nd pad is in,
+ * unblocking the front-end multiplayer gate. */
+static int pcConnectedPlayerCount(void) {
+    int pads = platformGetPadCount();
+    int count = pads > 1 ? pads : 1; /* keyboard/mouse guarantees >=1 */
+    if (count > MAXCONTROLLERS) count = MAXCONTROLLERS;
+    return count;
+}
+
+/* Mark the first `count` slots of an OSContStatus array as a present standard
+ * controller and the rest as not responding, so the contiguous-slot logic in
+ * joyCheckStatus()/joyGetControllerCount() derives the right player count. */
+static void pcFillContStatus(OSContStatus *data, int count) {
+    int i;
+    if (!data) return;
+    memset(data, 0, sizeof(OSContStatus) * MAXCONTROLLERS);
+    for (i = 0; i < MAXCONTROLLERS; i++) {
+        if (i < count) {
+            data[i].type   = CONT_TYPE_NORMAL;
+            data[i].status = 0;
+            data[i].errno  = 0;
+        } else {
+            data[i].errno = CONT_NO_RESPONSE_ERROR;
+        }
+    }
+}
+
 s32 osContInit(OSMesgQueue *mq, u8 *bitpattern, OSContStatus *data) {
-    if (bitpattern) *bitpattern = 0x01; /* Controller 1 present */
-    if (data) memset(data, 0, sizeof(OSContStatus) * MAXCONTROLLERS);
+    int count = pcConnectedPlayerCount();
+    if (bitpattern) {
+        /* Low `count` bits set = those player slots present. */
+        *bitpattern = (u8)((1u << count) - 1u);
+    }
+    pcFillContStatus(data, count);
     /* Prime the input queue so the first joyPoll() call succeeds.
      * On N64, the SI interrupt from osContInit fires and posts to the queue;
      * on PC we simulate that by posting a message directly. */
@@ -574,7 +608,12 @@ s32 osContStartReadData(OSMesgQueue *mq) {
     if (mq) osSendMesg(mq, NULL, OS_MESG_NOBLOCK);
     return 0;
 }
-s32 osContGetQuery(OSContStatus *data) { (void)data; return 0; }
+/* Re-derive connection state each query so hot-plug is reflected: joyCheckStatus
+ * reads g_ContStatus[i].errno here and rebuilds g_ConnectedControllers. */
+s32 osContGetQuery(OSContStatus *data) {
+    pcFillContStatus(data, pcConnectedPlayerCount());
+    return 0;
+}
 /* Mouse delta from platform_sdl.c */
 extern void platformGetMouseDelta(int *dx, int *dy);
 extern int g_pcDebugFlyCamera;
@@ -4735,6 +4774,73 @@ static void pcApplyScriptedFrontendDirection(u16 *buttons, int *stick_x,
                                      "GE007_AUTO_FRONTEND_RIGHT", input_frame));
 }
 
+/* Map a single opened pad (slot k) to an N64 OSContPad. Used for players 2..4;
+ * player 1 (slot 0) takes the richer inline path below that also merges
+ * keyboard/mouse and the P1-only edge-triggered weapon/crouch state.
+ *
+ * Buttons here come from platformGetPadButtons(), a raw bitmask of
+ * (1u << SDL_CONTROLLER_BUTTON_*). The N64 mapping mirrors the pad0 path so all
+ * players share one mapping. Absent pads (handle == NULL) yield a zeroed pad. */
+static void pcFillPadFromController(OSContPad *pad, int k) {
+    unsigned int raw;
+    int lx = 0, ly = 0;
+    int lt = 0, rt = 0;
+    u16 buttons = 0;
+    int stick_x = 0, stick_y = 0;
+
+    if (!pad) {
+        return;
+    }
+
+    raw = platformGetPadButtons(k);
+
+    /* Face buttons (mirror pad0 mapping in osContGetReadData). */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_A))             buttons |= A_BUTTON;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_B))             buttons |= B_BUTTON;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_X))             buttons |= B_BUTTON; /* X = reload (B in GE) */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_START))         buttons |= START_BUTTON;
+
+    /* Bumpers */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_LEFTSHOULDER))  buttons |= L_TRIG;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) buttons |= Z_TRIG; /* RB = alt fire */
+
+    /* D-pad */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_UP))       buttons |= U_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_DOWN))     buttons |= D_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_LEFT))     buttons |= L_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_RIGHT))    buttons |= R_JPAD;
+
+    /* Analog triggers → R_TRIG (aim) and Z_TRIG (fire). */
+    platformGetPadTriggers(k, &lt, &rt);
+    if (lt > GAMEPAD_DEADZONE) buttons |= R_TRIG; /* LT = aim mode */
+    if (rt > GAMEPAD_DEADZONE) buttons |= Z_TRIG; /* RT = fire */
+
+    /* Left stick → N64 analog stick (movement). */
+    platformGetPadLeftStick(k, &lx, &ly);
+    if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) {
+        int mapped = (lx * 80) / 32767;
+        if (mapped > 80) mapped = 80;
+        if (mapped < -80) mapped = -80;
+        stick_x += mapped;
+    }
+    if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) {
+        int mapped = (-ly * 80) / 32767; /* SDL Y is inverted vs N64 */
+        if (mapped > 80) mapped = 80;
+        if (mapped < -80) mapped = -80;
+        stick_y += mapped;
+    }
+
+    if (stick_x > 80) stick_x = 80;
+    if (stick_x < -80) stick_x = -80;
+    if (stick_y > 80) stick_y = 80;
+    if (stick_y < -80) stick_y = -80;
+
+    pad->button  = buttons;
+    pad->stick_x = (s8)stick_x;
+    pad->stick_y = (s8)stick_y;
+    pad->errno   = 0;
+}
+
 s32 osContGetReadData(OSContPad *data) {
     extern int g_frame_count_diag;
     int input_frame;
@@ -5164,6 +5270,16 @@ s32 osContGetReadData(OSContPad *data) {
     data[0].stick_x = (s8)stick_x;
     data[0].stick_y = (s8)stick_y;
     data[0].errno = 0;
+
+    /* Players 2..4: pad slot k drives data[k] directly (no keyboard/mouse
+     * merge — those belong to P1 only). Absent pads were already zeroed by the
+     * memset above; pcFillPadFromController() leaves them neutral. */
+    {
+        int k;
+        for (k = 1; k < MAXCONTROLLERS; k++) {
+            pcFillPadFromController(&data[k], k);
+        }
+    }
 
     /* Input logging removed — verified working */
 

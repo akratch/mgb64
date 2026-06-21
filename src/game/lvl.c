@@ -5693,16 +5693,22 @@ void lvlViewMoveTick(void)
     {
         extern int g_pcDebugFlyCamera;
         extern void platformGetMouseDelta(int *dx, int *dy);
-        extern void platformGetRightStick(int *rx, int *ry);
+        extern void platformGetPadRightStick(int k, int *rx, int *ry);
 
         /* Inject mouse look and gamepad right-stick directly into player
          * angles (bypasses C-button acceleration for smooth feel).
-         * Only when gameplay camera is active. */
+         * Only when gameplay camera is active.
+         *
+         * Per-player routing (split-screen): the right stick comes from pad
+         * slot == this player's number, so pad k aims player k. Mouse-look is
+         * player 1 (slot 0) only, so it never leaks to players 2-4. */
         if (!g_pcDebugFlyCamera && g_CurrentPlayer->prop != NULL) {
             int mdx = 0, mdy = 0;
             int grx = 0, gry = 0;
-            platformGetMouseDelta(&mdx, &mdy);
-            platformGetRightStick(&grx, &gry);
+            if (local_player_number == 0) {
+                platformGetMouseDelta(&mdx, &mdy);
+            }
+            platformGetPadRightStick(local_player_number, &grx, &gry);
 
             /* Convert gamepad right stick to pixel-equivalent delta.
              * Scale: 32767 → ~g_pcGamepadLookSpeed pixels per frame (tuned for 60fps).

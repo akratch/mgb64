@@ -28,8 +28,90 @@ void platformShutdownSDL(void);
 void platformSetWindowTitle(const char *title);
 
 /* ===== Gamepad state ===== */
+/* Up to MAXCONTROLLERS pads are opened and bound to fixed player slots.
+ * The mapping is stable: a pad keeps its slot for its lifetime, and a
+ * hot-unplug frees only that slot (no reshuffling of other players). Slot 0
+ * doubles as the keyboard/mouse player, so a pad opened first lands in slot 0
+ * but the data[0] path still merges keyboard/mouse on top of it (see stubs.c).
+ *
+ * g_gameController/g_gameControllerID are kept as aliases for slot 0 so the
+ * existing single-pad call sites (right-stick read, shutdown) keep working. */
+typedef struct {
+    SDL_GameController *handle;      /* NULL when the slot is free */
+    SDL_JoystickID      instance_id; /* -1 when the slot is free */
+    int                 slot;        /* fixed player slot, == array index */
+} PlatformPad;
+
+#define PLATFORM_MAX_PADS 4 /* matches N64 MAXCONTROLLERS */
+
+static PlatformPad g_pads[PLATFORM_MAX_PADS];
+
 SDL_GameController *g_gameController = NULL;
 static SDL_JoystickID g_gameControllerID = -1;
+
+/* Refresh the legacy single-pad aliases from slot 0. */
+static void platformSyncPad0Alias(void) {
+    g_gameController   = g_pads[0].handle;
+    g_gameControllerID = g_pads[0].instance_id;
+}
+
+/* Open an SDL game controller (by joystick device index) into the first free
+ * slot. Returns the slot used, or -1 if no slot is free or the open failed. */
+static int platformOpenPad(int deviceIndex) {
+    SDL_GameController *gc;
+    SDL_JoystickID id;
+    int slot;
+
+    if (!SDL_IsGameController(deviceIndex)) {
+        return -1;
+    }
+
+    id = SDL_JoystickGetDeviceInstanceID(deviceIndex);
+    /* Reject duplicates: a controller already opened in some slot. */
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (g_pads[slot].handle && g_pads[slot].instance_id == id) {
+            return -1;
+        }
+    }
+
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (!g_pads[slot].handle) {
+            break;
+        }
+    }
+    if (slot >= PLATFORM_MAX_PADS) {
+        return -1; /* all slots full */
+    }
+
+    gc = SDL_GameControllerOpen(deviceIndex);
+    if (!gc) {
+        return -1;
+    }
+
+    g_pads[slot].handle      = gc;
+    g_pads[slot].instance_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
+    g_pads[slot].slot        = slot;
+    printf("[SDL] Gamepad connected (P%d): %s\n", slot + 1, SDL_GameControllerName(gc));
+
+    platformSyncPad0Alias();
+    return slot;
+}
+
+/* Free the slot whose pad has the given instance id, without disturbing the
+ * other slots (stable mapping survives hot-unplug). */
+static void platformClosePadByInstance(SDL_JoystickID id) {
+    int slot;
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (g_pads[slot].handle && g_pads[slot].instance_id == id) {
+            printf("[SDL] Gamepad disconnected (P%d)\n", slot + 1);
+            SDL_GameControllerClose(g_pads[slot].handle);
+            g_pads[slot].handle      = NULL;
+            g_pads[slot].instance_id = -1;
+            break;
+        }
+    }
+    platformSyncPad0Alias();
+}
 
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
@@ -889,6 +971,98 @@ void platformGetRightStick(int *rx_out, int *ry_out) {
     *ry_out = ry;
 }
 
+/* ===== Per-pad accessors (multi-controller / split-screen) =====
+ * Slot index k is the player number (0..PLATFORM_MAX_PADS-1). Every accessor
+ * bounds-checks k and returns neutral values for an absent or out-of-range pad,
+ * so callers never touch a NULL handle on hot-unplug. */
+
+int platformGetPadCount(void) {
+    int count = 0;
+    int k;
+    for (k = 0; k < PLATFORM_MAX_PADS; k++) {
+        if (g_pads[k].handle) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/* Raw SDL button state for pad k (0 if absent). Mapping to N64 buttons is done
+ * by the caller (stubs.c) so all players share one mapping. */
+unsigned int platformGetPadButtons(int k) {
+    SDL_GameController *gc;
+    unsigned int mask = 0;
+    int b;
+
+    if (k < 0 || k >= PLATFORM_MAX_PADS) {
+        return 0;
+    }
+    gc = g_pads[k].handle;
+    if (!gc) {
+        return 0;
+    }
+    for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) {
+        if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) {
+            mask |= (1u << b);
+        }
+    }
+    return mask;
+}
+
+/* Raw left-stick axes for pad k (range -32768..32767, 0 if absent). */
+void platformGetPadLeftStick(int k, int *lx_out, int *ly_out) {
+    SDL_GameController *gc;
+    int lx = 0, ly = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
+        ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+    }
+    if (lx_out) *lx_out = lx;
+    if (ly_out) *ly_out = ly;
+}
+
+/* Raw right-stick axes for pad k with deadzone applied (0 if absent).
+ * Matches the deadzone used by the legacy platformGetRightStick(). */
+void platformGetPadRightStick(int k, int *rx_out, int *ry_out) {
+    SDL_GameController *gc;
+    int rx = 0, ry = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX);
+        ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY);
+        if (rx > -8000 && rx < 8000) rx = 0;
+        if (ry > -8000 && ry < 8000) ry = 0;
+    }
+#ifdef MACOS_APP_BUNDLE
+    /* The Swift bridge only feeds player 1. */
+    if (k == 0) {
+        rx += g_pcBridgeRightStickX;
+        ry += g_pcBridgeRightStickY;
+        if (rx > 32767) rx = 32767;
+        if (rx < -32767) rx = -32767;
+        if (ry > 32767) ry = 32767;
+        if (ry < -32767) ry = -32767;
+    }
+#endif
+    if (rx_out) *rx_out = rx;
+    if (ry_out) *ry_out = ry;
+}
+
+/* Trigger axes for pad k (range 0..32767, 0 if absent). leftTrig/rightTrig may
+ * be NULL. */
+void platformGetPadTriggers(int k, int *leftTrig, int *rightTrig) {
+    SDL_GameController *gc;
+    int lt = 0, rt = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        lt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        rt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    }
+    if (leftTrig) *leftTrig = lt;
+    if (rightTrig) *rightTrig = rt;
+}
+
 /* ===== Scheduler references ===== */
 /* We need access to the scheduler's client list to send retrace messages */
 extern OSSched os_scheduler;
@@ -1000,19 +1174,20 @@ int platformInitSDL(void) {
         printf("[SDL] Input grab disabled (GE007_NO_INPUT_GRAB)\n");
     }
 
-    /* Open first available game controller */
+    /* Open every available game controller into its own player slot. The first
+     * opened pad lands in slot 0 (player 1) and shares that slot with the
+     * keyboard/mouse merge in stubs.c. */
+    for (int i = 0; i < PLATFORM_MAX_PADS; i++) {
+        g_pads[i].handle      = NULL;
+        g_pads[i].instance_id = -1;
+        g_pads[i].slot        = i;
+    }
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) {
-            g_gameController = SDL_GameControllerOpen(i);
-            if (g_gameController) {
-                g_gameControllerID = SDL_JoystickInstanceID(
-                    SDL_GameControllerGetJoystick(g_gameController));
-                printf("[SDL] Gamepad connected: %s\n",
-                       SDL_GameControllerName(g_gameController));
-                break;
-            }
+        if (platformOpenPad(i) < 0 && platformGetPadCount() >= PLATFORM_MAX_PADS) {
+            break; /* table full */
         }
     }
+    platformSyncPad0Alias();
 
     return 0;
 }
@@ -1128,24 +1303,13 @@ void platformPollEvents(void) {
                 break;
             }
             case SDL_CONTROLLERDEVICEADDED:
-                if (!g_gameController) {
-                    g_gameController = SDL_GameControllerOpen(event.cdevice.which);
-                    if (g_gameController) {
-                        g_gameControllerID = SDL_JoystickInstanceID(
-                            SDL_GameControllerGetJoystick(g_gameController));
-                        printf("[SDL] Gamepad connected: %s\n",
-                               SDL_GameControllerName(g_gameController));
-                    }
-                }
+                /* event.cdevice.which is a device index for ADDED. */
+                platformOpenPad(event.cdevice.which);
                 break;
             case SDL_CONTROLLERDEVICEREMOVED:
-                if (g_gameController &&
-                    event.cdevice.which == g_gameControllerID) {
-                    printf("[SDL] Gamepad disconnected\n");
-                    SDL_GameControllerClose(g_gameController);
-                    g_gameController = NULL;
-                    g_gameControllerID = -1;
-                }
+                /* event.cdevice.which is an instance id for REMOVED. Free only
+                 * that slot; other players keep their stable mapping. */
+                platformClosePadByInstance(event.cdevice.which);
                 break;
             case SDL_MOUSEMOTION:
                 if (g_mouseGrabbed) {
@@ -1303,7 +1467,15 @@ void platformShutdownSDL(void) {
      * can corrupt static FILE pointers in port_trace.c, causing fclose()
      * to SIGSEGV. The OS reclaims all file handles on process exit.
      * The trace file is flushed every 60 frames, so data loss is minimal. */
-    if (g_gameController) SDL_GameControllerClose(g_gameController);
+    for (int i = 0; i < PLATFORM_MAX_PADS; i++) {
+        if (g_pads[i].handle) {
+            SDL_GameControllerClose(g_pads[i].handle);
+            g_pads[i].handle      = NULL;
+            g_pads[i].instance_id = -1;
+        }
+    }
+    g_gameController   = NULL;
+    g_gameControllerID = -1;
     /* After SIGSEGV recovery via siglongjmp, the GL context may be corrupt.
      * Skip GL cleanup and just destroy the window + quit SDL. The OS will
      * reclaim the GL resources on process exit anyway. */
