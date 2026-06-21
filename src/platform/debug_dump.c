@@ -10,6 +10,8 @@
 #include <math.h>
 #include "../bondtypes.h"
 #include "../bondconstants.h"
+#include "../game/player.h"
+#include "../game/gun.h"
 
 extern union ModelRwData *modelGetNodeRwData(Model *model, ModelNode *node);
 
@@ -28,7 +30,7 @@ extern struct CurrentEnvironmentRecord *fogGetCurrentEnvironmentp(void);
 
 /* Player access helpers — struct player is incomplete here, use bondview.c helpers */
 extern coord3d *bondviewGetCurrentPlayersPosition(void);
-extern s32 bondviewGetCurrentPlayersRoom(void);
+extern u8 bondviewGetCurrentPlayersRoom(void);
 
 /* Dump state */
 static int s_dumpRequested = 0;
@@ -69,6 +71,51 @@ static const char *propTypeName(int t) {
         case 5: return "VIEWER";
         default: return "???";
     }
+}
+
+static void debugDumpViewmodelTrace(FILE *fp, const char *label, GUNHAND hand) {
+    PortViewmodelTrace trace;
+
+    memset(&trace, 0, sizeof(trace));
+    portGetViewmodelTrace(hand, &trace);
+
+    fprintf(fp, "  %s trace: valid=%d frame=%d item=%d visible=%d firing=%d flash=%d state=%d hold=%d\n",
+            label,
+            trace.valid,
+            trace.frame,
+            trace.item,
+            trace.visible,
+            trace.firing,
+            trace.flash,
+            trace.state,
+            trace.hold_time);
+    fprintf(fp, "    switch1=%d switches=%d s060=%d s078=%d sxflash=%d shell_l=0x%X shell_r=0x%X depth=%.2f\n",
+            trace.switch1,
+            trace.switch_count,
+            trace.suppress_0x60,
+            trace.suppress_0x78,
+            trace.suppress_extra_flash,
+            trace.shell_left_mask,
+            trace.shell_right_mask,
+            trace.depth);
+    fprintf(fp, "    raw: item=%d pending=%d invis=%d lock=%d mag=%d weaponnum=%d watchmenu=%d anim=%d ammo_type=%d reserve=%d mag_size=%d flags=0x%X\n",
+            trace.raw_hand_item,
+            trace.raw_pending,
+            trace.raw_invis,
+            trace.raw_lock,
+            trace.raw_mag,
+            trace.raw_weaponnum,
+            trace.raw_watchmenu,
+            trace.raw_animation,
+            trace.raw_ammo_type,
+            trace.raw_ammo_reserve,
+            trace.raw_mag_size,
+            trace.raw_flags);
+    fprintf(fp, "    root=(%.2f, %.2f, %.2f) world=(%.2f, %.2f, %.2f) muzzle=(%.2f, %.2f, %.2f) recoil=(%.5f, %.5f)\n",
+            trace.root[0], trace.root[1], trace.root[2],
+            trace.world[0], trace.world[1], trace.world[2],
+            trace.muzzle[0], trace.muzzle[1], trace.muzzle[2],
+            trace.recoil_angle, trace.bolt_recoil);
 }
 
 void debugDumpExecute(void) {
@@ -119,6 +166,78 @@ void debugDumpExecute(void) {
             fprintf(fp, "  DiffFromFar=%d FarIntensity=%d\n", diffFromFar, farIntensity);
             fprintf(fp, "  RGB=(%d,%d,%d) Clouds=%d\n", ep[8], ep[9], ep[10], ep[11]);
         }
+    }
+
+    /* --- Player weapon/HUD state --- */
+    fprintf(fp, "\n== PLAYER WEAPON/HUD ==\n");
+    if (g_CurrentPlayer) {
+        struct player *p = g_CurrentPlayer;
+
+        fprintf(fp, "  watch_state=%d watch_pause=%d watch_open_req=%d outside_watch=%d mpmenuon=%d\n",
+                p->watch_animation_state,
+                p->watch_pause_time,
+                p->open_close_solo_watch_menu,
+                p->outside_watch_menu,
+                p->mpmenuon);
+        fprintf(fp, "  gunsightmode=%d insightaimmode=%d gunammooff=%d force_disarm=%d\n",
+                p->gunsightmode,
+                p->insightaimmode,
+                p->gunammooff,
+                g_bondviewForceDisarm);
+        fprintf(fp, "  crosshair=(%.2f, %.2f) crosshair_pos=(%.4f, %.4f) gunsight=(%.2f, %.2f)\n",
+                p->crosshair_angle.f[0],
+                p->crosshair_angle.f[1],
+                p->crosshair_x_pos,
+                p->crosshair_y_pos,
+                p->field_FFC.x,
+                p->field_FFC.y);
+        fprintf(fp, "  health: bond=%.4f armour=%.4f actual_h=%.4f actual_a=%.4f damage_show=%d health_show=%d\n",
+                p->bondhealth,
+                p->bondarmour,
+                p->actual_health,
+                p->actual_armor,
+                p->damageshowtime,
+                p->healthshowtime);
+
+        for (int i = GUNRIGHT; i <= GUNLEFT; i++) {
+            struct hand *hand = &p->hands[i];
+            const char *label = (i == GUNRIGHT) ? "RIGHT" : "LEFT";
+            ITEM_IDS active = get_item_in_hand_or_watch_menu((GUNHAND)i);
+
+            fprintf(fp, "  %s hand: ready=%d hand_item=%d active_item=%d pending=%d invis=%d lock=%d\n",
+                    label,
+                    Gun_hand_without_item((GUNHAND)i),
+                    p->hand_item[i],
+                    active,
+                    p->field_2A44[i],
+                    p->hand_invisible[i],
+                    p->lock_hand_model[i]);
+            fprintf(fp, "    weaponnum=%d watchmenu=%d prev=%d next=%d anim=%d trig=%d state=%d hold=%d fire=%d flash=%d visible=%d\n",
+                    hand->weaponnum,
+                    hand->weaponnum_watchmenu,
+                    hand->previous_weapon,
+                    hand->weapon_next_weapon,
+                    hand->weapon_current_animation,
+                    hand->weapon_animation_trigger,
+                    hand->when_detonating_mines_is_0,
+                    hand->weapon_hold_time,
+                    hand->weapon_firing_status,
+                    hand->field_87D,
+                    hand->field_87F);
+            fprintf(fp, "    ammo_mag=%d field_8A4=%d model=%p model_header=%p render_pos=%p muzzle=(%.2f, %.2f, %.2f) depth=%.2f\n",
+                    hand->weapon_ammo_in_magazine,
+                    hand->field_8A4,
+                    (void *)hand->field_B68,
+                    (void *)hand->field_B70,
+                    (void *)hand->field_B74,
+                    hand->field_B58.x,
+                    hand->field_B58.y,
+                    hand->field_B58.z,
+                    hand->field_B64);
+            debugDumpViewmodelTrace(fp, label, (GUNHAND)i);
+        }
+    } else {
+        fprintf(fp, "  g_CurrentPlayer=NULL\n");
     }
 
     /* --- All CHR props --- */
