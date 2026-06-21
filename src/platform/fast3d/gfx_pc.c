@@ -3062,6 +3062,9 @@ static int g_effect_tri_trace_budget = INT32_MIN;
 static const char *g_effect_tri_trace_label = NULL;
 static int g_effect_cmd_trace_enabled = -1;
 static int g_effect_cmd_trace_budget = INT32_MIN;
+#define EFFECT_LABEL_STACK_MAX 64
+static const char *g_effect_inherited_label_stack[EFFECT_LABEL_STACK_MAX];
+static const char *g_effect_pending_child_label = NULL;
 
 static int gfx_effect_tri_trace_is_enabled(void) {
     if (g_effect_tri_trace_enabled < 0) {
@@ -3110,6 +3113,38 @@ static bool gfx_effect_tri_trace_label_matches(const char *label) {
     return g_effect_tri_trace_label == NULL ||
            g_effect_tri_trace_label[0] == '\0' ||
            strstr(label, g_effect_tri_trace_label) != NULL;
+}
+
+static const char *gfx_effect_label_for_current_command(void) {
+    const char *label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+
+    if (label != NULL) {
+        return label;
+    }
+
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        return g_effect_inherited_label_stack[dl_depth];
+    }
+
+    return NULL;
+}
+
+static void gfx_effect_push_inherited_label(void) {
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        g_effect_inherited_label_stack[dl_depth] = g_effect_pending_child_label;
+    }
+
+    g_effect_pending_child_label = NULL;
+}
+
+static void gfx_effect_pop_inherited_label(void) {
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        g_effect_inherited_label_stack[dl_depth] = NULL;
+    }
+}
+
+static void gfx_effect_inherit_label_for_child_dl(void) {
+    g_effect_pending_child_label = gfx_effect_label_for_current_command();
 }
 
 static const char *gfx_blend_mode_diag_name(enum GfxBlendMode mode) {
@@ -4845,7 +4880,7 @@ static bool gfx_effect_tri_trace_should_log(const char **out_label) {
         return false;
     }
 
-    label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+    label = gfx_effect_label_for_current_command();
     if (!gfx_effect_tri_trace_label_matches(label)) {
         return false;
     }
@@ -5139,7 +5174,7 @@ static void gfx_effect_cmd_trace(uint8_t opcode, uint64_t w0, uint64_t w1) {
         return;
     }
 
-    label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+    label = gfx_effect_label_for_current_command();
     if (!gfx_effect_tri_trace_label_matches(label)) {
         return;
     }
@@ -12664,9 +12699,11 @@ volatile uintptr_t g_lastDlW1 = 0;  /* uintptr_t: w1 often carries pointers */
 static void gfx_run_dl_pc(Gfx *cmd) {
     dl_depth++;
     if (dl_depth > 32) {
+        g_effect_pending_child_label = NULL;
         dl_depth--;
         return;
     }
+    gfx_effect_push_inherited_label();
     int subtree_tris_start = g_tri_count_diag;
     /* Track whether this DL invocation started inside the dynamic buffer.
      * Static DLs (dlFastPipelineSetup etc.) live in the executable's data
@@ -12677,6 +12714,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
     for (int cmd_count = 0; cmd_count < 100000; cmd_count++) {
         /* Bounds check: only for DLs that started in the dynamic buffer */
         if (in_dynamic_range && (uintptr_t)cmd >= pc_gfx_range_end) {
+            gfx_effect_pop_inherited_label();
             dl_depth--;
             return;
         }
@@ -12919,9 +12957,11 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                             trace_log("G_DL -> N64 @%p", (void*)dl_addr);
                         }
                     }
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else if (C0(16, 1) == 0) {
                     if (trace_active()) trace_log("G_DL -> PC @%p", (void*)dl_addr);
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_run_dl_pc(dl_addr);
                 } else {
                     if (trace_active()) trace_log("G_DL -> BRANCH @%p", (void*)dl_addr);
@@ -12932,6 +12972,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
             }
             case (uint8_t)G_ENDDL:
                 if (trace_active()) trace_log("} ENDDL (%d tris in subtree)", g_tri_count_diag - subtree_tris_start);
+                gfx_effect_pop_inherited_label();
                 dl_depth--;
                 return;
             /* Base GBI separate set/clear geometry mode */
@@ -13150,6 +13191,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 }
                 /* Only abort on opcodes that are clearly garbage pointers */
                 if (opcode < 0x06 && opcode > 0x00) {
+                    gfx_effect_pop_inherited_label();
                     dl_depth--;
                     return;
                 }
@@ -13167,8 +13209,12 @@ static inline uint32_t read_be32(const uint8_t *p) {
 }
 
 void gfx_process_n64_dl(const uint8_t *data) {
-    if (!data) return;
+    if (!data) {
+        g_effect_pending_child_label = NULL;
+        return;
+    }
     if (!gfx_addr_is_n64_data_range((uintptr_t)data, 8)) {
+        g_effect_pending_child_label = NULL;
         return;
     }
     int n64_cmd_count = 0;
@@ -13214,6 +13260,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
     }
 
     dl_depth++;
+    gfx_effect_push_inherited_label();
     if (entry_depth < (int)(sizeof(g_n64_dl_stack) / sizeof(g_n64_dl_stack[0]))) {
         g_n64_dl_stack[entry_depth] = (uintptr_t)data;
         g_n64_dl_seq_stack[entry_depth] = exec_seq;
@@ -13261,6 +13308,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
         fflush(stderr);
     }
 #define ABORT_N64_DL() do { \
+        gfx_effect_pop_inherited_label(); \
         dl_depth--; \
         g_executing_weapon_dl = was_weapon_dl; \
         g_executing_guard_dl = was_guard_dl; \
@@ -13279,6 +13327,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                         n64_vtx_count, n64_cmd_count, n64_dl_count);
                 fflush(stderr);
             }
+            gfx_effect_pop_inherited_label();
             dl_depth--;
             g_executing_weapon_dl = was_weapon_dl;
             g_executing_guard_dl = was_guard_dl;
@@ -13300,6 +13349,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
         uint8_t opcode = w0 >> 24;
         g_rsp_cmd_seq++;
         g_diag_current_cmd_addr = (uintptr_t)data;
+        gfx_effect_cmd_trace(opcode, w0, w1);
         if ((int)exec_seq == gfx_trace_n64_tri_seq() &&
             g_frame_count_diag >= gfx_trace_n64_dl_after_frame()) {
             fprintf(stderr,
@@ -13770,11 +13820,13 @@ void gfx_process_n64_dl(const uint8_t *data) {
                             trace_log("G_DL_N64 -> N64 @%p [room=%d %s]", dl_addr, room, room_dl_kind);
                         }
                     }
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else {
                     /* Jump to a PC DL from within an N64 DL */
                     if (gfx_is_valid_pc_dl((uintptr_t)dl_addr) ||
                         gfx_is_static_pc_dl((uintptr_t)dl_addr)) {
+                        gfx_effect_inherit_label_for_child_dl();
                         gfx_run_dl_pc((Gfx *)dl_addr);
                     } else {
                         g_bad_cmd_count++;
@@ -13800,6 +13852,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                                 n64_vtx_count, n64_cmd_count, n64_dl_count);
                         fflush(stderr);
                     }
+                    gfx_effect_pop_inherited_label();
                     dl_depth--;
                     g_executing_weapon_dl = was_weapon_dl;
                     g_executing_guard_dl = was_guard_dl;
@@ -13845,6 +13898,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                             n64_vtx_count, n64_cmd_count, n64_dl_count);
                     fflush(stderr);
                 }
+                gfx_effect_pop_inherited_label();
                 dl_depth--;
                 g_executing_weapon_dl = was_weapon_dl;
                 g_executing_guard_dl = was_guard_dl;

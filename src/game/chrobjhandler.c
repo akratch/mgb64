@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include "gfx_pc.h"
 extern int g_frame_count_diag;
 #endif
 #include <assets/GlobalImageTable.h>
@@ -74,6 +75,11 @@ static int g_DoorTraceFrameMax = -1;
 #define DOOR_TRACE_MAX_FILTER_VALUES 32
 static int g_DoorTraceFilterObjs[DOOR_TRACE_MAX_FILTER_VALUES];
 static int g_DoorTraceFilterObjCount = 0;
+static int g_TintedGlassTraceEnabled = -1;
+static int g_TintedGlassTraceBudget = -1;
+static int g_TintedGlassMinRenderOpacity = -1;
+static int g_GlassShotDepthToleranceInitialized = 0;
+static f32 g_GlassShotDepthTolerance = 2.0f;
 static int g_InteractTraceEnabled = -1;
 static int g_InteractTraceBudget = -1;
 static int g_AutogunPoseTraceEnabled = -1;
@@ -444,6 +450,146 @@ static int doorShouldAutoClose(const DoorRecord *door)
     }
 
     return ((u32)g_GlobalTimer - door->openedTime) > door->autoCloseFrames;
+}
+
+static int tintedGlassTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_TintedGlassTraceEnabled >= 0) {
+        return g_TintedGlassTraceEnabled;
+    }
+
+    value = getenv("GE007_TRACE_TINTED_GLASS");
+    g_TintedGlassTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_TRACE_TINTED_GLASS_BUDGET");
+    g_TintedGlassTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 240;
+
+    return g_TintedGlassTraceEnabled;
+}
+
+static void tintedGlassTracePrintf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!tintedGlassTraceEnabled()) {
+        return;
+    }
+
+    if (g_TintedGlassTraceBudget == 0) {
+        return;
+    }
+
+    if (g_TintedGlassTraceBudget > 0) {
+        g_TintedGlassTraceBudget--;
+    }
+
+    va_start(ap, fmt);
+    fprintf(stderr, "[TINTED_GLASS_TRACE] frame=%d ", g_frame_count_diag);
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    fflush(stderr);
+}
+
+static int tintedGlassMinRenderOpacity(void)
+{
+    const char *value;
+    int opacity = 96;
+
+    if (g_TintedGlassMinRenderOpacity >= 0) {
+        return g_TintedGlassMinRenderOpacity;
+    }
+
+    value = getenv("GE007_TINTED_GLASS_MIN_OPACITY");
+
+    if (value != NULL && value[0] != '\0') {
+        opacity = atoi(value);
+    }
+
+    if (opacity < 0) {
+        opacity = 0;
+    } else if (opacity > 255) {
+        opacity = 255;
+    }
+
+    g_TintedGlassMinRenderOpacity = opacity;
+    return g_TintedGlassMinRenderOpacity;
+}
+
+static int tintedGlassRenderOpacity(const TintedGlassRecord *glass)
+{
+    int opacity;
+    int minOpacity;
+
+    if (glass == NULL) {
+        return 0;
+    }
+
+    opacity = glass->calculatedopacity;
+
+    if (opacity < 0) {
+        opacity = 0;
+    } else if (opacity > 255) {
+        opacity = 255;
+    }
+
+    minOpacity = tintedGlassMinRenderOpacity();
+
+    if (opacity < minOpacity) {
+        opacity = minOpacity;
+    }
+
+    return opacity;
+}
+
+static f32 glassShotDepthTolerance(void)
+{
+    const char *value;
+
+    if (g_GlassShotDepthToleranceInitialized) {
+        return g_GlassShotDepthTolerance;
+    }
+
+    value = getenv("GE007_GLASS_SHOT_DEPTH_TOLERANCE");
+
+    if (value != NULL && value[0] != '\0') {
+        g_GlassShotDepthTolerance = strtof(value, NULL);
+    }
+
+    if (g_GlassShotDepthTolerance < 0.0f) {
+        g_GlassShotDepthTolerance = 0.0f;
+    } else if (g_GlassShotDepthTolerance > 20.0f) {
+        g_GlassShotDepthTolerance = 20.0f;
+    }
+
+    g_GlassShotDepthToleranceInitialized = 1;
+    return g_GlassShotDepthTolerance;
+}
+
+static int objectIsGlassLikeForShot(const ObjectRecord *obj)
+{
+    if (obj == NULL) {
+        return 0;
+    }
+
+    return obj->type == PROPDEF_GLASS || obj->type == PROPDEF_TINTED_GLASS;
+}
+
+static int objectShotDepthWithinGlassTolerance(const ObjectRecord *obj, f32 depth, f32 limit)
+{
+    f32 tolerance;
+
+    if (!objectIsGlassLikeForShot(obj) || depth <= limit) {
+        return 0;
+    }
+
+    tolerance = glassShotDepthTolerance();
+
+    /* Glass panes are often coplanar with background collision. Allow a tiny
+     * prop-hit bias so cracks attach to the pane instead of the wall behind it. */
+    return tolerance > 0.0f && depth <= limit + tolerance;
 }
 
 static int interactTraceEnabled(void)
@@ -10608,6 +10754,23 @@ s32 object_interaction(struct PropRecord *arg0)
             tinted_glass->TintDist,
             tinted_glass->CullDist,
             tinted_glass->unk90);
+
+#ifdef NATIVE_PORT
+        tintedGlassTracePrintf(
+            "update obj=%d pad=%d pos=(%.2f,%.2f,%.2f) tint=%d cull=%d "
+            "unk90=%.4f opacity=%d portal=%d player_single=%d",
+            tinted_glass->obj,
+            tinted_glass->pad,
+            obj->runtime_pos.x,
+            obj->runtime_pos.y,
+            obj->runtime_pos.z,
+            tinted_glass->TintDist,
+            tinted_glass->CullDist,
+            tinted_glass->unk90,
+            tinted_glass->calculatedopacity,
+            tinted_glass->portalnum,
+            sp674);
+#endif
 
         if ((tinted_glass->portalnum >= 0) && (sp674 == 1))
         {
@@ -31965,6 +32128,9 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
     f32 temp_f0;
     s32 temp_v0_4;
     s32 shadeMultiplier;
+#ifdef NATIVE_PORT
+    Gfx *traceStart = NULL;
+#endif
 
     obj = prop->obj;
 
@@ -32036,7 +32202,11 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 
         if (obj->type == PROPDEF_TINTED_GLASS)
         {
+#ifdef NATIVE_PORT
+            mrData.envcolour.word = tintedGlassRenderOpacity((struct TintedGlassRecord*)obj) << 8;
+#else
             mrData.envcolour.word = ((struct TintedGlassRecord*)obj)->calculatedopacity << 8;
+#endif
         }
         else if ((obj->type == PROPDEF_DOOR) && ((((struct DoorRecord*)obj)->doorFlags & 2) != 0))
         {
@@ -32065,6 +32235,28 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
             (unsigned int)obj->flags,
             (unsigned int)prop->flags);
     }
+
+    if (obj->type == PROPDEF_TINTED_GLASS)
+    {
+        TintedGlassRecord *glass = (TintedGlassRecord *)obj;
+        tintedGlassTracePrintf(
+            "render obj=%d pad=%d pass=%d alpha=%d propType=%d env=0x%08x "
+            "fog=0x%08x opacity=%d renderOpacity=%d minOpacity=%d "
+            "flags=0x%08x flags2=0x%08x propFlags=0x%02x",
+            glass->obj,
+            glass->pad,
+            arg2,
+            objAlpha,
+            mrData.PropType,
+            (unsigned int)mrData.envcolour.word,
+            (unsigned int)mrData.fogcolour.word,
+            glass->calculatedopacity,
+            (mrData.envcolour.word >> 8) & 0xFF,
+            tintedGlassMinRenderOpacity(),
+            (unsigned int)obj->flags,
+            (unsigned int)obj->flags2,
+            (unsigned int)prop->flags);
+    }
 #endif
 
     temp_v0_4 = objGetShotsTaken(obj);
@@ -32089,7 +32281,21 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 
     mrData.fogcolour.word = (sp48.rgba[0] << 0x18) | (sp48.rgba[1] << 0x10) | (sp48.rgba[2] << 0x08) | (sp48.rgba[3] << 0x00);
 
+#ifdef NATIVE_PORT
+    if (obj->type == PROPDEF_TINTED_GLASS && tintedGlassTraceEnabled())
+    {
+        traceStart = mrData.gdl;
+    }
+#endif
+
     sub_GAME_7F04AC20(prop, &mrData, arg2);
+
+#ifdef NATIVE_PORT
+    if (traceStart != NULL && traceStart != mrData.gdl)
+    {
+        gfx_register_effect_dl_range("tinted_glass", traceStart, mrData.gdl);
+    }
+#endif
 
     return mrData.gdl;
 }
@@ -37929,18 +38135,37 @@ post_hit:
 
     neg_z = -transformed.z;
     if (!(neg_z <= shotdata->unk34)) {
-        if (objectTraceMatchesObject(obj)) {
-            objectTracePrintf(
-                "frame=%d event=reject-depth obj=%d type=%d pad=%d hr=%d neg_z=%.3f limit=%.3f",
-                g_frame_count_diag,
-                obj->obj,
-                obj->type,
-                obj->pad,
-                hit_result,
-                neg_z,
-                shotdata->unk34);
+#ifdef NATIVE_PORT
+        if (objectShotDepthWithinGlassTolerance(obj, neg_z, shotdata->unk34)) {
+            if (objectTraceMatchesObject(obj)) {
+                objectTracePrintf(
+                    "frame=%d event=accept-depth-tolerance obj=%d type=%d pad=%d hr=%d neg_z=%.3f limit=%.3f tolerance=%.3f",
+                    g_frame_count_diag,
+                    obj->obj,
+                    obj->type,
+                    obj->pad,
+                    hit_result,
+                    neg_z,
+                    shotdata->unk34,
+                    glassShotDepthTolerance());
+            }
+            neg_z = shotdata->unk34;
+        } else
+#endif
+        {
+            if (objectTraceMatchesObject(obj)) {
+                objectTracePrintf(
+                    "frame=%d event=reject-depth obj=%d type=%d pad=%d hr=%d neg_z=%.3f limit=%.3f",
+                    g_frame_count_diag,
+                    obj->obj,
+                    obj->type,
+                    obj->pad,
+                    hit_result,
+                    neg_z,
+                    shotdata->unk34);
+            }
+            return;
         }
-        return;
     }
 
     do_damage = 1;
@@ -38187,8 +38412,27 @@ void sub_GAME_7F04E9BC(PropRecord* prop, struct ShotData* shotdata)
             && (obj->flags2 & PROPFLAG2_SHOOTTHROUGH) == 0) {
         tmp = -(model->render_pos->pos.m[3][2] + chrpropSumMatrixNegZ(bbox, (Mtxf*)model->render_pos));
 
-        if (tmp <= shotdata->unk34) {
+        if (tmp <= shotdata->unk34
 #ifdef NATIVE_PORT
+                || objectShotDepthWithinGlassTolerance(obj, tmp, shotdata->unk34)
+#endif
+                ) {
+#ifdef NATIVE_PORT
+            if (tmp > shotdata->unk34 && objectTraceMatchesObject(obj)) {
+                objectTracePrintf(
+                    "frame=%d event=accept-coarse-depth-tolerance obj=%d type=%d pad=%d weapon=%d depth=%.3f limit=%.3f tolerance=%.3f flags=0x%08x flags2=0x%08x",
+                    g_frame_count_diag,
+                    obj->obj,
+                    obj->type,
+                    obj->pad,
+                    shotdata->weapon,
+                    tmp,
+                    shotdata->unk34,
+                    glassShotDepthTolerance(),
+                    (unsigned int)obj->flags,
+                    (unsigned int)obj->flags2);
+            }
+
             if (objectTraceMatchesObject(obj)) {
                 objectTracePrintf(
                     "frame=%d event=consider obj=%d type=%d pad=%d weapon=%d depth=%.3f limit=%.3f flags=0x%08x flags2=0x%08x",

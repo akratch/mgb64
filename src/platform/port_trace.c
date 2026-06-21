@@ -1663,6 +1663,7 @@ static const char *tracePropDefName(s32 type) {
         case PROPDEF_SAFE: return "safe";
         case PROPDEF_SAFE_ITEM: return "safe_item";
         case PROPDEF_TANK: return "tank";
+        case PROPDEF_TINTED_GLASS: return "tinted_glass";
         default: return "other";
     }
 }
@@ -1682,6 +1683,7 @@ static int traceStageObjectIsMissionRelevant(s32 type) {
         case PROPDEF_VEHICHLE:
         case PROPDEF_AIRCRAFT:
         case PROPDEF_SAFE:
+        case PROPDEF_TINTED_GLASS:
         case PROPDEF_TANK:
             return 1;
         default:
