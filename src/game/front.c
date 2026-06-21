@@ -22,6 +22,7 @@
 #include "front.h"
 #include "gun.h"
 #include "image_bank.h"
+#include "initmenus.h"
 #include "initanitable.h"
 #include "lvl.h"
 #include "mp_weapon.h"
@@ -3136,6 +3137,7 @@ void init_menu05_fileselect(void)
         selected_difficulty = DIFFICULTY_AGENT;
         set_solo_and_ptr_briefing(selected_stage);
         bossSetLoadedStage(selected_stage);
+        pcPrimePostStageMenuForDirectBoot(selected_stage, FALSE);
         lvlSetSelectedDifficulty(DIFFICULTY_AGENT);
     }
 #endif

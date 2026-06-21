@@ -86,6 +86,21 @@ static s32 portUsePcSelector(void)
     return cached;
 }
 
+void pcPrimePostStageMenuForDirectBoot(LEVELID level, s32 multiplayer)
+{
+    /* MENU_RUN_STAGE normally primes the return menu before gameplay loads.
+     * PC direct-boot paths skip that frontend frame, so preserve the same
+     * post-stage route explicitly. */
+    if (multiplayer) {
+        frontChangeMenu(MENU_MP_OPTIONS, TRUE);
+    } else if (level == LEVELID_CUBA) {
+        do_extended_cast_display(TRUE);
+        frontChangeMenu(MENU_DISPLAY_CAST, TRUE);
+    } else {
+        frontChangeMenu(MENU_MISSION_FAILED, TRUE);
+    }
+}
+
 static char pc_ascii_tolower(char c)
 {
     if (c >= 'A' && c <= 'Z') {
@@ -235,6 +250,7 @@ static void pc_apply_level_selection(LEVELID level, s32 diff)
     selected_difficulty = diff;
     set_solo_and_ptr_briefing(selected_stage);
     bossSetLoadedStage(selected_stage);
+    pcPrimePostStageMenuForDirectBoot(selected_stage, FALSE);
     lvlSetSelectedDifficulty(diff);
     lvlPlayMusicTrack1(getmusictrack_or_randomtrack(level));
 }
@@ -297,6 +313,7 @@ static void pc_apply_mp_selection(s32 num_players, s32 mp_stage, MPSCENARIOS sce
     /* Hand the resolved stage to the boss main loop, which polls g_MainStageNum
      * and loads the stage directly — the same exit the solo direct-boot uses. */
     bossSetLoadedStage(selected_stage);
+    pcPrimePostStageMenuForDirectBoot(selected_stage, TRUE);
     lvlSetSelectedDifficulty(selected_difficulty);
     lvlPlayMusicTrack1(getmusictrack_or_randomtrack(selected_stage));
 }
