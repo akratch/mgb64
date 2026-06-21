@@ -161,11 +161,13 @@ setup detail.
 | Show controls | `H` | — |
 
 Mouse sensitivity, window size, display mode, and VSync are configurable in
-`ge007.ini` (written next to the executable on first run). The display mode key
-is `Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example:
-`--config-set Video.WindowMode=borderless`. VSync is `Video.VSync` with `off`,
-`on`, or `adaptive`; frame pacing is `Video.FrameCap` with `30`, `60`, or
-`display`. Output gamma is `Video.Gamma`, where `1.0` leaves colors unchanged.
+`ge007.ini`. By default the port writes config/save data in the current
+directory when it is writable; use `--savedir PATH` to keep a separate profile.
+The display mode key is `Video.WindowMode` with `windowed`, `borderless`, or
+`exclusive`; for example: `--config-set Video.WindowMode=borderless`. VSync is
+`Video.VSync` with `off`, `on`, or `adaptive`; frame pacing is `Video.FrameCap`
+with `30`, `60`, or `display`. Output gamma is `Video.Gamma`, where `1.0` leaves
+colors unchanged.
 `Video.RenderScale` adjusts the internal scene framebuffer from `1.0` to `2.0`
 for supersampling. `Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene
 anti-aliasing.

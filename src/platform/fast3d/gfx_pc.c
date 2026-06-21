@@ -5670,6 +5670,9 @@ static int g_diag_dump_loaded_texture_after_frame = INT32_MIN; /* GE007_DUMP_LOA
 static int g_diag_settex_mirror_tex1 = -1; /* GE007_DIAG_SETTEX_MIRROR_TEX1=1 */
 static int g_diag_no_settex_linearize = -1; /* GE007_DIAG_NO_SETTEX_LINEARIZE=1 */
 static int g_diag_disable_n64_filter = -1; /* GE007_DISABLE_N64_FILTER=1 */
+static int g_diag_trace_tex_footprint = -1; /* GE007_TRACE_TEX_FOOTPRINT=1 */
+static int g_diag_trace_tex_footprint_budget = INT32_MIN; /* GE007_TRACE_TEX_FOOTPRINT_BUDGET=N */
+static int g_diag_disable_loadblock_strided_footprint = -1; /* GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1 */
 
 static inline bool gfx_diag_no_settex_linearize_enabled(void);
 
@@ -5682,6 +5685,16 @@ static inline bool gfx_n64_shader_filter_enabled(void) {
     return g_diag_disable_n64_filter == 0;
 }
 
+static inline bool gfx_diag_disable_loadblock_strided_footprint_enabled(void)
+{
+    if (g_diag_disable_loadblock_strided_footprint < 0) {
+        g_diag_disable_loadblock_strided_footprint =
+            (getenv("GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT") != NULL) ? 1 : 0;
+    }
+
+    return g_diag_disable_loadblock_strided_footprint > 0;
+}
+
 static inline bool gfx_trace_settex_enabled(void) {
     if (g_diag_trace_settex < 0) {
         g_diag_trace_settex = (getenv("GE007_TRACE_SETTEX") != NULL) ? 1 : 0;
@@ -5691,6 +5704,80 @@ static inline bool gfx_trace_settex_enabled(void) {
         g_diag_trace_settex_after_frame = env ? atoi(env) : 0;
     }
     return g_diag_trace_settex > 0 && g_frame_count_diag >= g_diag_trace_settex_after_frame;
+}
+
+static bool gfx_trace_tex_footprint_enabled(void)
+{
+    if (g_diag_trace_tex_footprint < 0) {
+        g_diag_trace_tex_footprint =
+            (getenv("GE007_TRACE_TEX_FOOTPRINT") != NULL) ? 1 : 0;
+    }
+    if (g_diag_trace_tex_footprint_budget == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_TEX_FOOTPRINT_BUDGET");
+        g_diag_trace_tex_footprint_budget = env ? atoi(env) : 256;
+    }
+
+    return g_diag_trace_tex_footprint > 0 &&
+           g_diag_trace_tex_footprint_budget != 0;
+}
+
+static void gfx_trace_tex_footprint_decision(
+    const char *decision,
+    uint8_t tile,
+    uint32_t width,
+    uint32_t height,
+    uint32_t tile_rect_line_size_bytes,
+    uint32_t render_line_size_bytes,
+    uint32_t source_line_size_bytes,
+    uint32_t decode_line_size_bytes,
+    uint32_t decode_height,
+    const typeof(rdp.loaded_texture[0]) *loaded_texture)
+{
+    int room = -1;
+    const char *which = NULL;
+    uintptr_t offset = 0;
+
+    if (!gfx_trace_tex_footprint_enabled()) {
+        return;
+    }
+    if (g_diag_trace_tex_footprint_budget > 0) {
+        g_diag_trace_tex_footprint_budget--;
+    }
+
+    (void)gfx_diag_room_cmd_offset((uintptr_t)g_diag_current_cmd_addr,
+                                   &room, &which, NULL, &offset);
+
+    fprintf(stderr,
+            "[TEX-FOOTPRINT] frame=%d cmd=%p drawclass=%s room=%d/%s+0x%zx "
+            "tile=%u decision=%s tex_lod=%d maxlod=%u settex=%d "
+            "tile_wh=%ux%u rect_line=%u render_line=%u source_line=%u "
+            "decode_line=%u decode_height=%u load={addr=%p size=%u orig=%u full=%u line=%u full_line=%u key=0x%llx}\n",
+            g_frame_count_diag,
+            (void *)g_diag_current_cmd_addr,
+            gfx_draw_class_name(g_current_draw_class),
+            room,
+            which != NULL ? which : "?",
+            (size_t)offset,
+            tile,
+            decision != NULL ? decision : "?",
+            rdp.tex_lod ? 1 : 0,
+            rdp.tex_max_lod,
+            settex_active ? 1 : 0,
+            width,
+            height,
+            tile_rect_line_size_bytes,
+            render_line_size_bytes,
+            source_line_size_bytes,
+            decode_line_size_bytes,
+            decode_height,
+            loaded_texture != NULL ? (void *)loaded_texture->addr : NULL,
+            loaded_texture != NULL ? loaded_texture->size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->orig_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->full_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->line_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->full_image_line_size_bytes : 0,
+            loaded_texture != NULL ? (unsigned long long)loaded_texture->cache_key : 0ULL);
+    fflush(stderr);
 }
 
 static void gfx_log_settex_event(const char *tag, const char *detail) {
@@ -12114,6 +12201,11 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
             typeof(rdp.loaded_texture[0]) *loaded_texture =
                 gfx_loaded_texture_for_tile(tile);
             bool has_strided_loadblock_footprint = false;
+            bool strided_loadblock_candidate = false;
+            bool strided_loadblock_disabled =
+                gfx_diag_disable_loadblock_strided_footprint_enabled();
+            uint32_t source_line_size_bytes = 0;
+            const char *footprint_decision = "tile_rect";
 
             decode_line_size_bytes = tile_rect_line_size_bytes;
             decode_height = height;
@@ -12123,18 +12215,24 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                 loaded_texture->full_size_bytes == loaded_texture->orig_size_bytes &&
                 height != 0 &&
                 (loaded_texture->size_bytes % height) == 0) {
-                uint32_t source_line_size_bytes = loaded_texture->size_bytes / height;
+                source_line_size_bytes = loaded_texture->size_bytes / height;
 
                 if (source_line_size_bytes >= tile_rect_line_size_bytes) {
+                    strided_loadblock_candidate = true;
                     /* Rare's LOADBLOCK helpers store rows padded for TMEM, then
                      * G_SETTILESIZE describes the visible rectangle. Decode only
                      * the visible row while retaining the padded source pitch. */
-                    gfx_loaded_texture_set_strided_decode_footprint(
-                        loaded_texture,
-                        tile_rect_line_size_bytes,
-                        source_line_size_bytes,
-                        height);
-                    has_strided_loadblock_footprint = true;
+                    if (!strided_loadblock_disabled) {
+                        gfx_loaded_texture_set_strided_decode_footprint(
+                            loaded_texture,
+                            tile_rect_line_size_bytes,
+                            source_line_size_bytes,
+                            height);
+                        has_strided_loadblock_footprint = true;
+                        footprint_decision = "strided_loadblock";
+                    } else {
+                        footprint_decision = "strided_loadblock_disabled";
+                    }
                 }
             }
 
@@ -12150,12 +12248,17 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                  * frontend photos/portraits sample horizontally striped data. */
                 decode_line_size_bytes = render_line_size_bytes;
                 decode_height = height;
-            } else if (loaded_texture->size_bytes != 0 &&
+                footprint_decision = "lod_render_line";
+            } else if (!has_strided_loadblock_footprint &&
+                loaded_texture->size_bytes != 0 &&
                 render_line_size_bytes >= tile_rect_line_size_bytes &&
                 render_line_size_bytes <= loaded_texture->size_bytes &&
                 (loaded_texture->size_bytes % render_line_size_bytes) == 0) {
                 decode_line_size_bytes = render_line_size_bytes;
                 decode_height = loaded_texture->size_bytes / render_line_size_bytes;
+                if (!strided_loadblock_candidate || !strided_loadblock_disabled) {
+                    footprint_decision = "render_line_full";
+                }
             }
 
             if (!has_strided_loadblock_footprint) {
@@ -12164,6 +12267,19 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                     decode_line_size_bytes,
                     decode_height);
             }
+            gfx_trace_tex_footprint_decision(
+                footprint_decision,
+                tile,
+                width,
+                height,
+                tile_rect_line_size_bytes,
+                render_line_size_bytes,
+                source_line_size_bytes,
+                has_strided_loadblock_footprint ?
+                    tile_rect_line_size_bytes : decode_line_size_bytes,
+                has_strided_loadblock_footprint ?
+                    height : decode_height,
+                loaded_texture);
         }
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;

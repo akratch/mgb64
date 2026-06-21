@@ -605,6 +605,8 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
 | `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
 | `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
+| `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
+| `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
 | `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
@@ -613,6 +615,12 @@ lists commonly request N64 texture filtering, and the native path routes that
 through the shader-side N64 filter. A blanket room-nearest override bypasses
 that path and shows up as low color diversity/blocky texture regression on
 Cradle, Dam, Surface, and similar large room surfaces.
+
+Renderer acceptance captures should use a clean config profile or explicit
+overrides. A repo-root run can load local `ge007.ini`; values such as
+`Video.FovY=75` deliberately change composition and pixel metrics. For stock
+visual baselines, prefer a temporary profile, or run with
+`--config-override Video.FovY=60 --config-override Video.RenderScale=1`.
 
 ### Renderer diagnostics & experimental fixes (default OFF)
 
