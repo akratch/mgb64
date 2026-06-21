@@ -151,6 +151,7 @@ static inline bool gfx_is_intro_matrix_addr(uintptr_t addr)
 
 static void gfx_check_diag_env(void);
 extern void transform3Dto2DWithZScaling(coord3d *in, coord3d *out);
+extern void viGetZRange(float *zrange);
 
 /* Game texture system (for G_SETTEX) — declarations from image.h */
 #include "image.h"
@@ -1840,6 +1841,8 @@ struct LoadedVertex {
     struct RGBA color;
     uint8_t fog;       /* Per-vertex fog factor [0-255], separate from color.a.
                         * Matches PD port design: fog must not clobber shade alpha. */
+    float fog_depth;   /* Positive camera-space depth used for native fog diagnostics. */
+    float fog_coord;   /* Normalized fog input before gSPFogPosition coefficients. */
     uint8_t clip_rej;
     int16_t ob[3];
     int room_id;
@@ -2205,6 +2208,8 @@ static void gfx_loaded_vertex_lerp(struct LoadedVertex *dst,
     dst->color.b = (uint8_t)portLrintf(a->color.b + (b->color.b - a->color.b) * t);
     dst->color.a = (uint8_t)portLrintf(a->color.a + (b->color.a - a->color.a) * t);
     dst->fog = (uint8_t)portLrintf(a->fog + (b->fog - a->fog) * t);
+    dst->fog_depth = a->fog_depth + (b->fog_depth - a->fog_depth) * t;
+    dst->fog_coord = a->fog_coord + (b->fog_coord - a->fog_coord) * t;
 
     for (int i = 0; i < 3; i++) {
         dst->ob[i] = (int16_t)portLrintf(a->ob[i] + (b->ob[i] - a->ob[i]) * t);
@@ -3381,6 +3386,7 @@ static void gfx_note_n64_dl_non_dl_skip(bool from_n64_interpreter) {
 /* Runtime diagnostic flags (set via environment variables) */
 int g_diag_verbose = -1;             /* GE007_VERBOSE=1: enable all diagnostic printf output */
 static int g_diag_no_fog = -1;       /* GE007_NO_FOG=1: disable fog blending in shaders */
+static int g_diag_fog_use_clip_z = -1; /* GE007_FOG_USE_CLIP_Z=1: old GL clip-z fog input */
 static int g_diag_wireframe = -1;    /* GE007_WIREFRAME=1: render wireframe */
 static int g_diag_log_frame = -1;    /* GE007_LOG_FRAME=1: log combiner/state on first rendered frame */
 static int g_diag_trace_frame = -1;  /* GE007_TRACE_FRAME=N: full DL trace on frame N */
@@ -7094,6 +7100,7 @@ static void gfx_check_diag_env(void) {
 
         g_diag_verbose = (getenv("GE007_VERBOSE") != NULL) ? 1 : 0;
         g_diag_no_fog = (getenv("GE007_NO_FOG") != NULL) ? 1 : 0;
+        g_diag_fog_use_clip_z = (getenv("GE007_FOG_USE_CLIP_Z") != NULL) ? 1 : 0;
         g_diag_tex_only = (getenv("GE007_TEX_ONLY") != NULL) ? 1 : 0;
         g_diag_force_point_filter = (getenv("GE007_FORCE_POINT_FILTER") != NULL) ? 1 : 0;
         g_diag_force_linear_filter = (getenv("GE007_FORCE_LINEAR_FILTER") != NULL) ? 1 : 0;
@@ -7248,6 +7255,7 @@ static void gfx_check_diag_env(void) {
         g_diag_trace_texgen_materials_budget =
             texgen_materials_budget_env ? atoi(texgen_materials_budget_env) : 96;
         if (g_diag_no_fog) printf("[fast3d] FOG DISABLED (GE007_NO_FOG)\n");
+        if (g_diag_fog_use_clip_z) printf("[fast3d] FOG CLIP-Z COMPAT MODE (GE007_FOG_USE_CLIP_Z)\n");
         if (g_diag_force_point_filter) printf("[fast3d] POINT FILTER FORCED (GE007_FORCE_POINT_FILTER)\n");
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
         if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
@@ -7441,6 +7449,60 @@ static bool gfx_critical_room_shard_logging_enabled(void) {
         gfx_check_diag_env();
     }
     return g_diag_critical_room_shard_log || g_diag_trace_shards;
+}
+
+static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_depth)
+{
+    float zrange[2] = { 0.0f, 0.0f };
+    float depth = clip_w;
+    float fog_coord;
+
+    if (out_depth != NULL) {
+        *out_depth = depth;
+    }
+
+    if (g_diag_fog_use_clip_z < 0) {
+        g_diag_fog_use_clip_z = (getenv("GE007_FOG_USE_CLIP_Z") != NULL) ? 1 : 0;
+    }
+
+    if (g_diag_fog_use_clip_z > 0) {
+        float ww = clip_w;
+        if (fabsf(ww) < 0.001f) {
+            ww = ww < 0.0f ? -0.001f : 0.001f;
+        }
+        fog_coord = clip_z / ww;
+        return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+    }
+
+    viGetZRange(zrange);
+
+    /* GE stores fog start/end as 0..1000 fractions of the current VI z-range.
+     * Applying gSPFogPosition to GL clip_z/clip_w collapses narrow ramps such
+     * as Cradle's 996..1000 to full fog because perspective depth is clustered
+     * near 1.0. Homogeneous w is the positive camera-space depth produced by
+     * the same matrix path the renderer submits for depth testing, so remap it
+     * linearly back into the Fast3D -1..1 fog input domain before applying the
+     * original coefficients. */
+    if (!portFloatIsFinite(depth) ||
+        !portFloatIsFinite(zrange[0]) ||
+        !portFloatIsFinite(zrange[1]) ||
+        depth <= 0.0f ||
+        zrange[1] <= zrange[0] + 0.001f) {
+        float ww = clip_w;
+        if (fabsf(ww) < 0.001f) {
+            ww = ww < 0.0f ? -0.001f : 0.001f;
+        }
+        fog_coord = clip_z / ww;
+        return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+    }
+
+    float t = (depth - zrange[0]) / (zrange[1] - zrange[0]);
+    t = portMaxf(0.0f, portMinf(1.0f, t));
+    if (out_depth != NULL) {
+        *out_depth = depth;
+    }
+
+    return t * 2.0f - 1.0f;
 }
 
 /* Check if tracing is active for the current frame */
@@ -9426,8 +9488,8 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
             if (g_diag_verbose > 0 && vtx_log < 2 && g_frame_count_diag >= 3) {
                 float fog_z_val = 0;
                 if (rsp.geometry_mode & G_FOG) {
-                    float ww = w; if (fabsf(ww) < 0.001f) ww = 0.001f;
-                    fog_z_val = z * (1.0f/ww) * rsp.fog_mul + rsp.fog_offset;
+                    float fog_coord = gfx_fog_coord_for_vertex(z, w, NULL);
+                    fog_z_val = fog_coord * rsp.fog_mul + rsp.fog_offset;
                 }
                 printf("[VTX_XFORM_%d] src=%p ob=(%d,%d,%d) clip=(%.1f,%.1f,%.1f,%.1f) color=(%d,%d,%d,%d) fog_mul=%d fog_off=%d fog_z=%.1f G_FOG=%d\n",
                        vtx_log, (void *)(src_base + i * src_stride), v->ob[0], v->ob[1], v->ob[2], x, y, z, w,
@@ -9622,17 +9684,19 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         d->color.a = v->cn[3];
 
         if (rsp.geometry_mode & G_FOG) {
-            float ww = w;
-            if (fabsf(ww) < 0.001f) ww = 0.001f;
-            float winv = 1.0f / ww;
-            if (winv < 0.0f) winv = 32767.0f;
-            float fog_z = z * winv * rsp.fog_mul + rsp.fog_offset;
+            float fog_depth = 0.0f;
+            float fog_coord = gfx_fog_coord_for_vertex(z, w, &fog_depth);
+            float fog_z = fog_coord * rsp.fog_mul + rsp.fog_offset;
             if (!portFloatIsFinite(fog_z)) fog_z = 0.0f;
             if (fog_z < 0) fog_z = 0;
             if (fog_z > 255) fog_z = 255;
             d->fog = (uint8_t)fog_z;
+            d->fog_depth = fog_depth;
+            d->fog_coord = fog_coord;
         } else {
             d->fog = rdp.fog_color.a;
+            d->fog_depth = 0.0f;
+            d->fog_coord = 0.0f;
         }
     }
 }
@@ -11293,9 +11357,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                     rdp.other_mode_l, rdp.other_mode_l_raw);
             fprintf(stderr,
                     "  fog=(%.3f,%.3f,%.3f) ndc_z=(%.5f,%.5f,%.5f) "
+                    "fog_depth=(%.1f,%.1f,%.1f) fog_coord=(%.5f,%.5f,%.5f) "
                     "clip_z=(%.1f,%.1f,%.1f) w=(%.1f,%.1f,%.1f) bbox=[%.2f,%.2f]-[%.2f,%.2f]\n",
                     fog_alpha[0], fog_alpha[1], fog_alpha[2],
                     ndc_z[0], ndc_z[1], ndc_z[2],
+                    v_arr[0]->fog_depth, v_arr[1]->fog_depth, v_arr[2]->fog_depth,
+                    v_arr[0]->fog_coord, v_arr[1]->fog_coord, v_arr[2]->fog_coord,
                     v_arr[0]->z, v_arr[1]->z, v_arr[2]->z,
                     v_arr[0]->w, v_arr[1]->w, v_arr[2]->w,
                     ndc_metrics.min_x, ndc_metrics.min_y,
@@ -15551,6 +15618,8 @@ static void gfx_draw_sky_triangle_impl(
         d->u = us[i] * sky_uv_scale;
         d->v = vs[i] * sky_uv_scale;
         d->fog = 0;       /* Sky doesn't receive distance fog */
+        d->fog_depth = 0.0f;
+        d->fog_coord = 0.0f;
         d->clip_rej = 0;  /* Never trivially reject sky triangles */
         d->room_id = -1;
         d->src_addr = 0;
