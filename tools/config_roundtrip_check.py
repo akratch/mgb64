@@ -50,9 +50,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_binary(binary: Path, savedir: Path, *args: str) -> str:
+def run_binary(
+    binary: Path,
+    savedir: Path,
+    *args: str,
+    env_extra: dict[str, str] | None = None,
+) -> str:
     env = os.environ.copy()
     env.pop("GE007_DEBUG", None)
+    if env_extra:
+        env.update(env_extra)
 
     result = subprocess.run(
         [str(binary), "--savedir", str(savedir), *args],
@@ -129,6 +136,41 @@ def main() -> int:
         savedir = Path(temp)
         config_path = savedir / "ge007.ini"
         config_path.write_text(SEED_CONFIG, encoding="utf-8")
+
+        env_dump = parse_dump(
+            run_binary(
+                binary,
+                savedir,
+                "--dump-config",
+                env_extra={"GE007_WINDOW_WIDTH": "1333"},
+            )
+        )
+        assert_values(env_dump, {"Video.WindowWidth": "1333"}, "env override dump")
+        assert_file_contains(config_path, ["WindowWidth=1024"], "env override is not persisted")
+
+        cli_dump = parse_dump(
+            run_binary(
+                binary,
+                savedir,
+                "--config-override",
+                "Video.WindowHeight=720",
+                "--dump-config",
+            )
+        )
+        assert_values(cli_dump, {"Video.WindowHeight": "720"}, "cli override dump")
+        assert_file_contains(config_path, ["WindowHeight=768"], "cli override is not persisted")
+
+        precedence_dump = parse_dump(
+            run_binary(
+                binary,
+                savedir,
+                "--config-override",
+                "Video.WindowWidth=1400",
+                "--dump-config",
+                env_extra={"GE007_WINDOW_WIDTH": "1333"},
+            )
+        )
+        assert_values(precedence_dump, {"Video.WindowWidth": "1400"}, "cli over env precedence")
 
         run_binary(
             binary,

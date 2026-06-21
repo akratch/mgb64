@@ -927,31 +927,38 @@ static void platformApplyAutoMuteToggles(void)
 void platformRegisterConfig(void)
 {
     settingsRegisterInt("Video.WindowWidth", &g_cfgWindowW, 1440, 320, 3840,
-                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_WIDTH",
+                        "--config-override Video.WindowWidth=VALUE",
                         "Window width",
                         "Initial SDL window width in pixels.");
     settingsRegisterInt("Video.WindowHeight", &g_cfgWindowH, 810, 240, 2160,
-                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_HEIGHT",
+                        "--config-override Video.WindowHeight=VALUE",
                         "Window height",
                         "Initial SDL window height in pixels.");
     settingsRegisterInt("Video.Fullscreen", &g_fullscreen, 0, 0, 1,
-                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN",
+                        "--config-override Video.Fullscreen=VALUE",
                         "Borderless fullscreen",
                         "Start in SDL borderless fullscreen.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
-                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
+                          "--config-override Input.MouseSensitivity=VALUE",
                           "Mouse sensitivity",
                           "Mouse-look sensitivity during normal aim.");
     settingsRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.05f, 0.005f, 1.0f,
-                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY_AIM",
+                          "--config-override Input.MouseSensitivityAim=VALUE",
                           "Aim mouse sensitivity",
                           "Mouse-look sensitivity while aiming.");
     settingsRegisterInt("Input.InvertY", &g_pcInvertY, 0, 0, 1,
-                        SETTING_SCOPE_LIVE, NULL, NULL,
+                        SETTING_SCOPE_LIVE, "GE007_INVERT_Y",
+                        "--config-override Input.InvertY=VALUE",
                         "Invert Y axis",
                         "Invert mouse-look Y input.");
     settingsRegisterFloat("Input.GamepadLookSpeed", &g_pcGamepadLookSpeed, 8.0f, 1.0f, 30.0f,
-                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          SETTING_SCOPE_LIVE, "GE007_GAMEPAD_LOOK_SPEED",
+                          "--config-override Input.GamepadLookSpeed=VALUE",
                           "Gamepad look speed",
                           "Right-stick look speed multiplier.");
 }

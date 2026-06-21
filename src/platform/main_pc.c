@@ -122,7 +122,7 @@ static const PcStartStage *pcFindStageByName(const char *name) {
     return NULL;
 }
 
-static int pcApplyConfigSetArg(const char *arg) {
+static int pcApplyConfigArg(const char *arg, int mark_cli_override) {
     const char *eq;
     size_t key_len;
     char key[CONFIG_MAX_KEYNAME + 1];
@@ -147,8 +147,12 @@ static int pcApplyConfigSetArg(const char *arg) {
     key[key_len] = '\0';
 
     if (!configSetValue(key, eq + 1)) {
-        fprintf(stderr, "[CONFIG] Unknown --config-set key: %s\n", key);
+        fprintf(stderr, "[CONFIG] Unknown config key: %s\n", key);
         return 0;
+    }
+
+    if (mark_cli_override) {
+        settingsMarkCliOverride(key);
     }
 
     return 1;
@@ -498,7 +502,9 @@ int main(int argc, char **argv)
 {
     const char *romPath = NULL;
     const char *saveDirOverride = NULL;
+    const char *configOverrideArgs[PC_MAX_CONFIG_SET_ARGS];
     const char *configSetArgs[PC_MAX_CONFIG_SET_ARGS];
+    int configOverrideCount = 0;
     int configSetCount = 0;
     int resetConfig = 0;
     int listSettings = 0;
@@ -527,6 +533,12 @@ int main(int argc, char **argv)
             dumpConfig = 1;
         } else if (strcmp(argv[i], "--reset-config") == 0) {
             resetConfig = 1;
+        } else if (strcmp(argv[i], "--config-override") == 0 && i + 1 < argc) {
+            if (configOverrideCount >= PC_MAX_CONFIG_SET_ARGS) {
+                fprintf(stderr, "[CONFIG] Too many --config-override values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
+                return 2;
+            }
+            configOverrideArgs[configOverrideCount++] = argv[++i];
         } else if (strcmp(argv[i], "--config-set") == 0 && i + 1 < argc) {
             if (configSetCount >= PC_MAX_CONFIG_SET_ARGS) {
                 fprintf(stderr, "[CONFIG] Too many --config-set values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
@@ -664,11 +676,17 @@ int main(int argc, char **argv)
     portAudioRegisterConfig();
     configInit();
 
+    settingsApplyEnvOverrides();
+    for (int i = 0; i < configOverrideCount; i++) {
+        if (!pcApplyConfigArg(configOverrideArgs[i], 1)) {
+            return 2;
+        }
+    }
     if (resetConfig) {
         settingsResetAllToDefaults();
     }
     for (int i = 0; i < configSetCount; i++) {
-        if (!pcApplyConfigSetArg(configSetArgs[i])) {
+        if (!pcApplyConfigArg(configSetArgs[i], 0)) {
             return 2;
         }
     }

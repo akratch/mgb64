@@ -15,6 +15,12 @@ typedef enum SettingScope {
     SETTING_SCOPE_RESTART
 } SettingScope;
 
+typedef enum SettingOverrideSource {
+    SETTING_OVERRIDE_NONE,
+    SETTING_OVERRIDE_ENV,
+    SETTING_OVERRIDE_CLI
+} SettingOverrideSource;
+
 typedef union SettingValue {
     s32 s32_value;
     u32 u32_value;
@@ -33,6 +39,7 @@ typedef struct Setting {
     const char *cli;
     const char *label;
     const char *help;
+    SettingOverrideSource override_source;
 } Setting;
 
 void settingsRegisterInt(const char *key, s32 *var, s32 def, s32 min, s32 max,
@@ -51,6 +58,9 @@ const Setting *settingsFind(const char *key);
 
 const char *settingsTypeName(SettingType type);
 const char *settingsScopeName(SettingScope scope);
+const char *settingsOverrideSourceName(SettingOverrideSource source);
+void settingsMarkCliOverride(const char *key);
+void settingsApplyEnvOverrides(void);
 void settingsResetAllToDefaults(void);
 void settingsPrintList(FILE *f);
 void settingsPrintDump(FILE *f);

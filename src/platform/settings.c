@@ -9,6 +9,7 @@
 #include "settings.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -152,6 +153,48 @@ const char *settingsScopeName(SettingScope scope)
     }
 }
 
+const char *settingsOverrideSourceName(SettingOverrideSource source)
+{
+    switch (source) {
+        case SETTING_OVERRIDE_NONE: return "none";
+        case SETTING_OVERRIDE_ENV:  return "env";
+        case SETTING_OVERRIDE_CLI:  return "cli";
+        default:                    return "unknown";
+    }
+}
+
+void settingsMarkCliOverride(const char *key)
+{
+    Setting *setting = settingsFindMutable(key);
+
+    if (setting != NULL) {
+        setting->override_source = SETTING_OVERRIDE_CLI;
+    }
+}
+
+void settingsApplyEnvOverrides(void)
+{
+    s32 i;
+
+    for (i = 0; i < s_numSettings; i++) {
+        Setting *setting = &s_settings[i];
+        const char *value;
+
+        if (setting->env == NULL) {
+            continue;
+        }
+
+        value = getenv(setting->env);
+        if (value == NULL || value[0] == '\0') {
+            continue;
+        }
+
+        if (configSetValue(setting->key, value)) {
+            setting->override_source = SETTING_OVERRIDE_ENV;
+        }
+    }
+}
+
 void settingsResetAllToDefaults(void)
 {
     s32 i;
@@ -285,6 +328,10 @@ void settingsPrintList(FILE *f)
                     setting->env != NULL ? setting->env : "-",
                     setting->cli != NULL ? setting->cli : "-");
         }
+        if (setting->override_source != SETTING_OVERRIDE_NONE) {
+            fprintf(f, "  active_override=%s\n",
+                    settingsOverrideSourceName(setting->override_source));
+        }
         if (setting->label != NULL) {
             fprintf(f, "  label=%s\n", setting->label);
         }
@@ -331,6 +378,10 @@ void settingsPrintDump(FILE *f)
                 settingsScopeName(setting->scope),
                 def,
                 range);
+        if (setting->override_source != SETTING_OVERRIDE_NONE) {
+            fprintf(f, "# active_override=%s\n",
+                    settingsOverrideSourceName(setting->override_source));
+        }
         fprintf(f, "%s=%s\n", settingsKeyName(setting->key), current);
     }
 }

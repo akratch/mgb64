@@ -857,11 +857,13 @@ static void audioCallback(void *userdata, u8 *stream, int len)
 void portAudioRegisterConfig(void)
 {
     settingsRegisterFloat("Audio.MasterVolume", &s_masterVolume, 0.7f, 0.0f, 1.0f,
-                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          SETTING_SCOPE_LIVE, "GE007_MASTER_VOLUME",
+                          "--config-override Audio.MasterVolume=VALUE",
                           "Master volume",
                           "Overall native audio output volume.");
     settingsRegisterInt("Audio.DeviceSamples", &s_audioDeviceSamples, PORT_AUDIO_SAMPLES, 128, 2048,
-                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        SETTING_SCOPE_RESTART, "GE007_AUDIO_DEVICE_SAMPLES",
+                        "--config-override Audio.DeviceSamples=VALUE",
                         "Audio device samples",
                         "SDL audio device buffer size in samples.");
 }

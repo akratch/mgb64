@@ -130,6 +130,7 @@ Useful runtime options:
 | `--savedir PATH` | Store `ge007.ini` and save data in `PATH`. Without this, the port uses the current directory when writable, then falls back to a per-user directory. |
 | `--list-settings` | Print registered persistent settings and exit. Does not require a ROM. |
 | `--dump-config` | Print the current config view after loading `ge007.ini` and exit. Does not require a ROM. |
+| `--config-override KEY=VALUE` | Override a persistent setting for this run without saving it. Repeatable. |
 | `--config-set KEY=VALUE` | Set a persistent config value, save `ge007.ini`, and exit. Repeatable. Does not require a ROM. |
 | `--reset-config` | Reset registered persistent settings to defaults, save `ge007.ini`, and exit. Does not require a ROM. |
 | `--no-input-grab` | Do not capture the mouse. Useful while testing windowed startup. |
