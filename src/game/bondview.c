@@ -17539,6 +17539,9 @@ Gfx *sub_GAME_7F088618(Gfx *gdl) {
     gDPSetRenderMode(gdl++, G_RM_AA_XLU_SURF, G_RM_AA_XLU_SURF2);
     gDPSetCombineMode(gdl++, G_CC_SHADE, G_CC_SHADE);
     gDPSetPrimColor(gdl++, 0, 0, 0xE6, 0xE6, 0xE6, 0x00);
+    gSPSetGeometryMode(gdl++, G_SHADE | G_SHADING_SMOOTH);
+    /* The PC renderer re-injects fog on generic geometry-mode changes for room
+     * rendering, so clear HUD-disallowed modes after setting the desired flags. */
     gSPClearGeometryMode(gdl++,
                          G_ZBUFFER |
                          G_CULL_FRONT |
@@ -17547,7 +17550,6 @@ Gfx *sub_GAME_7F088618(Gfx *gdl) {
                          G_LIGHTING |
                          G_TEXTURE_GEN |
                          G_TEXTURE_GEN_LINEAR);
-    gSPSetGeometryMode(gdl++, G_SHADE | G_SHADING_SMOOTH);
     gSPDisplayList(gdl++, g_pcArmorBarDL);
     gSPDisplayList(gdl++, g_pcHealthBarDL);
     gSPClearGeometryMode(gdl++, G_FOG | G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR);
