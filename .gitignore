@@ -10,6 +10,7 @@
 *.z64
 *.n64
 *.v64
+*.rom
 baserom*
 *.cdata*
 *.eeprom

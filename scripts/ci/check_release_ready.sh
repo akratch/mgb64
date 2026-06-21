@@ -148,6 +148,7 @@ for pattern in \
   "*.z64" \
   "*.n64" \
   "*.v64" \
+  "*.rom" \
   "baserom*" \
   "*.bin" \
   "*.cdata*" \
