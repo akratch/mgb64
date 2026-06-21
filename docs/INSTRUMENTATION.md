@@ -603,7 +603,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_TRACE_CHRNUM=N` | add one guard's AI/action/render state to `--trace-state` |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
-| `GE007_FOG_USE_CLIP_Z=1` | fog-depth regression check; restores the old GL `clip_z / clip_w` input that over-fogs narrow ramps such as Cradle's 996..1000 fog range |
+| `GE007_FOG_USE_LINEAR_DEPTH=1` | fog-depth negative control; remaps camera-space depth linearly and should not be used as the N64-parity default |
 | `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
 | `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
 | `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
@@ -611,12 +611,14 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
-Fog regressions can masquerade as texture loss on distant stages. When a level
-uses a narrow `gSPFogPosition` range, such as Cradle's 996..1000 ramp, inspect
-`GE007_TRACE_FOG_TRIANGLES=1` output before changing texture decode/filtering:
-healthy native fog should report distance-derived `fog_coord` values around the
-VI z-range edge, while `GE007_FOG_USE_CLIP_Z=1` reproduces the legacy saturated
-`clip_z / clip_w` path for A/B captures.
+Fog regressions can masquerade as texture loss on distant stages. N64
+`gSPFogPosition` values are specified from near plane to far plane, but the
+effect is nonlinear after perspective transform; a narrow range such as
+Cradle's 996..1000 ramp can legitimately fog much earlier than a linear
+world-distance reading suggests. Use `GE007_TRACE_FOG_TRIANGLES=1` before
+changing texture decode/filtering. The parity path uses `clip_z / clip_w`;
+`GE007_FOG_USE_LINEAR_DEPTH=1` is only a negative control for proving that a
+linear remap is causing over-clear distant geometry.
 
 Room geometry should not default to point sampling. The game's room display
 lists commonly request N64 texture filtering, and the native path routes that

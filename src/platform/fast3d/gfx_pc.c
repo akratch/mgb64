@@ -3386,7 +3386,7 @@ static void gfx_note_n64_dl_non_dl_skip(bool from_n64_interpreter) {
 /* Runtime diagnostic flags (set via environment variables) */
 int g_diag_verbose = -1;             /* GE007_VERBOSE=1: enable all diagnostic printf output */
 static int g_diag_no_fog = -1;       /* GE007_NO_FOG=1: disable fog blending in shaders */
-static int g_diag_fog_use_clip_z = -1; /* GE007_FOG_USE_CLIP_Z=1: old GL clip-z fog input */
+static int g_diag_fog_use_linear_depth = -1; /* GE007_FOG_USE_LINEAR_DEPTH=1: diagnostic non-N64 fog input */
 static int g_diag_wireframe = -1;    /* GE007_WIREFRAME=1: render wireframe */
 static int g_diag_log_frame = -1;    /* GE007_LOG_FRAME=1: log combiner/state on first rendered frame */
 static int g_diag_trace_frame = -1;  /* GE007_TRACE_FRAME=N: full DL trace on frame N */
@@ -7100,7 +7100,8 @@ static void gfx_check_diag_env(void) {
 
         g_diag_verbose = (getenv("GE007_VERBOSE") != NULL) ? 1 : 0;
         g_diag_no_fog = (getenv("GE007_NO_FOG") != NULL) ? 1 : 0;
-        g_diag_fog_use_clip_z = (getenv("GE007_FOG_USE_CLIP_Z") != NULL) ? 1 : 0;
+        g_diag_fog_use_linear_depth =
+            (getenv("GE007_FOG_USE_LINEAR_DEPTH") != NULL) ? 1 : 0;
         g_diag_tex_only = (getenv("GE007_TEX_ONLY") != NULL) ? 1 : 0;
         g_diag_force_point_filter = (getenv("GE007_FORCE_POINT_FILTER") != NULL) ? 1 : 0;
         g_diag_force_linear_filter = (getenv("GE007_FORCE_LINEAR_FILTER") != NULL) ? 1 : 0;
@@ -7255,7 +7256,9 @@ static void gfx_check_diag_env(void) {
         g_diag_trace_texgen_materials_budget =
             texgen_materials_budget_env ? atoi(texgen_materials_budget_env) : 96;
         if (g_diag_no_fog) printf("[fast3d] FOG DISABLED (GE007_NO_FOG)\n");
-        if (g_diag_fog_use_clip_z) printf("[fast3d] FOG CLIP-Z COMPAT MODE (GE007_FOG_USE_CLIP_Z)\n");
+        if (g_diag_fog_use_linear_depth) {
+            printf("[fast3d] FOG LINEAR-DEPTH DIAGNOSTIC MODE (GE007_FOG_USE_LINEAR_DEPTH)\n");
+        }
         if (g_diag_force_point_filter) printf("[fast3d] POINT FILTER FORCED (GE007_FORCE_POINT_FILTER)\n");
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
         if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
@@ -7461,11 +7464,12 @@ static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_dep
         *out_depth = depth;
     }
 
-    if (g_diag_fog_use_clip_z < 0) {
-        g_diag_fog_use_clip_z = (getenv("GE007_FOG_USE_CLIP_Z") != NULL) ? 1 : 0;
+    if (g_diag_fog_use_linear_depth < 0) {
+        g_diag_fog_use_linear_depth =
+            (getenv("GE007_FOG_USE_LINEAR_DEPTH") != NULL) ? 1 : 0;
     }
 
-    if (g_diag_fog_use_clip_z > 0) {
+    if (g_diag_fog_use_linear_depth <= 0) {
         float ww = clip_w;
         if (fabsf(ww) < 0.001f) {
             ww = ww < 0.0f ? -0.001f : 0.001f;
@@ -7476,13 +7480,10 @@ static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_dep
 
     viGetZRange(zrange);
 
-    /* GE stores fog start/end as 0..1000 fractions of the current VI z-range.
-     * Applying gSPFogPosition to GL clip_z/clip_w collapses narrow ramps such
-     * as Cradle's 996..1000 to full fog because perspective depth is clustered
-     * near 1.0. Homogeneous w is the positive camera-space depth produced by
-     * the same matrix path the renderer submits for depth testing, so remap it
-     * linearly back into the Fast3D -1..1 fog input domain before applying the
-     * original coefficients. */
+    /* Diagnostic only: linearly remap positive camera-space depth back into the
+     * Fast3D -1..1 fog input domain before applying the original coefficients.
+     * N64 gSPFogPosition fog is intentionally nonlinear after perspective; the
+     * default path above uses clip_z / clip_w to preserve that behavior. */
     if (!portFloatIsFinite(depth) ||
         !portFloatIsFinite(zrange[0]) ||
         !portFloatIsFinite(zrange[1]) ||
