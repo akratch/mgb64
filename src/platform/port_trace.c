@@ -248,6 +248,7 @@ static int traceLiveStageGlobalsSafe(void) {
     }
 
     stage_menu_active =
+        current_menu == MENU_INVALID ||
         current_menu == MENU_RUN_STAGE ||
         current_menu == MENU_MISSION_COMPLETE ||
         current_menu == MENU_MISSION_FAILED ||
