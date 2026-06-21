@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include "config_pc.h"
+#include "settings.h"
 #include "savedir.h"
 #include <errno.h>
 #ifdef _WIN32
@@ -224,8 +225,70 @@ static s32 configLoad(const char *path)
 
 /* ===== Save ===== */
 
+static void formatSettingDefault(const Setting *setting, char *out, size_t out_size) {
+    switch (setting->type) {
+        case SETTING_TYPE_INT:
+            snprintf(out, out_size, "%d", setting->def.s32_value);
+            break;
+        case SETTING_TYPE_UINT:
+            snprintf(out, out_size, "%u", setting->def.u32_value);
+            break;
+        case SETTING_TYPE_FLOAT:
+            snprintf(out, out_size, "%g", (double)setting->def.f32_value);
+            break;
+        default:
+            snprintf(out, out_size, "?");
+            break;
+    }
+}
+
+static void formatSettingRange(const Setting *setting, char *out, size_t out_size) {
+    switch (setting->type) {
+        case SETTING_TYPE_INT:
+            snprintf(out, out_size, "%d..%d", setting->min.s32_value, setting->max.s32_value);
+            break;
+        case SETTING_TYPE_UINT:
+            snprintf(out, out_size, "%u..%u", setting->min.u32_value, setting->max.u32_value);
+            break;
+        case SETTING_TYPE_FLOAT:
+            snprintf(out, out_size, "%g..%g",
+                     (double)setting->min.f32_value,
+                     (double)setting->max.f32_value);
+            break;
+        default:
+            snprintf(out, out_size, "?");
+            break;
+    }
+}
+
+static void saveEntryMetadataComment(ConfigEntry *e, FILE *f) {
+    const Setting *setting = settingsFind(e->key);
+    char def[64];
+    char range[64];
+
+    if (!setting) {
+        return;
+    }
+
+    formatSettingDefault(setting, def, sizeof(def));
+    formatSettingRange(setting, range, sizeof(range));
+
+    if (setting->label) {
+        fprintf(f, "# %s\n", setting->label);
+    }
+    if (setting->help) {
+        fprintf(f, "# %s\n", setting->help);
+    }
+    fprintf(f, "# type=%s scope=%s default=%s range=%s\n",
+            settingsTypeName(setting->type),
+            settingsScopeName(setting->scope),
+            def,
+            range);
+}
+
 static void saveEntry(ConfigEntry *e, FILE *f) {
     const char *keyName = e->key + e->seclen + (e->seclen > 0 ? 1 : 0);
+    saveEntryMetadataComment(e, f);
     switch (e->type) {
         case CFG_S32: {
             s32 v = *(s32 *)e->ptr;

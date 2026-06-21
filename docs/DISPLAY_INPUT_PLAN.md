@@ -194,7 +194,7 @@ The foundation (P1). Everything else is rows + apply callbacks.
 | 0b. `configRegisterEnum`/`configRegisterString` | S | ⬜ | Enums serialize as stable tokens (`borderless`), not ints. |
 | 0c. Unknown-key passthrough | S | 🟡 | Unregistered key/value entries survive load→save; exact comment/order raw-line preservation remains future work. |
 | 0d. Atomic save | S | ✅ | Write `ge007.ini.tmp` then `rename`; never truncate the live file (`config_pc.c:205`). |
-| 0e. Self-documenting save | S | ⬜ | Emit `# <label> (default X, range A..B)` above each key; section-ordered to avoid duplicate headers from interleaved registration. |
+| 0e. Self-documenting save | S | ✅ | Emits schema comments with label, help, type, scope, default, and range above each registered key. |
 | 0f. Precedence + env-shadow surfacing | S | ⬜ | Read precedence **CLI > env > file > default**; if env/CLI shadows a key, the UI shows it read-only as "overridden by environment" (no silent no-op writes). |
 | 0g. `--dump-config` / `--list-settings` / `--config-set k=v` / `--reset-config` | S | ✅ | Introspection plus scriptable no-ROM config set/reset are wired. |
 | 0h. CLI split + macOS bridge cleanup | S | ⬜ | Keep early runtime flags outside the schema; make `GameBridge.h`/`GameBridge.c` truthful by wiring `game_config_get/set_*` through the registry or removing stale guarantees until wired. |
@@ -202,7 +202,8 @@ The foundation (P1). Everything else is rows + apply callbacks.
 **Gate:** `tools/settings_schema_check.py` verifies `--list-settings`,
 `--dump-config`, default values, custom `ge007.ini` loading, and no ROM startup.
 `tools/config_roundtrip_check.py` verifies `--config-set`, `--reset-config`,
-registered-value reload, atomic-save temp cleanup, and unknown-key preservation.
+registered-value reload, self-documenting save comments, atomic-save temp
+cleanup, and unknown-key preservation.
 Next, extend the gate for enum/string tokens and a simulated crash between temp
 write and rename.
 

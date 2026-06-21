@@ -144,6 +144,10 @@ def main() -> int:
         assert_file_contains(
             config_path,
             [
+                "# Window width",
+                "# type=int scope=restart default=1440 range=320..3840",
+                "# Master volume",
+                "# type=float scope=live default=0.7 range=0..1",
                 "FutureVideo=keep-me",
                 "[Future]",
                 "Token=hello",
