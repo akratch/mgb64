@@ -1025,6 +1025,16 @@ static int g_scene_msaa_samples;
 static bool g_scene_target_bound;
 static bool g_scene_target_multisampled;
 
+static float gfx_opengl_effective_render_scale(void) {
+    if (g_pcRenderScale < 1.0f) {
+        return 1.0f;
+    }
+    if (g_pcRenderScale > 2.0f) {
+        return 2.0f;
+    }
+    return g_pcRenderScale;
+}
+
 static int gfx_opengl_effective_msaa_samples(void) {
     static int max_samples = -1;
     static int last_requested = -1;
@@ -1067,8 +1077,8 @@ static int gfx_opengl_effective_msaa_samples(void) {
 }
 
 static bool gfx_opengl_scene_target_enabled(void) {
-    return g_pcRenderScale < 0.999f ||
-           g_pcRenderScale > 1.001f ||
+    float render_scale = gfx_opengl_effective_render_scale();
+    return render_scale > 1.001f ||
            gfx_opengl_effective_msaa_samples() > 0;
 }
 

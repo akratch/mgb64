@@ -166,8 +166,9 @@ is `Video.WindowMode` with `windowed`, `borderless`, or `exclusive`; for example
 `--config-set Video.WindowMode=borderless`. VSync is `Video.VSync` with `off`,
 `on`, or `adaptive`; frame pacing is `Video.FrameCap` with `30`, `60`, or
 `display`. Output gamma is `Video.Gamma`, where `1.0` leaves colors unchanged.
-`Video.RenderScale` adjusts the internal scene framebuffer from `0.5` to `2.0`.
-`Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene anti-aliasing.
+`Video.RenderScale` adjusts the internal scene framebuffer from `1.0` to `2.0`
+for supersampling. `Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene
+anti-aliasing.
 `Video.FovY` controls the normal gameplay vertical field of view from `45` to
 `90` degrees; scoped weapons and watch animations still use their own zoom
 values.

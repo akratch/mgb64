@@ -230,7 +230,7 @@ between temp write and rename.
 | Task | Effort | Status | Detail |
 |---|---|---|---|
 | Scene render target | M | ✅ | Binds an offscreen color+depth FBO at frame start when render scale differs from 1.0, resolves to the window before output post-processing, and invalidates on resize. |
-| `Video.RenderScale = 0.5…2.0` | S | ✅ | Schema-backed render scale; Fast3D viewport/scissor math uses the scaled scene dimensions, then blits back to the drawable. |
+| `Video.RenderScale = 1.0…2.0` | S | ✅ | Schema-backed render scale; Fast3D viewport/scissor math uses the scaled scene dimensions, then blits back to the drawable. |
 | `Video.MSAA = 0\|2\|4\|8` | S | ✅ | Schema-backed multisampled scene target. `MSAA=0` keeps the single-sample path; 2/4/8 render to MSAA renderbuffers, resolve to the scene target, then present through the existing output chain. |
 | `Video.Gamma` | S | ✅ | Added a schema-backed gamma uniform to the output-filter shader; gamma 1.0 keeps the old no-op path, non-default gamma runs the full-resolution post pass. |
 | `Video.RetroFilter` | S | ✅ | Exposes the existing VI filter as `auto|off|on`; `auto` preserves menu softening and opt-in gameplay behavior, `on` enables gameplay softening too. |
@@ -348,7 +348,7 @@ opening/closing mid-mission leaves the deterministic state trace unchanged.
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| Quality presets | S | ⬜ | `Authentic` (4:3, retro filter, classic controls) · `Modern` (native widescreen, MSAA, dual-stick) · `Performance` (RenderScale<1, no AA). One click. |
+| Quality presets | S | ⬜ | `Authentic` (4:3, retro filter, classic controls) · `Modern` (native widescreen, MSAA, dual-stick) · `Performance` (native scale, no AA). One click. |
 | Steam Deck / handheld profile | S | ⬜ | 16:10 1280×800, pad preset, comfortable FOV, GPU-tuned RenderScale. |
 | Docs + claim alignment | S | ⬜ | User options guide + contributor note on the schema registry and action layer; update `README`/`PORT.md`/`docs/STATUS.md` to claim only what's wired. |
 | CI wiring | S | ⬜ | Keep no-ROM checks in `tools/validate_quick.sh`; keep ROM-backed display/input/playability lanes as explicit scripts documented in `docs/INSTRUMENTATION.md`. |

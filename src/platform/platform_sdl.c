@@ -1408,11 +1408,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.Gamma=VALUE",
                           "Gamma",
                           "Output gamma correction. 1.0 leaves colors unchanged.");
-    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 0.5f, 2.0f,
+    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 2.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
                           "Render scale",
-                          "Scene framebuffer scale. 1.0 matches the window.");
+                          "Scene framebuffer scale. 1.0 matches the window; higher values supersample.");
     settingsRegisterEnum("Video.MSAA", &g_pcMsaaSamples, 0,
                          k_msaaOptions,
                          (s32)(sizeof(k_msaaOptions) / sizeof(k_msaaOptions[0])),

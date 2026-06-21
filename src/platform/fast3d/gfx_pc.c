@@ -3190,8 +3190,8 @@ struct GfxDimensions gfx_current_dimensions;
 extern float g_pcRenderScale;
 
 static float gfx_clamped_render_scale(void) {
-    if (g_pcRenderScale < 0.5f) {
-        return 0.5f;
+    if (g_pcRenderScale < 1.0f) {
+        return 1.0f;
     }
     if (g_pcRenderScale > 2.0f) {
         return 2.0f;
@@ -3204,6 +3204,26 @@ static int gfx_scaled_dimension(int value) {
     int rounded = (int)(scaled + 0.5f);
 
     return rounded > 0 ? rounded : 1;
+}
+
+static void gfx_sync_current_dimensions_from_window(void) {
+    extern SDL_Window *g_sdlWindow;
+    int w = 0;
+    int h = 0;
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
+    }
+
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    gfx_current_dimensions.width = gfx_scaled_dimension(w);
+    gfx_current_dimensions.height = gfx_scaled_dimension(h);
+    gfx_current_dimensions.aspect_ratio =
+        (float)gfx_current_dimensions.width /
+        (float)gfx_current_dimensions.height;
 }
 
 static float buf_vbo[MAX_BUFFERED * (48 * 3)]; /* 48 = pos + 2 texcoords + clamp extents + fog + inputs */
@@ -14982,14 +15002,7 @@ void gfx_run_dl(Gfx *dl) {
         }
     }
 
-    /* Update dimensions from SDL window */
-    extern SDL_Window *g_sdlWindow;
-    int w, h;
-    SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
-    gfx_current_dimensions.width = gfx_scaled_dimension(w);
-    gfx_current_dimensions.height = gfx_scaled_dimension(h > 0 ? h : 1);
-    gfx_current_dimensions.aspect_ratio =
-        (float)gfx_current_dimensions.width / (float)gfx_current_dimensions.height;
+    gfx_sync_current_dimensions_from_window();
 
     g_tri_count_diag = 0;
     g_sky_tri_count_diag = 0;
@@ -15268,6 +15281,7 @@ void gfx_draw_sky_triangle(
     uint8_t as[3] = { a0, a1, a2 };
     float us[3] = { u0, u1, u2 };
     float vs[3] = { v0, v1, v2 };
+    gfx_sync_current_dimensions_from_window();
     float logical_half_width = gfx_logical_screen_width() * 0.5f;
     float logical_half_height = gfx_logical_screen_height() * 0.5f;
     struct XYWidthHeight default_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
