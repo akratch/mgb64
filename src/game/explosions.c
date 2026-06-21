@@ -140,6 +140,46 @@ static float portBulletImpactNormalOffset(void)
     return value;
 }
 
+static s32 portPropIsGlassLike(PropRecord *prop)
+{
+    if (prop == NULL || prop->obj == NULL) {
+        return 0;
+    }
+
+    return prop->obj->type == PROPDEF_GLASS ||
+           prop->obj->type == PROPDEF_TINTED_GLASS;
+}
+
+static s32 portImpactIsGlassCrack(s32 impact_type)
+{
+    return impact_type >= 0x11 && impact_type <= 0x13;
+}
+
+static f32 portGlassImpactAxisBoost(const coord3d *axis_view, f32 axis_len)
+{
+    f32 screen_len;
+    f32 ratio;
+    f32 boost;
+    /* Keep glass cracks surface-aligned, but stop edge-on panes from
+     * projecting prop-attached impacts down to a one-pixel sliver. */
+    const f32 target_ratio = 0.70f;
+    const f32 max_boost = 6.0f;
+
+    if (axis_view == NULL || axis_len <= 0.0001f) {
+        return 1.0f;
+    }
+
+    screen_len = sqrtf(axis_view->x * axis_view->x + axis_view->y * axis_view->y);
+    ratio = screen_len / axis_len;
+
+    if (ratio >= target_ratio) {
+        return 1.0f;
+    }
+
+    boost = target_ratio / (ratio > 0.0001f ? ratio : 0.0001f);
+    return boost > max_boost ? max_boost : boost;
+}
+
 static s32 portEnsurePropImpactRenderPos(PropRecord *prop, s8 *model_render_pos_index)
 {
     ObjectRecord *obj;
@@ -3197,6 +3237,35 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
         
         sp9C /= sp88;
         sp98 /= temp_f6;
+
+#ifdef NATIVE_PORT
+        if (portPropIsGlassLike(prop) && portImpactIsGlassCrack(impact_type))
+        {
+            f32 boost_x = portGlassImpactAxisBoost(&sp78, sp88);
+            f32 boost_y = portGlassImpactAxisBoost(&sp6C, temp_f6);
+
+            if (boost_x > 1.0f || boost_y > 1.0f)
+            {
+                sp9C *= boost_x;
+                sp98 *= boost_y;
+
+                if (portTraceBulletImpacts())
+                {
+                    fprintf(stderr,
+                            "[BULLET-IMPACT-GLASS-BOOST] impact=%d boost=(%.3f,%.3f) "
+                            "axis_len=(%.4f,%.4f) axis_screen=(%.4f,%.4f)\n",
+                            impact_type,
+                            boost_x,
+                            boost_y,
+                            sp88,
+                            temp_f6,
+                            sqrtf(sp78.f[0] * sp78.f[0] + sp78.f[1] * sp78.f[1]),
+                            sqrtf(sp6C.f[0] * sp6C.f[0] + sp6C.f[1] * sp6C.f[1]));
+                    fflush(stderr);
+                }
+            }
+        }
+#endif
         
         if ((sp50->unk2 < 2) && (sp50->unk1 == 2))
         {
