@@ -603,6 +603,9 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_TRACE_CHRNUM=N` | add one guard's AI/action/render state to `--trace-state` |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
+| `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
+| `GE007_DISABLE_ROOM_POINT_FILTER=1` | negative control for the room-geometry nearest-sampling policy |
+| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
 ### Renderer diagnostics & experimental fixes (default OFF)

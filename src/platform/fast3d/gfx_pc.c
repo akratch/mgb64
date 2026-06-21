@@ -1092,6 +1092,7 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
 static int g_diag_tex_only = -1;
 static int g_diag_force_point_filter = -1;
 static int g_diag_force_linear_filter = -1;
+static int g_diag_disable_room_point_filter = -1;
 static int g_diag_convert_k4k5 = -1;
 static int g_diag_lod_fraction_override = INT32_MIN;
 static float g_diag_shade_scale = -1.0f;
@@ -1128,6 +1129,33 @@ static bool gfx_apply_texture_filter_override(bool linear_filter)
     if (g_diag_force_linear_filter > 0) {
         return true;
     }
+    return linear_filter;
+}
+
+static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
+{
+    linear_filter = gfx_apply_texture_filter_override(linear_filter);
+
+    if (g_diag_disable_room_point_filter < 0) {
+        g_diag_disable_room_point_filter =
+            (getenv("GE007_DISABLE_ROOM_POINT_FILTER") != NULL) ? 1 : 0;
+    }
+
+    if (g_diag_force_linear_filter > 0) {
+        return linear_filter;
+    }
+
+    /* GE's room textures are authored as low-resolution repeating world
+     * surfaces. The N64 filter bits on those DLs are not a safe signal for
+     * modern GL bilinear/shader filtering; applying them broadly smears Dam and
+     * Cradle surfaces. Keep room geometry nearest-sampled by default while
+     * leaving sky, UI, props, weapons, and explicit diagnostics untouched. */
+    if (g_diag_disable_room_point_filter == 0 &&
+        g_current_draw_class == DRAWCLASS_ROOM &&
+        !g_texrect_uv_mode) {
+        return false;
+    }
+
     return linear_filter;
 }
 
@@ -10324,7 +10352,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
         bool allow_lod_redirect = (g_texrect_tile_override < 0);
         bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         bool allow_n64_filter = !g_texrect_uv_mode &&
             depth_test &&
             linear_filter &&
@@ -10530,7 +10558,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
         cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
         cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         sampler_linear_filter = linear_filter && !shader_n64_filter;
         if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
             rendering_state.textures[0] != NULL ||
@@ -10569,7 +10597,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
             cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
             cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
-            linear_filter = gfx_apply_texture_filter_override(linear_filter);
+            linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
             sampler_linear_filter = linear_filter && !shader_n64_filter;
             if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
                 rendering_state.textures[1] != NULL ||
@@ -10625,7 +10653,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             ((cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0) :
             ((cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0);
         bool sampler_linear_filter;
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         if (is_font_texture) {
             cms = G_TX_CLAMP;
             cmt = G_TX_CLAMP;
@@ -15210,12 +15238,9 @@ void gfx_run_dl(Gfx *dl) {
  * synchronizes the texture and combiner state directly so that
  * gfx_emit_loaded_triangle sees the correct state when packing the VBO.
  *
- * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are in world-texture-repeat
- * space (e.g., worldX*0.1 ≈ -900 to +900).  The standard VBO packing divides
- * by 32.0 (s10.5→float) then by tex_width (normalize to [0,1]).  We apply
- * a tunable scale factor (GE007_SKY_UV_SCALE, default 3.5) that produces
- * approximately 2-4 cloud texture repeats across the sky, matching the N64's
- * apparent cloud density after RDP perspective-correct texture mapping.
+ * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are already in the
+ * game-authored sky texture coordinate space. Keep them at scale 1.0 by
+ * default; GE007_SKY_UV_SCALE remains available as a diagnostic override.
  *
  * RSP BYPASS NOTE: On N64, sky triangles are raw RDP commands that bypass
  * all RSP processing — no backface culling, no clip rejection, no fog.
@@ -15260,7 +15285,8 @@ void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_
      * intercept routes through gfx_sp_tri1 which DOES check geometry_mode. */
 }
 
-void gfx_draw_sky_triangle(
+static void gfx_draw_sky_triangle_impl(
+    bool clip_space_xy,
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -15282,43 +15308,35 @@ void gfx_draw_sky_triangle(
     float us[3] = { u0, u1, u2 };
     float vs[3] = { v0, v1, v2 };
     gfx_sync_current_dimensions_from_window();
-    float logical_half_width = gfx_logical_screen_width() * 0.5f;
-    float logical_half_height = gfx_logical_screen_height() * 0.5f;
     struct XYWidthHeight default_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
     struct XYWidthHeight default_scissor = default_viewport;
     struct XYWidthHeight viewport_saved = rdp.viewport;
     struct XYWidthHeight scissor_saved = rdp.scissor;
     uint32_t geometry_mode_saved = rsp.geometry_mode;
 
-    /* Sky UV scale: controls how many texture repeats appear across the sky.
-     *
-     * The raw UV values from the game are in world-texture space (range ±900+).
-     * On N64, the RDP's edge equation builder applies perspective scaling that
-     * naturally reduces the apparent repeat count.  On PC, we apply a fixed
-     * scale to approximate the N64's apparent cloud density.
-     *
-     * VBO packing does: gl_uv = (vertex.u / 32.0) / tex_width.
-     * For ~3 repeats across a UV range of ~1800, tex_width=64:
-     *   vertex.u = sky_uv * scale, (1800 * scale / 32 / 64) ≈ 3
-     *   → scale ≈ 3.4
-     *
-     * Tunable via GE007_SKY_UV_SCALE (default 3.5). */
+    /* Sky UV diagnostic scale. Default to the authored coordinates; increasing
+     * this repeats/compresses Cradle's sky into horizontal bands. */
     static float sky_uv_scale = -1.0f;
     if (sky_uv_scale < 0) {
         const char *env = getenv("GE007_SKY_UV_SCALE");
-        sky_uv_scale = env ? (float)atof(env) : 3.5f;
+        sky_uv_scale = env ? (float)atof(env) : 1.0f;
     }
 
     for (int i = 0; i < 3; i++) {
         struct LoadedVertex *d = &rsp.loaded_vertices[i];
-        /* SkyRelated38.unk28/unk2c are already in final screen space
-         * (quarter-pixels) after the game's sky-specific clipping.
-         * Feed those directly through the fullscreen viewport instead of
-         * treating them like ordinary clip-space geometry. */
-        float ndc_x = xs[i] / (4.0f * logical_half_width) - 1.0f;
-        float ndc_y = -(ys[i] / (4.0f * logical_half_height)) + 1.0f;
-        d->x = ndc_x * ws[i];
-        d->y = ndc_y * ws[i];
+        if (clip_space_xy) {
+            d->x = xs[i];
+            d->y = ys[i];
+        } else {
+            /* Diagnostic legacy path: SkyRelated38.unk28/unk2c are final
+             * quarter-pixel screen coordinates after game-side clamping. */
+            float logical_half_width = gfx_logical_screen_width() * 0.5f;
+            float logical_half_height = gfx_logical_screen_height() * 0.5f;
+            float ndc_x = xs[i] / (4.0f * logical_half_width) - 1.0f;
+            float ndc_y = -(ys[i] / (4.0f * logical_half_height)) + 1.0f;
+            d->x = ndc_x * ws[i];
+            d->y = ndc_y * ws[i];
+        }
         d->z = zs[i];
         d->w = ws[i];
         d->color.r = rs[i];
@@ -15347,6 +15365,40 @@ void gfx_draw_sky_triangle(
     rdp.viewport = viewport_saved;
     rdp.scissor = scissor_saved;
     rdp.viewport_or_scissor_changed = true;
+}
+
+void gfx_draw_sky_clip_triangle(
+    float x0, float y0, float z0, float w0,
+    uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
+    float u0, float v0,
+    float x1, float y1, float z1, float w1,
+    uint8_t r1, uint8_t g1, uint8_t b1, uint8_t a1,
+    float u1, float v1,
+    float x2, float y2, float z2, float w2,
+    uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
+    float u2, float v2)
+{
+    gfx_draw_sky_triangle_impl(true,
+        x0, y0, z0, w0, r0, g0, b0, a0, u0, v0,
+        x1, y1, z1, w1, r1, g1, b1, a1, u1, v1,
+        x2, y2, z2, w2, r2, g2, b2, a2, u2, v2);
+}
+
+void gfx_draw_sky_triangle(
+    float sx0, float sy0, float z0, float w0,
+    uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
+    float u0, float v0,
+    float sx1, float sy1, float z1, float w1,
+    uint8_t r1, uint8_t g1, uint8_t b1, uint8_t a1,
+    float u1, float v1,
+    float sx2, float sy2, float z2, float w2,
+    uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
+    float u2, float v2)
+{
+    gfx_draw_sky_triangle_impl(false,
+        sx0, sy0, z0, w0, r0, g0, b0, a0, u0, v0,
+        sx1, sy1, z1, w1, r1, g1, b1, a1, u1, v1,
+        sx2, sy2, z2, w2, r2, g2, b2, a2, u2, v2);
 }
 
 /* Snapshot end-of-frame render stats for port_trace.c */

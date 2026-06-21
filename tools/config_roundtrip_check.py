@@ -153,11 +153,57 @@ def assert_no_tmp(savedir: Path) -> None:
         raise SystemExit(f"FAIL: config save left temp file(s): {leftovers}")
 
 
+def assert_render_scale_min_clamp(binary: Path) -> None:
+    """Pin the release regression where sub-native scene scale broke sky rendering."""
+    with tempfile.TemporaryDirectory(prefix="mgb64_render_scale_clamp_") as temp:
+        savedir = Path(temp)
+        config_path = savedir / "ge007.ini"
+        config_path.write_text("[Video]\nRenderScale=0.5\n", encoding="utf-8")
+
+        file_dump = parse_dump(run_binary(binary, savedir, "--dump-config"))
+        assert_values(
+            file_dump,
+            {"Video.RenderScale": "1"},
+            "stale file render-scale clamp",
+        )
+
+        env_dump = parse_dump(
+            run_binary(
+                binary,
+                savedir,
+                "--dump-config",
+                env_extra={"GE007_RENDER_SCALE": "0.5"},
+            )
+        )
+        assert_values(
+            env_dump,
+            {"Video.RenderScale": "1"},
+            "env render-scale clamp",
+        )
+
+        cli_dump = parse_dump(
+            run_binary(
+                binary,
+                savedir,
+                "--config-override",
+                "Video.RenderScale=0.5",
+                "--dump-config",
+            )
+        )
+        assert_values(
+            cli_dump,
+            {"Video.RenderScale": "1"},
+            "cli render-scale clamp",
+        )
+
+
 def main() -> int:
     args = parse_args()
     binary = Path(args.binary).resolve()
     if not binary.is_file():
         raise SystemExit(f"FAIL: native binary not found: {binary}")
+
+    assert_render_scale_min_clamp(binary)
 
     with tempfile.TemporaryDirectory(prefix="mgb64_config_roundtrip_") as temp:
         savedir = Path(temp)
