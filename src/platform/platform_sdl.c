@@ -154,6 +154,7 @@ static int g_mouseGrabbed = 0;
 int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1. */
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
+f32 g_pcVideoGamma = 1.0f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1220,6 +1221,11 @@ void platformRegisterConfig(void)
                          "--config-override Video.FrameCap=VALUE",
                          "Frame cap",
                          "Frame pacing cap: 30, 60, or display.");
+    settingsRegisterFloat("Video.Gamma", &g_pcVideoGamma, 1.0f, 0.5f, 2.5f,
+                          SETTING_SCOPE_LIVE, "GE007_GAMMA",
+                          "--config-override Video.Gamma=VALUE",
+                          "Gamma",
+                          "Output gamma correction. 1.0 leaves colors unchanged.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",

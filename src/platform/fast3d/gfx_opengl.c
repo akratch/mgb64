@@ -32,6 +32,7 @@
 
 /* Verbose diagnostic flag from gfx_pc.c */
 extern int g_diag_verbose;
+extern float g_pcVideoGamma;
 
 /* GL_DEPTH_CLAMP support — defined in gfx_pc.c, set once here in
  * gfx_opengl_init() before any rendering, read by CPU clipper and
@@ -1220,6 +1221,25 @@ static void gfx_opengl_check_output_filter_color_diag(void) {
     }
 }
 
+static float gfx_opengl_output_gamma(void) {
+    if (g_pcVideoGamma < 0.5f) {
+        return 0.5f;
+    }
+    if (g_pcVideoGamma > 2.5f) {
+        return 2.5f;
+    }
+    return g_pcVideoGamma;
+}
+
+static bool gfx_opengl_output_color_adjust_active(void) {
+    float gamma = gfx_opengl_output_gamma();
+
+    return g_diag_output_filter_color_scale != 1.0f ||
+           g_diag_output_filter_color_bias != 0.0f ||
+           gamma < 0.999f ||
+           gamma > 1.001f;
+}
+
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
     GLuint shader = glCreateShader(type);
     GLint success = GL_FALSE;
@@ -1262,6 +1282,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform vec2 uDstSize;\n"
         "uniform float uColorScale;\n"
         "uniform float uColorBias;\n"
+        "uniform float uGamma;\n"
         "uniform int uFilterMode;\n"
         "in vec2 vTexCoord;\n"
         "out vec4 outColor;\n"
@@ -1318,7 +1339,9 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    else if (uFilterMode == 2) color = sampleFitSrcToDstNearest(gl_FragCoord.xy);\n"
         "    else if (uFilterMode == 3) color = sampleFitLogicalToDstNearest(gl_FragCoord.xy);\n"
         "    else color = sampleCpuBilinear(gl_FragCoord.xy);\n"
-        "    outColor = vec4(clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0), color.a);\n"
+        "    vec3 rgb = clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0);\n"
+        "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
+        "    outColor = vec4(rgb, color.a);\n"
         "}\n";
 
     if (g_output_filter_program == 0) {
@@ -1407,6 +1430,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_diag_output_filter_color_scale);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uColorBias"),
                 g_diag_output_filter_color_bias);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uGamma"),
+                gfx_opengl_output_gamma());
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);
@@ -1437,14 +1462,22 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     GLuint filter_source_tex;
     int filter_source_w;
     int filter_source_h;
+    bool use_vi_filter;
+    bool use_color_adjust;
 
     glGetIntegerv(GL_VIEWPORT, viewport);
     width = gfx_current_dimensions.width > 0 ? (int)gfx_current_dimensions.width : viewport[2];
     height = gfx_current_dimensions.height > 0 ? (int)gfx_current_dimensions.height : viewport[3];
-    if (!gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h)) {
+    gfx_opengl_check_output_filter_color_diag();
+    use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
+    use_color_adjust = gfx_opengl_output_color_adjust_active();
+    if (!use_vi_filter && !use_color_adjust) {
         return;
     }
-    gfx_opengl_check_output_filter_color_diag();
+    if (!use_vi_filter) {
+        filter_w = width;
+        filter_h = height;
+    }
 
     if (width <= 0 || height <= 0 || filter_w <= 0 || filter_h <= 0) {
         return;

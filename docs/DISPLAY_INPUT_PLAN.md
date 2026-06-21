@@ -231,7 +231,7 @@ between temp write and rename.
 | Scene render target | M | ⬜ | Bind an offscreen color+depth FBO at frame start sized `RenderScale × drawable`; wire the no-op `gfx_opengl_on_resize` (`gfx_opengl.c:1662`) and the legacy no-op `gfx_set_window_size` (`fast3d/gfx_pc.c:14929-14934`) to invalidate/reallocate targets. Split-screen viewports/scissor are in framebuffer pixels, so they scale uniformly — low MP risk. |
 | `Video.RenderScale = 0.5…2.0` | S | ⬜ | SSAA above 1.0; perf headroom below. Resolve through the existing output-filter blit (`gfx_opengl.c:1437`). |
 | `Video.MSAA = 0\|2\|4\|8` | S | ⬜ | Multisampled scene target; resolve on present. High impact on N64's hard aliased edges. |
-| `Video.Gamma` | S | ⬜ | Add a uniform to the output-filter shader (already has `uColorScale/uColorBias` `gfx_opengl.c:1404`). Real value for dark stages (Caverns/Cradle/Statue). |
+| `Video.Gamma` | S | ✅ | Added a schema-backed gamma uniform to the output-filter shader; gamma 1.0 keeps the old no-op path, non-default gamma runs the full-resolution post pass. |
 | `Video.RetroFilter` | S | ⬜ | Expose the existing VI filter (`gfx_opengl.c:1040`) as a user toggle for an authentic soft look. |
 
 **Gate:** `audit_screenshot_health.py` at 3840×2160 and at `RenderScale 2.0`
