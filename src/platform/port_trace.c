@@ -239,6 +239,28 @@ static int traceFlowOnlyEnabled(void) {
     return enabled;
 }
 
+static int traceLiveStageGlobalsSafe(void) {
+    int stage_menu_active;
+
+    if (g_StageNum == LEVELID_TITLE || lvlGetCurrentStageToLoad() == LEVELID_TITLE) {
+        return 0;
+    }
+
+    stage_menu_active =
+        current_menu == MENU_RUN_STAGE ||
+        current_menu == MENU_MISSION_COMPLETE ||
+        current_menu == MENU_MISSION_FAILED ||
+        (current_menu == MENU_SWITCH_SCREENS &&
+         (menu_update == MENU_RUN_STAGE ||
+          menu_update == MENU_MISSION_COMPLETE ||
+          menu_update == MENU_MISSION_FAILED ||
+          maybe_prev_menu == MENU_RUN_STAGE ||
+          maybe_prev_menu == MENU_MISSION_COMPLETE ||
+          maybe_prev_menu == MENU_MISSION_FAILED));
+
+    return stage_menu_active ? 1 : 0;
+}
+
 static const char *traceGuardOraclePath(void) {
     static const char *path = NULL;
     static int initialized = 0;
@@ -4066,6 +4088,7 @@ void portTraceFrame(void) {
     PortViewmodelTrace weapon_left;
     PortViewmodelTrace weapon_right;
     const PropRecord *nearest_guard_for_trace = NULL;
+    int trace_live_stage_globals = traceLiveStageGlobalsSafe();
 
     objective_statuses_json[0] = '[';
     objective_statuses_json[1] = ']';
@@ -4089,7 +4112,7 @@ void portTraceFrame(void) {
     save_field_json[0] = '\0';
     ramrom_field_json[0] = '\0';
 
-    if (g_CurrentPlayer) {
+    if (trace_live_stage_globals && g_CurrentPlayer) {
         int frozen_intro_camera = playerHasFrozenIntroCamera(g_CurrentPlayer);
 
         /* Access via struct — these are the canonical fields */
@@ -4934,10 +4957,12 @@ void portTraceFrame(void) {
     vi_view_top = viGetViewTop();
     vi_view_w = viGetViewWidth();
     vi_view_h = viGetViewHeight();
-    if (has_player) {
+    if (trace_live_stage_globals && has_player) {
         render_room = (int)bondviewGetCurrentPlayersRoom();
     }
-    traceCameraMatricesIfRequested(cam_mode, player_unknown, render_room);
+    if (trace_live_stage_globals) {
+        traceCameraMatricesIfRequested(cam_mode, player_unknown, render_room);
+    }
 
     /* Render stats from gfx_pc.c */
     int tris = 0, bad_cmds = 0, render_frame = 0;
@@ -5000,7 +5025,7 @@ void portTraceFrame(void) {
     int intro_bond_model_mtx = 0;
     int intro_bond_onscreen = 0;
     int intro_bond_seen_onscreen = 0;
-    int intro_bond_rendered = (s_bondIntroLastTraceFrame == s_traceFrame) ? 1 : 0;
+    int intro_bond_rendered = (trace_live_stage_globals && s_bondIntroLastTraceFrame == s_traceFrame) ? 1 : 0;
     int intro_bond_anim_valid = 0;
     float intro_bond_anim_frame = 0.0f;
     float intro_bond_anim_end = 0.0f;
@@ -5013,8 +5038,8 @@ void portTraceFrame(void) {
     int intro_bond_anim_entry_offset = -1;
     int intro_bond_anim_bits_offset = -1;
     u64 intro_bond_anim_hash = 0;
-    int intro_setup_anim_index = g_IntroAnimationIndex;
-    int intro_swirl_present = g_IntroSwirl != NULL ? 1 : 0;
+    int intro_setup_anim_index = trace_live_stage_globals ? g_IntroAnimationIndex : -1;
+    int intro_swirl_present = (trace_live_stage_globals && g_IntroSwirl != NULL) ? 1 : 0;
     int intro_swirl_count = 0;
     u64 intro_swirl_hash = 0;
     int intro_swirl_current_index = -1;
@@ -5027,7 +5052,7 @@ void portTraceFrame(void) {
     int intro_swirl_current_pad = -1;
     int intro_selected_camera_present = 0;
     int intro_selected_camera_index = -1;
-    int intro_selected_camera_count = g_SetupIntroCameraCount;
+    int intro_selected_camera_count = trace_live_stage_globals ? g_SetupIntroCameraCount : 0;
     float intro_selected_camera_x = 0.0f;
     float intro_selected_camera_y = 0.0f;
     float intro_selected_camera_z = 0.0f;
@@ -5049,7 +5074,7 @@ void portTraceFrame(void) {
     intro_bond_held_left.obj = -1;
     intro_bond_held_left.item = -1;
 
-    if (g_IntroSwirl != NULL) {
+    if (trace_live_stage_globals && g_IntroSwirl != NULL) {
         int i;
 
         intro_swirl_hash = 1469598103934665603ULL;
@@ -5086,7 +5111,7 @@ void portTraceFrame(void) {
         }
     }
 
-    if (ptr_random06cam_entry != NULL) {
+    if (trace_live_stage_globals && ptr_random06cam_entry != NULL) {
         struct SetupIntroCamera *iter;
         int reverse_index = 0;
 
@@ -5276,7 +5301,8 @@ void portTraceFrame(void) {
         return;
     }
 
-    if (g_CurrentPlayer != NULL &&
+    if (trace_live_stage_globals &&
+        g_CurrentPlayer != NULL &&
         g_CurrentPlayer->prop != NULL &&
         g_CurrentPlayer->prop->chr != NULL) {
         ChrRecord *intro_chr = g_CurrentPlayer->prop->chr;
@@ -5320,33 +5346,39 @@ void portTraceFrame(void) {
     }
 
     memset(&weapon_left, 0, sizeof(weapon_left));
-    portGetViewmodelTrace(GUNLEFT, &weapon_left);
+    if (trace_live_stage_globals) {
+        portGetViewmodelTrace(GUNLEFT, &weapon_left);
+    }
     if (weapon_left.frame == 0) {
         weapon_left.valid = 0;
     }
 
     memset(&weapon_right, 0, sizeof(weapon_right));
-    portGetViewmodelTrace(GUNRIGHT, &weapon_right);
+    if (trace_live_stage_globals) {
+        portGetViewmodelTrace(GUNRIGHT, &weapon_right);
+    }
     if (weapon_right.frame == 0) {
         weapon_right.valid = 0;
     }
 
-    for (int room = 1; room < g_MaxNumRooms; room++) {
-        s_room_info *ri = &g_BgRoomInfo[room];
+    if (trace_live_stage_globals) {
+        for (int room = 1; room < g_MaxNumRooms; room++) {
+            s_room_info *ri = &g_BgRoomInfo[room];
 
-        if (ri->room_rendered) {
-            rendered_rooms_count++;
-            if (rendered_rooms_sample_count < (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))) {
-                rendered_rooms_sample[rendered_rooms_sample_count++] = room;
+            if (ri->room_rendered) {
+                rendered_rooms_count++;
+                if (rendered_rooms_sample_count < (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))) {
+                    rendered_rooms_sample[rendered_rooms_sample_count++] = room;
+                }
             }
-        }
 
-        if (ri->room_neighbor_to_rendered) {
-            neighbor_rooms_count++;
-        }
+            if (ri->room_neighbor_to_rendered) {
+                neighbor_rooms_count++;
+            }
 
-        if (ri->model_bin_loaded) {
-            loaded_rooms_count++;
+            if (ri->model_bin_loaded) {
+                loaded_rooms_count++;
+            }
         }
     }
 
@@ -5374,13 +5406,15 @@ void portTraceFrame(void) {
         }
     }
 
-    traceBuildGuardSpawnJson(spawn_field_json, sizeof(spawn_field_json));
-    traceBuildShotJson(shot_field_json, sizeof(shot_field_json));
-    traceBuildBulletImpactJson(impact_field_json, sizeof(impact_field_json));
-    traceBuildProjectileJson(projectile_field_json, sizeof(projectile_field_json));
-    traceBuildGuardHitJson(hit_field_json, sizeof(hit_field_json));
-    traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
-    traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
+    if (trace_live_stage_globals) {
+        traceBuildGuardSpawnJson(spawn_field_json, sizeof(spawn_field_json));
+        traceBuildShotJson(shot_field_json, sizeof(shot_field_json));
+        traceBuildBulletImpactJson(impact_field_json, sizeof(impact_field_json));
+        traceBuildProjectileJson(projectile_field_json, sizeof(projectile_field_json));
+        traceBuildGuardHitJson(hit_field_json, sizeof(hit_field_json));
+        traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
+        traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
+    }
 
     /* Format to a stack buffer first, then write through the direct state-trace
      * helper so crash recovery cannot splice records together through stdio. */
