@@ -8,6 +8,12 @@ local 2–4-player split-screen is wired and validated
 that simulation online in an S-tier fashion.
 
 > Status: **planning**. No netcode is written yet (`grep -rE 'recvfrom|sendto|enet_|netplay' src/` → 0 hits). This is the design of record before any code lands.
+>
+> **Companion:** [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) is a verified
+> file-by-file map of the (MIT-licensed, same-engine-family) Perfect Dark PC
+> port netcode into `src/platform/net/`. Where its *ground-truth reading of the
+> shipped code* differs from the theory below, **the port map wins** — see the
+> reconciliation note in §1.
 
 ---
 
@@ -36,19 +42,44 @@ The deciding precedent: **Perfect Dark is built on this exact engine**, and the
 The authoritative model also buys us **cross-platform play** (macOS/ARM ↔ x86)
 that lockstep cannot, and sidesteps the PD port's "same ROM required" limitation.
 
-### Why full-sim clients (not thin clients)
+### Reconciliation with the PD port's *actual* shipped model (ground truth)
 
-A *thin client* (render only from replicated state, the PD-port path) must
-replicate **everything the renderer reads** — positions, anim frames, muzzle
-flashes, effects — which is why the PD port still has "rocket rotation wrong,"
-"cloak not synced" bugs: the sync surface is the entire renderable world.
+After reading the PD `port-net` source (see [NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) §1),
+the shipped model is **neither thin-client replication nor full-sim reconcile**.
+It is a third thing, and it's the proven baseline we should port first:
 
-Instead, **every peer runs the full 4-player simulation** from the shared input
-stream. Each peer's own sim produces all render data locally, so the network only
-has to ship **inputs every tick (tiny) + an occasional authoritative correction
-snapshot** to cancel drift before it's visible. This reuses the engine we already
-have (the split-screen host *is* a 4-player sim) and shrinks the wire surface to
-the ~85 KB match state instead of the whole renderable world.
+- **Movement is client-authoritative.** Each client simulates only *its own*
+  player and sends the result (position + angles + a `ucmd` command bitmask) to
+  the host, which relays it.
+- **Remote players are interpolated puppets** — normal engine players with input
+  disabled (`controlmode = CONTROLMODE_NA`), their pawns lerped between the last
+  two received moves over `Net.LerpTicks`. They are **not** simulated from
+  injected input and **not** reconciled.
+- **The world is kept correct by a discrete event layer** (`SVC_PROP_*`,
+  `SVC_CHR_*`, stats) keyed by a **sync-ID equal to the prop's array index** —
+  exactly the index-based serialization argued for in §3b.
+
+**Consequence for the split-screen seam (correction to §2):** the
+`osContGetReadData` `data[k]` injection is for **local couch players sharing one
+host**, *not* for remote players. Remote players are network puppets. "Online
+split-screen" = a host runs its 1–2 local players via `data[k]` **plus** N remote
+puppets via the net layer.
+
+The "full-sim clients + reconciliation" idea below is **retained as the post-v1
+hardening target** (it's where the prediction/reconciliation work in Phase N3
+actually pays off, and the only way to make movement server-authoritative and
+cheat-resistant). But **v1 ports the PD baseline**, because it works on this
+engine and ships fastest. The PD known-issues list (rocket rotation, cloak,
+per-weapon alt-fire) is exactly the long tail the §3c hash oracle is meant to
+surface early — and GoldenEye being human-only lets us skip PD's single biggest
+unsolved area (bot sync) entirely.
+
+#### Why not thin clients either
+
+A *thin client* (render only from replicated state) must replicate everything the
+renderer reads — positions, anim frames, muzzle flashes, effects. That maximizes
+the sync surface. The PD puppet+event model is lighter: each peer renders from
+its own local objects, and the wire carries only player moves + discrete events.
 
 ---
 
@@ -272,11 +303,13 @@ is a later, opt-in mode for tournaments.
 
 ## 10. Licensing
 
-MGB64's first-party code is **MIT** (`LICENSE`). The PD port and other decomp
-projects may carry incompatible licenses, so we **study their design, not their
-source** — netcode is clean-room reimplemented. Third-party libraries must be
-permissive: **enet (MIT)** for transport is the recommended vendor; avoid
-GPL-licensed net stacks. Record any vendored lib in `THIRD_PARTY.md`/`NOTICE.md`.
+MGB64's first-party code is **MIT** (`LICENSE`). **Verified:** the Perfect Dark
+PC port is also **MIT** (© 2022 Ryan Dwyer) and bundles **enet (MIT)** — both
+compatible with MGB64. So we may **adapt the PD netcode source directly** (not
+only clean-room), provided the copyright/permission notice is preserved and
+recorded in `THIRD_PARTY.md`/`NOTICE.md`. This supersedes the earlier
+clean-room-only assumption. Still avoid GPL-licensed net stacks. See
+[NETPLAY_PORT_MAP.md](NETPLAY_PORT_MAP.md) for the file-by-file adaptation.
 
 ---
 
