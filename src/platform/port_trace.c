@@ -71,6 +71,12 @@ extern s32 g_StageNum;
 /* Crash recovery count (from main_pc.c) */
 extern int g_crashRecoveryCount;
 
+/* Per-frame room draw count (from bg.c) */
+extern s32 g_BgNumberOfRoomsDrawn;
+
+/* Current (0-based) player number, for the per-player "p" trace field. */
+extern s32 get_cur_playernum(void);
+
 #ifdef NATIVE_PORT
 extern s32 port_save_copy_count;
 extern s32 port_save_copy_source;
@@ -3841,6 +3847,11 @@ void portTraceFrame(void) {
     int rendered_rooms_sample[16];
     int rendered_rooms_sample_count = 0;
     int has_player = 0;
+    /* 1-based current player number for the "p" field. 0 = no current player.
+     * In split-screen MP this lets the trace distinguish per-player viewpoints
+     * (the per-player move/render loop leaves g_CurrentPlayer on the player
+     * whose state this frame reflects). */
+    int trace_player_num = 0;
     int player_unknown = 0;
     int view_left = 0, view_top = 0, view_w = 0, view_h = 0;
     int vi_view_left = 0, vi_view_top = 0, vi_view_w = 0, vi_view_h = 0;
@@ -4081,6 +4092,7 @@ void portTraceFrame(void) {
 
         /* Access via struct — these are the canonical fields */
         has_player = 1;
+        trace_player_num = get_cur_playernum() + 1;
         player_unknown = g_CurrentPlayer->unknown;
         if (g_CurrentPlayer->prop) {
             px = g_CurrentPlayer->prop->pos.x;
@@ -4941,6 +4953,7 @@ void portTraceFrame(void) {
     room_render_fallback_active = (g_portRoomRenderFallbackFrame == g_frame_count_diag) ? 1 : 0;
     room_render_fallback_rooms = room_render_fallback_active ? g_portRoomRenderFallbackRooms : 0;
     room_render_fallback_total = g_portRoomRenderFallbackTotal;
+    int rooms_drawn = (int)g_BgNumberOfRoomsDrawn;
     unsigned int seg_mask = gfx_get_segment_mask();
     int menu = (int)current_menu;
     int menu_pending = (int)menu_update;
@@ -5208,7 +5221,7 @@ void portTraceFrame(void) {
             "\"turn\":%.5f,\"pitch\":%.5f,\"max_t\":%d,"
             "\"head\":[%.3f,%.3f,%.3f],\"prev\":[%.2f,%.2f,%.2f],"
             "\"clock\":%d,\"dt\":%.2f,\"global\":%d},"
-            "\"tris\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
+            "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
             "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
@@ -5223,7 +5236,7 @@ void portTraceFrame(void) {
             "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d},"
             "\"assert\":{\"file_select\":%d,\"stage_menu\":%d,\"mission_start\":%d,\"post_mission\":%d},"
             "\"nan\":%d}\n",
-            s_traceFrame, has_player,
+            s_traceFrame, trace_player_num,
             px, py, pz,
             move_speed_forwards, move_speed_sideways,
             move_speed_go, move_speed_strafe, move_speed_boost,
@@ -5231,7 +5244,7 @@ void portTraceFrame(void) {
             move_head_x, move_head_y, move_head_z,
             move_prev_x, move_prev_y, move_prev_z,
             g_ClockTimer, g_GlobalTimerDelta, g_GlobalTimer,
-            tris, g_crashRecoveryCount, bad_cmds,
+            tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
             dl_non_dl_skip_n64, dl_unregistered_skip,
@@ -5418,7 +5431,7 @@ void portTraceFrame(void) {
             "\"rooms\":{\"tile\":%d,\"portal\":%d,\"room_ptr\":%d,\"prop\":%d,\"cur\":%d,\"render\":%d,\"lookup\":%d,\"nearest\":%d,\"cam_lookup\":%d,\"cam_nearest\":%d,"
             "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s},"
             "\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
-            "\"tris\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
+            "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
             "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
@@ -5543,7 +5556,7 @@ void portTraceFrame(void) {
             "\"snd_create_post_event\":%u,\"snd_dispose_sound\":%u,\"snd_set_priority\":%u,"
             "\"snd_unlink_clear\":%u,\"snd_count_alloc_list\":%u},"
             "\"mp\":{\"time_ticks\":%d,\"player_count\":%d}}\n",
-            s_traceFrame, has_player,
+            s_traceFrame, trace_player_num,
             px, py, pz,
             cam_x, cam_y, cam_z,
             cam_target_x, cam_target_y, cam_target_z,
@@ -5567,7 +5580,7 @@ void portTraceFrame(void) {
             cam_lookup_room, cam_nearest_room,
             rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf,
             room_render_fallback_active, room_render_fallback_rooms, room_render_fallback_total,
-            tris, g_crashRecoveryCount, bad_cmds,
+            tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
             dl_non_dl_skip_n64, dl_unregistered_skip,
