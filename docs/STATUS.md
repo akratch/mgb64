@@ -44,6 +44,25 @@ you know what to expect and where help is most valuable.
   sustained-load frame budget, the higher-risk 3-player asymmetric split, and a
   full end-of-round scoreboard run are not yet validated. See
   [../docs/MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md).
+- **Recent playability fixes are landed and traceable:** Dam's intro truck now
+  binds its authored vehicle AI path and target speed, and vehicle geometry uses
+  the corrected native vector path so the truck body/wheels render together.
+  Transparent glass no longer disappears while collision remains active: the
+  native renderer handles secondary room alpha plus prop-type glass material
+  paths, and glass bullet-crack decals stay surface-aligned instead of vanishing
+  edge-on. The maintained probes live in
+  [INSTRUMENTATION.md](INSTRUMENTATION.md): the vehicle probe expects Dam truck
+  `obj=279`, AI list `0x040A`, `path_id=7`, and a moving `target_pad=312`
+  startup; the glass probe audits secondary alpha material classification and
+  glass draw ranges. The latest local MP timer acceptance run reached the forced
+  `60/60` tick match boundary with about `98%` split-half dissimilarity and zero
+  render-health failures; scoreboard/results transition proof remains open.
+- **Modern display controls are available through the native settings schema:**
+  window mode, display selection, fullscreen mode sizing, VSync, frame cap,
+  render scale, MSAA, gamma, retro filtering, and gameplay FOV are configurable
+  while defaulting back to the original 4:3-style presentation. See
+  [DISPLAY_INPUT_PLAN.md](DISPLAY_INPUT_PLAN.md) and
+  [PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 - **ROM-vs-native comparison tooling exists for targeted parity work:**
   `docs/ROM_COMPARISON.md` documents route specs, native traces, optional
   instrumented ares stock traces, movement/intro comparators, and structured

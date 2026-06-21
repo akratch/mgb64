@@ -772,10 +772,9 @@ If `VEHICLE_STATE` ticks appear with `path_id=-1`, `speed=0`, and `aim=0` while
 no `VEHICLE_AI` lines appear, inspect setup prop conversion and `ailistFindById`
 resolution for vehicle/aircraft props. If AI lines appear but movement stalls,
 look for `missing_switch_3`, `move_rejected_nav`, `move_rejected_footprint`, and
-waypoint-sentinel handling in the object handler. A longer Dam intro run
-currently reaches a separate render crash under investigation; the frame-80
-probe is intentionally short enough to prove vehicle startup movement without
-crossing into that failure.
+waypoint-sentinel handling in the object handler. The frame-80 probe is short by
+design: it proves authored vehicle startup movement without turning into a broad
+Dam intro/rendering soak.
 
 ## ROM movement oracle
 

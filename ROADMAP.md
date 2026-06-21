@@ -135,11 +135,19 @@ Landed / in progress (2-player focus):
   crashes found during bring-up (missing per-player char load, an enum-`PROP`
   signedness OOB, and a raw N64 anim offset used as a pointer) were root-caused
   and fixed under `NATIVE_PORT` guards; the solo lanes remain green.
+- **Phase 4b timer-boundary smoke (partial):** `--mp-timelimit SECS` gives the
+  MP direct-boot path a deterministic short match length, and
+  `tools/mp_smoke.sh --timelimit` proves the timer reaches the forced boundary
+  crash-free. A latest local acceptance run reached `60/60` match ticks with
+  about `98%` split-half dissimilarity. The remaining gap is the
+  `mp_watch.c` scoreboard/results transition assertion.
 
 Validation status:
 
 - **2-player split-screen: green** in the deterministic `mp_smoke` window (boot +
   two distinct viewports + render-health clean, zero crashes).
+- **Forced MP time limit: boundary green, scoreboard pending** in the
+  deterministic `mp_smoke --timelimit` window.
 - **4-player: boots and renders distinct viewports** in the `mp_smoke` window, but
   sustained frame-budget, the higher-risk 3-player asymmetric split, and a full
   end-of-round scoreboard run are **not** yet validated (Phase 4b/5).
@@ -149,10 +157,12 @@ Next:
 - **Phase 5 — split-screen performance + 3/4-player hardening:** validate the
   2-player frame budget, then the higher-risk 3-player asymmetric split and the
   4-way viewport math, with `room_render_fallback_records==0` under load.
-- **Parallel display/input polish track (default-off, config-gated):** true
-  hor+ widescreen, FOV control, fullscreen modes, render scale/MSAA/gamma,
-  settings UI, and input rebinding. The execution plan and regression matrix
-  live in [docs/DISPLAY_INPUT_PLAN.md](docs/DISPLAY_INPUT_PLAN.md).
+- **Parallel display/input polish track (default-off, config-gated):** display
+  selection, window modes, exclusive fullscreen, VSync/frame cap, render
+  scale/MSAA/gamma, retro filtering, and FOV are landed through the native
+  settings schema. True hor+ widescreen, settings UI, and input rebinding remain
+  open. The execution plan and regression matrix live in
+  [docs/DISPLAY_INPUT_PLAN.md](docs/DISPLAY_INPUT_PLAN.md).
 
 ### Music and audio fidelity
 
@@ -196,7 +206,12 @@ renderer rewrites.
 
 Current known areas:
 
-- prop-attached bullet impacts use the safe shade-only path by default;
+- transparent room/model glass now renders through the native secondary-alpha
+  and prop-material paths, and glass bullet impacts use a surface-aligned crack
+  path so edge-on panes do not swallow the decal. The Dam guard-tower probe in
+  [docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md) is the regression hook;
+- prop-attached bullet impacts outside glass still use the safe shade-only path
+  by default;
 - room/portal visibility culling is live on the native path: the `NATIVE_PORT`
   portal-BFS room-visibility walk runs by default (`GE007_PORTAL_BFS=0` is only a
   fall-back-to-frustum-all escape hatch). The per-room N64 projected scissor boxes
