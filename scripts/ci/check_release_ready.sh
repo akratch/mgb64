@@ -131,6 +131,8 @@ for f in \
   .gitignore \
   .editorconfig \
   .clang-format \
+  .githooks/pre-commit \
+  .githooks/pre-push \
   CMakeLists.txt \
   Makefile; do
   if [ ! -s "$f" ]; then
@@ -370,6 +372,7 @@ echo
 echo "== Release helper scripts =="
 for f in \
   scripts/release_preflight.sh \
+  scripts/install_git_hooks.sh \
   scripts/ci/check_high_risk_ignored_artifacts.sh \
   scripts/ci/check_public_history_text.sh \
   scripts/make_public_source_archive.sh \

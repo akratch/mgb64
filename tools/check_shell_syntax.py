@@ -31,20 +31,34 @@ def git_root() -> Path:
         return Path.cwd().resolve()
 
 
+def is_shell_script(root: Path, path: str) -> bool:
+    if path.endswith(".sh"):
+        return True
+    try:
+        first_line = (root / path).read_text(encoding="utf-8", errors="replace").splitlines()[0]
+    except (IndexError, OSError):
+        return False
+    return first_line.startswith("#!") and any(
+        shell in first_line for shell in ("/sh", "/bash", "env sh", "env bash")
+    )
+
+
 def tracked_shell_scripts(root: Path) -> list[str]:
     try:
         out = subprocess.check_output(
-            ["git", "ls-files", "*.sh"],
+            ["git", "ls-files"],
             cwd=root,
             stderr=subprocess.DEVNULL,
             text=True,
         )
-        return sorted(line for line in out.splitlines() if line)
+        return sorted(line for line in out.splitlines() if line and is_shell_script(root, line))
     except (OSError, subprocess.CalledProcessError):
         skipped_dirs = {".git", "build", "dist", "__pycache__"}
         return sorted(
             str(path.relative_to(root))
-            for path in root.rglob("*.sh")
+            for path in root.rglob("*")
+            if path.is_file()
+            if is_shell_script(root, str(path.relative_to(root)))
             if not any(part in skipped_dirs or part.startswith("build-") for part in path.parts)
         )
 
