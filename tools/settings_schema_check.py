@@ -14,6 +14,8 @@ from pathlib import Path
 EXPECTED_DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
+    "Video.WindowX": "-1",
+    "Video.WindowY": "-1",
     "Video.Display": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
@@ -29,6 +31,8 @@ CUSTOM_CONFIG = """\
 [Video]
 WindowWidth=1024
 WindowHeight=768
+WindowX=10
+WindowY=20
 Display=1
 WindowMode=exclusive
 VSync=off
@@ -145,6 +149,8 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1024",
                 "Video.WindowHeight": "768",
+                "Video.WindowX": "10",
+                "Video.WindowY": "20",
                 "Video.Display": "1",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",

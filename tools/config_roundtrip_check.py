@@ -13,6 +13,8 @@ from pathlib import Path
 DEFAULTS = {
     "Video.WindowWidth": "1440",
     "Video.WindowHeight": "810",
+    "Video.WindowX": "-1",
+    "Video.WindowY": "-1",
     "Video.Display": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
@@ -29,6 +31,8 @@ SEED_CONFIG = """\
 [Video]
 WindowWidth=1024
 WindowHeight=768
+WindowX=-1
+WindowY=-1
 Display=0
 WindowMode=windowed
 VSync=adaptive
@@ -149,6 +153,8 @@ def main() -> int:
                 "--dump-config",
                 env_extra={
                     "GE007_WINDOW_WIDTH": "1333",
+                    "GE007_WINDOW_X": "11",
+                    "GE007_WINDOW_Y": "22",
                     "GE007_DISPLAY": "1",
                     "GE007_WINDOW_MODE": "borderless",
                     "GE007_VSYNC": "on",
@@ -159,6 +165,8 @@ def main() -> int:
             env_dump,
             {
                 "Video.WindowWidth": "1333",
+                "Video.WindowX": "11",
+                "Video.WindowY": "22",
                 "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "on",
@@ -167,7 +175,14 @@ def main() -> int:
         )
         assert_file_contains(
             config_path,
-            ["WindowWidth=1024", "Display=0", "WindowMode=windowed", "VSync=adaptive"],
+            [
+                "WindowWidth=1024",
+                "WindowX=-1",
+                "WindowY=-1",
+                "Display=0",
+                "WindowMode=windowed",
+                "VSync=adaptive",
+            ],
             "env override is not persisted",
         )
 
@@ -177,6 +192,10 @@ def main() -> int:
                 savedir,
                 "--config-override",
                 "Video.WindowHeight=720",
+                "--config-override",
+                "Video.WindowX=33",
+                "--config-override",
+                "Video.WindowY=44",
                 "--config-override",
                 "Video.Display=2",
                 "--config-override",
@@ -190,6 +209,8 @@ def main() -> int:
             cli_dump,
             {
                 "Video.WindowHeight": "720",
+                "Video.WindowX": "33",
+                "Video.WindowY": "44",
                 "Video.Display": "2",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",
@@ -198,7 +219,14 @@ def main() -> int:
         )
         assert_file_contains(
             config_path,
-            ["WindowHeight=768", "Display=0", "WindowMode=windowed", "VSync=adaptive"],
+            [
+                "WindowHeight=768",
+                "WindowX=-1",
+                "WindowY=-1",
+                "Display=0",
+                "WindowMode=windowed",
+                "VSync=adaptive",
+            ],
             "cli override is not persisted",
         )
 
@@ -224,6 +252,10 @@ def main() -> int:
             "--config-set",
             "Video.WindowWidth=1280",
             "--config-set",
+            "Video.WindowX=50",
+            "--config-set",
+            "Video.WindowY=60",
+            "--config-set",
             "Video.Display=1",
             "--config-set",
             "Video.WindowMode=borderless",
@@ -236,6 +268,12 @@ def main() -> int:
             [
                 "# Window width",
                 "# type=int scope=restart default=1440 range=320..3840",
+                "# Window X",
+                "# type=int scope=restart default=-1 range=-1..32767",
+                "WindowX=50",
+                "# Window Y",
+                "# type=int scope=restart default=-1 range=-1..32767",
+                "WindowY=60",
                 "# Display",
                 "# type=int scope=restart default=0 range=0..31",
                 "Display=1",
@@ -261,6 +299,8 @@ def main() -> int:
             {
                 "Video.WindowWidth": "1280",
                 "Video.WindowHeight": "768",
+                "Video.WindowX": "50",
+                "Video.WindowY": "60",
                 "Video.Display": "1",
                 "Video.WindowMode": "borderless",
                 "Video.VSync": "off",

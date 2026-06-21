@@ -187,6 +187,8 @@ static const ConfigEnumOption k_vsyncOptions[] = {
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
 static s32 g_cfgWindowH = 810;
+static s32 g_cfgWindowX = -1;
+static s32 g_cfgWindowY = -1;
 static s32 g_cfgDisplayIndex = 0;
 
 /* ===== Screenshot support ===== */
@@ -992,18 +994,111 @@ static int platformConfiguredDisplayIndex(void)
     return (int)g_cfgDisplayIndex;
 }
 
+static int platformGetDisplayBounds(int display_index, SDL_Rect *bounds)
+{
+    if (!bounds) {
+        return 0;
+    }
+    if (SDL_GetDisplayUsableBounds(display_index, bounds) == 0) {
+        return 1;
+    }
+    return SDL_GetDisplayBounds(display_index, bounds) == 0;
+}
+
+static int platformClampIntToRange(int value, int min_value, int max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void platformGetConfiguredWindowPosition(int *x_out, int *y_out)
+{
+    int display_index = platformConfiguredDisplayIndex();
+
+    if (g_cfgWindowX < 0 || g_cfgWindowY < 0) {
+        int centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(display_index);
+        if (x_out) {
+            *x_out = centered_pos;
+        }
+        if (y_out) {
+            *y_out = centered_pos;
+        }
+        return;
+    }
+
+    SDL_Rect bounds;
+    if (platformGetDisplayBounds(display_index, &bounds)) {
+        int max_rel_x = bounds.w > g_cfgWindowW ? bounds.w - g_cfgWindowW : 0;
+        int max_rel_y = bounds.h > g_cfgWindowH ? bounds.h - g_cfgWindowH : 0;
+        int rel_x = platformClampIntToRange(g_cfgWindowX, 0, max_rel_x);
+        int rel_y = platformClampIntToRange(g_cfgWindowY, 0, max_rel_y);
+
+        if (x_out) {
+            *x_out = bounds.x + rel_x;
+        }
+        if (y_out) {
+            *y_out = bounds.y + rel_y;
+        }
+        return;
+    }
+
+    if (x_out) {
+        *x_out = g_cfgWindowX;
+    }
+    if (y_out) {
+        *y_out = g_cfgWindowY;
+    }
+}
+
+static void platformRememberWindowGeometry(void)
+{
+    int x;
+    int y;
+    int w;
+    int h;
+    int display_index;
+    SDL_Rect bounds;
+
+    if (!g_sdlWindow || g_windowMode != PLATFORM_WINDOW_MODE_WINDOWED) {
+        return;
+    }
+
+    SDL_GetWindowPosition(g_sdlWindow, &x, &y);
+    SDL_GetWindowSize(g_sdlWindow, &w, &h);
+    display_index = SDL_GetWindowDisplayIndex(g_sdlWindow);
+    if (display_index < 0) {
+        display_index = platformConfiguredDisplayIndex();
+    }
+
+    g_cfgWindowW = w;
+    g_cfgWindowH = h;
+    g_cfgDisplayIndex = display_index;
+
+    if (platformGetDisplayBounds(display_index, &bounds)) {
+        g_cfgWindowX = x - bounds.x;
+        g_cfgWindowY = y - bounds.y;
+    } else {
+        g_cfgWindowX = x;
+        g_cfgWindowY = y;
+    }
+}
+
 static void platformMoveWindowToConfiguredDisplay(void)
 {
-    int display_index;
-    int centered_pos;
+    int x;
+    int y;
 
     if (!g_sdlWindow) {
         return;
     }
 
-    display_index = platformConfiguredDisplayIndex();
-    centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(display_index);
-    SDL_SetWindowPosition(g_sdlWindow, centered_pos, centered_pos);
+    platformGetConfiguredWindowPosition(&x, &y);
+    SDL_SetWindowPosition(g_sdlWindow, x, y);
 }
 
 static void platformApplyWindowMode(void)
@@ -1062,6 +1157,16 @@ void platformRegisterConfig(void)
                         "--config-override Video.WindowHeight=VALUE",
                         "Window height",
                         "Initial SDL window height in pixels.");
+    settingsRegisterInt("Video.WindowX", &g_cfgWindowX, -1, -1, 32767,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_X",
+                        "--config-override Video.WindowX=VALUE",
+                        "Window X",
+                        "Window X position relative to the selected display; -1 centers it.");
+    settingsRegisterInt("Video.WindowY", &g_cfgWindowY, -1, -1, 32767,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_Y",
+                        "--config-override Video.WindowY=VALUE",
+                        "Window Y",
+                        "Window Y position relative to the selected display; -1 centers it.");
     settingsRegisterInt("Video.Display", &g_cfgDisplayIndex, 0, 0, 31,
                         SETTING_SCOPE_RESTART, "GE007_DISPLAY",
                         "--config-override Video.Display=VALUE",
@@ -1272,7 +1377,8 @@ int platformInitSDL(void) {
 
     {
         int disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
-        int centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(platformConfiguredDisplayIndex());
+        int window_x;
+        int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 
         if (!disable_highdpi) {
@@ -1285,9 +1391,10 @@ int platformInitSDL(void) {
             window_flags |= SDL_WINDOW_SHOWN;
         }
 
+        platformGetConfiguredWindowPosition(&window_x, &window_y);
         g_sdlWindow = SDL_CreateWindow(
         "MGB64",
-        centered_pos, centered_pos,
+        window_x, window_y,
         g_cfgWindowW, g_cfgWindowH,
         window_flags
         );
@@ -1377,6 +1484,9 @@ void platformPollEvents(void) {
                     SDL_GL_SetSwapInterval(0);
                 } else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                     gfx_set_window_size(event.window.data1, event.window.data2);
+                    platformRememberWindowGeometry();
+                } else if (event.window.event == SDL_WINDOWEVENT_MOVED) {
+                    platformRememberWindowGeometry();
                 }
                 break;
             case SDL_KEYDOWN:
@@ -1625,6 +1735,7 @@ void platformFrameSync(void) {
  */
 void platformShutdownSDL(void) {
     /* Save config on clean shutdown */
+    platformRememberWindowGeometry();
     configSave();
     /* NOTE: portTraceShutdown() is NOT called here. DL buffer overruns
      * can corrupt static FILE pointers in port_trace.c, causing fclose()
