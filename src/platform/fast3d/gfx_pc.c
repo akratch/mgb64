@@ -2681,6 +2681,21 @@ static inline void gfx_loaded_texture_clear_decode_footprint(typeof(rdp.loaded_t
     loaded_texture->decode_line_size_bytes = 0;
 }
 
+static inline void gfx_loaded_texture_set_strided_decode_footprint(
+    typeof(rdp.loaded_texture[0]) *loaded_texture,
+    uint32_t line_size_bytes,
+    uint32_t full_image_line_size_bytes,
+    uint32_t height)
+{
+    if (full_image_line_size_bytes < line_size_bytes) {
+        full_image_line_size_bytes = line_size_bytes;
+    }
+
+    loaded_texture->decode_line_size_bytes = line_size_bytes;
+    loaded_texture->decode_full_image_line_size_bytes = full_image_line_size_bytes;
+    loaded_texture->decode_size_bytes = line_size_bytes * height;
+}
+
 static inline void gfx_loaded_texture_set_decode_footprint(typeof(rdp.loaded_texture[0]) *loaded_texture,
                                                            uint32_t line_size_bytes,
                                                            uint32_t height)
@@ -2696,9 +2711,11 @@ static inline void gfx_loaded_texture_set_decode_footprint(typeof(rdp.loaded_tex
         full_image_line_size_bytes = loaded_texture->full_image_line_size_bytes;
     }
 
-    loaded_texture->decode_line_size_bytes = line_size_bytes;
-    loaded_texture->decode_full_image_line_size_bytes = full_image_line_size_bytes;
-    loaded_texture->decode_size_bytes = line_size_bytes * height;
+    gfx_loaded_texture_set_strided_decode_footprint(
+        loaded_texture,
+        line_size_bytes,
+        full_image_line_size_bytes,
+        height);
 }
 
 static inline bool gfx_loaded_texture_decode_footprint_is_plausible(
@@ -2756,11 +2773,19 @@ static inline bool gfx_tile_has_live_texture(uint8_t tile_desc)
            gfx_loaded_texture_decode_footprint_is_plausible(loaded_texture);
 }
 
+extern volatile uintptr_t g_diag_current_cmd_addr;
+static bool gfx_diag_room_cmd_offset(uintptr_t addr,
+                                     int *room_out,
+                                     const char **which,
+                                     uintptr_t *base_out,
+                                     uintptr_t *offset_out);
+
 static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc)
 {
     if (!settex_active ||
         g_texrect_uv_mode ||
-        g_current_draw_class != DRAWCLASS_ROOM ||
+        !gfx_diag_room_cmd_offset((uintptr_t)g_diag_current_cmd_addr,
+                                  NULL, NULL, NULL, NULL) ||
         tile_desc >= 8) {
         return false;
     }
@@ -2876,6 +2901,149 @@ static inline uint32_t gfx_clamp_extent_from_tile_delta(uint16_t lo,
     }
 
     return (((uint32_t)hi - (uint32_t)lo) + 4U) / 4U;
+}
+
+static inline bool gfx_shader_clamp_mode_needs_shader(uint8_t cm,
+                                                      uint32_t logical_size,
+                                                      uint32_t texture_size)
+{
+    if ((cm & G_TX_CLAMP) == 0) {
+        return false;
+    }
+
+    if ((cm & G_TX_MIRROR) != 0) {
+        return true;
+    }
+
+    if (logical_size == 0 || texture_size == 0) {
+        return false;
+    }
+
+    return logical_size != texture_size;
+}
+
+static bool gfx_loaded_tile_texture_dimensions(uint8_t tile_desc,
+                                               uint32_t *out_width,
+                                               uint32_t *out_height)
+{
+    if (tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    const typeof(rdp.loaded_texture[0]) *loaded_texture =
+        gfx_loaded_texture_for_tile(tile_desc);
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (g_texrect_uv_mode && tile->width != 0 && tile->height != 0) {
+        width = tile->width;
+        height = tile->height;
+    } else if (loaded_texture != NULL &&
+               gfx_loaded_texture_decode_line_size_bytes(loaded_texture) != 0) {
+        uint32_t decode_line_size_bytes =
+            gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
+        uint32_t decode_size_bytes =
+            gfx_loaded_texture_decode_size_bytes(loaded_texture);
+
+        width = gfx_texture_width_texels_from_line(decode_line_size_bytes,
+                                                   tile->siz);
+        height = decode_line_size_bytes != 0
+            ? decode_size_bytes / decode_line_size_bytes
+            : 0;
+    }
+
+    if (width == 0) {
+        width = tile->width != 0
+            ? tile->width
+            : gfx_clamp_extent_from_tile_delta(tile->uls, tile->lrs);
+    }
+    if (height == 0) {
+        height = tile->height != 0
+            ? tile->height
+            : gfx_clamp_extent_from_tile_delta(tile->ult, tile->lrt);
+    }
+
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (out_width != NULL) {
+        *out_width = width;
+    }
+    if (out_height != NULL) {
+        *out_height = height;
+    }
+
+    return true;
+}
+
+static bool gfx_shader_clamp_needed_for_loaded_tile(uint8_t tile_desc,
+                                                    int axis,
+                                                    bool force_clamp)
+{
+    if (tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    uint32_t tex_width;
+    uint32_t tex_height;
+    uint32_t logical_size;
+    uint32_t texture_size;
+    uint8_t cm;
+
+    if (!gfx_loaded_tile_texture_dimensions(tile_desc, &tex_width, &tex_height)) {
+        return false;
+    }
+
+    if (axis == 0) {
+        cm = force_clamp ? G_TX_CLAMP : tile->cms;
+        logical_size = tile->width != 0
+            ? tile->width
+            : gfx_clamp_extent_from_tile_delta(tile->uls, tile->lrs);
+        texture_size = tex_width;
+    } else {
+        cm = force_clamp ? G_TX_CLAMP : tile->cmt;
+        logical_size = tile->height != 0
+            ? tile->height
+            : gfx_clamp_extent_from_tile_delta(tile->ult, tile->lrt);
+        texture_size = tex_height;
+    }
+
+    return gfx_shader_clamp_mode_needs_shader(cm, logical_size, texture_size);
+}
+
+static bool gfx_shader_clamp_needed_for_settex(uint8_t tex_tile_base,
+                                               int unit,
+                                               int axis,
+                                               const struct SetTexTileState *tile_state)
+{
+    if (tile_state == NULL || !tile_state->valid) {
+        return false;
+    }
+
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+        uint8_t cm = axis == 0 ? tile_state->cms : tile_state->cmt;
+        return (cm & G_TX_CLAMP) != 0;
+    }
+
+    if (axis == 0) {
+        return gfx_shader_clamp_mode_needs_shader(
+            tile_state->cms,
+            tile_state->width,
+            (uint32_t)(settex_tex_w + 0.5f));
+    }
+
+    return gfx_shader_clamp_mode_needs_shader(
+        tile_state->cmt,
+        tile_state->height,
+        (uint32_t)(settex_tex_h + 0.5f));
 }
 
 static inline bool gfx_shader_clamp_enabled(uint32_t cc_options,
@@ -10150,28 +10318,44 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
         struct SetTexTileState settex_tile0;
         if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
-            if (settex_tile0.cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            if (settex_tile0.cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 0, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 1, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         } else if (td0 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td0);
             bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (is_font_texture || (rdp.texture_tile[td0].cms & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            if (is_font_texture || (rdp.texture_tile[td0].cmt & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[0])
                 cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         }
         uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
         struct SetTexTileState settex_tile1;
         if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
-            if (settex_tile1.cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            if (settex_tile1.cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 0, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 1, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         } else if (td1 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td1);
             bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (is_font_texture || (rdp.texture_tile[td1].cms & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            if (is_font_texture || (rdp.texture_tile[td1].cmt & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[1])
                 cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         }
@@ -11870,11 +12054,33 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
         {
             typeof(rdp.loaded_texture[0]) *loaded_texture =
                 gfx_loaded_texture_for_tile(tile);
+            bool has_strided_loadblock_footprint = false;
 
             decode_line_size_bytes = tile_rect_line_size_bytes;
             decode_height = height;
 
-            if (rdp.tex_lod && rdp.tex_max_lod > 0 &&
+            if (!(rdp.tex_lod && rdp.tex_max_lod > 0) &&
+                loaded_texture->size_bytes != 0 &&
+                loaded_texture->full_size_bytes == loaded_texture->orig_size_bytes &&
+                height != 0 &&
+                (loaded_texture->size_bytes % height) == 0) {
+                uint32_t source_line_size_bytes = loaded_texture->size_bytes / height;
+
+                if (source_line_size_bytes >= tile_rect_line_size_bytes) {
+                    /* Rare's LOADBLOCK helpers store rows padded for TMEM, then
+                     * G_SETTILESIZE describes the visible rectangle. Decode only
+                     * the visible row while retaining the padded source pitch. */
+                    gfx_loaded_texture_set_strided_decode_footprint(
+                        loaded_texture,
+                        tile_rect_line_size_bytes,
+                        source_line_size_bytes,
+                        height);
+                    has_strided_loadblock_footprint = true;
+                }
+            }
+
+            if (!has_strided_loadblock_footprint &&
+                rdp.tex_lod && rdp.tex_max_lod > 0 &&
                 loaded_texture->size_bytes != 0 &&
                 render_line_size_bytes >= tile_rect_line_size_bytes &&
                 render_line_size_bytes <= loaded_texture->size_bytes &&
@@ -11893,10 +12099,12 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                 decode_height = loaded_texture->size_bytes / render_line_size_bytes;
             }
 
-            gfx_loaded_texture_set_decode_footprint(
-                loaded_texture,
-                decode_line_size_bytes,
-                decode_height);
+            if (!has_strided_loadblock_footprint) {
+                gfx_loaded_texture_set_decode_footprint(
+                    loaded_texture,
+                    decode_line_size_bytes,
+                    decode_height);
+            }
         }
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;
