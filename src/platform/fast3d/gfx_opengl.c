@@ -22,6 +22,7 @@
 #else
 #include <glad/glad.h>
 #endif
+#include <SDL.h>
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
@@ -33,6 +34,7 @@
 /* Verbose diagnostic flag from gfx_pc.c */
 extern int g_diag_verbose;
 extern float g_pcVideoGamma;
+extern float g_pcRenderScale;
 extern int g_pcRetroFilterMode;
 
 #define PC_RETRO_FILTER_AUTO 0
@@ -964,6 +966,72 @@ static int g_output_filter_logical_h;
 static int g_diag_output_filter_color_checked;
 static float g_diag_output_filter_color_scale = 1.0f;
 static float g_diag_output_filter_color_bias;
+static GLuint g_scene_fbo;
+static GLuint g_scene_color_tex;
+static GLuint g_scene_depth_rb;
+static int g_scene_w;
+static int g_scene_h;
+static bool g_scene_target_bound;
+
+static bool gfx_opengl_scene_target_enabled(void) {
+    return g_pcRenderScale < 0.999f || g_pcRenderScale > 1.001f;
+}
+
+static bool gfx_opengl_ensure_scene_target(int width, int height) {
+    GLenum status;
+
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    if (g_scene_fbo == 0) {
+        glGenFramebuffers(1, &g_scene_fbo);
+    }
+    if (g_scene_color_tex == 0) {
+        glGenTextures(1, &g_scene_color_tex);
+    }
+    if (g_scene_depth_rb == 0) {
+        glGenRenderbuffers(1, &g_scene_depth_rb);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, g_scene_color_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+
+    if (g_scene_w != width || g_scene_h != height) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth_rb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        g_scene_w = width;
+        g_scene_h = height;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           g_scene_color_tex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                              g_scene_depth_rb);
+    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        static int warned;
+
+        if (!warned) {
+            fprintf(stderr,
+                    "[fast3d] Scene render target incomplete: 0x%04X\n",
+                    (unsigned int)status);
+            fflush(stderr);
+            warned = 1;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return false;
+    }
+
+    return true;
+}
 
 static bool gfx_opengl_diag_output_vi_filter(void) {
     if (!g_diag_output_vi_filter_checked) {
@@ -1475,10 +1543,16 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     int filter_source_h;
     bool use_vi_filter;
     bool use_color_adjust;
+    extern SDL_Window *g_sdlWindow;
+    int drawable_w = 0;
+    int drawable_h = 0;
 
     glGetIntegerv(GL_VIEWPORT, viewport);
-    width = gfx_current_dimensions.width > 0 ? (int)gfx_current_dimensions.width : viewport[2];
-    height = gfx_current_dimensions.height > 0 ? (int)gfx_current_dimensions.height : viewport[3];
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &drawable_w, &drawable_h);
+    }
+    width = drawable_w > 0 ? drawable_w : viewport[2];
+    height = drawable_h > 0 ? drawable_h : viewport[3];
     gfx_opengl_check_output_filter_color_diag();
     use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
     use_color_adjust = gfx_opengl_output_color_adjust_active();
@@ -1704,6 +1778,8 @@ static void gfx_opengl_init(void) {
 }
 
 static void gfx_opengl_on_resize(void) {
+    g_scene_w = 0;
+    g_scene_h = 0;
 }
 
 static float g_clear_r = 0, g_clear_g = 0, g_clear_b = 0;
@@ -1716,6 +1792,17 @@ static int wireframe_checked = 0, wireframe_on = 0;
 
 static void gfx_opengl_start_frame(void) {
     frame_count++;
+    g_scene_target_bound = false;
+
+    if (gfx_opengl_scene_target_enabled() &&
+        gfx_opengl_ensure_scene_target((int)gfx_current_dimensions.width,
+                                       (int)gfx_current_dimensions.height)) {
+        g_scene_target_bound = true;
+        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+        glViewport(0, 0, g_scene_w, g_scene_h);
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 
     if (!wireframe_checked) {
         wireframe_on = (getenv("GE007_WIREFRAME") != NULL);
@@ -1732,7 +1819,36 @@ static void gfx_opengl_start_frame(void) {
     glEnable(GL_SCISSOR_TEST);
 }
 
+static void gfx_opengl_resolve_scene_target(void) {
+    extern SDL_Window *g_sdlWindow;
+    int drawable_w = 0;
+    int drawable_h = 0;
+
+    if (!g_scene_target_bound || g_scene_fbo == 0) {
+        return;
+    }
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &drawable_w, &drawable_h);
+    }
+    if (drawable_w <= 0 || drawable_h <= 0) {
+        drawable_w = g_scene_w;
+        drawable_h = g_scene_h;
+    }
+
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                      0, 0, drawable_w, drawable_h,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, drawable_w, drawable_h);
+    g_scene_target_bound = false;
+}
+
 static void gfx_opengl_end_frame(void) {
+    gfx_opengl_resolve_scene_target();
     gfx_opengl_apply_output_vi_filter();
 }
 

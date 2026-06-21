@@ -2816,6 +2816,24 @@ static void gfx_invalidate_evicted_texture_node(struct TextureHashmapNode *victi
 }
 
 struct GfxDimensions gfx_current_dimensions;
+extern float g_pcRenderScale;
+
+static float gfx_clamped_render_scale(void) {
+    if (g_pcRenderScale < 0.5f) {
+        return 0.5f;
+    }
+    if (g_pcRenderScale > 2.0f) {
+        return 2.0f;
+    }
+    return g_pcRenderScale;
+}
+
+static int gfx_scaled_dimension(int value) {
+    float scaled = (float)value * gfx_clamped_render_scale();
+    int rounded = (int)(scaled + 0.5f);
+
+    return rounded > 0 ? rounded : 1;
+}
 
 static float buf_vbo[MAX_BUFFERED * (40 * 3)]; /* 40 = 4 pos + 2 tex + 4 fog + 7*4 inputs + 2 headroom */
 static size_t buf_vbo_len;
@@ -14346,9 +14364,10 @@ void gfx_run_dl(Gfx *dl) {
     extern SDL_Window *g_sdlWindow;
     int w, h;
     SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
-    gfx_current_dimensions.width = w;
-    gfx_current_dimensions.height = h > 0 ? h : 1;
-    gfx_current_dimensions.aspect_ratio = (float)w / (float)gfx_current_dimensions.height;
+    gfx_current_dimensions.width = gfx_scaled_dimension(w);
+    gfx_current_dimensions.height = gfx_scaled_dimension(h > 0 ? h : 1);
+    gfx_current_dimensions.aspect_ratio =
+        (float)gfx_current_dimensions.width / (float)gfx_current_dimensions.height;
 
     g_tri_count_diag = 0;
     g_sky_tri_count_diag = 0;

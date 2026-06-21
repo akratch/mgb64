@@ -228,8 +228,8 @@ between temp write and rename.
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| Scene render target | M | ⬜ | Bind an offscreen color+depth FBO at frame start sized `RenderScale × drawable`; wire the no-op `gfx_opengl_on_resize` (`gfx_opengl.c:1662`) and the legacy no-op `gfx_set_window_size` (`fast3d/gfx_pc.c:14929-14934`) to invalidate/reallocate targets. Split-screen viewports/scissor are in framebuffer pixels, so they scale uniformly — low MP risk. |
-| `Video.RenderScale = 0.5…2.0` | S | ⬜ | SSAA above 1.0; perf headroom below. Resolve through the existing output-filter blit (`gfx_opengl.c:1437`). |
+| Scene render target | M | ✅ | Binds an offscreen color+depth FBO at frame start when render scale differs from 1.0, resolves to the window before output post-processing, and invalidates on resize. |
+| `Video.RenderScale = 0.5…2.0` | S | ✅ | Schema-backed render scale; Fast3D viewport/scissor math uses the scaled scene dimensions, then blits back to the drawable. |
 | `Video.MSAA = 0\|2\|4\|8` | S | ⬜ | Multisampled scene target; resolve on present. High impact on N64's hard aliased edges. |
 | `Video.Gamma` | S | ✅ | Added a schema-backed gamma uniform to the output-filter shader; gamma 1.0 keeps the old no-op path, non-default gamma runs the full-resolution post pass. |
 | `Video.RetroFilter` | S | ✅ | Exposes the existing VI filter as `auto|off|on`; `auto` preserves menu softening and opt-in gameplay behavior, `on` enables gameplay softening too. |

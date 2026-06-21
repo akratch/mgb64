@@ -155,6 +155,7 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
+f32 g_pcRenderScale = 1.0f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1239,6 +1240,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.Gamma=VALUE",
                           "Gamma",
                           "Output gamma correction. 1.0 leaves colors unchanged.");
+    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 0.5f, 2.0f,
+                          SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
+                          "--config-override Video.RenderScale=VALUE",
+                          "Render scale",
+                          "Scene framebuffer scale. 1.0 matches the window.");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),

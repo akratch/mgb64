@@ -20,6 +20,7 @@ DEFAULTS = {
     "Video.VSync": "adaptive",
     "Video.FrameCap": "60",
     "Video.Gamma": "1",
+    "Video.RenderScale": "1",
     "Video.RetroFilter": "auto",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
@@ -41,6 +42,7 @@ WindowMode=windowed
 VSync=adaptive
 FrameCap=60
 Gamma=1
+RenderScale=1
 RetroFilter=auto
 FutureVideo=keep-me
 
@@ -166,6 +168,7 @@ def main() -> int:
                     "GE007_VSYNC": "on",
                     "GE007_FRAME_CAP": "30",
                     "GE007_GAMMA": "1.2",
+                    "GE007_RENDER_SCALE": "1.5",
                     "GE007_RETRO_FILTER": "on",
                 },
             )
@@ -181,6 +184,7 @@ def main() -> int:
                 "Video.VSync": "on",
                 "Video.FrameCap": "30",
                 "Video.Gamma": "1.2",
+                "Video.RenderScale": "1.5",
                 "Video.RetroFilter": "on",
             },
             "env override dump",
@@ -196,6 +200,7 @@ def main() -> int:
                 "VSync=adaptive",
                 "FrameCap=60",
                 "Gamma=1",
+                "RenderScale=1",
                 "RetroFilter=auto",
             ],
             "env override is not persisted",
@@ -222,6 +227,8 @@ def main() -> int:
                 "--config-override",
                 "Video.Gamma=1.3",
                 "--config-override",
+                "Video.RenderScale=0.75",
+                "--config-override",
                 "Video.RetroFilter=off",
                 "--dump-config",
             )
@@ -237,6 +244,7 @@ def main() -> int:
                 "Video.VSync": "off",
                 "Video.FrameCap": "display",
                 "Video.Gamma": "1.3",
+                "Video.RenderScale": "0.75",
                 "Video.RetroFilter": "off",
             },
             "cli override dump",
@@ -252,6 +260,7 @@ def main() -> int:
                 "VSync=adaptive",
                 "FrameCap=60",
                 "Gamma=1",
+                "RenderScale=1",
                 "RetroFilter=auto",
             ],
             "cli override is not persisted",
@@ -293,6 +302,8 @@ def main() -> int:
             "--config-set",
             "Video.Gamma=1.4",
             "--config-set",
+            "Video.RenderScale=2",
+            "--config-set",
             "Video.RetroFilter=on",
         )
         assert_no_tmp(savedir)
@@ -322,6 +333,9 @@ def main() -> int:
                 "# Gamma",
                 "# type=float scope=live default=1 range=0.5..2.5",
                 "Gamma=1.4",
+                "# Render scale",
+                "# type=float scope=restart default=1 range=0.5..2",
+                "RenderScale=2",
                 "# Retro filter",
                 "# type=enum scope=live default=auto range=auto|off|on",
                 "RetroFilter=on",
@@ -348,6 +362,7 @@ def main() -> int:
                 "Video.VSync": "off",
                 "Video.FrameCap": "30",
                 "Video.Gamma": "1.4",
+                "Video.RenderScale": "2",
                 "Video.RetroFilter": "on",
                 "Input.MouseSensitivity": "0.25",
                 "Input.InvertY": "1",
