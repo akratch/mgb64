@@ -124,16 +124,48 @@ static int portUseFlatBulletImpacts(PropRecord *prop)
     return 0;
 }
 
-static float portBulletImpactNormalOffset(void)
+static float portClampBulletImpactNormalOffset(float value)
+{
+    if (value < 0.0f) {
+        return 0.0f;
+    }
+
+    return value > 20.0f ? 20.0f : value;
+}
+
+static float portGlobalBulletImpactNormalOffset(int *is_set)
 {
     static int initialized = 0;
+    static int has_value = 0;
     static float value = 0.0f;
 
     if (!initialized) {
         const char *env = getenv("GE007_BULLET_IMPACT_NORMAL_OFFSET");
         if (env && *env) {
+            value = portClampBulletImpactNormalOffset(strtof(env, NULL));
+            has_value = 1;
+        }
+        initialized = 1;
+    }
+
+    if (is_set != NULL) {
+        *is_set = has_value;
+    }
+
+    return value;
+}
+
+static float portGlassBulletImpactNormalOffset(void)
+{
+    static int initialized = 0;
+    static float value = 2.0f;
+
+    if (!initialized) {
+        const char *env = getenv("GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET");
+        if (env && *env) {
             value = strtof(env, NULL);
         }
+        value = portClampBulletImpactNormalOffset(value);
         initialized = 1;
     }
 
@@ -153,6 +185,22 @@ static s32 portPropIsGlassLike(PropRecord *prop)
 static s32 portImpactIsGlassCrack(s32 impact_type)
 {
     return impact_type >= 0x11 && impact_type <= 0x13;
+}
+
+static float portBulletImpactNormalOffset(PropRecord *prop, s32 impact_type)
+{
+    int has_global_offset = 0;
+    float global_offset = portGlobalBulletImpactNormalOffset(&has_global_offset);
+
+    if (has_global_offset) {
+        return global_offset;
+    }
+
+    if (portPropIsGlassLike(prop) && portImpactIsGlassCrack(impact_type)) {
+        return portGlassBulletImpactNormalOffset();
+    }
+
+    return 0.0f;
 }
 
 static f32 portGlassImpactAxisBoost(const coord3d *axis_view, f32 axis_len)
@@ -3145,7 +3193,6 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
         return;
     }
 
-    decal_lift = portBulletImpactNormalOffset();
 #endif
 
     spE0 = g_BulletImpactDefaultVertex;
@@ -3154,6 +3201,10 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
     {
         impact_type = 0x10;
     }
+
+#ifdef NATIVE_PORT
+    decal_lift = portBulletImpactNormalOffset(prop, impact_type);
+#endif
 
     spA0.f[0] = pos->f[0];
     spA0.f[1] = pos->f[1];
@@ -3202,9 +3253,10 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
 #ifdef NATIVE_PORT
     if (decal_lift != 0.0f
         && ((arg1->f[0] != 0.0f) || (arg1->f[1] != 0.0f) || (arg1->f[2] != 0.0f))) {
-        /* The original stores coplanar impact quads. Keep any PC depth-bias
-         * workaround explicit through GE007_BULLET_IMPACT_NORMAL_OFFSET so
-         * normal gameplay does not show decals floating off the hit surface. */
+        /* The original stores coplanar impact quads. On PC, glass crack
+         * decals need a small normal lift to survive depth testing against
+         * transparent panes; GE007_BULLET_IMPACT_NORMAL_OFFSET remains a
+         * global diagnostic override. */
         spA0.f[0] += spDC * decal_lift;
         spA0.f[1] += spD8 * decal_lift;
         spA0.f[2] += spD4 * decal_lift;
@@ -3671,5 +3723,10 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
 
 Gfx * explosionCallRenderBulletImpactOnProp(Gfx *arg0)
 {
+#ifdef NATIVE_PORT
+    arg0 = explosionRenderBulletImpactOnProp(arg0, NULL, 0);
+    return explosionRenderBulletImpactOnProp(arg0, NULL, 1);
+#else
     return explosionRenderBulletImpactOnProp(arg0, NULL, 0);
+#endif
 }

@@ -120,6 +120,16 @@ static s32 chrpropNativeShouldRenderViewerModel(void)
             return FALSE;
     }
 }
+
+static s32 chrpropNativePropIsGlassLike(const PropRecord *prop)
+{
+    if (prop == NULL || prop->obj == NULL) {
+        return 0;
+    }
+
+    return prop->obj->type == PROPDEF_GLASS ||
+           prop->obj->type == PROPDEF_TINTED_GLASS;
+}
 #endif /* NATIVE_PORT */
 
 // bss
@@ -2568,6 +2578,8 @@ void chraiDefaultWeaponFireHandler(s32 hand) {
     u8 hit_type_byte;
 #ifdef NATIVE_PORT
     s32 trace_shot_id;
+    s32 glass_prop_hit_for_world;
+    s32 world_impact_hit_sound;
 #endif
 
     hit_bg = 0;
@@ -2579,6 +2591,8 @@ void chraiDefaultWeaponFireHandler(s32 hand) {
     neg_z = 0.0f;
 #ifdef NATIVE_PORT
     trace_shot_id = -1;
+    glass_prop_hit_for_world = 0;
+    world_impact_hit_sound = HIT_DEFAULT;
 #endif
 
     posdata = get_curplayer_positiondata();
@@ -2857,6 +2871,12 @@ check_weapon:
                                &hit->hitthing.unk0c,
                                threshold);
         }
+
+        if (hit->do_damage == 0 &&
+            (proptype == PROP_TYPE_OBJ || proptype == PROP_TYPE_WEAPON || proptype == PROP_TYPE_DOOR) &&
+            chrpropNativePropIsGlassLike(hit_prop)) {
+            glass_prop_hit_for_world = 1;
+        }
 #endif
 
         if (proptype == PROP_TYPE_CHR || proptype == PROP_TYPE_VIEWER) {
@@ -2962,9 +2982,22 @@ check_weapon:
 
         if (texturenum < 0) {
             imgsnd = D_8004E86C[0];
+#ifdef NATIVE_PORT
+            world_impact_hit_sound = HIT_DEFAULT;
+#endif
         } else {
             imgsnd = D_8004E86C[g_Textures[texturenum].hitSound];
+#ifdef NATIVE_PORT
+            world_impact_hit_sound = g_Textures[texturenum].hitSound;
+#endif
         }
+
+#ifdef NATIVE_PORT
+        if (glass_prop_hit_for_world && D_8004E86C[HIT_GLASS_XLU] != NULL) {
+            imgsnd = D_8004E86C[HIT_GLASS_XLU];
+            world_impact_hit_sound = HIT_GLASS_XLU;
+        }
+#endif
 
         if (do_effects != 0) {
             if (imgsnd->thing2_len > 0 && weapon_id != ITEM_WATCHLASER) {
@@ -3006,7 +3039,7 @@ check_weapon:
                                   hit_output.texturenum);
                 portTraceBulletImpactMaterial(
                     texturenum,
-                    texturenum < 0 ? 0 : g_Textures[texturenum].hitSound,
+                    world_impact_hit_sound,
                     impact_type);
 #endif
                 explosionCreateBulletImpact(&hit_point, &hit_output.normal,
