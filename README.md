@@ -173,6 +173,9 @@ filter. `Video.Display` selects the zero-based SDL display index and falls back
 to display 0 if the saved index is unavailable. `Video.WindowX` and
 `Video.WindowY` are relative to that display, with `-1` meaning centered.
 Run `ge007 --list-displays` to print detected SDL displays and fullscreen modes.
+For `Video.WindowMode=exclusive`, set `Video.FullscreenWidth`,
+`Video.FullscreenHeight`, and optionally `Video.FullscreenRefresh`; leave them
+at `0` to use SDL's default display mode.
 Pressing `H` also prints the full control list to the console.
 
 ## Known limitations

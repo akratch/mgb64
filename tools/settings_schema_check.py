@@ -17,6 +17,9 @@ EXPECTED_DEFAULTS = {
     "Video.WindowX": "-1",
     "Video.WindowY": "-1",
     "Video.Display": "0",
+    "Video.FullscreenWidth": "0",
+    "Video.FullscreenHeight": "0",
+    "Video.FullscreenRefresh": "0",
     "Video.WindowMode": "windowed",
     "Video.VSync": "adaptive",
     "Video.FrameCap": "60",
@@ -39,6 +42,9 @@ WindowHeight=768
 WindowX=10
 WindowY=20
 Display=1
+FullscreenWidth=1920
+FullscreenHeight=1080
+FullscreenRefresh=60
 WindowMode=exclusive
 VSync=off
 FrameCap=display
@@ -162,6 +168,9 @@ def main() -> int:
                 "Video.WindowX": "10",
                 "Video.WindowY": "20",
                 "Video.Display": "1",
+                "Video.FullscreenWidth": "1920",
+                "Video.FullscreenHeight": "1080",
+                "Video.FullscreenRefresh": "60",
                 "Video.WindowMode": "exclusive",
                 "Video.VSync": "off",
                 "Video.FrameCap": "display",

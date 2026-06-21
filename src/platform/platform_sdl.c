@@ -224,6 +224,9 @@ static s32 g_cfgWindowH = 810;
 static s32 g_cfgWindowX = -1;
 static s32 g_cfgWindowY = -1;
 static s32 g_cfgDisplayIndex = 0;
+static s32 g_cfgFullscreenW = 0;
+static s32 g_cfgFullscreenH = 0;
+static s32 g_cfgFullscreenRefresh = 0;
 
 int platformPrintDisplays(FILE *f)
 {
@@ -1209,6 +1212,72 @@ static void platformMoveWindowToConfiguredDisplay(void)
     SDL_SetWindowPosition(g_sdlWindow, x, y);
 }
 
+static int platformFindConfiguredFullscreenMode(SDL_DisplayMode *out_mode)
+{
+    int display_index;
+    int mode_count;
+
+    if (out_mode == NULL || g_cfgFullscreenW <= 0 || g_cfgFullscreenH <= 0) {
+        return 0;
+    }
+
+    display_index = platformConfiguredDisplayIndex();
+    mode_count = SDL_GetNumDisplayModes(display_index);
+    if (mode_count <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < mode_count; i++) {
+        SDL_DisplayMode mode = {0};
+
+        if (SDL_GetDisplayMode(display_index, i, &mode) != 0) {
+            continue;
+        }
+        if (mode.w != g_cfgFullscreenW || mode.h != g_cfgFullscreenH) {
+            continue;
+        }
+        if (g_cfgFullscreenRefresh > 0 &&
+            mode.refresh_rate != g_cfgFullscreenRefresh) {
+            continue;
+        }
+
+        *out_mode = mode;
+        return 1;
+    }
+
+    fprintf(stderr,
+            "[SDL] Fullscreen mode %dx%d@%dHz is not available on display %d; using SDL default.\n",
+            g_cfgFullscreenW,
+            g_cfgFullscreenH,
+            g_cfgFullscreenRefresh,
+            display_index);
+    return 0;
+}
+
+static void platformApplyFullscreenDisplayMode(void)
+{
+    SDL_DisplayMode mode;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE ||
+        !platformFindConfiguredFullscreenMode(&mode)) {
+        SDL_SetWindowDisplayMode(g_sdlWindow, NULL);
+        return;
+    }
+
+    if (SDL_SetWindowDisplayMode(g_sdlWindow, &mode) < 0) {
+        fprintf(stderr,
+                "[SDL] Failed to set fullscreen mode %dx%d@%dHz: %s\n",
+                mode.w,
+                mode.h,
+                mode.refresh_rate,
+                SDL_GetError());
+    }
+}
+
 static void platformApplyWindowMode(void)
 {
     Uint32 fullscreen_flag;
@@ -1219,6 +1288,7 @@ static void platformApplyWindowMode(void)
 
     fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
     platformMoveWindowToConfiguredDisplay();
+    platformApplyFullscreenDisplayMode();
     if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
         fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
                 g_windowMode, SDL_GetError());
@@ -1296,6 +1366,21 @@ void platformRegisterConfig(void)
                         "--config-override Video.Display=VALUE",
                         "Display",
                         "Zero-based SDL display index for window and fullscreen placement.");
+    settingsRegisterInt("Video.FullscreenWidth", &g_cfgFullscreenW, 0, 0, 7680,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_WIDTH",
+                        "--config-override Video.FullscreenWidth=VALUE",
+                        "Fullscreen width",
+                        "Exclusive fullscreen mode width; 0 uses SDL/default.");
+    settingsRegisterInt("Video.FullscreenHeight", &g_cfgFullscreenH, 0, 0, 4320,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_HEIGHT",
+                        "--config-override Video.FullscreenHeight=VALUE",
+                        "Fullscreen height",
+                        "Exclusive fullscreen mode height; 0 uses SDL/default.");
+    settingsRegisterInt("Video.FullscreenRefresh", &g_cfgFullscreenRefresh, 0, 0, 1000,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_REFRESH",
+                        "--config-override Video.FullscreenRefresh=VALUE",
+                        "Fullscreen refresh",
+                        "Exclusive fullscreen refresh rate in Hz; 0 accepts any/default.");
     settingsRegisterEnum("Video.WindowMode", &g_windowMode, PLATFORM_WINDOW_MODE_WINDOWED,
                          k_windowModeOptions,
                          (s32)(sizeof(k_windowModeOptions) / sizeof(k_windowModeOptions[0])),
