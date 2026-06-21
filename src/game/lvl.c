@@ -88,6 +88,23 @@ void set_favorite_weapon_for_every_player(void);
 extern int g_frame_count_diag;
 extern int g_tri_count_diag;
 
+static int pcNativeLiveLookAllowed(void)
+{
+    extern int g_freezeInput;
+
+    if (g_freezeInput) {
+        return 0;
+    }
+    if (get_is_ramrom_flag() != 0) {
+        return 0;
+    }
+    if (joyGetContDataIndex() != 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int lvlTracePhaseEnabled(void)
 {
     static int enabled = -1;
@@ -5697,10 +5714,17 @@ void lvlViewMoveTick(void)
         if (!g_pcDebugFlyCamera && g_CurrentPlayer->prop != NULL) {
             int mdx = 0, mdy = 0;
             int grx = 0, gry = 0;
+            int live_look_allowed = pcNativeLiveLookAllowed();
             if (local_player_number == 0) {
                 platformGetMouseDelta(&mdx, &mdy);
             }
             platformGetPadRightStick(local_player_number, &grx, &gry);
+            if (!live_look_allowed) {
+                mdx = 0;
+                mdy = 0;
+                grx = 0;
+                gry = 0;
+            }
 
             /* Convert gamepad right stick to pixel-equivalent delta.
              * Scale: 32767 → ~g_pcGamepadLookSpeed pixels per frame (tuned for 60fps).
