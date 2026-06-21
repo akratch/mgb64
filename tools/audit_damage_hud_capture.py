@@ -176,8 +176,7 @@ def audit_trace(args: argparse.Namespace) -> tuple[list[str], dict[str, Any]]:
         if (
             damage_show >= args.min_damage_show
             and health_show >= args.min_health_show
-            and actual_h <= args.max_actual_health
-            and bond_h <= args.max_bond_health
+            and (actual_h <= args.max_actual_health or bond_h <= args.max_bond_health)
         ):
             active = {
                 "frame": frame,

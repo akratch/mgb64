@@ -74,6 +74,7 @@ enum DrawClass {
     DRAWCLASS_HUD,
 };
 void gfx_set_draw_class(enum DrawClass cls);
+void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, const void *end);
 void gfx_set_prop_context(const void *prop,
                           int prop_type,
                           int obj_type,

@@ -1639,22 +1639,19 @@ Gfx* lvlRender(Gfx* DL)
             }
 
             sub_GAME_7F03D0D4();
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_ROOM);
-#endif
             /* A3: Always use original bgLevelRender on all platforms */
 #ifdef NATIVE_PORT
             {
                 s32 tris_before_bg_render = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = bgLevelRender(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_ROOM, drawclass_start, DL);
                 lvlTracePhasePrintf("bgLevelRender", tris_before_bg_render);
             }
 #else
             DL = bgLevelRender(DL);
 #endif
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
-
             /* Debug dump: execute after all guards have been ticked/rendered */
             {
                 extern void debugDumpExecute(void);
@@ -1718,19 +1715,15 @@ Gfx* lvlRender(Gfx* DL)
 
             setanimationdebugflag(getDebugMode() == DEB_SELANIM);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_CHRPROP);
-#endif
-#ifdef NATIVE_PORT
             {
                 s32 tris_before_chrprop = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = sub_GAME_7F049B58(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_CHRPROP, drawclass_start, DL);
                 lvlTracePhasePrintf("chrpropPass", tris_before_chrprop);
             }
 #else
             DL = sub_GAME_7F049B58(DL);
-#endif
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
 #endif
 
 #if defined(VERSION_EU)
@@ -1740,19 +1733,15 @@ Gfx* lvlRender(Gfx* DL)
 #endif
             DL = sub_GAME_7F0A2C44(DL);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_EFFECT);
-#endif
-#ifdef NATIVE_PORT
             {
                 s32 tris_before_fx = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = explosionRenderFlyingParticles(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_EFFECT, drawclass_start, DL);
                 lvlTracePhasePrintf("flyingParticles", tris_before_fx);
             }
 #else
             DL = explosionRenderFlyingParticles(DL);
-#endif
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
 #endif
 
             if (
@@ -1774,6 +1763,7 @@ Gfx* lvlRender(Gfx* DL)
             if (get_debug_render_raster() == DEB_BOND_VIEW)
             {
 #ifdef NATIVE_PORT
+                Gfx *drawclass_start = DL;
                 /* PC: Replicate the matrix setup that bgLevelRender (bg.c:4263-4265)
                  * normally does after room rendering but before weapon rendering.
                  * Our fly-camera path bypasses bgLevelRender, so we must emit:
@@ -1784,27 +1774,29 @@ Gfx* lvlRender(Gfx* DL)
                 gSPMatrix(DL++, g_viProjectionMatrix,
                           G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
                 DL = bondviewGfxPlayerField5cMatrix(DL);
-                gfx_set_draw_class(DRAWCLASS_WEAPON);
+                gfx_register_draw_class_dl_range(DRAWCLASS_WEAPON, drawclass_start, DL);
 #endif
                 DL = maybe_mp_interface(DL);
             }
             else
             {
 #ifdef NATIVE_PORT
-                gfx_set_draw_class(DRAWCLASS_WEAPON);
+                Gfx *drawclass_start = DL;
 #endif
                 DL = bondviewRemoved7F08BCB8(DL);
-            }
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
+                gfx_register_draw_class_dl_range(DRAWCLASS_WEAPON, drawclass_start, DL);
 #endif
+            }
 
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_HUD);
+            {
+                Gfx *drawclass_start = DL;
 #endif
             DL = mp_watch_menu_display(DL);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
+                gfx_register_draw_class_dl_range(DRAWCLASS_HUD, drawclass_start, DL);
+            }
 #endif
         }
     }

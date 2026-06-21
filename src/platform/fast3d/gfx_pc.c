@@ -457,6 +457,14 @@ static struct {
 static int effect_dl_range_count = 0;
 static int g_effect_range_trace_enabled = -1;
 
+#define MAX_DRAW_CLASS_DL_RANGES 512
+static struct {
+    uintptr_t start;
+    uintptr_t end;
+    enum DrawClass cls;
+} draw_class_dl_ranges[MAX_DRAW_CLASS_DL_RANGES];
+static int draw_class_dl_range_count = 0;
+
 static int gfx_effect_range_trace_is_enabled(void) {
     if (g_effect_range_trace_enabled < 0) {
         const char *env = getenv("GE007_EFFECT_RANGE_TRACE");
@@ -480,6 +488,40 @@ static const char *gfx_draw_class_name(enum DrawClass cls) {
 
 void gfx_set_draw_class(enum DrawClass cls) {
     g_current_draw_class = cls;
+}
+
+void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, const void *end) {
+    uintptr_t s = (uintptr_t)start;
+    uintptr_t e = (uintptr_t)end;
+
+    if ((int)cls < 0 || cls > DRAWCLASS_HUD || cls == DRAWCLASS_UNKNOWN || s == 0 || e <= s) {
+        return;
+    }
+
+    for (int i = 0; i < draw_class_dl_range_count; i++) {
+        if (draw_class_dl_ranges[i].cls == cls &&
+            draw_class_dl_ranges[i].end == s) {
+            draw_class_dl_ranges[i].end = e;
+            return;
+        }
+    }
+
+    if (draw_class_dl_range_count < MAX_DRAW_CLASS_DL_RANGES) {
+        draw_class_dl_ranges[draw_class_dl_range_count].start = s;
+        draw_class_dl_ranges[draw_class_dl_range_count].end = e;
+        draw_class_dl_ranges[draw_class_dl_range_count].cls = cls;
+        draw_class_dl_range_count++;
+    }
+}
+
+static enum DrawClass gfx_draw_class_for_cmd_addr(uintptr_t addr, enum DrawClass fallback) {
+    for (int i = draw_class_dl_range_count - 1; i >= 0; i--) {
+        if (addr >= draw_class_dl_ranges[i].start && addr < draw_class_dl_ranges[i].end) {
+            return draw_class_dl_ranges[i].cls;
+        }
+    }
+
+    return fallback;
 }
 
 void gfx_set_prop_context(const void *prop,
@@ -12715,12 +12757,15 @@ volatile uint32_t g_lastDlW0 = 0;
 volatile uintptr_t g_lastDlW1 = 0;  /* uintptr_t: w1 often carries pointers */
 
 static void gfx_run_dl_pc(Gfx *cmd) {
+    enum DrawClass entry_draw_class;
+
     dl_depth++;
     if (dl_depth > 32) {
         g_effect_pending_child_label = NULL;
         dl_depth--;
         return;
     }
+    entry_draw_class = g_current_draw_class;
     gfx_effect_push_inherited_label();
     int subtree_tris_start = g_tri_count_diag;
     /* Track whether this DL invocation started inside the dynamic buffer.
@@ -12734,9 +12779,11 @@ static void gfx_run_dl_pc(Gfx *cmd) {
         if (in_dynamic_range && (uintptr_t)cmd >= pc_gfx_range_end) {
             gfx_effect_pop_inherited_label();
             dl_depth--;
+            g_current_draw_class = entry_draw_class;
             return;
         }
 	        g_diag_current_cmd_addr = (uintptr_t)cmd;
+	        g_current_draw_class = gfx_draw_class_for_cmd_addr((uintptr_t)cmd, entry_draw_class);
 	        uint32_t opcode = cmd->words.w0 >> 24;
 	        gfx_effect_cmd_trace((uint8_t)opcode, cmd->words.w0, cmd->words.w1);
 
@@ -12992,6 +13039,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 if (trace_active()) trace_log("} ENDDL (%d tris in subtree)", g_tri_count_diag - subtree_tris_start);
                 gfx_effect_pop_inherited_label();
                 dl_depth--;
+                g_current_draw_class = entry_draw_class;
                 return;
             /* Base GBI separate set/clear geometry mode */
             case (uint8_t)G_SETGEOMETRYMODE:
@@ -13211,6 +13259,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 if (opcode < 0x06 && opcode > 0x00) {
                     gfx_effect_pop_inherited_label();
                     dl_depth--;
+                    g_current_draw_class = entry_draw_class;
                     return;
                 }
                 break;
@@ -13218,6 +13267,10 @@ static void gfx_run_dl_pc(Gfx *cmd) {
         }
         ++cmd;
     }
+
+    gfx_effect_pop_inherited_label();
+    dl_depth--;
+    g_current_draw_class = entry_draw_class;
 }
 
 /* ===== N64 binary display list interpreter (big-endian ROM data) ===== */
@@ -14315,6 +14368,7 @@ void gfx_run_dl(Gfx *dl) {
                 buf_vbo_num_tris = 0;
                 dl_depth = 0;
                 effect_dl_range_count = 0;
+                draw_class_dl_range_count = 0;
                 visibility_scaled_matrix_region_count = 0;
                 return;
             }
@@ -14428,6 +14482,7 @@ void gfx_run_dl(Gfx *dl) {
     }
     gfx_rapi->start_frame();
 
+    g_current_draw_class = DRAWCLASS_UNKNOWN;
     gfx_run_dl_pc(dl);
     gfx_flush();
     {
@@ -14558,6 +14613,7 @@ void gfx_run_dl(Gfx *dl) {
     }
 
     effect_dl_range_count = 0;
+    draw_class_dl_range_count = 0;
 }
 
 /* ===== Sky Triangle Rendering ===== */

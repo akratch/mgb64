@@ -19362,10 +19362,13 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     s32 i;
     s32 playercount;
     s32 justdied;
+#ifdef NATIVE_PORT
+    Gfx *drawclass_start;
+#endif
 
     if (playerHasFrozenIntroCamera(g_CurrentPlayer)) {
 #ifdef NATIVE_PORT
-        gfx_set_draw_class(DRAWCLASS_HUD);
+        drawclass_start = arg0;
 #endif
         bondviewIntroCameraTextTick();
         arg0 = sub_GAME_7F08A5FC(arg0);
@@ -19374,16 +19377,23 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
         arg0 = countdownTimerRender(arg0);
         arg0 = currentPlayerDrawFade(arg0);
         arg0 = sub_GAME_7F088CD8(arg0);
+#ifdef NATIVE_PORT
+        gfx_register_draw_class_dl_range(DRAWCLASS_HUD, drawclass_start, arg0);
+#endif
         return arg0;
     }
 
+#ifdef NATIVE_PORT
+    drawclass_start = arg0;
+#endif
     bondwalkFireBothHands();
     sub_GAME_7F06908C(&arg0);
     sub_GAME_7F062BE4(&arg0);
     arg0 = sub_GAME_7F087E74(arg0);
 
 #ifdef NATIVE_PORT
-    gfx_set_draw_class(DRAWCLASS_HUD);
+    gfx_register_draw_class_dl_range(DRAWCLASS_WEAPON, drawclass_start, arg0);
+    drawclass_start = arg0;
 #endif
 
     if (g_CurrentPlayer->mpmenuon != 0) {
@@ -19516,6 +19526,9 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     arg0 = countdownTimerRender(arg0);
     arg0 = display_red_blue_on_radar(arg0);
     arg0 = currentPlayerDrawFade(arg0);
+#ifdef NATIVE_PORT
+    gfx_register_draw_class_dl_range(DRAWCLASS_HUD, drawclass_start, arg0);
+#endif
     return arg0;
 }
 #else
