@@ -433,6 +433,12 @@ static int gfx_guard_matrix_slot_for_addr(uintptr_t addr) {
 /* Draw-class tagging — set by top-level renderers, read by diagnostics */
 static enum DrawClass g_current_draw_class = DRAWCLASS_UNKNOWN;
 static int g_drawclass_tri_counts[DRAWCLASS_HUD + 1];
+static bool g_sky_tri_mode = false;
+static bool g_sky_viewport_valid = false;
+static float g_sky_viewport_left = 0.0f;
+static float g_sky_viewport_top = 0.0f;
+static float g_sky_viewport_width = SCREEN_WIDTH;
+static float g_sky_viewport_height = SCREEN_HEIGHT;
 static struct {
     const void *prop;
     int prop_type;
@@ -1152,6 +1158,7 @@ static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
      * leaving sky, UI, props, weapons, and explicit diagnostics untouched. */
     if (g_diag_disable_room_point_filter == 0 &&
         g_current_draw_class == DRAWCLASS_ROOM &&
+        !g_sky_tri_mode &&
         !g_texrect_uv_mode) {
         return false;
     }
@@ -3265,6 +3272,7 @@ static float clear_r = 0, clear_g = 0, clear_b = 0;
 int g_frame_count_diag = 0;
 int g_tri_count_diag = 0;
 static int g_sky_tri_count_diag = 0;
+static int g_pending_sky_tri_count_diag = 0;
 static int g_nonsky_tri_count_diag = 0;
 static uint32_t g_n64_dl_exec_seq = 0;
 static int g_frame_n64_dl_index = 0;
@@ -5650,7 +5658,6 @@ volatile uint8_t g_diag_tex_tile = 0;
 static uint32_t g_vtx_load_seq = 0;
 static uint32_t g_modelview_load_seq = 0;
 static bool g_fillrect_draw_active = false;
-static bool g_sky_tri_mode = false;
 static int g_diag_trace_eye_bind = -1;
 static int g_diag_trace_settex = -1; /* GE007_TRACE_SETTEX=1 */
 static int g_diag_trace_settex_after_frame = -2; /* GE007_TRACE_SETTEX_AFTER_FRAME=N */
@@ -15032,8 +15039,10 @@ void gfx_run_dl(Gfx *dl) {
 
     gfx_sync_current_dimensions_from_window();
 
-    g_tri_count_diag = 0;
-    g_sky_tri_count_diag = 0;
+    int pending_sky_tris = g_pending_sky_tri_count_diag;
+    g_pending_sky_tri_count_diag = 0;
+    g_tri_count_diag = pending_sky_tris;
+    g_sky_tri_count_diag = pending_sky_tris;
     g_nonsky_tri_count_diag = 0;
     g_n64_dl_exec_seq = 0;
     g_frame_n64_dl_index = 0;
@@ -15245,11 +15254,85 @@ void gfx_run_dl(Gfx *dl) {
  * RSP BYPASS NOTE: On N64, sky triangles are raw RDP commands that bypass
  * all RSP processing — no backface culling, no clip rejection, no fog.
  * gfx_draw_sky_triangle() temporarily clears geometry_mode for the direct
- * triangle submission, then restores the caller's RSP state. */
+ * triangle submission, then restores the caller's RSP state.
+ *
+ * VIEWPORT NOTE: The game computes SkyRelated38 from the current player's
+ * viewport. Carry that viewport into the direct native draw so split-screen
+ * sky maps to the same sub-rectangle instead of the full window. */
 
-void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_g, uint8_t env_b) {
+static struct XYWidthHeight gfx_sky_viewport_to_drawable(void)
+{
+    gfx_sync_current_dimensions_from_window();
+
+    float logical_width = gfx_logical_screen_width();
+    float logical_height = gfx_logical_screen_height();
+    float left = g_sky_viewport_left;
+    float top = g_sky_viewport_top;
+    float width = g_sky_viewport_width;
+    float height = g_sky_viewport_height;
+
+    if (!g_sky_viewport_valid ||
+        !portFloatIsFinite(left) ||
+        !portFloatIsFinite(top) ||
+        !portFloatIsFinite(width) ||
+        !portFloatIsFinite(height) ||
+        width <= 0.0f ||
+        height <= 0.0f) {
+        left = 0.0f;
+        top = 0.0f;
+        width = logical_width;
+        height = logical_height;
+    }
+
+    if (left < 0.0f) {
+        width += left;
+        left = 0.0f;
+    }
+    if (top < 0.0f) {
+        height += top;
+        top = 0.0f;
+    }
+    if (left + width > logical_width) {
+        width = logical_width - left;
+    }
+    if (top + height > logical_height) {
+        height = logical_height - top;
+    }
+    if (width <= 0.0f || height <= 0.0f) {
+        left = 0.0f;
+        top = 0.0f;
+        width = logical_width;
+        height = logical_height;
+    }
+
+    struct XYWidthHeight viewport;
+    viewport.x = (int32_t)(left * gfx_ratio_x());
+    viewport.y = (int32_t)((logical_height - (top + height)) * gfx_ratio_y());
+    viewport.width = (int32_t)(width * gfx_ratio_x());
+    viewport.height = (int32_t)(height * gfx_ratio_y());
+
+    if (viewport.width <= 0) {
+        viewport.width = gfx_current_dimensions.width;
+    }
+    if (viewport.height <= 0) {
+        viewport.height = gfx_current_dimensions.height;
+    }
+
+    return viewport;
+}
+
+void gfx_prepare_sky_rendering(uint32_t texture_num,
+                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
+                               float screen_left, float screen_top,
+                               float screen_width, float screen_height) {
     /* Flush any pending geometry from previous draw state */
     gfx_flush();
+
+    g_sky_viewport_left = screen_left;
+    g_sky_viewport_top = screen_top;
+    g_sky_viewport_width = screen_width;
+    g_sky_viewport_height = screen_height;
+    g_sky_viewport_valid = true;
 
     /* Load the sky texture via the same path as G_SETTEX (Rare's texture-by-number).
      * This sets settex_active, settex_gl_tex_id, settex_tex_w/h. */
@@ -15308,8 +15391,10 @@ static void gfx_draw_sky_triangle_impl(
     float us[3] = { u0, u1, u2 };
     float vs[3] = { v0, v1, v2 };
     gfx_sync_current_dimensions_from_window();
-    struct XYWidthHeight default_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
-    struct XYWidthHeight default_scissor = default_viewport;
+    struct XYWidthHeight fullscreen_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
+    struct XYWidthHeight player_viewport = gfx_sky_viewport_to_drawable();
+    struct XYWidthHeight draw_viewport = clip_space_xy ? player_viewport : fullscreen_viewport;
+    struct XYWidthHeight draw_scissor = player_viewport;
     struct XYWidthHeight viewport_saved = rdp.viewport;
     struct XYWidthHeight scissor_saved = rdp.scissor;
     uint32_t geometry_mode_saved = rsp.geometry_mode;
@@ -15352,14 +15437,19 @@ static void gfx_draw_sky_triangle_impl(
         d->ob[0] = d->ob[1] = d->ob[2] = 0;
     }
 
-    rdp.viewport = default_viewport;
-    rdp.scissor = default_scissor;
+    rdp.viewport = draw_viewport;
+    rdp.scissor = draw_scissor;
     rdp.viewport_or_scissor_changed = true;
     rsp.geometry_mode = 0;
     gfx_sync_other_mode_l_effective();
+    int sky_tris_before = g_sky_tri_count_diag;
     g_sky_tri_mode = true;
     gfx_sp_tri1(0, 1, 2);
     g_sky_tri_mode = false;
+    int sky_tri_delta = g_sky_tri_count_diag - sky_tris_before;
+    if (sky_tri_delta > 0) {
+        g_pending_sky_tri_count_diag += sky_tri_delta;
+    }
     rsp.geometry_mode = geometry_mode_saved;
     gfx_sync_other_mode_l_effective();
     rdp.viewport = viewport_saved;

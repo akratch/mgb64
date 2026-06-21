@@ -211,7 +211,7 @@ if ! (
         --players "$PLAYERS" \
         --mp-stage "$MP_STAGE" \
         --scenario "$SCENARIO" \
-        "${MP_EXTRA_ARGS[@]}" \
+        ${MP_EXTRA_ARGS[@]+"${MP_EXTRA_ARGS[@]}"} \
         --deterministic \
         --trace-state "$TRACE" \
         --screenshot-frame "$FRAMES" \

@@ -93,7 +93,10 @@ void gfx_register_effect_dl_range(const char *label, const void *start, const vo
  * gfx_draw_sky_triangle() to ensure the correct texture, combiner, and
  * blend state — because the game's GBI commands (texSelect, SetCombine)
  * are written to the display list buffer and haven't been processed yet. */
-void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_g, uint8_t env_b);
+void gfx_prepare_sky_rendering(uint32_t texture_num,
+                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
+                               float screen_left, float screen_top,
+                               float screen_width, float screen_height);
 
 /* Submit a sky triangle directly from game code (NATIVE_PORT only).
  * The preferred native path takes the original clip-space x/y/z/w from

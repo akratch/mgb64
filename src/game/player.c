@@ -878,12 +878,15 @@ Gfx *skyRender(Gfx *gdl)
             /* Water sky path: same timing issue as cloud path — sync state
              * before the triangle intercepts fire. Uses WaterImageId. */
             {
-                extern void gfx_prepare_sky_rendering(uint32_t, uint8_t, uint8_t, uint8_t);
                 gfx_prepare_sky_rendering(
                     skywaterimages[fogGetCurrentEnvironmentp()->WaterImageId].index,
                     fogGetCurrentEnvironmentp()->Red,
                     fogGetCurrentEnvironmentp()->Green,
-                    fogGetCurrentEnvironmentp()->Blue);
+                    fogGetCurrentEnvironmentp()->Blue,
+                    getPlayer_c_screenleft(),
+                    getPlayer_c_screentop(),
+                    getPlayer_c_screenwidth(),
+                    getPlayer_c_screenheight());
             }
 #endif
 
@@ -1327,12 +1330,15 @@ Gfx *skyRender(Gfx *gdl)
      * and won't be processed until gfx_run_dl — but our sky triangles bypass
      * the DL entirely.  This call sets the state directly. */
     {
-        extern void gfx_prepare_sky_rendering(uint32_t, uint8_t, uint8_t, uint8_t);
         gfx_prepare_sky_rendering(
             skywaterimages[fogGetCurrentEnvironmentp()->SkyImageId].index,
             fogGetCurrentEnvironmentp()->Red,
             fogGetCurrentEnvironmentp()->Green,
-            fogGetCurrentEnvironmentp()->Blue);
+            fogGetCurrentEnvironmentp()->Blue,
+            getPlayer_c_screenleft(),
+            getPlayer_c_screentop(),
+            getPlayer_c_screenwidth(),
+            getPlayer_c_screenheight());
     }
 #endif
 
