@@ -5352,16 +5352,39 @@ f32 get_player_mp_char_height(int player)
     return mp_chr_setup[player_char[player]].pov;
 }
 
+#ifdef NATIVE_PORT
+/* Custom multiplayer time limit in seconds (0 = use the selected game length).
+ * Set by the --mp-timelimit direct-boot path for deterministic short matches. */
+s32 g_pcMpTimeLimitOverrideSecs = 0;
+#endif
+
 int get_mp_timelimit(void) {
+#ifdef NATIVE_PORT
+  if (g_pcMpTimeLimitOverrideSecs > 0) {
+    return SECS_TO_TIMER60(g_pcMpTimeLimitOverrideSecs);
+  }
+#endif
   return multi_game_lengths[game_length].time;
 }
 
 int get_mp_pointlimit(void) {
+#ifdef NATIVE_PORT
+  if (g_pcMpTimeLimitOverrideSecs > 0) {
+    return 0;
+  }
+#endif
   return multi_game_lengths[game_length].points;
 }
 
 void reset_mp_options_for_scenario(MPSCENARIOS scenarioid)
 {
+#ifdef NATIVE_PORT
+    /* Drop forced direct-boot limits before normal scenario setup; the direct
+     * boot path reapplies its requested value after reset/init. */
+    extern s32 g_pcMpTimeLimitOverrideSecs;
+    g_pcMpTimeLimitOverrideSecs = 0;
+#endif
+
     scenario = scenarioid;
 
     unlock_stage_select = 1;

@@ -44,6 +44,7 @@ int g_pcStartMultiplayer = 0;
 int g_pcStartMpPlayers = 2;
 int g_pcStartMpStage = MP_STAGE_TEMPLE;
 int g_pcStartMpScenario = SCENARIO_NORMAL;
+int g_pcStartMpTimeLimitSecs = 0;
 
 #define PC_MAX_CONFIG_SET_ARGS 32
 
@@ -654,6 +655,14 @@ int main(int argc, char **argv)
                         "[GE007-PC] 'flagtag', 'goldengun', 'ltk', '2v2', '3v1', or '2v1'.\n");
                 return 2;
             }
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--mp-timelimit") == 0 && i + 1 < argc) {
+            int secs = 0;
+            if (!pcParseIntArg(argv[++i], &secs) || secs < 1 || secs > 3600) {
+                fprintf(stderr, "[GE007-PC] Invalid --mp-timelimit value. Use seconds, 1-3600.\n");
+                return 2;
+            }
+            g_pcStartMpTimeLimitSecs = secs;
             g_pcStartMultiplayer = 1;
         } else if (argv[i][0] != '-') {
             romPath = argv[i];

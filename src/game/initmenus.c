@@ -260,7 +260,10 @@ static void pc_apply_level_selection(LEVELID level, s32 diff)
  * engine's own MP-setup helpers (reset/init_mp_options_for_scenario) and the
  * multi_stage_setups[] table rather than hand-rolling MP state, so the match is
  * configured exactly as it would be coming out of the MP options menu. */
-static void pc_apply_mp_selection(s32 num_players, s32 mp_stage, MPSCENARIOS scenarioid)
+static void pc_apply_mp_selection(s32 num_players,
+                                  s32 mp_stage,
+                                  MPSCENARIOS scenarioid,
+                                  s32 timelimit_secs)
 {
     extern struct mp_stage_setup multi_stage_setups[];
     extern void reset_mp_options_for_scenario(MPSCENARIOS scenarioid);
@@ -271,6 +274,7 @@ static void pc_apply_mp_selection(s32 num_players, s32 mp_stage, MPSCENARIOS sce
     extern void lvlPlayMusicTrack1(s32);
     extern void lvlSetSelectedDifficulty(s32);
     extern u32 randomGetNext(void);
+    extern s32 g_pcMpTimeLimitOverrideSecs;
     s32 i;
 
     /* All player slots default to the first control style (1.1 "Honey"); the
@@ -290,6 +294,7 @@ static void pc_apply_mp_selection(s32 num_players, s32 mp_stage, MPSCENARIOS sce
     reset_mp_options_for_scenario(scenarioid);
     MP_stage_selected = mp_stage;
     init_mp_options_for_scenario(num_players);
+    g_pcMpTimeLimitOverrideSecs = (timelimit_secs > 0) ? timelimit_secs : 0;
 
     if (check_if_mp_stage_unlocked(MP_stage_selected) == FALSE) {
         MP_stage_selected = MP_STAGE_TEMPLE;
@@ -549,11 +554,13 @@ void init_menus_or_reset(void)
             extern int g_pcStartMpPlayers;
             extern int g_pcStartMpStage;
             extern int g_pcStartMpScenario;
+            extern int g_pcStartMpTimeLimitSecs;
             s32 mp_players = g_pcStartMpPlayers;
             s32 mp_stage = g_pcStartMpStage;
             MPSCENARIOS mp_scenario = (MPSCENARIOS)g_pcStartMpScenario;
+            s32 mp_timelimit = g_pcStartMpTimeLimitSecs;
             g_pcStartMultiplayer = 0;
-            pc_apply_mp_selection(mp_players, mp_stage, mp_scenario);
+            pc_apply_mp_selection(mp_players, mp_stage, mp_scenario, mp_timelimit);
         } else if (g_pcStartLevel >= 0) {
             extern int g_pcStartDifficulty;
             LEVELID start_level = (LEVELID)g_pcStartLevel;

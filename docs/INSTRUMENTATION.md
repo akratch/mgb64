@@ -179,6 +179,7 @@ output directory defaults to `/tmp/mgb64_asan_smoke_*`.
 ```sh
 ./tools/mp_smoke.sh                                   # 2P temple deathmatch
 ./tools/mp_smoke.sh --players 4 --mp-stage complex    # 4P split-screen
+./tools/mp_smoke.sh --timelimit 4                     # forced 4s match timer boundary
 ./tools/mp_smoke.sh --no-build                        # reuse an existing build
 ```
 
@@ -189,8 +190,13 @@ a strict render-health audit (`--max-crashes 0`), and a valid 640x480
 screenshot. It then crops the framebuffer at `SCREEN_HEIGHT/2` and uses
 `tools/compare_screenshots.py` to assert the top (P1) and bottom (P2) halves are
 measurably dissimilar; a duplicated-camera regression that renders identical
-halves fails the lane. The output directory defaults to
+halves fails the lane. `--timelimit SECS` additionally passes
+`--mp-timelimit` to the native direct-boot path and asserts the MP trace timer
+reaches the requested limit crash-free. The output directory defaults to
 `/tmp/mgb64_mp_smoke_*`.
+
+Native-port feature patterns, current user-facing settings, and validation lane
+expectations are summarized in [PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 
 ### ROM-oracle route contract smoke
 

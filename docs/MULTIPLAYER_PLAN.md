@@ -81,7 +81,7 @@ validated, ⬜ not started.
 | Task | Effort | Status | Detail |
 |---|---|---|---|
 | 4a. `tools/mp_smoke.sh` | M | ✅ | Green for 2-player: boots a Temple deathmatch via CLI, drives a scripted P1 window, `--max-crashes 0`, crops the framebuffer, and asserts the two halves are dissimilar (~97% delta — a duplicated-camera bug fails). 4-player also boots + renders distinct viewports in the smoke window; sustained-load/3-player-asymmetric rigor is Phase 5. |
-| 4b. End-of-round assertion | S | ⬜ | Match reaches limit → `mp_watch.c` results/scoreboard without crash. |
+| 4b. End-of-round assertion | S | 🟡 | `--mp-timelimit SECS` forces a deterministic match length; `tools/mp_smoke.sh --timelimit` asserts the match timer reaches the configured limit crash-free. **Open:** headless direct-boot still needs a scoreboard/results-screen transition assertion. |
 
 ### Phase 5 — Split-screen performance + 3/4-player hardening (real hidden L)
 
@@ -97,6 +97,8 @@ The display/input portion of the old polish list now has its own execution plan:
 [DISPLAY_INPUT_PLAN.md](DISPLAY_INPUT_PLAN.md). That plan covers true hor+
 widescreen, FOV control, fullscreen modes, render scale/MSAA/gamma, settings UI,
 and input rebinding, with concrete regression lanes for split-screen safety.
+The native feature-extension pattern is summarized in
+[PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 
 Drop-shadows remain renderer-parity work, separate from the display/input track.
 

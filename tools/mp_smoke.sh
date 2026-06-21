@@ -30,6 +30,7 @@ SCENARIO="deathmatch"
 SCREEN_WIDTH=640
 SCREEN_HEIGHT=480
 MIN_HALF_DELTA_PCT="2.0"
+TIMELIMIT_SECS=0
 
 usage() {
     cat <<'USAGE'
@@ -41,6 +42,9 @@ Options:
   --scenario NAME|ID       combat scenario (default: deathmatch)
   --input-window START:LEN deterministic P1 GE007_AUTO_* window (default: 80:160)
   --frames N               deterministic screenshot/exit frame (default: 300)
+  --timelimit SECS         force a custom match time limit and assert the match
+                           timer elapses to it crash-free. Raises --frames to
+                           at least SECS*60 + 120.
   --min-half-delta-pct F   minimum changed-pixel %% between the two halves (default: 2.0)
   --out-dir DIR            output directory (default: /tmp/...)
   --rom PATH               ROM path (default: ./baserom.u.z64)
@@ -61,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --scenario) SCENARIO="$2"; shift 2 ;;
         --input-window) INPUT_WINDOW="$2"; shift 2 ;;
         --frames) FRAMES="$2"; shift 2 ;;
+        --timelimit) TIMELIMIT_SECS="$2"; shift 2 ;;
         --min-half-delta-pct) MIN_HALF_DELTA_PCT="$2"; shift 2 ;;
         --out-dir) OUT_DIR="$2"; shift 2 ;;
         --rom) ROM="$2"; shift 2 ;;
@@ -80,6 +85,22 @@ fi
 if [[ ! "$FRAMES" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: --frames must be a positive integer: $FRAMES" >&2
     exit 2
+fi
+if [[ ! "$TIMELIMIT_SECS" =~ ^[0-9]+$ ]]; then
+    echo "FAIL: --timelimit must be a non-negative integer (seconds): $TIMELIMIT_SECS" >&2
+    exit 2
+fi
+TIMELIMIT_TICKS=0
+if (( TIMELIMIT_SECS > 0 )); then
+    TIMELIMIT_TICKS=$(( TIMELIMIT_SECS * 60 ))
+    NEEDED_FRAMES=$(( TIMELIMIT_TICKS + 120 ))
+    if (( FRAMES < NEEDED_FRAMES )); then
+        FRAMES=$NEEDED_FRAMES
+    fi
+    NEEDED_TIMEOUT=$(( TIMELIMIT_SECS + 120 ))
+    if (( TIMEOUT_SECONDS < NEEDED_TIMEOUT )); then
+        TIMEOUT_SECONDS=$NEEDED_TIMEOUT
+    fi
 fi
 if [[ ! "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: --timeout must be a positive integer: $TIMEOUT_SECONDS" >&2
@@ -158,6 +179,14 @@ echo "  scenario:            $SCENARIO"
 echo "  input-window:        $INPUT_WINDOW"
 echo "  frames:              $FRAMES"
 echo "  min-half-delta-pct:  $MIN_HALF_DELTA_PCT"
+if (( TIMELIMIT_SECS > 0 )); then
+    echo "  timelimit:           ${TIMELIMIT_SECS}s (${TIMELIMIT_TICKS} ticks)"
+fi
+
+MP_EXTRA_ARGS=()
+if (( TIMELIMIT_SECS > 0 )); then
+    MP_EXTRA_ARGS+=(--mp-timelimit "$TIMELIMIT_SECS")
+fi
 
 # Boot the split-screen deathmatch and drive P1 forward+right so the P1 half
 # (top) diverges from the static P2 half (bottom). Identical halves -- the
@@ -182,6 +211,7 @@ if ! (
         --players "$PLAYERS" \
         --mp-stage "$MP_STAGE" \
         --scenario "$SCENARIO" \
+        "${MP_EXTRA_ARGS[@]}" \
         --deterministic \
         --trace-state "$TRACE" \
         --screenshot-frame "$FRAMES" \
@@ -295,6 +325,39 @@ then
 else
     echo "  split_dissimilar: FAIL (halves too similar -- possible duplicated-camera bug)"
     exit 1
+fi
+
+if (( TIMELIMIT_SECS > 0 )); then
+    if python3 - "$TRACE" "$TIMELIMIT_TICKS" <<'PY'
+import json
+import sys
+
+trace_path = sys.argv[1]
+limit = int(sys.argv[2])
+peak = 0
+
+with open(trace_path, "r", encoding="utf-8") as handle:
+    for line in handle:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        ticks = rec.get("mp", {}).get("time_ticks")
+        if isinstance(ticks, (int, float)) and ticks > peak:
+            peak = int(ticks)
+
+print(f"  match timer peaked at {peak}/{limit} ticks")
+raise SystemExit(0 if peak >= limit else 1)
+PY
+    then
+        echo "  match_timer_elapsed: PASS"
+    else
+        echo "  match_timer_elapsed: FAIL (timer never reached the configured limit)"
+        exit 1
+    fi
 fi
 
 echo ""
