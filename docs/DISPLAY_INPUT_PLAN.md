@@ -197,7 +197,7 @@ The foundation (P1). Everything else is rows + apply callbacks.
 | 0e. Self-documenting save | S | ✅ | Emits schema comments with label, help, type, scope, default, and range above each registered key. |
 | 0f. Precedence + env-shadow surfacing | S | 🟡 | Runtime precedence **CLI > env > file > default** is wired and tested; UI read-only surfacing waits for the settings overlay. |
 | 0g. `--dump-config` / `--list-settings` / `--config-set k=v` / `--reset-config` | S | ✅ | Introspection plus scriptable no-ROM config set/reset are wired. |
-| 0h. CLI split + macOS bridge cleanup | S | ⬜ | Keep early runtime flags outside the schema; make `GameBridge.h`/`GameBridge.c` truthful by wiring `game_config_get/set_*` through the registry or removing stale guarantees until wired. |
+| 0h. CLI split + macOS bridge cleanup | S | ✅ | Early runtime flags stay outside the schema; `GameBridge.c` config get/set now uses the public registry lookup/string-set path. |
 
 **Gate:** `tools/settings_schema_check.py` verifies `--list-settings`,
 `--dump-config`, default values, custom `ge007.ini` loading, and no ROM startup.

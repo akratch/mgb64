@@ -73,6 +73,10 @@ void *configFindEntry(const char *key, int *type_out) {
     return NULL;
 }
 
+s32 configSetValue(const char *key, const char *value) {
+    (void)key; (void)value; return 0;
+}
+
 void configRegisterInt(const char *key, s32 *var, s32 min, s32 max) {
     (void)key; (void)var; (void)min; (void)max;
 }

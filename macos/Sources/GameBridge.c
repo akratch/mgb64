@@ -109,6 +109,9 @@ static int s_resize_width = 0;
 static int s_resize_height = 0;
 static float s_resize_scale = 0.0f;
 
+/** Serialized config bridge access. */
+static os_unfair_lock s_config_lock = OS_UNFAIR_LOCK_INIT;
+
 /* ========================================================================
  * Crash handler & callback for Swift layer
  * ======================================================================== */
@@ -551,48 +554,107 @@ void game_set_input(const GameInputState *state) {
 /* ========================================================================
  * Configuration
  *
- * The config system (config_pc.c) uses a flat array of registered settings.
- * Each setting has a "Section.Key" string name and a pointer to its backing
- * variable. We search by name and read/write the backing variable directly.
- *
- * TODO: Once the config system exposes a lookup-by-name API, replace this
- * with direct calls. For now, we access the registered settings array.
+ * The config system exposes lookup and string-set APIs for registered
+ * "Section.Key" settings. The bridge accepts split section/key arguments
+ * because that maps cleanly to Swift preferences code.
  * ======================================================================== */
 
-/*
- * Config lookup is deferred until the config system exposes a public
- * search API. For now, these return the fallback value. The Preferences
- * UI can still function by reading/writing ge007.ini directly.
- */
+static bool game_config_join_key(const char *section, const char *key, char *out, size_t out_size) {
+    if (!section || !key || !*section || !*key || out_size == 0) {
+        return false;
+    }
+
+    return snprintf(out, out_size, "%s.%s", section, key) > 0;
+}
 
 float game_config_get_float(const char *section, const char *key, float fallback) {
-    (void)section;
-    (void)key;
-    /* TODO: Implement config lookup when config_pc exposes search API */
-    return fallback;
+    char full_key[CONFIG_MAX_KEYNAME + 1];
+    int type = -1;
+    void *ptr = NULL;
+    float value = fallback;
+
+    if (!game_config_join_key(section, key, full_key, sizeof(full_key))) {
+        return fallback;
+    }
+
+    os_unfair_lock_lock(&s_config_lock);
+    ptr = configFindEntry(full_key, &type);
+    if (ptr) {
+        if (type == 1) {
+            value = *(f32 *)ptr;
+        } else if (type == 0) {
+            value = (float)*(s32 *)ptr;
+        } else if (type == 2) {
+            value = (float)*(u32 *)ptr;
+        }
+    }
+    os_unfair_lock_unlock(&s_config_lock);
+
+    return value;
 }
 
 void game_config_set_float(const char *section, const char *key, float value) {
-    (void)section;
-    (void)key;
-    (void)value;
-    /* TODO: Implement config write when config_pc exposes search API */
+    char full_key[CONFIG_MAX_KEYNAME + 1];
+    char value_text[64];
+
+    if (!game_config_join_key(section, key, full_key, sizeof(full_key))) {
+        return;
+    }
+
+    snprintf(value_text, sizeof(value_text), "%g", (double)value);
+    os_unfair_lock_lock(&s_config_lock);
+    configSetValue(full_key, value_text);
+    os_unfair_lock_unlock(&s_config_lock);
 }
 
 int32_t game_config_get_int(const char *section, const char *key, int32_t fallback) {
-    (void)section;
-    (void)key;
-    return fallback;
+    char full_key[CONFIG_MAX_KEYNAME + 1];
+    int type = -1;
+    void *ptr = NULL;
+    int32_t value = fallback;
+
+    if (!game_config_join_key(section, key, full_key, sizeof(full_key))) {
+        return fallback;
+    }
+
+    os_unfair_lock_lock(&s_config_lock);
+    ptr = configFindEntry(full_key, &type);
+    if (ptr) {
+        if (type == 0) {
+            value = *(s32 *)ptr;
+        } else if (type == 1) {
+            value = (int32_t)*(f32 *)ptr;
+        } else if (type == 2) {
+            value = (int32_t)*(u32 *)ptr;
+        }
+    }
+    os_unfair_lock_unlock(&s_config_lock);
+
+    return value;
 }
 
 void game_config_set_int(const char *section, const char *key, int32_t value) {
-    (void)section;
-    (void)key;
-    (void)value;
+    char full_key[CONFIG_MAX_KEYNAME + 1];
+    char value_text[64];
+
+    if (!game_config_join_key(section, key, full_key, sizeof(full_key))) {
+        return;
+    }
+
+    snprintf(value_text, sizeof(value_text), "%d", value);
+    os_unfair_lock_lock(&s_config_lock);
+    configSetValue(full_key, value_text);
+    os_unfair_lock_unlock(&s_config_lock);
 }
 
 bool game_config_save(void) {
-    return configSave() != 0;
+    bool saved;
+
+    os_unfair_lock_lock(&s_config_lock);
+    saved = configSave() != 0;
+    os_unfair_lock_unlock(&s_config_lock);
+
+    return saved;
 }
 
 /* ========================================================================
