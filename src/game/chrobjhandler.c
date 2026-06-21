@@ -11112,6 +11112,7 @@ skip_autogun_switch_pose:
                 bool has_vehicle_switch_layout;
                 f32 wheel_diameter;
 #ifdef NATIVE_PORT
+                f32 *vehicle_switch5_data;
                 const char *vehicle_name = (model != NULL && model->obj != NULL && model->obj->debugName != NULL)
                     ? model->obj->debugName
                     : "<unnamed>";
@@ -11121,6 +11122,10 @@ skip_autogun_switch_pose:
                 matrix_count = modelGetRenderPosCount(model);
 
 #ifdef NATIVE_PORT
+                vehicle_switch5_data = (model != NULL && model->obj != NULL)
+                    ? (f32 *)modelGetSwitchDataSafe(model->obj, 5, sizeof(f32) * 5)
+                    : NULL;
+
                 has_vehicle_switch_layout =
                     model != NULL &&
                     model->obj != NULL &&
@@ -11129,8 +11134,7 @@ skip_autogun_switch_pose:
                     modelGetSwitchDataSafe(model->obj, 1, sizeof(coord3d)) != NULL &&
                     modelGetSwitchDataSafe(model->obj, 2, sizeof(coord3d)) != NULL &&
                     modelGetSwitchDataSafe(model->obj, 3, sizeof(coord3d)) != NULL &&
-                    modelGetSwitchDataSafe(model->obj, 4, sizeof(coord3d)) != NULL &&
-                    modelGetSwitchDataSafe(model->obj, 5, sizeof(f32) * 5) != NULL;
+                    modelGetSwitchDataSafe(model->obj, 4, sizeof(coord3d)) != NULL;
 #else
                 has_vehicle_switch_layout =
                     model != NULL &&
@@ -11163,7 +11167,7 @@ skip_autogun_switch_pose:
                         (model != NULL && model->obj != NULL) ? modelGetSwitchDataSafe(model->obj, 2, sizeof(coord3d)) : NULL,
                         (model != NULL && model->obj != NULL) ? modelGetSwitchDataSafe(model->obj, 3, sizeof(coord3d)) : NULL,
                         (model != NULL && model->obj != NULL) ? modelGetSwitchDataSafe(model->obj, 4, sizeof(coord3d)) : NULL,
-                        (model != NULL && model->obj != NULL) ? modelGetSwitchDataSafe(model->obj, 5, sizeof(f32) * 5) : NULL);
+                        (void *)vehicle_switch5_data);
 #endif
 
                     for (i = 1; i < matrix_count; i++)
@@ -11180,7 +11184,7 @@ skip_autogun_switch_pose:
                 sp25C = (coord3d *)modelGetSwitchDataSafe(model->obj, 2, sizeof(coord3d));
                 sp258 = (coord3d *)modelGetSwitchDataSafe(model->obj, 3, sizeof(coord3d));
                 sp254 = (coord3d *)modelGetSwitchDataSafe(model->obj, 4, sizeof(coord3d));
-                temp_v0_40 = (f32 *)modelGetSwitchDataSafe(model->obj, 5, sizeof(f32) * 5);
+                temp_v0_40 = vehicle_switch5_data;
 #else
                 sp260 = (coord3d *)temp_v1_7[1]->Data;
                 sp25C = (coord3d *)temp_v1_7[2]->Data;
@@ -11188,7 +11192,18 @@ skip_autogun_switch_pose:
                 sp254 = (coord3d *)temp_v1_7[4]->Data;
                 temp_v0_40 = (f32 *)temp_v1_7[5]->Data;
 #endif
-                wheel_diameter = (temp_v0_40[4] - temp_v0_40[3]) * model->scale;
+                if (temp_v0_40 != NULL)
+                {
+                    wheel_diameter = (temp_v0_40[4] - temp_v0_40[3]) * model->scale;
+                    if (wheel_diameter != wheel_diameter || fabsf(wheel_diameter) > 100000.0f)
+                    {
+                        wheel_diameter = 0.0f;
+                    }
+                }
+                else
+                {
+                    wheel_diameter = 0.0f;
+                }
 
                 if (sp678 != 0 && fabsf(wheel_diameter) > 0.0001f)
                 {
@@ -48213,7 +48228,14 @@ void drop_inventory(void)
     {
         propid = getPropForHeldItem(item);
 
+        /* enum PROP can be compiled unsigned, making (propid >= 0) always true
+         * for the -1 "no world model" return; cast to s32 so ITEM_FIST and other
+         * model-less items do not index PitemZ_entries[-1]. See sub_GAME_7F09B398. */
+#ifdef NATIVE_PORT
+        if (((s32)propid >= 0) && (bondinvHasInvItem(item) != 0))
+#else
         if ((propid >= 0) && (bondinvHasInvItem(item) != 0))
+#endif
         {
             prop = something_with_generating_object(playerchr, propid, item, 0x20000000, NULL, NULL);
 

@@ -4962,6 +4962,34 @@ void bondviewSetCameraMode(s32 arg0)
         g_MpSwirlForwardSpeed = 0.0f;
         g_MpSwirlDistance = 80.0f;
         fogLoadLevelEnvironment(bossGetStageNum(), 0);
+#ifdef NATIVE_PORT
+        /* On PC the MP intro swirl is skipped, so the per-player char load that
+         * normally runs through the swirl sequence never happens.  Mirror the
+         * skipped-intro FP path: load this player's Bond character model now if
+         * it doesn't exist yet, so g_CurrentPlayer->prop->chr is populated
+         * before the first gameplay tick reaches the weapon state machine
+         * (handle_weapon_id_values_possibly_1st_person_animation ->
+         * sub_GAME_7F09B368 dereferences prop->chr).  bondviewSetCameraMode(MP)
+         * is invoked once per player from bondviewLoadSetupIntroSection(), so
+         * each player's chr is loaded with that player current. */
+        if (g_CurrentPlayer->ptr_char_objectinstance == NULL)
+        {
+            solo_char_load();
+            g_CurrentPlayer->lock_hand_model[GUNRIGHT] = 0;
+            g_CurrentPlayer->lock_hand_model[GUNLEFT] = 0;
+
+            if (getCurrentPlayerWeaponId(GUNRIGHT) != ITEM_UNARMED) {
+                place_item_in_hand_swap_and_make_visible(
+                    GUNRIGHT, getCurrentPlayerWeaponId(GUNRIGHT));
+            }
+            if (getCurrentPlayerWeaponId(GUNLEFT) != ITEM_UNARMED) {
+                place_item_in_hand_swap_and_make_visible(
+                    GUNLEFT, getCurrentPlayerWeaponId(GUNLEFT));
+            }
+        }
+
+        bondviewFinalizeNativeFpHandoff();
+#endif
     }
     else if (g_CameraMode == CAMERAMODE_SWIRL)
     {
@@ -23089,7 +23117,17 @@ apply_animation:
 
         /* If animPtr is set but newAnim is not, load default anim from animPtr */
         if (animPtr != NULL && newAnim == NULL) {
+#ifdef NATIVE_PORT
+            /* animPtr->anonymous_0 is a raw N64 offset into ptr_animation_table,
+             * not a usable pointer on 64-bit; convert it the same way the rest of
+             * the firing-animation path does (firing_animation_groups[].anim above
+             * and chrlv.c's ANIM_FROM_OFFSET(panim_float->anonymous_0)). Reading it
+             * as a pointer (*(void**)animPtr) yields the bare offset (e.g. 0x76B8)
+             * and crashes modelSetAnimFrame when rendering the other player's body. */
+            newAnim = ANIM_FROM_OFFSET(((struct weapon_firing_animation_table *)animPtr)->anonymous_0);
+#else
             newAnim = *(void **)animPtr;
+#endif
         }
 
         /* If target anim differs from current, flag for update */
