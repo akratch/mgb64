@@ -4100,6 +4100,22 @@ s32 pull_and_display_text_for_folder_a0(s32 arg0)
     return -1;
 }
 
+s32 pull_briefing_for_stage_id(s32 stage_id)
+{
+    int i;
+
+    for (i=0; mission_folder_setup_entries[i].folder_text_preset != 0 ; i++)
+    {
+        if ((mission_folder_setup_entries[i].stage_id >= 0)
+            && (stage_id == mission_folder_setup_entries[i].stage_id))
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 
 s32 check_if_stage_completed_on_difficulty(int stage, DIFFICULTY difficulty)
 {

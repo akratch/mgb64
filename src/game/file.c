@@ -122,7 +122,12 @@ void set_solo_and_ptr_briefing(LEVELID stage)
 {
     gamemode = GAMEMODE_SOLO;
     selected_stage = stage;
-    briefingpage = pull_and_display_text_for_folder_a0(stage);
+    briefingpage = pull_briefing_for_stage_id(stage);
+
+    if (briefingpage < 0)
+    {
+        briefingpage = pull_and_display_text_for_folder_a0(stage);
+    }
 }
 
 void sub_GAME_7F01D61C(struct save_data *savefile)
@@ -153,4 +158,3 @@ void store_favorite_weapon_current_player(u32 right,u32 left)
   array_favweapon[playerNum][GUNRIGHT] = right;
   array_favweapon[playerNum][GUNLEFT] = left;
 }
-
