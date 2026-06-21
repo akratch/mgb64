@@ -626,6 +626,13 @@ through the shader-side N64 filter. A blanket room-nearest override bypasses
 that path and shows up as low color diversity/blocky texture regression on
 Cradle, Dam, Surface, and similar large room surfaces.
 
+Texture-cache identity must include the decoded source row pitch as well as
+the visible upload dimensions. N64 room materials can describe the same visible
+tile size from either packed `LOADBLOCK` bytes or a strided `LOADTILE`/sub-rect
+source; omitting the source pitch lets a later material reuse a GL texture that
+was decoded with the wrong stride, which looks like row smear even though the
+source bytes and sampler mode are both correct.
+
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
 `Video.FovY=75` deliberately change composition and pixel metrics. For stock

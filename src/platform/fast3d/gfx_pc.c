@@ -1894,6 +1894,11 @@ struct TextureHashmapNode {
     uint8_t palette_lut_mode;
     uint32_t size_bytes;
     uint32_t line_size_bytes;
+    /* The decoded source pitch is part of the GL upload identity. The same
+     * visible tile dimensions can come from packed LOADBLOCK data or from a
+     * strided LOADTILE/sub-rect; aliasing those cache entries reuses pixels
+     * decoded with the wrong row pitch and presents as texture smearing. */
+    uint32_t full_image_line_size_bytes;
     uint16_t tile_width;
     uint16_t tile_height;
     const uint8_t *palette_addr0;
@@ -1958,17 +1963,44 @@ static void tex_cache_init(void) {
     gfx_texture_cache.free_node_count = TEXTURE_CACHE_MAX_SIZE;
 }
 
+static inline size_t gfx_texture_cache_hash_key(uintptr_t texture_addr_key,
+                                                uintptr_t texture_source_key,
+                                                uint32_t size_bytes,
+                                                uint32_t line_size_bytes,
+                                                uint32_t full_image_line_size_bytes,
+                                                uint32_t tile_width,
+                                                uint32_t tile_height,
+                                                const uint8_t *palette_addr0,
+                                                const uint8_t *palette_addr1,
+                                                uint8_t palette_index,
+                                                uint8_t palette_lut_mode)
+{
+    return ((texture_addr_key >> 5) ^
+            (texture_source_key >> 9) ^
+            ((uintptr_t)palette_addr0 >> 4) ^
+            ((uintptr_t)palette_addr1 >> 7) ^
+            ((uint32_t)palette_index << 17) ^
+            ((uint32_t)palette_lut_mode << 21) ^
+            size_bytes ^
+            (line_size_bytes << 1) ^
+            (full_image_line_size_bytes << 3) ^
+            (tile_width << 5) ^
+            (tile_height << 11)) & 0x3ff;
+}
+
 /* Remove a node from its hash chain */
 static void tex_hash_remove(struct TextureHashmapNode *node) {
-    size_t hash = ((node->texture_addr_key >> 5) ^
-                   ((uintptr_t)node->palette_addr0 >> 4) ^
-                   ((uintptr_t)node->palette_addr1 >> 7) ^
-                   ((uint32_t)node->palette_index << 17) ^
-                   ((uint32_t)node->palette_lut_mode << 21) ^
-                   node->size_bytes ^
-                   (node->line_size_bytes << 1) ^
-                   ((uint32_t)node->tile_width << 5) ^
-                   ((uint32_t)node->tile_height << 11)) & 0x3ff;
+    size_t hash = gfx_texture_cache_hash_key(node->texture_addr_key,
+                                             node->texture_source_key,
+                                             node->size_bytes,
+                                             node->line_size_bytes,
+                                             node->full_image_line_size_bytes,
+                                             node->tile_width,
+                                             node->tile_height,
+                                             node->palette_addr0,
+                                             node->palette_addr1,
+                                             node->palette_index,
+                                             node->palette_lut_mode);
     struct TextureHashmapNode **pp = &gfx_texture_cache.hashmap[hash];
     while (*pp) {
         if (*pp == node) {
@@ -1999,6 +2031,7 @@ static void tex_cache_evict_lru(void) {
     victim->texture_source_key = 0;
     victim->size_bytes = 0;
     victim->line_size_bytes = 0;
+    victim->full_image_line_size_bytes = 0;
     victim->tile_width = 0;
     victim->tile_height = 0;
     victim->palette_index = 0;
@@ -2051,6 +2084,7 @@ static void gfx_texture_cache_delete_matching(bool (*match_fn)(const struct Text
         node->palette_lut_mode = 0;
         node->size_bytes = 0;
         node->line_size_bytes = 0;
+        node->full_image_line_size_bytes = 0;
         node->tile_width = 0;
         node->tile_height = 0;
         node->palette_addr0 = NULL;
@@ -2122,6 +2156,7 @@ static void gfx_texture_cache_discard_node(struct TextureHashmapNode *node) {
     node->palette_lut_mode = 0;
     node->size_bytes = 0;
     node->line_size_bytes = 0;
+    node->full_image_line_size_bytes = 0;
     node->tile_width = 0;
     node->tile_height = 0;
     node->palette_addr0 = NULL;
@@ -7801,6 +7836,7 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
                                      uintptr_t texture_addr_key, uint32_t fmt,
                                      uint32_t siz, uint32_t size_bytes,
                                      uint32_t line_size_bytes,
+                                     uint32_t full_image_line_size_bytes,
                                      uint32_t tile_width,
                                      uint32_t tile_height,
                                      const uint8_t *palette_addr0,
@@ -7808,25 +7844,29 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
                                      uint8_t palette_index,
                                      uint8_t palette_lut_mode,
                                      uintptr_t texture_source_key) {
-    size_t hash = ((texture_addr_key >> 5) ^
-                   ((uintptr_t)palette_addr0 >> 4) ^
-                   ((uintptr_t)palette_addr1 >> 7) ^
-                   ((uint32_t)palette_index << 17) ^
-                   ((uint32_t)palette_lut_mode << 21) ^
-                   size_bytes ^
-                   (line_size_bytes << 1) ^
-                   (tile_width << 5) ^
-                   (tile_height << 11)) & 0x3ff;
+    size_t hash = gfx_texture_cache_hash_key(texture_addr_key,
+                                             texture_source_key,
+                                             size_bytes,
+                                             line_size_bytes,
+                                             full_image_line_size_bytes,
+                                             tile_width,
+                                             tile_height,
+                                             palette_addr0,
+                                             palette_addr1,
+                                             palette_index,
+                                             palette_lut_mode);
 
     /* Search hash chain for existing entry */
     struct TextureHashmapNode *node = gfx_texture_cache.hashmap[hash];
     while (node != NULL) {
         if (node->in_use &&
             node->texture_addr_key == texture_addr_key &&
+            node->texture_source_key == texture_source_key &&
             node->fmt == fmt &&
             node->siz == siz &&
             node->size_bytes == size_bytes &&
             node->line_size_bytes == line_size_bytes &&
+            node->full_image_line_size_bytes == full_image_line_size_bytes &&
             node->tile_width == tile_width &&
             node->tile_height == tile_height &&
             node->palette_addr0 == palette_addr0 &&
@@ -7869,6 +7909,7 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
     new_node->siz = siz;
     new_node->size_bytes = size_bytes;
     new_node->line_size_bytes = line_size_bytes;
+    new_node->full_image_line_size_bytes = full_image_line_size_bytes;
     new_node->tile_width = tile_width;
     new_node->tile_height = tile_height;
     new_node->palette_addr0 = palette_addr0;
@@ -8487,6 +8528,7 @@ static bool import_texture(int slot, int tile_desc) {
     const __typeof__(rdp.loaded_texture[0]) *loaded_texture;
     uint32_t decode_size_bytes;
     uint32_t decode_line_size_bytes;
+    uint32_t decode_full_image_line_size_bytes;
     uint32_t texture_width;
     uint32_t texture_height;
     uint8_t fmt;
@@ -8499,6 +8541,8 @@ static bool import_texture(int slot, int tile_desc) {
     if (!loaded_texture->addr || loaded_texture->size_bytes == 0) return false;
     decode_size_bytes = gfx_loaded_texture_decode_size_bytes(loaded_texture);
     decode_line_size_bytes = gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
+    decode_full_image_line_size_bytes =
+        gfx_loaded_texture_decode_full_image_line_size_bytes(loaded_texture);
     if (decode_size_bytes == 0) return false;
     if (decode_line_size_bytes == 0) return false;
     if (!gfx_loaded_texture_decode_footprint_is_plausible(loaded_texture)) {
@@ -8560,6 +8604,7 @@ static bool import_texture(int slot, int tile_desc) {
                                  loaded_texture->cache_key, fmt, siz,
                                  decode_size_bytes,
                                  decode_line_size_bytes,
+                                 decode_full_image_line_size_bytes,
                                  texture_width,
                                  texture_height,
                                  fmt == G_IM_FMT_CI ? rdp.palette_addrs[0] : NULL,
