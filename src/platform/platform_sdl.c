@@ -20,6 +20,7 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "settings.h"
 #include "game/front.h"
 #include "game/title.h"
 
@@ -925,13 +926,34 @@ static void platformApplyAutoMuteToggles(void)
  * Called from main_pc.c before configInit(). */
 void platformRegisterConfig(void)
 {
-    configRegisterInt("Video.WindowWidth",  &g_cfgWindowW, 320, 3840);
-    configRegisterInt("Video.WindowHeight", &g_cfgWindowH, 240, 2160);
-    configRegisterInt("Video.Fullscreen",   &g_fullscreen, 0, 1);
-    configRegisterFloat("Input.MouseSensitivity",    &g_pcMouseSensitivity, 0.01f, 2.0f);
-    configRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.005f, 1.0f);
-    configRegisterInt("Input.InvertY",               &g_pcInvertY, 0, 1);
-    configRegisterFloat("Input.GamepadLookSpeed",    &g_pcGamepadLookSpeed, 1.0f, 30.0f);
+    settingsRegisterInt("Video.WindowWidth", &g_cfgWindowW, 1440, 320, 3840,
+                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        "Window width",
+                        "Initial SDL window width in pixels.");
+    settingsRegisterInt("Video.WindowHeight", &g_cfgWindowH, 810, 240, 2160,
+                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        "Window height",
+                        "Initial SDL window height in pixels.");
+    settingsRegisterInt("Video.Fullscreen", &g_fullscreen, 0, 0, 1,
+                        SETTING_SCOPE_RESTART, NULL, NULL,
+                        "Borderless fullscreen",
+                        "Start in SDL borderless fullscreen.");
+    settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
+                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          "Mouse sensitivity",
+                          "Mouse-look sensitivity during normal aim.");
+    settingsRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.05f, 0.005f, 1.0f,
+                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          "Aim mouse sensitivity",
+                          "Mouse-look sensitivity while aiming.");
+    settingsRegisterInt("Input.InvertY", &g_pcInvertY, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, NULL, NULL,
+                        "Invert Y axis",
+                        "Invert mouse-look Y input.");
+    settingsRegisterFloat("Input.GamepadLookSpeed", &g_pcGamepadLookSpeed, 8.0f, 1.0f, 30.0f,
+                          SETTING_SCOPE_LIVE, NULL, NULL,
+                          "Gamepad look speed",
+                          "Right-stick look speed multiplier.");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

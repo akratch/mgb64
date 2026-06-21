@@ -190,20 +190,23 @@ The foundation (P1). Everything else is rows + apply callbacks.
 
 | Task | Effort | Status | Detail |
 |---|---|---|---|
-| 0a. `src/platform/settings.c` schema + `Setting` table | M | ⬜ | One declarative table; replaces scattered `configRegister*`/`getenv`/CLI parsing as the front end. |
+| 0a. `src/platform/settings.c` schema + `Setting` table | M | 🟡 | Baseline schema exists for current scalar settings; enum/string/bind rows and full env/CLI front-end replacement remain. |
 | 0b. `configRegisterEnum`/`configRegisterString` | S | ⬜ | Enums serialize as stable tokens (`borderless`), not ints. |
 | 0c. Unknown-key passthrough | S | ⬜ | `configLoad` retains raw lines for unregistered keys; `configSave` re-emits them. Forward/back-compat. |
 | 0d. Atomic save | S | ⬜ | Write `ge007.ini.tmp` then `rename`; never truncate the live file (`config_pc.c:205`). |
 | 0e. Self-documenting save | S | ⬜ | Emit `# <label> (default X, range A..B)` above each key; section-ordered to avoid duplicate headers from interleaved registration. |
 | 0f. Precedence + env-shadow surfacing | S | ⬜ | Read precedence **CLI > env > file > default**; if env/CLI shadows a key, the UI shows it read-only as "overridden by environment" (no silent no-op writes). |
-| 0g. `--dump-config` / `--list-settings` / `--config-set k=v` / `--reset-config` | S | ⬜ | Introspection + scriptable config for CI/support. |
+| 0g. `--dump-config` / `--list-settings` / `--config-set k=v` / `--reset-config` | S | 🟡 | `--dump-config` and `--list-settings` are wired as no-ROM exits; `--config-set` and `--reset-config` remain. |
 | 0h. CLI split + macOS bridge cleanup | S | ⬜ | Keep early runtime flags outside the schema; make `GameBridge.h`/`GameBridge.c` truthful by wiring `game_config_get/set_*` through the registry or removing stale guarantees until wired. |
 
-**Gate:** new `tools/config_roundtrip_check.py` (no ROM) — write every key→reload→
-assert equality; assert an injected unknown key survives load→save; assert enum
-tokens round-trip; assert a simulated mid-write crash (kill between tmp and
-rename) leaves the prior file intact. Fold this no-ROM gate into
-`tools/validate_quick.sh --no-spawn`.
+**Gate:** `tools/settings_schema_check.py` is the landed no-ROM gate for the
+baseline schema: it verifies `--list-settings`, `--dump-config`, default values,
+custom `ge007.ini` loading, and no ROM startup. Next, add
+`tools/config_roundtrip_check.py` — write every key→reload→assert equality;
+assert an injected unknown key survives load→save; assert enum tokens
+round-trip; assert a simulated mid-write crash (kill between tmp and rename)
+leaves the prior file intact. Fold that no-ROM gate into
+`tools/validate_quick.sh --no-spawn` too.
 
 ---
 

@@ -198,8 +198,8 @@ add_definitions(
 # Note: TARGET_N64 is NOT defined — activates PC code paths
 
 # --- Collect sources ---
-file(GLOB GAME_SOURCES src/game/*.c)
-file(GLOB PLATFORM_SOURCES src/platform/*.c)
+file(GLOB GAME_SOURCES CONFIGURE_DEPENDS src/game/*.c)
+file(GLOB PLATFORM_SOURCES CONFIGURE_DEPENDS src/platform/*.c)
 
 # Exclude the old gfx_pc.c (replaced by fast3d)
 list(FILTER PLATFORM_SOURCES EXCLUDE REGEX "gfx_pc\\.c$")

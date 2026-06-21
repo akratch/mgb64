@@ -17,6 +17,7 @@
 #include <dirent.h>
 #include "rom_io.h"
 #include "savedir.h"
+#include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
 
@@ -462,6 +463,8 @@ int main(int argc, char **argv)
 {
     const char *romPath = NULL;
     const char *saveDirOverride = NULL;
+    int listSettings = 0;
+    int dumpConfig = 0;
     extern int g_autoScreenshotExit;
     extern const char *g_traceStatePath;
 
@@ -480,6 +483,10 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             romPath = argv[++i];
+        } else if (strcmp(argv[i], "--list-settings") == 0) {
+            listSettings = 1;
+        } else if (strcmp(argv[i], "--dump-config") == 0) {
+            dumpConfig = 1;
         } else if (strcmp(argv[i], "--background") == 0) {
             setenv("GE007_BACKGROUND", "1", 1);
             setenv("GE007_NO_INPUT_GRAB", "1", 1);
@@ -599,7 +606,7 @@ int main(int argc, char **argv)
         setenv("GE007_NO_INPUT_GRAB", "1", 1);
     }
 
-    if (!romPath) {
+    if (!romPath && !listSettings && !dumpConfig) {
         romPath = findRomFile();
     }
 
@@ -610,6 +617,19 @@ int main(int argc, char **argv)
     platformRegisterConfig();
     portAudioRegisterConfig();
     configInit();
+
+    if (listSettings || dumpConfig) {
+        if (listSettings) {
+            settingsPrintList(stdout);
+        }
+        if (listSettings && dumpConfig) {
+            printf("\n");
+        }
+        if (dumpConfig) {
+            settingsPrintDump(stdout);
+        }
+        return 0;
+    }
 
     printf("[GE007-PC] Starting...\n");
     if (g_pcStartMultiplayer) {

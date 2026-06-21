@@ -128,6 +128,8 @@ Useful runtime options:
 | `--mission N` | Direct-boot solo mission order `1` through `20`. Use this when you mean "mission 2", "mission 3", etc. |
 | `--difficulty VALUE` | Select the direct-boot difficulty. Values: `agent`, `secret`, `00`, `007`, or numeric `0` through `3`. Defaults to Agent. |
 | `--savedir PATH` | Store `ge007.ini` and save data in `PATH`. Without this, the port uses the current directory when writable, then falls back to a per-user directory. |
+| `--list-settings` | Print registered persistent settings and exit. Does not require a ROM. |
+| `--dump-config` | Print the current config view after loading `ge007.ini` and exit. Does not require a ROM. |
 | `--no-input-grab` | Do not capture the mouse. Useful while testing windowed startup. |
 | `--background` | Run without grabbing input and with background-friendly settings. Useful for smoke tests. |
 
