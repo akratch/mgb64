@@ -1456,8 +1456,15 @@ void platformRegisterConfig(void)
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {
-    *dx = g_mouseDeltaX + g_pcScriptedMouseDeltaX;
-    *dy = g_mouseDeltaY + g_pcScriptedMouseDeltaY;
+    extern int g_freezeInput;
+
+    if (g_freezeInput) {
+        *dx = g_pcScriptedMouseDeltaX;
+        *dy = g_pcScriptedMouseDeltaY;
+    } else {
+        *dx = g_mouseDeltaX + g_pcScriptedMouseDeltaX;
+        *dy = g_mouseDeltaY + g_pcScriptedMouseDeltaY;
+    }
     g_mouseDeltaX = 0;
     g_mouseDeltaY = 0;
     g_pcScriptedMouseDeltaX = 0;

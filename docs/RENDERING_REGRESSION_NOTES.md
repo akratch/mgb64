@@ -102,6 +102,17 @@ The visible symptoms were level-specific but shared renderer causes:
    band, so crop-level color metrics are not enough without texture-number tint
    and material traces at the actual capture frame.
 
+10. **Deterministic input freeze must not suppress scripted look probes.**
+    The screenshot and oracle lanes use `--deterministic`, which sets
+    `g_freezeInput` so live keyboard, mouse, and gamepad input cannot leak into
+    local captures. Scripted `GE007_AUTO_LOOK_*` probes are different: they are
+    authored capture input and must still reach the native mouse-look path. A
+    broken gate suppressed all native look while `g_freezeInput` was set, so
+    "look up" comparisons measured different camera composition instead of
+    sky/fog/texture output. The fixed path keeps RAMROM playback isolated,
+    ignores live gamepad right-stick while frozen, and lets
+    `platformGetMouseDelta()` return scripted mouse deltas under freeze.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -146,6 +157,10 @@ Use these habits before accepting renderer changes:
   not explain every apparent material color delta.
 - Treat `GE007_SKY_UV_SCALE=1.0` as a negative control. It is useful for proving
   sky UV bugs, but it is not the calibrated native default.
+- Do not use `g_freezeInput` as a blanket native-look gate. It should remove
+  live input from deterministic captures while preserving authored
+  `GE007_AUTO_LOOK_*` probes. Use `tools/scripted_look_smoke.sh` before
+  accepting changes in the native mouse/right-stick handoff.
 - Use fog traces before changing texture decode for distant low-detail scenes.
 - When a visual change appears only with `Video.RenderScale > 1` or MSAA, first
   compare against `Video.RenderScale=1`, then audit raw GL state restored by the
@@ -195,6 +210,18 @@ For smaller renderer A/B captures:
   --rom /path/to/baserom.u.z64 \
   --binary build/ge007
 ```
+
+Before trusting broad look-direction screenshot deltas, run:
+
+```sh
+./tools/scripted_look_smoke.sh --no-build \
+  --rom /path/to/baserom.u.z64 \
+  --binary build/ge007
+```
+
+This asserts that deterministic input freeze is still blocking live input while
+authored `GE007_AUTO_LOOK_UP` changes the gameplay pitch by a measurable amount.
+If it fails, visual comparisons that rely on `GE007_AUTO_LOOK_*` are not valid.
 
 For ROM-backed movement/intro parity, the public stock-oracle route set is
 currently Dam-focused. `stock_level` in a route gates and audits the target raw

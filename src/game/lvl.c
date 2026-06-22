@@ -90,15 +90,7 @@ extern int g_tri_count_diag;
 
 static int pcNativeLiveLookAllowed(void)
 {
-    extern int g_freezeInput;
-
-    if (g_freezeInput) {
-        return 0;
-    }
     if (get_is_ramrom_flag() != 0) {
-        return 0;
-    }
-    if (joyGetContDataIndex() != 0) {
         return 0;
     }
 
@@ -5753,6 +5745,7 @@ void lvlViewMoveTick(void)
         extern int g_pcDebugFlyCamera;
         extern void platformGetMouseDelta(int *dx, int *dy);
         extern void platformGetPadRightStick(int k, int *rx, int *ry);
+        extern int g_freezeInput;
 
         /* Inject mouse look and gamepad right-stick directly into player
          * angles (bypasses C-button acceleration for smooth feel).
@@ -5772,6 +5765,9 @@ void lvlViewMoveTick(void)
             if (!live_look_allowed) {
                 mdx = 0;
                 mdy = 0;
+                grx = 0;
+                gry = 0;
+            } else if (g_freezeInput) {
                 grx = 0;
                 gry = 0;
             }

@@ -40,6 +40,7 @@ The public validation surface is organized into these lanes:
 | Static | Raw native switch-node dereferences (no ROM) | `check_native_switch_access.py` |
 | Boot | Spawn invariants, asserts, crashes, render-health counters on level load | `spawn_health_check.sh` |
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
+| Scripted look | Deterministic input-freeze isolation while preserving authored `GE007_AUTO_LOOK_*` probes | `scripted_look_smoke.sh` |
 | Damage HUD | Deterministic Bond damage, active health/damage timers, visible health/armor rings, optional HUD-class triangle check | `damage_hud_smoke.sh` |
 | Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
 | Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
@@ -139,6 +140,22 @@ displacement, target-player record counts, input-event counts, and any
 failures. The top-level summary also records the config overrides applied to the
 run. Keep generated JSONL traces, screenshots, summaries, contact sheets, and
 audit logs local.
+
+### Scripted look smoke
+
+```sh
+./tools/scripted_look_smoke.sh
+./tools/scripted_look_smoke.sh --no-build --level 36
+```
+
+This lane exists because deterministic screenshot/oracle captures set
+`g_freezeInput` to block live keyboard, mouse, and gamepad input. That freeze
+must not suppress authored `GE007_AUTO_LOOK_*` probes; otherwise broad
+look-direction screenshot comparisons silently capture a different camera angle
+and mislabel composition drift as a renderer regression. The smoke direct-boots
+a baseline and a `GE007_AUTO_LOOK_UP` run, then requires the baseline pitch to
+stay near zero while the scripted run changes `move.pitch` by the configured
+minimum. Keep the generated traces and screenshots local.
 
 ### Damage HUD smoke
 
