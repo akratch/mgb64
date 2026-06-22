@@ -86,7 +86,6 @@ static int bondviewTraceNativeFovEnabled(void);
  */
 static u8  g_adsWasAiming[4];      /* ADS-2.1 rising/falling-edge FOV arming */
 static f32 g_adsLastFovTarget[4];  /* ADS-2.1 last armed target for switch re-arm */
-static s32 g_adsSprintLockout[4];  /* ADS-5.3 optional sprint-out deferral countdown */
 
 /*
  * ADS-2.1 timing conversion. ads_in_time/ads_out_time are authored in SECONDS,
@@ -107,7 +106,6 @@ extern s32 g_pcAdsCenterCrosshair;
 extern s32 g_pcAdsMovePenalty;
 extern f32 g_pcAdsMoveScale;
 extern f32 g_pcAdsStrafeScale;
-extern s32 g_pcAdsSprintLockout;
 
 /*
  * Resolve the ADS profile for the dominant (right) hand, falling back to the

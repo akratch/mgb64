@@ -173,6 +173,11 @@ static void adsComputeDefault(ITEM_IDS item, struct AdsProfile *out)
 
 const struct AdsProfile *adsGetProfile(ITEM_IDS item)
 {
+    /* Single-use scratch: the returned pointer is overwritten on the next
+     * adsGetProfile() call. Callers MUST consume it (read the fields they need)
+     * before calling adsGetProfile/adsResolveDominantProfile again — do not hold
+     * it across another resolve. Safe today (single-threaded per-frame player
+     * loop); copy into a local struct AdsProfile if you need to keep it. */
     static struct AdsProfile resolved;
     int i;
 

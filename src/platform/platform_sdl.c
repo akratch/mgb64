@@ -947,7 +947,6 @@ s32 g_pcAdsSpreadEnabled = 1;     /* Input.AdsSpreadEnabled  per-weapon spread m
 s32 g_pcAdsMovePenalty   = 1;     /* Input.AdsMovePenalty    aimed movement penalty  */
 f32 g_pcAdsMoveScale     = 1.0f;  /* Input.AdsMoveScale      forward-speed trim      */
 f32 g_pcAdsStrafeScale   = 1.0f;  /* Input.AdsStrafeScale    strafe-speed trim       */
-s32 g_pcAdsSprintLockout = 0;     /* Input.AdsSprintLockout  sprint-out lockout      */
 s32 g_pcAdsFaithfulZoom  = 0;     /* Input.AdsFaithfulZoom   disable mild-iron clamp */
 s32 g_pcAdsModelPose     = 1;     /* Input.AdsModelPose      sighted model pose      */
 s32 g_pcAdsModernReticle = 1;     /* Input.AdsModernReticle  modern dot+ticks reticle */
@@ -1516,11 +1515,6 @@ void platformRegisterConfig(void)
                           "--config-override Input.AdsStrafeScale=VALUE",
                           "ADS strafe scale",
                           "Trim on the per-weapon aimed strafe-speed multiplier.");
-    settingsRegisterInt("Input.AdsSprintLockout", &g_pcAdsSprintLockout, 0, 0, 1,
-                        SETTING_SCOPE_LIVE, "GE007_ADS_SPRINT_LOCKOUT",
-                        "--config-override Input.AdsSprintLockout=VALUE",
-                        "ADS sprint lockout",
-                        "Brief readiness delay when entering ADS at near-max speed.");
     settingsRegisterInt("Input.AdsFaithfulZoom", &g_pcAdsFaithfulZoom, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_ADS_FAITHFUL_ZOOM",
                         "--config-override Input.AdsFaithfulZoom=VALUE",

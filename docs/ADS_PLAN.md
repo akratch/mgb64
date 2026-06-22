@@ -162,7 +162,7 @@ Match the existing `Video.*`/`Input.*` calls at `platform_sdl.c:1346-1451` for t
 | `Input.AdsMovePenalty` | int, **1** | 0..1 | ADS-5.1 |
 | `Input.AdsMoveScale` | float, **1.0** | 0.1..2.0 | ADS-5.1 |
 | `Input.AdsStrafeScale` | float, **1.0** | 0.1..2.0 | ADS-5.1 |
-| `Input.AdsSprintLockout` | int, **0** | 0..1 | ADS-5.3 |
+| _(Input.AdsSprintLockout — deferred; ADS-5.3 not implemented, no setting registered)_ | — | — | ADS-5.3 |
 | `Input.AdsFaithfulZoom` | int, **0** | 0..1 | ADS-2.2 |
 | `Input.AdsModelPose` | int, **1** | 0..1 | ADS-6.1 |
 | `Input.AdsRecoilReduce` | float, **0.0** | 0.0..1.0 | ADS-7.1 |
