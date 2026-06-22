@@ -33179,24 +33179,27 @@ Gfx *drawModernAdsReticle(Gfx *gdl) {
     s32 cx = viGetViewLeft() + viGetViewWidth() / 2;
     s32 cy = viGetViewTop() + viGetViewHeight() / 2;
     s32 vh = viGetViewHeight();
-    s32 dot, gap, len, th;
+    s32 thk, gap, len, hx, hy;
     u16 white = (0x1F << 11) | (0x1F << 6) | (0x1F << 1) | 1; /* RGBA5551 opaque white */
     u32 fill = ((u32)white << 16) | white;
 
     if (vh < 1) { vh = 240; }
-    dot = 1;                                   /* center dot half-extent */
-    gap = vh / 64; if (gap < 3) { gap = 3; }   /* gap from center to each tick */
-    len = vh / 40; if (len < 4) { len = 4; }   /* tick length */
-    th  = vh / 240; if (th < 1) { th = 1; }    /* tick half-thickness */
+    /* Thin, precise: 1px-thick lines at 480p (scales up with render resolution),
+     * short ticks, small center dot. hx/hy center the lines on (cx,cy). */
+    thk = vh / 480; if (thk < 1) { thk = 1; }    /* line thickness (px) */
+    gap = vh / 60;  if (gap < 5) { gap = 5; }    /* gap from center to each tick */
+    len = vh / 72;  if (len < 4) { len = 4; }    /* tick length (short = precise) */
+    hx = cx - thk / 2;
+    hy = cy - thk / 2;
 
     gDPPipeSync(gdl++);
     gDPSetCycleType(gdl++, G_CYC_FILL);
     gDPSetFillColor(gdl++, fill);
-    gDPFillRectangle(gdl++, cx - dot, cy - dot, cx + dot, cy + dot);            /* center dot */
-    gDPFillRectangle(gdl++, cx - th, cy - gap - len, cx + th, cy - gap);        /* top tick */
-    gDPFillRectangle(gdl++, cx - th, cy + gap, cx + th, cy + gap + len);        /* bottom tick */
-    gDPFillRectangle(gdl++, cx - gap - len, cy - th, cx - gap, cy + th);        /* left tick */
-    gDPFillRectangle(gdl++, cx + gap, cy - th, cx + gap + len, cy + th);        /* right tick */
+    gDPFillRectangle(gdl++, hx, hy, hx + thk, hy + thk);                 /* center dot */
+    gDPFillRectangle(gdl++, hx, cy - gap - len, hx + thk, cy - gap);     /* top tick */
+    gDPFillRectangle(gdl++, hx, cy + gap, hx + thk, cy + gap + len);     /* bottom tick */
+    gDPFillRectangle(gdl++, cx - gap - len, hy, cx - gap, hy + thk);     /* left tick */
+    gDPFillRectangle(gdl++, cx + gap, hy, cx + gap + len, hy + thk);     /* right tick */
     gDPPipeSync(gdl++);
     gDPSetCycleType(gdl++, G_CYC_1CYCLE);
     return gdl;
