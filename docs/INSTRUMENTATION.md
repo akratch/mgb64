@@ -628,6 +628,16 @@ through the shader-side N64 filter. A blanket room-nearest override bypasses
 that path and shows up as low color diversity/blocky texture regression on
 Cradle, Dam, Surface, and similar large room surfaces.
 
+For texture-smear reviews, keep the distinction between the controls explicit:
+`GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL bilinear sampling and can
+produce diagonal/near-plane smear on Dam and Cradle room geometry. The default
+path uses the shader-side N64 filter plus a nearest threshold for clamped,
+non-texture-edge materials; `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is a useful
+negative control because it removes that threshold and should visibly soften
+large close surfaces. `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is a
+row-pitch control: if it barely changes a capture, the active defect is probably
+filter policy rather than decoded-source stride.
+
 Texture-cache identity must include the decoded source row pitch as well as
 the visible upload dimensions. N64 room materials can describe the same visible
 tile size from either packed `LOADBLOCK` bytes or a strided `LOADTILE`/sub-rect

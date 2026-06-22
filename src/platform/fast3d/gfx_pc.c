@@ -7143,6 +7143,9 @@ static void gfx_check_diag_env(void) {
         g_diag_force_room_point_filter =
             (getenv("GE007_FORCE_ROOM_POINT_FILTER") != NULL &&
              getenv("GE007_DISABLE_ROOM_POINT_FILTER") == NULL) ? 1 : 0;
+        g_diag_disable_n64_filter =
+            (getenv("GE007_DISABLE_N64_FILTER") != NULL ||
+             getenv("GE007_DISABLE_N64_3POINT") != NULL) ? 1 : 0;
         g_diag_convert_k4k5 = (getenv("GE007_DIAG_CONVERT_K4K5") != NULL) ? 1 : 0;
         (void)gfx_diag_lod_fraction_override();
         (void)gfx_diag_shade_scale();
@@ -7297,6 +7300,7 @@ static void gfx_check_diag_env(void) {
         if (g_diag_force_point_filter) printf("[fast3d] POINT FILTER FORCED (GE007_FORCE_POINT_FILTER)\n");
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
         if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
+        if (g_diag_disable_n64_filter) printf("[fast3d] N64 SHADER FILTER DISABLED (GE007_DISABLE_N64_FILTER/GE007_DISABLE_N64_3POINT)\n");
         if (g_diag_convert_k4k5) printf("[fast3d] DIAG K4/K5 CONVERT ENABLED (GE007_DIAG_CONVERT_K4K5)\n");
         if (g_diag_lod_fraction_override >= 0) {
             printf("[fast3d] DIAG LOD FRACTION OVERRIDE %d (GE007_DIAG_LOD_FRACTION)\n",
