@@ -617,7 +617,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
 | `GE007_FOG_USE_LINEAR_DEPTH=1` | fog-depth negative control; remaps camera-space depth linearly and should not be used as the N64-parity default |
 | `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
-| `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1`, `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD=N` | N64 shader-filter controls; use to separate threshold policy from texture decode |
+| `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1`, `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD=N`, `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` | N64 shader-filter controls; use to separate threshold policy from texture decode |
 | `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
 | `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
@@ -647,10 +647,14 @@ separate during review so one fix does not hide another:
 1. **Filter policy:** `GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL
    bilinear sampling and can produce diagonal/near-plane smear on Dam and
    Cradle room geometry. The default path uses the shader-side N64 filter plus a
-   nearest threshold. That threshold must be evaluated against the N64
-   VI/logical pixel footprint, not the Retina, window, or render-scale
-   framebuffer footprint; otherwise high-resolution close surfaces take the
-   nearest branch and look blocky on Surface and Cradle.
+   nearest threshold. The footprint is normalized to the N64 VI/logical pixel
+   grid so RenderScale and high-DPI windows do not change shader branch policy.
+   Clamped non-texture-edge room materials use the same `1.0` default threshold
+   as the rest of the N64 filter path; a special `0.05` threshold is a known
+   over-softening regression on Bunker's warning sign and similar close room
+   textures. Use
+   `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` to isolate
+   that class.
    `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is the negative control: it removes
    the threshold and should visibly soften large close surfaces.
 2. **Decoded-source footprint:** texture-cache identity must include the decoded

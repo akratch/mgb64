@@ -560,12 +560,10 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         bool clamped =
             cc_features.clamp[0][0] || cc_features.clamp[0][1] ||
             cc_features.clamp[1][0] || cc_features.clamp[1][1];
-        float default_nearest_threshold =
-            cc_features.n64_filter_nearest_threshold_005 ? 0.05f : 1.0f;
         float nearest_threshold =
             gfx_diag_n64_filter_nearest_threshold(cc_features.opt_texture_edge,
                                                   clamped,
-                                                  default_nearest_threshold);
+                                                  1.0f);
         append_line(fs_buf, &fs_len, "uniform vec2 uN64FilterScale;");
         append_line(fs_buf, &fs_len, "vec4 n64TextureFilter(sampler2D tex, vec2 uv) {");
         append_line(fs_buf, &fs_len, "    vec2 texSize = vec2(textureSize(tex, 0));");

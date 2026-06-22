@@ -10764,13 +10764,6 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             cc_options |= SHADER_OPT_N64_FILTER_ALWAYS_3POINT;
         }
     }
-    if ((cc_options & (SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER)) != 0 &&
-        (cc_options & SHADER_OPT_N64_FILTER_ALWAYS_3POINT) == 0 &&
-        (cc_options & (SHADER_OPT_TEXEL0_CLAMP_S | SHADER_OPT_TEXEL0_CLAMP_T |
-                       SHADER_OPT_TEXEL1_CLAMP_S | SHADER_OPT_TEXEL1_CLAMP_T)) != 0 &&
-        (cc_options & SHADER_OPT_TEXTURE_EDGE) == 0) {
-        cc_options |= SHADER_OPT_N64_FILTER_NEAREST_THRESHOLD_005;
-    }
     if (!tint_match && settex_active &&
         gfx_diag_settex_cc_color_scale_enabled(settex_material_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_COLOR_SCALE;
@@ -15529,9 +15522,10 @@ void gfx_run_dl(Gfx *dl) {
  * synchronizes the texture and combiner state directly so that
  * gfx_emit_loaded_triangle sees the correct state when packing the VBO.
  *
- * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are already in the
- * game-authored sky texture coordinate space. Keep them at scale 1.0 by
- * default; GE007_SKY_UV_SCALE remains available as a diagnostic override.
+ * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are in world-texture-repeat
+ * space. The standard VBO packing divides by 32.0 (s10.5 -> float) then by the
+ * texture width. GE007_SKY_UV_SCALE defaults to 3.5 so the native sky keeps the
+ * original dense cloud repeat instead of stretching into broad bands.
  *
  * RSP BYPASS NOTE: On N64, sky triangles are raw RDP commands that bypass
  * all RSP processing — no backface culling, no clip rejection, no fog.
@@ -15681,12 +15675,11 @@ static void gfx_draw_sky_triangle_impl(
     struct XYWidthHeight scissor_saved = rdp.scissor;
     uint32_t geometry_mode_saved = rsp.geometry_mode;
 
-    /* Sky UV diagnostic scale. Default to the authored coordinates; increasing
-     * this repeats/compresses Cradle's sky into horizontal bands. */
+    /* Sky UV diagnostic scale. */
     static float sky_uv_scale = -1.0f;
     if (sky_uv_scale < 0) {
         const char *env = getenv("GE007_SKY_UV_SCALE");
-        sky_uv_scale = env ? (float)atof(env) : 1.0f;
+        sky_uv_scale = env ? (float)atof(env) : 3.5f;
     }
 
     for (int i = 0; i < 3; i++) {

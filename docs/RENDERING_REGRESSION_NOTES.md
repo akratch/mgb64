@@ -16,8 +16,9 @@ The visible symptoms were level-specific but shared renderer causes:
   authored intro.
 - Cradle could crash during startup after animation/model setup and later
   showed severe texture smearing and blocky room surfaces.
-- Dam, Surface, and other large-room levels showed texture regressions after
-  modern display/FOV work even though the same levels were playable.
+- Dam, Surface, Bunker, Depot, and other large-room or sky-heavy levels showed
+  texture regressions after modern display/FOV work even though the same levels
+  were playable.
 - Some fog-heavy captures looked like missing texture detail when the immediate
   issue was actually fog-depth semantics.
 
@@ -29,15 +30,18 @@ The visible symptoms were level-specific but shared renderer causes:
    native display-list path. The collision path was correct, which is why Bond
    could hit invisible panes while the visible alpha/decal work was still wrong.
 
-2. **N64 texture-filter footprint was accidentally tied to modern framebuffer
-   resolution.**
+2. **N64 texture-filter threshold policy was too aggressive for clamped room
+   materials.**
    The shader-side N64 filter uses screen derivatives to decide when to take the
    nearest branch versus the three-point path. Those derivatives come from the
    OpenGL framebuffer, so Retina/high render scale made the footprint smaller
-   than it would be in the original VI/logical image. Close room surfaces then
-   took the wrong branch and looked blocky or smeared. The default path now
+   than it would be in the original VI/logical image. The default path
    normalizes that derivative through `uN64FilterScale` in
-   `src/platform/fast3d/gfx_opengl.c`.
+   `src/platform/fast3d/gfx_opengl.c`, but a later `0.05` threshold override for
+   clamped, non-texture-edge materials pushed close room textures into constant
+   three-point filtering. Bunker's yellow warning sign was the clearest probe:
+   the `0.05` path smeared it, while the normal `1.0` threshold restored texel
+   structure without forcing blanket point sampling.
 
 3. **Decoded texture source footprint is part of cache identity.**
    The same visible tile dimensions can come from packed `LOADBLOCK` data or a
@@ -80,6 +84,14 @@ The visible symptoms were level-specific but shared renderer causes:
    The playability harness now pins a 640x480 validation window by default and
    records any explicit config overrides in `summary.json`.
 
+8. **Sky UV scale is a calibrated repeat factor, not a raw passthrough.**
+   GoldenEye's sky coordinates arrive in world-repeat space and then pass
+   through the native VBO texture packing path. Defaulting `GE007_SKY_UV_SCALE`
+   to `1.0` stretched the cloud texture into broad bands on Depot, Surface,
+   Frigate, Cradle, and other sky-heavy levels. The native default is `3.5`,
+   which restores the dense cloud repeat seen in the older renderer path while
+   keeping the split-screen viewport-aware sky draw.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -99,6 +111,13 @@ Use these habits before accepting renderer changes:
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
   with `GE007_TRACE_SETTEX_MATERIAL_CC='*'` before changing global sampler
   policy.
+- Do not add special low nearest thresholds for clamped non-texture-edge room
+  materials. Use
+  `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` to A/B that
+  class; `0.05` is a known Bunker close-texture smear regression, and the
+  default `1.0` threshold is the validated baseline.
+- Treat `GE007_SKY_UV_SCALE=1.0` as a negative control. It is useful for proving
+  sky UV bugs, but it is not the calibrated native default.
 - Use fog traces before changing texture decode for distant low-detail scenes.
 - When a visual change appears only with `Video.RenderScale > 1` or MSAA, first
   compare against `Video.RenderScale=1`, then audit raw GL state restored by the

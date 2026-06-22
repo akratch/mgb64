@@ -63,7 +63,6 @@ enum {
 #define SHADER_OPT_NOPERSPECTIVE_FOG (1 << 16)
 #define SHADER_OPT_DIAG_COLOR_SCALE (1 << 17)
 #define SHADER_OPT_N64_FILTER_ALWAYS_3POINT (1 << 18)
-#define SHADER_OPT_N64_FILTER_NEAREST_THRESHOLD_005 (1 << 19)
 
 struct CCFeatures {
     uint8_t c[2][2][4];       /* [cycle][color_or_alpha][component A/B/C/D] */
@@ -80,7 +79,6 @@ struct CCFeatures {
     bool noperspective_fog;
     bool diag_color_scale;
     bool n64_filter_always_3point;
-    bool n64_filter_nearest_threshold_005;
     int num_inputs;
     bool do_single[2][2];     /* [cycle][color_or_alpha] */
     bool do_multiply[2][2];
