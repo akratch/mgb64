@@ -143,6 +143,7 @@ trap 'validation_release_runtime_lock' EXIT INT TERM
 
 SUMMARY_FILE="$OUT_DIR/summary.tsv"
 SUMMARY_JSON="$OUT_DIR/summary.json"
+CONTACT_SHEET="$OUT_DIR/contact_sheet.png"
 printf 'level\tpattern\tmoving_records\tmax_horizontal_delta\ttarget_player_records\trecords\n' >"$SUMMARY_FILE"
 
 FAILED=0
@@ -346,7 +347,7 @@ for lvl in $LEVELS; do
     fi
 done
 
-python3 - "$SUMMARY_FILE" "$SUMMARY_JSON" "$OUT_DIR" "$LEVELS" "$PATTERNS" "$TOTAL" "$PASSED" "$FAILED" "$INPUT_WINDOW" "$FRAMES" "$MIN_MOVING_RECORDS" "$MIN_HORIZONTAL_DELTA" <<'PY'
+python3 - "$SUMMARY_FILE" "$SUMMARY_JSON" "$CONTACT_SHEET" "$OUT_DIR" "$LEVELS" "$PATTERNS" "$TOTAL" "$PASSED" "$FAILED" "$INPUT_WINDOW" "$FRAMES" "$MIN_MOVING_RECORDS" "$MIN_HORIZONTAL_DELTA" <<'PY'
 import csv
 import json
 import sys
@@ -354,16 +355,40 @@ from pathlib import Path
 
 summary_file = Path(sys.argv[1])
 summary_json = Path(sys.argv[2])
-out_dir = Path(sys.argv[3])
-levels = sys.argv[4].split()
-patterns = sys.argv[5].split()
-total = int(sys.argv[6])
-passed = int(sys.argv[7])
-failed = int(sys.argv[8])
-input_window = sys.argv[9]
-frames = int(sys.argv[10])
-min_moving_records = int(sys.argv[11])
-min_horizontal_delta = float(sys.argv[12])
+contact_sheet = Path(sys.argv[3])
+out_dir = Path(sys.argv[4])
+levels = sys.argv[5].split()
+patterns = sys.argv[6].split()
+total = int(sys.argv[7])
+passed = int(sys.argv[8])
+failed = int(sys.argv[9])
+input_window = sys.argv[10]
+frames = int(sys.argv[11])
+min_moving_records = int(sys.argv[12])
+min_horizontal_delta = float(sys.argv[13])
+
+LEVEL_NAMES = {
+    33: "Dam",
+    34: "Facility",
+    22: "Statue",
+    26: "Frigate",
+    36: "Surface 1",
+    35: "Runway",
+    9: "Bunker 1",
+    20: "Silo",
+    43: "Surface 2",
+    27: "Bunker 2",
+    24: "Archives",
+    29: "Streets",
+    30: "Depot",
+    25: "Train",
+    37: "Jungle",
+    23: "Control",
+    39: "Caverns",
+    41: "Cradle",
+    28: "Aztec",
+    32: "Egyptian",
+}
 
 
 def load_json(path: Path) -> dict:
@@ -391,10 +416,13 @@ with summary_file.open("r", encoding="utf-8", newline="") as handle:
         screenshot_json = out_dir / f"level_{level}_{pattern}.screenshot.json"
         render_json = out_dir / f"level_{level}_{pattern}.render.json"
         movement_json = out_dir / f"level_{level}_{pattern}.movement.json"
+        screenshot_path = out_dir / f"level_{level}_{pattern}.bmp"
         accepted.append(
             {
                 "level": int(level),
+                "level_name": LEVEL_NAMES.get(int(level), ""),
                 "pattern": pattern,
+                "screenshot": str(screenshot_path),
                 "records": int(row["records"]),
                 "target_player_records": int(row["target_player_records"]),
                 "moving_records": int(row["moving_records"]),
@@ -418,9 +446,39 @@ for entry in accepted:
     if entry["movement"].get("status") != "pass":
         failures.append(f"level {entry['level']} {entry['pattern']}: movement audit failed")
 
+contact_sheet_path = None
+if accepted:
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        failures.append("contact sheet: Pillow is unavailable")
+    else:
+        thumb_w = 320
+        thumb_h = 240
+        label_h = 22
+        cols = 5 if len(accepted) >= 5 else max(1, len(accepted))
+        rows = (len(accepted) + cols - 1) // cols
+        resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+        sheet = Image.new("RGB", (cols * thumb_w, rows * (thumb_h + label_h)), (18, 18, 18))
+        draw = ImageDraw.Draw(sheet)
+
+        for index, entry in enumerate(accepted):
+            shot = Path(entry["screenshot"])
+            with Image.open(shot) as image:
+                thumb = image.convert("RGB").resize((thumb_w, thumb_h), resample)
+            x = (index % cols) * thumb_w
+            y = (index // cols) * (thumb_h + label_h)
+            sheet.paste(thumb, (x, y + label_h))
+            name = entry.get("level_name") or f"LEVELID {entry['level']}"
+            draw.text((x + 6, y + 4), f"{entry['level']} {name} [{entry['pattern']}]", fill=(235, 235, 235))
+
+        sheet.save(contact_sheet)
+        contact_sheet_path = str(contact_sheet)
+
 summary = {
     "status": "fail" if failed or failures else "pass",
     "summary_tsv": str(summary_file),
+    "contact_sheet": contact_sheet_path,
     "counts": {
         "requested": total,
         "passed": passed,
@@ -443,6 +501,8 @@ with summary_json.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print(f"summary_json: {summary_json}")
+if contact_sheet_path:
+    print(f"contact_sheet: {contact_sheet_path}")
 PY
 
 echo ""
@@ -450,4 +510,7 @@ echo "=== Playability Smoke: $PASSED/$TOTAL passed, $FAILED failed ==="
 echo "  artifacts: $OUT_DIR"
 echo "  summary:   $SUMMARY_FILE"
 echo "  json:      $SUMMARY_JSON"
+if [[ -s "$CONTACT_SHEET" ]]; then
+    echo "  contact:   $CONTACT_SHEET"
+fi
 exit "$FAILED"

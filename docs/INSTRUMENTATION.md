@@ -115,10 +115,11 @@ route.
 
 The output directory defaults to `/tmp/mgb64_playability_smoke_*`. It includes a
 `summary.tsv` row for each level's accepted pattern, a top-level `summary.json`
-with the accepted-level list and pass/fail counts, plus per-attempt screenshot,
-render, and movement audit JSON files. Movement audit JSON contains
-moving-record counts, displacement, target-player record counts, input-event
-counts, and any failures. Keep generated JSONL traces, screenshots, summaries,
+with the accepted-level list and pass/fail counts, a `contact_sheet.png` visual
+review sheet of accepted screenshots, plus per-attempt screenshot, render, and
+movement audit JSON files. Movement audit JSON contains moving-record counts,
+displacement, target-player record counts, input-event counts, and any
+failures. Keep generated JSONL traces, screenshots, summaries, contact sheets,
 and audit logs local.
 
 ### Damage HUD smoke
