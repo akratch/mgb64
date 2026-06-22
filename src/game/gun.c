@@ -6350,19 +6350,21 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         }
 
 #ifdef NATIVE_PORT
-        /* ADS-6.1 "rise to sights": shift the cosmetic gun_pos toward the sighted
-         * pose (blend-scaled, per-weapon AdsProfile or GE007_ADS_POSE_* override)
-         * BEFORE the look-at convergence below, so the weapon both translates to a
-         * centered/raised pose AND keeps aiming at the crosshair. Gated behind
-         * g_pcAdsEnabled && g_pcAdsModelPose && aim (via portAdsResolvePose). The
-         * model is cosmetic to the eye->crosshair bullet ray => accuracy-safe. */
-        {
-            f32 adx, ady, adz, ayaw, apitch, aroll;
-            if (portAdsResolvePose(hand, &adx, &ady, &adz, &ayaw, &apitch, &aroll) > 0.0f) {
-                gun_pos.x += adx;
-                gun_pos.y += ady;
-                gun_pos.z += adz;
-            }
+        /* ADS-6.1 "rise to sights": translate the cosmetic gun_pos toward the
+         * sighted pose (blend-scaled, per-weapon AdsProfile or GE007_ADS_POSE_*)
+         * BEFORE the look-at convergence so the weapon moves to a low/centered
+         * pose AND keeps aiming at the crosshair; the pose ROTATION is applied to
+         * the converged matrix below to "square" the barrel (flatten the upward
+         * tilt the convergence imparts to a low weapon). Gated behind g_pcAdsEnabled
+         * && g_pcAdsModelPose && aim. Model is cosmetic to the bullet ray => safe. */
+        f32 ads_dx = 0.0f, ads_dy = 0.0f, ads_dz = 0.0f;
+        f32 ads_yaw = 0.0f, ads_pitch = 0.0f, ads_roll = 0.0f;
+        f32 ads_blend = portAdsResolvePose(hand, &ads_dx, &ads_dy, &ads_dz,
+                                           &ads_yaw, &ads_pitch, &ads_roll);
+        if (ads_blend > 0.0f) {
+            gun_pos.x += ads_dx;
+            gun_pos.y += ads_dy;
+            gun_pos.z += ads_dz;
         }
 #endif
 
@@ -6375,6 +6377,25 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         }
 
         matrix_4x4_copy(&mtx_b, &mtx_d);
+#ifdef NATIVE_PORT
+        /* Square the barrel: rotate the converged orientation by the ADS pose
+         * rotation, then set_position restores the translation (same idiom as the
+         * port-root saved_pos path). pitch flattens the up-tilt down the sights. */
+        if (ads_blend > 0.0f) {
+            if (ads_pitch != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_x(ads_pitch, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+            if (ads_yaw != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_y(ads_yaw, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+            if (ads_roll != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_z(ads_roll, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+        }
+#endif
         matrix_4x4_set_position(&gun_pos, &mtx_d);
 
         /* VIEWMODEL DIAG — trace gun_pos components */

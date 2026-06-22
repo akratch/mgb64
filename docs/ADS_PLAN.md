@@ -670,19 +670,27 @@ first-person draw path (confirmed: its diagnostics never fire; `[VM-ANCHOR]` in
 - `portAdsResolvePose(hand, dx,dy,dz, dyaw,dpitch,droll)` (`gun.c`) resolves the
   per-weapon pose (GE007_ADS_POSE_* env override else `AdsProfile`), scaled by the
   ADS blend (`portAdsPoseBlendForHand`, the `zoomintime/zoomintimemax` alpha).
-- Applied to `gun_pos` in `handles_firing_or_throwing_weapon_in_hand` **before** the
-  look-at convergence, so the weapon both translates toward center **and** keeps
-  aiming at the crosshair. `gun_pos` space: **+x right, +y up, +z toward the eye**
+- **Translation** is applied to `gun_pos` in `handles_firing_or_throwing_weapon_in_hand`
+  **before** the look-at convergence (weapon moves to a low/centered pose and keeps
+  aiming at the crosshair). `gun_pos` space: **+x right, +y up, +z toward the eye**
   (a hipfire KF7 anchors at ~`(11.7, -20.8, -33.5)`).
+- **Rotation** (`pose_pitch_rad` etc.) is applied to the converged matrix `mtx_d`
+  **after** the look-at copy, before `set_position` (same idiom as the port-root
+  `saved_pos` path). A negative pitch **squares the barrel** — flattening the upward
+  tilt the convergence would otherwise impart to a low-held weapon — so it reads
+  "down the sights" rather than angled up.
 - The dormant `portBuildFirstPersonWeaponRoot` ADS code was removed (single source
   of truth). The blend ramp uses the §ADS-2.1 `ADS_ZOOMTIME_UNITS_PER_SEC` timing
   fix, so the raise eases over `ads_in_time` rather than snapping.
 
-**Authored poses** (`ads_profiles.c`, `pose_off_{x,y,z}` in `gun_pos` space, tuned
-visually at base FOV 60): PP7/PP7-sil `(-9, 18, 10)`, RC-P90 `(-10, 22, 14)`, KF7
-`(-12, 28, 17)`, AR33 `(-12, 26, 16)`. Untuned non-scope weapons use a moderate
-computed default `(-9, 18, 12)` so every gun rises. Sniper/spy-camera keep pose 0
-(they use the analog scope path, no model raise).
+**Authored poses** (`ads_profiles.c`; `pose_off_{x,y,z}` in `gun_pos` space +
+`pose_pitch_rad`, tuned visually at base FOV 60 for a LOW, SQUARE hold). Iterated
+via a parallel screenshot grid over X×Y×Z then X×pitch: PP7/PP7-sil
+`(-5,11,0)`+pitch`-38°`, RC-P90 `(-5,12,0)`+`-40°`, KF7 `(-5,13,0)`+`-42°`, AR33
+`(-5,13,0)`+`-42°`. Untuned non-scope weapons use the default `(-5,12,0)`+`-38°` so
+every gun gets a low squared raise. Sniper/spy-camera keep pose 0 (analog scope, no
+model raise). Verified: `AdsEnabled=0` == vanilla hipfire; `=1` == low, square,
+non-center-blocking sighted pose for the PP7 and KF7.
 
 ### 10.2 Authoring workflow (for the remaining weapons)
 

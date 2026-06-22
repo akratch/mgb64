@@ -26,12 +26,16 @@
 #define ADS_DEFAULT_MOVE_MULT   0.70f
 #define ADS_DEFAULT_STRAFE_MULT 0.60f
 #define ADS_ZERO_ZOOM_FACTOR    0.85f  /* Zoom==0 iron weapons get a mild computed zoom */
-/* Moderate default "rise to sights" pose (gun_pos space) for untuned non-scope
- * weapons — raises the model up/left toward the centered crosshair. Authored
+/* Default "rise to sights" pose for untuned non-scope weapons. Translation is in
+ * gun_pos space (+x right, +y up, +z toward eye); a low Y + Z~0 keeps the weapon
+ * in the lower third (not blocking center). pose_pitch_rad flattens the barrel the
+ * look-at convergence would otherwise angle up, so it reads SQUARE/forward (down
+ * the sights) rather than tilted up. Tuned visually at base FOV 60. Authored
  * weapons (above) override per gun; scopes keep 0. */
-#define ADS_DEFAULT_POSE_X      (-9.0f)
-#define ADS_DEFAULT_POSE_Y      (18.0f)
-#define ADS_DEFAULT_POSE_Z      (12.0f)
+#define ADS_DEFAULT_POSE_X      (-5.0f)
+#define ADS_DEFAULT_POSE_Y      (12.0f)
+#define ADS_DEFAULT_POSE_Z      (0.0f)
+#define ADS_DEFAULT_POSE_PITCH  (-0.6632f)  /* ~-38 deg, squares the barrel */
 
 extern s32 g_pcAdsFaithfulZoom;
 
@@ -93,16 +97,17 @@ typedef struct {
  * weapons fall back to the moderate computed default in adsComputeDefault. The
  * two true scopes keep pose 0 (they use the analog scope path, no model raise). */
 static const AdsAuthoredRow s_ads_authored[] = {
-    /* PP7 (WPPK):       factor in_t  out_t sens spread move  strafe  yaw/pit/roll  poseX  poseY  poseZ  scope */
-    { ITEM_WPPK,        { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0,0,0, -9.0f, 18.0f, 10.0f, 0 } },
+    /* pose: yaw, pitch_rad (negative = barrel pitched down to read square), roll, then poseX/Y/Z (gun_pos space). */
+    /* PP7 (WPPK):       factor in_t  out_t sens spread move  strafe  yaw  pitch     roll poseX  poseY poseZ scope */
+    { ITEM_WPPK,        { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0, -0.6632f, 0, -5.0f, 11.0f, 0.0f, 0 } },
     /* PP7 silenced (WPPKSIL) — the Dam starting weapon; same pose as the PP7 */
-    { ITEM_WPPKSIL,     { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0,0,0, -9.0f, 18.0f, 10.0f, 0 } },
+    { ITEM_WPPKSIL,     { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0, -0.6632f, 0, -5.0f, 11.0f, 0.0f, 0 } },
     /* RC-P90 (FNP90) — SMG */
-    { ITEM_FNP90,       { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.7f, 0.88f, 0.78f, 0,0,0, -10.0f, 22.0f, 14.0f, 0 } },
+    { ITEM_FNP90,       { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.7f, 0.88f, 0.78f, 0, -0.6981f, 0, -5.0f, 12.0f, 0.0f, 0 } },
     /* KF7 (AK47) — 0.67 (=>40, mild-clamped from 30) */
-    { ITEM_AK47,        { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.85f, 0.75f, 0,0,0, -12.0f, 28.0f, 17.0f, 0 } },
+    { ITEM_AK47,        { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.85f, 0.75f, 0, -0.7330f, 0, -5.0f, 13.0f, 0.0f, 0 } },
     /* AR33 (M16) — 0.67 (=>40, mild-clamped from 20=3x) */
-    { ITEM_M16,         { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.55f, 0.45f, 0,0,0, -12.0f, 26.0f, 16.0f, 0 } },
+    { ITEM_M16,         { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.55f, 0.45f, 0, -0.7330f, 0, -5.0f, 13.0f, 0.0f, 0 } },
     /* Sniper — true scope, yields to analog zoom (no model pose) */
     { ITEM_SNIPERRIFLE, { -1.0f, 0.30f, 0.24f, 1.0f, 1.0f, 0.40f, 0.30f, 0,0,0, 0,0,0, 1 } },
     /* Spy camera — true scope, yields */
@@ -137,10 +142,11 @@ static void adsComputeDefault(ITEM_IDS item, struct AdsProfile *out)
 
     out->is_scope = 0;
 
-    /* Untuned non-scope weapons get the moderate default raise. */
-    out->pose_off_x = ADS_DEFAULT_POSE_X;
-    out->pose_off_y = ADS_DEFAULT_POSE_Y;
-    out->pose_off_z = ADS_DEFAULT_POSE_Z;
+    /* Untuned non-scope weapons get the default low, squared raise. */
+    out->pose_off_x     = ADS_DEFAULT_POSE_X;
+    out->pose_off_y     = ADS_DEFAULT_POSE_Y;
+    out->pose_off_z     = ADS_DEFAULT_POSE_Z;
+    out->pose_pitch_rad = ADS_DEFAULT_POSE_PITCH;
 
     {
         WeaponStats *ws = get_ptr_item_statistics(item);
