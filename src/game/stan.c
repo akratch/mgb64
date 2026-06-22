@@ -729,8 +729,15 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
         /* Walk tiles in this room */
         StandTile *tile = firststaninroom[room];
         while (*(s32 *)tile != 0 && (tile->room & 0xFF) == room) {
-            /* Test if position is within tile bounds (uses sub_GAME_7F0B0400) */
-            if (stanTestPointWithinTileBoundsMaybe(tile, pos[0], pos[2])) {
+            /* F1 (ASM-faithful — canonical decomp gates tile selection on
+             * sub_GAME_7F0AF760(tile) == 0): skip degenerate (zero-area /
+             * collinear) tiles. sub_GAME_7F0AF760 returns nonzero for a tile
+             * whose edge cross-product is degenerate; such a tile has no valid
+             * floor surface, so considering it can yield a wrong floor
+             * tile/height near seams and stacked-floor geometry.
+             * Test if position is within tile bounds (uses sub_GAME_7F0B0400). */
+            if (sub_GAME_7F0AF760(tile) == 0 &&
+                stanTestPointWithinTileBoundsMaybe(tile, pos[0], pos[2])) {
                 f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
                 if (tile_y <= pos[1] && tile_y > best_y) {
                     best_tile = tile;
@@ -3291,9 +3298,15 @@ bool sub_GAME_7F0B0914(StandTile **tileStack, f32 start_x, f32 start_z, f32 dest
             return TRUE;
         }
 
-        iterCount += 1;
         edgeIdx = 0;  /* always reset (matches MIPS delay slot behavior) */
 
+        /* ASM-faithful iteration cap (US 7F0B0B5x): the original compares the
+         * PRE-increment counter against 0x1F5 — it continues while
+         * iterCount < 0x1F5 and fails at iterCount == 0x1F5, permitting 501
+         * tile-walk steps. The port previously incremented first and tested the
+         * post-increment value, aborting one step early (500), which could flip
+         * a single chrCanSeeBond / bullet-block result on a ray that crosses
+         * exactly 501 tile boundaries. */
         if (iterCount >= 0x1F5 || nextTile == NULL)
         {
             stanSavedColl_tile = prevTile;
@@ -3331,6 +3344,7 @@ bool sub_GAME_7F0B0914(StandTile **tileStack, f32 start_x, f32 start_z, f32 dest
             return FALSE;
         }
 
+        iterCount += 1;  /* post-test increment — see ASM-faithful cap note above */
         *tileStack = nextTile;
         crossCount = 0;
     }

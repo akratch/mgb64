@@ -4936,23 +4936,31 @@ s32 chrTickBeams(PropRecord *prop) {
     model = chr->model;
     if (model == NULL) return 0;
 
-    /* --- AI decision tick --- */
-    if (D_8002C904 == 0) {
-        chrlvActionTick(chr);
-        if ((chr->hidden & CHRHIDDEN_REMOVE) != 0) {
-            disable_sounds_attached_to_player_then_something(prop);
-            return 1;
-        }
+    /* --- AI decision tick ---
+     * ASM-faithful gate (US 7F020F64-78): a CHRFLAG_HIDDEN guard whose
+     * CHRFLAG_00040000 ("update guard action") bit is clear skips the entire
+     * action/animation tick — the original branches past it to the post-tick
+     * path. Without the gate, hidden guards keep advancing their AI in the port
+     * while the original freezes them. Non-hidden guards (the validated common
+     * case) take the gate as a no-op and are unaffected. */
+    if (!((chr->chrflags & CHRFLAG_HIDDEN) && (chr->chrflags & CHRFLAG_00040000) == 0)) {
+        if (D_8002C904 == 0) {
+            chrlvActionTick(chr);
+            if ((chr->hidden & CHRHIDDEN_REMOVE) != 0) {
+                disable_sounds_attached_to_player_then_something(prop);
+                return 1;
+            }
 
-        model = chr->model;
-        if (model == NULL) return 1; /* chrlvActionTick may have freed the model */
-    } else {
-        /* D_8002C904 nonzero: check animation table, potentially set animation */
-        if (g_AnimationTablePointerCountRelated < 256) {
-            struct ModelAnimation *current_anim = objecthandlerGetModelAnim(model);
-            uintptr_t target = animation_table_ptrs1[g_AnimationTablePointerCountRelated];
-            if (target != 1 && current_anim != (struct ModelAnimation *)target) {
-                modelSetAnimation(model, (struct ModelAnimation *)target, 0, 0.0f, 0.5f, 0.0f);
+            model = chr->model;
+            if (model == NULL) return 1; /* chrlvActionTick may have freed the model */
+        } else {
+            /* D_8002C904 nonzero: check animation table, potentially set animation */
+            if (g_AnimationTablePointerCountRelated < 256) {
+                struct ModelAnimation *current_anim = objecthandlerGetModelAnim(model);
+                uintptr_t target = animation_table_ptrs1[g_AnimationTablePointerCountRelated];
+                if (target != 1 && current_anim != (struct ModelAnimation *)target) {
+                    modelSetAnimation(model, (struct ModelAnimation *)target, 0, 0.0f, 0.5f, 0.0f);
+                }
             }
         }
     }
@@ -4975,22 +4983,25 @@ s32 chrTickBeams(PropRecord *prop) {
     /* --- Aim properties update --- */
     chrUpdateAimProperties(chr);
 
-    /* --- Flush any queued held-item drops ---
-     * Guard AI/death logic only marks held props as dropped and sets
-     * CHRHIDDEN_DROP_HELD_ITEMS. The original chrTickBeams then walks the
-     * child prop list, calls objDrop on each child, and clears the flag.
-     * This must happen before the visibility early-return so off-screen
-     * deaths still release real world pickups. */
-    chrDropPendingHeldItems(chr);
-
-    /* --- Process guard weapon firing ---
-     * The original chrTickBeams calls chrlvTriggerFireWeapon near the end.
-     * It checks CHRHIDDEN_FIRE_WEAPON_LEFT/RIGHT flags (set by
-     * chrlvTickAttackCommon during the firing animation window) and calls
-     * chrlvFireWeaponRelated → chrlvUpdateShotbondsum → damage to Bond.
-     * Must happen before the visibility early-return so off-screen guards
-     * can still shoot the player. */
-    chrlvTriggerFireWeapon(chr);
+    /* --- Held-item drops + guard weapon firing (ASM-faithful hidden gate) ---
+     * The original chrTickBeams performs BOTH the queued objDrop walk and
+     * chrlvTriggerFireWeapon only on the non-hidden path: ASM .L7F021AAC
+     * (US 7F021AAC) loads chr->chrflags and, if CHRFLAG_HIDDEN (0x400) is set,
+     * branches straight to the return — skipping both the drop and the fire.
+     *
+     * A CHRFLAG_HIDDEN guard must therefore neither drop items nor fire its
+     * weapon. Running them unconditionally (as the port previously did) makes
+     * hidden guards inflict phantom damage on Bond via
+     * chrlvTriggerFireWeapon → chrlvUpdateShotbondsum, and spawn phantom world
+     * pickups. Both calls stay before the visibility early-return so that
+     * off-screen (but not hidden) guards still shoot and drop, matching the
+     * original. chrDropPendingHeldItems() itself no-ops unless
+     * CHRHIDDEN_DROP_HELD_ITEMS is set, mirroring the ASM's inner
+     * (chr->hidden & 1) gate on the objDrop walk. */
+    if ((chr->chrflags & CHRFLAG_HIDDEN) == 0) {
+        chrDropPendingHeldItems(chr);
+        chrlvTriggerFireWeapon(chr);
+    }
 
     /* Dispose of any pending DL chain from last frame */
     if (chr->field_20 != NULL) {
