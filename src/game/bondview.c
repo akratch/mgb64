@@ -12107,8 +12107,29 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
     }
     else if (g_CurrentPlayer->controldef == CONTROLLER_CONFIG_KISSY)
     {
+        f32 ads_turn_x = ((f32) moveData.controlStickXRaw * 0.65f) / 80.0f;
+        f32 ads_turn_y = ((f32) moveData.controlStickYRaw * 0.65f) / 80.0f;
+
         gunSetAimType(0);
-        sub_GAME_7F067FBC(((f32) moveData.controlStickXRaw * 0.65f) / 80.0f, ((f32) moveData.controlStickYRaw * 0.65f) / 80.0f);
+#ifdef NATIVE_PORT
+        /* ADS aim-lock: on the KISSY free-aim path the movement stick (WASD on PC)
+         * feeds controlStickXRaw/YRaw into the crosshair integrator, so walking /
+         * strafing drifts the bullet aim off the fixed modern reticle. While aiming
+         * with ADS, idle that integrator input so the aim point stays locked at
+         * screen center (the ADS-3.1 center-pull zeroes it and nothing re-adds).
+         * Mouse-look turns the VIEW (vv_theta) on a separate path, so aiming still
+         * works. Gated behind g_pcAdsEnabled && g_pcAdsCenterCrosshair; off ⇒ the
+         * original raw inputs, byte-identical to vanilla. */
+        {
+            extern s32 g_pcAdsEnabled;
+            extern s32 g_pcAdsCenterCrosshair;
+            if (g_pcAdsEnabled && g_pcAdsCenterCrosshair && moveData.aiming) {
+                ads_turn_x = 0.0f;
+                ads_turn_y = 0.0f;
+            }
+        }
+#endif
+        sub_GAME_7F067FBC(ads_turn_x, ads_turn_y);
     }
 }
 
