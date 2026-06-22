@@ -123,6 +123,13 @@ repeatable `--config-override Section.Key=value` options for targeted probes,
 or pass `--no-default-config-overrides` when the point of the test is the user's
 actual window/config profile.
 
+After each process run, the lane audits the generated `ge007.ini` against every
+requested override whose value should persist. This catches branch-vs-reference
+mistakes where an older binary ignores `--config-override` and renders with a
+different window/aspect while the harness log still lists the requested
+settings. `Video.WindowX=-1` and `Video.WindowY=-1` are intentionally exempt
+because the runtime persists the resolved centered window position.
+
 The output directory defaults to `/tmp/mgb64_playability_smoke_*`. It includes a
 `summary.tsv` row for each level's accepted pattern, a top-level `summary.json`
 with the accepted-level list and pass/fail counts, a `contact_sheet.png` visual
@@ -695,7 +702,10 @@ overrides. A repo-root run can load local `ge007.ini`; values such as
 playability smoke lane pins its validation window by default; for stock visual
 baselines, keep that default and add only the probe-specific overrides, such as
 `--config-override Video.FovY=60 --config-override Video.RenderScale=1` or
-`--config-override Video.RenderScale=2`.
+`--config-override Video.RenderScale=2`. When comparing against an older binary
+that does not support the current config-override path, use
+`--no-default-config-overrides` on both captures or upgrade the reference binary
+before trusting whole-frame screenshot deltas.
 
 ### Renderer diagnostics & experimental fixes (default OFF)
 

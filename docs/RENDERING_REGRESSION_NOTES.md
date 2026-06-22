@@ -125,7 +125,9 @@ Use these habits before accepting renderer changes:
   `--config-override`, fall back to a 1440x810 default window, and make a
   healthy renderer look zoomed or composition-shifted when compared to the
   pinned 640x480 branch captures. Either compare two pinned builds or compare
-  both with default overrides disabled.
+  both with default overrides disabled. The current `playability_smoke.sh`
+  audits generated `ge007.ini` values after each run so this fails fast for the
+  normal validation lane.
 - When reviewing texture-cache changes, check decoded row pitch and full-source
   footprint, not just visible width/height/format/address.
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state

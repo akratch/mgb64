@@ -207,6 +207,79 @@ pattern_env() {
     esac
 }
 
+audit_effective_config() {
+    local config_file="$OUT_DIR/ge007.ini"
+
+    if [[ "${#CONFIG_OVERRIDES[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    python3 - "$config_file" "${CONFIG_OVERRIDES[@]}" <<'PY'
+import math
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+overrides = sys.argv[2:]
+
+if not config_path.is_file():
+    print(f"FAIL: missing generated config file for override audit: {config_path}")
+    raise SystemExit(1)
+
+values = {}
+section = None
+for raw in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or line.startswith(";"):
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        section = line[1:-1].strip()
+        continue
+    if section and "=" in line:
+        key, value = line.split("=", 1)
+        values[f"{section}.{key.strip()}"] = value.strip()
+
+
+def equal_value(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    try:
+        e = float(expected)
+        a = float(actual)
+    except ValueError:
+        return False
+    return math.isfinite(e) and math.isfinite(a) and abs(e - a) <= 1e-6
+
+
+failures = []
+for override in overrides:
+    if "=" not in override:
+        failures.append(f"malformed override: {override}")
+        continue
+    full_key, expected = override.split("=", 1)
+
+    # The validation default uses -1 as a center-window request. The runtime
+    # persists the resolved screen position, so this one request is not stable
+    # evidence that the binary ignored the override path.
+    if full_key in ("Video.WindowX", "Video.WindowY") and expected == "-1":
+        continue
+
+    actual = values.get(full_key)
+    if actual is None:
+        failures.append(f"{full_key}: missing from generated config")
+    elif not equal_value(expected, actual):
+        failures.append(f"{full_key}: expected {expected!r}, got {actual!r}")
+
+if failures:
+    print("FAIL: config override audit")
+    for failure in failures:
+        print(f"  {failure}")
+    raise SystemExit(1)
+
+print("PASS: config override audit")
+PY
+}
+
 run_attempt() {
     local lvl="$1"
     local pattern="$2"
@@ -270,6 +343,14 @@ run_attempt() {
         return 1
     fi
     echo "    process: PASS"
+
+    if audit_effective_config >"$OUT_DIR/level_${lvl}_${pattern}.config.txt" 2>&1; then
+        echo "    config: PASS"
+    else
+        echo "    config: FAIL"
+        sed -n '1,16p' "$OUT_DIR/level_${lvl}_${pattern}.config.txt" | sed 's/^/      /'
+        return 1
+    fi
 
     assert_count="$(grep -cF "[GEASSERT]" "$log" 2>/dev/null || true)"
     assert_count="${assert_count:-0}"
