@@ -731,6 +731,23 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    /* ADS reticle sanity note: surface a misconfigured reticle loudly rather than
+     * silently falling back to the classic crosshair. Fires only when the user
+     * opted into ADS (Input.AdsEnabled=1) yet the modern reticle is off
+     * (Input.AdsModernReticle=0) -- exactly the state a stray --config-override or
+     * a hand-edited ge007.ini can leave behind. ADS ships off, so this is never
+     * noisy in traditional play. */
+    {
+        const Setting *adsEnabled = settingsFind("Input.AdsEnabled");
+        const Setting *adsReticle = settingsFind("Input.AdsModernReticle");
+        if (adsEnabled && adsEnabled->ptr && *(const s32 *)adsEnabled->ptr != 0 &&
+            adsReticle && adsReticle->ptr && *(const s32 *)adsReticle->ptr == 0) {
+            printf("[GE007-PC] Note: Input.AdsEnabled=1 but Input.AdsModernReticle=0 -- "
+                   "the classic crosshair will show while aiming. Set "
+                   "Input.AdsModernReticle=1 in ge007.ini for the modern ADS reticle.\n");
+        }
+    }
+
     printf("[GE007-PC] Starting...\n");
     if (g_pcStartMultiplayer) {
         const char *stage_slug = "?";

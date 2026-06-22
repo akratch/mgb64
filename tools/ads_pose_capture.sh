@@ -48,14 +48,20 @@ timeout 130 env \
   GE007_AUTO_EQUIP_ITEM_FRAME="$EQUIP_DO" GE007_AUTO_EQUIP_ITEM="$ITEM" \
   GE007_AUTO_LOOK_DOWN="${LOOK_DOWN_START}:${LOOK_DOWN_LEN}" GE007_AUTO_LOOK_STEP="$LOOK_STEP" \
   GE007_AUTO_AIM="${AIM_START}:400" \
-  "${poseenv[@]}" \
+  ${poseenv[@]+"${poseenv[@]}"} \
   "$BIN" --mission "$MISSION" --difficulty 0 \
+    --savedir "$OUTDIR" \
     --config-override "Input.AdsEnabled=$ADS" \
     --screenshot-frame "$CAP" --screenshot-exit \
     --screenshot-label "$LABEL" --background --no-input-grab >/dev/null 2>&1 || true
 
+# NOTE: --savedir relocates ge007.ini/eeprom into $OUTDIR so this capture never
+# pollutes the user's repo-root ge007.ini (e.g. persisting Input.AdsEnabled or a
+# stray --config-override). The screenshot is written cwd-relative regardless, so
+# it lands in the repo root; convert it to PNG under $OUTDIR, then remove the BMP.
 if [ -f "screenshot_${LABEL}.bmp" ]; then
     sips -s format png "screenshot_${LABEL}.bmp" --out "${OUTDIR}/${LABEL}.png" >/dev/null 2>&1
+    rm -f "screenshot_${LABEL}.bmp"
     echo "OK ${OUTDIR}/${LABEL}.png  (item=$ITEM pose X=$X Y=$Y Z=$Z yaw=$YAW pitch=$PITCH roll=$ROLL)"
 else
     echo "FAIL no screenshot for $LABEL"

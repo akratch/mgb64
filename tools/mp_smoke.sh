@@ -207,6 +207,7 @@ if ! (
         "$TIMEOUT_BIN" "${TIMEOUT_ARGS[@]}" \
         "$BINARY" \
         --rom "$ROM" \
+        --savedir "$OUT_DIR" \
         --multiplayer \
         --players "$PLAYERS" \
         --mp-stage "$MP_STAGE" \
