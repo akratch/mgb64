@@ -23,6 +23,16 @@ MIN_HORIZONTAL_DELTA="20.0"
 LEVELS="33 41"
 ALL_LEVELS="33 34 22 26 36 35 9 20 43 27 24 29 30 25 37 23 39 41 28 32"
 PATTERNS="forward right back left"
+PIN_DEFAULT_CONFIG=1
+USER_CONFIG_OVERRIDES=()
+CONFIG_OVERRIDES=()
+DEFAULT_CONFIG_OVERRIDES=(
+    "Video.WindowWidth=640"
+    "Video.WindowHeight=480"
+    "Video.WindowX=-1"
+    "Video.WindowY=-1"
+    "Video.WindowMode=windowed"
+)
 
 usage() {
     cat <<'USAGE'
@@ -44,6 +54,10 @@ Options:
   --build-dir DIR          CMake build directory (default: build)
   --no-build               reuse an existing native binary
   --timeout SECONDS        per-attempt timeout (default: 60)
+  --config-override K=V    pass a deterministic config override to ge007
+                          may be repeated; use for RenderScale/MSAA probes
+  --no-default-config-overrides
+                          do not pin the validation window to 640x480
 
 Artifacts are ROM-derived local validation data. Do not commit captured traces,
 screenshots, logs, or generated audit summaries.
@@ -65,6 +79,8 @@ while [[ $# -gt 0 ]]; do
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
         --no-build) DO_BUILD=0; shift ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --config-override) USER_CONFIG_OVERRIDES+=("$2"); shift 2 ;;
+        --no-default-config-overrides) PIN_DEFAULT_CONFIG=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -119,6 +135,20 @@ for pattern in $PATTERNS; do
             ;;
     esac
 done
+if [[ "$PIN_DEFAULT_CONFIG" -eq 1 ]]; then
+    CONFIG_OVERRIDES+=("${DEFAULT_CONFIG_OVERRIDES[@]}")
+fi
+if [[ "${#USER_CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    CONFIG_OVERRIDES+=("${USER_CONFIG_OVERRIDES[@]}")
+fi
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    for override in "${CONFIG_OVERRIDES[@]}"; do
+        if [[ ! "$override" =~ ^[A-Za-z0-9_.-]+=.+$ ]]; then
+            echo "FAIL: --config-override must use Section.Key=value: $override" >&2
+            exit 2
+        fi
+    done
+fi
 
 if [[ -z "$BINARY" ]]; then
     BINARY="$(validation_binary_path "$BUILD_DIR")"
@@ -192,6 +222,8 @@ run_attempt() {
     local screenshot_src="$OUT_DIR/screenshot_${label}.bmp"
     local screenshot_dst="$OUT_DIR/level_${lvl}_${pattern}.bmp"
     local env_vars=()
+    local config_args=()
+    local binary_args=()
     local entry
     local assert_count
 
@@ -200,6 +232,15 @@ run_attempt() {
     while IFS= read -r entry; do
         env_vars+=("$entry")
     done < <(pattern_env "$pattern")
+    if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+        for entry in "${CONFIG_OVERRIDES[@]}"; do
+            config_args+=("--config-override" "$entry")
+        done
+    fi
+    binary_args=("--savedir" "$OUT_DIR")
+    if [[ "${#config_args[@]}" -gt 0 ]]; then
+        binary_args+=("${config_args[@]}")
+    fi
 
     if ! (
         cd "$OUT_DIR"
@@ -215,6 +256,7 @@ run_attempt() {
             GE007_DISABLE_LEVEL_INTRO=1 \
             "${env_vars[@]}" \
             "$BINARY" \
+            "${binary_args[@]}" \
             --rom "$ROM" \
             --level "$lvl" \
             --deterministic \
@@ -323,6 +365,12 @@ echo "  input-window:         $INPUT_WINDOW"
 echo "  frames:               $FRAMES"
 echo "  min-moving-records:   $MIN_MOVING_RECORDS"
 echo "  min-horizontal-delta: $MIN_HORIZONTAL_DELTA"
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    echo "  config-overrides:"
+    for override in "${CONFIG_OVERRIDES[@]}"; do
+        echo "    $override"
+    done
+fi
 
 for lvl in $LEVELS; do
     level_pass=0
@@ -347,7 +395,26 @@ for lvl in $LEVELS; do
     fi
 done
 
-python3 - "$SUMMARY_FILE" "$SUMMARY_JSON" "$CONTACT_SHEET" "$OUT_DIR" "$LEVELS" "$PATTERNS" "$TOTAL" "$PASSED" "$FAILED" "$INPUT_WINDOW" "$FRAMES" "$MIN_MOVING_RECORDS" "$MIN_HORIZONTAL_DELTA" <<'PY'
+SUMMARY_ARGS=(
+    "$SUMMARY_FILE"
+    "$SUMMARY_JSON"
+    "$CONTACT_SHEET"
+    "$OUT_DIR"
+    "$LEVELS"
+    "$PATTERNS"
+    "$TOTAL"
+    "$PASSED"
+    "$FAILED"
+    "$INPUT_WINDOW"
+    "$FRAMES"
+    "$MIN_MOVING_RECORDS"
+    "$MIN_HORIZONTAL_DELTA"
+)
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    SUMMARY_ARGS+=("${CONFIG_OVERRIDES[@]}")
+fi
+
+python3 - "${SUMMARY_ARGS[@]}" <<'PY'
 import csv
 import json
 import sys
@@ -366,6 +433,7 @@ input_window = sys.argv[10]
 frames = int(sys.argv[11])
 min_moving_records = int(sys.argv[12])
 min_horizontal_delta = float(sys.argv[13])
+config_overrides = sys.argv[14:]
 
 LEVEL_NAMES = {
     33: "Dam",
@@ -492,6 +560,7 @@ summary = {
         "frames": frames,
         "min_moving_records": min_moving_records,
         "min_horizontal_delta": min_horizontal_delta,
+        "config_overrides": config_overrides,
     },
     "failures": failures,
     "accepted": accepted,

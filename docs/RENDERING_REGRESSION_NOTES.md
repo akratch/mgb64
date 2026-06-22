@@ -71,6 +71,15 @@ The visible symptoms were level-specific but shared renderer causes:
    correct. Scene-target setup in `src/platform/fast3d/gfx_opengl.c` must restore
    active texture and unit-0 binding before queued triangles flush.
 
+7. **Validation config can masquerade as renderer state.**
+   The native binary writes `ge007.ini` on clean exit, including env-applied
+   settings. If a smoke run reuses an artifact directory or lets the default
+   1440x810 window drive captures on a high-DPI display, later attempts can
+   render through a much larger scene target than intended. That mostly changes
+   sky/backdrop sampling and can look like a texture regression in pixel deltas.
+   The playability harness now pins a 640x480 validation window by default and
+   records any explicit config overrides in `summary.json`.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -81,6 +90,10 @@ Use these habits before accepting renderer changes:
 - Treat renderer changes as suspect if they alter screenshot composition while
   a repo-root `ge007.ini` is changing `Video.FovY` or `Video.RenderScale`. For
   stock-ish captures, pass explicit config overrides.
+- Keep automated renderer captures on the pinned 640x480 validation window
+  unless the test is specifically exercising user-window/high-DPI behavior.
+  Use `--config-override Video.RenderScale=2` or `Video.MSAA=4` for targeted
+  scene-target probes, and keep the overrides visible in the artifact summary.
 - When reviewing texture-cache changes, check decoded row pitch and full-source
   footprint, not just visible width/height/format/address.
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
@@ -107,6 +120,19 @@ gameplay input, audits movement/render counters, audits screenshot health, and
 writes a `contact_sheet.png` for manual visual review. It proves the levels
 boot, move, render nonblank frames, and avoid known render-health counters; it
 does not prove hardware-perfect output.
+
+`playability_smoke.sh` pins `Video.WindowWidth=640`,
+`Video.WindowHeight=480`, and `Video.WindowMode=windowed` by default so
+generated `ge007.ini` state and high-DPI desktop geometry do not change the
+capture lane. For scene-target validation, add explicit overrides:
+
+```sh
+./tools/playability_smoke.sh --all --no-build \
+  --rom /path/to/baserom.u.z64 \
+  --binary build/ge007 \
+  --config-override Video.RenderScale=2 \
+  --config-override Video.FovY=60
+```
 
 For smaller renderer A/B captures:
 

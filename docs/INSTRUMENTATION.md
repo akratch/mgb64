@@ -100,6 +100,8 @@ number of failed levels.
 ./tools/playability_smoke.sh --all           # all 20 stages
 ./tools/playability_smoke.sh --level 33      # single raw LEVELID
 ./tools/playability_smoke.sh --no-build      # reuse an existing build
+./tools/playability_smoke.sh --all --no-build \
+  --config-override Video.RenderScale=2      # scene-target probe
 ```
 
 This direct-native lane disables authored intros explicitly, holds a deterministic
@@ -113,14 +115,23 @@ the first pattern that satisfies all checks. Use `--pattern`, `--input-window`,
 `--min-moving-records`, and `--min-horizontal-delta` when validating a narrower
 route.
 
+The lane pins `Video.WindowWidth=640`, `Video.WindowHeight=480`, and
+`Video.WindowMode=windowed` with command-line config overrides by default. This
+keeps generated `ge007.ini` files and high-DPI desktop window sizes from
+changing screenshot composition or scene-target size between attempts. Add
+repeatable `--config-override Section.Key=value` options for targeted probes,
+or pass `--no-default-config-overrides` when the point of the test is the user's
+actual window/config profile.
+
 The output directory defaults to `/tmp/mgb64_playability_smoke_*`. It includes a
 `summary.tsv` row for each level's accepted pattern, a top-level `summary.json`
 with the accepted-level list and pass/fail counts, a `contact_sheet.png` visual
 review sheet of accepted screenshots, plus per-attempt screenshot, render, and
 movement audit JSON files. Movement audit JSON contains moving-record counts,
 displacement, target-player record counts, input-event counts, and any
-failures. Keep generated JSONL traces, screenshots, summaries, contact sheets,
-and audit logs local.
+failures. The top-level summary also records the config overrides applied to the
+run. Keep generated JSONL traces, screenshots, summaries, contact sheets, and
+audit logs local.
 
 ### Damage HUD smoke
 
@@ -668,9 +679,11 @@ that this instrumentation is meant to keep from recurring.
 
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
-`Video.FovY=75` deliberately change composition and pixel metrics. For stock
-visual baselines, prefer a temporary profile, or run with
-`--config-override Video.FovY=60 --config-override Video.RenderScale=1`.
+`Video.FovY=75` deliberately change composition and pixel metrics. The
+playability smoke lane pins its validation window by default; for stock visual
+baselines, keep that default and add only the probe-specific overrides, such as
+`--config-override Video.FovY=60 --config-override Video.RenderScale=1` or
+`--config-override Video.RenderScale=2`.
 
 ### Renderer diagnostics & experimental fixes (default OFF)
 
