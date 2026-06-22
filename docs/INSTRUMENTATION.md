@@ -605,6 +605,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
 | `GE007_FOG_USE_LINEAR_DEPTH=1` | fog-depth negative control; remaps camera-space depth linearly and should not be used as the N64-parity default |
 | `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
+| `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1`, `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD=N` | N64 shader-filter controls; use to separate threshold policy from texture decode |
 | `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
 | `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
@@ -631,12 +632,15 @@ Cradle, Dam, Surface, and similar large room surfaces.
 For texture-smear reviews, keep the distinction between the controls explicit:
 `GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL bilinear sampling and can
 produce diagonal/near-plane smear on Dam and Cradle room geometry. The default
-path uses the shader-side N64 filter plus a nearest threshold for clamped,
-non-texture-edge materials; `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is a useful
-negative control because it removes that threshold and should visibly soften
-large close surfaces. `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is a
-row-pitch control: if it barely changes a capture, the active defect is probably
-filter policy rather than decoded-source stride.
+path uses the shader-side N64 filter plus a nearest threshold. That threshold
+must be evaluated against the N64 VI/logical pixel footprint, not the Retina,
+window, or render-scale framebuffer footprint; otherwise high-resolution close
+room surfaces collapse into the nearest branch and look blocky on Surface and
+Cradle. `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is a useful negative control
+because it removes that threshold and should visibly soften large close
+surfaces. `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is a row-pitch control:
+if it barely changes a capture, the active defect is probably filter policy
+rather than decoded-source stride.
 
 Texture-cache identity must include the decoded source row pitch as well as
 the visible upload dimensions. N64 room materials can describe the same visible

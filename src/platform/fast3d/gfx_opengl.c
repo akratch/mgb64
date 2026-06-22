@@ -26,6 +26,7 @@
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "gfx_screen_config.h"
 #include "../gfx_pc.h"
 #include "front.h"
 #include "othermodemicrocode.h"
@@ -72,12 +73,15 @@ struct ShaderProgram {
     bool used_noise;
     GLint frame_count_location;
     GLint window_height_location;
+    bool used_n64_filter;
+    GLint n64_filter_scale_location;
 };
 
 static struct ShaderProgram shader_program_pool[256];
 static uint16_t shader_program_pool_size;
 static GLuint opengl_vbo;
 static GLuint opengl_vao;
+static struct ShaderProgram *current_shader_program;
 
 static uint32_t frame_count;
 static uint32_t current_height;
@@ -267,10 +271,46 @@ static void gfx_opengl_vertex_array_set_attribs(struct ShaderProgram *prg) {
     }
 }
 
+static float gfx_opengl_axis_filter_scale(uint32_t drawable_size,
+                                          int logical_size,
+                                          int fallback_logical_size)
+{
+    float scale;
+
+    if (logical_size <= 0) {
+        logical_size = fallback_logical_size;
+    }
+    if (drawable_size == 0 || logical_size <= 0) {
+        return 1.0f;
+    }
+
+    scale = (float)drawable_size / (float)logical_size;
+    if (scale < 1.0f) {
+        return 1.0f;
+    }
+    if (scale > 64.0f) {
+        return 64.0f;
+    }
+    return scale;
+}
+
 static void gfx_opengl_set_uniforms(struct ShaderProgram *prg) {
     if (prg->used_noise) {
         glUniform1i(prg->frame_count_location, frame_count);
         glUniform1i(prg->window_height_location, current_height);
+    }
+    if (prg->used_n64_filter && prg->n64_filter_scale_location >= 0) {
+        /* dFdx/dFdy are measured in native drawable pixels. Scale them back
+         * to the VI/logical pixel grid before applying N64 filter thresholds. */
+        float scale_x =
+            gfx_opengl_axis_filter_scale(gfx_current_dimensions.width,
+                                          viGetX(),
+                                          DESIRED_SCREEN_WIDTH);
+        float scale_y =
+            gfx_opengl_axis_filter_scale(gfx_current_dimensions.height,
+                                          viGetY(),
+                                          DESIRED_SCREEN_HEIGHT);
+        glUniform2f(prg->n64_filter_scale_location, scale_x, scale_y);
     }
 }
 
@@ -279,11 +319,15 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
         for (int i = 0; i < old_prg->num_attribs; i++) {
             glDisableVertexAttribArray(old_prg->attrib_locations[i]);
         }
+        if (current_shader_program == old_prg) {
+            current_shader_program = NULL;
+        }
     }
 }
 
 static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
     glUseProgram(new_prg->opengl_program_id);
+    current_shader_program = new_prg;
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
 }
@@ -522,12 +566,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             gfx_diag_n64_filter_nearest_threshold(cc_features.opt_texture_edge,
                                                   clamped,
                                                   default_nearest_threshold);
+        append_line(fs_buf, &fs_len, "uniform vec2 uN64FilterScale;");
         append_line(fs_buf, &fs_len, "vec4 n64TextureFilter(sampler2D tex, vec2 uv) {");
         append_line(fs_buf, &fs_len, "    vec2 texSize = vec2(textureSize(tex, 0));");
         append_line(fs_buf, &fs_len, "    vec2 texelCoord = uv * texSize;");
         if (!always_3point) {
-            append_line(fs_buf, &fs_len, "    vec2 dx = dFdx(texelCoord);");
-            append_line(fs_buf, &fs_len, "    vec2 dy = dFdy(texelCoord);");
+            append_line(fs_buf, &fs_len, "    vec2 dx = dFdx(texelCoord) * uN64FilterScale.x;");
+            append_line(fs_buf, &fs_len, "    vec2 dy = dFdy(texelCoord) * uN64FilterScale.y;");
             append_line(fs_buf, &fs_len, "    vec2 footprint = max(abs(dx), abs(dy));");
             fs_len += ge007_sprintf(fs_buf + fs_len,
                                      "    if (max(footprint.x, footprint.y) < %.9f) {\n",
@@ -782,6 +827,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->used_textures[1] = cc_features.used_textures[1];
     prg->num_floats = num_floats;
     prg->num_attribs = cnt;
+    prg->used_noise = needs_noise;
+    if (needs_noise) {
+        prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
+        prg->window_height_location = glGetUniformLocation(shader_program, "window_height");
+    } else {
+        prg->frame_count_location = -1;
+        prg->window_height_location = -1;
+    }
+    prg->used_n64_filter = cc_features.n64_filter[0] || cc_features.n64_filter[1];
+    prg->n64_filter_scale_location = prg->used_n64_filter
+        ? glGetUniformLocation(shader_program, "uN64FilterScale")
+        : -1;
 
     gfx_opengl_load_shader(prg);
 
@@ -792,14 +849,6 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.used_textures[1]) {
         GLint sampler_location = glGetUniformLocation(shader_program, "uTex1");
         glUniform1i(sampler_location, 1);
-    }
-
-    if (needs_noise) {
-        prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
-        prg->window_height_location = glGetUniformLocation(shader_program, "window_height");
-        prg->used_noise = true;
-    } else {
-        prg->used_noise = false;
     }
 
     return prg;
@@ -976,6 +1025,9 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
 }
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+    if (current_shader_program != NULL) {
+        gfx_opengl_set_uniforms(current_shader_program);
+    }
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
