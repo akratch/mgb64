@@ -6372,15 +6372,40 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             f32 dx = gun_pos.x - hp->field_A38;
             f32 dy = gun_pos.y - hp->field_A3C;
             f32 dz = gun_pos.z - hp->field_A40;
+#ifdef NATIVE_PORT
+            /* ADS "flat aim": the look-at convergence points the barrel from the low
+             * sighted gun position UP at the near aim point, which reads as an
+             * upward tilt. During ADS, flatten the look-at toward the pure forward
+             * (z) axis — scaled by the blend — so the barrel reads level/forward
+             * down the sights. This is robust across weapon models and view pitch
+             * (unlike a per-gun pose rotation, which over-rotates non-monotonically).
+             * Env-tunable for authoring; defaults to full vertical flatten. */
+            if (ads_blend > 0.0f) {
+                static int s_flat_init = 0;
+                static f32 s_flat_y = 1.0f;   /* GE007_ADS_FLATTEN   (vertical) */
+                static f32 s_flat_x = 0.85f;  /* GE007_ADS_FLATTEN_X (horizontal) */
+                f32 fy, fx;
+                if (!s_flat_init) {
+                    const char *e;
+                    s_flat_init = 1;
+                    if ((e = getenv("GE007_ADS_FLATTEN")) && *e)   s_flat_y = (f32)atof(e);
+                    if ((e = getenv("GE007_ADS_FLATTEN_X")) && *e) s_flat_x = (f32)atof(e);
+                }
+                fy = ads_blend * s_flat_y; if (fy > 1.0f) fy = 1.0f;
+                fx = ads_blend * s_flat_x; if (fx > 1.0f) fx = 1.0f;
+                dy *= (1.0f - fy);
+                dx *= (1.0f - fx);
+            }
+#endif
             matrix_4x4_align(&mtx_c, 0, dx, dy, dz);
             matrix_4x4_multiply_homogeneous_in_place(&mtx_c, &mtx_b);
         }
 
         matrix_4x4_copy(&mtx_b, &mtx_d);
 #ifdef NATIVE_PORT
-        /* Square the barrel: rotate the converged orientation by the ADS pose
-         * rotation, then set_position restores the translation (same idiom as the
-         * port-root saved_pos path). pitch flattens the up-tilt down the sights. */
+        /* Optional ADS pose rotation (yaw/roll only; pitch is handled robustly by
+         * the look-at flatten above, so pose_pitch_rad is normally 0). Kept for
+         * per-weapon fine-tuning via GE007_ADS_POSE_*; inert when the values are 0. */
         if (ads_blend > 0.0f) {
             if (ads_pitch != 0.0f) {
                 Mtxf m; matrix_4x4_set_rotation_around_x(ads_pitch, &m);
@@ -33142,6 +33167,40 @@ Gfx *drawDamageOverlay(Gfx *gdl) {
 
     return gdl;
 }
+
+/* Modern ADS reticle: a clean center dot + four short gapped ticks at the player's
+ * view center, replacing the chunky textured crosshair while aiming for a modern
+ * (CoD-style) look. Drawn with gDPFillRectangle only (no textures / no settex, so
+ * it cannot corrupt texture state — same safe path as drawDamageOverlay). Sizes
+ * scale with the view height so it stays crisp in split-screen / any resolution.
+ * Gated by Input.AdsModernReticle; assumes the centered-crosshair ADS aim. */
+extern s32 g_pcAdsModernReticle;
+Gfx *drawModernAdsReticle(Gfx *gdl) {
+    s32 cx = viGetViewLeft() + viGetViewWidth() / 2;
+    s32 cy = viGetViewTop() + viGetViewHeight() / 2;
+    s32 vh = viGetViewHeight();
+    s32 dot, gap, len, th;
+    u16 white = (0x1F << 11) | (0x1F << 6) | (0x1F << 1) | 1; /* RGBA5551 opaque white */
+    u32 fill = ((u32)white << 16) | white;
+
+    if (vh < 1) { vh = 240; }
+    dot = 1;                                   /* center dot half-extent */
+    gap = vh / 64; if (gap < 3) { gap = 3; }   /* gap from center to each tick */
+    len = vh / 40; if (len < 4) { len = 4; }   /* tick length */
+    th  = vh / 240; if (th < 1) { th = 1; }    /* tick half-thickness */
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_FILL);
+    gDPSetFillColor(gdl++, fill);
+    gDPFillRectangle(gdl++, cx - dot, cy - dot, cx + dot, cy + dot);            /* center dot */
+    gDPFillRectangle(gdl++, cx - th, cy - gap - len, cx + th, cy - gap);        /* top tick */
+    gDPFillRectangle(gdl++, cx - th, cy + gap, cx + th, cy + gap + len);        /* bottom tick */
+    gDPFillRectangle(gdl++, cx - gap - len, cy - th, cx - gap, cy + th);        /* left tick */
+    gDPFillRectangle(gdl++, cx + gap, cy - th, cx + gap + len, cy + th);        /* right tick */
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+    return gdl;
+}
 #endif /* NATIVE_PORT */
 
 
@@ -33156,6 +33215,19 @@ void gunDrawSight(Gfx **gdl) {
             static int s_dump_crosshair = -1;
             static int s_dumped_crosshair = 0;
             Gfx *dl = *gdl;
+
+            /* ADS modern reticle override: while aiming with ADS on, draw the clean
+             * dot+ticks reticle instead of the chunky textured crosshair. Gated by
+             * g_pcAdsEnabled + Input.AdsModernReticle; off => unchanged crosshair. */
+            {
+                extern s32 g_pcAdsEnabled;
+                extern s32 g_pcAdsModernReticle;
+                if (g_pcAdsEnabled && g_pcAdsModernReticle &&
+                    g_CurrentPlayer->insightaimmode) {
+                    *gdl = drawModernAdsReticle(*gdl);
+                    return;
+                }
+            }
             f32 xypos[2];
             f32 halfedxy[2];
 

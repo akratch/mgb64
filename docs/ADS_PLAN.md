@@ -683,22 +683,32 @@ first-person draw path (confirmed: its diagnostics never fire; `[VM-ANCHOR]` in
   of truth). The blend ramp uses the §ADS-2.1 `ADS_ZOOMTIME_UNITS_PER_SEC` timing
   fix, so the raise eases over `ads_in_time` rather than snapping.
 
-**Pose value (`ads_profiles.c`; `ADS_DEFAULT_POSE_*`).** A single **UNIVERSAL** pose
-is used for every non-scope weapon: `gun_pos` translation `(-5, 9, 0)` + a gentle
-`pose_pitch_rad` of `-0.3142` (~−18°). Authored rows keep their per-weapon
-FOV/sens/spread/movement but share this pose via the `ADS_POSE_FIELDS` macro;
-untuned weapons get the same value from the computed default. Sniper/spy-camera keep
-pose 0 (analog scope, no model raise).
+**Pose + flat aim (`ads_profiles.c` `ADS_DEFAULT_POSE_*` + `gun.c` look-at flatten).**
+A single **UNIVERSAL** pose positions every non-scope weapon: `gun_pos` translation
+`(-5, 9, 0)`. Authored rows keep their per-weapon FOV/sens/spread/movement but share
+this pose via the `ADS_POSE_FIELDS` macro; untuned weapons get the same from the
+computed default. Sniper/spy-camera keep pose 0 (analog scope).
 
-Why one universal pose instead of per-weapon: a parallel screenshot grid over the
-full weapon roster showed the right pitch is driven by **barrel length**, and the
-post-convergence rotation is **non-monotonic per model** (a steep pitch that squares
-a rifle over-rotates a long pistol to near-vertical). A *gentle* −18° pitch + low Y
-proved robust by eye across pistols (PP7, Golden Gun, DD44), SMGs (D5K, ZMG),
-rifles (KF7, AR33), the shotgun and the Cougar Magnum — low, square, non-blocking on
-all of them — so one mild value beats fragile per-gun rotation. Verified:
-`AdsEnabled=0` == vanilla hipfire; `=1` == low, square, non-center-blocking sighted
-pose across weapon classes.
+**Barrel orientation is handled by flattening the look-at convergence, not a pose
+rotation.** The convergence aims the low-positioned gun *up* at the near aim point —
+which reads as an upward tilt that **varies with view pitch** (it looked OK at one
+captured frame but tilted up in live mouse-look). A per-gun `pose_pitch_rad` was
+tried and abandoned: the right pitch is driven by barrel length and the
+post-convergence rotation is **non-monotonic per model** (a pitch that squares a
+rifle over-rotates a long pistol to near-vertical). Instead, during ADS the look-at
+vector's vertical (and most of its horizontal) component is scaled toward zero by the
+blend (`gun.c` convergence block; `GE007_ADS_FLATTEN`/`_X` tunable), so the barrel
+points **straight forward / level** independent of weapon model AND view pitch —
+verified flat on the KF7 and silenced PP7 including with the view pitched up.
+`pose_pitch_rad` is now 0 (rotation path kept, inert, for optional fine-tuning).
+
+**Modern ADS reticle (`gun.c drawModernAdsReticle`, `Input.AdsModernReticle`).** While
+aiming with ADS on, the chunky textured crosshair is replaced by a clean center
+dot + four short gapped ticks at the player view center (CoD-style), drawn with
+`gDPFillRectangle` only (the settex-safe path) and sized off the view height (split-
+screen safe). Gated by `g_pcAdsEnabled && Input.AdsModernReticle && insightaimmode`;
+off-path is the unchanged classic crosshair. Verified: `AdsEnabled=0` == vanilla
+hipfire + classic crosshair; `=1` == flat low weapon + modern reticle.
 
 ### 10.2 Authoring workflow (for the remaining weapons)
 

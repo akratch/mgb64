@@ -40,7 +40,7 @@
 #define ADS_DEFAULT_POSE_X      (-5.0f)
 #define ADS_DEFAULT_POSE_Y      (9.0f)
 #define ADS_DEFAULT_POSE_Z      (0.0f)
-#define ADS_DEFAULT_POSE_PITCH  (-0.3142f)  /* ~-18 deg, gentle square (universal) */
+#define ADS_DEFAULT_POSE_PITCH  (0.0f)  /* barrel orientation handled by the look-at flatten */
 
 extern s32 g_pcAdsFaithfulZoom;
 
