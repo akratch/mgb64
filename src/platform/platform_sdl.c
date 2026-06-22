@@ -1953,6 +1953,7 @@ void platformFrameSync(void) {
         /* Auto-screenshot at specified frame */
         if (g_autoScreenshotFrame >= 0 && g_frameSyncCallCount == g_autoScreenshotFrame) {
             platformSaveScreenshot();
+            g_autoScreenshotFrame = -1;
             platformFinishAutoScreenshotIfRequested();
         }
         /* Auto-screenshot at specified gameplay timer. This captures matched

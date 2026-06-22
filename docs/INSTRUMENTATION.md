@@ -765,7 +765,7 @@ env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
   GE007_BLEND_AUDIT_INTERVAL=120 \
   /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
   --level dam --deterministic \
-  --screenshot-frame 220 --screenshot-label dam_glass_probe \
+  --screenshot-game-timer 220 --screenshot-label dam_glass_probe \
   --screenshot-exit > run.log 2>&1
 ```
 
