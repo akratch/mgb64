@@ -621,6 +621,8 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
 | `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
+| `GE007_TINT_TEX=min:max`, `GE007_SKIP_TEX=min:max` | tint or skip `G_SETTEX` texture-number ranges; these match stable game texture numbers, not transient GL upload ids |
+| `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
 | `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
@@ -675,6 +677,12 @@ separate during review so one fix does not hide another:
    the surface. The renderer should only trust an authored room tile descriptor
    when its clamp, shift, offset, and dimensions match the current `G_SETTEX`
    state.
+4. **Material attribution:** `G_SETTEX` texture numbers and OpenGL upload ids
+   are not interchangeable. Use `GE007_TINT_TEX`/`GE007_SKIP_TEX` to isolate
+   stable game texture numbers, then confirm the material with
+   `GE007_TRACE_SETTEX_MATERIAL_CC='*'`. Runway is a good counterexample: the
+   same visual band can include texture 22, 1267, and ordinary room materials,
+   so a single broad crop can make the wrong texture look guilty.
 
 The June 2026 renderer regression postmortem is in
 [RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md). It summarizes the

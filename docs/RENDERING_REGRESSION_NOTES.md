@@ -92,6 +92,16 @@ The visible symptoms were level-specific but shared renderer causes:
    which restores the dense cloud repeat seen in the older renderer path while
    keeping the split-screen viewport-aware sky draw.
 
+9. **Texture attribution must use stable `G_SETTEX` texture numbers.**
+   `settex_gl_tex_id` is an OpenGL upload id and changes with cache/upload
+   order. Using it for `GE007_TINT_TEX` or `GE007_SKIP_TEX` made focused probes
+   point at the wrong material after unrelated renderer changes. The tint/skip
+   path now matches `settex_texturenum`, which is the game texture number logged
+   by `GE007_TRACE_SETTEX_MATERIAL_CC`. Runway's foreground is the practical
+   example: texture 22 and texture 1267 can both overlap the same screenshot
+   band, so crop-level color metrics are not enough without texture-number tint
+   and material traces at the actual capture frame.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -102,6 +112,10 @@ Use these habits before accepting renderer changes:
 - Treat renderer changes as suspect if they alter screenshot composition while
   a repo-root `ge007.ini` is changing `Video.FovY` or `Video.RenderScale`. For
   stock-ish captures, pass explicit config overrides.
+- Before trusting a visual comparison, run the renderer from a build that
+  matches the branch under review. Local untracked `.c` files are picked up by
+  the CMake source glob, so use a clean worktree or check
+  `git ls-files --others --exclude-standard 'src/**/*.c'` first.
 - Keep automated renderer captures on the pinned 640x480 validation window
   unless the test is specifically exercising user-window/high-DPI behavior.
   Use `--config-override Video.RenderScale=2` or `Video.MSAA=4` for targeted
@@ -111,11 +125,17 @@ Use these habits before accepting renderer changes:
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
   with `GE007_TRACE_SETTEX_MATERIAL_CC='*'` before changing global sampler
   policy.
+- When isolating a suspect `G_SETTEX` material, use
+  `GE007_TINT_TEX=min:max` or `GE007_SKIP_TEX=min:max`. These match stable game
+  texture numbers, not transient GL texture ids.
 - Do not add special low nearest thresholds for clamped non-texture-edge room
   materials. Use
   `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` to A/B that
   class; `0.05` is a known Bunker close-texture smear regression, and the
   default `1.0` threshold is the validated baseline.
+- Keep `GE007_DIAG_DISABLE_SHADER_CLAMP=1` as a negative control only. It is
+  useful for proving clamp policy is involved, but a Runway pass showed it does
+  not explain every apparent material color delta.
 - Treat `GE007_SKY_UV_SCALE=1.0` as a negative control. It is useful for proving
   sky UV bugs, but it is not the calibrated native default.
 - Use fog traces before changing texture decode for distant low-detail scenes.

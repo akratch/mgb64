@@ -1121,6 +1121,7 @@ static int g_diag_settex_cc_n64_filter_always_3point_texsize = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_texnum = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_options = -1;
 static int g_diag_settex_clamped_non_texedge_n64_filter_always_3point = -1;
+static int g_diag_disable_shader_clamp = -1;
 
 static bool gfx_apply_texture_filter_override(bool linear_filter)
 {
@@ -1137,6 +1138,16 @@ static bool gfx_apply_texture_filter_override(bool linear_filter)
         return true;
     }
     return linear_filter;
+}
+
+static bool gfx_diag_disable_shader_clamp_enabled(void)
+{
+    if (g_diag_disable_shader_clamp < 0) {
+        g_diag_disable_shader_clamp =
+            (getenv("GE007_DIAG_DISABLE_SHADER_CLAMP") != NULL) ? 1 : 0;
+    }
+
+    return g_diag_disable_shader_clamp > 0;
 }
 
 static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
@@ -3020,6 +3031,10 @@ static inline bool gfx_shader_clamp_mode_needs_shader(uint8_t cm,
                                                       uint32_t logical_size,
                                                       uint32_t texture_size)
 {
+    if (gfx_diag_disable_shader_clamp_enabled()) {
+        return false;
+    }
+
     if ((cm & G_TX_CLAMP) == 0) {
         return false;
     }
@@ -3142,6 +3157,10 @@ static bool gfx_shader_clamp_needed_for_settex(uint8_t tex_tile_base,
     }
 
     if (gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
+        if (gfx_diag_disable_shader_clamp_enabled()) {
+            return false;
+        }
+
         uint8_t cm = axis == 0 ? tile_state->cms : tile_state->cmt;
         return (cm & G_TX_CLAMP) != 0;
     }
@@ -7184,6 +7203,8 @@ static void gfx_check_diag_env(void) {
         g_diag_disable_n64_filter =
             (getenv("GE007_DISABLE_N64_FILTER") != NULL ||
              getenv("GE007_DISABLE_N64_3POINT") != NULL) ? 1 : 0;
+        g_diag_disable_shader_clamp =
+            (getenv("GE007_DIAG_DISABLE_SHADER_CLAMP") != NULL) ? 1 : 0;
         g_diag_convert_k4k5 = (getenv("GE007_DIAG_CONVERT_K4K5") != NULL) ? 1 : 0;
         (void)gfx_diag_lod_fraction_override();
         (void)gfx_diag_shade_scale();
@@ -7339,6 +7360,7 @@ static void gfx_check_diag_env(void) {
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
         if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
         if (g_diag_disable_n64_filter) printf("[fast3d] N64 SHADER FILTER DISABLED (GE007_DISABLE_N64_FILTER/GE007_DISABLE_N64_3POINT)\n");
+        if (g_diag_disable_shader_clamp) printf("[fast3d] DIAG SHADER CLAMP DISABLED (GE007_DIAG_DISABLE_SHADER_CLAMP)\n");
         if (g_diag_convert_k4k5) printf("[fast3d] DIAG K4/K5 CONVERT ENABLED (GE007_DIAG_CONVERT_K4K5)\n");
         if (g_diag_lod_fraction_override >= 0) {
             printf("[fast3d] DIAG LOD FRACTION OVERRIDE %d (GE007_DIAG_LOD_FRACTION)\n",
@@ -9857,7 +9879,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               g_diag_tint_raw_mode_max);
     bool tint_by_tex = g_diag_tint_tex_enabled > 0 &&
                        settex_active &&
-                       gfx_mode_in_range(settex_gl_tex_id,
+                       settex_texturenum >= 0 &&
+                       gfx_mode_in_range((uint32_t)settex_texturenum,
                                          g_diag_tint_tex_min,
                                          g_diag_tint_tex_max);
     bool tint_by_sky = g_diag_tint_sky > 0 && g_sky_tri_mode;
@@ -9886,7 +9909,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               g_diag_skip_raw_mode_max);
     bool skip_by_tex = g_diag_skip_tex_enabled > 0 &&
                        settex_active &&
-                       gfx_mode_in_range(settex_gl_tex_id,
+                       settex_texturenum >= 0 &&
+                       gfx_mode_in_range((uint32_t)settex_texturenum,
                                          g_diag_skip_tex_min,
                                          g_diag_skip_tex_max);
     bool skip_by_sky = g_diag_skip_sky > 0 && g_sky_tri_mode;
