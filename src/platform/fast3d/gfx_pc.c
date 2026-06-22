@@ -2297,7 +2297,11 @@ static int gfx_clip_polygon_against_plane(struct LoadedVertex *dst,
         if (cur_inside != next_inside) {
             float denom = cur_dist - next_dist;
             if (fabsf(denom) > 0.000001f && out_count < dst_cap) {
-                float t = cur_dist / denom;
+                /* Intersect against the same effective plane used by the
+                 * inside test.  The near plane is intentionally inset by a
+                 * small epsilon; clipping back to the true plane can leave
+                 * generated vertices exactly on the unstable W boundary. */
+                float t = (cur_dist - plane_eps) / denom;
                 if (t < 0.0f) t = 0.0f;
                 if (t > 1.0f) t = 1.0f;
                 gfx_loaded_vertex_lerp(&dst[out_count++], cur, next, t);
@@ -2855,7 +2859,19 @@ static bool gfx_diag_room_cmd_offset(uintptr_t addr,
                                      uintptr_t *base_out,
                                      uintptr_t *offset_out);
 
-static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc)
+static const struct SetTexTileState *gfx_settex_fallback_tile_state_for_unit(int unit)
+{
+    if (unit == 1 && settex_tile_state[1].valid) {
+        return &settex_tile_state[1];
+    }
+    if (settex_tile_state[0].valid) {
+        return &settex_tile_state[0];
+    }
+    return NULL;
+}
+
+static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc,
+                                                              int unit)
 {
     if (!settex_active ||
         g_texrect_uv_mode ||
@@ -2866,10 +2882,33 @@ static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc)
     }
 
     const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    const struct SetTexTileState *fallback =
+        gfx_settex_fallback_tile_state_for_unit(unit);
 
-    return tile->line_size_bytes != 0 &&
-           tile->width != 0 &&
-           tile->height != 0;
+    /* Room DLs can leave ordinary TMEM tile descriptors live while a Rare
+     * G_SETTEX material drives the actual texture. Trust the room descriptor
+     * only when it matches the active G_SETTEX-derived tile state; otherwise
+     * stale TEXEL1 clamp state turns repeated Cradle rail textures into long
+     * edge smears. */
+    if (fallback == NULL || !fallback->valid) {
+        return false;
+    }
+    if (tile->cms != fallback->cms ||
+        tile->cmt != fallback->cmt ||
+        tile->shifts != fallback->shifts ||
+        tile->shiftt != fallback->shiftt ||
+        tile->uls != fallback->uls ||
+        tile->ult != fallback->ult) {
+        return false;
+    }
+
+    if (tile->line_size_bytes == 0 ||
+        tile->width != fallback->width ||
+        tile->height != fallback->height) {
+        return false;
+    }
+
+    return true;
 }
 
 static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
@@ -2885,7 +2924,7 @@ static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
         tile_desc = 0;
     }
 
-    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
         const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
 
         out->valid = true;
@@ -2903,10 +2942,9 @@ static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
     }
 
     const struct SetTexTileState *fallback =
-        (unit == 1 && settex_tile_state[1].valid) ?
-            &settex_tile_state[1] : &settex_tile_state[0];
+        gfx_settex_fallback_tile_state_for_unit(unit);
 
-    if (fallback->valid) {
+    if (fallback != NULL && fallback->valid) {
         *out = *fallback;
         return true;
     }
@@ -2924,7 +2962,7 @@ static bool gfx_get_settex_authoritative_tile_desc(uint8_t tex_tile_base,
         tile_desc = 0;
     }
 
-    if (!gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+    if (!gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
         return false;
     }
 
@@ -3103,7 +3141,7 @@ static bool gfx_shader_clamp_needed_for_settex(uint8_t tex_tile_base,
         tile_desc = 0;
     }
 
-    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc)) {
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
         uint8_t cm = axis == 0 ? tile_state->cms : tile_state->cmt;
         return (cm & G_TX_CLAMP) != 0;
     }

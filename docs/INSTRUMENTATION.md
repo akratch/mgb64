@@ -645,6 +645,15 @@ source; omitting the source pitch lets a later material reuse a GL texture that
 was decoded with the wrong stride, which looks like row smear even though the
 source bytes and sampler mode are both correct.
 
+`G_SETTEX` room materials have a second smear failure mode: stale ordinary TMEM
+tile descriptors can survive next to the active Rare texture-by-number state. A
+healthy trace has shader clamp bits that agree with the decoded settex fallback
+tile state. If `tile0`/`tile1` in `GE007_TRACE_SETTEX_MATERIAL_CC='*'` says wrap
+but `opts` still carries `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will
+clamp repeated room coordinates to an edge row/column and stretch it across the
+surface. The renderer should only trust an authored room tile descriptor when
+its clamp, shift, offset, and dimensions match the current `G_SETTEX` state.
+
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
 `Video.FovY=75` deliberately change composition and pixel metrics. For stock
