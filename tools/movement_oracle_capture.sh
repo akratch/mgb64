@@ -313,6 +313,8 @@ NATIVE_RENDER_JSON="$OUT_DIR/native_${ROUTE_NAME}.render.json"
 NATIVE_MOVEMENT_JSON="$OUT_DIR/native_${ROUTE_NAME}.movement.json"
 NATIVE_INTRO_SUMMARY_JSON="$OUT_DIR/native_${ROUTE_NAME}.intro-summary.json"
 NATIVE_INTRO_AUDIT_JSON="$OUT_DIR/native_${ROUTE_NAME}.intro-audit.json"
+STOCK_SCREENSHOT="$OUT_DIR/stock_${ROUTE_NAME}.ppm"
+STOCK_SCREENSHOT_JSON="$OUT_DIR/stock_${ROUTE_NAME}.screenshot.json"
 STOCK_AUDIT_JSON="$OUT_DIR/stock_${ROUTE_NAME}.audit.json"
 STOCK_OUT_TRACE="${STOCK_TRACE:-$OUT_DIR/stock_${ROUTE_NAME}.jsonl}"
 STOCK_LOG="$OUT_DIR/stock_${ROUTE_NAME}.log"
@@ -400,7 +402,7 @@ run_stock_capture() {
 
     python3 tools/rom_oracle_route.py ares-input "$ROUTE_PATH" >"$ARES_INPUT"
     mkdir -p "$SAVES_DIR"
-    rm -f "$STOCK_OUT_TRACE" "$STOCK_LOG"
+    rm -f "$STOCK_OUT_TRACE" "$STOCK_LOG" "$STOCK_SCREENSHOT" "$STOCK_SCREENSHOT_JSON"
 
     if [[ -n "$STOCK_SPEEDFRAMES" ]]; then
         stock_timing_env+=(MGB64_ARES_GAMEPLAY_SPEEDFRAMES="$STOCK_SPEEDFRAMES")
@@ -416,6 +418,8 @@ run_stock_capture() {
         MGB64_ARES_MOVEMENT_TRACE="$STOCK_OUT_TRACE" \
         MGB64_ARES_INPUT_SCRIPT="$ARES_INPUT" \
         MGB64_ARES_FRAME_LIMIT="$STOCK_FRAMES" \
+        MGB64_ARES_SCREENSHOT_PATH="$STOCK_SCREENSHOT" \
+        MGB64_ARES_SCREENSHOT_FRAME="$STOCK_FRAMES" \
         MGB64_ARES_TARGET_STAGE="$STOCK_LEVEL")
     if [[ "${#stock_timing_env[@]}" -gt 0 ]]; then
         stock_cmd+=("${stock_timing_env[@]}")
@@ -475,6 +479,18 @@ run_stock_capture() {
         tail -60 "$STOCK_LOG" | sed 's/^/  /' >&2
         exit 1
     fi
+
+    if [[ ! -s "$STOCK_SCREENSHOT" ]]; then
+        echo "FAIL: stock oracle screenshot was not written: $STOCK_SCREENSHOT" >&2
+        echo "This usually means the selected ares binary lacks the screen-dump oracle hook." >&2
+        tail -60 "$STOCK_LOG" | sed 's/^/  /' >&2
+        exit 1
+    fi
+    python3 tools/audit_screenshot_health.py \
+        --label "stock ${ROUTE_NAME} screenshot" \
+        --expect-size 640x480 \
+        --json-out "$STOCK_SCREENSHOT_JSON" \
+        "$STOCK_SCREENSHOT"
 }
 
 echo "=== ROM Oracle Capture ==="
@@ -651,6 +667,9 @@ echo "artifacts:"
 echo "  native trace: $NATIVE_TRACE"
 if [[ -n "$STOCK_TRACE" || -n "$ARES_BIN" ]]; then
     echo "  stock trace:  $STOCK_OUT_TRACE"
+    if [[ -s "$STOCK_SCREENSHOT" ]]; then
+        echo "  stock shot:   $STOCK_SCREENSHOT"
+    fi
 fi
 
 if [[ "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "$ARES_BIN" ) ]]; then
@@ -813,6 +832,8 @@ python3 - \
     "$NATIVE_MOVEMENT_JSON" \
     "$NATIVE_INTRO_SUMMARY_JSON" \
     "$NATIVE_INTRO_AUDIT_JSON" \
+    "$STOCK_SCREENSHOT" \
+    "$STOCK_SCREENSHOT_JSON" \
     "$STOCK_AUDIT_JSON" \
     "$COMPARE_JSON" \
     "$SUMMARY_COMPARE_JSON" <<'PY'
@@ -835,10 +856,12 @@ from pathlib import Path
     native_movement_json,
     native_intro_summary_json,
     native_intro_audit_json,
+    stock_screenshot,
+    stock_screenshot_json,
     stock_audit_json,
     compare_json,
     summary_compare_json,
-) = sys.argv[1:18]
+) = sys.argv[1:20]
 
 
 def existing(path: str) -> str | None:
@@ -862,6 +885,8 @@ artifacts = {
     "native_movement_json": existing(native_movement_json),
     "native_intro_summary_json": existing(native_intro_summary_json),
     "native_intro_audit_json": existing(native_intro_audit_json),
+    "stock_screenshot": existing(stock_screenshot),
+    "stock_screenshot_health_json": existing(stock_screenshot_json),
     "stock_audit_json": existing(stock_audit_json),
     "compare_json": existing(compare_json),
     "summary_compare_json": existing(summary_compare_json),
@@ -879,6 +904,7 @@ payload = {
     "native_movement": load_json(native_movement_json),
     "native_intro_summary": load_json(native_intro_summary_json),
     "native_intro_audit": load_json(native_intro_audit_json),
+    "stock_screenshot_health": load_json(stock_screenshot_json),
     "stock_audit": load_json(stock_audit_json),
     "comparison": load_json(compare_json),
     "summary_comparison": load_json(summary_compare_json),

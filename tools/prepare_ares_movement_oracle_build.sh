@@ -126,6 +126,9 @@ struct OracleState {
   bool gameplayTimelineStarted = false;
   u64 videoFrame = 0;
   u64 inputFrame = 0;
+  const char* screenshotPath = nullptr;
+  u64 screenshotFrame = 0;
+  bool screenshotDumped = false;
   u64 gameplayOriginInputFrame = 0;
   s32 gameplayOriginGlobal = 0;
   s32 gameplayStartGlobal = 0;
@@ -249,6 +252,20 @@ struct OracleState {
       if(end && *end == 0) frameLimit = parsed;
     }
 
+    screenshotPath = getenv("MGB64_ARES_SCREENSHOT_PATH");
+    if(!screenshotPath || !*screenshotPath) screenshotPath = getenv("MGB64_ARES_SCREENSHOT");
+    if(!screenshotPath || !*screenshotPath) screenshotPath = nullptr;
+    if(screenshotPath) {
+      screenshotFrame = frameLimit ? frameLimit : 1;
+      if(auto screenshotFrameEnv = getenv("MGB64_ARES_SCREENSHOT_FRAME")) {
+        if(*screenshotFrameEnv) {
+          char* end = nullptr;
+          auto parsed = strtoull(screenshotFrameEnv, &end, 10);
+          if(end && *end == 0) screenshotFrame = parsed;
+        }
+      }
+    }
+
     if(auto script = getenv("MGB64_ARES_INPUT_SCRIPT")) {
       if(*script) loadInputScript(script);
     }
@@ -269,6 +286,59 @@ struct OracleState {
 
     setvbuf(trace, nullptr, _IONBF, 0);
     fprintf(stderr, "mgb64 oracle: writing JSONL to %s\n", path);
+  }
+
+  auto dumpScreen(Node::Video::Screen screen) -> void {
+    configure();
+    if(!screenshotPath || screenshotDumped) return;
+    if(screenshotFrame && videoFrame < screenshotFrame) return;
+
+    auto pixels = screen->pixels(1);
+    u32 width = screen->width();
+    u32 height = screen->height();
+    if(width == 0) width = screen->canvasWidth();
+    if(height == 0) height = screen->canvasHeight();
+    if(width == 0 || height == 0 || pixels.size() == 0) return;
+    if((u64)width * (u64)height > (u64)pixels.size()) {
+      width = screen->canvasWidth();
+      height = screen->canvasHeight();
+    }
+    if((u64)width * (u64)height > (u64)pixels.size()) {
+      height = (u32)(pixels.size() / width);
+    }
+    if(width == 0 || height == 0) return;
+
+    FILE* out = fopen(screenshotPath, "wb");
+    if(!out) {
+      fprintf(stderr, "mgb64 oracle: failed to open screenshot %s\n", screenshotPath);
+      screenshotDumped = true;
+      return;
+    }
+
+    fprintf(out, "P6\n%u %u\n255\n", width, height);
+    for(u32 y = 0; y < height; y++) {
+      for(u32 x = 0; x < width; x++) {
+        u32 color = pixels[(u64)y * width + x];
+        u8 r = 0, g = 0, b = 0;
+        if(color < (1u << 24)) {
+          r = (u8)((color >> 16) & 0xff);
+          g = (u8)((color >> 8) & 0xff);
+          b = (u8)(color & 0xff);
+        } else {
+          u32 rgb555 = color & 0x7fffu;
+          r = (u8)((((rgb555 >> 10) & 0x1f) * 255u) / 31u);
+          g = (u8)((((rgb555 >> 5) & 0x1f) * 255u) / 31u);
+          b = (u8)(((rgb555 & 0x1f) * 255u) / 31u);
+        }
+        fputc(r, out);
+        fputc(g, out);
+        fputc(b, out);
+      }
+    }
+    fclose(out);
+    screenshotDumped = true;
+    fprintf(stderr, "mgb64 oracle: wrote screenshot to %s at frame %llu\n",
+      screenshotPath, (unsigned long long)videoFrame);
   }
 
   auto loadInputScript(const char* path) -> void {
@@ -1000,6 +1070,10 @@ auto mgb64OracleFrameHook() -> void {
   oracleState().traceFrame();
 }
 
+auto mgb64OracleVideoDump(Node::Video::Screen screen) -> void {
+  oracleState().dumpScreen(screen);
+}
+
 }
 '''
 
@@ -1013,6 +1087,15 @@ if "mgb64OracleFrameHook" not in text:
         "  auto mgb64OracleFrameHook() -> void;\n",
         1,
     )
+if "mgb64OracleVideoDump" not in text:
+    text = text.replace(
+        "  auto mgb64OracleFrameHook() -> void;\n",
+        "  auto mgb64OracleFrameHook() -> void;\n"
+        "  auto mgb64OracleVideoDump(Node::Video::Screen screen) -> void;\n",
+        1,
+    )
+    n64_hpp.write_text(text, encoding="utf-8")
+elif text != n64_hpp.read_text(encoding="utf-8"):
     n64_hpp.write_text(text, encoding="utf-8")
 
 gamepad_cpp = src / "ares/n64/controller/gamepad/gamepad.cpp"
@@ -1029,6 +1112,22 @@ if "mgb64OracleFrameHook" not in text:
         "        refreshed = true;\n        mgb64OracleFrameHook();\n        screen->frame();\n",
         1,
     )
+    vi_cpp.write_text(text, encoding="utf-8")
+text = vi_cpp.read_text(encoding="utf-8")
+if "mgb64OracleVideoDump(screen);" not in text:
+    text = text.replace(
+        "    if(Model::Aleck64()) aleck64.vdp.render(screen); //aleck64 supports overlay graphics\n"
+        "    return;\n",
+        "    if(Model::Aleck64()) aleck64.vdp.render(screen); //aleck64 supports overlay graphics\n"
+        "    mgb64OracleVideoDump(screen);\n"
+        "    return;\n",
+        1,
+    )
+    marker = "\n}\n\nauto VI::power"
+    software_start = text.find("  if(vi.io.colorDepth == 3) {\n    //24bpp\n")
+    software_end = text.find(marker, software_start)
+    if software_start >= 0 and software_end >= 0:
+        text = text[:software_end] + "\n\n  mgb64OracleVideoDump(screen);" + text[software_end:]
     vi_cpp.write_text(text, encoding="utf-8")
 text = vi_cpp.read_text(encoding="utf-8")
 oracle_block_start = text.find("#include <n64/n64.hpp>\n\n#include <cmath>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n\nnamespace ares::Nintendo64 {\n\nnamespace {\n\nstruct OracleInputEvent")
