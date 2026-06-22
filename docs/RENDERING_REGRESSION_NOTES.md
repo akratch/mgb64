@@ -203,10 +203,13 @@ itself. Add a verified stock menu route or direct-stage hook before claiming
 stock-backed parity for another level.
 
 When an instrumented ares binary is available, `movement_oracle_capture.sh`
-also asks stock ares to dump a local PPM framebuffer at the final route frame
-and health-checks that screenshot. Use that as the first emulator-pixel sanity
-check before drawing conclusions from native-only captures. The stock screenshot
-is generated from the user's ROM and must remain local.
+also asks stock ares to dump a local PPM framebuffer and health-checks that
+screenshot. Use that as the first emulator-pixel sanity check before drawing
+conclusions from native-only captures. For routes that spend extra emulator time
+in menus, set `stock_screenshot_frame` to the gameplay-equivalent frame instead
+of trusting the final process frame; the Dam forward route uses this to avoid
+capturing the mission-failed report screen. The stock screenshot is generated
+from the user's ROM and must remain local.
 
 ## Manual Priority List
 

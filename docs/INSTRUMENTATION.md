@@ -236,8 +236,10 @@ With a local instrumented ares binary from
 `tools/prepare_ares_movement_oracle_build.sh`,
 `tools/movement_oracle_capture.sh --ares-bin ...` captures the same route from
 stock ares. The stock lane now writes a local `stock_<route>.ppm` framebuffer
-dump at the route's final oracle frame, audits it with
-`audit_screenshot_health.py`, and records it in `summary_<route>.json`. Use it
+dump, audits it with `audit_screenshot_health.py`, and records it in
+`summary_<route>.json`. By default the dump uses `stock_frames`, but a route may
+set `stock_screenshot_frame` when the emulator needs extra menu/frontend frames
+and the useful visual checkpoint happens earlier than process exit. Use the dump
 as a ground-truth visual checkpoint next to the movement/intro comparator; it is
 still a ROM-derived artifact and must stay out of git.
 
