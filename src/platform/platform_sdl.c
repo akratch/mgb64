@@ -309,6 +309,7 @@ int platformPrintDisplays(FILE *f)
 static int g_screenshotRequested = 0;
 static int g_screenshotCounter = 0;
 int g_autoScreenshotFrame = -1;  /* frame number to auto-capture (-1 = disabled) */
+int g_autoScreenshotGameTimer = -1; /* g_GlobalTimer value to auto-capture (-1 = disabled) */
 int g_autoScreenshotExit = 0;    /* exit after auto-screenshot */
 static char g_screenshotLabelStorage[96];
 static const char *g_screenshotLabel = NULL; /* label for screenshot filename */
@@ -1953,6 +1954,16 @@ void platformFrameSync(void) {
         if (g_autoScreenshotFrame >= 0 && g_frameSyncCallCount == g_autoScreenshotFrame) {
             platformSaveScreenshot();
             platformFinishAutoScreenshotIfRequested();
+        }
+        /* Auto-screenshot at specified gameplay timer. This captures matched
+         * simulation states even when startup/loading consumes render frames. */
+        if (g_autoScreenshotGameTimer >= 0) {
+            extern s32 g_GlobalTimer;
+            if (g_GlobalTimer >= g_autoScreenshotGameTimer) {
+                platformSaveScreenshot();
+                g_autoScreenshotGameTimer = -1;
+                platformFinishAutoScreenshotIfRequested();
+            }
         }
         /* Manual screenshot (F2) */
         if (g_screenshotRequested) {

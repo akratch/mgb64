@@ -775,6 +775,13 @@ The important `BLEND-AUDIT` invariant is that true XLU surface modes such as
 `BG-ROOM-PTR` shows secondary pointers as null for rooms with nonzero secondary
 sizes, investigate room loading before touching renderer state.
 
+For visual parity probes that need the same gameplay state across branches, use
+`--screenshot-game-timer N` instead of `--screenshot-frame N`. The frame trigger
+counts SDL/render syncs and can fire before comparable player simulation time if
+startup, intro, or loading behavior differs. The game-timer trigger captures once
+`g_GlobalTimer >= N`, so branch-to-branch screenshots line up on the same mission
+tick.
+
 ### Vehicle AI/path probe
 
 Scripted vehicles should receive their authored AI list from setup data, bind a

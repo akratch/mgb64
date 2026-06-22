@@ -558,6 +558,9 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
             extern int g_autoScreenshotFrame;
             g_autoScreenshotFrame = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--screenshot-game-timer") == 0 && i + 1 < argc) {
+            extern int g_autoScreenshotGameTimer;
+            g_autoScreenshotGameTimer = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--screenshot-exit") == 0) {
             g_autoScreenshotExit = 1;
         } else if (strcmp(argv[i], "--screenshot-label") == 0 && i + 1 < argc) {
