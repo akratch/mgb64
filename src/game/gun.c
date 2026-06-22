@@ -33179,27 +33179,55 @@ Gfx *drawModernAdsReticle(Gfx *gdl) {
     s32 cx = viGetViewLeft() + viGetViewWidth() / 2;
     s32 cy = viGetViewTop() + viGetViewHeight() / 2;
     s32 vh = viGetViewHeight();
-    s32 thk, gap, len, hx, hy;
-    u16 white = (0x1F << 11) | (0x1F << 6) | (0x1F << 1) | 1; /* RGBA5551 opaque white */
-    u32 fill = ((u32)white << 16) | white;
+    s32 thk, gap, len, hx, hy, o;
+    /* RGBA5551. Red is an homage to the classic GoldenEye crosshair; a 1px dark
+     * outline keeps the thin red crisp/visible on any background. */
+    u16 red  = (0x1F << 11) | (0x00 << 6) | (0x00 << 1) | 1;
+    u16 dark = (0x00 << 11) | (0x00 << 6) | (0x00 << 1) | 1;
+    u32 fill_red  = ((u32)red << 16) | red;
+    u32 fill_dark = ((u32)dark << 16) | dark;
+    /* env-tunable (px / flags) for polishing; <0 => resolution-scaled default. */
+    static int s_init = 0;
+    static s32 s_thk = -1, s_gap = -1, s_len = -1, s_dot = 1, s_outline = 1;
 
     if (vh < 1) { vh = 240; }
-    /* Thin, precise: 1px-thick lines at 480p (scales up with render resolution),
-     * short ticks, small center dot. hx/hy center the lines on (cx,cy). */
-    thk = vh / 480; if (thk < 1) { thk = 1; }    /* line thickness (px) */
-    gap = vh / 60;  if (gap < 5) { gap = 5; }    /* gap from center to each tick */
-    len = vh / 72;  if (len < 4) { len = 4; }    /* tick length (short = precise) */
+    if (!s_init) {
+        const char *e; s_init = 1;
+        if ((e = getenv("GE007_ADS_RETICLE_THK")) && *e)     s_thk = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_GAP")) && *e)     s_gap = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_LEN")) && *e)     s_len = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_DOT")) && *e)     s_dot = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_OUTLINE")) && *e) s_outline = (s32)atof(e);
+    }
+    /* Thinnest practical lines: 1px through ~2x render scale. Short ticks + a
+     * clear center gap read as a precise, modern reticle. */
+    thk = (s_thk >= 0) ? s_thk : (vh / 900); if (thk < 1) { thk = 1; }  /* ~1px */
+    gap = (s_gap >= 0) ? s_gap : (vh / 60);  if (gap < 6) { gap = 6; }  /* ~8px @480 */
+    len = (s_len >= 0) ? s_len : (vh / 44);  if (len < 8) { len = 8; }  /* ~11px @480 */
     hx = cx - thk / 2;
     hy = cy - thk / 2;
+    o  = (thk + 1) / 2; if (o < 1) { o = 1; } /* outline expansion */
 
     gDPPipeSync(gdl++);
     gDPSetCycleType(gdl++, G_CYC_FILL);
-    gDPSetFillColor(gdl++, fill);
-    gDPFillRectangle(gdl++, hx, hy, hx + thk, hy + thk);                 /* center dot */
-    gDPFillRectangle(gdl++, hx, cy - gap - len, hx + thk, cy - gap);     /* top tick */
-    gDPFillRectangle(gdl++, hx, cy + gap, hx + thk, cy + gap + len);     /* bottom tick */
-    gDPFillRectangle(gdl++, cx - gap - len, hy, cx - gap, hy + thk);     /* left tick */
-    gDPFillRectangle(gdl++, cx + gap, hy, cx + gap + len, hy + thk);     /* right tick */
+
+    if (s_outline) {                              /* dark outline pass (1px larger) */
+        gDPSetFillColor(gdl++, fill_dark);
+        if (s_dot) { gDPFillRectangle(gdl++, hx - o, hy - o, hx + thk + o, hy + thk + o); }
+        gDPFillRectangle(gdl++, hx - o, cy - gap - len - o, hx + thk + o, cy - gap + o);
+        gDPFillRectangle(gdl++, hx - o, cy + gap - o, hx + thk + o, cy + gap + len + o);
+        gDPFillRectangle(gdl++, cx - gap - len - o, hy - o, cx - gap + o, hy + thk + o);
+        gDPFillRectangle(gdl++, cx + gap - o, hy - o, cx + gap + len + o, hy + thk + o);
+        gDPPipeSync(gdl++);
+    }
+
+    gDPSetFillColor(gdl++, fill_red);             /* red reticle */
+    if (s_dot) { gDPFillRectangle(gdl++, hx, hy, hx + thk, hy + thk); }
+    gDPFillRectangle(gdl++, hx, cy - gap - len, hx + thk, cy - gap);     /* top */
+    gDPFillRectangle(gdl++, hx, cy + gap, hx + thk, cy + gap + len);     /* bottom */
+    gDPFillRectangle(gdl++, cx - gap - len, hy, cx - gap, hy + thk);     /* left */
+    gDPFillRectangle(gdl++, cx + gap, hy, cx + gap + len, hy + thk);     /* right */
+
     gDPPipeSync(gdl++);
     gDPSetCycleType(gdl++, G_CYC_1CYCLE);
     return gdl;
@@ -33225,8 +33253,12 @@ void gunDrawSight(Gfx **gdl) {
             {
                 extern s32 g_pcAdsEnabled;
                 extern s32 g_pcAdsModernReticle;
+                static int s_force_reticle = -1;
+                if (s_force_reticle < 0) {
+                    s_force_reticle = (getenv("GE007_ADS_RETICLE_FORCE") != NULL);
+                }
                 if (g_pcAdsEnabled && g_pcAdsModernReticle &&
-                    g_CurrentPlayer->insightaimmode) {
+                    (g_CurrentPlayer->insightaimmode || s_force_reticle)) {
                     *gdl = drawModernAdsReticle(*gdl);
                     return;
                 }
