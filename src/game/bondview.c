@@ -9774,6 +9774,33 @@ void bondviewSyncViewBasisFromHead(void)
         headup_x = g_CurrentPlayer->headup.f[0];
         headup_y = g_CurrentPlayer->headup.f[1];
         headup_z = g_CurrentPlayer->headup.f[2];
+
+        /* ADS steady-view: the head basis carries walk/strafe head-bob ON TOP of
+         * the view direction (which is encoded by the vv_verta360/vv_theta Rx/Ry
+         * rotations below). While aiming with ADS, lerp the head basis toward the
+         * NEUTRAL forward(-z)/up(+y) by the ADS blend, removing the bob without
+         * changing where you aim. Gated by Input.AdsSteadyView; off ⇒ unchanged. */
+        {
+            extern s32 g_pcAdsEnabled;
+            extern s32 g_pcAdsSteadyView;
+            if (g_pcAdsEnabled && g_pcAdsSteadyView &&
+                g_CurrentPlayer->insightaimmode) {
+                f32 t;
+                if (g_CurrentPlayer->zoomintimemax > 0.0f) {
+                    t = g_CurrentPlayer->zoomintime / g_CurrentPlayer->zoomintimemax;
+                } else {
+                    t = 1.0f;
+                }
+                if (t < 0.0f) { t = 0.0f; }
+                if (t > 1.0f) { t = 1.0f; }
+                headlook_x += (0.0f  - headlook_x) * t;
+                headlook_y += (0.0f  - headlook_y) * t;
+                headlook_z += (-1.0f - headlook_z) * t;
+                headup_x   += (0.0f  - headup_x) * t;
+                headup_y   += (1.0f  - headup_y) * t;
+                headup_z   += (0.0f  - headup_z) * t;
+            }
+        }
     }
 
     /* Without animation tables, headlook/headup are zero. Use default

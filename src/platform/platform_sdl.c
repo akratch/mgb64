@@ -951,6 +951,8 @@ s32 g_pcAdsSprintLockout = 0;     /* Input.AdsSprintLockout  sprint-out lockout 
 s32 g_pcAdsFaithfulZoom  = 0;     /* Input.AdsFaithfulZoom   disable mild-iron clamp */
 s32 g_pcAdsModelPose     = 1;     /* Input.AdsModelPose      sighted model pose      */
 s32 g_pcAdsModernReticle = 1;     /* Input.AdsModernReticle  modern dot+ticks reticle */
+s32 g_pcAdsSteadyView    = 1;     /* Input.AdsSteadyView     damp walk/strafe head-bob in ADS */
+f32 g_pcAdsBobFloor      = 0.15f; /* Input.AdsBobFloor       residual ADS weapon bob (0=rigid) */
 f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
 
 extern int g_pcScriptedMouseDeltaX;
@@ -1539,6 +1541,16 @@ void platformRegisterConfig(void)
                         "--config-override Input.AdsModernReticle=VALUE",
                         "ADS modern reticle",
                         "Clean dot+ticks aiming reticle while aiming (vs the classic crosshair).");
+    settingsRegisterInt("Input.AdsSteadyView", &g_pcAdsSteadyView, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_STEADY_VIEW",
+                        "--config-override Input.AdsSteadyView=VALUE",
+                        "ADS steady view",
+                        "Damp walk/strafe head-bob out of the aimed view (1 = steadier).");
+    settingsRegisterFloat("Input.AdsBobFloor", &g_pcAdsBobFloor, 0.15f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_BOB_FLOOR",
+                          "--config-override Input.AdsBobFloor=VALUE",
+                          "ADS bob floor",
+                          "Residual weapon bob kept while aiming (0 = rigid, ~0.15 = subtle).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

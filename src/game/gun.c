@@ -6130,7 +6130,15 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             f32 adsSwayBlend = portAdsPoseBlendForHand(hand);
 
             if (adsSwayBlend > 0.0f) {
-                f32 adsSwayDamp = 1.0f - adsSwayBlend;
+                /* Keep a subtle movement bob (Input.AdsBobFloor) instead of going
+                 * fully rigid: damp = 1 - blend*(1-floor). floor=0 => 1-blend (old
+                 * rigid behavior); floor~0.15 => a small, alive, cosmetic bob. */
+                extern f32 g_pcAdsBobFloor;
+                f32 floor = g_pcAdsBobFloor;
+                f32 adsSwayDamp;
+                if (floor < 0.0f) { floor = 0.0f; }
+                if (floor > 1.0f) { floor = 1.0f; }
+                adsSwayDamp = 1.0f - adsSwayBlend * (1.0f - floor);
 
                 blendpos_result.x *= adsSwayDamp;
                 blendpos_result.y *= adsSwayDamp;
@@ -6254,7 +6262,12 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
                 f32 adsFollowBlend = portAdsPoseBlendForHand(hand);
 
                 if (adsFollowBlend > 0.0f) {
-                    follow_x *= (1.0f - adsFollowBlend);
+                    /* Same subtle-bob floor as the sway damp above (Input.AdsBobFloor). */
+                    extern f32 g_pcAdsBobFloor;
+                    f32 floor = g_pcAdsBobFloor;
+                    if (floor < 0.0f) { floor = 0.0f; }
+                    if (floor > 1.0f) { floor = 1.0f; }
+                    follow_x *= (1.0f - adsFollowBlend * (1.0f - floor));
                 }
             }
 #endif
