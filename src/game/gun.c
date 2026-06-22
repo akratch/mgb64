@@ -184,7 +184,21 @@ static f32 portAdsPoseBlendForHand(s32 hand)
     if (!g_pcAdsEnabled || !g_pcAdsModelPose) {
         return 0.0f;
     }
-    if (g_CurrentPlayer == NULL || !g_CurrentPlayer->insightaimmode) {
+    if (g_CurrentPlayer == NULL) {
+        return 0.0f;
+    }
+    /* Authoring aid (never set in normal play): force a full pose blend on the
+     * right hand so GE007_ADS_POSE_* can be dialed in headlessly without the
+     * scripted-aim path engaging insightaimmode. Same env-gated pattern as the
+     * other GE007_* diag hooks; bypassed entirely when the var is unset. */
+    {
+        static int s_force_pose = -1;
+        if (s_force_pose < 0) s_force_pose = (getenv("GE007_ADS_FORCE_POSE") != NULL);
+        if (s_force_pose && hand == GUNRIGHT) {
+            return 1.0f;
+        }
+    }
+    if (!g_CurrentPlayer->insightaimmode) {
         return 0.0f;
     }
     /* Only the actively-aiming (dominant/firing) hand is posed/damped. */
@@ -202,6 +216,51 @@ static f32 portAdsPoseBlendForHand(s32 hand)
     if (frac < 0.0f) { frac = 0.0f; }
     if (frac > 1.0f) { frac = 1.0f; }
     return frac;
+}
+
+/* ADS-6.1 — resolve the sighted-pose delta for `hand`, scaled by the current ADS
+ * blend, into gun_pos space (translation) + radians (rotation). Source is the
+ * GE007_ADS_POSE_* live-authoring env (read once) when set, else the per-weapon
+ * AdsProfile pose. Returns the blend (0 => caller applies nothing). This runs in
+ * the ACTIVE viewmodel positioner (handles_firing_or_throwing_weapon_in_hand);
+ * the gun model is cosmetic to the eye->crosshair bullet ray, so moving it is
+ * accuracy-safe. Default table pose is 0 => no move unless authored/env-set. */
+static f32 portAdsResolvePose(s32 hand, f32 *dx, f32 *dy, f32 *dz,
+                              f32 *dyaw, f32 *dpitch, f32 *droll)
+{
+    static int s_init = 0;
+    static int s_ax = 0, s_ay = 0, s_az = 0, s_ayaw = 0, s_apitch = 0, s_aroll = 0;
+    static f32 s_x = 0.0f, s_y = 0.0f, s_z = 0.0f;
+    static f32 s_yaw = 0.0f, s_pitch = 0.0f, s_roll = 0.0f;
+    const struct AdsProfile *p;
+    f32 blend;
+
+    *dx = *dy = *dz = *dyaw = *dpitch = *droll = 0.0f;
+
+    blend = portAdsPoseBlendForHand(hand);
+    if (blend <= 0.0f) {
+        return 0.0f;
+    }
+
+    if (!s_init) {
+        const char *e;
+        s_init = 1;
+        if ((e = getenv("GE007_ADS_POSE_X")) && *e)         { s_x = atof(e); s_ax = 1; }
+        if ((e = getenv("GE007_ADS_POSE_Y")) && *e)         { s_y = atof(e); s_ay = 1; }
+        if ((e = getenv("GE007_ADS_POSE_Z")) && *e)         { s_z = atof(e); s_az = 1; }
+        if ((e = getenv("GE007_ADS_POSE_YAW_DEG")) && *e)   { s_yaw = atof(e) * 3.14159265f / 180.0f; s_ayaw = 1; }
+        if ((e = getenv("GE007_ADS_POSE_PITCH_DEG")) && *e) { s_pitch = atof(e) * 3.14159265f / 180.0f; s_apitch = 1; }
+        if ((e = getenv("GE007_ADS_POSE_ROLL_DEG")) && *e)  { s_roll = atof(e) * 3.14159265f / 180.0f; s_aroll = 1; }
+    }
+
+    p = adsGetProfile(getCurrentPlayerWeaponId(hand));
+    *dx     = (s_ax     ? s_x     : p->pose_off_x)   * blend;
+    *dy     = (s_ay     ? s_y     : p->pose_off_y)   * blend;
+    *dz     = (s_az     ? s_z     : p->pose_off_z)   * blend;
+    *dyaw   = (s_ayaw   ? s_yaw   : p->pose_yaw_rad)   * blend;
+    *dpitch = (s_apitch ? s_pitch : p->pose_pitch_rad) * blend;
+    *droll  = (s_aroll  ? s_roll  : p->pose_roll_rad)  * blend;
+    return blend;
 }
 
 /* ADS-7.1 — returns the cosmetic recoil scale [0,1] for `hand` when that hand is
@@ -2910,24 +2969,6 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
     static f32 s_heavy_offset_y = 0.0f;
     static f32 s_heavy_offset_z = 0.0f;
     static f32 s_heavy_scale = 1.02f;
-#ifdef NATIVE_PORT
-    /* ADS-6.1 live authoring overrides (GE007_ADS_POSE_*). When the matching env
-     * var is unset, s_ads_pose_authored stays 0 and the profile-table pose values
-     * are used verbatim; default table pose is 0 => no model move (safe no-op).
-     * Read once, same idiom as GE007_FP_* above. */
-    static s32 s_ads_pose_auth_yaw = 0;
-    static s32 s_ads_pose_auth_pitch = 0;
-    static s32 s_ads_pose_auth_roll = 0;
-    static s32 s_ads_pose_auth_x = 0;
-    static s32 s_ads_pose_auth_y = 0;
-    static s32 s_ads_pose_auth_z = 0;
-    static f32 s_ads_pose_yaw_rad = 0.0f;
-    static f32 s_ads_pose_pitch_rad = 0.0f;
-    static f32 s_ads_pose_roll_rad = 0.0f;
-    static f32 s_ads_pose_off_x = 0.0f;
-    static f32 s_ads_pose_off_y = 0.0f;
-    static f32 s_ads_pose_off_z = 0.0f;
-#endif
     f32 yaw_to_apply = 0.0f;
     f32 pitch_to_apply = 0.0f;
     f32 roll_to_apply = 0.0f;
@@ -3043,45 +3084,10 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         if (taser_roll_env != NULL && taser_roll_env[0] != '\0') {
             s_taser_roll_rad = atof(taser_roll_env) * 3.14159265f / 180.0f;
         }
-#ifdef NATIVE_PORT
-        {
-            /* ADS-6.1 live pose authoring: GE007_ADS_POSE_* override the profile
-             * pose values for the in-hand weapon, letting us dial the sighted pose
-             * at runtime then bake into the table. Unset => keep the NaN sentinel
-             * so the profile value is used. Generalizes the GE007_FP_* loop. */
-            const char *ads_pose_yaw_env = getenv("GE007_ADS_POSE_YAW_DEG");
-            const char *ads_pose_pitch_env = getenv("GE007_ADS_POSE_PITCH_DEG");
-            const char *ads_pose_roll_env = getenv("GE007_ADS_POSE_ROLL_DEG");
-            const char *ads_pose_x_env = getenv("GE007_ADS_POSE_X");
-            const char *ads_pose_y_env = getenv("GE007_ADS_POSE_Y");
-            const char *ads_pose_z_env = getenv("GE007_ADS_POSE_Z");
-
-            if (ads_pose_yaw_env != NULL && ads_pose_yaw_env[0] != '\0') {
-                s_ads_pose_yaw_rad = atof(ads_pose_yaw_env) * 3.14159265f / 180.0f;
-                s_ads_pose_auth_yaw = 1;
-            }
-            if (ads_pose_pitch_env != NULL && ads_pose_pitch_env[0] != '\0') {
-                s_ads_pose_pitch_rad = atof(ads_pose_pitch_env) * 3.14159265f / 180.0f;
-                s_ads_pose_auth_pitch = 1;
-            }
-            if (ads_pose_roll_env != NULL && ads_pose_roll_env[0] != '\0') {
-                s_ads_pose_roll_rad = atof(ads_pose_roll_env) * 3.14159265f / 180.0f;
-                s_ads_pose_auth_roll = 1;
-            }
-            if (ads_pose_x_env != NULL && ads_pose_x_env[0] != '\0') {
-                s_ads_pose_off_x = atof(ads_pose_x_env);
-                s_ads_pose_auth_x = 1;
-            }
-            if (ads_pose_y_env != NULL && ads_pose_y_env[0] != '\0') {
-                s_ads_pose_off_y = atof(ads_pose_y_env);
-                s_ads_pose_auth_y = 1;
-            }
-            if (ads_pose_z_env != NULL && ads_pose_z_env[0] != '\0') {
-                s_ads_pose_off_z = atof(ads_pose_z_env);
-                s_ads_pose_auth_z = 1;
-            }
-        }
-#endif
+        /* ADS-6.1 sighted-pose authoring (GE007_ADS_POSE_*) is read in
+         * portAdsResolvePose() and applied in the ACTIVE viewmodel positioner
+         * (handles_firing_or_throwing_weapon_in_hand) — not in this dormant
+         * port-root path. */
         s_viewmodel_yaw_init = 1;
     }
 
@@ -3123,35 +3129,12 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
      * its anchor and bullets (eye -> crosshair_angle) are unaffected. With pose=0
      * in the table (default) and no GE007_ADS_POSE_* override this is a no-op move.
      * ADS-7.1 recoil cut rides the same blend fraction and hand index. */
-    {
-        f32 adsBlend = portAdsPoseBlendForHand(gunhand);
-
-        if (adsBlend > 0.0f) {
-            const struct AdsProfile *adsProf =
-                adsGetProfile(getCurrentPlayerWeaponId(gunhand));
-
-            /* GE007_ADS_POSE_* live overrides take precedence; otherwise use the
-             * profile-table pose (default 0 => no-op move). */
-            f32 pose_yaw   = s_ads_pose_auth_yaw   ? s_ads_pose_yaw_rad   : adsProf->pose_yaw_rad;
-            f32 pose_pitch = s_ads_pose_auth_pitch ? s_ads_pose_pitch_rad : adsProf->pose_pitch_rad;
-            f32 pose_roll  = s_ads_pose_auth_roll  ? s_ads_pose_roll_rad  : adsProf->pose_roll_rad;
-            f32 pose_ox    = s_ads_pose_auth_x     ? s_ads_pose_off_x     : adsProf->pose_off_x;
-            f32 pose_oy    = s_ads_pose_auth_y     ? s_ads_pose_off_y     : adsProf->pose_off_y;
-            f32 pose_oz    = s_ads_pose_auth_z     ? s_ads_pose_off_z     : adsProf->pose_off_z;
-
-            yaw_to_apply   += pose_yaw   * adsBlend;
-            pitch_to_apply += pose_pitch * adsBlend;
-            roll_to_apply  += pose_roll  * adsBlend;
-            offset_x       += pose_ox    * adsBlend;
-            offset_y       += pose_oy    * adsBlend;
-            offset_z       += pose_oz    * adsBlend;
-        }
-
-        /* ADS-7.1 cosmetic recoil reduction is applied non-destructively at the
-         * recoil matrix-consumption sites (portAdsRecoilScaleForHand on a local
-         * copy of field_A84/field_A88), NOT by mutating the persistent gameplay
-         * accumulators here — see the recoil switch-node builders below. */
-    }
+    /* ADS-6.1 sighted pose is applied in the ACTIVE viewmodel positioner
+     * (handles_firing_or_throwing_weapon_in_hand, via portAdsResolvePose on
+     * gun_pos) — NOT here. This port-root path is not the live first-person
+     * draw path, so applying the pose here was a no-op. ADS-7.1 cosmetic recoil
+     * reduction likewise rides the recoil matrix-consumption sites
+     * (portAdsRecoilScaleForHand on local copies of field_A84/field_A88). */
 #endif
 
     if (yaw_to_apply != 0.0f || pitch_to_apply != 0.0f || roll_to_apply != 0.0f) {
@@ -6365,6 +6348,23 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
                 portLoadFloatSlot(&hp->field_96C), hp->field_970, portLoadFloatSlot(&hp->field_974));
             matrix_4x4_multiply_homogeneous_in_place(&mtx_c, &mtx_b);
         }
+
+#ifdef NATIVE_PORT
+        /* ADS-6.1 "rise to sights": shift the cosmetic gun_pos toward the sighted
+         * pose (blend-scaled, per-weapon AdsProfile or GE007_ADS_POSE_* override)
+         * BEFORE the look-at convergence below, so the weapon both translates to a
+         * centered/raised pose AND keeps aiming at the crosshair. Gated behind
+         * g_pcAdsEnabled && g_pcAdsModelPose && aim (via portAdsResolvePose). The
+         * model is cosmetic to the eye->crosshair bullet ray => accuracy-safe. */
+        {
+            f32 adx, ady, adz, ayaw, apitch, aroll;
+            if (portAdsResolvePose(hand, &adx, &ady, &adz, &ayaw, &apitch, &aroll) > 0.0f) {
+                gun_pos.x += adx;
+                gun_pos.y += ady;
+                gun_pos.z += adz;
+            }
+        }
+#endif
 
         {
             f32 dx = gun_pos.x - hp->field_A38;

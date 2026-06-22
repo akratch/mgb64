@@ -648,3 +648,75 @@ viewkick/flinch threads, dotesports Apex Peacekeeper ADS-spread + Cold War flinc
 (Recoil/Focus/Spread/Stability). UX/classics: Activision "Gaining Complete Control", GoldenEye wiki
 Aim-Mode/Control-style + XBLA, Perfect Dark XBLA control options, sweatygaming toggle-vs-hold, MS Xbox
 accessibility guideline 117. (Full URL list retained in the research transcript.)
+
+---
+
+## 10. Rise-to-sights (ADS-6.1) — implemented + remaining scope
+
+### 10.1 What shipped this pass
+
+The weapon now **visually rises to a centered, sighted pose while aiming** (behind
+`Input.AdsEnabled` / `Input.AdsModelPose`, off by default). Verified by headless
+capture on the Dam (`mission 1`): `AdsEnabled=0` keeps the gun at vanilla hipfire
+(bottom-right); `AdsEnabled=1` raises it up/left to center, muzzle under the
+crosshair, easing in over `ads_in_time`.
+
+**Critical fix — the pose was in a dormant function.** ADS-6.1 was originally added
+to `portBuildFirstPersonWeaponRoot` (`gun.c`), which is **not** the live
+first-person draw path (confirmed: its diagnostics never fire; `[VM-ANCHOR]` in
+`handles_firing_or_throwing_weapon_in_hand` does). The pose is now applied in the
+**active** positioner:
+
+- `portAdsResolvePose(hand, dx,dy,dz, dyaw,dpitch,droll)` (`gun.c`) resolves the
+  per-weapon pose (GE007_ADS_POSE_* env override else `AdsProfile`), scaled by the
+  ADS blend (`portAdsPoseBlendForHand`, the `zoomintime/zoomintimemax` alpha).
+- Applied to `gun_pos` in `handles_firing_or_throwing_weapon_in_hand` **before** the
+  look-at convergence, so the weapon both translates toward center **and** keeps
+  aiming at the crosshair. `gun_pos` space: **+x right, +y up, +z toward the eye**
+  (a hipfire KF7 anchors at ~`(11.7, -20.8, -33.5)`).
+- The dormant `portBuildFirstPersonWeaponRoot` ADS code was removed (single source
+  of truth). The blend ramp uses the §ADS-2.1 `ADS_ZOOMTIME_UNITS_PER_SEC` timing
+  fix, so the raise eases over `ads_in_time` rather than snapping.
+
+**Authored poses** (`ads_profiles.c`, `pose_off_{x,y,z}` in `gun_pos` space, tuned
+visually at base FOV 60): PP7/PP7-sil `(-9, 18, 10)`, RC-P90 `(-10, 22, 14)`, KF7
+`(-12, 28, 17)`, AR33 `(-12, 26, 16)`. Untuned non-scope weapons use a moderate
+computed default `(-9, 18, 12)` so every gun rises. Sniper/spy-camera keep pose 0
+(they use the analog scope path, no model raise).
+
+### 10.2 Authoring workflow (for the remaining weapons)
+
+`tools/ads_pose_capture.sh LABEL ITEM [X Y Z YAW PITCH ROLL]` boots a mission,
+force-equips the item, holds aim, applies a `GE007_ADS_POSE_*` override, captures a
+screenshot and converts it to PNG. Two debug hooks make headless authoring work:
+
+- **`GE007_ADS_FORCE_POSE=1`** — forces a full pose blend on the right hand
+  regardless of aim (env-gated, never set in normal play), so the pose can be dialed
+  without the scripted-aim path engaging `insightaimmode`.
+- **`GE007_ADS_POSE_X/Y/Z` / `GE007_ADS_POSE_{YAW,PITCH,ROLL}_DEG`** — live override
+  for the in-hand weapon; dial, capture, then bake into `ads_profiles.c`.
+
+Workflow per weapon: capture base → nudge X (left, negative) and Y (up) until the
+sight line / muzzle sits on the centered crosshair, add Z to pull toward the eye →
+bake the values into the authored row.
+
+### 10.3 Remaining next steps (to "excellent")
+
+| # | Item | Notes |
+|---|---|---|
+| 1 | **Author the remaining weapons** | ~10–15 guns still on the moderate default (DD44/TT33, Klobb, ZMG, D5K, Phantom, Spectre, shotguns, Golden Gun, Magnum, throwing knife, grenades). Use §10.2. Heavy/launcher items (rocket/grenade/taser) should likely get pose 0 or a bespoke pose — verify they don't look odd under the default raise. |
+| 2 | **Per-weapon pose rotation** | `portAdsResolvePose` already returns `dyaw/dpitch/droll` (currently unused at the call site). Wire them into `mtx_d` if a weapon needs re-orienting (not just translating) to sit straight down the sights. |
+| 3 | **Tune the default by class** | A single fixed `gun_pos` offset over/undershoots weapons with very different base `PosY/PosZ`. Consider per-class defaults (pistol/SMG/rifle) keyed off `WeaponStats`, or scale the offset by the base anchor. |
+| 4 | **Harness gaps** | The scripted `GE007_AUTO_EQUIP_ITEM` did not always swap the weapon (the Dam default `ITEM_WPPKSIL` persisted in some runs); and `GE007_AUTO_AIM` engages `insightaimmode` but `GE007_ADS_FORCE_POSE` was needed for reliable headless capture. Fix the scripted-equip/aim path so the harness can become a CI regression (capture-diff) gate. |
+| 5 | **Easing** | Optional ease-out on the blend fraction (currently linear; short in-times mask it). |
+| 6 | **Recoil (ADS-7.1) on the active path** | Verify the cosmetic recoil cut at the switch-node consumption sites is in the active render path (the pose fix showed `portBuildFirstPersonWeaponRoot` is dormant — re-confirm the recoil sites aren't). Default-off, so low priority. |
+| 7 | **Runtime gates (ADS-0.3)** | RAMROM replay byte-identity with `AdsEnabled=0`; split-screen asymmetric ADS; the pose change is cosmetic + flag-gated so determinism should hold — still run the gates. |
+| 8 | **In-game options menu** | Surface the `Input.Ads*` flags in the front-end so it's discoverable, not just `ge007.ini`/CLI. |
+
+### 10.4 Verification done
+
+Clean `ge007` build; 7/7 ctest CI guards pass; headless captures confirm
+`AdsEnabled=0` == vanilla hipfire and `AdsEnabled=1` == raised sighted pose for the
+PP7 and KF7; the FOV/pose blend ramps over multiple frames (timing fix). Per-weapon
+visual fine-tuning of the long tail (item 1) and the runtime determinism gates
+(item 7) remain.
