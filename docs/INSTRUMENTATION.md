@@ -661,6 +661,11 @@ separate during review so one fix does not hide another:
    when its clamp, shift, offset, and dimensions match the current `G_SETTEX`
    state.
 
+The June 2026 renderer regression postmortem is in
+[RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md). It summarizes the
+glass, filter-footprint, decoded-footprint, `G_SETTEX`, and fog failure modes
+that this instrumentation is meant to keep from recurring.
+
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
 `Video.FovY=75` deliberately change composition and pixel metrics. For stock

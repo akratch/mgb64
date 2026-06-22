@@ -57,6 +57,15 @@ you know what to expect and where help is most valuable.
   glass draw ranges. The latest local MP timer acceptance run reached the forced
   `60/60` tick match boundary with about `98%` split-half dissimilarity and zero
   render-health failures; scoreboard/results transition proof remains open.
+- **The recent texture regression class is documented and guarded:** Cradle,
+  Dam, and Surface exposed several renderer mistakes that looked similar by eye:
+  room-nearest overrides, N64 filter-footprint scaling against the modern
+  framebuffer, decoded row-pitch/cache identity drift, stale `G_SETTEX` tile
+  state, and fog-depth false positives. The fixes and the keep-it-fixed
+  checklist are recorded in
+  [RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md), and the broad
+  native gate is `tools/playability_smoke.sh --all`, including a contact sheet
+  for manual review.
 - **Modern display controls are available through the native settings schema:**
   window mode, display selection, fullscreen mode sizing, VSync, frame cap,
   render scale, MSAA, gamma, retro filtering, and gameplay FOV are configurable
@@ -136,7 +145,9 @@ you know what to expect and where help is most valuable.
 - Graphical inaccuracies and occasional rendering glitches versus original
   hardware. The renderer now has strict render-health counters, screenshot
   health gates, and a small renderer parity scene lane, but visual accuracy is
-  still not claimed as hardware-perfect.
+  still not claimed as hardware-perfect. See
+  [RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md) for the current
+  texture/glass/fog failure taxonomy and validation path.
 - Authored level intro parity is still incomplete across the full game, but Dam
   now has local ROM-vs-native selected-camera/static-camera coverage plus
   timer-aligned swirl/Bond-animation coverage and native actor/render/held-item
