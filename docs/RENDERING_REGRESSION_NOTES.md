@@ -120,6 +120,12 @@ Use these habits before accepting renderer changes:
   unless the test is specifically exercising user-window/high-DPI behavior.
   Use `--config-override Video.RenderScale=2` or `Video.MSAA=4` for targeted
   scene-target probes, and keep the overrides visible in the artifact summary.
+- When using an older checkout or `main` binary as a visual reference, verify
+  that it actually honors the same config path. Older binaries can ignore
+  `--config-override`, fall back to a 1440x810 default window, and make a
+  healthy renderer look zoomed or composition-shifted when compared to the
+  pinned 640x480 branch captures. Either compare two pinned builds or compare
+  both with default overrides disabled.
 - When reviewing texture-cache changes, check decoded row pitch and full-source
   footprint, not just visible width/height/format/address.
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
@@ -159,6 +165,13 @@ gameplay input, audits movement/render counters, audits screenshot health, and
 writes a `contact_sheet.png` for manual visual review. It proves the levels
 boot, move, render nonblank frames, and avoid known render-health counters; it
 does not prove hardware-perfect output.
+
+For branch-vs-reference visual comparisons, first confirm the captures have the
+same viewport/composition. A high changed-pixel percentage is expected if one
+binary was captured through the pinned 640x480 validation window and the other
+used the old 1440x810 default. Once the aspect is matched, filter/sky/fog
+changes should be reviewed by region and with material traces rather than by
+whole-frame changed-pixel percentage alone.
 
 `playability_smoke.sh` pins `Video.WindowWidth=640`,
 `Video.WindowHeight=480`, and `Video.WindowMode=windowed` by default so
