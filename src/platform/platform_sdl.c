@@ -935,6 +935,23 @@ float g_pcMouseSensitivity = 0.15f; /* configurable mouse sensitivity */
 float g_pcMouseSensAim = 0.05f;     /* aim-mode mouse sensitivity */
 int g_pcInvertY = 0;                /* invert Y axis */
 float g_pcGamepadLookSpeed = 8.0f;  /* gamepad right stick scaling */
+
+/* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
+ * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
+ * Consumers declare these inline as `extern` at their use sites. */
+s32 g_pcAdsEnabled       = 0;     /* Input.AdsEnabled        master, OFF by default */
+f32 g_pcAdsSensitivity   = 1.0f;  /* Input.AdsSensitivity    flat aimed look mult   */
+s32 g_pcAdsFovCoupleSens = 1;     /* Input.AdsFovCoupleSens  FOV-coupled slow-look   */
+s32 g_pcAdsCenterCrosshair = 1;   /* Input.AdsCenterCrosshair stick center-pull      */
+s32 g_pcAdsSpreadEnabled = 1;     /* Input.AdsSpreadEnabled  per-weapon spread mult  */
+s32 g_pcAdsMovePenalty   = 1;     /* Input.AdsMovePenalty    aimed movement penalty  */
+f32 g_pcAdsMoveScale     = 1.0f;  /* Input.AdsMoveScale      forward-speed trim      */
+f32 g_pcAdsStrafeScale   = 1.0f;  /* Input.AdsStrafeScale    strafe-speed trim       */
+s32 g_pcAdsSprintLockout = 0;     /* Input.AdsSprintLockout  sprint-out lockout      */
+s32 g_pcAdsFaithfulZoom  = 0;     /* Input.AdsFaithfulZoom   disable mild-iron clamp */
+s32 g_pcAdsModelPose     = 1;     /* Input.AdsModelPose      sighted model pose      */
+f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
+
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
 #ifdef MACOS_APP_BUNDLE
@@ -1453,6 +1470,69 @@ void platformRegisterConfig(void)
                           "--config-override Input.GamepadLookSpeed=VALUE",
                           "Gamepad look speed",
                           "Right-stick look speed multiplier.");
+
+    /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
+     * when 0 every ADS branch is bypassed and behavior is byte-identical. */
+    settingsRegisterInt("Input.AdsEnabled", &g_pcAdsEnabled, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_ENABLED",
+                        "--config-override Input.AdsEnabled=VALUE",
+                        "Enable ADS",
+                        "Modern aim-down-sights (opt-in). 0 = vanilla aiming.");
+    settingsRegisterFloat("Input.AdsSensitivity", &g_pcAdsSensitivity, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_SENSITIVITY",
+                          "--config-override Input.AdsSensitivity=VALUE",
+                          "ADS sensitivity",
+                          "Flat look-speed multiplier while aiming.");
+    settingsRegisterInt("Input.AdsFovCoupleSens", &g_pcAdsFovCoupleSens, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_FOV_COUPLE_SENS",
+                        "--config-override Input.AdsFovCoupleSens=VALUE",
+                        "FOV-coupled ADS sens",
+                        "Slow aimed look proportionally to the narrowed FOV.");
+    settingsRegisterInt("Input.AdsCenterCrosshair", &g_pcAdsCenterCrosshair, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_CENTER_CROSSHAIR",
+                        "--config-override Input.AdsCenterCrosshair=VALUE",
+                        "ADS center crosshair",
+                        "Ramp the stick aim accumulators toward center while aiming.");
+    settingsRegisterInt("Input.AdsSpreadEnabled", &g_pcAdsSpreadEnabled, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_SPREAD_ENABLED",
+                        "--config-override Input.AdsSpreadEnabled=VALUE",
+                        "ADS spread tighten",
+                        "Apply the per-weapon spread multiplier while aiming.");
+    settingsRegisterInt("Input.AdsMovePenalty", &g_pcAdsMovePenalty, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_MOVE_PENALTY",
+                        "--config-override Input.AdsMovePenalty=VALUE",
+                        "ADS movement penalty",
+                        "Slow forward/strafe movement while aiming. 0 = vanilla speed.");
+    settingsRegisterFloat("Input.AdsMoveScale", &g_pcAdsMoveScale, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_MOVE_SCALE",
+                          "--config-override Input.AdsMoveScale=VALUE",
+                          "ADS move scale",
+                          "Trim on the per-weapon aimed forward-speed multiplier.");
+    settingsRegisterFloat("Input.AdsStrafeScale", &g_pcAdsStrafeScale, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_STRAFE_SCALE",
+                          "--config-override Input.AdsStrafeScale=VALUE",
+                          "ADS strafe scale",
+                          "Trim on the per-weapon aimed strafe-speed multiplier.");
+    settingsRegisterInt("Input.AdsSprintLockout", &g_pcAdsSprintLockout, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_SPRINT_LOCKOUT",
+                        "--config-override Input.AdsSprintLockout=VALUE",
+                        "ADS sprint lockout",
+                        "Brief readiness delay when entering ADS at near-max speed.");
+    settingsRegisterInt("Input.AdsFaithfulZoom", &g_pcAdsFaithfulZoom, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_FAITHFUL_ZOOM",
+                        "--config-override Input.AdsFaithfulZoom=VALUE",
+                        "Faithful ADS zoom",
+                        "Use each weapon's true Zoom (no mild-iron clamp) when aiming.");
+    settingsRegisterInt("Input.AdsModelPose", &g_pcAdsModelPose, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_MODEL_POSE",
+                        "--config-override Input.AdsModelPose=VALUE",
+                        "ADS model pose",
+                        "Blend the weapon model toward the sighted pose while aiming.");
+    settingsRegisterFloat("Input.AdsRecoilReduce", &g_pcAdsRecoilReduce, 0.0f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_RECOIL_REDUCE",
+                          "--config-override Input.AdsRecoilReduce=VALUE",
+                          "ADS recoil reduce",
+                          "Cosmetic aimed recoil reduction (0 = off).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

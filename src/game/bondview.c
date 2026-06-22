@@ -55,6 +55,9 @@
 #include "fog.h"
 #include "ob.h"
 #include "ge_debug.h"
+#ifdef NATIVE_PORT
+#include "ads_profiles.h"
+#endif
 
 /* Forward declarations for functions without headers */
 Gfx *display_red_blue_on_radar(Gfx *DL);
@@ -73,6 +76,55 @@ s32 chrTickBeams(PropRecord *prop);
 static int s_nativeLoadingBondIntroChr = 0;
 static f32 bondviewGetNativeBaseFovY(void);
 static int bondviewTraceNativeFovEnabled(void);
+
+/*
+ * ADS (aim-down-sights) per-player side state. Keyed by get_cur_playernum()
+ * (0..3) so split-screen players track their aim edges/ramps independently and
+ * no new fields are added to the player struct. All ADS behavior here is gated
+ * behind g_pcAdsEnabled (and its sub-flags); when off these arrays are inert and
+ * runtime behavior is byte-identical to vanilla.
+ */
+static u8  g_adsWasAiming[4];      /* ADS-2.1 rising/falling-edge FOV arming */
+static f32 g_adsLastFovTarget[4];  /* ADS-2.1 last armed target for switch re-arm */
+static s32 g_adsSprintLockout[4];  /* ADS-5.3 optional sprint-out deferral countdown */
+
+/*
+ * ADS-2.1 timing conversion. ads_in_time/ads_out_time are authored in SECONDS,
+ * but trigger_watch_zoom() stores its 2nd arg into zoomintimemax, which
+ * bondviewUpdateWatchZoomIn() advances by (speedgraphframes * watch_transition_time)
+ * each 60Hz frame. With the base watch_transition_time (0.90909088) that is
+ * ~54.5 zoom-time units per real second (cross-check: the vanilla watch zoom uses
+ * 15.0 units ~= 0.275 s; 15 / 54.5 ~= 0.275). Convert seconds -> units at the
+ * arming sites, otherwise a tiny seconds value (0.12) overshoots zoomintimemax on
+ * the first tick and the FOV — and the center-pull / pose / recoil blends that
+ * share the zoomintime/zoomintimemax alpha — SNAP instead of easing.
+ */
+#define ADS_ZOOMTIME_UNITS_PER_SEC 54.5f
+
+/* ADS feature flags (defined in platform_sdl.c; inline-extern per convention). */
+extern s32 g_pcAdsEnabled;
+extern s32 g_pcAdsCenterCrosshair;
+extern s32 g_pcAdsMovePenalty;
+extern f32 g_pcAdsMoveScale;
+extern f32 g_pcAdsStrafeScale;
+extern s32 g_pcAdsSprintLockout;
+
+/*
+ * Resolve the ADS profile for the dominant (right) hand, falling back to the
+ * left hand's weapon, then the default profile (hand-selection policy, §3).
+ * adsGetProfile() never returns NULL.
+ */
+static const struct AdsProfile *adsResolveDominantProfile(void)
+{
+    ITEM_IDS item = getCurrentPlayerWeaponId(GUNRIGHT);
+
+    if (item == ITEM_UNARMED)
+    {
+        item = getCurrentPlayerWeaponId(GUNLEFT);
+    }
+
+    return adsGetProfile(item);
+}
 
 static int portSuppressDamageFlash(void)
 {
@@ -11323,6 +11375,48 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 
     gunSetSightVisible(GUNSIGHTREASON_NOTAIMING, moveData.aiming);
 
+#ifdef NATIVE_PORT
+    /*
+     * ADS-3.1 — Ramped crosshair center-pull (both aim accumulators).
+     *
+     * While aimed, lerp BOTH aim-accumulator pairs toward true center (0) by the
+     * watch-zoom blend fraction (zoomintime/zoomintimemax, the same alpha that
+     * drives the FOV ramp) BEFORE caclulate_gun_crosshair_position_rotation maps
+     * them to screen px. crosshair_x_pos/crosshair_y_pos feed the bullet ray
+     * (crosshair_angle); gun_azimuth_angle/gun_azimuth_turning feed the gun-model
+     * convergence (field_FFC) — both must center for what-you-see-is-what-you-hit.
+     * On mouse this is near a no-op (the reticle already sits near center); on the
+     * analog-stick free-aim path it ramps the reticle to center so sights == impact.
+     *
+     * Gated behind g_pcAdsEnabled && g_pcAdsCenterCrosshair; off ⇒ untouched.
+     * (NOTE: the plan named the convergence accumulators "gun_azimuth_angle/
+     *  field_FFC"; field_FFC is the derived screen-px output, so the real
+     *  accumulators biased here are gun_azimuth_angle / gun_azimuth_turning.)
+     */
+    if (g_pcAdsEnabled && g_pcAdsCenterCrosshair && moveData.aiming)
+    {
+        f32 adsCenterFrac;
+
+        if (g_CurrentPlayer->zoomintimemax > 0.0f)
+        {
+            adsCenterFrac = g_CurrentPlayer->zoomintime / g_CurrentPlayer->zoomintimemax;
+        }
+        else
+        {
+            adsCenterFrac = 1.0f;
+        }
+
+        if (adsCenterFrac < 0.0f) { adsCenterFrac = 0.0f; }
+        if (adsCenterFrac > 1.0f) { adsCenterFrac = 1.0f; }
+
+        /* lerp toward 0 by adsCenterFrac == scale the residual by (1 - frac) */
+        g_CurrentPlayer->crosshair_x_pos     *= (1.0f - adsCenterFrac);
+        g_CurrentPlayer->crosshair_y_pos     *= (1.0f - adsCenterFrac);
+        g_CurrentPlayer->gun_azimuth_angle   *= (1.0f - adsCenterFrac);
+        g_CurrentPlayer->gun_azimuth_turning *= (1.0f - adsCenterFrac);
+    }
+#endif
+
     if (moveData.zoomOutFovPersec > 0)
     {
         camera_sniper_zoom_out(moveData.zoomOutFovPersec);
@@ -11336,10 +11430,80 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
     if (g_CurrentPlayer->watch_animation_state == WATCH_ANIMATION_0x0)
     {
 #ifdef NATIVE_PORT
+        int adsFovHandled = 0;
+
+        /*
+         * ADS-2.1 — FOV substitution into the sole per-frame watch-zoom driver,
+         * with rising-edge RAW arming so a fixed per-weapon ads_in/ads_out time
+         * is honored (the guarded bondviewTriggerWatchZoom derives |dFOV|/2 and
+         * cannot honor a fixed time; raw trigger_watch_zoom every frame would
+         * re-capture zoominfovyold and reset zoomintime, freezing the lerp).
+         *
+         * Iron weapons zoom to a mild ADS FOV; true scopes (sniper/camera) yield
+         * to the vanilla get_item_in_hand_zoom() analog path verbatim. Per-player
+         * via get_cur_playernum() side arrays. Gated behind g_pcAdsEnabled; off ⇒
+         * the vanilla bondviewTriggerWatchZoom path below runs unchanged.
+         */
+        if (g_pcAdsEnabled)
+        {
+            s32 adsP = get_cur_playernum();
+
+            if (adsP < 0) { adsP = 0; }
+            if (adsP > 3) { adsP = 3; }
+
+            if (moveData.zooming)
+            {
+                const struct AdsProfile *adsProf = adsResolveDominantProfile();
+                f32 adsFovTarget = adsResolveFovY(adsProf, bondviewGetBaseFovY());
+
+                /* adsFovTarget <= 0 => true scope: yield to the analog path. */
+                if (adsFovTarget > 0.0f)
+                {
+                    int adsRising = (!g_adsWasAiming[adsP]);
+                    int adsRetarget = (adsFovTarget != g_adsLastFovTarget[adsP]);
+
+                    if (adsRising || adsRetarget)
+                    {
+                        trigger_watch_zoom(adsFovTarget,
+                            adsProf->ads_in_time * ADS_ZOOMTIME_UNITS_PER_SEC);
+                        g_adsLastFovTarget[adsP] = adsFovTarget;
+                    }
+                    /* else: let bondviewUpdateWatchZoomIn() step the in-flight lerp. */
+
+                    g_adsWasAiming[adsP] = 1;
+                    bondviewUpdateWatchZoomIn();
+                    adsFovHandled = 1;
+                }
+                else
+                {
+                    /*
+                     * Zooming but the dominant weapon is a true scope: hand off to
+                     * the vanilla analog zoom (get_item_in_hand_zoom) below without
+                     * arming an ADS lerp. Clear the edge so the falling-edge ease
+                     * doesn't fire when switching iron -> scope while aimed.
+                     */
+                    g_adsWasAiming[adsP] = 0;
+                }
+            }
+
+            /* Falling edge: was ADS-arming, now not zooming -> ease back to base. */
+            if (!adsFovHandled && g_adsWasAiming[adsP])
+            {
+                const struct AdsProfile *adsProf = adsResolveDominantProfile();
+                f32 adsBase = bondviewGetBaseFovY();
+
+                trigger_watch_zoom(adsBase,
+                    adsProf->ads_out_time * ADS_ZOOMTIME_UNITS_PER_SEC);
+                g_adsLastFovTarget[adsP] = adsBase;
+                g_adsWasAiming[adsP] = 0;
+                bondviewUpdateWatchZoomIn();
+                adsFovHandled = 1;
+            }
+        }
+
+        if (!adsFovHandled)
+        {
         ftemp_nostack_spE0 = bondviewGetNativeBaseFovY();
-#else
-        ftemp_nostack_spE0 = 60.0f;
-#endif
 
         if (moveData.zooming)
         {
@@ -11347,16 +11511,29 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 
             if (ftemp_nostack_spE0 <= 0)
             {
-#ifdef NATIVE_PORT
                 ftemp_nostack_spE0 = bondviewGetNativeBaseFovY();
-#else
-                ftemp_nostack_spE0 = 60.0f;
-#endif
             }
         }
 
         bondviewTriggerWatchZoom(ftemp_nostack_spE0);
         bondviewUpdateWatchZoomIn();
+        }
+#else
+        ftemp_nostack_spE0 = 60.0f;
+
+        if (moveData.zooming)
+        {
+            ftemp_nostack_spE0 = get_item_in_hand_zoom();
+
+            if (ftemp_nostack_spE0 <= 0)
+            {
+                ftemp_nostack_spE0 = 60.0f;
+            }
+        }
+
+        bondviewTriggerWatchZoom(ftemp_nostack_spE0);
+        bondviewUpdateWatchZoomIn();
+#endif
     }
 
     if (in_tank_flag == 1)
@@ -12288,6 +12465,38 @@ void MoveBond(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
             g_CurrentPlayer->speedforwards *= 0.5f;
             g_CurrentPlayer->speedsideways *= 0.5f;
         }
+
+#ifdef NATIVE_PORT
+        /*
+         * ADS-5.1 — Aimed movement / strafe penalty (post-crouch seam).
+         *
+         * Pure post-ramp scalar on the resolved per-frame speed (same idiom as the
+         * crouch *=0.5f above), so it rides after the x1.08/xspeedboost sprint bonus
+         * and the gait (MAX_SPEED_FACTOR / bondviewMoveAnimationTick) stays in sync.
+         * Forward and strafe are scaled separately (strafe penalized harder); strafe
+         * is floored at 0.30 of nominal so it never reads as a near-stop.
+         *
+         * Per-player (g_CurrentPlayer->insightaimmode), inside the in_tank_flag==0
+         * guard. NOT behind pcNativeLiveLookAllowed() (that is the look-delta replay
+         * gate; gating movement there desyncs replays) — the AdsEnabled + AdsMovePenalty
+         * flags alone bypass this block, keeping AdsEnabled=0 byte-identical. No new RNG.
+         */
+        if (g_pcAdsEnabled && g_pcAdsMovePenalty && g_CurrentPlayer->insightaimmode)
+        {
+            const struct AdsProfile *adsMoveProf = adsResolveDominantProfile();
+            f32 adsFwd = adsMoveProf->ads_move_mult   * g_pcAdsMoveScale;
+            f32 adsStrafe = adsMoveProf->ads_strafe_mult * g_pcAdsStrafeScale;
+
+            /* keep resolved strafe >= 0.30 of nominal (never a near-stop). */
+            if (adsStrafe < 0.30f)
+            {
+                adsStrafe = 0.30f;
+            }
+
+            g_CurrentPlayer->speedforwards *= adsFwd;
+            g_CurrentPlayer->speedsideways *= adsStrafe;
+        }
+#endif
 
         if ((g_CurrentPlayer->bondshotspeed.f[0] != 0.0f) || (g_CurrentPlayer->bondshotspeed.f[2] != 0.0f))
         {
@@ -13945,6 +14154,14 @@ static f32 bondviewGetNativeBaseFovY(void)
     }
 
     return g_pcFovY;
+}
+
+/* ADS-0.2: public, linkable wrapper around the static base-FOV resolver so ADS
+ * code in ads_profiles.c / lvl.c can compute mild zooms at query time. Returns
+ * the runtime base FOV-Y (user-settable Video.FovY, clamped to [45,90]). */
+f32 bondviewGetBaseFovY(void)
+{
+    return bondviewGetNativeBaseFovY();
 }
 
 static int bondviewTraceNativeFovEnabled(void)

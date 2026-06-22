@@ -85,6 +85,7 @@ void set_favorite_weapon_for_every_player(void);
 #include <stdio.h>
 #include <math.h>
 #include "platform/gfx_pc.h"
+#include "ads_profiles.h"
 extern int g_frame_count_diag;
 extern int g_tri_count_diag;
 
@@ -5790,6 +5791,42 @@ void lvlViewMoveTick(void)
                 extern int g_pcInvertY;
                 f32 sens = g_CurrentPlayer->insightaimmode
                          ? g_pcMouseSensAim : g_pcMouseSensitivity;
+                /* ADS-1.1 / ADS-1.2 — aimed slow-look. Off-path identity:
+                 * only touches the final `sens` when g_pcAdsEnabled and the
+                 * player is in aim mode; AdsEnabled=0 (or hip-fire) leaves the
+                 * vanilla sens untouched. Applied ONCE here (not on gp_scale,
+                 * which already folds into mdx and is re-multiplied by sens).
+                 * This whole block is inside pcNativeLiveLookAllowed() — when
+                 * live look is disallowed mdx/mdy are zeroed above, so we never
+                 * reach here on the replay/ramrom path. */
+                extern s32 g_pcAdsEnabled;
+                extern f32 g_pcAdsSensitivity;
+                extern s32 g_pcAdsFovCoupleSens;
+                if (g_pcAdsEnabled && g_CurrentPlayer->insightaimmode) {
+                    /* Hand-selection policy (§3): dominant/right hand; fall
+                     * back to the left hand's weapon; default profile if both
+                     * empty (ITEM_UNARMED). */
+                    ITEM_IDS ads_item = getCurrentPlayerWeaponId(GUNRIGHT);
+                    if (ads_item == ITEM_UNARMED) {
+                        ads_item = getCurrentPlayerWeaponId(GUNLEFT);
+                    }
+                    const struct AdsProfile *ads_p = adsGetProfile(ads_item);
+                    /* ADS-1.1: flat per-weapon trim * user multiplier. */
+                    sens *= ads_p->sens_mult * g_pcAdsSensitivity;
+                    /* ADS-1.2: optional FOV-couple — the engine's own
+                     * viGetFovY()/baseFov ratio, floored so the sniper stays
+                     * usable. With sens_mult defaulting to 1.0 under coupling
+                     * (ADS-2.2) the FOV ratio is the sole zoom-based slowdown,
+                     * so no sens_mult^2 double-dip. */
+                    if (g_pcAdsFovCoupleSens) {
+                        f32 base_fov = bondviewGetBaseFovY();
+                        f32 fov_ratio = (base_fov > 0.0001f)
+                                      ? viGetFovY() / base_fov : 1.0f;
+                        if (fov_ratio < 0.2f) fov_ratio = 0.2f;
+                        if (fov_ratio > 1.0f) fov_ratio = 1.0f;
+                        sens *= fov_ratio;
+                    }
+                }
                 if (in_tank_flag == 1) {
                     g_TankTurretAngle += (f32)mdx * sens * (3.14159265f / 180.0f);
 

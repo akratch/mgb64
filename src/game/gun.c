@@ -8,6 +8,7 @@
 #include "bondview.h"
 #include "bondinv.h"
 #include "gun.h"
+#include "ads_profiles.h"
 #include "chrobjdata.h"
 #include "game/chrobjhandler.h"
 #include "game/objective_status.h"
@@ -145,6 +146,103 @@ extern int sub_GAME_7F0AC0E8(u8 *arg);
 
 /* debugmenu_handler.c */
 extern s32 get_debug_007_unlock_flag(void);
+
+#ifdef NATIVE_PORT
+/*
+ * ADS-6.1 / ADS-7.1 — sighted weapon-model pose blend + cosmetic recoil cut.
+ *
+ * OFF-PATH IDENTITY: every branch below is gated behind g_pcAdsEnabled and its
+ * sub-flag (g_pcAdsModelPose / g_pcAdsRecoilReduce). With AdsEnabled=0 these
+ * helpers return 0 / are skipped and the matched/vanilla path is byte-identical.
+ *
+ * ACCURACY INVARIANT: bullets exit the eye toward crosshair_angle (gun.c:28456);
+ * the gun model, sway and recoil are purely cosmetic. Nothing here touches
+ * crosshair_angle / field_FFC.
+ *
+ * The pose/recoil blend is driven off the SAME alpha as the FOV-zoom engine
+ * (zoomintime/zoomintimemax, the watch-zoom blend fraction — see ADS-2.1 in
+ * bondview.c) so FOV and pose raise stay coupled (no BF-style decoupling bug).
+ *
+ * Per-hand gating: only the actively-aiming hand (the dominant/firing hand
+ * g_CurrentPlayer->field_FD8) is posed/damped, so the off-hand, split-screen
+ * other player and watch-preview viewmodels keep their vanilla sway.
+ */
+extern s32 g_pcAdsEnabled;
+extern s32 g_pcAdsModelPose;
+extern f32 g_pcAdsRecoilReduce;
+
+/* Returns the ADS pose blend fraction [0,1] for `hand` when that specific hand
+ * is aiming down sights and pose is enabled; otherwise 0.0 (a no-op everywhere
+ * the value is consumed). Gated on per-hand aim so only the active aiming hand
+ * is affected. Drives both the model pose and the sway/X-follow damp. */
+static f32 portAdsPoseBlendForHand(s32 hand)
+{
+    f32 num;
+    f32 den;
+    f32 frac;
+
+    if (!g_pcAdsEnabled || !g_pcAdsModelPose) {
+        return 0.0f;
+    }
+    if (g_CurrentPlayer == NULL || !g_CurrentPlayer->insightaimmode) {
+        return 0.0f;
+    }
+    /* Only the actively-aiming (dominant/firing) hand is posed/damped. */
+    if (hand != g_CurrentPlayer->field_FD8) {
+        return 0.0f;
+    }
+
+    den = g_CurrentPlayer->zoomintimemax;
+    if (den > 0.0f) {
+        num = g_CurrentPlayer->zoomintime;
+        frac = num / den;
+    } else {
+        frac = 1.0f;
+    }
+    if (frac < 0.0f) { frac = 0.0f; }
+    if (frac > 1.0f) { frac = 1.0f; }
+    return frac;
+}
+
+/* ADS-7.1 — returns the cosmetic recoil scale [0,1] for `hand` when that hand is
+ * aiming and recoil reduction is enabled; otherwise 1.0 (no-op). Applied to a
+ * LOCAL copy of the recoil accumulators at their cosmetic matrix-consumption
+ * sites, so the persistent gameplay state g_CurrentPlayer->hands[].field_A84 /
+ * field_A88 is NEVER mutated here (avoids cross-frame compounding — those fields
+ * are produced/ramped by sub_GAME_7F05E6B4 and read elsewhere as gameplay
+ * recoil). Default g_pcAdsRecoilReduce==0.0 => returns 1.0 => byte-identical. */
+static f32 portAdsRecoilScaleForHand(s32 hand)
+{
+    f32 num;
+    f32 den;
+    f32 frac;
+    f32 scale;
+
+    if (!g_pcAdsEnabled || g_pcAdsRecoilReduce <= 0.0f) {
+        return 1.0f;
+    }
+    if (g_CurrentPlayer == NULL || !g_CurrentPlayer->insightaimmode) {
+        return 1.0f;
+    }
+    if (hand != g_CurrentPlayer->field_FD8) {
+        return 1.0f;
+    }
+
+    den = g_CurrentPlayer->zoomintimemax;
+    if (den > 0.0f) {
+        num = g_CurrentPlayer->zoomintime;
+        frac = num / den;
+    } else {
+        frac = 1.0f;
+    }
+    if (frac < 0.0f) { frac = 0.0f; }
+    if (frac > 1.0f) { frac = 1.0f; }
+
+    scale = 1.0f - (g_pcAdsRecoilReduce * frac);
+    if (scale < 0.0f) { scale = 0.0f; }
+    return scale;
+}
+#endif /* NATIVE_PORT */
 
 /* platform/stubs.c (ALIGN64_V2 as function) */
 extern u32 ALIGN64_V2(u32 val);
@@ -2812,6 +2910,24 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
     static f32 s_heavy_offset_y = 0.0f;
     static f32 s_heavy_offset_z = 0.0f;
     static f32 s_heavy_scale = 1.02f;
+#ifdef NATIVE_PORT
+    /* ADS-6.1 live authoring overrides (GE007_ADS_POSE_*). When the matching env
+     * var is unset, s_ads_pose_authored stays 0 and the profile-table pose values
+     * are used verbatim; default table pose is 0 => no model move (safe no-op).
+     * Read once, same idiom as GE007_FP_* above. */
+    static s32 s_ads_pose_auth_yaw = 0;
+    static s32 s_ads_pose_auth_pitch = 0;
+    static s32 s_ads_pose_auth_roll = 0;
+    static s32 s_ads_pose_auth_x = 0;
+    static s32 s_ads_pose_auth_y = 0;
+    static s32 s_ads_pose_auth_z = 0;
+    static f32 s_ads_pose_yaw_rad = 0.0f;
+    static f32 s_ads_pose_pitch_rad = 0.0f;
+    static f32 s_ads_pose_roll_rad = 0.0f;
+    static f32 s_ads_pose_off_x = 0.0f;
+    static f32 s_ads_pose_off_y = 0.0f;
+    static f32 s_ads_pose_off_z = 0.0f;
+#endif
     f32 yaw_to_apply = 0.0f;
     f32 pitch_to_apply = 0.0f;
     f32 roll_to_apply = 0.0f;
@@ -2927,6 +3043,45 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         if (taser_roll_env != NULL && taser_roll_env[0] != '\0') {
             s_taser_roll_rad = atof(taser_roll_env) * 3.14159265f / 180.0f;
         }
+#ifdef NATIVE_PORT
+        {
+            /* ADS-6.1 live pose authoring: GE007_ADS_POSE_* override the profile
+             * pose values for the in-hand weapon, letting us dial the sighted pose
+             * at runtime then bake into the table. Unset => keep the NaN sentinel
+             * so the profile value is used. Generalizes the GE007_FP_* loop. */
+            const char *ads_pose_yaw_env = getenv("GE007_ADS_POSE_YAW_DEG");
+            const char *ads_pose_pitch_env = getenv("GE007_ADS_POSE_PITCH_DEG");
+            const char *ads_pose_roll_env = getenv("GE007_ADS_POSE_ROLL_DEG");
+            const char *ads_pose_x_env = getenv("GE007_ADS_POSE_X");
+            const char *ads_pose_y_env = getenv("GE007_ADS_POSE_Y");
+            const char *ads_pose_z_env = getenv("GE007_ADS_POSE_Z");
+
+            if (ads_pose_yaw_env != NULL && ads_pose_yaw_env[0] != '\0') {
+                s_ads_pose_yaw_rad = atof(ads_pose_yaw_env) * 3.14159265f / 180.0f;
+                s_ads_pose_auth_yaw = 1;
+            }
+            if (ads_pose_pitch_env != NULL && ads_pose_pitch_env[0] != '\0') {
+                s_ads_pose_pitch_rad = atof(ads_pose_pitch_env) * 3.14159265f / 180.0f;
+                s_ads_pose_auth_pitch = 1;
+            }
+            if (ads_pose_roll_env != NULL && ads_pose_roll_env[0] != '\0') {
+                s_ads_pose_roll_rad = atof(ads_pose_roll_env) * 3.14159265f / 180.0f;
+                s_ads_pose_auth_roll = 1;
+            }
+            if (ads_pose_x_env != NULL && ads_pose_x_env[0] != '\0') {
+                s_ads_pose_off_x = atof(ads_pose_x_env);
+                s_ads_pose_auth_x = 1;
+            }
+            if (ads_pose_y_env != NULL && ads_pose_y_env[0] != '\0') {
+                s_ads_pose_off_y = atof(ads_pose_y_env);
+                s_ads_pose_auth_y = 1;
+            }
+            if (ads_pose_z_env != NULL && ads_pose_z_env[0] != '\0') {
+                s_ads_pose_off_z = atof(ads_pose_z_env);
+                s_ads_pose_auth_z = 1;
+            }
+        }
+#endif
         s_viewmodel_yaw_init = 1;
     }
 
@@ -2960,6 +3115,44 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         pitch_to_apply = s_weapon_pitch_rad;
         roll_to_apply = s_weapon_roll_rad;
     }
+
+#ifdef NATIVE_PORT
+    /* ADS-6.1: additively blend the profile sighted pose toward the family pose
+     * by the FOV-coupled blend fraction. Cosmetic only — applied via the same
+     * saved_pos / matrix_4x4_set_position path below, so the model rotates about
+     * its anchor and bullets (eye -> crosshair_angle) are unaffected. With pose=0
+     * in the table (default) and no GE007_ADS_POSE_* override this is a no-op move.
+     * ADS-7.1 recoil cut rides the same blend fraction and hand index. */
+    {
+        f32 adsBlend = portAdsPoseBlendForHand(gunhand);
+
+        if (adsBlend > 0.0f) {
+            const struct AdsProfile *adsProf =
+                adsGetProfile(getCurrentPlayerWeaponId(gunhand));
+
+            /* GE007_ADS_POSE_* live overrides take precedence; otherwise use the
+             * profile-table pose (default 0 => no-op move). */
+            f32 pose_yaw   = s_ads_pose_auth_yaw   ? s_ads_pose_yaw_rad   : adsProf->pose_yaw_rad;
+            f32 pose_pitch = s_ads_pose_auth_pitch ? s_ads_pose_pitch_rad : adsProf->pose_pitch_rad;
+            f32 pose_roll  = s_ads_pose_auth_roll  ? s_ads_pose_roll_rad  : adsProf->pose_roll_rad;
+            f32 pose_ox    = s_ads_pose_auth_x     ? s_ads_pose_off_x     : adsProf->pose_off_x;
+            f32 pose_oy    = s_ads_pose_auth_y     ? s_ads_pose_off_y     : adsProf->pose_off_y;
+            f32 pose_oz    = s_ads_pose_auth_z     ? s_ads_pose_off_z     : adsProf->pose_off_z;
+
+            yaw_to_apply   += pose_yaw   * adsBlend;
+            pitch_to_apply += pose_pitch * adsBlend;
+            roll_to_apply  += pose_roll  * adsBlend;
+            offset_x       += pose_ox    * adsBlend;
+            offset_y       += pose_oy    * adsBlend;
+            offset_z       += pose_oz    * adsBlend;
+        }
+
+        /* ADS-7.1 cosmetic recoil reduction is applied non-destructively at the
+         * recoil matrix-consumption sites (portAdsRecoilScaleForHand on a local
+         * copy of field_A84/field_A88), NOT by mutating the persistent gameplay
+         * accumulators here — see the recoil switch-node builders below. */
+    }
+#endif
 
     if (yaw_to_apply != 0.0f || pitch_to_apply != 0.0f || roll_to_apply != 0.0f) {
         coord3d saved_pos;
@@ -3609,8 +3802,15 @@ static void portApplyFirstPersonWeaponAuthoring(Model *model,
             Mtxf mtx_c;
 
             sub_GAME_7F05E6B4(gunhand, hand->weapon_hold_time);
-            matrix_4x4_set_position_and_rotation_around_y(
-                (f32 *)node_pos, hand->field_A84, &mtx_c);
+            {
+                f32 ads_a84 = hand->field_A84;
+#ifdef NATIVE_PORT
+                /* ADS-7.1: cosmetic recoil cut on a LOCAL copy (default off). */
+                ads_a84 *= portAdsRecoilScaleForHand(gunhand);
+#endif
+                matrix_4x4_set_position_and_rotation_around_y(
+                    (f32 *)node_pos, ads_a84, &mtx_c);
+            }
 
             matrix_4x4_multiply_homogeneous((Mtxf *)root_mtx,
                                             &mtx_c, &matrices[mtxidx]);
@@ -3638,7 +3838,14 @@ static void portApplyFirstPersonWeaponAuthoring(Model *model,
              * which is m[3][2]: Z translation. The decompiled m[1][2]
              * version shears the basis and turns the silenced PP7 into the
              * vertical spike seen on fired frames. */
-            mtx_c.m[3][2] -= hand->field_A88;
+            {
+                f32 ads_a88 = hand->field_A88;
+#ifdef NATIVE_PORT
+                /* ADS-7.1: cosmetic recoil cut on a LOCAL copy (default off). */
+                ads_a88 *= portAdsRecoilScaleForHand(gunhand);
+#endif
+                mtx_c.m[3][2] -= ads_a88;
+            }
 
             matrix_4x4_multiply((Mtxf *)root_mtx, &mtx_c, &matrices[mtxidx]);
         }
@@ -5930,6 +6137,25 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         blendpos_result.y *= g_CurrentPlayer->gunposamplitude;
         blendpos_result.z *= g_CurrentPlayer->gunposamplitude;
 
+#ifdef NATIVE_PORT
+        /* ADS-6.1: damp the breathing/idle sway on the LOCAL per-hand result by
+         * (1 - blend) while THIS hand is aiming, so the sighted picture steadies.
+         * gunposamplitude itself (a shared player field) is left untouched, so the
+         * off-hand / split-screen other player / watch preview keep full sway.
+         * Gated on per-hand aim via portAdsPoseBlendForHand(hand). */
+        {
+            f32 adsSwayBlend = portAdsPoseBlendForHand(hand);
+
+            if (adsSwayBlend > 0.0f) {
+                f32 adsSwayDamp = 1.0f - adsSwayBlend;
+
+                blendpos_result.x *= adsSwayDamp;
+                blendpos_result.y *= adsSwayDamp;
+                blendpos_result.z *= adsSwayDamp;
+            }
+        }
+#endif
+
         blendpos_result.x += hp->weapon_theta_displacement;
         blendpos_result.y += hp->weapon_verta_displacement;
 
@@ -6034,7 +6260,22 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         {
             f32 half = 0.5f;
             f32 aim_x = g_CurrentPlayer->field_FFC.x - screenleft;
-            gun_pos.x += (aim_x - screenleft * half) * stats->CrosshairSpeed / (screenwidth * half);
+            f32 follow_x = (aim_x - screenleft * half) * stats->CrosshairSpeed / (screenwidth * half);
+#ifdef NATIVE_PORT
+            /* ADS-6.1: damp the gun-model X crosshair-follow by (1 - blend) while
+             * THIS hand is aiming so the model settles to a sighted picture.
+             * Cosmetic only — writes gun_pos.x (model), never field_FFC. Gated on
+             * per-hand aim so the off-hand / split-screen / watch preview are not
+             * damped. Reads field_FFC.x as input only. */
+            {
+                f32 adsFollowBlend = portAdsPoseBlendForHand(hand);
+
+                if (adsFollowBlend > 0.0f) {
+                    follow_x *= (1.0f - adsFollowBlend);
+                }
+            }
+#endif
+            gun_pos.x += follow_x;
         }
 
         screentop = getPlayer_c_screentop();
@@ -28467,6 +28708,22 @@ void bullet_path_from_screen_center(coord3d* arg0, coord3d* result, enum GUNHAND
         // Single shots are four times more accurate
         inaccuracy *= 0.25f;
     }
+
+#ifdef NATIVE_PORT
+    // ADS-4.1: per-weapon spread tightening while aiming down sights.
+    // Off-path identity: byte-identical when g_pcAdsEnabled==0. Scalar multiply
+    // only — the 4 RANDOMFRAC()/randomGetNext() draws/shot below are unchanged.
+    {
+        extern s32 g_pcAdsEnabled;
+        extern s32 g_pcAdsSpreadEnabled;
+
+        if (g_pcAdsEnabled && g_pcAdsSpreadEnabled && g_CurrentPlayer->insightaimmode)
+        {
+            // Use the FIRING hand (arg2), per ADS_PLAN §3.
+            inaccuracy *= adsGetProfile(getCurrentPlayerWeaponId(arg2))->spread_mult;
+        }
+    }
+#endif
 
     scaledspread = (120.0f * inaccuracy) / viGetFovY();
 
