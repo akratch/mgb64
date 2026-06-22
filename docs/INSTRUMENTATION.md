@@ -629,34 +629,36 @@ through the shader-side N64 filter. A blanket room-nearest override bypasses
 that path and shows up as low color diversity/blocky texture regression on
 Cradle, Dam, Surface, and similar large room surfaces.
 
-For texture-smear reviews, keep the distinction between the controls explicit:
-`GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL bilinear sampling and can
-produce diagonal/near-plane smear on Dam and Cradle room geometry. The default
-path uses the shader-side N64 filter plus a nearest threshold. That threshold
-must be evaluated against the N64 VI/logical pixel footprint, not the Retina,
-window, or render-scale framebuffer footprint; otherwise high-resolution close
-room surfaces collapse into the nearest branch and look blocky on Surface and
-Cradle. `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is a useful negative control
-because it removes that threshold and should visibly soften large close
-surfaces. `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is a row-pitch control:
-if it barely changes a capture, the active defect is probably filter policy
-rather than decoded-source stride.
+Texture regressions tend to fall into three separate classes. Keep them
+separate during review so one fix does not hide another:
 
-Texture-cache identity must include the decoded source row pitch as well as
-the visible upload dimensions. N64 room materials can describe the same visible
-tile size from either packed `LOADBLOCK` bytes or a strided `LOADTILE`/sub-rect
-source; omitting the source pitch lets a later material reuse a GL texture that
-was decoded with the wrong stride, which looks like row smear even though the
-source bytes and sampler mode are both correct.
-
-`G_SETTEX` room materials have a second smear failure mode: stale ordinary TMEM
-tile descriptors can survive next to the active Rare texture-by-number state. A
-healthy trace has shader clamp bits that agree with the decoded settex fallback
-tile state. If `tile0`/`tile1` in `GE007_TRACE_SETTEX_MATERIAL_CC='*'` says wrap
-but `opts` still carries `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will
-clamp repeated room coordinates to an edge row/column and stretch it across the
-surface. The renderer should only trust an authored room tile descriptor when
-its clamp, shift, offset, and dimensions match the current `G_SETTEX` state.
+1. **Filter policy:** `GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL
+   bilinear sampling and can produce diagonal/near-plane smear on Dam and
+   Cradle room geometry. The default path uses the shader-side N64 filter plus a
+   nearest threshold. That threshold must be evaluated against the N64
+   VI/logical pixel footprint, not the Retina, window, or render-scale
+   framebuffer footprint; otherwise high-resolution close surfaces take the
+   nearest branch and look blocky on Surface and Cradle.
+   `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is the negative control: it removes
+   the threshold and should visibly soften large close surfaces.
+2. **Decoded-source footprint:** texture-cache identity must include the decoded
+   source row pitch as well as visible upload dimensions. N64 room materials can
+   describe the same visible tile size from either packed `LOADBLOCK` bytes or a
+   strided `LOADTILE`/sub-rect source; omitting the source pitch lets a later
+   material reuse a GL texture decoded with the wrong stride, which looks like
+   row smear even though the source bytes and sampler mode are correct.
+   `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is the negative control: if it
+   barely changes a capture, the active defect is probably filter policy rather
+   than decoded-source stride.
+3. **Rare `G_SETTEX` tile state:** stale ordinary TMEM tile descriptors can
+   survive next to the active texture-by-number state. A healthy
+   `GE007_TRACE_SETTEX_MATERIAL_CC='*'` trace has shader clamp bits that agree
+   with the decoded `settex` fallback tile state. If `tile0`/`tile1` says wrap
+   but `opts` still carries `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will
+   clamp repeated room coordinates to an edge row/column and stretch it across
+   the surface. The renderer should only trust an authored room tile descriptor
+   when its clamp, shift, offset, and dimensions match the current `G_SETTEX`
+   state.
 
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
