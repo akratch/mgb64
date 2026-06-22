@@ -617,6 +617,8 @@ effect is nonlinear after perspective transform; a narrow range such as
 Cradle's 996..1000 ramp can legitimately fog much earlier than a linear
 world-distance reading suggests. Use `GE007_TRACE_FOG_TRIANGLES=1` before
 changing texture decode/filtering. The parity path uses `clip_z / clip_w`;
+for negative or near-zero homogeneous `w`, keep the legacy saturated reciprocal
+behavior so clipped geometry does not become incorrectly clear.
 `GE007_FOG_USE_LINEAR_DEPTH=1` is only a negative control for proving that a
 linear remap is causing over-clear distant geometry.
 

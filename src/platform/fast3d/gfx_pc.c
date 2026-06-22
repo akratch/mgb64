@@ -7489,11 +7489,28 @@ static bool gfx_critical_room_shard_logging_enabled(void) {
     return g_diag_critical_room_shard_log || g_diag_trace_shards;
 }
 
+static float gfx_fog_coord_from_clip(float clip_z, float clip_w)
+{
+    /* Match the legacy Fast3D path used before the fog-depth regression:
+     * fog is generated from post-projection z/w, but negative reciprocal values
+     * are saturated instead of producing negative fog.  This keeps clipped or
+     * sign-flipped homogeneous vertices from becoming incorrectly clear. */
+    float ww = clip_w;
+    if (fabsf(ww) < 0.001f) {
+        ww = 0.001f;
+    }
+    float winv = 1.0f / ww;
+    if (winv < 0.0f) {
+        winv = 32767.0f;
+    }
+    float fog_coord = clip_z * winv;
+    return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+}
+
 static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_depth)
 {
     float zrange[2] = { 0.0f, 0.0f };
     float depth = clip_w;
-    float fog_coord;
 
     if (out_depth != NULL) {
         *out_depth = depth;
@@ -7505,12 +7522,7 @@ static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_dep
     }
 
     if (g_diag_fog_use_linear_depth <= 0) {
-        float ww = clip_w;
-        if (fabsf(ww) < 0.001f) {
-            ww = ww < 0.0f ? -0.001f : 0.001f;
-        }
-        fog_coord = clip_z / ww;
-        return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+        return gfx_fog_coord_from_clip(clip_z, clip_w);
     }
 
     viGetZRange(zrange);
@@ -7524,12 +7536,7 @@ static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_dep
         !portFloatIsFinite(zrange[1]) ||
         depth <= 0.0f ||
         zrange[1] <= zrange[0] + 0.001f) {
-        float ww = clip_w;
-        if (fabsf(ww) < 0.001f) {
-            ww = ww < 0.0f ? -0.001f : 0.001f;
-        }
-        fog_coord = clip_z / ww;
-        return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+        return gfx_fog_coord_from_clip(clip_z, clip_w);
     }
 
     float t = (depth - zrange[0]) / (zrange[1] - zrange[0]);
