@@ -1137,10 +1137,25 @@ static bool gfx_opengl_scene_target_enabled(void) {
 static bool gfx_opengl_ensure_scene_target(int width, int height) {
     GLenum status;
     int samples = gfx_opengl_effective_msaa_samples();
+    GLint saved_active_texture = 0;
+    GLint saved_texture0 = 0;
 
     if (width <= 0 || height <= 0) {
         return false;
     }
+
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &saved_active_texture);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &saved_texture0);
+
+    /* FBO setup binds its color texture on unit 0. The Fast3D layer caches
+     * texture bindings separately, so restore the raw GL binding before any
+     * queued triangles flush against stale cached state. */
+#define RESTORE_SCENE_TEXTURE_BINDING() do { \
+        glBindTexture(GL_TEXTURE_2D, (GLuint)saved_texture0); \
+        glActiveTexture((GLenum)saved_active_texture); \
+    } while (0)
+
     if (g_scene_fbo == 0) {
         glGenFramebuffers(1, &g_scene_fbo);
     }
@@ -1185,6 +1200,7 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
             warned = 1;
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        RESTORE_SCENE_TEXTURE_BINDING();
         return false;
     }
 
@@ -1232,9 +1248,13 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
                 warned_msaa = 1;
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            RESTORE_SCENE_TEXTURE_BINDING();
             return false;
         }
     }
+
+    RESTORE_SCENE_TEXTURE_BINDING();
+#undef RESTORE_SCENE_TEXTURE_BINDING
 
     return true;
 }

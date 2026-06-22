@@ -61,6 +61,16 @@ The visible symptoms were level-specific but shared renderer causes:
    example: forcing linear depth can make distant geometry look clearer, but
    that is a negative control, not the parity default.
 
+6. **Modern scene targets can clobber cached GL texture state.**
+   `Video.RenderScale > 1` and MSAA render through an offscreen scene target.
+   FBO setup temporarily binds the scene color texture on GL texture unit 0. If
+   that binding is not restored, Fast3D's cached sampler state still believes the
+   current game texture is live, but the GPU samples the scene target instead.
+   The failure looks like sky/cloud or texture detail disappearing only under
+   RenderScale/MSAA; the same capture at `Video.RenderScale=1` still looks
+   correct. Scene-target setup in `src/platform/fast3d/gfx_opengl.c` must restore
+   active texture and unit-0 binding before queued triangles flush.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -77,6 +87,10 @@ Use these habits before accepting renderer changes:
   with `GE007_TRACE_SETTEX_MATERIAL_CC='*'` before changing global sampler
   policy.
 - Use fog traces before changing texture decode for distant low-detail scenes.
+- When a visual change appears only with `Video.RenderScale > 1` or MSAA, first
+  compare against `Video.RenderScale=1`, then audit raw GL state restored by the
+  scene-target/output-filter helpers. Do not assume the material trace is wrong;
+  queued VBOs can be correct while the GL binding they flush against is stale.
 
 ## Validation
 
@@ -120,4 +134,3 @@ exercise the failure modes above:
   startup crash.
 - Silo, Depot, Train, Caverns: repeated room textures, long corridors, large
   flat surfaces, and alpha/transparency edges.
-
