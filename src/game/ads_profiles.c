@@ -26,16 +26,21 @@
 #define ADS_DEFAULT_MOVE_MULT   0.70f
 #define ADS_DEFAULT_STRAFE_MULT 0.60f
 #define ADS_ZERO_ZOOM_FACTOR    0.85f  /* Zoom==0 iron weapons get a mild computed zoom */
-/* Default "rise to sights" pose for untuned non-scope weapons. Translation is in
- * gun_pos space (+x right, +y up, +z toward eye); a low Y + Z~0 keeps the weapon
- * in the lower third (not blocking center). pose_pitch_rad flattens the barrel the
- * look-at convergence would otherwise angle up, so it reads SQUARE/forward (down
- * the sights) rather than tilted up. Tuned visually at base FOV 60. Authored
- * weapons (above) override per gun; scopes keep 0. */
+/* "Rise to sights" pose, in gun_pos space (+x right, +y up, +z toward eye). A low
+ * Y + Z~0 seats the weapon in the lower third (not blocking center); a GENTLE
+ * pose_pitch_rad flattens the barrel the look-at convergence would otherwise angle
+ * up, so it reads square/forward down the sights.
+ *
+ * This single pose is intentionally UNIVERSAL: validated by eye across pistols
+ * (PP7, Golden Gun, DD44), SMGs (D5K, ZMG), rifles (KF7, AR33), shotgun and the
+ * Cougar Magnum. A gentle pitch is used deliberately — steeper per-weapon pitches
+ * over-rotate non-monotonically (each model's barrel sits at a different angle in
+ * the convergence frame), so one mild value is far more robust than fragile
+ * per-gun rotation. Scopes (sniper/camera) keep pose 0 (analog scope path). */
 #define ADS_DEFAULT_POSE_X      (-5.0f)
-#define ADS_DEFAULT_POSE_Y      (12.0f)
+#define ADS_DEFAULT_POSE_Y      (9.0f)
 #define ADS_DEFAULT_POSE_Z      (0.0f)
-#define ADS_DEFAULT_POSE_PITCH  (-0.6632f)  /* ~-38 deg, squares the barrel */
+#define ADS_DEFAULT_POSE_PITCH  (-0.3142f)  /* ~-18 deg, gentle square (universal) */
 
 extern s32 g_pcAdsFaithfulZoom;
 
@@ -96,18 +101,22 @@ typedef struct {
  * were authored visually at base FOV 60 (see tools/ads_pose_capture.sh); other
  * weapons fall back to the moderate computed default in adsComputeDefault. The
  * two true scopes keep pose 0 (they use the analog scope path, no model raise). */
+/* Authored rows keep per-weapon FOV/sens/spread/movement; the sighted POSE is the
+ * shared universal value (ADS_DEFAULT_POSE_*, see below) for every non-scope gun. */
+#define ADS_POSE_FIELDS  0, ADS_DEFAULT_POSE_PITCH, 0, \
+                         ADS_DEFAULT_POSE_X, ADS_DEFAULT_POSE_Y, ADS_DEFAULT_POSE_Z
 static const AdsAuthoredRow s_ads_authored[] = {
-    /* pose: yaw, pitch_rad (negative = barrel pitched down to read square), roll, then poseX/Y/Z (gun_pos space). */
-    /* PP7 (WPPK):       factor in_t  out_t sens spread move  strafe  yaw  pitch     roll poseX  poseY poseZ scope */
-    { ITEM_WPPK,        { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0, -0.6632f, 0, -5.0f, 11.0f, 0.0f, 0 } },
-    /* PP7 silenced (WPPKSIL) — the Dam starting weapon; same pose as the PP7 */
-    { ITEM_WPPKSIL,     { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, 0, -0.6632f, 0, -5.0f, 11.0f, 0.0f, 0 } },
+    /*                   factor in_t  out_t  sens spread move  strafe  <pose>            scope */
+    /* PP7 (WPPK) */
+    { ITEM_WPPK,        { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, ADS_POSE_FIELDS, 0 } },
+    /* PP7 silenced (WPPKSIL) — the Dam starting weapon */
+    { ITEM_WPPKSIL,     { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.6f, 0.90f, 0.80f, ADS_POSE_FIELDS, 0 } },
     /* RC-P90 (FNP90) — SMG */
-    { ITEM_FNP90,       { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.7f, 0.88f, 0.78f, 0, -0.6981f, 0, -5.0f, 12.0f, 0.0f, 0 } },
+    { ITEM_FNP90,       { 0.85f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.7f, 0.88f, 0.78f, ADS_POSE_FIELDS, 0 } },
     /* KF7 (AK47) — 0.67 (=>40, mild-clamped from 30) */
-    { ITEM_AK47,        { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.85f, 0.75f, 0, -0.7330f, 0, -5.0f, 13.0f, 0.0f, 0 } },
+    { ITEM_AK47,        { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.85f, 0.75f, ADS_POSE_FIELDS, 0 } },
     /* AR33 (M16) — 0.67 (=>40, mild-clamped from 20=3x) */
-    { ITEM_M16,         { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.55f, 0.45f, 0, -0.7330f, 0, -5.0f, 13.0f, 0.0f, 0 } },
+    { ITEM_M16,         { 0.67f, ADS_DEFAULT_IN_TIME, ADS_DEFAULT_OUT_TIME, 1.0f, 0.5f, 0.55f, 0.45f, ADS_POSE_FIELDS, 0 } },
     /* Sniper — true scope, yields to analog zoom (no model pose) */
     { ITEM_SNIPERRIFLE, { -1.0f, 0.30f, 0.24f, 1.0f, 1.0f, 0.40f, 0.30f, 0,0,0, 0,0,0, 1 } },
     /* Spy camera — true scope, yields */

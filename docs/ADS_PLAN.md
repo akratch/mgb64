@@ -683,14 +683,22 @@ first-person draw path (confirmed: its diagnostics never fire; `[VM-ANCHOR]` in
   of truth). The blend ramp uses the §ADS-2.1 `ADS_ZOOMTIME_UNITS_PER_SEC` timing
   fix, so the raise eases over `ads_in_time` rather than snapping.
 
-**Authored poses** (`ads_profiles.c`; `pose_off_{x,y,z}` in `gun_pos` space +
-`pose_pitch_rad`, tuned visually at base FOV 60 for a LOW, SQUARE hold). Iterated
-via a parallel screenshot grid over X×Y×Z then X×pitch: PP7/PP7-sil
-`(-5,11,0)`+pitch`-38°`, RC-P90 `(-5,12,0)`+`-40°`, KF7 `(-5,13,0)`+`-42°`, AR33
-`(-5,13,0)`+`-42°`. Untuned non-scope weapons use the default `(-5,12,0)`+`-38°` so
-every gun gets a low squared raise. Sniper/spy-camera keep pose 0 (analog scope, no
-model raise). Verified: `AdsEnabled=0` == vanilla hipfire; `=1` == low, square,
-non-center-blocking sighted pose for the PP7 and KF7.
+**Pose value (`ads_profiles.c`; `ADS_DEFAULT_POSE_*`).** A single **UNIVERSAL** pose
+is used for every non-scope weapon: `gun_pos` translation `(-5, 9, 0)` + a gentle
+`pose_pitch_rad` of `-0.3142` (~−18°). Authored rows keep their per-weapon
+FOV/sens/spread/movement but share this pose via the `ADS_POSE_FIELDS` macro;
+untuned weapons get the same value from the computed default. Sniper/spy-camera keep
+pose 0 (analog scope, no model raise).
+
+Why one universal pose instead of per-weapon: a parallel screenshot grid over the
+full weapon roster showed the right pitch is driven by **barrel length**, and the
+post-convergence rotation is **non-monotonic per model** (a steep pitch that squares
+a rifle over-rotates a long pistol to near-vertical). A *gentle* −18° pitch + low Y
+proved robust by eye across pistols (PP7, Golden Gun, DD44), SMGs (D5K, ZMG),
+rifles (KF7, AR33), the shotgun and the Cougar Magnum — low, square, non-blocking on
+all of them — so one mild value beats fragile per-gun rotation. Verified:
+`AdsEnabled=0` == vanilla hipfire; `=1` == low, square, non-center-blocking sighted
+pose across weapon classes.
 
 ### 10.2 Authoring workflow (for the remaining weapons)
 
