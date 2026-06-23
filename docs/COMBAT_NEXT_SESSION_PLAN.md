@@ -184,7 +184,51 @@ before any default-ON flip.
 
 ---
 
-## Item 4 — Hidden-guard + knife-impact test hooks + regressions  (M)
+## Item 4 — Hidden-guard + knife-impact test hooks + regressions  (DONE 2026-06-23, commit 98cd5be)
+
+**Status: shipped + adversarially reviewed.** `GE007_AUTO_SET_CHRFLAG` hook
+(stubs.c), `flag_hidden`/`flag_update_action`/`bg_ai`/`on_proplist` trace fields
+(port_trace.c), `tools/hidden_guard_contract_smoke.sh` (+ audit, two modes) and
+`tools/knife_impact_smoke.sh` (+ audit). Both regressions are gold-standard
+negative-controlled against the real binary: defeating the H2 gate (chr.c:4946)
+fails the h2 mode; defeating the H1 gate (chr.c:5046) fails the new h1-isolation
+mode (hide with CHRFLAG_00040000 set so the AI keeps ticking); reverting the
+`sp58C` fix crashes the knife smoke (Signal 11). Inert by default (byte-identical
+default trace).
+
+**The test surfaced a REAL correctness gap → fixed (see H1b below).** Building the
+hidden-guard observability (`on_proplist`) revealed that a mid-life-hidden guard
+stayed on `g_OnScreenPropList`.
+
+### H1b fix — clear PROPFLAG_ONSCREEN on the not-visible path (chr.c:5165)
+
+ASM-confirmed gap (review, instruction-level): the N64 not-visible path
+(`.L7F021A34`, reached on `visible==0`) clears `PROPFLAG_ONSCREEN` (0x02) on the
+chr prop + held weapons (`weapons_held[GUNRIGHT/GUNLEFT]`) + hat
+(`handle_positiondata_hat`); the port's early-return omitted it, so a guard hidden
+*after* being on-screen kept the latched flag (re-set each frame by the camera
+pass) and stayed on `g_OnScreenPropList` — genuinely **hittable** (bullet hit-scan
+`sub_GAME_7F022648` has no HIDDEN check, even rebuilds the DL) and
+**auto-aim-targetable** (`sub_GAME_7F023194`). This is exactly the user's "phantom
+guards *receiving* damage" symptom (the H1 fire-gate addressed guards *dealing*
+damage). Fix mirrors the ASM exactly (clear gated on `!visible`, matching the
+original for ordinary culled guards too). Validated: `on_proplist` 1→0 within one
+frame of the hide; only behavioral delta on a non-hidden scenario is a 1-RNG-call
+shift at one frame (faithful consequence of correcting prop visibility — full
+RNG-stream confirmation is the Item 1 combat oracle). Mid-life-hide only; from-load
+hide was already benign.
+
+**Followups (review action items, not blocking):**
+- Combat/RNG oracle (Item 1) to confirm the H1b RNG-stream change matches stock.
+- Stronger H1b assertion: forced shot at a hidden guard registers no hit
+  (`sub_GAME_7F022648` early-returns) + from-load-hidden negative control.
+- Audit `docs/COMBAT_GLIDEPATH.md` `FIRE=45:330` etc.: `GE007_AUTO_FIRE` is
+  `start:DURATION`, not `start:end`; charge weapons (throwknife/grenade/sniper)
+  need a *releasing* window.
+
+---
+
+### (original scope, for reference)
 
 **Objective:** Close the two biggest correctness test gaps — the H1/H1b/H2/H5
 hidden-guard contract and the knife-vs-guard crash path — neither has a runtime

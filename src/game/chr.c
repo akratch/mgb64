@@ -5163,6 +5163,25 @@ s32 chrTickBeams(PropRecord *prop) {
     }
 
     if (!visible) {
+        /* H1b (mid-life-hide fix): match the N64 not-visible path
+         * (.L7F021A34-.L7F021A88) — clear PROPFLAG_ONSCREEN on the chr prop and
+         * its held weapons/hat before returning. The render path below only SETS
+         * this flag, and a separate camera pass (chrobjhandler.c) also sets it for
+         * any geometrically-visible prop regardless of CHRFLAG_HIDDEN; so without
+         * clearing it here, a guard hidden AFTER being on-screen stayed on
+         * g_OnScreenPropList and remained auto-aim-targetable and hittable (the
+         * "phantom guard receiving damage" symptom). Gated on !visible (not only
+         * CHRFLAG_HIDDEN) to also match the original for ordinary culled guards. */
+        if (chr->weapons_held[GUNRIGHT] != NULL) {
+            chr->weapons_held[GUNRIGHT]->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        if (chr->weapons_held[GUNLEFT] != NULL) {
+            chr->weapons_held[GUNLEFT]->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        if (chr->handle_positiondata_hat != NULL) {
+            chr->handle_positiondata_hat->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        prop->flags &= ~PROPFLAG_ONSCREEN;
         return 0;
     }
 
