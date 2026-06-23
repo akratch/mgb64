@@ -4981,10 +4981,11 @@ s32 chrTickBeams(PropRecord *prop) {
     }
 
     /* --- Stan tile fix-up ---
-     * On N64, sub_GAME_7F03E27C assigns tiles during prop setup. That function
-     * is stubbed on NATIVE_PORT, so find a tile if we don't have one.
-     * Floor detection itself is handled canonically by the model move callback
-     * (sub_GAME_7F01FC10) invoked via subcalcpos → sub_GAME_7F06D490. */
+     * Ensure the prop has a stan (floor) tile. On N64 the tile is assigned during
+     * prop/chr setup; on NATIVE_PORT it can still be missing here, so resolve one
+     * defensively via sub_GAME_7F0AF20C when prop->stan is NULL. Floor detection
+     * itself is handled canonically by the model move callback (sub_GAME_7F01FC10)
+     * invoked via subcalcpos → sub_GAME_7F06D490. */
     if (prop->stan == NULL) {
         extern StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist);
         f32 pos3[3] = { prop->pos.x, prop->pos.y, prop->pos.z };
@@ -5054,7 +5055,6 @@ s32 chrTickBeams(PropRecord *prop) {
     }
 
     /* --- Visibility test --- */
-#ifdef NATIVE_PORT
     /* H7 (gated, default OFF): the original gates rendering on the real frustum
      * test sub_GAME_7F054D6C (room/fog/portal + camIsPosInScreen). The Phase-1
      * GE007_TRACE_VISIBILITY probe confirmed that test is accurate in 1P — it
@@ -5067,11 +5067,10 @@ s32 chrTickBeams(PropRecord *prop) {
     {
         static int s_frustum_gate = -1;
         if (s_frustum_gate < 0) {
-            /* Default OFF; enable with a non-zero value. "0"/empty disable
-             * (matching the GE007_STAN_ONEDGE convention) so GE007_CHRBEAMS_FRUSTUM=0
-             * is not a footgun that silently enables the frustum path. */
-            const char *e = getenv("GE007_CHRBEAMS_FRUSTUM");
-            s_frustum_gate = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+            /* Default OFF; "0"/empty disable (ge_env_bool gives every GE007_*
+             * gate the same truth table, so GE007_CHRBEAMS_FRUSTUM=0 is never a
+             * footgun that silently enables the frustum path). */
+            s_frustum_gate = ge_env_bool("GE007_CHRBEAMS_FRUSTUM", 0);
         }
         if (s_frustum_gate) {
             f32 inst_size = getinstsize(model);
@@ -5091,17 +5090,11 @@ s32 chrTickBeams(PropRecord *prop) {
             }
         }
     }
-#else
-    {
-        f32 inst_size = getinstsize(model);
-        visible = sub_GAME_7F054D6C(prop, &prop->pos, inst_size, 1);
-    }
-#endif
 
     /* --- PHASE-1 frustum-accuracy probe (GE007_TRACE_VISIBILITY) ---
      * H4/H7 decision gate. BEHAVIOR-NEUTRAL: this only ADDITIONALLY computes the
-     * real frustum visibility test (sub_GAME_7F054D6C — identical to the #else
-     * branch and already trusted by the native object handler at
+     * real frustum visibility test (sub_GAME_7F054D6C — the same canonical test
+     * already trusted by the native object handler at
      * chrobjhandler.c:10895) and logs it against the room-rendered bypass that
      * actually drives `visible`. It does NOT change `visible`, and runs only when
      * GE007_TRACE_VISIBILITY is set (off by default). Used to decide whether
@@ -5109,7 +5102,6 @@ s32 chrTickBeams(PropRecord *prop) {
      * visibility-gated actiontype dispatch (H4) and drop the bypass (H7): the
      * failure signal is (room_rendered=1 && frustum=0) for a guard that is
      * genuinely on-screen (cross-checked against the run's screenshot). */
-#ifdef NATIVE_PORT
     {
         static int s_vis_probe = -1;
         if (s_vis_probe < 0) {
@@ -5133,7 +5125,6 @@ s32 chrTickBeams(PropRecord *prop) {
             }
         }
     }
-#endif
 
     /* --- Per-frame guard physics/visibility diagnostic --- */
     {
@@ -5214,7 +5205,6 @@ s32 chrTickBeams(PropRecord *prop) {
         prop->zDepth = height;
     }
 
-#ifdef NATIVE_PORT
     /* PC: compute view-space Z distance for fog/visibility calculations.
      * On N64, bondviewTransformManyPosToViewMatrix updates zDepth later,
      * but that code is skipped on NATIVE_PORT. Without this, zDepth stays
@@ -5229,7 +5219,6 @@ s32 chrTickBeams(PropRecord *prop) {
             prop->zDepth = viewZ;
         }
     }
-#endif
 
     /* --- Register guard model DL region for correct matrix order ---
      * g_executing_guard_dl gates P×MV matrix multiplication. Without this,

@@ -692,6 +692,17 @@ glabel sub_GAME_7F0AF038
  *
  * Returns: pointer to the best tile, or NULL if no tile found.
  */
+/* Highest-floor selection tail shared by the F2-ON and default paths: keep
+ * `tile` if its interpolated floor Y is at/below the query point and higher than
+ * the best seen so far. Byte-faithful to the original inline idiom. */
+static void stanConsiderFloorTile(StandTile *tile, f32 *pos, StandTile **best_tile, f32 *best_y) {
+    f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
+    if (tile_y <= pos[1] && tile_y > *best_y) {
+        *best_tile = tile;
+        *best_y = tile_y;
+    }
+}
+
 StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
     StandTile *best_tile = NULL;
     f32 best_y = -3.402823e+38f;
@@ -720,15 +731,15 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
      * (see COMBAT_DEFERRED_PLAN). */
     extern f32 getShortest2dDispToInfTripleEdge(StandTile *tile, s32 start3index, f32 p_x, f32 p_z);
     extern void getTileMidPoint(StandTile *tile, coord3d *midPnt);
-    extern s32 walkTilesBetweenPoints_NoCallback(StandTile **tileStack, f32 start_x, f32 start_z, f32 dest_x, f32 dest_z);
+    /* walkTilesBetweenPoints_NoCallback is declared in stan.h. */
     /* Default ON (ASM-faithful seam disambiguation); set GE007_STAN_ONEDGE=0 to
      * disable. Validated: no flat-ground movement-oracle regression, adversarially
      * confirmed faithful to the canonical decomp, ASan/crash-clean. Unrelated to the
      * object_interaction throwknife-impact crash (different subsystem). */
     static int s_onedge_gate = -1;
     if (s_onedge_gate < 0) {
-        const char *e = getenv("GE007_STAN_ONEDGE");
-        s_onedge_gate = (e != NULL && e[0] == '0') ? 0 : 1;
+        /* Default ON; "0" disables (shared GE007_* gate truth table). */
+        s_onedge_gate = ge_env_bool("GE007_STAN_ONEDGE", 1);
     }
     s32 on_edge = 0;
 
@@ -783,11 +794,7 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
                         }
                     }
                     if (consider) {
-                        f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
-                        if (tile_y <= pos[1] && tile_y > best_y) {
-                            best_tile = tile;
-                            best_y = tile_y;
-                        }
+                        stanConsiderFloorTile(tile, pos, &best_tile, &best_y);
                     }
                 }
             } else {
@@ -796,11 +803,7 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
                  * native bounds test + highest-floor selection. */
                 if (sub_GAME_7F0AF760(tile) == 0 &&
                     stanTestPointWithinTileBoundsMaybe(tile, pos[0], pos[2])) {
-                    f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
-                    if (tile_y <= pos[1] && tile_y > best_y) {
-                        best_tile = tile;
-                        best_y = tile_y;
-                    }
+                    stanConsiderFloorTile(tile, pos, &best_tile, &best_y);
                 }
             }
 

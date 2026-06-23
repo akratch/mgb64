@@ -8699,8 +8699,16 @@ static bool import_texture(int slot, int tile_desc) {
              * from a separate G_LOADTLUT, which may be stale if the original draw was
              * non-CI; not hit by the IA8 case this fixes, but flagged for static CI. */
             if (recovered != NULL) {
+                /* The format recovery below is behavior and always runs; only the
+                 * diagnostic is gated (GE007_TRACE_TEX, off by default) so a normal
+                 * run is not spammed. Bounded to the first few recoveries. */
                 static int tex_fmt_recover_log = 0;
-                if (tex_fmt_recover_log < 8) {
+                static int s_tex_trace = -1;
+                if (s_tex_trace < 0) {
+                    const char *e = getenv("GE007_TRACE_TEX");
+                    s_tex_trace = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+                }
+                if (s_tex_trace && tex_fmt_recover_log < 8) {
                     fprintf(stderr,
                             "[TEX-FMT-RECOVER] token=0x%x stale fmt=%u siz=%u -> fmt=%u siz=%u\n",
                             token, fmt, siz,
