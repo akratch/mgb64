@@ -343,6 +343,24 @@ static int portUseNativeExplosionFallback(void)
     return cached;
 }
 
+static int portExplosionPartFade(void)
+{
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char *env = getenv("GE007_EXPLOSION_PART_FADE");
+        /* Default ON: restore the original N64 per-part distance fade in
+         * explosionRenderPart. Close fireball billboards are scaled down (f2)
+         * and their centre pulled toward the player, so a point-blank blast
+         * does not fill the screen with giant full-size quads. The port
+         * previously stubbed f2=1.0 and used the raw part position.
+         * GE007_EXPLOSION_PART_FADE=0 restores that flat full-size behavior. */
+        cached = (env != NULL && env[0] == '0') ? 0 : 1;
+    }
+
+    return cached;
+}
+
 static void portExplosionTrace(PropRecord *source,
                                struct coord3d *target_pos,
                                s16 explosion_type,
@@ -2001,9 +2019,7 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
     f32 sp44;
     
     f32 temp_f0;
-#ifndef NATIVE_PORT
-    f32 var_f12;    
-#endif
+    f32 var_f12;
 
     spA0 = g_ExplosionRenderPartDefaultVertex;
 
@@ -2016,7 +2032,19 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
 
     temp_f0 = sqrtf((sp64 * sp64) + (sp60 * sp60) + (sp5C * sp5C));
 #ifdef NATIVE_PORT
-    f2 = 1.0f;
+    if (portExplosionPartFade())
+    {
+        var_f12 = temp_f0 * 0.5f;
+        if (var_f12 > 100.0f)
+        {
+            var_f12 = 100.0f;
+        }
+        f2 = (temp_f0 == 0.0f) ? 0.0f : (temp_f0 - var_f12) / temp_f0;
+    }
+    else
+    {
+        f2 = 1.0f;
+    }
 #else
     var_f12 = temp_f0 * 0.5f;
     if (var_f12 > 100.0f)
@@ -2038,9 +2066,18 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
     sp50 = arg0->rot * f2;
 
 #ifdef NATIVE_PORT
-    sp4c = arg0->pos.f[0];
-    sp48 = arg0->pos.f[1];
-    sp44 = arg0->pos.f[2];
+    if (portExplosionPartFade())
+    {
+        sp4c = sp98->f[0] + (sp64 * f2);
+        sp48 = sp98->f[1] + (sp60 * f2);
+        sp44 = sp98->f[2] + (sp5C * f2);
+    }
+    else
+    {
+        sp4c = arg0->pos.f[0];
+        sp48 = arg0->pos.f[1];
+        sp44 = arg0->pos.f[2];
+    }
 #else
     sp4c = sp98->f[0] + (sp64 * f2);
     sp48 = sp98->f[1] + (sp60 * f2);
