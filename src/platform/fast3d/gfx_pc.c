@@ -8641,6 +8641,52 @@ static bool import_texture(int slot, int tile_desc) {
 
     fmt = rdp.texture_tile[tile_desc].fmt;
     siz = rdp.texture_tile[tile_desc].siz;
+
+    /* Static-texture format recovery.
+     * gfx_resolve_static_game_texture() supplies a static texture's texel data +
+     * cache key but does NOT populate the tile descriptor's fmt/siz. A draw that
+     * reaches here via G_SETTILE/LOADBLOCK then reads a stale/garbage tile
+     * descriptor — e.g. fmt=RGBA/siz=8b, an impossible N64 combo that matches no
+     * import_texture_* branch below — so `uploaded` stays false and the slot is
+     * bound to the zero texture (the material renders blank; logged as
+     * [TEX-UPLOAD-FAIL]). When the tile (fmt,siz) is not an importable combo and
+     * this is a static game texture, recover the authoritative format/depth from
+     * the texture pool — the same source the settex path trusts (tex->gbiformat /
+     * tex->depth). Normal textures with valid descriptors are untouched. */
+    {
+        bool tex_combo_importable;
+        switch (fmt) {
+            case G_IM_FMT_RGBA: tex_combo_importable = (siz == G_IM_SIZ_16b || siz == G_IM_SIZ_32b); break;
+            case G_IM_FMT_IA:   tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b || siz == G_IM_SIZ_16b); break;
+            case G_IM_FMT_CI:   tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b); break;
+            case G_IM_FMT_I:    tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b); break;
+            default:            tex_combo_importable = false; break;
+        }
+        if (!tex_combo_importable && gfx_loaded_texture_is_static_game_texture(loaded_texture)) {
+            /* Use source_cache_key, not cache_key: on the G_LOADTILE path cache_key
+             * carries a sub-tile byte offset (gfx_dp_load_tile) so (uint32_t)cache_key
+             * would be token+offset; source_cache_key is the pristine FLAG|token in
+             * both the LOADBLOCK and LOADTILE paths, so the low 32 bits are the token. */
+            uint32_t token = (uint32_t)loaded_texture->source_cache_key;
+            struct tex *recovered = texFindInPool((s32)token, ptr_texture_alloc_start);
+            /* Caveat: if a recovered format is CI it decodes against rdp.palette_addrs
+             * from a separate G_LOADTLUT, which may be stale if the original draw was
+             * non-CI; not hit by the IA8 case this fixes, but flagged for static CI. */
+            if (recovered != NULL) {
+                static int tex_fmt_recover_log = 0;
+                if (tex_fmt_recover_log < 8) {
+                    fprintf(stderr,
+                            "[TEX-FMT-RECOVER] token=0x%x stale fmt=%u siz=%u -> fmt=%u siz=%u\n",
+                            token, fmt, siz,
+                            (uint32_t)recovered->gbiformat, (uint32_t)recovered->depth);
+                    tex_fmt_recover_log++;
+                }
+                fmt = recovered->gbiformat;
+                siz = recovered->depth;
+            }
+        }
+    }
+
     texture_width = gfx_texture_width_texels_from_line(decode_line_size_bytes, siz);
     texture_height = decode_size_bytes / decode_line_size_bytes;
     if (texture_width == 0) {
