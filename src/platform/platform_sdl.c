@@ -559,7 +559,15 @@ void platformSaveScreenshot(void) {
         return;
     }
 
+    /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
+     * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
+     * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
+     * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
+     * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
+     * last fully-presented frame (deterministic). Restore GL_BACK after. */
+    glReadBuffer(GL_FRONT);
     glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+    glReadBuffer(GL_BACK);
 
     if (src_w == w && src_h == h) {
         memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);

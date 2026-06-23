@@ -15709,7 +15709,13 @@ static void gfx_draw_sky_triangle_impl(
     for (int i = 0; i < 3; i++) {
         struct LoadedVertex *d = &rsp.loaded_vertices[i];
         if (clip_space_xy) {
-            d->x = xs[i];
+            /* Apply the same aspect correction every scene vertex gets
+             * (gfx_adjust_x_for_aspect_ratio, line ~9639). The player projection
+             * uses a fixed N64 4:3 aspect, so on a non-4:3 window the world x is
+             * squeezed by 4:3 / actual_aspect while the sky kept full clip width —
+             * a ~33% sky/world horizontal mismatch. Self-guarding: returns x
+             * unchanged on exact 4:3 (validation window stays byte-identical). */
+            d->x = gfx_adjust_x_for_aspect_ratio(xs[i]);
             d->y = ys[i];
         } else {
             /* Diagnostic legacy path: SkyRelated38.unk28/unk2c are final
