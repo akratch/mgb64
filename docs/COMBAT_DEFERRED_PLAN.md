@@ -142,8 +142,10 @@ These are net-new harness/infra; several unblock multiple items at once.
 3. **`--trace-state` selected-stan-tile / floor-Y field** — floor-Y is only indirect via
    `pos[1]` today; tile identity isn't traced, so two stacked tiles with near-equal Y
    can't be distinguished. Needed to make F2 directly observable.
-4. **Runtime env gates** `GE007_CHRBEAMS_FRUSTUM`, `GE007_CHRBEAMS_DISPATCH`,
-   `GE007_STAN_ONEDGE` (default OFF) — keep both old and new paths compiled so every
+4. **Runtime env gates** `GE007_CHRBEAMS_FRUSTUM` (default OFF; non-zero enables,
+   `=0`/empty disable), `GE007_CHRBEAMS_DISPATCH` (default OFF), and
+   `GE007_STAN_ONEDGE` (**default ON**; `=0` disables — F2 was flipped on, see §1c
+   row F2) — keep both old and new paths compiled so every
    behavioral change is instantly revertable and gates-OFF stays byte-identical to
    baseline (mirrors how ADS shipped behind `Input.AdsEnabled`).
 5. **`GE007_TRACE_VISIBILITY` dual-result probe** — behavior-neutral diagnostic in

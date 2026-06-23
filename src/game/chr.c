@@ -5067,7 +5067,11 @@ s32 chrTickBeams(PropRecord *prop) {
     {
         static int s_frustum_gate = -1;
         if (s_frustum_gate < 0) {
-            s_frustum_gate = (getenv("GE007_CHRBEAMS_FRUSTUM") != NULL) ? 1 : 0;
+            /* Default OFF; enable with a non-zero value. "0"/empty disable
+             * (matching the GE007_STAN_ONEDGE convention) so GE007_CHRBEAMS_FRUSTUM=0
+             * is not a footgun that silently enables the frustum path. */
+            const char *e = getenv("GE007_CHRBEAMS_FRUSTUM");
+            s_frustum_gate = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
         }
         if (s_frustum_gate) {
             f32 inst_size = getinstsize(model);
