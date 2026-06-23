@@ -41,6 +41,89 @@ dependencies exist and work.
   NULLs `weapons_held[hand]` only conditionally (`prop->parent != NULL`), so the fix
   must re-read the slot each iteration.
 
+## 1b. Execution status — Phases 0 & 1 EXECUTED (2026-06-22)
+
+**Phase 0 (read-only baselines) — DONE.**
+
+| Baseline | Result (artifact) |
+|---|---|
+| F2-M0 (movement no-regression bar) | `dam_forward_stop` max-horiz-Δ **2084.24**, `dam_strafe_matrix` **2563.70**, both control-audit PASS |
+| **H5-M0 (dead behavior proven)** | Over a 399-frame guard-attack scenario, the union of all guard `hidden_bits` = **0x0** — `CHRHIDDEN_BACKGROUND_AI` is **never set** → guard-triggered prox mines are provably dead in the port |
+| H6-M0 | `objFreePermanently` confirmed absent from native chrTickBeams (chr.c:4917-5160); ASM sites at chr.c:5275/5286 |
+| H3-M1 | `D_8002C90C/910` mutated only at lvl.c:2394/2397/2886/2889 (debug `case 8`); no normal-play mutator |
+| H4-M0 | trace + floor-Y capture mechanism confirmed; **organic-patroller pinning deferred to Phase-3 prep** (boot-time Dam guards are idle/standing, actions [0,1]; a moving ACT_PATROL guard needs activation) |
+
+**Phase 1 (behavior-neutral harness) — frustum probe LANDED + DECISION made.**
+
+- **Landed:** `GE007_TRACE_VISIBILITY` dual-result frustum probe in `chrTickBeams`
+  (chr.c, after the room-rendered block). It additionally computes the real
+  `sub_GAME_7F054D6C` frustum test and logs it vs the bypass, **without changing
+  `visible`**. Verified behavior-neutral: post-probe combat probe A is **byte-for-byte
+  identical** to baseline (env unset), and spawn-health 33/34/36 pass with env unset.
+- **Deliberately deferred (atomic with their phase, not added as dead/untested code
+  now):** the `GE007_AUTO_SET_HELD_WEAPON_REMOVE` force hook (added with the H6 fix in
+  Phase 2 — access path proven at stubs.c:2823) and the `GE007_CHRBEAMS_FRUSTUM/
+  DISPATCH` + `GE007_STAN_ONEDGE` behavior-gates (added with the behavior they gate in
+  Phase 3/4; the probe's `s_vis_probe` cached-getenv pattern is the template).
+
+### M1 frustum-accuracy DECISION (the load-bearing H4/H7 gate)
+
+Ran the probe with guards on-screen, 1P (Dam) and 2P (temple split-screen):
+
+| Run | Probes | Disagree | Direction | Invariant |
+|---|---|---|---|---|
+| 1P Dam | 600 | 29.2% | 100% `room_rendered=1 & frustum=0` | `frustum-keeps-bypass-culls` = **0** |
+| 2P temple | 357 | 75.9% | 100% `room_rendered=1 & frustum=0` | `frustum-keeps-bypass-culls` = **0** |
+
+- **1P → PASS.** Screenshot cross-check confirms the frustum is *accurate*: the one
+  on-screen guard is a frustum-*kept* guard; frustum-*culled* guards (chr0/1/2/3 behind
+  Bond at the warp anchor) are genuinely off-screen. Other frustum-"visible" guards are
+  in the view volume but wall-occluded — correct view-frustum (non-occlusion) behavior,
+  matching N64. The bypass is **over-inclusive** (keeps behind-camera guards). The
+  invariant `frustum never keeps what the bypass culls` means switching can only cull
+  *more*, never resurrect — so the only risk is over-culling, which 1P shows it does not.
+  **⇒ H7 (real visibility) + H4 (actiontype dispatch) are GO for single-player**, behind
+  `GE007_CHRBEAMS_*` gates, validated per-stage (Phase 3).
+- **2P split-screen → CONDITIONAL.** Same clean one-directional pattern, no crashes, but
+  the higher cull rate reflects per-player half-viewports. A *once-per-chr* frustum test
+  uses the **current** player's camera, so it can cull a chr visible to the **other**
+  player. **⇒ For split-screen, H7 must test visibility per-player (keep if visible to
+  ANY active player) or retain the bypass in MP**, until per-player frustum is validated.
+  This is a first-class concern on the split-screen branch.
+
+**Net:** the prior "frustum not calibrated" blocker is **refuted for 1P** (frustum is
+accurate) and **refined for MP** (per-player handling required). H4/H7 is unblocked for
+single-player; the MP path gets an explicit per-player sub-task. *Caveat (per §6): this
+is screenshot-validated, not frame-exact-oracle-validated — Phase 3 must re-confirm
+per-stage, and Phase 5 (combat oracle) is the only path to frame-exact parity.*
+
+## 1c. Execution status — Phases 2, 3 & 4 EXECUTED (2026-06-22)
+
+All deferred items except H4 are now **landed and validated** (uncommitted; `chr.c` +
+`stan.c` only). Validation = build-clean + adversarial C-vs-ASM review (verdict
+*correct*, faithfulness confirmed incl. F2 scaling) + gated-OFF byte-identical +
+gated-ON clean + 3-stage×3000f soak (3/3 PASS) + ares ROM-oracle MATCH
+(`move.speed max_abs 0.0`).
+
+| Item | Status | Notes |
+|---|---|---|
+| **H3** freeze timer | ✅ landed | ASM-faithful; verified no-op in normal play (`D_8002C90C==0`) |
+| **H5** BACKGROUND_AI / prox mines | ✅ landed | **confirmed working** — flag now set on active guards (`track.hidden_bits` shows `0x200`); was provably dead pre-fix; prox-mine detonation enabled |
+| **H6** held-weapon free | ✅ landed | ASM-faithful field path (`weapons_held[h]->weapon->runtime_bitflags`); no-op in normal play; ASan/crash-clean |
+| **H1b** hidden-guard visibility | ✅ landed | hidden guards no longer rendered/auto-aim-targetable (the "phantom guards receiving damage" fix) |
+| **H7** real frustum visibility | ✅ landed, gated `GE007_CHRBEAMS_FRUSTUM`=OFF | 1P frustum proven accurate; gated-OFF byte-identical; gated-ON clean. MP needs per-player union (M1b) before default-ON. |
+| **F2** on-edge seam disambiguation | ✅ landed, **default ON** (`GE007_STAN_ONEDGE`=0 disables) | gated path restructured to canonical ordering (edge loop → degenerate → walk-back); env-OFF byte-identical to pre-F2; ON validated no flat-ground oracle regression + adversarially confirmed faithful. **Default flipped ON ahead of the Phase-5 seam oracle by deliberate decision** (escape hatch retained); seam-*positive* frame-exact proof still oracle-gated. |
+| **H4** actiontype position dispatch | ⏸ **deferred (documented)** | Native already computes guard floor-Y canonically via the move callback (`chr.c:4974` → `subcalcpos → sub_GAME_7F06D490`), so H4's main benefit is largely **redundant in the port**; the only remaining divergence is anim-cadence, **unverifiable frame-exact without the combat-field oracle (Phase 5)**. Not landing ~150 lines of high-risk unvalidatable translation for marginal benefit. |
+
+**Known minor deviation (documented, from the adversarial review):** a `CHRFLAG_HIDDEN`
+guard still gets its position/animation *advanced* in the port (the native calls
+`chrPositionRelated7F020E40` unconditionally), whereas the ASM freezes it
+(`.L7F0210BC` skips the dispatch). This is a **pre-existing** structural property of
+the native subset (H3 only corrected the *argument*, not the call's
+unconditionality), and is benign: hidden guards are now non-rendered/non-targetable
+(H1b), AI-frozen when `!CHRFLAG_00040000` (H2), and don't fire/drop (H1). Full
+`.L7F0210BC` position-freeze fidelity is folded into the deferred H4 work.
+
 ## 2. Cross-cutting prerequisites (shared blockers)
 
 These are net-new harness/infra; several unblock multiple items at once.
@@ -100,7 +183,7 @@ These are net-new harness/infra; several unblock multiple items at once.
 | **1 — Harness prereqs (behavior-neutral)** | all | New hooks/gates/probes compile; **gates-OFF byte-identical to Phase 0**. H7 dual-result probe runs 1P+2P → frustum-vs-bypass disagreement table. **Decision gate:** frustum accurate → proceed to Phase 3; else freeze H4/H7 with documented root cause. |
 | **2 — Low-risk ASM-faithful fixes** | H5, H6, H3 | Builds green; H5 detonation fires iff guard in 250u & Bond out of range; H6 ASan-clean, no spurious frees, H1 intact; H3 zero-diff on default oracle route. All smokes pass. |
 | **3 — Gated dispatch + visibility** *(only if Phase 1 PASSED)* | H4, H7 | Gates-OFF == Phase 0; gates-ON runs full levels 1P+2P, no crash/ASAN; patrol guards keep valid floor-Y; no on-screen guard wrongly culled (screenshot cross-check); off-screen guards correctly stop tile updates. |
-| **4 — F2 seam disambiguation** *(gated, route-blocked)* | F2 | Builds; ASan-clean; flag-OFF byte-identical; flag-ON ≤ baseline divergence on all four flat routes; smokes pass. **Default-ON flip gated on Phase 5 seam route.** |
+| **4 — F2 seam disambiguation** *(default ON)* | F2 | Builds; ASan-clean; flag-OFF byte-identical; flag-ON ≤ baseline divergence on all four flat routes; smokes pass. **Default flipped ON ahead of the Phase-5 seam route by decision** (`GE007_STAN_ONEDGE=0` reverts); seam-positive frame-exact proof remains Phase-5 oracle-gated. |
 | **5 — Combat-field ROM-oracle (ground-truth parity)** | H5, H4, F2 | Per item: port matches stock within tolerance OR documented divergence. The only path to frame-exact parity for the three final milestones. |
 
 ## 5. Per-item milestones (steps · test · exit)
@@ -136,8 +219,13 @@ compiled.
   guard with varying floor-Y + stable room registration.
 - **M1** (M) — **measure frustum accuracy** (the gate): `GE007_TRACE_VISIBILITY`
   dual-result log (room-rendered vs `sub_GAME_7F054D6C`) cross-checked against
-  screenshots. *Exit:* PASS (`frustum=0` only when genuinely off-screen → proceed) or
-  FAIL (document the plane/scale root cause → freeze H4/H7).
+  screenshots. **✅ EXECUTED (Phase 1, see §1b): 1P PASS (frustum accurate), 2P
+  CONDITIONAL (per-player viewports — frustum must be tested per active player).**
+- **M1b** (M, new — from the 2P finding) — split-screen visibility must keep a chr if it
+  is in *any* active player's frustum (loop players / union), not just the current
+  player's. *Test:* 2P `GE007_TRACE_VISIBILITY` + per-viewport screenshot cross-check;
+  no chr visible to either half is culled. *Exit:* MP cull set ⊆ {chrs off-screen for
+  all players}, or retain the bypass in MP behind the gate.
 - **M2** (L) — restore real visibility (replace bypass with
   `sub_GAME_7F054D6C(prop,&prop->pos,getinstsize(model),1)` behind
   `GE007_CHRBEAMS_FRUSTUM`; re-validate the zDepth/fog workaround doesn't double-apply)
