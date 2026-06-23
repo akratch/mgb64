@@ -539,7 +539,14 @@ static void glassTracePrintf(const char *fmt, ...)
 static int tintedGlassMinRenderOpacity(void)
 {
     const char *value;
-    int opacity = 96;
+    /* glass-01: tinted glass should fade toward clear up close (the N64 uses the
+     * raw distance-based calculatedopacity, near-zero at short range). The old
+     * floor of 96/255 (~37%) made every pane permanently cloudy. Drop it to a
+     * small hardware-edge guard (16/255 ~ 6%) so glass reads far clearer while
+     * still never fully vanishing on the PC G_RM_FOG_PRIM_A blend path (commit
+     * 429391c added the floor because near-zero prim alpha could blank the pane).
+     * GE007_TINTED_GLASS_MIN_OPACITY=0 restores full N64 parity once validated. */
+    int opacity = 16;
 
     if (g_TintedGlassMinRenderOpacity >= 0) {
         return g_TintedGlassMinRenderOpacity;
@@ -27462,10 +27469,23 @@ Gfx *sub_GAME_7F049B58(Gfx *gfx) {
                 gfx = sub_GAME_7F061E18(gfx, (u8 *)chr + 0x1AC, 1);
 #endif
             } else if (type == 1) {
-#ifndef NATIVE_PORT
+#ifdef NATIVE_PORT
+                /* Autogun (PROPDEF_AUTOGUN == 13) beam rendering. The N64 path
+                 * read the beam pointer via the hardcoded 32-bit offset 0xCC,
+                 * which is wrong on 64-bit: the inherited ObjectRecord base plus
+                 * the preceding pointer fields (unkC4/unkC8/beam) all widen, so
+                 * `beam` no longer lands at 0xCC. Use the struct field instead.
+                 * `type` is the inherited PropDefHeaderRecord def-type byte
+                 * (offset 0x3, == the N64 *(u8*)data+3 check). AutogunRecord.beam
+                 * is a layout-compatible record that sub_GAME_7F061E18 reads like
+                 * a ChrRecord_f180; the renderer self-gates on inactive beams. */
+                struct AutogunRecord *autogun = (struct AutogunRecord *)prop->voidp;
+                if (autogun != NULL && autogun->type == 13 && autogun->beam != NULL) {
+                    gfx = sub_GAME_7F061E18(gfx, autogun->beam, 1);
+                }
+#else
                 /* Autogun (type 13) beam rendering - uses hardcoded offset 0xCC
-                 * into ObjectRecord which is wrong on 64-bit. Autoguns don't
-                 * appear on Dam; skip on PC until the struct is mapped. */
+                 * into ObjectRecord. */
                 void *data = prop->voidp;
                 if (*((u8 *)data + 3) == 13) {
                     gfx = sub_GAME_7F061E18(gfx, *(void **)((u8 *)data + 0xCC), 1);

@@ -105,6 +105,8 @@ static int portTexturedPropBulletImpacts(void)
     return cached;
 }
 
+static s32 portPropIsGlassLike(PropRecord *prop);
+
 static int portUseFlatBulletImpacts(PropRecord *prop)
 {
     if (portFlatBulletImpacts()) {
@@ -116,7 +118,17 @@ static int portUseFlatBulletImpacts(PropRecord *prop)
             return 1;
         }
 
-        /* Prop-attached textured impacts can leak texture state on the PC
+        /* glass-02: glass-like props (PROPDEF_GLASS / TINTED_GLASS) render their
+         * bullet impacts as the textured crack decal instead of a flat dark quad.
+         * This is the high-value "glass accuracy" case and uses the same textured
+         * path world impacts already use. Scope is intentionally narrow (glass
+         * props only) to limit the historical prop-textured texture-state-leak
+         * risk; GE007_FLAT_PROP_BULLET_IMPACTS still forces flat for debugging. */
+        if (portPropIsGlassLike(prop)) {
+            return 0;
+        }
+
+        /* Other prop-attached textured impacts can leak texture state on the PC
          * renderer; keep the safer flat path as the public default. */
         return !portTexturedPropBulletImpacts();
     }
