@@ -11,6 +11,15 @@
 #include "bondview.h"
 #include "chrobjhandler.h"
 #include "matrixmath.h"
+#include "player.h"
+
+/* Declarations for the un-stubbed glass-shard render (sub_GAME_7F0A2C44),
+ * whose body was never compiled while parked behind PORT_FIXME_STUBS. */
+extern struct sImageTableEntry *glassoverlayimage;
+extern void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg3, u32 ulst);
+/* Returns Mtx* (bondview.c); without this prototype the implicit-int return
+ * truncates the 64-bit pointer before osVirtualToPhysical on the PC port. */
+extern Mtx *currentPlayerGetMatrix10C8(void);
 
 #ifndef VERSION_EU
 #define SCALAR_1_7F0A2160 1.5f
@@ -1080,8 +1089,20 @@ glabel update_broken_windows
 
 
 
+#ifdef NATIVE_PORT
+static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=0 disables (default on) */
+static int ge007_glass_shards_enabled(void)
+{
+    if (s_ge007_glass_shards < 0) {
+        const char *e = getenv("GE007_GLASS_SHARDS");
+        s_ge007_glass_shards = (e != NULL && e[0] == '0') ? 0 : 1;
+    }
+    return s_ge007_glass_shards;
+}
+#endif
+
 #ifdef NONMATCHING
-#ifdef PORT_FIXME_STUBS
+#if 0 /* un-stubbed for native: falling glass shards render; A/B via GE007_GLASS_SHARDS */
 Gfx *sub_GAME_7F0A2C44(Gfx *gdl) { return gdl; }
 #else
 Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
@@ -1090,6 +1111,12 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     Mtx *mtx;
     Mtxf mtxf;
     s_shattered_window_piece *piece;
+
+#ifdef NATIVE_PORT
+    if (!ge007_glass_shards_enabled()) {
+        return gdl; /* A/B off: no-op, identical to the old stub */
+    }
+#endif
 
     texSelect(&gdl, (void *)((u8 *)glassoverlayimage + 0xC), 2, 1, 2);
 
@@ -1156,11 +1183,14 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     gdl++;
 
     gdl->words.w0 = 0x01030040;
-    gdl->words.w1 = (uintptr_t)currentPlayerGetProjectionMatrix();
+    /* Must resolve to a physical/segment address for the gSPMatrix, like the
+     * per-piece matrix above and the spark path -- a raw cast faults on the PC
+     * fast3d interpreter ([GFX-BAD] G_MTX). */
+    gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetProjectionMatrix());
     gdl++;
 
     gdl->words.w0 = 0x01020040;
-    gdl->words.w1 = (uintptr_t)currentPlayerGetMatrix10C8();
+    gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetMatrix10C8());
     gdl++;
 
     return gdl;
