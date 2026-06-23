@@ -10846,10 +10846,6 @@ void sub_GAME_7F073FC8(s32 arg0)
 
 
 #ifdef NONMATCHING
-#if defined(PORT_FIXME_STUBS) || defined(NATIVE_PORT)
-/* Shadow rendering disabled on PC — texture/matrix setup not yet port-safe. */
-void doshadow(ModelRenderData *data, Model *model, ModelNode *node) { (void)data; (void)model; (void)node; }
-#else
 extern u32 D_800363F8;
 void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
     ModelRoData_ShadowRecord *rodata;
@@ -10864,11 +10860,39 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
     sImageTableEntry *tconfig;
     s32 index;
 
+#ifdef NATIVE_PORT
+    /* Drop shadows re-enabled on PC (lighting-model-2). Gate default ON;
+     * GE007_DROP_SHADOWS=0 disables (escape hatch — this re-enabled draw path
+     * needs visual polarity/placement validation). */
+    static int s_shadows_enabled = -1;
+    if (s_shadows_enabled < 0) {
+        const char *shadow_env = getenv("GE007_DROP_SHADOWS");
+        s_shadows_enabled = (shadow_env != NULL && shadow_env[0] == '0') ? 0 : 1;
+    }
+    if (!s_shadows_enabled) {
+        return;
+    }
+#endif
+
     if ((s32)D_800363F0 <= 0) {
         return;
     }
 
+#ifdef NATIVE_PORT
+    /* D_800363F8 is a bare u32 on the port; the N64 `*(Vertex *)&D_800363F8`
+     * over-reads 12 bytes past it, and being big-endian ROM-era source data it
+     * would also reinterpret wrong on a little-endian host. Build the template
+     * explicitly — only RGB is meaningful (coord/index/s/t/a are all overwritten
+     * below). Mirrors the shipping sibling pattern (Vertex D_800363E0,
+     * objecthandler.c:263). Template bytes were FF FF FF 50 => white, a=0x50. */
+    memset(&vtxtemplate, 0, sizeof(vtxtemplate));
+    vtxtemplate.r = 0xFF;
+    vtxtemplate.g = 0xFF;
+    vtxtemplate.b = 0xFF;
+    vtxtemplate.a = 0x50;
+#else
     vtxtemplate = *(Vertex *)&D_800363F8;
+#endif
     rodata = &node->Data->Shadow;
     rwdata = modelGetNodeRwData(model, (ModelNode *)rodata->Header);
 
@@ -10967,7 +10991,6 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
 #endif
     gDPTri2(data->gdl++, 0, 1, 2, 2, 3, 0);
 }
-#endif /* PORT_FIXME_STUBS */
 #else
 #ifndef VERSION_EU
 //D:80054A94
