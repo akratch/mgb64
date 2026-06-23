@@ -20,6 +20,12 @@ extern void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, 
 /* Returns Mtx* (bondview.c); without this prototype the implicit-int return
  * truncates the 64-bit pointer before osVirtualToPhysical on the PC port. */
 extern Mtx *currentPlayerGetMatrix10C8(void);
+/* CRITICAL crash fix: dynAllocateMatrix returns Mtx* (dyn.c) but is NOT in any
+ * header. Without this prototype the implicit-int return truncates the 64-bit
+ * matrix pointer to 32 bits, so the per-piece matrix_4x4_f32_to_s32 writes 64
+ * bytes to a garbage address -> the glass-shatter SEGV. */
+extern Mtx *dynAllocateMatrix(void);
+extern f32 get_room_data_float1(void); /* room compression scale (returns f32; prototype avoids implicit-int) */
 
 #ifndef VERSION_EU
 #define SCALAR_1_7F0A2160 1.5f
@@ -187,6 +193,27 @@ void sub_GAME_7F0A1DA0(f32 *arg0, f32 *arg1, f32 *arg2, f32 *arg3, f32 arg4, f32
     gridF = (f32)gridTotal;
     cols = (s32)(range1 / gridF);
     rows = (s32)(range2 / gridF);
+
+#ifdef NATIVE_PORT
+    {
+        /* GE007_TRACE_GLASS=1: one line per shatter -- glass centre, piece count,
+         * and Bond's position, so the spot can be reproduced via GE007_AUTO_WARP_*. */
+        static int s_trace_glass = -1;
+        if (s_trace_glass < 0) {
+            s_trace_glass = getenv("GE007_TRACE_GLASS") ? 1 : 0;
+        }
+        if (s_trace_glass) {
+            extern int g_frame_count_diag;
+            fprintf(stderr,
+                    "[GLASS-SHATTER] frame=%d center=(%.1f,%.1f,%.1f) grid=%dx%d=%d pieces nextShard=%d bondPos=(%.1f,%.1f,%.1f)\n",
+                    g_frame_count_diag, centerX, centerY, centerZ, cols, rows, cols * rows, g_NextShardNum,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.x : 0.0f,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.y : 0.0f,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.z : 0.0f);
+            fflush(stderr);
+        }
+    }
+#endif
 
     if (rows > 0) {
         for (j = 0; j < rows; j++) {
@@ -1090,10 +1117,12 @@ glabel update_broken_windows
 
 
 #ifdef NATIVE_PORT
-static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=0 disables (default on) */
+static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=1 enables (default OFF pending visual sign-off) */
 static int ge007_glass_shards_enabled(void)
 {
     if (s_ge007_glass_shards < 0) {
+        /* Default ON now that the heavy-shatter crash is fixed (dynAllocateMatrix
+         * overflow + DL-buffer guard). GE007_GLASS_SHARDS=0 disables for A/B. */
         const char *e = getenv("GE007_GLASS_SHARDS");
         s_ge007_glass_shards = (e != NULL && e[0] == '0') ? 0 : 1;
     }
@@ -1115,6 +1144,10 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
 #ifdef NATIVE_PORT
     if (!ge007_glass_shards_enabled()) {
         return gdl; /* A/B off: no-op, identical to the old stub */
+    }
+    /* Defensive: the per-piece loop dereferences both; bail rather than SEGV. */
+    if (g_CurrentPlayer == NULL || ptr_shattered_window_pieces == NULL) {
+        return gdl;
     }
 #endif
 
@@ -1148,10 +1181,68 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     gdl->words.w1 = osVirtualToPhysical((void *)get_BONDdata_field_10E0());
     gdl++;
 
+#ifdef NATIVE_PORT
+    {
+        /* GE007_TRACE_GLASS=1: per-frame summary so a shatter can be bug-hunted
+         * (active piece count, remaining VTX/GFX display-list space, and the
+         * pointers the per-piece loop dereferences). */
+        static int s_trace_glass = -1;
+        if (s_trace_glass < 0) {
+            s_trace_glass = getenv("GE007_TRACE_GLASS") ? 1 : 0;
+        }
+        if (s_trace_glass) {
+            extern int g_frame_count_diag;
+            extern s32 dynGetFreeVtx(void);
+            extern s32 dynGetFreeGfx(Gfx *gdl);
+            s32 active = 0, j;
+            for (j = 0; j < SHATTERED_WINDOW_PIECES_BUFFER_LEN; j++) {
+                if (((s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + j * 0x68))->piece > 0) {
+                    active++;
+                }
+            }
+            if (active > 0) {
+                s_shattered_window_piece *p0 = NULL;
+                s16 *vtx;
+                for (j = 0; j < SHATTERED_WINDOW_PIECES_BUFFER_LEN; j++) {
+                    s_shattered_window_piece *pp = (s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + j * 0x68);
+                    if (pp->piece > 0) { p0 = pp; break; }
+                }
+                vtx = (s16 *)((u8 *)p0 + 0x38);
+                fprintf(stderr,
+                        "[GLASS-SHARD] frame=%d active=%d/%d visScale=%.8f roomScale=%.8f bondPos=(%.0f,%.0f,%.0f) p0=(%.0f,%.0f,%.0f) rot=(%.2f,%.2f,%.2f) vtx0=(%d,%d,%d) vtx1=(%d,%d,%d)\n",
+                        g_frame_count_diag, active, (s32)SHATTERED_WINDOW_PIECES_BUFFER_LEN,
+                        bgGetLevelVisibilityScale(), get_room_data_float1(),
+                        g_CurrentPlayer->current_model_pos.x, g_CurrentPlayer->current_model_pos.y, g_CurrentPlayer->current_model_pos.z,
+                        p0->x, p0->y, p0->z, p0->field_0x10, p0->field_0x14, p0->field_0x18,
+                        vtx[0], vtx[1], vtx[2], vtx[8], vtx[9], vtx[10]);
+                fflush(stderr);
+            }
+        }
+    }
+#endif
+
     piece_offset = 0;
     for (i = 0; i < SHATTERED_WINDOW_PIECES_BUFFER_LEN; i++) {
         piece = (s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + piece_offset);
         if (piece->piece > 0) {
+#ifdef NATIVE_PORT
+            /* Each piece emits 3 GBI words + a matrix. Stop before the DL buffer
+             * overruns rather than write past it (the other half of the heavy-
+             * shatter crash; the matrix side is bounded in dynAllocateMatrix). */
+            {
+                extern s32 dynGetFreeGfx(Gfx *gdl);
+                if (dynGetFreeGfx(gdl) < 8) {
+                    static s32 gfx_full_log = 0;
+                    if (gfx_full_log++ < 5) {
+                        extern int g_frame_count_diag;
+                        fprintf(stderr, "[GLASS-SHARD] frame=%d GFX buffer full at piece %d/%d -- stopping shard emit\n",
+                                g_frame_count_diag, i, (s32)SHATTERED_WINDOW_PIECES_BUFFER_LEN);
+                        fflush(stderr);
+                    }
+                    break;
+                }
+            }
+#endif
             mtx = dynAllocateMatrix();
 
             matrix_4x4_set_position_and_rotation_around_xyz(
@@ -1160,6 +1251,24 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
             mtxf.m[3][0] -= g_CurrentPlayer->current_model_pos.x;
             mtxf.m[3][1] -= g_CurrentPlayer->current_model_pos.y;
             mtxf.m[3][2] -= g_CurrentPlayer->current_model_pos.z;
+
+#ifdef NATIVE_PORT
+            /* Compress the shard modelview by the room scale (get_room_data_float1,
+             * the same factor the explosion and bullet-impact effects multiply
+             * their positions by). Without this, shards render at full uncompressed
+             * size on scaled levels (Dam roomScale~0.234, Surface, Archives) -> a
+             * full-screen blur. GE007_GLASS_SHARD_NO_SCALE=1 disables for A/B. */
+            {
+                static int s_noscale = -1;
+                if (s_noscale < 0) {
+                    const char *e = getenv("GE007_GLASS_SHARD_NO_SCALE");
+                    s_noscale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+                }
+                if (!s_noscale) {
+                    matrix_scalar_multiply_3(get_room_data_float1(), &mtxf.m[0][0]);
+                }
+            }
+#endif
 
             matrix_4x4_f32_to_s32(&mtxf, (Mtxf *)mtx);
 
