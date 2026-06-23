@@ -2827,6 +2827,15 @@ static inline bool gfx_loaded_texture_decode_footprint_is_plausible(
     return decode_size_bytes != 0 &&
            decode_line_size_bytes != 0 &&
            decode_size_bytes <= 256 * 1024 &&
+           /* Defensive backstop: the decode footprint must never read MORE than
+            * the loaded source. All four footprint-setting branches in
+            * gfx_dp_set_tile_size already guarantee decode_size <= size_bytes
+            * (strided/lod/render_line_full/subload_clamp), so this never rejects
+            * a legitimate tile; it demotes any FUTURE sub-tilesize over-read (the
+            * explosion-confetti class) to a clean no-draw instead of uploading
+            * heap garbage. Compared against size_bytes, not full_size_bytes
+            * (LOADTILE sub-rectangles legitimately have full_size_bytes larger). */
+           decode_size_bytes <= loaded_texture->size_bytes &&
            decode_line_size_bytes <= decode_size_bytes &&
            (decode_size_bytes % decode_line_size_bytes) == 0 &&
            decode_full_image_line_size_bytes >= decode_line_size_bytes;
@@ -5771,6 +5780,7 @@ static int g_diag_disable_n64_filter = -1; /* GE007_DISABLE_N64_FILTER=1 */
 static int g_diag_trace_tex_footprint = -1; /* GE007_TRACE_TEX_FOOTPRINT=1 */
 static int g_diag_trace_tex_footprint_budget = INT32_MIN; /* GE007_TRACE_TEX_FOOTPRINT_BUDGET=N */
 static int g_diag_disable_loadblock_strided_footprint = -1; /* GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1 */
+static int g_diag_tilesize_clamp_subload = -1; /* GE007_TILESIZE_CLAMP_SUBLOAD=0 disables (default on) */
 
 static inline bool gfx_diag_no_settex_linearize_enabled(void);
 
@@ -5791,6 +5801,22 @@ static inline bool gfx_diag_disable_loadblock_strided_footprint_enabled(void)
     }
 
     return g_diag_disable_loadblock_strided_footprint > 0;
+}
+
+static inline bool gfx_diag_tilesize_clamp_subload_enabled(void)
+{
+    if (g_diag_tilesize_clamp_subload < 0) {
+        const char *env = getenv("GE007_TILESIZE_CLAMP_SUBLOAD");
+        /* Default ON. A sub-tilesize LOADBLOCK texture is loaded narrower than
+         * its declared G_SETTILESIZE rectangle (the explosion fire texture is
+         * loaded 16x14 RGBA16 but the tile rect is 56x56). Clamp the decode
+         * footprint to the true loaded extent instead of over-reading heap past
+         * the source. Set GE007_TILESIZE_CLAMP_SUBLOAD=0 to restore the legacy
+         * full-tilesize decode for A/B comparison. */
+        g_diag_tilesize_clamp_subload = (env != NULL && env[0] == '0') ? 0 : 1;
+    }
+
+    return g_diag_tilesize_clamp_subload > 0;
 }
 
 static inline bool gfx_trace_settex_enabled(void) {
@@ -12484,6 +12510,31 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                 if (!strided_loadblock_candidate || !strided_loadblock_disabled) {
                     footprint_decision = "render_line_full";
                 }
+            } else if (!has_strided_loadblock_footprint &&
+                gfx_diag_tilesize_clamp_subload_enabled() &&
+                loaded_texture->size_bytes != 0 &&
+                render_line_size_bytes != 0 &&
+                render_line_size_bytes < tile_rect_line_size_bytes &&
+                (loaded_texture->size_bytes % render_line_size_bytes) == 0 &&
+                (uint64_t)tile_rect_line_size_bytes * height > loaded_texture->size_bytes) {
+                /* Sub-tilesize LOADBLOCK: the loaded texture is narrower than the
+                 * declared G_SETTILESIZE rectangle. The explosion fire texture is
+                 * the canonical case -- loaded 16x14 RGBA16 (448 bytes, render line
+                 * 32 bytes) but the tile rect is 56x56 (line 112 bytes). On N64 the
+                 * tile mask (MASK_16) + G_TX_CLAMP confine sampling to the loaded
+                 * 16x14 extent; the default footprint (tile_rect_line * height =
+                 * 6272 bytes) instead over-reads ~5.8KB of heap past the 448-byte
+                 * source and uploads it as TEXEL1 -- the explosion "confetti".
+                 * Decode only the true loaded extent: clamp the row pitch to the
+                 * tile's render line and the height to size_bytes/render_line. Both
+                 * are <= the default, so this only ever NARROWS the footprint and
+                 * decode_line * decode_height <= size_bytes (never over-reads). */
+                decode_line_size_bytes = render_line_size_bytes;
+                decode_height = loaded_texture->size_bytes / render_line_size_bytes;
+                if (decode_height > height) {
+                    decode_height = height;
+                }
+                footprint_decision = "subload_clamp";
             }
 
             if (!has_strided_loadblock_footprint) {
