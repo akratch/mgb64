@@ -128,6 +128,11 @@ Useful runtime options:
 | `--mission N` | Direct-boot solo mission order `1` through `20`. Use this when you mean "mission 2", "mission 3", etc. |
 | `--difficulty VALUE` | Select the direct-boot difficulty. Values: `agent`, `secret`, `00`, `007`, or numeric `0` through `3`. Defaults to Agent. |
 | `--savedir PATH` | Store `ge007.ini` and save data in `PATH`. Without this, the port uses the current directory when writable, then falls back to a per-user directory. |
+| `--list-settings` | Print registered persistent settings and exit. Does not require a ROM. |
+| `--dump-config` | Print the current config view after loading `ge007.ini` and exit. Does not require a ROM. |
+| `--config-override KEY=VALUE` | Override a persistent setting for this run without saving it. Repeatable. |
+| `--config-set KEY=VALUE` | Set a persistent config value, save `ge007.ini`, and exit. Repeatable. Does not require a ROM. |
+| `--reset-config` | Reset registered persistent settings to defaults, save `ge007.ini`, and exit. Does not require a ROM. |
 | `--no-input-grab` | Do not capture the mouse. Useful while testing windowed startup. |
 | `--background` | Run without grabbing input and with background-friendly settings. Useful for smoke tests. |
 
@@ -155,9 +160,29 @@ setup detail.
 | Mute audio | `M` | — |
 | Show controls | `H` | — |
 
-Mouse sensitivity, fullscreen, and window size are configurable in `ge007.ini`
-(written next to the executable on first run). Pressing `H` also prints the full
-control list to the console.
+Mouse sensitivity, window size, display mode, and VSync are configurable in
+`ge007.ini`. By default the port writes config/save data in the current
+directory when it is writable; use `--savedir PATH` to keep a separate profile.
+The display mode key is `Video.WindowMode` with `windowed`, `borderless`, or
+`exclusive`; for example: `--config-set Video.WindowMode=borderless`. VSync is
+`Video.VSync` with `off`, `on`, or `adaptive`; frame pacing is `Video.FrameCap`
+with `30`, `60`, or `display`. Output gamma is `Video.Gamma`, where `1.0` leaves
+colors unchanged.
+`Video.RenderScale` adjusts the internal scene framebuffer from `1.0` to `2.0`
+for supersampling. `Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene
+anti-aliasing.
+`Video.FovY` controls the normal gameplay vertical field of view from `45` to
+`90` degrees; scoped weapons and watch animations still use their own zoom
+values.
+`Video.RetroFilter` is `auto`, `off`, or `on` for the VI-style soft output
+filter. `Video.Display` selects the zero-based SDL display index and falls back
+to display 0 if the saved index is unavailable. `Video.WindowX` and
+`Video.WindowY` are relative to that display, with `-1` meaning centered.
+Run `ge007 --list-displays` to print detected SDL displays and fullscreen modes.
+For `Video.WindowMode=exclusive`, set `Video.FullscreenWidth`,
+`Video.FullscreenHeight`, and optionally `Video.FullscreenRefresh`; leave them
+at `0` to use SDL's default display mode.
+Pressing `H` also prints the full control list to the console.
 
 ## Known limitations
 

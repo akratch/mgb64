@@ -554,9 +554,43 @@ OSYieldResult osSpTaskYielded(OSTask *task) { (void)task; return 0; }
 
 /* ===== Controller stubs ===== */
 
+/* Effective connected-player count on the native port. Player 1 (slot 0) is
+ * always present because the keyboard/mouse drives it even with no pad; opened
+ * pads beyond the first add players for split-screen. Clamped to MAXCONTROLLERS.
+ * This is what makes joyGetControllerCount() report >=2 once a 2nd pad is in,
+ * unblocking the front-end multiplayer gate. */
+static int pcConnectedPlayerCount(void) {
+    int pads = platformGetPadCount();
+    int count = pads > 1 ? pads : 1; /* keyboard/mouse guarantees >=1 */
+    if (count > MAXCONTROLLERS) count = MAXCONTROLLERS;
+    return count;
+}
+
+/* Mark the first `count` slots of an OSContStatus array as a present standard
+ * controller and the rest as not responding, so the contiguous-slot logic in
+ * joyCheckStatus()/joyGetControllerCount() derives the right player count. */
+static void pcFillContStatus(OSContStatus *data, int count) {
+    int i;
+    if (!data) return;
+    memset(data, 0, sizeof(OSContStatus) * MAXCONTROLLERS);
+    for (i = 0; i < MAXCONTROLLERS; i++) {
+        if (i < count) {
+            data[i].type   = CONT_TYPE_NORMAL;
+            data[i].status = 0;
+            data[i].errno  = 0;
+        } else {
+            data[i].errno = CONT_NO_RESPONSE_ERROR;
+        }
+    }
+}
+
 s32 osContInit(OSMesgQueue *mq, u8 *bitpattern, OSContStatus *data) {
-    if (bitpattern) *bitpattern = 0x01; /* Controller 1 present */
-    if (data) memset(data, 0, sizeof(OSContStatus) * MAXCONTROLLERS);
+    int count = pcConnectedPlayerCount();
+    if (bitpattern) {
+        /* Low `count` bits set = those player slots present. */
+        *bitpattern = (u8)((1u << count) - 1u);
+    }
+    pcFillContStatus(data, count);
     /* Prime the input queue so the first joyPoll() call succeeds.
      * On N64, the SI interrupt from osContInit fires and posts to the queue;
      * on PC we simulate that by posting a message directly. */
@@ -574,7 +608,12 @@ s32 osContStartReadData(OSMesgQueue *mq) {
     if (mq) osSendMesg(mq, NULL, OS_MESG_NOBLOCK);
     return 0;
 }
-s32 osContGetQuery(OSContStatus *data) { (void)data; return 0; }
+/* Re-derive connection state each query so hot-plug is reflected: joyCheckStatus
+ * reads g_ContStatus[i].errno here and rebuilds g_ConnectedControllers. */
+s32 osContGetQuery(OSContStatus *data) {
+    pcFillContStatus(data, pcConnectedPlayerCount());
+    return 0;
+}
 /* Mouse delta from platform_sdl.c */
 extern void platformGetMouseDelta(int *dx, int *dy);
 extern int g_pcDebugFlyCamera;
@@ -654,6 +693,19 @@ typedef struct PcScriptedSetChrAIEvent {
     int ailist_id;
     int applied;
 } PcScriptedSetChrAIEvent;
+
+/* Deterministic test hook: OR `set_mask` and AND-NOT `clr_mask` into a chr's
+ * chrflags at a frame. Two masks (not one) so a single event can both set
+ * CHRFLAG_HIDDEN and clear CHRFLAG_00040000 — the combination the H2 AI-freeze
+ * gate (chr.c) requires. masks are unsigned so 0 is a legitimate no-op and large
+ * bits (0x00040000) never go negative. */
+typedef struct PcScriptedSetChrFlagEvent {
+    int frame;
+    int chrnum;
+    unsigned int set_mask;
+    unsigned int clr_mask;
+    int applied;
+} PcScriptedSetChrFlagEvent;
 
 typedef struct PcScriptedChrToPadEvent {
     int frame;
@@ -802,6 +854,9 @@ static PcScriptedGuardSpawnEvent s_autoGuardSpawnEvents[PC_MAX_SCRIPTED_WARP_EVE
 static int s_autoSetChrAIInitialized = 0;
 static int s_autoSetChrAICount = 0;
 static PcScriptedSetChrAIEvent s_autoSetChrAIEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
+static int s_autoSetChrFlagInitialized = 0;
+static int s_autoSetChrFlagCount = 0;
+static PcScriptedSetChrFlagEvent s_autoSetChrFlagEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
 static int s_autoChrToPadInitialized = 0;
 static int s_autoChrToPadCount = 0;
 static PcScriptedChrToPadEvent s_autoChrToPadEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
@@ -1644,6 +1699,146 @@ static void pcMaybeApplyScriptedSetChrAI(int input_frame)
         chr->aioffset = 0;
         chr->sleep = 0;
         s_autoSetChrAIEvents[i].applied = 1;
+    }
+}
+
+static void pcInitScriptedSetChrFlag(void)
+{
+    const char *script_env;
+
+    if (s_autoSetChrFlagInitialized) {
+        return;
+    }
+
+    s_autoSetChrFlagInitialized = 1;
+    memset(s_autoSetChrFlagEvents, 0, sizeof(s_autoSetChrFlagEvents));
+
+    script_env = getenv("GE007_AUTO_SET_CHRFLAG_SCRIPT");
+
+    if (script_env != NULL && *script_env != '\0' &&
+        !(script_env[0] == '0' && script_env[1] == '\0')) {
+        while (*script_env != '\0' && s_autoSetChrFlagCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+            char *endptr;
+            long frame;
+            long chrnum;
+            unsigned long set_mask;
+            unsigned long clr_mask;
+
+            while (*script_env == ' ' || *script_env == '\t' || *script_env == ',') {
+                script_env++;
+            }
+
+            if (*script_env == '\0') {
+                break;
+            }
+
+            frame = strtol(script_env, &endptr, 0);
+            if (endptr == script_env || *endptr != ':') {
+                break;
+            }
+
+            script_env = endptr + 1;
+            chrnum = strtol(script_env, &endptr, 0);
+            if (endptr == script_env || *endptr != ':') {
+                break;
+            }
+
+            script_env = endptr + 1;
+            set_mask = strtoul(script_env, &endptr, 0);
+            if (endptr == script_env || *endptr != ':') {
+                break;
+            }
+
+            script_env = endptr + 1;
+            clr_mask = strtoul(script_env, &endptr, 0);
+            if (endptr == script_env) {
+                break;
+            }
+
+            s_autoSetChrFlagEvents[s_autoSetChrFlagCount].frame = (int)frame;
+            s_autoSetChrFlagEvents[s_autoSetChrFlagCount].chrnum = (int)chrnum;
+            s_autoSetChrFlagEvents[s_autoSetChrFlagCount].set_mask = (unsigned int)set_mask;
+            s_autoSetChrFlagEvents[s_autoSetChrFlagCount].clr_mask = (unsigned int)clr_mask;
+            s_autoSetChrFlagEvents[s_autoSetChrFlagCount].applied = 0;
+            s_autoSetChrFlagCount++;
+            script_env = endptr;
+        }
+    }
+
+    if (s_autoSetChrFlagCount == 0) {
+        const char *frame_env = getenv("GE007_AUTO_SET_CHRFLAG_FRAME");
+        const char *chr_env = getenv("GE007_AUTO_SET_CHRFLAG_CHRNUM");
+        const char *set_env = getenv("GE007_AUTO_SET_CHRFLAG_SET");
+        const char *clr_env = getenv("GE007_AUTO_SET_CHRFLAG_CLR");
+        int frame = -1;
+        int chrnum = -1;
+        unsigned int set_mask = 0;
+        unsigned int clr_mask = 0;
+        int have_mask = 0;
+
+        if (frame_env != NULL && *frame_env != '\0') {
+            frame = (int)strtol(frame_env, NULL, 0);
+        }
+
+        if (chr_env != NULL && *chr_env != '\0') {
+            chrnum = (int)strtol(chr_env, NULL, 0);
+        }
+
+        if (set_env != NULL && *set_env != '\0') {
+            set_mask = (unsigned int)strtoul(set_env, NULL, 0);
+            have_mask = 1;
+        }
+
+        if (clr_env != NULL && *clr_env != '\0') {
+            clr_mask = (unsigned int)strtoul(clr_env, NULL, 0);
+            have_mask = 1;
+        }
+
+        if (frame >= 0 && chrnum >= 0 && have_mask) {
+            s_autoSetChrFlagEvents[0].frame = frame;
+            s_autoSetChrFlagEvents[0].chrnum = chrnum;
+            s_autoSetChrFlagEvents[0].set_mask = set_mask;
+            s_autoSetChrFlagEvents[0].clr_mask = clr_mask;
+            s_autoSetChrFlagEvents[0].applied = 0;
+            s_autoSetChrFlagCount = 1;
+        }
+    }
+}
+
+static void pcMaybeApplyScriptedSetChrFlag(int input_frame)
+{
+    int i;
+
+    pcInitScriptedSetChrFlag();
+
+    if (!g_deterministic || s_autoSetChrFlagCount == 0) {
+        return;
+    }
+
+    for (i = 0; i < s_autoSetChrFlagCount; i++) {
+        ChrRecord *chr;
+        unsigned int flags;
+
+        if (s_autoSetChrFlagEvents[i].applied ||
+            s_autoSetChrFlagEvents[i].frame < 0 ||
+            s_autoSetChrFlagEvents[i].chrnum < 0 ||
+            input_frame != s_autoSetChrFlagEvents[i].frame) {
+            continue;
+        }
+
+        chr = chrFindByLiteralId(s_autoSetChrFlagEvents[i].chrnum);
+
+        if (chr == NULL) {
+            continue;
+        }
+
+        /* Compute in unsigned then cast once back to the CHRFLAG enum so the
+         * set/clear is -Werror-clean (no implicit int->enum on the bitops). */
+        flags = (unsigned int)chr->chrflags;
+        flags |= s_autoSetChrFlagEvents[i].set_mask;
+        flags &= ~s_autoSetChrFlagEvents[i].clr_mask;
+        chr->chrflags = (CHRFLAG)flags;
+        s_autoSetChrFlagEvents[i].applied = 1;
     }
 }
 
@@ -4735,6 +4930,73 @@ static void pcApplyScriptedFrontendDirection(u16 *buttons, int *stick_x,
                                      "GE007_AUTO_FRONTEND_RIGHT", input_frame));
 }
 
+/* Map a single opened pad (slot k) to an N64 OSContPad. Used for players 2..4;
+ * player 1 (slot 0) takes the richer inline path below that also merges
+ * keyboard/mouse and the P1-only edge-triggered weapon/crouch state.
+ *
+ * Buttons here come from platformGetPadButtons(), a raw bitmask of
+ * (1u << SDL_CONTROLLER_BUTTON_*). The N64 mapping mirrors the pad0 path so all
+ * players share one mapping. Absent pads (handle == NULL) yield a zeroed pad. */
+static void pcFillPadFromController(OSContPad *pad, int k) {
+    unsigned int raw;
+    int lx = 0, ly = 0;
+    int lt = 0, rt = 0;
+    u16 buttons = 0;
+    int stick_x = 0, stick_y = 0;
+
+    if (!pad) {
+        return;
+    }
+
+    raw = platformGetPadButtons(k);
+
+    /* Face buttons (mirror pad0 mapping in osContGetReadData). */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_A))             buttons |= A_BUTTON;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_B))             buttons |= B_BUTTON;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_X))             buttons |= B_BUTTON; /* X = reload (B in GE) */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_START))         buttons |= START_BUTTON;
+
+    /* Bumpers */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_LEFTSHOULDER))  buttons |= L_TRIG;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) buttons |= Z_TRIG; /* RB = alt fire */
+
+    /* D-pad */
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_UP))       buttons |= U_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_DOWN))     buttons |= D_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_LEFT))     buttons |= L_JPAD;
+    if (raw & (1u << SDL_CONTROLLER_BUTTON_DPAD_RIGHT))    buttons |= R_JPAD;
+
+    /* Analog triggers → R_TRIG (aim) and Z_TRIG (fire). */
+    platformGetPadTriggers(k, &lt, &rt);
+    if (lt > GAMEPAD_DEADZONE) buttons |= R_TRIG; /* LT = aim mode */
+    if (rt > GAMEPAD_DEADZONE) buttons |= Z_TRIG; /* RT = fire */
+
+    /* Left stick → N64 analog stick (movement). */
+    platformGetPadLeftStick(k, &lx, &ly);
+    if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) {
+        int mapped = (lx * 80) / 32767;
+        if (mapped > 80) mapped = 80;
+        if (mapped < -80) mapped = -80;
+        stick_x += mapped;
+    }
+    if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) {
+        int mapped = (-ly * 80) / 32767; /* SDL Y is inverted vs N64 */
+        if (mapped > 80) mapped = 80;
+        if (mapped < -80) mapped = -80;
+        stick_y += mapped;
+    }
+
+    if (stick_x > 80) stick_x = 80;
+    if (stick_x < -80) stick_x = -80;
+    if (stick_y > 80) stick_y = 80;
+    if (stick_y < -80) stick_y = -80;
+
+    pad->button  = buttons;
+    pad->stick_x = (s8)stick_x;
+    pad->stick_y = (s8)stick_y;
+    pad->errno   = 0;
+}
+
 s32 osContGetReadData(OSContPad *data) {
     extern int g_frame_count_diag;
     int input_frame;
@@ -4758,6 +5020,7 @@ s32 osContGetReadData(OSContPad *data) {
     pcMaybeApplyScriptedWarpChr(input_frame);
     pcMaybeApplyScriptedGuardSpawn(input_frame);
     pcMaybeApplyScriptedSetChrAI(input_frame);
+    pcMaybeApplyScriptedSetChrFlag(input_frame);
     pcMaybeApplyScriptedChrToPad(input_frame);
     pcMaybeApplyScriptedDamageChr(input_frame);
     pcMaybeApplyScriptedCollectTag(input_frame);
@@ -5164,6 +5427,16 @@ s32 osContGetReadData(OSContPad *data) {
     data[0].stick_x = (s8)stick_x;
     data[0].stick_y = (s8)stick_y;
     data[0].errno = 0;
+
+    /* Players 2..4: pad slot k drives data[k] directly (no keyboard/mouse
+     * merge — those belong to P1 only). Absent pads were already zeroed by the
+     * memset above; pcFillPadFromController() leaves them neutral. */
+    {
+        int k;
+        for (k = 1; k < MAXCONTROLLERS; k++) {
+            pcFillPadFromController(&data[k], k);
+        }
+    }
 
     /* Input logging removed — verified working */
 

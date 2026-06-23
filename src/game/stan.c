@@ -692,6 +692,17 @@ glabel sub_GAME_7F0AF038
  *
  * Returns: pointer to the best tile, or NULL if no tile found.
  */
+/* Highest-floor selection tail shared by the F2-ON and default paths: keep
+ * `tile` if its interpolated floor Y is at/below the query point and higher than
+ * the best seen so far. Byte-faithful to the original inline idiom. */
+static void stanConsiderFloorTile(StandTile *tile, f32 *pos, StandTile **best_tile, f32 *best_y) {
+    f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
+    if (tile_y <= pos[1] && tile_y > *best_y) {
+        *best_tile = tile;
+        *best_y = tile_y;
+    }
+}
+
 StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
     StandTile *best_tile = NULL;
     f32 best_y = -3.402823e+38f;
@@ -707,6 +718,30 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
     s16 sx16 = (s16)sx;
     s16 sy16 = (s16)sy;
     s16 sz16 = (s16)sz;
+
+    /* F2 (gated, default ON — GE007_STAN_ONEDGE=0 disables): on-edge seam
+     * disambiguation. For a query point on/near a shared tile seam (within ~2
+     * scaled units of an edge), the original walks from the tile midpoint to the
+     * query point and rejects the tile if the walk fails or lands on a different
+     * tile — so a query between stacked floors picks the tile the walk reaches, not
+     * whichever passed the band test. on_edge is function-scope/sticky, faithful to
+     * the canonical decomp (stan.c #else body). Default ON restores the canonical
+     * seam behavior; GE007_STAN_ONEDGE=0 reverts to the prior bypass path (which is
+     * then byte-identical to pre-F2). Frame-exact seam parity is still oracle-gated
+     * (see COMBAT_DEFERRED_PLAN). */
+    extern f32 getShortest2dDispToInfTripleEdge(StandTile *tile, s32 start3index, f32 p_x, f32 p_z);
+    extern void getTileMidPoint(StandTile *tile, coord3d *midPnt);
+    /* walkTilesBetweenPoints_NoCallback is declared in stan.h. */
+    /* Default ON (ASM-faithful seam disambiguation); set GE007_STAN_ONEDGE=0 to
+     * disable. Validated: no flat-ground movement-oracle regression, adversarially
+     * confirmed faithful to the canonical decomp, ASan/crash-clean. Unrelated to the
+     * object_interaction throwknife-impact crash (different subsystem). */
+    static int s_onedge_gate = -1;
+    if (s_onedge_gate < 0) {
+        /* Default ON; "0" disables (shared GE007_* gate truth table). */
+        s_onedge_gate = ge_env_bool("GE007_STAN_ONEDGE", 1);
+    }
+    s32 on_edge = 0;
 
     for (s32 room = 0; room < dword_CODE_bss_8007B9DC; room++) {
         if (firststaninroom[room] == NULL) continue;
@@ -729,12 +764,46 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
         /* Walk tiles in this room */
         StandTile *tile = firststaninroom[room];
         while (*(s32 *)tile != 0 && (tile->room & 0xFF) == room) {
-            /* Test if position is within tile bounds (uses sub_GAME_7F0B0400) */
-            if (stanTestPointWithinTileBoundsMaybe(tile, pos[0], pos[2])) {
-                f32 tile_y = stanGetPositionYValue(tile, pos[0], pos[2]);
-                if (tile_y <= pos[1] && tile_y > best_y) {
-                    best_tile = tile;
-                    best_y = tile_y;
+            if (s_onedge_gate) {
+                /* F2 gated-ON: faithful canonical ordering (stan.c #else body).
+                 * The 3-edge band loop runs FIRST, for every bounds-candidate tile
+                 * (BEFORE the degenerate skip), so the sticky on_edge/bVar2
+                 * accumulates from all such tiles exactly as the original. The
+                 * disp<-2 case is the bounds reject (replaces the bypass's
+                 * stanTestPointWithinTileBoundsMaybe on this path); disp<2 sets the
+                 * sticky on_edge. Then the degenerate skip (F1), the on-edge
+                 * midpoint walk-back, and highest-floor selection. Scaled coords
+                 * (sx/sz) for the edge test; unscaled mid/pos for the walk. */
+                s32 e;
+                s32 skip = 0;
+                for (e = 0; e < 3; e++) {
+                    f32 disp = getShortest2dDispToInfTripleEdge(tile, e, sx, sz);
+                    if (disp < -2.0f) { skip = 1; break; }  /* outside this edge */
+                    if (disp < 2.0f) { on_edge = 1; }        /* sticky, faithful to bVar2 */
+                }
+                if (!skip && sub_GAME_7F0AF760(tile) == 0) {  /* F1: non-degenerate */
+                    s32 consider = 1;
+                    if (on_edge) {
+                        coord3d mid;
+                        StandTile *walkTile = tile;
+                        getTileMidPoint(tile, &mid);  /* unscaled world coords */
+                        if (walkTilesBetweenPoints_NoCallback(&walkTile, mid.x, mid.z,
+                                                              pos[0], pos[2]) == 0
+                            || walkTile != tile) {
+                            consider = 0;  /* walk failed or landed on a different tile */
+                        }
+                    }
+                    if (consider) {
+                        stanConsiderFloorTile(tile, pos, &best_tile, &best_y);
+                    }
+                }
+            } else {
+                /* F1 (default path, byte-identical to pre-F2): skip degenerate
+                 * (zero-area / collinear) tiles via sub_GAME_7F0AF760, then the
+                 * native bounds test + highest-floor selection. */
+                if (sub_GAME_7F0AF760(tile) == 0 &&
+                    stanTestPointWithinTileBoundsMaybe(tile, pos[0], pos[2])) {
+                    stanConsiderFloorTile(tile, pos, &best_tile, &best_y);
                 }
             }
 
@@ -3291,9 +3360,15 @@ bool sub_GAME_7F0B0914(StandTile **tileStack, f32 start_x, f32 start_z, f32 dest
             return TRUE;
         }
 
-        iterCount += 1;
         edgeIdx = 0;  /* always reset (matches MIPS delay slot behavior) */
 
+        /* ASM-faithful iteration cap (US 7F0B0B5x): the original compares the
+         * PRE-increment counter against 0x1F5 — it continues while
+         * iterCount < 0x1F5 and fails at iterCount == 0x1F5, permitting 501
+         * tile-walk steps. The port previously incremented first and tested the
+         * post-increment value, aborting one step early (500), which could flip
+         * a single chrCanSeeBond / bullet-block result on a ray that crosses
+         * exactly 501 tile boundaries. */
         if (iterCount >= 0x1F5 || nextTile == NULL)
         {
             stanSavedColl_tile = prevTile;
@@ -3331,6 +3406,7 @@ bool sub_GAME_7F0B0914(StandTile **tileStack, f32 start_x, f32 start_z, f32 dest
             return FALSE;
         }
 
+        iterCount += 1;  /* post-test increment — see ASM-faithful cap note above */
         *tileStack = nextTile;
         crossCount = 0;
     }

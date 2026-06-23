@@ -8,7 +8,7 @@ The public lane is intentionally narrow:
 - route specs are authored JSON and safe to commit;
 - native captures use `ge007 --trace-state`;
 - stock captures use a locally patched ares checkout in ignored build space;
-- generated `.jsonl`, `.bmp`, save, and emulator outputs stay local.
+- generated `.jsonl`, `.bmp`, `.ppm`, save, and emulator outputs stay local.
 
 ## Tools
 
@@ -107,6 +107,7 @@ Route files use schema `mgb64.rom_oracle.route.v1`:
   "frames": 220,
   "native_frames": 220,
   "stock_frames": 6500,
+  "stock_screenshot_frame": 2950,
   "native_speedframes": 3,
   "stock_speedframes": 3,
   "stock_gameplay_start_global": 1146,
@@ -153,6 +154,10 @@ Provider-specific fields are optional:
 
 - `native_frames` and `stock_frames` override `frames` for direct-native and
   booted-stock-ROM captures.
+- `stock_screenshot_frame` optionally overrides the stock framebuffer dump frame.
+  It defaults to `stock_frames`. Use it when a route needs extra stock frontend
+  frames for traces/comparison but the meaningful visual checkpoint is an earlier
+  gameplay frame.
 - `native_level` and `stock_level` override `level` for the native direct-boot
   target and stock-oracle target-stage gate respectively. `stock_level` does not
   by itself select a mission in the stock frontend; it tells the ares hook which
@@ -296,7 +301,9 @@ python3 tools/rom_oracle_route.py ares-input dam_forward_stop
 The movement comparator consumes JSONL records with:
 
 - `f`: provider frame index;
-- `p`: has-player flag;
+- `p`: current player number, 1-based (`0` = no current player, `1` in
+  single-player; `2`/`3`/`4` distinguish per-player viewpoints in split-screen).
+  Any `p >= 1` means a player is present, so existing presence checks still hold;
 - `pos`: player prop position;
 - `col`: player collision position, when available;
 - `move.speed`: `[speedforwards, speedsideways]`;

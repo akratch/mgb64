@@ -2735,6 +2735,13 @@ void bondviewTriggerWatchZoom(f32 zoominfovy);
 
 void trigger_watch_zoom(f32 final, f32 time);
 
+#ifdef NATIVE_PORT
+/* ADS-0.2: public base-FOV accessor (wraps static bondviewGetNativeBaseFovY).
+ * Returns the runtime base FOV-Y (Video.FovY clamped to [45,90]); ADS code
+ * computes mild iron-sight zooms against this at query time. */
+f32 bondviewGetBaseFovY(void);
+#endif
+
 PropRecord* get_curplayer_positiondata(void);
 
 void currentPlayerSetScreenSize(f32 width, f32 height);

@@ -96,14 +96,7 @@ static int portFlatPropBulletImpacts(void)
     return cached;
 }
 
-static int portTexturedPropBulletImpacts(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        cached = getenv("GE007_TEXTURED_PROP_BULLET_IMPACTS") != NULL;
-    }
-    return cached;
-}
+static s32 portPropIsGlassLike(PropRecord *prop);
 
 static int portUseFlatBulletImpacts(PropRecord *prop)
 {
@@ -112,32 +105,138 @@ static int portUseFlatBulletImpacts(PropRecord *prop)
     }
 
     if (prop != NULL) {
+        /* Tier-2 / N64 parity: ALL destroyable props (crates, barrels, screens,
+         * glass) render their bullet impacts as the textured bullet-hole decal,
+         * exactly like the original decomp -- which has no flat path at all -- and
+         * like world/wall impacts. The original code unconditionally calls
+         * texSelect() for every prop impact (see the #else branch of
+         * explosionRenderBulletImpactOnProp); the flat path here is a port-only
+         * workaround that drew a solid, untextured G_CC_SHADE quad in the impact's
+         * "appearance" colour. Because ~17 of the 20 g_ImpactTypes entries have
+         * apptype==1, that colour is a deterministic near-white (0xFF - rand%40)
+         * -- i.e. the white squares the user saw -- with no texture alpha to carve
+         * the hole shape. The textured path modulates the IA/RGBA bullet-hole
+         * texture (G_CC_MODULATEIA) so its alpha cuts the decal exactly as on N64.
+         *
+         * The textured path is now self-contained: explosionRenderBulletImpactOnProp
+         * emits a full RDP state-reset epilogue so it can no longer leak
+         * texture/combine/rendermode/cycle state into following inline prop/child
+         * geometry (precautionary hardening -- glass has run this path since
+         * 76d4c48 with no observed leak). GE007_FLAT_PROP_BULLET_IMPACTS still
+         * forces the legacy flat path for debugging/A-B; GE007_FLAT_BULLET_IMPACTS
+         * forces flat globally (world + prop). */
         if (portFlatPropBulletImpacts()) {
             return 1;
         }
 
-        /* Prop-attached textured impacts can leak texture state on the PC
-         * renderer; keep the safer flat path as the public default. */
-        return !portTexturedPropBulletImpacts();
+        return 0;
     }
 
     return 0;
 }
 
-static float portBulletImpactNormalOffset(void)
+static float portClampBulletImpactNormalOffset(float value)
+{
+    if (value < 0.0f) {
+        return 0.0f;
+    }
+
+    return value > 20.0f ? 20.0f : value;
+}
+
+static float portGlobalBulletImpactNormalOffset(int *is_set)
 {
     static int initialized = 0;
+    static int has_value = 0;
     static float value = 0.0f;
 
     if (!initialized) {
         const char *env = getenv("GE007_BULLET_IMPACT_NORMAL_OFFSET");
         if (env && *env) {
-            value = strtof(env, NULL);
+            value = portClampBulletImpactNormalOffset(strtof(env, NULL));
+            has_value = 1;
         }
         initialized = 1;
     }
 
+    if (is_set != NULL) {
+        *is_set = has_value;
+    }
+
     return value;
+}
+
+static float portGlassBulletImpactNormalOffset(void)
+{
+    static int initialized = 0;
+    static float value = 2.0f;
+
+    if (!initialized) {
+        const char *env = getenv("GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET");
+        if (env && *env) {
+            value = strtof(env, NULL);
+        }
+        value = portClampBulletImpactNormalOffset(value);
+        initialized = 1;
+    }
+
+    return value;
+}
+
+static s32 portPropIsGlassLike(PropRecord *prop)
+{
+    if (prop == NULL || prop->obj == NULL) {
+        return 0;
+    }
+
+    return prop->obj->type == PROPDEF_GLASS ||
+           prop->obj->type == PROPDEF_TINTED_GLASS;
+}
+
+static s32 portImpactIsGlassCrack(s32 impact_type)
+{
+    return impact_type >= 0x11 && impact_type <= 0x13;
+}
+
+static float portBulletImpactNormalOffset(PropRecord *prop, s32 impact_type)
+{
+    int has_global_offset = 0;
+    float global_offset = portGlobalBulletImpactNormalOffset(&has_global_offset);
+
+    if (has_global_offset) {
+        return global_offset;
+    }
+
+    if (portImpactIsGlassCrack(impact_type)) {
+        return portGlassBulletImpactNormalOffset();
+    }
+
+    return 0.0f;
+}
+
+static f32 portGlassImpactAxisBoost(const coord3d *axis_view, f32 axis_len)
+{
+    f32 screen_len;
+    f32 ratio;
+    f32 boost;
+    /* Keep glass cracks surface-aligned, but stop edge-on panes from
+     * projecting prop-attached impacts down to a one-pixel sliver. */
+    const f32 target_ratio = 0.70f;
+    const f32 max_boost = 6.0f;
+
+    if (axis_view == NULL || axis_len <= 0.0001f) {
+        return 1.0f;
+    }
+
+    screen_len = sqrtf(axis_view->x * axis_view->x + axis_view->y * axis_view->y);
+    ratio = screen_len / axis_len;
+
+    if (ratio >= target_ratio) {
+        return 1.0f;
+    }
+
+    boost = target_ratio / (ratio > 0.0001f ? ratio : 0.0001f);
+    return boost > max_boost ? max_boost : boost;
 }
 
 static s32 portEnsurePropImpactRenderPos(PropRecord *prop, s8 *model_render_pos_index)
@@ -239,6 +338,24 @@ static int portUseNativeExplosionFallback(void)
             env = getenv("GE007_ORIGINAL_EXPLOSION_TEXTURES");
             cached = (env != NULL && env[0] != '\0' && env[0] == '0') ? 1 : 0;
         }
+    }
+
+    return cached;
+}
+
+static int portExplosionPartFade(void)
+{
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char *env = getenv("GE007_EXPLOSION_PART_FADE");
+        /* Default ON: restore the original N64 per-part distance fade in
+         * explosionRenderPart. Close fireball billboards are scaled down (f2)
+         * and their centre pulled toward the player, so a point-blank blast
+         * does not fill the screen with giant full-size quads. The port
+         * previously stubbed f2=1.0 and used the raw part position.
+         * GE007_EXPLOSION_PART_FADE=0 restores that flat full-size behavior. */
+        cached = (env != NULL && env[0] == '0') ? 0 : 1;
     }
 
     return cached;
@@ -1902,9 +2019,7 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
     f32 sp44;
     
     f32 temp_f0;
-#ifndef NATIVE_PORT
-    f32 var_f12;    
-#endif
+    f32 var_f12;
 
     spA0 = g_ExplosionRenderPartDefaultVertex;
 
@@ -1917,7 +2032,19 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
 
     temp_f0 = sqrtf((sp64 * sp64) + (sp60 * sp60) + (sp5C * sp5C));
 #ifdef NATIVE_PORT
-    f2 = 1.0f;
+    if (portExplosionPartFade())
+    {
+        var_f12 = temp_f0 * 0.5f;
+        if (var_f12 > 100.0f)
+        {
+            var_f12 = 100.0f;
+        }
+        f2 = (temp_f0 == 0.0f) ? 0.0f : (temp_f0 - var_f12) / temp_f0;
+    }
+    else
+    {
+        f2 = 1.0f;
+    }
 #else
     var_f12 = temp_f0 * 0.5f;
     if (var_f12 > 100.0f)
@@ -1939,9 +2066,18 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
     sp50 = arg0->rot * f2;
 
 #ifdef NATIVE_PORT
-    sp4c = arg0->pos.f[0];
-    sp48 = arg0->pos.f[1];
-    sp44 = arg0->pos.f[2];
+    if (portExplosionPartFade())
+    {
+        sp4c = sp98->f[0] + (sp64 * f2);
+        sp48 = sp98->f[1] + (sp60 * f2);
+        sp44 = sp98->f[2] + (sp5C * f2);
+    }
+    else
+    {
+        sp4c = arg0->pos.f[0];
+        sp48 = arg0->pos.f[1];
+        sp44 = arg0->pos.f[2];
+    }
 #else
     sp4c = sp98->f[0] + (sp64 * f2);
     sp48 = sp98->f[1] + (sp60 * f2);
@@ -3105,7 +3241,6 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
         return;
     }
 
-    decal_lift = portBulletImpactNormalOffset();
 #endif
 
     spE0 = g_BulletImpactDefaultVertex;
@@ -3114,6 +3249,10 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
     {
         impact_type = 0x10;
     }
+
+#ifdef NATIVE_PORT
+    decal_lift = portBulletImpactNormalOffset(prop, impact_type);
+#endif
 
     spA0.f[0] = pos->f[0];
     spA0.f[1] = pos->f[1];
@@ -3162,9 +3301,10 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
 #ifdef NATIVE_PORT
     if (decal_lift != 0.0f
         && ((arg1->f[0] != 0.0f) || (arg1->f[1] != 0.0f) || (arg1->f[2] != 0.0f))) {
-        /* The original stores coplanar impact quads. Keep any PC depth-bias
-         * workaround explicit through GE007_BULLET_IMPACT_NORMAL_OFFSET so
-         * normal gameplay does not show decals floating off the hit surface. */
+        /* The original stores coplanar impact quads. On PC, glass crack
+         * decals need a small normal lift to survive depth testing against
+         * transparent panes; GE007_BULLET_IMPACT_NORMAL_OFFSET remains a
+         * global diagnostic override. */
         spA0.f[0] += spDC * decal_lift;
         spA0.f[1] += spD8 * decal_lift;
         spA0.f[2] += spD4 * decal_lift;
@@ -3197,6 +3337,35 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
         
         sp9C /= sp88;
         sp98 /= temp_f6;
+
+#ifdef NATIVE_PORT
+        if (portPropIsGlassLike(prop) && portImpactIsGlassCrack(impact_type))
+        {
+            f32 boost_x = portGlassImpactAxisBoost(&sp78, sp88);
+            f32 boost_y = portGlassImpactAxisBoost(&sp6C, temp_f6);
+
+            if (boost_x > 1.0f || boost_y > 1.0f)
+            {
+                sp9C *= boost_x;
+                sp98 *= boost_y;
+
+                if (portTraceBulletImpacts())
+                {
+                    fprintf(stderr,
+                            "[BULLET-IMPACT-GLASS-BOOST] impact=%d boost=(%.3f,%.3f) "
+                            "axis_len=(%.4f,%.4f) axis_screen=(%.4f,%.4f)\n",
+                            impact_type,
+                            boost_x,
+                            boost_y,
+                            sp88,
+                            temp_f6,
+                            sqrtf(sp78.f[0] * sp78.f[0] + sp78.f[1] * sp78.f[1]),
+                            sqrtf(sp6C.f[0] * sp6C.f[0] + sp6C.f[1] * sp6C.f[1]));
+                    fflush(stderr);
+                }
+            }
+        }
+#endif
         
         if ((sp50->unk2 < 2) && (sp50->unk1 == 2))
         {
@@ -3554,6 +3723,29 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
 
     if (sp50)
     {
+#ifdef NATIVE_PORT
+        /* The textured impact path (texSelect) leaves the RDP in textured state:
+         * texture ON, combine = G_CC_MODULATEIA, a DECAL render mode, LUT/LOD set,
+         * and -- for any mipmapped impact image -- cycle = G_CYC_2CYCLE. Prop
+         * impacts are emitted INLINE in the per-prop display list (chrobjhandler.c),
+         * immediately before the child-prop recursion and sibling props, so that
+         * state must not leak. Most following geometry is models that re-establish
+         * their own material setup, but raw inline DL (e.g. door words) inherits
+         * combine/cycle, so normalise the RDP to a neutral, untextured baseline
+         * here. This makes the now-default textured prop path self-contained for
+         * every caller (the inline prop path AND the isolated world pass) --
+         * precautionary hardening that keeps the textured default safe. NB: this
+         * is a neutral OPA baseline, NOT the legacy flat path's XLU_DECAL mode;
+         * the explicit cycle reset covers the mipmapped-impact G_CYC_2CYCLE case
+         * that the partial SETOTHERMODE_H writes below would otherwise miss. */
+        gDPPipeSync(gdl++);
+        gSPTexture(gdl++, 0xffff, 0xffff, 0, G_TX_RENDERTILE, G_OFF);
+        gDPSetTextureLUT(gdl++, G_TT_NONE);
+        gDPSetTextureLOD(gdl++, G_TL_TILE);
+        gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+        gDPSetCombineMode(gdl++, G_CC_SHADE, G_CC_SHADE);
+        gDPSetRenderMode(gdl++, G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2);
+#endif
         /* Bullet impacts render as double-sided quads, but the surrounding
          * room/world passes assume normal backface culling. Restore that
          * state here so firing decals do not leak disabled culling into
@@ -3602,5 +3794,10 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
 
 Gfx * explosionCallRenderBulletImpactOnProp(Gfx *arg0)
 {
+#ifdef NATIVE_PORT
+    arg0 = explosionRenderBulletImpactOnProp(arg0, NULL, 0);
+    return explosionRenderBulletImpactOnProp(arg0, NULL, 1);
+#else
     return explosionRenderBulletImpactOnProp(arg0, NULL, 0);
+#endif
 }

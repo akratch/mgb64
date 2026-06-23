@@ -32,8 +32,6 @@ void gfx_cc_get_features(uint64_t shader_id0, uint32_t shader_id1, struct CCFeat
     cc_features->noperspective_fog = (shader_id1 & SHADER_OPT_NOPERSPECTIVE_FOG) != 0;
     cc_features->diag_color_scale = (shader_id1 & SHADER_OPT_DIAG_COLOR_SCALE) != 0;
     cc_features->n64_filter_always_3point = (shader_id1 & SHADER_OPT_N64_FILTER_ALWAYS_3POINT) != 0;
-    cc_features->n64_filter_nearest_threshold_005 =
-        (shader_id1 & SHADER_OPT_N64_FILTER_NEAREST_THRESHOLD_005) != 0;
 
     cc_features->used_textures[0] = false;
     cc_features->used_textures[1] = false;

@@ -85,8 +85,18 @@ void set_favorite_weapon_for_every_player(void);
 #include <stdio.h>
 #include <math.h>
 #include "platform/gfx_pc.h"
+#include "ads_profiles.h"
 extern int g_frame_count_diag;
 extern int g_tri_count_diag;
+
+static int pcNativeLiveLookAllowed(void)
+{
+    if (get_is_ramrom_flag() != 0) {
+        return 0;
+    }
+
+    return 1;
+}
 
 static int lvlTracePhaseEnabled(void)
 {
@@ -124,6 +134,17 @@ static void lvlTracePhasePrintf(const char *phase, s32 before_tris)
             g_tri_count_diag - before_tris,
             g_tri_count_diag);
     fflush(stderr);
+}
+
+static int lvlTraceFovEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        enabled = (getenv("GE007_TRACE_FOV") != NULL) ? 1 : 0;
+    }
+
+    return enabled;
 }
 
 /* Room loading functions from bg.c (not in header) */
@@ -198,10 +219,35 @@ static int pc_load_room(int roomID) {
         return 0;
     }
 
+    /* Register data as N64-format for the GFX translator */
+    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_expanded_mapping_info, dl_result);
+    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_point_index, vtx_result);
+
+    u8 *sec_buf = NULL;
+    u32 sec_result = 0;
+
+    if (g_BgRoomInfo[roomID].csize_secondary_DL_binary > 0) {
+        sec_buf = (u8 *)malloc(PC_ROOM_BUF_SIZE);
+        if (sec_buf) {
+            sec_result = sub_GAME_7F0B61DC(roomID, (u32 *)sec_buf, PC_ROOM_BUF_SIZE);
+            if ((s32)sec_result >= 0) {
+                gfx_register_n64_dl_region(
+                    g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info,
+                    sec_result);
+            } else {
+                free(sec_buf);
+                sec_buf = NULL;
+                sec_result = 0;
+                g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info = NULL;
+                g_BgRoomInfo[roomID].usize_secondary_DL_binary = 0;
+            }
+        }
+    }
+
     if (trace_pc_room_loads) {
         fprintf(stderr,
                 "[PC-ROOM-LOAD] room=%d vtx_buf=%p stored_vtx=%p vtx_size=0x%X "
-                "dl_buf=%p stored_dl=%p dl_size=0x%X model=%d\n",
+                "dl_buf=%p stored_dl=%p dl_size=0x%X sec_buf=%p stored_sec=%p sec_size=0x%X model=%d\n",
                 roomID,
                 vtx_buf,
                 g_BgRoomInfo[roomID].ptr_point_index,
@@ -209,26 +255,18 @@ static int pc_load_room(int roomID) {
                 dl_buf,
                 g_BgRoomInfo[roomID].ptr_expanded_mapping_info,
                 (unsigned)g_BgRoomInfo[roomID].usize_primary_DL_binary,
+                sec_buf,
+                g_BgRoomInfo[roomID].ptr_secondary_expanded_mapping_info,
+                (unsigned)g_BgRoomInfo[roomID].usize_secondary_DL_binary,
                 g_BgRoomInfo[roomID].model_bin_loaded);
         fflush(stderr);
     }
-
-    /* Register data as N64-format for the GFX translator */
-    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_expanded_mapping_info, dl_result);
-    gfx_register_n64_dl_region(g_BgRoomInfo[roomID].ptr_point_index, vtx_result);
-
-    /* Secondary display list data (transparent geometry: glass, water, etc.)
-     * is loaded on-demand by the gameplay path (sub_GAME_7F0B6368) when
-     * rendering the secondary room DL. We don't preload it here because
-     * sub_GAME_7F0B61DC depends on BG file state that may not be fully
-     * initialized during early preload. */
-    u8 *sec_buf = NULL;
 
     /* Mark as loaded so the gameplay path (bgCheckIfRoomModelNeedsLoad)
      * won't redundantly reload this room via sub_GAME_7F0B6368.
      * Also set cur_room_totalsize so delete_room_data() is consistent. */
     g_BgRoomInfo[roomID].model_bin_loaded = 1;
-    g_BgRoomInfo[roomID].cur_room_totalsize = vtx_result + dl_result;
+    g_BgRoomInfo[roomID].cur_room_totalsize = vtx_result + dl_result + sec_result;
 
     /* Post-load fixups matching original N64 path (bg.c:6900-6995) */
     {
@@ -1260,6 +1298,13 @@ Gfx* lvlRender(Gfx* DL)
                                     (uintptr_t)g_BgRoomInfo[rm].usize_primary_DL_binary),
                             CCRMLUT_PRIMARY_ADDFOG);
                     }
+                    if (g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info) {
+                        bgLoadFromDynamicCCRMLUT(
+                            g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info,
+                            (Gfx *)((u8 *)g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info +
+                                    (uintptr_t)g_BgRoomInfo[rm].usize_secondary_DL_binary),
+                            CCRMLUT_SECONDARY_ADDFOG);
+                    }
                 }
                 if (getenv("GE007_VERBOSE")) {
                     printf("[LVL_FOG_REWRITE] Applied fog LUT to %d rooms\n", pc_num_loaded_rooms);
@@ -1425,6 +1470,10 @@ Gfx* lvlRender(Gfx* DL)
                                g_BgRoomInfo[rm].ptr_point_index);
                     gSPDisplayList(DL++,
                                    g_BgRoomInfo[rm].ptr_expanded_mapping_info);
+                    if (g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info) {
+                        gSPDisplayList(DL++,
+                                       g_BgRoomInfo[rm].ptr_secondary_expanded_mapping_info);
+                    }
                     rendered++;
                 }
                 {
@@ -1520,6 +1569,17 @@ Gfx* lvlRender(Gfx* DL)
             viSetViewPosition(g_CurrentPlayer->viewleft, g_CurrentPlayer->viewtop);
             viSetFovY(g_CurrentPlayer->fovy);
             viSetAspect(g_CurrentPlayer->aspect);
+#ifdef NATIVE_PORT
+            if (lvlTraceFovEnabled()) {
+                fprintf(stderr,
+                        "[FOV] frame=%d source=lvlRender player=%d player_fovy=%.6f vi_fovy=%.6f aspect=%.6f\n",
+                        g_frame_count_diag,
+                        i,
+                        g_CurrentPlayer->fovy,
+                        viGetFovY(),
+                        g_CurrentPlayer->aspect);
+            }
+#endif
 
 #ifdef NATIVE_PORT
             /* A3: Use original pipeline. viClearZBufCurrentPlayer skipped on PC
@@ -1639,22 +1699,19 @@ Gfx* lvlRender(Gfx* DL)
             }
 
             sub_GAME_7F03D0D4();
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_ROOM);
-#endif
             /* A3: Always use original bgLevelRender on all platforms */
 #ifdef NATIVE_PORT
             {
                 s32 tris_before_bg_render = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = bgLevelRender(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_ROOM, drawclass_start, DL);
                 lvlTracePhasePrintf("bgLevelRender", tris_before_bg_render);
             }
 #else
             DL = bgLevelRender(DL);
 #endif
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
-
             /* Debug dump: execute after all guards have been ticked/rendered */
             {
                 extern void debugDumpExecute(void);
@@ -1718,41 +1775,37 @@ Gfx* lvlRender(Gfx* DL)
 
             setanimationdebugflag(getDebugMode() == DEB_SELANIM);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_CHRPROP);
-#endif
-#ifdef NATIVE_PORT
             {
                 s32 tris_before_chrprop = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = sub_GAME_7F049B58(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_CHRPROP, drawclass_start, DL);
                 lvlTracePhasePrintf("chrpropPass", tris_before_chrprop);
             }
 #else
             DL = sub_GAME_7F049B58(DL);
 #endif
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
-#endif
 
 #if defined(VERSION_EU)
             sub_GAME_7F0A46A0(&DL, 1);
-#else /* VERSION_US, VERSION_JP, unspecified */
+#elif defined(NONMATCHING)
+            /* Native: capture the DL advanced past the bullet-spark commands so
+             * the glass-shard pass below appends instead of overwriting them. */
+            DL = sub_GAME_7F0A4824(DL, 1);
+#else /* matched VERSION_US, VERSION_JP */
             sub_GAME_7F0A4824(DL, 1);
 #endif
             DL = sub_GAME_7F0A2C44(DL);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_EFFECT);
-#endif
-#ifdef NATIVE_PORT
             {
                 s32 tris_before_fx = g_tri_count_diag;
+                Gfx *drawclass_start = DL;
                 DL = explosionRenderFlyingParticles(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_EFFECT, drawclass_start, DL);
                 lvlTracePhasePrintf("flyingParticles", tris_before_fx);
             }
 #else
             DL = explosionRenderFlyingParticles(DL);
-#endif
-#ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
 #endif
 
             if (
@@ -1774,6 +1827,7 @@ Gfx* lvlRender(Gfx* DL)
             if (get_debug_render_raster() == DEB_BOND_VIEW)
             {
 #ifdef NATIVE_PORT
+                Gfx *drawclass_start = DL;
                 /* PC: Replicate the matrix setup that bgLevelRender (bg.c:4263-4265)
                  * normally does after room rendering but before weapon rendering.
                  * Our fly-camera path bypasses bgLevelRender, so we must emit:
@@ -1784,27 +1838,29 @@ Gfx* lvlRender(Gfx* DL)
                 gSPMatrix(DL++, g_viProjectionMatrix,
                           G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
                 DL = bondviewGfxPlayerField5cMatrix(DL);
-                gfx_set_draw_class(DRAWCLASS_WEAPON);
+                gfx_register_draw_class_dl_range(DRAWCLASS_WEAPON, drawclass_start, DL);
 #endif
                 DL = maybe_mp_interface(DL);
             }
             else
             {
 #ifdef NATIVE_PORT
-                gfx_set_draw_class(DRAWCLASS_WEAPON);
+                Gfx *drawclass_start = DL;
 #endif
                 DL = bondviewRemoved7F08BCB8(DL);
-            }
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
+                gfx_register_draw_class_dl_range(DRAWCLASS_WEAPON, drawclass_start, DL);
 #endif
+            }
 
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_HUD);
+            {
+                Gfx *drawclass_start = DL;
 #endif
             DL = mp_watch_menu_display(DL);
 #ifdef NATIVE_PORT
-            gfx_set_draw_class(DRAWCLASS_UNKNOWN);
+                gfx_register_draw_class_dl_range(DRAWCLASS_HUD, drawclass_start, DL);
+            }
 #endif
         }
     }
@@ -5693,16 +5749,33 @@ void lvlViewMoveTick(void)
     {
         extern int g_pcDebugFlyCamera;
         extern void platformGetMouseDelta(int *dx, int *dy);
-        extern void platformGetRightStick(int *rx, int *ry);
+        extern void platformGetPadRightStick(int k, int *rx, int *ry);
+        extern int g_freezeInput;
 
         /* Inject mouse look and gamepad right-stick directly into player
          * angles (bypasses C-button acceleration for smooth feel).
-         * Only when gameplay camera is active. */
+         * Only when gameplay camera is active.
+         *
+         * Per-player routing (split-screen): the right stick comes from pad
+         * slot == this player's number, so pad k aims player k. Mouse-look is
+         * player 1 (slot 0) only, so it never leaks to players 2-4. */
         if (!g_pcDebugFlyCamera && g_CurrentPlayer->prop != NULL) {
             int mdx = 0, mdy = 0;
             int grx = 0, gry = 0;
-            platformGetMouseDelta(&mdx, &mdy);
-            platformGetRightStick(&grx, &gry);
+            int live_look_allowed = pcNativeLiveLookAllowed();
+            if (local_player_number == 0) {
+                platformGetMouseDelta(&mdx, &mdy);
+            }
+            platformGetPadRightStick(local_player_number, &grx, &gry);
+            if (!live_look_allowed) {
+                mdx = 0;
+                mdy = 0;
+                grx = 0;
+                gry = 0;
+            } else if (g_freezeInput) {
+                grx = 0;
+                gry = 0;
+            }
 
             /* Convert gamepad right stick to pixel-equivalent delta.
              * Scale: 32767 → ~g_pcGamepadLookSpeed pixels per frame (tuned for 60fps).
@@ -5722,6 +5795,42 @@ void lvlViewMoveTick(void)
                 extern int g_pcInvertY;
                 f32 sens = g_CurrentPlayer->insightaimmode
                          ? g_pcMouseSensAim : g_pcMouseSensitivity;
+                /* ADS-1.1 / ADS-1.2 — aimed slow-look. Off-path identity:
+                 * only touches the final `sens` when g_pcAdsEnabled and the
+                 * player is in aim mode; AdsEnabled=0 (or hip-fire) leaves the
+                 * vanilla sens untouched. Applied ONCE here (not on gp_scale,
+                 * which already folds into mdx and is re-multiplied by sens).
+                 * This whole block is inside pcNativeLiveLookAllowed() — when
+                 * live look is disallowed mdx/mdy are zeroed above, so we never
+                 * reach here on the replay/ramrom path. */
+                extern s32 g_pcAdsEnabled;
+                extern f32 g_pcAdsSensitivity;
+                extern s32 g_pcAdsFovCoupleSens;
+                if (g_pcAdsEnabled && g_CurrentPlayer->insightaimmode) {
+                    /* Hand-selection policy (§3): dominant/right hand; fall
+                     * back to the left hand's weapon; default profile if both
+                     * empty (ITEM_UNARMED). */
+                    ITEM_IDS ads_item = getCurrentPlayerWeaponId(GUNRIGHT);
+                    if (ads_item == ITEM_UNARMED) {
+                        ads_item = getCurrentPlayerWeaponId(GUNLEFT);
+                    }
+                    const struct AdsProfile *ads_p = adsGetProfile(ads_item);
+                    /* ADS-1.1: flat per-weapon trim * user multiplier. */
+                    sens *= ads_p->sens_mult * g_pcAdsSensitivity;
+                    /* ADS-1.2: optional FOV-couple — the engine's own
+                     * viGetFovY()/baseFov ratio, floored so the sniper stays
+                     * usable. With sens_mult defaulting to 1.0 under coupling
+                     * (ADS-2.2) the FOV ratio is the sole zoom-based slowdown,
+                     * so no sens_mult^2 double-dip. */
+                    if (g_pcAdsFovCoupleSens) {
+                        f32 base_fov = bondviewGetBaseFovY();
+                        f32 fov_ratio = (base_fov > 0.0001f)
+                                      ? viGetFovY() / base_fov : 1.0f;
+                        if (fov_ratio < 0.2f) fov_ratio = 0.2f;
+                        if (fov_ratio > 1.0f) fov_ratio = 1.0f;
+                        sens *= fov_ratio;
+                    }
+                }
                 if (in_tank_flag == 1) {
                     g_TankTurretAngle += (f32)mdx * sens * (3.14159265f / 180.0f);
 

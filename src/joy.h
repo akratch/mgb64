@@ -38,5 +38,6 @@ s32 joyGamePakLongWrite(u8 address, u8 *buffer, s32 nbytes);
 void joyRumblePakStart(s32 controller, f32 duration);
 void joyRumblePakStop(void);
 void joySetContDataIndex(s32 index);
+s32 joyGetContDataIndex(void);
 
 #endif

@@ -8,6 +8,7 @@
 #include "bondview.h"
 #include "bondinv.h"
 #include "gun.h"
+#include "ads_profiles.h"
 #include "chrobjdata.h"
 #include "game/chrobjhandler.h"
 #include "game/objective_status.h"
@@ -145,6 +146,162 @@ extern int sub_GAME_7F0AC0E8(u8 *arg);
 
 /* debugmenu_handler.c */
 extern s32 get_debug_007_unlock_flag(void);
+
+#ifdef NATIVE_PORT
+/*
+ * ADS-6.1 / ADS-7.1 — sighted weapon-model pose blend + cosmetic recoil cut.
+ *
+ * OFF-PATH IDENTITY: every branch below is gated behind g_pcAdsEnabled and its
+ * sub-flag (g_pcAdsModelPose / g_pcAdsRecoilReduce). With AdsEnabled=0 these
+ * helpers return 0 / are skipped and the matched/vanilla path is byte-identical.
+ *
+ * ACCURACY INVARIANT: bullets exit the eye toward crosshair_angle (gun.c:28456);
+ * the gun model, sway and recoil are purely cosmetic. Nothing here touches
+ * crosshair_angle / field_FFC.
+ *
+ * The pose/recoil blend is driven off the SAME alpha as the FOV-zoom engine
+ * (zoomintime/zoomintimemax, the watch-zoom blend fraction — see ADS-2.1 in
+ * bondview.c) so FOV and pose raise stay coupled (no BF-style decoupling bug).
+ *
+ * Per-hand gating: only the actively-aiming hand (the dominant/firing hand
+ * g_CurrentPlayer->field_FD8) is posed/damped, so the off-hand, split-screen
+ * other player and watch-preview viewmodels keep their vanilla sway.
+ */
+extern s32 g_pcAdsEnabled;
+extern s32 g_pcAdsModelPose;
+extern f32 g_pcAdsRecoilReduce;
+
+/* Returns the ADS pose blend fraction [0,1] for `hand` when that specific hand
+ * is aiming down sights and pose is enabled; otherwise 0.0 (a no-op everywhere
+ * the value is consumed). Gated on per-hand aim so only the active aiming hand
+ * is affected. Drives both the model pose and the sway/X-follow damp. */
+static f32 portAdsPoseBlendForHand(s32 hand)
+{
+    f32 num;
+    f32 den;
+    f32 frac;
+
+    if (!g_pcAdsEnabled || !g_pcAdsModelPose) {
+        return 0.0f;
+    }
+    if (g_CurrentPlayer == NULL) {
+        return 0.0f;
+    }
+    /* Authoring aid (never set in normal play): force a full pose blend on the
+     * right hand so GE007_ADS_POSE_* can be dialed in headlessly without the
+     * scripted-aim path engaging insightaimmode. Same env-gated pattern as the
+     * other GE007_* diag hooks; bypassed entirely when the var is unset. */
+    {
+        static int s_force_pose = -1;
+        if (s_force_pose < 0) s_force_pose = (getenv("GE007_ADS_FORCE_POSE") != NULL);
+        if (s_force_pose && hand == GUNRIGHT) {
+            return 1.0f;
+        }
+    }
+    if (!g_CurrentPlayer->insightaimmode) {
+        return 0.0f;
+    }
+    /* Only the actively-aiming (dominant/firing) hand is posed/damped. */
+    if (hand != g_CurrentPlayer->field_FD8) {
+        return 0.0f;
+    }
+
+    den = g_CurrentPlayer->zoomintimemax;
+    if (den > 0.0f) {
+        num = g_CurrentPlayer->zoomintime;
+        frac = num / den;
+    } else {
+        frac = 1.0f;
+    }
+    if (frac < 0.0f) { frac = 0.0f; }
+    if (frac > 1.0f) { frac = 1.0f; }
+    return frac;
+}
+
+/* ADS-6.1 — resolve the sighted-pose delta for `hand`, scaled by the current ADS
+ * blend, into gun_pos space (translation) + radians (rotation). Source is the
+ * GE007_ADS_POSE_* live-authoring env (read once) when set, else the per-weapon
+ * AdsProfile pose. Returns the blend (0 => caller applies nothing). This runs in
+ * the ACTIVE viewmodel positioner (handles_firing_or_throwing_weapon_in_hand);
+ * the gun model is cosmetic to the eye->crosshair bullet ray, so moving it is
+ * accuracy-safe. Default table pose is 0 => no move unless authored/env-set. */
+static f32 portAdsResolvePose(s32 hand, f32 *dx, f32 *dy, f32 *dz,
+                              f32 *dyaw, f32 *dpitch, f32 *droll)
+{
+    static int s_init = 0;
+    static int s_ax = 0, s_ay = 0, s_az = 0, s_ayaw = 0, s_apitch = 0, s_aroll = 0;
+    static f32 s_x = 0.0f, s_y = 0.0f, s_z = 0.0f;
+    static f32 s_yaw = 0.0f, s_pitch = 0.0f, s_roll = 0.0f;
+    const struct AdsProfile *p;
+    f32 blend;
+
+    *dx = *dy = *dz = *dyaw = *dpitch = *droll = 0.0f;
+
+    blend = portAdsPoseBlendForHand(hand);
+    if (blend <= 0.0f) {
+        return 0.0f;
+    }
+
+    if (!s_init) {
+        const char *e;
+        s_init = 1;
+        if ((e = getenv("GE007_ADS_POSE_X")) && *e)         { s_x = atof(e); s_ax = 1; }
+        if ((e = getenv("GE007_ADS_POSE_Y")) && *e)         { s_y = atof(e); s_ay = 1; }
+        if ((e = getenv("GE007_ADS_POSE_Z")) && *e)         { s_z = atof(e); s_az = 1; }
+        if ((e = getenv("GE007_ADS_POSE_YAW_DEG")) && *e)   { s_yaw = atof(e) * 3.14159265f / 180.0f; s_ayaw = 1; }
+        if ((e = getenv("GE007_ADS_POSE_PITCH_DEG")) && *e) { s_pitch = atof(e) * 3.14159265f / 180.0f; s_apitch = 1; }
+        if ((e = getenv("GE007_ADS_POSE_ROLL_DEG")) && *e)  { s_roll = atof(e) * 3.14159265f / 180.0f; s_aroll = 1; }
+    }
+
+    p = adsGetProfile(getCurrentPlayerWeaponId(hand));
+    *dx     = (s_ax     ? s_x     : p->pose_off_x)   * blend;
+    *dy     = (s_ay     ? s_y     : p->pose_off_y)   * blend;
+    *dz     = (s_az     ? s_z     : p->pose_off_z)   * blend;
+    *dyaw   = (s_ayaw   ? s_yaw   : p->pose_yaw_rad)   * blend;
+    *dpitch = (s_apitch ? s_pitch : p->pose_pitch_rad) * blend;
+    *droll  = (s_aroll  ? s_roll  : p->pose_roll_rad)  * blend;
+    return blend;
+}
+
+/* ADS-7.1 — returns the cosmetic recoil scale [0,1] for `hand` when that hand is
+ * aiming and recoil reduction is enabled; otherwise 1.0 (no-op). Applied to a
+ * LOCAL copy of the recoil accumulators at their cosmetic matrix-consumption
+ * sites, so the persistent gameplay state g_CurrentPlayer->hands[].field_A84 /
+ * field_A88 is NEVER mutated here (avoids cross-frame compounding — those fields
+ * are produced/ramped by sub_GAME_7F05E6B4 and read elsewhere as gameplay
+ * recoil). Default g_pcAdsRecoilReduce==0.0 => returns 1.0 => byte-identical. */
+static f32 portAdsRecoilScaleForHand(s32 hand)
+{
+    f32 num;
+    f32 den;
+    f32 frac;
+    f32 scale;
+
+    if (!g_pcAdsEnabled || g_pcAdsRecoilReduce <= 0.0f) {
+        return 1.0f;
+    }
+    if (g_CurrentPlayer == NULL || !g_CurrentPlayer->insightaimmode) {
+        return 1.0f;
+    }
+    if (hand != g_CurrentPlayer->field_FD8) {
+        return 1.0f;
+    }
+
+    den = g_CurrentPlayer->zoomintimemax;
+    if (den > 0.0f) {
+        num = g_CurrentPlayer->zoomintime;
+        frac = num / den;
+    } else {
+        frac = 1.0f;
+    }
+    if (frac < 0.0f) { frac = 0.0f; }
+    if (frac > 1.0f) { frac = 1.0f; }
+
+    scale = 1.0f - (g_pcAdsRecoilReduce * frac);
+    if (scale < 0.0f) { scale = 0.0f; }
+    return scale;
+}
+#endif /* NATIVE_PORT */
 
 /* platform/stubs.c (ALIGN64_V2 as function) */
 extern u32 ALIGN64_V2(u32 val);
@@ -2927,6 +3084,10 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         if (taser_roll_env != NULL && taser_roll_env[0] != '\0') {
             s_taser_roll_rad = atof(taser_roll_env) * 3.14159265f / 180.0f;
         }
+        /* ADS-6.1 sighted-pose authoring (GE007_ADS_POSE_*) is read in
+         * portAdsResolvePose() and applied in the ACTIVE viewmodel positioner
+         * (handles_firing_or_throwing_weapon_in_hand) — not in this dormant
+         * port-root path. */
         s_viewmodel_yaw_init = 1;
     }
 
@@ -2960,6 +3121,21 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         pitch_to_apply = s_weapon_pitch_rad;
         roll_to_apply = s_weapon_roll_rad;
     }
+
+#ifdef NATIVE_PORT
+    /* ADS-6.1: additively blend the profile sighted pose toward the family pose
+     * by the FOV-coupled blend fraction. Cosmetic only — applied via the same
+     * saved_pos / matrix_4x4_set_position path below, so the model rotates about
+     * its anchor and bullets (eye -> crosshair_angle) are unaffected. With pose=0
+     * in the table (default) and no GE007_ADS_POSE_* override this is a no-op move.
+     * ADS-7.1 recoil cut rides the same blend fraction and hand index. */
+    /* ADS-6.1 sighted pose is applied in the ACTIVE viewmodel positioner
+     * (handles_firing_or_throwing_weapon_in_hand, via portAdsResolvePose on
+     * gun_pos) — NOT here. This port-root path is not the live first-person
+     * draw path, so applying the pose here was a no-op. ADS-7.1 cosmetic recoil
+     * reduction likewise rides the recoil matrix-consumption sites
+     * (portAdsRecoilScaleForHand on local copies of field_A84/field_A88). */
+#endif
 
     if (yaw_to_apply != 0.0f || pitch_to_apply != 0.0f || roll_to_apply != 0.0f) {
         coord3d saved_pos;
@@ -3609,8 +3785,15 @@ static void portApplyFirstPersonWeaponAuthoring(Model *model,
             Mtxf mtx_c;
 
             sub_GAME_7F05E6B4(gunhand, hand->weapon_hold_time);
-            matrix_4x4_set_position_and_rotation_around_y(
-                (f32 *)node_pos, hand->field_A84, &mtx_c);
+            {
+                f32 ads_a84 = hand->field_A84;
+#ifdef NATIVE_PORT
+                /* ADS-7.1: cosmetic recoil cut on a LOCAL copy (default off). */
+                ads_a84 *= portAdsRecoilScaleForHand(gunhand);
+#endif
+                matrix_4x4_set_position_and_rotation_around_y(
+                    (f32 *)node_pos, ads_a84, &mtx_c);
+            }
 
             matrix_4x4_multiply_homogeneous((Mtxf *)root_mtx,
                                             &mtx_c, &matrices[mtxidx]);
@@ -3638,7 +3821,14 @@ static void portApplyFirstPersonWeaponAuthoring(Model *model,
              * which is m[3][2]: Z translation. The decompiled m[1][2]
              * version shears the basis and turns the silenced PP7 into the
              * vertical spike seen on fired frames. */
-            mtx_c.m[3][2] -= hand->field_A88;
+            {
+                f32 ads_a88 = hand->field_A88;
+#ifdef NATIVE_PORT
+                /* ADS-7.1: cosmetic recoil cut on a LOCAL copy (default off). */
+                ads_a88 *= portAdsRecoilScaleForHand(gunhand);
+#endif
+                mtx_c.m[3][2] -= ads_a88;
+            }
 
             matrix_4x4_multiply((Mtxf *)root_mtx, &mtx_c, &matrices[mtxidx]);
         }
@@ -5930,6 +6120,33 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         blendpos_result.y *= g_CurrentPlayer->gunposamplitude;
         blendpos_result.z *= g_CurrentPlayer->gunposamplitude;
 
+#ifdef NATIVE_PORT
+        /* ADS-6.1: damp the breathing/idle sway on the LOCAL per-hand result by
+         * (1 - blend) while THIS hand is aiming, so the sighted picture steadies.
+         * gunposamplitude itself (a shared player field) is left untouched, so the
+         * off-hand / split-screen other player / watch preview keep full sway.
+         * Gated on per-hand aim via portAdsPoseBlendForHand(hand). */
+        {
+            f32 adsSwayBlend = portAdsPoseBlendForHand(hand);
+
+            if (adsSwayBlend > 0.0f) {
+                /* Keep a subtle movement bob (Input.AdsBobFloor) instead of going
+                 * fully rigid: damp = 1 - blend*(1-floor). floor=0 => 1-blend (old
+                 * rigid behavior); floor~0.15 => a small, alive, cosmetic bob. */
+                extern f32 g_pcAdsBobFloor;
+                f32 floor = g_pcAdsBobFloor;
+                f32 adsSwayDamp;
+                if (floor < 0.0f) { floor = 0.0f; }
+                if (floor > 1.0f) { floor = 1.0f; }
+                adsSwayDamp = 1.0f - adsSwayBlend * (1.0f - floor);
+
+                blendpos_result.x *= adsSwayDamp;
+                blendpos_result.y *= adsSwayDamp;
+                blendpos_result.z *= adsSwayDamp;
+            }
+        }
+#endif
+
         blendpos_result.x += hp->weapon_theta_displacement;
         blendpos_result.y += hp->weapon_verta_displacement;
 
@@ -6034,7 +6251,27 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         {
             f32 half = 0.5f;
             f32 aim_x = g_CurrentPlayer->field_FFC.x - screenleft;
-            gun_pos.x += (aim_x - screenleft * half) * stats->CrosshairSpeed / (screenwidth * half);
+            f32 follow_x = (aim_x - screenleft * half) * stats->CrosshairSpeed / (screenwidth * half);
+#ifdef NATIVE_PORT
+            /* ADS-6.1: damp the gun-model X crosshair-follow by (1 - blend) while
+             * THIS hand is aiming so the model settles to a sighted picture.
+             * Cosmetic only — writes gun_pos.x (model), never field_FFC. Gated on
+             * per-hand aim so the off-hand / split-screen / watch preview are not
+             * damped. Reads field_FFC.x as input only. */
+            {
+                f32 adsFollowBlend = portAdsPoseBlendForHand(hand);
+
+                if (adsFollowBlend > 0.0f) {
+                    /* Same subtle-bob floor as the sway damp above (Input.AdsBobFloor). */
+                    extern f32 g_pcAdsBobFloor;
+                    f32 floor = g_pcAdsBobFloor;
+                    if (floor < 0.0f) { floor = 0.0f; }
+                    if (floor > 1.0f) { floor = 1.0f; }
+                    follow_x *= (1.0f - adsFollowBlend * (1.0f - floor));
+                }
+            }
+#endif
+            gun_pos.x += follow_x;
         }
 
         screentop = getPlayer_c_screentop();
@@ -6125,15 +6362,78 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             matrix_4x4_multiply_homogeneous_in_place(&mtx_c, &mtx_b);
         }
 
+#ifdef NATIVE_PORT
+        /* ADS-6.1 "rise to sights": translate the cosmetic gun_pos toward the
+         * sighted pose (blend-scaled, per-weapon AdsProfile or GE007_ADS_POSE_*)
+         * BEFORE the look-at convergence so the weapon moves to a low/centered
+         * pose AND keeps aiming at the crosshair; the pose ROTATION is applied to
+         * the converged matrix below to "square" the barrel (flatten the upward
+         * tilt the convergence imparts to a low weapon). Gated behind g_pcAdsEnabled
+         * && g_pcAdsModelPose && aim. Model is cosmetic to the bullet ray => safe. */
+        f32 ads_dx = 0.0f, ads_dy = 0.0f, ads_dz = 0.0f;
+        f32 ads_yaw = 0.0f, ads_pitch = 0.0f, ads_roll = 0.0f;
+        f32 ads_blend = portAdsResolvePose(hand, &ads_dx, &ads_dy, &ads_dz,
+                                           &ads_yaw, &ads_pitch, &ads_roll);
+        if (ads_blend > 0.0f) {
+            gun_pos.x += ads_dx;
+            gun_pos.y += ads_dy;
+            gun_pos.z += ads_dz;
+        }
+#endif
+
         {
             f32 dx = gun_pos.x - hp->field_A38;
             f32 dy = gun_pos.y - hp->field_A3C;
             f32 dz = gun_pos.z - hp->field_A40;
+#ifdef NATIVE_PORT
+            /* ADS "flat aim": the look-at convergence points the barrel from the low
+             * sighted gun position UP at the near aim point, which reads as an
+             * upward tilt. During ADS, flatten the look-at toward the pure forward
+             * (z) axis — scaled by the blend — so the barrel reads level/forward
+             * down the sights. This is robust across weapon models and view pitch
+             * (unlike a per-gun pose rotation, which over-rotates non-monotonically).
+             * Env-tunable for authoring; defaults to full vertical flatten. */
+            if (ads_blend > 0.0f) {
+                static int s_flat_init = 0;
+                static f32 s_flat_y = 1.0f;   /* GE007_ADS_FLATTEN   (vertical) */
+                static f32 s_flat_x = 0.85f;  /* GE007_ADS_FLATTEN_X (horizontal) */
+                f32 fy, fx;
+                if (!s_flat_init) {
+                    const char *e;
+                    s_flat_init = 1;
+                    if ((e = getenv("GE007_ADS_FLATTEN")) && *e)   s_flat_y = (f32)atof(e);
+                    if ((e = getenv("GE007_ADS_FLATTEN_X")) && *e) s_flat_x = (f32)atof(e);
+                }
+                fy = ads_blend * s_flat_y; if (fy > 1.0f) fy = 1.0f;
+                fx = ads_blend * s_flat_x; if (fx > 1.0f) fx = 1.0f;
+                dy *= (1.0f - fy);
+                dx *= (1.0f - fx);
+            }
+#endif
             matrix_4x4_align(&mtx_c, 0, dx, dy, dz);
             matrix_4x4_multiply_homogeneous_in_place(&mtx_c, &mtx_b);
         }
 
         matrix_4x4_copy(&mtx_b, &mtx_d);
+#ifdef NATIVE_PORT
+        /* Optional ADS pose rotation (yaw/roll only; pitch is handled robustly by
+         * the look-at flatten above, so pose_pitch_rad is normally 0). Kept for
+         * per-weapon fine-tuning via GE007_ADS_POSE_*; inert when the values are 0. */
+        if (ads_blend > 0.0f) {
+            if (ads_pitch != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_x(ads_pitch, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+            if (ads_yaw != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_y(ads_yaw, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+            if (ads_roll != 0.0f) {
+                Mtxf m; matrix_4x4_set_rotation_around_z(ads_roll, &m);
+                matrix_4x4_multiply_in_place(&m, &mtx_d);
+            }
+        }
+#endif
         matrix_4x4_set_position(&gun_pos, &mtx_d);
 
         /* VIEWMODEL DIAG — trace gun_pos components */
@@ -28468,6 +28768,22 @@ void bullet_path_from_screen_center(coord3d* arg0, coord3d* result, enum GUNHAND
         inaccuracy *= 0.25f;
     }
 
+#ifdef NATIVE_PORT
+    // ADS-4.1: per-weapon spread tightening while aiming down sights.
+    // Off-path identity: byte-identical when g_pcAdsEnabled==0. Scalar multiply
+    // only — the 4 RANDOMFRAC()/randomGetNext() draws/shot below are unchanged.
+    {
+        extern s32 g_pcAdsEnabled;
+        extern s32 g_pcAdsSpreadEnabled;
+
+        if (g_pcAdsEnabled && g_pcAdsSpreadEnabled && g_CurrentPlayer->insightaimmode)
+        {
+            // Use the FIRING hand (arg2), per ADS_PLAN §3.
+            inaccuracy *= adsGetProfile(getCurrentPlayerWeaponId(arg2))->spread_mult;
+        }
+    }
+#endif
+
     scaledspread = (120.0f * inaccuracy) / viGetFovY();
 
     randfactor = (RANDOMFRAC() - 0.5f) * RANDOMFRAC();
@@ -30431,6 +30747,7 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
     f32 halfedxy[2];
     s32 tex_w = (s32)img->width;
     s32 tex_h = (s32)img->height;
+    s32 tex_mode = mode != 0 ? 2 : 1;
 
     halfedxy[0] = (f32)tex_w * 0.5f;
     halfedxy[1] = (f32)tex_h * 0.5f;
@@ -30444,7 +30761,7 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
         xypos[1] = height + unk_scale - (f32)tex_h * 0.5f;
     }
 
-    texSelect(&gdl, img, 4, 0, 0);
+    texSelect(&gdl, img, tex_mode, 0, 0);
     display_image_at_position(&gdl, xypos, halfedxy,
         tex_w, (u32)tex_h, 0, flipX ? 1 : 0, 1,
         (u32)r, (u32)g, (u32)b, (u32)a,
@@ -31056,23 +31373,96 @@ static struct sImageTableEntry *portGetAmmoImage(s32 ammo_type) {
     }
 }
 
-static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 x_clip, s32 x_reserve,
-                              s32 halign, s32 y_pos) {
+static f32 portGetAmmoIconYOffset(const AmmoStats *stats)
+{
+    u32 bits = ((u32)stats->field_08 << 16) | (u32)stats->field_0A;
+    f32 value;
+
+    memcpy(&value, &bits, sizeof(value));
+
+    return value;
+}
+
+static void portGetAmmoHudOffsets(s32 *left_offset, s32 *right_offset)
+{
+    if (getPlayerCount() < 3) {
+        *left_offset = 0x3b;
+        *right_offset = 0x3b;
+    } else if ((get_cur_playernum() & 1) != 0) {
+        *left_offset = 0x2b;
+        *right_offset = 0x7f;
+    } else {
+        *left_offset = 0x3b;
+        *right_offset = 0x6d;
+    }
+}
+
+static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
+{
     ITEM_IDS weapon = getCurrentPlayerWeaponId(hand);
     if ((s32)weapon <= 0) return gdl;
 
-    s32 clip = g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
+    s32 ammo_type = get_ammo_type_for_weapon(weapon);
+    if (ammo_type <= AMMO_NONE || ammo_type >= AMMO_RELATED_MAX) return gdl;
+    if (bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_HIDE_AMMO_DISPLAY) != 0) return gdl;
+
+    AmmoStats *stats = &ammo_related[ammo_type];
+    struct sImageTableEntry *image = portGetAmmoImage(ammo_type);
+    s32 icon_width = image ? (s32)image->width : 5;
+    bool no_clip_reloads = (bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_NO_CLIP_RELOADS) != 0);
+    s32 clip = no_clip_reloads ? 0 : g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
     s32 reserve = get_ammo_count_for_weapon(weapon);
+    bool is_left_hand = (hand == GUNLEFT);
 
     /* Weapons with no ammo tracking (e.g. unarmed) return negative */
     if (reserve < 0 && clip <= 0) return gdl;
 
-    if (clip >= 0) {
-        gdl = gunDrawHudInteger(gdl, clip, x_clip, halign, y_pos, HUDVALIGN_BOTTOM, 1);
+    if (image != NULL) {
+        gdl = (Gfx *)set_rgba_redirect_generate_microcode(
+            gdl,
+            image,
+            (f32)icon_x,
+            -1.0f,
+            (f32)y_pos,
+            is_left_hand ? 1 : 0,
+            portGetAmmoIconYOffset(stats),
+            1);
     }
-    if (reserve >= 0) {
-        gdl = gunDrawHudInteger(gdl, reserve, x_reserve, halign, y_pos, HUDVALIGN_BOTTOM, 0);
+
+    gdl = microcode_constructor(gdl);
+
+    if (!no_clip_reloads) {
+        s32 clip_x = is_left_hand
+            ? icon_x + (icon_width >> 1) + 3
+            : icon_x - (icon_width >> 1) - 4;
+
+        gdl = gunDrawHudInteger(
+            gdl,
+            clip,
+            clip_x,
+            is_left_hand ? HUDHALIGN_LEFT : HUDHALIGN_RIGHT,
+            y_pos,
+            HUDVALIGN_BOTTOM,
+            1);
     }
+
+    if (reserve > 0 || no_clip_reloads) {
+        s32 reserve_x = is_left_hand
+            ? icon_x - ((icon_width + 1) >> 1) - 4
+            : icon_x + ((icon_width + 1) >> 1) + 3;
+
+        gdl = gunDrawHudInteger(
+            gdl,
+            reserve,
+            reserve_x,
+            is_left_hand ? HUDHALIGN_RIGHT : HUDHALIGN_LEFT,
+            y_pos,
+            HUDVALIGN_BOTTOM,
+            0);
+    }
+
+    gdl = combiner_bayer_lod_perspective(gdl);
+
     return gdl;
 }
 
@@ -31081,13 +31471,16 @@ Gfx *generate_ammo_total_microcode(Gfx *gdl) {
      * Right-hand weapon at bottom-right, left-hand at bottom-left. */
     if (g_CurrentPlayer->gunammooff != 0) return gdl;
 
+    s32 left_offset;
+    s32 right_offset;
+    s32 view_left = viGetViewLeft();
+    s32 view_right = view_left + viGetViewWidth();
     s32 y_pos = viGetViewTop() + viGetViewHeight() - 20;
 
-    /* Right-hand weapon: clip at x=255, reserve at x=295 */
-    gdl = portDrawHandAmmo(gdl, GUNRIGHT, 255, 295, HUDHALIGN_RIGHT, y_pos);
+    portGetAmmoHudOffsets(&left_offset, &right_offset);
 
-    /* Left-hand weapon (dual-wield): clip at x=25, reserve at x=65 */
-    gdl = portDrawHandAmmo(gdl, GUNLEFT, 25, 65, HUDHALIGN_LEFT, y_pos);
+    gdl = portDrawHandAmmo(gdl, GUNRIGHT, view_right - right_offset, y_pos);
+    gdl = portDrawHandAmmo(gdl, GUNLEFT, view_left + left_offset, y_pos);
 
     return gdl;
 }
@@ -32787,6 +33180,71 @@ Gfx *drawDamageOverlay(Gfx *gdl) {
 
     return gdl;
 }
+
+/* Modern ADS reticle: a clean center dot + four short gapped ticks at the player's
+ * view center, replacing the chunky textured crosshair while aiming for a modern
+ * (CoD-style) look. Drawn with gDPFillRectangle only (no textures / no settex, so
+ * it cannot corrupt texture state — same safe path as drawDamageOverlay). Sizes
+ * scale with the view height so it stays crisp in split-screen / any resolution.
+ * Gated by Input.AdsModernReticle; assumes the centered-crosshair ADS aim. */
+extern s32 g_pcAdsModernReticle;
+Gfx *drawModernAdsReticle(Gfx *gdl) {
+    s32 cx = viGetViewLeft() + viGetViewWidth() / 2;
+    s32 cy = viGetViewTop() + viGetViewHeight() / 2;
+    s32 vh = viGetViewHeight();
+    s32 thk, gap, len, hx, hy, o;
+    /* RGBA5551. Red is an homage to the classic GoldenEye crosshair; a 1px dark
+     * outline keeps the thin red crisp/visible on any background. */
+    u16 red  = (0x1F << 11) | (0x00 << 6) | (0x00 << 1) | 1;
+    u16 dark = (0x00 << 11) | (0x00 << 6) | (0x00 << 1) | 1;
+    u32 fill_red  = ((u32)red << 16) | red;
+    u32 fill_dark = ((u32)dark << 16) | dark;
+    /* env-tunable (px / flags) for polishing; <0 => resolution-scaled default. */
+    static int s_init = 0;
+    static s32 s_thk = -1, s_gap = -1, s_len = -1, s_dot = 1, s_outline = 1;
+
+    if (vh < 1) { vh = 240; }
+    if (!s_init) {
+        const char *e; s_init = 1;
+        if ((e = getenv("GE007_ADS_RETICLE_THK")) && *e)     s_thk = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_GAP")) && *e)     s_gap = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_LEN")) && *e)     s_len = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_DOT")) && *e)     s_dot = (s32)atof(e);
+        if ((e = getenv("GE007_ADS_RETICLE_OUTLINE")) && *e) s_outline = (s32)atof(e);
+    }
+    /* Thinnest practical lines: 1px through ~2x render scale. Short ticks + a
+     * clear center gap read as a precise, modern reticle. */
+    thk = (s_thk >= 0) ? s_thk : (vh / 900); if (thk < 1) { thk = 1; }  /* ~1px */
+    gap = (s_gap >= 0) ? s_gap : (vh / 60);  if (gap < 6) { gap = 6; }  /* ~8px @480 */
+    len = (s_len >= 0) ? s_len : (vh / 44);  if (len < 8) { len = 8; }  /* ~11px @480 */
+    hx = cx - thk / 2;
+    hy = cy - thk / 2;
+    o  = (thk + 1) / 2; if (o < 1) { o = 1; } /* outline expansion */
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_FILL);
+
+    if (s_outline) {                              /* dark outline pass (1px larger) */
+        gDPSetFillColor(gdl++, fill_dark);
+        if (s_dot) { gDPFillRectangle(gdl++, hx - o, hy - o, hx + thk + o, hy + thk + o); }
+        gDPFillRectangle(gdl++, hx - o, cy - gap - len - o, hx + thk + o, cy - gap + o);
+        gDPFillRectangle(gdl++, hx - o, cy + gap - o, hx + thk + o, cy + gap + len + o);
+        gDPFillRectangle(gdl++, cx - gap - len - o, hy - o, cx - gap + o, hy + thk + o);
+        gDPFillRectangle(gdl++, cx + gap - o, hy - o, cx + gap + len + o, hy + thk + o);
+        gDPPipeSync(gdl++);
+    }
+
+    gDPSetFillColor(gdl++, fill_red);             /* red reticle */
+    if (s_dot) { gDPFillRectangle(gdl++, hx, hy, hx + thk, hy + thk); }
+    gDPFillRectangle(gdl++, hx, cy - gap - len, hx + thk, cy - gap);     /* top */
+    gDPFillRectangle(gdl++, hx, cy + gap, hx + thk, cy + gap + len);     /* bottom */
+    gDPFillRectangle(gdl++, cx - gap - len, hy, cx - gap, hy + thk);     /* left */
+    gDPFillRectangle(gdl++, cx + gap, hy, cx + gap + len, hy + thk);     /* right */
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+    return gdl;
+}
 #endif /* NATIVE_PORT */
 
 
@@ -32801,6 +33259,23 @@ void gunDrawSight(Gfx **gdl) {
             static int s_dump_crosshair = -1;
             static int s_dumped_crosshair = 0;
             Gfx *dl = *gdl;
+
+            /* ADS modern reticle override: while aiming with ADS on, draw the clean
+             * dot+ticks reticle instead of the chunky textured crosshair. Gated by
+             * g_pcAdsEnabled + Input.AdsModernReticle; off => unchanged crosshair. */
+            {
+                extern s32 g_pcAdsEnabled;
+                extern s32 g_pcAdsModernReticle;
+                static int s_force_reticle = -1;
+                if (s_force_reticle < 0) {
+                    s_force_reticle = (getenv("GE007_ADS_RETICLE_FORCE") != NULL);
+                }
+                if (g_pcAdsEnabled && g_pcAdsModernReticle &&
+                    (g_CurrentPlayer->insightaimmode || s_force_reticle)) {
+                    *gdl = drawModernAdsReticle(*gdl);
+                    return;
+                }
+            }
             f32 xypos[2];
             f32 halfedxy[2];
 

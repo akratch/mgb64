@@ -40,6 +40,11 @@ The public validation surface is organized into these lanes:
 | Static | Raw native switch-node dereferences (no ROM) | `check_native_switch_access.py` |
 | Boot | Spawn invariants, asserts, crashes, render-health counters on level load | `spawn_health_check.sh` |
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
+| Scripted look | Deterministic input-freeze isolation while preserving authored `GE007_AUTO_LOOK_*` probes | `scripted_look_smoke.sh` |
+| Damage HUD | Deterministic Bond damage, active health/damage timers, visible health/armor rings, optional HUD-class triangle check | `damage_hud_smoke.sh` |
+| Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
+| Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
+| Multiplayer | Split-screen deathmatch boot; asserts the two framebuffer halves are measurably dissimilar | `mp_smoke.sh` |
 | Route contract | ROM-oracle route spec/adapters, optional native route captures | `route_contract_smoke.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
 | Screenshot | Missing, wrong-size, blank, or nearly monochrome frame captures | `audit_screenshot_health.py` |
@@ -96,6 +101,8 @@ number of failed levels.
 ./tools/playability_smoke.sh --all           # all 20 stages
 ./tools/playability_smoke.sh --level 33      # single raw LEVELID
 ./tools/playability_smoke.sh --no-build      # reuse an existing build
+./tools/playability_smoke.sh --all --no-build \
+  --config-override Video.RenderScale=2      # scene-target probe
 ```
 
 This direct-native lane disables authored intros explicitly, holds a deterministic
@@ -109,13 +116,123 @@ the first pattern that satisfies all checks. Use `--pattern`, `--input-window`,
 `--min-moving-records`, and `--min-horizontal-delta` when validating a narrower
 route.
 
+The lane pins `Video.WindowWidth=640`, `Video.WindowHeight=480`, and
+`Video.WindowMode=windowed` with command-line config overrides by default. This
+keeps generated `ge007.ini` files and high-DPI desktop window sizes from
+changing screenshot composition or scene-target size between attempts. Add
+repeatable `--config-override Section.Key=value` options for targeted probes,
+or pass `--no-default-config-overrides` when the point of the test is the user's
+actual window/config profile.
+
+After each process run, the lane audits the generated `ge007.ini` against every
+requested override whose value should persist. This catches branch-vs-reference
+mistakes where an older binary ignores `--config-override` and renders with a
+different window/aspect while the harness log still lists the requested
+settings. `Video.WindowX=-1` and `Video.WindowY=-1` are intentionally exempt
+because the runtime persists the resolved centered window position.
+
 The output directory defaults to `/tmp/mgb64_playability_smoke_*`. It includes a
 `summary.tsv` row for each level's accepted pattern, a top-level `summary.json`
-with the accepted-level list and pass/fail counts, plus per-attempt screenshot,
-render, and movement audit JSON files. Movement audit JSON contains
-moving-record counts, displacement, target-player record counts, input-event
-counts, and any failures. Keep generated JSONL traces, screenshots, summaries,
-and audit logs local.
+with the accepted-level list and pass/fail counts, a `contact_sheet.png` visual
+review sheet of accepted screenshots, plus per-attempt screenshot, render, and
+movement audit JSON files. Movement audit JSON contains moving-record counts,
+displacement, target-player record counts, input-event counts, and any
+failures. The top-level summary also records the config overrides applied to the
+run. Keep generated JSONL traces, screenshots, summaries, contact sheets, and
+audit logs local.
+
+### Scripted look smoke
+
+```sh
+./tools/scripted_look_smoke.sh
+./tools/scripted_look_smoke.sh --no-build --level 36
+```
+
+This lane exists because deterministic screenshot/oracle captures set
+`g_freezeInput` to block live keyboard, mouse, and gamepad input. That freeze
+must not suppress authored `GE007_AUTO_LOOK_*` probes; otherwise broad
+look-direction screenshot comparisons silently capture a different camera angle
+and mislabel composition drift as a renderer regression. The smoke direct-boots
+a baseline and a `GE007_AUTO_LOOK_UP` run, then requires the baseline pitch to
+stay near zero while the scripted run changes `move.pitch` by the configured
+minimum. Keep the generated traces and screenshots local.
+
+### Damage HUD smoke
+
+```sh
+./tools/damage_hud_smoke.sh                 # Dam, Surface 1, Facility
+./tools/damage_hud_smoke.sh --level 33      # single raw LEVELID
+./tools/damage_hud_smoke.sh --no-build      # reuse an existing build
+```
+
+This focused lane injects deterministic Bond damage, captures a state trace plus
+screenshot, and requires: clean process exit, zero `[GEASSERT]` failures, valid
+screenshot health, strict render-health audit, active `damage_show` and
+`health_show` trace state, and visible warm health-ring plus cool armor-ring
+pixels. HUD-class triangle counting is optional via `--min-hud-tris`; the
+default level set includes Dam and Surface 1 because their level visibility scale
+is `0.2`, plus Facility as the normal-scale control.
+
+The output directory defaults to `/tmp/mgb64_damage_hud_smoke_*` and contains
+per-level screenshots, logs, JSONL traces, render audit JSON, damage-HUD audit
+JSON, and a `summary.tsv`. Keep these ROM-derived artifacts local.
+
+### Stability soak
+
+```sh
+./tools/soak_stability.sh                 # Dam, Cradle, Caverns
+./tools/soak_stability.sh --all           # all 20 stages
+./tools/soak_stability.sh --frames 10800  # longer soak per stage
+./tools/soak_stability.sh --no-build      # reuse an existing build
+```
+
+This long headless deterministic lane boots each stage with `GE007_DEBUG=1`,
+runs it for `--frames` frames, captures the JSONL state trace, and pipes it
+through `tools/audit_render_trace.py --max-crashes 0`. Any crash, recovery,
+unhandled GBI command, non-finite trace value, or display-list resolve failure
+hard-fails the lane. Per-frame render cost is now part of the trace via the
+`tris` and `rooms_drawn` fields (triangle count and `g_BgNumberOfRoomsDrawn`),
+so soak summaries can track rendering load over time. The output directory
+defaults to `/tmp/mgb64_soak_stability_*`. Exit code = number of failed stages.
+
+### ASan/UBSan smoke
+
+```sh
+./tools/asan_smoke.sh                 # report-only, exits 0
+./tools/asan_smoke.sh --gate          # fail on any sanitizer finding
+./tools/asan_smoke.sh --no-build      # reuse an existing build-asan binary
+```
+
+This configures a separate `-DSANITIZE=ON` build directory (`build-asan`) and
+runs a short deterministic pass over a few stages with
+`ASAN_OPTIONS=halt_on_error=1:detect_leaks=0` and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. It is report-only by default
+and always exits 0; pass `--gate` to make sanitizer findings fail the lane. The
+output directory defaults to `/tmp/mgb64_asan_smoke_*`.
+
+### Multiplayer split-screen smoke
+
+```sh
+./tools/mp_smoke.sh                                   # 2P temple deathmatch
+./tools/mp_smoke.sh --players 4 --mp-stage complex    # 4P split-screen
+./tools/mp_smoke.sh --timelimit 4                     # forced 4s match timer boundary
+./tools/mp_smoke.sh --no-build                        # reuse an existing build
+```
+
+This boots a split-screen deathmatch via the native `--multiplayer`,
+`--players`, `--mp-stage`, and `--scenario` flags, drives a short deterministic
+P1 input window, and requires: clean process exit, zero `[GEASSERT]` failures,
+a strict render-health audit (`--max-crashes 0`), and a valid 640x480
+screenshot. It then crops the framebuffer at `SCREEN_HEIGHT/2` and uses
+`tools/compare_screenshots.py` to assert the top (P1) and bottom (P2) halves are
+measurably dissimilar; a duplicated-camera regression that renders identical
+halves fails the lane. `--timelimit SECS` additionally passes
+`--mp-timelimit` to the native direct-boot path and asserts the MP trace timer
+reaches the requested limit crash-free. The output directory defaults to
+`/tmp/mgb64_mp_smoke_*`.
+
+Native-port feature patterns, current user-facing settings, and validation lane
+expectations are summarized in [PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 
 ### ROM-oracle route contract smoke
 
@@ -131,6 +248,17 @@ audits, movement audits, and intro actor/animation audits execute without a
 stock ares oracle build. The output directory defaults to
 `/tmp/mgb64_route_contract_smoke_*`; generated traces, screenshots, logs, and
 summaries are ROM-derived local artifacts and must not be committed.
+
+With a local instrumented ares binary from
+`tools/prepare_ares_movement_oracle_build.sh`,
+`tools/movement_oracle_capture.sh --ares-bin ...` captures the same route from
+stock ares. The stock lane now writes a local `stock_<route>.ppm` framebuffer
+dump, audits it with `audit_screenshot_health.py`, and records it in
+`summary_<route>.json`. By default the dump uses `stock_frames`, but a route may
+set `stock_screenshot_frame` when the emulator needs extra menu/frontend frames
+and the useful visual checkpoint happens earlier than process exit. Use the dump
+as a ground-truth visual checkpoint next to the movement/intro comparator; it is
+still a ROM-derived artifact and must stay out of git.
 
 ### Save persistence
 
@@ -522,7 +650,90 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_TRACE_CHRNUM=N` | add one guard's AI/action/render state to `--trace-state` |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |
 | `GE007_NO_FOG=1`, `GE007_WIREFRAME=1`, `GE007_TEX_ONLY=1` | renderer debug toggles |
+| `GE007_FOG_USE_LINEAR_DEPTH=1` | fog-depth negative control; remaps camera-space depth linearly and should not be used as the N64-parity default |
+| `GE007_FORCE_POINT_FILTER=1`, `GE007_FORCE_LINEAR_FILTER=1`, `GE007_DISABLE_N64_FILTER=1` | texture-filter A/B probes for smearing, bilerp, and shader-filter issues |
+| `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1`, `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD=N`, `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` | N64 shader-filter controls; use to separate threshold policy from texture decode |
+| `GE007_FORCE_ROOM_POINT_FILTER=1` | negative control for room-geometry filtering; this intentionally bypasses the default N64 shader filter and should look harsher on Dam/Cradle/Surface |
+| `GE007_TRACE_TEX_FOOTPRINT=1`, `GE007_TRACE_TEX_FOOTPRINT_BUDGET=N` | log `G_SETTILESIZE` decode-footprint decisions, including row pitch, visible row width, LOD state, and room-DL context |
+| `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
+| `GE007_TINT_TEX=min:max`, `GE007_SKIP_TEX=min:max` | tint or skip `G_SETTEX` texture-number ranges; these match stable game texture numbers, not transient GL upload ids |
+| `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
+| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
+
+Fog regressions can masquerade as texture loss on distant stages. N64
+`gSPFogPosition` values are specified from near plane to far plane, but the
+effect is nonlinear after perspective transform; a narrow range such as
+Cradle's 996..1000 ramp can legitimately fog much earlier than a linear
+world-distance reading suggests. Use `GE007_TRACE_FOG_TRIANGLES=1` before
+changing texture decode/filtering. The parity path uses `clip_z / clip_w`;
+for negative or near-zero homogeneous `w`, keep the legacy saturated reciprocal
+behavior so clipped geometry does not become incorrectly clear.
+`GE007_FOG_USE_LINEAR_DEPTH=1` is only a negative control for proving that a
+linear remap is causing over-clear distant geometry.
+
+Room geometry should not default to point sampling. The game's room display
+lists commonly request N64 texture filtering, and the native path routes that
+through the shader-side N64 filter. A blanket room-nearest override bypasses
+that path and shows up as low color diversity/blocky texture regression on
+Cradle, Dam, Surface, and similar large room surfaces.
+
+Texture regressions tend to fall into three separate classes. Keep them
+separate during review so one fix does not hide another:
+
+1. **Filter policy:** `GE007_DISABLE_N64_FILTER=1` falls back to ordinary GL
+   bilinear sampling and can produce diagonal/near-plane smear on Dam and
+   Cradle room geometry. The default path uses the shader-side N64 filter plus a
+   nearest threshold. The footprint is normalized to the N64 VI/logical pixel
+   grid so RenderScale and high-DPI windows do not change shader branch policy.
+   Clamped non-texture-edge room materials use the same `1.0` default threshold
+   as the rest of the N64 filter path; a special `0.05` threshold is a known
+   over-softening regression on Bunker's warning sign and similar close room
+   textures. Use
+   `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD=N` to isolate
+   that class.
+   `GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1` is the negative control: it removes
+   the threshold and should visibly soften large close surfaces.
+2. **Decoded-source footprint:** texture-cache identity must include the decoded
+   source row pitch as well as visible upload dimensions. N64 room materials can
+   describe the same visible tile size from either packed `LOADBLOCK` bytes or a
+   strided `LOADTILE`/sub-rect source; omitting the source pitch lets a later
+   material reuse a GL texture decoded with the wrong stride, which looks like
+   row smear even though the source bytes and sampler mode are correct.
+   `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` is the negative control: if it
+   barely changes a capture, the active defect is probably filter policy rather
+   than decoded-source stride.
+3. **Rare `G_SETTEX` tile state:** stale ordinary TMEM tile descriptors can
+   survive next to the active texture-by-number state. A healthy
+   `GE007_TRACE_SETTEX_MATERIAL_CC='*'` trace has shader clamp bits that agree
+   with the decoded `settex` fallback tile state. If `tile0`/`tile1` says wrap
+   but `opts` still carries `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will
+   clamp repeated room coordinates to an edge row/column and stretch it across
+   the surface. The renderer should only trust an authored room tile descriptor
+   when its clamp, shift, offset, and dimensions match the current `G_SETTEX`
+   state.
+4. **Material attribution:** `G_SETTEX` texture numbers and OpenGL upload ids
+   are not interchangeable. Use `GE007_TINT_TEX`/`GE007_SKIP_TEX` to isolate
+   stable game texture numbers, then confirm the material with
+   `GE007_TRACE_SETTEX_MATERIAL_CC='*'`. Runway is a good counterexample: the
+   same visual band can include texture 22, 1267, and ordinary room materials,
+   so a single broad crop can make the wrong texture look guilty.
+
+The June 2026 renderer regression postmortem is in
+[RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md). It summarizes the
+glass, filter-footprint, decoded-footprint, `G_SETTEX`, and fog failure modes
+that this instrumentation is meant to keep from recurring.
+
+Renderer acceptance captures should use a clean config profile or explicit
+overrides. A repo-root run can load local `ge007.ini`; values such as
+`Video.FovY=75` deliberately change composition and pixel metrics. The
+playability smoke lane pins its validation window by default; for stock visual
+baselines, keep that default and add only the probe-specific overrides, such as
+`--config-override Video.FovY=60 --config-override Video.RenderScale=1` or
+`--config-override Video.RenderScale=2`. When comparing against an older binary
+that does not support the current config-override path, use
+`--no-default-config-overrides` on both captures or upgrade the reference binary
+before trusting whole-frame screenshot deltas.
 
 ### Renderer diagnostics & experimental fixes (default OFF)
 
@@ -536,8 +747,9 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_DIAG_NOPERSPECTIVE_SETTEX_TEXCOORDS=1` | noperspective texcoords for `settex` materials |
 | `GE007_DIAG_SETTEX_CC_COLOR_SCALE=1` | enable a combiner color scale on `settex` materials (menu brightness experiment) |
 | `GE007_DIAG_SETTEX_CC_COLOR_SCALE_VALUE=N` | the scale factor (default `1.02`) |
-| `GE007_TEXTURED_PROP_BULLET_IMPACTS=1` | opt into original textured prop-attached bullet impacts |
-| `GE007_FLAT_PROP_BULLET_IMPACTS=1` | force shade-only prop-attached bullet impacts |
+| `GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET=N` | tune the default glass-crack decal lift (default `2.0`) |
+| `GE007_BULLET_IMPACT_NORMAL_OFFSET=N` | force a global decal lift for diagnostics |
+| `GE007_FLAT_PROP_BULLET_IMPACTS=1` | force shade-only (legacy flat) prop-attached bullet impacts; textured bullet-hole decals are now the N64-faithful default for **all** props (crates/barrels/screens/glass), so this is the A/B escape hatch |
 | `GE007_FLAT_BULLET_IMPACTS=1` | force shade-only bullet impacts globally |
 
 Run visual experiments with these set, compare against the default visually (and
@@ -610,6 +822,28 @@ Relevant `ge007` command-line flags: `--rom PATH`, `--level N`
 `--background`, `--no-input-grab`, `--trace-state path.jsonl`,
 `--screenshot-frame N` / `--screenshot-label L` / `--screenshot-exit`.
 
+For headless split-screen multiplayer validation there is a parallel
+direct-boot path: `--multiplayer` enters a match directly (bypassing the
+frontend), `--players N` sets the player count (2-4), `--mp-stage NAME-or-id`
+picks a multiplayer stage (`temple`, `complex`, `caves`, `library`, `basement`,
+`stack`, `facility`, `bunker`, `archives`, `caverns`, `egypt`, or `random`; a
+raw `MP_STAGE` index also works), and `--scenario NAME-or-id` selects the combat
+mode (`normal` aka `deathmatch`/`combat`, `yolt`, `flagtag`, `goldengun`, `ltk`,
+`2v2`, `3v1`, `2v1`). Passing any of `--players`, `--mp-stage`, or `--scenario`
+implies `--multiplayer`. The MP direct-boot honors the same deterministic env
+knobs as the solo path (`GE007_DETERMINISTIC*`, `GE007_AUTO_*`, the screenshot
+and `--trace-state` hooks), so a 2-player run is scriptable:
+
+```sh
+env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
+  GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
+  --multiplayer --players 2 --mp-stage temple --scenario normal \
+  --deterministic --trace-state mp_state.jsonl \
+  --screenshot-frame 120 --screenshot-label mp_temple_2p \
+  --screenshot-exit > run.log 2>&1
+```
+
 ### Transparent room material probe
 
 Glass, water, and similar authored level geometry live in secondary room display
@@ -626,7 +860,7 @@ env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_NO_VSYNC=1 \
   GE007_BLEND_AUDIT_INTERVAL=120 \
   /path/to/build/ge007 --rom /path/to/baserom.u.z64 \
   --level dam --deterministic \
-  --screenshot-frame 220 --screenshot-label dam_glass_probe \
+  --screenshot-game-timer 220 --screenshot-label dam_glass_probe \
   --screenshot-exit > run.log 2>&1
 ```
 
@@ -635,6 +869,13 @@ The important `BLEND-AUDIT` invariant is that true XLU surface modes such as
 `edge no`. Explicit TEX_EDGE/cutout modes should still report `edge yes`. If
 `BG-ROOM-PTR` shows secondary pointers as null for rooms with nonzero secondary
 sizes, investigate room loading before touching renderer state.
+
+For visual parity probes that need the same gameplay state across branches, use
+`--screenshot-game-timer N` instead of `--screenshot-frame N`. The frame trigger
+counts SDL/render syncs and can fire before comparable player simulation time if
+startup, intro, or loading behavior differs. The game-timer trigger captures once
+`g_GlobalTimer >= N`, so branch-to-branch screenshots line up on the same mission
+tick.
 
 ### Vehicle AI/path probe
 
@@ -667,10 +908,9 @@ If `VEHICLE_STATE` ticks appear with `path_id=-1`, `speed=0`, and `aim=0` while
 no `VEHICLE_AI` lines appear, inspect setup prop conversion and `ailistFindById`
 resolution for vehicle/aircraft props. If AI lines appear but movement stalls,
 look for `missing_switch_3`, `move_rejected_nav`, `move_rejected_footprint`, and
-waypoint-sentinel handling in the object handler. A longer Dam intro run
-currently reaches a separate render crash under investigation; the frame-80
-probe is intentionally short enough to prove vehicle startup movement without
-crossing into that failure.
+waypoint-sentinel handling in the object handler. The frame-80 probe is short by
+design: it proves authored vehicle startup movement without turning into a broad
+Dam intro/rendering soak.
 
 ## ROM movement oracle
 

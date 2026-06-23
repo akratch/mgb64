@@ -10,9 +10,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include "config_pc.h"
+#include "settings.h"
 #include "savedir.h"
 #include <errno.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 /* ===== Types ===== */
 
@@ -20,7 +29,9 @@ typedef enum {
     CFG_NONE,
     CFG_S32,
     CFG_F32,
-    CFG_U32
+    CFG_U32,
+    CFG_ENUM,
+    CFG_STRING
 } ConfigType;
 
 typedef struct {
@@ -33,12 +44,26 @@ typedef struct {
         struct { s32 min_s32, max_s32; };
         struct { u32 min_u32, max_u32; };
     };
+    const ConfigEnumOption *enum_options;
+    s32 enum_count;
+    size_t string_capacity;
 } ConfigEntry;
+
+#define CONFIG_MAX_UNKNOWN_SETTINGS 128
+#define CONFIG_MAX_VALUE_LENGTH 384
+
+typedef struct {
+    char key[CONFIG_MAX_KEYNAME + 1];   /* "Section.Key" */
+    s32 seclen;                         /* length of section prefix */
+    char value[CONFIG_MAX_VALUE_LENGTH + 1];
+} ConfigUnknownEntry;
 
 /* ===== State ===== */
 
 static ConfigEntry s_entries[CONFIG_MAX_SETTINGS];
 static s32 s_numEntries;
+static ConfigUnknownEntry s_unknownEntries[CONFIG_MAX_UNKNOWN_SETTINGS];
+static s32 s_numUnknownEntries;
 
 /* ===== Helpers ===== */
 
@@ -72,7 +97,7 @@ static ConfigEntry *findEntry(const char *key) {
 static ConfigEntry *addEntry(const char *key) {
     if (s_numEntries >= CONFIG_MAX_SETTINGS) return NULL;
     ConfigEntry *e = &s_entries[s_numEntries++];
-    snprintf(e->key, CONFIG_MAX_KEYNAME, "%s", key);
+    snprintf(e->key, sizeof(e->key), "%s", key);
     const char *dot = strrchr(e->key, '.');
     e->seclen = dot ? (s32)(dot - e->key) : 0;
     return e;
@@ -81,6 +106,29 @@ static ConfigEntry *addEntry(const char *key) {
 static ConfigEntry *findOrAddEntry(const char *key) {
     ConfigEntry *e = findEntry(key);
     return e ? e : addEntry(key);
+}
+
+static ConfigUnknownEntry *findUnknownEntry(const char *key) {
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        if (strcasecmp(s_unknownEntries[i].key, key) == 0)
+            return &s_unknownEntries[i];
+    }
+    return NULL;
+}
+
+static void rememberUnknownEntry(const char *key, const char *value) {
+    ConfigUnknownEntry *e = findUnknownEntry(key);
+
+    if (!e) {
+        if (s_numUnknownEntries >= CONFIG_MAX_UNKNOWN_SETTINGS) return;
+        e = &s_unknownEntries[s_numUnknownEntries++];
+        memset(e, 0, sizeof(*e));
+        snprintf(e->key, sizeof(e->key), "%s", key);
+        const char *dot = strrchr(e->key, '.');
+        e->seclen = dot ? (s32)(dot - e->key) : 0;
+    }
+
+    snprintf(e->value, sizeof(e->value), "%s", value);
 }
 
 /* ===== Registration ===== */
@@ -103,12 +151,34 @@ void configRegisterUInt(const char *key, u32 *var, u32 min, u32 max)
     if (e) { e->type = CFG_U32; e->ptr = var; e->min_u32 = min; e->max_u32 = max; }
 }
 
+void configRegisterEnum(const char *key, s32 *var,
+                        const ConfigEnumOption *options, s32 option_count)
+{
+    ConfigEntry *e = findOrAddEntry(key);
+    if (e) {
+        e->type = CFG_ENUM;
+        e->ptr = var;
+        e->enum_options = options;
+        e->enum_count = option_count;
+    }
+}
+
+void configRegisterString(const char *key, char *var, size_t capacity)
+{
+    ConfigEntry *e = findOrAddEntry(key);
+    if (e) {
+        e->type = CFG_STRING;
+        e->ptr = var;
+        e->string_capacity = capacity;
+    }
+}
+
 /* ===== Set from string (INI parsing) ===== */
 
-static void setFromString(const char *key, const char *val)
+static s32 setFromString(const char *key, const char *val)
 {
     ConfigEntry *e = findEntry(key);
-    if (!e) return;
+    if (!e) return 0;
 
     switch (e->type) {
         case CFG_S32: {
@@ -126,8 +196,29 @@ static void setFromString(const char *key, const char *val)
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             *(u32 *)e->ptr = v;
         } break;
+        case CFG_ENUM: {
+            s32 found = 0;
+            for (s32 i = 0; i < e->enum_count; i++) {
+                if (e->enum_options[i].token &&
+                    strcasecmp(e->enum_options[i].token, val) == 0) {
+                    *(s32 *)e->ptr = e->enum_options[i].value;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                *(s32 *)e->ptr = (s32)strtol(val, NULL, 0);
+            }
+        } break;
+        case CFG_STRING: {
+            if (e->ptr && e->string_capacity > 0) {
+                snprintf((char *)e->ptr, e->string_capacity, "%s", val);
+            }
+        } break;
         default: break;
     }
+
+    return 1;
 }
 
 /* ===== Load ===== */
@@ -139,6 +230,7 @@ static s32 configLoad(const char *path)
 
     char line[512];
     char curSection[CONFIG_MAX_SECNAME + 1] = {0};
+    s_numUnknownEntries = 0;
 
     while (fgets(line, sizeof(line), f)) {
         char *p = trimWhitespace(line);
@@ -168,7 +260,9 @@ static s32 configLoad(const char *path)
         else
             snprintf(fullKey, CONFIG_MAX_KEYNAME, "%s", keyPart);
 
-        setFromString(fullKey, valPart);
+        if (!setFromString(fullKey, valPart)) {
+            rememberUnknownEntry(fullKey, valPart);
+        }
     }
 
     fclose(f);
@@ -177,8 +271,82 @@ static s32 configLoad(const char *path)
 
 /* ===== Save ===== */
 
+static void formatSettingDefault(const Setting *setting, char *out, size_t out_size) {
+    switch (setting->type) {
+        case SETTING_TYPE_INT:
+            snprintf(out, out_size, "%d", setting->def.s32_value);
+            break;
+        case SETTING_TYPE_UINT:
+            snprintf(out, out_size, "%u", setting->def.u32_value);
+            break;
+        case SETTING_TYPE_FLOAT:
+            snprintf(out, out_size, "%g", (double)setting->def.f32_value);
+            break;
+        case SETTING_TYPE_ENUM:
+            snprintf(out, out_size, "%s", settingsEnumTokenForValue(setting, setting->def.s32_value));
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "%s", setting->def_string ? setting->def_string : "");
+            break;
+        default:
+            snprintf(out, out_size, "?");
+            break;
+    }
+}
+
+static void formatSettingRange(const Setting *setting, char *out, size_t out_size) {
+    switch (setting->type) {
+        case SETTING_TYPE_INT:
+            snprintf(out, out_size, "%d..%d", setting->min.s32_value, setting->max.s32_value);
+            break;
+        case SETTING_TYPE_UINT:
+            snprintf(out, out_size, "%u..%u", setting->min.u32_value, setting->max.u32_value);
+            break;
+        case SETTING_TYPE_FLOAT:
+            snprintf(out, out_size, "%g..%g",
+                     (double)setting->min.f32_value,
+                     (double)setting->max.f32_value);
+            break;
+        case SETTING_TYPE_ENUM:
+            settingsFormatEnumOptions(setting, out, out_size);
+            break;
+        case SETTING_TYPE_STRING:
+            snprintf(out, out_size, "len<%u", (unsigned int)setting->string_capacity);
+            break;
+        default:
+            snprintf(out, out_size, "?");
+            break;
+    }
+}
+
+static void saveEntryMetadataComment(ConfigEntry *e, FILE *f) {
+    const Setting *setting = settingsFind(e->key);
+    char def[64];
+    char range[64];
+
+    if (!setting) {
+        return;
+    }
+
+    formatSettingDefault(setting, def, sizeof(def));
+    formatSettingRange(setting, range, sizeof(range));
+
+    if (setting->label) {
+        fprintf(f, "# %s\n", setting->label);
+    }
+    if (setting->help) {
+        fprintf(f, "# %s\n", setting->help);
+    }
+    fprintf(f, "# type=%s scope=%s default=%s range=%s\n",
+            settingsTypeName(setting->type),
+            settingsScopeName(setting->scope),
+            def,
+            range);
+}
+
 static void saveEntry(ConfigEntry *e, FILE *f) {
     const char *keyName = e->key + e->seclen + (e->seclen > 0 ? 1 : 0);
+    saveEntryMetadataComment(e, f);
     switch (e->type) {
         case CFG_S32: {
             s32 v = *(s32 *)e->ptr;
@@ -195,16 +363,81 @@ static void saveEntry(ConfigEntry *e, FILE *f) {
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             fprintf(f, "%s=%u\n", keyName, v);
         } break;
+        case CFG_ENUM: {
+            s32 v = *(s32 *)e->ptr;
+            const char *token = NULL;
+            for (s32 i = 0; i < e->enum_count; i++) {
+                if (e->enum_options[i].value == v) {
+                    token = e->enum_options[i].token;
+                    break;
+                }
+            }
+            if (token) {
+                fprintf(f, "%s=%s\n", keyName, token);
+            } else {
+                fprintf(f, "%s=%d\n", keyName, v);
+            }
+        } break;
+        case CFG_STRING:
+            fprintf(f, "%s=%s\n", keyName, e->ptr ? (char *)e->ptr : "");
+            break;
         default: break;
     }
 }
 
+static const char *configKeyName(const char *key, s32 seclen) {
+    return key + seclen + (seclen > 0 ? 1 : 0);
+}
+
+static void configSectionName(const char *key, s32 seclen, char *out, size_t out_size) {
+    if (out_size == 0) return;
+
+    if (seclen > 0 && seclen <= CONFIG_MAX_SECNAME) {
+        memcpy(out, key, (size_t)seclen);
+        out[seclen] = '\0';
+    } else {
+        snprintf(out, out_size, "General");
+    }
+}
+
+static void saveUnknownEntry(ConfigUnknownEntry *e, FILE *f) {
+    fprintf(f, "%s=%s\n", configKeyName(e->key, e->seclen), e->value);
+}
+
+static void saveUnknownSection(const char *section, FILE *f, u8 *written) {
+    char sec[CONFIG_MAX_SECNAME + 1];
+
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        if (written[i]) continue;
+
+        configSectionName(s_unknownEntries[i].key, s_unknownEntries[i].seclen, sec, sizeof(sec));
+        if (strcmp(sec, section) == 0) {
+            saveUnknownEntry(&s_unknownEntries[i], f);
+            written[i] = 1;
+        }
+    }
+}
+
+static s32 replaceConfigFile(const char *tmp_path, const char *path) {
+#ifdef _WIN32
+    return MoveFileExA(tmp_path, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+#else
+    return rename(tmp_path, path);
+#endif
+}
+
 s32 configSave(void)
 {
-    const char *path = savedirPath(CONFIG_FILENAME);
-    FILE *f = fopen(path, "w");
+    char path[PATH_MAX];
+    char tmp_path[PATH_MAX];
+    u8 unknown_written[CONFIG_MAX_UNKNOWN_SETTINGS] = {0};
+    const char *saved_path = savedirPath(CONFIG_FILENAME);
+    snprintf(path, sizeof(path), "%s", saved_path);
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+    FILE *f = fopen(tmp_path, "w");
     if (!f) {
-        printf("[CONFIG] Failed to save %s: %s\n", path, strerror(errno));
+        printf("[CONFIG] Failed to save %s: %s\n", tmp_path, strerror(errno));
         return 0;
     }
 
@@ -215,23 +448,62 @@ s32 configSave(void)
     for (s32 i = 0; i < s_numEntries; i++) {
         ConfigEntry *e = &s_entries[i];
         char sec[CONFIG_MAX_SECNAME + 1];
-        if (e->seclen > 0 && e->seclen <= CONFIG_MAX_SECNAME) {
-            memcpy(sec, e->key, e->seclen);
-            sec[e->seclen] = '\0';
-        } else {
-            snprintf(sec, CONFIG_MAX_SECNAME, "%s", e->key);
-        }
+        configSectionName(e->key, e->seclen, sec, sizeof(sec));
 
         if (strcmp(curSec, sec) != 0) {
+            if (curSec[0] != '\0') {
+                saveUnknownSection(curSec, f, unknown_written);
+            }
             fprintf(f, "\n[%s]\n", sec);
-            snprintf(curSec, CONFIG_MAX_SECNAME, "%s", sec);
+            snprintf(curSec, sizeof(curSec), "%s", sec);
         }
         saveEntry(e, f);
     }
 
-    fclose(f);
+    if (curSec[0] != '\0') {
+        saveUnknownSection(curSec, f, unknown_written);
+    }
+
+    for (s32 i = 0; i < s_numUnknownEntries; i++) {
+        char sec[CONFIG_MAX_SECNAME + 1];
+        if (unknown_written[i]) continue;
+        configSectionName(s_unknownEntries[i].key, s_unknownEntries[i].seclen, sec, sizeof(sec));
+        fprintf(f, "\n[%s]\n", sec);
+        saveUnknownEntry(&s_unknownEntries[i], f);
+        unknown_written[i] = 1;
+    }
+
+    if (fclose(f) != 0) {
+        printf("[CONFIG] Failed to finish writing %s: %s\n", tmp_path, strerror(errno));
+        remove(tmp_path);
+        return 0;
+    }
+
+#ifdef _WIN32
+    if (replaceConfigFile(tmp_path, path) != 0) {
+        printf("[CONFIG] Failed to replace %s: Windows error %lu\n", path, (unsigned long)GetLastError());
+        remove(tmp_path);
+        return 0;
+    }
+#else
+    if (replaceConfigFile(tmp_path, path) != 0) {
+        printf("[CONFIG] Failed to replace %s: %s\n", path, strerror(errno));
+        remove(tmp_path);
+        return 0;
+    }
+#endif
+
     printf("[CONFIG] Saved %s\n", path);
     return 1;
+}
+
+s32 configSetValue(const char *key, const char *value)
+{
+    if (!key || !value) {
+        return 0;
+    }
+
+    return setFromString(key, value);
 }
 
 /* ===== Public Lookup ===== */
@@ -248,6 +520,8 @@ void *configFindEntry(const char *key, int *type_out)
             case CFG_S32: *type_out = 0; break;
             case CFG_F32: *type_out = 1; break;
             case CFG_U32: *type_out = 2; break;
+            case CFG_ENUM: *type_out = 3; break;
+            case CFG_STRING: *type_out = 4; break;
             default:      *type_out = -1; break;
         }
     }

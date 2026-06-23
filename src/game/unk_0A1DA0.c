@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include <limits.h>
 #include <string.h>
+#include <stdlib.h>
 #include "math_atan2f.h"
 #include "unk_0A1DA0.h"
 #include "random.h"
@@ -10,6 +11,21 @@
 #include "bondview.h"
 #include "chrobjhandler.h"
 #include "matrixmath.h"
+#include "player.h"
+
+/* Declarations for the un-stubbed glass-shard render (sub_GAME_7F0A2C44),
+ * whose body was never compiled while parked behind PORT_FIXME_STUBS. */
+extern struct sImageTableEntry *glassoverlayimage;
+extern void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg3, u32 ulst);
+/* Returns Mtx* (bondview.c); without this prototype the implicit-int return
+ * truncates the 64-bit pointer before osVirtualToPhysical on the PC port. */
+extern Mtx *currentPlayerGetMatrix10C8(void);
+/* CRITICAL crash fix: dynAllocateMatrix returns Mtx* (dyn.c) but is NOT in any
+ * header. Without this prototype the implicit-int return truncates the 64-bit
+ * matrix pointer to 32 bits, so the per-piece matrix_4x4_f32_to_s32 writes 64
+ * bytes to a garbage address -> the glass-shatter SEGV. */
+extern Mtx *dynAllocateMatrix(void);
+extern f32 get_room_data_float1(void); /* room compression scale (returns f32; prototype avoids implicit-int) */
 
 #ifndef VERSION_EU
 #define SCALAR_1_7F0A2160 1.5f
@@ -89,7 +105,12 @@ struct rgba_u8 D_80040960[8] = {
     { 0 },
     { 0 }
 };
-u32 D_80040980 = 0;
+/* Read as a 16-byte Vtx template at sub_GAME_7F0A3F04 (the bullet-spark
+ * billboard); a 4-byte u32 here caused a 12-byte over-read. The all-0xFF
+ * colour mirrors g_ExplosionRenderPartDefaultVertex; cn/ob/tc are overwritten
+ * per particle/vertex, so only a valid 16-byte backing is needed. The N64
+ * GLOBAL_ASM references it by %hi/%lo address only, so the type is build-neutral. */
+Vtx D_80040980 = { 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff };
 
 
 
@@ -172,6 +193,27 @@ void sub_GAME_7F0A1DA0(f32 *arg0, f32 *arg1, f32 *arg2, f32 *arg3, f32 arg4, f32
     gridF = (f32)gridTotal;
     cols = (s32)(range1 / gridF);
     rows = (s32)(range2 / gridF);
+
+#ifdef NATIVE_PORT
+    {
+        /* GE007_TRACE_GLASS=1: one line per shatter -- glass centre, piece count,
+         * and Bond's position, so the spot can be reproduced via GE007_AUTO_WARP_*. */
+        static int s_trace_glass = -1;
+        if (s_trace_glass < 0) {
+            s_trace_glass = getenv("GE007_TRACE_GLASS") ? 1 : 0;
+        }
+        if (s_trace_glass) {
+            extern int g_frame_count_diag;
+            fprintf(stderr,
+                    "[GLASS-SHATTER] frame=%d center=(%.1f,%.1f,%.1f) grid=%dx%d=%d pieces nextShard=%d bondPos=(%.1f,%.1f,%.1f)\n",
+                    g_frame_count_diag, centerX, centerY, centerZ, cols, rows, cols * rows, g_NextShardNum,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.x : 0.0f,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.y : 0.0f,
+                    g_CurrentPlayer ? g_CurrentPlayer->current_model_pos.z : 0.0f);
+            fflush(stderr);
+        }
+    }
+#endif
 
     if (rows > 0) {
         for (j = 0; j < rows; j++) {
@@ -1074,8 +1116,22 @@ glabel update_broken_windows
 
 
 
+#ifdef NATIVE_PORT
+static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=1 enables (default OFF pending visual sign-off) */
+static int ge007_glass_shards_enabled(void)
+{
+    if (s_ge007_glass_shards < 0) {
+        /* Default ON now that the heavy-shatter crash is fixed (dynAllocateMatrix
+         * overflow + DL-buffer guard). GE007_GLASS_SHARDS=0 disables for A/B. */
+        const char *e = getenv("GE007_GLASS_SHARDS");
+        s_ge007_glass_shards = (e != NULL && e[0] == '0') ? 0 : 1;
+    }
+    return s_ge007_glass_shards;
+}
+#endif
+
 #ifdef NONMATCHING
-#ifdef PORT_FIXME_STUBS
+#if 0 /* un-stubbed for native: falling glass shards render; A/B via GE007_GLASS_SHARDS */
 Gfx *sub_GAME_7F0A2C44(Gfx *gdl) { return gdl; }
 #else
 Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
@@ -1084,6 +1140,16 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     Mtx *mtx;
     Mtxf mtxf;
     s_shattered_window_piece *piece;
+
+#ifdef NATIVE_PORT
+    if (!ge007_glass_shards_enabled()) {
+        return gdl; /* A/B off: no-op, identical to the old stub */
+    }
+    /* Defensive: the per-piece loop dereferences both; bail rather than SEGV. */
+    if (g_CurrentPlayer == NULL || ptr_shattered_window_pieces == NULL) {
+        return gdl;
+    }
+#endif
 
     texSelect(&gdl, (void *)((u8 *)glassoverlayimage + 0xC), 2, 1, 2);
 
@@ -1115,10 +1181,68 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     gdl->words.w1 = osVirtualToPhysical((void *)get_BONDdata_field_10E0());
     gdl++;
 
+#ifdef NATIVE_PORT
+    {
+        /* GE007_TRACE_GLASS=1: per-frame summary so a shatter can be bug-hunted
+         * (active piece count, remaining VTX/GFX display-list space, and the
+         * pointers the per-piece loop dereferences). */
+        static int s_trace_glass = -1;
+        if (s_trace_glass < 0) {
+            s_trace_glass = getenv("GE007_TRACE_GLASS") ? 1 : 0;
+        }
+        if (s_trace_glass) {
+            extern int g_frame_count_diag;
+            extern s32 dynGetFreeVtx(void);
+            extern s32 dynGetFreeGfx(Gfx *gdl);
+            s32 active = 0, j;
+            for (j = 0; j < SHATTERED_WINDOW_PIECES_BUFFER_LEN; j++) {
+                if (((s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + j * 0x68))->piece > 0) {
+                    active++;
+                }
+            }
+            if (active > 0) {
+                s_shattered_window_piece *p0 = NULL;
+                s16 *vtx;
+                for (j = 0; j < SHATTERED_WINDOW_PIECES_BUFFER_LEN; j++) {
+                    s_shattered_window_piece *pp = (s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + j * 0x68);
+                    if (pp->piece > 0) { p0 = pp; break; }
+                }
+                vtx = (s16 *)((u8 *)p0 + 0x38);
+                fprintf(stderr,
+                        "[GLASS-SHARD] frame=%d active=%d/%d visScale=%.8f roomScale=%.8f bondPos=(%.0f,%.0f,%.0f) p0=(%.0f,%.0f,%.0f) rot=(%.2f,%.2f,%.2f) vtx0=(%d,%d,%d) vtx1=(%d,%d,%d)\n",
+                        g_frame_count_diag, active, (s32)SHATTERED_WINDOW_PIECES_BUFFER_LEN,
+                        bgGetLevelVisibilityScale(), get_room_data_float1(),
+                        g_CurrentPlayer->current_model_pos.x, g_CurrentPlayer->current_model_pos.y, g_CurrentPlayer->current_model_pos.z,
+                        p0->x, p0->y, p0->z, p0->field_0x10, p0->field_0x14, p0->field_0x18,
+                        vtx[0], vtx[1], vtx[2], vtx[8], vtx[9], vtx[10]);
+                fflush(stderr);
+            }
+        }
+    }
+#endif
+
     piece_offset = 0;
     for (i = 0; i < SHATTERED_WINDOW_PIECES_BUFFER_LEN; i++) {
         piece = (s_shattered_window_piece *)((u8 *)ptr_shattered_window_pieces + piece_offset);
         if (piece->piece > 0) {
+#ifdef NATIVE_PORT
+            /* Each piece emits 3 GBI words + a matrix. Stop before the DL buffer
+             * overruns rather than write past it (the other half of the heavy-
+             * shatter crash; the matrix side is bounded in dynAllocateMatrix). */
+            {
+                extern s32 dynGetFreeGfx(Gfx *gdl);
+                if (dynGetFreeGfx(gdl) < 8) {
+                    static s32 gfx_full_log = 0;
+                    if (gfx_full_log++ < 5) {
+                        extern int g_frame_count_diag;
+                        fprintf(stderr, "[GLASS-SHARD] frame=%d GFX buffer full at piece %d/%d -- stopping shard emit\n",
+                                g_frame_count_diag, i, (s32)SHATTERED_WINDOW_PIECES_BUFFER_LEN);
+                        fflush(stderr);
+                    }
+                    break;
+                }
+            }
+#endif
             mtx = dynAllocateMatrix();
 
             matrix_4x4_set_position_and_rotation_around_xyz(
@@ -1127,6 +1251,24 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
             mtxf.m[3][0] -= g_CurrentPlayer->current_model_pos.x;
             mtxf.m[3][1] -= g_CurrentPlayer->current_model_pos.y;
             mtxf.m[3][2] -= g_CurrentPlayer->current_model_pos.z;
+
+#ifdef NATIVE_PORT
+            /* Compress the shard modelview by the room scale (get_room_data_float1,
+             * the same factor the explosion and bullet-impact effects multiply
+             * their positions by). Without this, shards render at full uncompressed
+             * size on scaled levels (Dam roomScale~0.234, Surface, Archives) -> a
+             * full-screen blur. GE007_GLASS_SHARD_NO_SCALE=1 disables for A/B. */
+            {
+                static int s_noscale = -1;
+                if (s_noscale < 0) {
+                    const char *e = getenv("GE007_GLASS_SHARD_NO_SCALE");
+                    s_noscale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+                }
+                if (!s_noscale) {
+                    matrix_scalar_multiply_3(get_room_data_float1(), &mtxf.m[0][0]);
+                }
+            }
+#endif
 
             matrix_4x4_f32_to_s32(&mtxf, (Mtxf *)mtx);
 
@@ -1150,11 +1292,14 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     gdl++;
 
     gdl->words.w0 = 0x01030040;
-    gdl->words.w1 = (uintptr_t)currentPlayerGetProjectionMatrix();
+    /* Must resolve to a physical/segment address for the gSPMatrix, like the
+     * per-piece matrix above and the spark path -- a raw cast faults on the PC
+     * fast3d interpreter ([GFX-BAD] G_MTX). */
+    gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetProjectionMatrix());
     gdl++;
 
     gdl->words.w0 = 0x01020040;
-    gdl->words.w1 = (uintptr_t)currentPlayerGetMatrix10C8();
+    gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetMatrix10C8());
     gdl++;
 
     return gdl;
@@ -3861,8 +4006,20 @@ void sub_GAME_7F0A3EA0(void)
 
 
 
+#ifdef NATIVE_PORT
+static int s_ge007_bullet_sparks = -1; /* GE007_BULLET_SPARKS=0 disables (default on) */
+static int ge007_bullet_sparks_enabled(void)
+{
+    if (s_ge007_bullet_sparks < 0) {
+        const char *e = getenv("GE007_BULLET_SPARKS");
+        s_ge007_bullet_sparks = (e != NULL && e[0] == '0') ? 0 : 1;
+    }
+    return s_ge007_bullet_sparks;
+}
+#endif
+
 #ifdef NONMATCHING
-#ifdef PORT_FIXME_STUBS
+#if 0 /* un-stubbed for native: bullet sparks render; runtime A/B via GE007_BULLET_SPARKS */
 void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     (void)arg0; (void)gdl_ptr; (void)arg2;
 }
@@ -3876,7 +4033,9 @@ extern f32 get_room_data_float1(void);
 extern intptr_t get_BONDdata_field_10E0(void);
 extern Gfx *applyRoomMatrixToDisplayList(Gfx *DL, int index);
 extern Mtx *currentPlayerGetProjectionMatrix(void);
-extern u32 osVirtualToPhysical(void *);
+#ifndef NATIVE_PORT
+extern u32 osVirtualToPhysical(void *); /* native: provided as a macro in platform_os.h */
+#endif
 
 void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     Vtx *vertices;
@@ -3910,6 +4069,12 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     if (!camIsPosInScreen((coord3d *)&arg0->unk10, *(f32 *)&arg0->unk24)) {
         return;
     }
+
+#ifdef NATIVE_PORT
+    if (!ge007_bullet_sparks_enabled()) {
+        return; /* A/B off: emit nothing, leave *gdl_ptr unadvanced (= old stub) */
+    }
+#endif
 
     vtxtemplate = *(Vtx *)&D_80040980;
 
@@ -4018,6 +4183,22 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     gdl->words.w0 = 0x01030040;
     gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetProjectionMatrix());
     gdl++;
+
+#ifdef NATIVE_PORT
+    {
+        static int trace = -1;
+        if (trace < 0) {
+            trace = getenv("GE007_TRACE_SPARKS") ? 1 : 0;
+        }
+        if (trace) {
+            extern int g_frame_count_diag;
+            fprintf(stderr, "[SPARK-RENDER] frame=%d frameIdx=%d pos=(%.1f,%.1f,%.1f) cn=%02x%02x%02x%02x\n",
+                    g_frame_count_diag, frameIndex, posX, posY, posZ,
+                    vtxtemplate.v.cn[0], vtxtemplate.v.cn[1], vtxtemplate.v.cn[2], vtxtemplate.v.cn[3]);
+            fflush(stderr);
+        }
+    }
+#endif
 
     *gdl_ptr = gdl;
 }
@@ -4424,8 +4605,12 @@ glabel sub_GAME_7F0A3F04
 )
 #endif
 
+#ifdef NONMATCHING
+Gfx *sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
+#else
 void sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
-    
+#endif
+
     bondstruct_unk_8007A170 *thing = &dword_CODE_bss_8007A170[0]; \
     bondstruct_unk_8007A170 *end = dword_CODE_bss_8007A170 + UNK_8007A170_MAX;
 
@@ -4433,6 +4618,9 @@ void sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
     {
         sub_GAME_7F0A3F04(thing, &gdl, arg1);
     }
+#ifdef NONMATCHING
+    return gdl; /* gdl advanced through &gdl by sub_GAME_7F0A3F04; return it so the advance is not discarded */
+#endif
 }
 
 f32 sub_GAME_7F0A4594(f32 *arg0) {
@@ -4688,7 +4876,9 @@ void sub_GAME_7F0A46A0(Gfx *arg0, s32 arg1)
 // calling sub_GAME_7F0A3F04 on each (renders bullet spark/dust cloud effects).
 // Matches with original IDO. ido_recomp: reverse global address completion order
 // (addiu $s0/$s1 completed in same order as lui instead of reverse).
-void sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
+/* Native only (matched build uses the GLOBAL_ASM twin below). Returns the
+ * advanced DL so sub_GAME_7F0A4824 can thread it past the second spark stream. */
+Gfx *sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
     bondstruct_unk_8007A170 *ptr = (bondstruct_unk_8007A170 *)dword_CODE_bss_8007A4E0;
     bondstruct_unk_8007A170 *end = (bondstruct_unk_8007A170 *)dword_CODE_bss_8007B098;
 
@@ -4696,6 +4886,7 @@ void sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
         sub_GAME_7F0A3F04(ptr, &arg0, arg1);
         ptr = (bondstruct_unk_8007A170 *)((u8 *)ptr + 0x3C);
     } while (ptr < end);
+    return arg0;
 }
 #else
 GLOBAL_ASM(
@@ -4753,10 +4944,21 @@ void update_bullet_sparks_and_dust_clouds(void) {
 
 
 
+#ifdef NONMATCHING
+/* Native: thread DL through both spark streams and return the advanced DL so
+ * lvl.c hands it to the glass-shard pass instead of letting shards overwrite
+ * the spark commands. */
+Gfx *sub_GAME_7F0A4824(Gfx *arg0, s32 arg1) {
+    arg0 = sub_GAME_7F0A4528(arg0, arg1);
+    arg0 = sub_GAME_7F0A4768(arg0, arg1);
+    return arg0;
+}
+#else
 void sub_GAME_7F0A4824(Gfx *arg0, s32 arg1) {
     sub_GAME_7F0A4528(arg0, arg1);
     sub_GAME_7F0A4768(arg0, arg1);
 }
+#endif
 
 
 #endif 

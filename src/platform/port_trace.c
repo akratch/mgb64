@@ -71,6 +71,12 @@ extern s32 g_StageNum;
 /* Crash recovery count (from main_pc.c) */
 extern int g_crashRecoveryCount;
 
+/* Per-frame room draw count (from bg.c) */
+extern s32 g_BgNumberOfRoomsDrawn;
+
+/* Current (0-based) player number, for the per-player "p" trace field. */
+extern s32 get_cur_playernum(void);
+
 #ifdef NATIVE_PORT
 extern s32 port_save_copy_count;
 extern s32 port_save_copy_source;
@@ -231,6 +237,30 @@ static int traceFlowOnlyEnabled(void) {
                    getenv("GE007_TRACE_MINIMAL") != NULL) ? 1 : 0;
     }
     return enabled;
+}
+
+/* Frontend/title transitions can leave stage pointers non-null after unload. */
+static int traceLiveStageGlobalsSafe(void) {
+    int stage_menu_active;
+
+    if (g_StageNum == LEVELID_TITLE || lvlGetCurrentStageToLoad() == LEVELID_TITLE) {
+        return 0;
+    }
+
+    stage_menu_active =
+        current_menu == MENU_INVALID ||
+        current_menu == MENU_RUN_STAGE ||
+        current_menu == MENU_MISSION_COMPLETE ||
+        current_menu == MENU_MISSION_FAILED ||
+        (current_menu == MENU_SWITCH_SCREENS &&
+         (menu_update == MENU_RUN_STAGE ||
+          menu_update == MENU_MISSION_COMPLETE ||
+          menu_update == MENU_MISSION_FAILED ||
+          maybe_prev_menu == MENU_RUN_STAGE ||
+          maybe_prev_menu == MENU_MISSION_COMPLETE ||
+          maybe_prev_menu == MENU_MISSION_FAILED));
+
+    return stage_menu_active ? 1 : 0;
 }
 
 static const char *traceGuardOraclePath(void) {
@@ -1657,6 +1687,7 @@ static const char *tracePropDefName(s32 type) {
         case PROPDEF_SAFE: return "safe";
         case PROPDEF_SAFE_ITEM: return "safe_item";
         case PROPDEF_TANK: return "tank";
+        case PROPDEF_TINTED_GLASS: return "tinted_glass";
         default: return "other";
     }
 }
@@ -1676,6 +1707,7 @@ static int traceStageObjectIsMissionRelevant(s32 type) {
         case PROPDEF_VEHICHLE:
         case PROPDEF_AIRCRAFT:
         case PROPDEF_SAFE:
+        case PROPDEF_TINTED_GLASS:
         case PROPDEF_TANK:
             return 1;
         default:
@@ -3841,6 +3873,11 @@ void portTraceFrame(void) {
     int rendered_rooms_sample[16];
     int rendered_rooms_sample_count = 0;
     int has_player = 0;
+    /* 1-based current player number for the "p" field. 0 = no current player.
+     * In split-screen MP this lets the trace distinguish per-player viewpoints
+     * (the per-player move/render loop leaves g_CurrentPlayer on the player
+     * whose state this frame reflects). */
+    int trace_player_num = 0;
     int player_unknown = 0;
     int view_left = 0, view_top = 0, view_w = 0, view_h = 0;
     int vi_view_left = 0, vi_view_top = 0, vi_view_w = 0, vi_view_h = 0;
@@ -4053,6 +4090,7 @@ void portTraceFrame(void) {
     PortViewmodelTrace weapon_left;
     PortViewmodelTrace weapon_right;
     const PropRecord *nearest_guard_for_trace = NULL;
+    int trace_live_stage_globals = traceLiveStageGlobalsSafe();
 
     objective_statuses_json[0] = '[';
     objective_statuses_json[1] = ']';
@@ -4076,11 +4114,12 @@ void portTraceFrame(void) {
     save_field_json[0] = '\0';
     ramrom_field_json[0] = '\0';
 
-    if (g_CurrentPlayer) {
+    if (trace_live_stage_globals && g_CurrentPlayer) {
         int frozen_intro_camera = playerHasFrozenIntroCamera(g_CurrentPlayer);
 
         /* Access via struct — these are the canonical fields */
         has_player = 1;
+        trace_player_num = get_cur_playernum() + 1;
         player_unknown = g_CurrentPlayer->unknown;
         if (g_CurrentPlayer->prop) {
             px = g_CurrentPlayer->prop->pos.x;
@@ -4621,6 +4660,7 @@ void portTraceFrame(void) {
                 int tracked_seen_onscreen = 0;
                 int tracked_field20 = 0;
                 int tracked_model_mtx = 0;
+                int tracked_on_proplist = 0;
                 TracePropFloorSnapshot tracked_floor;
                 TraceHeldPropSnapshot held_right;
                 TraceHeldPropSnapshot held_left;
@@ -4667,6 +4707,24 @@ void portTraceFrame(void) {
                 if (tracked_chr->prop != NULL) {
                     tracked_prop_flags = tracked_chr->prop->flags;
                     tracked_prop_onscreen = ((tracked_chr->prop->flags & PROPFLAG_ONSCREEN) != 0) ? 1 : 0;
+
+                    /* g_OnScreenPropList membership: the rebuilt-every-frame list
+                     * that makes a prop auto-aim-targetable/hittable. This is the
+                     * precise H1b observable (PROPFLAG_ONSCREEN alone latches and is
+                     * managed by a separate camera pass). */
+                    {
+                        extern PropRecord **g_LastOnScreenProp;
+                        extern PropRecord *g_OnScreenPropList[];
+                        PropRecord **pp;
+                        if (g_LastOnScreenProp != NULL) {
+                            for (pp = g_OnScreenPropList; pp < g_LastOnScreenProp; pp++) {
+                                if (*pp == tracked_chr->prop) {
+                                    tracked_on_proplist = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 tracked_seen_onscreen = ((tracked_chr->chrflags & CHRFLAG_HAS_BEEN_ON_SCREEN) != 0) ? 1 : 0;
@@ -4685,6 +4743,7 @@ void portTraceFrame(void) {
                          sizeof(tracked_chr_field_json),
                          "\"track\":{\"chrnum\":%d,\"source\":%d,\"present\":1,\"hidden\":%d,\"hidden_bits\":%d,"
                          "\"chrflags\":\"0x%08X\",\"alive\":%d,"
+                         "\"flag_hidden\":%d,\"flag_update_action\":%d,\"bg_ai\":%d,"
                          "\"action\":%d,\"alert\":%d,\"sleep\":%d,\"firecount\":%d,"
                          "\"damage\":%.4f,\"maxdamage\":%.4f,"
                          "\"padpreset\":%d,\"dist_to_bond\":%.2f,\"pos\":[%.2f,%.2f,%.2f],"
@@ -4696,7 +4755,7 @@ void portTraceFrame(void) {
                          "\"room\":{\"stan\":%d,\"first\":%d,\"count\":%d,\"any_rendered\":%d,"
                          "\"first_rendered\":%d,\"rooms\":%s},"
                          "\"render\":{\"prop_flags\":\"0x%08X\",\"onscreen\":%d,\"seen_onscreen\":%d,"
-                         "\"z\":%.2f,\"field20\":%d,\"model_mtx\":%d},"
+                         "\"z\":%.2f,\"field20\":%d,\"model_mtx\":%d,\"on_proplist\":%d},"
                          "\"held\":{\"right\":{\"present\":%d,\"obj\":%d,\"item\":%d,\"state\":%d,"
                          "\"runtime\":\"0x%08X\",\"prop_flags\":\"0x%08X\",\"has_mtx\":%d,"
                          "\"room\":{\"stan\":%d,\"first\":%d,\"count\":%d,\"any_rendered\":%d,"
@@ -4725,6 +4784,9 @@ void portTraceFrame(void) {
                          tracked_chr->hidden,
                          (unsigned int)tracked_chr->chrflags,
                          (tracked_chr->damage < tracked_chr->maxdamage) ? 1 : 0,
+                         ((tracked_chr->chrflags & CHRFLAG_HIDDEN) != 0),
+                         ((tracked_chr->chrflags & CHRFLAG_00040000) != 0),
+                         ((tracked_chr->hidden & CHRHIDDEN_BACKGROUND_AI) != 0),
                          tracked_chr->actiontype,
                          tracked_chr->alertness,
                          tracked_chr->sleep,
@@ -4769,6 +4831,7 @@ void portTraceFrame(void) {
                          tracked_chr->prop != NULL ? tracked_chr->prop->zDepth : 0.0f,
                          tracked_field20,
                          tracked_model_mtx,
+                         tracked_on_proplist,
                          held_right.present,
                          held_right.obj,
                          held_right.item,
@@ -4920,10 +4983,12 @@ void portTraceFrame(void) {
     vi_view_top = viGetViewTop();
     vi_view_w = viGetViewWidth();
     vi_view_h = viGetViewHeight();
-    if (has_player) {
+    if (trace_live_stage_globals && has_player) {
         render_room = (int)bondviewGetCurrentPlayersRoom();
     }
-    traceCameraMatricesIfRequested(cam_mode, player_unknown, render_room);
+    if (trace_live_stage_globals) {
+        traceCameraMatricesIfRequested(cam_mode, player_unknown, render_room);
+    }
 
     /* Render stats from gfx_pc.c */
     int tris = 0, bad_cmds = 0, render_frame = 0;
@@ -4941,6 +5006,7 @@ void portTraceFrame(void) {
     room_render_fallback_active = (g_portRoomRenderFallbackFrame == g_frame_count_diag) ? 1 : 0;
     room_render_fallback_rooms = room_render_fallback_active ? g_portRoomRenderFallbackRooms : 0;
     room_render_fallback_total = g_portRoomRenderFallbackTotal;
+    int rooms_drawn = (int)g_BgNumberOfRoomsDrawn;
     unsigned int seg_mask = gfx_get_segment_mask();
     int menu = (int)current_menu;
     int menu_pending = (int)menu_update;
@@ -4985,7 +5051,7 @@ void portTraceFrame(void) {
     int intro_bond_model_mtx = 0;
     int intro_bond_onscreen = 0;
     int intro_bond_seen_onscreen = 0;
-    int intro_bond_rendered = (s_bondIntroLastTraceFrame == s_traceFrame) ? 1 : 0;
+    int intro_bond_rendered = (trace_live_stage_globals && s_bondIntroLastTraceFrame == s_traceFrame) ? 1 : 0;
     int intro_bond_anim_valid = 0;
     float intro_bond_anim_frame = 0.0f;
     float intro_bond_anim_end = 0.0f;
@@ -4998,8 +5064,8 @@ void portTraceFrame(void) {
     int intro_bond_anim_entry_offset = -1;
     int intro_bond_anim_bits_offset = -1;
     u64 intro_bond_anim_hash = 0;
-    int intro_setup_anim_index = g_IntroAnimationIndex;
-    int intro_swirl_present = g_IntroSwirl != NULL ? 1 : 0;
+    int intro_setup_anim_index = trace_live_stage_globals ? g_IntroAnimationIndex : -1;
+    int intro_swirl_present = (trace_live_stage_globals && g_IntroSwirl != NULL) ? 1 : 0;
     int intro_swirl_count = 0;
     u64 intro_swirl_hash = 0;
     int intro_swirl_current_index = -1;
@@ -5012,7 +5078,7 @@ void portTraceFrame(void) {
     int intro_swirl_current_pad = -1;
     int intro_selected_camera_present = 0;
     int intro_selected_camera_index = -1;
-    int intro_selected_camera_count = g_SetupIntroCameraCount;
+    int intro_selected_camera_count = trace_live_stage_globals ? g_SetupIntroCameraCount : 0;
     float intro_selected_camera_x = 0.0f;
     float intro_selected_camera_y = 0.0f;
     float intro_selected_camera_z = 0.0f;
@@ -5034,7 +5100,7 @@ void portTraceFrame(void) {
     intro_bond_held_left.obj = -1;
     intro_bond_held_left.item = -1;
 
-    if (g_IntroSwirl != NULL) {
+    if (trace_live_stage_globals && g_IntroSwirl != NULL) {
         int i;
 
         intro_swirl_hash = 1469598103934665603ULL;
@@ -5071,7 +5137,7 @@ void portTraceFrame(void) {
         }
     }
 
-    if (ptr_random06cam_entry != NULL) {
+    if (trace_live_stage_globals && ptr_random06cam_entry != NULL) {
         struct SetupIntroCamera *iter;
         int reverse_index = 0;
 
@@ -5170,8 +5236,12 @@ void portTraceFrame(void) {
 
     if (!s_assertPostMissionTransition &&
         menu_entered &&
-        menu == MENU_MISSION_SELECT &&
-        (s_prevMenu == MENU_MISSION_COMPLETE || s_prevMenu == MENU_MISSION_FAILED)) {
+        (s_prevMenu == MENU_MISSION_COMPLETE || s_prevMenu == MENU_MISSION_FAILED) &&
+        (menu == MENU_MISSION_COMPLETE ||
+         menu == MENU_MISSION_SELECT ||
+         menu == MENU_BRIEFING ||
+         menu == MENU_RUN_STAGE ||
+         menu == MENU_DISPLAY_CAST)) {
         s_assertPostMissionTransition = 1;
     }
 
@@ -5208,7 +5278,7 @@ void portTraceFrame(void) {
             "\"turn\":%.5f,\"pitch\":%.5f,\"max_t\":%d,"
             "\"head\":[%.3f,%.3f,%.3f],\"prev\":[%.2f,%.2f,%.2f],"
             "\"clock\":%d,\"dt\":%.2f,\"global\":%d},"
-            "\"tris\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
+            "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
             "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
@@ -5223,7 +5293,7 @@ void portTraceFrame(void) {
             "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d},"
             "\"assert\":{\"file_select\":%d,\"stage_menu\":%d,\"mission_start\":%d,\"post_mission\":%d},"
             "\"nan\":%d}\n",
-            s_traceFrame, has_player,
+            s_traceFrame, trace_player_num,
             px, py, pz,
             move_speed_forwards, move_speed_sideways,
             move_speed_go, move_speed_strafe, move_speed_boost,
@@ -5231,7 +5301,7 @@ void portTraceFrame(void) {
             move_head_x, move_head_y, move_head_z,
             move_prev_x, move_prev_y, move_prev_z,
             g_ClockTimer, g_GlobalTimerDelta, g_GlobalTimer,
-            tris, g_crashRecoveryCount, bad_cmds,
+            tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
             dl_non_dl_skip_n64, dl_unregistered_skip,
@@ -5261,7 +5331,8 @@ void portTraceFrame(void) {
         return;
     }
 
-    if (g_CurrentPlayer != NULL &&
+    if (trace_live_stage_globals &&
+        g_CurrentPlayer != NULL &&
         g_CurrentPlayer->prop != NULL &&
         g_CurrentPlayer->prop->chr != NULL) {
         ChrRecord *intro_chr = g_CurrentPlayer->prop->chr;
@@ -5305,33 +5376,39 @@ void portTraceFrame(void) {
     }
 
     memset(&weapon_left, 0, sizeof(weapon_left));
-    portGetViewmodelTrace(GUNLEFT, &weapon_left);
+    if (trace_live_stage_globals) {
+        portGetViewmodelTrace(GUNLEFT, &weapon_left);
+    }
     if (weapon_left.frame == 0) {
         weapon_left.valid = 0;
     }
 
     memset(&weapon_right, 0, sizeof(weapon_right));
-    portGetViewmodelTrace(GUNRIGHT, &weapon_right);
+    if (trace_live_stage_globals) {
+        portGetViewmodelTrace(GUNRIGHT, &weapon_right);
+    }
     if (weapon_right.frame == 0) {
         weapon_right.valid = 0;
     }
 
-    for (int room = 1; room < g_MaxNumRooms; room++) {
-        s_room_info *ri = &g_BgRoomInfo[room];
+    if (trace_live_stage_globals) {
+        for (int room = 1; room < g_MaxNumRooms; room++) {
+            s_room_info *ri = &g_BgRoomInfo[room];
 
-        if (ri->room_rendered) {
-            rendered_rooms_count++;
-            if (rendered_rooms_sample_count < (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))) {
-                rendered_rooms_sample[rendered_rooms_sample_count++] = room;
+            if (ri->room_rendered) {
+                rendered_rooms_count++;
+                if (rendered_rooms_sample_count < (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))) {
+                    rendered_rooms_sample[rendered_rooms_sample_count++] = room;
+                }
             }
-        }
 
-        if (ri->room_neighbor_to_rendered) {
-            neighbor_rooms_count++;
-        }
+            if (ri->room_neighbor_to_rendered) {
+                neighbor_rooms_count++;
+            }
 
-        if (ri->model_bin_loaded) {
-            loaded_rooms_count++;
+            if (ri->model_bin_loaded) {
+                loaded_rooms_count++;
+            }
         }
     }
 
@@ -5359,13 +5436,15 @@ void portTraceFrame(void) {
         }
     }
 
-    traceBuildGuardSpawnJson(spawn_field_json, sizeof(spawn_field_json));
-    traceBuildShotJson(shot_field_json, sizeof(shot_field_json));
-    traceBuildBulletImpactJson(impact_field_json, sizeof(impact_field_json));
-    traceBuildProjectileJson(projectile_field_json, sizeof(projectile_field_json));
-    traceBuildGuardHitJson(hit_field_json, sizeof(hit_field_json));
-    traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
-    traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
+    if (trace_live_stage_globals) {
+        traceBuildGuardSpawnJson(spawn_field_json, sizeof(spawn_field_json));
+        traceBuildShotJson(shot_field_json, sizeof(shot_field_json));
+        traceBuildBulletImpactJson(impact_field_json, sizeof(impact_field_json));
+        traceBuildProjectileJson(projectile_field_json, sizeof(projectile_field_json));
+        traceBuildGuardHitJson(hit_field_json, sizeof(hit_field_json));
+        traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
+        traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
+    }
 
     /* Format to a stack buffer first, then write through the direct state-trace
      * helper so crash recovery cannot splice records together through stdio. */
@@ -5418,7 +5497,7 @@ void portTraceFrame(void) {
             "\"rooms\":{\"tile\":%d,\"portal\":%d,\"room_ptr\":%d,\"prop\":%d,\"cur\":%d,\"render\":%d,\"lookup\":%d,\"nearest\":%d,\"cam_lookup\":%d,\"cam_nearest\":%d,"
             "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s},"
             "\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
-            "\"tris\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
+            "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
             "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
@@ -5543,7 +5622,7 @@ void portTraceFrame(void) {
             "\"snd_create_post_event\":%u,\"snd_dispose_sound\":%u,\"snd_set_priority\":%u,"
             "\"snd_unlink_clear\":%u,\"snd_count_alloc_list\":%u},"
             "\"mp\":{\"time_ticks\":%d,\"player_count\":%d}}\n",
-            s_traceFrame, has_player,
+            s_traceFrame, trace_player_num,
             px, py, pz,
             cam_x, cam_y, cam_z,
             cam_target_x, cam_target_y, cam_target_z,
@@ -5567,7 +5646,7 @@ void portTraceFrame(void) {
             cam_lookup_room, cam_nearest_room,
             rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf,
             room_render_fallback_active, room_render_fallback_rooms, room_render_fallback_total,
-            tris, g_crashRecoveryCount, bad_cmds,
+            tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
             dl_non_dl_skip_n64, dl_unregistered_skip,

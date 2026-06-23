@@ -86,6 +86,21 @@ static s32 portUsePcSelector(void)
     return cached;
 }
 
+void pcPrimePostStageMenuForDirectBoot(LEVELID level, s32 multiplayer)
+{
+    /* MENU_RUN_STAGE normally primes the return menu before gameplay loads.
+     * PC direct-boot paths skip that frontend frame, so preserve the same
+     * post-stage route explicitly. */
+    if (multiplayer) {
+        frontChangeMenu(MENU_MP_OPTIONS, TRUE);
+    } else if (level == LEVELID_CUBA) {
+        do_extended_cast_display(TRUE);
+        frontChangeMenu(MENU_DISPLAY_CAST, TRUE);
+    } else {
+        frontChangeMenu(MENU_MISSION_FAILED, TRUE);
+    }
+}
+
 static char pc_ascii_tolower(char c)
 {
     if (c >= 'A' && c <= 'Z') {
@@ -235,8 +250,77 @@ static void pc_apply_level_selection(LEVELID level, s32 diff)
     selected_difficulty = diff;
     set_solo_and_ptr_briefing(selected_stage);
     bossSetLoadedStage(selected_stage);
+    pcPrimePostStageMenuForDirectBoot(selected_stage, FALSE);
     lvlSetSelectedDifficulty(diff);
     lvlPlayMusicTrack1(getmusictrack_or_randomtrack(level));
+}
+
+/* Native-port direct-boot into a split-screen multiplayer match, bypassing the
+ * frontend the same way pc_apply_level_selection() does for solo. We drive the
+ * engine's own MP-setup helpers (reset/init_mp_options_for_scenario) and the
+ * multi_stage_setups[] table rather than hand-rolling MP state, so the match is
+ * configured exactly as it would be coming out of the MP options menu. */
+static void pc_apply_mp_selection(s32 num_players,
+                                  s32 mp_stage,
+                                  MPSCENARIOS scenarioid,
+                                  s32 timelimit_secs)
+{
+    extern struct mp_stage_setup multi_stage_setups[];
+    extern void reset_mp_options_for_scenario(MPSCENARIOS scenarioid);
+    extern void init_mp_options_for_scenario(s32 numplayers);
+    extern s32 check_if_mp_stage_unlocked(s32 stage);
+    extern void bossSetLoadedStage(LEVELID);
+    extern s32 getmusictrack_or_randomtrack(s32);
+    extern void lvlPlayMusicTrack1(s32);
+    extern void lvlSetSelectedDifficulty(s32);
+    extern u32 randomGetNext(void);
+    extern s32 g_pcMpTimeLimitOverrideSecs;
+    s32 i;
+
+    /* All player slots default to the first control style (1.1 "Honey"); the
+     * BSS array is already zeroed, but set it explicitly so a deterministic
+     * headless run does not depend on prior frontend state. */
+    for (i = 0; i < num_players; i++) {
+        controlstyle_player[i] = CONTROLLER_CONFIG_HONEY;
+    }
+
+    gamemode = GAMEMODE_MULTI;
+    fileSetCurrentFolder(FOLDER1);
+
+    /* Choose the scenario first so reset_mp_options_for_scenario() establishes
+     * the per-scenario weapon-set/game-length defaults, then size the match to
+     * the requested player count (init clamps to >= 2 and re-validates the stage
+     * and scenario player limits for us). */
+    reset_mp_options_for_scenario(scenarioid);
+    MP_stage_selected = mp_stage;
+    init_mp_options_for_scenario(num_players);
+    g_pcMpTimeLimitOverrideSecs = (timelimit_secs > 0) ? timelimit_secs : 0;
+
+    if (check_if_mp_stage_unlocked(MP_stage_selected) == FALSE) {
+        MP_stage_selected = MP_STAGE_TEMPLE;
+    }
+
+    /* Resolve MP_STAGE_RANDOM the same way interface_menu0E_mpoptions() does on
+     * Start: pick a random unlocked non-random stage. */
+    if (multi_stage_setups[MP_stage_selected].stage_id < 0) {
+        s32 pick;
+        do {
+            pick = 1 + (s32)(randomGetNext() % (u32)(MP_STAGE_SELECTED_MAX - 1));
+        } while (check_if_mp_stage_unlocked(pick) == 0);
+        selected_stage = multi_stage_setups[pick].stage_id;
+    } else {
+        selected_stage = multi_stage_setups[MP_stage_selected].stage_id;
+    }
+
+    selected_difficulty = DIFFICULTY_AGENT;
+    briefingpage = -1;
+
+    /* Hand the resolved stage to the boss main loop, which polls g_MainStageNum
+     * and loads the stage directly — the same exit the solo direct-boot uses. */
+    bossSetLoadedStage(selected_stage);
+    pcPrimePostStageMenuForDirectBoot(selected_stage, TRUE);
+    lvlSetSelectedDifficulty(selected_difficulty);
+    lvlPlayMusicTrack1(getmusictrack_or_randomtrack(selected_stage));
 }
 
 /* Called each frame when the level selector is active.
@@ -458,6 +542,7 @@ void init_menus_or_reset(void)
     {
         extern const char *g_pcStartRamrom;
         extern int g_pcStartLevel;
+        extern int g_pcStartMultiplayer;
 
         if (g_pcStartRamrom != NULL) {
             const char *start_ramrom = g_pcStartRamrom;
@@ -465,6 +550,17 @@ void init_menus_or_reset(void)
             if (!pcRamromStartReplayByName(start_ramrom)) {
                 menu_update = MENU_FILE_SELECT;
             }
+        } else if (g_pcStartMultiplayer) {
+            extern int g_pcStartMpPlayers;
+            extern int g_pcStartMpStage;
+            extern int g_pcStartMpScenario;
+            extern int g_pcStartMpTimeLimitSecs;
+            s32 mp_players = g_pcStartMpPlayers;
+            s32 mp_stage = g_pcStartMpStage;
+            MPSCENARIOS mp_scenario = (MPSCENARIOS)g_pcStartMpScenario;
+            s32 mp_timelimit = g_pcStartMpTimeLimitSecs;
+            g_pcStartMultiplayer = 0;
+            pc_apply_mp_selection(mp_players, mp_stage, mp_scenario, mp_timelimit);
         } else if (g_pcStartLevel >= 0) {
             extern int g_pcStartDifficulty;
             LEVELID start_level = (LEVELID)g_pcStartLevel;

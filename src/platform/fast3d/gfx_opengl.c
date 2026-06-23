@@ -22,9 +22,11 @@
 #else
 #include <glad/glad.h>
 #endif
+#include <SDL.h>
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "gfx_screen_config.h"
 #include "../gfx_pc.h"
 #include "front.h"
 #include "othermodemicrocode.h"
@@ -32,6 +34,14 @@
 
 /* Verbose diagnostic flag from gfx_pc.c */
 extern int g_diag_verbose;
+extern float g_pcVideoGamma;
+extern float g_pcRenderScale;
+extern int g_pcMsaaSamples;
+extern int g_pcRetroFilterMode;
+
+#define PC_RETRO_FILTER_AUTO 0
+#define PC_RETRO_FILTER_OFF  1
+#define PC_RETRO_FILTER_ON   2
 
 /* GL_DEPTH_CLAMP support — defined in gfx_pc.c, set once here in
  * gfx_opengl_init() before any rendering, read by CPU clipper and
@@ -63,12 +73,15 @@ struct ShaderProgram {
     bool used_noise;
     GLint frame_count_location;
     GLint window_height_location;
+    bool used_n64_filter;
+    GLint n64_filter_scale_location;
 };
 
 static struct ShaderProgram shader_program_pool[256];
 static uint16_t shader_program_pool_size;
 static GLuint opengl_vbo;
 static GLuint opengl_vao;
+static struct ShaderProgram *current_shader_program;
 
 static uint32_t frame_count;
 static uint32_t current_height;
@@ -258,10 +271,46 @@ static void gfx_opengl_vertex_array_set_attribs(struct ShaderProgram *prg) {
     }
 }
 
+static float gfx_opengl_axis_filter_scale(uint32_t drawable_size,
+                                          int logical_size,
+                                          int fallback_logical_size)
+{
+    float scale;
+
+    if (logical_size <= 0) {
+        logical_size = fallback_logical_size;
+    }
+    if (drawable_size == 0 || logical_size <= 0) {
+        return 1.0f;
+    }
+
+    scale = (float)drawable_size / (float)logical_size;
+    if (scale < 1.0f) {
+        return 1.0f;
+    }
+    if (scale > 64.0f) {
+        return 64.0f;
+    }
+    return scale;
+}
+
 static void gfx_opengl_set_uniforms(struct ShaderProgram *prg) {
     if (prg->used_noise) {
         glUniform1i(prg->frame_count_location, frame_count);
         glUniform1i(prg->window_height_location, current_height);
+    }
+    if (prg->used_n64_filter && prg->n64_filter_scale_location >= 0) {
+        /* dFdx/dFdy are measured in native drawable pixels. Scale them back
+         * to the VI/logical pixel grid before applying N64 filter thresholds. */
+        float scale_x =
+            gfx_opengl_axis_filter_scale(gfx_current_dimensions.width,
+                                          viGetX(),
+                                          DESIRED_SCREEN_WIDTH);
+        float scale_y =
+            gfx_opengl_axis_filter_scale(gfx_current_dimensions.height,
+                                          viGetY(),
+                                          DESIRED_SCREEN_HEIGHT);
+        glUniform2f(prg->n64_filter_scale_location, scale_x, scale_y);
     }
 }
 
@@ -270,11 +319,15 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
         for (int i = 0; i < old_prg->num_attribs; i++) {
             glDisableVertexAttribArray(old_prg->attrib_locations[i]);
         }
+        if (current_shader_program == old_prg) {
+            current_shader_program = NULL;
+        }
     }
 }
 
 static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
     glUseProgram(new_prg->opengl_program_id);
+    current_shader_program = new_prg;
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
 }
@@ -380,8 +433,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     struct CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
 
-    char vs_buf[4096];
-    char fs_buf[8192];
+    char vs_buf[8192];
+    char fs_buf[12288];
     size_t vs_len = 0;
     size_t fs_len = 0;
     size_t num_floats = 4;
@@ -407,6 +460,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             vs_len += ge007_sprintf(vs_buf + vs_len, "%sout vec2 vTexCoord%d;\n",
                                      texcoord_interp, i);
             num_floats += 2;
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "in float aTexClamp%c%d;\n",
+                                             axis_name, i);
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "%sout float vTexClamp%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                    num_floats += 1;
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -425,6 +490,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "vTexClamp%c%d = aTexClamp%c%d;\n",
+                                             axis_name, i, axis_name, i);
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -456,6 +529,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
             fs_len += ge007_sprintf(fs_buf + fs_len, "%sin vec2 vTexCoord%d;\n",
                                      texcoord_interp, i);
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    fs_len += ge007_sprintf(fs_buf + fs_len,
+                                             "%sin float vTexClamp%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                }
+            }
         }
     }
     if (cc_features.opt_fog) {
@@ -479,18 +560,17 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         bool clamped =
             cc_features.clamp[0][0] || cc_features.clamp[0][1] ||
             cc_features.clamp[1][0] || cc_features.clamp[1][1];
-        float default_nearest_threshold =
-            cc_features.n64_filter_nearest_threshold_005 ? 0.05f : 1.0f;
         float nearest_threshold =
             gfx_diag_n64_filter_nearest_threshold(cc_features.opt_texture_edge,
                                                   clamped,
-                                                  default_nearest_threshold);
+                                                  1.0f);
+        append_line(fs_buf, &fs_len, "uniform vec2 uN64FilterScale;");
         append_line(fs_buf, &fs_len, "vec4 n64TextureFilter(sampler2D tex, vec2 uv) {");
         append_line(fs_buf, &fs_len, "    vec2 texSize = vec2(textureSize(tex, 0));");
         append_line(fs_buf, &fs_len, "    vec2 texelCoord = uv * texSize;");
         if (!always_3point) {
-            append_line(fs_buf, &fs_len, "    vec2 dx = dFdx(texelCoord);");
-            append_line(fs_buf, &fs_len, "    vec2 dy = dFdy(texelCoord);");
+            append_line(fs_buf, &fs_len, "    vec2 dx = dFdx(texelCoord) * uN64FilterScale.x;");
+            append_line(fs_buf, &fs_len, "    vec2 dy = dFdy(texelCoord) * uN64FilterScale.y;");
             append_line(fs_buf, &fs_len, "    vec2 footprint = max(abs(dx), abs(dy));");
             fs_len += ge007_sprintf(fs_buf + fs_len,
                                      "    if (max(footprint.x, footprint.y) < %.9f) {\n",
@@ -528,32 +608,40 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "void main() {");
 
-    /* Shader-side UV clamping (PD pattern): clamp tex coords before sampling
-     * when the N64 tile descriptor has G_TX_CLAMP set per-axis. */
+    /* Shader-side UV clamping (PD pattern): clamp tex coords to the live
+     * N64 tile's logical window, not blindly to the GL texture's 0..1 range. */
     for (int i = 0; i < 2; i++) {
         if (!cc_features.used_textures[i]) continue;
+        fs_len += ge007_sprintf(fs_buf + fs_len,
+                                 "vec2 sampleTexCoord%d = vTexCoord%d;\n",
+                                 i, i);
         if (cc_features.clamp[i][0] || cc_features.clamp[i][1]) {
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec2 clampedTexCoord%d = vTexCoord%d;\n", i, i);
-            if (cc_features.clamp[i][0])
-                fs_len += ge007_sprintf(fs_buf + fs_len, "clampedTexCoord%d.s = clamp(clampedTexCoord%d.s, 0.0, 1.0);\n", i, i);
-            if (cc_features.clamp[i][1])
-                fs_len += ge007_sprintf(fs_buf + fs_len, "clampedTexCoord%d.t = clamp(clampedTexCoord%d.t, 0.0, 1.0);\n", i, i);
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                     "vec2 texSize%d = vec2(textureSize(uTex%d, 0));\n",
+                                     i, i);
+            if (cc_features.clamp[i][0] && cc_features.clamp[i][1]) {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d = clamp(vTexCoord%d, 0.5 / texSize%d, vec2(vTexClampS%d, vTexClampT%d));\n",
+                                         i, i, i, i, i);
+            } else if (cc_features.clamp[i][0]) {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d.s = clamp(vTexCoord%d.s, 0.5 / texSize%d.s, vTexClampS%d);\n",
+                                         i, i, i, i);
+            } else {
+                fs_len += ge007_sprintf(fs_buf + fs_len,
+                                         "sampleTexCoord%d.t = clamp(vTexCoord%d.t, 0.5 / texSize%d.t, vTexClampT%d);\n",
+                                         i, i, i, i);
+            }
         }
     }
 
     if (cc_features.used_textures[0]) {
         const char *sample_fn = cc_features.n64_filter[0] ? "n64TextureFilter" : "texture";
-        if (cc_features.clamp[0][0] || cc_features.clamp[0][1])
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, clampedTexCoord0);\n", sample_fn);
-        else
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, vTexCoord0);\n", sample_fn);
+        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, sampleTexCoord0);\n", sample_fn);
     }
     if (cc_features.used_textures[1]) {
         const char *sample_fn = cc_features.n64_filter[1] ? "n64TextureFilter" : "texture";
-        if (cc_features.clamp[1][0] || cc_features.clamp[1][1])
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, clampedTexCoord1);\n", sample_fn);
-        else
-            fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, vTexCoord1);\n", sample_fn);
+        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, sampleTexCoord1);\n", sample_fn);
     }
 
     /* 2-cycle combiner: emit formula for each cycle.
@@ -704,6 +792,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
             prg->attrib_sizes[cnt] = 2;
             ++cnt;
+            for (int axis = 0; axis < 2; axis++) {
+                if (cc_features.clamp[i][axis]) {
+                    ge007_sprintf(name, "aTexClamp%c%d", axis == 0 ? 'S' : 'T', i);
+                    prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
+                    prg->attrib_sizes[cnt] = 1;
+                    ++cnt;
+                }
+            }
         }
     }
 
@@ -729,6 +825,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->used_textures[1] = cc_features.used_textures[1];
     prg->num_floats = num_floats;
     prg->num_attribs = cnt;
+    prg->used_noise = needs_noise;
+    if (needs_noise) {
+        prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
+        prg->window_height_location = glGetUniformLocation(shader_program, "window_height");
+    } else {
+        prg->frame_count_location = -1;
+        prg->window_height_location = -1;
+    }
+    prg->used_n64_filter = cc_features.n64_filter[0] || cc_features.n64_filter[1];
+    prg->n64_filter_scale_location = prg->used_n64_filter
+        ? glGetUniformLocation(shader_program, "uN64FilterScale")
+        : -1;
 
     gfx_opengl_load_shader(prg);
 
@@ -739,14 +847,6 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.used_textures[1]) {
         GLint sampler_location = glGetUniformLocation(shader_program, "uTex1");
         glUniform1i(sampler_location, 1);
-    }
-
-    if (needs_noise) {
-        prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
-        prg->window_height_location = glGetUniformLocation(shader_program, "window_height");
-        prg->used_noise = true;
-    } else {
-        prg->used_noise = false;
     }
 
     return prg;
@@ -923,6 +1023,9 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
 }
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+    if (current_shader_program != NULL) {
+        gfx_opengl_set_uniforms(current_shader_program);
+    }
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
@@ -958,6 +1061,201 @@ static int g_output_filter_logical_h;
 static int g_diag_output_filter_color_checked;
 static float g_diag_output_filter_color_scale = 1.0f;
 static float g_diag_output_filter_color_bias;
+static GLuint g_scene_fbo;
+static GLuint g_scene_color_tex;
+static GLuint g_scene_depth_rb;
+static GLuint g_scene_msaa_fbo;
+static GLuint g_scene_msaa_color_rb;
+static GLuint g_scene_msaa_depth_rb;
+static int g_scene_w;
+static int g_scene_h;
+static int g_scene_msaa_w;
+static int g_scene_msaa_h;
+static int g_scene_msaa_samples;
+static bool g_scene_target_bound;
+static bool g_scene_target_multisampled;
+
+static float gfx_opengl_effective_render_scale(void) {
+    if (g_pcRenderScale < 1.0f) {
+        return 1.0f;
+    }
+    if (g_pcRenderScale > 2.0f) {
+        return 2.0f;
+    }
+    return g_pcRenderScale;
+}
+
+static int gfx_opengl_effective_msaa_samples(void) {
+    static int max_samples = -1;
+    static int last_requested = -1;
+    static int last_effective = -1;
+    static int warned_clamp;
+    int requested = g_pcMsaaSamples;
+    int effective = 0;
+
+    if (requested < 2) {
+        return 0;
+    }
+
+    if (max_samples < 0) {
+        GLint gl_max_samples = 0;
+
+        glGetIntegerv(GL_MAX_SAMPLES, &gl_max_samples);
+        max_samples = gl_max_samples > 0 ? (int)gl_max_samples : 0;
+    }
+
+    if (requested >= 8 && max_samples >= 8) {
+        effective = 8;
+    } else if (requested >= 4 && max_samples >= 4) {
+        effective = 4;
+    } else if (requested >= 2 && max_samples >= 2) {
+        effective = 2;
+    }
+
+    if ((requested != last_requested || effective != last_effective) &&
+        requested > 0 && effective != requested && !warned_clamp) {
+        fprintf(stderr,
+                "[fast3d] Video.MSAA=%d clamped to %d (GL_MAX_SAMPLES=%d)\n",
+                requested, effective, max_samples);
+        fflush(stderr);
+        warned_clamp = 1;
+    }
+    last_requested = requested;
+    last_effective = effective;
+
+    return effective;
+}
+
+static bool gfx_opengl_scene_target_enabled(void) {
+    float render_scale = gfx_opengl_effective_render_scale();
+    return render_scale > 1.001f ||
+           gfx_opengl_effective_msaa_samples() > 0;
+}
+
+static bool gfx_opengl_ensure_scene_target(int width, int height) {
+    GLenum status;
+    int samples = gfx_opengl_effective_msaa_samples();
+    GLint saved_active_texture = 0;
+    GLint saved_texture0 = 0;
+
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &saved_active_texture);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &saved_texture0);
+
+    /* FBO setup binds its color texture on unit 0. The Fast3D layer caches
+     * texture bindings separately, so restore the raw GL binding before any
+     * queued triangles flush against stale cached state. */
+#define RESTORE_SCENE_TEXTURE_BINDING() do { \
+        glBindTexture(GL_TEXTURE_2D, (GLuint)saved_texture0); \
+        glActiveTexture((GLenum)saved_active_texture); \
+    } while (0)
+
+    if (g_scene_fbo == 0) {
+        glGenFramebuffers(1, &g_scene_fbo);
+    }
+    if (g_scene_color_tex == 0) {
+        glGenTextures(1, &g_scene_color_tex);
+    }
+    if (g_scene_depth_rb == 0) {
+        glGenRenderbuffers(1, &g_scene_depth_rb);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, g_scene_color_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+
+    if (g_scene_w != width || g_scene_h != height) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth_rb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        g_scene_w = width;
+        g_scene_h = height;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           g_scene_color_tex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                              g_scene_depth_rb);
+    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        static int warned;
+
+        if (!warned) {
+            fprintf(stderr,
+                    "[fast3d] Scene render target incomplete: 0x%04X\n",
+                    (unsigned int)status);
+            fflush(stderr);
+            warned = 1;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        RESTORE_SCENE_TEXTURE_BINDING();
+        return false;
+    }
+
+    if (samples > 0) {
+        if (g_scene_msaa_fbo == 0) {
+            glGenFramebuffers(1, &g_scene_msaa_fbo);
+        }
+        if (g_scene_msaa_color_rb == 0) {
+            glGenRenderbuffers(1, &g_scene_msaa_color_rb);
+        }
+        if (g_scene_msaa_depth_rb == 0) {
+            glGenRenderbuffers(1, &g_scene_msaa_depth_rb);
+        }
+
+        if (g_scene_msaa_w != width ||
+            g_scene_msaa_h != height ||
+            g_scene_msaa_samples != samples) {
+            glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_color_rb);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8,
+                                             width, height);
+            glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                             GL_DEPTH_COMPONENT24,
+                                             width, height);
+            g_scene_msaa_w = width;
+            g_scene_msaa_h = height;
+            g_scene_msaa_samples = samples;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_msaa_fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  GL_RENDERBUFFER, g_scene_msaa_color_rb);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            static int warned_msaa;
+
+            if (!warned_msaa) {
+                fprintf(stderr,
+                        "[fast3d] MSAA scene render target incomplete: 0x%04X "
+                        "(samples=%d)\n",
+                        (unsigned int)status, samples);
+                fflush(stderr);
+                warned_msaa = 1;
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            RESTORE_SCENE_TEXTURE_BINDING();
+            return false;
+        }
+    }
+
+    RESTORE_SCENE_TEXTURE_BINDING();
+#undef RESTORE_SCENE_TEXTURE_BINDING
+
+    return true;
+}
 
 static bool gfx_opengl_diag_output_vi_filter(void) {
     if (!g_diag_output_vi_filter_checked) {
@@ -1034,7 +1332,8 @@ static bool gfx_opengl_auto_menu_vi_filter(int *filter_w, int *filter_h) {
         g_auto_menu_vi_filter_checked = 1;
     }
 
-    if (g_auto_menu_vi_filter_disabled ||
+    if (g_pcRetroFilterMode == PC_RETRO_FILTER_OFF ||
+        g_auto_menu_vi_filter_disabled ||
         !gfx_opengl_current_menu_uses_auto_vi_filter() ||
         viGetX() != 440 ||
         viGetY() != 330) {
@@ -1074,6 +1373,8 @@ static bool gfx_opengl_auto_gameplay_vi_filter(int framebuffer_w,
                                                int *filter_h) {
     const int target_h = 240;
     int target_w;
+    bool setting_enabled = g_pcRetroFilterMode == PC_RETRO_FILTER_ON;
+    bool setting_disabled = g_pcRetroFilterMode == PC_RETRO_FILTER_OFF;
 
     if (!g_auto_gameplay_vi_filter_checked) {
         /* The N64 VI filter bilinearly downsamples to 240p then upsamples, which
@@ -1084,16 +1385,19 @@ static bool gfx_opengl_auto_gameplay_vi_filter(int framebuffer_w,
             gfx_opengl_env_flag_enabled("GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER") ? 1 : 0;
         g_auto_gameplay_vi_filter_disabled =
             gfx_opengl_env_flag_enabled("GE007_DISABLE_AUTO_GAMEPLAY_VI_FILTER") ? 1 : 0;
-        if (g_auto_gameplay_vi_filter_enabled && !g_auto_gameplay_vi_filter_disabled) {
+        if ((setting_enabled || g_auto_gameplay_vi_filter_enabled) &&
+            !setting_disabled &&
+            !g_auto_gameplay_vi_filter_disabled) {
             fprintf(stderr,
                     "[fast3d] Auto gameplay/display-cast output VI filter enabled "
-                    "(GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER)\n");
+                    "(Video.RetroFilter or GE007_ENABLE_AUTO_GAMEPLAY_VI_FILTER)\n");
             fflush(stderr);
         }
         g_auto_gameplay_vi_filter_checked = 1;
     }
 
-    if (!g_auto_gameplay_vi_filter_enabled ||
+    if (setting_disabled ||
+        (!setting_enabled && !g_auto_gameplay_vi_filter_enabled) ||
         g_auto_gameplay_vi_filter_disabled ||
         framebuffer_w <= 0 ||
         framebuffer_h < target_h) {
@@ -1220,6 +1524,25 @@ static void gfx_opengl_check_output_filter_color_diag(void) {
     }
 }
 
+static float gfx_opengl_output_gamma(void) {
+    if (g_pcVideoGamma < 0.5f) {
+        return 0.5f;
+    }
+    if (g_pcVideoGamma > 2.5f) {
+        return 2.5f;
+    }
+    return g_pcVideoGamma;
+}
+
+static bool gfx_opengl_output_color_adjust_active(void) {
+    float gamma = gfx_opengl_output_gamma();
+
+    return g_diag_output_filter_color_scale != 1.0f ||
+           g_diag_output_filter_color_bias != 0.0f ||
+           gamma < 0.999f ||
+           gamma > 1.001f;
+}
+
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
     GLuint shader = glCreateShader(type);
     GLint success = GL_FALSE;
@@ -1262,6 +1585,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform vec2 uDstSize;\n"
         "uniform float uColorScale;\n"
         "uniform float uColorBias;\n"
+        "uniform float uGamma;\n"
         "uniform int uFilterMode;\n"
         "in vec2 vTexCoord;\n"
         "out vec4 outColor;\n"
@@ -1318,7 +1642,9 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    else if (uFilterMode == 2) color = sampleFitSrcToDstNearest(gl_FragCoord.xy);\n"
         "    else if (uFilterMode == 3) color = sampleFitLogicalToDstNearest(gl_FragCoord.xy);\n"
         "    else color = sampleCpuBilinear(gl_FragCoord.xy);\n"
-        "    outColor = vec4(clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0), color.a);\n"
+        "    vec3 rgb = clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0);\n"
+        "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
+        "    outColor = vec4(rgb, color.a);\n"
         "}\n";
 
     if (g_output_filter_program == 0) {
@@ -1407,6 +1733,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_diag_output_filter_color_scale);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uColorBias"),
                 g_diag_output_filter_color_bias);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uGamma"),
+                gfx_opengl_output_gamma());
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);
@@ -1437,14 +1765,28 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     GLuint filter_source_tex;
     int filter_source_w;
     int filter_source_h;
+    bool use_vi_filter;
+    bool use_color_adjust;
+    extern SDL_Window *g_sdlWindow;
+    int drawable_w = 0;
+    int drawable_h = 0;
 
     glGetIntegerv(GL_VIEWPORT, viewport);
-    width = gfx_current_dimensions.width > 0 ? (int)gfx_current_dimensions.width : viewport[2];
-    height = gfx_current_dimensions.height > 0 ? (int)gfx_current_dimensions.height : viewport[3];
-    if (!gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h)) {
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &drawable_w, &drawable_h);
+    }
+    width = drawable_w > 0 ? drawable_w : viewport[2];
+    height = drawable_h > 0 ? drawable_h : viewport[3];
+    gfx_opengl_check_output_filter_color_diag();
+    use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
+    use_color_adjust = gfx_opengl_output_color_adjust_active();
+    if (!use_vi_filter && !use_color_adjust) {
         return;
     }
-    gfx_opengl_check_output_filter_color_diag();
+    if (!use_vi_filter) {
+        filter_w = width;
+        filter_h = height;
+    }
 
     if (width <= 0 || height <= 0 || filter_w <= 0 || filter_h <= 0) {
         return;
@@ -1660,6 +2002,11 @@ static void gfx_opengl_init(void) {
 }
 
 static void gfx_opengl_on_resize(void) {
+    g_scene_w = 0;
+    g_scene_h = 0;
+    g_scene_msaa_w = 0;
+    g_scene_msaa_h = 0;
+    g_scene_msaa_samples = 0;
 }
 
 static float g_clear_r = 0, g_clear_g = 0, g_clear_b = 0;
@@ -1672,6 +2019,20 @@ static int wireframe_checked = 0, wireframe_on = 0;
 
 static void gfx_opengl_start_frame(void) {
     frame_count++;
+    g_scene_target_bound = false;
+    g_scene_target_multisampled = false;
+
+    if (gfx_opengl_scene_target_enabled() &&
+        gfx_opengl_ensure_scene_target((int)gfx_current_dimensions.width,
+                                       (int)gfx_current_dimensions.height)) {
+        g_scene_target_bound = true;
+        g_scene_target_multisampled = gfx_opengl_effective_msaa_samples() > 0;
+        glBindFramebuffer(GL_FRAMEBUFFER,
+                          g_scene_target_multisampled ? g_scene_msaa_fbo : g_scene_fbo);
+        glViewport(0, 0, g_scene_w, g_scene_h);
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 
     if (!wireframe_checked) {
         wireframe_on = (getenv("GE007_WIREFRAME") != NULL);
@@ -1688,7 +2049,43 @@ static void gfx_opengl_start_frame(void) {
     glEnable(GL_SCISSOR_TEST);
 }
 
+static void gfx_opengl_resolve_scene_target(void) {
+    extern SDL_Window *g_sdlWindow;
+    int drawable_w = 0;
+    int drawable_h = 0;
+
+    if (!g_scene_target_bound || g_scene_fbo == 0) {
+        return;
+    }
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &drawable_w, &drawable_h);
+    }
+    if (drawable_w <= 0 || drawable_h <= 0) {
+        drawable_w = g_scene_w;
+        drawable_h = g_scene_h;
+    }
+
+    glDisable(GL_SCISSOR_TEST);
+    if (g_scene_target_multisampled) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
+        glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                          0, 0, g_scene_w, g_scene_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                      0, 0, drawable_w, drawable_h,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, drawable_w, drawable_h);
+    g_scene_target_bound = false;
+}
+
 static void gfx_opengl_end_frame(void) {
+    gfx_opengl_resolve_scene_target();
     gfx_opengl_apply_output_vi_filter();
 }
 

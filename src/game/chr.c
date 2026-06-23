@@ -4936,35 +4936,56 @@ s32 chrTickBeams(PropRecord *prop) {
     model = chr->model;
     if (model == NULL) return 0;
 
-    /* --- AI decision tick --- */
-    if (D_8002C904 == 0) {
-        chrlvActionTick(chr);
-        if ((chr->hidden & CHRHIDDEN_REMOVE) != 0) {
-            disable_sounds_attached_to_player_then_something(prop);
-            return 1;
-        }
+    /* --- AI decision tick ---
+     * ASM-faithful gate (US 7F020F64-78): a CHRFLAG_HIDDEN guard whose
+     * CHRFLAG_00040000 ("update guard action") bit is clear skips the entire
+     * action/animation tick — the original branches past it to the post-tick
+     * path. Without the gate, hidden guards keep advancing their AI in the port
+     * while the original freezes them. Non-hidden guards (the validated common
+     * case) take the gate as a no-op and are unaffected. */
+    if (!((chr->chrflags & CHRFLAG_HIDDEN) && (chr->chrflags & CHRFLAG_00040000) == 0)) {
+        if (D_8002C904 == 0) {
+            chrlvActionTick(chr);
+            if ((chr->hidden & CHRHIDDEN_REMOVE) != 0) {
+                disable_sounds_attached_to_player_then_something(prop);
+                return 1;
+            }
 
-        model = chr->model;
-        if (model == NULL) return 1; /* chrlvActionTick may have freed the model */
-    } else {
-        /* D_8002C904 nonzero: check animation table, potentially set animation */
-        if (g_AnimationTablePointerCountRelated < 256) {
-            struct ModelAnimation *current_anim = objecthandlerGetModelAnim(model);
-            uintptr_t target = animation_table_ptrs1[g_AnimationTablePointerCountRelated];
-            if (target != 1 && current_anim != (struct ModelAnimation *)target) {
-                modelSetAnimation(model, (struct ModelAnimation *)target, 0, 0.0f, 0.5f, 0.0f);
+            model = chr->model;
+            if (model == NULL) return 1; /* chrlvActionTick may have freed the model */
+        } else {
+            /* D_8002C904 nonzero: check animation table, potentially set animation */
+            if (g_AnimationTablePointerCountRelated < 256) {
+                struct ModelAnimation *current_anim = objecthandlerGetModelAnim(model);
+                uintptr_t target = animation_table_ptrs1[g_AnimationTablePointerCountRelated];
+                if (target != 1 && current_anim != (struct ModelAnimation *)target) {
+                    modelSetAnimation(model, (struct ModelAnimation *)target, 0, 0.0f, 0.5f, 0.0f);
+                }
             }
         }
     }
 
-    /* --- Position and animation advance --- */
-    chrPositionRelated7F020E40(chr, g_ClockTimer);
+    /* --- Position and animation advance ---
+     * ASM-faithful freeze-aware tick (US .L7F02101C): the original passes a
+     * freeze-derived value, not raw g_ClockTimer — g_ClockTimer when
+     * D_8002C90C==0 (the normal/default case), else 0, else 1 gated by D_8002C910.
+     * D_8002C90C/910 are mutated only by the DEB_SELANIM debug menu (lvl.c case
+     * 8), so this is a no-op in normal play and matches the original under the
+     * debug single-step. */
+    {
+        s32 animTick = g_ClockTimer;
+        if (D_8002C90C != 0) {
+            animTick = (D_8002C910 != 0) ? 1 : 0;
+        }
+        chrPositionRelated7F020E40(chr, animTick);
+    }
 
     /* --- Stan tile fix-up ---
-     * On N64, sub_GAME_7F03E27C assigns tiles during prop setup. That function
-     * is stubbed on NATIVE_PORT, so find a tile if we don't have one.
-     * Floor detection itself is handled canonically by the model move callback
-     * (sub_GAME_7F01FC10) invoked via subcalcpos → sub_GAME_7F06D490. */
+     * Ensure the prop has a stan (floor) tile. On N64 the tile is assigned during
+     * prop/chr setup; on NATIVE_PORT it can still be missing here, so resolve one
+     * defensively via sub_GAME_7F0AF20C when prop->stan is NULL. Floor detection
+     * itself is handled canonically by the model move callback (sub_GAME_7F01FC10)
+     * invoked via subcalcpos → sub_GAME_7F06D490. */
     if (prop->stan == NULL) {
         extern StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist);
         f32 pos3[3] = { prop->pos.x, prop->pos.y, prop->pos.z };
@@ -4972,25 +4993,60 @@ s32 chrTickBeams(PropRecord *prop) {
         prop->stan = sub_GAME_7F0AF20C(pos3, 0, &dist);
     }
 
+    /* --- H6: free held weapons flagged for permanent removal (ASM-faithful) ---
+     * ASM .L7F02106C / .L7F021094: each held weapon whose WeaponObjRecord
+     * runtime_bitflags has RUNTIMEBITFLAG_REMOVE set (e.g. via chrSetWeaponFlag4)
+     * is released with objFreePermanently, on all tick paths (not hidden-gated).
+     * The native subset omitted this, leaking such a weapon / leaving it attached.
+     * In normal play the flag is unset, so this is a no-op. weapons_held[hand] is
+     * re-read each iteration; objFreePermanently NULLs the attached slot. */
+    {
+        s32 hand;
+        for (hand = 0; hand < 2; hand++) {
+            PropRecord *wp = chr->weapons_held[hand];
+            if (wp != NULL && wp->weapon != NULL
+                && (wp->weapon->runtime_bitflags & RUNTIMEBITFLAG_REMOVE)) {
+                objFreePermanently((struct ObjectRecord *)wp->weapon, TRUE);
+            }
+        }
+    }
+
+    /* --- H5: set CHRHIDDEN_BACKGROUND_AI (ASM-faithful) ---
+     * ASM .L7F0213C8 / .L7F0213F8: the original sets the "AI script running" flag
+     * (0x200) for this guard in ALL cases EXCEPT a static standing prop
+     * (actiontype==ACT_STAND && model->anim2==NULL && prop->type!=PROP_TYPE_VIEWER).
+     * The flag is cleared every AI tick (chrlv.c:11079) and read by
+     * check_guard_detonate_proxmine (chrobjhandler.c:44364) — so without setting
+     * it, guards NEVER trigger proximity mines in the port. (model->anim2 is the
+     * native field for the ASM's model->0x54; the Model struct widens on
+     * NATIVE_PORT, so a raw +0x54 would read the wrong field.) */
+    if (!(chr->actiontype == ACT_STAND && model->anim2 == NULL
+          && prop->type != PROP_TYPE_VIEWER)) {
+        chr->hidden |= CHRHIDDEN_BACKGROUND_AI;
+    }
+
     /* --- Aim properties update --- */
     chrUpdateAimProperties(chr);
 
-    /* --- Flush any queued held-item drops ---
-     * Guard AI/death logic only marks held props as dropped and sets
-     * CHRHIDDEN_DROP_HELD_ITEMS. The original chrTickBeams then walks the
-     * child prop list, calls objDrop on each child, and clears the flag.
-     * This must happen before the visibility early-return so off-screen
-     * deaths still release real world pickups. */
-    chrDropPendingHeldItems(chr);
-
-    /* --- Process guard weapon firing ---
-     * The original chrTickBeams calls chrlvTriggerFireWeapon near the end.
-     * It checks CHRHIDDEN_FIRE_WEAPON_LEFT/RIGHT flags (set by
-     * chrlvTickAttackCommon during the firing animation window) and calls
-     * chrlvFireWeaponRelated → chrlvUpdateShotbondsum → damage to Bond.
-     * Must happen before the visibility early-return so off-screen guards
-     * can still shoot the player. */
-    chrlvTriggerFireWeapon(chr);
+    /* --- Held-item drops + guard weapon firing (ASM-faithful hidden gate) ---
+     * The original chrTickBeams performs BOTH the queued objDrop walk and
+     * chrlvTriggerFireWeapon only on the non-hidden path: ASM .L7F021AAC
+     * (US 7F021AAC) loads chr->chrflags and, if CHRFLAG_HIDDEN (0x400) is set,
+     * branches straight to the return — skipping both the drop and the fire.
+     *
+     * A CHRFLAG_HIDDEN guard must therefore neither drop items nor fire its
+     * weapon. Running them unconditionally (as the port previously did) makes
+     * hidden guards inflict phantom damage on Bond via
+     * chrlvTriggerFireWeapon → chrlvUpdateShotbondsum, and spawn phantom world
+     * pickups. Both calls stay before the visibility early-return so that
+     * off-screen (but not hidden) guards still shoot and drop, matching the
+     * original. chrDropPendingHeldItems() itself no-ops unless
+     * CHRHIDDEN_DROP_HELD_ITEMS is set, mirroring the ASM's inner
+     * (chr->hidden & 1) gate on the objDrop walk. */
+    if ((chr->chrflags & CHRFLAG_HIDDEN) == 0) {
+        chrDropPendingHeldItems(chr);
+        chrlvTriggerFireWeapon(chr);
+    }
 
     /* Dispose of any pending DL chain from last frame */
     if (chr->field_20 != NULL) {
@@ -4999,27 +5055,76 @@ s32 chrTickBeams(PropRecord *prop) {
     }
 
     /* --- Visibility test --- */
-#ifdef NATIVE_PORT
-    /* Bypass full visibility test — camIsPosInScreen frustum planes not yet
-     * calibrated for PC coordinate space. Just check room_rendered. */
-    visible = 0;
+    /* H7 (gated, default OFF): the original gates rendering on the real frustum
+     * test sub_GAME_7F054D6C (room/fog/portal + camIsPosInScreen). The Phase-1
+     * GE007_TRACE_VISIBILITY probe confirmed that test is accurate in 1P — it
+     * culls only out-of-view-volume guards and never keeps what the room-rendered
+     * bypass culls. When GE007_CHRBEAMS_FRUSTUM is set, use the real test;
+     * otherwise keep the room-rendered bypass (byte-identical to prior behavior).
+     * NOTE: in split-screen the frustum uses the CURRENT player's camera, so this
+     * gate is intended for single-player until the per-player union (M1b) lands —
+     * see docs/COMBAT_DEFERRED_PLAN.md. */
     {
-        s32 room_ids[8];
-        chraiGetPropRoomIds(prop, room_ids);
-        for (s32 room_index = 0; room_ids[room_index] >= 0; room_index++) {
-            if (room_ids[room_index] < g_MaxNumRooms
-                && getROOMID_isRendered(room_ids[room_index])) {
-                visible = 1;
-                break;
+        static int s_frustum_gate = -1;
+        if (s_frustum_gate < 0) {
+            /* Default OFF; "0"/empty disable (ge_env_bool gives every GE007_*
+             * gate the same truth table, so GE007_CHRBEAMS_FRUSTUM=0 is never a
+             * footgun that silently enables the frustum path). */
+            s_frustum_gate = ge_env_bool("GE007_CHRBEAMS_FRUSTUM", 0);
+        }
+        if (s_frustum_gate) {
+            f32 inst_size = getinstsize(model);
+            visible = sub_GAME_7F054D6C(prop, &prop->pos, inst_size, 1);
+        } else {
+            visible = 0;
+            {
+                s32 room_ids[8];
+                chraiGetPropRoomIds(prop, room_ids);
+                for (s32 room_index = 0; room_ids[room_index] >= 0; room_index++) {
+                    if (room_ids[room_index] < g_MaxNumRooms
+                        && getROOMID_isRendered(room_ids[room_index])) {
+                        visible = 1;
+                        break;
+                    }
+                }
             }
         }
     }
-#else
+
+    /* --- PHASE-1 frustum-accuracy probe (GE007_TRACE_VISIBILITY) ---
+     * H4/H7 decision gate. BEHAVIOR-NEUTRAL: this only ADDITIONALLY computes the
+     * real frustum visibility test (sub_GAME_7F054D6C — the same canonical test
+     * already trusted by the native object handler at
+     * chrobjhandler.c:10895) and logs it against the room-rendered bypass that
+     * actually drives `visible`. It does NOT change `visible`, and runs only when
+     * GE007_TRACE_VISIBILITY is set (off by default). Used to decide whether
+     * camIsPosInScreen is accurate enough on PC to restore the original
+     * visibility-gated actiontype dispatch (H4) and drop the bypass (H7): the
+     * failure signal is (room_rendered=1 && frustum=0) for a guard that is
+     * genuinely on-screen (cross-checked against the run's screenshot). */
     {
-        f32 inst_size = getinstsize(model);
-        visible = sub_GAME_7F054D6C(prop, &prop->pos, inst_size, 1);
+        static int s_vis_probe = -1;
+        if (s_vis_probe < 0) {
+            s_vis_probe = (getenv("GE007_TRACE_VISIBILITY") != NULL) ? 1 : 0;
+        }
+        if (s_vis_probe) {
+            static int vis_probe_log = 0;
+            if (vis_probe_log < 600) {
+                f32 probe_inst = getinstsize(model);
+                s32 probe_frustum = sub_GAME_7F054D6C(prop, &prop->pos, probe_inst, 1);
+                s32 probe_rooms[8];
+                chraiGetPropRoomIds(prop, probe_rooms);
+                vis_probe_log++;
+                fprintf(stderr,
+                        "[VIS_PROBE] chr=%d room0=%d room_rendered=%d frustum=%d "
+                        "disagree=%d pos=(%.1f,%.1f,%.1f) inst=%.1f\n",
+                        chr->chrnum, probe_rooms[0], visible, probe_frustum,
+                        ((visible != 0) != (probe_frustum != 0)),
+                        prop->pos.x, prop->pos.y, prop->pos.z, probe_inst);
+                fflush(stderr);
+            }
+        }
     }
-#endif
 
     /* --- Per-frame guard physics/visibility diagnostic --- */
     {
@@ -5043,7 +5148,40 @@ s32 chrTickBeams(PropRecord *prop) {
         }
     }
 
+    /* --- ASM-faithful hidden-guard visibility gate ---
+     * A CHRFLAG_HIDDEN guard (set by the AI_HideAllChrs script command,
+     * chrai.c:5133, during cutscenes / intros / scripted transitions) is forced
+     * not-visible by the original: ASM .L7F0210BC stores visibility=0 and jumps
+     * past the render path. The native room-rendered bypass above does not encode
+     * this, so a hidden guard in a rendered room was still rendered AND given
+     * PROPFLAG_ONSCREEN below — which put it on g_OnScreenPropList, making it
+     * auto-aim-targetable and hittable. Symptom: "phantom" guards visible on
+     * screen and taking damage during scripted-hide windows. Complements the H1
+     * fire/drop gate (same CHRFLAG_HIDDEN condition); non-hidden guards unaffected. */
+    if (chr->chrflags & CHRFLAG_HIDDEN) {
+        visible = 0;
+    }
+
     if (!visible) {
+        /* H1b (mid-life-hide fix): match the N64 not-visible path
+         * (.L7F021A34-.L7F021A88) — clear PROPFLAG_ONSCREEN on the chr prop and
+         * its held weapons/hat before returning. The render path below only SETS
+         * this flag, and a separate camera pass (chrobjhandler.c) also sets it for
+         * any geometrically-visible prop regardless of CHRFLAG_HIDDEN; so without
+         * clearing it here, a guard hidden AFTER being on-screen stayed on
+         * g_OnScreenPropList and remained auto-aim-targetable and hittable (the
+         * "phantom guard receiving damage" symptom). Gated on !visible (not only
+         * CHRFLAG_HIDDEN) to also match the original for ordinary culled guards. */
+        if (chr->weapons_held[GUNRIGHT] != NULL) {
+            chr->weapons_held[GUNRIGHT]->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        if (chr->weapons_held[GUNLEFT] != NULL) {
+            chr->weapons_held[GUNLEFT]->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        if (chr->handle_positiondata_hat != NULL) {
+            chr->handle_positiondata_hat->flags &= ~PROPFLAG_ONSCREEN;
+        }
+        prop->flags &= ~PROPFLAG_ONSCREEN;
         return 0;
     }
 
@@ -5086,7 +5224,6 @@ s32 chrTickBeams(PropRecord *prop) {
         prop->zDepth = height;
     }
 
-#ifdef NATIVE_PORT
     /* PC: compute view-space Z distance for fog/visibility calculations.
      * On N64, bondviewTransformManyPosToViewMatrix updates zDepth later,
      * but that code is skipped on NATIVE_PORT. Without this, zDepth stays
@@ -5101,7 +5238,6 @@ s32 chrTickBeams(PropRecord *prop) {
             prop->zDepth = viewZ;
         }
     }
-#endif
 
     /* --- Register guard model DL region for correct matrix order ---
      * g_executing_guard_dl gates P×MV matrix multiplication. Without this,

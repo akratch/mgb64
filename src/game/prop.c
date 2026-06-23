@@ -50,6 +50,8 @@ static int g_DoorSetupTraceEnabled = -1;
 static int g_DoorSetupTraceBudget = -1;
 static int g_SetupLinkTraceEnabled = -1;
 static int g_SetupLinkTraceBudget = -1;
+static int g_TintedGlassTraceEnabled = -1;
+static int g_TintedGlassTraceBudget = -1;
 
 static int monitorTraceEnabled(void)
 {
@@ -172,6 +174,55 @@ static void setupLinkTracePrintf(const char *fmt, ...)
     fprintf(stderr, "\n");
     va_end(ap);
     fflush(stderr);
+}
+
+static int tintedGlassTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_TintedGlassTraceEnabled >= 0) {
+        return g_TintedGlassTraceEnabled;
+    }
+
+    value = getenv("GE007_TRACE_TINTED_GLASS");
+    g_TintedGlassTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_TRACE_TINTED_GLASS_BUDGET");
+    g_TintedGlassTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 120;
+
+    return g_TintedGlassTraceEnabled;
+}
+
+static void tintedGlassTracePrintf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!tintedGlassTraceEnabled()) {
+        return;
+    }
+
+    if (g_TintedGlassTraceBudget == 0) {
+        return;
+    }
+
+    if (g_TintedGlassTraceBudget > 0) {
+        g_TintedGlassTraceBudget--;
+    }
+
+    va_start(ap, fmt);
+    fprintf(stderr, "[TINTED_GLASS_TRACE] setup ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    fflush(stderr);
+}
+
+static f32 setupFixed16StoredInFloatToFloat(f32 value)
+{
+    s32 raw;
+
+    memcpy(&raw, &value, sizeof(raw));
+    return raw / 65536.0f;
 }
 #endif
 
@@ -1878,6 +1929,24 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
                 break;
             }
 
+            /* --- TintedGlassRecord (N64=148, PC=sizeof) ---
+             * unk90 is stored as raw fixed-point bits until the spawn pass,
+             * matching the original loader's later fixed16 conversion. */
+            case PROPDEF_TINTED_GLASS: {
+                TintedGlassRecord *tg = (TintedGlassRecord *)dst;
+                s32 raw_unk90;
+
+                memset(tg, 0, sizeof(TintedGlassRecord));
+                propdef_convert_objectrecord(src, (ObjectRecord *)tg);
+                tg->TintDist = be_s32(src + 0x80);
+                tg->CullDist = be_s32(src + 0x84);
+                tg->calculatedopacity = be_s32(src + 0x88);
+                tg->portalnum = be_s32(src + 0x8C);
+                raw_unk90 = be_s32(src + 0x90);
+                memcpy(&tg->unk90, &raw_unk90, sizeof(raw_unk90));
+                break;
+            }
+
             /* --- BodyArmourRecord (N64=136, PC=sizeof) --- */
             case PROPDEF_ARMOUR: {
                 BodyArmourRecord *ba = (BodyArmourRecord *)dst;
@@ -3113,7 +3182,51 @@ void proplvreset2(s32 stageId)
                     struct TintedGlassRecord *pdef_tintg = (struct TintedGlassRecord *)phead;
                     if (withobjs && !((pdef_tintg)->flags2 & flags))
                     {
-                        /* Skip portal setup — boundpads not converted yet */
+                        if (pdef_tintg->flags & PROPFLAG_GLASS_HASPORTAL)
+                        {
+                            if (!(isNotBoundPad(pdef_tintg->pad)) && g_CurrentSetup.boundpads != NULL)
+                            {
+                                struct coord3d up;
+                                struct coord3d up2;
+                                BoundPadRecord *pad3d;
+                                f32 scale;
+
+                                pad3d = &g_CurrentSetup.boundpads[getBoundPadNum(pdef_tintg->pad)];
+
+                                sub_GAME_7F001BD4(pad3d, &up);
+
+                                scale = 10.0f;
+
+                                up2.x = (scale * pad3d->up.x) + up.x;
+                                up2.y = (scale * pad3d->up.y) + up.y;
+                                up2.z = (scale * pad3d->up.z) + up.z;
+                                up.x -= scale * pad3d->up.x;
+                                up.y -= scale * pad3d->up.y;
+                                up.z -= scale * pad3d->up.z;
+                                pdef_tintg->portalnum = sub_GAME_7F0B9E04(&up, &up2);
+                                pdef_tintg->unk90 = setupFixed16StoredInFloatToFloat(pdef_tintg->unk90);
+                            }
+                            else
+                            {
+                                pdef_tintg->unk90 = setupFixed16StoredInFloatToFloat(pdef_tintg->unk90);
+                            }
+                        }
+
+                        tintedGlassTracePrintf(
+                            "spawn index=%d obj=%d pad=%d flags=0x%08x flags2=0x%08x "
+                            "tint=%d cull=%d opacity=%d portal=%d unk90=%.4f has_boundpad=%d",
+                            pdefIndex,
+                            pdef_tintg->obj,
+                            pdef_tintg->pad,
+                            (unsigned int)pdef_tintg->flags,
+                            (unsigned int)pdef_tintg->flags2,
+                            pdef_tintg->TintDist,
+                            pdef_tintg->CullDist,
+                            pdef_tintg->calculatedopacity,
+                            pdef_tintg->portalnum,
+                            pdef_tintg->unk90,
+                            (!(isNotBoundPad(pdef_tintg->pad)) && g_CurrentSetup.boundpads != NULL) ? 1 : 0);
+
                         domakedefaultobj(stageId, (struct ObjectRecord *)pdef_tintg, pdefIndex);
                     }
                     break;

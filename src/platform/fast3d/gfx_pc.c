@@ -151,6 +151,7 @@ static inline bool gfx_is_intro_matrix_addr(uintptr_t addr)
 
 static void gfx_check_diag_env(void);
 extern void transform3Dto2DWithZScaling(coord3d *in, coord3d *out);
+extern void viGetZRange(float *zrange);
 
 /* Game texture system (for G_SETTEX) — declarations from image.h */
 #include "image.h"
@@ -433,6 +434,12 @@ static int gfx_guard_matrix_slot_for_addr(uintptr_t addr) {
 /* Draw-class tagging — set by top-level renderers, read by diagnostics */
 static enum DrawClass g_current_draw_class = DRAWCLASS_UNKNOWN;
 static int g_drawclass_tri_counts[DRAWCLASS_HUD + 1];
+static bool g_sky_tri_mode = false;
+static bool g_sky_viewport_valid = false;
+static float g_sky_viewport_left = 0.0f;
+static float g_sky_viewport_top = 0.0f;
+static float g_sky_viewport_width = SCREEN_WIDTH;
+static float g_sky_viewport_height = SCREEN_HEIGHT;
 static struct {
     const void *prop;
     int prop_type;
@@ -457,6 +464,14 @@ static struct {
 static int effect_dl_range_count = 0;
 static int g_effect_range_trace_enabled = -1;
 
+#define MAX_DRAW_CLASS_DL_RANGES 512
+static struct {
+    uintptr_t start;
+    uintptr_t end;
+    enum DrawClass cls;
+} draw_class_dl_ranges[MAX_DRAW_CLASS_DL_RANGES];
+static int draw_class_dl_range_count = 0;
+
 static int gfx_effect_range_trace_is_enabled(void) {
     if (g_effect_range_trace_enabled < 0) {
         const char *env = getenv("GE007_EFFECT_RANGE_TRACE");
@@ -480,6 +495,40 @@ static const char *gfx_draw_class_name(enum DrawClass cls) {
 
 void gfx_set_draw_class(enum DrawClass cls) {
     g_current_draw_class = cls;
+}
+
+void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, const void *end) {
+    uintptr_t s = (uintptr_t)start;
+    uintptr_t e = (uintptr_t)end;
+
+    if ((int)cls < 0 || cls > DRAWCLASS_HUD || cls == DRAWCLASS_UNKNOWN || s == 0 || e <= s) {
+        return;
+    }
+
+    for (int i = 0; i < draw_class_dl_range_count; i++) {
+        if (draw_class_dl_ranges[i].cls == cls &&
+            draw_class_dl_ranges[i].end == s) {
+            draw_class_dl_ranges[i].end = e;
+            return;
+        }
+    }
+
+    if (draw_class_dl_range_count < MAX_DRAW_CLASS_DL_RANGES) {
+        draw_class_dl_ranges[draw_class_dl_range_count].start = s;
+        draw_class_dl_ranges[draw_class_dl_range_count].end = e;
+        draw_class_dl_ranges[draw_class_dl_range_count].cls = cls;
+        draw_class_dl_range_count++;
+    }
+}
+
+static enum DrawClass gfx_draw_class_for_cmd_addr(uintptr_t addr, enum DrawClass fallback) {
+    for (int i = draw_class_dl_range_count - 1; i >= 0; i--) {
+        if (addr >= draw_class_dl_ranges[i].start && addr < draw_class_dl_ranges[i].end) {
+            return draw_class_dl_ranges[i].cls;
+        }
+    }
+
+    return fallback;
 }
 
 void gfx_set_prop_context(const void *prop,
@@ -1050,6 +1099,7 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
 static int g_diag_tex_only = -1;
 static int g_diag_force_point_filter = -1;
 static int g_diag_force_linear_filter = -1;
+static int g_diag_force_room_point_filter = -1;
 static int g_diag_convert_k4k5 = -1;
 static int g_diag_lod_fraction_override = INT32_MIN;
 static float g_diag_shade_scale = -1.0f;
@@ -1071,6 +1121,7 @@ static int g_diag_settex_cc_n64_filter_always_3point_texsize = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_texnum = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_options = -1;
 static int g_diag_settex_clamped_non_texedge_n64_filter_always_3point = -1;
+static int g_diag_disable_shader_clamp = -1;
 
 static bool gfx_apply_texture_filter_override(bool linear_filter)
 {
@@ -1086,6 +1137,44 @@ static bool gfx_apply_texture_filter_override(bool linear_filter)
     if (g_diag_force_linear_filter > 0) {
         return true;
     }
+    return linear_filter;
+}
+
+static bool gfx_diag_disable_shader_clamp_enabled(void)
+{
+    if (g_diag_disable_shader_clamp < 0) {
+        g_diag_disable_shader_clamp =
+            (getenv("GE007_DIAG_DISABLE_SHADER_CLAMP") != NULL) ? 1 : 0;
+    }
+
+    return g_diag_disable_shader_clamp > 0;
+}
+
+static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
+{
+    linear_filter = gfx_apply_texture_filter_override(linear_filter);
+
+    if (g_diag_force_room_point_filter < 0) {
+        g_diag_force_room_point_filter =
+            (getenv("GE007_FORCE_ROOM_POINT_FILTER") != NULL &&
+             getenv("GE007_DISABLE_ROOM_POINT_FILTER") == NULL) ? 1 : 0;
+    }
+
+    if (g_diag_force_linear_filter > 0) {
+        return linear_filter;
+    }
+
+    /* N64 G_TF_BILERP room materials should use the shader-side N64 filter,
+     * not blanket nearest sampling. The old default point override made Dam,
+     * Cradle, Surface, and other room textures collapse to visibly lower color
+     * diversity. Keep point sampling available only as a focused diagnostic. */
+    if (g_diag_force_room_point_filter > 0 &&
+        g_current_draw_class == DRAWCLASS_ROOM &&
+        !g_sky_tri_mode &&
+        !g_texrect_uv_mode) {
+        return false;
+    }
+
     return linear_filter;
 }
 
@@ -1763,6 +1852,8 @@ struct LoadedVertex {
     struct RGBA color;
     uint8_t fog;       /* Per-vertex fog factor [0-255], separate from color.a.
                         * Matches PD port design: fog must not clobber shade alpha. */
+    float fog_depth;   /* Positive camera-space depth used for native fog diagnostics. */
+    float fog_coord;   /* Normalized fog input before gSPFogPosition coefficients. */
     uint8_t clip_rej;
     int16_t ob[3];
     int room_id;
@@ -1814,6 +1905,11 @@ struct TextureHashmapNode {
     uint8_t palette_lut_mode;
     uint32_t size_bytes;
     uint32_t line_size_bytes;
+    /* The decoded source pitch is part of the GL upload identity. The same
+     * visible tile dimensions can come from packed LOADBLOCK data or from a
+     * strided LOADTILE/sub-rect; aliasing those cache entries reuses pixels
+     * decoded with the wrong row pitch and presents as texture smearing. */
+    uint32_t full_image_line_size_bytes;
     uint16_t tile_width;
     uint16_t tile_height;
     const uint8_t *palette_addr0;
@@ -1878,17 +1974,44 @@ static void tex_cache_init(void) {
     gfx_texture_cache.free_node_count = TEXTURE_CACHE_MAX_SIZE;
 }
 
+static inline size_t gfx_texture_cache_hash_key(uintptr_t texture_addr_key,
+                                                uintptr_t texture_source_key,
+                                                uint32_t size_bytes,
+                                                uint32_t line_size_bytes,
+                                                uint32_t full_image_line_size_bytes,
+                                                uint32_t tile_width,
+                                                uint32_t tile_height,
+                                                const uint8_t *palette_addr0,
+                                                const uint8_t *palette_addr1,
+                                                uint8_t palette_index,
+                                                uint8_t palette_lut_mode)
+{
+    return ((texture_addr_key >> 5) ^
+            (texture_source_key >> 9) ^
+            ((uintptr_t)palette_addr0 >> 4) ^
+            ((uintptr_t)palette_addr1 >> 7) ^
+            ((uint32_t)palette_index << 17) ^
+            ((uint32_t)palette_lut_mode << 21) ^
+            size_bytes ^
+            (line_size_bytes << 1) ^
+            (full_image_line_size_bytes << 3) ^
+            (tile_width << 5) ^
+            (tile_height << 11)) & 0x3ff;
+}
+
 /* Remove a node from its hash chain */
 static void tex_hash_remove(struct TextureHashmapNode *node) {
-    size_t hash = ((node->texture_addr_key >> 5) ^
-                   ((uintptr_t)node->palette_addr0 >> 4) ^
-                   ((uintptr_t)node->palette_addr1 >> 7) ^
-                   ((uint32_t)node->palette_index << 17) ^
-                   ((uint32_t)node->palette_lut_mode << 21) ^
-                   node->size_bytes ^
-                   (node->line_size_bytes << 1) ^
-                   ((uint32_t)node->tile_width << 5) ^
-                   ((uint32_t)node->tile_height << 11)) & 0x3ff;
+    size_t hash = gfx_texture_cache_hash_key(node->texture_addr_key,
+                                             node->texture_source_key,
+                                             node->size_bytes,
+                                             node->line_size_bytes,
+                                             node->full_image_line_size_bytes,
+                                             node->tile_width,
+                                             node->tile_height,
+                                             node->palette_addr0,
+                                             node->palette_addr1,
+                                             node->palette_index,
+                                             node->palette_lut_mode);
     struct TextureHashmapNode **pp = &gfx_texture_cache.hashmap[hash];
     while (*pp) {
         if (*pp == node) {
@@ -1919,6 +2042,7 @@ static void tex_cache_evict_lru(void) {
     victim->texture_source_key = 0;
     victim->size_bytes = 0;
     victim->line_size_bytes = 0;
+    victim->full_image_line_size_bytes = 0;
     victim->tile_width = 0;
     victim->tile_height = 0;
     victim->palette_index = 0;
@@ -1971,6 +2095,7 @@ static void gfx_texture_cache_delete_matching(bool (*match_fn)(const struct Text
         node->palette_lut_mode = 0;
         node->size_bytes = 0;
         node->line_size_bytes = 0;
+        node->full_image_line_size_bytes = 0;
         node->tile_width = 0;
         node->tile_height = 0;
         node->palette_addr0 = NULL;
@@ -2042,6 +2167,7 @@ static void gfx_texture_cache_discard_node(struct TextureHashmapNode *node) {
     node->palette_lut_mode = 0;
     node->size_bytes = 0;
     node->line_size_bytes = 0;
+    node->full_image_line_size_bytes = 0;
     node->tile_width = 0;
     node->tile_height = 0;
     node->palette_addr0 = NULL;
@@ -2128,6 +2254,8 @@ static void gfx_loaded_vertex_lerp(struct LoadedVertex *dst,
     dst->color.b = (uint8_t)portLrintf(a->color.b + (b->color.b - a->color.b) * t);
     dst->color.a = (uint8_t)portLrintf(a->color.a + (b->color.a - a->color.a) * t);
     dst->fog = (uint8_t)portLrintf(a->fog + (b->fog - a->fog) * t);
+    dst->fog_depth = a->fog_depth + (b->fog_depth - a->fog_depth) * t;
+    dst->fog_coord = a->fog_coord + (b->fog_coord - a->fog_coord) * t;
 
     for (int i = 0; i < 3; i++) {
         dst->ob[i] = (int16_t)portLrintf(a->ob[i] + (b->ob[i] - a->ob[i]) * t);
@@ -2180,7 +2308,11 @@ static int gfx_clip_polygon_against_plane(struct LoadedVertex *dst,
         if (cur_inside != next_inside) {
             float denom = cur_dist - next_dist;
             if (fabsf(denom) > 0.000001f && out_count < dst_cap) {
-                float t = cur_dist / denom;
+                /* Intersect against the same effective plane used by the
+                 * inside test.  The near plane is intentionally inset by a
+                 * small epsilon; clipping back to the true plane can leave
+                 * generated vertices exactly on the unstable W boundary. */
+                float t = (cur_dist - plane_eps) / denom;
                 if (t < 0.0f) t = 0.0f;
                 if (t > 1.0f) t = 1.0f;
                 gfx_loaded_vertex_lerp(&dst[out_count++], cur, next, t);
@@ -2639,6 +2771,21 @@ static inline void gfx_loaded_texture_clear_decode_footprint(typeof(rdp.loaded_t
     loaded_texture->decode_line_size_bytes = 0;
 }
 
+static inline void gfx_loaded_texture_set_strided_decode_footprint(
+    typeof(rdp.loaded_texture[0]) *loaded_texture,
+    uint32_t line_size_bytes,
+    uint32_t full_image_line_size_bytes,
+    uint32_t height)
+{
+    if (full_image_line_size_bytes < line_size_bytes) {
+        full_image_line_size_bytes = line_size_bytes;
+    }
+
+    loaded_texture->decode_line_size_bytes = line_size_bytes;
+    loaded_texture->decode_full_image_line_size_bytes = full_image_line_size_bytes;
+    loaded_texture->decode_size_bytes = line_size_bytes * height;
+}
+
 static inline void gfx_loaded_texture_set_decode_footprint(typeof(rdp.loaded_texture[0]) *loaded_texture,
                                                            uint32_t line_size_bytes,
                                                            uint32_t height)
@@ -2654,9 +2801,11 @@ static inline void gfx_loaded_texture_set_decode_footprint(typeof(rdp.loaded_tex
         full_image_line_size_bytes = loaded_texture->full_image_line_size_bytes;
     }
 
-    loaded_texture->decode_line_size_bytes = line_size_bytes;
-    loaded_texture->decode_full_image_line_size_bytes = full_image_line_size_bytes;
-    loaded_texture->decode_size_bytes = line_size_bytes * height;
+    gfx_loaded_texture_set_strided_decode_footprint(
+        loaded_texture,
+        line_size_bytes,
+        full_image_line_size_bytes,
+        height);
 }
 
 static inline bool gfx_loaded_texture_decode_footprint_is_plausible(
@@ -2678,6 +2827,15 @@ static inline bool gfx_loaded_texture_decode_footprint_is_plausible(
     return decode_size_bytes != 0 &&
            decode_line_size_bytes != 0 &&
            decode_size_bytes <= 256 * 1024 &&
+           /* Defensive backstop: the decode footprint must never read MORE than
+            * the loaded source. All four footprint-setting branches in
+            * gfx_dp_set_tile_size already guarantee decode_size <= size_bytes
+            * (strided/lod/render_line_full/subload_clamp), so this never rejects
+            * a legitimate tile; it demotes any FUTURE sub-tilesize over-read (the
+            * explosion-confetti class) to a clean no-draw instead of uploading
+            * heap garbage. Compared against size_bytes, not full_size_bytes
+            * (LOADTILE sub-rectangles legitimately have full_size_bytes larger). */
+           decode_size_bytes <= loaded_texture->size_bytes &&
            decode_line_size_bytes <= decode_size_bytes &&
            (decode_size_bytes % decode_line_size_bytes) == 0 &&
            decode_full_image_line_size_bytes >= decode_line_size_bytes;
@@ -2714,6 +2872,361 @@ static inline bool gfx_tile_has_live_texture(uint8_t tile_desc)
            gfx_loaded_texture_decode_footprint_is_plausible(loaded_texture);
 }
 
+extern volatile uintptr_t g_diag_current_cmd_addr;
+static bool gfx_diag_room_cmd_offset(uintptr_t addr,
+                                     int *room_out,
+                                     const char **which,
+                                     uintptr_t *base_out,
+                                     uintptr_t *offset_out);
+
+static const struct SetTexTileState *gfx_settex_fallback_tile_state_for_unit(int unit)
+{
+    if (unit == 1 && settex_tile_state[1].valid) {
+        return &settex_tile_state[1];
+    }
+    if (settex_tile_state[0].valid) {
+        return &settex_tile_state[0];
+    }
+    return NULL;
+}
+
+static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc,
+                                                              int unit)
+{
+    if (!settex_active ||
+        g_texrect_uv_mode ||
+        !gfx_diag_room_cmd_offset((uintptr_t)g_diag_current_cmd_addr,
+                                  NULL, NULL, NULL, NULL) ||
+        tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    const struct SetTexTileState *fallback =
+        gfx_settex_fallback_tile_state_for_unit(unit);
+
+    /* Room DLs can leave ordinary TMEM tile descriptors live while a Rare
+     * G_SETTEX material drives the actual texture. Trust the room descriptor
+     * only when it matches the active G_SETTEX-derived tile state; otherwise
+     * stale TEXEL1 clamp state turns repeated Cradle rail textures into long
+     * edge smears. */
+    if (fallback == NULL || !fallback->valid) {
+        return false;
+    }
+    if (tile->cms != fallback->cms ||
+        tile->cmt != fallback->cmt ||
+        tile->shifts != fallback->shifts ||
+        tile->shiftt != fallback->shiftt ||
+        tile->uls != fallback->uls ||
+        tile->ult != fallback->ult) {
+        return false;
+    }
+
+    if (tile->line_size_bytes == 0 ||
+        tile->width != fallback->width ||
+        tile->height != fallback->height) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
+                                                int unit,
+                                                struct SetTexTileState *out)
+{
+    if (!settex_active || out == NULL) {
+        return false;
+    }
+
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
+        const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+
+        out->valid = true;
+        out->cms = tile->cms;
+        out->cmt = tile->cmt;
+        out->shifts = tile->shifts;
+        out->shiftt = tile->shiftt;
+        out->uls = tile->uls;
+        out->ult = tile->ult;
+        out->lrs = tile->lrs;
+        out->lrt = tile->lrt;
+        out->width = tile->width;
+        out->height = tile->height;
+        return true;
+    }
+
+    const struct SetTexTileState *fallback =
+        gfx_settex_fallback_tile_state_for_unit(unit);
+
+    if (fallback != NULL && fallback->valid) {
+        *out = *fallback;
+        return true;
+    }
+
+    memset(out, 0, sizeof(*out));
+    return false;
+}
+
+static bool gfx_get_settex_authoritative_tile_desc(uint8_t tex_tile_base,
+                                                   int unit,
+                                                   uint8_t *out_tile_desc)
+{
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (!gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
+        return false;
+    }
+
+    if (out_tile_desc != NULL) {
+        *out_tile_desc = tile_desc;
+    }
+    return true;
+}
+
+static bool gfx_get_settex_authoritative_render_dimensions(uint8_t tex_tile_base,
+                                                           int unit,
+                                                           uint32_t *out_width,
+                                                           uint32_t *out_height)
+{
+    uint8_t tile_desc;
+    if (!gfx_get_settex_authoritative_tile_desc(tex_tile_base, unit, &tile_desc)) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    uint32_t width = gfx_texture_width_texels_from_line(tile->line_size_bytes,
+                                                        tile->siz);
+    uint32_t height = (uint32_t)(settex_tex_h + 0.5f);
+
+    if (width == 0) {
+        width = tile->width;
+    }
+    if (height == 0) {
+        height = tile->height;
+    }
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (out_width != NULL) {
+        *out_width = width;
+    }
+    if (out_height != NULL) {
+        *out_height = height;
+    }
+    return true;
+}
+
+static inline uint32_t gfx_clamp_extent_from_tile_delta(uint16_t lo,
+                                                        uint16_t hi)
+{
+    if (hi < lo) {
+        return 0;
+    }
+
+    return (((uint32_t)hi - (uint32_t)lo) + 4U) / 4U;
+}
+
+static inline bool gfx_shader_clamp_mode_needs_shader(uint8_t cm,
+                                                      uint32_t logical_size,
+                                                      uint32_t texture_size)
+{
+    if (gfx_diag_disable_shader_clamp_enabled()) {
+        return false;
+    }
+
+    if ((cm & G_TX_CLAMP) == 0) {
+        return false;
+    }
+
+    if ((cm & G_TX_MIRROR) != 0) {
+        return true;
+    }
+
+    if (logical_size == 0 || texture_size == 0) {
+        return false;
+    }
+
+    return logical_size != texture_size;
+}
+
+static bool gfx_loaded_tile_texture_dimensions(uint8_t tile_desc,
+                                               uint32_t *out_width,
+                                               uint32_t *out_height)
+{
+    if (tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    const typeof(rdp.loaded_texture[0]) *loaded_texture =
+        gfx_loaded_texture_for_tile(tile_desc);
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (g_texrect_uv_mode && tile->width != 0 && tile->height != 0) {
+        width = tile->width;
+        height = tile->height;
+    } else if (loaded_texture != NULL &&
+               gfx_loaded_texture_decode_line_size_bytes(loaded_texture) != 0) {
+        uint32_t decode_line_size_bytes =
+            gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
+        uint32_t decode_size_bytes =
+            gfx_loaded_texture_decode_size_bytes(loaded_texture);
+
+        width = gfx_texture_width_texels_from_line(decode_line_size_bytes,
+                                                   tile->siz);
+        height = decode_line_size_bytes != 0
+            ? decode_size_bytes / decode_line_size_bytes
+            : 0;
+    }
+
+    if (width == 0) {
+        width = tile->width != 0
+            ? tile->width
+            : gfx_clamp_extent_from_tile_delta(tile->uls, tile->lrs);
+    }
+    if (height == 0) {
+        height = tile->height != 0
+            ? tile->height
+            : gfx_clamp_extent_from_tile_delta(tile->ult, tile->lrt);
+    }
+
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (out_width != NULL) {
+        *out_width = width;
+    }
+    if (out_height != NULL) {
+        *out_height = height;
+    }
+
+    return true;
+}
+
+static bool gfx_shader_clamp_needed_for_loaded_tile(uint8_t tile_desc,
+                                                    int axis,
+                                                    bool force_clamp)
+{
+    if (tile_desc >= 8) {
+        return false;
+    }
+
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
+    uint32_t tex_width;
+    uint32_t tex_height;
+    uint32_t logical_size;
+    uint32_t texture_size;
+    uint8_t cm;
+
+    if (!gfx_loaded_tile_texture_dimensions(tile_desc, &tex_width, &tex_height)) {
+        return false;
+    }
+
+    if (axis == 0) {
+        cm = force_clamp ? G_TX_CLAMP : tile->cms;
+        logical_size = tile->width != 0
+            ? tile->width
+            : gfx_clamp_extent_from_tile_delta(tile->uls, tile->lrs);
+        texture_size = tex_width;
+    } else {
+        cm = force_clamp ? G_TX_CLAMP : tile->cmt;
+        logical_size = tile->height != 0
+            ? tile->height
+            : gfx_clamp_extent_from_tile_delta(tile->ult, tile->lrt);
+        texture_size = tex_height;
+    }
+
+    return gfx_shader_clamp_mode_needs_shader(cm, logical_size, texture_size);
+}
+
+static bool gfx_shader_clamp_needed_for_settex(uint8_t tex_tile_base,
+                                               int unit,
+                                               int axis,
+                                               const struct SetTexTileState *tile_state)
+{
+    if (tile_state == NULL || !tile_state->valid) {
+        return false;
+    }
+
+    uint8_t tile_desc = tex_tile_base + (uint8_t)unit;
+    if (tile_desc >= 8) {
+        tile_desc = 0;
+    }
+
+    if (gfx_settex_room_tile_desc_is_authoritative(tile_desc, unit)) {
+        if (gfx_diag_disable_shader_clamp_enabled()) {
+            return false;
+        }
+
+        uint8_t cm = axis == 0 ? tile_state->cms : tile_state->cmt;
+        return (cm & G_TX_CLAMP) != 0;
+    }
+
+    if (axis == 0) {
+        return gfx_shader_clamp_mode_needs_shader(
+            tile_state->cms,
+            tile_state->width,
+            (uint32_t)(settex_tex_w + 0.5f));
+    }
+
+    return gfx_shader_clamp_mode_needs_shader(
+        tile_state->cmt,
+        tile_state->height,
+        (uint32_t)(settex_tex_h + 0.5f));
+}
+
+static inline bool gfx_shader_clamp_enabled(uint32_t cc_options,
+                                            int tex_unit,
+                                            int axis)
+{
+    uint32_t bit;
+
+    if (tex_unit == 0) {
+        bit = axis == 0 ? SHADER_OPT_TEXEL0_CLAMP_S :
+                          SHADER_OPT_TEXEL0_CLAMP_T;
+    } else {
+        bit = axis == 0 ? SHADER_OPT_TEXEL1_CLAMP_S :
+                          SHADER_OPT_TEXEL1_CLAMP_T;
+    }
+
+    return (cc_options & bit) != 0;
+}
+
+static inline uint8_t gfx_sampler_cm_for_shader_clamp(uint8_t cm,
+                                                      uint32_t cc_options,
+                                                      int tex_unit,
+                                                      int axis)
+{
+    return gfx_shader_clamp_enabled(cc_options, tex_unit, axis)
+        ? (uint8_t)(cm & ~G_TX_CLAMP)
+        : cm;
+}
+
+static inline float gfx_shader_clamp_coord(uint32_t logical_size,
+                                           uint32_t texture_size)
+{
+    if (texture_size == 0) {
+        texture_size = 1;
+    }
+    if (logical_size == 0) {
+        logical_size = texture_size;
+    }
+
+    return ((float)logical_size - 0.5f) / (float)texture_size;
+}
+
 static void gfx_compute_vbo_texcoord_for_unit(const struct LoadedVertex *vertex,
                                               int ti,
                                               uint8_t tex_tile_base,
@@ -2728,25 +3241,24 @@ static void gfx_compute_vbo_texcoord_for_unit(const struct LoadedVertex *vertex,
     float v = vertex->v / 32.0f;
     bool use_settex_uv = (ti == 0 && settex_active) ||
                          (ti == 1 && (settex_mirror_tex1 || mirror_tex1_from_tex0));
+    struct SetTexTileState settex_tile;
 
-    if (!g_texrect_uv_mode && ti == 0 && settex_active && settex_tile_state[0].valid) {
+    if (!g_texrect_uv_mode && ti == 0 &&
+        gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile)) {
         gfx_apply_tile_uv_transform(&u, &v,
-                                    settex_tile_state[0].shifts,
-                                    settex_tile_state[0].shiftt,
-                                    settex_tile_state[0].uls,
-                                    settex_tile_state[0].ult,
+                                    settex_tile.shifts,
+                                    settex_tile.shiftt,
+                                    settex_tile.uls,
+                                    settex_tile.ult,
                                     rdp.other_mode_h);
-    } else if (!g_texrect_uv_mode && ti == 1 && settex_mirror_tex1) {
-        const struct SetTexTileState *tile_state =
-            settex_tile_state[1].valid ? &settex_tile_state[1] : &settex_tile_state[0];
-        if (tile_state->valid) {
-            gfx_apply_tile_uv_transform(&u, &v,
-                                        tile_state->shifts,
-                                        tile_state->shiftt,
-                                        tile_state->uls,
-                                        tile_state->ult,
-                                        rdp.other_mode_h);
-        }
+    } else if (!g_texrect_uv_mode && ti == 1 && settex_mirror_tex1 &&
+               gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile)) {
+        gfx_apply_tile_uv_transform(&u, &v,
+                                    settex_tile.shifts,
+                                    settex_tile.shiftt,
+                                    settex_tile.uls,
+                                    settex_tile.ult,
+                                    rdp.other_mode_h);
     } else if (!use_settex_uv && !g_texrect_uv_mode) {
         uint8_t td = tex_tile_base + ti;
         if (td >= 8) td = 0;
@@ -2816,8 +3328,46 @@ static void gfx_invalidate_evicted_texture_node(struct TextureHashmapNode *victi
 }
 
 struct GfxDimensions gfx_current_dimensions;
+extern float g_pcRenderScale;
 
-static float buf_vbo[MAX_BUFFERED * (40 * 3)]; /* 40 = 4 pos + 2 tex + 4 fog + 7*4 inputs + 2 headroom */
+static float gfx_clamped_render_scale(void) {
+    if (g_pcRenderScale < 1.0f) {
+        return 1.0f;
+    }
+    if (g_pcRenderScale > 2.0f) {
+        return 2.0f;
+    }
+    return g_pcRenderScale;
+}
+
+static int gfx_scaled_dimension(int value) {
+    float scaled = (float)value * gfx_clamped_render_scale();
+    int rounded = (int)(scaled + 0.5f);
+
+    return rounded > 0 ? rounded : 1;
+}
+
+static void gfx_sync_current_dimensions_from_window(void) {
+    extern SDL_Window *g_sdlWindow;
+    int w = 0;
+    int h = 0;
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
+    }
+
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    gfx_current_dimensions.width = gfx_scaled_dimension(w);
+    gfx_current_dimensions.height = gfx_scaled_dimension(h);
+    gfx_current_dimensions.aspect_ratio =
+        (float)gfx_current_dimensions.width /
+        (float)gfx_current_dimensions.height;
+}
+
+static float buf_vbo[MAX_BUFFERED * (48 * 3)]; /* 48 = pos + 2 texcoords + clamp extents + fog + inputs */
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
 
@@ -2828,6 +3378,7 @@ static float clear_r = 0, clear_g = 0, clear_b = 0;
 int g_frame_count_diag = 0;
 int g_tri_count_diag = 0;
 static int g_sky_tri_count_diag = 0;
+static int g_pending_sky_tri_count_diag = 0;
 static int g_nonsky_tri_count_diag = 0;
 static uint32_t g_n64_dl_exec_seq = 0;
 static int g_frame_n64_dl_index = 0;
@@ -2936,6 +3487,7 @@ static void gfx_note_n64_dl_non_dl_skip(bool from_n64_interpreter) {
 /* Runtime diagnostic flags (set via environment variables) */
 int g_diag_verbose = -1;             /* GE007_VERBOSE=1: enable all diagnostic printf output */
 static int g_diag_no_fog = -1;       /* GE007_NO_FOG=1: disable fog blending in shaders */
+static int g_diag_fog_use_linear_depth = -1; /* GE007_FOG_USE_LINEAR_DEPTH=1: diagnostic non-N64 fog input */
 static int g_diag_wireframe = -1;    /* GE007_WIREFRAME=1: render wireframe */
 static int g_diag_log_frame = -1;    /* GE007_LOG_FRAME=1: log combiner/state on first rendered frame */
 static int g_diag_trace_frame = -1;  /* GE007_TRACE_FRAME=N: full DL trace on frame N */
@@ -3062,6 +3614,9 @@ static int g_effect_tri_trace_budget = INT32_MIN;
 static const char *g_effect_tri_trace_label = NULL;
 static int g_effect_cmd_trace_enabled = -1;
 static int g_effect_cmd_trace_budget = INT32_MIN;
+#define EFFECT_LABEL_STACK_MAX 64
+static const char *g_effect_inherited_label_stack[EFFECT_LABEL_STACK_MAX];
+static const char *g_effect_pending_child_label = NULL;
 
 static int gfx_effect_tri_trace_is_enabled(void) {
     if (g_effect_tri_trace_enabled < 0) {
@@ -3110,6 +3665,38 @@ static bool gfx_effect_tri_trace_label_matches(const char *label) {
     return g_effect_tri_trace_label == NULL ||
            g_effect_tri_trace_label[0] == '\0' ||
            strstr(label, g_effect_tri_trace_label) != NULL;
+}
+
+static const char *gfx_effect_label_for_current_command(void) {
+    const char *label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+
+    if (label != NULL) {
+        return label;
+    }
+
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        return g_effect_inherited_label_stack[dl_depth];
+    }
+
+    return NULL;
+}
+
+static void gfx_effect_push_inherited_label(void) {
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        g_effect_inherited_label_stack[dl_depth] = g_effect_pending_child_label;
+    }
+
+    g_effect_pending_child_label = NULL;
+}
+
+static void gfx_effect_pop_inherited_label(void) {
+    if (dl_depth >= 0 && dl_depth < EFFECT_LABEL_STACK_MAX) {
+        g_effect_inherited_label_stack[dl_depth] = NULL;
+    }
+}
+
+static void gfx_effect_inherit_label_for_child_dl(void) {
+    g_effect_pending_child_label = gfx_effect_label_for_current_command();
 }
 
 static const char *gfx_blend_mode_diag_name(enum GfxBlendMode mode) {
@@ -3686,10 +4273,16 @@ static bool gfx_sample_settex_unit_center(const struct LoadedVertex *v1,
         return false;
     }
 
-    tile_state = (ti == 1 && settex_tile_state[1].valid) ?
-        &settex_tile_state[1] : &settex_tile_state[0];
-    cms = tile_state->valid ? tile_state->cms : G_TX_WRAP;
-    cmt = tile_state->valid ? tile_state->cmt : G_TX_WRAP;
+    struct SetTexTileState effective_tile_state;
+    if (gfx_get_settex_effective_tile_state(tex_tile_base, ti, &effective_tile_state)) {
+        tile_state = &effective_tile_state;
+        cms = tile_state->cms;
+        cmt = tile_state->cmt;
+    } else {
+        tile_state = NULL;
+        cms = G_TX_WRAP;
+        cmt = G_TX_WRAP;
+    }
 
     sx = out->u * (float)settex_rgba_w;
     sy = out->v * (float)settex_rgba_h;
@@ -4845,7 +5438,7 @@ static bool gfx_effect_tri_trace_should_log(const char **out_label) {
         return false;
     }
 
-    label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+    label = gfx_effect_label_for_current_command();
     if (!gfx_effect_tri_trace_label_matches(label)) {
         return false;
     }
@@ -5139,7 +5732,7 @@ static void gfx_effect_cmd_trace(uint8_t opcode, uint64_t w0, uint64_t w1) {
         return;
     }
 
-    label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
+    label = gfx_effect_label_for_current_command();
     if (!gfx_effect_tri_trace_label_matches(label)) {
         return;
     }
@@ -5172,7 +5765,6 @@ volatile uint8_t g_diag_tex_tile = 0;
 static uint32_t g_vtx_load_seq = 0;
 static uint32_t g_modelview_load_seq = 0;
 static bool g_fillrect_draw_active = false;
-static bool g_sky_tri_mode = false;
 static int g_diag_trace_eye_bind = -1;
 static int g_diag_trace_settex = -1; /* GE007_TRACE_SETTEX=1 */
 static int g_diag_trace_settex_after_frame = -2; /* GE007_TRACE_SETTEX_AFTER_FRAME=N */
@@ -5185,6 +5777,10 @@ static int g_diag_dump_loaded_texture_after_frame = INT32_MIN; /* GE007_DUMP_LOA
 static int g_diag_settex_mirror_tex1 = -1; /* GE007_DIAG_SETTEX_MIRROR_TEX1=1 */
 static int g_diag_no_settex_linearize = -1; /* GE007_DIAG_NO_SETTEX_LINEARIZE=1 */
 static int g_diag_disable_n64_filter = -1; /* GE007_DISABLE_N64_FILTER=1 */
+static int g_diag_trace_tex_footprint = -1; /* GE007_TRACE_TEX_FOOTPRINT=1 */
+static int g_diag_trace_tex_footprint_budget = INT32_MIN; /* GE007_TRACE_TEX_FOOTPRINT_BUDGET=N */
+static int g_diag_disable_loadblock_strided_footprint = -1; /* GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1 */
+static int g_diag_tilesize_clamp_subload = -1; /* GE007_TILESIZE_CLAMP_SUBLOAD=0 disables (default on) */
 
 static inline bool gfx_diag_no_settex_linearize_enabled(void);
 
@@ -5197,6 +5793,32 @@ static inline bool gfx_n64_shader_filter_enabled(void) {
     return g_diag_disable_n64_filter == 0;
 }
 
+static inline bool gfx_diag_disable_loadblock_strided_footprint_enabled(void)
+{
+    if (g_diag_disable_loadblock_strided_footprint < 0) {
+        g_diag_disable_loadblock_strided_footprint =
+            (getenv("GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT") != NULL) ? 1 : 0;
+    }
+
+    return g_diag_disable_loadblock_strided_footprint > 0;
+}
+
+static inline bool gfx_diag_tilesize_clamp_subload_enabled(void)
+{
+    if (g_diag_tilesize_clamp_subload < 0) {
+        const char *env = getenv("GE007_TILESIZE_CLAMP_SUBLOAD");
+        /* Default ON. A sub-tilesize LOADBLOCK texture is loaded narrower than
+         * its declared G_SETTILESIZE rectangle (the explosion fire texture is
+         * loaded 16x14 RGBA16 but the tile rect is 56x56). Clamp the decode
+         * footprint to the true loaded extent instead of over-reading heap past
+         * the source. Set GE007_TILESIZE_CLAMP_SUBLOAD=0 to restore the legacy
+         * full-tilesize decode for A/B comparison. */
+        g_diag_tilesize_clamp_subload = (env != NULL && env[0] == '0') ? 0 : 1;
+    }
+
+    return g_diag_tilesize_clamp_subload > 0;
+}
+
 static inline bool gfx_trace_settex_enabled(void) {
     if (g_diag_trace_settex < 0) {
         g_diag_trace_settex = (getenv("GE007_TRACE_SETTEX") != NULL) ? 1 : 0;
@@ -5206,6 +5828,80 @@ static inline bool gfx_trace_settex_enabled(void) {
         g_diag_trace_settex_after_frame = env ? atoi(env) : 0;
     }
     return g_diag_trace_settex > 0 && g_frame_count_diag >= g_diag_trace_settex_after_frame;
+}
+
+static bool gfx_trace_tex_footprint_enabled(void)
+{
+    if (g_diag_trace_tex_footprint < 0) {
+        g_diag_trace_tex_footprint =
+            (getenv("GE007_TRACE_TEX_FOOTPRINT") != NULL) ? 1 : 0;
+    }
+    if (g_diag_trace_tex_footprint_budget == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_TEX_FOOTPRINT_BUDGET");
+        g_diag_trace_tex_footprint_budget = env ? atoi(env) : 256;
+    }
+
+    return g_diag_trace_tex_footprint > 0 &&
+           g_diag_trace_tex_footprint_budget != 0;
+}
+
+static void gfx_trace_tex_footprint_decision(
+    const char *decision,
+    uint8_t tile,
+    uint32_t width,
+    uint32_t height,
+    uint32_t tile_rect_line_size_bytes,
+    uint32_t render_line_size_bytes,
+    uint32_t source_line_size_bytes,
+    uint32_t decode_line_size_bytes,
+    uint32_t decode_height,
+    const typeof(rdp.loaded_texture[0]) *loaded_texture)
+{
+    int room = -1;
+    const char *which = NULL;
+    uintptr_t offset = 0;
+
+    if (!gfx_trace_tex_footprint_enabled()) {
+        return;
+    }
+    if (g_diag_trace_tex_footprint_budget > 0) {
+        g_diag_trace_tex_footprint_budget--;
+    }
+
+    (void)gfx_diag_room_cmd_offset((uintptr_t)g_diag_current_cmd_addr,
+                                   &room, &which, NULL, &offset);
+
+    fprintf(stderr,
+            "[TEX-FOOTPRINT] frame=%d cmd=%p drawclass=%s room=%d/%s+0x%zx "
+            "tile=%u decision=%s tex_lod=%d maxlod=%u settex=%d "
+            "tile_wh=%ux%u rect_line=%u render_line=%u source_line=%u "
+            "decode_line=%u decode_height=%u load={addr=%p size=%u orig=%u full=%u line=%u full_line=%u key=0x%llx}\n",
+            g_frame_count_diag,
+            (void *)g_diag_current_cmd_addr,
+            gfx_draw_class_name(g_current_draw_class),
+            room,
+            which != NULL ? which : "?",
+            (size_t)offset,
+            tile,
+            decision != NULL ? decision : "?",
+            rdp.tex_lod ? 1 : 0,
+            rdp.tex_max_lod,
+            settex_active ? 1 : 0,
+            width,
+            height,
+            tile_rect_line_size_bytes,
+            render_line_size_bytes,
+            source_line_size_bytes,
+            decode_line_size_bytes,
+            decode_height,
+            loaded_texture != NULL ? (void *)loaded_texture->addr : NULL,
+            loaded_texture != NULL ? loaded_texture->size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->orig_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->full_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->line_size_bytes : 0,
+            loaded_texture != NULL ? loaded_texture->full_image_line_size_bytes : 0,
+            loaded_texture != NULL ? (unsigned long long)loaded_texture->cache_key : 0ULL);
+    fflush(stderr);
 }
 
 static void gfx_log_settex_event(const char *tag, const char *detail) {
@@ -6190,6 +6886,139 @@ static bool gfx_mode_in_range(uint32_t mode, uint32_t min_mode, uint32_t max_mod
     return mode >= min_mode && mode <= max_mode;
 }
 
+static bool gfx_mode_is_room_xlu(uint32_t mode) {
+    switch (mode) {
+        case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
+        case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
+        case 0x00504240: /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu) */
+        case 0x0C1849D8: /* PASS + AA_ZB_XLU_SURF2 */
+        case 0x0C184DD8: /* PASS + AA_ZB_XLU_DECAL2 */
+        case 0x041049D8: /* FOG_PRIM_A (de-fogged) + XLU_SURF2 */
+        case 0x04104DD8: /* FOG_PRIM_A (de-fogged) + XLU_DECAL2 */
+        case 0x081049D8: /* FOG_SHADE_A (de-fogged) + XLU_SURF2 */
+        case 0x08104DD8: /* FOG_SHADE_A (de-fogged) + XLU_DECAL2 */
+        case 0xC0504240: /* fog-forced CLR_IN + XLU_SURF2 */
+        case 0xC41049D8: /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
+        case 0xC4104DD8: /* FOG_PRIM_A + AA_ZB_XLU_DECAL2 */
+        case 0xC81049D8: /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
+        case 0xC8104DD8: /* FOG_SHADE_A + AA_ZB_XLU_DECAL2 */
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline uint64_t gfx_pack_cc_id(uint32_t rgb0,
+                                      uint32_t alpha0,
+                                      uint32_t rgb1,
+                                      uint32_t alpha1) {
+    return (uint64_t)rgb0 |
+           ((uint64_t)alpha0 << 16) |
+           ((uint64_t)rgb1 << 28) |
+           ((uint64_t)alpha1 << 44);
+}
+
+static uint64_t gfx_apply_room_alpha_lut(uint64_t cc_id,
+                                         uint32_t raw_mode,
+                                         bool room_matrix,
+                                         enum GfxBlendMode blend_mode) {
+    const uint32_t trilerp_rgb =
+        color_comb(G_CCMUX_TEXEL1, G_CCMUX_TEXEL0,
+                   G_CCMUX_LOD_FRACTION, G_CCMUX_TEXEL0);
+    const uint32_t trilerp_alpha =
+        alpha_comb(G_ACMUX_TEXEL1, G_ACMUX_TEXEL0,
+                   G_ACMUX_LOD_FRACTION, G_ACMUX_TEXEL0);
+    const uint32_t modulatei_rgb =
+        color_comb(G_CCMUX_TEXEL0, G_CCMUX_COMBINED,
+                   G_CCMUX_SHADE, G_CCMUX_COMBINED);
+    const uint32_t modulatei_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t modulateia_alpha =
+        alpha_comb(G_ACMUX_TEXEL0, G_ACMUX_COMBINED,
+                   G_ACMUX_SHADE, G_ACMUX_COMBINED);
+    const uint32_t modulatei2_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_SHADE, G_CCMUX_COMBINED);
+    const uint32_t modulatei2_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t modulateia2_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_SHADE, G_ACMUX_COMBINED);
+    const uint32_t shade_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_COMBINED, G_CCMUX_SHADE);
+    const uint32_t shade_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_SHADE);
+    const uint32_t pass_rgb =
+        color_comb(G_CCMUX_COMBINED, G_CCMUX_COMBINED,
+                   G_CCMUX_COMBINED, G_CCMUX_COMBINED);
+    const uint32_t pass_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_COMBINED);
+    const uint32_t custom06_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_ENVIRONMENT, G_ACMUX_COMBINED);
+    const uint32_t custom07_alpha =
+        alpha_comb(G_ACMUX_TEXEL0, G_ACMUX_COMBINED,
+                   G_ACMUX_ENVIRONMENT, G_ACMUX_COMBINED);
+    const uint32_t custom08_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_ENVIRONMENT);
+    const uint32_t custom10_alpha =
+        alpha_comb(G_ACMUX_COMBINED, G_ACMUX_COMBINED,
+                   G_ACMUX_COMBINED, G_ACMUX_ENVIRONMENT);
+    const uint32_t custom11_alpha =
+        alpha_comb(G_ACMUX_1, G_ACMUX_COMBINED,
+                   G_ACMUX_TEXEL1, G_ACMUX_COMBINED);
+
+    if (!room_matrix ||
+        blend_mode != GFX_BLEND_ALPHA ||
+        !gfx_mode_is_room_xlu(raw_mode)) {
+        return cc_id;
+    }
+
+    /* DL_LUT_PRIMARY/SECONDARY(_ADDFOG) swap SHADE alpha to ENVIRONMENT
+     * alpha for room XLU passes. If a native room DL reaches the translator
+     * before that raw-data rewrite, mirror the authored replacement here. */
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                                modulatei2_rgb, modulateia2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                              modulatei2_rgb, custom06_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(modulatei_rgb, modulateia_alpha,
+                                modulatei_rgb, modulateia_alpha)) {
+        return gfx_pack_cc_id(modulatei_rgb, custom07_alpha,
+                              modulatei_rgb, custom07_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                                modulatei2_rgb, modulatei2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, trilerp_alpha,
+                              modulatei2_rgb, custom08_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(modulatei_rgb, modulatei_alpha,
+                                modulatei_rgb, modulatei_alpha)) {
+        return gfx_pack_cc_id(modulatei_rgb, custom08_alpha,
+                              modulatei_rgb, custom08_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(shade_rgb, shade_alpha, pass_rgb, pass_alpha)) {
+        return gfx_pack_cc_id(shade_rgb, custom10_alpha, pass_rgb, pass_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(shade_rgb, shade_alpha, shade_rgb, shade_alpha)) {
+        return gfx_pack_cc_id(shade_rgb, custom10_alpha,
+                              shade_rgb, custom10_alpha);
+    }
+    if (cc_id == gfx_pack_cc_id(trilerp_rgb, custom11_alpha,
+                                modulatei2_rgb, modulateia2_alpha)) {
+        return gfx_pack_cc_id(trilerp_rgb, custom11_alpha,
+                              modulatei2_rgb, custom06_alpha);
+    }
+
+    return cc_id;
+}
+
 static bool gfx_parse_rgba(const char *value, struct RGBA *out) {
     unsigned long comps[4] = {0, 0, 0, 255};
     char *end = NULL;
@@ -6389,9 +7218,19 @@ static void gfx_check_diag_env(void) {
 
         g_diag_verbose = (getenv("GE007_VERBOSE") != NULL) ? 1 : 0;
         g_diag_no_fog = (getenv("GE007_NO_FOG") != NULL) ? 1 : 0;
+        g_diag_fog_use_linear_depth =
+            (getenv("GE007_FOG_USE_LINEAR_DEPTH") != NULL) ? 1 : 0;
         g_diag_tex_only = (getenv("GE007_TEX_ONLY") != NULL) ? 1 : 0;
         g_diag_force_point_filter = (getenv("GE007_FORCE_POINT_FILTER") != NULL) ? 1 : 0;
         g_diag_force_linear_filter = (getenv("GE007_FORCE_LINEAR_FILTER") != NULL) ? 1 : 0;
+        g_diag_force_room_point_filter =
+            (getenv("GE007_FORCE_ROOM_POINT_FILTER") != NULL &&
+             getenv("GE007_DISABLE_ROOM_POINT_FILTER") == NULL) ? 1 : 0;
+        g_diag_disable_n64_filter =
+            (getenv("GE007_DISABLE_N64_FILTER") != NULL ||
+             getenv("GE007_DISABLE_N64_3POINT") != NULL) ? 1 : 0;
+        g_diag_disable_shader_clamp =
+            (getenv("GE007_DIAG_DISABLE_SHADER_CLAMP") != NULL) ? 1 : 0;
         g_diag_convert_k4k5 = (getenv("GE007_DIAG_CONVERT_K4K5") != NULL) ? 1 : 0;
         (void)gfx_diag_lod_fraction_override();
         (void)gfx_diag_shade_scale();
@@ -6540,8 +7379,14 @@ static void gfx_check_diag_env(void) {
         g_diag_trace_texgen_materials_budget =
             texgen_materials_budget_env ? atoi(texgen_materials_budget_env) : 96;
         if (g_diag_no_fog) printf("[fast3d] FOG DISABLED (GE007_NO_FOG)\n");
+        if (g_diag_fog_use_linear_depth) {
+            printf("[fast3d] FOG LINEAR-DEPTH DIAGNOSTIC MODE (GE007_FOG_USE_LINEAR_DEPTH)\n");
+        }
         if (g_diag_force_point_filter) printf("[fast3d] POINT FILTER FORCED (GE007_FORCE_POINT_FILTER)\n");
         if (g_diag_force_linear_filter) printf("[fast3d] LINEAR FILTER FORCED (GE007_FORCE_LINEAR_FILTER)\n");
+        if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
+        if (g_diag_disable_n64_filter) printf("[fast3d] N64 SHADER FILTER DISABLED (GE007_DISABLE_N64_FILTER/GE007_DISABLE_N64_3POINT)\n");
+        if (g_diag_disable_shader_clamp) printf("[fast3d] DIAG SHADER CLAMP DISABLED (GE007_DIAG_DISABLE_SHADER_CLAMP)\n");
         if (g_diag_convert_k4k5) printf("[fast3d] DIAG K4/K5 CONVERT ENABLED (GE007_DIAG_CONVERT_K4K5)\n");
         if (g_diag_lod_fraction_override >= 0) {
             printf("[fast3d] DIAG LOD FRACTION OVERRIDE %d (GE007_DIAG_LOD_FRACTION)\n",
@@ -6732,6 +7577,65 @@ static bool gfx_critical_room_shard_logging_enabled(void) {
         gfx_check_diag_env();
     }
     return g_diag_critical_room_shard_log || g_diag_trace_shards;
+}
+
+static float gfx_fog_coord_from_clip(float clip_z, float clip_w)
+{
+    /* Match the legacy Fast3D path used before the fog-depth regression:
+     * fog is generated from post-projection z/w, but negative reciprocal values
+     * are saturated instead of producing negative fog.  This keeps clipped or
+     * sign-flipped homogeneous vertices from becoming incorrectly clear. */
+    float ww = clip_w;
+    if (fabsf(ww) < 0.001f) {
+        ww = 0.001f;
+    }
+    float winv = 1.0f / ww;
+    if (winv < 0.0f) {
+        winv = 32767.0f;
+    }
+    float fog_coord = clip_z * winv;
+    return portFloatIsFinite(fog_coord) ? fog_coord : 0.0f;
+}
+
+static float gfx_fog_coord_for_vertex(float clip_z, float clip_w, float *out_depth)
+{
+    float zrange[2] = { 0.0f, 0.0f };
+    float depth = clip_w;
+
+    if (out_depth != NULL) {
+        *out_depth = depth;
+    }
+
+    if (g_diag_fog_use_linear_depth < 0) {
+        g_diag_fog_use_linear_depth =
+            (getenv("GE007_FOG_USE_LINEAR_DEPTH") != NULL) ? 1 : 0;
+    }
+
+    if (g_diag_fog_use_linear_depth <= 0) {
+        return gfx_fog_coord_from_clip(clip_z, clip_w);
+    }
+
+    viGetZRange(zrange);
+
+    /* Diagnostic only: linearly remap positive camera-space depth back into the
+     * Fast3D -1..1 fog input domain before applying the original coefficients.
+     * N64 gSPFogPosition fog is intentionally nonlinear after perspective; the
+     * default path above uses clip_z / clip_w to preserve that behavior. */
+    if (!portFloatIsFinite(depth) ||
+        !portFloatIsFinite(zrange[0]) ||
+        !portFloatIsFinite(zrange[1]) ||
+        depth <= 0.0f ||
+        zrange[1] <= zrange[0] + 0.001f) {
+        return gfx_fog_coord_from_clip(clip_z, clip_w);
+    }
+
+    float t = (depth - zrange[0]) / (zrange[1] - zrange[0]);
+    t = portMaxf(0.0f, portMinf(1.0f, t));
+    if (out_depth != NULL) {
+        *out_depth = depth;
+    }
+
+    return t * 2.0f - 1.0f;
 }
 
 /* Check if tracing is active for the current frame */
@@ -7029,6 +7933,7 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
                                      uintptr_t texture_addr_key, uint32_t fmt,
                                      uint32_t siz, uint32_t size_bytes,
                                      uint32_t line_size_bytes,
+                                     uint32_t full_image_line_size_bytes,
                                      uint32_t tile_width,
                                      uint32_t tile_height,
                                      const uint8_t *palette_addr0,
@@ -7036,25 +7941,29 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
                                      uint8_t palette_index,
                                      uint8_t palette_lut_mode,
                                      uintptr_t texture_source_key) {
-    size_t hash = ((texture_addr_key >> 5) ^
-                   ((uintptr_t)palette_addr0 >> 4) ^
-                   ((uintptr_t)palette_addr1 >> 7) ^
-                   ((uint32_t)palette_index << 17) ^
-                   ((uint32_t)palette_lut_mode << 21) ^
-                   size_bytes ^
-                   (line_size_bytes << 1) ^
-                   (tile_width << 5) ^
-                   (tile_height << 11)) & 0x3ff;
+    size_t hash = gfx_texture_cache_hash_key(texture_addr_key,
+                                             texture_source_key,
+                                             size_bytes,
+                                             line_size_bytes,
+                                             full_image_line_size_bytes,
+                                             tile_width,
+                                             tile_height,
+                                             palette_addr0,
+                                             palette_addr1,
+                                             palette_index,
+                                             palette_lut_mode);
 
     /* Search hash chain for existing entry */
     struct TextureHashmapNode *node = gfx_texture_cache.hashmap[hash];
     while (node != NULL) {
         if (node->in_use &&
             node->texture_addr_key == texture_addr_key &&
+            node->texture_source_key == texture_source_key &&
             node->fmt == fmt &&
             node->siz == siz &&
             node->size_bytes == size_bytes &&
             node->line_size_bytes == line_size_bytes &&
+            node->full_image_line_size_bytes == full_image_line_size_bytes &&
             node->tile_width == tile_width &&
             node->tile_height == tile_height &&
             node->palette_addr0 == palette_addr0 &&
@@ -7097,6 +8006,7 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
     new_node->siz = siz;
     new_node->size_bytes = size_bytes;
     new_node->line_size_bytes = line_size_bytes;
+    new_node->full_image_line_size_bytes = full_image_line_size_bytes;
     new_node->tile_width = tile_width;
     new_node->tile_height = tile_height;
     new_node->palette_addr0 = palette_addr0;
@@ -7715,6 +8625,7 @@ static bool import_texture(int slot, int tile_desc) {
     const __typeof__(rdp.loaded_texture[0]) *loaded_texture;
     uint32_t decode_size_bytes;
     uint32_t decode_line_size_bytes;
+    uint32_t decode_full_image_line_size_bytes;
     uint32_t texture_width;
     uint32_t texture_height;
     uint8_t fmt;
@@ -7727,6 +8638,8 @@ static bool import_texture(int slot, int tile_desc) {
     if (!loaded_texture->addr || loaded_texture->size_bytes == 0) return false;
     decode_size_bytes = gfx_loaded_texture_decode_size_bytes(loaded_texture);
     decode_line_size_bytes = gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
+    decode_full_image_line_size_bytes =
+        gfx_loaded_texture_decode_full_image_line_size_bytes(loaded_texture);
     if (decode_size_bytes == 0) return false;
     if (decode_line_size_bytes == 0) return false;
     if (!gfx_loaded_texture_decode_footprint_is_plausible(loaded_texture)) {
@@ -7754,6 +8667,60 @@ static bool import_texture(int slot, int tile_desc) {
 
     fmt = rdp.texture_tile[tile_desc].fmt;
     siz = rdp.texture_tile[tile_desc].siz;
+
+    /* Static-texture format recovery.
+     * gfx_resolve_static_game_texture() supplies a static texture's texel data +
+     * cache key but does NOT populate the tile descriptor's fmt/siz. A draw that
+     * reaches here via G_SETTILE/LOADBLOCK then reads a stale/garbage tile
+     * descriptor — e.g. fmt=RGBA/siz=8b, an impossible N64 combo that matches no
+     * import_texture_* branch below — so `uploaded` stays false and the slot is
+     * bound to the zero texture (the material renders blank; logged as
+     * [TEX-UPLOAD-FAIL]). When the tile (fmt,siz) is not an importable combo and
+     * this is a static game texture, recover the authoritative format/depth from
+     * the texture pool — the same source the settex path trusts (tex->gbiformat /
+     * tex->depth). Normal textures with valid descriptors are untouched. */
+    {
+        bool tex_combo_importable;
+        switch (fmt) {
+            case G_IM_FMT_RGBA: tex_combo_importable = (siz == G_IM_SIZ_16b || siz == G_IM_SIZ_32b); break;
+            case G_IM_FMT_IA:   tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b || siz == G_IM_SIZ_16b); break;
+            case G_IM_FMT_CI:   tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b); break;
+            case G_IM_FMT_I:    tex_combo_importable = (siz == G_IM_SIZ_4b || siz == G_IM_SIZ_8b); break;
+            default:            tex_combo_importable = false; break;
+        }
+        if (!tex_combo_importable && gfx_loaded_texture_is_static_game_texture(loaded_texture)) {
+            /* Use source_cache_key, not cache_key: on the G_LOADTILE path cache_key
+             * carries a sub-tile byte offset (gfx_dp_load_tile) so (uint32_t)cache_key
+             * would be token+offset; source_cache_key is the pristine FLAG|token in
+             * both the LOADBLOCK and LOADTILE paths, so the low 32 bits are the token. */
+            uint32_t token = (uint32_t)loaded_texture->source_cache_key;
+            struct tex *recovered = texFindInPool((s32)token, ptr_texture_alloc_start);
+            /* Caveat: if a recovered format is CI it decodes against rdp.palette_addrs
+             * from a separate G_LOADTLUT, which may be stale if the original draw was
+             * non-CI; not hit by the IA8 case this fixes, but flagged for static CI. */
+            if (recovered != NULL) {
+                /* The format recovery below is behavior and always runs; only the
+                 * diagnostic is gated (GE007_TRACE_TEX, off by default) so a normal
+                 * run is not spammed. Bounded to the first few recoveries. */
+                static int tex_fmt_recover_log = 0;
+                static int s_tex_trace = -1;
+                if (s_tex_trace < 0) {
+                    const char *e = getenv("GE007_TRACE_TEX");
+                    s_tex_trace = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+                }
+                if (s_tex_trace && tex_fmt_recover_log < 8) {
+                    fprintf(stderr,
+                            "[TEX-FMT-RECOVER] token=0x%x stale fmt=%u siz=%u -> fmt=%u siz=%u\n",
+                            token, fmt, siz,
+                            (uint32_t)recovered->gbiformat, (uint32_t)recovered->depth);
+                    tex_fmt_recover_log++;
+                }
+                fmt = recovered->gbiformat;
+                siz = recovered->depth;
+            }
+        }
+    }
+
     texture_width = gfx_texture_width_texels_from_line(decode_line_size_bytes, siz);
     texture_height = decode_size_bytes / decode_line_size_bytes;
     if (texture_width == 0) {
@@ -7788,6 +8755,7 @@ static bool import_texture(int slot, int tile_desc) {
                                  loaded_texture->cache_key, fmt, siz,
                                  decode_size_bytes,
                                  decode_line_size_bytes,
+                                 decode_full_image_line_size_bytes,
                                  texture_width,
                                  texture_height,
                                  fmt == G_IM_FMT_CI ? rdp.palette_addrs[0] : NULL,
@@ -8717,8 +9685,8 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
             if (g_diag_verbose > 0 && vtx_log < 2 && g_frame_count_diag >= 3) {
                 float fog_z_val = 0;
                 if (rsp.geometry_mode & G_FOG) {
-                    float ww = w; if (fabsf(ww) < 0.001f) ww = 0.001f;
-                    fog_z_val = z * (1.0f/ww) * rsp.fog_mul + rsp.fog_offset;
+                    float fog_coord = gfx_fog_coord_for_vertex(z, w, NULL);
+                    fog_z_val = fog_coord * rsp.fog_mul + rsp.fog_offset;
                 }
                 printf("[VTX_XFORM_%d] src=%p ob=(%d,%d,%d) clip=(%.1f,%.1f,%.1f,%.1f) color=(%d,%d,%d,%d) fog_mul=%d fog_off=%d fog_z=%.1f G_FOG=%d\n",
                        vtx_log, (void *)(src_base + i * src_stride), v->ob[0], v->ob[1], v->ob[2], x, y, z, w,
@@ -8727,6 +9695,24 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
                        (rsp.geometry_mode & G_FOG) != 0);
                 fflush(stdout);
                 vtx_log++;
+            }
+        }
+
+        {
+            const char *effect_label = gfx_effect_label_for_current_command();
+
+            if (effect_label != NULL &&
+                strstr(effect_label, "glass") != NULL &&
+                w < -GFX_NEAR_CLIP_EPSILON) {
+                /* Glass prop model matrices can produce an all-negative
+                 * homogeneous clip vector for visible panes. The projective
+                 * point is unchanged by flipping the sign, but the clipper and
+                 * backend require positive w to avoid treating the pane as
+                 * behind the camera. */
+                x = -x;
+                y = -y;
+                z = -z;
+                w = -w;
             }
         }
 
@@ -8895,17 +9881,19 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         d->color.a = v->cn[3];
 
         if (rsp.geometry_mode & G_FOG) {
-            float ww = w;
-            if (fabsf(ww) < 0.001f) ww = 0.001f;
-            float winv = 1.0f / ww;
-            if (winv < 0.0f) winv = 32767.0f;
-            float fog_z = z * winv * rsp.fog_mul + rsp.fog_offset;
+            float fog_depth = 0.0f;
+            float fog_coord = gfx_fog_coord_for_vertex(z, w, &fog_depth);
+            float fog_z = fog_coord * rsp.fog_mul + rsp.fog_offset;
             if (!portFloatIsFinite(fog_z)) fog_z = 0.0f;
             if (fog_z < 0) fog_z = 0;
             if (fog_z > 255) fog_z = 255;
             d->fog = (uint8_t)fog_z;
+            d->fog_depth = fog_depth;
+            d->fog_coord = fog_coord;
         } else {
             d->fog = rdp.fog_color.a;
+            d->fog_depth = 0.0f;
+            d->fog_coord = 0.0f;
         }
     }
 }
@@ -8971,7 +9959,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               g_diag_tint_raw_mode_max);
     bool tint_by_tex = g_diag_tint_tex_enabled > 0 &&
                        settex_active &&
-                       gfx_mode_in_range(settex_gl_tex_id,
+                       settex_texturenum >= 0 &&
+                       gfx_mode_in_range((uint32_t)settex_texturenum,
                                          g_diag_tint_tex_min,
                                          g_diag_tint_tex_max);
     bool tint_by_sky = g_diag_tint_sky > 0 && g_sky_tri_mode;
@@ -9000,7 +9989,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               g_diag_skip_raw_mode_max);
     bool skip_by_tex = g_diag_skip_tex_enabled > 0 &&
                        settex_active &&
-                       gfx_mode_in_range(settex_gl_tex_id,
+                       settex_texturenum >= 0 &&
+                       gfx_mode_in_range((uint32_t)settex_texturenum,
                                          g_diag_skip_tex_min,
                                          g_diag_skip_tex_max);
     bool skip_by_sky = g_diag_skip_sky > 0 && g_sky_tri_mode;
@@ -9128,8 +10118,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
      * hand pathological mixed-W triangles to the backend. */
     static int g_no_cull = -1;
     if (g_no_cull < 0) g_no_cull = (getenv("GE007_NO_CULL") != NULL);
+    uint8_t common_clip_rej = v1->clip_rej & v2->clip_rej & v3->clip_rej;
+    if (g_depth_clamp_enabled) {
+        common_clip_rej &= (uint8_t)~32;
+    }
     if (!g_no_cull && v1->w > 0 && v2->w > 0 && v3->w > 0 &&
-        (v1->clip_rej & v2->clip_rej & v3->clip_rej)) {
+        common_clip_rej) {
         if (focus_match && ndc_metrics_ok) {
             gfx_diag_log_focus_event("GFX-FOCUS-REJECT",
                                      g_diag_current_cmd_addr, dl_room, dl_which,
@@ -9719,7 +10713,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
         bool allow_lod_redirect = (g_texrect_tile_override < 0);
         bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         bool allow_n64_filter = !g_texrect_uv_mode &&
             depth_test &&
             linear_filter &&
@@ -9731,28 +10725,46 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             (cc_features_for_options.used_textures[0] !=
              cc_features_for_options.used_textures[1]);
         uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
-        if (settex_active && settex_tile_state[0].valid) {
-            if (settex_tile_state[0].cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            if (settex_tile_state[0].cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+        struct SetTexTileState settex_tile0;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 0, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 1, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         } else if (td0 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td0);
             bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (is_font_texture || (rdp.texture_tile[td0].cms & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            if (is_font_texture || (rdp.texture_tile[td0].cmt & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[0])
                 cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         }
         uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
-        if (settex_active && settex_tile_state[1].valid) {
-            if (settex_tile_state[1].cms & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            if (settex_tile_state[1].cmt & G_TX_CLAMP) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+        struct SetTexTileState settex_tile1;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 0, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 1, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         } else if (td1 < 8) {
             const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td1);
             bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (is_font_texture || (rdp.texture_tile[td1].cms & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            if (is_font_texture || (rdp.texture_tile[td1].cmt & G_TX_CLAMP)) cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[1])
                 cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         }
@@ -9761,6 +10773,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
         (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
     uint64_t effective_cc_id = cc_id;
+    effective_cc_id = gfx_apply_room_alpha_lut(effective_cc_id,
+                                               rdp.other_mode_l_raw,
+                                               room_matrix,
+                                               blend_mode);
     struct RGBA diag_tint_color = g_diag_tint_rgba;
     bool eye_intro_strip = gfx_is_eye_intro_strip_material(tex_tile_base);
     bool trace_eye_material = (g_diag_trace_eye_bind > 0 && gfx_is_eye_intro_diag_material());
@@ -9852,13 +10868,6 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             cc_options |= SHADER_OPT_N64_FILTER_ALWAYS_3POINT;
         }
     }
-    if ((cc_options & (SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER)) != 0 &&
-        (cc_options & SHADER_OPT_N64_FILTER_ALWAYS_3POINT) == 0 &&
-        (cc_options & (SHADER_OPT_TEXEL0_CLAMP_S | SHADER_OPT_TEXEL0_CLAMP_T |
-                       SHADER_OPT_TEXEL1_CLAMP_S | SHADER_OPT_TEXEL1_CLAMP_T)) != 0 &&
-        (cc_options & SHADER_OPT_TEXTURE_EDGE) == 0) {
-        cc_options |= SHADER_OPT_N64_FILTER_NEAREST_THRESHOLD_005;
-    }
     if (!tint_match && settex_active &&
         gfx_diag_settex_cc_color_scale_enabled(settex_material_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_COLOR_SCALE;
@@ -9885,6 +10894,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     /* Per-tile texture setup (PD pattern: tile array with first_tile_index).
      * TEXEL0 uses tile[first_tile_index+0], TEXEL1 uses tile[first_tile_index+1]. */
     uint32_t tex_width[2] = {1, 1}, tex_height[2] = {1, 1};
+    uint32_t tex_clamp_width[2] = {1, 1}, tex_clamp_height[2] = {1, 1};
     bool settex_mirror_tex1 = false;
     bool mirror_tex1_from_tex0 = false;
     bool allow_lod_redirect = (g_texrect_tile_override < 0);
@@ -9896,9 +10906,13 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
         bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0;
         bool sampler_linear_filter;
-        uint8_t cms = settex_tile_state[0].valid ? settex_tile_state[0].cms : G_TX_WRAP;
-        uint8_t cmt = settex_tile_state[0].valid ? settex_tile_state[0].cmt : G_TX_WRAP;
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        struct SetTexTileState tile_state;
+        bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 0, &tile_state);
+        uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+        uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         sampler_linear_filter = linear_filter && !shader_n64_filter;
         if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
             rendering_state.textures[0] != NULL ||
@@ -9912,6 +10926,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
         tex_width[0] = (uint32_t)settex_tex_w;
         tex_height[0] = (uint32_t)settex_tex_h;
+        (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 0,
+                                                             &tex_width[0],
+                                                             &tex_height[0]);
     }
 
     {
@@ -9928,11 +10945,13 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
             bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0;
             bool sampler_linear_filter;
-            const struct SetTexTileState *tile_state =
-                settex_tile_state[1].valid ? &settex_tile_state[1] : &settex_tile_state[0];
-            uint8_t cms = tile_state->valid ? tile_state->cms : G_TX_WRAP;
-            uint8_t cmt = tile_state->valid ? tile_state->cmt : G_TX_WRAP;
-            linear_filter = gfx_apply_texture_filter_override(linear_filter);
+            struct SetTexTileState tile_state;
+            bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 1, &tile_state);
+            uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+            uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+            cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
+            cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
+            linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
             sampler_linear_filter = linear_filter && !shader_n64_filter;
             if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
                 rendering_state.textures[1] != NULL ||
@@ -9946,6 +10965,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             }
             tex_width[1] = (uint32_t)settex_tex_w;
             tex_height[1] = (uint32_t)settex_tex_h;
+            (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 1,
+                                                                 &tex_width[1],
+                                                                 &tex_height[1]);
             settex_mirror_tex1 = true;
         }
 
@@ -9985,11 +11007,13 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             ((cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0) :
             ((cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0);
         bool sampler_linear_filter;
-        linear_filter = gfx_apply_texture_filter_override(linear_filter);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
         if (is_font_texture) {
             cms = G_TX_CLAMP;
             cmt = G_TX_CLAMP;
         }
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, ti, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, ti, 1);
         if (is_font_texture && gfx_font_force_point_filter()) {
             linear_filter = false;
         }
@@ -10061,6 +11085,66 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
         tex_width[1] = tex_width[0];
         tex_height[1] = tex_height[0];
+    }
+
+    for (int ti = 0; ti < 2; ti++) {
+        struct SetTexTileState settex_tile_state_effective;
+        uint32_t logical_width;
+        uint32_t logical_height;
+        bool unit_uses_settex =
+            (ti == 0 && settex_active) ||
+            (ti == 1 && settex_mirror_tex1);
+
+        if (!used_textures[ti]) {
+            continue;
+        }
+
+        tex_clamp_width[ti] = tex_width[ti] != 0 ? tex_width[ti] : 1U;
+        tex_clamp_height[ti] = tex_height[ti] != 0 ? tex_height[ti] : 1U;
+
+        if (unit_uses_settex &&
+            gfx_get_settex_effective_tile_state(tex_tile_base, ti,
+                                                &settex_tile_state_effective)) {
+            logical_width = settex_tile_state_effective.width != 0
+                ? settex_tile_state_effective.width
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.uls,
+                                                   settex_tile_state_effective.lrs);
+            logical_height = settex_tile_state_effective.height != 0
+                ? settex_tile_state_effective.height
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.ult,
+                                                   settex_tile_state_effective.lrt);
+            if (logical_width != 0) {
+                tex_clamp_width[ti] = logical_width;
+            }
+            if (logical_height != 0) {
+                tex_clamp_height[ti] = logical_height;
+            }
+        } else {
+            uint8_t tile_desc =
+                gfx_effective_tile_desc_for_unit(tex_tile_base, ti,
+                                                 allow_lod_redirect);
+            if (tile_desc < 8) {
+                logical_width = rdp.texture_tile[tile_desc].width != 0
+                    ? rdp.texture_tile[tile_desc].width
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].uls,
+                                                       rdp.texture_tile[tile_desc].lrs);
+                logical_height = rdp.texture_tile[tile_desc].height != 0
+                    ? rdp.texture_tile[tile_desc].height
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].ult,
+                                                       rdp.texture_tile[tile_desc].lrt);
+                if (logical_width != 0) {
+                    tex_clamp_width[ti] = logical_width;
+                }
+                if (logical_height != 0) {
+                    tex_clamp_height[ti] = logical_height;
+                }
+            }
+        }
+    }
+
+    if (mirror_tex1_from_tex0 && used_textures[0] && used_textures[1]) {
+        tex_clamp_width[1] = tex_clamp_width[0];
+        tex_clamp_height[1] = tex_clamp_height[0];
     }
 
     /* Footprint-derived LOD is valid only when TEXEL1 is an independent
@@ -10273,6 +11357,16 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                               &u, &v);
             buf_vbo[buf_vbo_len++] = u;
             buf_vbo[buf_vbo_len++] = v;
+            if (gfx_shader_clamp_enabled(cc_options, ti, 0)) {
+                buf_vbo[buf_vbo_len++] =
+                    gfx_shader_clamp_coord(tex_clamp_width[ti],
+                                           tex_width[ti]);
+            }
+            if (gfx_shader_clamp_enabled(cc_options, ti, 1)) {
+                buf_vbo[buf_vbo_len++] =
+                    gfx_shader_clamp_coord(tex_clamp_height[ti],
+                                           tex_height[ti]);
+            }
         }
 
         if (use_fog) {
@@ -10455,9 +11549,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                     rdp.other_mode_l, rdp.other_mode_l_raw);
             fprintf(stderr,
                     "  fog=(%.3f,%.3f,%.3f) ndc_z=(%.5f,%.5f,%.5f) "
+                    "fog_depth=(%.1f,%.1f,%.1f) fog_coord=(%.5f,%.5f,%.5f) "
                     "clip_z=(%.1f,%.1f,%.1f) w=(%.1f,%.1f,%.1f) bbox=[%.2f,%.2f]-[%.2f,%.2f]\n",
                     fog_alpha[0], fog_alpha[1], fog_alpha[2],
                     ndc_z[0], ndc_z[1], ndc_z[2],
+                    v_arr[0]->fog_depth, v_arr[1]->fog_depth, v_arr[2]->fog_depth,
+                    v_arr[0]->fog_coord, v_arr[1]->fog_coord, v_arr[2]->fog_coord,
                     v_arr[0]->z, v_arr[1]->z, v_arr[2]->z,
                     v_arr[0]->w, v_arr[1]->w, v_arr[2]->w,
                     ndc_metrics.min_x, ndc_metrics.min_y,
@@ -11362,11 +12459,44 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
         {
             typeof(rdp.loaded_texture[0]) *loaded_texture =
                 gfx_loaded_texture_for_tile(tile);
+            bool has_strided_loadblock_footprint = false;
+            bool strided_loadblock_candidate = false;
+            bool strided_loadblock_disabled =
+                gfx_diag_disable_loadblock_strided_footprint_enabled();
+            uint32_t source_line_size_bytes = 0;
+            const char *footprint_decision = "tile_rect";
 
             decode_line_size_bytes = tile_rect_line_size_bytes;
             decode_height = height;
 
-            if (rdp.tex_lod && rdp.tex_max_lod > 0 &&
+            if (!(rdp.tex_lod && rdp.tex_max_lod > 0) &&
+                loaded_texture->size_bytes != 0 &&
+                loaded_texture->full_size_bytes == loaded_texture->orig_size_bytes &&
+                height != 0 &&
+                (loaded_texture->size_bytes % height) == 0) {
+                source_line_size_bytes = loaded_texture->size_bytes / height;
+
+                if (source_line_size_bytes >= tile_rect_line_size_bytes) {
+                    strided_loadblock_candidate = true;
+                    /* Rare's LOADBLOCK helpers store rows padded for TMEM, then
+                     * G_SETTILESIZE describes the visible rectangle. Decode only
+                     * the visible row while retaining the padded source pitch. */
+                    if (!strided_loadblock_disabled) {
+                        gfx_loaded_texture_set_strided_decode_footprint(
+                            loaded_texture,
+                            tile_rect_line_size_bytes,
+                            source_line_size_bytes,
+                            height);
+                        has_strided_loadblock_footprint = true;
+                        footprint_decision = "strided_loadblock";
+                    } else {
+                        footprint_decision = "strided_loadblock_disabled";
+                    }
+                }
+            }
+
+            if (!has_strided_loadblock_footprint &&
+                rdp.tex_lod && rdp.tex_max_lod > 0 &&
                 loaded_texture->size_bytes != 0 &&
                 render_line_size_bytes >= tile_rect_line_size_bytes &&
                 render_line_size_bytes <= loaded_texture->size_bytes &&
@@ -11377,18 +12507,63 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
                  * frontend photos/portraits sample horizontally striped data. */
                 decode_line_size_bytes = render_line_size_bytes;
                 decode_height = height;
-            } else if (loaded_texture->size_bytes != 0 &&
+                footprint_decision = "lod_render_line";
+            } else if (!has_strided_loadblock_footprint &&
+                loaded_texture->size_bytes != 0 &&
                 render_line_size_bytes >= tile_rect_line_size_bytes &&
                 render_line_size_bytes <= loaded_texture->size_bytes &&
                 (loaded_texture->size_bytes % render_line_size_bytes) == 0) {
                 decode_line_size_bytes = render_line_size_bytes;
                 decode_height = loaded_texture->size_bytes / render_line_size_bytes;
+                if (!strided_loadblock_candidate || !strided_loadblock_disabled) {
+                    footprint_decision = "render_line_full";
+                }
+            } else if (!has_strided_loadblock_footprint &&
+                gfx_diag_tilesize_clamp_subload_enabled() &&
+                loaded_texture->size_bytes != 0 &&
+                render_line_size_bytes != 0 &&
+                render_line_size_bytes < tile_rect_line_size_bytes &&
+                (loaded_texture->size_bytes % render_line_size_bytes) == 0 &&
+                (uint64_t)tile_rect_line_size_bytes * height > loaded_texture->size_bytes) {
+                /* Sub-tilesize LOADBLOCK: the loaded texture is narrower than the
+                 * declared G_SETTILESIZE rectangle. The explosion fire texture is
+                 * the canonical case -- loaded 16x14 RGBA16 (448 bytes, render line
+                 * 32 bytes) but the tile rect is 56x56 (line 112 bytes). On N64 the
+                 * tile mask (MASK_16) + G_TX_CLAMP confine sampling to the loaded
+                 * 16x14 extent; the default footprint (tile_rect_line * height =
+                 * 6272 bytes) instead over-reads ~5.8KB of heap past the 448-byte
+                 * source and uploads it as TEXEL1 -- the explosion "confetti".
+                 * Decode only the true loaded extent: clamp the row pitch to the
+                 * tile's render line and the height to size_bytes/render_line. Both
+                 * are <= the default, so this only ever NARROWS the footprint and
+                 * decode_line * decode_height <= size_bytes (never over-reads). */
+                decode_line_size_bytes = render_line_size_bytes;
+                decode_height = loaded_texture->size_bytes / render_line_size_bytes;
+                if (decode_height > height) {
+                    decode_height = height;
+                }
+                footprint_decision = "subload_clamp";
             }
 
-            gfx_loaded_texture_set_decode_footprint(
-                loaded_texture,
-                decode_line_size_bytes,
-                decode_height);
+            if (!has_strided_loadblock_footprint) {
+                gfx_loaded_texture_set_decode_footprint(
+                    loaded_texture,
+                    decode_line_size_bytes,
+                    decode_height);
+            }
+            gfx_trace_tex_footprint_decision(
+                footprint_decision,
+                tile,
+                width,
+                height,
+                tile_rect_line_size_bytes,
+                render_line_size_bytes,
+                source_line_size_bytes,
+                has_strided_loadblock_footprint ?
+                    tile_rect_line_size_bytes : decode_line_size_bytes,
+                has_strided_loadblock_footprint ?
+                    height : decode_height,
+                loaded_texture);
         }
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;
@@ -12609,11 +13784,16 @@ volatile uint32_t g_lastDlW0 = 0;
 volatile uintptr_t g_lastDlW1 = 0;  /* uintptr_t: w1 often carries pointers */
 
 static void gfx_run_dl_pc(Gfx *cmd) {
+    enum DrawClass entry_draw_class;
+
     dl_depth++;
     if (dl_depth > 32) {
+        g_effect_pending_child_label = NULL;
         dl_depth--;
         return;
     }
+    entry_draw_class = g_current_draw_class;
+    gfx_effect_push_inherited_label();
     int subtree_tris_start = g_tri_count_diag;
     /* Track whether this DL invocation started inside the dynamic buffer.
      * Static DLs (dlFastPipelineSetup etc.) live in the executable's data
@@ -12624,10 +13804,13 @@ static void gfx_run_dl_pc(Gfx *cmd) {
     for (int cmd_count = 0; cmd_count < 100000; cmd_count++) {
         /* Bounds check: only for DLs that started in the dynamic buffer */
         if (in_dynamic_range && (uintptr_t)cmd >= pc_gfx_range_end) {
+            gfx_effect_pop_inherited_label();
             dl_depth--;
+            g_current_draw_class = entry_draw_class;
             return;
         }
 	        g_diag_current_cmd_addr = (uintptr_t)cmd;
+	        g_current_draw_class = gfx_draw_class_for_cmd_addr((uintptr_t)cmd, entry_draw_class);
 	        uint32_t opcode = cmd->words.w0 >> 24;
 	        gfx_effect_cmd_trace((uint8_t)opcode, cmd->words.w0, cmd->words.w1);
 
@@ -12866,9 +14049,11 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                             trace_log("G_DL -> N64 @%p", (void*)dl_addr);
                         }
                     }
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else if (C0(16, 1) == 0) {
                     if (trace_active()) trace_log("G_DL -> PC @%p", (void*)dl_addr);
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_run_dl_pc(dl_addr);
                 } else {
                     if (trace_active()) trace_log("G_DL -> BRANCH @%p", (void*)dl_addr);
@@ -12879,7 +14064,9 @@ static void gfx_run_dl_pc(Gfx *cmd) {
             }
             case (uint8_t)G_ENDDL:
                 if (trace_active()) trace_log("} ENDDL (%d tris in subtree)", g_tri_count_diag - subtree_tris_start);
+                gfx_effect_pop_inherited_label();
                 dl_depth--;
+                g_current_draw_class = entry_draw_class;
                 return;
             /* Base GBI separate set/clear geometry mode */
             case (uint8_t)G_SETGEOMETRYMODE:
@@ -13097,7 +14284,9 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 }
                 /* Only abort on opcodes that are clearly garbage pointers */
                 if (opcode < 0x06 && opcode > 0x00) {
+                    gfx_effect_pop_inherited_label();
                     dl_depth--;
+                    g_current_draw_class = entry_draw_class;
                     return;
                 }
                 break;
@@ -13105,6 +14294,10 @@ static void gfx_run_dl_pc(Gfx *cmd) {
         }
         ++cmd;
     }
+
+    gfx_effect_pop_inherited_label();
+    dl_depth--;
+    g_current_draw_class = entry_draw_class;
 }
 
 /* ===== N64 binary display list interpreter (big-endian ROM data) ===== */
@@ -13114,8 +14307,12 @@ static inline uint32_t read_be32(const uint8_t *p) {
 }
 
 void gfx_process_n64_dl(const uint8_t *data) {
-    if (!data) return;
+    if (!data) {
+        g_effect_pending_child_label = NULL;
+        return;
+    }
     if (!gfx_addr_is_n64_data_range((uintptr_t)data, 8)) {
+        g_effect_pending_child_label = NULL;
         return;
     }
     int n64_cmd_count = 0;
@@ -13161,6 +14358,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
     }
 
     dl_depth++;
+    gfx_effect_push_inherited_label();
     if (entry_depth < (int)(sizeof(g_n64_dl_stack) / sizeof(g_n64_dl_stack[0]))) {
         g_n64_dl_stack[entry_depth] = (uintptr_t)data;
         g_n64_dl_seq_stack[entry_depth] = exec_seq;
@@ -13208,6 +14406,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
         fflush(stderr);
     }
 #define ABORT_N64_DL() do { \
+        gfx_effect_pop_inherited_label(); \
         dl_depth--; \
         g_executing_weapon_dl = was_weapon_dl; \
         g_executing_guard_dl = was_guard_dl; \
@@ -13226,6 +14425,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                         n64_vtx_count, n64_cmd_count, n64_dl_count);
                 fflush(stderr);
             }
+            gfx_effect_pop_inherited_label();
             dl_depth--;
             g_executing_weapon_dl = was_weapon_dl;
             g_executing_guard_dl = was_guard_dl;
@@ -13247,6 +14447,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
         uint8_t opcode = w0 >> 24;
         g_rsp_cmd_seq++;
         g_diag_current_cmd_addr = (uintptr_t)data;
+        gfx_effect_cmd_trace(opcode, w0, w1);
         if ((int)exec_seq == gfx_trace_n64_tri_seq() &&
             g_frame_count_diag >= gfx_trace_n64_dl_after_frame()) {
             fprintf(stderr,
@@ -13717,11 +14918,13 @@ void gfx_process_n64_dl(const uint8_t *data) {
                             trace_log("G_DL_N64 -> N64 @%p [room=%d %s]", dl_addr, room, room_dl_kind);
                         }
                     }
+                    gfx_effect_inherit_label_for_child_dl();
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else {
                     /* Jump to a PC DL from within an N64 DL */
                     if (gfx_is_valid_pc_dl((uintptr_t)dl_addr) ||
                         gfx_is_static_pc_dl((uintptr_t)dl_addr)) {
+                        gfx_effect_inherit_label_for_child_dl();
                         gfx_run_dl_pc((Gfx *)dl_addr);
                     } else {
                         g_bad_cmd_count++;
@@ -13747,6 +14950,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                                 n64_vtx_count, n64_cmd_count, n64_dl_count);
                         fflush(stderr);
                     }
+                    gfx_effect_pop_inherited_label();
                     dl_depth--;
                     g_executing_weapon_dl = was_weapon_dl;
                     g_executing_guard_dl = was_guard_dl;
@@ -13792,6 +14996,7 @@ void gfx_process_n64_dl(const uint8_t *data) {
                             n64_vtx_count, n64_cmd_count, n64_dl_count);
                     fflush(stderr);
                 }
+                gfx_effect_pop_inherited_label();
                 dl_depth--;
                 g_executing_weapon_dl = was_weapon_dl;
                 g_executing_guard_dl = was_guard_dl;
@@ -14190,6 +15395,7 @@ void gfx_run_dl(Gfx *dl) {
                 buf_vbo_num_tris = 0;
                 dl_depth = 0;
                 effect_dl_range_count = 0;
+                draw_class_dl_range_count = 0;
                 visibility_scaled_matrix_region_count = 0;
                 return;
             }
@@ -14235,16 +15441,12 @@ void gfx_run_dl(Gfx *dl) {
         }
     }
 
-    /* Update dimensions from SDL window */
-    extern SDL_Window *g_sdlWindow;
-    int w, h;
-    SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
-    gfx_current_dimensions.width = w;
-    gfx_current_dimensions.height = h > 0 ? h : 1;
-    gfx_current_dimensions.aspect_ratio = (float)w / (float)gfx_current_dimensions.height;
+    gfx_sync_current_dimensions_from_window();
 
-    g_tri_count_diag = 0;
-    g_sky_tri_count_diag = 0;
+    int pending_sky_tris = g_pending_sky_tri_count_diag;
+    g_pending_sky_tri_count_diag = 0;
+    g_tri_count_diag = pending_sky_tris;
+    g_sky_tri_count_diag = pending_sky_tris;
     g_nonsky_tri_count_diag = 0;
     g_n64_dl_exec_seq = 0;
     g_frame_n64_dl_index = 0;
@@ -14302,6 +15504,7 @@ void gfx_run_dl(Gfx *dl) {
     }
     gfx_rapi->start_frame();
 
+    g_current_draw_class = DRAWCLASS_UNKNOWN;
     gfx_run_dl_pc(dl);
     gfx_flush();
     {
@@ -14432,6 +15635,7 @@ void gfx_run_dl(Gfx *dl) {
     }
 
     effect_dl_range_count = 0;
+    draw_class_dl_range_count = 0;
 }
 
 /* ===== Sky Triangle Rendering ===== */
@@ -14448,20 +15652,92 @@ void gfx_run_dl(Gfx *dl) {
  * gfx_emit_loaded_triangle sees the correct state when packing the VBO.
  *
  * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are in world-texture-repeat
- * space (e.g., worldX*0.1 ≈ -900 to +900).  The standard VBO packing divides
- * by 32.0 (s10.5→float) then by tex_width (normalize to [0,1]).  We apply
- * a tunable scale factor (GE007_SKY_UV_SCALE, default 3.5) that produces
- * approximately 2-4 cloud texture repeats across the sky, matching the N64's
- * apparent cloud density after RDP perspective-correct texture mapping.
+ * space. The standard VBO packing divides by 32.0 (s10.5 -> float) then by the
+ * texture width. GE007_SKY_UV_SCALE defaults to 3.5 so the native sky keeps the
+ * original dense cloud repeat instead of stretching into broad bands.
  *
  * RSP BYPASS NOTE: On N64, sky triangles are raw RDP commands that bypass
  * all RSP processing — no backface culling, no clip rejection, no fog.
  * gfx_draw_sky_triangle() temporarily clears geometry_mode for the direct
- * triangle submission, then restores the caller's RSP state. */
+ * triangle submission, then restores the caller's RSP state.
+ *
+ * VIEWPORT NOTE: The game computes SkyRelated38 from the current player's
+ * viewport. Carry that viewport into the direct native draw so split-screen
+ * sky maps to the same sub-rectangle instead of the full window. */
 
-void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_g, uint8_t env_b) {
+static struct XYWidthHeight gfx_sky_viewport_to_drawable(void)
+{
+    gfx_sync_current_dimensions_from_window();
+
+    float logical_width = gfx_logical_screen_width();
+    float logical_height = gfx_logical_screen_height();
+    float left = g_sky_viewport_left;
+    float top = g_sky_viewport_top;
+    float width = g_sky_viewport_width;
+    float height = g_sky_viewport_height;
+
+    if (!g_sky_viewport_valid ||
+        !portFloatIsFinite(left) ||
+        !portFloatIsFinite(top) ||
+        !portFloatIsFinite(width) ||
+        !portFloatIsFinite(height) ||
+        width <= 0.0f ||
+        height <= 0.0f) {
+        left = 0.0f;
+        top = 0.0f;
+        width = logical_width;
+        height = logical_height;
+    }
+
+    if (left < 0.0f) {
+        width += left;
+        left = 0.0f;
+    }
+    if (top < 0.0f) {
+        height += top;
+        top = 0.0f;
+    }
+    if (left + width > logical_width) {
+        width = logical_width - left;
+    }
+    if (top + height > logical_height) {
+        height = logical_height - top;
+    }
+    if (width <= 0.0f || height <= 0.0f) {
+        left = 0.0f;
+        top = 0.0f;
+        width = logical_width;
+        height = logical_height;
+    }
+
+    struct XYWidthHeight viewport;
+    viewport.x = (int32_t)(left * gfx_ratio_x());
+    viewport.y = (int32_t)((logical_height - (top + height)) * gfx_ratio_y());
+    viewport.width = (int32_t)(width * gfx_ratio_x());
+    viewport.height = (int32_t)(height * gfx_ratio_y());
+
+    if (viewport.width <= 0) {
+        viewport.width = gfx_current_dimensions.width;
+    }
+    if (viewport.height <= 0) {
+        viewport.height = gfx_current_dimensions.height;
+    }
+
+    return viewport;
+}
+
+void gfx_prepare_sky_rendering(uint32_t texture_num,
+                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
+                               float screen_left, float screen_top,
+                               float screen_width, float screen_height) {
     /* Flush any pending geometry from previous draw state */
     gfx_flush();
+
+    g_sky_viewport_left = screen_left;
+    g_sky_viewport_top = screen_top;
+    g_sky_viewport_width = screen_width;
+    g_sky_viewport_height = screen_height;
+    g_sky_viewport_valid = true;
 
     /* Load the sky texture via the same path as G_SETTEX (Rare's texture-by-number).
      * This sets settex_active, settex_gl_tex_id, settex_tex_w/h. */
@@ -14497,7 +15773,8 @@ void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_
      * intercept routes through gfx_sp_tri1 which DOES check geometry_mode. */
 }
 
-void gfx_draw_sky_triangle(
+static void gfx_draw_sky_triangle_impl(
+    bool clip_space_xy,
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -14518,27 +15795,16 @@ void gfx_draw_sky_triangle(
     uint8_t as[3] = { a0, a1, a2 };
     float us[3] = { u0, u1, u2 };
     float vs[3] = { v0, v1, v2 };
-    float logical_half_width = gfx_logical_screen_width() * 0.5f;
-    float logical_half_height = gfx_logical_screen_height() * 0.5f;
-    struct XYWidthHeight default_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
-    struct XYWidthHeight default_scissor = default_viewport;
+    gfx_sync_current_dimensions_from_window();
+    struct XYWidthHeight fullscreen_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
+    struct XYWidthHeight player_viewport = gfx_sky_viewport_to_drawable();
+    struct XYWidthHeight draw_viewport = clip_space_xy ? player_viewport : fullscreen_viewport;
+    struct XYWidthHeight draw_scissor = player_viewport;
     struct XYWidthHeight viewport_saved = rdp.viewport;
     struct XYWidthHeight scissor_saved = rdp.scissor;
     uint32_t geometry_mode_saved = rsp.geometry_mode;
 
-    /* Sky UV scale: controls how many texture repeats appear across the sky.
-     *
-     * The raw UV values from the game are in world-texture space (range ±900+).
-     * On N64, the RDP's edge equation builder applies perspective scaling that
-     * naturally reduces the apparent repeat count.  On PC, we apply a fixed
-     * scale to approximate the N64's apparent cloud density.
-     *
-     * VBO packing does: gl_uv = (vertex.u / 32.0) / tex_width.
-     * For ~3 repeats across a UV range of ~1800, tex_width=64:
-     *   vertex.u = sky_uv * scale, (1800 * scale / 32 / 64) ≈ 3
-     *   → scale ≈ 3.4
-     *
-     * Tunable via GE007_SKY_UV_SCALE (default 3.5). */
+    /* Sky UV diagnostic scale. */
     static float sky_uv_scale = -1.0f;
     if (sky_uv_scale < 0) {
         const char *env = getenv("GE007_SKY_UV_SCALE");
@@ -14547,14 +15813,25 @@ void gfx_draw_sky_triangle(
 
     for (int i = 0; i < 3; i++) {
         struct LoadedVertex *d = &rsp.loaded_vertices[i];
-        /* SkyRelated38.unk28/unk2c are already in final screen space
-         * (quarter-pixels) after the game's sky-specific clipping.
-         * Feed those directly through the fullscreen viewport instead of
-         * treating them like ordinary clip-space geometry. */
-        float ndc_x = xs[i] / (4.0f * logical_half_width) - 1.0f;
-        float ndc_y = -(ys[i] / (4.0f * logical_half_height)) + 1.0f;
-        d->x = ndc_x * ws[i];
-        d->y = ndc_y * ws[i];
+        if (clip_space_xy) {
+            /* Apply the same aspect correction every scene vertex gets
+             * (gfx_adjust_x_for_aspect_ratio, line ~9639). The player projection
+             * uses a fixed N64 4:3 aspect, so on a non-4:3 window the world x is
+             * squeezed by 4:3 / actual_aspect while the sky kept full clip width —
+             * a ~33% sky/world horizontal mismatch. Self-guarding: returns x
+             * unchanged on exact 4:3 (validation window stays byte-identical). */
+            d->x = gfx_adjust_x_for_aspect_ratio(xs[i]);
+            d->y = ys[i];
+        } else {
+            /* Diagnostic legacy path: SkyRelated38.unk28/unk2c are final
+             * quarter-pixel screen coordinates after game-side clamping. */
+            float logical_half_width = gfx_logical_screen_width() * 0.5f;
+            float logical_half_height = gfx_logical_screen_height() * 0.5f;
+            float ndc_x = xs[i] / (4.0f * logical_half_width) - 1.0f;
+            float ndc_y = -(ys[i] / (4.0f * logical_half_height)) + 1.0f;
+            d->x = ndc_x * ws[i];
+            d->y = ndc_y * ws[i];
+        }
         d->z = zs[i];
         d->w = ws[i];
         d->color.r = rs[i];
@@ -14564,25 +15841,66 @@ void gfx_draw_sky_triangle(
         d->u = us[i] * sky_uv_scale;
         d->v = vs[i] * sky_uv_scale;
         d->fog = 0;       /* Sky doesn't receive distance fog */
+        d->fog_depth = 0.0f;
+        d->fog_coord = 0.0f;
         d->clip_rej = 0;  /* Never trivially reject sky triangles */
         d->room_id = -1;
         d->src_addr = 0;
         d->ob[0] = d->ob[1] = d->ob[2] = 0;
     }
 
-    rdp.viewport = default_viewport;
-    rdp.scissor = default_scissor;
+    rdp.viewport = draw_viewport;
+    rdp.scissor = draw_scissor;
     rdp.viewport_or_scissor_changed = true;
     rsp.geometry_mode = 0;
     gfx_sync_other_mode_l_effective();
+    int sky_tris_before = g_sky_tri_count_diag;
     g_sky_tri_mode = true;
     gfx_sp_tri1(0, 1, 2);
     g_sky_tri_mode = false;
+    int sky_tri_delta = g_sky_tri_count_diag - sky_tris_before;
+    if (sky_tri_delta > 0) {
+        g_pending_sky_tri_count_diag += sky_tri_delta;
+    }
     rsp.geometry_mode = geometry_mode_saved;
     gfx_sync_other_mode_l_effective();
     rdp.viewport = viewport_saved;
     rdp.scissor = scissor_saved;
     rdp.viewport_or_scissor_changed = true;
+}
+
+void gfx_draw_sky_clip_triangle(
+    float x0, float y0, float z0, float w0,
+    uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
+    float u0, float v0,
+    float x1, float y1, float z1, float w1,
+    uint8_t r1, uint8_t g1, uint8_t b1, uint8_t a1,
+    float u1, float v1,
+    float x2, float y2, float z2, float w2,
+    uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
+    float u2, float v2)
+{
+    gfx_draw_sky_triangle_impl(true,
+        x0, y0, z0, w0, r0, g0, b0, a0, u0, v0,
+        x1, y1, z1, w1, r1, g1, b1, a1, u1, v1,
+        x2, y2, z2, w2, r2, g2, b2, a2, u2, v2);
+}
+
+void gfx_draw_sky_triangle(
+    float sx0, float sy0, float z0, float w0,
+    uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
+    float u0, float v0,
+    float sx1, float sy1, float z1, float w1,
+    uint8_t r1, uint8_t g1, uint8_t b1, uint8_t a1,
+    float u1, float v1,
+    float sx2, float sy2, float z2, float w2,
+    uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
+    float u2, float v2)
+{
+    gfx_draw_sky_triangle_impl(false,
+        sx0, sy0, z0, w0, r0, g0, b0, a0, u0, v0,
+        sx1, sy1, z1, w1, r1, g1, b1, a1, u1, v1,
+        sx2, sy2, z2, w2, r2, g2, b2, a2, u2, v2);
 }
 
 /* Snapshot end-of-frame render stats for port_trace.c */

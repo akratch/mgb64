@@ -17,6 +17,8 @@
 #include <dirent.h>
 #include "rom_io.h"
 #include "savedir.h"
+#include "config_pc.h"
+#include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
 
@@ -32,6 +34,19 @@ int g_pcStartLevel = -1;
 int g_pcStartDifficulty = DIFFICULTY_AGENT;
 const char *g_pcStartRamrom = NULL;
 static int g_pcStartLevelForcedRaw = 0;
+
+/* Multiplayer direct-boot selection from command line.
+ * g_pcStartMultiplayer gates the GAMEMODE_MULTI direct-boot path in
+ * init_menus_or_reset(); the rest mirror the frontend MP option state.
+ * MP_stage value is a MP_STAGE_* index into multi_stage_setups[];
+ * scenario value is a SCENARIO_* (MPSCENARIOS) index. */
+int g_pcStartMultiplayer = 0;
+int g_pcStartMpPlayers = 2;
+int g_pcStartMpStage = MP_STAGE_TEMPLE;
+int g_pcStartMpScenario = SCENARIO_NORMAL;
+int g_pcStartMpTimeLimitSecs = 0;
+
+#define PC_MAX_CONFIG_SET_ARGS 32
 
 static inline void pc_diag_write_stderr(const char *msg, int len)
 {
@@ -108,6 +123,42 @@ static const PcStartStage *pcFindStageByName(const char *name) {
     return NULL;
 }
 
+static int pcApplyConfigArg(const char *arg, int mark_cli_override) {
+    const char *eq;
+    size_t key_len;
+    char key[CONFIG_MAX_KEYNAME + 1];
+
+    if (arg == NULL) {
+        return 0;
+    }
+
+    eq = strchr(arg, '=');
+    if (eq == NULL || eq == arg) {
+        fprintf(stderr, "[CONFIG] Invalid --config-set '%s'. Expected Section.Key=value.\n", arg);
+        return 0;
+    }
+
+    key_len = (size_t)(eq - arg);
+    if (key_len > CONFIG_MAX_KEYNAME) {
+        fprintf(stderr, "[CONFIG] --config-set key is too long: %s\n", arg);
+        return 0;
+    }
+
+    memcpy(key, arg, key_len);
+    key[key_len] = '\0';
+
+    if (!configSetValue(key, eq + 1)) {
+        fprintf(stderr, "[CONFIG] Unknown config key: %s\n", key);
+        return 0;
+    }
+
+    if (mark_cli_override) {
+        settingsMarkCliOverride(key);
+    }
+
+    return 1;
+}
+
 static int pcParseIntArg(const char *arg, int *out_value) {
     char *end = NULL;
     long value;
@@ -150,6 +201,99 @@ static int pcParseDifficultyArg(const char *arg, int *out_value) {
 
     if (pcParseIntArg(arg, &parsed)) {
         if (parsed >= DIFFICULTY_AGENT && parsed <= DIFFICULTY_007) {
+            *out_value = parsed;
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+/* CLI-friendly names for the multiplayer stage table. The mp_stage index is a
+ * MP_STAGE_* enum value (an index into front.c's multi_stage_setups[]); we never
+ * embed ROM-derived stage data here, only the public enum index plus a slug. */
+typedef struct PcMpStage {
+    int mp_stage;         /* MP_STAGE_* index into multi_stage_setups[] */
+    const char *slug;     /* CLI-friendly name */
+} PcMpStage;
+
+static const PcMpStage kPcMpStages[] = {
+    { MP_STAGE_RANDOM,   "random" },
+    { MP_STAGE_TEMPLE,   "temple" },
+    { MP_STAGE_COMPLEX,  "complex" },
+    { MP_STAGE_CAVES,    "caves" },
+    { MP_STAGE_LIBRARY,  "library" },
+    { MP_STAGE_BASEMENT, "basement" },
+    { MP_STAGE_STACK,    "stack" },
+    { MP_STAGE_FACILITY, "facility" },
+    { MP_STAGE_BUNKER,   "bunker" },
+    { MP_STAGE_ARCHIVES, "archives" },
+    { MP_STAGE_CAVERNS,  "caverns" },
+    { MP_STAGE_EGYPT,    "egypt" },
+};
+
+/* CLI-friendly names for the multiplayer scenarios (combat modes). */
+typedef struct PcMpScenario {
+    int scenario;         /* SCENARIO_* (MPSCENARIOS) index */
+    const char *slug;     /* CLI-friendly name */
+} PcMpScenario;
+
+static const PcMpScenario kPcMpScenarios[] = {
+    { SCENARIO_NORMAL, "normal" },
+    { SCENARIO_NORMAL, "deathmatch" },
+    { SCENARIO_NORMAL, "combat" },
+    { SCENARIO_YOLT,   "yolt" },
+    { SCENARIO_TLD,    "flagtag" },
+    { SCENARIO_TLD,    "tld" },
+    { SCENARIO_MWTGG,  "goldengun" },
+    { SCENARIO_MWTGG,  "mwtgg" },
+    { SCENARIO_LTK,    "licencetokill" },
+    { SCENARIO_LTK,    "ltk" },
+    { SCENARIO_2v2,    "2v2" },
+    { SCENARIO_3v1,    "3v1" },
+    { SCENARIO_2v1,    "2v1" },
+};
+
+static int pcParseMpStageArg(const char *arg, int *out_value) {
+    size_t i;
+    int parsed;
+
+    if (!arg || !*arg) return 0;
+
+    for (i = 0; i < sizeof(kPcMpStages) / sizeof(kPcMpStages[0]); i++) {
+        if (strcasecmp(kPcMpStages[i].slug, arg) == 0) {
+            *out_value = kPcMpStages[i].mp_stage;
+            return 1;
+        }
+    }
+
+    if (pcParseIntArg(arg, &parsed)) {
+        if (parsed > MP_STAGE_RANDOM && parsed < MP_STAGE_SELECTED_MAX) {
+            *out_value = parsed;
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+static int pcParseMpScenarioArg(const char *arg, int *out_value) {
+    size_t i;
+    int parsed;
+
+    if (!arg || !*arg) return 0;
+
+    for (i = 0; i < sizeof(kPcMpScenarios) / sizeof(kPcMpScenarios[0]); i++) {
+        if (strcasecmp(kPcMpScenarios[i].slug, arg) == 0) {
+            *out_value = kPcMpScenarios[i].scenario;
+            return 1;
+        }
+    }
+
+    if (pcParseIntArg(arg, &parsed)) {
+        if (parsed >= SCENARIO_NORMAL && parsed < MPSCENARIOS_MAX) {
             *out_value = parsed;
             return 1;
         }
@@ -236,6 +380,7 @@ extern void schedulerInitThread(void);
 
 /* SDL platform — defined in platform_sdl.c */
 extern int  platformInitSDL(void);
+extern int  platformPrintDisplays(FILE *f);
 extern void platformShutdownSDL(void);
 extern void platformSetScreenshotLabel(const char *label);
 extern void pcSetTraceStatePath(const char *path);
@@ -359,6 +504,14 @@ int main(int argc, char **argv)
 {
     const char *romPath = NULL;
     const char *saveDirOverride = NULL;
+    const char *configOverrideArgs[PC_MAX_CONFIG_SET_ARGS];
+    const char *configSetArgs[PC_MAX_CONFIG_SET_ARGS];
+    int configOverrideCount = 0;
+    int configSetCount = 0;
+    int resetConfig = 0;
+    int listSettings = 0;
+    int listDisplays = 0;
+    int dumpConfig = 0;
     extern int g_autoScreenshotExit;
     extern const char *g_traceStatePath;
 
@@ -377,6 +530,26 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
             romPath = argv[++i];
+        } else if (strcmp(argv[i], "--list-settings") == 0) {
+            listSettings = 1;
+        } else if (strcmp(argv[i], "--list-displays") == 0) {
+            listDisplays = 1;
+        } else if (strcmp(argv[i], "--dump-config") == 0) {
+            dumpConfig = 1;
+        } else if (strcmp(argv[i], "--reset-config") == 0) {
+            resetConfig = 1;
+        } else if (strcmp(argv[i], "--config-override") == 0 && i + 1 < argc) {
+            if (configOverrideCount >= PC_MAX_CONFIG_SET_ARGS) {
+                fprintf(stderr, "[CONFIG] Too many --config-override values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
+                return 2;
+            }
+            configOverrideArgs[configOverrideCount++] = argv[++i];
+        } else if (strcmp(argv[i], "--config-set") == 0 && i + 1 < argc) {
+            if (configSetCount >= PC_MAX_CONFIG_SET_ARGS) {
+                fprintf(stderr, "[CONFIG] Too many --config-set values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
+                return 2;
+            }
+            configSetArgs[configSetCount++] = argv[++i];
         } else if (strcmp(argv[i], "--background") == 0) {
             setenv("GE007_BACKGROUND", "1", 1);
             setenv("GE007_NO_INPUT_GRAB", "1", 1);
@@ -385,6 +558,9 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
             extern int g_autoScreenshotFrame;
             g_autoScreenshotFrame = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--screenshot-game-timer") == 0 && i + 1 < argc) {
+            extern int g_autoScreenshotGameTimer;
+            g_autoScreenshotGameTimer = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--screenshot-exit") == 0) {
             g_autoScreenshotExit = 1;
         } else if (strcmp(argv[i], "--screenshot-label") == 0 && i + 1 < argc) {
@@ -456,6 +632,41 @@ int main(int argc, char **argv)
             g_pcStartLevel = -1;
         } else if (strcmp(argv[i], "--savedir") == 0 && i + 1 < argc) {
             saveDirOverride = argv[++i];
+        } else if (strcmp(argv[i], "--multiplayer") == 0) {
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--players") == 0 && i + 1 < argc) {
+            int players = 0;
+            if (!pcParseIntArg(argv[++i], &players) || players < 2 || players > 4) {
+                fprintf(stderr, "[GE007-PC] Invalid --players value. Use 2, 3, or 4.\n");
+                return 2;
+            }
+            g_pcStartMpPlayers = players;
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--mp-stage") == 0 && i + 1 < argc) {
+            if (!pcParseMpStageArg(argv[++i], &g_pcStartMpStage)) {
+                fprintf(stderr,
+                        "[GE007-PC] Unknown --mp-stage. Use a stage name like 'temple' or 'complex',\n"
+                        "[GE007-PC] or a raw MP_STAGE index (1-%d).\n",
+                        MP_STAGE_SELECTED_MAX - 1);
+                return 2;
+            }
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--scenario") == 0 && i + 1 < argc) {
+            if (!pcParseMpScenarioArg(argv[++i], &g_pcStartMpScenario)) {
+                fprintf(stderr,
+                        "[GE007-PC] Unknown --scenario. Use 'normal' (combat deathmatch), 'yolt',\n"
+                        "[GE007-PC] 'flagtag', 'goldengun', 'ltk', '2v2', '3v1', or '2v1'.\n");
+                return 2;
+            }
+            g_pcStartMultiplayer = 1;
+        } else if (strcmp(argv[i], "--mp-timelimit") == 0 && i + 1 < argc) {
+            int secs = 0;
+            if (!pcParseIntArg(argv[++i], &secs) || secs < 1 || secs > 3600) {
+                fprintf(stderr, "[GE007-PC] Invalid --mp-timelimit value. Use seconds, 1-3600.\n");
+                return 2;
+            }
+            g_pcStartMpTimeLimitSecs = secs;
+            g_pcStartMultiplayer = 1;
         } else if (argv[i][0] != '-') {
             romPath = argv[i];
         }
@@ -469,7 +680,7 @@ int main(int argc, char **argv)
         setenv("GE007_NO_INPUT_GRAB", "1", 1);
     }
 
-    if (!romPath) {
+    if (!romPath && !listSettings && !listDisplays && !dumpConfig && !resetConfig && configSetCount == 0) {
         romPath = findRomFile();
     }
 
@@ -481,8 +692,83 @@ int main(int argc, char **argv)
     portAudioRegisterConfig();
     configInit();
 
+    settingsApplyEnvOverrides();
+    for (int i = 0; i < configOverrideCount; i++) {
+        if (!pcApplyConfigArg(configOverrideArgs[i], 1)) {
+            return 2;
+        }
+    }
+    if (resetConfig) {
+        settingsResetAllToDefaults();
+    }
+    for (int i = 0; i < configSetCount; i++) {
+        if (!pcApplyConfigArg(configSetArgs[i], 0)) {
+            return 2;
+        }
+    }
+    if (resetConfig || configSetCount > 0) {
+        if (!configSave()) {
+            return 1;
+        }
+    }
+
+    if (listSettings || listDisplays || dumpConfig || resetConfig || configSetCount > 0) {
+        if (listSettings) {
+            settingsPrintList(stdout);
+        }
+        if (listSettings && (dumpConfig || listDisplays)) {
+            printf("\n");
+        }
+        if (dumpConfig) {
+            settingsPrintDump(stdout);
+        }
+        if (dumpConfig && listDisplays) {
+            printf("\n");
+        }
+        if (listDisplays && !platformPrintDisplays(stdout)) {
+            return 1;
+        }
+        return 0;
+    }
+
+    /* ADS reticle sanity note: surface a misconfigured reticle loudly rather than
+     * silently falling back to the classic crosshair. Fires only when the user
+     * opted into ADS (Input.AdsEnabled=1) yet the modern reticle is off
+     * (Input.AdsModernReticle=0) -- exactly the state a stray --config-override or
+     * a hand-edited ge007.ini can leave behind. ADS ships off, so this is never
+     * noisy in traditional play. */
+    {
+        const Setting *adsEnabled = settingsFind("Input.AdsEnabled");
+        const Setting *adsReticle = settingsFind("Input.AdsModernReticle");
+        if (adsEnabled && adsEnabled->ptr && *(const s32 *)adsEnabled->ptr != 0 &&
+            adsReticle && adsReticle->ptr && *(const s32 *)adsReticle->ptr == 0) {
+            printf("[GE007-PC] Note: Input.AdsEnabled=1 but Input.AdsModernReticle=0 -- "
+                   "the classic crosshair will show while aiming. Set "
+                   "Input.AdsModernReticle=1 in ge007.ini for the modern ADS reticle.\n");
+        }
+    }
+
     printf("[GE007-PC] Starting...\n");
-    if (g_pcStartLevel >= 0) {
+    if (g_pcStartMultiplayer) {
+        const char *stage_slug = "?";
+        const char *scenario_slug = "?";
+        size_t i;
+        for (i = 0; i < sizeof(kPcMpStages) / sizeof(kPcMpStages[0]); i++) {
+            if (kPcMpStages[i].mp_stage == g_pcStartMpStage) {
+                stage_slug = kPcMpStages[i].slug;
+                break;
+            }
+        }
+        for (i = 0; i < sizeof(kPcMpScenarios) / sizeof(kPcMpScenarios[0]); i++) {
+            if (kPcMpScenarios[i].scenario == g_pcStartMpScenario) {
+                scenario_slug = kPcMpScenarios[i].slug;
+                break;
+            }
+        }
+        printf("[GE007-PC] Start multiplayer: %d players, stage %s (MP_STAGE %d), scenario %s (SCENARIO %d)\n",
+               g_pcStartMpPlayers, stage_slug, g_pcStartMpStage,
+               scenario_slug, g_pcStartMpScenario);
+    } else if (g_pcStartLevel >= 0) {
         const PcStartStage *stage = pcFindStageByLevelId(g_pcStartLevel);
         if (stage) {
             printf("[GE007-PC] Start stage: %s (mission %d, LEVELID %d)\n",

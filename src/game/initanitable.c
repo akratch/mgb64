@@ -322,29 +322,54 @@ static int animOffsetCmp(const void *a, const void *b) {
 }
 
 /**
- * Byte-swap all ModelAnimation records referenced by the animation table.
+ * Byte-swap ModelAnimation records referenced by native animation tables.
  * Must be called AFTER romCopy but BEFORE expand_ani_table_entries.
  *
  * Records are variable-size: stride between consecutive sorted offsets
  * determines each record's bounds. We sort the offsets, compute strides,
  * and swap only within each record's actual size.
  */
-static void animByteSwapAllRecords(uintptr_t *ptrs, s32 bufsize) {
+static int animOffsetAlreadyCollected(uintptr_t *offsets, s32 count, uintptr_t offset) {
+    for (s32 i = 0; i < count; i++) {
+        if (offsets[i] == offset) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static s32 animCountValidOffsets(uintptr_t *ptrs) {
+    s32 count = 0;
+
+    for (uintptr_t *p = ptrs; *p != 0; p++) {
+        if (*p != 1) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static s32 animCollectValidOffsets(uintptr_t *ptrs,
+                                   uintptr_t *offsets,
+                                   s32 count,
+                                   s32 capacity) {
+    for (uintptr_t *p = ptrs; *p != 0; p++) {
+        if (*p != 1 &&
+            count < capacity &&
+            !animOffsetAlreadyCollected(offsets, count, *p)) {
+            offsets[count++] = *p;
+        }
+    }
+
+    return count;
+}
+
+static void animByteSwapRecordOffsets(uintptr_t *sorted, s32 count, s32 bufsize) {
     u8 *base = (u8 *)ptr_animation_table;
 
-    /* Count valid entries (skip 0 terminator and 1 sentinel) */
-    s32 count = 0;
-    for (uintptr_t *p = ptrs; *p != 0; p++) {
-        if (*p != 1) count++;
-    }
     if (count == 0) return;
 
-    /* Collect valid offsets into a sorted array */
-    uintptr_t *sorted = (uintptr_t *)malloc(count * sizeof(uintptr_t));
-    s32 idx = 0;
-    for (uintptr_t *p = ptrs; *p != 0; p++) {
-        if (*p != 1) sorted[idx++] = *p;
-    }
     qsort(sorted, count, sizeof(uintptr_t), animOffsetCmp);
 
     /* Pass 1: Byte-swap each record's header fields */
@@ -388,8 +413,67 @@ static void animByteSwapAllRecords(uintptr_t *ptrs, s32 bufsize) {
 
         free(swapped_offsets);
     }
+}
 
+static void animByteSwapAllRecordTables(uintptr_t *ptrs1,
+                                        uintptr_t *ptrs2,
+                                        s32 bufsize) {
+    s32 capacity = animCountValidOffsets(ptrs1) + animCountValidOffsets(ptrs2);
+    s32 count = 0;
+    uintptr_t *sorted;
+
+    if (capacity == 0) {
+        return;
+    }
+
+    sorted = (uintptr_t *)malloc((size_t)capacity * sizeof(uintptr_t));
+    if (sorted == NULL) {
+        return;
+    }
+
+    count = animCollectValidOffsets(ptrs1, sorted, count, capacity);
+    count = animCollectValidOffsets(ptrs2, sorted, count, capacity);
+    animByteSwapRecordOffsets(sorted, count, bufsize);
     free(sorted);
+}
+
+static int animTableContainsOffset(uintptr_t *ptrs, uintptr_t offset) {
+    for (uintptr_t *p = ptrs; *p != 0; p++) {
+        if (*p != 1 && *p == offset) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void animAddRomStartToRecordsMissingFromTable(uintptr_t *ptrs,
+                                                     uintptr_t *covered_ptrs) {
+    s32 rom_entries_off = (s32)(uintptr_t)ROM_OFFSET(_animation_entriesSegmentRomStart);
+    s32 capacity = animCountValidOffsets(ptrs);
+    s32 processed_count = 0;
+    uintptr_t *processed;
+
+    if (capacity == 0) {
+        return;
+    }
+
+    processed = (uintptr_t *)malloc((size_t)capacity * sizeof(uintptr_t));
+    if (processed == NULL) {
+        return;
+    }
+
+    for (uintptr_t *p = ptrs; *p != 0; p++) {
+        if (*p != 1 &&
+            !animTableContainsOffset(covered_ptrs, *p) &&
+            !animOffsetAlreadyCollected(processed, processed_count, *p)) {
+            s32 *rec = (s32 *)((u8 *)ptr_animation_table + *p);
+            rec[0] += rom_entries_off;
+            processed[processed_count++] = *p;
+        }
+    }
+
+    free(processed);
 }
 #endif
 
@@ -481,10 +565,17 @@ void alloc_load_expand_ani_table(void)
 #ifdef NATIVE_PORT
     /* Byte-swap all ModelAnimation records from big-endian (N64 ROM) to native.
      * Must happen before expand_ani_table_entries which reads the s32 fields. */
-    animByteSwapAllRecords((uintptr_t *)animation_table_ptrs1, animsDataSegmentSize);
+    animByteSwapAllRecordTables((uintptr_t *)animation_table_ptrs1,
+                                (uintptr_t *)animation_table_ptrs2,
+                                animsDataSegmentSize);
+    /* Table 2 stays as offsets for ANIM_TABLE_PTR2(), so apply the ROM entries
+     * base to any vehicle/aircraft records not covered by table 1 without
+     * converting the table entries themselves into pointers. */
+    animAddRomStartToRecordsMissingFromTable((uintptr_t *)animation_table_ptrs2,
+                                             (uintptr_t *)animation_table_ptrs1);
     expand_ani_table_entries((uintptr_t *)animation_table_ptrs1);
-    /* animation_table_ptrs2 contains ModelAnimation* pointers — skip expansion on PC
-     * since they would need different handling (struct pointers, not buffer offsets). */
+    /* Keep animation_table_ptrs2 unexpanded on PC: ANIM_TABLE_PTR2() converts
+     * these offsets at call sites. */
 #else
     expand_ani_table_entries((s32*)&animation_table_ptrs1);
     expand_ani_table_entries((s32*)&animation_table_ptrs2);

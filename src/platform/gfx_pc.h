@@ -74,6 +74,7 @@ enum DrawClass {
     DRAWCLASS_HUD,
 };
 void gfx_set_draw_class(enum DrawClass cls);
+void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, const void *end);
 void gfx_set_prop_context(const void *prop,
                           int prop_type,
                           int obj_type,
@@ -92,16 +93,29 @@ void gfx_register_effect_dl_range(const char *label, const void *start, const vo
  * gfx_draw_sky_triangle() to ensure the correct texture, combiner, and
  * blend state — because the game's GBI commands (texSelect, SetCombine)
  * are written to the display list buffer and haven't been processed yet. */
-void gfx_prepare_sky_rendering(uint32_t texture_num, uint8_t env_r, uint8_t env_g, uint8_t env_b);
+void gfx_prepare_sky_rendering(uint32_t texture_num,
+                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
+                               float screen_left, float screen_top,
+                               float screen_width, float screen_height);
 
 /* Submit a sky triangle directly from game code (NATIVE_PORT only).
- * The original RDP path rasterizes using SkyRelated38's screen-space
- * coordinates after the game has already clamped them to the current
- * player viewport, so the native path takes screen-space x/y while
- * preserving the original clip-space z/w for depth and perspective.
+ * The preferred native path takes the original clip-space x/y/z/w from
+ * SkyRelated38. This keeps position and texture interpolation in the same
+ * coordinate space. The screen-space variant is retained as a diagnostic for
+ * the original raw-RDP approximation.
  *
  * Used by player.c skyRender() to replace raw RDP triangle commands
  * that the DL interpreter cannot process. */
+void gfx_draw_sky_clip_triangle(
+    float x0, float y0, float z0, float w0,
+    uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
+    float u0, float v0,
+    float x1, float y1, float z1, float w1,
+    uint8_t r1, uint8_t g1, uint8_t b1, uint8_t a1,
+    float u1, float v1,
+    float x2, float y2, float z2, float w2,
+    uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
+    float u2, float v2);
 void gfx_draw_sky_triangle(
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,

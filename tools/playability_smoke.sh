@@ -23,6 +23,16 @@ MIN_HORIZONTAL_DELTA="20.0"
 LEVELS="33 41"
 ALL_LEVELS="33 34 22 26 36 35 9 20 43 27 24 29 30 25 37 23 39 41 28 32"
 PATTERNS="forward right back left"
+PIN_DEFAULT_CONFIG=1
+USER_CONFIG_OVERRIDES=()
+CONFIG_OVERRIDES=()
+DEFAULT_CONFIG_OVERRIDES=(
+    "Video.WindowWidth=640"
+    "Video.WindowHeight=480"
+    "Video.WindowX=-1"
+    "Video.WindowY=-1"
+    "Video.WindowMode=windowed"
+)
 
 usage() {
     cat <<'USAGE'
@@ -44,6 +54,10 @@ Options:
   --build-dir DIR          CMake build directory (default: build)
   --no-build               reuse an existing native binary
   --timeout SECONDS        per-attempt timeout (default: 60)
+  --config-override K=V    pass a deterministic config override to ge007
+                          may be repeated; use for RenderScale/MSAA probes
+  --no-default-config-overrides
+                          do not pin the validation window to 640x480
 
 Artifacts are ROM-derived local validation data. Do not commit captured traces,
 screenshots, logs, or generated audit summaries.
@@ -65,6 +79,8 @@ while [[ $# -gt 0 ]]; do
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
         --no-build) DO_BUILD=0; shift ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --config-override) USER_CONFIG_OVERRIDES+=("$2"); shift 2 ;;
+        --no-default-config-overrides) PIN_DEFAULT_CONFIG=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -119,6 +135,20 @@ for pattern in $PATTERNS; do
             ;;
     esac
 done
+if [[ "$PIN_DEFAULT_CONFIG" -eq 1 ]]; then
+    CONFIG_OVERRIDES+=("${DEFAULT_CONFIG_OVERRIDES[@]}")
+fi
+if [[ "${#USER_CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    CONFIG_OVERRIDES+=("${USER_CONFIG_OVERRIDES[@]}")
+fi
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    for override in "${CONFIG_OVERRIDES[@]}"; do
+        if [[ ! "$override" =~ ^[A-Za-z0-9_.-]+=.+$ ]]; then
+            echo "FAIL: --config-override must use Section.Key=value: $override" >&2
+            exit 2
+        fi
+    done
+fi
 
 if [[ -z "$BINARY" ]]; then
     BINARY="$(validation_binary_path "$BUILD_DIR")"
@@ -143,6 +173,7 @@ trap 'validation_release_runtime_lock' EXIT INT TERM
 
 SUMMARY_FILE="$OUT_DIR/summary.tsv"
 SUMMARY_JSON="$OUT_DIR/summary.json"
+CONTACT_SHEET="$OUT_DIR/contact_sheet.png"
 printf 'level\tpattern\tmoving_records\tmax_horizontal_delta\ttarget_player_records\trecords\n' >"$SUMMARY_FILE"
 
 FAILED=0
@@ -176,6 +207,79 @@ pattern_env() {
     esac
 }
 
+audit_effective_config() {
+    local config_file="$OUT_DIR/ge007.ini"
+
+    if [[ "${#CONFIG_OVERRIDES[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    python3 - "$config_file" "${CONFIG_OVERRIDES[@]}" <<'PY'
+import math
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+overrides = sys.argv[2:]
+
+if not config_path.is_file():
+    print(f"FAIL: missing generated config file for override audit: {config_path}")
+    raise SystemExit(1)
+
+values = {}
+section = None
+for raw in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or line.startswith(";"):
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        section = line[1:-1].strip()
+        continue
+    if section and "=" in line:
+        key, value = line.split("=", 1)
+        values[f"{section}.{key.strip()}"] = value.strip()
+
+
+def equal_value(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    try:
+        e = float(expected)
+        a = float(actual)
+    except ValueError:
+        return False
+    return math.isfinite(e) and math.isfinite(a) and abs(e - a) <= 1e-6
+
+
+failures = []
+for override in overrides:
+    if "=" not in override:
+        failures.append(f"malformed override: {override}")
+        continue
+    full_key, expected = override.split("=", 1)
+
+    # The validation default uses -1 as a center-window request. The runtime
+    # persists the resolved screen position, so this one request is not stable
+    # evidence that the binary ignored the override path.
+    if full_key in ("Video.WindowX", "Video.WindowY") and expected == "-1":
+        continue
+
+    actual = values.get(full_key)
+    if actual is None:
+        failures.append(f"{full_key}: missing from generated config")
+    elif not equal_value(expected, actual):
+        failures.append(f"{full_key}: expected {expected!r}, got {actual!r}")
+
+if failures:
+    print("FAIL: config override audit")
+    for failure in failures:
+        print(f"  {failure}")
+    raise SystemExit(1)
+
+print("PASS: config override audit")
+PY
+}
+
 run_attempt() {
     local lvl="$1"
     local pattern="$2"
@@ -191,6 +295,8 @@ run_attempt() {
     local screenshot_src="$OUT_DIR/screenshot_${label}.bmp"
     local screenshot_dst="$OUT_DIR/level_${lvl}_${pattern}.bmp"
     local env_vars=()
+    local config_args=()
+    local binary_args=()
     local entry
     local assert_count
 
@@ -199,6 +305,15 @@ run_attempt() {
     while IFS= read -r entry; do
         env_vars+=("$entry")
     done < <(pattern_env "$pattern")
+    if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+        for entry in "${CONFIG_OVERRIDES[@]}"; do
+            config_args+=("--config-override" "$entry")
+        done
+    fi
+    binary_args=("--savedir" "$OUT_DIR")
+    if [[ "${#config_args[@]}" -gt 0 ]]; then
+        binary_args+=("${config_args[@]}")
+    fi
 
     if ! (
         cd "$OUT_DIR"
@@ -214,6 +329,7 @@ run_attempt() {
             GE007_DISABLE_LEVEL_INTRO=1 \
             "${env_vars[@]}" \
             "$BINARY" \
+            "${binary_args[@]}" \
             --rom "$ROM" \
             --level "$lvl" \
             --deterministic \
@@ -227,6 +343,14 @@ run_attempt() {
         return 1
     fi
     echo "    process: PASS"
+
+    if audit_effective_config >"$OUT_DIR/level_${lvl}_${pattern}.config.txt" 2>&1; then
+        echo "    config: PASS"
+    else
+        echo "    config: FAIL"
+        sed -n '1,16p' "$OUT_DIR/level_${lvl}_${pattern}.config.txt" | sed 's/^/      /'
+        return 1
+    fi
 
     assert_count="$(grep -cF "[GEASSERT]" "$log" 2>/dev/null || true)"
     assert_count="${assert_count:-0}"
@@ -322,6 +446,12 @@ echo "  input-window:         $INPUT_WINDOW"
 echo "  frames:               $FRAMES"
 echo "  min-moving-records:   $MIN_MOVING_RECORDS"
 echo "  min-horizontal-delta: $MIN_HORIZONTAL_DELTA"
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    echo "  config-overrides:"
+    for override in "${CONFIG_OVERRIDES[@]}"; do
+        echo "    $override"
+    done
+fi
 
 for lvl in $LEVELS; do
     level_pass=0
@@ -346,7 +476,26 @@ for lvl in $LEVELS; do
     fi
 done
 
-python3 - "$SUMMARY_FILE" "$SUMMARY_JSON" "$OUT_DIR" "$LEVELS" "$PATTERNS" "$TOTAL" "$PASSED" "$FAILED" "$INPUT_WINDOW" "$FRAMES" "$MIN_MOVING_RECORDS" "$MIN_HORIZONTAL_DELTA" <<'PY'
+SUMMARY_ARGS=(
+    "$SUMMARY_FILE"
+    "$SUMMARY_JSON"
+    "$CONTACT_SHEET"
+    "$OUT_DIR"
+    "$LEVELS"
+    "$PATTERNS"
+    "$TOTAL"
+    "$PASSED"
+    "$FAILED"
+    "$INPUT_WINDOW"
+    "$FRAMES"
+    "$MIN_MOVING_RECORDS"
+    "$MIN_HORIZONTAL_DELTA"
+)
+if [[ "${#CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+    SUMMARY_ARGS+=("${CONFIG_OVERRIDES[@]}")
+fi
+
+python3 - "${SUMMARY_ARGS[@]}" <<'PY'
 import csv
 import json
 import sys
@@ -354,16 +503,41 @@ from pathlib import Path
 
 summary_file = Path(sys.argv[1])
 summary_json = Path(sys.argv[2])
-out_dir = Path(sys.argv[3])
-levels = sys.argv[4].split()
-patterns = sys.argv[5].split()
-total = int(sys.argv[6])
-passed = int(sys.argv[7])
-failed = int(sys.argv[8])
-input_window = sys.argv[9]
-frames = int(sys.argv[10])
-min_moving_records = int(sys.argv[11])
-min_horizontal_delta = float(sys.argv[12])
+contact_sheet = Path(sys.argv[3])
+out_dir = Path(sys.argv[4])
+levels = sys.argv[5].split()
+patterns = sys.argv[6].split()
+total = int(sys.argv[7])
+passed = int(sys.argv[8])
+failed = int(sys.argv[9])
+input_window = sys.argv[10]
+frames = int(sys.argv[11])
+min_moving_records = int(sys.argv[12])
+min_horizontal_delta = float(sys.argv[13])
+config_overrides = sys.argv[14:]
+
+LEVEL_NAMES = {
+    33: "Dam",
+    34: "Facility",
+    22: "Statue",
+    26: "Frigate",
+    36: "Surface 1",
+    35: "Runway",
+    9: "Bunker 1",
+    20: "Silo",
+    43: "Surface 2",
+    27: "Bunker 2",
+    24: "Archives",
+    29: "Streets",
+    30: "Depot",
+    25: "Train",
+    37: "Jungle",
+    23: "Control",
+    39: "Caverns",
+    41: "Cradle",
+    28: "Aztec",
+    32: "Egyptian",
+}
 
 
 def load_json(path: Path) -> dict:
@@ -391,10 +565,13 @@ with summary_file.open("r", encoding="utf-8", newline="") as handle:
         screenshot_json = out_dir / f"level_{level}_{pattern}.screenshot.json"
         render_json = out_dir / f"level_{level}_{pattern}.render.json"
         movement_json = out_dir / f"level_{level}_{pattern}.movement.json"
+        screenshot_path = out_dir / f"level_{level}_{pattern}.bmp"
         accepted.append(
             {
                 "level": int(level),
+                "level_name": LEVEL_NAMES.get(int(level), ""),
                 "pattern": pattern,
+                "screenshot": str(screenshot_path),
                 "records": int(row["records"]),
                 "target_player_records": int(row["target_player_records"]),
                 "moving_records": int(row["moving_records"]),
@@ -418,9 +595,39 @@ for entry in accepted:
     if entry["movement"].get("status") != "pass":
         failures.append(f"level {entry['level']} {entry['pattern']}: movement audit failed")
 
+contact_sheet_path = None
+if accepted:
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        failures.append("contact sheet: Pillow is unavailable")
+    else:
+        thumb_w = 320
+        thumb_h = 240
+        label_h = 22
+        cols = 5 if len(accepted) >= 5 else max(1, len(accepted))
+        rows = (len(accepted) + cols - 1) // cols
+        resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+        sheet = Image.new("RGB", (cols * thumb_w, rows * (thumb_h + label_h)), (18, 18, 18))
+        draw = ImageDraw.Draw(sheet)
+
+        for index, entry in enumerate(accepted):
+            shot = Path(entry["screenshot"])
+            with Image.open(shot) as image:
+                thumb = image.convert("RGB").resize((thumb_w, thumb_h), resample)
+            x = (index % cols) * thumb_w
+            y = (index // cols) * (thumb_h + label_h)
+            sheet.paste(thumb, (x, y + label_h))
+            name = entry.get("level_name") or f"LEVELID {entry['level']}"
+            draw.text((x + 6, y + 4), f"{entry['level']} {name} [{entry['pattern']}]", fill=(235, 235, 235))
+
+        sheet.save(contact_sheet)
+        contact_sheet_path = str(contact_sheet)
+
 summary = {
     "status": "fail" if failed or failures else "pass",
     "summary_tsv": str(summary_file),
+    "contact_sheet": contact_sheet_path,
     "counts": {
         "requested": total,
         "passed": passed,
@@ -434,6 +641,7 @@ summary = {
         "frames": frames,
         "min_moving_records": min_moving_records,
         "min_horizontal_delta": min_horizontal_delta,
+        "config_overrides": config_overrides,
     },
     "failures": failures,
     "accepted": accepted,
@@ -443,6 +651,8 @@ with summary_json.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print(f"summary_json: {summary_json}")
+if contact_sheet_path:
+    print(f"contact_sheet: {contact_sheet_path}")
 PY
 
 echo ""
@@ -450,4 +660,7 @@ echo "=== Playability Smoke: $PASSED/$TOTAL passed, $FAILED failed ==="
 echo "  artifacts: $OUT_DIR"
 echo "  summary:   $SUMMARY_FILE"
 echo "  json:      $SUMMARY_JSON"
+if [[ -s "$CONTACT_SHEET" ]]; then
+    echo "  contact:   $CONTACT_SHEET"
+fi
 exit "$FAILED"

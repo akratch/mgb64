@@ -70,7 +70,12 @@ void dynInitMemory(void) {
      * 16-byte Gfx commands + brute-force room rendering (no portal culling). */
     {
         s32 gfxSize = 512 * 1024;
-        s32 vtxSize = 256 * 1024;
+        /* 512KB (was 256KB): matrices, sub-DLs and vertices all bump-allocate
+         * from this one pool, and a heavy glass shatter allocates up to ~200
+         * matrices late in the frame. The extra headroom keeps every shard on a
+         * distinct matrix (instead of the dynAllocateMatrix overflow scratch)
+         * and covers worst-case 2-player shared-pool pressure. */
+        s32 vtxSize = 512 * 1024;
         g_GfxBuffers[0] = (u8 *)malloc(gfxSize * 2);
         g_GfxBuffers[1] = (g_GfxBuffers[0] + gfxSize);
         g_GfxBuffers[2] = (g_GfxBuffers[1] + gfxSize);
@@ -130,9 +135,27 @@ void/*Vtx?*/ *dynAllocate7F0BD6C4(s32 count) {
 
 Mtx *dynAllocateMatrix(void)
 {
-	void *ptr = g_GfxMemPos;
-	g_GfxMemPos += sizeof(Mtx);
-	return ptr;
+#ifdef NATIVE_PORT
+	/* Unbounded bump allocator: a heavy frame -- e.g. a window shattering into
+	 * many glass shards, each allocating a matrix late in lvlRender -- can push
+	 * g_GfxMemPos past the VTX buffer end. Hand out a reusable scratch matrix on
+	 * overflow instead of an out-of-bounds pointer that the caller then writes
+	 * 64 bytes into (the sub_GAME_7F0A2C44 SEGV). */
+	static Mtx s_overflowScratch;
+	if (g_GfxMemPos + sizeof(Mtx) > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
+		static s32 overflow_count = 0;
+		if (++overflow_count <= 5) {
+			printf("[DYN] MTX overflow (count=%d): VTX free=%ld bytes\n", overflow_count,
+				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
+		}
+		return &s_overflowScratch;
+	}
+#endif
+	{
+		void *ptr = g_GfxMemPos;
+		g_GfxMemPos += sizeof(Mtx);
+		return ptr;
+	}
 }
 
 void/*Light?*/ *dynAllocate7F0BD6F8(s32 count) {

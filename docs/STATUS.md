@@ -30,6 +30,48 @@ you know what to expect and where help is most valuable.
   zero assertions, screenshot-health-clean captures, and render-health-clean
   traces. It writes per-attempt audit JSON plus a top-level `summary.json` so
   local ROM-backed playability evidence can be reviewed without scraping logs.
+- **2-player split-screen multiplayer is wired (input + launch + aim):** the
+  native port opens every connected pad into its own player slot, fills
+  `data[1..3]` so `joyGetControllerCount() >= 2` unblocks the MP menus, direct-boots
+  a deterministic split-screen match via `--multiplayer/--players N/--mp-stage/
+  --scenario`, and routes aim per player (mouse-look → P1, pad `k` → player `k`).
+  `tools/mp_smoke.sh` is the 2-player measurement lane: it boots a deathmatch,
+  drives a scripted player-1 input window, and asserts the two framebuffer halves
+  are measurably dissimilar so a duplicated-camera bug fails. What is **proven**
+  today: the 2-player lane is **green** — boot, two distinct viewports (~97%
+  dissimilar halves), render-health clean, zero crashes; and 4-player boots and
+  renders distinct viewports in the same smoke window. What is **pending**:
+  sustained-load frame budget, the higher-risk 3-player asymmetric split, and a
+  full end-of-round scoreboard run are not yet validated. See
+  [../docs/MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md).
+- **Recent playability fixes are landed and traceable:** Dam's intro truck now
+  binds its authored vehicle AI path and target speed, and vehicle geometry uses
+  the corrected native vector path so the truck body/wheels render together.
+  Transparent glass no longer disappears while collision remains active: the
+  native renderer handles secondary room alpha plus prop-type glass material
+  paths, and glass bullet-crack decals stay surface-aligned instead of vanishing
+  edge-on. The maintained probes live in
+  [INSTRUMENTATION.md](INSTRUMENTATION.md): the vehicle probe expects Dam truck
+  `obj=279`, AI list `0x040A`, `path_id=7`, and a moving `target_pad=312`
+  startup; the glass probe audits secondary alpha material classification and
+  glass draw ranges. The latest local MP timer acceptance run reached the forced
+  `60/60` tick match boundary with about `98%` split-half dissimilarity and zero
+  render-health failures; scoreboard/results transition proof remains open.
+- **The recent texture regression class is documented and guarded:** Cradle,
+  Dam, and Surface exposed several renderer mistakes that looked similar by eye:
+  room-nearest overrides, N64 filter-footprint scaling against the modern
+  framebuffer, decoded row-pitch/cache identity drift, stale `G_SETTEX` tile
+  state, and fog-depth false positives. The fixes and the keep-it-fixed
+  checklist are recorded in
+  [RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md), and the broad
+  native gate is `tools/playability_smoke.sh --all`, including a contact sheet
+  for manual review.
+- **Modern display controls are available through the native settings schema:**
+  window mode, display selection, fullscreen mode sizing, VSync, frame cap,
+  render scale, MSAA, gamma, retro filtering, and gameplay FOV are configurable
+  while defaulting back to the original 4:3-style presentation. See
+  [DISPLAY_INPUT_PLAN.md](DISPLAY_INPUT_PLAN.md) and
+  [PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 - **ROM-vs-native comparison tooling exists for targeted parity work:**
   `docs/ROM_COMPARISON.md` documents route specs, native traces, optional
   instrumented ares stock traces, movement/intro comparators, and structured
@@ -103,7 +145,9 @@ you know what to expect and where help is most valuable.
 - Graphical inaccuracies and occasional rendering glitches versus original
   hardware. The renderer now has strict render-health counters, screenshot
   health gates, and a small renderer parity scene lane, but visual accuracy is
-  still not claimed as hardware-perfect.
+  still not claimed as hardware-perfect. See
+  [RENDERING_REGRESSION_NOTES.md](RENDERING_REGRESSION_NOTES.md) for the current
+  texture/glass/fog failure taxonomy and validation path.
 - Authored level intro parity is still incomplete across the full game, but Dam
   now has local ROM-vs-native selected-camera/static-camera coverage plus
   timer-aligned swirl/Bond-animation coverage and native actor/render/held-item
@@ -115,7 +159,10 @@ you know what to expect and where help is most valuable.
   Movement-speed parity has targeted ROM-backed Dam coverage and all-level
   deterministic native playability smoke coverage, but broader movement edge
   cases, mission flow, menus, combat behavior, and organic input paths still
-  need reference-backed expansion.
+  need reference-backed expansion. `tools/soak_stability.sh` is the headless
+  deterministic measurement path for crash/render-health regressions over long
+  per-stage runs (no numeric stability budget is claimed yet); `tools/asan_smoke.sh`
+  adds a report-only ASan/UBSan lane.
 - Audio is functional and the SFX mapping/owner-slot path has been validated.
   Native music now follows ABI1 little-endian sample-lane ordering for the
   envmixer and custom pole-filter paths, with additive aux-return mixing. It

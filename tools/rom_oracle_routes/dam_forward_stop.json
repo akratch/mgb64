@@ -5,6 +5,7 @@
   "frames": 220,
   "native_frames": 220,
   "stock_frames": 6500,
+  "stock_screenshot_frame": 2950,
   "native_speedframes": 3,
   "stock_speedframes": 3,
   "stock_gameplay_start_global": 1146,

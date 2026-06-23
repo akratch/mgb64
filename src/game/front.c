@@ -22,6 +22,7 @@
 #include "front.h"
 #include "gun.h"
 #include "image_bank.h"
+#include "initmenus.h"
 #include "initanitable.h"
 #include "lvl.h"
 #include "mp_weapon.h"
@@ -3136,6 +3137,7 @@ void init_menu05_fileselect(void)
         selected_difficulty = DIFFICULTY_AGENT;
         set_solo_and_ptr_briefing(selected_stage);
         bossSetLoadedStage(selected_stage);
+        pcPrimePostStageMenuForDirectBoot(selected_stage, FALSE);
         lvlSetSelectedDifficulty(DIFFICULTY_AGENT);
     }
 #endif
@@ -4090,6 +4092,22 @@ s32 pull_and_display_text_for_folder_a0(s32 arg0)
     for (i=0; mission_folder_setup_entries[i].folder_text_preset != 0 ; i++)
     {
         if (arg0 == mission_folder_setup_entries[i].mission_num)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+s32 pull_briefing_for_stage_id(s32 stage_id)
+{
+    int i;
+
+    for (i=0; mission_folder_setup_entries[i].folder_text_preset != 0 ; i++)
+    {
+        if ((mission_folder_setup_entries[i].stage_id >= 0)
+            && (stage_id == mission_folder_setup_entries[i].stage_id))
         {
             return i;
         }
@@ -5334,16 +5352,39 @@ f32 get_player_mp_char_height(int player)
     return mp_chr_setup[player_char[player]].pov;
 }
 
+#ifdef NATIVE_PORT
+/* Custom multiplayer time limit in seconds (0 = use the selected game length).
+ * Set by the --mp-timelimit direct-boot path for deterministic short matches. */
+s32 g_pcMpTimeLimitOverrideSecs = 0;
+#endif
+
 int get_mp_timelimit(void) {
+#ifdef NATIVE_PORT
+  if (g_pcMpTimeLimitOverrideSecs > 0) {
+    return SECS_TO_TIMER60(g_pcMpTimeLimitOverrideSecs);
+  }
+#endif
   return multi_game_lengths[game_length].time;
 }
 
 int get_mp_pointlimit(void) {
+#ifdef NATIVE_PORT
+  if (g_pcMpTimeLimitOverrideSecs > 0) {
+    return 0;
+  }
+#endif
   return multi_game_lengths[game_length].points;
 }
 
 void reset_mp_options_for_scenario(MPSCENARIOS scenarioid)
 {
+#ifdef NATIVE_PORT
+    /* Drop forced direct-boot limits before normal scenario setup; the direct
+     * boot path reapplies its requested value after reset/init. */
+    extern s32 g_pcMpTimeLimitOverrideSecs;
+    g_pcMpTimeLimitOverrideSecs = 0;
+#endif
+
     scenario = scenarioid;
 
     unlock_stage_select = 1;

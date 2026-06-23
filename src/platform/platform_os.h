@@ -619,6 +619,16 @@ s32 osContGetQuery(OSContStatus *data);
 s32 osContGetReadData(OSContPad *data);
 void osContSetCh(u8 ch);
 
+/* Native multi-controller accessors (defined in platform_sdl.c).
+ * Slot index k is the player number (0..MAXCONTROLLERS-1); accessors
+ * bounds-check k and return neutral values for an absent pad. Slot 0 is the
+ * keyboard/mouse player and the first opened pad. */
+int platformGetPadCount(void);
+unsigned int platformGetPadButtons(int k);
+void platformGetPadLeftStick(int k, int *lx_out, int *ly_out);
+void platformGetPadRightStick(int k, int *rx_out, int *ry_out);
+void platformGetPadTriggers(int k, int *leftTrig, int *rightTrig);
+
 /* Rumble Pak */
 s32 osMotorInit(OSMesgQueue *mq, OSPfs *pfs, s32 channel);
 s32 osMotorStart(OSPfs *pfs);

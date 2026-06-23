@@ -50,6 +50,13 @@ static int bboxTraceEnabled(void);
 static void bboxTracePrintf(const char *fmt, ...);
 static int portModelAnimFrameValueUsable(f32 frame);
 static int portModelAnimFrameSpanTooLarge(f32 frame1, f32 frame2);
+static int portTraceAnimRootSkips(void);
+static void portLogAnimRootSkip(const char *phase, const char *reason,
+                                Model *model, ModelNode *rootNode,
+                                ModelSkeleton *skel, ModelAnimation *anim,
+                                s32 index);
+static bool portModelRootMotionReady(Model *model, ModelNode *rootNode,
+                                     ModelAnimation *anim, const char *phase);
 
 /*
  * Side-channel for head attachment data.
@@ -101,6 +108,102 @@ static int portModelAnimFrameSpanTooLarge(f32 frame1, f32 frame2)
     }
 
     return span > 512.0f;
+}
+
+static int portTraceAnimRootSkips(void)
+{
+    static int enabled = -1;
+    const char *value;
+
+    if (enabled >= 0) {
+        return enabled;
+    }
+
+    value = getenv("GE007_TRACE_ANIM_ROOT");
+    enabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+    return enabled;
+}
+
+static void portLogAnimRootSkip(const char *phase, const char *reason,
+                                Model *model, ModelNode *rootNode,
+                                ModelSkeleton *skel, ModelAnimation *anim,
+                                s32 index)
+{
+    static int budget = 64;
+
+    if (!portTraceAnimRootSkips() || budget <= 0) {
+        return;
+    }
+
+    budget--;
+    fprintf(stderr,
+            "[ANIM_ROOT_SKIP] phase=%s reason=%s model=%p chr=%p root=%p "
+            "opcode=%d skel=%p joints=%p joints_n=%d anim=%p index=%d\n",
+            phase != NULL ? phase : "?",
+            reason != NULL ? reason : "?",
+            (void *)model,
+            model != NULL ? (void *)model->chr : NULL,
+            (void *)rootNode,
+            rootNode != NULL ? (rootNode->Opcode & 0xFF) : -1,
+            (void *)skel,
+            skel != NULL ? (void *)skel->Joints : NULL,
+            skel != NULL ? skel->numjoints : -1,
+            (void *)anim,
+            index);
+    fflush(stderr);
+}
+
+static bool portModelRootMotionReady(Model *model, ModelNode *rootNode,
+                                     ModelAnimation *anim, const char *phase)
+{
+    ModelSkeleton *skel;
+    union ModelRoData *rodata;
+    s32 index = -1;
+
+    if (model == NULL) {
+        portLogAnimRootSkip(phase, "no_model", model, rootNode, NULL, anim, index);
+        return false;
+    }
+    if (model->obj == NULL) {
+        portLogAnimRootSkip(phase, "no_model_obj", model, rootNode, NULL, anim, index);
+        return false;
+    }
+    if (rootNode == NULL) {
+        portLogAnimRootSkip(phase, "no_root", model, rootNode, NULL, anim, index);
+        return false;
+    }
+    if ((rootNode->Opcode & 0xFF) != 1) {
+        portLogAnimRootSkip(phase, "root_opcode", model, rootNode,
+                            model->obj->Skeleton, anim, index);
+        return false;
+    }
+    if (rootNode->Data == NULL) {
+        portLogAnimRootSkip(phase, "no_root_data", model, rootNode,
+                            model->obj->Skeleton, anim, index);
+        return false;
+    }
+    if (anim == NULL) {
+        portLogAnimRootSkip(phase, "no_anim", model, rootNode,
+                            model->obj->Skeleton, anim, index);
+        return false;
+    }
+
+    skel = model->obj->Skeleton;
+    if (skel == NULL || skel->Joints == NULL || skel->numjoints <= 0) {
+        portLogAnimRootSkip(phase, "bad_skeleton", model, rootNode,
+                            skel, anim, index);
+        return false;
+    }
+
+    rodata = rootNode->Data;
+    index = (s32)(u16)(rodata->Header.ModelType >> 16);
+    if (index < 0 || index >= skel->numjoints) {
+        portLogAnimRootSkip(phase, "root_index_oob", model, rootNode,
+                            skel, anim, index);
+        return false;
+    }
+
+    return true;
 }
 
 static int bboxTraceEnabled(void)
@@ -2893,7 +2996,38 @@ u32 sub_GAME_7F06D2E4(s32 index, s32 flag, void *anim_header, void *anim_data, s
     /* On 64-bit, use struct field access instead of hardcoded byte offsets.
      * ModelSkeleton has alignment padding before the pointer field. */
     ModelSkeleton *skel = (ModelSkeleton *)anim_header;
-    u8 *joints = (u8 *)skel->Joints;
+    u8 *joints;
+
+    if (out_pos == NULL) {
+        portLogAnimRootSkip("extract", "no_out", NULL, NULL,
+                            skel, (ModelAnimation *)anim_data, index);
+        return 0;
+    }
+
+    out_pos[0] = 0;
+    out_pos[1] = 0;
+    out_pos[2] = 0;
+
+    if (anim_header == NULL || anim_data == NULL) {
+        portLogAnimRootSkip("extract", "null_input", NULL, NULL,
+                            skel, (ModelAnimation *)anim_data, index);
+        return 0;
+    }
+
+    if ((uintptr_t)anim_data < 0x1000U) {
+        portLogAnimRootSkip("extract", "bad_anim_ptr", NULL, NULL,
+                            skel, (ModelAnimation *)anim_data, index);
+        return 0;
+    }
+
+    if (skel->Joints == NULL || skel->numjoints <= 0 ||
+        index < 0 || index >= skel->numjoints) {
+        portLogAnimRootSkip("extract", "bad_skeleton_or_index", NULL, NULL,
+                            skel, (ModelAnimation *)anim_data, index);
+        return 0;
+    }
+
+    joints = (u8 *)skel->Joints;
 
     /* Animation record field at 0x0C is u16 bits_per_frame (byte-swapped in header) */
     bit_offset = *(u16 *)((u8 *)anim_data + 0xc) * frame_mult;
@@ -6316,6 +6450,11 @@ void modelSetAnimation2(Model *model, ModelAnimation *anim, s32 arg2, f32 startf
     s32 sp2C;
     ModelNode *rootNode;
 
+    if (model == NULL || model->obj == NULL) {
+        portLogAnimRootSkip("set", "bad_model", model, NULL, NULL, anim, -1);
+        return;
+    }
+
     sp2C = (model->anim == NULL);
     if (model->anim2 != NULL) {
         model->unk88 = arg5;
@@ -6334,6 +6473,10 @@ void modelSetAnimation2(Model *model, ModelAnimation *anim, s32 arg2, f32 startf
     model->animlooping = 0;
 
     rootNode = model->obj->RootNode;
+    if (!portModelRootMotionReady(model, rootNode, model->anim, "set")) {
+        return;
+    }
+
     if ((rootNode->Opcode & 0xFF) == 1)
     {
         union ModelRoData *rodata = rootNode->Data;
@@ -7187,6 +7330,12 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
     f32 sinval;
 
 #ifdef NATIVE_PORT
+    if (model == NULL || model->obj == NULL) {
+        portLogAnimRootSkip("frame2", "bad_model", model, NULL, NULL,
+                            model != NULL ? model->anim : NULL, -1);
+        return;
+    }
+
     if (!portModelAnimFrameValueUsable(frame1)
         || !portModelAnimFrameValueUsable(frame2)
         || portModelAnimFrameSpanTooLarge(frame1, frame2))
@@ -7213,11 +7362,20 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
 #endif
 
     rootNode = model->obj->RootNode;
+    if (rootNode == NULL) {
+#ifdef NATIVE_PORT
+        portLogAnimRootSkip("frame2", "no_root", model, rootNode,
+                            model->obj->Skeleton, model->anim, -1);
+#endif
+        modelSetAnimFrame2(model, frame2, frame2b_arg);
+        return;
+    }
+
     if ((rootNode->Opcode & 0xFF) != 1) {
 #ifdef NATIVE_PORT
         {
             static int skip_log = 0;
-            if (skip_log < 5 && model->chr) {
+            if (portTraceAnimRootSkips() && skip_log < 5 && model->chr) {
                 skip_log++;
                 fprintf(stderr, "[ANIM_FRAME2_SKIP] reason=opcode(%d!=1) chr=%p\n",
                         rootNode->Opcode & 0xFF, (void*)model->chr);
@@ -7229,6 +7387,13 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
         return;
     }
 
+#ifdef NATIVE_PORT
+    if (!portModelRootMotionReady(model, rootNode, model->anim, "frame2")) {
+        modelSetAnimFrame2(model, frame2, frame2b_arg);
+        return;
+    }
+#endif
+
     rodata = rootNode->Data;
     rwdata = (struct modeldata_root *)modelGetNodeRwData(model, rootNode);
 
@@ -7236,7 +7401,7 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
 #ifdef NATIVE_PORT
         {
             static int skip_log2 = 0;
-            if (skip_log2 < 5 && model->chr) {
+            if (portTraceAnimRootSkips() && skip_log2 < 5 && model->chr) {
                 skip_log2++;
                 fprintf(stderr, "[ANIM_FRAME2_SKIP] reason=unk00(%d!=0) chr=%p\n",
                         rwdata->unk00, (void*)model->chr);
@@ -8796,6 +8961,30 @@ void modelApplyRenderModeType1(ModelRenderData *renderdata)
     gDPSetCombineMode(renderdata->gdl++, G_CC_MODULATEIA, G_CC_MODULATEIA);
 }
 
+/*
+ * GoldenEye uses PropType 9 as a full prop material path for glass and
+ * similar object overlays, even though the enum name is PROP_TYPE_MAX.
+ */
+static void modelApplyFullPropMaterial(ModelRenderData *renderdata)
+{
+    u8 r = _SHIFTR(renderdata->fogcolour.word, 24, 8);
+    u8 g = _SHIFTR(renderdata->fogcolour.word, 16, 8);
+    u8 b = _SHIFTR(renderdata->fogcolour.word, 8, 8);
+    u8 a = _SHIFTR(renderdata->fogcolour.word, 0, 8);
+
+    gDPPipeSync(renderdata->gdl++);
+    gDPSetCycleType(renderdata->gdl++, G_CYC_2CYCLE);
+    gDPSetFogColor(renderdata->gdl++, r, g, b, a);
+    gDPSetEnvColor(renderdata->gdl++, 0xFF, 0xFF, 0xFF, 0xFF);
+    gDPSetPrimColor(renderdata->gdl++, 0, 0, 0, 0, 0,
+            (renderdata->envcolour.word >> 8) & 0xFF);
+    gDPSetCombineLERP(renderdata->gdl++,
+            TEXEL1, TEXEL0, LOD_FRACTION, TEXEL0,
+            TEXEL1, TEXEL0, LOD_FRACTION, TEXEL0,
+            COMBINED, 0, SHADE, 0,
+            COMBINED, 0, SHADE, PRIMITIVE);
+}
+
 /**
  * @brief Model Type 3: GunLighting - Reduced Secondary Commands (guns)
     This Type Uses Vertex Alpha for Secondary Surfaces and uses the FOG Alpha value for applying Fog/"Lighting".
@@ -8957,6 +9146,33 @@ void modelApplyRenderModeType3(ModelRenderData *renderdata, bool isPrimary)
                 {
                     gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_TEX_EDGE2);
                 }
+            }
+        }
+    }
+    else if (renderdata->PropType == PROP_TYPE_MAX)
+    {
+        if (isPrimary)
+        {
+            modelApplyFullPropMaterial(renderdata);
+
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_OPA_SURF2);
+            }
+        }
+        else
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_XLU_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_XLU_SURF2);
             }
         }
     }
@@ -9244,6 +9460,33 @@ void modelApplyRenderModeType4(ModelRenderData *renderdata, bool isPrimary)
                 {
                     gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_TEX_EDGE2);
                 }
+            }
+        }
+    }
+    else if (renderdata->PropType == PROP_TYPE_MAX)
+    {
+        modelApplyFullPropMaterial(renderdata);
+
+        if (isPrimary)
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_OPA_SURF2);
+            }
+        }
+        else
+        {
+            if (renderdata->zbufferenabled)
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_XLU_SURF2);
+            }
+            else
+            {
+                gDPSetRenderMode(renderdata->gdl++, G_RM_FOG_PRIM_A, G_RM_AA_XLU_SURF2);
             }
         }
     }
@@ -10603,10 +10846,6 @@ void sub_GAME_7F073FC8(s32 arg0)
 
 
 #ifdef NONMATCHING
-#if defined(PORT_FIXME_STUBS) || defined(NATIVE_PORT)
-/* Shadow rendering disabled on PC — texture/matrix setup not yet port-safe. */
-void doshadow(ModelRenderData *data, Model *model, ModelNode *node) { (void)data; (void)model; (void)node; }
-#else
 extern u32 D_800363F8;
 void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
     ModelRoData_ShadowRecord *rodata;
@@ -10621,11 +10860,39 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
     sImageTableEntry *tconfig;
     s32 index;
 
+#ifdef NATIVE_PORT
+    /* Drop shadows re-enabled on PC (lighting-model-2). Gate default ON;
+     * GE007_DROP_SHADOWS=0 disables (escape hatch — this re-enabled draw path
+     * needs visual polarity/placement validation). */
+    static int s_shadows_enabled = -1;
+    if (s_shadows_enabled < 0) {
+        const char *shadow_env = getenv("GE007_DROP_SHADOWS");
+        s_shadows_enabled = (shadow_env != NULL && shadow_env[0] == '0') ? 0 : 1;
+    }
+    if (!s_shadows_enabled) {
+        return;
+    }
+#endif
+
     if ((s32)D_800363F0 <= 0) {
         return;
     }
 
+#ifdef NATIVE_PORT
+    /* D_800363F8 is a bare u32 on the port; the N64 `*(Vertex *)&D_800363F8`
+     * over-reads 12 bytes past it, and being big-endian ROM-era source data it
+     * would also reinterpret wrong on a little-endian host. Build the template
+     * explicitly — only RGB is meaningful (coord/index/s/t/a are all overwritten
+     * below). Mirrors the shipping sibling pattern (Vertex D_800363E0,
+     * objecthandler.c:263). Template bytes were FF FF FF 50 => white, a=0x50. */
+    memset(&vtxtemplate, 0, sizeof(vtxtemplate));
+    vtxtemplate.r = 0xFF;
+    vtxtemplate.g = 0xFF;
+    vtxtemplate.b = 0xFF;
+    vtxtemplate.a = 0x50;
+#else
     vtxtemplate = *(Vertex *)&D_800363F8;
+#endif
     rodata = &node->Data->Shadow;
     rwdata = modelGetNodeRwData(model, (ModelNode *)rodata->Header);
 
@@ -10724,7 +10991,6 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
 #endif
     gDPTri2(data->gdl++, 0, 1, 2, 2, 3, 0);
 }
-#endif /* PORT_FIXME_STUBS */
 #else
 #ifndef VERSION_EU
 //D:80054A94

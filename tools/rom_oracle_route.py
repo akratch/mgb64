@@ -97,6 +97,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("native_frames", route.get("frames"))
     if field == "stock_frames":
         return route.get("stock_frames", route.get("frames"))
+    if field == "stock_screenshot_frame":
+        return route.get("stock_screenshot_frame", route_field(route, "stock_frames"))
     if field == "native_level":
         return route.get("native_level", route.get("level"))
     if field == "stock_level":
@@ -434,6 +436,17 @@ def route_positive_int(route: dict[str, Any], field: str) -> None:
         raise SystemExit(f"FAIL: route {field} must be a positive integer when set")
 
 
+def route_required_positive_int_field(route: dict[str, Any], field: str) -> int:
+    value = route_field(route, field)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise SystemExit(f"FAIL: route {field} must be a positive integer") from None
+    if parsed < 1:
+        raise SystemExit(f"FAIL: route {field} must be a positive integer")
+    return parsed
+
+
 def route_nonnegative_int(route: dict[str, Any], field: str) -> None:
     value = route.get(field, "")
     if value in ("", None):
@@ -525,6 +538,10 @@ def validate_route(route: dict[str, Any]) -> None:
     route_bool(route, "compare_intro_setup", False)
     route_bool(route, "compare_bond_anim", False)
     route_bool(route, "native_render_audit", False)
+    stock_frames = route_required_positive_int_field(route, "stock_frames")
+    stock_screenshot_frame = route_required_positive_int_field(route, "stock_screenshot_frame")
+    if stock_screenshot_frame > stock_frames:
+        errors.append("route stock_screenshot_frame must be <= stock_frames")
     route_positive_int(route, "native_level")
     route_positive_int(route, "stock_level")
     route_nonnegative_int(route, "stock_max_suppressed_menu_records")

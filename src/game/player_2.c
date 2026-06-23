@@ -649,7 +649,17 @@ void sub_GAME_7F09B398(enum GUNHAND hand)
     {
         wepid = getCurrentPlayerWeaponId(hand);
         prop = getPropForHeldItem(wepid);
+#ifdef NATIVE_PORT
+        /* getPropForHeldItem() returns -1 for held items with no world model
+         * (e.g. ITEM_FIST/ITEM_UNARMED). enum PROP has only non-negative
+         * enumerators, so some compilers make it unsigned and (prop >= 0) is
+         * always true, letting -1 reach something_with_generating_object() and
+         * index PitemZ_entries[-1] out of bounds. Cast to s32 to preserve the
+         * N64 signed-int comparison (same idiom as get_item_in_hand_or_watch_menu). */
+        if ((s32)prop >= 0)
+#else
         if (prop >= 0)
+#endif
         {
             flags = ((hand * 4) == 0)
                   ? 0

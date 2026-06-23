@@ -69,7 +69,7 @@ extern s32 SHATTERED_WINDOW_PIECES_BUFFER_LEN;
 extern s_shattered_window_piece* ptr_shattered_window_pieces;
 extern s32 g_NextShardNum;
 
-extern u32 D_80040980;
+extern Vtx D_80040980; /* bullet-spark Vtx template (was u32 -> 12-byte over-read) */
 extern u32 D_80040984;
 extern u32 D_80040988;
 extern u32 D_8004098C;
@@ -81,8 +81,16 @@ extern u32 game_options_index;
 void sub_GAME_7F0A47D4(void);
 void sub_GAME_7F0A47FC(void);
 void update_broken_windows(void);
+#ifdef NONMATCHING
+/* Native port: the spark dispatchers return the advanced DL so lvl.c can hand
+ * it to the glass-shard pass without clobbering the spark commands. The matched
+ * N64 build keeps the original void wrappers. */
+Gfx *sub_GAME_7F0A4528(Gfx *arg0, s32 arg1);
+Gfx *sub_GAME_7F0A4824(Gfx *arg0, s32 arg1);
+#else
 void sub_GAME_7F0A4528(Gfx *arg0, s32 arg1);
 void sub_GAME_7F0A4824(Gfx *arg0, s32 arg1);
+#endif
 Gfx * sub_GAME_7F0A2C44(Gfx *arg0);
 
 // tentative signature

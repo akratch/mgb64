@@ -35,6 +35,21 @@ static inline int ge_dbg_assert_on_fail(void) {
     return cached;
 }
 
+/* ge_env_bool -- single truth table for GE007_* behavior gates.
+ *   unset / empty -> default_on
+ *   "0"           -> off
+ *   anything else -> on
+ * This avoids the "=0 silently enables" footgun: GE007_FOO=0 always means off,
+ * regardless of whether the gate defaults on or off. Callers cache the result
+ * in a static so getenv runs once. */
+static inline int ge_env_bool(const char *name, int default_on) {
+    const char *e = getenv(name);
+    if (e == NULL || e[0] == '\0') {
+        return default_on;
+    }
+    return (e[0] == '0') ? 0 : 1;
+}
+
 #define GEDBG(fmt, ...) do { \
     if (ge_dbg_enabled()) { \
         fprintf(stderr, "[GEDBG] " fmt "\n", ##__VA_ARGS__); \
@@ -58,6 +73,11 @@ static int ge_dbg_enabled(void) {
 
 static int ge_dbg_assert_on_fail(void) {
     return 0;
+}
+
+static int ge_env_bool(const char *name, int default_on) {
+    (void)name;
+    return default_on;
 }
 
 static void ge_dbg_noop(const char *fmt, ...) {

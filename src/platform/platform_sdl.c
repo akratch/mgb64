@@ -20,7 +20,10 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "gfx_pc.h"
+#include "settings.h"
 #include "game/front.h"
+#include "game/initmenus.h"
 #include "game/title.h"
 
 /* Forward declarations */
@@ -28,8 +31,90 @@ void platformShutdownSDL(void);
 void platformSetWindowTitle(const char *title);
 
 /* ===== Gamepad state ===== */
+/* Up to MAXCONTROLLERS pads are opened and bound to fixed player slots.
+ * The mapping is stable: a pad keeps its slot for its lifetime, and a
+ * hot-unplug frees only that slot (no reshuffling of other players). Slot 0
+ * doubles as the keyboard/mouse player, so a pad opened first lands in slot 0
+ * but the data[0] path still merges keyboard/mouse on top of it (see stubs.c).
+ *
+ * g_gameController/g_gameControllerID are kept as aliases for slot 0 so the
+ * existing single-pad call sites (right-stick read, shutdown) keep working. */
+typedef struct {
+    SDL_GameController *handle;      /* NULL when the slot is free */
+    SDL_JoystickID      instance_id; /* -1 when the slot is free */
+    int                 slot;        /* fixed player slot, == array index */
+} PlatformPad;
+
+#define PLATFORM_MAX_PADS 4 /* matches N64 MAXCONTROLLERS */
+
+static PlatformPad g_pads[PLATFORM_MAX_PADS];
+
 SDL_GameController *g_gameController = NULL;
 static SDL_JoystickID g_gameControllerID = -1;
+
+/* Refresh the legacy single-pad aliases from slot 0. */
+static void platformSyncPad0Alias(void) {
+    g_gameController   = g_pads[0].handle;
+    g_gameControllerID = g_pads[0].instance_id;
+}
+
+/* Open an SDL game controller (by joystick device index) into the first free
+ * slot. Returns the slot used, or -1 if no slot is free or the open failed. */
+static int platformOpenPad(int deviceIndex) {
+    SDL_GameController *gc;
+    SDL_JoystickID id;
+    int slot;
+
+    if (!SDL_IsGameController(deviceIndex)) {
+        return -1;
+    }
+
+    id = SDL_JoystickGetDeviceInstanceID(deviceIndex);
+    /* Reject duplicates: a controller already opened in some slot. */
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (g_pads[slot].handle && g_pads[slot].instance_id == id) {
+            return -1;
+        }
+    }
+
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (!g_pads[slot].handle) {
+            break;
+        }
+    }
+    if (slot >= PLATFORM_MAX_PADS) {
+        return -1; /* all slots full */
+    }
+
+    gc = SDL_GameControllerOpen(deviceIndex);
+    if (!gc) {
+        return -1;
+    }
+
+    g_pads[slot].handle      = gc;
+    g_pads[slot].instance_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
+    g_pads[slot].slot        = slot;
+    printf("[SDL] Gamepad connected (P%d): %s\n", slot + 1, SDL_GameControllerName(gc));
+
+    platformSyncPad0Alias();
+    return slot;
+}
+
+/* Free the slot whose pad has the given instance id, without disturbing the
+ * other slots (stable mapping survives hot-unplug). */
+static void platformClosePadByInstance(SDL_JoystickID id) {
+    int slot;
+    for (slot = 0; slot < PLATFORM_MAX_PADS; slot++) {
+        if (g_pads[slot].handle && g_pads[slot].instance_id == id) {
+            printf("[SDL] Gamepad disconnected (P%d)\n", slot + 1);
+            SDL_GameControllerClose(g_pads[slot].handle);
+            g_pads[slot].handle      = NULL;
+            g_pads[slot].instance_id = -1;
+            break;
+        }
+    }
+    platformSyncPad0Alias();
+}
 
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
@@ -41,8 +126,6 @@ static int g_disableInputGrab = 0;
 static int g_traceRequested = -1;
 
 /* ===== Frame timing ===== */
-#define TARGET_FPS 60
-#define FRAME_TIME_MS (1000 / TARGET_FPS)
 static u32 g_lastFrameTime = 0;
 static int g_frameSyncCallCount = 0;
 
@@ -71,13 +154,154 @@ static int g_mouseGrabbed = 0;
 int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1. */
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
+f32 g_pcVideoGamma = 1.0f;
+f32 g_pcRenderScale = 1.0f;
+s32 g_pcMsaaSamples = 0;
+f32 g_pcFovY = 60.0f;
 
-/* ===== Fullscreen state ===== */
-static int g_fullscreen = 0;
+/* ===== Window mode state ===== */
+typedef enum PlatformWindowMode {
+    PLATFORM_WINDOW_MODE_WINDOWED = 0,
+    PLATFORM_WINDOW_MODE_BORDERLESS = 1,
+    PLATFORM_WINDOW_MODE_EXCLUSIVE = 2
+} PlatformWindowMode;
+
+static s32 g_windowMode = PLATFORM_WINDOW_MODE_WINDOWED;
+static const ConfigEnumOption k_windowModeOptions[] = {
+    { "windowed", PLATFORM_WINDOW_MODE_WINDOWED },
+    { "borderless", PLATFORM_WINDOW_MODE_BORDERLESS },
+    { "exclusive", PLATFORM_WINDOW_MODE_EXCLUSIVE },
+};
+
+typedef enum PlatformVSyncMode {
+    PLATFORM_VSYNC_OFF = 0,
+    PLATFORM_VSYNC_ON = 1,
+    PLATFORM_VSYNC_ADAPTIVE = 2
+} PlatformVSyncMode;
+
+static s32 g_vsyncMode = PLATFORM_VSYNC_ADAPTIVE;
+static const ConfigEnumOption k_vsyncOptions[] = {
+    { "off", PLATFORM_VSYNC_OFF },
+    { "on", PLATFORM_VSYNC_ON },
+    { "adaptive", PLATFORM_VSYNC_ADAPTIVE },
+};
+
+typedef enum PlatformFrameCapMode {
+    PLATFORM_FRAME_CAP_DISPLAY = 0,
+    PLATFORM_FRAME_CAP_30 = 30,
+    PLATFORM_FRAME_CAP_60 = 60
+} PlatformFrameCapMode;
+
+static s32 g_frameCapMode = PLATFORM_FRAME_CAP_60;
+static const ConfigEnumOption k_frameCapOptions[] = {
+    { "30", PLATFORM_FRAME_CAP_30 },
+    { "60", PLATFORM_FRAME_CAP_60 },
+    { "display", PLATFORM_FRAME_CAP_DISPLAY },
+};
+
+static const ConfigEnumOption k_msaaOptions[] = {
+    { "0", 0 },
+    { "2", 2 },
+    { "4", 4 },
+    { "8", 8 },
+};
+
+typedef enum PlatformRetroFilterMode {
+    PLATFORM_RETRO_FILTER_AUTO = 0,
+    PLATFORM_RETRO_FILTER_OFF = 1,
+    PLATFORM_RETRO_FILTER_ON = 2
+} PlatformRetroFilterMode;
+
+s32 g_pcRetroFilterMode = PLATFORM_RETRO_FILTER_AUTO;
+static const ConfigEnumOption k_retroFilterOptions[] = {
+    { "auto", PLATFORM_RETRO_FILTER_AUTO },
+    { "off", PLATFORM_RETRO_FILTER_OFF },
+    { "on", PLATFORM_RETRO_FILTER_ON },
+};
 
 /* ===== Configurable window/display settings ===== */
 static s32 g_cfgWindowW = 1440;
 static s32 g_cfgWindowH = 810;
+static s32 g_cfgWindowX = -1;
+static s32 g_cfgWindowY = -1;
+static s32 g_cfgDisplayIndex = 0;
+static s32 g_cfgFullscreenW = 0;
+static s32 g_cfgFullscreenH = 0;
+static s32 g_cfgFullscreenRefresh = 0;
+
+int platformPrintDisplays(FILE *f)
+{
+    int initialized_here = 0;
+    int display_count;
+
+    if (f == NULL) {
+        f = stdout;
+    }
+
+    if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
+            fprintf(stderr, "[SDL] Failed to initialize video for display listing: %s\n",
+                    SDL_GetError());
+            return 0;
+        }
+        initialized_here = 1;
+    }
+
+    display_count = SDL_GetNumVideoDisplays();
+    if (display_count < 0) {
+        fprintf(stderr, "[SDL] Failed to enumerate displays: %s\n", SDL_GetError());
+        if (initialized_here) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        }
+        return 0;
+    }
+
+    fprintf(f, "SDL displays (%d):\n", display_count);
+    for (int i = 0; i < display_count; i++) {
+        const char *name = SDL_GetDisplayName(i);
+        SDL_Rect bounds = {0, 0, 0, 0};
+        SDL_Rect usable = {0, 0, 0, 0};
+        SDL_DisplayMode current = {0};
+        int mode_count;
+
+        SDL_GetDisplayBounds(i, &bounds);
+        SDL_GetDisplayUsableBounds(i, &usable);
+        SDL_GetCurrentDisplayMode(i, &current);
+
+        fprintf(f,
+                "  [%d] %s bounds=%dx%d+%d+%d usable=%dx%d+%d+%d current=%dx%d@%dHz\n",
+                i,
+                (name != NULL && name[0] != '\0') ? name : "(unnamed)",
+                bounds.w, bounds.h, bounds.x, bounds.y,
+                usable.w, usable.h, usable.x, usable.y,
+                current.w, current.h, current.refresh_rate);
+
+        mode_count = SDL_GetNumDisplayModes(i);
+        if (mode_count < 0) {
+            fprintf(f, "      modes: unavailable (%s)\n", SDL_GetError());
+            continue;
+        }
+
+        for (int m = 0; m < mode_count; m++) {
+            SDL_DisplayMode mode = {0};
+
+            if (SDL_GetDisplayMode(i, m, &mode) != 0) {
+                continue;
+            }
+            fprintf(f, "      mode[%d] %dx%d@%dHz %s\n",
+                    m,
+                    mode.w,
+                    mode.h,
+                    mode.refresh_rate,
+                    SDL_GetPixelFormatName(mode.format));
+        }
+    }
+
+    if (initialized_here) {
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+    return 1;
+}
 
 /* ===== Screenshot support ===== */
 #define SCREENSHOT_W 640
@@ -85,6 +309,7 @@ static s32 g_cfgWindowH = 810;
 static int g_screenshotRequested = 0;
 static int g_screenshotCounter = 0;
 int g_autoScreenshotFrame = -1;  /* frame number to auto-capture (-1 = disabled) */
+int g_autoScreenshotGameTimer = -1; /* g_GlobalTimer value to auto-capture (-1 = disabled) */
 int g_autoScreenshotExit = 0;    /* exit after auto-screenshot */
 static char g_screenshotLabelStorage[96];
 static const char *g_screenshotLabel = NULL; /* label for screenshot filename */
@@ -334,7 +559,15 @@ void platformSaveScreenshot(void) {
         return;
     }
 
+    /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
+     * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
+     * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
+     * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
+     * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
+     * last fully-presented frame (deterministic). Restore GL_BACK after. */
+    glReadBuffer(GL_FRONT);
     glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+    glReadBuffer(GL_BACK);
 
     if (src_w == w && src_h == h) {
         memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);
@@ -710,6 +943,25 @@ float g_pcMouseSensitivity = 0.15f; /* configurable mouse sensitivity */
 float g_pcMouseSensAim = 0.05f;     /* aim-mode mouse sensitivity */
 int g_pcInvertY = 0;                /* invert Y axis */
 float g_pcGamepadLookSpeed = 8.0f;  /* gamepad right stick scaling */
+
+/* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
+ * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
+ * Consumers declare these inline as `extern` at their use sites. */
+s32 g_pcAdsEnabled       = 0;     /* Input.AdsEnabled        master, OFF by default */
+f32 g_pcAdsSensitivity   = 1.0f;  /* Input.AdsSensitivity    flat aimed look mult   */
+s32 g_pcAdsFovCoupleSens = 1;     /* Input.AdsFovCoupleSens  FOV-coupled slow-look   */
+s32 g_pcAdsCenterCrosshair = 1;   /* Input.AdsCenterCrosshair stick center-pull      */
+s32 g_pcAdsSpreadEnabled = 1;     /* Input.AdsSpreadEnabled  per-weapon spread mult  */
+s32 g_pcAdsMovePenalty   = 1;     /* Input.AdsMovePenalty    aimed movement penalty  */
+f32 g_pcAdsMoveScale     = 1.0f;  /* Input.AdsMoveScale      forward-speed trim      */
+f32 g_pcAdsStrafeScale   = 1.0f;  /* Input.AdsStrafeScale    strafe-speed trim       */
+s32 g_pcAdsFaithfulZoom  = 0;     /* Input.AdsFaithfulZoom   disable mild-iron clamp */
+s32 g_pcAdsModelPose     = 1;     /* Input.AdsModelPose      sighted model pose      */
+s32 g_pcAdsModernReticle = 1;     /* Input.AdsModernReticle  modern dot+ticks reticle */
+s32 g_pcAdsSteadyView    = 1;     /* Input.AdsSteadyView     damp walk/strafe head-bob in ADS */
+f32 g_pcAdsBobFloor      = 0.15f; /* Input.AdsBobFloor       residual ADS weapon bob (0=rigid) */
+f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
+
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
 #ifdef MACOS_APP_BUNDLE
@@ -839,22 +1091,480 @@ static void platformApplyAutoMuteToggles(void)
     }
 }
 
+static Uint32 platformFullscreenFlagForWindowMode(s32 mode)
+{
+    switch (mode) {
+        case PLATFORM_WINDOW_MODE_BORDERLESS:
+            return SDL_WINDOW_FULLSCREEN_DESKTOP;
+        case PLATFORM_WINDOW_MODE_EXCLUSIVE:
+            return SDL_WINDOW_FULLSCREEN;
+        case PLATFORM_WINDOW_MODE_WINDOWED:
+        default:
+            return 0;
+    }
+}
+
+static void platformSyncWindowSizeForRenderer(void)
+{
+    int w;
+    int h;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    SDL_GetWindowSize(g_sdlWindow, &w, &h);
+    gfx_set_window_size(w, h);
+}
+
+static int platformConfiguredDisplayIndex(void)
+{
+    int display_count = SDL_GetNumVideoDisplays();
+
+    if (display_count <= 0) {
+        return 0;
+    }
+    if (g_cfgDisplayIndex < 0 || g_cfgDisplayIndex >= display_count) {
+        fprintf(stderr,
+                "[SDL] Display index %d is not available; using display 0 of %d.\n",
+                g_cfgDisplayIndex, display_count);
+        return 0;
+    }
+
+    return (int)g_cfgDisplayIndex;
+}
+
+static int platformGetDisplayBounds(int display_index, SDL_Rect *bounds)
+{
+    if (!bounds) {
+        return 0;
+    }
+    if (SDL_GetDisplayUsableBounds(display_index, bounds) == 0) {
+        return 1;
+    }
+    return SDL_GetDisplayBounds(display_index, bounds) == 0;
+}
+
+static int platformClampIntToRange(int value, int min_value, int max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void platformGetConfiguredWindowPosition(int *x_out, int *y_out)
+{
+    int display_index = platformConfiguredDisplayIndex();
+
+    if (g_cfgWindowX < 0 || g_cfgWindowY < 0) {
+        int centered_pos = SDL_WINDOWPOS_CENTERED_DISPLAY(display_index);
+        if (x_out) {
+            *x_out = centered_pos;
+        }
+        if (y_out) {
+            *y_out = centered_pos;
+        }
+        return;
+    }
+
+    SDL_Rect bounds;
+    if (platformGetDisplayBounds(display_index, &bounds)) {
+        int max_rel_x = bounds.w > g_cfgWindowW ? bounds.w - g_cfgWindowW : 0;
+        int max_rel_y = bounds.h > g_cfgWindowH ? bounds.h - g_cfgWindowH : 0;
+        int rel_x = platformClampIntToRange(g_cfgWindowX, 0, max_rel_x);
+        int rel_y = platformClampIntToRange(g_cfgWindowY, 0, max_rel_y);
+
+        if (x_out) {
+            *x_out = bounds.x + rel_x;
+        }
+        if (y_out) {
+            *y_out = bounds.y + rel_y;
+        }
+        return;
+    }
+
+    if (x_out) {
+        *x_out = g_cfgWindowX;
+    }
+    if (y_out) {
+        *y_out = g_cfgWindowY;
+    }
+}
+
+static void platformRememberWindowGeometry(void)
+{
+    int x;
+    int y;
+    int w;
+    int h;
+    int display_index;
+    SDL_Rect bounds;
+
+    if (!g_sdlWindow || g_windowMode != PLATFORM_WINDOW_MODE_WINDOWED) {
+        return;
+    }
+
+    SDL_GetWindowPosition(g_sdlWindow, &x, &y);
+    SDL_GetWindowSize(g_sdlWindow, &w, &h);
+    display_index = SDL_GetWindowDisplayIndex(g_sdlWindow);
+    if (display_index < 0) {
+        display_index = platformConfiguredDisplayIndex();
+    }
+
+    g_cfgWindowW = w;
+    g_cfgWindowH = h;
+    g_cfgDisplayIndex = display_index;
+
+    if (platformGetDisplayBounds(display_index, &bounds)) {
+        g_cfgWindowX = x - bounds.x;
+        g_cfgWindowY = y - bounds.y;
+    } else {
+        g_cfgWindowX = x;
+        g_cfgWindowY = y;
+    }
+}
+
+static void platformMoveWindowToConfiguredDisplay(void)
+{
+    int x;
+    int y;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    platformGetConfiguredWindowPosition(&x, &y);
+    SDL_SetWindowPosition(g_sdlWindow, x, y);
+}
+
+static int platformFindConfiguredFullscreenMode(SDL_DisplayMode *out_mode)
+{
+    int display_index;
+    int mode_count;
+
+    if (out_mode == NULL || g_cfgFullscreenW <= 0 || g_cfgFullscreenH <= 0) {
+        return 0;
+    }
+
+    display_index = platformConfiguredDisplayIndex();
+    mode_count = SDL_GetNumDisplayModes(display_index);
+    if (mode_count <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < mode_count; i++) {
+        SDL_DisplayMode mode = {0};
+
+        if (SDL_GetDisplayMode(display_index, i, &mode) != 0) {
+            continue;
+        }
+        if (mode.w != g_cfgFullscreenW || mode.h != g_cfgFullscreenH) {
+            continue;
+        }
+        if (g_cfgFullscreenRefresh > 0 &&
+            mode.refresh_rate != g_cfgFullscreenRefresh) {
+            continue;
+        }
+
+        *out_mode = mode;
+        return 1;
+    }
+
+    fprintf(stderr,
+            "[SDL] Fullscreen mode %dx%d@%dHz is not available on display %d; using SDL default.\n",
+            g_cfgFullscreenW,
+            g_cfgFullscreenH,
+            g_cfgFullscreenRefresh,
+            display_index);
+    return 0;
+}
+
+static void platformApplyFullscreenDisplayMode(void)
+{
+    SDL_DisplayMode mode;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE ||
+        !platformFindConfiguredFullscreenMode(&mode)) {
+        SDL_SetWindowDisplayMode(g_sdlWindow, NULL);
+        return;
+    }
+
+    if (SDL_SetWindowDisplayMode(g_sdlWindow, &mode) < 0) {
+        fprintf(stderr,
+                "[SDL] Failed to set fullscreen mode %dx%d@%dHz: %s\n",
+                mode.w,
+                mode.h,
+                mode.refresh_rate,
+                SDL_GetError());
+    }
+}
+
+static void platformApplyWindowMode(void)
+{
+    Uint32 fullscreen_flag;
+
+    if (!g_sdlWindow) {
+        return;
+    }
+
+    fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
+    platformMoveWindowToConfiguredDisplay();
+    platformApplyFullscreenDisplayMode();
+    if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
+        fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
+                g_windowMode, SDL_GetError());
+        return;
+    }
+
+    platformSyncWindowSizeForRenderer();
+}
+
+static void platformApplyVSync(void)
+{
+    if (g_forceNoVsync) {
+        SDL_GL_SetSwapInterval(0);
+        return;
+    }
+
+    switch (g_vsyncMode) {
+        case PLATFORM_VSYNC_OFF:
+            SDL_GL_SetSwapInterval(0);
+            break;
+        case PLATFORM_VSYNC_ON:
+            SDL_GL_SetSwapInterval(1);
+            break;
+        case PLATFORM_VSYNC_ADAPTIVE:
+        default:
+            if (SDL_GL_SetSwapInterval(-1) < 0) {
+                SDL_GL_SetSwapInterval(1);
+            }
+            break;
+    }
+}
+
+static u32 platformFrameDelayMs(void)
+{
+    switch (g_frameCapMode) {
+        case PLATFORM_FRAME_CAP_30:
+            return 1000 / 30;
+        case PLATFORM_FRAME_CAP_DISPLAY:
+            if (!g_forceNoVsync && g_vsyncMode != PLATFORM_VSYNC_OFF) {
+                return 0;
+            }
+            return 1000 / 60;
+        case PLATFORM_FRAME_CAP_60:
+        default:
+            return 1000 / 60;
+    }
+}
+
 /* Register platform settings with the config system.
  * Called from main_pc.c before configInit(). */
 void platformRegisterConfig(void)
 {
-    configRegisterInt("Video.WindowWidth",  &g_cfgWindowW, 320, 3840);
-    configRegisterInt("Video.WindowHeight", &g_cfgWindowH, 240, 2160);
-    configRegisterInt("Video.Fullscreen",   &g_fullscreen, 0, 1);
-    configRegisterFloat("Input.MouseSensitivity",    &g_pcMouseSensitivity, 0.01f, 2.0f);
-    configRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.005f, 1.0f);
-    configRegisterInt("Input.InvertY",               &g_pcInvertY, 0, 1);
-    configRegisterFloat("Input.GamepadLookSpeed",    &g_pcGamepadLookSpeed, 1.0f, 30.0f);
+    settingsRegisterInt("Video.WindowWidth", &g_cfgWindowW, 1440, 320, 3840,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_WIDTH",
+                        "--config-override Video.WindowWidth=VALUE",
+                        "Window width",
+                        "Initial SDL window width in pixels.");
+    settingsRegisterInt("Video.WindowHeight", &g_cfgWindowH, 810, 240, 2160,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_HEIGHT",
+                        "--config-override Video.WindowHeight=VALUE",
+                        "Window height",
+                        "Initial SDL window height in pixels.");
+    settingsRegisterInt("Video.WindowX", &g_cfgWindowX, -1, -1, 32767,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_X",
+                        "--config-override Video.WindowX=VALUE",
+                        "Window X",
+                        "Window X position relative to the selected display; -1 centers it.");
+    settingsRegisterInt("Video.WindowY", &g_cfgWindowY, -1, -1, 32767,
+                        SETTING_SCOPE_RESTART, "GE007_WINDOW_Y",
+                        "--config-override Video.WindowY=VALUE",
+                        "Window Y",
+                        "Window Y position relative to the selected display; -1 centers it.");
+    settingsRegisterInt("Video.Display", &g_cfgDisplayIndex, 0, 0, 31,
+                        SETTING_SCOPE_RESTART, "GE007_DISPLAY",
+                        "--config-override Video.Display=VALUE",
+                        "Display",
+                        "Zero-based SDL display index for window and fullscreen placement.");
+    settingsRegisterInt("Video.FullscreenWidth", &g_cfgFullscreenW, 0, 0, 7680,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_WIDTH",
+                        "--config-override Video.FullscreenWidth=VALUE",
+                        "Fullscreen width",
+                        "Exclusive fullscreen mode width; 0 uses SDL/default.");
+    settingsRegisterInt("Video.FullscreenHeight", &g_cfgFullscreenH, 0, 0, 4320,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_HEIGHT",
+                        "--config-override Video.FullscreenHeight=VALUE",
+                        "Fullscreen height",
+                        "Exclusive fullscreen mode height; 0 uses SDL/default.");
+    settingsRegisterInt("Video.FullscreenRefresh", &g_cfgFullscreenRefresh, 0, 0, 1000,
+                        SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_REFRESH",
+                        "--config-override Video.FullscreenRefresh=VALUE",
+                        "Fullscreen refresh",
+                        "Exclusive fullscreen refresh rate in Hz; 0 accepts any/default.");
+    settingsRegisterEnum("Video.WindowMode", &g_windowMode, PLATFORM_WINDOW_MODE_WINDOWED,
+                         k_windowModeOptions,
+                         (s32)(sizeof(k_windowModeOptions) / sizeof(k_windowModeOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_WINDOW_MODE",
+                         "--config-override Video.WindowMode=VALUE",
+                         "Window mode",
+                         "SDL display mode: windowed, borderless, or exclusive.");
+    settingsRegisterEnum("Video.VSync", &g_vsyncMode, PLATFORM_VSYNC_ADAPTIVE,
+                         k_vsyncOptions,
+                         (s32)(sizeof(k_vsyncOptions) / sizeof(k_vsyncOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_VSYNC",
+                         "--config-override Video.VSync=VALUE",
+                         "VSync",
+                         "Swap interval: off, on, or adaptive.");
+    settingsRegisterEnum("Video.FrameCap", &g_frameCapMode, PLATFORM_FRAME_CAP_60,
+                         k_frameCapOptions,
+                         (s32)(sizeof(k_frameCapOptions) / sizeof(k_frameCapOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_FRAME_CAP",
+                         "--config-override Video.FrameCap=VALUE",
+                         "Frame cap",
+                         "Frame pacing cap: 30, 60, or display.");
+    settingsRegisterFloat("Video.Gamma", &g_pcVideoGamma, 1.0f, 0.5f, 2.5f,
+                          SETTING_SCOPE_LIVE, "GE007_GAMMA",
+                          "--config-override Video.Gamma=VALUE",
+                          "Gamma",
+                          "Output gamma correction. 1.0 leaves colors unchanged.");
+    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 2.0f,
+                          SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
+                          "--config-override Video.RenderScale=VALUE",
+                          "Render scale",
+                          "Scene framebuffer scale. 1.0 matches the window; higher values supersample.");
+    settingsRegisterEnum("Video.MSAA", &g_pcMsaaSamples, 0,
+                         k_msaaOptions,
+                         (s32)(sizeof(k_msaaOptions) / sizeof(k_msaaOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_MSAA",
+                         "--config-override Video.MSAA=VALUE",
+                         "MSAA",
+                         "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
+    settingsRegisterFloat("Video.FovY", &g_pcFovY, 60.0f, 45.0f, 90.0f,
+                          SETTING_SCOPE_LIVE, "GE007_FOV_Y",
+                          "--config-override Video.FovY=VALUE",
+                          "Vertical FOV",
+                          "Gameplay vertical field of view in degrees.");
+    settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
+                         k_retroFilterOptions,
+                         (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_RETRO_FILTER",
+                         "--config-override Video.RetroFilter=VALUE",
+                         "Retro filter",
+                         "Output VI soft-filter mode: auto, off, or on.");
+    settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
+                          "--config-override Input.MouseSensitivity=VALUE",
+                          "Mouse sensitivity",
+                          "Mouse-look sensitivity during normal aim.");
+    settingsRegisterFloat("Input.MouseSensitivityAim", &g_pcMouseSensAim, 0.05f, 0.005f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY_AIM",
+                          "--config-override Input.MouseSensitivityAim=VALUE",
+                          "Aim mouse sensitivity",
+                          "Mouse-look sensitivity while aiming.");
+    settingsRegisterInt("Input.InvertY", &g_pcInvertY, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_INVERT_Y",
+                        "--config-override Input.InvertY=VALUE",
+                        "Invert Y axis",
+                        "Invert mouse-look Y input.");
+    settingsRegisterFloat("Input.GamepadLookSpeed", &g_pcGamepadLookSpeed, 8.0f, 1.0f, 30.0f,
+                          SETTING_SCOPE_LIVE, "GE007_GAMEPAD_LOOK_SPEED",
+                          "--config-override Input.GamepadLookSpeed=VALUE",
+                          "Gamepad look speed",
+                          "Right-stick look speed multiplier.");
+
+    /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
+     * when 0 every ADS branch is bypassed and behavior is byte-identical. */
+    settingsRegisterInt("Input.AdsEnabled", &g_pcAdsEnabled, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_ENABLED",
+                        "--config-override Input.AdsEnabled=VALUE",
+                        "Enable ADS",
+                        "Modern aim-down-sights (opt-in). 0 = vanilla aiming.");
+    settingsRegisterFloat("Input.AdsSensitivity", &g_pcAdsSensitivity, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_SENSITIVITY",
+                          "--config-override Input.AdsSensitivity=VALUE",
+                          "ADS sensitivity",
+                          "Flat look-speed multiplier while aiming.");
+    settingsRegisterInt("Input.AdsFovCoupleSens", &g_pcAdsFovCoupleSens, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_FOV_COUPLE_SENS",
+                        "--config-override Input.AdsFovCoupleSens=VALUE",
+                        "FOV-coupled ADS sens",
+                        "Slow aimed look proportionally to the narrowed FOV.");
+    settingsRegisterInt("Input.AdsCenterCrosshair", &g_pcAdsCenterCrosshair, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_CENTER_CROSSHAIR",
+                        "--config-override Input.AdsCenterCrosshair=VALUE",
+                        "ADS center crosshair",
+                        "Ramp the stick aim accumulators toward center while aiming.");
+    settingsRegisterInt("Input.AdsSpreadEnabled", &g_pcAdsSpreadEnabled, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_SPREAD_ENABLED",
+                        "--config-override Input.AdsSpreadEnabled=VALUE",
+                        "ADS spread tighten",
+                        "Apply the per-weapon spread multiplier while aiming.");
+    settingsRegisterInt("Input.AdsMovePenalty", &g_pcAdsMovePenalty, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_MOVE_PENALTY",
+                        "--config-override Input.AdsMovePenalty=VALUE",
+                        "ADS movement penalty",
+                        "Slow forward/strafe movement while aiming. 0 = vanilla speed.");
+    settingsRegisterFloat("Input.AdsMoveScale", &g_pcAdsMoveScale, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_MOVE_SCALE",
+                          "--config-override Input.AdsMoveScale=VALUE",
+                          "ADS move scale",
+                          "Trim on the per-weapon aimed forward-speed multiplier.");
+    settingsRegisterFloat("Input.AdsStrafeScale", &g_pcAdsStrafeScale, 1.0f, 0.1f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_STRAFE_SCALE",
+                          "--config-override Input.AdsStrafeScale=VALUE",
+                          "ADS strafe scale",
+                          "Trim on the per-weapon aimed strafe-speed multiplier.");
+    settingsRegisterInt("Input.AdsFaithfulZoom", &g_pcAdsFaithfulZoom, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_FAITHFUL_ZOOM",
+                        "--config-override Input.AdsFaithfulZoom=VALUE",
+                        "Faithful ADS zoom",
+                        "Use each weapon's true Zoom (no mild-iron clamp) when aiming.");
+    settingsRegisterInt("Input.AdsModelPose", &g_pcAdsModelPose, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_MODEL_POSE",
+                        "--config-override Input.AdsModelPose=VALUE",
+                        "ADS model pose",
+                        "Blend the weapon model toward the sighted pose while aiming.");
+    settingsRegisterFloat("Input.AdsRecoilReduce", &g_pcAdsRecoilReduce, 0.0f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_RECOIL_REDUCE",
+                          "--config-override Input.AdsRecoilReduce=VALUE",
+                          "ADS recoil reduce",
+                          "Cosmetic aimed recoil reduction (0 = off).");
+    settingsRegisterInt("Input.AdsModernReticle", &g_pcAdsModernReticle, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_MODERN_RETICLE",
+                        "--config-override Input.AdsModernReticle=VALUE",
+                        "ADS modern reticle",
+                        "Clean dot+ticks aiming reticle while aiming (vs the classic crosshair).");
+    settingsRegisterInt("Input.AdsSteadyView", &g_pcAdsSteadyView, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_ADS_STEADY_VIEW",
+                        "--config-override Input.AdsSteadyView=VALUE",
+                        "ADS steady view",
+                        "Damp walk/strafe head-bob out of the aimed view (1 = steadier).");
+    settingsRegisterFloat("Input.AdsBobFloor", &g_pcAdsBobFloor, 0.15f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_ADS_BOB_FLOOR",
+                          "--config-override Input.AdsBobFloor=VALUE",
+                          "ADS bob floor",
+                          "Residual weapon bob kept while aiming (0 = rigid, ~0.15 = subtle).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {
-    *dx = g_mouseDeltaX + g_pcScriptedMouseDeltaX;
-    *dy = g_mouseDeltaY + g_pcScriptedMouseDeltaY;
+    extern int g_freezeInput;
+
+    if (g_freezeInput) {
+        *dx = g_pcScriptedMouseDeltaX;
+        *dy = g_pcScriptedMouseDeltaY;
+    } else {
+        *dx = g_mouseDeltaX + g_pcScriptedMouseDeltaX;
+        *dy = g_mouseDeltaY + g_pcScriptedMouseDeltaY;
+    }
     g_mouseDeltaX = 0;
     g_mouseDeltaY = 0;
     g_pcScriptedMouseDeltaX = 0;
@@ -887,6 +1597,98 @@ void platformGetRightStick(int *rx_out, int *ry_out) {
 #endif
     *rx_out = rx;
     *ry_out = ry;
+}
+
+/* ===== Per-pad accessors (multi-controller / split-screen) =====
+ * Slot index k is the player number (0..PLATFORM_MAX_PADS-1). Every accessor
+ * bounds-checks k and returns neutral values for an absent or out-of-range pad,
+ * so callers never touch a NULL handle on hot-unplug. */
+
+int platformGetPadCount(void) {
+    int count = 0;
+    int k;
+    for (k = 0; k < PLATFORM_MAX_PADS; k++) {
+        if (g_pads[k].handle) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/* Raw SDL button state for pad k (0 if absent). Mapping to N64 buttons is done
+ * by the caller (stubs.c) so all players share one mapping. */
+unsigned int platformGetPadButtons(int k) {
+    SDL_GameController *gc;
+    unsigned int mask = 0;
+    int b;
+
+    if (k < 0 || k >= PLATFORM_MAX_PADS) {
+        return 0;
+    }
+    gc = g_pads[k].handle;
+    if (!gc) {
+        return 0;
+    }
+    for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) {
+        if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) {
+            mask |= (1u << b);
+        }
+    }
+    return mask;
+}
+
+/* Raw left-stick axes for pad k (range -32768..32767, 0 if absent). */
+void platformGetPadLeftStick(int k, int *lx_out, int *ly_out) {
+    SDL_GameController *gc;
+    int lx = 0, ly = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
+        ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+    }
+    if (lx_out) *lx_out = lx;
+    if (ly_out) *ly_out = ly;
+}
+
+/* Raw right-stick axes for pad k with deadzone applied (0 if absent).
+ * Matches the deadzone used by the legacy platformGetRightStick(). */
+void platformGetPadRightStick(int k, int *rx_out, int *ry_out) {
+    SDL_GameController *gc;
+    int rx = 0, ry = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX);
+        ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY);
+        if (rx > -8000 && rx < 8000) rx = 0;
+        if (ry > -8000 && ry < 8000) ry = 0;
+    }
+#ifdef MACOS_APP_BUNDLE
+    /* The Swift bridge only feeds player 1. */
+    if (k == 0) {
+        rx += g_pcBridgeRightStickX;
+        ry += g_pcBridgeRightStickY;
+        if (rx > 32767) rx = 32767;
+        if (rx < -32767) rx = -32767;
+        if (ry > 32767) ry = 32767;
+        if (ry < -32767) ry = -32767;
+    }
+#endif
+    if (rx_out) *rx_out = rx;
+    if (ry_out) *ry_out = ry;
+}
+
+/* Trigger axes for pad k (range 0..32767, 0 if absent). leftTrig/rightTrig may
+ * be NULL. */
+void platformGetPadTriggers(int k, int *leftTrig, int *rightTrig) {
+    SDL_GameController *gc;
+    int lt = 0, rt = 0;
+
+    if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        lt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        rt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    }
+    if (leftTrig) *leftTrig = lt;
+    if (rightTrig) *rightTrig = rt;
 }
 
 /* ===== Scheduler references ===== */
@@ -929,6 +1731,8 @@ int platformInitSDL(void) {
 
     {
         int disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
+        int window_x;
+        int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 
         if (!disable_highdpi) {
@@ -941,16 +1745,13 @@ int platformInitSDL(void) {
             window_flags |= SDL_WINDOW_SHOWN;
         }
 
+        platformGetConfiguredWindowPosition(&window_x, &window_y);
         g_sdlWindow = SDL_CreateWindow(
         "MGB64",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        window_x, window_y,
         g_cfgWindowW, g_cfgWindowH,
         window_flags
         );
-    }
-
-    if (g_sdlWindow && g_fullscreen) {
-        SDL_SetWindowFullscreen(g_sdlWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
     }
 
     if (!g_sdlWindow) {
@@ -958,6 +1759,8 @@ int platformInitSDL(void) {
         SDL_Quit();
         return -1;
     }
+
+    platformApplyWindowMode();
 
     g_glContext = SDL_GL_CreateContext(g_sdlWindow);
     if (!g_glContext) {
@@ -980,11 +1783,9 @@ int platformInitSDL(void) {
 
     /* macOS can block indefinitely in SwapWindow when the test window never
      * receives focus. Allow explicit no-vsync runs for automated capture. */
+    platformApplyVSync();
     if (g_forceNoVsync) {
-        SDL_GL_SetSwapInterval(0);
         printf("[SDL] VSync disabled (GE007_NO_VSYNC)\n");
-    } else if (SDL_GL_SetSwapInterval(-1) < 0) {
-        SDL_GL_SetSwapInterval(1);
     }
 
     g_lastFrameTime = SDL_GetTicks();
@@ -1000,19 +1801,20 @@ int platformInitSDL(void) {
         printf("[SDL] Input grab disabled (GE007_NO_INPUT_GRAB)\n");
     }
 
-    /* Open first available game controller */
+    /* Open every available game controller into its own player slot. The first
+     * opened pad lands in slot 0 (player 1) and shares that slot with the
+     * keyboard/mouse merge in stubs.c. */
+    for (int i = 0; i < PLATFORM_MAX_PADS; i++) {
+        g_pads[i].handle      = NULL;
+        g_pads[i].instance_id = -1;
+        g_pads[i].slot        = i;
+    }
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) {
-            g_gameController = SDL_GameControllerOpen(i);
-            if (g_gameController) {
-                g_gameControllerID = SDL_JoystickInstanceID(
-                    SDL_GameControllerGetJoystick(g_gameController));
-                printf("[SDL] Gamepad connected: %s\n",
-                       SDL_GameControllerName(g_gameController));
-                break;
-            }
+        if (platformOpenPad(i) < 0 && platformGetPadCount() >= PLATFORM_MAX_PADS) {
+            break; /* table full */
         }
     }
+    platformSyncPad0Alias();
 
     return 0;
 }
@@ -1029,26 +1831,25 @@ void platformPollEvents(void) {
                 break;
             case SDL_WINDOWEVENT:
                 if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
-                    /* Re-enable vsync when window gains focus */
-                    if (!g_forceNoVsync) {
-                        if (SDL_GL_SetSwapInterval(-1) < 0) {
-                            SDL_GL_SetSwapInterval(1);
-                        }
-                    }
+                    /* Restore the configured swap interval when focus returns. */
+                    platformApplyVSync();
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                     /* Disable vsync when unfocused to prevent macOS SwapWindow hang */
                     SDL_GL_SetSwapInterval(0);
                 } else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                    extern void gfx_set_window_size(int w, int h);
                     gfx_set_window_size(event.window.data1, event.window.data2);
+                    platformRememberWindowGeometry();
+                } else if (event.window.event == SDL_WINDOWEVENT_MOVED) {
+                    platformRememberWindowGeometry();
                 }
                 break;
             case SDL_KEYDOWN:
                 if (event.key.keysym.sym == SDLK_RETURN &&
                     (event.key.keysym.mod & KMOD_ALT)) {
-                    g_fullscreen = !g_fullscreen;
-                    SDL_SetWindowFullscreen(g_sdlWindow,
-                        g_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    g_windowMode = (g_windowMode == PLATFORM_WINDOW_MODE_WINDOWED)
+                        ? PLATFORM_WINDOW_MODE_BORDERLESS
+                        : PLATFORM_WINDOW_MODE_WINDOWED;
+                    platformApplyWindowMode();
                 } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
                     if (g_mouseGrabbed) {
                         /* In gameplay: pause (START_BUTTON) and ungrab mouse */
@@ -1110,6 +1911,7 @@ void platformPollEvents(void) {
                     selected_stage = levelMap[idx];
                     set_solo_and_ptr_briefing(selected_stage);
                     bossSetLoadedStage(selected_stage);
+                    pcPrimePostStageMenuForDirectBoot((LEVELID)selected_stage, FALSE);
                     printf("[SDL] Level switch requested: LEVELID %d (F%d)\n",
                            levelMap[idx], idx + 3);
                 }
@@ -1128,24 +1930,13 @@ void platformPollEvents(void) {
                 break;
             }
             case SDL_CONTROLLERDEVICEADDED:
-                if (!g_gameController) {
-                    g_gameController = SDL_GameControllerOpen(event.cdevice.which);
-                    if (g_gameController) {
-                        g_gameControllerID = SDL_JoystickInstanceID(
-                            SDL_GameControllerGetJoystick(g_gameController));
-                        printf("[SDL] Gamepad connected: %s\n",
-                               SDL_GameControllerName(g_gameController));
-                    }
-                }
+                /* event.cdevice.which is a device index for ADDED. */
+                platformOpenPad(event.cdevice.which);
                 break;
             case SDL_CONTROLLERDEVICEREMOVED:
-                if (g_gameController &&
-                    event.cdevice.which == g_gameControllerID) {
-                    printf("[SDL] Gamepad disconnected\n");
-                    SDL_GameControllerClose(g_gameController);
-                    g_gameController = NULL;
-                    g_gameControllerID = -1;
-                }
+                /* event.cdevice.which is an instance id for REMOVED. Free only
+                 * that slot; other players keep their stable mapping. */
+                platformClosePadByInstance(event.cdevice.which);
                 break;
             case SDL_MOUSEMOTION:
                 if (g_mouseGrabbed) {
@@ -1247,11 +2038,12 @@ void platformFrameSync(void) {
     }
 #endif
 
-    /* Frame pacing — wait until next frame boundary */
+    /* Frame pacing — wait until next configured frame boundary. */
     u32 now = SDL_GetTicks();
     u32 elapsed = now - g_lastFrameTime;
-    if (elapsed < FRAME_TIME_MS) {
-        SDL_Delay(FRAME_TIME_MS - elapsed);
+    u32 frame_delay_ms = platformFrameDelayMs();
+    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
+        SDL_Delay(frame_delay_ms - elapsed);
     }
     g_lastFrameTime = SDL_GetTicks();
 
@@ -1268,7 +2060,18 @@ void platformFrameSync(void) {
         /* Auto-screenshot at specified frame */
         if (g_autoScreenshotFrame >= 0 && g_frameSyncCallCount == g_autoScreenshotFrame) {
             platformSaveScreenshot();
+            g_autoScreenshotFrame = -1;
             platformFinishAutoScreenshotIfRequested();
+        }
+        /* Auto-screenshot at specified gameplay timer. This captures matched
+         * simulation states even when startup/loading consumes render frames. */
+        if (g_autoScreenshotGameTimer >= 0) {
+            extern s32 g_GlobalTimer;
+            if (g_GlobalTimer >= g_autoScreenshotGameTimer) {
+                platformSaveScreenshot();
+                g_autoScreenshotGameTimer = -1;
+                platformFinishAutoScreenshotIfRequested();
+            }
         }
         /* Manual screenshot (F2) */
         if (g_screenshotRequested) {
@@ -1298,12 +2101,21 @@ void platformFrameSync(void) {
  */
 void platformShutdownSDL(void) {
     /* Save config on clean shutdown */
+    platformRememberWindowGeometry();
     configSave();
     /* NOTE: portTraceShutdown() is NOT called here. DL buffer overruns
      * can corrupt static FILE pointers in port_trace.c, causing fclose()
      * to SIGSEGV. The OS reclaims all file handles on process exit.
      * The trace file is flushed every 60 frames, so data loss is minimal. */
-    if (g_gameController) SDL_GameControllerClose(g_gameController);
+    for (int i = 0; i < PLATFORM_MAX_PADS; i++) {
+        if (g_pads[i].handle) {
+            SDL_GameControllerClose(g_pads[i].handle);
+            g_pads[i].handle      = NULL;
+            g_pads[i].instance_id = -1;
+        }
+    }
+    g_gameController   = NULL;
+    g_gameControllerID = -1;
     /* After SIGSEGV recovery via siglongjmp, the GL context may be corrupt.
      * Skip GL cleanup and just destroy the window + quit SDL. The OS will
      * reclaim the GL resources on process exit anyway. */
