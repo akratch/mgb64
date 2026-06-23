@@ -7375,7 +7375,7 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
 #ifdef NATIVE_PORT
         {
             static int skip_log = 0;
-            if (skip_log < 5 && model->chr) {
+            if (portTraceAnimRootSkips() && skip_log < 5 && model->chr) {
                 skip_log++;
                 fprintf(stderr, "[ANIM_FRAME2_SKIP] reason=opcode(%d!=1) chr=%p\n",
                         rootNode->Opcode & 0xFF, (void*)model->chr);
@@ -7401,7 +7401,7 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
 #ifdef NATIVE_PORT
         {
             static int skip_log2 = 0;
-            if (skip_log2 < 5 && model->chr) {
+            if (portTraceAnimRootSkips() && skip_log2 < 5 && model->chr) {
                 skip_log2++;
                 fprintf(stderr, "[ANIM_FRAME2_SKIP] reason=unk00(%d!=0) chr=%p\n",
                         rwdata->unk00, (void*)model->chr);

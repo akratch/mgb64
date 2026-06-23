@@ -10672,7 +10672,7 @@ void chrlvTickGoPos(ChrRecord *self)
 #ifdef NATIVE_PORT
     {
         static int gopos_log = 0;
-        if (gopos_log < 30 && self->chrnum == 0) {
+        if (pcChrlvAiMoveTraceEnabled() && gopos_log < 30 && self->chrnum == 0) {
             fprintf(stderr,
                     "[GOPOS_TICK] chrnum=%d age=%d mode=%d curindex=%d "
                     "pos=(%.1f,%.1f,%.1f) target=(%.1f,%.1f,%.1f) "
@@ -11779,7 +11779,7 @@ bool chrGoToBond(ChrRecord *self, SPEED speed)
 #ifdef NATIVE_PORT
             {
                 static int gtb_ok = 0;
-                if (gtb_ok < 30) {
+                if (pcChrlvAiMoveTraceEnabled() && gtb_ok < 30) {
                     gtb_ok++;
                     fprintf(stderr,
                         "[GOTO_BOND] chrnum=%d speed=%d -> SUCCESS action=%d unk59=%d\n",
@@ -11793,7 +11793,7 @@ bool chrGoToBond(ChrRecord *self, SPEED speed)
 #ifdef NATIVE_PORT
         {
             static int gtb_fail = 0;
-            if (gtb_fail < 30) {
+            if (pcChrlvAiMoveTraceEnabled() && gtb_fail < 30) {
                 gtb_fail++;
                 fprintf(stderr,
                     "[GOTO_BOND] chrnum=%d speed=%d -> FAIL (plot_course returned 0)\n",
@@ -11807,7 +11807,7 @@ bool chrGoToBond(ChrRecord *self, SPEED speed)
     else
     {
         static int gtb_block = 0;
-        if (gtb_block < 30) {
+        if (pcChrlvAiMoveTraceEnabled() && gtb_block < 30) {
             gtb_block++;
             fprintf(stderr,
                 "[GOTO_BOND] chrnum=%d speed=%d -> BLOCKED dead=%d seenCount=%d\n",
