@@ -4660,6 +4660,7 @@ void portTraceFrame(void) {
                 int tracked_seen_onscreen = 0;
                 int tracked_field20 = 0;
                 int tracked_model_mtx = 0;
+                int tracked_on_proplist = 0;
                 TracePropFloorSnapshot tracked_floor;
                 TraceHeldPropSnapshot held_right;
                 TraceHeldPropSnapshot held_left;
@@ -4706,6 +4707,24 @@ void portTraceFrame(void) {
                 if (tracked_chr->prop != NULL) {
                     tracked_prop_flags = tracked_chr->prop->flags;
                     tracked_prop_onscreen = ((tracked_chr->prop->flags & PROPFLAG_ONSCREEN) != 0) ? 1 : 0;
+
+                    /* g_OnScreenPropList membership: the rebuilt-every-frame list
+                     * that makes a prop auto-aim-targetable/hittable. This is the
+                     * precise H1b observable (PROPFLAG_ONSCREEN alone latches and is
+                     * managed by a separate camera pass). */
+                    {
+                        extern PropRecord **g_LastOnScreenProp;
+                        extern PropRecord *g_OnScreenPropList[];
+                        PropRecord **pp;
+                        if (g_LastOnScreenProp != NULL) {
+                            for (pp = g_OnScreenPropList; pp < g_LastOnScreenProp; pp++) {
+                                if (*pp == tracked_chr->prop) {
+                                    tracked_on_proplist = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 tracked_seen_onscreen = ((tracked_chr->chrflags & CHRFLAG_HAS_BEEN_ON_SCREEN) != 0) ? 1 : 0;
@@ -4724,6 +4743,7 @@ void portTraceFrame(void) {
                          sizeof(tracked_chr_field_json),
                          "\"track\":{\"chrnum\":%d,\"source\":%d,\"present\":1,\"hidden\":%d,\"hidden_bits\":%d,"
                          "\"chrflags\":\"0x%08X\",\"alive\":%d,"
+                         "\"flag_hidden\":%d,\"flag_update_action\":%d,\"bg_ai\":%d,"
                          "\"action\":%d,\"alert\":%d,\"sleep\":%d,\"firecount\":%d,"
                          "\"damage\":%.4f,\"maxdamage\":%.4f,"
                          "\"padpreset\":%d,\"dist_to_bond\":%.2f,\"pos\":[%.2f,%.2f,%.2f],"
@@ -4735,7 +4755,7 @@ void portTraceFrame(void) {
                          "\"room\":{\"stan\":%d,\"first\":%d,\"count\":%d,\"any_rendered\":%d,"
                          "\"first_rendered\":%d,\"rooms\":%s},"
                          "\"render\":{\"prop_flags\":\"0x%08X\",\"onscreen\":%d,\"seen_onscreen\":%d,"
-                         "\"z\":%.2f,\"field20\":%d,\"model_mtx\":%d},"
+                         "\"z\":%.2f,\"field20\":%d,\"model_mtx\":%d,\"on_proplist\":%d},"
                          "\"held\":{\"right\":{\"present\":%d,\"obj\":%d,\"item\":%d,\"state\":%d,"
                          "\"runtime\":\"0x%08X\",\"prop_flags\":\"0x%08X\",\"has_mtx\":%d,"
                          "\"room\":{\"stan\":%d,\"first\":%d,\"count\":%d,\"any_rendered\":%d,"
@@ -4764,6 +4784,9 @@ void portTraceFrame(void) {
                          tracked_chr->hidden,
                          (unsigned int)tracked_chr->chrflags,
                          (tracked_chr->damage < tracked_chr->maxdamage) ? 1 : 0,
+                         ((tracked_chr->chrflags & CHRFLAG_HIDDEN) != 0),
+                         ((tracked_chr->chrflags & CHRFLAG_00040000) != 0),
+                         ((tracked_chr->hidden & CHRHIDDEN_BACKGROUND_AI) != 0),
                          tracked_chr->actiontype,
                          tracked_chr->alertness,
                          tracked_chr->sleep,
@@ -4808,6 +4831,7 @@ void portTraceFrame(void) {
                          tracked_chr->prop != NULL ? tracked_chr->prop->zDepth : 0.0f,
                          tracked_field20,
                          tracked_model_mtx,
+                         tracked_on_proplist,
                          held_right.present,
                          held_right.obj,
                          held_right.item,
