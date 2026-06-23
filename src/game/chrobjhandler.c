@@ -9054,7 +9054,14 @@ s32 object_interaction(struct PropRecord *arg0)
     // missing: sp608
     s32 sp604;
     struct coord3d sp5CC;
-    Mtxf *sp58C = NULL;
+    /* Stack scratch matrix. The original is a 4x4 Mtxf on the stack that
+     * matrix_4x4_7F059E64() fills and mtx4TransformVecInPlace() then reads
+     * (throwing-knife impact-on-guard hit-position transform). The decomp
+     * mistyped it as a NULL Mtxf* that is never pointed anywhere, so the
+     * throwknife->on-screen-guard branch (chrobjhandler.c ~9539-9540) passed
+     * NULL to both calls -> immediate SIGSEGV on every knife-vs-guard hit.
+     * Restore it as a real stack matrix. */
+    Mtxf sp58C;
     struct coord3d sp564;
     f32 sp550[4]; //quatf
     struct ModelRoData_BoundingBoxRecord *sp54C;
@@ -9536,8 +9543,8 @@ s32 object_interaction(struct PropRecord *arg0)
                                         sp5CC.f[1] -= (getjointsize(objinst, dword_CODE_bss_80075B74) * 0.5f * flt_CODE_bss_80075B78.f[0]);
                                         sp5CC.f[2] -= (getjointsize(objinst, dword_CODE_bss_80075B74) * 0.5f * flt_CODE_bss_80075B88.f[0]);
 
-                                        matrix_4x4_7F059E64(temp_s2_4, sp58C);
-                                        mtx4TransformVecInPlace(sp58C, &sp5CC);
+                                        matrix_4x4_7F059E64(temp_s2_4, &sp58C);
+                                        mtx4TransformVecInPlace(&sp58C, &sp5CC);
                                         sub_GAME_7F0221DC(objinst, bodypartshot, dword_CODE_bss_80075B74, &sp5CC);
                                     }
                                 }
