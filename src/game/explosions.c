@@ -96,15 +96,6 @@ static int portFlatPropBulletImpacts(void)
     return cached;
 }
 
-static int portTexturedPropBulletImpacts(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        cached = getenv("GE007_TEXTURED_PROP_BULLET_IMPACTS") != NULL;
-    }
-    return cached;
-}
-
 static s32 portPropIsGlassLike(PropRecord *prop);
 
 static int portUseFlatBulletImpacts(PropRecord *prop)
@@ -114,23 +105,31 @@ static int portUseFlatBulletImpacts(PropRecord *prop)
     }
 
     if (prop != NULL) {
+        /* Tier-2 / N64 parity: ALL destroyable props (crates, barrels, screens,
+         * glass) render their bullet impacts as the textured bullet-hole decal,
+         * exactly like the original decomp -- which has no flat path at all -- and
+         * like world/wall impacts. The original code unconditionally calls
+         * texSelect() for every prop impact (see the #else branch of
+         * explosionRenderBulletImpactOnProp); the flat path here is a port-only
+         * workaround that drew a solid, untextured G_CC_SHADE quad in the impact's
+         * "appearance" colour. Because ~17 of the 20 g_ImpactTypes entries have
+         * apptype==1, that colour is a deterministic near-white (0xFF - rand%40)
+         * -- i.e. the white squares the user saw -- with no texture alpha to carve
+         * the hole shape. The textured path modulates the IA/RGBA bullet-hole
+         * texture (G_CC_MODULATEIA) so its alpha cuts the decal exactly as on N64.
+         *
+         * The textured path is now self-contained: explosionRenderBulletImpactOnProp
+         * emits a full RDP state-reset epilogue so it can no longer leak
+         * texture/combine/rendermode/cycle state into following inline prop/child
+         * geometry (precautionary hardening -- glass has run this path since
+         * 76d4c48 with no observed leak). GE007_FLAT_PROP_BULLET_IMPACTS still
+         * forces the legacy flat path for debugging/A-B; GE007_FLAT_BULLET_IMPACTS
+         * forces flat globally (world + prop). */
         if (portFlatPropBulletImpacts()) {
             return 1;
         }
 
-        /* glass-02: glass-like props (PROPDEF_GLASS / TINTED_GLASS) render their
-         * bullet impacts as the textured crack decal instead of a flat dark quad.
-         * This is the high-value "glass accuracy" case and uses the same textured
-         * path world impacts already use. Scope is intentionally narrow (glass
-         * props only) to limit the historical prop-textured texture-state-leak
-         * risk; GE007_FLAT_PROP_BULLET_IMPACTS still forces flat for debugging. */
-        if (portPropIsGlassLike(prop)) {
-            return 0;
-        }
-
-        /* Other prop-attached textured impacts can leak texture state on the PC
-         * renderer; keep the safer flat path as the public default. */
-        return !portTexturedPropBulletImpacts();
+        return 0;
     }
 
     return 0;
@@ -3687,6 +3686,29 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
 
     if (sp50)
     {
+#ifdef NATIVE_PORT
+        /* The textured impact path (texSelect) leaves the RDP in textured state:
+         * texture ON, combine = G_CC_MODULATEIA, a DECAL render mode, LUT/LOD set,
+         * and -- for any mipmapped impact image -- cycle = G_CYC_2CYCLE. Prop
+         * impacts are emitted INLINE in the per-prop display list (chrobjhandler.c),
+         * immediately before the child-prop recursion and sibling props, so that
+         * state must not leak. Most following geometry is models that re-establish
+         * their own material setup, but raw inline DL (e.g. door words) inherits
+         * combine/cycle, so normalise the RDP to a neutral, untextured baseline
+         * here. This makes the now-default textured prop path self-contained for
+         * every caller (the inline prop path AND the isolated world pass) --
+         * precautionary hardening that keeps the textured default safe. NB: this
+         * is a neutral OPA baseline, NOT the legacy flat path's XLU_DECAL mode;
+         * the explicit cycle reset covers the mipmapped-impact G_CYC_2CYCLE case
+         * that the partial SETOTHERMODE_H writes below would otherwise miss. */
+        gDPPipeSync(gdl++);
+        gSPTexture(gdl++, 0xffff, 0xffff, 0, G_TX_RENDERTILE, G_OFF);
+        gDPSetTextureLUT(gdl++, G_TT_NONE);
+        gDPSetTextureLOD(gdl++, G_TL_TILE);
+        gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+        gDPSetCombineMode(gdl++, G_CC_SHADE, G_CC_SHADE);
+        gDPSetRenderMode(gdl++, G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2);
+#endif
         /* Bullet impacts render as double-sided quads, but the surrounding
          * room/world passes assume normal backface culling. Restore that
          * state here so firing decals do not leak disabled culling into

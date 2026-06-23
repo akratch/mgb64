@@ -747,10 +747,9 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_DIAG_NOPERSPECTIVE_SETTEX_TEXCOORDS=1` | noperspective texcoords for `settex` materials |
 | `GE007_DIAG_SETTEX_CC_COLOR_SCALE=1` | enable a combiner color scale on `settex` materials (menu brightness experiment) |
 | `GE007_DIAG_SETTEX_CC_COLOR_SCALE_VALUE=N` | the scale factor (default `1.02`) |
-| `GE007_TEXTURED_PROP_BULLET_IMPACTS=1` | opt into original textured prop-attached bullet impacts |
 | `GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET=N` | tune the default glass-crack decal lift (default `2.0`) |
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET=N` | force a global decal lift for diagnostics |
-| `GE007_FLAT_PROP_BULLET_IMPACTS=1` | force shade-only prop-attached bullet impacts |
+| `GE007_FLAT_PROP_BULLET_IMPACTS=1` | force shade-only (legacy flat) prop-attached bullet impacts; textured bullet-hole decals are now the N64-faithful default for **all** props (crates/barrels/screens/glass), so this is the A/B escape hatch |
 | `GE007_FLAT_BULLET_IMPACTS=1` | force shade-only bullet impacts globally |
 
 Run visual experiments with these set, compare against the default visually (and
