@@ -1788,7 +1788,11 @@ Gfx* lvlRender(Gfx* DL)
 
 #if defined(VERSION_EU)
             sub_GAME_7F0A46A0(&DL, 1);
-#else /* VERSION_US, VERSION_JP, unspecified */
+#elif defined(NONMATCHING)
+            /* Native: capture the DL advanced past the bullet-spark commands so
+             * the glass-shard pass below appends instead of overwriting them. */
+            DL = sub_GAME_7F0A4824(DL, 1);
+#else /* matched VERSION_US, VERSION_JP */
             sub_GAME_7F0A4824(DL, 1);
 #endif
             DL = sub_GAME_7F0A2C44(DL);

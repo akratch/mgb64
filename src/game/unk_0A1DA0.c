@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include <limits.h>
 #include <string.h>
+#include <stdlib.h>
 #include "math_atan2f.h"
 #include "unk_0A1DA0.h"
 #include "random.h"
@@ -89,7 +90,12 @@ struct rgba_u8 D_80040960[8] = {
     { 0 },
     { 0 }
 };
-u32 D_80040980 = 0;
+/* Read as a 16-byte Vtx template at sub_GAME_7F0A3F04 (the bullet-spark
+ * billboard); a 4-byte u32 here caused a 12-byte over-read. The all-0xFF
+ * colour mirrors g_ExplosionRenderPartDefaultVertex; cn/ob/tc are overwritten
+ * per particle/vertex, so only a valid 16-byte backing is needed. The N64
+ * GLOBAL_ASM references it by %hi/%lo address only, so the type is build-neutral. */
+Vtx D_80040980 = { 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff };
 
 
 
@@ -3861,8 +3867,20 @@ void sub_GAME_7F0A3EA0(void)
 
 
 
+#ifdef NATIVE_PORT
+static int s_ge007_bullet_sparks = -1; /* GE007_BULLET_SPARKS=0 disables (default on) */
+static int ge007_bullet_sparks_enabled(void)
+{
+    if (s_ge007_bullet_sparks < 0) {
+        const char *e = getenv("GE007_BULLET_SPARKS");
+        s_ge007_bullet_sparks = (e != NULL && e[0] == '0') ? 0 : 1;
+    }
+    return s_ge007_bullet_sparks;
+}
+#endif
+
 #ifdef NONMATCHING
-#ifdef PORT_FIXME_STUBS
+#if 0 /* un-stubbed for native: bullet sparks render; runtime A/B via GE007_BULLET_SPARKS */
 void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     (void)arg0; (void)gdl_ptr; (void)arg2;
 }
@@ -3876,7 +3894,9 @@ extern f32 get_room_data_float1(void);
 extern intptr_t get_BONDdata_field_10E0(void);
 extern Gfx *applyRoomMatrixToDisplayList(Gfx *DL, int index);
 extern Mtx *currentPlayerGetProjectionMatrix(void);
-extern u32 osVirtualToPhysical(void *);
+#ifndef NATIVE_PORT
+extern u32 osVirtualToPhysical(void *); /* native: provided as a macro in platform_os.h */
+#endif
 
 void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     Vtx *vertices;
@@ -3910,6 +3930,12 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     if (!camIsPosInScreen((coord3d *)&arg0->unk10, *(f32 *)&arg0->unk24)) {
         return;
     }
+
+#ifdef NATIVE_PORT
+    if (!ge007_bullet_sparks_enabled()) {
+        return; /* A/B off: emit nothing, leave *gdl_ptr unadvanced (= old stub) */
+    }
+#endif
 
     vtxtemplate = *(Vtx *)&D_80040980;
 
@@ -4018,6 +4044,22 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     gdl->words.w0 = 0x01030040;
     gdl->words.w1 = osVirtualToPhysical((void *)currentPlayerGetProjectionMatrix());
     gdl++;
+
+#ifdef NATIVE_PORT
+    {
+        static int trace = -1;
+        if (trace < 0) {
+            trace = getenv("GE007_TRACE_SPARKS") ? 1 : 0;
+        }
+        if (trace) {
+            extern int g_frame_count_diag;
+            fprintf(stderr, "[SPARK-RENDER] frame=%d frameIdx=%d pos=(%.1f,%.1f,%.1f) cn=%02x%02x%02x%02x\n",
+                    g_frame_count_diag, frameIndex, posX, posY, posZ,
+                    vtxtemplate.v.cn[0], vtxtemplate.v.cn[1], vtxtemplate.v.cn[2], vtxtemplate.v.cn[3]);
+            fflush(stderr);
+        }
+    }
+#endif
 
     *gdl_ptr = gdl;
 }
@@ -4424,8 +4466,12 @@ glabel sub_GAME_7F0A3F04
 )
 #endif
 
+#ifdef NONMATCHING
+Gfx *sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
+#else
 void sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
-    
+#endif
+
     bondstruct_unk_8007A170 *thing = &dword_CODE_bss_8007A170[0]; \
     bondstruct_unk_8007A170 *end = dword_CODE_bss_8007A170 + UNK_8007A170_MAX;
 
@@ -4433,6 +4479,9 @@ void sub_GAME_7F0A4528(Gfx *gdl, s32 arg1) {
     {
         sub_GAME_7F0A3F04(thing, &gdl, arg1);
     }
+#ifdef NONMATCHING
+    return gdl; /* gdl advanced through &gdl by sub_GAME_7F0A3F04; return it so the advance is not discarded */
+#endif
 }
 
 f32 sub_GAME_7F0A4594(f32 *arg0) {
@@ -4688,7 +4737,9 @@ void sub_GAME_7F0A46A0(Gfx *arg0, s32 arg1)
 // calling sub_GAME_7F0A3F04 on each (renders bullet spark/dust cloud effects).
 // Matches with original IDO. ido_recomp: reverse global address completion order
 // (addiu $s0/$s1 completed in same order as lui instead of reverse).
-void sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
+/* Native only (matched build uses the GLOBAL_ASM twin below). Returns the
+ * advanced DL so sub_GAME_7F0A4824 can thread it past the second spark stream. */
+Gfx *sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
     bondstruct_unk_8007A170 *ptr = (bondstruct_unk_8007A170 *)dword_CODE_bss_8007A4E0;
     bondstruct_unk_8007A170 *end = (bondstruct_unk_8007A170 *)dword_CODE_bss_8007B098;
 
@@ -4696,6 +4747,7 @@ void sub_GAME_7F0A4768(Gfx *arg0, s32 arg1) {
         sub_GAME_7F0A3F04(ptr, &arg0, arg1);
         ptr = (bondstruct_unk_8007A170 *)((u8 *)ptr + 0x3C);
     } while (ptr < end);
+    return arg0;
 }
 #else
 GLOBAL_ASM(
@@ -4753,10 +4805,21 @@ void update_bullet_sparks_and_dust_clouds(void) {
 
 
 
+#ifdef NONMATCHING
+/* Native: thread DL through both spark streams and return the advanced DL so
+ * lvl.c hands it to the glass-shard pass instead of letting shards overwrite
+ * the spark commands. */
+Gfx *sub_GAME_7F0A4824(Gfx *arg0, s32 arg1) {
+    arg0 = sub_GAME_7F0A4528(arg0, arg1);
+    arg0 = sub_GAME_7F0A4768(arg0, arg1);
+    return arg0;
+}
+#else
 void sub_GAME_7F0A4824(Gfx *arg0, s32 arg1) {
     sub_GAME_7F0A4528(arg0, arg1);
     sub_GAME_7F0A4768(arg0, arg1);
 }
+#endif
 
 
 #endif 
