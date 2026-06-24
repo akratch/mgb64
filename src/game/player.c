@@ -44,6 +44,38 @@ void sub_GAME_7F093880(f32 offset_x, f32 offset_y, coord3d* out) {
     coord2d coords;
     f32 screen_top;
 
+#ifdef NATIVE_PORT
+    /* Widescreen sky fix.  The PC backend squeezes every clip-x by
+     * factor = (4/3)/window_aspect (gfx_adjust_x_for_aspect_ratio).  The 3D
+     * world overflows its frustum, so it still fills the screen after the
+     * squeeze; but the sky is a finite quad whose corners are unprojected from
+     * the screen edges and therefore sit exactly on the frustum edge (NDC +-1).
+     * The same squeeze pulls those corners inward to +-factor, leaving blank
+     * bars on the left/right of a non-4:3 window.
+     *
+     * Pre-widen the screen-x about the viewport centre by 1/factor here (this
+     * is the single chokepoint feeding every cloud-quad corner).  The
+     * screen->world->screen round trip preserves screen-x exactly, so after the
+     * backend squeeze each corner lands back on the viewport edge, while the
+     * widened rays sample the same wider world directions the squeezed world
+     * reveals -- keeping the sky/world horizon registered.  factor == 1 on an
+     * exact 4:3 window or when aspect correction is disabled, so this is a
+     * byte-identical no-op there. */
+    {
+        static int sky_aspect_fix = -1;
+        if (sky_aspect_fix < 0) {
+            sky_aspect_fix = (getenv("GE007_NO_SKY_ASPECT_FIX") == NULL); /* default ON */
+        }
+        if (sky_aspect_fix) {
+            f32 halfwidth = getPlayer_c_screenwidth() * 0.5f;
+            f32 factor = gfx_get_aspect_x_factor();
+            if (factor != 0.0f) {
+                offset_x = halfwidth + (offset_x - halfwidth) * (1.0f / factor);
+            }
+        }
+    }
+#endif
+
     player_mtxf = currentPlayerGetMatrix10D4();
     coords.x = getPlayer_c_screenleft() + offset_x;
     screen_top = getPlayer_c_screentop();

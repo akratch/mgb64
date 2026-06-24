@@ -9167,6 +9167,22 @@ static float gfx_adjust_x_for_aspect_ratio(float x) {
         diag_aspect_x_scale + diag_aspect_x_offset;
 }
 
+/* Returns the *multiplicative* horizontal factor that
+ * gfx_adjust_x_for_aspect_ratio() applies to every clip-x, with the additive
+ * diagnostic offset cancelled out.  Derived from the function itself
+ * (adjust(1) - adjust(0)) so it tracks every guard exactly: 1.0 when aspect
+ * correction is disabled, when the window dims are unknown, on an exact 4:3
+ * window, and 0.0 only under a pathological GE007_DIAG_ASPECT_X_SCALE=0.
+ *
+ * The window dimensions are synced first so this returns the SAME factor the
+ * per-vertex squeeze will use at emit time.  Consumed by the sky path
+ * (player.c skyRender -> sub_GAME_7F093880) to pre-widen the cloud quad by
+ * 1/factor so its NDC +-1 corners land back at +-1 after the squeeze. */
+float gfx_get_aspect_x_factor(void) {
+    gfx_sync_current_dimensions_from_window();
+    return gfx_adjust_x_for_aspect_ratio(1.0f) - gfx_adjust_x_for_aspect_ratio(0.0f);
+}
+
 static int gfx_find_room_for_vtx_addr(uintptr_t addr) {
     if (addr == 0) return -1;
     for (int room = 1; room < g_MaxNumRooms; room++) {

@@ -98,6 +98,13 @@ void gfx_prepare_sky_rendering(uint32_t texture_num,
                                float screen_left, float screen_top,
                                float screen_width, float screen_height);
 
+/* Multiplicative horizontal aspect factor applied to every clip-x by the
+ * widescreen squeeze (gfx_adjust_x_for_aspect_ratio), with the diagnostic
+ * offset removed: (4/3)/window_aspect, or 1.0 when the squeeze is a no-op
+ * (correction disabled / unknown dims / exact 4:3).  Used by skyRender to
+ * pre-widen the finite cloud quad so it fills the viewport after the squeeze. */
+float gfx_get_aspect_x_factor(void);
+
 /* Submit a sky triangle directly from game code (NATIVE_PORT only).
  * The preferred native path takes the original clip-space x/y/z/w from
  * SkyRelated38. This keeps position and texture interpolation in the same
