@@ -10,6 +10,58 @@ survey, ~128 subagents, every claim checked against `file:line`). It supersedes
 nothing in [RENDER_PORT_SURVEY.md](RENDER_PORT_SURVEY.md) (that doc is parity/bug
 work); this one is forward-looking *enhancement* work.
 
+---
+
+## ✅ Phase 0 — SHIPPED (2026-06-24)
+
+All of Phase 0 is implemented as 13 opt-in, default-off commits on
+`feat/split-screen-multiplayer` (local; unpushed). Each carries a
+`GE007_*` / `Video.*` / `Input.*` A/B gate and defaults to identity/off.
+
+| Commit | Feature | Toggle (default) |
+|--------|---------|------------------|
+| `27a8ae0` | Output-pass post-FX plumbing (`uApplyPost`) + **color grade** | `Video.Saturation/Contrast/Brightness` (1/1/0) |
+| `c2a1d06` | Output **ordered dither** | `Video.OutputDither` (0) |
+| `fc26a0f` | Output **vignette** | `Video.Vignette` (0) |
+| `2a15fe1` | Output **bloom v1** | `Video.Bloom` (0) |
+| `e15cc87` | **RenderScale cap 2×→4×** + driver-level GL-limit clamp | `Video.RenderScale` (1.0) |
+| `bc01b1e` | **Radial deadzone + gamepad aim curve + opt-in fps-independent look** | `Input.Gamepad{LookCurve,Deadzone,RadialDeadzone,FpsScale}` (linear) |
+| `06c85f0` | **Cosmetic fog-density dial** (AI-neutral) | `Video.FogDensity` (1.0) |
+| `3025470` | **Per-level sky/cloud RGB grade** | `#ifdef GE007_ATMOS_GRADE` (off) |
+| `4a8bfca` | **Bullet-decal cap 100→400** | `#ifdef NATIVE_PORT` (N64 keeps 100) |
+| `014b557` | **Additive viewmodel sway** | `Input.ViewmodelSway` (0) |
+| `90a0be0` | **Per-gun viewmodel proportion** | `GE007_VIEWMODEL_TWEAK` (off) |
+| `f1277cd` | **Always-on modern crosshair** | `Input.ModernCrosshair` (0) |
+| `31eebd2` | **Hit markers on damage** | `Input.HitMarkers` (0) |
+
+**Validation (all driven post-hoc, independent of the implementing agents):**
+
+- **Regression — default path byte-identical.** Clean rebuild (`--clean-first`)
+  green. `playability_smoke --all` (20 levels, all flags off) reproduced the
+  baseline contract *exactly* (14 pass / same 6 pre-existing fails), and **all 39
+  default-state screenshots are byte-identical to the pre-Phase-0 baseline**. The
+  opt-in/identity model held perfectly — zero default-path change.
+- **Per-feature A/B (deterministic, level 33).** 8/9 visually-testable effects
+  confirmed active by pixel-diff vs a byte-identical reference: color-grade (≈20%),
+  vignette (≈42%), bloom, RenderScale-3×, fog-density ×4 (≈81%; thinning already-thin
+  fog shows nothing, thickening is dramatic), dither (≈1.8% *atop* a graded frame —
+  correct ±0.5-LSB anti-banding, a no-op on flat 8-bit by design), viewmodel sway,
+  per-gun scale.
+- **ASan/UBSan.** Output-FX+RenderScale, fog+HUD+viewmodel, and input feature paths
+  all run clean; the only finding is a *pre-existing* misaligned-struct UB
+  (`unk_0A1DA0.c:4061`) also present with all flags off. **No findings in Phase 0 code.**
+
+**Needs in-game (not headless-confirmable) confirmation — code-correct, boots clean:**
+- **Modern crosshair** routes correctly in `gunDrawSight` but only draws in *aim*
+  states; the headless walk never aims. (If "always-on in hip-fire" is wanted, the
+  crosshair must be force-drawn in hip-fire — a small follow-up.)
+- **Hit markers** trigger from the correct hit-detect site, but need a registered
+  hit (combat) to render.
+- **Gamepad input feel** has no pad in the headless harness; defaults reproduce the
+  vanilla linear map exactly.
+
+---
+
 ## Guiding principles
 
 1. **Everything is opt-in and default-off.** With all flags off, the build is
