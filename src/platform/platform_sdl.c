@@ -951,6 +951,11 @@ float g_pcMouseSensitivity = 0.15f; /* configurable mouse sensitivity */
 float g_pcMouseSensAim = 0.05f;     /* aim-mode mouse sensitivity */
 int g_pcInvertY = 0;                /* invert Y axis */
 float g_pcGamepadLookSpeed = 8.0f;  /* gamepad right stick scaling */
+/* Opt-in right-stick feel knobs (all default to vanilla-identity). */
+float g_pcGamepadLookCurve = 1.0f;  /* response exponent on |stick|; 1.0 = linear (vanilla) */
+float g_pcGamepadDeadzone = 0.2441f;/* radial inner deadzone fraction (legacy 8000/32767 corner) */
+int g_pcGamepadRadialDeadzone = 0;  /* 0 = legacy per-axis square; 1 = radial rescale-from-edge */
+int g_pcGamepadFpsScale = 0;        /* 0 = vanilla per-frame; 1 = scale look by frame delta */
 
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
@@ -1528,6 +1533,26 @@ void platformRegisterConfig(void)
                           "--config-override Input.GamepadLookSpeed=VALUE",
                           "Gamepad look speed",
                           "Right-stick look speed multiplier.");
+    settingsRegisterFloat("Input.GamepadLookCurve", &g_pcGamepadLookCurve, 1.0f, 1.0f, 4.0f,
+                          SETTING_SCOPE_LIVE, "GE007_GAMEPAD_LOOK_CURVE",
+                          "--config-override Input.GamepadLookCurve=VALUE",
+                          "Gamepad look curve",
+                          "Response exponent: 1.0 linear (vanilla), >1 finer near center.");
+    settingsRegisterFloat("Input.GamepadDeadzone", &g_pcGamepadDeadzone, 0.2441f, 0.0f, 0.9f,
+                          SETTING_SCOPE_LIVE, "GE007_GAMEPAD_DEADZONE",
+                          "--config-override Input.GamepadDeadzone=VALUE",
+                          "Gamepad deadzone",
+                          "Right-stick inner deadzone as a fraction of full deflection (radial mode).");
+    settingsRegisterInt("Input.GamepadRadialDeadzone", &g_pcGamepadRadialDeadzone, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_GAMEPAD_RADIAL_DEADZONE",
+                        "--config-override Input.GamepadRadialDeadzone=VALUE",
+                        "Radial deadzone",
+                        "1 = circular deadzone with rescale-from-edge; 0 = legacy square.");
+    settingsRegisterInt("Input.GamepadFpsScale", &g_pcGamepadFpsScale, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_GAMEPAD_FPS_SCALE",
+                        "--config-override Input.GamepadFpsScale=VALUE",
+                        "FPS-independent gamepad",
+                        "Scale right-stick look by frame delta so speed is fps-independent.");
 
     /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
      * when 0 every ADS branch is bypassed and behavior is byte-identical. */
@@ -1705,10 +1730,16 @@ void platformGetPadRightStick(int k, int *rx_out, int *ry_out) {
     int rx = 0, ry = 0;
 
     if (k >= 0 && k < PLATFORM_MAX_PADS && (gc = g_pads[k].handle) != NULL) {
+        /* Default: legacy per-axis square deadzone (|axis|<8000 -> 0). When the
+         * opt-in radial deadzone is on, relax this pre-clip to a small noise
+         * floor so lvl.c can apply a true radial magnitude deadzone + rescale
+         * (otherwise the square clip would zero diagonals before lvl.c sees
+         * them). Default (flag 0) keeps the exact vanilla 8000 clip. */
+        int dz_axis = g_pcGamepadRadialDeadzone ? 1638 : 8000;
         rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX);
         ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY);
-        if (rx > -8000 && rx < 8000) rx = 0;
-        if (ry > -8000 && ry < 8000) ry = 0;
+        if (rx > -dz_axis && rx < dz_axis) rx = 0;
+        if (ry > -dz_axis && ry < dz_axis) ry = 0;
     }
 #ifdef MACOS_APP_BUNDLE
     /* The Swift bridge only feeds player 1. */

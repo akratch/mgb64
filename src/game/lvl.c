@@ -5781,12 +5781,51 @@ void lvlViewMoveTick(void)
              * Scale: 32767 → ~g_pcGamepadLookSpeed pixels per frame (tuned for 60fps).
              * Aim mode uses 1/3 sensitivity like mouse. */
             extern float g_pcGamepadLookSpeed;
+            extern int g_pcGamepadRadialDeadzone;
+            extern float g_pcGamepadDeadzone;
+            extern float g_pcGamepadLookCurve;
+            extern int g_pcGamepadFpsScale;
             if (grx != 0 || gry != 0) {
                 f32 gp_scale = g_CurrentPlayer->insightaimmode
                              ? g_pcGamepadLookSpeed / 3.0f
                              : g_pcGamepadLookSpeed;
-                mdx += (int)((f32)grx / 32767.0f * gp_scale);
-                mdy += (int)((f32)gry / 32767.0f * gp_scale);
+                /* Normalized stick axes. Default path (all knobs at identity)
+                 * reduces to the vanilla linear map below, byte-for-byte. */
+                f32 nx = (f32)grx / 32767.0f;
+                f32 ny = (f32)gry / 32767.0f;
+                /* (1) Radial deadzone + rescale-from-edge (opt-in). The platform
+                 * relaxes its square pre-clip to a noise floor when this flag is
+                 * on, so nx/ny carry true diagonal magnitude here. */
+                if (g_pcGamepadRadialDeadzone) {
+                    f32 mag = sqrtf(nx * nx + ny * ny);
+                    f32 dz = g_pcGamepadDeadzone;
+                    if (mag <= dz || mag <= 0.0f) {
+                        nx = 0.0f;
+                        ny = 0.0f;
+                    } else {
+                        f32 rescaled = (mag - dz) / (1.0f - dz);
+                        if (rescaled > 1.0f) rescaled = 1.0f;
+                        f32 inv = rescaled / mag;
+                        nx *= inv;
+                        ny *= inv;
+                    }
+                }
+                /* (2) Response curve: magnitude-preserving exponent (opt-in). */
+                if (g_pcGamepadLookCurve != 1.0f) {
+                    f32 mag = sqrtf(nx * nx + ny * ny);
+                    if (mag > 0.0001f) {
+                        f32 shaped = powf(mag, g_pcGamepadLookCurve);
+                        f32 inv = shaped / mag;
+                        nx *= inv;
+                        ny *= inv;
+                    }
+                }
+                /* (3) FPS-independent gamepad look (opt-in). Multiplies ONLY the
+                 * gamepad term, never the mouse delta already in mdx. At locked
+                 * 60fps g_GlobalTimerDelta==1.0 so this is a no-op even when on. */
+                f32 fps = g_pcGamepadFpsScale ? g_GlobalTimerDelta : 1.0f;
+                mdx += (int)(nx * gp_scale * fps);
+                mdy += (int)(ny * gp_scale * fps);
             }
 
             if (mdx != 0 || mdy != 0) {
