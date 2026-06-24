@@ -2970,6 +2970,7 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
     static f32 s_heavy_offset_y = 0.0f;
     static f32 s_heavy_offset_z = 0.0f;
     static f32 s_heavy_scale = 1.02f;
+    static f32 s_global_vm_scale = 1.0f;   /* GE007_VIEWMODEL_TWEAK global proportion mult (1.0 = identity) */
     f32 yaw_to_apply = 0.0f;
     f32 pitch_to_apply = 0.0f;
     f32 roll_to_apply = 0.0f;
@@ -3003,6 +3004,7 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         const char *heavy_y_env = getenv("GE007_FP_HEAVY_Y");
         const char *heavy_z_env = getenv("GE007_FP_HEAVY_Z");
         const char *heavy_scale_env = getenv("GE007_FP_HEAVY_SCALE");
+        const char *vm_tweak_env = getenv("GE007_VIEWMODEL_TWEAK");
         const char *glaunch_yaw_env = getenv("GE007_FP_GLAUNCH_YAW_DEG");
         const char *glaunch_pitch_env = getenv("GE007_FP_GLAUNCH_PITCH_DEG");
         const char *glaunch_roll_env = getenv("GE007_FP_GLAUNCH_ROLL_DEG");
@@ -3052,6 +3054,11 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         }
         if (heavy_scale_env != NULL && heavy_scale_env[0] != '\0') {
             s_heavy_scale = atof(heavy_scale_env);
+        }
+        if (vm_tweak_env != NULL && vm_tweak_env[0] != '\0') {
+            s_global_vm_scale = (f32)atof(vm_tweak_env);
+            if (s_global_vm_scale < 0.5f) s_global_vm_scale = 0.5f;
+            if (s_global_vm_scale > 2.0f) s_global_vm_scale = 2.0f;
         }
         if (glaunch_yaw_env != NULL && glaunch_yaw_env[0] != '\0') {
             s_glaunch_yaw_rad = atof(glaunch_yaw_env) * 3.14159265f / 180.0f;
@@ -3172,7 +3179,7 @@ static void portBuildFirstPersonWeaponRoot(Mtxf *dst,
         dst->m[3][2] += offset_z;
     }
 
-    matrix_scalar_multiply(0.1f * scale_to_apply, dst->m[0]);
+    matrix_scalar_multiply(0.1f * scale_to_apply * s_global_vm_scale, dst->m[0]);
 }
 
 static void portSetFirstPersonAimPoint(struct hand *hand, const Mtxf *root_mtx)
