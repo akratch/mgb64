@@ -13,7 +13,14 @@
 #define SMOKE_PARTS_LEN 10
 #define SCORCH_BUFFER_LEN 20
 #define IMPACT_TYPE_LEN 20
+#ifdef NATIVE_PORT
+/* 400 (was 100, N64): PC has ample MEMPOOL_STAGE; ~84B/entry => ~33KB. Lengthens
+ * decal persistence; SMOKE_PARTS_LEN(=10) still controls only the newest-10 fade
+ * ramp. Lives in MEMPOOL_STAGE, NOT the dyn 512KB VTX pool, so no dyn change. */
+#define BULLET_IMPACT_BUFFER_LEN 400
+#else
 #define BULLET_IMPACT_BUFFER_LEN 100
+#endif
 #define MAX_FLYING_PARTICLES 200
 
 typedef struct s_smoketype {
