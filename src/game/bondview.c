@@ -14316,8 +14316,8 @@ static f32 bondviewGetNativeBaseFovY(void)
     if (g_pcFovY < 45.0f) {
         return 45.0f;
     }
-    if (g_pcFovY > 90.0f) {
-        return 90.0f;
+    if (g_pcFovY > 105.0f) {
+        return 105.0f;
     }
 
     return g_pcFovY;
@@ -14325,7 +14325,7 @@ static f32 bondviewGetNativeBaseFovY(void)
 
 /* ADS-0.2: public, linkable wrapper around the static base-FOV resolver so ADS
  * code in ads_profiles.c / lvl.c can compute mild zooms at query time. Returns
- * the runtime base FOV-Y (user-settable Video.FovY, clamped to [45,90]). */
+ * the runtime base FOV-Y (user-settable Video.FovY, clamped to [45,105]). */
 f32 bondviewGetBaseFovY(void)
 {
     return bondviewGetNativeBaseFovY();

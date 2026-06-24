@@ -1528,11 +1528,11 @@ void platformRegisterConfig(void)
                          "--config-override Video.MSAA=VALUE",
                          "MSAA",
                          "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
-    settingsRegisterFloat("Video.FovY", &g_pcFovY, 60.0f, 45.0f, 90.0f,
+    settingsRegisterFloat("Video.FovY", &g_pcFovY, 60.0f, 45.0f, 105.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOV_Y",
                           "--config-override Video.FovY=VALUE",
                           "Vertical FOV",
-                          "Gameplay vertical field of view in degrees.");
+                          "Gameplay vertical field of view in degrees (45-105). 60 is the original feel; higher widens peripheral view.");
     settingsRegisterFloat("Video.FogDensity", &g_pcFogDensity, 1.0f, 0.25f, 4.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOG_DENSITY",
                           "--config-override Video.FogDensity=VALUE",
