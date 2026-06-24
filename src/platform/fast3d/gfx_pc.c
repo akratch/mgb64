@@ -3329,6 +3329,7 @@ static void gfx_invalidate_evicted_texture_node(struct TextureHashmapNode *victi
 
 struct GfxDimensions gfx_current_dimensions;
 extern float g_pcRenderScale;
+extern float g_pcFogDensity; /* GE007_FOG_DENSITY: cosmetic haze multiplier (1.0 = identity, AI-neutral) */
 
 static float gfx_clamped_render_scale(void) {
     if (g_pcRenderScale < 1.0f) {
@@ -9936,7 +9937,14 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         if (rsp.geometry_mode & G_FOG) {
             float fog_depth = 0.0f;
             float fog_coord = gfx_fog_coord_for_vertex(z, w, &fog_depth);
-            float fog_z = fog_coord * rsp.fog_mul + rsp.fog_offset;
+            /* GE007_FOG_DENSITY: cosmetic haze multiplier on the normalized fog coord,
+               applied before fog_mul so fog_offset (near-edge bias) is preserved.
+               Default 1.0 makes this multiply bit-identical to the original; the
+               settings layer clamps the value to [0.25, 4.0]. AI sight range is
+               unaffected (this never touches g_ScaledFarFogIntensity / viSetZRange). */
+            float fog_density = g_pcFogDensity;
+            if (!portFloatIsFinite(fog_density) || fog_density < 0.0f) fog_density = 1.0f;
+            float fog_z = (fog_coord * fog_density) * rsp.fog_mul + rsp.fog_offset;
             if (!portFloatIsFinite(fog_z)) fog_z = 0.0f;
             if (fog_z < 0) fog_z = 0;
             if (fog_z > 255) fog_z = 255;

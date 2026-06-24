@@ -166,6 +166,7 @@ f32 g_pcVignette = 0.0f;
 s32 g_pcBloom = 0;
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
+f32 g_pcFogDensity = 1.0f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1506,6 +1507,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.FovY=VALUE",
                           "Vertical FOV",
                           "Gameplay vertical field of view in degrees.");
+    settingsRegisterFloat("Video.FogDensity", &g_pcFogDensity, 1.0f, 0.25f, 4.0f,
+                          SETTING_SCOPE_LIVE, "GE007_FOG_DENSITY",
+                          "--config-override Video.FogDensity=VALUE",
+                          "Fog density",
+                          "Cosmetic haze thickness multiplier. 1.0 leaves fog unchanged; AI sight range is unaffected.");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),
