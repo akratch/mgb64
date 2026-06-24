@@ -7,6 +7,9 @@
 #include "bondview.h"
 #include "fog.h"
 #include <limits.h>
+#ifdef GE007_ATMOS_GRADE
+#include <stdlib.h>
+#endif
 
 #ifdef NATIVE_PORT
 extern s32 getPlayerCount(void);
@@ -282,6 +285,75 @@ f32 fogGetScaledFarFogIntensitySquared(void)
 /**
  * Address 0x7F0BA758.
 */
+#ifdef GE007_ATMOS_GRADE
+/* GE007_ATMOS_GRADE: cosmetic per-level sky/cloud color grade applied to the
+   unified g_CurrentEnvironment RGB at the load chokepoint. Both VERSION_EU and
+   non-EU table arms (and the solosky/fogless paths) funnel through here, so a
+   single helper covers all arms. Distance/visibility columns are never touched,
+   so AI sight range (g_ScaledFarFogIntensity) is unaffected. Identity at
+   defaults (sat=1.0, val=1.0): the luma mix and value scale return the input
+   unchanged, so the graded build is numerically identical to stock when the
+   GE007_ATMOS_GRADE_SAT / GE007_ATMOS_GRADE_VAL env vars are unset. */
+static f32 g_atmosSatScale = 1.0f; /* 1.0 = identity saturation */
+static f32 g_atmosValScale = 1.0f; /* 1.0 = identity brightness */
+static s32 g_atmosInit = 0;
+
+static void atmosGradeInit(void)
+{
+    const char *s;
+    if (g_atmosInit) {
+        return;
+    }
+    g_atmosInit = 1;
+    s = getenv("GE007_ATMOS_GRADE_SAT");
+    if (s != NULL && s[0] != '\0') {
+        g_atmosSatScale = (f32) atof(s);
+    }
+    s = getenv("GE007_ATMOS_GRADE_VAL");
+    if (s != NULL && s[0] != '\0') {
+        g_atmosValScale = (f32) atof(s);
+    }
+}
+
+/* Saturate about luma then scale by value. clamp_top: clamp to 255 (sky u8) or
+   only to >=0 (cloud f32, preserving original additive headroom). */
+static f32 atmosGradeChan(f32 c, f32 luma, s32 clamp_top)
+{
+    f32 v = (luma + (c - luma) * g_atmosSatScale) * g_atmosValScale;
+    if (v < 0.0f) {
+        v = 0.0f;
+    }
+    if (clamp_top && v > 255.0f) {
+        v = 255.0f;
+    }
+    return v;
+}
+
+static void atmosGradeEnv(void)
+{
+    f32 r, g, b, luma;
+    atmosGradeInit();
+
+    /* sky base RGB (u8) -- clamp 0..255, round before truncating */
+    r = (f32) g_CurrentEnvironment.Red;
+    g = (f32) g_CurrentEnvironment.Green;
+    b = (f32) g_CurrentEnvironment.Blue;
+    luma = 0.299f * r + 0.587f * g + 0.114f * b;
+    g_CurrentEnvironment.Red   = (u8) (atmosGradeChan(r, luma, 1) + 0.5f);
+    g_CurrentEnvironment.Green = (u8) (atmosGradeChan(g, luma, 1) + 0.5f);
+    g_CurrentEnvironment.Blue  = (u8) (atmosGradeChan(b, luma, 1) + 0.5f);
+
+    /* cloud RGB (f32) -- keep float, clamp only >=0 to preserve additive headroom */
+    r = g_CurrentEnvironment.CloudRed;
+    g = g_CurrentEnvironment.CloudGreen;
+    b = g_CurrentEnvironment.CloudBlue;
+    luma = 0.299f * r + 0.587f * g + 0.114f * b;
+    g_CurrentEnvironment.CloudRed   = atmosGradeChan(r, luma, 0);
+    g_CurrentEnvironment.CloudGreen = atmosGradeChan(g, luma, 0);
+    g_CurrentEnvironment.CloudBlue  = atmosGradeChan(b, luma, 0);
+}
+#endif
+
 void fogLoadCurrentEnvironment(EnvironmentRecord *arg0)
 {
     f32 zrange[2]; // 48
@@ -335,6 +407,10 @@ void fogLoadCurrentEnvironment(EnvironmentRecord *arg0)
     g_CurrentEnvironment.WaterBlue = arg0->Sky.WaterBlue;
     g_CurrentEnvironment.WaterConcavity = arg0->Sky.WaterConcavity;
 
+#ifdef GE007_ATMOS_GRADE
+    atmosGradeEnv();
+#endif
+
 #if defined(VERSION_EU)
     #define FOG_ZERO 0
 #else
@@ -383,6 +459,10 @@ void fogLoadFoglessCurrentEnvironment(EnvironmentFoglessRecord *arg0)
     g_CurrentEnvironment.WaterGreen = arg0->WaterGreen;
     g_CurrentEnvironment.WaterBlue = arg0->WaterBlue;
     g_CurrentEnvironment.WaterConcavity = arg0->WaterConcavity;
+
+#ifdef GE007_ATMOS_GRADE
+    atmosGradeEnv();
+#endif
 }
 
 
