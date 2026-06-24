@@ -41,6 +41,7 @@ extern int g_pcRetroFilterMode;
 extern float g_pcVideoSaturation;
 extern float g_pcVideoContrast;
 extern float g_pcVideoBrightness;
+extern int g_pcOutputDither;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1561,7 +1562,8 @@ static bool gfx_opengl_output_color_adjust_active(void) {
            gamma > 1.001f ||
            gfx_opengl_output_saturation() != 1.0f ||
            gfx_opengl_output_contrast() != 1.0f ||
-           gfx_opengl_output_brightness() != 0.0f;
+           gfx_opengl_output_brightness() != 0.0f ||
+           g_pcOutputDither != 0;
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1611,7 +1613,13 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uContrast;\n"
         "uniform float uBrightness;\n"
         "uniform int uApplyPost;\n"
+        "uniform int uDither;\n"
         "uniform int uFilterMode;\n"
+        "const float kBayer4[16] = float[16](\n"
+        "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
+        "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
+        "    3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,\n"
+        "   15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0);\n"
         "in vec2 vTexCoord;\n"
         "out vec4 outColor;\n"
         "vec4 sampleNearest(vec2 dstCoord) {\n"
@@ -1676,6 +1684,12 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "        rgb = clamp(rgb, 0.0, 1.0);\n"
         "    }\n"
         "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
+        "    if (uApplyPost == 1 && uDither == 1) {\n"
+        "        ivec2 dp = ivec2(gl_FragCoord.xy) & 3;\n"
+        "        float t = kBayer4[dp.y * 4 + dp.x] - 0.5;\n"
+        "        rgb += vec3(t / 255.0);\n"
+        "        rgb = clamp(rgb, 0.0, 1.0);\n"
+        "    }\n"
         "    outColor = vec4(rgb, color.a);\n"
         "}\n";
 
@@ -1776,6 +1790,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 gfx_opengl_output_brightness());
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uApplyPost"),
                 apply_post);
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uDither"),
+                g_pcOutputDither ? 1 : 0);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);
