@@ -2245,6 +2245,48 @@ static Model *portEnsureWatchModel(struct player *player, ModelFileHeader *heade
     return player->watch_model;
 }
 
+/* Persistent header storage for the single-player Bond viewer BODY model.
+ *
+ * solo_char_load originally assembled the body INTO the GUNRIGHT weapon-header
+ * slot (copy_of_body_obj_header[GUNRIGHT], via get_ptr_itemheader_in_hand) and
+ * pinned chr->model->obj to it through animInit(). One frame after solo_char_load
+ * clears lock_hand_model[GUNRIGHT], the first-person weapon loader
+ * (used_to_load_1st_person_model_on_demand, gun.c) overwrites that entire slot
+ * with the equipped weapon's header, dropping the body's requiredRenderPosCount
+ * from ~21 to 6. chrTickBeams then sizes render_pos to 6, so the body display
+ * list's references to joints 6..20 read uninitialised bone matrices and the
+ * skeleton collapses to nothing — Bond is invisible for the whole intro swirl
+ * and outro pose even though drawjointlist keeps running (render_count climbs).
+ *
+ * Giving the body its own header de-aliases model->obj from the weapon slot, so
+ * the FP weapon loader can no longer clobber it. The body's node data lives in
+ * bodyBuffer (which the weapon loader never touches), so the body tree stays
+ * valid. This is the getPlayerCount()==1 branch only, so a single persistent
+ * header reused across levels suffices; calloc'd once, like the watch model. */
+static ModelFileHeader *portBondBodyHeader(void)
+{
+    static ModelFileHeader *header = NULL;
+    static int enabled = -1;
+    /* INCOMPLETE FIX — opt-in only (default off). De-aliasing the body header
+     * stops the render_pos count collapsing 21->6 (Bond no longer disappears),
+     * but exposes a SECOND bug: the runtime-assembled viewer body (separate
+     * body+head via makeonebody) has a RootNode(21)/Skeleton(body-only) joint
+     * mismatch, so the head joints' matrices are never filled and the body
+     * renders as a degenerate spiky shape. Until that is fixed, returning NULL
+     * (-> original GUNRIGHT-slot aliasing -> body simply absent) is preferable
+     * to a garbled body, so this stays behind GE007_BOND_BODY_FIX. */
+    if (enabled < 0) {
+        enabled = (getenv("GE007_BOND_BODY_FIX") != NULL);
+    }
+    if (!enabled) {
+        return NULL;
+    }
+    if (header == NULL) {
+        header = (ModelFileHeader *)calloc(1, sizeof(ModelFileHeader));
+    }
+    return header;
+}
+
 static f32 portGetWatchPauseAdjust(struct player *player)
 {
     Model *watchmodel;
@@ -2397,7 +2439,18 @@ void solo_char_load(void)
             remove_item_in_hand(GUNLEFT);
             remove_item_in_hand(GUNRIGHT);
             texInitPool(&texPool, headBuffer, headBufSize);
+#ifdef NATIVE_PORT
+            /* Assemble the body into its OWN persistent header, not the GUNRIGHT
+             * weapon slot, so model->obj is never clobbered by the FP weapon
+             * loader (see portBondBodyHeader). Fall back to the slot only if the
+             * one-time allocation failed. */
+            p_bodyHeader = portBondBodyHeader();
+            if (p_bodyHeader == NULL) {
+                p_bodyHeader = get_ptr_itemheader_in_hand(GUNRIGHT);
+            }
+#else
             p_bodyHeader = get_ptr_itemheader_in_hand(GUNRIGHT);
+#endif
 
             p_bodyEntry = &c_item_entries[body];
             p_bodyEntryHeader = p_bodyEntry->header;
@@ -2455,7 +2508,12 @@ void solo_char_load(void)
          * that exhausts MEMPOOL_STAGE. */
         if (c_item_entries[body].header->RootNode == NULL && getPlayerCount() == 1)
         {
-            ModelFileHeader *pcopy = get_ptr_itemheader_in_hand(GUNRIGHT);
+            /* Source the converted body tree from the body's dedicated header
+             * (where it was assembled above), not the GUNRIGHT weapon slot. */
+            ModelFileHeader *pcopy = portBondBodyHeader();
+            if (pcopy == NULL) {
+                pcopy = get_ptr_itemheader_in_hand(GUNRIGHT);
+            }
             copyModelFileHeaderFields(c_item_entries[body].header, pcopy);
         }
         else
