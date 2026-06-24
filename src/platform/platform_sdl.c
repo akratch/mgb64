@@ -169,6 +169,7 @@ f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
+f32 g_pcViewmodelFov = 60.0f;    /* remaster default: weapon rendered at fixed 60deg ref FOV regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
 f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
@@ -1533,6 +1534,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.FovY=VALUE",
                           "Vertical FOV",
                           "Gameplay vertical field of view in degrees (45-105). 60 is the original feel; higher widens peripheral view.");
+    settingsRegisterFloat("Video.ViewmodelFov", &g_pcViewmodelFov, 60.0f, 0.0f, 90.0f,
+                          SETTING_SCOPE_LIVE, "GE007_VIEWMODEL_FOV",
+                          "--config-override Video.ViewmodelFov=VALUE",
+                          "Viewmodel FOV",
+                          "Vertical FOV used to project the first-person weapon. Fixed reference so the gun does not warp at wide world FOV. 0 follows world FOV (vanilla).");
     settingsRegisterFloat("Video.FogDensity", &g_pcFogDensity, 1.0f, 0.25f, 4.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOG_DENSITY",
                           "--config-override Video.FogDensity=VALUE",

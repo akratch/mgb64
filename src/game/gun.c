@@ -171,6 +171,7 @@ extern s32 g_pcAdsEnabled;
 extern s32 g_pcAdsModelPose;
 extern f32 g_pcAdsRecoilReduce;
 extern f32 g_pcViewmodelSway;
+extern f32 g_pcViewmodelFov;
 
 /* Returns the ADS pose blend fraction [0,1] for `hand` when that specific hand
  * is aiming down sights and pose is enabled; otherwise 0.0 (a no-op everywhere
@@ -14777,8 +14778,26 @@ void sub_GAME_7F062BE4(Gfx **arg0) {
             {
                 static Mtxf s_weaponProjF __attribute__((aligned(16)));
                 u16 wpn_persp_norm;
-                f32 weapon_fovy = getPlayer_c_perspfovy();
+                f32 world_fovy = getPlayer_c_perspfovy();
+                f32 weapon_fovy;
                 f32 weapon_aspect = getPlayer_c_perspaspect();
+
+                /* Decouple the viewmodel FOV from the world FOV so the gun does
+                 * not stretch at wide Video.FovY. With g_pcViewmodelFov>0 the
+                 * weapon is rendered at that fixed reference FOV, but we still
+                 * track ADS/zoom by scaling with how much the world FOV has
+                 * narrowed below its (clamped) base. c_perspfovy is left
+                 * untouched (it also feeds LOD/cull scale c_scaley), so this is
+                 * a purely local substitution. 0.0 = follow world FOV (vanilla
+                 * coupling, A/B identity). At default (world 60, ref 60) this is
+                 * bit-for-bit the old getPlayer_c_perspfovy() projection. */
+                if (g_pcViewmodelFov > 0.0f) {
+                    f32 base = bondviewGetBaseFovY();
+                    f32 zoom_ratio = (base > 0.0f) ? (world_fovy / base) : 1.0f;
+                    weapon_fovy = g_pcViewmodelFov * zoom_ratio;
+                } else {
+                    weapon_fovy = world_fovy;
+                }
 
                 if (weapon_fovy <= 0.0f) {
                     weapon_fovy = g_ViBackData->fovy;
