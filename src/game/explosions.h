@@ -21,7 +21,15 @@
 #else
 #define BULLET_IMPACT_BUFFER_LEN 100
 #endif
+#ifdef NATIVE_PORT
+/* 400 (was 200, N64): richer blast debris. ~116B/entry in MEMPOOL_STAGE => ~23KB;
+ * render path allocs 1 dynAllocateMatrix(64B) per VISIBLE particle from the
+ * separate 512KB dyn VTX pool (worst-case +25KB/frame, ample headroom). NOT the
+ * dyn pool sizing; max_particles is still divided by getPlayerCount() at alloc. */
+#define MAX_FLYING_PARTICLES 400
+#else
 #define MAX_FLYING_PARTICLES 200
+#endif
 
 typedef struct s_smoketype {
     s16 duration;
