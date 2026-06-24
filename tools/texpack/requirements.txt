@@ -1,0 +1,3 @@
+# tools/texpack/build_pack.py — only needed to decode the engine's .ppm texture
+# dumps. Once the engine dumps PNG directly (Phase 2 STEP 4) this becomes optional.
+Pillow>=10.0

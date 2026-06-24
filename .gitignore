@@ -95,6 +95,14 @@ diag_*
 # (re-allow project-authored images by exception if ever needed, e.g.:)
 # !docs/img/*.png
 
+# --- HD texture-pack tooling (tools/texpack) ---
+# Fetched-on-demand Real-ESRGAN binary + models (third-party, large) and build
+# staging. HD packs / texture dumps are ROM-derived and already excluded by the
+# *.png / *.ppm rules above; the manifest is dump-derived metadata.
+tools/texpack/.bin/
+tools/texpack/**/.stage/
+*.texmanifest.csv
+
 # --- Tooling intermediates ---
 __pycache__/
 *.pyc

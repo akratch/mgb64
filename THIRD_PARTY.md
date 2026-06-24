@@ -109,8 +109,11 @@ See `ROADMAP.md` for the staged cleanup plan.
 | `tools/extractor/puff.c`, `tools/extractor/puff.h` | Mark Adler's `puff` inflate implementation, locally modified as noted in-file | zlib-style license retained in `puff.h`; see `tools/extractor/README.md` | https://zlib.net/puff/ |
 | `tools/mktex/src/libpdtex/reader.c` | Texture decompression routines copied/adapted from Perfect Dark decompilation `texdecompress.c` | MIT, via upstream Perfect Dark decompilation; see `tools/mktex/LICENSE.perfect_dark` and `tools/mktex/PROVENANCE.md` | https://github.com/n64decomp/perfect_dark |
 | `tools/armips/` (`tools/armips.cpp`) | armips assembler, including embedded tinyformat formatting helper | armips MIT and tinyformat Boost Software License; notices retained in `tools/armips.cpp` | https://github.com/Kingcom/armips |
+| `tools/texpack/.bin/` (fetched, **not** committed) | Real-ESRGAN ncnn-vulkan upscaler + models, used by the optional HD texture-pack pipeline | BSD-3-Clause (Real-ESRGAN); model weights per upstream. Fetched on demand by `tools/texpack/fetch_realesrgan.sh` into a gitignored cache — never tracked in this repo. | https://github.com/xinntao/Real-ESRGAN |
 
-See each component's directory for its own license/README where present.
+See each component's directory for its own license/README where present. The
+`tools/texpack/` scripts are first-party (this project); they fetch the third-party
+upscaler at runtime rather than vendoring it.
 
 ## Attribution & thanks
 
