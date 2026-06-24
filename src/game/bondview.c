@@ -2263,28 +2263,50 @@ static Model *portEnsureWatchModel(struct player *player, ModelFileHeader *heade
  * bodyBuffer (which the weapon loader never touches), so the body tree stays
  * valid. This is the getPlayerCount()==1 branch only, so a single persistent
  * header reused across levels suffices; calloc'd once, like the watch model. */
+static int portBondBodyFixEnabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        /* Default ON; set GE007_NO_BOND_BODY_FIX to revert to the original
+         * (invisible) behaviour for A/B. */
+        enabled = (getenv("GE007_NO_BOND_BODY_FIX") == NULL);
+    }
+    return enabled;
+}
+
 static ModelFileHeader *portBondBodyHeader(void)
 {
     static ModelFileHeader *header = NULL;
-    static int enabled = -1;
-    /* INCOMPLETE FIX — opt-in only (default off). De-aliasing the body header
-     * stops the render_pos count collapsing 21->6 (Bond no longer disappears),
-     * but exposes a SECOND bug: the runtime-assembled viewer body (separate
-     * body+head via makeonebody) has a RootNode(21)/Skeleton(body-only) joint
-     * mismatch, so the head joints' matrices are never filled and the body
-     * renders as a degenerate spiky shape. Until that is fixed, returning NULL
-     * (-> original GUNRIGHT-slot aliasing -> body simply absent) is preferable
-     * to a garbled body, so this stays behind GE007_BOND_BODY_FIX. */
-    if (enabled < 0) {
-        enabled = (getenv("GE007_BOND_BODY_FIX") != NULL);
-    }
-    if (!enabled) {
+    if (!portBondBodyFixEnabled()) {
         return NULL;
     }
     if (header == NULL) {
         header = (ModelFileHeader *)calloc(1, sizeof(ModelFileHeader));
     }
     return header;
+}
+
+/* Persistent DATA buffer for the single-player Bond viewer body+head mesh.
+ *
+ * solo_char_load originally loaded the body+head converted RootNode/Vertices/DL
+ * data into the GUNRIGHT *weapon* data buffer (getPlayerWeaponBufferForHand).
+ * That is the data-buffer half of the same aliasing as the header: one frame
+ * after lock_hand_model[GUNRIGHT] is cleared, the FP weapon loader writes the
+ * equipped weapon model into the SAME buffer, so the body's object-space
+ * vertices become garbage and the mesh fans into a degenerate spiky shape (the
+ * bone matrices stay correct, which is why the body is visible-but-garbled once
+ * the header de-alias keeps the render_pos count at 21). Give the body its own
+ * buffer so the FP loader can never overwrite the mesh. Single-player only. */
+static u8 *portBondBodyBuffer(void)
+{
+    static u8 *buf = NULL;
+    if (!portBondBodyFixEnabled()) {
+        return NULL;
+    }
+    if (buf == NULL) {
+        buf = (u8 *)calloc(1, getSizeBufferWeaponInHand(GUNRIGHT));
+    }
+    return buf;
 }
 
 static f32 portGetWatchPauseAdjust(struct player *player)
@@ -2353,6 +2375,19 @@ void solo_char_load(void)
         totalsize = 0;
         bodyBufSize = getSizeBufferWeaponInHand(GUNRIGHT);
         headBufSize = getSizeBufferWeaponInHand(GUNLEFT);
+#ifdef NATIVE_PORT
+        /* Load the 1P viewer body+head MESH into a dedicated data buffer instead
+         * of the GUNRIGHT weapon buffer, so the FP weapon loader cannot overwrite
+         * the body vertices a frame later (see portBondBodyBuffer). Same de-alias
+         * as the header (portBondBodyHeader); both are needed. Falls back to the
+         * weapon buffer if disabled or the one-time alloc failed. */
+        if (getPlayerCount() == 1) {
+            u8 *bond_body_buf = portBondBodyBuffer();
+            if (bond_body_buf != NULL) {
+                bodyBuffer = bond_body_buf;
+            }
+        }
+#endif
         rhandweapID = get_item_in_hand_or_watch_menu(GUNRIGHT);
         body = BODY_Formal_Wear;
         head = HEAD_Male_Brosnan_Default;
