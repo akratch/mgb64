@@ -314,6 +314,7 @@ target_include_directories(ge007 PRIVATE
     src/libultra/audio
     assets
     lib/glad/include
+    lib/stb
     .
 )
 
@@ -460,6 +461,7 @@ if(MACOS_APP_BUNDLE AND APPLE)
         src/libultra/audio
         assets
         lib/glad/include
+        lib/stb
         macos/Sources
         .
     )

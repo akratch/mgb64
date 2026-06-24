@@ -33,6 +33,7 @@
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
 #include "gfx_screen_config.h"
+#include "texture_pack.h"
 #include "bg.h"
 #include "front.h"
 #include "othermodemicrocode.h"
@@ -13727,7 +13728,25 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     gfx_flush();
     uint32_t tex_id = gfx_rapi->new_texture();
     gfx_bind_texture(0, tex_id);
-    if (!gfx_rapi->upload_texture(rgba, w, h)) {
+    /* HD texture pack (Remaster Phase 2): if an artist-supplied PNG exists for this
+     * static token, upload it at its native (higher) resolution INSTEAD of the N64
+     * texels. We replace only the uploaded pixels/dims; w/h stay native below, so
+     * the logical tile dims (and thus UV mapping) are unchanged and the GPU samples
+     * the HD image over [0,1]. Default (no pack dir) => identical to stock. */
+    const uint8_t *upload_rgba = rgba;
+    int upload_w = w, upload_h = h;
+    uint8_t *hd_rgba = NULL;
+    if (texture_pack_enabled()) {
+        int hd_w = 0, hd_h = 0;
+        if (texture_pack_try_load(texturenum, &hd_rgba, &hd_w, &hd_h)) {
+            upload_rgba = hd_rgba;
+            upload_w = hd_w;
+            upload_h = hd_h;
+        }
+    }
+    bool upload_ok = gfx_rapi->upload_texture(upload_rgba, upload_w, upload_h);
+    free(hd_rgba);
+    if (!upload_ok) {
         gfx_force_texture_unit_reload(0);
         gfx_rapi->delete_texture(tex_id);
         free(linear_tex_data);

@@ -171,6 +171,7 @@ f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at
 f32 g_pcFogDensity = 1.0f;
 f32 g_pcViewmodelFov = 60.0f;    /* remaster default: weapon rendered at fixed 60deg ref FOV regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
+char g_pcTexturePack[1024] = ""; /* Video.TexturePack: dir of an HD texture pack (textures/tok####.png). Empty = off (stock, byte-identical). */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
 f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
 f32 g_pcGradeLevelTintR = 1.0f;  /* renderer-internal: per-level tint R */
@@ -1550,6 +1551,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.FogDensity=VALUE",
                           "Fog density",
                           "Cosmetic haze thickness multiplier. 1.0 leaves fog unchanged; AI sight range is unaffected.");
+    settingsRegisterString("Video.TexturePack", g_pcTexturePack, sizeof(g_pcTexturePack), "",
+                           SETTING_SCOPE_RESTART, "GE007_TEXTURE_PACK",
+                           "--config-override Video.TexturePack=PATH",
+                           "HD texture pack",
+                           "Directory of an HD texture pack (textures/tok####.png), built by tools/texpack from your own ROM dump. Empty = off (stock).");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),

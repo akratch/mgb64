@@ -103,6 +103,7 @@ See `ROADMAP.md` for the staged cleanup plan.
 | Path | Component | License | Upstream |
 | --- | --- | --- | --- |
 | `lib/glad/` | glad OpenGL loader (generated, v0.1.36) + Khronos `khrplatform.h` | MIT and Khronos notices — see `lib/glad/LICENSE` | https://github.com/Dav1dde/glad |
+| `lib/stb/stb_image.h` | stb_image v2.30 PNG decoder, used by the optional HD texture-pack loader (`src/platform/texture_pack.c`) | Public domain (Unlicense) / MIT dual — full notice in the file trailer | https://github.com/nothings/stb |
 | `tools/asm-processor/` | asm-processor (MIPS asm pre/post-processor) | The Unlicense (public domain) — see `tools/asm-processor/LICENSE` | https://github.com/simonlindholm/asm-processor |
 | `tools/ido5.3_recomp/` | Local-only placeholder for an external static recompilation of SGI's IDO 5.3 C compiler | No recompilation source or IDO/IRIX compiler input files are redistributed here; this ignored directory must be populated locally for matching-target work | https://github.com/decompals/ido-static-recomp |
 | `tools/gzipsrc/` | gzip source (DEFLATE compression used by the asset pipeline) | GNU GPL v2 or later — see `tools/gzipsrc/COPYING` and `tools/gzipsrc/README.md` | https://www.gnu.org/software/gzip/ |
