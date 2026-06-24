@@ -170,6 +170,7 @@ extern s32 get_debug_007_unlock_flag(void);
 extern s32 g_pcAdsEnabled;
 extern s32 g_pcAdsModelPose;
 extern f32 g_pcAdsRecoilReduce;
+extern f32 g_pcViewmodelSway;
 
 /* Returns the ADS pose blend fraction [0,1] for `hand` when that specific hand
  * is aiming down sights and pose is enabled; otherwise 0.0 (a no-op everywhere
@@ -6378,6 +6379,23 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             gun_pos.x += ads_dx;
             gun_pos.y += ads_dy;
             gun_pos.z += ads_dz;
+        }
+
+        /* Opt-in additive breathing sway (Input.ViewmodelSway). Cosmetic: written
+         * into gun_pos -> mtx_d translation only; the bullet ray (eye->crosshair_angle)
+         * is independent, so aim is unaffected. Phase advances on g_GlobalTimerDelta
+         * (frame-rate independent). Inert when amplitude==0. Suppressed while ADS is
+         * actively converging so it does not fight the sighted pose. NOTE: the look-at
+         * convergence below re-points the barrel from the swayed gun_pos, attenuating
+         * the effective on-screen amplitude (same as the ADS dx/dy/dz precedent). */
+        if (g_pcViewmodelSway > 0.0f && ads_blend <= 0.0f) {
+            static f32 s_sway_phase = 0.0f;
+            f32 amp = g_pcViewmodelSway;
+            s_sway_phase += 0.01666667f * g_GlobalTimerDelta;
+            if (s_sway_phase > 6.2831853f) s_sway_phase -= 6.2831853f;
+            gun_pos.x += amp * 0.6f * sinf(s_sway_phase);
+            gun_pos.y += amp * 0.4f * sinf(s_sway_phase * 2.0f);
+            gun_pos.z += amp * 0.25f * cosf(s_sway_phase);
         }
 #endif
 

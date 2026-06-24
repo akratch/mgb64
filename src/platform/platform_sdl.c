@@ -975,6 +975,7 @@ s32 g_pcAdsModernReticle = 1;     /* Input.AdsModernReticle  modern dot+ticks re
 s32 g_pcAdsSteadyView    = 1;     /* Input.AdsSteadyView     damp walk/strafe head-bob in ADS */
 f32 g_pcAdsBobFloor      = 0.15f; /* Input.AdsBobFloor       residual ADS weapon bob (0=rigid) */
 f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
+f32 g_pcViewmodelSway    = 0.0f;  /* Input.ViewmodelSway     additive breathing sway amplitude (0=off) */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -1632,6 +1633,11 @@ void platformRegisterConfig(void)
                           "--config-override Input.AdsBobFloor=VALUE",
                           "ADS bob floor",
                           "Residual weapon bob kept while aiming (0 = rigid, ~0.15 = subtle).");
+    settingsRegisterFloat("Input.ViewmodelSway", &g_pcViewmodelSway, 0.0f, 0.0f, 3.0f,
+                          SETTING_SCOPE_LIVE, "GE007_VIEWMODEL_SWAY",
+                          "--config-override Input.ViewmodelSway=VALUE",
+                          "Viewmodel sway",
+                          "Additive breathing sway on the first-person weapon (0 = off, 1 = subtle).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {
