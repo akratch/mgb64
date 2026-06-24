@@ -13745,6 +13745,12 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
         }
     }
     bool upload_ok = gfx_rapi->upload_texture(upload_rgba, upload_w, upload_h);
+    if (!upload_ok && hd_rgba != NULL) {
+        /* HD asset rejected (e.g. exceeds GL/backend max size) — fall back to the
+         * native N64 texels so a bad pack asset degrades gracefully to stock
+         * instead of breaking the texture. rgba/w/h are still the native decode. */
+        upload_ok = gfx_rapi->upload_texture(rgba, w, h);
+    }
     free(hd_rgba);
     if (!upload_ok) {
         gfx_force_texture_unit_reload(0);
