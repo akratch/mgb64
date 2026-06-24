@@ -38,6 +38,9 @@ extern float g_pcVideoGamma;
 extern float g_pcRenderScale;
 extern int g_pcMsaaSamples;
 extern int g_pcRetroFilterMode;
+extern float g_pcVideoSaturation;
+extern float g_pcVideoContrast;
+extern float g_pcVideoBrightness;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1534,13 +1537,31 @@ static float gfx_opengl_output_gamma(void) {
     return g_pcVideoGamma;
 }
 
+static float gfx_opengl_output_saturation(void) {
+    float v = g_pcVideoSaturation;
+    return v < 0.0f ? 0.0f : (v > 2.0f ? 2.0f : v);
+}
+
+static float gfx_opengl_output_contrast(void) {
+    float v = g_pcVideoContrast;
+    return v < 0.5f ? 0.5f : (v > 2.0f ? 2.0f : v);
+}
+
+static float gfx_opengl_output_brightness(void) {
+    float v = g_pcVideoBrightness;
+    return v < -0.5f ? -0.5f : (v > 0.5f ? 0.5f : v);
+}
+
 static bool gfx_opengl_output_color_adjust_active(void) {
     float gamma = gfx_opengl_output_gamma();
 
     return g_diag_output_filter_color_scale != 1.0f ||
            g_diag_output_filter_color_bias != 0.0f ||
            gamma < 0.999f ||
-           gamma > 1.001f;
+           gamma > 1.001f ||
+           gfx_opengl_output_saturation() != 1.0f ||
+           gfx_opengl_output_contrast() != 1.0f ||
+           gfx_opengl_output_brightness() != 0.0f;
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1586,6 +1607,10 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uColorScale;\n"
         "uniform float uColorBias;\n"
         "uniform float uGamma;\n"
+        "uniform float uSaturation;\n"
+        "uniform float uContrast;\n"
+        "uniform float uBrightness;\n"
+        "uniform int uApplyPost;\n"
         "uniform int uFilterMode;\n"
         "in vec2 vTexCoord;\n"
         "out vec4 outColor;\n"
@@ -1643,6 +1668,13 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    else if (uFilterMode == 3) color = sampleFitLogicalToDstNearest(gl_FragCoord.xy);\n"
         "    else color = sampleCpuBilinear(gl_FragCoord.xy);\n"
         "    vec3 rgb = clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0);\n"
+        "    if (uApplyPost == 1) {\n"
+        "        rgb += vec3(uBrightness);\n"
+        "        rgb = (rgb - 0.5) * uContrast + 0.5;\n"
+        "        float luma = dot(rgb, vec3(0.299, 0.587, 0.114));\n"
+        "        rgb = mix(vec3(luma), rgb, uSaturation);\n"
+        "        rgb = clamp(rgb, 0.0, 1.0);\n"
+        "    }\n"
         "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
         "    outColor = vec4(rgb, color.a);\n"
         "}\n";
@@ -1720,7 +1752,8 @@ static void gfx_opengl_ensure_filter_texture(GLuint *tex_id,
 static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                                                   int src_w, int src_h,
                                                   int dst_w, int dst_h,
-                                                  int filter_mode) {
+                                                  int filter_mode,
+                                                  int apply_post) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_id);
     glUseProgram(g_output_filter_program);
@@ -1735,6 +1768,14 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_diag_output_filter_color_bias);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uGamma"),
                 gfx_opengl_output_gamma());
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uSaturation"),
+                gfx_opengl_output_saturation());
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uContrast"),
+                gfx_opengl_output_contrast());
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uBrightness"),
+                gfx_opengl_output_brightness());
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uApplyPost"),
+                apply_post);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);
@@ -1873,7 +1914,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
             gfx_opengl_draw_output_filter_texture(g_output_filter_copy_tex,
                                                   width, height,
                                                   logical_w, logical_h,
-                                                  2);
+                                                  2, 0);
             filter_source_tex = g_output_filter_logical_tex;
             filter_source_w = logical_w;
             filter_source_h = logical_h;
@@ -1892,7 +1933,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
         gfx_opengl_draw_output_filter_texture(filter_source_tex,
                                               filter_source_w, filter_source_h,
                                               filter_w, filter_h,
-                                              0);
+                                              0, 0);
 
         if (use_logical_size) {
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -1902,14 +1943,14 @@ static void gfx_opengl_apply_output_vi_filter(void) {
                 gfx_opengl_draw_output_filter_texture(g_output_filter_low_tex,
                                                       filter_w, filter_h,
                                                       logical_w, logical_h,
-                                                      0);
+                                                      0, 0);
 
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glViewport(0, 0, width, height);
                 gfx_opengl_draw_output_filter_texture(g_output_filter_logical_tex,
                                                       logical_w, logical_h,
                                                       width, height,
-                                                      3);
+                                                      3, 1);
             }
         } else {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1917,7 +1958,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
             gfx_opengl_draw_output_filter_texture(g_output_filter_low_tex,
                                                   filter_w, filter_h,
                                                   width, height,
-                                                  0);
+                                                  0, 1);
         }
     }
 
