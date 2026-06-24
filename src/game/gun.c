@@ -33213,9 +33213,7 @@ Gfx *drawDamageOverlay(Gfx *gdl) {
  * scale with the view height so it stays crisp in split-screen / any resolution.
  * Gated by Input.AdsModernReticle; assumes the centered-crosshair ADS aim. */
 extern s32 g_pcAdsModernReticle;
-Gfx *drawModernAdsReticle(Gfx *gdl) {
-    s32 cx = viGetViewLeft() + viGetViewWidth() / 2;
-    s32 cy = viGetViewTop() + viGetViewHeight() / 2;
+Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy) {
     s32 vh = viGetViewHeight();
     s32 thk, gap, len, hx, hy, o;
     /* RGBA5551. Red is an homage to the classic GoldenEye crosshair; a 1px dark
@@ -33285,6 +33283,27 @@ void gunDrawSight(Gfx **gdl) {
             static int s_dumped_crosshair = 0;
             Gfx *dl = *gdl;
 
+            /* Always-on modern crosshair (Input.ModernCrosshair): when enabled,
+             * draw the crisp dot+ticks reticle in place of the textured crosshair
+             * in normal play. Tracks the drifting crosshair via crosshair_angle
+             * (same logical-pixel space incl. pane offset); snaps to pane center
+             * while aiming (insightaimmode). OFF by default => no-op. */
+            {
+                extern s32 g_pcModernCrosshair;
+                if (g_pcModernCrosshair) {
+                    s32 cx, cy;
+                    if (g_CurrentPlayer->insightaimmode) {
+                        cx = viGetViewLeft() + viGetViewWidth() / 2;
+                        cy = viGetViewTop() + viGetViewHeight() / 2;
+                    } else {
+                        cx = (s32)g_CurrentPlayer->crosshair_angle.f[0];
+                        cy = (s32)g_CurrentPlayer->crosshair_angle.f[1];
+                    }
+                    *gdl = drawModernAdsReticle(*gdl, cx, cy);
+                    return;
+                }
+            }
+
             /* ADS modern reticle override: while aiming with ADS on, draw the clean
              * dot+ticks reticle instead of the chunky textured crosshair. Gated by
              * g_pcAdsEnabled + Input.AdsModernReticle; off => unchanged crosshair. */
@@ -33297,7 +33316,9 @@ void gunDrawSight(Gfx **gdl) {
                 }
                 if (g_pcAdsEnabled && g_pcAdsModernReticle &&
                     (g_CurrentPlayer->insightaimmode || s_force_reticle)) {
-                    *gdl = drawModernAdsReticle(*gdl);
+                    *gdl = drawModernAdsReticle(*gdl,
+                        viGetViewLeft() + viGetViewWidth() / 2,
+                        viGetViewTop() + viGetViewHeight() / 2);
                     return;
                 }
             }

@@ -326,6 +326,11 @@ void CapBeamLengthAndDecideIfRendered(struct ChrRecord_f180 *arg0, ITEM_IDS item
 void sub_GAME_7F068190(coord3d *arg0, coord3d *arg1);
 
 void inc_curplayer_hitcount_with_weapon(ITEM_IDS item, SHOT_REGISTER shot_register);
+#ifdef NATIVE_PORT
+Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy);
+void triggerHitMarker(s32 kind);
+Gfx *drawHitMarker(Gfx *gdl, s32 cx, s32 cy);
+#endif
 s8 get_hands_firing_status(GUNHAND hand);
 void gunFireTankShell(s32 hand);
 void         remove_item_in_hand(GUNHAND hand);

@@ -976,6 +976,8 @@ s32 g_pcAdsSteadyView    = 1;     /* Input.AdsSteadyView     damp walk/strafe he
 f32 g_pcAdsBobFloor      = 0.15f; /* Input.AdsBobFloor       residual ADS weapon bob (0=rigid) */
 f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
 f32 g_pcViewmodelSway    = 0.0f;  /* Input.ViewmodelSway     additive breathing sway amplitude (0=off) */
+s32 g_pcModernCrosshair  = 0;     /* Input.ModernCrosshair   always-on crisp hip-fire reticle (OFF) */
+s32 g_pcHitMarkers       = 0;     /* Input.HitMarkers        on-hit X marker (OFF)                 */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -1638,6 +1640,11 @@ void platformRegisterConfig(void)
                           "--config-override Input.ViewmodelSway=VALUE",
                           "Viewmodel sway",
                           "Additive breathing sway on the first-person weapon (0 = off, 1 = subtle).");
+    settingsRegisterInt("Input.ModernCrosshair", &g_pcModernCrosshair, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MODERN_CROSSHAIR",
+                        "--config-override Input.ModernCrosshair=VALUE",
+                        "Modern crosshair",
+                        "Always-on crisp dot+ticks hip-fire reticle instead of the textured crosshair (0 = off).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {
