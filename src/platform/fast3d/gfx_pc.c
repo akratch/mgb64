@@ -3334,8 +3334,8 @@ static float gfx_clamped_render_scale(void) {
     if (g_pcRenderScale < 1.0f) {
         return 1.0f;
     }
-    if (g_pcRenderScale > 2.0f) {
-        return 2.0f;
+    if (g_pcRenderScale > 4.0f) {
+        return 4.0f;
     }
     return g_pcRenderScale;
 }
@@ -3360,8 +3360,45 @@ static void gfx_sync_current_dimensions_from_window(void) {
         return;
     }
 
-    gfx_current_dimensions.width = gfx_scaled_dimension(w);
-    gfx_current_dimensions.height = gfx_scaled_dimension(h);
+    int scaled_w = gfx_scaled_dimension(w);
+    int scaled_h = gfx_scaled_dimension(h);
+
+    /* Proportional clamp to the GPU's offscreen attachment limit.  RenderScale
+     * can push the scene framebuffer past GL_MAX_TEXTURE_SIZE /
+     * GL_MAX_RENDERBUFFER_SIZE on smaller GPUs; clamping both axes by the same
+     * factor preserves aspect_ratio (clamping each axis independently, or
+     * clamping inside ensure_scene_target, would distort or crop). */
+    {
+        extern int gfx_opengl_max_offscreen_dim(void);
+        int max_dim = gfx_opengl_max_offscreen_dim();
+        int largest = scaled_w > scaled_h ? scaled_w : scaled_h;
+
+        if (max_dim > 0 && largest > max_dim) {
+            float factor = (float)max_dim / (float)largest;
+            int cw = (int)((float)scaled_w * factor);
+            int ch = (int)((float)scaled_h * factor);
+            static int warned_scene_clamp;
+
+            if (cw < 1) {
+                cw = 1;
+            }
+            if (ch < 1) {
+                ch = 1;
+            }
+            if (!warned_scene_clamp) {
+                fprintf(stderr,
+                        "[fast3d] RenderScale scene target %dx%d exceeds GPU limit %d; clamped to %dx%d\n",
+                        scaled_w, scaled_h, max_dim, cw, ch);
+                fflush(stderr);
+                warned_scene_clamp = 1;
+            }
+            scaled_w = cw;
+            scaled_h = ch;
+        }
+    }
+
+    gfx_current_dimensions.width = scaled_w;
+    gfx_current_dimensions.height = scaled_h;
     gfx_current_dimensions.aspect_ratio =
         (float)gfx_current_dimensions.width /
         (float)gfx_current_dimensions.height;

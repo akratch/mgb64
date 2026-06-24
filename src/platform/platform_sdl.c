@@ -1484,11 +1484,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.BloomIntensity=VALUE",
                           "Bloom intensity",
                           "Strength of the bloom halo added to the image.");
-    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 2.0f,
+    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
                           "Render scale",
-                          "Scene framebuffer scale. 1.0 matches the window; higher values supersample.");
+                          "Scene framebuffer scale. 1.0 matches the window; up to 4.0 supersamples (clamped to GPU texture/renderbuffer limits).");
     settingsRegisterEnum("Video.MSAA", &g_pcMsaaSamples, 0,
                          k_msaaOptions,
                          (s32)(sizeof(k_msaaOptions) / sizeof(k_msaaOptions[0])),

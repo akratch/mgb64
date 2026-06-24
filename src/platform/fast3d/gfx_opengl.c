@@ -1083,12 +1083,35 @@ static int g_scene_msaa_samples;
 static bool g_scene_target_bound;
 static bool g_scene_target_multisampled;
 
+/* Largest square offscreen dimension this GL context can allocate.  The scene
+ * color attachment is a TEXTURE (GL_MAX_TEXTURE_SIZE) while the depth and MSAA
+ * attachments are RENDERBUFFERS (GL_MAX_RENDERBUFFER_SIZE); they share one FBO,
+ * so the safe limit is the MIN of the two.  Queried once (lazy) like the
+ * anisotropy/MSAA limits above.  Exposed to gfx_pc.c so the scaled scene
+ * dimensions can be clamped at their single producer (keeps aspect_ratio and
+ * gfx_current_dimensions consistent — clamping inside ensure_scene_target would
+ * crop the viewport instead). */
+int gfx_opengl_max_offscreen_dim(void) {
+    static int max_dim = -1;
+    if (max_dim < 0) {
+        GLint max_tex = 0, max_rb = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+        glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_rb);
+        int m = (int)max_tex;
+        if ((int)max_rb > 0 && (int)max_rb < m) {
+            m = (int)max_rb;
+        }
+        max_dim = m > 0 ? m : 2048; /* conservative GL3.3 floor if the driver lies */
+    }
+    return max_dim;
+}
+
 static float gfx_opengl_effective_render_scale(void) {
     if (g_pcRenderScale < 1.0f) {
         return 1.0f;
     }
-    if (g_pcRenderScale > 2.0f) {
-        return 2.0f;
+    if (g_pcRenderScale > 4.0f) {
+        return 4.0f;
     }
     return g_pcRenderScale;
 }
