@@ -156,7 +156,7 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
 f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
-s32 g_pcMsaaSamples = 0;
+s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
 f32 g_pcFovY = 60.0f;
 f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
 f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
@@ -197,6 +197,11 @@ typedef enum PlatformVSyncMode {
     PLATFORM_VSYNC_ADAPTIVE = 2
 } PlatformVSyncMode;
 
+/* remaster default: ADAPTIVE by design (NOT a hard "on"). Adaptive is tear-free
+ * at/above the cap and drops to tear-when-slow to avoid latency spikes, with a
+ * hard-vsync fallback on unsupported drivers. A literal "on" would change sim
+ * substep distribution (substep count is wall-clock-derived via g_ClockTimer),
+ * a pacing risk with no headless coverage, for no benefit on adaptive-capable GPUs. */
 static s32 g_vsyncMode = PLATFORM_VSYNC_ADAPTIVE;
 static const ConfigEnumOption k_vsyncOptions[] = {
     { "off", PLATFORM_VSYNC_OFF },

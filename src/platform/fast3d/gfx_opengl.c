@@ -91,6 +91,9 @@ struct ShaderProgram {
     GLint window_height_location;
     bool used_n64_filter;
     GLint n64_filter_scale_location;
+    /* Texture-cutout (alpha-edge) shader: drives GL_SAMPLE_ALPHA_TO_COVERAGE
+     * when the multisample scene target is bound (see gfx_opengl_update_a2c_state). */
+    bool opt_texture_edge;
 };
 
 static struct ShaderProgram shader_program_pool[256];
@@ -341,11 +344,51 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
     }
 }
 
+/* True only while the multisample scene FBO is bound (set in start_frame). */
+static bool g_scene_target_multisampled;
+/* Tracks the live blend-enable so A2C only engages on blend-DISABLED cutouts. */
+static bool g_blend_disabled = true;
+
+/* GL_SAMPLE_ALPHA_TO_COVERAGE is core GL 3.3; provide the token defensively. */
+#ifndef GL_SAMPLE_ALPHA_TO_COVERAGE
+#define GL_SAMPLE_ALPHA_TO_COVERAGE 0x809E
+#endif
+
+/* A/B escape hatch: GE007_NO_A2C=1 forces alpha-to-coverage off. */
+static int g_a2c_force = -1;
+static bool gfx_opengl_a2c_enabled(void) {
+    if (g_a2c_force < 0) {
+        const char *e = getenv("GE007_NO_A2C");
+        g_a2c_force = (e && e[0] && strcmp(e, "0") != 0) ? 0 : 1;
+    }
+    return g_a2c_force != 0;
+}
+
+/* Engage alpha-to-coverage ONLY when: the multisample scene target is bound,
+ * the current shader is a texture-edge/cutout shader, blend is disabled, and
+ * the env override allows it. Re-evaluated on both shader and blend changes
+ * (load_shader runs before set_blend_mode in gfx_pc, and blend can change
+ * without a shader change). On the single-sample output/default FB this is
+ * always false, so the output pass is unaffected even though it does not
+ * save/restore A2C state. */
+static void gfx_opengl_update_a2c_state(void) {
+    bool on = g_scene_target_multisampled && g_blend_disabled &&
+              current_shader_program != NULL &&
+              current_shader_program->opt_texture_edge &&
+              gfx_opengl_a2c_enabled();
+    if (on) {
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    } else {
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    }
+}
+
 static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
     glUseProgram(new_prg->opengl_program_id);
     current_shader_program = new_prg;
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
+    gfx_opengl_update_a2c_state();
 }
 
 static void append_str(char *buf, size_t *len, const char *str) {
@@ -842,6 +885,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->num_floats = num_floats;
     prg->num_attribs = cnt;
     prg->used_noise = needs_noise;
+    /* Mirror the cutout-discard gate at the GLSL emit site (opt_texture_edge &&
+     * opt_alpha); marks this program for alpha-to-coverage under MSAA. */
+    prg->opt_texture_edge = cc_features.opt_texture_edge && cc_features.opt_alpha;
     if (needs_noise) {
         prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
         prg->window_height_location = glGetUniformLocation(shader_program, "window_height");
@@ -1036,6 +1082,9 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
     }
+    /* A2C must not engage on blended draws (coverage*srcAlpha double-applies). */
+    g_blend_disabled = (mode == GFX_BLEND_DISABLED);
+    gfx_opengl_update_a2c_state();
 }
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -1089,7 +1138,6 @@ static int g_scene_msaa_w;
 static int g_scene_msaa_h;
 static int g_scene_msaa_samples;
 static bool g_scene_target_bound;
-static bool g_scene_target_multisampled;
 
 /* Largest square offscreen dimension this GL context can allocate.  The scene
  * color attachment is a TEXTURE (GL_MAX_TEXTURE_SIZE) while the depth and MSAA
@@ -1978,6 +2026,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     GLboolean saved_depth_test = GL_FALSE;
     GLboolean saved_blend = GL_FALSE;
     GLboolean saved_dither = GL_FALSE;
+    GLboolean saved_a2c = GL_FALSE;
     GLboolean saved_depth_mask = GL_TRUE;
     int width;
     int height;
@@ -2066,6 +2115,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     saved_depth_test = glIsEnabled(GL_DEPTH_TEST);
     saved_blend = glIsEnabled(GL_BLEND);
     saved_dither = glIsEnabled(GL_DITHER);
+    saved_a2c = glIsEnabled(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &saved_depth_mask);
 
     if (!gfx_opengl_ensure_output_filter_program()) {
@@ -2077,6 +2127,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_DITHER);
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glDepthMask(GL_FALSE);
 
     gfx_opengl_ensure_filter_texture(&g_output_filter_copy_tex,
@@ -2171,6 +2222,11 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     } else {
         glDisable(GL_DITHER);
     }
+    if (saved_a2c) {
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    } else {
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    }
     glDepthMask(saved_depth_mask);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)saved_draw_fbo);
@@ -2194,6 +2250,8 @@ static void gfx_opengl_init(void) {
 
     glDepthFunc(GL_LESS);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    /* Known starting state; gfx_opengl_update_a2c_state manages it thereafter. */
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
 
     /* GL_DEPTH_CLAMP: prevents near/far clipping, clamping depth values
      * instead of discarding fragments. Core in OpenGL 3.2+.
