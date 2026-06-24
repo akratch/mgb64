@@ -62,6 +62,42 @@ All of Phase 0 is implemented as 13 opt-in, default-off commits on
 
 ---
 
+## ✅ Phase 1 — SHIPPED (2026-06-24)
+
+10 commits (`06ca72c`..`4441b92`), default-enabled for the remaster build, each
+gated/tunable via `Video.*`/`Input.*`/`GE007_*` (set to identity to A/B).
+
+| Commit | Feature | Default |
+|--------|---------|---------|
+| `06ca72c` | **Output-pass FXAA** (sprite/alpha/HUD edge AA SSAA misses) | `Video.Fxaa` 1 |
+| `5bc7b12` | **Adaptive sharpen** (CAS-style, ringing-clamped) | `Video.Sharpen` 0.3 |
+| `17ae76d` | **Per-level mood grade presets** (4 buckets: cool/warm/cold-blue/sickly-green, ±3–4%) | `Video.GradePresets` 1 |
+| `af19f96` | **FovY range → 105** (default stays 60) | range only |
+| `91f2aaa` | **Viewmodel-FOV decouple** (no gun warp at wide FOV; leans in on ADS) | `Video.ViewmodelFov` 60 |
+| `faf383d` | **Alpha-to-coverage** for cutout edges (engages when MSAA on) | with MSAA |
+| `5d138db` | **Reticle target-acquired feedback** (green + 2× dot on auto-aim target) | `Input.ReticleTargetFeedback` 1 |
+| `b7ea39a` | **Flying-debris cap 200→400** (`NATIVE_PORT`) | on |
+| `9cee132` | **Persistent scorch in split-screen MP** (alloc/write/render un-gated, 20→40) | on |
+| `4441b92` | **Simultaneous-explosion cap 6→16** + screen-shake clamp | on |
+
+**Deliberate deviations from the roadmap's literal text** (informed by the now-default
+2× SSAA): **MSAA stays default 0** (geometry AA already covered by SSAA; stacking 4×
+MSAA is pure cost) and **VSync stays adaptive** (a hard-on flip risks the wall-clock
+sim-substep `g_ClockTimer` pacing for no gain over adaptive). Both are one-line flips
+if wanted; A2C is implemented and ready to engage if MSAA is enabled.
+
+**Validation:** clean rebuild green; `--all` 20-level smoke held the **14/6** contract
+(no playability regression); **identity check byte-identical** — with all Phase 1 knobs
+off the frame reproduces the Phase 0 (`592ebb9`) baseline exactly, so Phase 1 adds zero
+disturbance to the established path; per-feature A/B confirmed FXAA (15.8%), sharpen
+(15.1%), grade-presets (73.4% — Dam cold-blue), viewmodel-FOV decouple (3.3% @FOV105);
+**ASan/UBSan clean** on all Phase 1 paths (only the pre-existing `unk_0A1DA0.c:4061` UB).
+Needs in-game confirmation (headless can't reach the state): reticle target feedback
+(aim at an enemy), A2C (enable MSAA), effects caps (combat). The explosion screen-shake
+clamp (90.0f) is a conservative placeholder to tune by feel.
+
+---
+
 ## Guiding principles
 
 1. **Everything is opt-in and default-off.** With all flags off, the build is
