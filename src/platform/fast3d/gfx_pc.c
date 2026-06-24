@@ -12973,11 +12973,18 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     float ulyf = -(uly / (4.0f * logical_half_height)) + 1.0f;
     float lrxf = lrx / (4.0f * logical_half_width) - 1.0f;
     float lryf = -(lry / (4.0f * logical_half_height)) + 1.0f;
-    bool spans_logical_width = g_fillrect_draw_active
-        && ulx <= 0
+    bool spans_logical_width = ulx <= 0
         && lrx >= (int32_t)(gfx_logical_screen_width() * 4.0f) - 4;
 
-    /* Full-width screen-space fills are HUD/fade overlays, not world geometry. */
+    /* A rectangle spanning the full logical width is a full-screen overlay
+     * (fade/flash fillrect, or a full-screen TEXRECT like the blood/death
+     * masks in blood_animation.c) — not world geometry. It must full-bleed, so
+     * exempt it from the per-vertex widescreen squeeze; otherwise its NDC +-1
+     * edges get pulled inward to +-factor and leave bare strips on the sides
+     * (the same failure the sky quad had). HUD-sized texrects (crosshair, ammo,
+     * radar, glyphs) are never full-width, so they are unaffected and still
+     * squeeze. No-op on 4:3 (factor == 1). Previously gated on
+     * g_fillrect_draw_active, which wrongly excluded full-screen texrects. */
     if (!spans_logical_width) {
         ulxf = gfx_adjust_x_for_aspect_ratio(ulxf);
         lrxf = gfx_adjust_x_for_aspect_ratio(lrxf);
