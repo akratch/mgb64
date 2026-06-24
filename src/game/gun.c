@@ -33206,6 +33206,71 @@ Gfx *drawDamageOverlay(Gfx *gdl) {
     return gdl;
 }
 
+/* ---------------------------------------------------------------------------
+   Hit markers: a transient marker drawn over the crosshair when the player's
+   shot registers on an actor. Modeled on the damage-overlay pair above:
+   fill-rects only (no settex => cannot corrupt tex state), and the per-frame
+   timer decrement lives in the DRAW fn (called once per pane per render frame).
+   State is per-player so split-screen panes never leak markers into one another.
+   kind: 0 = body hit (white), 1 = head hit (yellow), 2 = kill (red).
+   Gated by Input.HitMarkers; OFF by default => triggerHitMarker no-ops and the
+   timer never arms, so drawHitMarker adds zero DL.
+   --------------------------------------------------------------------------- */
+#define HITMARKER_MAX_FRAMES 9
+static s32 s_hitmarker_timer[MAX_PLAYER_COUNT] = {0};
+static s32 s_hitmarker_kind[MAX_PLAYER_COUNT] = {0};
+extern s32 g_pcHitMarkers;
+
+void triggerHitMarker(s32 kind) {
+    s32 p;
+    if (!g_pcHitMarkers) { return; }
+    p = get_cur_playernum();
+    if (p < 0 || p >= MAX_PLAYER_COUNT) { return; }
+    /* escalate to the higher kind (kill > head > body) when re-armed this tick */
+    if (kind >= s_hitmarker_kind[p] || s_hitmarker_timer[p] <= 0) {
+        s_hitmarker_kind[p] = kind;
+    }
+    s_hitmarker_timer[p] = HITMARKER_MAX_FRAMES;
+}
+
+Gfx *drawHitMarker(Gfx *gdl, s32 cx, s32 cy) {
+    s32 p = get_cur_playernum();
+    s32 vh, gap, len, thk;
+    u16 col;
+    u32 fill;
+    if (!gdl || p < 0 || p >= MAX_PLAYER_COUNT || s_hitmarker_timer[p] <= 0) {
+        return gdl;
+    }
+    vh = viGetViewHeight();
+    if (vh < 1) { vh = 240; }
+    gap = vh / 48; if (gap < 4) { gap = 4; }
+    len = vh / 30; if (len < 6) { len = 6; }
+    thk = vh / 240; if (thk < 1) { thk = 1; }
+
+    /* RGBA5551: white body / yellow head / red kill */
+    switch (s_hitmarker_kind[p]) {
+        case 2:  col = (0x1F << 11) | (0x00 << 6) | (0x00 << 1) | 1; break; /* red  */
+        case 1:  col = (0x1F << 11) | (0x1F << 6) | (0x00 << 1) | 1; break; /* yellow */
+        default: col = (0x1F << 11) | (0x1F << 6) | (0x1F << 1) | 1; break; /* white */
+    }
+    fill = ((u32)col << 16) | col;
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_FILL);
+    gDPSetFillColor(gdl++, fill);
+    /* four gapped ticks angled out from center (left/right/top/bottom) */
+    gDPFillRectangle(gdl++, cx - gap - len, cy - thk, cx - gap,       cy + thk);
+    gDPFillRectangle(gdl++, cx + gap,       cy - thk, cx + gap + len, cy + thk);
+    gDPFillRectangle(gdl++, cx - thk, cy - gap - len, cx + thk, cy - gap);
+    gDPFillRectangle(gdl++, cx - thk, cy + gap,       cx + thk, cy + gap + len);
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+
+    s_hitmarker_timer[p]--;
+    if (s_hitmarker_timer[p] <= 0) { s_hitmarker_timer[p] = 0; }
+    return gdl;
+}
+
 /* Modern ADS reticle: a clean center dot + four short gapped ticks at the player's
  * view center, replacing the chunky textured crosshair while aiming for a modern
  * (CoD-style) look. Drawn with gDPFillRectangle only (no textures / no settex, so

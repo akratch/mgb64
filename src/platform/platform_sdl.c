@@ -1645,6 +1645,11 @@ void platformRegisterConfig(void)
                         "--config-override Input.ModernCrosshair=VALUE",
                         "Modern crosshair",
                         "Always-on crisp dot+ticks hip-fire reticle instead of the textured crosshair (0 = off).");
+    settingsRegisterInt("Input.HitMarkers", &g_pcHitMarkers, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_HIT_MARKERS",
+                        "--config-override Input.HitMarkers=VALUE",
+                        "Hit markers",
+                        "Flash a marker on the crosshair when your shot registers (white hit, yellow head, red kill; 0 = off).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

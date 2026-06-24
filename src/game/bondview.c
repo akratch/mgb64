@@ -19969,6 +19969,22 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     bondviewUpperTextWindowTimerTick();
     arg0 = sub_GAME_7F08AAE8(arg0);
     gunDrawSight(&arg0);
+#ifdef NATIVE_PORT
+    /* Hit markers (Input.HitMarkers; no-op when off): draw on the crosshair,
+     * once per pane per render frame (this is the render path, satisfying the
+     * per-frame timer decrement inside drawHitMarker). */
+    {
+        s32 hm_cx, hm_cy;
+        if (g_CurrentPlayer->insightaimmode) {
+            hm_cx = viGetViewLeft() + viGetViewWidth() / 2;
+            hm_cy = viGetViewTop() + viGetViewHeight() / 2;
+        } else {
+            hm_cx = (s32)g_CurrentPlayer->crosshair_angle.f[0];
+            hm_cy = (s32)g_CurrentPlayer->crosshair_angle.f[1];
+        }
+        arg0 = drawHitMarker(arg0, hm_cx, hm_cy);
+    }
+#endif
     arg0 = generate_ammo_total_microcode(arg0);
     arg0 = countdownTimerRender(arg0);
     arg0 = display_red_blue_on_radar(arg0);

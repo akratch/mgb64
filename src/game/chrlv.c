@@ -3377,6 +3377,15 @@ bool handles_shot_actors(ChrRecord *self, s32 hitpart, coord3d *vector, s32 weap
                 break;
             }
         }
+#ifdef NATIVE_PORT
+        /* Hit marker on a registered player hit (Input.HitMarkers; no-op when off).
+         * Exclude HIT_GUN/HIT_HAT — those are 0-damage cosmetic hits. A kill is
+         * escalated to a red marker later in the death branch. */
+        if (hitpart != HIT_GUN && hitpart != HIT_HAT)
+        {
+            triggerHitMarker(hitpart == HIT_HEAD ? 1 : 0);
+        }
+#endif
     }
 
     self->numarghs++;
@@ -3515,6 +3524,9 @@ bool handles_shot_actors(ChrRecord *self, s32 hitpart, coord3d *vector, s32 weap
                 {
                     chrSetHiddenToRandom(self);
 #ifdef NATIVE_PORT
+                    /* Player kill: escalate the hit marker to a red kill marker
+                     * (Input.HitMarkers; no-op when off). */
+                    if (isPlayer) { triggerHitMarker(2); }
                     portTraceGuardHitApply(self,
                                            trace_initial_hitpart,
                                            hitpart,
