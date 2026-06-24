@@ -7,7 +7,16 @@
 // applied that compiler factors out.
 #define EXPLOSION_DAMAGE_SCALER 1.0f
 
+#ifdef NATIVE_PORT
+/* 16 (was 6, N64): ~1KB/entry struct Explosion (parts[40]) => +~10KB in
+ * MEMPOOL_STAGE. Allows more concurrent blasts (multi-grenade / MP) instead of
+ * silently dropping the 7th at the slot scan. The per-frame screen-shake
+ * magnitude sum in explosionScreenShake is clamped (NATIVE_PORT) so more
+ * occupied slots cannot translate into more violent shake. */
+#define EXPLOSION_BUFFER_LEN 16
+#else
 #define EXPLOSION_BUFFER_LEN 6
+#endif
 #define EXPLOSION_PARTS_LEN 40
 #define SMOKE_BUFFER_LEN 20
 #define SMOKE_PARTS_LEN 10

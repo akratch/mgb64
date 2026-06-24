@@ -1067,6 +1067,22 @@ void explosionScreenShake(coord3d* source_pos, coord3d* source_mag, coord3d* res
         }
     }
 
+#ifdef NATIVE_PORT
+    /* Decouple shake from the raised EXPLOSION_BUFFER_LEN (6 -> 16): the loop
+     * above sums explosion_mag over every occupied slot, so many simultaneous
+     * close blasts would over-shake. Clamp the summed magnitude to roughly the
+     * old 6-slot close-range saturation so denser firefights are NOT more
+     * violent than vanilla. Applied before the smoke bump and the result
+     * assignments so all downstream consumers see the clamped value. */
+    {
+        const f32 kPortShakeMagMax = 90.0f;
+        if (explosion_mag > kPortShakeMagMax)
+        {
+            explosion_mag = kPortShakeMagMax;
+        }
+    }
+#endif
+
     if (g_NumSmokeEntries > 0)
     {
         g_NumSmokeEntries--;
