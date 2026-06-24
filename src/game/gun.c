@@ -33314,9 +33314,13 @@ void gunDrawSight(Gfx **gdl) {
             halfedxy[0] = 16.0f;
             halfedxy[1] = 16.0f;
 
-            if (get_screen_ratio() == SCREEN_RATIO_16_9) {
-                halfedxy[0] *= 0.75f;
-            }
+            /* No menu-gated 0.75 width fudge on the PC port. The fast3d backend
+             * already squeezes every texrect's x by (4/3)/window_aspect, which
+             * exactly cancels the anamorphic logical(4:3)->drawable scaling, so a
+             * 32x32 reticle renders square at any window aspect. The legacy 0.75
+             * (anamorphic-stretch compensation) would double-narrow on top of
+             * that squeeze and render the reticle as a vertical oval whenever the
+             * screen-ratio menu option is set to 16:9. */
 
             display_image_at_position(&dl, xypos, halfedxy, 0x20, 0x20,
                 0, 0, 1, 0xFF, 0xFF, 0xFF, 0x6E,
