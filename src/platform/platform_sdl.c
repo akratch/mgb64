@@ -992,6 +992,7 @@ f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut
 f32 g_pcViewmodelSway    = 1.0f;  /* Input.ViewmodelSway     remaster default: subtle weapon sway ON */
 s32 g_pcModernCrosshair  = 1;     /* Input.ModernCrosshair   remaster default: crisp hip-fire reticle ON */
 s32 g_pcHitMarkers       = 1;     /* Input.HitMarkers        remaster default: on-hit marker ON */
+s32 g_pcReticleTargetFeedback = 1; /* Input.ReticleTargetFeedback remaster default: tint reticle on-target ON */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -1684,6 +1685,11 @@ void platformRegisterConfig(void)
                         "--config-override Input.HitMarkers=VALUE",
                         "Hit markers",
                         "Flash a marker on the crosshair when your shot registers (white hit, yellow head, red kill; 0 = off).");
+    settingsRegisterInt("Input.ReticleTargetFeedback", &g_pcReticleTargetFeedback, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_RETICLE_TARGET_FEEDBACK",
+                        "--config-override Input.ReticleTargetFeedback=VALUE",
+                        "Reticle target feedback",
+                        "Tint the modern reticle green and thicken the dot when your crosshair is over an enemy (0 = off).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

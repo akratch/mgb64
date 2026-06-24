@@ -33297,15 +33297,31 @@ Gfx *drawHitMarker(Gfx *gdl, s32 cx, s32 cy) {
  * scale with the view height so it stays crisp in split-screen / any resolution.
  * Gated by Input.AdsModernReticle; assumes the centered-crosshair ADS aim. */
 extern s32 g_pcAdsModernReticle;
-Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy) {
+/* Reticle target-acquired signal: the stock auto-aim system already maintains
+ * g_CurrentPlayer->autoaim_target_{x,y} (a non-NULL armed CHR the crosshair is
+ * near, refreshed every frame by chrpropUpdateAutoaimTarget). Gated by
+ * Input.ReticleTargetFeedback so =0 restores the static red reticle (identity). */
+static s32 gunReticleOnTarget(void) {
+    extern s32 g_pcReticleTargetFeedback;
+    return (g_pcReticleTargetFeedback &&
+            (g_CurrentPlayer->autoaim_target_y != NULL ||
+             g_CurrentPlayer->autoaim_target_x != NULL)) ? 1 : 0;
+}
+Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy, s32 on_target) {
     s32 vh = viGetViewHeight();
     s32 thk, gap, len, hx, hy, o;
+    s32 dot_thk, draw_dot;
     /* RGBA5551. Red is an homage to the classic GoldenEye crosshair; a 1px dark
-     * outline keeps the thin red crisp/visible on any background. */
+     * outline keeps the thin red crisp/visible on any background. When the
+     * crosshair is over a shootable enemy (on_target), tint the reticle green
+     * and thicken/force the center dot for clear target-acquired feedback. */
     u16 red  = (0x1F << 11) | (0x00 << 6) | (0x00 << 1) | 1;
+    u16 grn  = (0x00 << 11) | (0x1F << 6) | (0x06 << 1) | 1; /* bright green */
     u16 dark = (0x00 << 11) | (0x00 << 6) | (0x00 << 1) | 1;
     u32 fill_red  = ((u32)red << 16) | red;
+    u32 fill_grn  = ((u32)grn << 16) | grn;
     u32 fill_dark = ((u32)dark << 16) | dark;
+    u32 fill_main = on_target ? fill_grn : fill_red;
     /* env-tunable (px / flags) for polishing; <0 => resolution-scaled default. */
     static int s_init = 0;
     static s32 s_thk = -1, s_gap = -1, s_len = -1, s_dot = 1, s_outline = 1;
@@ -33328,12 +33344,18 @@ Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy) {
     hy = cy - thk / 2;
     o  = (thk + 1) / 2; if (o < 1) { o = 1; } /* outline expansion */
 
+    /* On-target: thicken + force the center dot to read as a 'lock'. The cross
+     * ticks keep thk so geometry/aim is unchanged; only the dot differs. */
+    dot_thk = thk;
+    draw_dot = s_dot;
+    if (on_target) { dot_thk = thk * 2; if (dot_thk < 2) { dot_thk = 2; } draw_dot = 1; }
+
     gDPPipeSync(gdl++);
     gDPSetCycleType(gdl++, G_CYC_FILL);
 
     if (s_outline) {                              /* dark outline pass (1px larger) */
         gDPSetFillColor(gdl++, fill_dark);
-        if (s_dot) { gDPFillRectangle(gdl++, hx - o, hy - o, hx + thk + o, hy + thk + o); }
+        if (draw_dot) { gDPFillRectangle(gdl++, hx - o, hy - o, hx + dot_thk + o, hy + dot_thk + o); }
         gDPFillRectangle(gdl++, hx - o, cy - gap - len - o, hx + thk + o, cy - gap + o);
         gDPFillRectangle(gdl++, hx - o, cy + gap - o, hx + thk + o, cy + gap + len + o);
         gDPFillRectangle(gdl++, cx - gap - len - o, hy - o, cx - gap + o, hy + thk + o);
@@ -33341,8 +33363,8 @@ Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy) {
         gDPPipeSync(gdl++);
     }
 
-    gDPSetFillColor(gdl++, fill_red);             /* red reticle */
-    if (s_dot) { gDPFillRectangle(gdl++, hx, hy, hx + thk, hy + thk); }
+    gDPSetFillColor(gdl++, fill_main);            /* reticle (green on-target, else red) */
+    if (draw_dot) { gDPFillRectangle(gdl++, hx, hy, hx + dot_thk, hy + dot_thk); }
     gDPFillRectangle(gdl++, hx, cy - gap - len, hx + thk, cy - gap);     /* top */
     gDPFillRectangle(gdl++, hx, cy + gap, hx + thk, cy + gap + len);     /* bottom */
     gDPFillRectangle(gdl++, cx - gap - len, hy, cx - gap, hy + thk);     /* left */
@@ -33383,7 +33405,7 @@ void gunDrawSight(Gfx **gdl) {
                         cx = (s32)g_CurrentPlayer->crosshair_angle.f[0];
                         cy = (s32)g_CurrentPlayer->crosshair_angle.f[1];
                     }
-                    *gdl = drawModernAdsReticle(*gdl, cx, cy);
+                    *gdl = drawModernAdsReticle(*gdl, cx, cy, gunReticleOnTarget());
                     return;
                 }
             }
@@ -33402,7 +33424,8 @@ void gunDrawSight(Gfx **gdl) {
                     (g_CurrentPlayer->insightaimmode || s_force_reticle)) {
                     *gdl = drawModernAdsReticle(*gdl,
                         viGetViewLeft() + viGetViewWidth() / 2,
-                        viGetViewTop() + viGetViewHeight() / 2);
+                        viGetViewTop() + viGetViewHeight() / 2,
+                        gunReticleOnTarget());
                     return;
                 }
             }

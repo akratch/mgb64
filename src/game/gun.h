@@ -327,7 +327,7 @@ void sub_GAME_7F068190(coord3d *arg0, coord3d *arg1);
 
 void inc_curplayer_hitcount_with_weapon(ITEM_IDS item, SHOT_REGISTER shot_register);
 #ifdef NATIVE_PORT
-Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy);
+Gfx *drawModernAdsReticle(Gfx *gdl, s32 cx, s32 cy, s32 on_target);
 void triggerHitMarker(s32 kind);
 Gfx *drawHitMarker(Gfx *gdl, s32 cx, s32 cy);
 #endif
