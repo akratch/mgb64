@@ -48,6 +48,12 @@ extern float g_pcBloomThreshold;
 extern float g_pcBloomIntensity;
 extern int g_pcFxaa;
 extern float g_pcSharpen;
+extern int g_pcGradePresets;
+extern float g_pcGradeLevelSat;
+extern float g_pcGradeLevelCon;
+extern float g_pcGradeLevelTintR;
+extern float g_pcGradeLevelTintG;
+extern float g_pcGradeLevelTintB;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1605,7 +1611,12 @@ static bool gfx_opengl_output_color_adjust_active(void) {
            g_pcOutputDither != 0 ||
            gfx_opengl_output_vignette() > 0.0001f ||
            g_pcFxaa != 0 ||
-           gfx_opengl_output_sharpen() > 0.0001f;
+           gfx_opengl_output_sharpen() > 0.0001f ||
+           (g_pcGradePresets && (g_pcGradeLevelSat != 1.0f ||
+                                 g_pcGradeLevelCon != 1.0f ||
+                                 g_pcGradeLevelTintR != 1.0f ||
+                                 g_pcGradeLevelTintG != 1.0f ||
+                                 g_pcGradeLevelTintB != 1.0f));
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1663,6 +1674,9 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform int uFilterMode;\n"
         "uniform int uFxaa;\n"
         "uniform float uSharpen;\n"
+        "uniform float uLevelSat;\n"
+        "uniform float uLevelCon;\n"
+        "uniform vec3 uColorTint;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
         "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
@@ -1796,9 +1810,12 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    vec3 rgb = clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0);\n"
         "    if (uApplyPost == 1) {\n"
         "        rgb += vec3(uBrightness);\n"
-        "        rgb = (rgb - 0.5) * uContrast + 0.5;\n"
+        "        float con = uContrast * uLevelCon;\n"
+        "        rgb = (rgb - 0.5) * con + 0.5;\n"
         "        float luma = dot(rgb, vec3(0.299, 0.587, 0.114));\n"
-        "        rgb = mix(vec3(luma), rgb, uSaturation);\n"
+        "        float sat = uSaturation * uLevelSat;\n"
+        "        rgb = mix(vec3(luma), rgb, sat);\n"
+        "        rgb *= uColorTint;\n"
         "        rgb = clamp(rgb, 0.0, 1.0);\n"
         "    }\n"
         "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
@@ -1933,6 +1950,17 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 (apply_post && g_pcFxaa) ? 1 : 0);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uSharpen"),
                 apply_post ? gfx_opengl_output_sharpen() : 0.0f);
+    {
+        int gp = g_pcGradePresets ? 1 : 0;
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uLevelSat"),
+                    gp ? g_pcGradeLevelSat : 1.0f);
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uLevelCon"),
+                    gp ? g_pcGradeLevelCon : 1.0f);
+        glUniform3f(glGetUniformLocation(g_output_filter_program, "uColorTint"),
+                    gp ? g_pcGradeLevelTintR : 1.0f,
+                    gp ? g_pcGradeLevelTintG : 1.0f,
+                    gp ? g_pcGradeLevelTintB : 1.0f);
+    }
     glBindVertexArray(g_output_filter_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }

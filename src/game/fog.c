@@ -15,6 +15,68 @@
 extern s32 getPlayerCount(void);
 #endif
 
+extern s32 g_pcGradePresets;
+extern f32 g_pcGradeLevelSat;
+extern f32 g_pcGradeLevelCon;
+extern f32 g_pcGradeLevelTintR;
+extern f32 g_pcGradeLevelTintG;
+extern f32 g_pcGradeLevelTintB;
+
+/* Per-level mood grade preset. Writes the 5 renderer-internal level-grade
+ * globals from a LEVELID-keyed mood table; the renderer composes them atop
+ * the global output-pass grade (gated by Video.GradePresets). Default arm =
+ * identity so unlisted/MP levels keep a neutral grade. */
+#define SET5(s, c, r, g, b)            \
+    do {                               \
+        g_pcGradeLevelSat   = (s);     \
+        g_pcGradeLevelCon   = (c);     \
+        g_pcGradeLevelTintR = (r);     \
+        g_pcGradeLevelTintG = (g);     \
+        g_pcGradeLevelTintB = (b);     \
+    } while (0)
+
+static void fogApplyLevelGradePreset(s32 level_id)
+{
+    switch (level_id) {
+    /* COOL / CLINICAL */
+    case LEVELID_FACILITY:
+    case LEVELID_CONTROL:
+    case LEVELID_BUNKER1:
+    case LEVELID_BUNKER2:
+    case LEVELID_ARCHIVES:
+        SET5(0.97f, 1.02f, 0.99f, 1.00f, 1.04f);
+        break;
+    /* WARM / SUNLIT */
+    case LEVELID_SURFACE:
+    case LEVELID_SURFACE2:
+    case LEVELID_RUNWAY:
+    case LEVELID_JUNGLE:
+    case LEVELID_EGYPT:
+    case LEVELID_AZTEC:
+        SET5(1.04f, 1.01f, 1.04f, 1.01f, 0.97f);
+        break;
+    /* COLD-NIGHT / BLUE */
+    case LEVELID_DAM:
+    case LEVELID_DEPOT:
+    case LEVELID_CRADLE:
+    case LEVELID_TRAIN:
+    case LEVELID_FRIGATE:
+    case LEVELID_STREETS:
+        SET5(0.98f, 1.03f, 0.97f, 0.99f, 1.05f);
+        break;
+    /* SICKLY-GREEN / TOXIC */
+    case LEVELID_CAVERNS:
+    case LEVELID_SILO:
+    case LEVELID_STATUE:
+        SET5(1.00f, 1.02f, 0.98f, 1.03f, 0.98f);
+        break;
+    /* default / unlisted / MP = identity */
+    default:
+        SET5(1.00f, 1.00f, 1.00f, 1.00f, 1.00f);
+        break;
+    }
+}
+
 /**
  * Address 0x800825C0.
 */
@@ -486,6 +548,8 @@ void fogLoadLevelEnvironment(s32 level_id, s32 arg1)
     s32 num_players;
 
     found_fogless = NULL;
+
+    fogApplyLevelGradePreset(level_id);
 
     num_players = getPlayerCount();
     

@@ -169,6 +169,12 @@ f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
+s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
+f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
+f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
+f32 g_pcGradeLevelTintR = 1.0f;  /* renderer-internal: per-level tint R */
+f32 g_pcGradeLevelTintG = 1.0f;  /* renderer-internal: per-level tint G */
+f32 g_pcGradeLevelTintB = 1.0f;  /* renderer-internal: per-level tint B */
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1505,6 +1511,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.Sharpen=VALUE",
                           "Sharpen",
                           "Contrast-adaptive output sharpening. 0.0 = off; ~0.3 mild; higher risks ringing.");
+    settingsRegisterInt("Video.GradePresets", &g_pcGradePresets, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_GRADE_PRESETS",
+                        "--config-override Video.GradePresets=VALUE",
+                        "Per-level grade",
+                        "Subtle per-level mood color grade composed atop the global grade. 0 = off (identity).");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
