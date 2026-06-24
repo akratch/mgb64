@@ -42,6 +42,7 @@ extern float g_pcVideoSaturation;
 extern float g_pcVideoContrast;
 extern float g_pcVideoBrightness;
 extern int g_pcOutputDither;
+extern float g_pcVignette;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1553,6 +1554,11 @@ static float gfx_opengl_output_brightness(void) {
     return v < -0.5f ? -0.5f : (v > 0.5f ? 0.5f : v);
 }
 
+static float gfx_opengl_output_vignette(void) {
+    float v = g_pcVignette;
+    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+}
+
 static bool gfx_opengl_output_color_adjust_active(void) {
     float gamma = gfx_opengl_output_gamma();
 
@@ -1563,7 +1569,8 @@ static bool gfx_opengl_output_color_adjust_active(void) {
            gfx_opengl_output_saturation() != 1.0f ||
            gfx_opengl_output_contrast() != 1.0f ||
            gfx_opengl_output_brightness() != 0.0f ||
-           g_pcOutputDither != 0;
+           g_pcOutputDither != 0 ||
+           gfx_opengl_output_vignette() > 0.0001f;
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1614,6 +1621,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uBrightness;\n"
         "uniform int uApplyPost;\n"
         "uniform int uDither;\n"
+        "uniform float uVignette;\n"
         "uniform int uFilterMode;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
@@ -1684,6 +1692,12 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "        rgb = clamp(rgb, 0.0, 1.0);\n"
         "    }\n"
         "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
+        "    if (uApplyPost == 1 && uVignette > 0.0) {\n"
+        "        vec2 vc = vTexCoord - vec2(0.5);\n"
+        "        float d = dot(vc, vc) * 2.0;\n"
+        "        float vig = 1.0 - uVignette * smoothstep(0.3, 1.0, d);\n"
+        "        rgb *= vig;\n"
+        "    }\n"
         "    if (uApplyPost == 1 && uDither == 1) {\n"
         "        ivec2 dp = ivec2(gl_FragCoord.xy) & 3;\n"
         "        float t = kBayer4[dp.y * 4 + dp.x] - 0.5;\n"
@@ -1792,6 +1806,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 apply_post);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uDither"),
                 g_pcOutputDither ? 1 : 0);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uVignette"),
+                gfx_opengl_output_vignette());
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);

@@ -162,6 +162,7 @@ f32 g_pcVideoSaturation = 1.0f;
 f32 g_pcVideoContrast = 1.0f;
 f32 g_pcVideoBrightness = 0.0f;
 s32 g_pcOutputDither = 0;
+f32 g_pcVignette = 0.0f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1460,6 +1461,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.OutputDither=VALUE",
                         "Output dither",
                         "4x4 ordered Bayer dither to hide RGBA8 banding in skies/fades.");
+    settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.0f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_VIGNETTE",
+                          "--config-override Video.Vignette=VALUE",
+                          "Vignette",
+                          "Soft darkening toward screen edges. 0.0 = off.");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 2.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
