@@ -6,8 +6,23 @@ them, drops them in a pack directory, and sees HD textures in-game** — with ze
 geometry/UV changes, and with the repository staying provably asset-free.
 
 Produced from a 5-area adversarially-verified plan workflow (every anchor checked
-against the live `gfx_pc.c` texture code; all areas `goAhead`). This is the **plan**;
-nothing here is implemented yet.
+against the live `gfx_pc.c` texture code; all areas `goAhead`).
+
+> ## ✅ Loader implemented — `feat/dam-hd-remaster` (2026-06-24)
+> The **in-game loader is live** (commits `a109dc2` + `0a9d597`). It hooks the static
+> **G_SETTEX** decode path (`gfx_pc.c` ~:13730) *after* the N64 texels are decoded: if
+> `<pack>/textures/tok<token>.png` exists it uploads that at higher resolution instead.
+> Hooking post-decode is cleaner than the plan's import_texture variant — it inherits
+> CI-palette and I/IA prim-tint handling for free (the HD image is just a higher-res copy
+> of the same decoded master), so v1 already covers Dam's CI4 world surfaces, not just RGBA.
+> `Video.TexturePack` (string, `GE007_TEXTURE_PACK`), default empty = OFF (byte-identical).
+> Verified: Dam renders the Real-ESRGAN pack live (71% of the frame), default-off frame ==
+> Phase-1 final frame (byte-identical), `--all` smoke holds 14/6, ASan clean on the loader
+> path, code-reviewed (oversized-asset → native fallback). Build the pack with `tools/texpack`,
+> then `GE007_TEXTURE_PACK=<pack> ./build/ge007 --level 33`.
+> Still planned (this doc): the import_texture-path hook for non-settex/dynamic textures,
+> the content-hash dump+manifest (STEP 1), PNG dump swap (STEP 4), and the format-class guard
+> for palette-animated/LOD edge cases (STEP 5).
 
 ## Why this works (Engine B)
 
