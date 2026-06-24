@@ -155,15 +155,15 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
-f32 g_pcRenderScale = 1.0f;
+f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
 s32 g_pcMsaaSamples = 0;
 f32 g_pcFovY = 60.0f;
-f32 g_pcVideoSaturation = 1.0f;
-f32 g_pcVideoContrast = 1.0f;
-f32 g_pcVideoBrightness = 0.0f;
-s32 g_pcOutputDither = 0;
-f32 g_pcVignette = 0.0f;
-s32 g_pcBloom = 0;
+f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
+f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
+f32 g_pcVideoBrightness = 0.0f;  /* kept neutral (brightness offset is taste-sensitive) */
+s32 g_pcOutputDither = 1;        /* remaster default: on (anti-banding under the grade) */
+f32 g_pcVignette = 0.25f;        /* remaster default: soft edge falloff for depth */
+s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
 f32 g_pcFogDensity = 1.0f;
@@ -953,10 +953,10 @@ float g_pcMouseSensAim = 0.05f;     /* aim-mode mouse sensitivity */
 int g_pcInvertY = 0;                /* invert Y axis */
 float g_pcGamepadLookSpeed = 8.0f;  /* gamepad right stick scaling */
 /* Opt-in right-stick feel knobs (all default to vanilla-identity). */
-float g_pcGamepadLookCurve = 1.0f;  /* response exponent on |stick|; 1.0 = linear (vanilla) */
-float g_pcGamepadDeadzone = 0.2441f;/* radial inner deadzone fraction (legacy 8000/32767 corner) */
-int g_pcGamepadRadialDeadzone = 0;  /* 0 = legacy per-axis square; 1 = radial rescale-from-edge */
-int g_pcGamepadFpsScale = 0;        /* 0 = vanilla per-frame; 1 = scale look by frame delta */
+float g_pcGamepadLookCurve = 1.5f;  /* remaster default: mild ease-in for fine aim (1.0 = linear) */
+float g_pcGamepadDeadzone = 0.15f;  /* remaster default: tighter modern deadzone (paired with radial) */
+int g_pcGamepadRadialDeadzone = 1;  /* remaster default: true radial rescale-from-edge */
+int g_pcGamepadFpsScale = 1;        /* remaster default: frame-rate-independent look (no-op at 60fps) */
 
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
@@ -975,9 +975,9 @@ s32 g_pcAdsModernReticle = 1;     /* Input.AdsModernReticle  modern dot+ticks re
 s32 g_pcAdsSteadyView    = 1;     /* Input.AdsSteadyView     damp walk/strafe head-bob in ADS */
 f32 g_pcAdsBobFloor      = 0.15f; /* Input.AdsBobFloor       residual ADS weapon bob (0=rigid) */
 f32 g_pcAdsRecoilReduce  = 0.0f;  /* Input.AdsRecoilReduce   cosmetic recoil cut     */
-f32 g_pcViewmodelSway    = 0.0f;  /* Input.ViewmodelSway     additive breathing sway amplitude (0=off) */
-s32 g_pcModernCrosshair  = 0;     /* Input.ModernCrosshair   always-on crisp hip-fire reticle (OFF) */
-s32 g_pcHitMarkers       = 0;     /* Input.HitMarkers        on-hit X marker (OFF)                 */
+f32 g_pcViewmodelSway    = 1.0f;  /* Input.ViewmodelSway     remaster default: subtle weapon sway ON */
+s32 g_pcModernCrosshair  = 1;     /* Input.ModernCrosshair   remaster default: crisp hip-fire reticle ON */
+s32 g_pcHitMarkers       = 1;     /* Input.HitMarkers        remaster default: on-hit marker ON */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -1453,12 +1453,12 @@ void platformRegisterConfig(void)
                           "--config-override Video.Gamma=VALUE",
                           "Gamma",
                           "Output gamma correction. 1.0 leaves colors unchanged.");
-    settingsRegisterFloat("Video.Saturation", &g_pcVideoSaturation, 1.0f, 0.0f, 2.0f,
+    settingsRegisterFloat("Video.Saturation", &g_pcVideoSaturation, 1.15f, 0.0f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_SATURATION",
                           "--config-override Video.Saturation=VALUE",
                           "Saturation",
                           "Output color saturation. 1.0 leaves colors unchanged.");
-    settingsRegisterFloat("Video.Contrast", &g_pcVideoContrast, 1.0f, 0.5f, 2.0f,
+    settingsRegisterFloat("Video.Contrast", &g_pcVideoContrast, 1.08f, 0.5f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_CONTRAST",
                           "--config-override Video.Contrast=VALUE",
                           "Contrast",
@@ -1468,17 +1468,17 @@ void platformRegisterConfig(void)
                           "--config-override Video.Brightness=VALUE",
                           "Brightness",
                           "Output brightness offset. 0.0 leaves colors unchanged.");
-    settingsRegisterInt("Video.OutputDither", &g_pcOutputDither, 0, 0, 1,
+    settingsRegisterInt("Video.OutputDither", &g_pcOutputDither, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_OUTPUT_DITHER",
                         "--config-override Video.OutputDither=VALUE",
                         "Output dither",
                         "4x4 ordered Bayer dither to hide RGBA8 banding in skies/fades.");
-    settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.0f, 0.0f, 1.0f,
+    settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.25f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIGNETTE",
                           "--config-override Video.Vignette=VALUE",
                           "Vignette",
                           "Soft darkening toward screen edges. 0.0 = off.");
-    settingsRegisterInt("Video.Bloom", &g_pcBloom, 0, 0, 1,
+    settingsRegisterInt("Video.Bloom", &g_pcBloom, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_BLOOM",
                         "--config-override Video.Bloom=VALUE",
                         "Bloom",
@@ -1493,7 +1493,7 @@ void platformRegisterConfig(void)
                           "--config-override Video.BloomIntensity=VALUE",
                           "Bloom intensity",
                           "Strength of the bloom halo added to the image.");
-    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 4.0f,
+    settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
                           "Render scale",
@@ -1542,22 +1542,22 @@ void platformRegisterConfig(void)
                           "--config-override Input.GamepadLookSpeed=VALUE",
                           "Gamepad look speed",
                           "Right-stick look speed multiplier.");
-    settingsRegisterFloat("Input.GamepadLookCurve", &g_pcGamepadLookCurve, 1.0f, 1.0f, 4.0f,
+    settingsRegisterFloat("Input.GamepadLookCurve", &g_pcGamepadLookCurve, 1.5f, 1.0f, 4.0f,
                           SETTING_SCOPE_LIVE, "GE007_GAMEPAD_LOOK_CURVE",
                           "--config-override Input.GamepadLookCurve=VALUE",
                           "Gamepad look curve",
                           "Response exponent: 1.0 linear (vanilla), >1 finer near center.");
-    settingsRegisterFloat("Input.GamepadDeadzone", &g_pcGamepadDeadzone, 0.2441f, 0.0f, 0.9f,
+    settingsRegisterFloat("Input.GamepadDeadzone", &g_pcGamepadDeadzone, 0.15f, 0.0f, 0.9f,
                           SETTING_SCOPE_LIVE, "GE007_GAMEPAD_DEADZONE",
                           "--config-override Input.GamepadDeadzone=VALUE",
                           "Gamepad deadzone",
                           "Right-stick inner deadzone as a fraction of full deflection (radial mode).");
-    settingsRegisterInt("Input.GamepadRadialDeadzone", &g_pcGamepadRadialDeadzone, 0, 0, 1,
+    settingsRegisterInt("Input.GamepadRadialDeadzone", &g_pcGamepadRadialDeadzone, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_GAMEPAD_RADIAL_DEADZONE",
                         "--config-override Input.GamepadRadialDeadzone=VALUE",
                         "Radial deadzone",
                         "1 = circular deadzone with rescale-from-edge; 0 = legacy square.");
-    settingsRegisterInt("Input.GamepadFpsScale", &g_pcGamepadFpsScale, 0, 0, 1,
+    settingsRegisterInt("Input.GamepadFpsScale", &g_pcGamepadFpsScale, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_GAMEPAD_FPS_SCALE",
                         "--config-override Input.GamepadFpsScale=VALUE",
                         "FPS-independent gamepad",
@@ -1635,17 +1635,17 @@ void platformRegisterConfig(void)
                           "--config-override Input.AdsBobFloor=VALUE",
                           "ADS bob floor",
                           "Residual weapon bob kept while aiming (0 = rigid, ~0.15 = subtle).");
-    settingsRegisterFloat("Input.ViewmodelSway", &g_pcViewmodelSway, 0.0f, 0.0f, 3.0f,
+    settingsRegisterFloat("Input.ViewmodelSway", &g_pcViewmodelSway, 1.0f, 0.0f, 3.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIEWMODEL_SWAY",
                           "--config-override Input.ViewmodelSway=VALUE",
                           "Viewmodel sway",
                           "Additive breathing sway on the first-person weapon (0 = off, 1 = subtle).");
-    settingsRegisterInt("Input.ModernCrosshair", &g_pcModernCrosshair, 0, 0, 1,
+    settingsRegisterInt("Input.ModernCrosshair", &g_pcModernCrosshair, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_MODERN_CROSSHAIR",
                         "--config-override Input.ModernCrosshair=VALUE",
                         "Modern crosshair",
                         "Always-on crisp dot+ticks hip-fire reticle instead of the textured crosshair (0 = off).");
-    settingsRegisterInt("Input.HitMarkers", &g_pcHitMarkers, 0, 0, 1,
+    settingsRegisterInt("Input.HitMarkers", &g_pcHitMarkers, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_HIT_MARKERS",
                         "--config-override Input.HitMarkers=VALUE",
                         "Hit markers",
