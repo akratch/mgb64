@@ -167,6 +167,7 @@ s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitter
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
+f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
 
 /* ===== Window mode state ===== */
@@ -1499,6 +1500,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.Fxaa=VALUE",
                         "FXAA",
                         "Fast approximate anti-aliasing on the output pass; cleans sprite/alpha/HUD edges. 0 = off.");
+    settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.3f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SHARPEN",
+                          "--config-override Video.Sharpen=VALUE",
+                          "Sharpen",
+                          "Contrast-adaptive output sharpening. 0.0 = off; ~0.3 mild; higher risks ringing.");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",

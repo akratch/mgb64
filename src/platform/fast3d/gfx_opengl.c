@@ -1587,6 +1587,11 @@ static float gfx_opengl_output_vignette(void) {
     return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
 }
 
+static float gfx_opengl_output_sharpen(void) {
+    float v = g_pcSharpen;
+    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+}
+
 static bool gfx_opengl_output_color_adjust_active(void) {
     float gamma = gfx_opengl_output_gamma();
 
@@ -1599,7 +1604,8 @@ static bool gfx_opengl_output_color_adjust_active(void) {
            gfx_opengl_output_brightness() != 0.0f ||
            g_pcOutputDither != 0 ||
            gfx_opengl_output_vignette() > 0.0001f ||
-           g_pcFxaa != 0;
+           g_pcFxaa != 0 ||
+           gfx_opengl_output_sharpen() > 0.0001f;
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1656,6 +1662,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uBloomIntensity;\n"
         "uniform int uFilterMode;\n"
         "uniform int uFxaa;\n"
+        "uniform float uSharpen;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
         "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
@@ -1747,6 +1754,22 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    if (lB < lMin || lB > lMax) return rgbA;\n"
         "    return rgbB;\n"
         "}\n"
+        "vec3 casSharpen(vec2 fc, vec3 rgbC) {\n"
+        "    vec3 n = sampleDst(fc + vec2( 0.0,-1.0)).rgb;\n"
+        "    vec3 s = sampleDst(fc + vec2( 0.0, 1.0)).rgb;\n"
+        "    vec3 w = sampleDst(fc + vec2(-1.0, 0.0)).rgb;\n"
+        "    vec3 e = sampleDst(fc + vec2( 1.0, 0.0)).rgb;\n"
+        "    vec3 mn = min(rgbC, min(min(n,s), min(w,e)));\n"
+        "    vec3 mx = max(rgbC, max(max(n,s), max(w,e)));\n"
+        "    vec3 amp = clamp(min(mn, 1.0 - mx) / max(mx, 0.0001), 0.0, 1.0);\n"
+        "    amp = sqrt(amp);\n"
+        "    float peak = -0.125 - 0.075 * uSharpen;\n"
+        "    vec3 wgt = amp * peak;\n"
+        "    vec3 sum = rgbC + (n + s + w + e) * wgt;\n"
+        "    vec3 rcpW = 1.0 / (1.0 + 4.0 * wgt);\n"
+        "    vec3 outc = clamp(sum * rcpW, mn, mx);\n"
+        "    return mix(rgbC, outc, clamp(uSharpen, 0.0, 1.0));\n"
+        "}\n"
         "void main() {\n"
         "    vec4 color = sampleDst(gl_FragCoord.xy);\n"
         "    if (uApplyPost == 1 && uFxaa == 1) {\n"
@@ -1784,6 +1807,9 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "        float d = dot(vc, vc) * 2.0;\n"
         "        float vig = 1.0 - uVignette * smoothstep(0.3, 1.0, d);\n"
         "        rgb *= vig;\n"
+        "    }\n"
+        "    if (uApplyPost == 1 && uSharpen > 0.0) {\n"
+        "        rgb = casSharpen(gl_FragCoord.xy, rgb);\n"
         "    }\n"
         "    if (uApplyPost == 1 && uDither == 1) {\n"
         "        ivec2 dp = ivec2(gl_FragCoord.xy) & 3;\n"
@@ -1905,6 +1931,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 filter_mode);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFxaa"),
                 (apply_post && g_pcFxaa) ? 1 : 0);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uSharpen"),
+                apply_post ? gfx_opengl_output_sharpen() : 0.0f);
     glBindVertexArray(g_output_filter_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -1937,6 +1965,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     bool use_color_adjust;
     bool use_bloom;
     bool use_fxaa;
+    bool use_sharpen;
     extern SDL_Window *g_sdlWindow;
     int drawable_w = 0;
     int drawable_h = 0;
@@ -1952,7 +1981,8 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     use_color_adjust = gfx_opengl_output_color_adjust_active();
     use_bloom = (g_pcBloom != 0);
     use_fxaa = (g_pcFxaa != 0);
-    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa) {
+    use_sharpen = (gfx_opengl_output_sharpen() > 0.0f);
+    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen) {
         return;
     }
     if (!use_vi_filter) {
