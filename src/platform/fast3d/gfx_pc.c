@@ -12973,21 +12973,45 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     float ulyf = -(uly / (4.0f * logical_half_height)) + 1.0f;
     float lrxf = lrx / (4.0f * logical_half_width) - 1.0f;
     float lryf = -(lry / (4.0f * logical_half_height)) + 1.0f;
-    bool spans_logical_width = ulx <= 0
-        && lrx >= (int32_t)(gfx_logical_screen_width() * 4.0f) - 4;
-
-    /* A rectangle spanning the full logical width is a full-screen overlay
-     * (fade/flash fillrect, or a full-screen TEXRECT like the blood/death
-     * masks in blood_animation.c) — not world geometry. It must full-bleed, so
-     * exempt it from the per-vertex widescreen squeeze; otherwise its NDC +-1
-     * edges get pulled inward to +-factor and leave bare strips on the sides
-     * (the same failure the sky quad had). HUD-sized texrects (crosshair, ammo,
-     * radar, glyphs) are never full-width, so they are unaffected and still
-     * squeeze. No-op on 4:3 (factor == 1). Previously gated on
-     * g_fillrect_draw_active, which wrongly excluded full-screen texrects. */
-    if (!spans_logical_width) {
-        ulxf = gfx_adjust_x_for_aspect_ratio(ulxf);
-        lrxf = gfx_adjust_x_for_aspect_ratio(lrxf);
+    /* Widescreen rectangle handling, keyed off the CURRENT viewport (rdp.viewport
+     * is the active player's pane; in single-player it is the full window).
+     *
+     * (1) A rectangle that spans the full pane is a full-screen overlay
+     *     (fade/flash fillrect, or a full-screen TEXRECT like the blood/death
+     *     masks in blood_animation.c) — it must full-bleed, so it is exempt
+     *     from the squeeze; otherwise its edges get pulled inward and leave
+     *     bare strips on the sides (the failure the sky quad had).
+     * (2) Everything else (HUD, crosshair, glyphs) is squeezed about the PANE
+     *     centre, not the window centre, so in split-screen each pane's HUD and
+     *     crosshair squeeze about their own pane and stay aligned with that
+     *     pane's rendered world / bullet-impact point instead of drifting toward
+     *     the window centre.
+     *
+     * In single-player the pane is the full window: pane centre == NDC 0 and the
+     * span test reduces to the full-logical-width check, so this is byte-identical
+     * to the prior window-centred behaviour. No-op on exact 4:3 (factor == 1).
+     * factor is derived as adjust(1)-adjust(0) so it carries every guard
+     * (correction disabled / unknown dims / 4:3) with the diagnostic offset
+     * removed, and without re-syncing the window per rectangle. */
+    {
+        float factor = gfx_adjust_x_for_aspect_ratio(1.0f) - gfx_adjust_x_for_aspect_ratio(0.0f);
+        float win_w = (float)gfx_current_dimensions.width;
+        float pane_cx_ndc = 0.0f;
+        int32_t pane_left_qpx = 0;
+        int32_t pane_right_qpx = (int32_t)(gfx_logical_screen_width() * 4.0f);
+        if (win_w > 0.0f && rdp.viewport.width > 0) {
+            float ratio_x = win_w / gfx_logical_screen_width();
+            pane_cx_ndc = 2.0f * (rdp.viewport.x + rdp.viewport.width * 0.5f) / win_w - 1.0f;
+            if (ratio_x != 0.0f) {
+                pane_left_qpx = (int32_t)(rdp.viewport.x * 4.0f / ratio_x);
+                pane_right_qpx = (int32_t)((rdp.viewport.x + rdp.viewport.width) * 4.0f / ratio_x);
+            }
+        }
+        bool spans_pane = ulx <= pane_left_qpx && lrx >= pane_right_qpx - 4;
+        if (!spans_pane) {
+            ulxf = pane_cx_ndc + (ulxf - pane_cx_ndc) * factor;
+            lrxf = pane_cx_ndc + (lrxf - pane_cx_ndc) * factor;
+        }
     }
 
     if (trace_rect_conversion &&
