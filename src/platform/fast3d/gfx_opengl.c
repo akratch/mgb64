@@ -43,6 +43,9 @@ extern float g_pcVideoContrast;
 extern float g_pcVideoBrightness;
 extern int g_pcOutputDither;
 extern float g_pcVignette;
+extern int g_pcBloom;
+extern float g_pcBloomThreshold;
+extern float g_pcBloomIntensity;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1622,6 +1625,9 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform int uApplyPost;\n"
         "uniform int uDither;\n"
         "uniform float uVignette;\n"
+        "uniform int uBloom;\n"
+        "uniform float uBloomThreshold;\n"
+        "uniform float uBloomIntensity;\n"
         "uniform int uFilterMode;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
@@ -1683,6 +1689,24 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    else if (uFilterMode == 2) color = sampleFitSrcToDstNearest(gl_FragCoord.xy);\n"
         "    else if (uFilterMode == 3) color = sampleFitLogicalToDstNearest(gl_FragCoord.xy);\n"
         "    else color = sampleCpuBilinear(gl_FragCoord.xy);\n"
+        "    if (uApplyPost == 1 && uBloom == 1) {\n"
+        "        vec2 texel = 1.0 / uSrcSize;\n"
+        "        vec3 bloom = vec3(0.0);\n"
+        "        float wsum = 0.0;\n"
+        "        const int R = 3;\n"
+        "        for (int y = -R; y <= R; ++y)\n"
+        "        for (int x = -R; x <= R; ++x) {\n"
+        "            vec2 o = vec2(float(x), float(y)) * texel * 2.0;\n"
+        "            vec3 s = texture(uTex, vTexCoord + o).rgb;\n"
+        "            float l = dot(s, vec3(0.299, 0.587, 0.114));\n"
+        "            float b = max(l - uBloomThreshold, 0.0) / max(1.0 - uBloomThreshold, 0.001);\n"
+        "            float w = exp(-float(x*x + y*y) / 6.0);\n"
+        "            bloom += s * b * w;\n"
+        "            wsum += w;\n"
+        "        }\n"
+        "        bloom /= max(wsum, 0.001);\n"
+        "        color.rgb = clamp(color.rgb + bloom * uBloomIntensity, 0.0, 1.0);\n"
+        "    }\n"
         "    vec3 rgb = clamp(color.rgb * uColorScale + vec3(uColorBias / 255.0), 0.0, 1.0);\n"
         "    if (uApplyPost == 1) {\n"
         "        rgb += vec3(uBrightness);\n"
@@ -1808,6 +1832,12 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_pcOutputDither ? 1 : 0);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uVignette"),
                 gfx_opengl_output_vignette());
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uBloom"),
+                g_pcBloom ? 1 : 0);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uBloomThreshold"),
+                g_pcBloomThreshold);
+    glUniform1f(glGetUniformLocation(g_output_filter_program, "uBloomIntensity"),
+                g_pcBloomIntensity);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glBindVertexArray(g_output_filter_vao);
@@ -1840,6 +1870,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     int filter_source_h;
     bool use_vi_filter;
     bool use_color_adjust;
+    bool use_bloom;
     extern SDL_Window *g_sdlWindow;
     int drawable_w = 0;
     int drawable_h = 0;
@@ -1853,7 +1884,8 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     gfx_opengl_check_output_filter_color_diag();
     use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
     use_color_adjust = gfx_opengl_output_color_adjust_active();
-    if (!use_vi_filter && !use_color_adjust) {
+    use_bloom = (g_pcBloom != 0);
+    if (!use_vi_filter && !use_color_adjust && !use_bloom) {
         return;
     }
     if (!use_vi_filter) {

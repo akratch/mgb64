@@ -163,6 +163,9 @@ f32 g_pcVideoContrast = 1.0f;
 f32 g_pcVideoBrightness = 0.0f;
 s32 g_pcOutputDither = 0;
 f32 g_pcVignette = 0.0f;
+s32 g_pcBloom = 0;
+f32 g_pcBloomThreshold = 0.8f;
+f32 g_pcBloomIntensity = 0.5f;
 
 /* ===== Window mode state ===== */
 typedef enum PlatformWindowMode {
@@ -1466,6 +1469,21 @@ void platformRegisterConfig(void)
                           "--config-override Video.Vignette=VALUE",
                           "Vignette",
                           "Soft darkening toward screen edges. 0.0 = off.");
+    settingsRegisterInt("Video.Bloom", &g_pcBloom, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_BLOOM",
+                        "--config-override Video.Bloom=VALUE",
+                        "Bloom",
+                        "In-shader bright-pass bloom on bright emitters. 0 = off.");
+    settingsRegisterFloat("Video.BloomThreshold", &g_pcBloomThreshold, 0.8f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_BLOOM_THRESHOLD",
+                          "--config-override Video.BloomThreshold=VALUE",
+                          "Bloom threshold",
+                          "Luma above which pixels contribute to bloom.");
+    settingsRegisterFloat("Video.BloomIntensity", &g_pcBloomIntensity, 0.5f, 0.0f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_BLOOM_INTENSITY",
+                          "--config-override Video.BloomIntensity=VALUE",
+                          "Bloom intensity",
+                          "Strength of the bloom halo added to the image.");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 1.0f, 1.0f, 2.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
