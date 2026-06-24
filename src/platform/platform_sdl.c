@@ -166,6 +166,7 @@ f32 g_pcVignette = 0.25f;        /* remaster default: soft edge falloff for dept
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
+s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcFogDensity = 1.0f;
 
 /* ===== Window mode state ===== */
@@ -1493,6 +1494,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.BloomIntensity=VALUE",
                           "Bloom intensity",
                           "Strength of the bloom halo added to the image.");
+    settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_FXAA",
+                        "--config-override Video.Fxaa=VALUE",
+                        "FXAA",
+                        "Fast approximate anti-aliasing on the output pass; cleans sprite/alpha/HUD edges. 0 = off.");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",

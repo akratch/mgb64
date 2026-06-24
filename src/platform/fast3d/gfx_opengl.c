@@ -46,6 +46,8 @@ extern float g_pcVignette;
 extern int g_pcBloom;
 extern float g_pcBloomThreshold;
 extern float g_pcBloomIntensity;
+extern int g_pcFxaa;
+extern float g_pcSharpen;
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -1596,7 +1598,8 @@ static bool gfx_opengl_output_color_adjust_active(void) {
            gfx_opengl_output_contrast() != 1.0f ||
            gfx_opengl_output_brightness() != 0.0f ||
            g_pcOutputDither != 0 ||
-           gfx_opengl_output_vignette() > 0.0001f;
+           gfx_opengl_output_vignette() > 0.0001f ||
+           g_pcFxaa != 0;
 }
 
 static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) {
@@ -1652,6 +1655,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uBloomThreshold;\n"
         "uniform float uBloomIntensity;\n"
         "uniform int uFilterMode;\n"
+        "uniform int uFxaa;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
         "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
@@ -1706,12 +1710,48 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    vec4 c11 = texelFetch(uTex, p1, 0);\n"
         "    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);\n"
         "}\n"
+        "vec4 sampleDst(vec2 dstCoord) {\n"
+        "    if (uFilterMode == 1) return sampleNearest(dstCoord);\n"
+        "    else if (uFilterMode == 2) return sampleFitSrcToDstNearest(dstCoord);\n"
+        "    else if (uFilterMode == 3) return sampleFitLogicalToDstNearest(dstCoord);\n"
+        "    return sampleCpuBilinear(dstCoord);\n"
+        "}\n"
+        "float fxLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+        "vec3 fxaa(vec2 fc, vec3 rgbM) {\n"
+        "    float lM = fxLuma(rgbM);\n"
+        "    float lN = fxLuma(sampleDst(fc + vec2( 0.0,-1.0)).rgb);\n"
+        "    float lS = fxLuma(sampleDst(fc + vec2( 0.0, 1.0)).rgb);\n"
+        "    float lW = fxLuma(sampleDst(fc + vec2(-1.0, 0.0)).rgb);\n"
+        "    float lE = fxLuma(sampleDst(fc + vec2( 1.0, 0.0)).rgb);\n"
+        "    float lNW = fxLuma(sampleDst(fc + vec2(-1.0,-1.0)).rgb);\n"
+        "    float lNE = fxLuma(sampleDst(fc + vec2( 1.0,-1.0)).rgb);\n"
+        "    float lSW = fxLuma(sampleDst(fc + vec2(-1.0, 1.0)).rgb);\n"
+        "    float lSE = fxLuma(sampleDst(fc + vec2( 1.0, 1.0)).rgb);\n"
+        "    float lMin = min(lM, min(min(lN,lS), min(lW,lE)));\n"
+        "    float lMax = max(lM, max(max(lN,lS), max(lW,lE)));\n"
+        "    float range = lMax - lMin;\n"
+        "    if (range < max(0.0625, lMax * 0.125)) return rgbM;\n"
+        "    vec2 dir;\n"
+        "    dir.x = -((lNW + lNE) - (lSW + lSE));\n"
+        "    dir.y =  ((lNW + lSW) - (lNE + lSE));\n"
+        "    float dirReduce = max((lNW+lNE+lSW+lSE) * 0.03125, 0.0078125);\n"
+        "    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+        "    dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0));\n"
+        "    vec3 rgbA = 0.5 * (\n"
+        "        sampleDst(fc + dir * (1.0/3.0 - 0.5)).rgb +\n"
+        "        sampleDst(fc + dir * (2.0/3.0 - 0.5)).rgb);\n"
+        "    vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
+        "        sampleDst(fc + dir * -0.5).rgb +\n"
+        "        sampleDst(fc + dir *  0.5).rgb);\n"
+        "    float lB = fxLuma(rgbB);\n"
+        "    if (lB < lMin || lB > lMax) return rgbA;\n"
+        "    return rgbB;\n"
+        "}\n"
         "void main() {\n"
-        "    vec4 color;\n"
-        "    if (uFilterMode == 1) color = sampleNearest(gl_FragCoord.xy);\n"
-        "    else if (uFilterMode == 2) color = sampleFitSrcToDstNearest(gl_FragCoord.xy);\n"
-        "    else if (uFilterMode == 3) color = sampleFitLogicalToDstNearest(gl_FragCoord.xy);\n"
-        "    else color = sampleCpuBilinear(gl_FragCoord.xy);\n"
+        "    vec4 color = sampleDst(gl_FragCoord.xy);\n"
+        "    if (uApplyPost == 1 && uFxaa == 1) {\n"
+        "        color.rgb = fxaa(gl_FragCoord.xy, color.rgb);\n"
+        "    }\n"
         "    if (uApplyPost == 1 && uBloom == 1) {\n"
         "        vec2 texel = 1.0 / uSrcSize;\n"
         "        vec3 bloom = vec3(0.0);\n"
@@ -1863,6 +1903,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_pcBloomIntensity);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uFxaa"),
+                (apply_post && g_pcFxaa) ? 1 : 0);
     glBindVertexArray(g_output_filter_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -1894,6 +1936,7 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     bool use_vi_filter;
     bool use_color_adjust;
     bool use_bloom;
+    bool use_fxaa;
     extern SDL_Window *g_sdlWindow;
     int drawable_w = 0;
     int drawable_h = 0;
@@ -1908,7 +1951,8 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
     use_color_adjust = gfx_opengl_output_color_adjust_active();
     use_bloom = (g_pcBloom != 0);
-    if (!use_vi_filter && !use_color_adjust && !use_bloom) {
+    use_fxaa = (g_pcFxaa != 0);
+    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa) {
         return;
     }
     if (!use_vi_filter) {
