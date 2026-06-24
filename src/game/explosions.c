@@ -2949,7 +2949,13 @@ void explosionScorchTick(struct coord3d *pos, f32 explosion_size, s16 room)
 
     temp_s0 = getRoomPositionByIndex((s32) room);
 
+#ifdef NATIVE_PORT
+    /* MP scorch: record marks regardless of player count (buffer is always
+     * allocated on PC). GE007_DISABLE_SCORCH_MARKS is the off switch. */
+    if (!portDisableScorchMarks())
+#else
     if (getPlayerCount() < 2)
+#endif
     {
         if (explosion_size > 200.0f)
         {
@@ -3072,11 +3078,13 @@ Gfx *explosionRenderScorchBuffer(Gfx *arg0)
         return arg0;
     }
 #endif
+#ifndef NATIVE_PORT
     if (getPlayerCount() >= 2)
     {
         return arg0;
     }
     else
+#endif
     {
         gSPSetGeometryMode(arg0++, G_CULL_BACK);
         gSPClearGeometryMode(arg0++, G_CULL_FRONT | G_FOG);
@@ -3084,7 +3092,7 @@ Gfx *explosionRenderScorchBuffer(Gfx *arg0)
 
         texSelect(&arg0, genericimage, 4, 1, 2);
 
-        for (i=0; i<20; i++)
+        for (i=0; i<SCORCH_BUFFER_LEN; i++)
         {
             if (g_ScorchBuffer[i].roomid >= 0 && getROOMID_isRendered(g_ScorchBuffer[i].roomid))
             {

@@ -11,7 +11,13 @@
 #define EXPLOSION_PARTS_LEN 40
 #define SMOKE_BUFFER_LEN 20
 #define SMOKE_PARTS_LEN 10
+#ifdef NATIVE_PORT
+/* 40 (was 20, N64): +~2KB MEMPOOL_STAGE (~96B/entry). MP now shares this ring
+ * across both split-screen panes, so a larger ring keeps scorch marks persisting. */
+#define SCORCH_BUFFER_LEN 40
+#else
 #define SCORCH_BUFFER_LEN 20
+#endif
 #define IMPACT_TYPE_LEN 20
 #ifdef NATIVE_PORT
 /* 400 (was 100, N64): PC has ample MEMPOOL_STAGE; ~84B/entry => ~33KB. Lengthens

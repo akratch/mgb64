@@ -46,7 +46,14 @@ void alloc_explosion_smoke_casing_scorch_impact_buffers(void)
         }
     }
 
+#ifdef NATIVE_PORT
+    /* MP scorch: always allocate so split-screen has a non-NULL buffer. The N64
+     * SP-only gate was a fill-rate/memory concession; the write/render gates in
+     * explosions.c are lifted in tandem so MP persists ground scorch. */
+    if (1)
+#else
     if (getPlayerCount() == 1)
+#endif
     {
         // scorches are the circle burn marks left on the ground from explosions
         g_ScorchBuffer = (struct Scorch *)mempAllocBytesInBank(SCORCH_BUFFER_LEN * sizeof(struct Scorch), MEMPOOL_STAGE);
