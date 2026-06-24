@@ -1438,6 +1438,34 @@ f32 getPlayer_c_perspnear(void)
     return g_CurrentPlayer->c_perspnear;
 }
 
+#ifdef NATIVE_PORT
+/* Widescreen edge-object cull fix. The PC backend squeezes the rendered scene
+ * to a wider effective FOV (gfx_adjust_x_for_aspect_ratio in gfx_pc.c), so
+ * geometry beyond the fixed 1.4545 frustum is actually visible near the
+ * left/right edges. The horizontal cull planes below are built from c_scalex
+ * (derived from c_perspaspect=1.4545), so without this they would cull objects
+ * that are on screen, making chrs/props/doors pop in/out at the edges on a wide
+ * window. Widen ONLY the horizontal cull term by 1/factor to match the rendered
+ * extent. factor==1 on exact 4:3 -> exact no-op. Vertical planes and the
+ * screen<->world aim duals (transform3Dto2DCoords etc.) are deliberately left
+ * untouched -- those round-trip correctly and must stay at 1.4545. */
+static f32 widenCullHorizontal(f32 x)
+{
+    static int enabled = -1;
+    f32 factor;
+    if (enabled < 0) {
+        enabled = (getenv("GE007_NO_CULL_ASPECT_FIX") == NULL); /* default ON */
+    }
+    if (!enabled) {
+        return x;
+    }
+    factor = gfx_get_aspect_x_factor();
+    return (factor != 0.0f) ? x / factor : x;
+}
+#else
+#define widenCullHorizontal(x) (x)
+#endif
+
 void sub_GAME_7F0785DC()
 {
     f32 h_div;
@@ -1468,7 +1496,7 @@ void sub_GAME_7F0785DC()
                           + (flt_CODE_bss_80079950.y * g_CurrentPlayer->field_10D4->m[3][1])
                           + (flt_CODE_bss_80079950.z * g_CurrentPlayer->field_10D4->m[3][2]);
 
-    h2 = (-g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex;
+    h2 = widenCullHorizontal((-g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex);
     h2_div = 1.0f / sqrtf((h2 * h2) + 1.0f);
     h2 *= h2_div;
     nh2_div = -h2_div;
@@ -1600,7 +1628,7 @@ s32 camIsPosInScreenBox(coord3d *pos, f32 margin, bbox2d *box)
         return FALSE;
     }
 
-    sp38 = (box->min.x - g_CurrentPlayer->c_screenleft - g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex;
+    sp38 = widenCullHorizontal((box->min.x - g_CurrentPlayer->c_screenleft - g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex);
 
     sp3c = 1.0f / sqrtf(sp38 * sp38 + 1.0f);
     sp38 *= sp3c;
@@ -1617,7 +1645,7 @@ s32 camIsPosInScreenBox(coord3d *pos, f32 margin, bbox2d *box)
         return FALSE;
     }
 
-    sp38 = -(box->max.x - g_CurrentPlayer->c_screenleft - g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex;
+    sp38 = widenCullHorizontal(-(box->max.x - g_CurrentPlayer->c_screenleft - g_CurrentPlayer->c_halfwidth) * g_CurrentPlayer->c_scalex);
     sp30 = 1.0f / sqrtf(sp38 * sp38 + 1.0f);
     sp38 *= sp30;
     sp20 = -sp30;
