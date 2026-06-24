@@ -157,20 +157,21 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 f32 g_pcVideoGamma = 1.0f;
 f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
 s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
-f32 g_pcFovY = 60.0f;
+f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
 f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
 f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
 f32 g_pcVideoBrightness = 0.0f;  /* kept neutral (brightness offset is taste-sensitive) */
 s32 g_pcOutputDither = 1;        /* remaster default: on (anti-banding under the grade) */
-f32 g_pcVignette = 0.25f;        /* remaster default: soft edge falloff for depth */
+f32 g_pcVignette = 0.15f;        /* remaster default: soft edge falloff for depth */
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
-f32 g_pcViewmodelFov = 60.0f;    /* remaster default: weapon rendered at fixed 60deg ref FOV regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
+f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
+s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
 char g_pcTexturePack[1024] = ""; /* Video.TexturePack: dir of an HD texture pack (textures/tok####.png). Empty = off (stock, byte-identical). */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
 f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
@@ -1489,7 +1490,7 @@ void platformRegisterConfig(void)
                         "--config-override Video.OutputDither=VALUE",
                         "Output dither",
                         "4x4 ordered Bayer dither to hide RGBA8 banding in skies/fades.");
-    settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.25f, 0.0f, 1.0f,
+    settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIGNETTE",
                           "--config-override Video.Vignette=VALUE",
                           "Vignette",
@@ -1524,6 +1525,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.GradePresets=VALUE",
                         "Per-level grade",
                         "Subtle per-level mood color grade composed atop the global grade. 0 = off (identity).");
+    settingsRegisterInt("Video.Tonemap", &g_pcTonemap, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_TONEMAP",
+                        "--config-override Video.Tonemap=VALUE",
+                        "Filmic tonemap",
+                        "Gentle filmic highlight rolloff for a cinematic look. 0 = off (linear).");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
@@ -1536,12 +1542,12 @@ void platformRegisterConfig(void)
                          "--config-override Video.MSAA=VALUE",
                          "MSAA",
                          "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
-    settingsRegisterFloat("Video.FovY", &g_pcFovY, 60.0f, 45.0f, 105.0f,
+    settingsRegisterFloat("Video.FovY", &g_pcFovY, 50.0f, 45.0f, 105.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOV_Y",
                           "--config-override Video.FovY=VALUE",
                           "Vertical FOV",
                           "Gameplay vertical field of view in degrees (45-105). 60 is the original feel; higher widens peripheral view.");
-    settingsRegisterFloat("Video.ViewmodelFov", &g_pcViewmodelFov, 60.0f, 0.0f, 90.0f,
+    settingsRegisterFloat("Video.ViewmodelFov", &g_pcViewmodelFov, 50.0f, 0.0f, 90.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIEWMODEL_FOV",
                           "--config-override Video.ViewmodelFov=VALUE",
                           "Viewmodel FOV",

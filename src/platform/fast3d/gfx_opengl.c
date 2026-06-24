@@ -49,6 +49,7 @@ extern float g_pcBloomIntensity;
 extern int g_pcFxaa;
 extern float g_pcSharpen;
 extern int g_pcGradePresets;
+extern int g_pcTonemap;
 extern float g_pcGradeLevelSat;
 extern float g_pcGradeLevelCon;
 extern float g_pcGradeLevelTintR;
@@ -1012,7 +1013,7 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
     }
     if (max_aniso > 1) {
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                        linear_filter ? (max_aniso > 8 ? 8.0f : max_aniso) : 1.0f);
+                        linear_filter ? (max_aniso > 16 ? 16.0f : max_aniso) : 1.0f);
     }
 }
 
@@ -1725,6 +1726,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uLevelSat;\n"
         "uniform float uLevelCon;\n"
         "uniform vec3 uColorTint;\n"
+        "uniform int uTonemap;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
         "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
@@ -1864,6 +1866,13 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "        float sat = uSaturation * uLevelSat;\n"
         "        rgb = mix(vec3(luma), rgb, sat);\n"
         "        rgb *= uColorTint;\n"
+        "        if (uTonemap == 1) {\n"
+        "            /* gentle filmic: lift mids + soft highlight shoulder, then a mild\n"
+        "             * S-curve, blended 40%% for a cinematic rolloff (no muddy crush). */\n"
+        "            vec3 t = rgb / (rgb * 0.55 + 0.58);\n"
+        "            t = t * t * (3.0 - 2.0 * t);\n"
+        "            rgb = mix(rgb, t, 0.40);\n"
+        "        }\n"
         "        rgb = clamp(rgb, 0.0, 1.0);\n"
         "    }\n"
         "    rgb = pow(rgb, vec3(1.0 / max(uGamma, 0.001)));\n"
@@ -2009,6 +2018,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                     gp ? g_pcGradeLevelTintG : 1.0f,
                     gp ? g_pcGradeLevelTintB : 1.0f);
     }
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uTonemap"),
+                (apply_post && g_pcTonemap) ? 1 : 0);
     glBindVertexArray(g_output_filter_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -2058,8 +2069,9 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     use_color_adjust = gfx_opengl_output_color_adjust_active();
     use_bloom = (g_pcBloom != 0);
     use_fxaa = (g_pcFxaa != 0);
+    bool use_tonemap = (g_pcTonemap != 0);
     use_sharpen = (gfx_opengl_output_sharpen() > 0.0f);
-    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen) {
+    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen && !use_tonemap) {
         return;
     }
     if (!use_vi_filter) {
