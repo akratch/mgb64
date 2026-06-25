@@ -50,6 +50,7 @@ extern int g_pcFxaa;
 extern float g_pcSharpen;
 extern int g_pcGradePresets;
 extern int g_pcTonemap;
+extern int g_pcRemasterFX;
 extern float g_pcGradeLevelSat;
 extern float g_pcGradeLevelCon;
 extern float g_pcGradeLevelTintR;
@@ -1650,17 +1651,26 @@ static float gfx_opengl_output_sharpen(void) {
 static bool gfx_opengl_output_color_adjust_active(void) {
     float gamma = gfx_opengl_output_gamma();
 
-    return g_diag_output_filter_color_scale != 1.0f ||
-           g_diag_output_filter_color_bias != 0.0f ||
-           gamma < 0.999f ||
-           gamma > 1.001f ||
-           gfx_opengl_output_saturation() != 1.0f ||
+    /* Gamma + the diag color knobs are always honored (display/diag, not remaster). */
+    if (g_diag_output_filter_color_scale != 1.0f ||
+        g_diag_output_filter_color_bias != 0.0f ||
+        gamma < 0.999f || gamma > 1.001f) {
+        return true;
+    }
+    /* Master faithful switch: when Video.RemasterFX is off, NONE of the remaster
+     * post-FX run, so the output pass is a pure passthrough (faithful original
+     * look) regardless of the individual grade/tonemap/etc. settings. */
+    if (!g_pcRemasterFX) {
+        return false;
+    }
+    return gfx_opengl_output_saturation() != 1.0f ||
            gfx_opengl_output_contrast() != 1.0f ||
            gfx_opengl_output_brightness() != 0.0f ||
            g_pcOutputDither != 0 ||
            gfx_opengl_output_vignette() > 0.0001f ||
            g_pcFxaa != 0 ||
            gfx_opengl_output_sharpen() > 0.0001f ||
+           g_pcTonemap != 0 ||
            (g_pcGradePresets && (g_pcGradeLevelSat != 1.0f ||
                                  g_pcGradeLevelCon != 1.0f ||
                                  g_pcGradeLevelTintR != 1.0f ||
@@ -1991,7 +2001,7 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uBrightness"),
                 gfx_opengl_output_brightness());
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uApplyPost"),
-                apply_post);
+                (apply_post && g_pcRemasterFX) ? 1 : 0);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uDither"),
                 g_pcOutputDither ? 1 : 0);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uVignette"),
@@ -2068,9 +2078,9 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     gfx_opengl_check_output_filter_color_diag();
     use_vi_filter = gfx_opengl_output_vi_filter_target(width, height, &filter_w, &filter_h);
     use_color_adjust = gfx_opengl_output_color_adjust_active();
-    use_bloom = (g_pcBloom != 0);
-    use_fxaa = (g_pcFxaa != 0);
-    bool use_tonemap = (g_pcTonemap != 0);
+    use_bloom = (g_pcBloom != 0) && g_pcRemasterFX;
+    use_fxaa = (g_pcFxaa != 0) && g_pcRemasterFX;
+    bool use_tonemap = (g_pcTonemap != 0) && g_pcRemasterFX;
     use_sharpen = (gfx_opengl_output_sharpen() > 0.0f);
     if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen && !use_tonemap) {
         return;

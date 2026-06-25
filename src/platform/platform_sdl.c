@@ -172,6 +172,7 @@ f32 g_pcFogDensity = 1.0f;
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
 s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
+s32 g_pcRemasterFX = 1;          /* MASTER faithful switch: 0 = bypass ALL remaster post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA) for the original look. HD textures + SSAA (fidelity, not look) stay via their own settings. */
 char g_pcTexturePack[1024] = ""; /* Video.TexturePack: dir of an HD texture pack (textures/tok####.png). Empty = off (stock, byte-identical). */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
 f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
@@ -1530,6 +1531,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.Tonemap=VALUE",
                         "Filmic tonemap",
                         "Gentle filmic highlight rolloff for a cinematic look. 0 = off (linear).");
+    settingsRegisterInt("Video.RemasterFX", &g_pcRemasterFX, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_REMASTER_FX",
+                        "--config-override Video.RemasterFX=VALUE",
+                        "Remaster post-FX (master)",
+                        "Master switch for the cinematic post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA). 0 = faithful original look (HD textures + SSAA still apply via their own settings).");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
