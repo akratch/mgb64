@@ -54,6 +54,20 @@ parses the texture token from the filename, batches by model, and runs
 deterministic (feed-forward — same input always yields the same output), so a pack is
 reproducible.
 
+Two quality safeguards run automatically:
+- **Seam-safe tiling** — textures whose edges wrap (detected by edge-matching) are
+  tiled 3×3, upscaled, then center-cropped, so the result stays seamless across mapped
+  quads instead of showing broken-wrap seams. Disable with `--no-seamless`.
+- **Anti-hallucination** — tiny source textures (≤16 px) use deterministic Lanczos
+  instead of the AI model, which otherwise invents junk on small ambiguous tiles
+  (e.g. a "smiley face" on a hubcap).
+
+**Model tip:** for GoldenEye's flat, low-color textures, `--model realesrgan-x4plus-anime`
+is usually cleaner (less speckle) than the default `realesrgan-x4plus`.
+
+See [docs/VISUAL_MODES.md](../../docs/VISUAL_MODES.md) for how the pack plugs into the
+faithful / remaster visual modes.
+
 ## Alternatives / future
 
 - **Algorithmic** (deterministic, no AI): swap in `xbrz`/`scale2x` for pixel-art/UI tiles.
