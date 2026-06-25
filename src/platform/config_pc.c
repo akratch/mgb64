@@ -346,6 +346,17 @@ static void saveEntryMetadataComment(ConfigEntry *e, FILE *f) {
 
 static void saveEntry(ConfigEntry *e, FILE *f) {
     const char *keyName = e->key + e->seclen + (e->seclen > 0 ? 1 : 0);
+    /* Transient env overrides (GE007_*) apply to this launch only and must NOT be
+     * persisted -- otherwise a one-off e.g. GE007_TEXTURE_PACK=... would silently
+     * stick on every later launch. Omit them so the saved config keeps the user's
+     * own (menu/file) value; on reload an absent key falls back to its default.
+     * CLI --config-override is intentionally still saved (config-pinning). */
+    {
+        const Setting *st = settingsFind(e->key);
+        if (st != NULL && st->override_source == SETTING_OVERRIDE_ENV) {
+            return;
+        }
+    }
     saveEntryMetadataComment(e, f);
     switch (e->type) {
         case CFG_S32: {
