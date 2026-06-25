@@ -61,9 +61,21 @@ def _pil():
 
 
 def load_rgba(src):
-    """Decode an engine dump (.ppm/.png) to a PIL RGBA image."""
+    """Decode an engine dump (.ppm/.png) to a PIL RGBA image.
+
+    The engine dumps RGB to <tok>.rgba.ppm and the ALPHA channel SEPARATELY to
+    <tok>.alpha.pgm (PPM has no alpha). We must re-attach it, or alpha-cutout
+    textures lose their transparency through the pipeline: round wheels become
+    solid squares, grates fill in, and glass goes opaque."""
     Image = _pil()
-    return Image.open(src).convert("RGBA")
+    im = Image.open(src).convert("RGBA")
+    if src.endswith(".rgba.ppm"):
+        alpha_path = src[:-len(".rgba.ppm")] + ".alpha.pgm"
+        if os.path.exists(alpha_path):
+            a = Image.open(alpha_path).convert("L")
+            if a.size == im.size:
+                im.putalpha(a)
+    return im
 
 
 def is_tileable(im, tol=20.0):
