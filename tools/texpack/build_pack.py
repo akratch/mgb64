@@ -52,16 +52,55 @@ def parse_token(fname):
     return ("tok" + m.group(1)) if m.group(1) else ("h" + m.group(2))
 
 
-def to_png(src, dst):
-    """Decode an engine dump (.ppm/.png) to a clean RGBA PNG."""
-    if src.lower().endswith(".png"):
-        shutil.copyfile(src, dst); return True
+def _pil():
     try:
         from PIL import Image
+        return Image
     except ImportError:
-        sys.exit("Pillow required to decode .ppm dumps: pip install -r tools/texpack/requirements.txt")
-    Image.open(src).convert("RGBA").save(dst)
-    return True
+        sys.exit("Pillow required: pip install -r tools/texpack/requirements.txt")
+
+
+def load_rgba(src):
+    """Decode an engine dump (.ppm/.png) to a PIL RGBA image."""
+    Image = _pil()
+    return Image.open(src).convert("RGBA")
+
+
+def is_tileable(im, tol=20.0):
+    """Heuristic: a texture wraps seamlessly if opposite edges roughly match
+    (the right edge continues into the left, top into bottom). Such textures
+    tile across large surfaces, so they must be upscaled seam-safe."""
+    w, h = im.size
+    if w < 8 or h < 8:
+        return False
+    px = im.load()
+
+    def edge_cols(x0, x1):
+        s = 0.0
+        for y in range(h):
+            a = px[x0, y]; b = px[x1, y]
+            s += abs(a[0]-b[0]) + abs(a[1]-b[1]) + abs(a[2]-b[2])
+        return s / (h * 3.0)
+
+    def edge_rows(y0, y1):
+        s = 0.0
+        for x in range(w):
+            a = px[x, y0]; b = px[x, y1]
+            s += abs(a[0]-b[0]) + abs(a[1]-b[1]) + abs(a[2]-b[2])
+        return s / (w * 3.0)
+
+    return edge_cols(0, w - 1) < tol and edge_rows(0, h - 1) < tol
+
+
+def tile_3x3(im):
+    """Replicate a texture into a 3x3 grid so the upscaler sees the wrap context."""
+    Image = _pil()
+    w, h = im.size
+    out = Image.new("RGBA", (w * 3, h * 3))
+    for ty in range(3):
+        for tx in range(3):
+            out.paste(im, (tx * w, ty * h))
+    return out
 
 
 def load_manifest(dump_dir):
@@ -84,6 +123,8 @@ def main():
     ap.add_argument("--realesrgan", default=DEFAULT_BIN)
     ap.add_argument("--models", default=DEFAULT_MODELS)
     ap.add_argument("--route", action="store_true", help="route model by draw_class via *.texmanifest.csv")
+    ap.add_argument("--no-seamless", action="store_true",
+                    help="disable seam-safe (tile-and-crop) upscaling for tileable textures")
     args = ap.parse_args()
 
     if not (os.path.isfile(args.realesrgan) and os.access(args.realesrgan, os.X_OK)):
@@ -94,24 +135,39 @@ def main():
     if not srcs:
         sys.exit(f"no *.rgba.ppm / *.png dumps in {args.dump}")
 
+    Image = _pil()
     manifest = load_manifest(args.dump) if args.route else {}
     stage = os.path.join(args.out, ".stage"); os.makedirs(stage, exist_ok=True)
     outdir = os.path.join(args.out, "textures"); os.makedirs(outdir, exist_ok=True)
+    TINY = 16   # source textures this small or smaller go through Lanczos, not the AI
+                # upscaler — Real-ESRGAN hallucinates faces/junk on tiny ambiguous tiles.
 
-    # group inputs by the model they will use (so we can batch each model in dir-mode)
-    by_model = {}
-    n = 0
+    by_model = {}          # model -> [tokens] for the ESRGAN batch
+    tiled = {}             # token -> (orig_w, orig_h) for seam-safe crop after upscale
+    n = lanczos_n = 0
     for s in srcs:
         tok = parse_token(os.path.basename(s))
         if not tok:
             continue
-        png = os.path.join(stage, tok + ".png")
-        to_png(s, png)
+        im = load_rgba(s)
+        w, h = im.size
+        if max(w, h) <= TINY:
+            # anti-hallucination: deterministic Lanczos for tiny textures
+            im.resize((w * args.scale, h * args.scale), Image.LANCZOS).save(
+                os.path.join(outdir, tok + ".png"))
+            lanczos_n += 1; n += 1
+            continue
+        seamless = (not args.no_seamless) and is_tileable(im)
+        staged = tile_3x3(im) if seamless else im
+        if seamless:
+            tiled[tok] = (w, h)
+        staged.save(os.path.join(stage, tok + ".png"))
         model = CLASS_MODEL.get(manifest.get(tok, ""), args.model)
         by_model.setdefault(model, []).append(tok)
         n += 1
 
-    print(f"staged {n} textures; upscaling x{args.scale} with: {', '.join(by_model)}")
+    print(f"staged {n} textures ({lanczos_n} tiny->Lanczos, {len(tiled)} tileable->seam-safe); "
+          f"AI-upscaling x{args.scale} with: {', '.join(by_model) or '(none)'}")
     for model, toks in by_model.items():
         mdir = os.path.join(stage, "_in_" + model); os.makedirs(mdir, exist_ok=True)
         odir = os.path.join(stage, "_out_" + model); os.makedirs(odir, exist_ok=True)
@@ -121,7 +177,16 @@ def main():
                         "-s", str(args.scale), "-n", model, "-m", args.models, "-f", "png"],
                        check=True)
         for t in toks:
-            shutil.move(os.path.join(odir, t + ".png"), os.path.join(outdir, t + ".png"))
+            up = os.path.join(odir, t + ".png")
+            if t in tiled:
+                # seam-safe: the staged image was a 3x3 tiling; crop the center tile so
+                # the upscaled result wraps seamlessly across mapped quads (no seams).
+                ow, oh = tiled[t]; s_ = args.scale
+                cu = Image.open(up)
+                cu.crop((ow * s_, oh * s_, 2 * ow * s_, 2 * oh * s_)).save(
+                    os.path.join(outdir, t + ".png"))
+            else:
+                shutil.move(up, os.path.join(outdir, t + ".png"))
 
     shutil.rmtree(stage, ignore_errors=True)
     print(f"pack ready: {outdir}  ({n} textures)")

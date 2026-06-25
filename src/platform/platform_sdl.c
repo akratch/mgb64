@@ -160,14 +160,14 @@ s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack 
 f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
 f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
 f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
-f32 g_pcVideoBrightness = 0.0f;  /* kept neutral (brightness offset is taste-sensitive) */
+f32 g_pcVideoBrightness = 0.04f;  /* kept neutral (brightness offset is taste-sensitive) */
 s32 g_pcOutputDither = 1;        /* remaster default: on (anti-banding under the grade) */
 f32 g_pcVignette = 0.15f;        /* remaster default: soft edge falloff for depth */
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
-f32 g_pcSharpen = 0.3f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
+f32 g_pcSharpen = 0.15f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
@@ -1480,7 +1480,7 @@ void platformRegisterConfig(void)
                           "--config-override Video.Contrast=VALUE",
                           "Contrast",
                           "Output color contrast. 1.0 leaves colors unchanged.");
-    settingsRegisterFloat("Video.Brightness", &g_pcVideoBrightness, 0.0f, -0.5f, 0.5f,
+    settingsRegisterFloat("Video.Brightness", &g_pcVideoBrightness, 0.04f, -0.5f, 0.5f,
                           SETTING_SCOPE_LIVE, "GE007_BRIGHTNESS",
                           "--config-override Video.Brightness=VALUE",
                           "Brightness",
@@ -1515,7 +1515,7 @@ void platformRegisterConfig(void)
                         "--config-override Video.Fxaa=VALUE",
                         "FXAA",
                         "Fast approximate anti-aliasing on the output pass; cleans sprite/alpha/HUD edges. 0 = off.");
-    settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.3f, 0.0f, 1.0f,
+    settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_SHARPEN",
                           "--config-override Video.Sharpen=VALUE",
                           "Sharpen",
