@@ -342,6 +342,11 @@ texture number/size, screen bbox, target texel samples, interpolated shade/fog,
 shader-mirrored target fragment values, pre/post RGB, delta, and changed flag.
 Leave `GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY=1` at its default when you want only
 target-covering rows; set it to `0` only to debug coordinate-space mistakes.
+For material-level traces, the `[SETTEX-MATERIAL-CC] lodgate={...}` fields
+separate source sampling from final compositing: authored room-XLU trilerp
+should report `cc_lod=1`, `settex_endpoint=1`, and `allowfp=1` even if
+`roommtx=0`. Use `GE007_DISABLE_SETTEX_FOOTPRINT_LOD=1` as the focused
+negative control before changing color scale, alpha scale, or RDP blend policy.
 `tools/analyze_glass_center_handoff.py` selects
 `native_settex.frame_selection.selected` by default when a native pixel log is
 provided, and compares native post pixels against `stock_pixel.selected_sample`.

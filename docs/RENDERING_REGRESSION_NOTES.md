@@ -143,6 +143,19 @@ The visible symptoms were level-specific but shared renderer causes:
     `api_blend=alpha`, and Frigate room 57 should remain non-fog
     alpha-suppressed (`opts=0x01043f11`, `api_blend=alpha`).
 
+13. **Room `G_SETTEX` LOD endpoints are draw semantics, not matrix semantics.**
+    Dam's pad10092 room-glass source trace showed `G_SETTEX` trilerp draws
+    with valid two-scale footprints and `LOD_FRACTION` in the RGB combiner even
+    when the modelview room-matrix flag was false. Gating footprint LOD on that
+    matrix bit left the target draw at `lod=0`, producing a black source
+    fragment before any framebuffer blend was considered. The default renderer
+    now allows footprint-derived LOD for room-class, XLU, `G_SETTEX` materials
+    that own both texture endpoints and consume `LOD_FRACTION`; use
+    `GE007_DISABLE_SETTEX_FOOTPRINT_LOD=1` as the focused A/B control. This is
+    intentionally a source-sampling fix only: Dam's final center-glass handoff
+    still needs the broader RDP framebuffer-memory/coverage blend work before
+    stock pixel parity should be expected.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -178,6 +191,10 @@ Use these habits before accepting renderer changes:
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
   with `GE007_TRACE_SETTEX_MATERIAL_CC='*'` before changing global sampler
   policy.
+- When reviewing `G_SETTEX` LOD changes, inspect the material trace `lodgate`
+  fields before tuning color or alpha. For authored room-XLU trilerp, the
+  durable proof is draw class, raw room-XLU mode, valid `G_SETTEX` tile 1, and
+  packed RGB `LOD_FRACTION`; do not require the room-matrix bit to be true.
 - When isolating a suspect `G_SETTEX` material, use
   `GE007_TINT_TEX=min:max` or `GE007_SKIP_TEX=min:max`. These match stable game
   texture numbers, not transient GL texture ids.

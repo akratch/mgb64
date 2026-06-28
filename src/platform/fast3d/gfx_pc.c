@@ -3141,6 +3141,19 @@ struct ColorCombiner {
     uint8_t shader_input_mapping[2][7]; /* [color/alpha][input_index] → G_CCMUX_* value */
 };
 
+static bool gfx_cc_id_rgb_uses_lod_fraction(uint64_t cc_id, uint32_t cc_options) {
+    int cycles = (cc_options & SHADER_OPT_2CYC) != 0 ? 2 : 1;
+
+    for (int i = 0; i < cycles; i++) {
+        uint32_t rgb_c = (cc_id >> (i * 28 + 8)) & 0x1f;
+        if (rgb_c == G_CCMUX_LOD_FRACTION) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static struct ColorCombiner color_combiner_pool[256];
 static uint16_t color_combiner_pool_size;
 
@@ -6342,7 +6355,8 @@ static uint8_t gfx_lod_fraction_for_triangle(
     const uint32_t tex_height[2],
     bool settex_mirror_tex1,
     bool mirror_tex1_from_tex0,
-    bool allow_footprint_lod)
+    bool allow_footprint_lod,
+    bool allow_zero_max_lod_footprint)
 {
     int override = gfx_diag_lod_fraction_override();
     if (override >= 0) {
@@ -6350,7 +6364,7 @@ static uint8_t gfx_lod_fraction_for_triangle(
     }
 
     if (!rdp.tex_lod ||
-        rdp.tex_max_lod == 0 ||
+        (rdp.tex_max_lod == 0 && !allow_zero_max_lod_footprint) ||
         g_texrect_uv_mode ||
         ndc_metrics == NULL ||
         !ndc_metrics_ok ||
@@ -7383,6 +7397,9 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                               bool room_matrix,
                                               bool fog_use_fixed_alpha,
                                               uint8_t lod_fraction,
+                                              bool settex_authored_lod_endpoint,
+                                              bool allow_footprint_lod,
+                                              bool settex_cc_uses_lod_fraction,
                                               bool settex_mirror_tex1,
                                               bool mirror_tex1_from_tex0) {
     if (!settex_active ||
@@ -7711,6 +7728,7 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
             "prim=(%u,%u,%u,%u) env=(%u,%u,%u,%u) fogrgba=(%u,%u,%u,%u) "
             "shade0=(%u,%u,%u,%u) shade1=(%u,%u,%u,%u) shade2=(%u,%u,%u,%u) "
             "oml_raw=0x%08X oml=0x%08X omh=0x%08X geom=0x%08X "
+            "lodgate={texlod=%d maxlod=%u cc_lod=%d settex_endpoint=%d allowfp=%d roommtx=%d mirror=%d,%d} "
             "screen_bbox=[%.2f,%.2f,%.2f,%.2f] screen_area2=%.2f "
             "fp0={valid=%d max=%.6f dudx=%.6f dvdx=%.6f dudy=%.6f dvdy=%.6f} "
             "fp1={valid=%d max=%.6f dudx=%.6f dvdx=%.6f dudy=%.6f dvdy=%.6f} %s %s\n",
@@ -7768,6 +7786,14 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
             rdp.other_mode_l,
             rdp.other_mode_h,
             rsp.geometry_mode,
+            rdp.tex_lod ? 1 : 0,
+            rdp.tex_max_lod,
+            settex_cc_uses_lod_fraction ? 1 : 0,
+            settex_authored_lod_endpoint ? 1 : 0,
+            allow_footprint_lod ? 1 : 0,
+            room_matrix ? 1 : 0,
+            settex_mirror_tex1 ? 1 : 0,
+            mirror_tex1_from_tex0 ? 1 : 0,
             screen_bbox_valid ? screen_min_x : 0.0f,
             screen_bbox_valid ? screen_min_y : 0.0f,
             screen_bbox_valid ? screen_max_x : 0.0f,
@@ -10452,6 +10478,25 @@ static inline bool gfx_diag_settex_mirror_tex1_enabled(void) {
             (getenv("GE007_DIAG_SETTEX_MIRROR_TEX1") != NULL) ? 1 : 0;
     }
     return g_diag_settex_mirror_tex1 > 0;
+}
+
+static bool gfx_settex_footprint_lod_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_SETTEX_FOOTPRINT_LOD");
+        const char *enable_env = getenv("GE007_SETTEX_FOOTPRINT_LOD");
+        enabled = 1;
+        if (disable_env != NULL && disable_env[0] != '\0' &&
+            strcmp(disable_env, "0") != 0) {
+            enabled = 0;
+        }
+        if (enable_env != NULL && strcmp(enable_env, "0") == 0) {
+            enabled = 0;
+        }
+    }
+
+    return enabled != 0;
 }
 
 static inline bool gfx_diag_no_settex_linearize_enabled(void) {
@@ -15740,13 +15785,28 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     }
 
     /* Footprint-derived LOD is valid only when TEXEL1 is an independent
-     * endpoint. The current G_SETTEX backend uploads one GL image and
-     * synthesizes tile-1 sampling from that same image, so using a high
-     * footprint fraction there blends against a non-N64 endpoint. */
+     * endpoint. Most G_SETTEX draws still fall back to W-derived LOD because
+     * stale tile state can leave TEXEL1 looking live. XLU room materials that
+     * explicitly define tile 1 and consume LOD_FRACTION are authored two-scale
+     * SETTEX draws; stock can blend tile 1 even when SPTexture max LOD is zero. */
+    bool settex_cc_uses_lod_fraction =
+        gfx_cc_id_rgb_uses_lod_fraction(settex_material_cc_id, cc_options);
+    bool settex_authored_lod_endpoint =
+        gfx_settex_footprint_lod_enabled() &&
+        settex_active &&
+        g_current_draw_class == DRAWCLASS_ROOM &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_mode_is_room_xlu(rdp.other_mode_l_raw) &&
+        settex_mirror_tex1 &&
+        settex_tile_state[1].valid &&
+        used_textures[0] &&
+        used_textures[1] &&
+        settex_cc_uses_lod_fraction;
     bool allow_footprint_lod =
-        !settex_active &&
-        !settex_mirror_tex1 &&
-        !mirror_tex1_from_tex0;
+        (!settex_active &&
+         !settex_mirror_tex1 &&
+         !mirror_tex1_from_tex0) ||
+        settex_authored_lod_endpoint;
     uint8_t lod_fraction = gfx_lod_fraction_for_triangle(v1, v2, v3,
                                                          &ndc_metrics,
                                                          ndc_metrics_ok,
@@ -15756,7 +15816,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                                          tex_height,
                                                          settex_mirror_tex1,
                                                          mirror_tex1_from_tex0,
-                                                         allow_footprint_lod);
+                                                         allow_footprint_lod,
+                                                         settex_authored_lod_endpoint);
     bool use_texture = used_textures[0] || used_textures[1];
 
     gfx_trace_settex_material_cc_emit(cc_id,
@@ -15780,6 +15841,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                       room_matrix,
                                       fog_use_fixed_alpha,
                                       lod_fraction,
+                                      settex_authored_lod_endpoint,
+                                      allow_footprint_lod,
+                                      settex_cc_uses_lod_fraction,
                                       settex_mirror_tex1,
                                       mirror_tex1_from_tex0);
 
