@@ -164,6 +164,19 @@ The visible symptoms were level-specific but shared renderer causes:
     shader ids. After room alpha LUTs, eye overrides, or tint overrides, rescan
     the effective combiner before classifying blend/memory behavior.
 
+15. **Native direct sky must behave as a backdrop when PC rooms draw early.**
+    The PC room path renders background rooms before the gameplay
+    `skyRender()` call that submits native direct sky triangles. Without an
+    occlusion policy, those sky triangles run with no depth test and can become
+    the final owner of pixels that an earlier room/terrain draw already wrote.
+    Dam's pad10092 target exposed this directly: `[TRI-PIXEL]` showed a late
+    sky triangle (`raw=0x0C192078`, `sky=1`) rewriting the target from
+    `[10,10,10]` to `[44,72,114]`. Native sky now renders at far clip depth,
+    depth-compares against existing room depth, and does not update depth, so
+    it fills untouched backdrop pixels without cutting through rooms. Use
+    `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as the focused negative control; on
+    the Dam target it restores the late sky overwrite.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -219,6 +232,9 @@ Use these habits before accepting renderer changes:
   not explain every apparent material color delta.
 - Treat `GE007_SKY_UV_SCALE=1.0` as a negative control. It is useful for proving
   sky UV bugs, but it is not the calibrated native default.
+- Treat `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as a negative control. It should
+  only be used to prove native direct sky final ownership; default sky should
+  not overwrite pixels already owned by room depth.
 - Do not use `g_freezeInput` as a blanket native-look gate. It should remove
   live input from deterministic captures while preserving authored
   `GE007_AUTO_LOOK_*` probes. Use `tools/scripted_look_smoke.sh` before

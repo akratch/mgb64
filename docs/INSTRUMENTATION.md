@@ -338,7 +338,8 @@ env GE007_TRACE_SETTEX_PIXEL=0x00738e4f020a2d12 \
 
 Rows are emitted as `[SETTEX-PIXEL]` JSON in the native log and include the
 target, framebuffer/gl coordinates, triangle id, barycentrics, combiner ids,
-texture number/size, screen bbox, target texel samples, interpolated shade/fog,
+draw class, display-list room, raw/effective othermodes, decoded depth/coverage
+state, texture number/size, screen bbox, target texel samples, interpolated shade/fog,
 shader-mirrored target fragment values, pre/post RGB, delta, and changed flag.
 Rows with reconstructed source data also include `pred_alpha` and `pred_rdp`,
 computed from `shaderL_frag` plus the pre-draw framebuffer pixel. Their
@@ -357,6 +358,34 @@ negative control before changing color scale, alpha scale, or RDP blend policy.
 provided, and compares native post pixels against `stock_pixel.selected_sample`.
 Pass `--native-pixel-frame N` only when deliberately inspecting a different
 frame.
+
+For generalized final-owner work, use the native all-triangle pixel probe. It
+does not reconstruct shader sources, but it brackets every selected triangle
+with a flush/readback boundary and records the same ownership/depth/coverage
+context plus `pre`, `post`, `delta`, and `changed`:
+
+```sh
+OUT=/tmp/mgb64_native_tri_pixel_probe
+env GE007_TRACE_TRI_PIXEL='*' \
+  GE007_TRACE_TRI_PIXEL_AFTER_FRAME=122 \
+  GE007_TRACE_TRI_PIXEL_BUDGET=1600 \
+  GE007_TRACE_TRI_PIXEL_X=94 \
+  GE007_TRACE_TRI_PIXEL_Y=95 \
+  GE007_TRACE_TRI_PIXEL_INSIDE_ONLY=0 \
+  tools/movement_oracle_capture.sh \
+    --route dam_regular_glass_shatter_pad10092_impact_visual_probe \
+    --native-only --no-compare \
+    --out-dir "$OUT" \
+    --rom baserom.u.z64 \
+    --binary build/ge007 \
+    --no-build
+```
+
+Rows are emitted as `[TRI-PIXEL]` JSON. Leave
+`GE007_TRACE_TRI_PIXEL_INSIDE_ONLY=1` for focused owner probes; set it to `0`
+when auditing edge coverage or suspected non-triangle/rect handoffs. The
+`GE007_TRACE_TRI_PIXEL` value accepts `1`, `*`, or an effective-combiner list,
+and `GE007_TRACE_TRI_PIXEL_DRAWCLASS=name` limits rows to matching draw classes.
 
 Summarize a capture with:
 
@@ -1606,7 +1635,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
 | `GE007_TINT_TEX=min:max`, `GE007_SKIP_TEX=min:max` | tint or skip `G_SETTEX` texture-number ranges; these match stable game texture numbers, not transient GL upload ids |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
-| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N` | sky isolation, legacy sky path, and UV-scale probes |
+| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N`, `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` | sky isolation, legacy sky path, UV-scale probes, and the native sky backdrop-depth negative control |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
 Fog regressions can masquerade as texture loss on distant stages. N64

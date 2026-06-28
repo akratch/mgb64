@@ -4266,6 +4266,14 @@ static int g_diag_trace_settex_pixel_target_x = INT32_MIN; /* GE007_TRACE_SETTEX
 static int g_diag_trace_settex_pixel_target_y = INT32_MIN; /* GE007_TRACE_SETTEX_PIXEL_Y=N */
 static int g_diag_trace_settex_pixel_inside_only = -1; /* GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY=1 */
 static int g_diag_trace_settex_pixel_serial = 0;
+static int g_diag_trace_tri_pixel = -1; /* GE007_TRACE_TRI_PIXEL=1|*|cc-list */
+static int g_diag_trace_tri_pixel_after_frame = INT32_MIN; /* GE007_TRACE_TRI_PIXEL_AFTER_FRAME=N */
+static int g_diag_trace_tri_pixel_budget = INT32_MIN; /* GE007_TRACE_TRI_PIXEL_BUDGET=N */
+static int g_diag_trace_tri_pixel_target_x = INT32_MIN; /* GE007_TRACE_TRI_PIXEL_X=N */
+static int g_diag_trace_tri_pixel_target_y = INT32_MIN; /* GE007_TRACE_TRI_PIXEL_Y=N */
+static int g_diag_trace_tri_pixel_inside_only = -1; /* GE007_TRACE_TRI_PIXEL_INSIDE_ONLY=1 */
+static int g_diag_trace_tri_pixel_drawclass = -1; /* GE007_TRACE_TRI_PIXEL_DRAWCLASS=name */
+static int g_diag_trace_tri_pixel_serial = 0;
 static int g_diag_debug_cmd_range_enabled = -1; /* GE007_DEBUG_CMD_RANGE=min:max */
 static uintptr_t g_diag_debug_cmd_min = 0;
 static uintptr_t g_diag_debug_cmd_max = 0;
@@ -4329,6 +4337,7 @@ static uint32_t g_diag_skip_tex_min = 0;
 static uint32_t g_diag_skip_tex_max = 0;
 static int g_diag_tint_sky = -1; /* GE007_TINT_SKY=1 */
 static int g_diag_skip_sky = -1; /* GE007_SKIP_SKY=1 */
+static int g_sky_backdrop_depth = -1; /* GE007_DISABLE_SKY_BACKDROP_DEPTH=1 */
 static struct RGBA g_diag_tint_rgba = {255, 0, 255, 255}; /* GE007_TINT_RGBA=r,g,b[,a] */
 static int g_diag_clear_rgba_enabled = -1; /* GE007_CLEAR_RGBA=r,g,b[,a] */
 static struct RGBA g_diag_clear_rgba = {0, 0, 0, 255};
@@ -4756,6 +4765,28 @@ static const char *gfx_cvg_dst_diag_name(uint32_t mode) {
         default:
             return "?";
     }
+}
+
+static bool gfx_sky_backdrop_depth_enabled(void)
+{
+    if (g_sky_backdrop_depth < 0) {
+        const char *disable = getenv("GE007_DISABLE_SKY_BACKDROP_DEPTH");
+        const char *enable = getenv("GE007_SKY_BACKDROP_DEPTH");
+        g_sky_backdrop_depth =
+            (disable != NULL && disable[0] != '\0' && strcmp(disable, "0") != 0)
+                ? 0
+                : 1;
+        if (enable != NULL && enable[0] != '\0') {
+            g_sky_backdrop_depth = strcmp(enable, "0") != 0 ? 1 : 0;
+        }
+        if (!g_sky_backdrop_depth) {
+            fprintf(stderr,
+                    "[fast3d] SKY BACKDROP DEPTH DISABLED "
+                    "(GE007_DISABLE_SKY_BACKDROP_DEPTH/GE007_SKY_BACKDROP_DEPTH)\n");
+            fflush(stderr);
+        }
+    }
+    return g_sky_backdrop_depth > 0;
 }
 
 static uint32_t gfx_blender_field(uint32_t mode, int cycle, int field) {
@@ -5358,8 +5389,25 @@ struct GfxSettexPixelProbe {
     uint64_t effective_cc_id;
     uint32_t cc_options;
     uint32_t raw_mode;
+    uint32_t effective_mode;
+    uint32_t other_mode_h;
+    uint32_t geometry_mode;
+    const void *cmd_addr;
+    enum DrawClass draw_class;
+    int dl_room;
+    const char *dl_which;
     enum GfxBlendMode blend_mode;
     enum GfxBlendMode api_blend_mode;
+    bool depth_test;
+    bool depth_update;
+    bool depth_compare;
+    bool depth_source_prim;
+    uint16_t zmode;
+    bool use_fog;
+    bool fog_use_fixed_alpha;
+    bool texture_edge;
+    bool room_matrix;
+    bool sky_tri_mode;
     uint8_t lod_fraction;
     float uv0[2];
     float uv1[2];
@@ -5379,6 +5427,53 @@ struct GfxSettexPixelProbe {
     uint8_t shaderL_frag[4];
     uint8_t shaderP_comb[4];
     uint8_t shaderP_frag[4];
+    uint8_t pre_rgb[3];
+};
+
+struct GfxTriPixelProbe {
+    bool active;
+    int serial;
+    int frame;
+    int tri;
+    int target_x;
+    int target_y;
+    int fb_x;
+    int fb_y;
+    int gl_x;
+    int gl_y;
+    bool inside;
+    float bary[3];
+    float screen_min_x;
+    float screen_min_y;
+    float screen_max_x;
+    float screen_max_y;
+    uint64_t cc_id;
+    uint64_t effective_cc_id;
+    uint32_t cc_options;
+    uint32_t raw_mode;
+    uint32_t effective_mode;
+    uint32_t other_mode_h;
+    uint32_t geometry_mode;
+    const void *cmd_addr;
+    enum DrawClass draw_class;
+    int dl_room;
+    const char *dl_which;
+    enum GfxBlendMode blend_mode;
+    enum GfxBlendMode api_blend_mode;
+    bool depth_test;
+    bool depth_update;
+    bool depth_compare;
+    bool depth_source_prim;
+    uint16_t zmode;
+    bool use_fog;
+    bool fog_use_fixed_alpha;
+    bool texture_edge;
+    bool room_matrix;
+    bool sky_tri_mode;
+    bool settex;
+    int texnum;
+    int tex_w;
+    int tex_h;
     uint8_t pre_rgb[3];
 };
 
@@ -5963,6 +6058,84 @@ static bool gfx_trace_settex_pixel_texture_needs_rgba(int texturenum, int width,
     return true;
 }
 
+static bool gfx_trace_tri_pixel_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_trace_tri_pixel < 0) {
+        env = getenv("GE007_TRACE_TRI_PIXEL");
+        g_diag_trace_tri_pixel =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_trace_tri_pixel) {
+            const char *after = getenv("GE007_TRACE_TRI_PIXEL_AFTER_FRAME");
+            const char *budget = getenv("GE007_TRACE_TRI_PIXEL_BUDGET");
+            const char *drawclass = getenv("GE007_TRACE_TRI_PIXEL_DRAWCLASS");
+            const char *x = getenv("GE007_TRACE_TRI_PIXEL_X");
+            const char *y = getenv("GE007_TRACE_TRI_PIXEL_Y");
+            fprintf(stderr,
+                    "[fast3d] TRACE TRI PIXEL spec=%s after=%s budget=%s "
+                    "drawclass=%s target=%s,%s (GE007_TRACE_TRI_PIXEL)\n",
+                    env,
+                    (after != NULL && after[0] != '\0') ? after : "0",
+                    (budget != NULL && budget[0] != '\0') ? budget : "64",
+                    (drawclass != NULL && drawclass[0] != '\0') ? drawclass : "*",
+                    (x != NULL && x[0] != '\0') ? x : "?",
+                    (y != NULL && y[0] != '\0') ? y : "?");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_trace_tri_pixel_after_frame == INT32_MIN) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_AFTER_FRAME");
+        g_diag_trace_tri_pixel_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_tri_pixel_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_BUDGET");
+        g_diag_trace_tri_pixel_budget = env ? atoi(env) : 64;
+    }
+    if (g_diag_trace_tri_pixel_target_x == INT32_MIN) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_X");
+        g_diag_trace_tri_pixel_target_x = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_tri_pixel_target_y == INT32_MIN) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_Y");
+        g_diag_trace_tri_pixel_target_y = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_tri_pixel_inside_only < 0) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_INSIDE_ONLY");
+        g_diag_trace_tri_pixel_inside_only =
+            (env == NULL || env[0] == '\0' || strcmp(env, "0") != 0) ? 1 : 0;
+    }
+
+    if (g_diag_trace_tri_pixel <= 0 ||
+        g_diag_trace_tri_pixel_budget == 0 ||
+        g_frame_count_diag < g_diag_trace_tri_pixel_after_frame ||
+        g_diag_trace_tri_pixel_target_x < 0 ||
+        g_diag_trace_tri_pixel_target_y < 0) {
+        return false;
+    }
+
+    env = getenv("GE007_TRACE_TRI_PIXEL");
+    if (strcmp(env, "1") != 0 &&
+        strcmp(env, "*") != 0 &&
+        !gfx_diag_u64_matches_list(env, effective_cc_id)) {
+        return false;
+    }
+
+    if (g_diag_trace_tri_pixel_drawclass < 0) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_DRAWCLASS");
+        g_diag_trace_tri_pixel_drawclass =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_tri_pixel_drawclass > 0) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_DRAWCLASS");
+        if (strstr(gfx_draw_class_name(g_current_draw_class), env) == NULL) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool gfx_settex_pixel_probe_barycentric(const struct GfxTriNdcMetrics *metrics,
                                                float target_x,
                                                float target_y,
@@ -6017,6 +6190,311 @@ static bool gfx_settex_pixel_probe_barycentric(const struct GfxTriNdcMetrics *me
            bary[2] >= -0.0001f && bary[2] <= 1.0001f;
 }
 
+static void gfx_tri_pixel_probe_log_failure(
+    const char *status,
+    const struct GfxTriPixelProbe *probe)
+{
+    fprintf(stderr,
+            "[TRI-PIXEL] {"
+            "\"status\":\"%s\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"drawclass\":\"%s\",\"dl_room\":%d,\"dl\":\"%s\",\"cmd\":\"%p\","
+            "\"settex\":%d,\"texnum\":%d,\"wh\":[%d,%d],"
+            "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
+            "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\",\"geom\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"mode\":{\"cvg\":\"%s\",\"imrd\":%d,\"clr_on_cvg\":%d,"
+            "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
+            "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
+            "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
+            "\n",
+            status,
+            probe->frame,
+            probe->tri,
+            probe->serial,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside ? 1 : 0,
+            probe->bary[0],
+            probe->bary[1],
+            probe->bary[2],
+            gfx_draw_class_name(probe->draw_class),
+            probe->dl_room,
+            probe->dl_which != NULL ? probe->dl_which : "-",
+            probe->cmd_addr,
+            probe->settex ? 1 : 0,
+            probe->texnum,
+            probe->tex_w,
+            probe->tex_h,
+            (unsigned long long)probe->cc_id,
+            (unsigned long long)probe->effective_cc_id,
+            probe->cc_options,
+            probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            probe->geometry_mode,
+            probe->depth_test ? 1 : 0,
+            probe->depth_update ? 1 : 0,
+            probe->depth_compare ? 1 : 0,
+            probe->depth_source_prim ? 1 : 0,
+            gfx_zmode_diag_name(probe->zmode),
+            probe->zmode,
+            gfx_cvg_dst_diag_name(probe->raw_mode),
+            (probe->raw_mode & IM_RD) != 0 ? 1 : 0,
+            (probe->raw_mode & CLR_ON_CVG) != 0 ? 1 : 0,
+            (probe->raw_mode & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (probe->raw_mode & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (probe->raw_mode & FORCE_BL) != 0 ? 1 : 0,
+            probe->use_fog ? 1 : 0,
+            probe->fog_use_fixed_alpha ? 1 : 0,
+            probe->texture_edge ? 1 : 0,
+            probe->room_matrix ? 1 : 0,
+            probe->sky_tri_mode ? 1 : 0,
+            gfx_blend_mode_diag_name(probe->blend_mode),
+            gfx_blend_mode_diag_name(probe->api_blend_mode),
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y);
+    fflush(stderr);
+}
+
+static bool gfx_tri_pixel_probe_begin(struct GfxTriPixelProbe *probe,
+                                      uint64_t cc_id,
+                                      uint64_t effective_cc_id,
+                                      uint32_t cc_options,
+                                      uint32_t raw_mode,
+                                      uint32_t effective_mode,
+                                      uint32_t other_mode_h,
+                                      uint32_t geometry_mode,
+                                      enum GfxBlendMode blend_mode,
+                                      enum GfxBlendMode api_blend_mode,
+                                      bool depth_test,
+                                      bool depth_update,
+                                      bool depth_compare,
+                                      bool depth_source_prim,
+                                      uint16_t zmode,
+                                      bool use_fog,
+                                      bool fog_use_fixed_alpha,
+                                      bool texture_edge,
+                                      bool room_matrix,
+                                      bool sky_tri_mode,
+                                      const void *cmd_addr,
+                                      enum DrawClass draw_class,
+                                      int dl_room,
+                                      const char *dl_which,
+                                      const struct GfxTriNdcMetrics *metrics)
+{
+    float screen_bbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ratio_x;
+    float ratio_y;
+
+    memset(probe, 0, sizeof(*probe));
+    if (!gfx_trace_tri_pixel_enabled(effective_cc_id)) {
+        return false;
+    }
+    if (gfx_rapi == NULL || gfx_rapi->read_framebuffer_rgb == NULL ||
+        gfx_current_dimensions.width == 0 || gfx_current_dimensions.height == 0) {
+        return false;
+    }
+
+    probe->serial = g_diag_trace_tri_pixel_serial++;
+    probe->frame = g_frame_count_diag;
+    probe->tri = g_tri_count_diag;
+    probe->target_x = g_diag_trace_tri_pixel_target_x;
+    probe->target_y = g_diag_trace_tri_pixel_target_y;
+    probe->cc_id = cc_id;
+    probe->effective_cc_id = effective_cc_id;
+    probe->cc_options = cc_options;
+    probe->raw_mode = raw_mode;
+    probe->effective_mode = effective_mode;
+    probe->other_mode_h = other_mode_h;
+    probe->geometry_mode = geometry_mode;
+    probe->blend_mode = blend_mode;
+    probe->api_blend_mode = api_blend_mode;
+    probe->depth_test = depth_test;
+    probe->depth_update = depth_update;
+    probe->depth_compare = depth_compare;
+    probe->depth_source_prim = depth_source_prim;
+    probe->zmode = zmode;
+    probe->use_fog = use_fog;
+    probe->fog_use_fixed_alpha = fog_use_fixed_alpha;
+    probe->texture_edge = texture_edge;
+    probe->room_matrix = room_matrix;
+    probe->sky_tri_mode = sky_tri_mode;
+    probe->cmd_addr = cmd_addr;
+    probe->draw_class = draw_class;
+    probe->dl_room = dl_room;
+    probe->dl_which = dl_which;
+    probe->settex = settex_active;
+    probe->texnum = settex_active ? settex_texturenum : -1;
+    probe->tex_w = settex_active ? (int)(settex_tex_w + 0.5f) : 0;
+    probe->tex_h = settex_active ? (int)(settex_tex_h + 0.5f) : 0;
+    probe->inside = gfx_settex_pixel_probe_barycentric(
+        metrics,
+        (float)probe->target_x + 0.5f,
+        (float)probe->target_y + 0.5f,
+        probe->bary,
+        screen_bbox);
+    probe->screen_min_x = screen_bbox[0];
+    probe->screen_min_y = screen_bbox[1];
+    probe->screen_max_x = screen_bbox[2];
+    probe->screen_max_y = screen_bbox[3];
+
+    if (g_diag_trace_tri_pixel_inside_only > 0 && !probe->inside) {
+        return false;
+    }
+
+    ratio_x = gfx_ratio_x();
+    ratio_y = gfx_ratio_y();
+    probe->fb_x = (int)floorf(((float)probe->target_x + 0.5f) * ratio_x);
+    probe->fb_y = (int)floorf(((float)probe->target_y + 0.5f) * ratio_y);
+    if (probe->fb_x < 0) probe->fb_x = 0;
+    if (probe->fb_y < 0) probe->fb_y = 0;
+    if (probe->fb_x >= (int)gfx_current_dimensions.width) {
+        probe->fb_x = (int)gfx_current_dimensions.width - 1;
+    }
+    if (probe->fb_y >= (int)gfx_current_dimensions.height) {
+        probe->fb_y = (int)gfx_current_dimensions.height - 1;
+    }
+    probe->gl_x = probe->fb_x;
+    probe->gl_y = (int)gfx_current_dimensions.height - 1 - probe->fb_y;
+
+    if (g_diag_trace_tri_pixel_budget > 0) {
+        g_diag_trace_tri_pixel_budget--;
+    }
+
+    gfx_flush();
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        probe->pre_rgb)) {
+        gfx_tri_pixel_probe_log_failure("pre_read_failed", probe);
+        return false;
+    }
+
+    probe->active = true;
+    return true;
+}
+
+static void gfx_tri_pixel_probe_finish(struct GfxTriPixelProbe *probe)
+{
+    uint8_t post_rgb[3] = {0, 0, 0};
+    int delta[3];
+    bool changed;
+
+    if (probe == NULL || !probe->active) {
+        return;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        post_rgb)) {
+        gfx_tri_pixel_probe_log_failure("post_read_failed", probe);
+        probe->active = false;
+        return;
+    }
+
+    for (int ch = 0; ch < 3; ch++) {
+        delta[ch] = (int)post_rgb[ch] - (int)probe->pre_rgb[ch];
+    }
+    changed = delta[0] != 0 || delta[1] != 0 || delta[2] != 0;
+    fprintf(stderr,
+            "[TRI-PIXEL] {"
+            "\"status\":\"ok\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"drawclass\":\"%s\",\"dl_room\":%d,\"dl\":\"%s\",\"cmd\":\"%p\","
+            "\"settex\":%d,\"texnum\":%d,\"wh\":[%d,%d],"
+            "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
+            "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\",\"geom\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"mode\":{\"cvg\":\"%s\",\"imrd\":%d,\"clr_on_cvg\":%d,"
+            "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
+            "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
+            "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+            "\"pre\":[%u,%u,%u],\"post\":[%u,%u,%u],"
+            "\"delta\":[%d,%d,%d],\"changed\":%d}"
+            "\n",
+            probe->frame,
+            probe->tri,
+            probe->serial,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside ? 1 : 0,
+            probe->bary[0],
+            probe->bary[1],
+            probe->bary[2],
+            gfx_draw_class_name(probe->draw_class),
+            probe->dl_room,
+            probe->dl_which != NULL ? probe->dl_which : "-",
+            probe->cmd_addr,
+            probe->settex ? 1 : 0,
+            probe->texnum,
+            probe->tex_w,
+            probe->tex_h,
+            (unsigned long long)probe->cc_id,
+            (unsigned long long)probe->effective_cc_id,
+            probe->cc_options,
+            probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            probe->geometry_mode,
+            probe->depth_test ? 1 : 0,
+            probe->depth_update ? 1 : 0,
+            probe->depth_compare ? 1 : 0,
+            probe->depth_source_prim ? 1 : 0,
+            gfx_zmode_diag_name(probe->zmode),
+            probe->zmode,
+            gfx_cvg_dst_diag_name(probe->raw_mode),
+            (probe->raw_mode & IM_RD) != 0 ? 1 : 0,
+            (probe->raw_mode & CLR_ON_CVG) != 0 ? 1 : 0,
+            (probe->raw_mode & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (probe->raw_mode & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (probe->raw_mode & FORCE_BL) != 0 ? 1 : 0,
+            probe->use_fog ? 1 : 0,
+            probe->fog_use_fixed_alpha ? 1 : 0,
+            probe->texture_edge ? 1 : 0,
+            probe->room_matrix ? 1 : 0,
+            probe->sky_tri_mode ? 1 : 0,
+            gfx_blend_mode_diag_name(probe->blend_mode),
+            gfx_blend_mode_diag_name(probe->api_blend_mode),
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y,
+            probe->pre_rgb[0],
+            probe->pre_rgb[1],
+            probe->pre_rgb[2],
+            post_rgb[0],
+            post_rgb[1],
+            post_rgb[2],
+            delta[0],
+            delta[1],
+            delta[2],
+            changed ? 1 : 0);
+    fflush(stderr);
+    probe->active = false;
+}
+
 static void gfx_settex_pixel_probe_log_failure(
     const char *status,
     const struct GfxSettexPixelProbe *probe)
@@ -6026,8 +6504,15 @@ static void gfx_settex_pixel_probe_log_failure(
             "\"status\":\"%s\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
             "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
             "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"drawclass\":\"%s\",\"dl_room\":%d,\"dl\":\"%s\",\"cmd\":\"%p\","
             "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
             "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\",\"geom\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"mode\":{\"cvg\":\"%s\",\"imrd\":%d,\"clr_on_cvg\":%d,"
+            "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
+            "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
             "\"texnum\":%d,\"wh\":[%d,%d],"
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
@@ -6046,10 +6531,34 @@ static void gfx_settex_pixel_probe_log_failure(
             probe->bary[0],
             probe->bary[1],
             probe->bary[2],
+            gfx_draw_class_name(probe->draw_class),
+            probe->dl_room,
+            probe->dl_which != NULL ? probe->dl_which : "-",
+            probe->cmd_addr,
             (unsigned long long)probe->settex_material_cc_id,
             (unsigned long long)probe->effective_cc_id,
             probe->cc_options,
             probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            probe->geometry_mode,
+            probe->depth_test ? 1 : 0,
+            probe->depth_update ? 1 : 0,
+            probe->depth_compare ? 1 : 0,
+            probe->depth_source_prim ? 1 : 0,
+            gfx_zmode_diag_name(probe->zmode),
+            probe->zmode,
+            gfx_cvg_dst_diag_name(probe->raw_mode),
+            (probe->raw_mode & IM_RD) != 0 ? 1 : 0,
+            (probe->raw_mode & CLR_ON_CVG) != 0 ? 1 : 0,
+            (probe->raw_mode & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (probe->raw_mode & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (probe->raw_mode & FORCE_BL) != 0 ? 1 : 0,
+            probe->use_fog ? 1 : 0,
+            probe->fog_use_fixed_alpha ? 1 : 0,
+            probe->texture_edge ? 1 : 0,
+            probe->room_matrix ? 1 : 0,
+            probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
             probe->texnum,
@@ -6087,8 +6596,25 @@ static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
                                          uint64_t effective_cc_id,
                                          uint32_t cc_options,
                                          uint32_t raw_mode,
+                                         uint32_t effective_mode,
+                                         uint32_t other_mode_h,
+                                         uint32_t geometry_mode,
                                          enum GfxBlendMode blend_mode,
                                          enum GfxBlendMode api_blend_mode,
+                                         bool depth_test,
+                                         bool depth_update,
+                                         bool depth_compare,
+                                         bool depth_source_prim,
+                                         uint16_t zmode,
+                                         bool use_fog,
+                                         bool fog_use_fixed_alpha,
+                                         bool texture_edge,
+                                         bool room_matrix,
+                                         bool sky_tri_mode,
+                                         const void *cmd_addr,
+                                         enum DrawClass draw_class,
+                                         int dl_room,
+                                         const char *dl_which,
                                          const struct GfxTriNdcMetrics *metrics)
 {
     float screen_bbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -6114,8 +6640,25 @@ static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
     probe->effective_cc_id = effective_cc_id;
     probe->cc_options = cc_options;
     probe->raw_mode = raw_mode;
+    probe->effective_mode = effective_mode;
+    probe->other_mode_h = other_mode_h;
+    probe->geometry_mode = geometry_mode;
     probe->blend_mode = blend_mode;
     probe->api_blend_mode = api_blend_mode;
+    probe->depth_test = depth_test;
+    probe->depth_update = depth_update;
+    probe->depth_compare = depth_compare;
+    probe->depth_source_prim = depth_source_prim;
+    probe->zmode = zmode;
+    probe->use_fog = use_fog;
+    probe->fog_use_fixed_alpha = fog_use_fixed_alpha;
+    probe->texture_edge = texture_edge;
+    probe->room_matrix = room_matrix;
+    probe->sky_tri_mode = sky_tri_mode;
+    probe->cmd_addr = cmd_addr;
+    probe->draw_class = draw_class;
+    probe->dl_room = dl_room;
+    probe->dl_which = dl_which;
     probe->texnum = settex_texturenum;
     probe->tex_w = (int)(settex_tex_w + 0.5f);
     probe->tex_h = (int)(settex_tex_h + 0.5f);
@@ -6210,8 +6753,15 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             "\"status\":\"ok\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
             "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
             "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"drawclass\":\"%s\",\"dl_room\":%d,\"dl\":\"%s\",\"cmd\":\"%p\","
             "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
             "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\",\"geom\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"mode\":{\"cvg\":\"%s\",\"imrd\":%d,\"clr_on_cvg\":%d,"
+            "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
+            "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
             "\"texnum\":%d,\"wh\":[%d,%d],"
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
@@ -6242,10 +6792,34 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             probe->bary[0],
             probe->bary[1],
             probe->bary[2],
+            gfx_draw_class_name(probe->draw_class),
+            probe->dl_room,
+            probe->dl_which != NULL ? probe->dl_which : "-",
+            probe->cmd_addr,
             (unsigned long long)probe->settex_material_cc_id,
             (unsigned long long)probe->effective_cc_id,
             probe->cc_options,
             probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            probe->geometry_mode,
+            probe->depth_test ? 1 : 0,
+            probe->depth_update ? 1 : 0,
+            probe->depth_compare ? 1 : 0,
+            probe->depth_source_prim ? 1 : 0,
+            gfx_zmode_diag_name(probe->zmode),
+            probe->zmode,
+            gfx_cvg_dst_diag_name(probe->raw_mode),
+            (probe->raw_mode & IM_RD) != 0 ? 1 : 0,
+            (probe->raw_mode & CLR_ON_CVG) != 0 ? 1 : 0,
+            (probe->raw_mode & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (probe->raw_mode & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (probe->raw_mode & FORCE_BL) != 0 ? 1 : 0,
+            probe->use_fog ? 1 : 0,
+            probe->fog_use_fixed_alpha ? 1 : 0,
+            probe->texture_edge ? 1 : 0,
+            probe->room_matrix ? 1 : 0,
+            probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
             probe->texnum,
@@ -14733,9 +15307,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     /* Depth mode — uses PD-style unified API but with conservative enable logic.
      * Gate depth test on BOTH G_ZBUFFER and Z_CMP to avoid priming depth for
      * surfaces that only want Z_UPD (which can occlude textured geometry). */
-    bool depth_test = (rsp.geometry_mode & G_ZBUFFER) != 0 &&
+    bool sky_backdrop_depth =
+        g_sky_tri_mode && gfx_sky_backdrop_depth_enabled();
+    bool depth_test = ((rsp.geometry_mode & G_ZBUFFER) != 0 || sky_backdrop_depth) &&
                       (rdp.other_mode_l & Z_CMP) != 0;
-    bool depth_update = (rdp.other_mode_l & Z_UPD) == Z_UPD;
+    bool depth_update =
+        !sky_backdrop_depth && (rdp.other_mode_l & Z_UPD) == Z_UPD;
     bool depth_compare = (rdp.other_mode_l & Z_CMP) == Z_CMP;
     bool depth_source_prim = (rdp.other_mode_l & G_ZS_PRIM) == G_ZS_PRIM;
     uint16_t zmode = rdp.other_mode_l & ZMODE_DEC;
@@ -16031,6 +16608,33 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_settex_fb_capture_begin(&settex_fb_capture,
                                     settex_material_cc_id,
                                     &ndc_metrics);
+    struct GfxTriPixelProbe tri_pixel_probe;
+    bool tri_pixel_probe_active =
+        gfx_tri_pixel_probe_begin(&tri_pixel_probe,
+                                  cc_id,
+                                  effective_cc_id,
+                                  cc_options,
+                                  rdp.other_mode_l_raw,
+                                  rdp.other_mode_l,
+                                  rdp.other_mode_h,
+                                  rsp.geometry_mode,
+                                  blend_mode,
+                                  api_blend_mode,
+                                  depth_test,
+                                  depth_update,
+                                  depth_compare,
+                                  depth_source_prim,
+                                  zmode,
+                                  use_fog,
+                                  fog_use_fixed_alpha,
+                                  texture_edge,
+                                  room_matrix,
+                                  g_sky_tri_mode,
+                                  g_diag_current_cmd_addr,
+                                  g_current_draw_class,
+                                  dl_room,
+                                  dl_which,
+                                  &ndc_metrics);
     struct GfxSettexPixelProbe settex_pixel_probe;
     bool settex_pixel_probe_active =
         gfx_settex_pixel_probe_begin(&settex_pixel_probe,
@@ -16038,8 +16642,25 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                      effective_cc_id,
                                      cc_options,
                                      rdp.other_mode_l_raw,
+                                     rdp.other_mode_l,
+                                     rdp.other_mode_h,
+                                     rsp.geometry_mode,
                                      blend_mode,
                                      api_blend_mode,
+                                     depth_test,
+                                     depth_update,
+                                     depth_compare,
+                                     depth_source_prim,
+                                     zmode,
+                                     use_fog,
+                                     fog_use_fixed_alpha,
+                                     texture_edge,
+                                     room_matrix,
+                                     g_sky_tri_mode,
+                                     g_diag_current_cmd_addr,
+                                     g_current_draw_class,
+                                     dl_room,
+                                     dl_which,
                                      &ndc_metrics);
     if (settex_pixel_probe_active) {
         gfx_settex_pixel_probe_populate_source(&settex_pixel_probe,
@@ -16166,6 +16787,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
 
     for (int vi = 0; vi < 3; vi++) {
         float z = v_arr[vi]->z, w = v_arr[vi]->w;
+        if (sky_backdrop_depth) {
+            z = w;
+        }
         if (z_is_from_0_to_1) {
             z = (z + w) / 2.0f;
         }
@@ -16508,10 +17132,13 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
 	    if (++buf_vbo_num_tris == MAX_BUFFERED) {
 	        gfx_flush();
 	    }
-    if (settex_fb_capture_active || settex_pixel_probe_active) {
+    if (settex_fb_capture_active || tri_pixel_probe_active || settex_pixel_probe_active) {
         gfx_flush();
         if (settex_fb_capture_active) {
             gfx_settex_fb_capture_finish(&settex_fb_capture);
+        }
+        if (tri_pixel_probe_active) {
+            gfx_tri_pixel_probe_finish(&tri_pixel_probe);
         }
         if (settex_pixel_probe_active) {
             gfx_settex_pixel_probe_finish(&settex_pixel_probe);
