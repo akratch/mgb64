@@ -324,6 +324,11 @@ room-glass source differs per point (`[32,32,32,102]`, `[0,0,0,102]`,
 hidden coverage transition is `0x1 -> 0x3`. The next renderer change should be
 evaluated per pixel against source, framebuffer memory, hidden coverage, and
 final post output rather than by a single global opacity or color scalar.
+The matching forced room-glass coverage-memory diagnostic
+`GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=0x00738e4f020a2d12` remains a checked
+negative on this lane: `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314`
+reports center `4.0`, left `10.0`, and lower-right `25.0` mean_abs_rgb, worse
+than the default source-enriched run (`3.0`, `10.0`, `24.0`).
 
 2026-06-28 glass tie-off: pause here unless resuming the bounded raw-state
 handoff. The next useful capture is one stock Parallel-RDP pixel-probe rerun at
