@@ -163,6 +163,20 @@ The visible symptoms were level-specific but shared renderer causes:
     rows and `898` unpromoted coverage candidates, gameplay state remained
     identical for `359` compared frames, and the screenshot delta was
     `9,621 / 307,200` pixels (`3.132%`).
+    The follow-up generalized the same classifier to generated or locally
+    transformed room-class `G_SETTEX` strips whose room command address and
+    room-matrix attribution are absent, but only after the same fogged XLU
+    coverage-wrap state, `envA=255`, and `primA=0` material gates pass. Current
+    cross-level proof `/tmp/mgb64_cvg_gate_matrix_after_1782661301` promotes the
+    generated fogged rows in Jungle (`1,951` `ok_generated_room` rows; `2,062`
+    promoted total), Dam (`28` generated rows), and Depot (`36` generated rows),
+    while Frigate still promotes zero rows because its candidates fail on
+    `fog=0` or `water_suppress`. The focused Jungle guard
+    `/tmp/mgb64_jungle_xlu_cvg_guard_final` passed with `779` budgeted
+    promoted rows, `810` disabled-run candidates, a `0.507%` screenshot delta,
+    and identical gameplay state for `239` compared frames. The original Surface
+    guard `/tmp/mgb64_surface_xlu_cvg_guard_final` still passed with
+    `873` promoted rows, `873` disabled-run candidates, and a `2.139%` delta.
 
 13. **Room `G_SETTEX` LOD endpoints are draw semantics, not matrix semantics.**
     Dam's pad10092 room-glass source trace showed `G_SETTEX` trilerp draws

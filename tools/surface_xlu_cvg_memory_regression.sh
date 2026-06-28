@@ -23,6 +23,9 @@ MSAA_VALUES="0 4"
 MIN_CHANGED_PCT="0.25"
 MIN_PROMOTED_ROWS=100
 MIN_UNPROMOTED_ROWS=100
+MAX_DEFAULT_UNPROMOTED_ROWS=0
+REPORT_LABEL="${GE007_XLU_CVG_REGRESSION_LABEL:-Surface XLU coverage-memory}"
+REPORT_SLUG="${GE007_XLU_CVG_REGRESSION_SLUG:-surface_xlu_cvg_memory}"
 
 usage() {
     cat <<'USAGE'
@@ -41,6 +44,8 @@ Options:
   --min-changed-pct F        min screenshot delta default vs disabled (default: 0.25)
   --min-promoted-rows N      min default alpha_rdp_cvg_memory rows (default: 100)
   --min-unpromoted-rows N    min disabled unpromoted candidate rows (default: 100)
+  --max-default-unpromoted-rows N
+                             max default unpromoted candidate rows (default: 0)
 
 Artifacts are ROM-derived local validation data. Do not commit or redistribute
 captured screenshots or traces.
@@ -61,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --min-changed-pct) MIN_CHANGED_PCT="$2"; shift 2 ;;
         --min-promoted-rows) MIN_PROMOTED_ROWS="$2"; shift 2 ;;
         --min-unpromoted-rows) MIN_UNPROMOTED_ROWS="$2"; shift 2 ;;
+        --max-default-unpromoted-rows) MAX_DEFAULT_UNPROMOTED_ROWS="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -80,6 +86,10 @@ if [[ ! "$LEVEL" =~ ^-?[0-9]+$ ]]; then
 fi
 if [[ ! "$MIN_PROMOTED_ROWS" =~ ^[1-9][0-9]*$ || ! "$MIN_UNPROMOTED_ROWS" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: min row thresholds must be positive integers" >&2
+    exit 2
+fi
+if [[ ! "$MAX_DEFAULT_UNPROMOTED_ROWS" =~ ^[0-9]+$ ]]; then
+    echo "FAIL: --max-default-unpromoted-rows must be a non-negative integer" >&2
     exit 2
 fi
 if [[ -z "${MSAA_VALUES//[[:space:]]/}" ]]; then
@@ -134,7 +144,7 @@ capture_variant() {
     local msaa="$1"
     local variant="$2"
     local case_dir="$OUT_DIR/msaa_${msaa}/${variant}"
-    local label="surface_xlu_cvg_${variant}_msaa${msaa}_$$"
+    local label="${REPORT_SLUG}_${variant}_msaa${msaa}_$$"
     local trace="$case_dir/state.jsonl"
     local log="$case_dir/run.log"
     local screenshot_src="$case_dir/screenshot_${label}.bmp"
@@ -211,12 +221,12 @@ capture_variant() {
     fi
 
     python3 tools/audit_screenshot_health.py \
-        --label "surface_xlu_cvg_memory/${variant}/msaa${msaa}" \
+        --label "${REPORT_SLUG}/${variant}/msaa${msaa}" \
         --expect-size 640x480 \
         --json-out "$screenshot_json" \
         "$screenshot_dst" >/dev/null
     python3 tools/audit_render_trace.py \
-        --label "surface_xlu_cvg_memory/${variant}/msaa${msaa}" \
+        --label "${REPORT_SLUG}/${variant}/msaa${msaa}" \
         --json-out "$render_json" \
         "$trace" >/dev/null
     python3 tools/summarize_rdp_render_mode_trace.py \
@@ -247,9 +257,11 @@ validate_pair() {
         "$MIN_CHANGED_PCT" \
         "$MIN_PROMOTED_ROWS" \
         "$MIN_UNPROMOTED_ROWS" \
+        "$MAX_DEFAULT_UNPROMOTED_ROWS" \
         "$base/default/rdp_modes.json" \
         "$base/disabled/rdp_modes.json" \
-        "$compare_json" <<'PY'
+        "$compare_json" \
+        "$REPORT_LABEL" <<'PY'
 import json
 import sys
 
@@ -257,12 +269,14 @@ msaa = sys.argv[1]
 min_changed = float(sys.argv[2])
 min_promoted = int(sys.argv[3])
 min_unpromoted = int(sys.argv[4])
-with open(sys.argv[5], "r", encoding="utf-8") as handle:
-    default = json.load(handle)
+max_default_unpromoted = int(sys.argv[5])
 with open(sys.argv[6], "r", encoding="utf-8") as handle:
-    disabled = json.load(handle)
+    default = json.load(handle)
 with open(sys.argv[7], "r", encoding="utf-8") as handle:
+    disabled = json.load(handle)
+with open(sys.argv[8], "r", encoding="utf-8") as handle:
     compare = json.load(handle)
+report_label = sys.argv[9]
 
 failures = []
 promoted = int(default.get("promoted_coverage_memory_rows", 0))
@@ -273,8 +287,11 @@ changed_pct = float(compare.get("changed_pct", 0.0))
 
 if promoted < min_promoted:
     failures.append(f"default promoted rows {promoted} < {min_promoted}")
-if default_unpromoted != 0:
-    failures.append(f"default left {default_unpromoted} unpromoted coverage candidates")
+if default_unpromoted > max_default_unpromoted:
+    failures.append(
+        f"default left {default_unpromoted} unpromoted coverage candidates "
+        f"> {max_default_unpromoted}"
+    )
 if disabled_promoted != 0:
     failures.append(f"disabled run still promoted {disabled_promoted} coverage-memory rows")
 if disabled_unpromoted < min_unpromoted:
@@ -283,20 +300,20 @@ if changed_pct < min_changed:
     failures.append(f"screenshot delta {changed_pct:.3f}% < {min_changed:.3f}%")
 
 if failures:
-    print(f"FAIL: Surface XLU coverage-memory msaa={msaa}")
+    print(f"FAIL: {report_label} msaa={msaa}")
     for failure in failures:
         print(f"  {failure}")
     raise SystemExit(1)
 
 print(
-    f"PASS: Surface XLU coverage-memory msaa={msaa} "
+    f"PASS: {report_label} msaa={msaa} "
     f"promoted={promoted} disabled_candidates={disabled_unpromoted} "
     f"changed={changed_pct:.3f}%"
 )
 PY
 }
 
-echo "=== Surface XLU Coverage-Memory Regression ==="
+echo "=== $REPORT_LABEL Regression ==="
 echo "  out-dir: $OUT_DIR"
 echo "  binary:  $BINARY"
 echo "  ROM:     $ROM"

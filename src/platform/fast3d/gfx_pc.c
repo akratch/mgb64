@@ -5079,20 +5079,20 @@ static int gfx_room_xlu_cvg_memory_enabled(void)
     return enabled;
 }
 
-static bool gfx_room_xlu_cvg_memory_needed(int dl_room,
-                                           const char *dl_which,
-                                           bool room_matrix,
-                                           enum GfxBlendMode blend_mode,
-                                           bool depth_test,
-                                           bool depth_update,
-                                           bool depth_compare,
-                                           uint16_t zmode,
-                                           bool texture_edge,
-                                           uint32_t raw_mode,
-                                           bool use_fog)
+static const char *gfx_room_xlu_cvg_memory_gate_reason(int dl_room,
+                                                       const char *dl_which,
+                                                       bool room_matrix,
+                                                       enum GfxBlendMode blend_mode,
+                                                       bool depth_test,
+                                                       bool depth_update,
+                                                       bool depth_compare,
+                                                       uint16_t zmode,
+                                                       bool texture_edge,
+                                                       uint32_t raw_mode,
+                                                       bool use_fog)
 {
     if (!gfx_room_xlu_cvg_memory_enabled()) {
-        return false;
+        return "disabled";
     }
 
     /*
@@ -5102,24 +5102,75 @@ static bool gfx_room_xlu_cvg_memory_needed(int dl_room,
      * memory blending. Keep this gate narrow: active glass/effects and
      * Frigate's non-fog room shell are intentionally outside it. Primitive
      * alpha is not stable on this material across frames, so the mode/depth/
-     * fog/room/material class is the durable signature.
+     * fog/room/material class is the durable signature. Some backdrop strips
+     * are emitted through generated or locally transformed room paths where
+     * command-address and room-matrix ownership are no longer recoverable; for
+     * those, keep a narrower material fallback keyed by room draw class plus
+     * envA=255/primA=0.
      */
-    return dl_room >= 0 &&
-           dl_which != NULL &&
-           strcmp(dl_which, "secondary") == 0 &&
-           room_matrix &&
-           g_current_draw_class == DRAWCLASS_ROOM &&
-           settex_active &&
-           use_fog &&
-           blend_mode == GFX_BLEND_ALPHA &&
-           depth_test &&
-           depth_compare &&
-           !depth_update &&
-           zmode == ZMODE_XLU &&
-           !texture_edge &&
-           !g_sky_tri_mode &&
-           rdp.env_color.a == 255 &&
-           gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode);
+    if (g_current_draw_class != DRAWCLASS_ROOM) {
+        return "class";
+    }
+    if (!settex_active) {
+        return "settex";
+    }
+    if (!use_fog) {
+        return "fog";
+    }
+    if (blend_mode != GFX_BLEND_ALPHA) {
+        return "blend";
+    }
+    if (!depth_test) {
+        return "depth_test";
+    }
+    if (!depth_compare) {
+        return "depth_compare";
+    }
+    if (depth_update) {
+        return "depth_update";
+    }
+    if (zmode != ZMODE_XLU) {
+        return "zmode";
+    }
+    if (texture_edge) {
+        return "texedge";
+    }
+    if (g_sky_tri_mode) {
+        return "sky";
+    }
+    if (rdp.env_color.a != 255) {
+        return "envA";
+    }
+    if (!gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode)) {
+        return "rdp_mode";
+    }
+    if (dl_room >= 0 && dl_which != NULL &&
+        strcmp(dl_which, "secondary") == 0 && room_matrix) {
+        return "ok";
+    }
+    if (dl_room < 0 && dl_which == NULL && !room_matrix &&
+        rdp.prim_color.a == 0) {
+        return "ok_generated_room";
+    }
+
+    if (dl_room < 0) {
+        return "dl_room";
+    }
+    if (dl_which == NULL || strcmp(dl_which, "secondary") != 0) {
+        return "dl";
+    }
+    if (!room_matrix) {
+        return "roommtx";
+    }
+
+    return "owner";
+}
+
+static bool gfx_room_xlu_cvg_memory_needed(const char *gate_reason)
+{
+    return gate_reason != NULL &&
+           (strcmp(gate_reason, "ok") == 0 ||
+            strcmp(gate_reason, "ok_generated_room") == 0);
 }
 
 static const char *gfx_zmode_diag_name(uint32_t mode) {
@@ -5280,6 +5331,7 @@ static void gfx_trace_rdp_render_mode_note(
     enum GfxBlendMode api_blend_mode,
     enum GfxRdpMemoryBlendClass rdp_memory_blend_class,
     bool room_xlu_cvg_memory,
+    const char *room_xlu_cvg_memory_reason,
     bool room_water_alpha_suppress,
     bool room_secondary_xlu_sort,
     bool uses_texture0,
@@ -5321,7 +5373,9 @@ static void gfx_trace_rdp_render_mode_note(
             "raw=0x%08X eff=0x%08X omh=0x%08X geom=0x%08X "
             "cc=0x%016llX effcc=0x%016llX opts=0x%08X "
             "settex=%d texnum=%d wh=%.0fx%.0f tex_used=(%d,%d) "
+            "envA=%u primA=%u fogA=%u "
             "blend=%s api_blend=%s rdp_mem=%s room_cvg=%d water_suppress=%d room_sort=%d "
+            "room_cvg_reason=%s "
             "alpha=%d fog=%d texedge=%d noise=%d "
             "depth=(test=%d,upd=%d,cmp=%d,prim=%d,z=%s) "
             "decode={z=%s cvg=%s zcmp=%d zupd=%d aa=%d imrd=%d clr_on_cvg=%d "
@@ -5350,12 +5404,16 @@ static void gfx_trace_rdp_render_mode_note(
             settex_active ? settex_tex_h : 0.0f,
             uses_texture0 ? 1 : 0,
             uses_texture1 ? 1 : 0,
+            (unsigned)rdp.env_color.a,
+            (unsigned)rdp.prim_color.a,
+            (unsigned)rdp.fog_color.a,
             gfx_blend_mode_diag_name(blend_mode),
             gfx_blend_mode_diag_name(api_blend_mode),
             gfx_rdp_memory_blend_class_name(rdp_memory_blend_class),
             room_xlu_cvg_memory ? 1 : 0,
             room_water_alpha_suppress ? 1 : 0,
             room_secondary_xlu_sort ? 1 : 0,
+            room_xlu_cvg_memory_reason ? room_xlu_cvg_memory_reason : "?",
             use_alpha ? 1 : 0,
             use_fog ? 1 : 0,
             texture_edge ? 1 : 0,
@@ -17308,19 +17366,22 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                              zmode,
                                              texture_edge,
                                              rdp.other_mode_l_raw);
+    const char *room_xlu_cvg_memory_reason = room_water_alpha_suppress
+        ? "water_suppress"
+        : (tint_match
+            ? "tint"
+            : gfx_room_xlu_cvg_memory_gate_reason(dl_room, dl_which,
+                                                  room_matrix,
+                                                  blend_mode,
+                                                  depth_test,
+                                                  depth_update,
+                                                  depth_compare,
+                                                  zmode,
+                                                  texture_edge,
+                                                  rdp.other_mode_l_raw,
+                                                  use_fog));
     bool room_xlu_cvg_memory =
-        !room_water_alpha_suppress &&
-        !tint_match &&
-        gfx_room_xlu_cvg_memory_needed(dl_room, dl_which,
-                                       room_matrix,
-                                       blend_mode,
-                                       depth_test,
-                                       depth_update,
-                                       depth_compare,
-                                       zmode,
-                                       texture_edge,
-                                       rdp.other_mode_l_raw,
-                                       use_fog);
+        gfx_room_xlu_cvg_memory_needed(room_xlu_cvg_memory_reason);
     enum GfxRdpMemoryBlendClass rdp_memory_blend_class =
         gfx_rdp_memory_blend_class_for_draw(tint_match,
                                             use_alpha,
@@ -17427,6 +17488,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                    api_blend_mode,
                                    rdp_memory_blend_class,
                                    room_xlu_cvg_memory,
+                                   room_xlu_cvg_memory_reason,
                                    room_water_alpha_suppress,
                                    room_secondary_xlu_sort,
                                    effective_cc_features_for_options.used_textures[0],

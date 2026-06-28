@@ -1420,6 +1420,7 @@ runtime guard instead of overloading the broad parity scene:
 ```sh
 ./tools/surface_xlu_cvg_memory_regression.sh --no-build
 ./tools/surface_xlu_cvg_memory_regression.sh --no-build --msaa-values "0 4"
+./tools/jungle_xlu_cvg_memory_regression.sh --no-build
 ```
 
 It captures Surface 1 default versus `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1`,
@@ -1427,7 +1428,10 @@ checks screenshot health and render health, requires identical gameplay state,
 and verifies that the default run promotes the fogged secondary-room XLU rows to
 `alpha_rdp_cvg_memory` while the disabled run exposes them as unpromoted RDP
 coverage-wrap candidates. The optional validation CTest runs the faster
-`--msaa-values 0` lane.
+`--msaa-values 0` lane. The Jungle wrapper uses the same harness for the
+generated/locally transformed fogged room strips that lose display-list room
+attribution; it allows the small env-alpha candidate class to remain unpromoted
+by default.
 
 ### Level-intro census
 
@@ -1931,7 +1935,7 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_DIAG_XLU_COVERAGE_STENCIL_CC=1|*|cc-list` / `GE007_DIAG_XLU_COVERAGE_STENCIL_INCREMENT=1..8` | default-off backend A/B for matched loaded-tile alpha draws with raw `ZMODE_XLU` + `CVG_DST_WRAP` + `CLR_ON_CVG` + `IM_RD` + `FORCE_BL`; forces a stencil-backed scene target and uses the lower stencil bits as an approximate per-pixel coverage counter before allowing color writes |
 | `GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC=1|*|cc-list` | default-off backend/shader A/B for matched alpha draws, including loaded-tile and `G_SETTEX` materials, with raw `ZMODE_XLU` + `CVG_DST_WRAP` + `CLR_ON_CVG` + `IM_RD` + `FORCE_BL`; snapshots the current framebuffer per triangle and applies an RDP-style final blender/memory-color formula without GL fixed-function alpha blending |
 | `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=1|*|cc-list` | default-off backend/shader A/B for the same matched alpha draws, including `G_SETTEX`; passes per-triangle screen vertices to the shader, estimates an 8-sample coverage count, stores synthetic coverage in framebuffer alpha, and applies the `CLR_ON_CVG` memory-color rule before blending |
-| `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` / `GE007_ROOM_XLU_CVG_MEMORY=0` | disable the default material classifier that promotes fogged secondary-room `G_SETTEX` XLU coverage-wrap/color-on-coverage strips to `GFX_BLEND_ALPHA_RDP_CVG_MEMORY`; this also disables the forced RGBA scene target used to keep framebuffer alpha as deterministic coverage memory, so use it as the focused Surface tree/fog A/B escape hatch |
+| `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` / `GE007_ROOM_XLU_CVG_MEMORY=0` | disable the default material classifier that promotes fogged room-class `G_SETTEX` XLU coverage-wrap/color-on-coverage strips to `GFX_BLEND_ALPHA_RDP_CVG_MEMORY`, including generated/locally transformed strips with missing room-DL attribution only when `envA=255` and `primA=0`; this also disables the forced RGBA scene target used to keep framebuffer alpha as deterministic coverage memory, so use it as the focused Surface/Jungle tree-fog A/B escape hatch |
 | `GE007_DISABLE_ROOM_XLU_SORT=1` / `GE007_SORT_ROOM_XLU=0` | disable default local secondary-room XLU far-to-near sorting; this is a broad A/B and should not be used as a first fix when coverage-memory owns the artifact |
 | `GE007_DISABLE_ROOM_XLU_DEFER=1` / `GE007_SORT_ROOM_XLU_DEFER=0` | disable the cross-flush secondary-room XLU defer queue while leaving local room-XLU sorting enabled; useful for proving whether a visual delta is from batch ordering or material blending |
 | `GE007_TRACE_GLASS_SHARD_COVERAGE=1` / `GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME=N` / `GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET=N` | read-only active-shard coverage-grid trace; logs one `[SHARD-COVERAGE]` row per active frame with raw N64 coverage flags, material/blend identity, and coarse bbox-cell overlap pressure |
@@ -2026,10 +2030,13 @@ smoke runs and human play sessions.
 
 Use `tools/summarize_rdp_render_mode_trace.py` on `[RDP-MODE]` logs before
 adding another render-mode special case. The summary groups raw modes by final
-native API blend, depth mode, draw class, `G_SETTEX` identity, and coverage
-flags, and highlights unpromoted `ZMODE_XLU` + `CVG_DST_WRAP` +
-`CLR_ON_CVG` + `IM_RD` + `FORCE_BL` candidates that are still using ordinary
-alpha blending.
+native API blend, depth mode, draw class, room-matrix/display-list ownership,
+combiner/options, `G_SETTEX` identity, material alpha, and coverage flags. It
+also highlights unpromoted `ZMODE_XLU` + `CVG_DST_WRAP` + `CLR_ON_CVG` +
+`IM_RD` + `FORCE_BL` candidates that are still using ordinary alpha blending,
+with the `room_cvg_reason` gate (`ok`, `ok_generated_room`, `fog`, `envA`,
+`dl_room`, and so on) explaining why the default classifier did or did not
+promote each row.
 
 `tools/compare_glass_shard_pixel_oracle.py` measures active-glass screenshot
 deltas under individual traced shard-piece masks. It uses the same logical
