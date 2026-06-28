@@ -4509,6 +4509,12 @@ static const char *gfx_blend_mode_diag_name(enum GfxBlendMode mode) {
     }
 }
 
+enum GfxRdpMemoryBlendClass {
+    GFX_RDP_MEMORY_BLEND_NONE,
+    GFX_RDP_MEMORY_BLEND_COLOR,
+    GFX_RDP_MEMORY_BLEND_COVERAGE,
+};
+
 static bool gfx_raw_mode_has_xlu_coverage_flags(uint32_t mode) {
     return (mode & ZMODE_DEC) == ZMODE_XLU &&
            (mode & AA_EN) != 0 &&
@@ -4522,6 +4528,51 @@ static bool gfx_raw_mode_has_xlu_wrap_color_on_coverage(uint32_t mode) {
            (mode & IM_RD) != 0 &&
            (mode & CVG_X_ALPHA) == 0 &&
            (mode & ALPHA_CVG_SEL) == 0;
+}
+
+static enum GfxRdpMemoryBlendClass gfx_rdp_memory_blend_class_for_draw(
+    bool tint_match,
+    bool use_alpha,
+    enum GfxBlendMode blend_mode,
+    uint32_t raw_mode,
+    bool uses_texture0,
+    bool uses_texture1,
+    uint64_t effective_cc_id,
+    bool default_cvg_memory)
+{
+    if (tint_match ||
+        !use_alpha ||
+        blend_mode != GFX_BLEND_ALPHA ||
+        (!uses_texture0 && !uses_texture1) ||
+        !gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode)) {
+        return GFX_RDP_MEMORY_BLEND_NONE;
+    }
+
+    if (default_cvg_memory ||
+        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+        return GFX_RDP_MEMORY_BLEND_COVERAGE;
+    }
+
+    if (gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
+        return GFX_RDP_MEMORY_BLEND_COLOR;
+    }
+
+    return GFX_RDP_MEMORY_BLEND_NONE;
+}
+
+static enum GfxBlendMode gfx_api_blend_mode_for_rdp_memory_class(
+    enum GfxBlendMode fallback,
+    enum GfxRdpMemoryBlendClass blend_class)
+{
+    switch (blend_class) {
+        case GFX_RDP_MEMORY_BLEND_COVERAGE:
+            return GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
+        case GFX_RDP_MEMORY_BLEND_COLOR:
+            return GFX_BLEND_ALPHA_RDP_MEMORY;
+        case GFX_RDP_MEMORY_BLEND_NONE:
+        default:
+            return fallback;
+    }
 }
 
 static bool gfx_room_water_alpha_suppress_needed(int dl_room,
@@ -8423,19 +8474,24 @@ static void gfx_trace_texgen_material_emit(
         g_diag_trace_texgen_materials_budget--;
     }
 
-    if (blend_mode == GFX_BLEND_ALPHA &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
-        api_blend_mode = GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
-    } else if (blend_mode == GFX_BLEND_ALPHA &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
-        api_blend_mode = GFX_BLEND_ALPHA_RDP_MEMORY;
-    } else if (blend_mode == GFX_BLEND_ALPHA &&
+    enum GfxRdpMemoryBlendClass rdp_memory_blend_class =
+        gfx_rdp_memory_blend_class_for_draw(false, use_alpha, blend_mode,
+                                            rdp.other_mode_l_raw,
+                                            used_textures[0],
+                                            used_textures[1],
+                                            effective_cc_id,
+                                            false);
+    api_blend_mode =
+        gfx_api_blend_mode_for_rdp_memory_class(api_blend_mode,
+                                                rdp_memory_blend_class);
+
+    if (api_blend_mode == blend_mode &&
+        blend_mode == GFX_BLEND_ALPHA &&
         gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
         gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
         api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
-    } else if (blend_mode == GFX_BLEND_ALPHA &&
+    } else if (api_blend_mode == blend_mode &&
+        blend_mode == GFX_BLEND_ALPHA &&
         gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
         gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
         api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
@@ -15192,6 +15248,15 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                        texture_edge,
                                        rdp.other_mode_l_raw,
                                        use_fog);
+    enum GfxRdpMemoryBlendClass rdp_memory_blend_class =
+        gfx_rdp_memory_blend_class_for_draw(tint_match,
+                                            use_alpha,
+                                            blend_mode,
+                                            rdp.other_mode_l_raw,
+                                            cc_features_for_options.used_textures[0],
+                                            cc_features_for_options.used_textures[1],
+                                            effective_cc_id,
+                                            room_xlu_cvg_memory);
     if (!tint_match && !settex_active && use_alpha &&
         (cc_features_for_options.used_textures[0] ||
          cc_features_for_options.used_textures[1]) &&
@@ -15207,19 +15272,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         cc_options |= SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN;
     }
     if (!tint_match && use_alpha &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        (cc_features_for_options.used_textures[0] ||
-         cc_features_for_options.used_textures[1]) &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        (room_xlu_cvg_memory ||
-         gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id))) {
+        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COVERAGE) {
         cc_options |= SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND;
     } else if (!tint_match && use_alpha &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        (cc_features_for_options.used_textures[0] ||
-         cc_features_for_options.used_textures[1]) &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
+        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COLOR) {
         cc_options |= SHADER_OPT_DIAG_RDP_MEMORY_BLEND;
     }
     if (!tint_match && settex_active &&
@@ -15259,42 +15315,37 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         cc_options |= SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS;
     }
 
-	    enum GfxBlendMode api_blend_mode = blend_mode;
-	    if (blend_mode == GFX_BLEND_ALPHA &&
-	        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-	        (room_xlu_cvg_memory ||
-	         gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id))) {
-	        api_blend_mode = GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
-    } else if (blend_mode == GFX_BLEND_ALPHA &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
-        api_blend_mode = GFX_BLEND_ALPHA_RDP_MEMORY;
-    } else if (blend_mode == GFX_BLEND_ALPHA &&
+    enum GfxBlendMode api_blend_mode =
+        gfx_api_blend_mode_for_rdp_memory_class(blend_mode,
+                                                rdp_memory_blend_class);
+    if (api_blend_mode == blend_mode &&
+        blend_mode == GFX_BLEND_ALPHA &&
         gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
         gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
         api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
-	    } else if (blend_mode == GFX_BLEND_ALPHA &&
-	        gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
-	        gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
-	        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
-	    }
+    } else if (api_blend_mode == blend_mode &&
+               blend_mode == GFX_BLEND_ALPHA &&
+               gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
+               gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
+        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
+    }
 
-	    bool room_secondary_xlu_sort =
-	        dl_room >= 0 &&
-	        dl_which != NULL &&
-	        strcmp(dl_which, "secondary") == 0 &&
-	        room_matrix &&
-	        blend_mode == GFX_BLEND_ALPHA &&
-	        api_blend_mode == GFX_BLEND_ALPHA &&
-	        depth_test &&
-	        depth_compare &&
-	        !depth_update &&
-	        zmode == ZMODE_XLU &&
-	        !texture_edge &&
-	        !g_sky_tri_mode;
-	    float room_secondary_xlu_sort_key = room_secondary_xlu_sort
-	        ? gfx_room_xlu_tri_sort_key(v1, v2, v3)
-	        : 0.0f;
+    bool room_secondary_xlu_sort =
+        dl_room >= 0 &&
+        dl_which != NULL &&
+        strcmp(dl_which, "secondary") == 0 &&
+        room_matrix &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        api_blend_mode == GFX_BLEND_ALPHA &&
+        depth_test &&
+        depth_compare &&
+        !depth_update &&
+        zmode == ZMODE_XLU &&
+        !texture_edge &&
+        !g_sky_tri_mode;
+    float room_secondary_xlu_sort_key = room_secondary_xlu_sort
+        ? gfx_room_xlu_tri_sort_key(v1, v2, v3)
+        : 0.0f;
 
     gfx_trace_glass_shard_coverage_note(gfx_effect_label_for_current_command(),
                                          &ndc_metrics,
