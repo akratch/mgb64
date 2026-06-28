@@ -2054,6 +2054,30 @@ falling-shard pass caused the pixels. Always pair stock/native shard-mask
 findings with a native default-vs-`GE007_GLASS_SHARDS=0` control before assigning
 ownership.
 
+`tools/select_glass_shard_pixel_targets.py` bridges the projected-shard mask
+oracle to stock ares single-pixel probes. It loads the same stock/native
+projection traces and logical-viewport screenshots, rasterizes common projected
+pieces, ranks changed covered pixels by RGB/luma disagreement, and emits stock
+RDP logical targets:
+
+```sh
+python3 tools/select_glass_shard_pixel_targets.py \
+  --baseline-trace /tmp/.../stock_dam_regular_glass_shatter_pad10092_impact_visual_probe.jsonl \
+  --test-trace /tmp/.../native_dam_regular_glass_shatter_pad10092_impact_visual_probe.jsonl \
+  --baseline-image /tmp/.../stock_dam_regular_glass_shatter_pad10092_impact_visual_probe.ppm \
+  --test-image /tmp/.../native_dam_regular_glass_shatter_pad10092_impact_visual_probe.bmp \
+  --route tools/rom_oracle_routes/dam_regular_glass_shatter_pad10092_impact_visual_probe.json \
+  --top 12 \
+  --json-out /tmp/shard_pixel_targets.json
+```
+
+The 2026-06-28 pad-`10092` recheck used this to catch a false lead: the
+`projected_impact` ROI had `0` shard-mask candidate pixels, and the previous
+center target was finally owned by an opaque/clamp room draw rather than
+`0x0C1849D8` glass shards. Whole-mask selection produced concrete shard-covered
+targets such as `149,209`, `201,207`, and `132,212` for bounded stock RDP pixel
+probes. Use those selected targets before making shard-pixel ownership claims.
+
 `tools/compare_glass_shard_draw_trace.py` is the next forensic step after the
 pixel oracle. It joins the oracle's top offending piece indices to native
 `[EFFECT-TRI]` rows and matching `[TEXGEN-MATERIAL]` rows, then emits a compact

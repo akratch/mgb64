@@ -41,6 +41,14 @@ then compare raw stock state against the native `[SETTEX-PIXEL]` row. If that
 does not explain the off-center delta, stop this thesis and pick a different
 glass fixture or owner-isolated route before changing renderer behavior.
 
+For falling-shard-specific pixel probes, first run
+`tools/select_glass_shard_pixel_targets.py` against the current stock/native
+projection traces and route screenshots. The 2026-06-28 pad-`10092` recheck
+found `0` shard-mask candidates inside the route's `projected_impact` ROI and
+showed the old center target was not shard-owned. Whole-mask ranking selected
+actual shard-covered stock RDP targets such as `149,209`, `201,207`, and
+`132,212`; use those before making renderer claims about `0x0C1849D8` shards.
+
 ## Deterministic repro (no aiming)
 
 Shooting glass headlessly is driven by scripted tag-damage, which calls
