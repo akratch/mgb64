@@ -457,7 +457,14 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  native pre also differs from the stock framebuffer-input candidate by
 	  `35.333..70.667` mean_abs_rgb. That makes source/raster evidence and
 	  prior-owner ordering the next target before any global blend change. The
-	  matching forced room-glass coverage-memory
+	  native lower-right all-triangle proof
+	  `/tmp/mgb64_native_tri_pixel_lower_right_all_1782656042/tri_pixel_chain_94_95_frame122_changed.json`
+	  shows the changed owner chain at frame `122`: sky texnum `2228`
+	  `[16,48,96] -> [42,71,113]`, room `132` texnum `949`
+	  `[42,71,113] -> [11,11,11]`, then texnum `654` glass
+	  `[11,11,11] -> [7,7,7] -> [8,8,8]`. Compare that room-`949` step against
+	  stock before changing texnum-`654` blending. The matching forced
+	  room-glass coverage-memory
 	  diagnostic
 	  `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314` remains a negative
 	  control: center, left, and lower-right report `4.0`, `10.0`, and `25.0`

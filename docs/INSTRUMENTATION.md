@@ -87,6 +87,7 @@ The public validation surface is organized into these lanes:
 | Glass center handoff | Read-only join from stock center-pixel output to stock command-region and native settex evidence | `analyze_glass_center_handoff.py` |
 | Glass handoff points | Batch summary of multiple stock/native handoff JSONs with source, framebuffer-input, hidden-coverage, and final-output fields | `summarize_glass_handoff_points.py` |
 | Glass handoff run compare | Baseline-vs-candidate classification for handoff point summaries; reports per-point wins, regressions, and neutral deltas | `compare_glass_handoff_runs.py` |
+| Native TRI pixel chain | Read-only reducer for native `[TRI-PIXEL]` owner chains at a selected target/frame | `summarize_native_tri_pixel_probe.py` |
 | Bullet impact sequence | Sampled stock/native bullet-impact sequence parity at selected frames; catches later-impact drift hidden by first-impact gates | `compare_bullet_impact_sequence.py` |
 | Glass contributor isolation | Native-only A/B ownership sweep for Dam active, impact, and pad-10092 impact glass fixtures | `glass_contributor_isolation_regression.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
@@ -435,6 +436,24 @@ the two generated triangles is being probed. Use
 `GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` to suppress ordinary triangles and isolate
 screen-space rectangle ownership.
 
+Summarize large native triangle logs before hand-reading them:
+
+```sh
+python3 tools/summarize_native_tri_pixel_probe.py "$OUT"/native_*.log \
+  --target 94,95 \
+  --frame 122 \
+  --changed-only
+```
+
+The current lower-right Dam glass owner-chain proof is
+`/tmp/mgb64_native_tri_pixel_lower_right_all_1782656042/tri_pixel_chain_94_95_frame122_changed.json`.
+At native target `94,95`, frame `122`, the changed chain is: sky texnum `2228`
+changes `[16,48,96] -> [42,71,113]`; room `132` primary texnum `949` changes
+`[42,71,113] -> [11,11,11]`; texnum `654` glass then changes
+`[11,11,11] -> [7,7,7] -> [8,8,8]`. This explains the dark native pre-glass
+input in the lower-right handoff and makes room texnum-`949` ownership/order the
+next concrete comparison point before changing texnum-`654` blending.
+
 Deferred secondary-room XLU batches are drawn after their source triangles have
 been queued, so their final pixel ownership is not visible as a normal
 `[TRI-PIXEL]` post-draw row. Use the default-off deferred probe when a
@@ -515,6 +534,7 @@ python3 tools/check_stock_rdp_pixel_probe_regression.py
 python3 tools/check_glass_center_handoff_regression.py
 python3 tools/check_glass_handoff_points_regression.py
 python3 tools/check_glass_handoff_run_compare_regression.py
+python3 tools/check_native_tri_pixel_probe_regression.py
 python3 tools/check_room_glass_source_reconstruction_regression.py
 ```
 
