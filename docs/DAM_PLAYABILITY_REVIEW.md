@@ -443,14 +443,14 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  near stock. The next code pass needs multi-pixel stock/native final-output
 	  evidence across the room-glass ROI before changing texnum-`654`
 	  translucent composition, coverage, or framebuffer-memory semantics.
-	  That lane now has a first batch reducer:
-	  `/tmp/mgb64_glass_handoff_points_current_1782655031` refreshes center,
-	  `176,158`, and `188,170` with the same analyzer. It reports center
-	  `mean_abs_rgb=1.0`, left `10.0`, and lower-right `21.0`, with different
-	  stock same-frame framebuffer inputs and a lower-right hidden-coverage
-	  transition from `0x1` to `0x3`. Treat the next fix as per-pixel RDP
-	  source/framebuffer/coverage/output work, not as a global alpha or color
-	  scalar.
+	  That lane now has a first source-enriched batch reducer:
+	  `/tmp/mgb64_glass_handoff_points_source_current_1782655165` refreshes
+	  center, `176,158`, and `188,170` with the same analyzer and current native
+	  `[SETTEX-PIXEL]` source fields. It reports center `mean_abs_rgb=3.0`, left
+	  `10.0`, and lower-right `24.0`; native source, stock same-frame framebuffer
+	  input, and hidden-coverage transitions all vary by pixel. Treat the next fix
+	  as per-pixel RDP source/framebuffer/coverage/output work, not as a global
+	  alpha or color scalar.
 	  That multi-point lane has now started: `/tmp/mgb64_pixel_handoff_176_158_1782631121`
 	  samples stock/aligned `176,158` mapped to native `88,89` and reports stock
 	  `[32,32,32]` versus native `[22,22,22]`, while

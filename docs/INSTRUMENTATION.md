@@ -313,16 +313,17 @@ texture samples populated, `shaderL_frag=[0,0,0,102]`, and framebuffer movement
 semantics, not a uniform alpha or brightness scalar.
 
 `tools/summarize_glass_handoff_points.py` now reduces handoff JSONs into a
-multi-point final-output table. Current proof
-`/tmp/mgb64_glass_handoff_points_current_1782655031` refreshes the center,
-`176,158`, and `188,170` handoffs with the same analyzer and reports `3/3`
-complete points: center stock/native mean_abs_rgb `1.0`, left `10.0`, and
-lower-right `21.0`. The stock same-frame framebuffer inputs differ across those
-points (`[104,96,96,224]`, `[16,48,96,224]`, `[56,40,40,32]`) and the
-lower-right hidden coverage transition is `0x1 -> 0x3`, so the next renderer
-change should be evaluated per pixel against source, framebuffer memory, hidden
-coverage, and final post output rather than by a single global opacity or color
-scalar.
+multi-point final-output table. Current source-enriched proof
+`/tmp/mgb64_glass_handoff_points_source_current_1782655165` refreshes center,
+`176,158`, and `188,170` with the same analyzer and current native
+`[SETTEX-PIXEL]` source fields. It reports `3/3` complete points: center
+stock/native mean_abs_rgb `3.0`, left `10.0`, and lower-right `24.0`. Native
+room-glass source differs per point (`[32,32,32,102]`, `[0,0,0,102]`,
+`[22,22,22,102]`), stock same-frame framebuffer inputs differ
+(`[104,96,96,224]`, `[16,48,96,224]`, `[56,40,40,32]`), and the lower-right
+hidden coverage transition is `0x1 -> 0x3`. The next renderer change should be
+evaluated per pixel against source, framebuffer memory, hidden coverage, and
+final post output rather than by a single global opacity or color scalar.
 
 2026-06-28 glass tie-off: pause here unless resuming the bounded raw-state
 handoff. The next useful capture is one stock Parallel-RDP pixel-probe rerun at
