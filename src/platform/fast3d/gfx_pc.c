@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <assert.h>
+#include <limits.h>
 #include <unistd.h>
 
 #ifndef _LANGUAGE_C
@@ -950,10 +951,14 @@ static int settex_cache_count = 0;
 
 struct SetTexTileState {
     bool valid;
+    uint8_t fmt, siz;
     uint8_t cms, cmt;
+    uint8_t masks, maskt;
     uint8_t shifts, shiftt;
     uint16_t uls, ult, lrs, lrt;
     uint32_t width, height;
+    uint32_t line_size_bytes;
+    uint16_t tmem;
 };
 
 /* State for G_SETTEX: when set, overrides standard texture loading */
@@ -994,10 +999,16 @@ static void gfx_settex_clear_tile_state(void)
 static void gfx_settex_define_tile_state(int tile_index,
                                          uint32_t width,
                                          uint32_t height,
+                                         uint8_t fmt,
+                                         uint8_t siz,
                                          uint8_t cms,
                                          uint8_t cmt,
+                                         uint8_t masks,
+                                         uint8_t maskt,
                                          uint8_t shifts,
                                          uint8_t shiftt,
+                                         uint16_t tmem,
+                                         uint32_t line_size_bytes,
                                          uint8_t offset,
                                          bool has_custom_lods)
 {
@@ -1009,8 +1020,12 @@ static void gfx_settex_define_tile_state(int tile_index,
     uint16_t tile_offset = (offset == 2 && !has_custom_lods) ? 2 : 0;
 
     state->valid = true;
+    state->fmt = fmt;
+    state->siz = siz;
     state->cms = cms;
     state->cmt = cmt;
+    state->masks = masks;
+    state->maskt = maskt;
     state->shifts = shifts;
     state->shiftt = shiftt;
     state->uls = tile_offset;
@@ -1019,6 +1034,44 @@ static void gfx_settex_define_tile_state(int tile_index,
     state->lrt = tile_offset + (uint16_t)((height - 1U) << G_TEXTURE_IMAGE_FRAC);
     state->width = width;
     state->height = height;
+    state->line_size_bytes = line_size_bytes;
+    state->tmem = tmem;
+}
+
+static uint8_t gfx_settex_dimension_to_mask(uint32_t dimension)
+{
+    uint8_t mask = 0;
+
+    if (dimension == 0) {
+        return 0;
+    }
+
+    dimension--;
+    while (dimension > 0 && mask < 8) {
+        dimension >>= 1;
+        mask++;
+    }
+
+    return mask;
+}
+
+static uint32_t gfx_settex_line_words_for_width(uint32_t width, uint8_t siz)
+{
+    switch (siz) {
+        case G_IM_SIZ_32b:
+        case G_IM_SIZ_16b:
+            return (width + 3U) / 4U;
+        case G_IM_SIZ_8b:
+            return (width + 7U) / 8U;
+        case G_IM_SIZ_4b:
+        default:
+            return (width + 15U) / 16U;
+    }
+}
+
+static uint8_t gfx_settex_mask_minus_flag(uint8_t mask, uint8_t flag)
+{
+    return flag < mask ? (uint8_t)(mask - flag) : 0;
 }
 
 static void gfx_settex_configure_tiles(uint32_t w0,
@@ -1026,6 +1079,8 @@ static void gfx_settex_configure_tiles(uint32_t w0,
                                        int texturenum,
                                        uint32_t width,
                                        uint32_t height,
+                                       uint8_t fmt,
+                                       uint8_t siz,
                                        uint8_t maxlod,
                                        bool has_custom_lods)
 {
@@ -1038,42 +1093,68 @@ static void gfx_settex_configure_tiles(uint32_t w0,
     uint8_t min_lod = (uint8_t)((w1 >> 24) & 0xFFU);
     uint8_t cms = gfx_tex_mode_to_gbi_mode(smode);
     uint8_t cmt = gfx_tex_mode_to_gbi_mode(tmode);
+    uint8_t base_masks = gfx_settex_dimension_to_mask(width);
+    uint8_t base_maskt = gfx_settex_dimension_to_mask(height);
+    uint32_t base_line_words = gfx_settex_line_words_for_width(width, siz);
+    uint16_t base_tmem = 0;
 
     gfx_settex_clear_tile_state();
     settex_type = type;
     settex_offset = offset;
     settex_min_lod = min_lod;
 
-    (void)texturenum;
+    if (texturenum >= 0 && texturenum < MAX_TEXTURES) {
+        const struct image_entry *image = &g_Textures[texturenum];
+        base_masks = gfx_settex_mask_minus_flag(base_masks, image->flag5);
+        base_maskt = gfx_settex_mask_minus_flag(base_maskt, image->flag6);
+        base_tmem = (uint16_t)(image->flag3 + base_line_words * image->flag4);
+    }
 
     if (type == 0 || type == 1) {
         /* Detail/detail-like G_SETTEX modes define TEXEL0 from the image-table
-         * tile and apply command shifts there. Mask deltas are an N64 TMEM
-         * addressing detail; the native backend uses GL repeat/clamp, so the
-         * important state to preserve for smear-free sampling is the explicit
-         * S/T shift and tile offset. */
+         * tile and apply command shifts there. Mirror texWriteTileFromDefinition()
+         * so the native direct SETTEX path carries the same line, TMEM, mask,
+         * shift, and offset state as the stock-expanded ordinary tile commands. */
         gfx_settex_define_tile_state(0, width, height,
+                                     fmt, siz,
                                      G_TX_WRAP, G_TX_WRAP,
+                                     base_masks, base_maskt,
                                      shifts, shiftt,
+                                     base_tmem, base_line_words * 8U,
                                      offset, has_custom_lods);
 
         gfx_settex_define_tile_state(1, width, height,
+                                     fmt, siz,
                                      cms, cmt,
+                                     gfx_settex_dimension_to_mask(width),
+                                     gfx_settex_dimension_to_mask(height),
                                      0, 0,
+                                     0, base_line_words * 8U,
                                      offset, has_custom_lods);
     } else {
         gfx_settex_define_tile_state(0, width, height,
+                                     fmt, siz,
                                      cms, cmt,
+                                     gfx_settex_dimension_to_mask(width),
+                                     gfx_settex_dimension_to_mask(height),
                                      0, 0,
+                                     0, base_line_words * 8U,
                                      offset, has_custom_lods);
         if (maxlod > 1) {
             uint32_t lod_width = (width + 1U) >> 1;
             uint32_t lod_height = (height + 1U) >> 1;
+            uint32_t lod_line_words =
+                gfx_settex_line_words_for_width(lod_width > 0 ? lod_width : 1,
+                                                siz);
             gfx_settex_define_tile_state(1,
                                          lod_width > 0 ? lod_width : 1,
                                          lod_height > 0 ? lod_height : 1,
+                                         fmt, siz,
                                          cms, cmt,
+                                         gfx_settex_dimension_to_mask(lod_width > 0 ? lod_width : 1),
+                                         gfx_settex_dimension_to_mask(lod_height > 0 ? lod_height : 1),
                                          1, 1,
+                                         0, lod_line_words * 8U,
                                          offset, has_custom_lods);
         }
     }
@@ -3347,6 +3428,7 @@ static struct RDP {
         uint8_t siz;
         uint8_t cms, cmt;
         uint8_t palette;
+        uint8_t masks, maskt;
         uint8_t shifts, shiftt;
         uint16_t uls, ult, lrs, lrt;
         uint16_t width, height;     /* texels, computed from lrs-uls/lrt-ult */
@@ -3680,8 +3762,12 @@ static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc,
     if (fallback == NULL || !fallback->valid) {
         return false;
     }
-    if (tile->cms != fallback->cms ||
+    if (tile->fmt != fallback->fmt ||
+        tile->siz != fallback->siz ||
+        tile->cms != fallback->cms ||
         tile->cmt != fallback->cmt ||
+        tile->masks != fallback->masks ||
+        tile->maskt != fallback->maskt ||
         tile->shifts != fallback->shifts ||
         tile->shiftt != fallback->shiftt ||
         tile->uls != fallback->uls ||
@@ -3690,6 +3776,8 @@ static inline bool gfx_settex_room_tile_desc_is_authoritative(uint8_t tile_desc,
     }
 
     if (tile->line_size_bytes == 0 ||
+        tile->line_size_bytes != fallback->line_size_bytes ||
+        tile->tmem != fallback->tmem ||
         tile->width != fallback->width ||
         tile->height != fallback->height) {
         return false;
@@ -3715,8 +3803,12 @@ static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
         const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_desc];
 
         out->valid = true;
+        out->fmt = tile->fmt;
+        out->siz = tile->siz;
         out->cms = tile->cms;
         out->cmt = tile->cmt;
+        out->masks = tile->masks;
+        out->maskt = tile->maskt;
         out->shifts = tile->shifts;
         out->shiftt = tile->shiftt;
         out->uls = tile->uls;
@@ -3725,6 +3817,8 @@ static bool gfx_get_settex_effective_tile_state(uint8_t tex_tile_base,
         out->lrt = tile->lrt;
         out->width = tile->width;
         out->height = tile->height;
+        out->line_size_bytes = tile->line_size_bytes;
+        out->tmem = tile->tmem;
         return true;
     }
 
@@ -7838,10 +7932,66 @@ static int gfx_settex_wrap_texel_index(int value, int size, uint8_t mode)
     }
 }
 
+static int gfx_settex_tile_axis_size(int texture_size,
+                                     uint32_t logical_size,
+                                     uint8_t mask,
+                                     uint8_t mode)
+{
+    uint32_t size = (uint32_t)(texture_size > 0 ? texture_size : 1);
+
+    if (mode != G_TX_CLAMP && mask > 0 && mask < 31) {
+        uint32_t mask_size = 1U << mask;
+        if (mask_size != 0) {
+            size = mask_size;
+        }
+    } else if (mode == G_TX_CLAMP && logical_size != 0) {
+        size = logical_size;
+    }
+
+    if (size == 0) {
+        size = 1;
+    }
+    if (size > (uint32_t)INT_MAX) {
+        size = (uint32_t)INT_MAX;
+    }
+    return (int)size;
+}
+
 static void gfx_settex_fetch_rgba(int x, int y, uint8_t cms, uint8_t cmt, uint8_t out[4])
 {
     int ix = gfx_settex_wrap_texel_index(x, (int)settex_rgba_w, cms);
     int iy = gfx_settex_wrap_texel_index(y, (int)settex_rgba_h, cmt);
+    const uint8_t *px = settex_rgba_pixels + ((iy * (int)settex_rgba_w + ix) * 4);
+    out[0] = px[0];
+    out[1] = px[1];
+    out[2] = px[2];
+    out[3] = px[3];
+}
+
+static void gfx_settex_fetch_rgba_tile(int x,
+                                       int y,
+                                       const struct SetTexTileState *tile_state,
+                                       uint8_t cms,
+                                       uint8_t cmt,
+                                       uint8_t out[4])
+{
+    int sx = (int)settex_rgba_w;
+    int sy = (int)settex_rgba_h;
+    int ix;
+    int iy;
+
+    if (tile_state != NULL && tile_state->valid) {
+        sx = gfx_settex_tile_axis_size(sx, tile_state->width,
+                                       tile_state->masks, cms);
+        sy = gfx_settex_tile_axis_size(sy, tile_state->height,
+                                       tile_state->maskt, cmt);
+    }
+
+    ix = gfx_settex_wrap_texel_index(x, sx, cms);
+    iy = gfx_settex_wrap_texel_index(y, sy, cmt);
+    ix = gfx_settex_wrap_texel_index(ix, (int)settex_rgba_w, G_TX_WRAP);
+    iy = gfx_settex_wrap_texel_index(iy, (int)settex_rgba_h, G_TX_WRAP);
+
     const uint8_t *px = settex_rgba_pixels + ((iy * (int)settex_rgba_w + ix) * 4);
     out[0] = px[0];
     out[1] = px[1];
@@ -7879,17 +8029,19 @@ static int gfx_signf_to_int(float value)
 
 static void gfx_settex_fetch_rgba_nearest_uv(float u,
                                              float v,
+                                             const struct SetTexTileState *tile_state,
                                              uint8_t cms,
                                              uint8_t cmt,
                                              uint8_t out[4])
 {
     int x = (int)floorf(u * (float)settex_rgba_w);
     int y = (int)floorf(v * (float)settex_rgba_h);
-    gfx_settex_fetch_rgba(x, y, cms, cmt, out);
+    gfx_settex_fetch_rgba_tile(x, y, tile_state, cms, cmt, out);
 }
 
 static void gfx_settex_sample_3point_rgba(float u,
                                           float v,
+                                          const struct SetTexTileState *tile_state,
                                           uint8_t cms,
                                           uint8_t cmt,
                                           uint8_t out[4])
@@ -7908,12 +8060,12 @@ static void gfx_settex_sample_3point_rgba(float u,
     base_u = u - offset_x / (float)settex_rgba_w;
     base_v = v - offset_y / (float)settex_rgba_h;
 
-    gfx_settex_fetch_rgba_nearest_uv(base_u, base_v, cms, cmt, c0);
+    gfx_settex_fetch_rgba_nearest_uv(base_u, base_v, tile_state, cms, cmt, c0);
     gfx_settex_fetch_rgba_nearest_uv(base_u + (float)gfx_signf_to_int(offset_x) / (float)settex_rgba_w,
-                                     base_v, cms, cmt, c1);
+                                     base_v, tile_state, cms, cmt, c1);
     gfx_settex_fetch_rgba_nearest_uv(base_u,
                                      base_v + (float)gfx_signf_to_int(offset_y) / (float)settex_rgba_h,
-                                     cms, cmt, c2);
+                                     tile_state, cms, cmt, c2);
 
     for (int i = 0; i < 4; i++) {
         float value =
@@ -8163,7 +8315,8 @@ static bool gfx_sample_settex_unit_center(const struct LoadedVertex *v1,
     sy = out->v * (float)settex_rgba_h;
     out->x = (int)floorf(sx);
     out->y = (int)floorf(sy);
-    gfx_settex_fetch_rgba(out->x, out->y, cms, cmt, out->nearest);
+    gfx_settex_fetch_rgba_tile(out->x, out->y, tile_state, cms, cmt,
+                               out->nearest);
 
     sx -= 0.5f;
     sy -= 0.5f;
@@ -8177,16 +8330,17 @@ static bool gfx_sample_settex_unit_center(const struct LoadedVertex *v1,
     if (tx > 1.0f) tx = 1.0f;
     if (ty < 0.0f) ty = 0.0f;
     if (ty > 1.0f) ty = 1.0f;
-    gfx_settex_fetch_rgba(x0, y0, cms, cmt, c00);
-    gfx_settex_fetch_rgba(x1, y0, cms, cmt, c10);
-    gfx_settex_fetch_rgba(x0, y1, cms, cmt, c01);
-    gfx_settex_fetch_rgba(x1, y1, cms, cmt, c11);
+    gfx_settex_fetch_rgba_tile(x0, y0, tile_state, cms, cmt, c00);
+    gfx_settex_fetch_rgba_tile(x1, y0, tile_state, cms, cmt, c10);
+    gfx_settex_fetch_rgba_tile(x0, y1, tile_state, cms, cmt, c01);
+    gfx_settex_fetch_rgba_tile(x1, y1, tile_state, cms, cmt, c11);
     for (int i = 0; i < 4; i++) {
         uint8_t a = gfx_lerp_u8(c00[i], c10[i], tx);
         uint8_t b = gfx_lerp_u8(c01[i], c11[i], tx);
         out->linear[i] = gfx_lerp_u8(a, b, ty);
     }
-    gfx_settex_sample_3point_rgba(out->u, out->v, cms, cmt, out->threepoint);
+    gfx_settex_sample_3point_rgba(out->u, out->v, tile_state, cms, cmt,
+                                  out->threepoint);
 
     out->valid = true;
     return true;
@@ -8257,7 +8411,8 @@ static bool gfx_sample_settex_unit_bary(const struct LoadedVertex *v1,
     sy = out->v * (float)settex_rgba_h;
     out->x = (int)floorf(sx);
     out->y = (int)floorf(sy);
-    gfx_settex_fetch_rgba(out->x, out->y, cms, cmt, out->nearest);
+    gfx_settex_fetch_rgba_tile(out->x, out->y, tile_state, cms, cmt,
+                               out->nearest);
 
     sx -= 0.5f;
     sy -= 0.5f;
@@ -8271,16 +8426,17 @@ static bool gfx_sample_settex_unit_bary(const struct LoadedVertex *v1,
     if (tx > 1.0f) tx = 1.0f;
     if (ty < 0.0f) ty = 0.0f;
     if (ty > 1.0f) ty = 1.0f;
-    gfx_settex_fetch_rgba(x0, y0, cms, cmt, c00);
-    gfx_settex_fetch_rgba(x1, y0, cms, cmt, c10);
-    gfx_settex_fetch_rgba(x0, y1, cms, cmt, c01);
-    gfx_settex_fetch_rgba(x1, y1, cms, cmt, c11);
+    gfx_settex_fetch_rgba_tile(x0, y0, tile_state, cms, cmt, c00);
+    gfx_settex_fetch_rgba_tile(x1, y0, tile_state, cms, cmt, c10);
+    gfx_settex_fetch_rgba_tile(x0, y1, tile_state, cms, cmt, c01);
+    gfx_settex_fetch_rgba_tile(x1, y1, tile_state, cms, cmt, c11);
     for (int i = 0; i < 4; i++) {
         uint8_t a = gfx_lerp_u8(c00[i], c10[i], tx);
         uint8_t b = gfx_lerp_u8(c01[i], c11[i], tx);
         out->linear[i] = gfx_lerp_u8(a, b, ty);
     }
-    gfx_settex_sample_3point_rgba(out->u, out->v, cms, cmt, out->threepoint);
+    gfx_settex_sample_3point_rgba(out->u, out->v, tile_state, cms, cmt,
+                                  out->threepoint);
 
     out->valid = true;
     return true;
@@ -9119,6 +9275,8 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
             "texnum=%d gl=%u wh=%.0fx%.0f type=%u offset=%u minlod=%u lod=%u "
             "tile0=(%d,%u,%u,%u,%u,%u,%u,%u,%u) "
             "tile1=(%d,%u,%u,%u,%u,%u,%u,%u,%u) "
+            "tilex0=(%u,%u,%u,%u,%u,%u,%u,%u) "
+            "tilex1=(%u,%u,%u,%u,%u,%u,%u,%u) "
             "tex_used=(%d,%d) blend=%s "
             "alpha=%d fog=%d texedge=%d depth=(%d,%d,%d) "
             "prim=(%u,%u,%u,%u) env=(%u,%u,%u,%u) fogrgba=(%u,%u,%u,%u) "
@@ -9163,6 +9321,22 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
             settex_tile_state[1].ult,
             settex_tile_state[1].width,
             settex_tile_state[1].height,
+            settex_tile_state[0].fmt,
+            settex_tile_state[0].siz,
+            settex_tile_state[0].masks,
+            settex_tile_state[0].maskt,
+            settex_tile_state[0].line_size_bytes,
+            settex_tile_state[0].tmem,
+            settex_tile_state[0].lrs,
+            settex_tile_state[0].lrt,
+            settex_tile_state[1].fmt,
+            settex_tile_state[1].siz,
+            settex_tile_state[1].masks,
+            settex_tile_state[1].maskt,
+            settex_tile_state[1].line_size_bytes,
+            settex_tile_state[1].tmem,
+            settex_tile_state[1].lrs,
+            settex_tile_state[1].lrt,
             used_textures[0] ? 1 : 0,
             used_textures[1] ? 1 : 0,
             gfx_blend_mode_diag_name(blend_mode),
@@ -18641,6 +18815,8 @@ static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t t
         rdp.texture_tile[tile].cms = cms;
         rdp.texture_tile[tile].cmt = cmt;
         rdp.texture_tile[tile].palette = palette;
+        rdp.texture_tile[tile].masks = masks;
+        rdp.texture_tile[tile].maskt = maskt;
         rdp.texture_tile[tile].shifts = shifts;
         rdp.texture_tile[tile].shiftt = shiftt;
         rdp.texture_tile[tile].line_size_bytes = line * 8;
@@ -19728,6 +19904,8 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
             gfx_settex_configure_tiles(w0, w1, texturenum,
                                        (uint32_t)settex_cache[i].tex_w,
                                        (uint32_t)settex_cache[i].tex_h,
+                                       settex_cache[i].fmt,
+                                       settex_cache[i].siz,
                                        settex_cache[i].maxlod,
                                        settex_cache[i].unk0c_02 != 0);
             gfx_diag_dump_settex_cached_texture(texturenum,
@@ -19761,6 +19939,7 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     uint32_t sz  = tex->depth;
 
     gfx_settex_configure_tiles(w0, w1, texturenum, (uint32_t)w, (uint32_t)h,
+                               (uint8_t)fmt, (uint8_t)sz,
                                tex->maxlod, tex->unk0c_02 != 0);
 
     /* Decode texture to RGBA32 */
