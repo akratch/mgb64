@@ -1414,6 +1414,21 @@ Run one scene with:
 ./tools/renderer_parity_capture.sh --scene surface_sky_fog --no-build
 ```
 
+For the promoted Surface fog/tree coverage-memory path, use the focused
+runtime guard instead of overloading the broad parity scene:
+
+```sh
+./tools/surface_xlu_cvg_memory_regression.sh --no-build
+./tools/surface_xlu_cvg_memory_regression.sh --no-build --msaa-values "0 4"
+```
+
+It captures Surface 1 default versus `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1`,
+checks screenshot health and render health, requires identical gameplay state,
+and verifies that the default run promotes the fogged secondary-room XLU rows to
+`alpha_rdp_cvg_memory` while the disabled run exposes them as unpromoted RDP
+coverage-wrap candidates. The optional validation CTest runs the faster
+`--msaa-values 0` lane.
+
 ### Level-intro census
 
 To map native authored-intro coverage across direct-boot stages, run:

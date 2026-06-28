@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import json
 import re
 import sys
 from pathlib import Path
@@ -114,26 +115,14 @@ def is_unpromoted_coverage_candidate(row: dict[str, str]) -> bool:
     )
 
 
-def print_bucket(title: str, counter: collections.Counter[tuple[str, ...]], top: int) -> None:
-    print(title)
-    if not counter:
-        print("  none")
-        return
-    for sig, count in counter.most_common(top):
-        print(f"  {count:5d}  " + " ".join(sig))
+def bucket_payload(counter: collections.Counter[tuple[str, ...]], top: int) -> list[dict[str, object]]:
+    return [
+        {"count": count, "signature": list(sig)}
+        for sig, count in counter.most_common(top)
+    ]
 
 
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("logs", nargs="+", type=Path)
-    parser.add_argument("--top", type=int, default=20)
-    args = parser.parse_args(argv)
-
-    rows = load_rows(args.logs)
-    if not rows:
-        print("no RDP-MODE rows found", file=sys.stderr)
-        return 1
-
+def summarize(rows: list[dict[str, str]], top: int = 20) -> dict[str, object]:
     by_signature = collections.Counter(signature(row) for row in rows)
     by_raw_api = collections.Counter(
         (
@@ -162,11 +151,66 @@ def main(argv: list[str]) -> int:
     candidates = [row for row in rows if is_unpromoted_coverage_candidate(row)]
     by_candidate = collections.Counter(signature(row) for row in candidates)
 
-    print(f"rows: {len(rows)}")
-    print(f"unique signatures: {len(by_signature)}")
-    print_bucket("top raw/api buckets:", by_raw_api, args.top)
-    print_bucket("top depth buckets:", by_depth, args.top)
-    print_bucket("unpromoted XLU coverage-wrap candidates:", by_candidate, args.top)
+    return {
+        "rows": len(rows),
+        "unique_signatures": len(by_signature),
+        "counts": {
+            "api_blend": dict(sorted(collections.Counter(row["api_blend"] for row in rows).items())),
+            "blend": dict(sorted(collections.Counter(row["blend"] for row in rows).items())),
+            "rdp_mem": dict(sorted(collections.Counter(row["rdp_mem"] for row in rows).items())),
+            "raw": dict(sorted(collections.Counter(row["raw"] for row in rows).items())),
+            "room_cvg": dict(sorted(collections.Counter(row["room_cvg"] for row in rows).items())),
+            "z": dict(sorted(collections.Counter(row["z"] for row in rows).items())),
+        },
+        "promoted_coverage_memory_rows": sum(
+            1 for row in rows
+            if row["api_blend"] == "alpha_rdp_cvg_memory"
+            and row["rdp_mem"] == "coverage"
+        ),
+        "unpromoted_coverage_candidate_rows": len(candidates),
+        "top_raw_api": bucket_payload(by_raw_api, top),
+        "top_depth": bucket_payload(by_depth, top),
+        "top_unpromoted_coverage_candidates": bucket_payload(by_candidate, top),
+    }
+
+
+def print_bucket(title: str, items: list[dict[str, object]]) -> None:
+    print(title)
+    if not items:
+        print("  none")
+        return
+    for item in items:
+        sig = item["signature"]
+        assert isinstance(sig, list)
+        print(f"  {item['count']:5d}  " + " ".join(str(part) for part in sig))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("logs", nargs="+", type=Path)
+    parser.add_argument("--top", type=int, default=20)
+    parser.add_argument("--json-out", type=Path)
+    args = parser.parse_args(argv)
+
+    rows = load_rows(args.logs)
+    if not rows:
+        print("no RDP-MODE rows found", file=sys.stderr)
+        return 1
+
+    payload = summarize(rows, args.top)
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                                 encoding="utf-8")
+
+    print(f"rows: {payload['rows']}")
+    print(f"unique signatures: {payload['unique_signatures']}")
+    print_bucket("top raw/api buckets:", payload["top_raw_api"])  # type: ignore[arg-type]
+    print_bucket("top depth buckets:", payload["top_depth"])  # type: ignore[arg-type]
+    print_bucket(
+        "unpromoted XLU coverage-wrap candidates:",
+        payload["top_unpromoted_coverage_candidates"],  # type: ignore[arg-type]
+    )
     return 0
 
 

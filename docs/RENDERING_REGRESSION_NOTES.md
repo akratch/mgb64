@@ -156,6 +156,13 @@ The visible symptoms were level-specific but shared renderer causes:
     Dam's glass material suite should still report shard coverage as
     `api_blend=alpha`, and Frigate room 57 should remain non-fog
     alpha-suppressed (`opts=0x01043f11`, `api_blend=alpha`).
+    The repeatable guard is now `tools/surface_xlu_cvg_memory_regression.sh`.
+    Fresh current-build proof `/tmp/mgb64_surface_rdp_phase2_1782659808`
+    reproduced the same class: default promoted `898` room XLU wrap rows to
+    `alpha_rdp_cvg_memory`, disabling the classifier left `898` ordinary alpha
+    rows and `898` unpromoted coverage candidates, gameplay state remained
+    identical for `359` compared frames, and the screenshot delta was
+    `9,621 / 307,200` pixels (`3.132%`).
 
 13. **Room `G_SETTEX` LOD endpoints are draw semantics, not matrix semantics.**
     Dam's pad10092 room-glass source trace showed `G_SETTEX` trilerp draws
@@ -259,6 +266,9 @@ Use these habits before accepting renderer changes:
   coverage-memory route before expanding sort/order heuristics. The strongest
   Surface signal was `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` versus default, not
   `GE007_DISABLE_ROOM_XLU_DEFER=1` or `GE007_DISABLE_ROOM_XLU_SORT=1`.
+  Use `tools/surface_xlu_cvg_memory_regression.sh --no-build` for a repeatable
+  Surface proof; add `--msaa-values "0 4"` when touching scene-target resolve,
+  coverage-alpha storage, or framebuffer snapshot code.
 - When using an older checkout or `main` binary as a visual reference, verify
   that it actually honors the same config path. Older binaries can ignore
   `--config-override`, fall back to a 1440x810 default window, and make a

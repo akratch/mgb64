@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 
@@ -53,6 +54,16 @@ def main() -> int:
         assert rows[1]["raw"] == "0x0C1849D8"
         assert rows[1]["api_blend"] == "alpha"
         assert rdp_modes.is_unpromoted_coverage_candidate(rows[1])
+        payload = rdp_modes.summarize(rows, top=4)
+        assert payload["promoted_coverage_memory_rows"] == 1
+        assert payload["unpromoted_coverage_candidate_rows"] == 1
+        assert payload["counts"]["api_blend"] == {"alpha": 1, "alpha_rdp_cvg_memory": 1}
+
+        json_path = Path(tmp) / "summary.json"
+        assert rdp_modes.main([str(path), "--top", "4", "--json-out", str(json_path)]) == 0
+        saved = json.loads(json_path.read_text(encoding="utf-8"))
+        assert saved["promoted_coverage_memory_rows"] == 1
+        assert saved["unpromoted_coverage_candidate_rows"] == 1
         assert rdp_modes.main([str(path), "--top", "4"]) == 0
 
     print("PASS: RDP render-mode trace summary regression")

@@ -237,6 +237,9 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_interaction_smoke interaction_smoke.sh 120)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
     add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
+    add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360
+        --msaa-values 0
+    )
     add_port_validation_smoke(port_spawn_health_smoke spawn_health_check.sh 120)
     add_port_validation_smoke(port_audio_churn_smoke audio_soak_test.sh 90
         --seconds 3
