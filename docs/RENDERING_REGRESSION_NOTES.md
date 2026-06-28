@@ -123,6 +123,26 @@ The visible symptoms were level-specific but shared renderer causes:
     ignores live gamepad right-stick while frozen, and lets
     `platformGetMouseDelta()` return scripted mouse deltas under freeze.
 
+12. **Surface fog/tree backdrops need RDP coverage-memory blending, not a
+    draw-order patch.**
+    Surface 1's distant tree/fog strips are fogged secondary-room `G_SETTEX`
+    alpha draws with `ZMODE_XLU`, `CVG_DST_WRAP`, `CLR_ON_CVG`, `IM_RD`, depth
+    compare on, and depth update off. Treating that class as ordinary GL alpha
+    blending lets distant fog/tree layers accumulate through nearer room alpha
+    differently from the RDP. The default renderer now routes the narrow
+    fogged secondary-room coverage-wrap class through the RDP coverage-memory
+    shader/backend path; `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` is the focused
+    escape hatch. Surface's look-sweep proof is intentionally material-level:
+    disabling the promoted class changes 35,815 pixels at frame 360, while the
+    promoted default matches the old explicit
+    `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=0x00f78e4f0ebe2d12` diagnostic
+    exactly. By contrast, disabling the secondary-room XLU deferred sort was a
+    0-pixel result on that route, and disabling local room XLU sort changed only
+    351 pixels. Keep Dam glass and Frigate room-57 shell out of this gate:
+    Dam's glass material suite should still report shard coverage as
+    `api_blend=alpha`, and Frigate room 57 should remain non-fog
+    alpha-suppressed (`opts=0x01043f11`, `api_blend=alpha`).
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -141,6 +161,10 @@ Use these habits before accepting renderer changes:
   unless the test is specifically exercising user-window/high-DPI behavior.
   Use `--config-override Video.RenderScale=2` or `Video.MSAA=4` for targeted
   scene-target probes, and keep the overrides visible in the artifact summary.
+- For fogged secondary-room `G_SETTEX` XLU artifacts, check the RDP
+  coverage-memory route before expanding sort/order heuristics. The strongest
+  Surface signal was `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` versus default, not
+  `GE007_DISABLE_ROOM_XLU_DEFER=1` or `GE007_DISABLE_ROOM_XLU_SORT=1`.
 - When using an older checkout or `main` binary as a visual reference, verify
   that it actually honors the same config path. Older binaries can ignore
   `--config-override`, fall back to a 1440x810 default window, and make a

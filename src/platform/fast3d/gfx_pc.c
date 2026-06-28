@@ -4021,6 +4021,23 @@ static uintptr_t buf_vbo_tri_cmd_addr[MAX_BUFFERED];
 static int buf_vbo_tri_room[MAX_BUFFERED];
 static uint32_t g_room_xlu_sort_serial = 0;
 
+#define ROOM_XLU_DEFER_MAX_BATCHES 4096
+
+struct GfxRoomXluDeferredBatch {
+    float *vbo;
+    size_t len;
+    size_t tris;
+    size_t stride;
+    float key;
+    uint32_t serial;
+    int room;
+    struct RenderingState state;
+};
+
+static struct GfxRoomXluDeferredBatch room_xlu_deferred_batches[ROOM_XLU_DEFER_MAX_BATCHES];
+static size_t room_xlu_deferred_count = 0;
+static uint32_t room_xlu_deferred_serial = 0;
+
 /* Background clear color */
 static float clear_r = 0, clear_g = 0, clear_b = 0;
 
@@ -4540,6 +4557,67 @@ static bool gfx_room_water_alpha_suppress_needed(int dl_room,
            !depth_update &&
            zmode == ZMODE_XLU &&
            !texture_edge &&
+           gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode);
+}
+
+static int gfx_room_xlu_cvg_memory_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_ROOM_XLU_CVG_MEMORY");
+        const char *enable_env = getenv("GE007_ROOM_XLU_CVG_MEMORY");
+
+        enabled = 1;
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static bool gfx_room_xlu_cvg_memory_needed(int dl_room,
+                                           const char *dl_which,
+                                           bool room_matrix,
+                                           enum GfxBlendMode blend_mode,
+                                           bool depth_test,
+                                           bool depth_update,
+                                           bool depth_compare,
+                                           uint16_t zmode,
+                                           bool texture_edge,
+                                           uint32_t raw_mode,
+                                           bool use_fog)
+{
+    if (!gfx_room_xlu_cvg_memory_enabled()) {
+        return false;
+    }
+
+    /*
+     * Fogged secondary-room backdrop strips use N64 coverage-wrap/color-on-
+     * coverage semantics. Treating them as ordinary GL alpha blend lets far
+     * fog/tree layers participate in the color buffer differently from RDP
+     * memory blending. Keep this gate narrow: active glass/effects and
+     * Frigate's non-fog room shell are intentionally outside it. Primitive
+     * alpha is not stable on this material across frames, so the mode/depth/
+     * fog/room/material class is the durable signature.
+     */
+    return dl_room >= 0 &&
+           dl_which != NULL &&
+           strcmp(dl_which, "secondary") == 0 &&
+           room_matrix &&
+           g_current_draw_class == DRAWCLASS_ROOM &&
+           settex_active &&
+           use_fog &&
+           blend_mode == GFX_BLEND_ALPHA &&
+           depth_test &&
+           depth_compare &&
+           !depth_update &&
+           zmode == ZMODE_XLU &&
+           !texture_edge &&
+           !g_sky_tri_mode &&
+           rdp.env_color.a == 255 &&
            gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode);
 }
 
@@ -11326,6 +11404,291 @@ static bool gfx_room_xlu_sort_group_precedes(const struct GfxRoomXluSortGroup *a
     return a->serial < b->serial;
 }
 
+static int gfx_room_xlu_defer_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_ROOM_XLU_DEFER");
+        const char *enable_env = getenv("GE007_SORT_ROOM_XLU_DEFER");
+        enabled = 1;
+
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static void gfx_room_xlu_deferred_free_from(size_t first) {
+    for (size_t i = first; i < room_xlu_deferred_count; i++) {
+        free(room_xlu_deferred_batches[i].vbo);
+        room_xlu_deferred_batches[i].vbo = NULL;
+    }
+    room_xlu_deferred_count = first;
+}
+
+static void gfx_room_xlu_deferred_reset(void) {
+    gfx_room_xlu_deferred_free_from(0);
+}
+
+static void gfx_apply_rendering_state_snapshot(const struct RenderingState *state) {
+    if (state->shader_program != rendering_state.shader_program) {
+        gfx_rapi->unload_shader(rendering_state.shader_program);
+        if (state->shader_program != NULL) {
+            gfx_rapi->load_shader(state->shader_program);
+        }
+        rendering_state.shader_program = state->shader_program;
+    }
+
+    if (state->blend_mode != rendering_state.blend_mode) {
+        gfx_rapi->set_blend_mode(state->blend_mode);
+        rendering_state.blend_mode = state->blend_mode;
+    }
+
+    if (state->depth_mode != rendering_state.depth_mode) {
+        uint8_t depth_mode = state->depth_mode;
+        bool depth_test = (depth_mode & 1) != 0;
+        bool depth_update = (depth_mode & 2) != 0;
+        bool depth_compare = (depth_mode & 4) != 0;
+        bool depth_source_prim = (depth_mode & 8) != 0;
+        uint16_t zmode = (uint16_t)(depth_mode & 0x30) << 6;
+
+        gfx_rapi->set_depth_mode(depth_test, depth_update, depth_compare,
+                                  depth_source_prim, zmode);
+        rendering_state.depth_mode = state->depth_mode;
+    }
+
+    if (memcmp(&state->viewport, &rendering_state.viewport, sizeof(state->viewport)) != 0) {
+        gfx_rapi->set_viewport(state->viewport.x, state->viewport.y,
+                               state->viewport.width, state->viewport.height);
+        rendering_state.viewport = state->viewport;
+    }
+
+    if (memcmp(&state->scissor, &rendering_state.scissor, sizeof(state->scissor)) != 0) {
+        gfx_rapi->set_scissor(state->scissor.x, state->scissor.y,
+                              state->scissor.width, state->scissor.height);
+        rendering_state.scissor = state->scissor;
+    }
+
+    for (int tile = 0; tile < 2; tile++) {
+        if (state->bound_texture_id[tile] != rendering_state.bound_texture_id[tile]) {
+            gfx_rapi->select_texture(tile, state->bound_texture_id[tile]);
+            rendering_state.bound_texture_id[tile] = state->bound_texture_id[tile];
+        }
+
+        if (state->bound_texture_id[tile] != 0 &&
+            (state->bound_texture_linear[tile] != rendering_state.bound_texture_linear[tile] ||
+             state->bound_texture_cms[tile] != rendering_state.bound_texture_cms[tile] ||
+             state->bound_texture_cmt[tile] != rendering_state.bound_texture_cmt[tile])) {
+            gfx_rapi->set_sampler_parameters(tile,
+                                             state->bound_texture_linear[tile],
+                                             state->bound_texture_cms[tile],
+                                             state->bound_texture_cmt[tile]);
+            rendering_state.bound_texture_linear[tile] =
+                state->bound_texture_linear[tile];
+            rendering_state.bound_texture_cms[tile] =
+                state->bound_texture_cms[tile];
+            rendering_state.bound_texture_cmt[tile] =
+                state->bound_texture_cmt[tile];
+        }
+
+        if (state->bound_texture_id[tile] == 0) {
+            rendering_state.bound_texture_linear[tile] =
+                state->bound_texture_linear[tile];
+            rendering_state.bound_texture_cms[tile] =
+                state->bound_texture_cms[tile];
+            rendering_state.bound_texture_cmt[tile] =
+                state->bound_texture_cmt[tile];
+        }
+
+        rendering_state.textures[tile] = state->textures[tile];
+    }
+}
+
+static bool gfx_room_xlu_deferred_batch_precedes(
+    const struct GfxRoomXluDeferredBatch *a,
+    const struct GfxRoomXluDeferredBatch *b) {
+    const float epsilon = 0.0001f;
+
+    if (a->key > b->key + epsilon) {
+        return true;
+    }
+    if (a->key < b->key - epsilon) {
+        return false;
+    }
+
+    return a->serial < b->serial;
+}
+
+static void gfx_room_xlu_deferred_draw_pending(void) {
+    if (room_xlu_deferred_count == 0) {
+        return;
+    }
+
+    struct RenderingState saved_state = rendering_state;
+    size_t total_tris = 0;
+    float min_key = 0.0f;
+    float max_key = 0.0f;
+
+    for (size_t i = 1; i < room_xlu_deferred_count; i++) {
+        struct GfxRoomXluDeferredBatch batch = room_xlu_deferred_batches[i];
+        size_t j = i;
+
+        while (j > 0 &&
+               gfx_room_xlu_deferred_batch_precedes(&batch,
+                                                    &room_xlu_deferred_batches[j - 1])) {
+            room_xlu_deferred_batches[j] = room_xlu_deferred_batches[j - 1];
+            j--;
+        }
+
+        room_xlu_deferred_batches[j] = batch;
+    }
+
+    for (size_t i = 0; i < room_xlu_deferred_count; i++) {
+        if (i == 0 || room_xlu_deferred_batches[i].key < min_key) {
+            min_key = room_xlu_deferred_batches[i].key;
+        }
+        if (i == 0 || room_xlu_deferred_batches[i].key > max_key) {
+            max_key = room_xlu_deferred_batches[i].key;
+        }
+        total_tris += room_xlu_deferred_batches[i].tris;
+    }
+
+    if (gfx_trace_room_xlu_sort_enabled() &&
+        g_frame_count_diag >= gfx_trace_room_xlu_sort_after_frame()) {
+        static int defer_log_frame = -1;
+        static int defer_log_count = 0;
+
+        if (defer_log_frame != g_frame_count_diag) {
+            defer_log_frame = g_frame_count_diag;
+            defer_log_count = 0;
+        }
+
+        if (defer_log_count < 32) {
+            fprintf(stderr,
+                    "[ROOM-XLU-DEFER] frame=%d batches=%zu tris=%zu "
+                    "key_range=[%.3f,%.3f] first_room=%d first_key=%.3f "
+                    "last_room=%d last_key=%.3f\n",
+                    g_frame_count_diag,
+                    room_xlu_deferred_count,
+                    total_tris,
+                    min_key,
+                    max_key,
+                    room_xlu_deferred_batches[0].room,
+                    room_xlu_deferred_batches[0].key,
+                    room_xlu_deferred_batches[room_xlu_deferred_count - 1].room,
+                    room_xlu_deferred_batches[room_xlu_deferred_count - 1].key);
+            fflush(stderr);
+            defer_log_count++;
+        }
+    }
+
+    for (size_t i = 0; i < room_xlu_deferred_count; i++) {
+        struct GfxRoomXluDeferredBatch *batch = &room_xlu_deferred_batches[i];
+        if (batch->vbo == NULL || batch->len == 0 || batch->tris == 0) {
+            continue;
+        }
+
+        gfx_apply_rendering_state_snapshot(&batch->state);
+        gfx_rapi->draw_triangles(batch->vbo, batch->len, batch->tris);
+        free(batch->vbo);
+        batch->vbo = NULL;
+    }
+
+    room_xlu_deferred_count = 0;
+    gfx_apply_rendering_state_snapshot(&saved_state);
+}
+
+static bool gfx_room_xlu_defer_buffer(size_t stride) {
+    size_t tri_floats;
+    size_t group_count = 0;
+    size_t tri = 0;
+
+    if (!gfx_room_xlu_defer_enabled() ||
+        !gfx_room_xlu_sort_enabled() ||
+        buf_vbo_num_tris == 0 ||
+        stride == 0) {
+        return false;
+    }
+
+    tri_floats = stride * 3;
+    if (buf_vbo_len != buf_vbo_num_tris * tri_floats) {
+        return false;
+    }
+
+    for (size_t i = 0; i < buf_vbo_num_tris; i++) {
+        if (!buf_vbo_tri_sortable[i]) {
+            return false;
+        }
+    }
+
+    while (tri < buf_vbo_num_tris && group_count < MAX_BUFFERED) {
+        uintptr_t cmd_addr = buf_vbo_tri_cmd_addr[tri];
+        size_t group_start = tri;
+        float key_sum = 0.0f;
+
+        while (tri < buf_vbo_num_tris &&
+               buf_vbo_tri_cmd_addr[tri] == cmd_addr &&
+               group_count < MAX_BUFFERED) {
+            key_sum += buf_vbo_tri_sort_key[tri];
+            tri++;
+        }
+
+        room_xlu_sort_groups[group_count].start = group_start;
+        room_xlu_sort_groups[group_count].count = tri - group_start;
+        room_xlu_sort_groups[group_count].key =
+            key_sum / (float)room_xlu_sort_groups[group_count].count;
+        room_xlu_sort_groups[group_count].serial =
+            buf_vbo_tri_serial[group_start];
+        room_xlu_sort_groups[group_count].room =
+            buf_vbo_tri_room[group_start];
+        group_count++;
+    }
+
+    if (group_count == 0 || tri < buf_vbo_num_tris) {
+        return false;
+    }
+
+    if (room_xlu_deferred_count + group_count > ROOM_XLU_DEFER_MAX_BATCHES) {
+        gfx_room_xlu_deferred_draw_pending();
+    }
+
+    if (room_xlu_deferred_count + group_count > ROOM_XLU_DEFER_MAX_BATCHES) {
+        return false;
+    }
+
+    size_t first_added = room_xlu_deferred_count;
+
+    for (size_t i = 0; i < group_count; i++) {
+        const struct GfxRoomXluSortGroup *group = &room_xlu_sort_groups[i];
+        size_t src = group->start * tri_floats;
+        size_t len = group->count * tri_floats;
+        float *vbo = (float *)malloc(len * sizeof(float));
+
+        if (vbo == NULL) {
+            gfx_room_xlu_deferred_free_from(first_added);
+            return false;
+        }
+
+        memcpy(vbo, &buf_vbo[src], len * sizeof(float));
+
+        struct GfxRoomXluDeferredBatch *batch =
+            &room_xlu_deferred_batches[room_xlu_deferred_count++];
+        batch->vbo = vbo;
+        batch->len = len;
+        batch->tris = group->count;
+        batch->stride = stride;
+        batch->key = group->key;
+        batch->serial = group->serial != 0 ? group->serial : ++room_xlu_deferred_serial;
+        batch->room = group->room;
+        batch->state = rendering_state;
+    }
+
+    return true;
+}
+
 static void gfx_room_xlu_sort_flush_segment(size_t segment_start,
                                             size_t segment_end,
                                             size_t tri_floats,
@@ -11485,6 +11848,12 @@ static void gfx_flush(void) {
             fflush(stdout);
         }
         flush_log++;
+        if (gfx_room_xlu_defer_buffer(stride)) {
+            buf_vbo_len = 0;
+            buf_vbo_num_tris = 0;
+            return;
+        }
+        gfx_room_xlu_deferred_draw_pending();
         gfx_sort_buffered_room_xlu_tris(stride);
         gfx_rapi->draw_triangles(buf_vbo, buf_vbo_len, buf_vbo_num_tris);
         buf_vbo_len = 0;
@@ -14799,6 +15168,30 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_diag_noperspective_cc_inputs_enabled(effective_cc_id)) {
         cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
     }
+    bool room_water_alpha_suppress =
+        !tint_match &&
+        gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
+                                             room_matrix,
+                                             blend_mode,
+                                             depth_test,
+                                             depth_update,
+                                             depth_compare,
+                                             zmode,
+                                             texture_edge,
+                                             rdp.other_mode_l_raw);
+    bool room_xlu_cvg_memory =
+        !room_water_alpha_suppress &&
+        !tint_match &&
+        gfx_room_xlu_cvg_memory_needed(dl_room, dl_which,
+                                       room_matrix,
+                                       blend_mode,
+                                       depth_test,
+                                       depth_update,
+                                       depth_compare,
+                                       zmode,
+                                       texture_edge,
+                                       rdp.other_mode_l_raw,
+                                       use_fog);
     if (!tint_match && !settex_active && use_alpha &&
         (cc_features_for_options.used_textures[0] ||
          cc_features_for_options.used_textures[1]) &&
@@ -14818,7 +15211,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         (cc_features_for_options.used_textures[0] ||
          cc_features_for_options.used_textures[1]) &&
         gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+        (room_xlu_cvg_memory ||
+         gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id))) {
         cc_options |= SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND;
     } else if (!tint_match && use_alpha &&
         blend_mode == GFX_BLEND_ALPHA &&
@@ -14861,23 +15255,15 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_diag_settex_cc_alpha_scale_enabled(settex_material_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_ALPHA_SCALE;
     }
-    if (!tint_match &&
-        gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
-                                              room_matrix,
-                                              blend_mode,
-                                              depth_test,
-                                              depth_update,
-                                              depth_compare,
-                                              zmode,
-                                              texture_edge,
-                                              rdp.other_mode_l_raw)) {
+    if (room_water_alpha_suppress) {
         cc_options |= SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS;
     }
 
 	    enum GfxBlendMode api_blend_mode = blend_mode;
 	    if (blend_mode == GFX_BLEND_ALPHA &&
 	        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-	        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+	        (room_xlu_cvg_memory ||
+	         gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id))) {
 	        api_blend_mode = GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
     } else if (blend_mode == GFX_BLEND_ALPHA &&
         gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
@@ -19914,6 +20300,7 @@ void gfx_run_dl(Gfx *dl) {
                 g_gfxRecoveryActive = 0;
                 buf_vbo_len = 0;
                 buf_vbo_num_tris = 0;
+                gfx_room_xlu_deferred_reset();
                 dl_depth = 0;
                 effect_dl_range_count = 0;
                 draw_class_dl_range_count = 0;
@@ -19972,6 +20359,8 @@ void gfx_run_dl(Gfx *dl) {
 	    g_n64_dl_exec_seq = 0;
 	    g_frame_n64_dl_index = 0;
 	    g_room_xlu_sort_serial = 0;
+	    room_xlu_deferred_serial = 0;
+	    gfx_room_xlu_deferred_reset();
 	    g_bad_cmd_count = 0;
     memset(g_drawclass_tri_counts, 0, sizeof(g_drawclass_tri_counts));
     gfx_drawclass_bbox_reset();
@@ -20027,6 +20416,7 @@ void gfx_run_dl(Gfx *dl) {
     g_current_draw_class = DRAWCLASS_UNKNOWN;
     gfx_run_dl_pc(dl);
     gfx_flush();
+    gfx_room_xlu_deferred_draw_pending();
     {
         extern volatile int g_gfxRecoveryActive;
         g_gfxRecoveryActive = 0;

@@ -16,10 +16,10 @@ enum GfxBlendMode {
     GFX_BLEND_DISABLED = 0,  /* opaque — no blending */
     GFX_BLEND_ALPHA    = 1,  /* standard alpha: src*srcA + dst*(1-srcA) */
     GFX_BLEND_MODULATE = 2,  /* multiplicative: src*dst (darkening/shadows) */
-    GFX_BLEND_ALPHA_COVERAGE = 3, /* diagnostic: alpha blend plus sample coverage */
-    GFX_BLEND_ALPHA_CVG_WRAP_STENCIL = 4, /* diagnostic: stencil coverage wrap */
-    GFX_BLEND_ALPHA_RDP_MEMORY = 5, /* diagnostic: shader samples memory color */
-    GFX_BLEND_ALPHA_RDP_CVG_MEMORY = 6, /* diagnostic: shader coverage + memory color */
+    GFX_BLEND_ALPHA_COVERAGE = 3, /* alpha blend plus sample coverage */
+    GFX_BLEND_ALPHA_CVG_WRAP_STENCIL = 4, /* stencil coverage wrap */
+    GFX_BLEND_ALPHA_RDP_MEMORY = 5, /* shader samples memory color */
+    GFX_BLEND_ALPHA_RDP_CVG_MEMORY = 6, /* shader coverage + memory color */
 };
 
 struct GfxRenderingAPI {

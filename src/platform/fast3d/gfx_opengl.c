@@ -1541,7 +1541,7 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
     if (mode == GFX_BLEND_ALPHA_RDP_MEMORY &&
         !g_diag_xlu_rdp_memory_blend_logged) {
         fprintf(stderr,
-                "[fast3d] DIAG XLU RDP memory blend active; "
+                "[fast3d] XLU RDP memory blend active; "
                 "shader samples framebuffer memory color\n");
         fflush(stderr);
         g_diag_xlu_rdp_memory_blend_logged = 1;
@@ -1549,7 +1549,7 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
     if (mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY &&
         !g_diag_xlu_rdp_cvg_memory_blend_logged) {
         fprintf(stderr,
-                "[fast3d] DIAG XLU RDP coverage memory blend active; "
+                "[fast3d] XLU RDP coverage memory blend active; "
                 "shader samples framebuffer memory color and tracks coverage alpha\n");
         fflush(stderr);
         g_diag_xlu_rdp_cvg_memory_blend_logged = 1;
@@ -1680,8 +1680,7 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
         gfx_opengl_set_uniforms(current_shader_program);
     }
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
-    if ((g_blend_alpha_rdp_memory && gfx_diag_xlu_rdp_memory_blend_enabled()) ||
-        (g_blend_alpha_rdp_cvg_memory && gfx_diag_xlu_rdp_cvg_memory_blend_enabled())) {
+    if (g_blend_alpha_rdp_memory || g_blend_alpha_rdp_cvg_memory) {
         GLint viewport[4] = {0, 0, 0, 0};
         glGetIntegerv(GL_VIEWPORT, viewport);
         for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
