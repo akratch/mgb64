@@ -463,7 +463,15 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  `[16,48,96] -> [42,71,113]`, room `132` texnum `949`
 	  `[42,71,113] -> [11,11,11]`, then texnum `654` glass
 	  `[11,11,11] -> [7,7,7] -> [8,8,8]`. Compare that room-`949` step against
-	  stock before changing texnum-`654` blending. The matching forced
+	  stock before changing texnum-`654` blending. The refreshed stock point
+	  `/tmp/mgb64_stock_pixel_188_170_diag_1782656309/handoff_188_170_refreshed.json`
+	  shows the stock pre-glass owner is texture `0x149b28`, raw `0x0000394a`,
+	  hidden `0x1`, tile masks `5x5`, and output `[56,40,40,32]`; the native
+	  texnum-`949` source probe
+	  `/tmp/mgb64_native_settex_pixel_tex949_lower_right_1782656233` reconstructs
+	  an opaque source near `[10,10,10,255]`. The next concrete fix target is
+	  room/background source sampling or texture-coordinate interpretation for
+	  that pre-glass owner, not an alpha-only texnum-`654` fix. The matching forced
 	  room-glass coverage-memory
 	  diagnostic
 	  `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314` remains a negative
