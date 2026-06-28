@@ -85,6 +85,7 @@ The public validation surface is organized into these lanes:
 | Stock RDP command stream | Dev-only ares RDP command sidecar for actual stock draw-state evidence | `analyze_stock_rdp_command_stream.py` |
 | Stock RDP pixel probe | Dev-only ares Parallel-RDP post-draw framebuffer samples for exact stock per-pixel output | `analyze_stock_rdp_pixel_probe.py` |
 | Glass center handoff | Read-only join from stock center-pixel output to stock command-region and native settex evidence | `analyze_glass_center_handoff.py` |
+| Glass handoff points | Batch summary of multiple stock/native handoff JSONs with source, framebuffer-input, hidden-coverage, and final-output fields | `summarize_glass_handoff_points.py` |
 | Bullet impact sequence | Sampled stock/native bullet-impact sequence parity at selected frames; catches later-impact drift hidden by first-impact gates | `compare_bullet_impact_sequence.py` |
 | Glass contributor isolation | Native-only A/B ownership sweep for Dam active, impact, and pad-10092 impact glass fixtures | `glass_contributor_isolation_regression.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
@@ -310,6 +311,18 @@ fields for the second point: the selected frame-`122` row has `src_valid=1`,
 texture samples populated, `shaderL_frag=[0,0,0,102]`, and framebuffer movement
 `[7,7,7] -> [11,11,11]`. This points at per-pixel source/filter/raster/RDP
 semantics, not a uniform alpha or brightness scalar.
+
+`tools/summarize_glass_handoff_points.py` now reduces handoff JSONs into a
+multi-point final-output table. Current proof
+`/tmp/mgb64_glass_handoff_points_current_1782655031` refreshes the center,
+`176,158`, and `188,170` handoffs with the same analyzer and reports `3/3`
+complete points: center stock/native mean_abs_rgb `1.0`, left `10.0`, and
+lower-right `21.0`. The stock same-frame framebuffer inputs differ across those
+points (`[104,96,96,224]`, `[16,48,96,224]`, `[56,40,40,32]`) and the
+lower-right hidden coverage transition is `0x1 -> 0x3`, so the next renderer
+change should be evaluated per pixel against source, framebuffer memory, hidden
+coverage, and final post output rather than by a single global opacity or color
+scalar.
 
 2026-06-28 glass tie-off: pause here unless resuming the bounded raw-state
 handoff. The next useful capture is one stock Parallel-RDP pixel-probe rerun at
