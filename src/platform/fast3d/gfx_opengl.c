@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <platform_stdio.h>
 
 #ifndef _LANGUAGE_C
@@ -1713,7 +1714,31 @@ static bool gfx_opengl_ensure_framebuffer_snapshot_texture(int width, int height
     return true;
 }
 
-static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
+static void gfx_opengl_clamp_snapshot_rect(const GLint viewport[4],
+                                           const GLint requested_rect[4],
+                                           GLint out_rect[4]) {
+    GLint copy_x = requested_rect != NULL ? requested_rect[0] : viewport[0];
+    GLint copy_y = requested_rect != NULL ? requested_rect[1] : viewport[1];
+    GLint copy_w = requested_rect != NULL ? requested_rect[2] : viewport[2];
+    GLint copy_h = requested_rect != NULL ? requested_rect[3] : viewport[3];
+    GLint viewport_x1 = viewport[0] + viewport[2];
+    GLint viewport_y1 = viewport[1] + viewport[3];
+    GLint copy_x1 = copy_x + copy_w;
+    GLint copy_y1 = copy_y + copy_h;
+
+    if (copy_x < viewport[0]) copy_x = viewport[0];
+    if (copy_y < viewport[1]) copy_y = viewport[1];
+    if (copy_x1 > viewport_x1) copy_x1 = viewport_x1;
+    if (copy_y1 > viewport_y1) copy_y1 = viewport_y1;
+
+    out_rect[0] = copy_x;
+    out_rect[1] = copy_y;
+    out_rect[2] = copy_x1 > copy_x ? copy_x1 - copy_x : 0;
+    out_rect[3] = copy_y1 > copy_y ? copy_y1 - copy_y : 0;
+}
+
+static bool gfx_opengl_copy_framebuffer_snapshot(const GLint viewport[4],
+                                                 const GLint requested_rect[4]) {
     GLint saved_active_texture = 0;
     GLint saved_texture2 = 0;
     GLint saved_read_fbo = 0;
@@ -1721,6 +1746,9 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
     GLint saved_read_buffer = GL_BACK;
     GLboolean saved_scissor = GL_FALSE;
     GLuint read_fbo;
+    GLint copy_rect[4];
+    GLint dst_x;
+    GLint dst_y;
 
     glGetIntegerv(GL_ACTIVE_TEXTURE, &saved_active_texture);
     glActiveTexture(GL_TEXTURE2);
@@ -1730,6 +1758,14 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
         glActiveTexture((GLenum)saved_active_texture);
         return false;
     }
+    gfx_opengl_clamp_snapshot_rect(viewport, requested_rect, copy_rect);
+    if (copy_rect[2] <= 0 || copy_rect[3] <= 0) {
+        glBindTexture(GL_TEXTURE_2D, (GLuint)saved_texture2);
+        glActiveTexture((GLenum)saved_active_texture);
+        return false;
+    }
+    dst_x = copy_rect[0] - viewport[0];
+    dst_y = copy_rect[1] - viewport[1];
 
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &saved_read_fbo);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
@@ -1750,17 +1786,21 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
         glDisable(GL_SCISSOR_TEST);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
-        glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
-                          0, 0, g_scene_w, g_scene_h,
+        glBlitFramebuffer(copy_rect[0], copy_rect[1],
+                          copy_rect[0] + copy_rect[2],
+                          copy_rect[1] + copy_rect[3],
+                          copy_rect[0], copy_rect[1],
+                          copy_rect[0] + copy_rect[2],
+                          copy_rect[1] + copy_rect[3],
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
         read_fbo = g_scene_fbo;
     }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
     glReadBuffer(read_fbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                        viewport[0], viewport[1],
-                        viewport[2], viewport[3]);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_x, dst_y,
+                        copy_rect[0], copy_rect[1],
+                        copy_rect[2], copy_rect[3]);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)saved_draw_fbo);
     glReadBuffer((GLenum)saved_read_buffer);
@@ -1785,6 +1825,91 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
     glBindTexture(GL_TEXTURE_2D, g_diag_framebuffer_snapshot_tex);
     glActiveTexture((GLenum)saved_active_texture);
     return true;
+}
+
+static bool gfx_opengl_compute_tri_snapshot_rect(const float buf_vbo[],
+                                                 size_t buf_vbo_len,
+                                                 size_t buf_vbo_num_tris,
+                                                 size_t tri,
+                                                 const GLint viewport[4],
+                                                 GLint out_rect[4]) {
+    size_t vertex_count;
+    size_t stride;
+    const float *base;
+    float min_x = 0.0f;
+    float min_y = 0.0f;
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    /* The shader samples framebuffer memory via gl_FragCoord, so only pixels
+     * inside this triangle's screen-space bbox can be read for this draw. */
+    const int margin = 3;
+
+    if (buf_vbo == NULL || buf_vbo_num_tris == 0 || tri >= buf_vbo_num_tris ||
+        viewport[2] <= 0 || viewport[3] <= 0) {
+        return false;
+    }
+
+    vertex_count = buf_vbo_num_tris * 3;
+    if (vertex_count == 0 || buf_vbo_len % vertex_count != 0) {
+        return false;
+    }
+
+    stride = buf_vbo_len / vertex_count;
+    if (stride < 10) {
+        return false;
+    }
+
+    base = &buf_vbo[tri * 3 * stride];
+    for (int i = 0; i < 3; i++) {
+        float ndc_x = base[4 + i * 2 + 0];
+        float ndc_y = base[4 + i * 2 + 1];
+        float pixel_x;
+        float pixel_y;
+
+        if (ndc_x != ndc_x || ndc_y != ndc_y ||
+            ndc_x <= -100000.0f || ndc_x >= 100000.0f ||
+            ndc_y <= -100000.0f || ndc_y >= 100000.0f) {
+            return false;
+        }
+
+        pixel_x = (float)viewport[0] + (ndc_x * 0.5f + 0.5f) * (float)viewport[2];
+        pixel_y = (float)viewport[1] + (ndc_y * 0.5f + 0.5f) * (float)viewport[3];
+
+        if (i == 0) {
+            min_x = max_x = pixel_x;
+            min_y = max_y = pixel_y;
+        } else {
+            if (pixel_x < min_x) min_x = pixel_x;
+            if (pixel_x > max_x) max_x = pixel_x;
+            if (pixel_y < min_y) min_y = pixel_y;
+            if (pixel_y > max_y) max_y = pixel_y;
+        }
+    }
+
+    out_rect[0] = (GLint)floorf(min_x) - margin;
+    out_rect[1] = (GLint)floorf(min_y) - margin;
+    out_rect[2] = (GLint)ceilf(max_x) + margin - out_rect[0];
+    out_rect[3] = (GLint)ceilf(max_y) + margin - out_rect[1];
+    gfx_opengl_clamp_snapshot_rect(viewport, out_rect, out_rect);
+
+    return out_rect[2] > 0 && out_rect[3] > 0;
+}
+
+static bool gfx_opengl_rdp_cvg_snapshot_rects_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_RDP_CVG_SNAPSHOT_RECTS");
+        const char *enable_env = getenv("GE007_RDP_CVG_SNAPSHOT_RECTS");
+
+        enabled = 1;
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled != 0;
 }
 
 static void gfx_opengl_draw_triangles_cvg_wrap_stencil(size_t buf_vbo_num_tris) {
@@ -1839,7 +1964,16 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
         GLint viewport[4] = {0, 0, 0, 0};
         glGetIntegerv(GL_VIEWPORT, viewport);
         for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
-            (void)gfx_opengl_copy_framebuffer_snapshot(viewport);
+            GLint snapshot_rect[4];
+            const GLint *requested_rect = NULL;
+            if (g_blend_alpha_rdp_cvg_memory &&
+                gfx_opengl_rdp_cvg_snapshot_rects_enabled() &&
+                gfx_opengl_compute_tri_snapshot_rect(buf_vbo, buf_vbo_len,
+                                                     buf_vbo_num_tris, tri,
+                                                     viewport, snapshot_rect)) {
+                requested_rect = snapshot_rect;
+            }
+            (void)gfx_opengl_copy_framebuffer_snapshot(viewport, requested_rect);
             glDrawArrays(GL_TRIANGLES, (GLint)(tri * 3), 3);
         }
     } else if (g_blend_alpha_cvg_wrap_stencil && gfx_diag_xlu_coverage_stencil_enabled()) {

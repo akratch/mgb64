@@ -733,6 +733,24 @@ static int bgPortalLegacyProjectClampEnabled(void)
     return enabled;
 }
 
+extern s32 levelentry_index;
+
+static int bgAutoNeighborRoomsEnabled(void)
+{
+    static int env_enabled = -2;
+
+    if (env_enabled == -2) {
+        const char *env = getenv("GE007_AUTO_NEIGHBOR_ROOMS");
+        env_enabled = env ? (atoi(env) != 0) : -1;
+    }
+
+    if (env_enabled >= 0) {
+        return env_enabled;
+    }
+
+    return levelentry_index == LEVEL_INDEX_TRA;
+}
+
 static f32 bgPortalBboxWidth(const f32 *bbox)
 {
     return bbox[2] - bbox[0];
@@ -15180,17 +15198,24 @@ void sub_GAME_7F0B8A6C(void) {
      *
      * Portal BFS can under-admit directly adjacent interior rooms at sharp
      * transitions when the portal projection falls just outside the current
-     * screen-space test. Keep this as an opt-in diagnostic: stock Dam renders
-     * only the portal-admitted rooms at the glass corridor checkpoint, while
-     * default-on promotion over-admits neighbor rooms. */
+     * screen-space test. The broad GE007_DRAW_NEIGHBOR_ROOMS diagnostic stays
+     * opt-in because it over-admits Dam. Train gets a narrower default path:
+     * only one-hop rooms whose own AABB still intersects the screen are added,
+     * covering shutter/window backdrop holes without making every level use
+     * fullscreen neighbor admission. */
     {
-        static int draw_neighbor_rooms = -1;
+        static int draw_neighbor_rooms = -2;
+        s32 auto_neighbor_rooms;
+        s32 cull_neighbor_rooms;
         if (draw_neighbor_rooms < 0) {
             const char *env = getenv("GE007_DRAW_NEIGHBOR_ROOMS");
-            draw_neighbor_rooms = env ? atoi(env) : 0;
+            draw_neighbor_rooms = env ? atoi(env) : -1;
         }
 
-        if (draw_neighbor_rooms) {
+        auto_neighbor_rooms = bgAutoNeighborRoomsEnabled();
+        cull_neighbor_rooms = (draw_neighbor_rooms < 0 && auto_neighbor_rooms);
+
+        if (draw_neighbor_rooms > 0 || cull_neighbor_rooms) {
 #ifdef NATIVE_PORT
             bbox2d *player_bbox = (bbox2d *)&g_CurrentPlayer->screenxminf;
 #else
@@ -15199,6 +15224,9 @@ void sub_GAME_7F0B8A6C(void) {
             for (i = 1; i < g_MaxNumRooms; i++) {
                 if (g_BgRoomInfo[i].room_neighbor_to_rendered &&
                     !g_BgRoomInfo[i].room_rendered) {
+                    if (cull_neighbor_rooms && !sub_GAME_7F0B5208(i, player_bbox)) {
+                        continue;
+                    }
                     bgSetRoomAdmitTraceContext("neighbor_to_rendered", g_BgCurrentRoom, -1, 0);
                     sub_GAME_7F0B39BC(i, 0, player_bbox, 1);
                     bgClearRoomAdmitTraceContext();

@@ -4,7 +4,8 @@
 #
 # The regression captures the same control-room/wall-contact view three ways:
 #   1. default portal BFS
-#   2. old broad native projection/widening behavior explicitly restored
+#   2. old broad native projection/widening behavior explicitly restored,
+#      including the pre-ordering portal setup used by that legacy control
 #   3. portal BFS disabled as a diagnostic broad-frustum comparison
 #
 # The default must stay tight and visually match the broad-frustum diagnostic at
@@ -167,6 +168,8 @@ echo "  frames:  $FRAMES"
 
 run_capture default
 run_capture old_fallback \
+    GE007_BGORDER_PORTAL=0 \
+    GE007_BG_PORTAL_AABB_EXPAND=0 \
     GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=1 \
     GE007_PORTAL_LEGACY_PROJECT_CLAMP=1 \
     GE007_PORTAL_PARENT_CLIP_MIN_SPAN=8 \

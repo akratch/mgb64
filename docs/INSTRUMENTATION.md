@@ -1433,6 +1433,16 @@ generated/locally transformed fogged room strips that lose display-list room
 attribution; it allows the small env-alpha candidate class to remain unpromoted
 by default.
 
+The default coverage-memory backend snapshots only each promoted triangle's
+screen-space bbox before drawing that triangle. Use
+`GE007_DISABLE_RDP_CVG_SNAPSHOT_RECTS=1` (or
+`GE007_RDP_CVG_SNAPSHOT_RECTS=0`) to restore the old full-viewport per-triangle
+snapshot for A/B comparisons. Current proof:
+`/tmp/mgb64_surface_rectsnap_ab_640` produced `0/307200` changed pixels for
+rectangle snapshots versus full snapshots while keeping `873` promoted rows,
+and `/tmp/mgb64_surface2_perf_rectsnap_final.LNzHKP` kept Surface 2 at
+`2056x1257` to `avg_work=9.81 ms`, `max_work=15 ms`.
+
 ### Level-intro census
 
 To map native authored-intro coverage across direct-boot stages, run:
@@ -1941,6 +1951,7 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC=1|*|cc-list` | default-off backend/shader A/B for matched alpha draws, including loaded-tile and `G_SETTEX` materials, with raw `ZMODE_XLU` + `CVG_DST_WRAP` + `CLR_ON_CVG` + `IM_RD` + `FORCE_BL`; snapshots the current framebuffer per triangle and applies an RDP-style final blender/memory-color formula without GL fixed-function alpha blending |
 | `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=1|*|cc-list` | default-off backend/shader A/B for the same matched alpha draws, including `G_SETTEX`; passes per-triangle screen vertices to the shader, estimates an 8-sample coverage count, stores synthetic coverage in framebuffer alpha, and applies the `CLR_ON_CVG` memory-color rule before blending |
 | `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` / `GE007_ROOM_XLU_CVG_MEMORY=0` | disable the default material classifier that promotes fogged room-class `G_SETTEX` XLU coverage-wrap/color-on-coverage strips to `GFX_BLEND_ALPHA_RDP_CVG_MEMORY`, including generated/locally transformed strips with missing room-DL attribution only when `envA=255` and `primA=0`; this also disables the forced RGBA scene target used to keep framebuffer alpha as deterministic coverage memory, so use it as the focused Surface/Jungle tree-fog A/B escape hatch |
+| `GE007_DISABLE_RDP_CVG_SNAPSHOT_RECTS=1` / `GE007_RDP_CVG_SNAPSHOT_RECTS=0` | disable the optimized bbox-only framebuffer snapshot for `GFX_BLEND_ALPHA_RDP_CVG_MEMORY` and restore the old full-viewport per-triangle copy; use only for visual/perf A/B because the default rectangle path is screenshot-identical on the Surface guard and avoids large-window stalls |
 | `GE007_DISABLE_ROOM_XLU_SORT=1` / `GE007_SORT_ROOM_XLU=0` | disable default local secondary-room XLU far-to-near sorting; this is a broad A/B and should not be used as a first fix when coverage-memory owns the artifact |
 | `GE007_DISABLE_ROOM_XLU_DEFER=1` / `GE007_SORT_ROOM_XLU_DEFER=0` | disable the cross-flush secondary-room XLU defer queue while leaving local room-XLU sorting enabled; useful for proving whether a visual delta is from batch ordering or material blending |
 | `GE007_TRACE_GLASS_SHARD_COVERAGE=1` / `GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME=N` / `GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET=N` | read-only active-shard coverage-grid trace; logs one `[SHARD-COVERAGE]` row per active frame with raw N64 coverage flags, material/blend identity, and coarse bbox-cell overlap pressure |
@@ -2017,6 +2028,8 @@ smoke runs and human play sessions.
 | `GE007_PORTAL_RETRY_SCREEN_CLIP=1` | retry portal screen clipping without the parent bbox after an empty clip for A/B only; default off |
 | `GE007_PORTAL_LEGACY_PROJECT_CLAMP=1` | restore the old native `sub_GAME_7F0B5864` pre-clamp behavior for legacy over-admission A/B only; default returns stock-style raw projected bboxes |
 | `GE007_PORTAL_NEAR_CLIP=0|1` | toggle native portal near-plane epsilon clipping; default `1` avoids huge near-plane projection values while preserving stock-style bbox rejection through caller clipping |
+| `GE007_AUTO_NEIGHBOR_ROOMS=0|1` | toggle the cull-limited one-hop neighbor room fallback; default `1` only on Train to cover rear-car shutter/window backdrop holes without enabling broad neighbor admission on Dam |
+| `GE007_DRAW_NEIGHBOR_ROOMS=1` | broad one-hop neighbor room diagnostic; remains opt-in because it bypasses the Train cull-limited default and can over-admit unrelated portal neighbors |
 | `GE007_TRACE_PORTAL_VERTS=1` / `GE007_TRACE_PORTAL_VERTS_IDX=N` / `GE007_TRACE_PORTAL_VERTS_AFTER_FRAME=N` | log transformed/projected vertices for portal projection probes |
 | `GE007_TRACE_TINTED_GLASS=1` / `GE007_TRACE_TINTED_GLASS_BUDGET=N` | log tinted-glass setup/update/render opacity, including raw opacity, render opacity, and the active min-opacity floor |
 | `GE007_TRACE_BULLET_IMPACTS=1` | log bullet-impact create/render events, including whether prop-attached impacts used the textured or legacy flat path |

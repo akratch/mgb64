@@ -181,6 +181,22 @@ The visible symptoms were level-specific but shared renderer causes:
     `/tmp/mgb64_jungle_envA_cvg_ab_1782661591` promoted all `93` leftovers via
     the diagnostic but produced a `0`-pixel delta, so the `envA=255` default gate
     stays narrow.
+    2026-06-28 performance follow-up: the default promoted path must not copy
+    the full viewport once per triangle. At a `2056x1257` Surface 2 window, the
+    old full-snapshot path averaged about `24 ms` of pre-cap work; disabling the
+    classifier dropped to about `8 ms`, proving the slowdown was framebuffer
+    snapshot bandwidth rather than bloom/post-FX. The OpenGL backend now copies
+    only the promoted triangle's screen-space bbox into the same full-size
+    snapshot texture before drawing that triangle, preserving the shader's
+    `gl_FragCoord` lookup semantics while avoiding full-window copies. A/B
+    proof `/tmp/mgb64_surface_rectsnap_ab_640` is screenshot-identical to the
+    old full-copy path (`0/307200` changed pixels, `873` promoted rows), the
+    focused guard `/tmp/mgb64_surface_xlu_cvg_memory_rectsnap_guard` still
+    passes (`873` promoted rows, `2.089%` default-vs-disabled delta), and the
+    final large-window Surface 2 perf probe
+    `/tmp/mgb64_surface2_perf_rectsnap_final.LNzHKP` reports
+    `avg_work=9.81 ms`, `max_work=15 ms`. Keep
+    `GE007_DISABLE_RDP_CVG_SNAPSHOT_RECTS=1` as the exact full-copy A/B only.
 
 13. **Room `G_SETTEX` LOD endpoints are draw semantics, not matrix semantics.**
     Dam's pad10092 room-glass source trace showed `G_SETTEX` trilerp draws
@@ -261,6 +277,19 @@ The visible symptoms were level-specific but shared renderer causes:
     logged zero mask bits in 200 rows, proving the option gate does not emit
     dead unused-`TEXEL1` variants. Surface renderer parity capture still passed
     with the shader tile-mask path live.
+
+18. **Train rear-car window slats need a cull-limited neighbor fallback.**
+    Room 51's rear office windows can face the exterior/shutter geometry at a
+    grazing angle where portal BFS keeps only the current room. That leaves a
+    sky/backdrop-heavy window fill instead of the adjacent Train geometry behind
+    the slats. The old `GE007_DRAW_NEIGHBOR_ROOMS=1` diagnostic proves the
+    missing-room class, but it is too broad for Dam because it admits every
+    one-hop neighbor with a fullscreen bbox. The default path now enables a
+    narrower `GE007_AUTO_NEIGHBOR_ROOMS` fallback only on Train: visible one-hop
+    neighbors are added only after their room AABB intersects the current screen
+    frustum. Keep `GE007_AUTO_NEIGHBOR_ROOMS=0` as the negative control, and use
+    `tools/train_window_backdrop_regression.sh` before changing portal BFS,
+    Train room ordering, native sky backdrop depth, or neighbor-room policy.
 
 ## Guardrails
 
