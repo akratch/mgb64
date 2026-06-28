@@ -154,7 +154,12 @@ The visible symptoms were level-specific but shared renderer causes:
     `GE007_DISABLE_SETTEX_FOOTPRINT_LOD=1` as the focused A/B control. This is
     intentionally a source-sampling fix only: Dam's final center-glass handoff
     still needs the broader RDP framebuffer-memory/coverage blend work before
-    stock pixel parity should be expected.
+    stock pixel parity should be expected. The room-glass source oracle must
+    validate both settex units and the decoded two-cycle combiner, not just a
+    tile0 `texel * shade` shortcut; keep
+    `python3 tools/check_room_glass_source_reconstruction_regression.py` green
+    when changing settex sampling, combiner diagnostics, or framebuffer-owner
+    probes.
 
 14. **Early renderer classifiers must decode raw combiners as raw combiners.**
     `gfx_cc_get_features()` expects the generated shader id, not Rare/N64's raw

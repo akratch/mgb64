@@ -35,9 +35,43 @@ SETTEX_FB_RE = re.compile(r"\[SETTEX-FB-CAPTURE\]\s+(?P<body>.*)")
 G_TX_MIRROR = 0x1
 G_TX_CLAMP = 0x2
 
+G_CCMUX_COMBINED = 0
+G_CCMUX_TEXEL0 = 1
+G_CCMUX_TEXEL1 = 2
+G_CCMUX_PRIMITIVE = 3
+G_CCMUX_SHADE = 4
+G_CCMUX_ENVIRONMENT = 5
+G_CCMUX_1 = 6
+G_CCMUX_NOISE = 7
+G_CCMUX_TEXEL0_ALPHA = 8
+G_CCMUX_TEXEL1_ALPHA = 9
+G_CCMUX_PRIMITIVE_ALPHA = 10
+G_CCMUX_SHADE_ALPHA = 11
+G_CCMUX_ENV_ALPHA = 12
+G_CCMUX_LOD_FRACTION = 13
+G_CCMUX_PRIM_LOD_FRAC = 14
+G_CCMUX_0 = 31
+
+G_ACMUX_COMBINED = 0
+G_ACMUX_TEXEL0 = 1
+G_ACMUX_TEXEL1 = 2
+G_ACMUX_PRIMITIVE = 3
+G_ACMUX_SHADE = 4
+G_ACMUX_ENVIRONMENT = 5
+G_ACMUX_1 = 6
+G_ACMUX_0 = 7
+
+SHADER_OPT_ALPHA = 1 << 0
+SHADER_OPT_FOG = 1 << 1
+SHADER_OPT_TEXTURE_EDGE = 1 << 2
+SHADER_OPT_2CYC = 1 << 4
+SHADER_OPT_NOPERSPECTIVE_TEXCOORDS = 1 << 14
+SHADER_OPT_NOPERSPECTIVE_INPUTS = 1 << 15
+
 Pixel = tuple[int, int, int]
 Rgba = tuple[int, int, int, int]
 Float3 = tuple[float, float, float]
+Float4 = tuple[float, float, float, float]
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -513,6 +547,7 @@ def parse_log_rows(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]
             tile0 = parse_tile(texgen.value_for(body, "tile0"))
             if tile0 is None:
                 continue
+            tile1 = parse_tile(texgen.value_for(body, "tile1"))
             clips = [parse_tuple(texgen.value_for(body, f"vclip{index}"))[:4] for index in range(3)]
             raw_uvs = [parse_tuple(texgen.value_for(body, f"vuv{index}"))[:2] for index in range(3)]
             shades = [parse_tuple(texgen.value_for(body, f"shade{index}"))[:4] for index in range(3)]
@@ -529,6 +564,8 @@ def parse_log_rows(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]
                 "body": body,
                 "frame": parse_int(body, "frame"),
                 "tri": parse_int(body, "tri"),
+                "cc_options": parse_int(body, "opts") or 0,
+                "effective_cc_id_int": int(effcc, 16) if effcc is not None and effcc.startswith("0x") else 0,
                 "effcc": effcc,
                 "opts": opts,
                 "oml_raw": oml_raw,
@@ -536,15 +573,27 @@ def parse_log_rows(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]
                 "wh": wh,
                 "rgba_wh": rgba_wh,
                 "tile0": tile0,
+                "tile1": tile1,
                 "tex_size": width_height,
+                "prim": parse_tuple(texgen.value_for(body, "prim"))[:4],
+                "env": parse_tuple(texgen.value_for(body, "env"))[:4],
+                "fogrgba": parse_tuple(texgen.value_for(body, "fogrgba"))[:4],
+                "fog_enabled": parse_int(body, "fog") == 1,
+                "blend": texgen.value_for(body, "blend"),
+                "lod_fraction": parse_int(body, "lod") or 0,
                 "vclip": clips,
                 "vuv": raw_uvs,
                 "shade": shades,
                 "uv0_logged": parse_tuple(texgen.value_for(body, "uv0"))[:2],
+                "uv1_logged": parse_tuple(texgen.value_for(body, "uv1"))[:2],
                 "t0n_logged": parse_tuple(texgen.value_for(body, "t0n"))[:4],
                 "t0l_logged": parse_tuple(texgen.value_for(body, "t0l"))[:4],
                 "t0p_logged": parse_tuple(texgen.value_for(body, "t0p"))[:4],
+                "t1n_logged": parse_tuple(texgen.value_for(body, "t1n"))[:4],
+                "t1l_logged": parse_tuple(texgen.value_for(body, "t1l"))[:4],
+                "t1p_logged": parse_tuple(texgen.value_for(body, "t1p"))[:4],
                 "shadec_logged": parse_tuple(texgen.value_for(body, "shadec"))[:4],
+                "lodc_logged": parse_int(body, "lodc"),
                 "shaderL_logged": parse_tuple(texgen.value_for(body, "shaderL_frag"))[:4],
                 "shaderP_logged": parse_tuple(texgen.value_for(body, "shaderP_frag"))[:4],
                 "fogc_logged": parse_tuple(texgen.value_for(body, "fogc"))[:4],
@@ -798,9 +847,10 @@ def row_overlaps_roi(row: dict[str, Any], mapping: dict[str, Any], roi: tuple[in
     )
 
 
-def compute_uvs(row: dict[str, Any]) -> list[tuple[float, float]]:
+def compute_uvs(row: dict[str, Any], unit: int) -> list[tuple[float, float]]:
     width, height = row["tex_size"]
-    return [vertex_uv(raw_uv, row["tile0"], width, height) for raw_uv in row["vuv"]]
+    tile = row.get(f"tile{unit}") or row["tile0"]
+    return [vertex_uv(raw_uv, tile, width, height) for raw_uv in row["vuv"]]
 
 
 def interp_pair(
@@ -818,26 +868,219 @@ def interp_rgba(
     values: list[list[float]],
     bary: tuple[float, float, float],
     ws: list[float],
+    noperspective: bool = False,
 ) -> Rgba:
     return tuple(
-        clamp_u8(perspective_interp([item[channel] for item in values], bary, ws))
+        clamp_u8(
+            sum(item[channel] * bary[index] for index, item in enumerate(values))
+            if noperspective
+            else perspective_interp([item[channel] for item in values], bary, ws)
+        )
         for channel in range(4)
     )  # type: ignore[return-value]
 
 
-def shader_source(texel: Rgba, shade: Rgba, fog: Rgba | None = None) -> Rgba:
-    out = [
-        clamp_u8(float(texel[channel]) * float(shade[channel]) / 255.0)
-        for channel in range(3)
-    ]
-    alpha = texel[3]
-    if fog is not None and fog[3] > 0:
-        fog_alpha = fog[3] / 255.0
-        out = [
-            clamp_u8(float(out[channel]) + (float(fog[channel]) - float(out[channel])) * fog_alpha)
-            for channel in range(3)
-        ]
-    return (out[0], out[1], out[2], alpha)
+def unit_rgba(pixel: Rgba) -> Float4:
+    return tuple(float(channel) / 255.0 for channel in pixel)  # type: ignore[return-value]
+
+
+def clamp_unit(value: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
+    return min(1.0, max(0.0, value))
+
+
+def unit_to_rgba(values: Float4) -> Rgba:
+    return tuple(clamp_u8(clamp_unit(channel) * 255.0) for channel in values)  # type: ignore[return-value]
+
+
+def rgba_from_row_source(row: dict[str, Any], key: str, default_alpha: int) -> Rgba:
+    value = row.get(key)
+    if isinstance(value, list) and len(value) >= 4:
+        return tuple(clamp_u8(float(value[index])) for index in range(4))  # type: ignore[return-value]
+    return (0, 0, 0, default_alpha)
+
+
+def combiner_rgb_source(
+    source: int,
+    cycle: int,
+    tex0: Float4,
+    tex1: Float4,
+    shade: Float4,
+    prim: Float4,
+    env: Float4,
+    lod_fraction: float,
+    combined: Float4,
+    channel: int,
+) -> float:
+    if source == G_CCMUX_COMBINED:
+        return combined[channel] if cycle > 0 else 0.0
+    if source == G_CCMUX_TEXEL0:
+        return tex0[channel]
+    if source == G_CCMUX_TEXEL1:
+        return tex1[channel]
+    if source == G_CCMUX_PRIMITIVE:
+        return prim[channel]
+    if source == G_CCMUX_SHADE:
+        return shade[channel]
+    if source == G_CCMUX_ENVIRONMENT:
+        return env[channel]
+    if source == G_CCMUX_1:
+        return 1.0
+    if source == G_CCMUX_TEXEL0_ALPHA:
+        return tex0[3]
+    if source == G_CCMUX_TEXEL1_ALPHA:
+        return tex1[3]
+    if source == G_CCMUX_PRIMITIVE_ALPHA:
+        return prim[3]
+    if source == G_CCMUX_SHADE_ALPHA:
+        return shade[3]
+    if source == G_CCMUX_ENV_ALPHA:
+        return env[3]
+    if source == G_CCMUX_LOD_FRACTION:
+        return lod_fraction
+    return 0.0
+
+
+def combiner_alpha_source(
+    source: int,
+    slot: int,
+    cycle: int,
+    tex0: Float4,
+    tex1: Float4,
+    shade: Float4,
+    prim: Float4,
+    env: Float4,
+    lod_fraction: float,
+    combined: Float4,
+) -> float:
+    if source == G_ACMUX_COMBINED:
+        return lod_fraction if slot == 2 else (combined[3] if cycle > 0 else 0.0)
+    if source == G_ACMUX_TEXEL0:
+        return tex0[3]
+    if source == G_ACMUX_TEXEL1:
+        return tex1[3]
+    if source == G_ACMUX_PRIMITIVE:
+        return prim[3]
+    if source == G_ACMUX_SHADE:
+        return shade[3]
+    if source == G_ACMUX_ENVIRONMENT:
+        return env[3]
+    if source == G_ACMUX_1:
+        return 0.0 if slot == 2 else 1.0
+    return 0.0
+
+
+def eval_combiner_channel(a: float, b: float, c: float, d: float) -> float:
+    return (a - b) * c + d
+
+
+def shader_source_from_combiner(
+    row: dict[str, Any],
+    tex0_pixel: Rgba,
+    tex1_pixel: Rgba,
+    shade_pixel: Rgba,
+    fog_pixel: Rgba | None,
+) -> Rgba:
+    cc_id = int(row.get("effective_cc_id_int") or 0)
+    cc_options = int(row.get("cc_options") or 0)
+    tex0 = unit_rgba(tex0_pixel)
+    tex1 = unit_rgba(tex1_pixel)
+    shade = unit_rgba(shade_pixel)
+    prim = unit_rgba(rgba_from_row_source(row, "prim", 0))
+    env = unit_rgba(rgba_from_row_source(row, "env", 255))
+    lod_fraction = clamp_unit(float(row.get("lod_fraction") or 0) / 255.0)
+    cycles = 2 if (cc_options & SHADER_OPT_2CYC) else 1
+    combined: Float4 = (0.0, 0.0, 0.0, 0.0)
+
+    for cycle in range(cycles):
+        rgb_a = (cc_id >> (cycle * 28)) & 0xF
+        rgb_b = (cc_id >> (cycle * 28 + 4)) & 0xF
+        rgb_c = (cc_id >> (cycle * 28 + 8)) & 0x1F
+        rgb_d = (cc_id >> (cycle * 28 + 13)) & 0x7
+        alp_a = (cc_id >> (cycle * 28 + 16)) & 0x7
+        alp_b = (cc_id >> (cycle * 28 + 19)) & 0x7
+        alp_c = (cc_id >> (cycle * 28 + 22)) & 0x7
+        alp_d = (cc_id >> (cycle * 28 + 25)) & 0x7
+
+        if rgb_a >= 8:
+            rgb_a = G_CCMUX_0
+        if rgb_b >= 8:
+            rgb_b = G_CCMUX_0
+        if rgb_c >= 16:
+            rgb_c = G_CCMUX_0
+        if rgb_d == G_CCMUX_NOISE:
+            rgb_d = G_CCMUX_0
+        if rgb_a == rgb_b or rgb_c == G_CCMUX_COMBINED:
+            rgb_a = rgb_b = rgb_c = G_CCMUX_COMBINED
+        if alp_a == alp_b or alp_c == G_ACMUX_COMBINED:
+            alp_a = alp_b = alp_c = G_ACMUX_COMBINED
+
+        rgb: list[float] = []
+        for channel in range(3):
+            rgb.append(
+                eval_combiner_channel(
+                    combiner_rgb_source(rgb_a, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined, channel),
+                    combiner_rgb_source(rgb_b, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined, channel),
+                    combiner_rgb_source(rgb_c, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined, channel),
+                    combiner_rgb_source(rgb_d, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined, channel),
+                )
+            )
+
+        alpha = 1.0
+        if cc_options & SHADER_OPT_ALPHA:
+            alpha = eval_combiner_channel(
+                combiner_alpha_source(alp_a, 0, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined),
+                combiner_alpha_source(alp_b, 1, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined),
+                combiner_alpha_source(alp_c, 2, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined),
+                combiner_alpha_source(alp_d, 3, cycle, tex0, tex1, shade, prim, env, lod_fraction, combined),
+            )
+
+        if cycle == 0 and cycles == 2:
+            combined = tuple(min(1.01, max(-1.01, channel)) for channel in (*rgb, alpha))  # type: ignore[assignment]
+        else:
+            combined = (rgb[0], rgb[1], rgb[2], alpha)
+
+    combined = tuple(clamp_unit(channel) for channel in combined)  # type: ignore[assignment]
+
+    if (cc_options & SHADER_OPT_FOG) and row.get("fog_enabled") and fog_pixel is not None and fog_pixel[3] > 0:
+        fog = unit_rgba(fog_pixel)
+        combined = (
+            combined[0] + (fog[0] - combined[0]) * fog[3],
+            combined[1] + (fog[1] - combined[1]) * fog[3],
+            combined[2] + (fog[2] - combined[2]) * fog[3],
+            combined[3],
+        )
+
+    if (cc_options & SHADER_OPT_TEXTURE_EDGE) and (cc_options & SHADER_OPT_ALPHA):
+        combined = (combined[0], combined[1], combined[2], 1.0 if combined[3] > 0.19 else 0.0)
+
+    return unit_to_rgba(combined)
+
+
+def sample_unit(
+    row: dict[str, Any],
+    unit: int,
+    bary: tuple[float, float, float],
+    geom: dict[str, Any],
+    texture: Texture,
+) -> dict[str, Any]:
+    uvs = compute_uvs(row, unit)
+    noperspective = (int(row.get("cc_options") or 0) & SHADER_OPT_NOPERSPECTIVE_TEXCOORDS) != 0
+    if noperspective:
+        uv = (
+            sum(item[0] * bary[index] for index, item in enumerate(uvs)),
+            sum(item[1] * bary[index] for index, item in enumerate(uvs)),
+        )
+    else:
+        uv = interp_pair(uvs, bary, geom["clip_w"])
+    tile = row.get(f"tile{unit}") or row["tile0"]
+    return {
+        "uv": uv,
+        "nearest": texture.nearest(uv[0], uv[1], tile["cms"], tile["cmt"]),
+        "linear": texture.linear(uv[0], uv[1], tile["cms"], tile["cmt"]),
+        "threepoint": texture.threepoint(uv[0], uv[1], tile["cms"], tile["cmt"]),
+    }
 
 
 def reconstruct_at(
@@ -846,22 +1089,24 @@ def reconstruct_at(
     geom: dict[str, Any],
     texture: Texture,
 ) -> dict[str, Rgba]:
-    uvs = compute_uvs(row)
-    uv = interp_pair(uvs, bary, geom["clip_w"])
-    shade = interp_rgba(row["shade"], bary, geom["clip_w"])
-    tile = row["tile0"]
-    nearest = texture.nearest(uv[0], uv[1], tile["cms"], tile["cmt"])
-    linear = texture.linear(uv[0], uv[1], tile["cms"], tile["cmt"])
-    threepoint = texture.threepoint(uv[0], uv[1], tile["cms"], tile["cmt"])
-    # The target projected_impact rows have zero fog in the current traces.
+    sample0 = sample_unit(row, 0, bary, geom, texture)
+    sample1 = sample_unit(row, 1, bary, geom, texture) if row.get("tile1") else sample0
+    noperspective_inputs = (int(row.get("cc_options") or 0) & SHADER_OPT_NOPERSPECTIVE_INPUTS) != 0
+    shade = interp_rgba(row["shade"], bary, geom["clip_w"], noperspective=noperspective_inputs)
+    fog_logged = row.get("fogc_logged")
     fog = None
+    if isinstance(fog_logged, list) and len(fog_logged) >= 4 and any(fog_logged):
+        fog = tuple(clamp_u8(float(fog_logged[index])) for index in range(4))  # type: ignore[assignment]
     return {
-        "nearest": shader_source(nearest, shade, fog),
-        "linear": shader_source(linear, shade, fog),
-        "threepoint": shader_source(threepoint, shade, fog),
-        "tex_nearest": nearest,
-        "tex_linear": linear,
-        "tex_threepoint": threepoint,
+        "nearest": shader_source_from_combiner(row, sample0["nearest"], sample1["nearest"], shade, fog),
+        "linear": shader_source_from_combiner(row, sample0["linear"], sample1["linear"], shade, fog),
+        "threepoint": shader_source_from_combiner(row, sample0["threepoint"], sample1["threepoint"], shade, fog),
+        "tex_nearest": sample0["nearest"],
+        "tex_linear": sample0["linear"],
+        "tex_threepoint": sample0["threepoint"],
+        "tex1_nearest": sample1["nearest"],
+        "tex1_linear": sample1["linear"],
+        "tex1_threepoint": sample1["threepoint"],
         "shade": shade,
     }
 
@@ -873,18 +1118,26 @@ def center_validation(rows: list[dict[str, Any]], texture: Texture, mapping: dic
     for row in rows:
         geom = row_geometry(row, mapping)
         bary = (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
-        uvs = compute_uvs(row)
-        center_uv = interp_pair(uvs, bary, geom["clip_w"])
+        uvs0 = compute_uvs(row, 0)
+        uvs1 = compute_uvs(row, 1) if row.get("tile1") else uvs0
+        center_uv = interp_pair(uvs0, bary, geom["clip_w"])
+        center_uv1 = interp_pair(uvs1, bary, geom["clip_w"])
         recon = reconstruct_at(row, bary, geom, texture)
         check = {
             "tri": row.get("tri"),
             "line": row.get("line"),
             "uv": list(center_uv),
             "logged_uv": row.get("uv0_logged"),
+            "uv1": list(center_uv1),
+            "logged_uv1": row.get("uv1_logged"),
             "tex_linear": list(recon["tex_linear"]),
             "logged_t0l": row.get("t0l_logged"),
             "tex_threepoint": list(recon["tex_threepoint"]),
             "logged_t0p": row.get("t0p_logged"),
+            "tex1_linear": list(recon["tex1_linear"]),
+            "logged_t1l": row.get("t1l_logged"),
+            "tex1_threepoint": list(recon["tex1_threepoint"]),
+            "logged_t1p": row.get("t1p_logged"),
             "shader_linear": list(recon["linear"]),
             "logged_shaderL": row.get("shaderL_logged"),
             "shader_threepoint": list(recon["threepoint"]),
@@ -893,8 +1146,11 @@ def center_validation(rows: list[dict[str, Any]], texture: Texture, mapping: dic
         checks.append(check)
         comparisons = (
             ("uv", center_uv, row.get("uv0_logged") or []),
+            ("uv1", center_uv1, row.get("uv1_logged") or []),
             ("t0l", recon["tex_linear"], row.get("t0l_logged") or []),
             ("t0p", recon["tex_threepoint"], row.get("t0p_logged") or []),
+            ("t1l", recon["tex1_linear"], row.get("t1l_logged") or []),
+            ("t1p", recon["tex1_threepoint"], row.get("t1p_logged") or []),
             ("shaderL", recon["linear"], row.get("shaderL_logged") or []),
             ("shaderP", recon["threepoint"], row.get("shaderP_logged") or []),
         )
@@ -902,7 +1158,7 @@ def center_validation(rows: list[dict[str, Any]], texture: Texture, mapping: dic
             if len(expected) < len(actual):
                 failures.append(f"tri {row.get('tri')}: missing logged {name}")
                 continue
-            tolerance = 0.001 if name == "uv" else 1.0
+            tolerance = 0.001 if name in ("uv", "uv1") else 1.0
             deltas = [abs(float(actual[index]) - float(expected[index])) for index in range(len(actual))]
             max_abs[name] = max(max_abs[name], max(deltas))
             if max(deltas) > tolerance:

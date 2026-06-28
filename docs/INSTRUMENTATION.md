@@ -472,6 +472,7 @@ The ROM-free analyzer regression guard is:
 python3 tools/check_stock_rdp_command_stream_regression.py
 python3 tools/check_stock_rdp_pixel_probe_regression.py
 python3 tools/check_glass_center_handoff_regression.py
+python3 tools/check_room_glass_source_reconstruction_regression.py
 ```
 
 It constructs a synthetic sidecar where bbox attribution would incorrectly give
@@ -2728,23 +2729,27 @@ pre/post framebuffer PPMs for matching room-glass draws with
 `GE007_TRACE_SETTEX_FB_CAPTURE`. The wrapper still captures a fresh same-run
 `GE007_SKIP_TEX=654` underlay by default instead of relying on a stale external
 skip artifact. Current proof
-`/tmp/mgb64_glass_pad10092_room_glass_source_recon_sameframe_fb_final` passes:
+`/tmp/mgb64_glass_room_glass_source_recon_oracle_fix_verify` passes:
 `projected_impact` is covered by tex654 rows for `380/380` pixels, and the
 center self-check exactly reproduces the trace (`uv` max delta `0.000004`,
-`t0l/t0p/shaderL/shaderP` max delta `0`). The reconstructed source still does
-not explain the rendered default image or stock under a simple source-over
-skip-underlay model: best synthetic-vs-default is linear with
-`mean_abs_rgb=5.190`, `70.526%` changed; best synthetic-vs-stock is
-`mean_abs_rgb=12.332`, `92.895%` changed; actual reconstructed source is darker
-than stock-required by luma mean `-14.919` with source mean-abs RGB `30.840`.
+`uv1` max delta `0.000002`, and `t0l/t0p/t1l/t1p/shaderL/shaderP` max delta
+`0`). The analyzer now reconstructs both `G_SETTEX` texture units and evaluates
+the decoded two-cycle combiner; the ROM-free guard is
+`python3 tools/check_room_glass_source_reconstruction_regression.py`. The
+reconstructed source still does not explain the rendered default image or stock
+under a simple source-over skip-underlay model: best synthetic-vs-default is
+linear with `mean_abs_rgb=4.066`, `64.211%` changed; best synthetic-vs-stock is
+nearest with `mean_abs_rgb=11.983`, `94.211%` changed; actual reconstructed
+linear source is darker than stock-required by luma mean `-12.216` with source
+mean-abs RGB `30.499`.
 The stock-required source number is directionally useful but weaker than the
 same-run native proof because the stock frame is cropped/resized into native
 space. Two same-frame captures overlap the target ROI on frame `123`
-(`mean_abs_rgb` mean `2.699`, changed mean `19.480%`). The analyzer joins the
+(`mean_abs_rgb` mean `2.739`, changed mean `19.213%`). The analyzer joins the
 first capture's `pre` and last capture's `post` PPMs back to the route ROI, but
 that join crosses pre-output-filter PPMs with post-presentation screenshots:
 first-pre versus skip-underlay is `mean_abs_rgb=5.636`, and last-post versus
-native-final is `mean_abs_rgb=3.982`. Treat those as presentation-normalization
+native-final is `mean_abs_rgb=3.658`. Treat those as presentation-normalization
 evidence, not as byte-exact screenshot parity. The texture payload, UV
 transform, center shader sample, target-pixel coverage, and same-frame native
 destination capture are no longer the blind spots. The remaining problem is

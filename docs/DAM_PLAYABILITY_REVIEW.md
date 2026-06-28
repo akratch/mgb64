@@ -295,27 +295,31 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
   ordering/coverage/framebuffer semantics or per-pixel source/raster tracing,
   not another global opacity tweak.
   The source-reconstruction probe
-  `/tmp/mgb64_glass_pad10092_room_glass_source_recon_sameframe_fb_final` now answers
+  `/tmp/mgb64_glass_room_glass_source_recon_oracle_fix_verify` now answers
   that tracing question in native space. It captures texnum `654`, captures a
   same-run `GE007_SKIP_TEX=654` underlay, captures same-frame pre/post
   framebuffer PPMs around the matching room-glass draws, reconstructs the two
   owning room-glass triangles over `projected_impact`, and validates the math
-  against trace center samples exactly (`uv` max delta `0.000004`,
-  `t0l/t0p/shaderL/shaderP` max delta `0`). Coverage is `380/380` pixels.
-  Best synthetic-vs-default is still `mean_abs_rgb=5.190` with `70.526%`
-  changed, and best synthetic-vs-stock is `mean_abs_rgb=12.332` with `92.895%`
-  changed. The reconstructed source is darker than stock-required by luma mean
-  `-14.919`; keep that stock-required number as a hint because stock is resized
-  into native space. The remaining glass defect is not “stale underlay,”
-  “dumped texture/UV/alpha is too bright,” or a simple target-alpha scalar. It
-  is exact translucent ordering, coverage, framebuffer-memory, or
+  against trace center samples exactly (`uv` max delta `0.000004`, `uv1` max
+  delta `0.000002`, and `t0l/t0p/t1l/t1p/shaderL/shaderP` max delta `0`).
+  Coverage is `380/380` pixels. The analyzer now reconstructs both `G_SETTEX`
+  texture units and evaluates the decoded two-cycle combiner; the ROM-free
+  guard is `python3 tools/check_room_glass_source_reconstruction_regression.py`.
+  Best synthetic-vs-default is still linear, now `mean_abs_rgb=4.066` with
+  `64.211%` changed, and best synthetic-vs-stock is nearest with
+  `mean_abs_rgb=11.983` and `94.211%` changed. The reconstructed linear source
+  is darker than stock-required by luma mean `-12.216`; keep that
+  stock-required number as a hint because stock is resized into native space.
+  The remaining glass defect is not “stale underlay,” “dumped texture/UV/alpha
+  is too bright,” “missing tile1/LOD combiner,” or a simple target-alpha scalar.
+  It is exact translucent ordering, coverage, framebuffer-memory, or
   stock-reference pixel-output semantics. The same-frame capture now proves that
   the native destination can be sampled at the exact draw boundary: two captures
   overlap the ROI on frame `123`, with capture-local movement
-  `mean_abs_rgb=2.699` and changed mean `19.480%`. The analyzer also reports the
+  `mean_abs_rgb=2.739` and changed mean `19.213%`. The analyzer also reports the
   presentation-normalization caveat explicitly: first-pre versus skip-underlay
   is `mean_abs_rgb=5.636`, and last-post versus native-final is
-  `mean_abs_rgb=3.982` because the capture is pre-output-filter while the
+  `mean_abs_rgb=3.658` because the capture is pre-output-filter while the
   screenshots are post-presentation. The same artifact also rules out a
   target-triangle self-overlap/order mistake for this ROI: all `380` pixels have
   exactly one owning room-glass row, ordered/reverse composition does not improve
