@@ -63,6 +63,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_native_switch_access.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_sdk_surface.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_stub_surface.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_bg_visibility_opcode_table.py"
             "${CMAKE_SOURCE_DIR}/tools/analyze_stock_rdp_command_stream.py"
             "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_command_stream_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/analyze_stock_rdp_pixel_probe.py"
@@ -100,6 +101,11 @@ if(BUILD_TESTING)
     add_test(
         NAME port_glass_handoff_run_compare_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_handoff_run_compare_regression.py"
+    )
+    add_test(
+        NAME port_bg_visibility_opcode_table_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_bg_visibility_opcode_table.py"
+                --repo-root "${CMAKE_SOURCE_DIR}"
     )
     add_test(
         NAME port_native_tri_pixel_probe_guard

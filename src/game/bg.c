@@ -13524,13 +13524,14 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x15-0x1C: invalid */
+        /* 0x15-0x1D: invalid */
         case 0x15: case 0x16: case 0x17: case 0x18:
         case 0x19: case 0x1A: case 0x1B: case 0x1C:
+        case 0x1D:
             goto invalid_type_terminate;
 
-        /* 0x1D: force_visible */
-        case 0x1D:
+        /* 0x1E: force_visible */
+        case 0x1E:
             if (flag != 0) {
                 bgCopyCurrentPlayerScreenBboxToFloats((f32 *)dword_CODE_bss_80081600);
                 current_visibility = 0;
@@ -13538,8 +13539,8 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x1E: match_portal_vis */
-        case 0x1E:
+        /* 0x1F: match_portal_vis */
+        case 0x1F:
             if (flag != 0) {
                 if (sub_GAME_7F0B5864(vis_read_s32(pc, 0xC), (f32 *)dword_CODE_bss_80081600)) {
                     if (bgRectIntersect((struct bbox2d *)dword_CODE_bss_80081600,
@@ -13555,8 +13556,8 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x1F: add_visible_room */
-        case 0x1F:
+        /* 0x20: add_visible_room */
+        case 0x20:
             if (flag != 0) {
                 if (current_visibility == 0) {
                     s32 vis_room = vis_read_s32(pc, 0xC);
@@ -13599,16 +13600,16 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x20: remove_vis */
-        case 0x20:
+        /* 0x21: remove_vis */
+        case 0x21:
             if (flag != 0) {
                 current_visibility = 1;
             }
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x21: visible_if_seen_through_portal */
-        case 0x21:
+        /* 0x22: visible_if_seen_through_portal */
+        case 0x22:
             if (flag != 0) {
                 if (!sub_GAME_7F0B5864(vis_read_s32(pc, 0xC), (f32 *)&local_bbox)) {
                     goto vis_through_portal_done;
@@ -13627,8 +13628,8 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x22: not_visible_if_seen_through_portal */
-        case 0x22:
+        /* 0x23: not_visible_if_seen_through_portal */
+        case 0x23:
             if (flag != 0) {
                 if (current_visibility != 0) {
                     goto not_vis_through_portal_done;
@@ -13649,16 +13650,16 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x23: disable_room */
-        case 0x23:
+        /* 0x24: disable_room */
+        case 0x24:
             if (flag != 0) {
                 g_BgRoomInfo[vis_read_s32(pc, 0xC)].room_loaded_mask = 1;
             }
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x24: disable_room_range */
-        case 0x24:
+        /* 0x25: disable_room_range */
+        case 0x25:
             if (flag != 0) {
                 s32 room = vis_read_s32(pc, 0xC);
                 s32 endroom = vis_read_s32(pc, 0x14);
@@ -13669,16 +13670,16 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x25: preload_room */
-        case 0x25:
+        /* 0x26: preload_room */
+        case 0x26:
             if (flag != 0 && canPreload != 0) {
                 canPreload = (bgCheckIfRoomModelNeedsLoad(vis_read_s32(pc, 0xC)) == 0);
             }
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x26: preload_room_range */
-        case 0x26:
+        /* 0x27: preload_room_range */
+        case 0x27:
             if (flag != 0) {
                 s32 room = vis_read_s32(pc, 0xC);
                 s32 endroom = vis_read_s32(pc, 0x14);
@@ -13692,7 +13693,6 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
             pc += (pc[1] << 3);
             goto top;
 
-        /* 0x27: should not be reached (last valid entry), fall through */
         default:
             goto invalid_type_terminate;
         }
