@@ -912,21 +912,59 @@ bool bondinvHasGEKey(void)
     PropRecord   *prop;
     ObjectRecord *obj;
 
+    if (g_CurrentPlayer == NULL) {
+        return FALSE;
+    }
+
+    if (get_ammo_count_for_weapon(ITEM_GOLDENEYEKEY) > 0)
+    {
+        return TRUE;
+    }
+
+    if (g_CurrentPlayer->equipcuritem == ITEM_GOLDENEYEKEY)
+    {
+        return TRUE;
+    }
+
+    if (g_CurrentPlayer->hand_item[GUNRIGHT] == ITEM_GOLDENEYEKEY ||
+        g_CurrentPlayer->hand_item[GUNLEFT] == ITEM_GOLDENEYEKEY ||
+        g_CurrentPlayer->hands[GUNRIGHT].weapon_next_weapon == ITEM_GOLDENEYEKEY ||
+        g_CurrentPlayer->hands[GUNLEFT].weapon_next_weapon == ITEM_GOLDENEYEKEY)
+    {
+        return TRUE;
+    }
+
     item = g_CurrentPlayer->ptr_inventory_first_in_cycle;
 
     while (item)
     {
-        if (item->type == INV_ITEM_PROP)
+        if (item->type == INV_ITEM_WEAPON)
+        {
+            if (item->type_inv_item.type_weap.weapon == ITEM_GOLDENEYEKEY)
+            {
+                return TRUE;
+            }
+        }
+        else if (item->type == INV_ITEM_PROP)
         {
             prop = item->type_inv_item.type_prop.prop;
 
-            if (prop->type == PROP_TYPE_WEAPON)
+            if (prop != NULL)
             {
                 obj = prop->obj;
 
-                if (obj->obj == PROJECTILES_TYPE_GE_KEY)
+                if (obj != NULL)
                 {
-                    return TRUE;
+                    if (obj->obj == PROJECTILES_TYPE_GE_KEY)
+                    {
+                        return TRUE;
+                    }
+
+                    if (obj->type == PROPDEF_COLLECTABLE &&
+                        ((WeaponObjRecord *)obj)->weaponnum == ITEM_GOLDENEYEKEY)
+                    {
+                        return TRUE;
+                    }
                 }
             }
         }

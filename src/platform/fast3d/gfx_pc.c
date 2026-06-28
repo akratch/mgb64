@@ -12700,7 +12700,10 @@ static void gfx_dp_load_tlut(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t 
 
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t value = base[i];
-        rdp.palette[palofs + i] = (uint16_t)((value << 8) | (value >> 8));
+        if (!rdp.texture_to_load.is_static_game_texture) {
+            value = (uint16_t)((value << 8) | (value >> 8));
+        }
+        rdp.palette[palofs + i] = value;
     }
 
     rdp.textures_changed[0] = true;

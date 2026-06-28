@@ -12,6 +12,11 @@
 #include "gbi_extension.h"
 
 #ifdef NATIVE_PORT
+extern struct sImageTableEntry *genericimage;
+extern struct sImageTableEntry *impactimages;
+extern struct sImageTableEntry *explosion_smokeimages;
+extern struct sImageTableEntry *scattered_explosions;
+
 typedef struct TexDebugFireEvent {
     uint32_t seq;
     int32_t global_timer;
@@ -52,6 +57,75 @@ static int texDebugTraceSelectEnabled(void)
     }
 
     return g_TexDebugTraceSelect != 0;
+}
+
+static const char *texDebugImageTableName(struct sImageTableEntry *entry, int *index_out)
+{
+    if (index_out != NULL) {
+        *index_out = -1;
+    }
+
+    if (entry == NULL) {
+        return "-";
+    }
+
+    if (genericimage != NULL && entry >= genericimage && entry < genericimage + 1) {
+        if (index_out != NULL) *index_out = (int)(entry - genericimage);
+        return "genericimage";
+    }
+    if (impactimages != NULL && entry >= impactimages && entry < impactimages + 20) {
+        if (index_out != NULL) *index_out = (int)(entry - impactimages);
+        return "impactimages";
+    }
+    if (explosion_smokeimages != NULL && entry >= explosion_smokeimages && entry < explosion_smokeimages + 6) {
+        if (index_out != NULL) *index_out = (int)(entry - explosion_smokeimages);
+        return "explosion_smokeimages";
+    }
+    if (scattered_explosions != NULL && entry >= scattered_explosions && entry < scattered_explosions + 5) {
+        if (index_out != NULL) *index_out = (int)(entry - scattered_explosions);
+        return "scattered_explosions";
+    }
+
+    return "-";
+}
+
+static u32 texResolveNativeImageIndex(u32 raw_index)
+{
+    if (raw_index < NUM_TEXTURES) {
+        return raw_index;
+    }
+
+    {
+        u32 swapped = ((raw_index & 0x000000ffU) << 24) |
+                      ((raw_index & 0x0000ff00U) << 8) |
+                      ((raw_index & 0x00ff0000U) >> 8) |
+                      ((raw_index & 0xff000000U) >> 24);
+
+        if (swapped < NUM_TEXTURES) {
+            return swapped;
+        }
+    }
+
+    return raw_index;
+}
+
+#define TEX_NATIVE_IMAGESEG_TOKEN_PREFIX 0xABCD0000U
+#define TEX_NATIVE_IMAGESEG_TOKEN_ID_MASK 0x0000FFFFU
+
+static uintptr_t texNativeTextureImageForSettimg(u32 texture_index,
+                                                 struct tex *tex,
+                                                 const struct sImageTableEntry *tconfig)
+{
+    if (texture_index < NUM_TEXTURES) {
+        return (uintptr_t)(TEX_NATIVE_IMAGESEG_TOKEN_PREFIX |
+                           (texture_index & TEX_NATIVE_IMAGESEG_TOKEN_ID_MASK));
+    }
+
+    if (tex != NULL && tex->data != NULL) {
+        return (uintptr_t)tex->data;
+    }
+
+    return (uintptr_t)tconfig->index;
 }
 
 void texDebugPushSourceTag(const char *tag)
@@ -502,45 +576,62 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
         
 		u8 format;
 		u8 depth;
-        s32 stack_padding;
-		s32 lutmode;
-		s32 depth2 = G_IM_SIZ_16b;
-		s32 lrs = 0;
-        s32 sp138 = 0;
-		s32 line = 0;
-            
-        u16* aa;
+	        s32 stack_padding;
+			s32 lutmode;
+			s32 depth2 = G_IM_SIZ_16b;
+			s32 lrs = 0;
+	        s32 sp138 = 0;
+			s32 line = 0;
+#ifdef NATIVE_PORT
+		        u32 texture_index = texResolveNativeImageIndex(tconfig->index);
+#endif
 
-        tex = NULL;
+		        u16* aa;
+
+	        tex = NULL;
         
         width = tconfig->width;
         height = tconfig->height;
         
-        if ((u32) tconfig->index < NUM_TEXTURES)
-        {
+	        if ((u32) tconfig->index < NUM_TEXTURES)
+	        {
 #ifdef NATIVE_PORT
-            /* On PC, tconfig->index is the texture enum value directly.
-             * texLoadFromTextureNum takes the number and loads via g_Textures[]. */
-            texLoadFromTextureNum(tconfig->index, NULL);
+	            /* On PC, tconfig->index is the texture enum value directly.
+	             * texLoadFromTextureNum takes the number and loads via g_Textures[]. */
+	            texLoadFromTextureNum(texture_index, NULL);
 #else
-            texLoad((s32 *)tconfig, NULL);
+	            texLoad((s32 *)tconfig, NULL);
 #endif
-        }
-
+	        }
 #ifdef NATIVE_PORT
-        /* On PC, tconfig->index IS the texture number — use it directly.
-         * On N64, the index is a ROM address and (PHYS_TO_K0(addr))[-4]
-         * reads the texture number from ROM metadata preceding the data. */
-        tex = texFindInPool(tconfig->index, NULL);
-        if (texDebugTraceSelectEnabled()) {
-            fprintf(stderr,
-                    "[TEXSELECT] gt=%d img=%u table_wh=%ux%u table_level=%u "
-                    "table_fmt=%u table_depth=%u arg2=%u arg3=%d ulst=%u "
-                    "tex=%p texnum=%u tex_wh=%ux%u tex_maxlod=%u tex_fmt=%u "
-                    "tex_depth=%u special=%u data=%p\n",
-                    g_GlobalTimer,
-                    tconfig->index,
-                    tconfig->width,
+	        else if (texture_index < NUM_TEXTURES)
+	        {
+	            texLoadFromTextureNum(texture_index, NULL);
+	        }
+#endif
+
+	#ifdef NATIVE_PORT
+	        /* On PC, tconfig->index IS the texture number — use it directly.
+	         * On N64, the index is a ROM address and (PHYS_TO_K0(addr))[-4]
+	         * reads the texture number from ROM metadata preceding the data. */
+	        tex = texFindInPool(texture_index, NULL);
+	        if (texDebugTraceSelectEnabled()) {
+	            int table_index;
+	            const char *table_name = texDebugImageTableName(tconfig, &table_index);
+	            fprintf(stderr,
+	                    "[TEXSELECT] gt=%d entry=%p src=%s[%d] tag=%s img=%u resolved_img=%u "
+	                    "table_wh=%ux%u table_level=%u "
+	                    "table_fmt=%u table_depth=%u arg2=%u arg3=%d ulst=%u "
+	                    "tex=%p texnum=%u tex_wh=%ux%u tex_maxlod=%u tex_fmt=%u "
+	                    "tex_depth=%u special=%u data=%p\n",
+	                    g_GlobalTimer,
+	                    (void *)tconfig,
+	                    table_name,
+	                    table_index,
+	                    g_TexDebugSourceTag != NULL ? g_TexDebugSourceTag : "-",
+	                    tconfig->index,
+	                    texture_index,
+	                    tconfig->width,
                     tconfig->height,
                     tconfig->level,
                     tconfig->format,
@@ -562,6 +653,15 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
 #else
         aa = PHYS_TO_K0(tconfig->index);
         tex = texFindInPool((aa)[-4], NULL);
+#endif
+
+#ifdef NATIVE_PORT
+        /* Static game textures must reach fast3d as IMAGESEG-style tokens so
+         * the renderer uses the native-word RGBA decoder and stable cache key.
+         * Non-static effect-frame entries keep the older pointer/raw fallback. */
+        uintptr_t texture_image = texNativeTextureImageForSettimg(texture_index,
+                                                                  tex,
+                                                                  tconfig);
 #endif
 
         if (tconfig->level == 0)
@@ -649,7 +749,13 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
                 break;
             }
 
-            gDPSetTextureImage(gdl++, format, depth2, 1, tconfig->index);
+            gDPSetTextureImage(gdl++, format, depth2, 1,
+#ifdef NATIVE_PORT
+                texture_image
+#else
+                tconfig->index
+#endif
+            );
 
             gDPSetTile(gdl++, format, depth2, 0, 0, G_TX_LOADTILE, 0,
                 tconfig->flagsT, G_TX_NOMASK, G_TX_NOLOD,
@@ -786,7 +892,13 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
                 break;
             }
 
-            gDPSetTextureImage(gdl++, format, depth2, 1, tconfig->index);
+            gDPSetTextureImage(gdl++, format, depth2, 1,
+#ifdef NATIVE_PORT
+                texture_image
+#else
+                tconfig->index
+#endif
+            );
 
             gDPSetTile(gdl++, format, depth2, 0, 0, G_TX_LOADTILE, 0,
                 G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOLOD,

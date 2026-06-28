@@ -64,6 +64,7 @@ extern ObjectRecord *setupFindObjForReuse(s32 wanttype, ObjectRecord **offscreen
 #include "fr.h"
 #include "unk_0CC4C0.h"
 #include "objective_status.h"
+#include "othermodemicrocode.h"
 
 #ifdef NATIVE_PORT
 static void chrobjClearStaleSoundSlot(ALSoundState **slot, const char *source);
@@ -111,6 +112,8 @@ static int g_ObjDropTraceBudget = -1;
 static int g_ObjDropTraceFrameMin = -1;
 static int g_ObjDropTraceFrameMax = -1;
 static int g_ObjDropTraceDepth = 0;
+static int g_HatTraceEnabled = -1;
+static int g_HatTraceBudget = -1;
 extern void portTraceBulletImpactMaterial(s32 texturenum, s32 hit_sound, s32 impact_type);
 extern void portTraceProjectileMotionEnd(const ObjectRecord *obj,
                                          const PropRecord *projectile_prop,
@@ -923,6 +926,109 @@ static void monitorTracePrintf(const char *fmt, ...)
     fflush(stderr);
 }
 
+static ModelNode *monitorFindDrawableNode(ModelNode *node, int depth)
+{
+    ModelNode *found;
+    union ModelRoData *rodata;
+    u32 type;
+
+    if (node == NULL || depth > 64) {
+        return NULL;
+    }
+
+    type = node->Opcode & 0xff;
+
+    if (type == MODELNODE_OPCODE_DLCOLLISION) {
+        return node;
+    }
+
+    rodata = node->Data;
+
+    if (rodata != NULL) {
+        switch (type) {
+            case MODELNODE_OPCODE_HEADER:
+                found = monitorFindDrawableNode(rodata->Header.FirstGroup, depth + 1);
+                if (found != NULL) {
+                    return found;
+                }
+                break;
+
+            case MODELNODE_OPCODE_GROUP:
+            case MODELNODE_OPCODE_OP03:
+                found = monitorFindDrawableNode(rodata->Group.ChildGroup, depth + 1);
+                if (found != NULL) {
+                    return found;
+                }
+                break;
+
+            case MODELNODE_OPCODE_LOD:
+                found = monitorFindDrawableNode(rodata->LOD.Affects, depth + 1);
+                if (found != NULL) {
+                    return found;
+                }
+                break;
+
+            case MODELNODE_OPCODE_SWITCH:
+                found = monitorFindDrawableNode(rodata->Switch.Controls, depth + 1);
+                if (found != NULL) {
+                    return found;
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    found = monitorFindDrawableNode(node->Child, depth + 1);
+    if (found != NULL) {
+        return found;
+    }
+
+    return monitorFindDrawableNode(node->Next, depth + 1);
+}
+
+static int hatTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_HatTraceEnabled >= 0) {
+        return g_HatTraceEnabled;
+    }
+
+    value = getenv("GE007_HAT_TRACE");
+    g_HatTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_HAT_TRACE_BUDGET");
+    g_HatTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 200;
+
+    return g_HatTraceEnabled;
+}
+
+static void hatTracePrintf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!hatTraceEnabled()) {
+        return;
+    }
+
+    if (g_HatTraceBudget == 0) {
+        return;
+    }
+
+    if (g_HatTraceBudget > 0) {
+        g_HatTraceBudget--;
+    }
+
+    va_start(ap, fmt);
+    fprintf(stderr, "[HAT_TRACE] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    fflush(stderr);
+}
+
 static int propSetupTraceEnabled(void)
 {
     const char *value;
@@ -1442,9 +1548,8 @@ ModelRenderData D_80030B34 = {NULL,
 
 
 
-#ifndef NATIVE_PORT
 //[80030B74	00	Bond]
-u32 monAnim00Bond[] = {
+MonitorCmdWord monAnim00Bond[] = {
     MONUSEIMAGE(IMGBOND),
     MONHORZSCROLL(0x400, 20),
     MONHOLDTIME(20),
@@ -1460,7 +1565,7 @@ u32 monAnim00Bond[] = {
 };
 
 //[80030C00	01	Desktops, Satellite]
-u32 monAnim01DesktopsSatellite[] = {
+MonitorCmdWord monAnim01DesktopsSatellite[] = {
      MONUSEIMAGE(IMG2DMATH),
      MONHORZSCROLL(0x400, 20),
      MONHOLDTIME(20),
@@ -1509,7 +1614,7 @@ u32 monAnim01DesktopsSatellite[] = {
 };
 
 //[80030E24	02	10 screens: astrological]
-u32 monAnim02Astrological[] = {
+MonitorCmdWord monAnim02Astrological[] = {
      MONUSEIMAGE(IMGSHUTTLE1), MONHOLDTIME(80),
      MONUSEIMAGE(IMGSHUTTLE2), MONHOLDTIME(80),
      MONUSEIMAGE(IMGEARTHFULL1), MONHOLDTIME(80),
@@ -1524,7 +1629,7 @@ u32 monAnim02Astrological[] = {
 };
 
 //[80030EC8	0F	7 screens: satellite, targetting, ]
-u32 monAnim0FSatelliteTargeting[] = {
+MonitorCmdWord monAnim0FSatelliteTargeting[] = {
      MONUSEIMAGE(IMGEARTH), MONHOLDTIME(80),
      MONUSEIMAGE(IMGDESKTOPBANG), MONHOLDTIME(80),
      MONUSEIMAGE(IMGHEATMAP), MONHOLDTIME(80),
@@ -1537,7 +1642,7 @@ u32 monAnim0FSatelliteTargeting[] = {
 };
 
 //[80030F44	03	3 wave patterns]
-u32 monAnim03ThreeWavePattern[] = {
+MonitorCmdWord monAnim03ThreeWavePattern[] = {
      MONRGBA(COLOR_MINESHAFT3, 1),
      MONUSEIMAGE(IMGSINE),
      MONHORZSCROLL(0x800, 120),
@@ -1561,7 +1666,7 @@ u32 monAnim03ThreeWavePattern[] = {
 };
 
 //[80031018	04	wave pattern]
-u32 monAnim04WavePattern[] = {
+MonitorCmdWord monAnim04WavePattern[] = {
      MONRGBA(COLOR_MINESHAFT3, 1),
      MONUSEIMAGE(IMGSINE),
      MONZOOMWIDTH(0x80, 1),
@@ -1574,7 +1679,7 @@ u32 monAnim04WavePattern[] = {
 };
 
 //[80031074	05	green text up]
-u32 monAnim05GreenTextUp[] = {
+MonitorCmdWord monAnim05GreenTextUp[] = {
      MONUSEIMAGE(IMGTEXT),
      MONRGBA(COLOR_BARELYGREENOPAQUE, 1),
      MONVERTSCROLL(0xFFFFFE00, 80),
@@ -1591,7 +1696,7 @@ u32 monAnim05GreenTextUp[] = {
 };
 
 //[800310F0	06	red text down]
-u32 monAnim06RedTextDown[] = {
+MonitorCmdWord monAnim06RedTextDown[] = {
      MONUSEIMAGE(IMGTEXT),
      MONRGBA(COLOR_DIESEL, 1),
      MONVERTSCROLL(0x200, 80),
@@ -1611,7 +1716,7 @@ u32 monAnim06RedTextDown[] = {
 };
 
 //[8003118C	07	d. green text down]
-u32 monAnim07GreenTextDown[] = {
+MonitorCmdWord monAnim07GreenTextDown[] = {
      MONUSEIMAGE(IMGTEXT),
      MONRGBA(COLOR_DEEPFIR, 1),
      MONVERTSCROLL(0x200, 80),
@@ -1630,7 +1735,7 @@ u32 monAnim07GreenTextDown[] = {
 };
 
 //[8003121C	08	red bar graph +]
-u32 monAnim08RedBarGraph[] = {
+MonitorCmdWord monAnim08RedBarGraph[] = {
      MONUSEIMAGE(IMGBARS),
      MONRGBA(COLOR_VERDUNGREEN, 1),
      MONHORZSCROLL(0x280, 1),
@@ -1639,7 +1744,7 @@ u32 monAnim08RedBarGraph[] = {
 };
 
 //[80031248	09	blue bar graph +]
-u32 monAnim09BlueBarGraph[] = {
+MonitorCmdWord monAnim09BlueBarGraph[] = {
      MONUSEIMAGE(IMGBARS),
      MONRGBA(COLOR_CYPRUS, 1),
      MONHORZSCROLL(0x280, 1),
@@ -1648,7 +1753,7 @@ u32 monAnim09BlueBarGraph[] = {
 };
 
 //[80031274	0A	green bar graph -]
-u32 monAnim0AGreenBarGraph[] = {
+MonitorCmdWord monAnim0AGreenBarGraph[] = {
      MONUSEIMAGE(IMGBARS),
      MONRGBA(COLOR_TOMTHUMB, 1),
      MONHORZSCROLL(0xFFFFFD80, 1),
@@ -1657,19 +1762,19 @@ u32 monAnim0AGreenBarGraph[] = {
 };
 
 //[800312A0	subroutine	used by radar]
-u32 monAnimRadarSub1[] = {
+MonitorCmdWord monAnimRadarSub1[] = {
      MONRGBA(COLOR_GREEN, 20),
      MONJUMPTO(monAnimRadarSub3)
 };
 
 //[800312B4	subroutine	used by radar]
-u32 monAnimRadarSub2[] = {
+MonitorCmdWord monAnimRadarSub2[] = {
      MONRGBA(COLOR_SANFELIX, 20),
      MONJUMPTO(monAnimRadarSub3)
 };
 
 //[800312C8	subroutine	used by radar]
-u32 monAnimRadarSub3[] = {
+MonitorCmdWord monAnimRadarSub3[] = {
      MONROTATEIMAGE(0xB6),
      MONHOLDTIME(1),
      MONJUMPCHANCE(monAnimRadarSub1, TWO_PERCENT_CHANCE),
@@ -1678,14 +1783,14 @@ u32 monAnimRadarSub3[] = {
 };
 
 //[800312F4	0B	radar]
-u32 monAnim0BRadar[] = {
+MonitorCmdWord monAnim0BRadar[] = {
      MONUSEIMAGE(IMGTRIANGLE),
      MONRGBA(COLOR_ALMOSTDARKGREEN, 1),
      MONJUMPTO(monAnimRadarSub2)
 };
 
 //[80031310	0C	spinning cube]
-u32 monAnim0CSpinningCube[] = {
+MonitorCmdWord monAnim0CSpinningCube[] = {
      MONUSEIMAGE(IMGCUBE1),
      MONRGBA(COLOR_MINSK, 30),
      MONHOLDTIME(5),
@@ -1699,7 +1804,7 @@ u32 monAnim0CSpinningCube[] = {
 };
 
 //[80031360	10	global map]
-u32 monAnim10GlobalMap[] = {
+MonitorCmdWord monAnim10GlobalMap[] = {
      MONUSEIMAGE(IMGWORLDMAP),
      MONRGBA(COLOR_SEAGREEN, 30),
      MONHORZSCROLL(0xFFFFFC00, 1024),
@@ -1731,7 +1836,7 @@ u32 monAnim10GlobalMap[] = {
 };
 
 //[80031490	0D	3 screens: location, weapon armed, ]
-u32 monAnim0DLocWeapArmed[] = {
+MonitorCmdWord monAnim0DLocWeapArmed[] = {
      MONRGBA(COLOR_BLACK, 1),
      MONRGBA(COLOR_SILVER, 400),
      MONUSEIMAGE(1),
@@ -1747,7 +1852,7 @@ u32 monAnim0DLocWeapArmed[] = {
 };
 
 //[800314F8	0E	red target]
-u32 monAnim0ERedTarget[] = {
+MonitorCmdWord monAnim0ERedTarget[] = {
      MONZOOMSQUARE(0x400, 1),
      MONRGBA(COLOR_THUNDERBIRD, 1),
      MONUSEIMAGE(6),
@@ -1762,7 +1867,7 @@ u32 monAnim0ERedTarget[] = {
 };
 
 //[8003156C	11	Karl yelling]
-u32 monAnim11KarlYelling[] = {
+MonitorCmdWord monAnim11KarlYelling[] = {
      MONRGBA(COLOR_DARKGREEN, 0),
      MONUSEIMAGE(IMGTALK1),
      MONHOLDTIME(5),
@@ -1778,7 +1883,7 @@ u32 monAnim11KarlYelling[] = {
 };
 
 //[800315CC	12	skateboard]
-u32 monAnim12Skateboard[] = {
+MonitorCmdWord monAnim12Skateboard[] = {
      MONUSEIMAGE(IMGSKATEBOARD4),
      MONRGBA(COLOR_DARKGREEN, 0),
      MONHOLDTIME(3),
@@ -1847,7 +1952,7 @@ u32 monAnim12Skateboard[] = {
 };
 
 //[80031848	13	police guy]
-u32 monAnim13PoliceGuy[] = {
+MonitorCmdWord monAnim13PoliceGuy[] = {
     MONRGBA(COLOR_DARKGREEN2, 0),
     MONUSEIMAGE(IMGFIST1),
     MONHOLDTIME(5),
@@ -1861,7 +1966,7 @@ u32 monAnim13PoliceGuy[] = {
 };
 
 //[80031898	14	'off']
-u32 monAnim14Off[] = {
+MonitorCmdWord monAnim14Off[] = {
     MONUSEIMAGE(IMGSINE),
     MONRGBA(COLOR_BARELYGREEN, 1),
     MONHOLDTIME(5),
@@ -1869,7 +1974,7 @@ u32 monAnim14Off[] = {
 };
 
 //[800318B8	15	randomly select one of seven animations]
-u32 monAnim15RandomSeven[] = {
+MonitorCmdWord monAnim15RandomSeven[] = {
     MONJUMPCHANCE(monAnim04WavePattern, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim11KarlYelling, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim08RedBarGraph, TEN_PERCENT_CHANCE),
@@ -1882,7 +1987,7 @@ u32 monAnim15RandomSeven[] = {
 };
 
 //[8003191C	16	randomly select random screens + random effects or boring]
-u32 monAnim16RandomFour[] = {
+MonitorCmdWord monAnim16RandomFour[] = {
     MONJUMPCHANCE(monAnim03ThreeWavePattern, TWO_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim08RedBarGraph, TWO_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim05GreenTextUp, TWO_PERCENT_CHANCE),
@@ -1891,7 +1996,7 @@ u32 monAnim16RandomFour[] = {
 };
 
 //[80031950	17	Base Function for random screens + random effects]
-u32 monAnim17RandImageEffect[] = {
+MonitorCmdWord monAnim17RandImageEffect[] = {
     MONJUMPCHANCE(monRandEffectChanceSHUTTLE1, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monRandEffectChanceSHUTTLE2, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monRandEffectChanceEARTHFULL1, TEN_PERCENT_CHANCE),
@@ -1907,77 +2012,77 @@ u32 monAnim17RandImageEffect[] = {
 };
 
 //[800319D4	18	random screens + random effects - set image]
-u32 monRandEffectChanceSHUTTLE1[] = {
+MonitorCmdWord monRandEffectChanceSHUTTLE1[] = {
     MONUSEIMAGE(IMGSHUTTLE1),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[800319F0	19	random screens + random effects - set image]
-u32 monRandEffectChanceSHUTTLE2[] = {
+MonitorCmdWord monRandEffectChanceSHUTTLE2[] = {
     MONUSEIMAGE(IMGSHUTTLE2),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A0C	1A	random screens + random effects - set image]
-u32 monRandEffectChanceEARTHFULL1[] = {
+MonitorCmdWord monRandEffectChanceEARTHFULL1[] = {
     MONUSEIMAGE(IMGEARTHFULL1),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A28	1B	random screens + random effects - set image]
-u32 monRandEffectChanceEARTHFULL2[] = {
+MonitorCmdWord monRandEffectChanceEARTHFULL2[] = {
     MONUSEIMAGE(IMGEARTHFULL2),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A44	1C	random screens + random effects - set image]
-u32 monRandEffectChanceBLUESTARS[] = {
+MonitorCmdWord monRandEffectChanceBLUESTARS[] = {
     MONUSEIMAGE(IMGBLUESTARS),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A60	1D	random screens + random effects - set image]
-u32 monRandEffectChanceGALAXY1[] = {
+MonitorCmdWord monRandEffectChanceGALAXY1[] = {
     MONUSEIMAGE(IMGGALAXY1),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A7C	1E	random screens + random effects - set image]
-u32 monRandEffectChanceGALAXY2[] = {
+MonitorCmdWord monRandEffectChanceGALAXY2[] = {
     MONUSEIMAGE(IMGGALAXY2),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031A98	1F	random screens + random effects - set image]
-u32 monRandEffectChanceEARTHTEXT[] = {
+MonitorCmdWord monRandEffectChanceEARTHTEXT[] = {
     MONUSEIMAGE(IMGEARTHTEXT),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031AB4	20	random screens + random effects - set image]
-u32 monRandEffectChanceTARGETEARTH[] = {
+MonitorCmdWord monRandEffectChanceTARGETEARTH[] = {
     MONUSEIMAGE(IMGTARGETEARTH),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031AD0	21	random screens + random effects - set image]
-u32 monRandEffectChanceGALAXY3[] = {
+MonitorCmdWord monRandEffectChanceGALAXY3[] = {
     MONUSEIMAGE(IMGGALAXY3),
     MONHOLDTIME(20),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, HUNDRED_PERCENT_CHANCE)
 };
 
 //[80031AEC	22	random screens + random effects - colourizer]
-u32 monRandChanceScrollOrZoomRandRGBN[] = {
+MonitorCmdWord monRandChanceScrollOrZoomRandRGBN[] = {
     MONJUMPCHANCE(monRandChanceScrollOrZoomRed, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monRandChanceScrollOrZoomGreen, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monRandChanceScrollOrZoomBlue, TEN_PERCENT_CHANCE),
@@ -1986,22 +2091,22 @@ u32 monRandChanceScrollOrZoomRandRGBN[] = {
 };
 
 //[80031B24	23	random screens + random effects - colourizer]
-u32 monRandChanceScrollOrZoomRed[] = {
+MonitorCmdWord monRandChanceScrollOrZoomRed[] = {
     MONRGBA(COLOR_PERSIANRED, 60),
     MONJUMPTO(monRandChanceScrollOrZoom)
 };
 
-u32 monRandChanceScrollOrZoomGreen[] = {
+MonitorCmdWord monRandChanceScrollOrZoomGreen[] = {
     MONRGBA(COLOR_APPLE, 60),
     MONJUMPTO(monRandChanceScrollOrZoom)
 };
 
-u32 monRandChanceScrollOrZoomBlue[] = {
+MonitorCmdWord monRandChanceScrollOrZoomBlue[] = {
     MONRGBA(COLOR_GOVERNORBAY, 60),
     MONJUMPTO(monRandChanceScrollOrZoom)
 };
 
-u32 monRandChanceScrollOrZoom[] = {
+MonitorCmdWord monRandChanceScrollOrZoom[] = {
     MONHOLDTIME(50),
     MONJUMPCHANCE(monAnim27RandomEffectScrollRight, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim28RandomEffectScrollUpFast, TEN_PERCENT_CHANCE),
@@ -2014,28 +2119,28 @@ u32 monRandChanceScrollOrZoom[] = {
 
 
 //[80031BB4	27	random screens + random effects - scroll right]
-u32 monAnim27RandomEffectScrollRight[] = {
+MonitorCmdWord monAnim27RandomEffectScrollRight[] = {
     MONHORZSCROLL(0x800, 120),
     MONHOLDTIME(120),
     MONJUMPTO(monAnim2CRandEffectWaitRoute)
 };
 
 //[80031BD0	28	random screens + random effects - scroll up fast]
-u32 monAnim28RandomEffectScrollUpFast[] = {
+MonitorCmdWord monAnim28RandomEffectScrollUpFast[] = {
     MONVERTSCROLL(0x2000, 50),
     MONHOLDTIME(200),
     MONJUMPTO(monAnim2CRandEffectWaitRoute)
 };
 
 //[80031BEC	29	random screens + random effects - scroll up]
-u32 monAnim29RandomEffectScrollUp[] = {
+MonitorCmdWord monAnim29RandomEffectScrollUp[] = {
     MONVERTSCROLL(0x2000, 200),
     MONHOLDTIME(200),
     MONJUMPTO(monAnim2CRandEffectWaitRoute)
 };
 
 //[80031C08	2A	random screens + random effects - scroll and zoom]
-u32 monAnim2ARandEffectScrollZoom1[] = {
+MonitorCmdWord monAnim2ARandEffectScrollZoom1[] = {
     MONHORZSCROLLNA(0x288, 300),
     MONVERTSCROLLNA(0x3AA, 300),
     MONZOOMSQUARE(0x80, 200),
@@ -2048,7 +2153,7 @@ u32 monAnim2ARandEffectScrollZoom1[] = {
 };
 
 //[80031C80	2B	random screens + random effects - scroll and zoom]
-u32 monAnim2ARandEffectScrollZoom2[] = {
+MonitorCmdWord monAnim2ARandEffectScrollZoom2[] = {
     MONHORZSCROLLNA(0x320, 400),
     MONVERTSCROLLNA(0x190, 400),
     MONZOOMSQUARE(0x80, 200),
@@ -2065,7 +2170,7 @@ u32 monAnim2ARandEffectScrollZoom2[] = {
 };
 
 //[80031D30	2C	random screens + random effects - wait and route]
-u32 monAnim2CRandEffectWaitRoute[] = {
+MonitorCmdWord monAnim2CRandEffectWaitRoute[] = {
     MONHOLDTIME(50),
     MONJUMPCHANCE(monRandChanceScrollOrZoomRandRGBN, TEN_PERCENT_CHANCE),
     MONJUMPCHANCE(monAnim2DRandEffectFlash, TWENTY_PERCENT_CHANCE),
@@ -2073,7 +2178,7 @@ u32 monAnim2CRandEffectWaitRoute[] = {
 };
 
 //[80031D58	2D	random screens + random effects - flash]
-u32 monAnim2DRandEffectFlash[] = {
+MonitorCmdWord monAnim2DRandEffectFlash[] = {
     MONHOLDTIME(50),
     MONRGBA(COLOR_WHITE, 10),
     MONRGBA(COLOR_BLACK, 5),
@@ -2085,7 +2190,7 @@ u32 monAnim2DRandEffectFlash[] = {
 };
 
 //[80031DA8	2E	red brightening screen]
-u32 monAnim2ERedBrightening[] = {
+MonitorCmdWord monAnim2ERedBrightening[] = {
      MONUSEIMAGE(IMGKEYBOARDKEY),
      MONZOOMSQUARE(0x200, 0),
      MONRGBA(COLOR_ALIZARINCRIMSON, 60),
@@ -2096,7 +2201,7 @@ u32 monAnim2ERedBrightening[] = {
 };
 
 //[80031DF4	2F	green brightening screen]
-u32 monAnim2FGreenBrightening[] = {
+MonitorCmdWord monAnim2FGreenBrightening[] = {
      MONUSEIMAGE(IMGKEYBOARDKEY),
      MONZOOMSQUARE(0x200, 0),
      MONRGBA(COLOR_APPLE, 60),
@@ -2107,7 +2212,7 @@ u32 monAnim2FGreenBrightening[] = {
 };
 
 //[80031E40	30	grey solid]
-u32 monAnim30GreySolid[] = {
+MonitorCmdWord monAnim30GreySolid[] = {
      MONUSEIMAGE(IMGKEYBOARDKEY),
      MONZOOMSQUARE(0x200, 0),
      MONRGBA(COLOR_MINESHAFT2, 10),
@@ -2116,7 +2221,7 @@ u32 monAnim30GreySolid[] = {
 };
 
 //[80031E78	31	red solid]
-u32 monAnim31RedSolid[] = {
+MonitorCmdWord monAnim31RedSolid[] = {
      MONUSEIMAGE(IMGKEYBOARDKEY),
      MONZOOMSQUARE(0x200, 0),
      MONRGBA(COLOR_ALIZARINCRIMSON, 10),
@@ -2125,7 +2230,7 @@ u32 monAnim31RedSolid[] = {
 };
 
 //[80031EB0	32	green solid]
-u32 monAnim32GreenSolid[] = {
+MonitorCmdWord monAnim32GreenSolid[] = {
      MONUSEIMAGE(IMGKEYBOARDKEY),
      MONZOOMSQUARE(0x200, 0),
      MONRGBA(COLOR_APPLE, 10),
@@ -2134,14 +2239,14 @@ u32 monAnim32GreenSolid[] = {
 };
 
 //[80031EE8	33	black solid]
-u32 monAnim33BlackSolid[] = {
+MonitorCmdWord monAnim33BlackSolid[] = {
      MONUSEIMAGE(0),
      MONRGBA(COLOR_BLACK, 0),
      MONSTOPANIM()
 };
 
 //[80031F00	34	???	Not Included in Normal List - linked @ 0x9544]
-u32 monAnim34[] = {
+MonitorCmdWord monAnim34[] = {
      MONZOOMSQUARE(0x400, 0),
      MONHOLDTIME(1),
      MONZOOMSQUARE(0x1000, 20),
@@ -2150,7 +2255,7 @@ u32 monAnim34[] = {
 };
 
 //[80031F44	35	Taser	Not Included in Normal List!]
-u32 monAnim35Taser[] = {
+MonitorCmdWord monAnim35Taser[] = {
      MONUSEIMAGE(IMGBOND),
      MONHORZSCROLL(0x400, 20), MONHOLDTIME(20),
      MONVERTSCROLL(0x400, 20), MONRGBA(COLOR_BLACK, 20), MONHOLDTIME(20),
@@ -2158,65 +2263,6 @@ u32 monAnim35Taser[] = {
      MONZOOMSQUARE(0x400, 20), MONHOLDTIME(20),
      MONLOOP()
 };
-#else /* NATIVE_PORT */
-u32 monAnim00Bond[] = { 0 };
-u32 monAnim01DesktopsSatellite[] = { 0 };
-u32 monAnim02Astrological[] = { 0 };
-u32 monAnim0FSatelliteTargeting[] = { 0 };
-u32 monAnim03ThreeWavePattern[] = { 0 };
-u32 monAnim04WavePattern[] = { 0 };
-u32 monAnim05GreenTextUp[] = { 0 };
-u32 monAnim06RedTextDown[] = { 0 };
-u32 monAnim07GreenTextDown[] = { 0 };
-u32 monAnim08RedBarGraph[] = { 0 };
-u32 monAnim09BlueBarGraph[] = { 0 };
-u32 monAnim0AGreenBarGraph[] = { 0 };
-u32 monAnimRadarSub1[] = { 0 };
-u32 monAnimRadarSub2[] = { 0 };
-u32 monAnimRadarSub3[] = { 0 };
-u32 monAnim0BRadar[] = { 0 };
-u32 monAnim0CSpinningCube[] = { 0 };
-u32 monAnim10GlobalMap[] = { 0 };
-u32 monAnim0DLocWeapArmed[] = { 0 };
-u32 monAnim0ERedTarget[] = { 0 };
-u32 monAnim11KarlYelling[] = { 0 };
-u32 monAnim12Skateboard[] = { 0 };
-u32 monAnim13PoliceGuy[] = { 0 };
-u32 monAnim14Off[] = { 0 };
-u32 monAnim15RandomSeven[] = { 0 };
-u32 monAnim16RandomFour[] = { 0 };
-u32 monAnim17RandImageEffect[] = { 0 };
-u32 monRandEffectChanceSHUTTLE1[] = { 0 };
-u32 monRandEffectChanceSHUTTLE2[] = { 0 };
-u32 monRandEffectChanceEARTHFULL1[] = { 0 };
-u32 monRandEffectChanceEARTHFULL2[] = { 0 };
-u32 monRandEffectChanceBLUESTARS[] = { 0 };
-u32 monRandEffectChanceGALAXY1[] = { 0 };
-u32 monRandEffectChanceGALAXY2[] = { 0 };
-u32 monRandEffectChanceEARTHTEXT[] = { 0 };
-u32 monRandEffectChanceTARGETEARTH[] = { 0 };
-u32 monRandEffectChanceGALAXY3[] = { 0 };
-u32 monRandChanceScrollOrZoomRandRGBN[] = { 0 };
-u32 monRandChanceScrollOrZoomRed[] = { 0 };
-u32 monRandChanceScrollOrZoomGreen[] = { 0 };
-u32 monRandChanceScrollOrZoomBlue[] = { 0 };
-u32 monRandChanceScrollOrZoom[] = { 0 };
-u32 monAnim27RandomEffectScrollRight[] = { 0 };
-u32 monAnim28RandomEffectScrollUpFast[] = { 0 };
-u32 monAnim29RandomEffectScrollUp[] = { 0 };
-u32 monAnim2ARandEffectScrollZoom1[] = { 0 };
-u32 monAnim2ARandEffectScrollZoom2[] = { 0 };
-u32 monAnim2CRandEffectWaitRoute[] = { 0 };
-u32 monAnim2DRandEffectFlash[] = { 0 };
-u32 monAnim2ERedBrightening[] = { 0 };
-u32 monAnim2FGreenBrightening[] = { 0 };
-u32 monAnim30GreySolid[] = { 0 };
-u32 monAnim31RedSolid[] = { 0 };
-u32 monAnim32GreenSolid[] = { 0 };
-u32 monAnim33BlackSolid[] = { 0 };
-u32 monAnim34[] = { 0 };
-u32 monAnim35Taser[] = { 0 };
-#endif /* !NATIVE_PORT */
 
 /**
  * Address 0x80031FD0.
@@ -11108,7 +11154,7 @@ s32 object_interaction(struct PropRecord *arg0)
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)modelGetSwitchNodeSafe(model->obj, 0),
-                    sp370->pad,
+                    sp370->cctv_pad,
                     sp360.f[0], sp360.f[1], sp360.f[2]);
 #endif
             }
@@ -27614,7 +27660,7 @@ glabel sub_GAME_7F049B58
 
 
 
-void save_ptr_monitor_ani_code_to_obj_ani_slot(MonitorRecord *mon, void *image)
+void save_ptr_monitor_ani_code_to_obj_ani_slot(MonitorRecord *mon, MonitorCmdWord *image)
 {
     mon->cmdlist  = image;
     mon->offset = 0;
@@ -27623,164 +27669,164 @@ void save_ptr_monitor_ani_code_to_obj_ani_slot(MonitorRecord *mon, void *image)
 
 void monitorSetImageByNum(MonitorRecord *mon, s32 monAnimID)
 {
-    void *image = &monAnim00Bond;
+    MonitorCmdWord *image = monAnim00Bond;
     switch (monAnimID)
     {
          default:
          case 0:
             break;
          case 1:
-            image = &monAnim01DesktopsSatellite;
+            image = monAnim01DesktopsSatellite;
             break;
         case 2:
-            image = &monAnim02Astrological;
+            image = monAnim02Astrological;
             break;
         case 3:
-            image = &monAnim03ThreeWavePattern;
+            image = monAnim03ThreeWavePattern;
             break;
         case 4:
-            image = &monAnim04WavePattern;
+            image = monAnim04WavePattern;
             break;
         case 5:
-            image = &monAnim05GreenTextUp;
+            image = monAnim05GreenTextUp;
             break;
         case 6:
-            image = &monAnim06RedTextDown;
+            image = monAnim06RedTextDown;
             break;
         case 7:
-            image = &monAnim07GreenTextDown;
+            image = monAnim07GreenTextDown;
             break;
         case 8:
-            image = &monAnim08RedBarGraph;
+            image = monAnim08RedBarGraph;
             break;
         case 9:
-            image = &monAnim09BlueBarGraph;
+            image = monAnim09BlueBarGraph;
             break;
         case 10:
-            image = &monAnim0AGreenBarGraph;
+            image = monAnim0AGreenBarGraph;
             break;
         case 11:
-            image = &monAnim0BRadar;
+            image = monAnim0BRadar;
             break;
         case 12:
-            image = &monAnim0CSpinningCube;
+            image = monAnim0CSpinningCube;
             break;
         case 13:
-            image = &monAnim0DLocWeapArmed;
+            image = monAnim0DLocWeapArmed;
             break;
         case 14:
-            image = &monAnim0ERedTarget;
+            image = monAnim0ERedTarget;
             break;
         case 15:
-            image = &monAnim0FSatelliteTargeting;
+            image = monAnim0FSatelliteTargeting;
             break;
         case 16:
-            image = &monAnim10GlobalMap;
+            image = monAnim10GlobalMap;
             break;
         case 17:
-            image = &monAnim11KarlYelling;
+            image = monAnim11KarlYelling;
             break;
         case 18:
-            image = &monAnim12Skateboard;
+            image = monAnim12Skateboard;
             break;
         case 19:
-            image = &monAnim13PoliceGuy;
+            image = monAnim13PoliceGuy;
             break;
         case 20:
-            image = &monAnim14Off;
+            image = monAnim14Off;
             break;
         case 21:
-            image = &monAnim15RandomSeven;
+            image = monAnim15RandomSeven;
             break;
         case 22:
-            image = &monAnim16RandomFour;
+            image = monAnim16RandomFour;
             break;
         case 23:
-            image = &monAnim17RandImageEffect;
+            image = monAnim17RandImageEffect;
             break;
         case 24:
-            image = &monRandEffectChanceSHUTTLE1;
+            image = monRandEffectChanceSHUTTLE1;
             break;
         case 25:
-            image = &monRandEffectChanceSHUTTLE2;
+            image = monRandEffectChanceSHUTTLE2;
             break;
         case 26:
-            image = &monRandEffectChanceEARTHFULL1;
+            image = monRandEffectChanceEARTHFULL1;
             break;
         case 27:
-            image = &monRandEffectChanceEARTHFULL2;
+            image = monRandEffectChanceEARTHFULL2;
             break;
         case 28:
-            image = &monRandEffectChanceBLUESTARS;
+            image = monRandEffectChanceBLUESTARS;
             break;
         case 29:
-            image = &monRandEffectChanceGALAXY1;
+            image = monRandEffectChanceGALAXY1;
             break;
         case 30:
-            image = &monRandEffectChanceGALAXY2;
+            image = monRandEffectChanceGALAXY2;
             break;
         case 31:
-            image = &monRandEffectChanceEARTHTEXT;
+            image = monRandEffectChanceEARTHTEXT;
             break;
         case 32:
-            image = &monRandEffectChanceTARGETEARTH;
+            image = monRandEffectChanceTARGETEARTH;
             break;
         case 33:
-            image = &monRandEffectChanceGALAXY3;
+            image = monRandEffectChanceGALAXY3;
             break;
         case 34:
-            image = &monRandChanceScrollOrZoomRandRGBN;
+            image = monRandChanceScrollOrZoomRandRGBN;
             break;
         case 35:
-            image = &monRandChanceScrollOrZoomRed;
+            image = monRandChanceScrollOrZoomRed;
             break;
         case 36:
-            image = &monRandChanceScrollOrZoomGreen;
+            image = monRandChanceScrollOrZoomGreen;
             break;
         case 37:
-            image = &monRandChanceScrollOrZoomBlue;
+            image = monRandChanceScrollOrZoomBlue;
             break;
         case 38:
-            image = &monRandChanceScrollOrZoom;
+            image = monRandChanceScrollOrZoom;
             break;
         case 39:
-            image = &monAnim27RandomEffectScrollRight;
+            image = monAnim27RandomEffectScrollRight;
             break;
         case 40:
-            image = &monAnim28RandomEffectScrollUpFast;
+            image = monAnim28RandomEffectScrollUpFast;
             break;
         case 41:
-            image = &monAnim29RandomEffectScrollUp;
+            image = monAnim29RandomEffectScrollUp;
             break;
         case 42:
-            image = &monAnim2ARandEffectScrollZoom1;
+            image = monAnim2ARandEffectScrollZoom1;
             break;
         case 43:
-            image = &monAnim2ARandEffectScrollZoom2;
+            image = monAnim2ARandEffectScrollZoom2;
             break;
         case 44:
-            image = &monAnim2CRandEffectWaitRoute;
+            image = monAnim2CRandEffectWaitRoute;
             break;
         case 45:
-            image = &monAnim2DRandEffectFlash;
+            image = monAnim2DRandEffectFlash;
             break;
         case 46:
-            image = &monAnim2ERedBrightening;
+            image = monAnim2ERedBrightening;
             break;
         case 47:
-            image = &monAnim2FGreenBrightening;
+            image = monAnim2FGreenBrightening;
             break;
         case 48:
-            image = &monAnim30GreySolid;
+            image = monAnim30GreySolid;
             break;
         case 49:
-            image = &monAnim31RedSolid;
+            image = monAnim31RedSolid;
             break;
         case 50:
-            image = &monAnim32GreenSolid;
+            image = monAnim32GreenSolid;
             break;
         case 51:
-            image = &monAnim33BlackSolid;
+            image = monAnim33BlackSolid;
             break;
     }
     save_ptr_monitor_ani_code_to_obj_ani_slot(mon,  image);
@@ -27798,7 +27844,7 @@ void save_img_index_to_obj_ani_slot(MonitorRecord *mon, void *unk88)
 
 
 #ifdef NONMATCHING
-#if defined(PORT_FIXME_STUBS)
+#if defined(PORT_FIXME_STUBS) && !defined(NATIVE_PORT)
 Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorRecord *screen, Gfx *gdl, s32 arg4, s32 arg5) {
     return gdl;
 }
@@ -27816,17 +27862,36 @@ struct tvcmd {
 Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorRecord *screen, Gfx *gdl, s32 arg4, s32 arg5)
 {
     if (node && (node->Opcode & 0xff) == MODELNODE_OPCODE_DLCOLLISION) {
-        Vertex *vertices = dynAllocate7F0BD6C4(4);
-        Gfx *savedgdl = gdl++;
         union ModelRoData *rodata = node->Data;
         union ModelRwData *rwdata = modelGetNodeRwData(model, node);
-        sImageTableEntry *tconfig;
+        sImageTableEntry *tconfig = NULL;
+        Vertex *vertices;
+#ifdef NATIVE_PORT
+        Vertex native_vertices[4];
+        Vtx *packed_vertices;
+#endif
+        Gfx *savedgdl;
         bool yielding = FALSE;
+        s32 command_budget = 128;
 
-        while (!yielding) {
-            struct tvcmd *cmd = (struct tvcmd *) &screen->cmdlist[screen->offset];
+        if (screen == NULL || screen->cmdlist == NULL) {
+            return gdl;
+        }
 
-            switch (cmd->type) {
+        while (!yielding && command_budget-- > 0) {
+            MonitorCmdWord *cmd = &screen->cmdlist[screen->offset];
+            u32 type = (u32)cmd[0];
+            u32 arg1u = (u32)cmd[1];
+            s32 arg1 = (s32)arg1u;
+            u32 arg2 = (u32)cmd[2];
+
+            if (screen->offset > 4096) {
+                save_ptr_monitor_ani_code_to_obj_ani_slot(screen, monAnim33BlackSolid);
+                yielding = TRUE;
+                break;
+            }
+
+            switch (type) {
             case TVCMD_STOPSCROLL:
                 screen->xmidinc = 0.0f;
                 screen->ymidinc = 0.0f;
@@ -27834,48 +27899,48 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
                 break;
             case TVCMD_SCROLLRELX:
                 screen->xmidfrac = 0.0f;
-                screen->xmidinc = 1.0f / cmd->arg2;
+                screen->xmidinc = 1.0f / arg2;
                 screen->xmidold = screen->xmid;
-                screen->xmidnew = screen->xmid + cmd->arg1 * (1.0f / 1024.0f);
+                screen->xmidnew = screen->xmid + arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SCROLLRELY:
                 screen->ymidfrac = 0.0f;
-                screen->ymidinc = 1.0f / cmd->arg2;
+                screen->ymidinc = 1.0f / arg2;
                 screen->ymidold = screen->ymid;
-                screen->ymidnew = screen->ymid + cmd->arg1 * (1.0f / 1024.0f);
+                screen->ymidnew = screen->ymid + arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SCROLLABSX:
                 screen->xmidfrac = 0.0f;
-                screen->xmidinc = 1.0f / cmd->arg2;
+                screen->xmidinc = 1.0f / arg2;
                 screen->xmidold = screen->xmid;
-                screen->xmidnew = cmd->arg1 * (1.0f / 1024.0f);
+                screen->xmidnew = arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SCROLLABSY:
                 screen->ymidfrac = 0.0f;
-                screen->ymidinc = 1.0f / cmd->arg2;
+                screen->ymidinc = 1.0f / arg2;
                 screen->ymidold = screen->ymid;
-                screen->ymidnew = cmd->arg1 * (1.0f / 1024.0f);
+                screen->ymidnew = arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SCALEABSX:
                 screen->xscalefrac = 0.0f;
-                screen->xscaleinc = 1.0f / cmd->arg2;
+                screen->xscaleinc = 1.0f / arg2;
                 screen->xscaleold = screen->xscale;
-                screen->xscalenew = cmd->arg1 * (1.0f / 1024.0f);
+                screen->xscalenew = arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SCALEABSY:
                 screen->yscalefrac = 0.0f;
-                screen->yscaleinc = 1.0f / cmd->arg2;
+                screen->yscaleinc = 1.0f / arg2;
                 screen->yscaleold = screen->yscale;
-                screen->yscalenew = cmd->arg1 * (1.0f / 1024.0f);
+                screen->yscalenew = arg1 * (1.0f / 1024.0f);
                 screen->offset += 3;
                 break;
             case TVCMD_SETTEXTURE:
-                save_img_index_to_obj_ani_slot(screen, cmd->arg1);
+                save_img_index_to_obj_ani_slot(screen, (void *)(intptr_t)arg1);
                 screen->offset += 2;
                 break;
             case TVCMD_PAUSE:
@@ -27889,15 +27954,23 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
                     }
                 } else {
                     yielding = TRUE;
-                    screen->pause60 = cmd->arg1;
+                    screen->pause60 = arg1;
                 }
                 break;
             case TVCMD_SETCMDLIST:
-                save_ptr_monitor_ani_code_to_obj_ani_slot(screen, (u32 *) cmd->arg1);
+                if (cmd[1] != 0) {
+                    save_ptr_monitor_ani_code_to_obj_ani_slot(screen, (MonitorCmdWord *)(uintptr_t)cmd[1]);
+                } else {
+                    yielding = TRUE;
+                }
                 break;
             case TVCMD_RANDSETCMDLIST:
-                if ((randomGetNext() >> 16) < cmd->arg2) {
-                    save_ptr_monitor_ani_code_to_obj_ani_slot(screen, (u32 *) cmd->arg1);
+                if ((randomGetNext() >> 16) < arg2) {
+                    if (cmd[1] != 0) {
+                        save_ptr_monitor_ani_code_to_obj_ani_slot(screen, (MonitorCmdWord *)(uintptr_t)cmd[1]);
+                    } else {
+                        yielding = TRUE;
+                    }
                 } else {
                     screen->offset += 3;
                 }
@@ -27910,28 +27983,28 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
                 break;
             case TVCMD_SETCOLOUR:
                 screen->colfrac = 0.0f;
-                screen->colinc = 1.0f / cmd->arg2;
+                screen->colinc = 1.0f / arg2;
 
                 screen->redold = screen->red;
-                screen->rednew = ((u32)cmd->arg1 >> 24) & 0xff;
+                screen->rednew = (arg1u >> 24) & 0xff;
 
                 screen->greenold = screen->green;
-                screen->greennew = ((u32)cmd->arg1 >> 16) & 0xff;
+                screen->greennew = (arg1u >> 16) & 0xff;
 
                 screen->blueold = screen->blue;
-                screen->bluenew = ((u32)cmd->arg1 >> 8) & 0xff;
+                screen->bluenew = (arg1u >> 8) & 0xff;
 
                 screen->alphaold = screen->alpha;
-                screen->alphanew = cmd->arg1 & 0xff;
+                screen->alphanew = arg1u & 0xff;
 
                 screen->offset += 3;
                 break;
             case TVCMD_ROTATEABS:
-                screen->rot = cmd->arg1 * M_TAU_F / M_U16_MAX_VALUE_F;
+                screen->rot = arg1 * M_TAU_F / M_U16_MAX_VALUE_F;
                 screen->offset += 2;
                 break;
             case TVCMD_ROTATEREL:
-                screen->rot += g_GlobalTimerDelta * cmd->arg1 * M_TAU_F / M_U16_MAX_VALUE_F;
+                screen->rot += g_GlobalTimerDelta * arg1 * M_TAU_F / M_U16_MAX_VALUE_F;
 
                 if (screen->rot >= M_TAU_F) {
                     screen->rot -= M_TAU_F;
@@ -27942,6 +28015,10 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
                 }
 
                 screen->offset += 2;
+                break;
+            default:
+                save_ptr_monitor_ani_code_to_obj_ani_slot(screen, monAnim33BlackSolid);
+                yielding = TRUE;
                 break;
             }
         }
@@ -28017,19 +28094,68 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
             }
         }
 
-        // Set up everything for rendering
-        modelSetDlColRuntimePointers(model, node, vertices, gdl);
+        {
+            intptr_t tconfig_value = (intptr_t)screen->tconfig;
 
+            if (tconfig_value >= 0 && tconfig_value < 100) {
+                tconfig = &monitorimages[(s32)tconfig_value];
+            } else {
+                tconfig = screen->tconfig;
+            }
+        }
+
+#ifdef NATIVE_PORT
+        monitorTracePrintf(
+            "kind=monitor_cmd model=%p name=%s node=%p screen=%p cmdlist=%p offset=%u pause=%d raw_tconfig=%p resolved=%p idx=%ld wh=%ux%u lvl=%u fmt=%u depth=%u rgba=%u,%u,%u,%u scale=%.3f,%.3f mid=%.3f,%.3f yielded=%d",
+            (void *)model,
+            (model != NULL && model->obj != NULL && model->obj->debugName != NULL) ? model->obj->debugName : "<unnamed>",
+            (void *)node,
+            (void *)screen,
+            screen != NULL ? (void *)screen->cmdlist : NULL,
+            screen != NULL ? screen->offset : 0,
+            screen != NULL ? screen->pause60 : 0,
+            screen != NULL ? (void *)screen->tconfig : NULL,
+            (void *)tconfig,
+            (tconfig != NULL && monitorimages != NULL) ? (long)(tconfig - monitorimages) : -1L,
+            tconfig != NULL ? tconfig->width : 0,
+            tconfig != NULL ? tconfig->height : 0,
+            tconfig != NULL ? tconfig->level : 0,
+            tconfig != NULL ? tconfig->format : 0,
+            tconfig != NULL ? tconfig->depth : 0,
+            screen != NULL ? screen->red : 0,
+            screen != NULL ? screen->green : 0,
+            screen != NULL ? screen->blue : 0,
+            screen != NULL ? screen->alpha : 0,
+            screen != NULL ? screen->xscale : 0.0f,
+            screen != NULL ? screen->yscale : 0.0f,
+            screen != NULL ? screen->xmid : 0.0f,
+            screen != NULL ? screen->ymid : 0.0f,
+            yielding);
+#endif
+
+        if (tconfig == NULL) {
+            return gdl;
+        }
+
+#ifdef NATIVE_PORT
+        vertices = native_vertices;
+        packed_vertices = dynAllocate7F0BD6C4(4);
+#else
+        vertices = dynAllocate7F0BD6C4(4);
+#endif
+        savedgdl = gdl++;
+
+#ifdef NATIVE_PORT
+        modelReadN64Vertex((const void *)rodata->DisplayListCollisions.Vertices, 0, &vertices[0]);
+        modelReadN64Vertex((const void *)rodata->DisplayListCollisions.Vertices, 1, &vertices[1]);
+        modelReadN64Vertex((const void *)rodata->DisplayListCollisions.Vertices, 2, &vertices[2]);
+        modelReadN64Vertex((const void *)rodata->DisplayListCollisions.Vertices, 3, &vertices[3]);
+#else
         vertices[0] = rodata->DisplayListCollisions.Vertices[0];
         vertices[1] = rodata->DisplayListCollisions.Vertices[1];
         vertices[2] = rodata->DisplayListCollisions.Vertices[2];
         vertices[3] = rodata->DisplayListCollisions.Vertices[3];
-
-        if ((uintptr_t)screen->tconfig < 100) {
-            tconfig = &monitorimages[(s32)(intptr_t)screen->tconfig];
-        } else {
-            tconfig = screen->tconfig;
-        }
+#endif
 
         if (tconfig != NULL) {
             u32 stack[13];
@@ -28107,13 +28233,36 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
             arg5 = 2;
         }
 
+#ifdef NATIVE_PORT
+        modelWriteVertexToGBI(&vertices[0], &packed_vertices[0]);
+        modelWriteVertexToGBI(&vertices[1], &packed_vertices[1]);
+        modelWriteVertexToGBI(&vertices[2], &packed_vertices[2]);
+        modelWriteVertexToGBI(&vertices[3], &packed_vertices[3]);
+
+        // Set up everything for rendering
+        modelSetDlColRuntimePointers(model, node, (Vertex *)packed_vertices, gdl);
+#else
+        // Set up everything for rendering
+        modelSetDlColRuntimePointers(model, node, vertices, gdl);
+#endif
+
         // Render the image
         gSPSetGeometryMode(gdl++, G_CULL_BACK);
 
+#ifdef NATIVE_PORT
+        texDebugPushSourceTag("monitor");
+#endif
         texSelect(&gdl, tconfig, arg5, arg4, 2);
+#ifdef NATIVE_PORT
+        texDebugPopSourceTag();
+#endif
 
         gSPMatrix(gdl++, osVirtualToPhysical(model->render_pos), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW | G_MTX_FLOAT_PORT);
+#ifdef NATIVE_PORT
+        gSPSegment(gdl++, SPSEGMENT_MODEL_VTX, osVirtualToPhysical(packed_vertices));
+#else
         gSPSegment(gdl++, SPSEGMENT_MODEL_VTX, osVirtualToPhysical(vertices));
+#endif
         gSPVertex(gdl++, 0x04000000, 4, 0);
         gDPTri2(gdl++, 0, 1, 2, 0, 2, 3);
         gSPEndDisplayList(gdl++);
@@ -31544,17 +31693,21 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
         {
             MonitorObjRecord *monitor = (MonitorObjRecord *)obj;
             ModelNode *monitor_switch0 = modelGetSwitchNodeSafe(model->obj, 0);
-            if (monitor_switch0 != NULL)
+            ModelNode *monitor_draw0 = monitorFindDrawableNode(monitor_switch0, 0);
+            if (monitor_draw0 != NULL)
             {
                 monitorTracePrintf(
-                    "kind=monitor obj=%d model=%p name=%s slot=0 switch=%p image=%d flags=0x%08x",
+                    "kind=monitor obj=%d model=%p name=%s slot=0 switch=%p switch_op=0x%04x draw=%p draw_op=0x%04x image=%d flags=0x%08x",
                     obj->obj,
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)monitor_switch0,
+                    monitor_switch0 != NULL ? monitor_switch0->Opcode : 0,
+                    (void *)monitor_draw0,
+                    monitor_draw0 != NULL ? monitor_draw0->Opcode : 0,
                     monitor->ImageNum,
                     (unsigned int)obj->flags);
-                gdl = process_monitor_animation_microcode(model, monitor_switch0, &monitor->Monitor, gdl, arg4, 1);
+                gdl = process_monitor_animation_microcode(model, monitor_draw0, &monitor->Monitor, gdl, arg4, 1);
             }
         }
 #else
@@ -31589,16 +31742,20 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
         MultiMonitorObjRecord *monitor = (MultiMonitorObjRecord *)obj;
         {
             ModelNode *monitor_switch0 = modelGetSwitchNodeSafe(model->obj, 0);
-            if (monitor_switch0 != NULL)
+            ModelNode *monitor_draw0 = monitorFindDrawableNode(monitor_switch0, 0);
+            if (monitor_draw0 != NULL)
             {
                 monitorTracePrintf(
-                    "kind=multi_monitor obj=%d model=%p name=%s slot=0 switch=%p flags=0x%08x",
+                    "kind=multi_monitor obj=%d model=%p name=%s slot=0 switch=%p switch_op=0x%04x draw=%p draw_op=0x%04x flags=0x%08x",
                     obj->obj,
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)monitor_switch0,
+                    monitor_switch0 != NULL ? monitor_switch0->Opcode : 0,
+                    (void *)monitor_draw0,
+                    monitor_draw0 != NULL ? monitor_draw0->Opcode : 0,
                     (unsigned int)obj->flags);
-                gdl = process_monitor_animation_microcode(model, monitor_switch0, &monitor->Monitor[0], gdl, arg4, 1);
+                gdl = process_monitor_animation_microcode(model, monitor_draw0, &monitor->Monitor[0], gdl, arg4, 1);
             }
         }
 #else
@@ -31623,16 +31780,20 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
 #ifdef NATIVE_PORT
         {
             ModelNode *monitor_switch1 = modelGetSwitchNodeSafe(model->obj, 1);
-            if (monitor_switch1 != NULL)
+            ModelNode *monitor_draw1 = monitorFindDrawableNode(monitor_switch1, 0);
+            if (monitor_draw1 != NULL)
             {
                 monitorTracePrintf(
-                    "kind=multi_monitor obj=%d model=%p name=%s slot=1 switch=%p flags=0x%08x",
+                    "kind=multi_monitor obj=%d model=%p name=%s slot=1 switch=%p switch_op=0x%04x draw=%p draw_op=0x%04x flags=0x%08x",
                     obj->obj,
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)monitor_switch1,
+                    monitor_switch1 != NULL ? monitor_switch1->Opcode : 0,
+                    (void *)monitor_draw1,
+                    monitor_draw1 != NULL ? monitor_draw1->Opcode : 0,
                     (unsigned int)obj->flags);
-                gdl = process_monitor_animation_microcode(model, monitor_switch1, &monitor->Monitor[1], gdl, arg4, 1);
+                gdl = process_monitor_animation_microcode(model, monitor_draw1, &monitor->Monitor[1], gdl, arg4, 1);
             }
         }
 #else
@@ -31644,16 +31805,20 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
 #ifdef NATIVE_PORT
         {
             ModelNode *monitor_switch2 = modelGetSwitchNodeSafe(model->obj, 2);
-            if (monitor_switch2 != NULL)
+            ModelNode *monitor_draw2 = monitorFindDrawableNode(monitor_switch2, 0);
+            if (monitor_draw2 != NULL)
             {
                 monitorTracePrintf(
-                    "kind=multi_monitor obj=%d model=%p name=%s slot=2 switch=%p flags=0x%08x",
+                    "kind=multi_monitor obj=%d model=%p name=%s slot=2 switch=%p switch_op=0x%04x draw=%p draw_op=0x%04x flags=0x%08x",
                     obj->obj,
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)monitor_switch2,
+                    monitor_switch2 != NULL ? monitor_switch2->Opcode : 0,
+                    (void *)monitor_draw2,
+                    monitor_draw2 != NULL ? monitor_draw2->Opcode : 0,
                     (unsigned int)obj->flags);
-                gdl = process_monitor_animation_microcode(model, monitor_switch2, &monitor->Monitor[2], gdl, arg4, 1);
+                gdl = process_monitor_animation_microcode(model, monitor_draw2, &monitor->Monitor[2], gdl, arg4, 1);
             }
         }
 #else
@@ -31665,16 +31830,20 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
 #ifdef NATIVE_PORT
         {
             ModelNode *monitor_switch3 = modelGetSwitchNodeSafe(model->obj, 3);
-            if (monitor_switch3 != NULL)
+            ModelNode *monitor_draw3 = monitorFindDrawableNode(monitor_switch3, 0);
+            if (monitor_draw3 != NULL)
             {
                 monitorTracePrintf(
-                    "kind=multi_monitor obj=%d model=%p name=%s slot=3 switch=%p flags=0x%08x",
+                    "kind=multi_monitor obj=%d model=%p name=%s slot=3 switch=%p switch_op=0x%04x draw=%p draw_op=0x%04x flags=0x%08x",
                     obj->obj,
                     (void *)model,
                     (model->obj && model->obj->debugName) ? model->obj->debugName : "<unnamed>",
                     (void *)monitor_switch3,
+                    monitor_switch3 != NULL ? monitor_switch3->Opcode : 0,
+                    (void *)monitor_draw3,
+                    monitor_draw3 != NULL ? monitor_draw3->Opcode : 0,
                     (unsigned int)obj->flags);
-                gdl = process_monitor_animation_microcode(model, monitor_switch3, &monitor->Monitor[3], gdl, arg4, 1);
+                gdl = process_monitor_animation_microcode(model, monitor_draw3, &monitor->Monitor[3], gdl, arg4, 1);
             }
         }
 #else
@@ -43869,11 +44038,29 @@ PropRecord *hatApplyToChr(HatRecord *hat, ChrRecord *chr, ModelFileHeader *filed
     if (prop && hat->model)
     {
         f32 scale = hat->extrascale * (1.0f / 256.0f);
+#ifdef NATIVE_PORT
+        ModelFileHeader *chr_obj = (chr != NULL && chr->model != NULL) ? chr->model->obj : NULL;
+        ModelNode *attach6 = modelGetSwitchNodeSafe(chr_obj, 6);
+        ModelNode *attach4 = modelGetSwitchNodeSafe(chr_obj, 4);
+
+        hatTracePrintf(
+            "apply obj=%d pad=%d chr=%d prop=%p hat_model=%p chr_model=%p body=%s switches=%d switch4=%p switch6=%p",
+            hat != NULL ? ((ObjectRecord *)hat)->obj : -1,
+            hat != NULL ? ((ObjectRecord *)hat)->pad : -1,
+            chr != NULL ? chr->chrnum : -1,
+            (void *)prop,
+            (void *)hat->model,
+            chr != NULL ? (void *)chr->model : NULL,
+            (chr_obj != NULL && chr_obj->debugName != NULL) ? chr_obj->debugName : "<unnamed>",
+            chr_obj != NULL ? chr_obj->numSwitches : -1,
+            (void *)attach4,
+            (void *)attach6);
+#endif
 
         modelSetScale(hat->model, hat->model->scale * scale);
         hat->model->attachedto = chr->model;
 #ifdef NATIVE_PORT
-        hat->model->attachedto_objinst = modelGetSwitchNodeSafe(chr->model->obj, 6);
+        hat->model->attachedto_objinst = attach6;
 #else
         hat->model->attachedto_objinst = chr->model->obj->Switches[6];
 #endif
@@ -43883,6 +44070,16 @@ PropRecord *hatApplyToChr(HatRecord *hat, ChrRecord *chr, ModelFileHeader *filed
             chrpropReparent(prop, chr->prop);
             chr->handle_positiondata_hat = prop;
         }
+
+#ifdef NATIVE_PORT
+        hatTracePrintf(
+            "apply_done obj=%d chr=%d attached=%p reparented=%d chr_hat=%p",
+            hat != NULL ? ((ObjectRecord *)hat)->obj : -1,
+            chr != NULL ? chr->chrnum : -1,
+            hat->model != NULL ? (void *)hat->model->attachedto_objinst : NULL,
+            hat->model != NULL && hat->model->attachedto_objinst != NULL,
+            chr != NULL ? (void *)chr->handle_positiondata_hat : NULL);
+#endif
     }
 
     return prop;
@@ -45035,7 +45232,14 @@ void sub_GAME_7F0523F8(PropRecord *prop, s32 arg1, void **arg2) {
     Mtxf *mtx;
 
     chr = prop->chr;
-    weaponprop = chrGetEquippedWeaponProp(chr, arg1);
+#ifdef NATIVE_PORT
+    if (arg1 == 2) {
+        weaponprop = chr->handle_positiondata_hat;
+    } else
+#endif
+    {
+        weaponprop = chrGetEquippedWeaponProp(chr, arg1);
+    }
 
     if (weaponprop == NULL) {
         return;
@@ -45056,6 +45260,20 @@ void sub_GAME_7F0523F8(PropRecord *prop, s32 arg1, void **arg2) {
 
     model = obj->model;
     if (model == NULL) return;
+
+#ifdef NATIVE_PORT
+    if (arg1 == 2) {
+        hatTracePrintf(
+            "draw_append chr=%d hat_prop=%p obj=%d model=%p attachedto=%p attach_node=%p list_before=%p",
+            chr != NULL ? chr->chrnum : -1,
+            (void *)weaponprop,
+            obj != NULL ? obj->obj : -1,
+            (void *)model,
+            (void *)model->attachedto,
+            (void *)model->attachedto_objinst,
+            arg2 != NULL ? *arg2 : NULL);
+    }
+#endif
 
 #ifdef NATIVE_PORT
     /* On N64, D_800322A4/A8/B0/C0 were contiguous in .data (64 bytes total).
@@ -45092,6 +45310,18 @@ void sub_GAME_7F0523F8(PropRecord *prop, s32 arg1, void **arg2) {
     if (arg2 != NULL) {
         if (!(obj->runtime_bitflags & 0x80)) {
             *arg2 = (void *)sub_GAME_7F06B120(*arg2, model);
+#ifdef NATIVE_PORT
+            if (arg1 == 2) {
+                hatTracePrintf(
+                    "draw_append_done chr=%d hat_prop=%p obj=%d render_pos=%p mtx_count=%d list_after=%p",
+                    chr != NULL ? chr->chrnum : -1,
+                    (void *)weaponprop,
+                    obj != NULL ? obj->obj : -1,
+                    model != NULL ? (void *)model->render_pos : NULL,
+                    model != NULL ? modelGetRenderPosCount(model) : 0,
+                    *arg2);
+            }
+#endif
         }
     }
 }
