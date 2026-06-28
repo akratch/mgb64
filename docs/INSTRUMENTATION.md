@@ -340,6 +340,11 @@ Rows are emitted as `[SETTEX-PIXEL]` JSON in the native log and include the
 target, framebuffer/gl coordinates, triangle id, barycentrics, combiner ids,
 texture number/size, screen bbox, target texel samples, interpolated shade/fog,
 shader-mirrored target fragment values, pre/post RGB, delta, and changed flag.
+Rows with reconstructed source data also include `pred_alpha` and `pred_rdp`,
+computed from `shaderL_frag` plus the pre-draw framebuffer pixel. Their
+`post_delta_*` fields answer whether the observed native post pixel follows
+ordinary GL alpha blending or the current RDP force-blend equation before
+chasing broader stock/native ownership hypotheses.
 Leave `GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY=1` at its default when you want only
 target-covering rows; set it to `0` only to debug coordinate-space mistakes.
 For material-level traces, the `[SETTEX-MATERIAL-CC] lodgate={...}` fields

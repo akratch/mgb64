@@ -3141,17 +3141,60 @@ struct ColorCombiner {
     uint8_t shader_input_mapping[2][7]; /* [color/alpha][input_index] → G_CCMUX_* value */
 };
 
-static bool gfx_cc_id_rgb_uses_lod_fraction(uint64_t cc_id, uint32_t cc_options) {
+struct GfxCcRawFeatures {
+    bool used_textures[2];
+    bool rgb_uses_lod_fraction;
+};
+
+static struct GfxCcRawFeatures gfx_cc_id_raw_features(uint64_t cc_id, uint32_t cc_options) {
+    struct GfxCcRawFeatures features = {0};
     int cycles = (cc_options & SHADER_OPT_2CYC) != 0 ? 2 : 1;
 
     for (int i = 0; i < cycles; i++) {
+        uint32_t rgb_a = (cc_id >> (i * 28)) & 0xf;
+        uint32_t rgb_b = (cc_id >> (i * 28 + 4)) & 0xf;
         uint32_t rgb_c = (cc_id >> (i * 28 + 8)) & 0x1f;
-        if (rgb_c == G_CCMUX_LOD_FRACTION) {
-            return true;
+        uint32_t rgb_d = (cc_id >> (i * 28 + 13)) & 7;
+        uint32_t alp_a = (cc_id >> (i * 28 + 16)) & 7;
+        uint32_t alp_b = (cc_id >> (i * 28 + 19)) & 7;
+        uint32_t alp_c = (cc_id >> (i * 28 + 22)) & 7;
+        uint32_t alp_d = (cc_id >> (i * 28 + 25)) & 7;
+        uint32_t rgb_slots[4] = {rgb_a, rgb_b, rgb_c, rgb_d};
+        uint32_t alpha_slots[4] = {alp_a, alp_b, alp_c, alp_d};
+
+        for (int j = 0; j < 4; j++) {
+            switch (rgb_slots[j]) {
+                case G_CCMUX_TEXEL0:
+                case G_CCMUX_TEXEL0_ALPHA:
+                    features.used_textures[0] = true;
+                    break;
+                case G_CCMUX_TEXEL1:
+                case G_CCMUX_TEXEL1_ALPHA:
+                    features.used_textures[1] = true;
+                    break;
+                case G_CCMUX_LOD_FRACTION:
+                    if (j == 2) {
+                        features.rgb_uses_lod_fraction = true;
+                    }
+                    break;
+            }
+
+            switch (alpha_slots[j]) {
+                case G_ACMUX_TEXEL0:
+                    features.used_textures[0] = true;
+                    break;
+                case G_ACMUX_TEXEL1:
+                    features.used_textures[1] = true;
+                    break;
+            }
         }
     }
 
-    return false;
+    return features;
+}
+
+static bool gfx_cc_id_rgb_uses_lod_fraction(uint64_t cc_id, uint32_t cc_options) {
+    return gfx_cc_id_raw_features(cc_id, cc_options).rgb_uses_lod_fraction;
 }
 
 static struct ColorCombiner color_combiner_pool[256];
@@ -6019,6 +6062,26 @@ static void gfx_settex_pixel_probe_log_failure(
     fflush(stderr);
 }
 
+static uint8_t gfx_predict_alpha_blend_channel(uint8_t src, uint8_t alpha, uint8_t dst)
+{
+    int out = ((int)src * (int)alpha +
+               (int)dst * (255 - (int)alpha) +
+               127) / 255;
+    if (out < 0) out = 0;
+    if (out > 255) out = 255;
+    return (uint8_t)out;
+}
+
+static uint8_t gfx_predict_rdp_force_blend_channel(uint8_t src, uint8_t alpha, uint8_t dst)
+{
+    int a0 = (int)alpha >> 3;
+    int a1 = (255 - (int)alpha) >> 3;
+    int out = ((int)src * a0 + (int)dst * (a1 + 1)) >> 5;
+    if (out < 0) out = 0;
+    if (out > 255) out = 255;
+    return (uint8_t)out;
+}
+
 static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
                                          uint64_t settex_material_cc_id,
                                          uint64_t effective_cc_id,
@@ -6107,7 +6170,11 @@ static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
 static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
 {
     uint8_t post_rgb[3] = {0, 0, 0};
+    uint8_t pred_alpha_rgb[3] = {0, 0, 0};
+    uint8_t pred_rdp_rgb[3] = {0, 0, 0};
     int delta[3];
+    int delta_alpha_pred[3];
+    int delta_rdp_pred[3];
     bool changed;
 
     if (probe == NULL || !probe->active) {
@@ -6125,7 +6192,17 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
     }
 
     for (int ch = 0; ch < 3; ch++) {
+        pred_alpha_rgb[ch] =
+            gfx_predict_alpha_blend_channel(probe->shaderL_frag[ch],
+                                            probe->shaderL_frag[3],
+                                            probe->pre_rgb[ch]);
+        pred_rdp_rgb[ch] =
+            gfx_predict_rdp_force_blend_channel(probe->shaderL_frag[ch],
+                                                probe->shaderL_frag[3],
+                                                probe->pre_rgb[ch]);
         delta[ch] = (int)post_rgb[ch] - (int)probe->pre_rgb[ch];
+        delta_alpha_pred[ch] = (int)post_rgb[ch] - (int)pred_alpha_rgb[ch];
+        delta_rdp_pred[ch] = (int)post_rgb[ch] - (int)pred_rdp_rgb[ch];
     }
     changed = delta[0] != 0 || delta[1] != 0 || delta[2] != 0;
     fprintf(stderr,
@@ -6148,6 +6225,8 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             "\"shaderL_comb\":[%u,%u,%u,%u],\"shaderL_frag\":[%u,%u,%u,%u],"
             "\"shaderP_comb\":[%u,%u,%u,%u],\"shaderP_frag\":[%u,%u,%u,%u],"
             "\"pre\":[%u,%u,%u],\"post\":[%u,%u,%u],"
+            "\"pred_alpha\":[%u,%u,%u],\"post_delta_alpha\":[%d,%d,%d],"
+            "\"pred_rdp\":[%u,%u,%u],\"post_delta_rdp\":[%d,%d,%d],"
             "\"delta\":[%d,%d,%d],\"changed\":%d}"
             "\n",
             probe->frame,
@@ -6250,6 +6329,18 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             post_rgb[0],
             post_rgb[1],
             post_rgb[2],
+            pred_alpha_rgb[0],
+            pred_alpha_rgb[1],
+            pred_alpha_rgb[2],
+            delta_alpha_pred[0],
+            delta_alpha_pred[1],
+            delta_alpha_pred[2],
+            pred_rdp_rgb[0],
+            pred_rdp_rgb[1],
+            pred_rdp_rgb[2],
+            delta_rdp_pred[0],
+            delta_rdp_pred[1],
+            delta_rdp_pred[2],
             delta[0],
             delta[1],
             delta[2],
@@ -15110,8 +15201,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         cc_options |= SHADER_OPT_2CYC;
     bool noperspective_all_settex_texcoords =
         settex_active && gfx_diag_noperspective_settex_texcoords_enabled();
-    struct CCFeatures cc_features_for_options;
-    gfx_cc_get_features(cc_id, cc_options, &cc_features_for_options);
+    struct GfxCcRawFeatures cc_features_for_options =
+        gfx_cc_id_raw_features(cc_id, cc_options);
 
     /* Shader-side UV clamping from tile descriptors (PD pattern) */
     {
@@ -15269,6 +15360,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_diag_noperspective_cc_inputs_enabled(effective_cc_id)) {
         cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
     }
+    struct GfxCcRawFeatures effective_cc_features_for_options =
+        gfx_cc_id_raw_features(effective_cc_id, cc_options);
     bool room_water_alpha_suppress =
         !tint_match &&
         gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
@@ -15298,20 +15391,20 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                             use_alpha,
                                             blend_mode,
                                             rdp.other_mode_l_raw,
-                                            cc_features_for_options.used_textures[0],
-                                            cc_features_for_options.used_textures[1],
+                                            effective_cc_features_for_options.used_textures[0],
+                                            effective_cc_features_for_options.used_textures[1],
                                             effective_cc_id,
                                             room_xlu_cvg_memory);
     if (!tint_match && !settex_active && use_alpha &&
-        (cc_features_for_options.used_textures[0] ||
-         cc_features_for_options.used_textures[1]) &&
+        (effective_cc_features_for_options.used_textures[0] ||
+         effective_cc_features_for_options.used_textures[1]) &&
         gfx_diag_alpha_from_tex_intensity_cc_enabled(effective_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY;
     }
     if (!tint_match && !settex_active && use_alpha &&
         blend_mode == GFX_BLEND_ALPHA &&
-        (cc_features_for_options.used_textures[0] ||
-         cc_features_for_options.used_textures[1]) &&
+        (effective_cc_features_for_options.used_textures[0] ||
+         effective_cc_features_for_options.used_textures[1]) &&
         gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
         gfx_diag_xlu_coverage_wrap_thin_cc_enabled(effective_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN;

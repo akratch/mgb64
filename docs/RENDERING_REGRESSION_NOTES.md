@@ -156,6 +156,14 @@ The visible symptoms were level-specific but shared renderer causes:
     still needs the broader RDP framebuffer-memory/coverage blend work before
     stock pixel parity should be expected.
 
+14. **Early renderer classifiers must decode raw combiners as raw combiners.**
+    `gfx_cc_get_features()` expects the generated shader id, not Rare/N64's raw
+    packed combine mode. Pre-shader decisions such as N64 filter eligibility,
+    alpha-from-intensity diagnostics, and RDP framebuffer-memory promotion must
+    use a raw-combiner scan until `gfx_generate_cc()` has produced the packed
+    shader ids. After room alpha LUTs, eye overrides, or tint overrides, rescan
+    the effective combiner before classifying blend/memory behavior.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -195,6 +203,9 @@ Use these habits before accepting renderer changes:
   fields before tuning color or alpha. For authored room-XLU trilerp, the
   durable proof is draw class, raw room-XLU mode, valid `G_SETTEX` tile 1, and
   packed RGB `LOD_FRACTION`; do not require the room-matrix bit to be true.
+- When an early renderer decision needs texture-use information, do not feed a
+  raw combine mode into `gfx_cc_get_features()`. Use raw combiner fields until
+  a `ColorCombiner` exists, then use the generated shader ids.
 - When isolating a suspect `G_SETTEX` material, use
   `GE007_TINT_TEX=min:max` or `GE007_SKIP_TEX=min:max`. These match stable game
   texture numbers, not transient GL texture ids.

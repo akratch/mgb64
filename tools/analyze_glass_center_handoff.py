@@ -474,6 +474,10 @@ def compact_native_pixel_row(row: dict[str, Any] | None) -> dict[str, Any] | Non
         "shaderP_frag",
         "pre",
         "post",
+        "pred_alpha",
+        "post_delta_alpha",
+        "pred_rdp",
+        "post_delta_rdp",
         "delta",
         "changed",
     )
@@ -647,6 +651,14 @@ def build_interpretation(payload: dict[str, Any]) -> tuple[list[str], list[str]]
                 f"pre={final_row.get('pre')} post={final_row.get('post')} "
                 f"changed={final_row.get('changed')}"
             )
+            if final_row.get("pred_alpha") or final_row.get("pred_rdp"):
+                notes.append(
+                    "selected native post versus reconstructed source predictions: "
+                    f"alpha={final_row.get('pred_alpha')} "
+                    f"delta_alpha={final_row.get('post_delta_alpha')} "
+                    f"rdp={final_row.get('pred_rdp')} "
+                    f"delta_rdp={final_row.get('post_delta_rdp')}"
+                )
         if post_delta:
             notes.append(
                 "selected native post pixel vs stock final RGB: "
@@ -786,6 +798,8 @@ def print_human(payload: dict[str, Any]) -> None:
             f"inside={native_pixel.get('inside_rows')} "
             f"changed={native_pixel.get('changed_inside_rows')} "
             f"selected_post={final_row.get('post')} "
+            f"pred_alpha={final_row.get('pred_alpha')} "
+            f"pred_rdp={final_row.get('pred_rdp')} "
             f"stock_delta={post_delta.get('delta')}"
         )
     if payload.get("warnings"):
