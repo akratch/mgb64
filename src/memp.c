@@ -472,3 +472,34 @@ void mempNullNextEntryInBank(u8 bank) {
         g_mempPools[bank].pos = 0;
     }
 }
+
+#ifdef NATIVE_PORT
+s32 mempPtrIsInBank(const void *ptr, u8 bank, u32 bytes)
+{
+    uintptr_t addr;
+    uintptr_t endaddr;
+    uintptr_t start;
+    uintptr_t pos;
+    uintptr_t end;
+
+    if (ptr == NULL || bank >= MEMPOOL_COUNT || bytes == 0) {
+        return FALSE;
+    }
+
+    addr = (uintptr_t)ptr;
+    if (addr > (~(uintptr_t)0) - (uintptr_t)bytes) {
+        return FALSE;
+    }
+
+    endaddr = addr + (uintptr_t)bytes;
+    start = (uintptr_t)g_mempPools[bank].start;
+    pos = (uintptr_t)g_mempPools[bank].pos;
+    end = (uintptr_t)g_mempPools[bank].end;
+
+    if (start == 0 || pos == 0 || end == 0 || pos > end) {
+        return FALSE;
+    }
+
+    return addr >= start && endaddr <= pos && endaddr <= end;
+}
+#endif

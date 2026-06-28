@@ -20,13 +20,24 @@ The hard parts are already decompiled and running:
   `src/fr.c:1764` (`viSetupScreensForNumPlayers`) draws the 2/3/4-way dividers;
   the native renderer honors per-player viewport (`gfx_pc.c:10916`) and scissor
   (`gfx_pc.c:11091`).
-- **Frontend** — MP menu state machine at `src/game/front.c:14324` plus the full
-  classic MP stage table (`front.c:1124+`).
+- **Frontend** — MP menu state machine in `menu_init` (`src/game/front.c:14273`;
+  dispatch switches ~`14351/14390/14419`) plus the full classic MP stage table
+  (`front.c:1123+`).
 
-The entire feature is gated behind one deficiency: the port presents exactly one
-controller (`platform_sdl.c:1003`) and `osContGetReadData` fills only `data[0]`
-(`stubs.c:4738`; `data[1..3]` zeroed at `:4750`), so `joyGetControllerCount()`
-returns 1 and the MP menus bounce out (`front.c:3886`, `:5526`).
+The entire feature *was* gated behind one deficiency, **now resolved by Phase 1
+below**: originally the port presented exactly one controller
+(`platform_sdl.c:1003`) and `osContGetReadData` filled only `data[0]`, so
+`joyGetControllerCount()` returned 1 and the MP menus bounced out. **Current state
+(✅ Phase 1):** `osContGetReadData` (func **`stubs.c:5000`**) does a local `data[0]`
+merge (`:5426`) then a real multi-pad fill loop `for k=1..MAXCONTROLLERS-1
+pcFillPadFromController(&data[k],k)` (**`:5436-5439`**); the menu gate is at
+`front.c:3888` (`>=2` enables Secret/Multi) and the `<2` bounce is `front.c:5567`.
+
+> **⚠ Anchor note (2026-06-25):** earlier revisions of this paragraph cited
+> `stubs.c:4738/:4750` with "`data[1..3]` zeroed" — **both stale and superseded**
+> (the fill loop landed in Phase 1; see the ✅ row in Phase 1 §1b). Canonical
+> stubs anchors: func `5000`, local merge `5426`, multi-pad fill `5436`. Full
+> corrected-anchor table: [NETPLAY_PLAN_REVIEW.md](NETPLAY_PLAN_REVIEW.md) §5.
 
 ## Scope guard
 
@@ -60,7 +71,7 @@ validated, ⬜ not started.
 |---|---|---|---|
 | 1a. Opened-pad table | M | ✅ | Replaced single `g_gameController` with `PlatformPad g_pads[PLATFORM_MAX_PADS]` `{handle, instance_id, slot}`; opens all pads at init + `CONTROLLERDEVICEADDED`; handles `CONTROLLERDEVICEREMOVED`. Added per-pad `platformGetPadCount/Buttons/LeftStick/RightStick/Triggers`. |
 | 1b. Fill `data[1..3]` | M | ✅ | `osContGetReadData` loops `k=1..MAXCONTROLLERS-1` filling each pad via `pcFillPadFromController`. Keyboard+mouse stay on `data[0]`. |
-| 1c. Controller-count shim | S | ✅ | `osContInit`/`osContGetQuery` set `g_ContStatus` from the opened-pad set so `joyGetControllerCount() >= 2` unblocks `front.c:3886`/`:5526`; hot-plug re-derived per frame. |
+| 1c. Controller-count shim | S | ✅ | `osContInit`/`osContGetQuery` set `g_ContStatus` from the opened-pad set so `joyGetControllerCount() >= 2` unblocks `front.c:3888` (`>=2` gate) / `:5567` (`<2` bounce); hot-plug re-derived per frame. |
 
 ### Phase 2 — Deterministic MP launch + first 2-player match
 

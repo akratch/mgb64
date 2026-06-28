@@ -12,6 +12,19 @@ so its netcode is the closest working reference that exists.
 > directly**, preserving the notice and recording it in `THIRD_PARTY.md` /
 > `NOTICE.md`.
 
+> **⚠ Revision (2026-06-25):** the 2026-06-25 source-grounded review
+> ([NETPLAY_PLAN_REVIEW.md](NETPLAY_PLAN_REVIEW.md)) re-verified every anchor in this
+> map. **The symbols and roles are real, but the `file:line` numbers below are
+> pervasively stale** (chrprop.c off-by-one; world-event sites off 29–460 lines). The
+> **authoritative corrected-anchor table is review §5** — use it, not the lines here,
+> until this map is re-anchored. Four substantive corrections are marked inline:
+> `byteswap.h` is the **wrong wire primitive** (§ source inventory), the puppet gate
+> must write `prop->pos` **and** the collision twin (§4c), `record_damage_kills`
+> centralizes **player** damage only (§4f), and `pc_apply_mp_selection` does **not**
+> drive `MENU_RUN_STAGE` (§4h). The review also adds blocker-class design work this
+> map under-scopes (resolved-vector hitscan, two-process test harness, per-scenario
+> replication, `getLocalViewportCount` decoupling, packet validation).
+
 ---
 
 ## 1. The PD netcode, as actually shipped (ground truth)
@@ -53,7 +66,7 @@ fields** (we add equivalents — §3, §4).
 | `port/include/net/net.h` | 163 | `netplayermove`, `netclient`, globals, `UCMD_*`, API | `src/platform/net/net.h` | port, light edit |
 | `port/src/net/net.c` | 1127 | enet host, conn FSM, frame pump, move record, syncid/player alloc, RNG, config, query | `src/platform/net/net.c` | port + rewrite engine bits |
 | `port/include/net/netmsg.h` + `port/src/net/netmsg.c` | 74/1582 | `SVC_*`/`CLC_*` (de)serialize + apply | `src/platform/net/netmsg.[ch]` | port framing, rewrite apply |
-| `port/src/net/netmenu.c` | 422 | host/join lobby UI | glue into `src/game/front.c` (MP FSM `front.c:14324`) | **reimplement** |
+| `port/src/net/netmenu.c` | 422 | host/join lobby UI | glue into `src/game/front.c` (MP FSM `menu_init` `front.c:14273`, switches ~`14351/14390/14419`) | **reimplement** |
 | `port/include/net/netenet.h` | 10 | enet include shim | `src/platform/net/netenet.h` | port verbatim |
 | `port/external/enet.c` + `include/external/enet.h` | vendored | UDP transport (MIT) | `lib/enet/` | **vendor as-is** |
 
@@ -83,18 +96,18 @@ reimplemented against GoldenEye's existing MP menu.
 | Frame pump site | `schedStartFrame`/`schedEndFrame` (`pdsched.c:242/281`) | `boss.c` mainloop: `joyPoll`(`:568`) → `joyConsumeSamplesWrapper`(`:572`) → `lvlManageMpGame`(`:602`) → `lvlRender`(`:629`) — **single-threaded** | `boss.c:567-629` |
 | Player input read | `pl->ucmd` (unified) | `joyGetButtons(p,mask)` / `joyGetStickX/Y` / `joyGetButtonsPressedThisFrame` | `joy.c:876` / `:827` / `:887` |
 | Button constants | `UCMD_*` | `Z_TRIG`(0x2000)/`R_TRIG`(0x0010)/`A_BUTTON`(0x8000)/`B_BUTTON`/C-buttons; `ANY_BUTTON`(0xFFFF) | `platform_os.h:183` |
-| Player move/aim apply | (in PD player update) | `bondviewMovePlayerUpdateViewport()` → `MoveBond()`; aim `platformGetPadRightStick`→`vv_theta`/`vv_verta` | `bondview.c:13915`/`:14088`; `lvl.c:5672`/`:5703-5757` |
-| Damage / death | (server applies) | `record_damage_kills()`; `bondviewKillCurrentPlayer()` | `bondview.c:20340` / `:20279` |
-| Projectile spawn | `SVC_PROP_SPAWN` site | `projectileAllocate()` / `projectileReset()` | `chrobjhandler.c:2300` / `:2266` |
-| Pickup | `SVC_PROP_PICKUP` site | `object_interaction()`; `g_WeaponSlots[30]`/`g_AmmoCrates[20]` | `chrobjhandler.c:8874`; `chrprop.c:392`/`:402` |
-| Door / lift | `SVC_PROP_DOOR/USE` site | `propdoorInteract()` (called from `chrprop.c:5294`) | `chrobjhandler.c` |
-| Explosion | (spawn/damage) | `explosionCreate()`; `g_ExplosionBuffer` | `explosions.c:844` / `:642` |
+| Player move/aim apply | (in PD player update) | `bondviewMovePlayerUpdateViewport()` → `MoveBond()`; aim `platformGetPadRightStick`→`vv_theta`/`vv_verta` | `bondview.c:14296`/`:12474` (gate at MoveBond call `:14485`); `lvl.c:5736/5740`/`:5769` (angle writes `:5842-5847`) |
+| Damage / death | (server applies) | `record_damage_kills()` (player damage only); `bondviewKillCurrentPlayer()` | `bondview.c:20737` / `:20676` |
+| Projectile spawn | `SVC_PROP_SPAWN` site | `projectileAllocate()` / `projectileReset()` | `chrobjhandler.c:2350` / `:2316` |
+| Pickup | `SVC_PROP_PICKUP` site | `object_interaction()`; `g_WeaponSlots[30]`/`g_AmmoCrates[20]` | `chrobjhandler.c:9032` (8874 is dead `#if 0`); `chrprop.c:393`/`:403` |
+| Door / lift | `SVC_PROP_DOOR/USE` site | `propdoorInteract()` (called from `chrprop.c:5295`) | def `chrobjhandler.c:48070` |
+| Explosion | (spawn/damage) | `explosionCreate()`; `g_ExplosionBuffer` | `explosions.c:873` / `:671` |
 | MP stage table | (PD mpsetups) | `multi_stage_setups[]` (`struct mp_stage_setup`) | `front.c:1123`; `front.h:70` |
-| MP active state | `g_MpSetup` | `MP_stage_selected`/`scenario`/`selected_num_players`/`selected_stage`; `get_scenario()` | `front.c:1319`/`:1322`/`:1317`/`:851`; `:7705` |
-| Stage load / teardown | `mainChangeToStage`/`mainEndStage` | `pc_apply_mp_selection()` → `bossSetLoadedStage()` (`g_MainStageNum`) → `frontChangeMenu(MENU_RUN_STAGE)` | `initmenus.c:263`; `boss.c:779` |
+| MP active state | `g_MpSetup` | `MP_stage_selected`/`scenario`/`selected_num_players`/`selected_stage`; `get_scenario()` | `front.c:1322`; `get_selected_num_players()` `:5306`; `get_scenario()` `:7705` |
+| Stage load / teardown | `mainChangeToStage`/`mainEndStage` | `pc_apply_mp_selection()` → `bossSetLoadedStage()` (`g_MainStageNum`) — **NOT** `MENU_RUN_STAGE` (§4h) | `initmenus.c:263`; `boss.c:779` |
 | Config registration | `configRegisterUInt("Net.*")` | `settings.c` / `config_pc.c` runtime-override system | `settings.c` |
 | CLI args | `sysArgGetInt("--port"/"--connect"/"--host")` | `main_pc.c` (joins `--multiplayer`/`--players`/`--mp-stage`) | `main_pc.c` |
-| Endian helpers | `PD_LE16/32/64` | `byteswap.h` | `src/platform/byteswap.h` |
+| Endian helpers | `PD_LE16/32/64` | **PD `netbuf`'s own LE codec — NOT `byteswap.h`** | — (`byteswap.h` is a **big-endian-ROM→host** converter; using it for an LE netbuf swaps the wrong way. PD's `netbuf.c` carries its own LE read/write — port that. Review §3.4.) |
 | Logging | `sysLogPrintf` | GE logging / `port_trace` | `port_trace.c` |
 
 ### The two structural gaps to build
@@ -123,12 +136,21 @@ set the puppet flag (§4c) for remote players, apply their name/skin. Call after
 `init_player_data_ptrs_construct_viewports` (`player_2.c:68`).
 
 ### 4c. The puppet gate — *new* per-player flag
-GoldenEye has no `CONTROLMODE_NA`. Add `g_NetPuppet[playernum]` and gate it in
-`bondviewMovePlayerUpdateViewport()` (`bondview.c:13915`): for a puppet, **skip**
-`joyGetStickX/Y` (`lvl.c:5672`) and `platformGetPadRightStick` (`lvl.c:5703`),
-and **set** `pos`/`vv_theta`/`vv_verta` from the interpolated network move instead
-of `MoveBond()` (`bondview.c:14088`). Drive the puppet's actions (fire/reload/
-switch) from the decoded `ucmd` (§4d).
+GoldenEye has no `CONTROLMODE_NA`. Add `g_NetPuppet[playernum]` and gate at the
+**`MoveBond()` call site** (`bondview.c:14485`, inside
+`bondviewMovePlayerUpdateViewport()` **`bondview.c:14296`**): for a puppet, **skip**
+`joyGetStickX/Y` (`lvl.c:5736/5740`) and `platformGetPadRightStick` (`lvl.c:5769`),
+**do not call `MoveBond()`/`bondviewProcessInput`** (`MoveBond` def **`bondview.c:12474`**),
+and drive actions from the decoded `ucmd` (§4d).
+
+> **⚠ Corrected (review §3 / §4.4):** you **cannot** place a puppet by writing the
+> `struct player.pos` field — that is the **camera/eye** position. The authoritative
+> world position is **`prop->pos`** mirrored to **`field_488.collision_position`**
+> (`bondview.c:5289-5291`), and `MoveBond` re-derives position from speed+collision
+> and would overwrite a naive `pos` write. The puppet must write **both `prop->pos`
+> and `collision_position`** (+ tile/room pointers) and bypass `MoveBond` entirely.
+> The flag must **also** gate the viewport/divider/gfx-budget loops, not just the
+> input read (these iterate `getPlayerCount()` *outside* this function — review §4.4).
 
 ### 4d. The `ucmd` adapter — keystone
 Two-way mapping between GoldenEye input/state and the wire `ucmd` (`net.h:46`):
@@ -156,14 +178,27 @@ friction lives (~40-line rewrite of `netClientRecordMove`, `net.c:185`).
   Force-tick handling per `netmsg.c:275`.
 
 ### 4f. Server-authoritative hit & damage
-When a client's `ucmd` has FIRE, the **host** reproduces the shot from the
-client's forwarded aim and applies it through GoldenEye's path — wrap
-`record_damage_kills()` (`bondview.c:20340`) / `bondviewKillCurrentPlayer()`
-(`bondview.c:20279`) to emit `SVC_CHR_DAMAGE` + kill/score events. Clients never
-self-report kills. *(If the hitscan path proves too coupled to reproduce host-
-side, fall back to shooter-detects-hit + host-validates — see plan §7.)*
+The **host** applies damage through GoldenEye's path — wrap `record_damage_kills()`
+(**`bondview.c:20737`**) / `bondviewKillCurrentPlayer()` (**`bondview.c:20676`**) to
+emit `SVC_CHR_DAMAGE` + kill/score events. Clients never self-report kills.
+
+> **⚠ Corrected (review §3.1) — "shooter-detects-hit + host-validates" is now the
+> PRIMARY model, not a fallback.** The host **cannot** reproduce the shot from
+> forwarded `vv_theta`/`vv_verta`: the live path `bullet_path_from_screen_center`
+> (`gun.c:28756`) folds in auto-aim crosshair deflection (`bondview.c:12178-12202`),
+> **4× `RANDOMFRAC()` spread draws** (`gun.c:28789-28795`), firer movement, and
+> per-peer FOV. The client forwards the **resolved** bullet vector / candidate hit +
+> target syncid; the host validates and applies. **Thread a firer id through
+> `ShotData`** (`chrobjhandler.h:36` has none) and `set_cur_player` to the firer
+> during resolution — credit currently rides implicit `get_cur_playernum()` context
+> (`chr.c:9784`, `explosions.c:1423-1437`). Note `record_damage_kills` centralizes
+> **player** damage only; **NPC kills bypass it** via `self->damage += …`
+> (`chrlv.c:3509`) — adequate for human-only deathmatch, not co-op.
+
 Health is normalized (`bondhealth`/`bondarmour` 0..1, scaled by per-player
-`actual_health`); `SVC_PLAYER_STATS` syncs the normalized values.
+`actual_health` **and `actual_armor`** — the wire must carry **both** scales,
+`bondview.c:20772/20803`); `SVC_PLAYER_STATS` syncs the normalized values. Define
+**pickup-vs-damage ordering** within a tick.
 
 ### 4g. World-event hooks — the correctness long tail
 The **host** calls the matching `netmsg…Write` at these grounded call sites; the
@@ -171,32 +206,44 @@ The **host** calls the matching `netmsg…Write` at these grounded call sites; t
 
 | Event | PD message | GoldenEye call site to wrap |
 |---|---|---|
-| Projectile created (grenade/rocket/mine) | `SVC_PROP_SPAWN` (`netmsg.c:912`) | `projectileAllocate()` `chrobjhandler.c:2300` |
+| Projectile created (grenade/rocket/mine) | `SVC_PROP_SPAWN` (`netmsg.c:912`) | `projectileAllocate()` `chrobjhandler.c:2350` (owner as id, `:34074`) |
 | Projectile/object in flight | `SVC_PROP_MOVE` (`netmsg.c:781`) | projectile update tick |
-| Damage / kill | `SVC_CHR_DAMAGE` (`netmsg.c:1397`) | `record_damage_kills()` `bondview.c:20340` |
-| Weapon dropped on death | `SVC_CHR_DISARM` (`netmsg.c:1485`) | death/disarm `bondview.c:20279` |
-| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` (`netmsg.c:1197`) | `object_interaction()` `chrobjhandler.c:8874` |
-| Door / lift | `SVC_PROP_DOOR/USE` (`netmsg.c:1278/1230`) | `propdoorInteract()` `chrobjhandler.c` |
-| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:844` |
+| Damage / kill | `SVC_CHR_DAMAGE` (`netmsg.c:1397`) | `record_damage_kills()` `bondview.c:20737` |
+| Weapon dropped on death | `SVC_CHR_DISARM` (`netmsg.c:1485`) | `drop_inventory()` `chrobjhandler.c:48607` (kill path `bondview.c:20834`, **`#if VERSION_US`** — un-gate for MP flag/GG transfer) |
+| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` (`netmsg.c:1197`) | `object_interaction()` `chrobjhandler.c:9032` |
+| Door / lift | `SVC_PROP_DOOR/USE` (`netmsg.c:1278/1230`) | `propdoorInteract()` `chrobjhandler.c:48070` (caller `chrprop.c:5295`) |
+| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:873`; splash `explosionInflictDamage()` `:1097` (guard `playerid==-1` `bondview.c:20795`) |
+| **Mine arm/detonate** | (new) | owner `chrobjhandler.c:34382`; global detonator flag `:44257`; proximity vs all players `:7652-7693` |
+| **Flag / Golden Gun owner** | `SVC_FLAG_*` / `SVC_GG_OWNER` (new) | flag `lvl.c:5916-5940`; GG `:5943-5951`; bonus `gun.c:33454`; respawn suppressed `prop.c:377-384` |
 | Health/armor | `SVC_PLAYER_STATS` (`netmsg.c:664`) | periodic + on-change |
 | Match start/end | `SVC_STAGE_START/END` (`netmsg.c:410/568`) | stage flow (§4h) + `mp_watch.c` scoreboard |
 
 ### 4h. Session/stage flow — `front.c` + `initmenus.c` + `boss.c`
 Port the host-drives-stage handshake:
 1. Host configures the match in the MP menu (`multi_stage_setups[]` `front.c:1123`,
-   `scenario` `front.c:1322`, player count).
+   `scenario` `front.c:1322`, player count). **Replicate the full match-setup
+   payload, not just scenario+count:** team assignment (`have_token_or_goldengun`
+   per player, `front.c:7910`), MP **weapon set** (`mp_weapon.c:218`), time/point
+   limits — review §4.3.
 2. Host load via `pc_apply_mp_selection()` (`initmenus.c:263`) → `bossSetLoadedStage()`
-   (`boss.c:779`) → `frontChangeMenu(MENU_RUN_STAGE)`, and broadcast
-   `SVC_STAGE_START`. Clients load the **same** stage/scenario.
+   (`boss.c:779`), and broadcast `SVC_STAGE_START`. Clients load the **same**
+   stage/scenario.
+   > **⚠ Corrected:** `pc_apply_mp_selection` does **not** call
+   > `frontChangeMenu(MENU_RUN_STAGE)` — it routes `MENU_MP_OPTIONS` as the return
+   > menu. Both the direct-boot and the normal-frontend (`init_menu0B_runstage`,
+   > `front.c:8813`) paths converge on **`bossSetLoadedStage`/`g_MainStageNum`**,
+   > which is the real load trigger the boss loop polls.
 3. After load: `netSyncIdsAllocate` (§3.1) + `netPlayersAllocate` (§4b) → `GAME`.
+   The clean barrier is **`boss.c:494`** (after `lvlStageLoad`, which is synchronous
+   — no frame yields).
 4. Match end → host runs `mp_watch.c` scoreboard authoritatively, `SVC_STAGE_END`
    → all peers return to lobby; repeat.
 
 ### 4i. Config + CLI + lobby UI
 Port `configRegister*("Net.*")` (`net.c:1114`) into `settings.c`; `--host/
 --connect/--port/--maxclients` (`net.c:421`) into `main_pc.c`; reimplement
-`netmenu.c` host/join against the MP menu FSM (`front.c:14324`). Replace PD's
-filename-only ROM check (`netmsg.c:197`) with build-hash + region.
+`netmenu.c` host/join against the MP menu FSM (`menu_init` `front.c:14273`).
+Replace PD's filename-only ROM check (`netmsg.c:197`) with build-hash + region.
 
 ---
 

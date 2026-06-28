@@ -21,11 +21,12 @@ void alloc_shattered_window_pieces(void)
     ptr_shattered_window_pieces = mempAllocBytesInBank(((SHATTERED_WINDOW_PIECES_BUFFER_LEN * 0x68) + 0xF) & ~0xF, MEMPOOL_STAGE);
 #ifdef NATIVE_PORT
     /* The glass-shard render (sub_GAME_7F0A2C44) emits gSPVertex pointing at
-     * piece+0x38; register the whole piece buffer so the PC fast3d G_VTX handler
-     * accepts those N64-format vertices instead of rejecting them ([GFX-BAD]). */
+     * piece+0x38. These Vtx records are written by native C at runtime, so
+     * register them as PC-native vertex data; treating the buffer as N64 binary
+     * byte-swaps small shard coordinates into screen-sized triangles. */
     {
-        extern void gfx_register_n64_dl_region(void *addr, size_t size);
-        gfx_register_n64_dl_region(
+        extern void gfx_register_pc_vertex_region(void *addr, size_t size);
+        gfx_register_pc_vertex_region(
             ptr_shattered_window_pieces,
             (size_t)(((SHATTERED_WINDOW_PIECES_BUFFER_LEN * 0x68) + 0xF) & ~0xF));
     }
@@ -37,4 +38,3 @@ void alloc_shattered_window_pieces(void)
 
     g_NextShardNum = 0;
 }
-

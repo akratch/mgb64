@@ -1,9 +1,11 @@
 #include <ultra64.h>
 #include <limits.h>
+#include <memp.h>
 #include <assets/animationtable_data.h>
 #include <random.h>
 #include "bondview.h"
 #include "chrai.h"
+#include "chrobjdata.h"
 #include "initanitable.h"
 #include "lvl.h"
 #include "matrixmath.h"
@@ -12,6 +14,8 @@
 #include "bondhead.h"
 #include "ge_debug.h"
 #ifdef NATIVE_PORT
+#include <stdio.h>
+#include <stdlib.h>
 #include "ramromreplay.h"
 #endif
 
@@ -35,11 +39,409 @@ struct init_bond_anim_unk g_BondMoveAnimationSetup[2] = {
 void bheadUpdatePos(coord3d *vel);
 void bheadUpdateRot(coord3d *lookvel, coord3d *upvel);
 void bheadSetdamp(f32 headdamp);
+void bheadFlipAnimation(void);
 
 // end forward declarations
 
 #ifdef NATIVE_PORT
 static s32 s_pcRamromDeferredBheadIdleRollCount = 0;
+
+#ifdef REFRESH_PAL
+#define BHEAD_NATIVE_ANIMRATE 1.2f
+#else
+#define BHEAD_NATIVE_ANIMRATE 1.0f
+#endif
+
+static s32 bheadNativeFiniteF32(f32 value)
+{
+    return value == value
+        && value > -3.402823466e+38f
+        && value < 3.402823466e+38f;
+}
+
+static s32 bheadNativeFrameF32Usable(f32 value)
+{
+    return value == value
+        && value > -1000000.0f
+        && value < 1000000.0f;
+}
+
+static s32 bheadNativeAnimPointerUsable(ModelAnimation *anim)
+{
+    uintptr_t base;
+    uintptr_t addr;
+    uintptr_t table_bytes;
+
+    if (anim == NULL || ptr_animation_table == NULL) {
+        return FALSE;
+    }
+
+    base = (uintptr_t)ptr_animation_table;
+    addr = (uintptr_t)anim;
+    table_bytes = sizeof(*ptr_animation_table);
+
+    return addr >= base
+        && addr <= base + table_bytes - sizeof(*anim);
+}
+
+static s32 bheadNativePlayerGaitModelUsable(void)
+{
+    Model *model;
+
+    if (g_CurrentPlayer == NULL || PLAYER_MODEL(g_CurrentPlayer) == NULL) {
+        return FALSE;
+    }
+
+    model = PLAYER_MODEL(g_CurrentPlayer);
+
+    if (!mempPtrIsInBank(model, MEMPOOL_STAGE, sizeof(*model))) {
+        return FALSE;
+    }
+
+    if (model->obj != &player_gait_object_header
+        || player_gait_object_header.RootNode == NULL
+        || model->datas == NULL
+        || !mempPtrIsInBank(model->datas, MEMPOOL_STAGE, sizeof(uintptr_t))
+        || !bheadNativeFiniteF32(model->scale)
+        || !bheadNativeFiniteF32(model->speed)
+        || !bheadNativeFiniteF32(model->playspeed)
+        || model->scale <= 0.0f
+        || model->scale > 100.0f
+        || (model->animlooping != 0 && model->anim == NULL))
+    {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static s32 bheadNativePlayerGaitFrameStateUsable(Model *model)
+{
+    s32 anim_frames;
+    f32 max_frame;
+
+    if (model == NULL
+        || model->anim == NULL
+        || ptr_animation_table == NULL
+        || !bheadNativeAnimPointerUsable(model->anim)
+        || !bheadNativeFrameF32Usable(model->unk28)
+        || !bheadNativeFrameF32Usable(model->unk2c)
+        || !bheadNativeFrameF32Usable(model->unk58)
+        || !bheadNativeFrameF32Usable(model->unk5c)
+        || !bheadNativeFrameF32Usable(model->speed)
+        || !bheadNativeFrameF32Usable(model->newspeed)
+        || !bheadNativeFrameF32Usable(model->oldspeed)
+        || !bheadNativeFrameF32Usable(model->timespeed)
+        || !bheadNativeFrameF32Usable(model->elapsespeed)
+        || !bheadNativeFrameF32Usable(model->playspeed)
+        || !bheadNativeFrameF32Usable(model->animrate)
+        || !bheadNativeFrameF32Usable(model->animloopframe)
+        || !bheadNativeFrameF32Usable(model->animloopmerge)
+        || !bheadNativeFrameF32Usable(model->endframe))
+    {
+        return FALSE;
+    }
+
+    anim_frames = model->anim->unk04;
+
+    if (anim_frames <= 0 || anim_frames > 10000) {
+        return FALSE;
+    }
+
+    max_frame = (f32)(anim_frames - 1);
+
+    if (model->unk28 < -1.0f
+        || model->unk28 > max_frame + 1.0f
+        || model->unk2c < -0.01f
+        || model->unk2c > 1.01f
+        || model->framea < 0
+        || model->framea >= anim_frames
+        || model->frameb < 0
+        || model->frameb >= anim_frames
+        || model->speed < -20.0f
+        || model->speed > 20.0f
+        || model->playspeed <= 0.0f
+        || model->playspeed > 10.0f
+        || model->animrate <= 0.0f
+        || model->animrate > 10.0f
+        || model->animloopframe < -1.0f
+        || model->animloopframe > max_frame + 1.0f
+        || model->animloopmerge < 0.0f
+        || model->animloopmerge > 120.0f
+        || model->endframe < -1.0f
+        || model->endframe > max_frame + 1.0f)
+    {
+        return FALSE;
+    }
+
+    if (model->anim2 != NULL) {
+        s32 anim2_frames;
+        f32 max_frame2;
+
+        if (!bheadNativeAnimPointerUsable(model->anim2)) {
+            return FALSE;
+        }
+
+        anim2_frames = model->anim2->unk04;
+        max_frame2 = (f32)(anim2_frames - 1);
+
+        if (anim2_frames <= 0
+            || anim2_frames > 10000
+            || model->unk58 < -1.0f
+            || model->unk58 > max_frame2 + 1.0f
+            || model->unk5c < -0.01f
+            || model->unk5c > 1.01f
+            || model->frame2a < 0
+            || model->frame2a >= anim2_frames
+            || model->frame2b < 0
+            || model->frame2b >= anim2_frames)
+        {
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
+static s32 bheadNativeNormalizeHeadAnimIndex(void)
+{
+    if (g_CurrentPlayer == NULL
+        || g_CurrentPlayer->headanim < 0
+        || g_CurrentPlayer->headanim > 1)
+    {
+        return 0;
+    }
+
+    return g_CurrentPlayer->headanim;
+}
+
+static void bheadNativeClampCurrentHeadAnimIndex(void)
+{
+    if (g_CurrentPlayer != NULL
+        && (g_CurrentPlayer->headanim < -1 || g_CurrentPlayer->headanim > 1))
+    {
+        g_CurrentPlayer->headanim = 0;
+    }
+}
+
+static f32 bheadNativeClampMoveAnimFrame(s32 headanim, f32 frame)
+{
+    f32 loopframe;
+    f32 endframe;
+
+    if (headanim < 0 || headanim > 1) {
+        headanim = 0;
+    }
+
+    loopframe = g_BondMoveAnimationSetup[headanim].loopframe;
+    endframe = g_BondMoveAnimationSetup[headanim].endframe;
+
+    if (!bheadNativeFrameF32Usable(frame) || endframe <= loopframe) {
+        return loopframe;
+    }
+
+    if (frame < loopframe) {
+        return loopframe;
+    }
+
+    if (frame > endframe) {
+        return endframe;
+    }
+
+    return frame;
+}
+
+static f32 bheadNativeCurrentMoveAnimFrame(s32 headanim, Model *model)
+{
+    f32 frame;
+    f32 loopframe;
+    f32 endframe;
+
+    if (headanim < 0 || headanim > 1) {
+        headanim = 0;
+    }
+
+    loopframe = g_BondMoveAnimationSetup[headanim].loopframe;
+    endframe = g_BondMoveAnimationSetup[headanim].endframe;
+    frame = g_CurrentPlayer != NULL ? g_CurrentPlayer->field_5C0 : loopframe;
+
+    if (!bheadNativeFrameF32Usable(frame)
+        || frame < loopframe
+        || frame > endframe)
+    {
+        frame = model != NULL ? model->unk28 : loopframe;
+    }
+
+    frame = bheadNativeClampMoveAnimFrame(headanim, frame);
+
+    if (g_CurrentPlayer != NULL) {
+        g_CurrentPlayer->field_5C0 = frame;
+    }
+
+    return frame;
+}
+
+static void bheadNativeSyncPlayerGaitFrame(Model *model)
+{
+    s32 headanim;
+
+    if (g_CurrentPlayer == NULL) {
+        return;
+    }
+
+    headanim = bheadNativeNormalizeHeadAnimIndex();
+    g_CurrentPlayer->field_5C0 = bheadNativeCurrentMoveAnimFrame(headanim, model);
+}
+
+static s32 bheadNativeResetPlayerGaitAnimation(const char *reason, Model *model)
+{
+    s32 headanim;
+    f32 saved_speed;
+
+    if (g_CurrentPlayer == NULL
+        || model == NULL
+        || ptr_animation_table == NULL)
+    {
+        return FALSE;
+    }
+
+    headanim = bheadNativeNormalizeHeadAnimIndex();
+    saved_speed = model->speed;
+
+    if (!bheadNativeFrameF32Usable(saved_speed)
+        || saved_speed < -20.0f
+        || saved_speed > 20.0f)
+    {
+        saved_speed = 0.0f;
+    }
+
+    model->anim2 = NULL;
+    model->unk58 = 0.0f;
+    model->unk5c = 0.0f;
+    model->speed2 = 0.0f;
+    model->unk74 = 0.0f;
+    model->unk78 = 0.0f;
+    model->unk7c = 0.0f;
+    model->unk80 = 0.0f;
+    model->unk84 = 0.0f;
+    model->unk88 = 0.0f;
+    model->unk8c = 0;
+    model->newspeed = saved_speed;
+    model->oldspeed = saved_speed;
+    model->timespeed = 0.0f;
+    model->elapsespeed = 0.0f;
+
+    modelSetAnimation(
+        model,
+        ANIM_FROM_OFFSET(g_BondMoveAnimationSetup[headanim].anim_id),
+        (s32)g_CurrentPlayer->animFlipFlag,
+        g_BondMoveAnimationSetup[headanim].loopframe,
+        0.5f,
+        0.0f);
+
+    modelSetAnimLooping(model, g_BondMoveAnimationSetup[headanim].loopframe, 0.0f);
+    modelSetAnimEndFrame(model, g_BondMoveAnimationSetup[headanim].endframe);
+    modelSetAnimFlipFunction(model, bheadFlipAnimation);
+    modelSetAnimPlaySpeed(model, BHEAD_NATIVE_ANIMRATE, 0.0f);
+    modelSetAnimSpeed(model, saved_speed, 0.0f);
+    g_CurrentPlayer->headanim = headanim;
+    g_CurrentPlayer->field_5C0 = g_BondMoveAnimationSetup[headanim].loopframe;
+
+    if (bheadNativePlayerGaitFrameStateUsable(model)) {
+        static int reset_log_budget = 20;
+
+        if (reset_log_budget > 0) {
+            reset_log_budget--;
+            fprintf(stderr,
+                    "[BHEAD_RESET_GAIT] reason=%s model=%p headanim=%d speed=%.3f\n",
+                    reason != NULL ? reason : "-",
+                    (void *)model,
+                    headanim,
+                    saved_speed);
+            fflush(stderr);
+        }
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void bheadNativeMaybePoisonPlayerGaitFrame(void)
+{
+    static s32 checked = FALSE;
+    static s32 poisoned = FALSE;
+    static s32 enabled = FALSE;
+    const char *env;
+    Model *model;
+
+    if (!checked) {
+        env = getenv("GE007_DIAG_POISON_BHEAD_FRAME");
+        enabled = (env != NULL && env[0] != '\0' && env[0] != '0') ? TRUE : FALSE;
+        checked = TRUE;
+    }
+
+    if (!enabled || poisoned || g_CurrentPlayer == NULL || PLAYER_MODEL(g_CurrentPlayer) == NULL) {
+        return;
+    }
+
+    model = PLAYER_MODEL(g_CurrentPlayer);
+
+    if (!mempPtrIsInBank(model, MEMPOOL_STAGE, sizeof(*model))) {
+        return;
+    }
+
+    model->unk28 = -2.0155136e28f;
+    model->unk58 = -2.0155136e28f;
+    poisoned = TRUE;
+
+    fprintf(stderr,
+            "[BHEAD_DIAG_POISON_GAIT] model=%p frame=%.3f frame2=%.3f\n",
+            (void *)model,
+            model->unk28,
+            model->unk58);
+    fflush(stderr);
+}
+
+static s32 bheadNativeEnsurePlayerGaitModel(const char *reason)
+{
+    Model *model;
+
+    if (!bheadNativePlayerGaitModelUsable()) {
+        if (g_CurrentPlayer != NULL && g_CurrentPlayer->model != NULL) {
+            GEDBG("BHEAD_INVALID_MODEL reason=%s model=%p",
+                  reason != NULL ? reason : "-",
+                  (void *)g_CurrentPlayer->model);
+            g_CurrentPlayer->model = NULL;
+        }
+
+        return FALSE;
+    }
+
+    model = PLAYER_MODEL(g_CurrentPlayer);
+    bheadNativeClampCurrentHeadAnimIndex();
+
+    if (bheadNativePlayerGaitFrameStateUsable(model)) {
+        bheadNativeSyncPlayerGaitFrame(model);
+        return TRUE;
+    }
+
+    if (bheadNativeResetPlayerGaitAnimation(reason, model)) {
+        return TRUE;
+    }
+
+    if (g_CurrentPlayer != NULL) {
+        GEDBG("BHEAD_INVALID_FRAME_STATE reason=%s model=%p frame=%.3f frame2=%.3f speed=%.3f playspeed=%.3f",
+              reason != NULL ? reason : "-",
+              (void *)model,
+              model != NULL ? model->unk28 : 0.0f,
+              model != NULL ? model->unk58 : 0.0f,
+              model != NULL ? model->speed : 0.0f,
+              model != NULL ? model->playspeed : 0.0f);
+        g_CurrentPlayer->model = NULL;
+    }
+
+    return FALSE;
+}
 
 static void scale_bondhead_matrix_translations(Mtxf *matrices, s32 count, f32 scale)
 {
@@ -255,15 +657,18 @@ void bheadUpdate(f32 percent_speed, f32 speedsideways)
     upvel = headUpDirection;
 
 #ifdef NATIVE_PORT
+    bheadNativeMaybePoisonPlayerGaitFrame();
+
     /* Guard: player model may not be initialized if animInit was not called.
      * Without the model, we can't compute headpos from bone matrices.
      * Use the existing standheight (set by initBondDATAdefaults from the model
      * matrices) as the headpos Y component. If standheight was never set,
      * use a safe default. headpos.f[1] IS the camera height above field_70. */
-    if (g_CurrentPlayer->model == NULL) {
+    if (!bheadNativeEnsurePlayerGaitModel("update")) {
         /* standheight is already set correctly by initBondDATAdefaults if
          * the model matrices were computed. Use it directly. */
-        if (g_CurrentPlayer->standheight > 1.0f) {
+        if (bheadNativeFiniteF32(g_CurrentPlayer->standheight)
+            && g_CurrentPlayer->standheight > 1.0f) {
             headpos.f[1] = g_CurrentPlayer->standheight;
         } else {
             headpos.f[1] = 162.0f; /* fallback if never initialized */
@@ -312,6 +717,9 @@ void bheadUpdate(f32 percent_speed, f32 speedsideways)
 
     modelSetAnimMergingEnabled(0);
     modelTickAnimQuarterSpeed(PLAYER_MODEL(g_CurrentPlayer), g_ClockTimer, 1);
+#ifdef NATIVE_PORT
+    bheadNativeSyncPlayerGaitFrame(PLAYER_MODEL(g_CurrentPlayer));
+#endif
     modelSetAnimMergingEnabled((s32) isMergable);
 
     subcalcpos(PLAYER_MODEL(g_CurrentPlayer));
@@ -498,6 +906,14 @@ void bheadAdjustAnimation(f32 speed)
     s32 i;
     f32 startframe;
 
+#ifdef NATIVE_PORT
+    bheadNativeMaybePoisonPlayerGaitFrame();
+
+    if (!bheadNativeEnsurePlayerGaitModel("adjust")) {
+        return;
+    }
+#endif
+
     speed *= g_BondMoveAnimationSetup[1].speedMultiplier;
 
     for (i=0; i<2; i++)
@@ -510,10 +926,22 @@ void bheadAdjustAnimation(f32 speed)
 
                 if (g_CurrentPlayer->headanim >= 0)
                 {
+#ifdef NATIVE_PORT
+                    f32 currentframe = bheadNativeCurrentMoveAnimFrame(
+                        g_CurrentPlayer->headanim,
+                        PLAYER_MODEL(g_CurrentPlayer));
+
+                    startframe = (currentframe - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe)
+                        / (g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].endframe - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe);
+#else
                     startframe = (g_CurrentPlayer->field_5C0 - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe)
                         / (g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].endframe - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe);
+#endif
 
                     startframe = g_BondMoveAnimationSetup[i].loopframe + ((g_BondMoveAnimationSetup[i].endframe - g_BondMoveAnimationSetup[i].loopframe) * startframe);
+#ifdef NATIVE_PORT
+                    startframe = bheadNativeClampMoveAnimFrame(i, startframe);
+#endif
                 }
 
                 modelSetAnimation(
@@ -533,6 +961,9 @@ void bheadAdjustAnimation(f32 speed)
                 modelSetAnimEndFrame(PLAYER_MODEL(g_CurrentPlayer), g_BondMoveAnimationSetup[i].endframe);
                 modelSetAnimFlipFunction(PLAYER_MODEL(g_CurrentPlayer), bheadFlipAnimation);
                 g_CurrentPlayer->headanim = i;
+#ifdef NATIVE_PORT
+                g_CurrentPlayer->field_5C0 = startframe;
+#endif
             }
 
             speed /= g_BondMoveAnimationSetup[i].speedMultiplier;
@@ -554,6 +985,11 @@ void bheadAdjustAnimation(f32 speed)
  */
 void bheadStartDeathAnimation(struct ModelAnimation *animnum, s32 flip, f32 fstarttime, f32 speed)
 {
+#ifdef NATIVE_PORT
+    if (!bheadNativeEnsurePlayerGaitModel("death")) {
+        return;
+    }
+#endif
     modelSetAnimation(PLAYER_MODEL(g_CurrentPlayer), animnum, flip, fstarttime, speed * 0.5f, 12.0f);
     g_CurrentPlayer->headanim = -1;
 }
@@ -566,6 +1002,11 @@ void bheadStartDeathAnimation(struct ModelAnimation *animnum, s32 flip, f32 fsta
  */
 void bheadSetSpeed(f32 speed)
 {
+#ifdef NATIVE_PORT
+    if (!bheadNativeEnsurePlayerGaitModel("speed")) {
+        return;
+    }
+#endif
     modelSetAnimSpeed(PLAYER_MODEL(g_CurrentPlayer), speed * 0.5f, 0.0f);
 }
 
@@ -581,7 +1022,7 @@ f32 bheadGetBreathingValue(void)
         // bondviewGetBondBreathing() * (1/80) + (1/240)
 		f32 baseBreathing = bondviewGetBondBreathing() * 0.012500001f + 0.004166667f;
 #ifdef NATIVE_PORT
-		if (PLAYER_MODEL(g_CurrentPlayer) == NULL) return baseBreathing;
+		if (!bheadNativeEnsurePlayerGaitModel("breathing")) return baseBreathing;
 #endif
 		f32 animSpeed = modelGetAbsAnimSpeed(PLAYER_MODEL(g_CurrentPlayer));
 

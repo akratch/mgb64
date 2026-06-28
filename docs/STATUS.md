@@ -47,6 +47,21 @@ you know what to expect and where help is most valuable.
 - **Recent playability fixes are landed and traceable:** Dam's intro truck now
   binds its authored vehicle AI path and target speed, and vehicle geometry uses
   the corrected native vector path so the truck body/wheels render together.
+  Bunker 1's full-game-boot movement regression is also fixed and documented:
+  the native player gait/head model pointer is initialized and validated, the
+  out-of-line native `field_5C0` gait-frame mirror is initialized/synchronized,
+  bad gait animation frame state is repaired before `bhead` ticking, and native
+  immediate play-speed changes keep `animrate` synchronized. This prevents the
+  bad full-boot signature where Bond is stuck at spawn and logs repeat
+  `[ANIM_FRAME*_GUARD] ... chr=0x0 ... frame=-...`. The related Bunker
+  datathief/debug-dump crash is also guarded: live dumps validate prop/model/dyn
+  pointers by default and only read bone matrices or root rwdata behind explicit
+  opt-in flags. Keep these guarded with `tools/playability_smoke.sh --level 9
+  --frames 420 --input-window 120:100 --pattern forward --no-build`, the no-arg
+  selector Bunker probe, the forced-authored-intro Bunker probe, the
+  `GE007_DIAG_POISON_BHEAD_FRAME=1` poisoned-frame recovery probe, and the
+  datathief auto-equip/debug-dump probe in
+  [INSTRUMENTATION.md](INSTRUMENTATION.md#bunker-1-full-boot-gaitdebug-dump-regressions).
   Transparent glass no longer disappears while collision remains active: the
   native renderer handles secondary room alpha plus prop-type glass material
   paths, and glass bullet-crack decals stay surface-aligned instead of vanishing

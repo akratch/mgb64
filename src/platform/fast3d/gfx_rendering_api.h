@@ -16,6 +16,10 @@ enum GfxBlendMode {
     GFX_BLEND_DISABLED = 0,  /* opaque — no blending */
     GFX_BLEND_ALPHA    = 1,  /* standard alpha: src*srcA + dst*(1-srcA) */
     GFX_BLEND_MODULATE = 2,  /* multiplicative: src*dst (darkening/shadows) */
+    GFX_BLEND_ALPHA_COVERAGE = 3, /* diagnostic: alpha blend plus sample coverage */
+    GFX_BLEND_ALPHA_CVG_WRAP_STENCIL = 4, /* diagnostic: stencil coverage wrap */
+    GFX_BLEND_ALPHA_RDP_MEMORY = 5, /* diagnostic: shader samples memory color */
+    GFX_BLEND_ALPHA_RDP_CVG_MEMORY = 6, /* diagnostic: shader coverage + memory color */
 };
 
 struct GfxRenderingAPI {
@@ -36,6 +40,7 @@ struct GfxRenderingAPI {
     void (*set_scissor)(int x, int y, int width, int height);
     void (*set_blend_mode)(enum GfxBlendMode mode);
     void (*draw_triangles)(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris);
+    bool (*read_framebuffer_rgb)(int x, int y, int width, int height, uint8_t *rgb_out);
     void (*init)(void);
     void (*on_resize)(void);
     void (*start_frame)(void);

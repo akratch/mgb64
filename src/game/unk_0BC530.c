@@ -34,6 +34,7 @@ s32 roomOwners[AMT300] = {0};
 Mtx roomMatrices[AMT300] = {0};
 #ifdef NATIVE_PORT
 static Mtxf roomMatricesF[AMT300];
+static Mtxf roomMatricesFVisibilityCompensated[AMT300];
 static coord3d roomMatrixBases[AMT300];
 static s32 roomMatrixBasisValid[AMT300];
 
@@ -44,8 +45,11 @@ int roomMatrixContainsAddress(const void *addr)
     uintptr_t fixed_end = fixed_start + sizeof(roomMatrices);
     uintptr_t float_start = (uintptr_t)&roomMatricesF[0];
     uintptr_t float_end = float_start + sizeof(roomMatricesF);
+    uintptr_t compensated_start = (uintptr_t)&roomMatricesFVisibilityCompensated[0];
+    uintptr_t compensated_end = compensated_start + sizeof(roomMatricesFVisibilityCompensated);
     return (p >= fixed_start && p < fixed_end) ||
-           (p >= float_start && p < float_end);
+           (p >= float_start && p < float_end) ||
+           (p >= compensated_start && p < compensated_end);
 }
 
 int roomMatrixRoomFromAddress(const void *addr)
@@ -55,6 +59,8 @@ int roomMatrixRoomFromAddress(const void *addr)
     uintptr_t fixed_end = fixed_start + sizeof(roomMatrices);
     uintptr_t float_start = (uintptr_t)&roomMatricesF[0];
     uintptr_t float_end = float_start + sizeof(roomMatricesF);
+    uintptr_t compensated_start = (uintptr_t)&roomMatricesFVisibilityCompensated[0];
+    uintptr_t compensated_end = compensated_start + sizeof(roomMatricesFVisibilityCompensated);
     size_t index;
 
     if (p >= fixed_start && p < fixed_end) {
@@ -63,6 +69,10 @@ int roomMatrixRoomFromAddress(const void *addr)
     }
     if (p >= float_start && p < float_end) {
         index = (size_t)(p - float_start) / sizeof(roomMatricesF[0]);
+        return roomIndices[index];
+    }
+    if (p >= compensated_start && p < compensated_end) {
+        index = (size_t)(p - compensated_start) / sizeof(roomMatricesFVisibilityCompensated[0]);
         return roomIndices[index];
     }
     return -1;
@@ -380,6 +390,43 @@ Gfx * applyRoomMatrixToDisplayList(Gfx *gdl,int roomID)
     gSPMatrix(gdl++, &roomMatrices[roomIndex], G_MTX_MODELVIEW|G_MTX_LOAD|G_MTX_NOPUSH);
     return gdl;
 }
+
+#ifdef NATIVE_PORT
+static int roomImpactVisibilityCompensationEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *value = getenv("GE007_BULLET_IMPACT_INV_VIS_SCALE");
+        enabled = (value != NULL && value[0] != '\0' && value[0] == '0') ? 0 : 1;
+    }
+
+    return enabled;
+}
+
+Gfx *applyRoomMatrixToDisplayListForWorldImpact(Gfx *gdl, int roomID)
+{
+    s32 roomIndex;
+    f32 vis_scale;
+
+    if (!roomImpactVisibilityCompensationEnabled()) {
+        return applyRoomMatrixToDisplayList(gdl, roomID);
+    }
+
+    vis_scale = bgGetLevelVisibilityScale();
+    if (vis_scale == 0.0f || vis_scale == 1.0f) {
+        return applyRoomMatrixToDisplayList(gdl, roomID);
+    }
+
+    roomIndex = setupRoomTransformationMatrix(roomID);
+    roomMatricesFVisibilityCompensated[roomIndex] = roomMatricesF[roomIndex];
+    matrix_scalar_multiply_3(1.0f / vis_scale, &roomMatricesFVisibilityCompensated[roomIndex].m[0][0]);
+    gSPMatrix(gdl++,
+              &roomMatricesFVisibilityCompensated[roomIndex],
+              G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH | G_MTX_FLOAT_PORT);
+    return gdl;
+}
+#endif
 
 
 /**

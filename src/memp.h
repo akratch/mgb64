@@ -67,5 +67,8 @@ u32 mempAllocPackedBytesInBank(u32 param_1);
 #endif
 void mempResetBank(u8 bank);
 void mempNullNextEntryInBank(u8 bank);
+#ifdef NATIVE_PORT
+s32 mempPtrIsInBank(const void *ptr, u8 bank, u32 bytes);
+#endif
 
 #endif

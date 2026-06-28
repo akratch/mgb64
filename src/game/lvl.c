@@ -1393,7 +1393,9 @@ Gfx* lvlRender(Gfx* DL)
             /* Don't force G_LIGHTING — GoldenEye rooms use precomputed vertex colors
              * (baked lighting), not N64 hardware lighting. Let room DLs set their own
              * geometry mode via embedded G_SETGEOMETRYMODE commands. */
-            gSPSetGeometryMode(DL++, G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK | G_FOG);
+            gSPSetGeometryMode(DL++,
+                G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK |
+                (g_FogSkyIsEnabled ? G_FOG : 0));
             gSPClearGeometryMode(DL++, G_TEXTURE_GEN | G_LIGHTING);
             gSPTexture(DL++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
 
@@ -1416,8 +1418,12 @@ Gfx* lvlRender(Gfx* DL)
                 if (fr == 0 && fg == 0 && fb == 0) {
                     fr = 100; fg = 120; fb = 140; /* default overcast blue-gray */
                 }
-                gDPSetFogColor(DL++, fr, fg, fb, 0xFF);
-                gSPFogPosition(DL++, 900, 1000);
+                if (g_FogSkyIsEnabled) {
+                    gDPSetFogColor(DL++, fr, fg, fb, 0xFF);
+                    gSPFogPosition(DL++, 900, 1000);
+                } else {
+                    gSPClearGeometryMode(DL++, G_FOG);
+                }
                 /* Set GL clear color directly — DL fog color gets overwritten
                  * by game code setting fog to (0,0,0) later in the frame */
                 gfx_set_clear_color(fr, fg, fb);
@@ -1643,6 +1649,11 @@ Gfx* lvlRender(Gfx* DL)
             /* A3: Use original rendering pipeline. Camera matrices set by
              * sub_GAME_7F087A08 → sub_GAME_7F0876C4 above. */
             {
+                s32 tris_before_vi_setup = g_tri_count_diag;
+                DL = viSetupScreensForNumPlayers(DL);
+                lvlTracePhasePrintf("viSetupScreensForNumPlayers", tris_before_vi_setup);
+            }
+            {
                 s32 tris_before_sky = g_tri_count_diag;
                 DL = skyRender(DL);
                 lvlTracePhasePrintf("skyRender", tris_before_sky);
@@ -1795,7 +1806,16 @@ Gfx* lvlRender(Gfx* DL)
 #else /* matched VERSION_US, VERSION_JP */
             sub_GAME_7F0A4824(DL, 1);
 #endif
+#ifdef NATIVE_PORT
+            {
+                Gfx *drawclass_start = DL;
+                DL = sub_GAME_7F0A2C44(DL);
+                gfx_register_draw_class_dl_range(DRAWCLASS_EFFECT, drawclass_start, DL);
+                gfx_register_effect_dl_range("glass_shards", drawclass_start, DL);
+            }
+#else
             DL = sub_GAME_7F0A2C44(DL);
+#endif
 #ifdef NATIVE_PORT
             {
                 s32 tris_before_fx = g_tri_count_diag;
@@ -5905,6 +5925,14 @@ void lvlViewMoveTick(void)
                 /* Zero out the C-button turn speed so it doesn't fight the mouse */
                 g_CurrentPlayer->speedtheta = 0.0f;
                 g_CurrentPlayer->speedverta = 0.0f;
+
+                /* Live mouse/gamepad look runs after the normal Bond movement
+                 * update. Refresh the derived view basis before syncing the PC
+                 * room camera; otherwise vv_theta/vv_verta and applied_view can
+                 * disagree for a frame, making movement plus look feel like the
+                 * world is shearing or leaning. */
+                bondviewApplyVertaTheta();
+                bondviewSyncViewBasisFromHead();
             }
 
             /* Sync the PC rendering camera from the player's world position.
@@ -5931,14 +5959,19 @@ void lvlViewMoveTick(void)
                     g_pcCamYaw = atan2f(-intro_fx, -intro_fz);
                     g_pcCamPitch = asinf(intro_fy);
                 } else {
-                    g_pcCamX = g_CurrentPlayer->prop->pos.x * ls;
+                    coord3d render_cam = g_CurrentPlayer->prop->pos;
+                    bondviewApplyNativeRenderCameraClearance(
+                        &render_cam,
+                        &g_CurrentPlayer->field_488.applied_view,
+                        "pc_camera_sync");
+                    g_pcCamX = render_cam.x * ls;
                     /* Gameplay keeps prop->pos/collision_position at eye
                      * height already. Adding field_29BC a second time makes
                      * the PC room renderer use a different camera Y than the
                      * weapon/prop pipeline, which misaligns world geometry,
                      * guards, and the gun at startup. */
-                    g_pcCamY = g_CurrentPlayer->prop->pos.y * ls;
-                    g_pcCamZ = g_CurrentPlayer->prop->pos.z * ls;
+                    g_pcCamY = render_cam.y * ls;
+                    g_pcCamZ = render_cam.z * ls;
                     g_pcCamYaw = 3.14159265f + (g_CurrentPlayer->vv_theta / 360.0f) * (2.0f * 3.14159265f);
                     g_pcCamPitch = (g_CurrentPlayer->vv_verta / 360.0f) * (2.0f * 3.14159265f);
                 }

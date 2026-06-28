@@ -1,7 +1,11 @@
 #include <ultra64.h>
 #include <ramrom.h>
 #include <memp.h>
+#include "image.h"
 #include "image_bank.h"
+#ifdef NATIVE_PORT
+#include "gfx_pc.h"
+#endif
 
 // bss
 //8008D0A0
@@ -85,6 +89,16 @@ struct sImageTableEntry *mpstageselimages;
 extern u8* _GlobalimagetableSegmentRomStart;
 
 
+static void texPreloadImageEntry(struct sImageTableEntry *entry)
+{
+#ifdef NATIVE_PORT
+    texLoadFromTextureNum(entry->index, 0);
+#else
+    texLoad((u32 *)entry, 0);
+#endif
+}
+
+
 #ifdef NATIVE_PORT
 void texSetBitstring(u8 *pos) {
     img_curpos = pos;
@@ -154,28 +168,100 @@ extern void* s_mpradarimages;
 extern void* s_mpcharselimages;
 extern void* s_mpstageselimages;
 
-extern Gfx* globalDL_0x000;
-extern Gfx* globalDL_0x078;
-extern Gfx* globalDL_0x120;
-extern Gfx* globalDL_0x1c8;
-extern Gfx* globalDL_0x270;
-extern Gfx* globalDL_0x318;
-extern Gfx* globalDL_0x3c0;
-extern Gfx* globalDL_0x468;
-extern Gfx* globalDL_0x510;
-extern Gfx* globalDL_0x5b8;
-extern Gfx* globalDL_0x660;
-extern Gfx* globalDL_0x708;
-extern Gfx* globalDL_0x7b0;
-extern Gfx* globalDL_0x858;
-extern Gfx* globalDL_0x900;
-extern Gfx* globalDL_0x9a8;
-extern Gfx* globalDL_0xa50;
+extern Gfx globalDL_0x000[];
+extern Gfx globalDL_0x078[];
+extern Gfx globalDL_0x120[];
+extern Gfx globalDL_0x1c8[];
+extern Gfx globalDL_0x270[];
+extern Gfx globalDL_0x318[];
+extern Gfx globalDL_0x3c0[];
+extern Gfx globalDL_0x468[];
+extern Gfx globalDL_0x510[];
+extern Gfx globalDL_0x5b8[];
+extern Gfx globalDL_0x660[];
+extern Gfx globalDL_0x708[];
+extern Gfx globalDL_0x7b0[];
+extern Gfx globalDL_0x858[];
+extern Gfx globalDL_0x900[];
+extern Gfx globalDL_0x9a8[];
+extern Gfx globalDL_0xa50[];
+
+
+static void texPreloadGlobalDisplayList(Gfx *dl)
+{
+#ifdef NATIVE_PORT
+    Gfx *cmd = dl;
+    size_t count = 1;
+
+    while ((((cmd->words.w0 >> 24) & 0xff) != (u8)G_ENDDL) && count < 256) {
+        cmd++;
+        count++;
+    }
+
+    gfx_register_extra_pc_dl(dl, count * sizeof(Gfx));
+#endif
+
+    texLoadFromDisplayList(dl, 0);
+}
+
+
+static void texPreloadGlobalDisplayLists(void)
+{
+#ifdef NATIVE_PORT
+#define GLOBAL_DL_PTR(name) (name)
+#else
+#define GLOBAL_DL_PTR(name) ((Gfx *)(globalbank_rdram_offset + (u32)(name)))
+#endif
+
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x000));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x078));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x120));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x1c8));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x270));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x318));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x3c0));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x468));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x510));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x5b8));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x660));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x708));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x7b0));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x858));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x900));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0x9a8));
+    texPreloadGlobalDisplayList(GLOBAL_DL_PTR(globalDL_0xa50));
+
+#undef GLOBAL_DL_PTR
+}
+
+static void texPreloadRuntimeImageEntries(void)
+{
+    s32 i;
+
+    texPreloadImageEntry(genericimage);
+
+    for (i = 0; i < 6; i++)
+    {
+        texPreloadImageEntry(&explosion_smokeimages[i]);
+    }
+
+    for (i = 0; i < 5; i++)
+    {
+        texPreloadImageEntry(&scattered_explosions[i]);
+    }
+
+#ifdef NATIVE_PORT
+    texPreloadImageEntry(flareimage1);
+    texPreloadImageEntry(flareimage2);
+    texPreloadImageEntry(flareimage3);
+    texPreloadImageEntry(flareimage4);
+    texPreloadImageEntry(flareimage5);
+#endif
+}
 
 void texReset(void)
 {
     u32 size;
-    s32 i;
 
 #ifdef NATIVE_PORT
     /* On PC, GlobalImageTable.c is compiled directly into the binary.
@@ -223,9 +309,8 @@ void texReset(void)
     mpcharselimages = (void *)&s_mpcharselimages;
     mpstageselimages = (void *)&s_mpstageselimages;
 
-    /* Skip texLoadFromDisplayList and texLoad for now —
-     * these parse N64 GBI display lists to pre-cache textures,
-     * which the PC GBI translator handles differently. */
+    texPreloadGlobalDisplayLists();
+    texPreloadRuntimeImageEntries();
 
 #else /* N64 */
     size = (u32)&_GlobalimagetableSegmentEnd - (u32)&_GlobalimagetableSegmentStart;
@@ -268,34 +353,7 @@ void texReset(void)
     mpcharselimages = (void *) (globalbank_rdram_offset + (u32)&s_mpcharselimages);
     mpstageselimages = (void *) (globalbank_rdram_offset + (u32)&s_mpstageselimages);
 
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x000, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x078, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x120, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x1c8, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x270, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x318, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x3c0, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x468, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x510, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x5b8, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x660, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x708, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x7b0, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x858, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x900, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0x9a8, 0);
-    texLoadFromDisplayList(globalbank_rdram_offset + (u32)&globalDL_0xa50, 0);
-
-    texLoad(genericimage, 0);
-
-    for (i=0; i < 6; i++)
-    {
-        texLoad(&explosion_smokeimages[i], 0);
-    }
-
-    for (i=0; i < 5; i++)
-    {
-        texLoad(&scattered_explosions[i], 0);
-    }
+    texPreloadGlobalDisplayLists();
+    texPreloadRuntimeImageEntries();
 #endif
 }

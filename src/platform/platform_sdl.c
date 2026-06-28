@@ -974,6 +974,7 @@ float g_pcGamepadLookCurve = 1.5f;  /* remaster default: mild ease-in for fine a
 float g_pcGamepadDeadzone = 0.15f;  /* remaster default: tighter modern deadzone (paired with radial) */
 int g_pcGamepadRadialDeadzone = 1;  /* remaster default: true radial rescale-from-edge */
 int g_pcGamepadFpsScale = 1;        /* remaster default: frame-rate-independent look (no-op at 60fps) */
+s32 g_pcSteadyView = 1;             /* Input.SteadyView       keep world camera upright while moving */
 
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
@@ -1615,6 +1616,11 @@ void platformRegisterConfig(void)
                         "--config-override Input.GamepadFpsScale=VALUE",
                         "FPS-independent gamepad",
                         "Scale right-stick look by frame delta so speed is fps-independent.");
+    settingsRegisterInt("Input.SteadyView", &g_pcSteadyView, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_STEADY_VIEW",
+                        "--config-override Input.SteadyView=VALUE",
+                        "Steady view",
+                        "Keep the world camera upright during movement; head motion still drives position and weapon sway.");
 
     /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
      * when 0 every ADS branch is bypassed and behavior is byte-identical. */

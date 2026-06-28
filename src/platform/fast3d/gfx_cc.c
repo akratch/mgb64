@@ -32,6 +32,12 @@ void gfx_cc_get_features(uint64_t shader_id0, uint32_t shader_id1, struct CCFeat
     cc_features->noperspective_fog = (shader_id1 & SHADER_OPT_NOPERSPECTIVE_FOG) != 0;
     cc_features->diag_color_scale = (shader_id1 & SHADER_OPT_DIAG_COLOR_SCALE) != 0;
     cc_features->n64_filter_always_3point = (shader_id1 & SHADER_OPT_N64_FILTER_ALWAYS_3POINT) != 0;
+    cc_features->diag_alpha_from_tex_intensity = (shader_id1 & SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY) != 0;
+    cc_features->diag_xlu_coverage_wrap_thin = (shader_id1 & SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN) != 0;
+    cc_features->diag_rdp_memory_blend = (shader_id1 & SHADER_OPT_DIAG_RDP_MEMORY_BLEND) != 0;
+    cc_features->diag_rdp_cvg_memory_blend = (shader_id1 & SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND) != 0;
+    cc_features->diag_alpha_scale = (shader_id1 & SHADER_OPT_DIAG_ALPHA_SCALE) != 0;
+    cc_features->room_water_alpha_suppress = (shader_id1 & SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS) != 0;
 
     cc_features->used_textures[0] = false;
     cc_features->used_textures[1] = false;

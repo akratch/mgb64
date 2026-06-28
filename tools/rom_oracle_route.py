@@ -99,6 +99,10 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("stock_frames", route.get("frames"))
     if field == "stock_screenshot_frame":
         return route.get("stock_screenshot_frame", route_field(route, "stock_frames"))
+    if field == "native_screenshot_game_timer":
+        return route.get("native_screenshot_game_timer", "")
+    if field == "stock_screenshot_game_timer":
+        return route.get("stock_screenshot_game_timer", "")
     if field == "native_level":
         return route.get("native_level", route.get("level"))
     if field == "stock_level":
@@ -109,6 +113,57 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("compare_kind", "movement")
     if field == "compare_profile":
         return route.get("compare_profile", "full")
+    if field == "compare_require_active":
+        return route.get("compare_require_active", False)
+    if field == "compare_require_hash_match":
+        return route.get("compare_require_hash_match", False)
+    if field == "compare_first_active_tolerance":
+        return route.get("compare_first_active_tolerance", "")
+    if field == "compare_max_active_tolerance":
+        return route.get("compare_max_active_tolerance", "")
+    if field == "compare_first_position_tolerance":
+        return route.get("compare_first_position_tolerance", "")
+    if field == "compare_first_sample_tolerance":
+        return route.get("compare_first_sample_tolerance", "")
+    if field == "compare_require_prop_destroyed":
+        return route.get("compare_require_prop_destroyed", False)
+    if field == "compare_require_impact_active":
+        return route.get("compare_require_impact_active", False)
+    if field == "compare_require_impact_match":
+        return route.get("compare_require_impact_match", False)
+    if field == "compare_impact_position_tolerance":
+        return route.get("compare_impact_position_tolerance", "")
+    if field == "compare_impact_position_points":
+        value = route.get("compare_impact_position_points", "")
+        if isinstance(value, list):
+            return ",".join(str(item) for item in value)
+        return value
+    if field == "compare_prop_position_tolerance":
+        return route.get("compare_prop_position_tolerance", "")
+    if field == "compare_max_buffer_len":
+        return route.get("compare_max_buffer_len", "")
+    if field == "visual_logical_size":
+        return route.get("visual_logical_size", "")
+    if field == "visual_logical_viewport":
+        return route.get("visual_logical_viewport", "")
+    if field == "visual_baseline_logical_frame":
+        return route.get("visual_baseline_logical_frame", "active")
+    if field == "visual_test_logical_frame":
+        return route.get("visual_test_logical_frame", "full")
+    if field == "compare_actor_chrnums":
+        return route.get("compare_actor_chrnums", [])
+    if field == "compare_actor_fields":
+        return route.get("compare_actor_fields", "")
+    if field == "compare_actor_frame":
+        return route.get("compare_actor_frame", "first-active")
+    if field == "compare_actor_position_tolerance":
+        return route.get("compare_actor_position_tolerance", "")
+    if field == "compare_require_health_match":
+        return route.get("compare_require_health_match", False)
+    if field == "compare_health_tolerance":
+        return route.get("compare_health_tolerance", "")
+    if field == "compare_damage_show_tolerance":
+        return route.get("compare_damage_show_tolerance", "")
     if field == "compare_max_aligned":
         return route.get("compare_max_aligned", "")
     if field == "compare_min_aligned":
@@ -167,6 +222,10 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("stock_max_suppressed_menu_records", "")
     if field == "stock_min_menu_to_gameplay_gap":
         return route.get("stock_min_menu_to_gameplay_gap", "")
+    if field == "stock_min_force_player_applies":
+        return route.get("stock_min_force_player_applies", "")
+    if field == "stock_min_force_player_stan_applies":
+        return route.get("stock_min_force_player_stan_applies", "")
     if field == "native_intro_audit":
         return route.get("native_intro_audit", False)
     if field == "native_intro_camera_modes":
@@ -375,12 +434,54 @@ def emit_native_env(route: dict[str, Any]) -> None:
         print(f"{key}={','.join(env[key])}")
 
 
+def emit_stock_env(route: dict[str, Any]) -> None:
+    direct_env = route.get("stock_env", {})
+    if direct_env in (None, ""):
+        direct_env = {}
+    if not isinstance(direct_env, dict):
+        raise SystemExit("FAIL: route stock_env must be an object when set")
+
+    def env_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if value is None:
+            return ""
+        return str(value)
+
+    for key in sorted(direct_env):
+        if not isinstance(key, str) or not key:
+            raise SystemExit(f"FAIL: stock_env key must be a non-empty string: {key!r}")
+        print(f"{key}={env_value(direct_env[key])}")
+
+
+def emit_native_config(route: dict[str, Any]) -> None:
+    config = route.get("native_config", {})
+    if config in (None, ""):
+        config = {}
+    if not isinstance(config, dict):
+        raise SystemExit("FAIL: route native_config must be an object when set")
+
+    def config_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if value is None:
+            return ""
+        return str(value)
+
+    for key in sorted(config):
+        if not isinstance(key, str) or not key:
+            raise SystemExit(f"FAIL: native_config key must be a non-empty string: {key!r}")
+        print(f"{key}={config_value(config[key])}")
+
+
 def event_phase(event: dict[str, Any]) -> str:
     phase = str(event.get("phase", "gameplay")).strip().lower().replace("-", "_")
-    if phase not in ("gameplay", "menu", "boot", "frontend"):
+    if phase not in ("gameplay", "menu", "boot", "frontend", "global", "stage_global"):
         raise SystemExit(f"FAIL: route event has unsupported phase {phase!r}: {event!r}")
     if phase in ("boot", "frontend"):
         return "menu"
+    if phase == "stage_global":
+        return "global"
     return phase
 
 
@@ -407,6 +508,161 @@ def emit_gameplay_windows(route: dict[str, Any]) -> None:
             raise SystemExit(f"FAIL: compare_gameplay_windows entries must be objects: {window!r}")
         start, duration = event_window(window)
         print(f"{start}:{duration}")
+
+
+def visual_region_arg(region: dict[str, Any]) -> str:
+    name = region["name"]
+    x, y, width, height = region["roi"]
+    return f"{name}:{x},{y},{width},{height}"
+
+
+def emit_visual_regions(route: dict[str, Any]) -> None:
+    regions = route.get("visual_regions", [])
+    if regions in (None, ""):
+        return
+    if not isinstance(regions, list):
+        raise SystemExit("FAIL: visual_regions must be a list")
+    for region in regions:
+        if not isinstance(region, dict):
+            raise SystemExit(f"FAIL: visual_regions entries must be objects: {region!r}")
+        print(visual_region_arg(region))
+
+
+def emit_visual_exclude_regions(route: dict[str, Any]) -> None:
+    exclude_names = route.get("visual_mask_exclude_regions", [])
+    if exclude_names in (None, ""):
+        return
+    if not isinstance(exclude_names, list):
+        raise SystemExit("FAIL: visual_mask_exclude_regions must be a list")
+
+    regions = route.get("visual_regions", [])
+    if regions in (None, ""):
+        regions = []
+    if not isinstance(regions, list):
+        raise SystemExit("FAIL: visual_regions must be a list")
+
+    by_name = {
+        region.get("name"): region
+        for region in regions
+        if isinstance(region, dict) and isinstance(region.get("name"), str)
+    }
+    for name in exclude_names:
+        if not isinstance(name, str) or not name:
+            raise SystemExit("FAIL: visual_mask_exclude_regions entries must be non-empty strings")
+        region = by_name.get(name)
+        if region is None:
+            raise SystemExit(f"FAIL: visual_mask_exclude_regions references unknown region: {name}")
+        print(visual_region_arg(region))
+
+
+def route_int_list(route: dict[str, Any], field: str, count: int, errors: list[str]):
+    value = route.get(field, "")
+    if value in ("", None):
+        return None
+    if (
+        not isinstance(value, list) or
+        len(value) != count or
+        any(not isinstance(item, int) for item in value)
+    ):
+        errors.append(f"route {field} must be a list of {count} integers")
+        return None
+    return value
+
+
+def visual_logical_arg(value: list[int]) -> str:
+    return ",".join(str(item) for item in value)
+
+
+def emit_visual_logical_args(route: dict[str, Any]) -> None:
+    errors: list[str] = []
+    logical_size = route_int_list(route, "visual_logical_size", 2, errors)
+    logical_viewport = route_int_list(route, "visual_logical_viewport", 4, errors)
+    if errors:
+        raise SystemExit("FAIL: " + "; ".join(errors))
+    if logical_size is None or logical_viewport is None:
+        return
+    baseline_frame = str(route.get("visual_baseline_logical_frame", "active"))
+    test_frame = str(route.get("visual_test_logical_frame", "full"))
+    print("--logical-size")
+    print(visual_logical_arg(logical_size))
+    print("--logical-viewport")
+    print(visual_logical_arg(logical_viewport))
+    print("--baseline-logical-frame")
+    print(baseline_frame)
+    print("--test-logical-frame")
+    print(test_frame)
+
+
+def route_int_items(route: dict[str, Any], field: str, errors: list[str]) -> list[int]:
+    value = route.get(field, [])
+    if value in ("", None):
+        return []
+    if not isinstance(value, list):
+        errors.append(f"route {field} must be a list of non-negative integers")
+        return []
+
+    items: list[int] = []
+    for index, item in enumerate(value):
+        if type(item) is not int or item < 0:
+            errors.append(f"route {field}[{index}] must be a non-negative integer")
+            continue
+        items.append(item)
+    return items
+
+
+def route_actor_fields(route: dict[str, Any], errors: list[str]) -> list[str]:
+    value = route.get("compare_actor_fields", "")
+    if value in ("", None):
+        return []
+    if isinstance(value, str):
+        fields = [field.strip() for field in value.split(",") if field.strip()]
+    elif isinstance(value, list):
+        fields = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                errors.append(f"route compare_actor_fields[{index}] must be a non-empty string")
+            else:
+                fields.append(item.strip())
+    else:
+        errors.append("route compare_actor_fields must be a string or list of strings")
+        return []
+    if not fields:
+        errors.append("route compare_actor_fields must name at least one field when set")
+    return fields
+
+
+def emit_actor_compare_args(route: dict[str, Any]) -> None:
+    errors: list[str] = []
+    chrnums = route_int_items(route, "compare_actor_chrnums", errors)
+    fields = route_actor_fields(route, errors)
+    frame = str(route.get("compare_actor_frame", "first-active"))
+    position_tolerance = route.get("compare_actor_position_tolerance", "")
+    if frame not in ("first-active", "last-active", "screenshot"):
+        errors.append("route compare_actor_frame must be first-active, last-active, or screenshot")
+    if position_tolerance not in ("", None):
+        try:
+            parsed = float(position_tolerance)
+        except (TypeError, ValueError):
+            errors.append("route compare_actor_position_tolerance must be a non-negative number")
+        else:
+            if parsed < 0.0:
+                errors.append("route compare_actor_position_tolerance must be a non-negative number")
+    if errors:
+        raise SystemExit("FAIL: " + "; ".join(errors))
+    if not chrnums:
+        return
+
+    for chrnum in chrnums:
+        print("--require-actor-match")
+        print(chrnum)
+    if fields:
+        print("--actor-fields")
+        print(",".join(fields))
+    print("--actor-frame")
+    print(frame)
+    if position_tolerance not in ("", None):
+        print("--actor-position-tolerance")
+        print(position_tolerance)
 
 
 def route_bool(route: dict[str, Any], field: str, default: bool) -> bool:
@@ -479,25 +735,120 @@ def route_positive_float(route: dict[str, Any], field: str) -> None:
         raise SystemExit(f"FAIL: route {field} must be a positive number when set")
 
 
+def route_nonnegative_float(route: dict[str, Any], field: str) -> None:
+    value = route.get(field, "")
+    if value in ("", None):
+        return
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise SystemExit(f"FAIL: route {field} must be a non-negative number when set") from None
+    if parsed < 0.0:
+        raise SystemExit(f"FAIL: route {field} must be a non-negative number when set")
+
+
+def route_impact_position_points(route: dict[str, Any]) -> None:
+    value = route.get("compare_impact_position_points", "")
+    if value in ("", None):
+        return
+    if isinstance(value, str):
+        points = [point.strip() for point in value.split(",") if point.strip()]
+    elif isinstance(value, list):
+        points = value
+    else:
+        raise SystemExit("FAIL: route compare_impact_position_points must be a string or list")
+
+    if not points:
+        raise SystemExit("FAIL: route compare_impact_position_points must name at least one point")
+    for point in points:
+        if point not in ("center", "v0", "v1", "v2", "v3"):
+            raise SystemExit(
+                "FAIL: route compare_impact_position_points entries must be one of "
+                "center, v0, v1, v2, v3"
+            )
+
+
 def validate_route(route: dict[str, Any]) -> None:
     compare_kind = str(route_field(route, "compare_kind"))
+    compare_align = str(route_field(route, "compare_align"))
+    compare_profile = str(route_field(route, "compare_profile"))
     stock_events = events_for(route, "stock")
     errors: list[str] = []
 
-    stock_has_gameplay_events = any(event_phase(event) == "gameplay" for event in stock_events)
+    if compare_kind not in ("movement", "intro", "visual", "glass"):
+        errors.append(f"route compare_kind must be movement, intro, visual, or glass: {compare_kind}")
+    elif compare_kind == "movement":
+        if compare_align not in ("global", "frame", "index", "move", "gameplay-frame"):
+            errors.append(f"movement route compare_align is unsupported: {compare_align}")
+        if compare_profile not in ("full", "dynamics", "scalar-speed", "timing"):
+            errors.append(f"movement route compare_profile is unsupported: {compare_profile}")
+    elif compare_kind == "intro":
+        if compare_align not in ("active-index", "global", "frame", "intro-timer"):
+            errors.append(f"intro route compare_align is unsupported: {compare_align}")
+        if compare_profile not in ("path", "scalar", "state", "full"):
+            errors.append(f"intro route compare_profile is unsupported: {compare_profile}")
+    elif compare_kind == "visual":
+        if compare_align not in ("global", "frame", "index"):
+            errors.append(f"visual route compare_align is unsupported: {compare_align}")
+        if compare_profile not in ("full", "screenshot", "active-normalized", "logical-viewport"):
+            errors.append(f"visual route compare_profile is unsupported: {compare_profile}")
+        if compare_profile == "logical-viewport":
+            logical_size = route_int_list(route, "visual_logical_size", 2, errors)
+            logical_viewport = route_int_list(route, "visual_logical_viewport", 4, errors)
+            if logical_size is not None:
+                width, height = logical_size
+                if width <= 0 or height <= 0:
+                    errors.append("route visual_logical_size must contain positive width/height")
+            if logical_size is not None and logical_viewport is not None:
+                x, y, width, height = logical_viewport
+                logical_width, logical_height = logical_size
+                if x < 0 or y < 0 or width <= 0 or height <= 0:
+                    errors.append("route visual_logical_viewport has invalid bounds")
+                elif x + width > logical_width or y + height > logical_height:
+                    errors.append("route visual_logical_viewport extends outside visual_logical_size")
+            for field in ("visual_baseline_logical_frame", "visual_test_logical_frame"):
+                value = str(route.get(field, "active" if field == "visual_baseline_logical_frame" else "full"))
+                if value not in ("active", "full"):
+                    errors.append(f"route {field} must be active or full")
+        route_bool(route, "compare_require_impact_active", False)
+        route_bool(route, "compare_require_impact_match", False)
+        route_positive_float(route, "compare_impact_position_tolerance")
+        route_impact_position_points(route)
+    elif compare_kind == "glass":
+        if compare_align not in ("global", "frame", "index"):
+            errors.append(f"glass route compare_align is unsupported: {compare_align}")
+        if compare_profile not in ("full", "state", "shatter-state"):
+            errors.append(f"glass route compare_profile is unsupported: {compare_profile}")
+        route_bool(route, "compare_require_active", False)
+        route_bool(route, "compare_require_hash_match", False)
+        route_nonnegative_int(route, "compare_first_active_tolerance")
+        route_nonnegative_int(route, "compare_max_active_tolerance")
+        route_positive_float(route, "compare_first_position_tolerance")
+        route_bool(route, "compare_require_prop_destroyed", False)
+        route_bool(route, "compare_require_impact_active", False)
+        route_bool(route, "compare_require_impact_match", False)
+        route_positive_float(route, "compare_impact_position_tolerance")
+        route_impact_position_points(route)
+        route_positive_float(route, "compare_prop_position_tolerance")
+        route_positive_int(route, "compare_max_buffer_len")
+
+    stock_has_gameplay_events = any(event_phase(event) in ("gameplay", "global") for event in stock_events)
     stock_has_menu_events = any(event_phase(event) == "menu" for event in stock_events)
-    if compare_kind == "movement" and stock_has_gameplay_events:
+    if compare_kind in ("movement", "glass") and stock_has_gameplay_events:
         if route_field(route, "stock_gameplay_start_global") in ("", None):
-            errors.append("movement stock gameplay routes must set stock_gameplay_start_global")
+            errors.append(f"{compare_kind} stock gameplay routes must set stock_gameplay_start_global")
         if not route_bool(route, "stock_menu_close_on_player", True):
             errors.append(
-                "movement stock gameplay routes must close menu input on target-player entry"
+                f"{compare_kind} stock gameplay routes must close menu input on target-player entry"
             )
-        for field in (
-            "native_min_moving_records",
-            "stock_min_moving_records",
-            "stock_min_gameplay_input_records",
-        ):
+        required_fields = ["stock_min_gameplay_input_records"]
+        if compare_kind == "movement":
+            required_fields = [
+                "native_min_moving_records",
+                "stock_min_moving_records",
+                *required_fields,
+            ]
+        for field in required_fields:
             if route_requires_present(route, field, errors):
                 route_positive_int(route, field)
         if stock_has_menu_events:
@@ -538,14 +889,95 @@ def validate_route(route: dict[str, Any]) -> None:
     route_bool(route, "compare_intro_setup", False)
     route_bool(route, "compare_bond_anim", False)
     route_bool(route, "native_render_audit", False)
+    for env_field in ("native_env", "stock_env", "native_config"):
+        direct_env = route.get(env_field, {})
+        if direct_env in (None, ""):
+            continue
+        if not isinstance(direct_env, dict):
+            errors.append(f"route {env_field} must be an object when set")
+            continue
+        for key in direct_env:
+            if not isinstance(key, str) or not key:
+                errors.append(f"route {env_field} keys must be non-empty strings")
+    visual_regions = route.get("visual_regions", [])
+    if visual_regions in (None, ""):
+        visual_regions = []
+    seen_regions: set[str] = set()
+    if not isinstance(visual_regions, list):
+        errors.append("route visual_regions must be a list when set")
+    else:
+        for index, region in enumerate(visual_regions):
+            if not isinstance(region, dict):
+                errors.append(f"route visual_regions[{index}] must be an object")
+                continue
+            name = region.get("name")
+            roi = region.get("roi")
+            if not isinstance(name, str) or not name:
+                errors.append(f"route visual_regions[{index}].name must be a non-empty string")
+            elif ":" in name or "," in name:
+                errors.append(f"route visual_regions[{index}].name must not contain ':' or ','")
+            elif name in seen_regions:
+                errors.append(f"route visual_regions name is duplicated: {name}")
+            else:
+                seen_regions.add(name)
+            if (
+                not isinstance(roi, list) or
+                len(roi) != 4 or
+                any(not isinstance(value, int) for value in roi)
+            ):
+                errors.append(f"route visual_regions[{index}].roi must be [x, y, width, height] integers")
+            else:
+                x, y, width, height = roi
+                if x < 0 or y < 0 or width <= 0 or height <= 0:
+                    errors.append(f"route visual_regions[{index}].roi has invalid bounds")
+
+    visual_mask_exclude_regions = route.get("visual_mask_exclude_regions", [])
+    if visual_mask_exclude_regions in (None, ""):
+        visual_mask_exclude_regions = []
+    if not isinstance(visual_mask_exclude_regions, list):
+        errors.append("route visual_mask_exclude_regions must be a list when set")
+    else:
+        seen_excludes: set[str] = set()
+        for index, name in enumerate(visual_mask_exclude_regions):
+            if not isinstance(name, str) or not name:
+                errors.append(f"route visual_mask_exclude_regions[{index}] must be a non-empty string")
+            elif name in seen_excludes:
+                errors.append(f"route visual_mask_exclude_regions is duplicated: {name}")
+            elif name not in seen_regions:
+                errors.append(f"route visual_mask_exclude_regions references unknown region: {name}")
+            else:
+                seen_excludes.add(name)
+
+    route_int_items(route, "compare_actor_chrnums", errors)
+    route_actor_fields(route, errors)
+    compare_actor_frame = str(route.get("compare_actor_frame", "first-active"))
+    if compare_actor_frame not in ("first-active", "last-active", "screenshot"):
+        errors.append("route compare_actor_frame must be first-active, last-active, or screenshot")
+    actor_position_tolerance = route.get("compare_actor_position_tolerance", "")
+    if actor_position_tolerance not in ("", None):
+        try:
+            parsed_actor_position_tolerance = float(actor_position_tolerance)
+        except (TypeError, ValueError):
+            errors.append("route compare_actor_position_tolerance must be a non-negative number")
+        else:
+            if parsed_actor_position_tolerance < 0.0:
+                errors.append("route compare_actor_position_tolerance must be a non-negative number")
+    route_bool(route, "compare_require_health_match", False)
+    route_nonnegative_float(route, "compare_health_tolerance")
+    route_nonnegative_int(route, "compare_damage_show_tolerance")
+
     stock_frames = route_required_positive_int_field(route, "stock_frames")
     stock_screenshot_frame = route_required_positive_int_field(route, "stock_screenshot_frame")
     if stock_screenshot_frame > stock_frames:
         errors.append("route stock_screenshot_frame must be <= stock_frames")
+    route_positive_int(route, "native_screenshot_game_timer")
+    route_positive_int(route, "stock_screenshot_game_timer")
     route_positive_int(route, "native_level")
     route_positive_int(route, "stock_level")
     route_nonnegative_int(route, "stock_max_suppressed_menu_records")
     route_nonnegative_int(route, "stock_min_menu_to_gameplay_gap")
+    route_positive_int(route, "stock_min_force_player_applies")
+    route_positive_int(route, "stock_min_force_player_stan_applies")
     route_positive_float(route, "compare_anim_tolerance")
     route_positive_int(route, "compare_min_aligned")
     route_positive_float(route, "compare_start_intro_timer")
@@ -555,7 +987,7 @@ def validate_route(route: dict[str, Any]) -> None:
         for event in events_for(route, provider):
             phase = event_phase(event) if provider == "stock" else "gameplay"
             buttons = set(event_buttons(event))
-            if phase == "gameplay" and "start" in buttons:
+            if phase in ("gameplay", "global") and "start" in buttons:
                 errors.append(f"{provider} gameplay event injects START: {event!r}")
 
     if errors:
@@ -596,10 +1028,28 @@ def main() -> int:
     p = sub.add_parser("native-env", help="emit KEY=VALUE lines for native GE007_AUTO_* input")
     p.add_argument("route")
 
+    p = sub.add_parser("native-config", help="emit KEY=VALUE lines for native --config-override")
+    p.add_argument("route")
+
+    p = sub.add_parser("stock-env", help="emit KEY=VALUE lines for stock ares oracle env")
+    p.add_argument("route")
+
     p = sub.add_parser("ares-input", help="emit ares controller route script")
     p.add_argument("route")
 
     p = sub.add_parser("gameplay-windows", help="emit comparator gameplay windows as START:LEN lines")
+    p.add_argument("route")
+
+    p = sub.add_parser("visual-regions", help="emit visual comparison regions as NAME:X,Y,W,H lines")
+    p.add_argument("route")
+
+    p = sub.add_parser("visual-exclude-regions", help="emit masked visual excluded regions as NAME:X,Y,W,H lines")
+    p.add_argument("route")
+
+    p = sub.add_parser("visual-logical-args", help="emit compare_screenshots logical-viewport args")
+    p.add_argument("route")
+
+    p = sub.add_parser("actor-compare-args", help="emit compare_glass_trace actor guard args")
     p.add_argument("route")
 
     p = sub.add_parser("summary", help="print route metadata")
@@ -623,10 +1073,22 @@ def main() -> int:
         print(route_field(route, args.field))
     elif args.command == "native-env":
         emit_native_env(route)
+    elif args.command == "native-config":
+        emit_native_config(route)
+    elif args.command == "stock-env":
+        emit_stock_env(route)
     elif args.command == "ares-input":
         emit_ares_input(route)
     elif args.command == "gameplay-windows":
         emit_gameplay_windows(route)
+    elif args.command == "visual-regions":
+        emit_visual_regions(route)
+    elif args.command == "visual-exclude-regions":
+        emit_visual_exclude_regions(route)
+    elif args.command == "visual-logical-args":
+        emit_visual_logical_args(route)
+    elif args.command == "actor-compare-args":
+        emit_actor_compare_args(route)
     elif args.command == "summary":
         print(json.dumps({k: v for k, v in route.items() if not k.startswith("_")}, indent=2))
     elif args.command == "validate":

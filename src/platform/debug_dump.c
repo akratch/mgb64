@@ -7,9 +7,12 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
+#include <stdint.h>
 #include "../bondtypes.h"
 #include "../bondconstants.h"
+#include "../game/chrai.h"
 #include "../game/player.h"
 #include "../game/gun.h"
 
@@ -20,6 +23,8 @@ extern int g_frame_count_diag;
 extern int g_MaxNumRooms;
 extern int g_BgCurrentRoom;
 extern f32 level_scale, inv_level_scale;
+extern u8 *g_VtxBuffers[3];
+extern u8 g_GfxActiveBufferIndex;
 
 /* Camera */
 extern Mtxf *camGetWorldToScreenMtxf(void);
@@ -37,6 +42,135 @@ static int s_dumpRequested = 0;
 static int s_dumpCount = 0;
 static char s_dumpPath[256] = "";
 static int s_overlayTimer = 0;
+
+static int debugDumpEnvFlag(const char *name) {
+    const char *env = getenv(name);
+    return env != NULL && env[0] != '\0' && env[0] != '0';
+}
+
+static void debugDumpMaybeAutoRequest(void) {
+    static int initialized = 0;
+    static int frame = -1;
+    static int done = 0;
+    const char *env;
+
+    if (!initialized) {
+        env = getenv("GE007_AUTO_DEBUG_DUMP_FRAME");
+        if (env != NULL && env[0] != '\0') {
+            frame = (int)strtol(env, NULL, 10);
+        }
+        initialized = 1;
+    }
+
+    if (!done && frame >= 0 && g_frame_count_diag >= frame) {
+        s_dumpRequested = 1;
+        done = 1;
+    }
+}
+
+static int debugDumpFiniteF32(f32 value) {
+    return value == value &&
+           value > -3.402823466e+38f &&
+           value < 3.402823466e+38f;
+}
+
+static int debugDumpPropPointerLooksValid(const PropRecord *prop) {
+    uintptr_t ptr = (uintptr_t)prop;
+    uintptr_t first = (uintptr_t)&pos_data_entry[0];
+    uintptr_t last = (uintptr_t)&pos_data_entry[POS_DATA_ENTRY_LEN];
+
+    return ptr >= first &&
+           ptr < last &&
+           ((ptr - first) % sizeof(pos_data_entry[0])) == 0;
+}
+
+static int debugDumpPtrInActiveDynVtxRange(const void *ptr, size_t bytes) {
+    uintptr_t addr;
+    uintptr_t endaddr;
+    uintptr_t start;
+    uintptr_t end;
+    u8 index = g_GfxActiveBufferIndex;
+
+    if (ptr == NULL || bytes == 0 || index > 1 ||
+        g_VtxBuffers[index] == NULL || g_VtxBuffers[index + 1] == NULL) {
+        return 0;
+    }
+
+    addr = (uintptr_t)ptr;
+    if (addr > (~(uintptr_t)0) - bytes) {
+        return 0;
+    }
+
+    endaddr = addr + bytes;
+    start = (uintptr_t)g_VtxBuffers[index];
+    end = (uintptr_t)g_VtxBuffers[index + 1];
+
+    return addr >= start && endaddr <= end;
+}
+
+static int debugDumpModelHeaderLooksSane(const ModelFileHeader *header) {
+    if (header == NULL ||
+        header->RootNode == NULL ||
+        header->numRecords < 0 ||
+        header->numRecords > 4096 ||
+        header->numMatrices < 0 ||
+        header->numMatrices > 512 ||
+        header->numSwitches < 0 ||
+        header->numSwitches > 1024) {
+        return 0;
+    }
+
+    if (header->Skeleton != NULL &&
+        (header->Skeleton->numjoints <= 0 ||
+         header->Skeleton->numjoints > 512)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int debugDumpModelLooksSane(const Model *model) {
+    if (model == NULL ||
+        !debugDumpModelHeaderLooksSane(model->obj) ||
+        !debugDumpFiniteF32(model->scale) ||
+        model->scale <= 0.0f ||
+        model->scale > 1000.0f) {
+        return 0;
+    }
+
+    if (model->obj->numRecords > 0 && model->datas == NULL) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int debugDumpMatrixCountForModel(const Model *model) {
+    s32 count;
+
+    if (!debugDumpModelLooksSane(model)) {
+        return 0;
+    }
+
+    count = model->obj->numMatrices;
+
+#ifdef NATIVE_PORT
+    if (model->obj->requiredRenderPosCount > count) {
+        count = model->obj->requiredRenderPosCount;
+    }
+#endif
+
+    if (model->obj->Skeleton != NULL &&
+        model->obj->Skeleton->numjoints > count) {
+        count = model->obj->Skeleton->numjoints;
+    }
+
+    if (count < 0 || count > 512) {
+        return 0;
+    }
+
+    return count;
+}
 
 void debugDumpRequest(void) {
     s_dumpRequested = 1;
@@ -119,6 +253,8 @@ static void debugDumpViewmodelTrace(FILE *fp, const char *label, GUNHAND hand) {
 }
 
 void debugDumpExecute(void) {
+    debugDumpMaybeAutoRequest();
+
     if (!s_dumpRequested) return;
     s_dumpRequested = 0;
 
@@ -257,6 +393,18 @@ void debugDumpExecute(void) {
                 Model *model = chr->model;
 
                 fprintf(fp, "\n  --- chr[%d] chrnum=%d ---\n", i, chr->chrnum);
+
+                if (!debugDumpPropPointerLooksValid(prop)) {
+                    fprintf(fp, "  skipped: invalid prop pointer %p\n", (void *)prop);
+                    continue;
+                }
+
+                if (prop->type != PROP_TYPE_CHR || prop->chr != chr) {
+                    fprintf(fp, "  skipped: prop mismatch type=%d prop_chr=%p expected_chr=%p\n",
+                            prop->type, (void *)prop->chr, (void *)chr);
+                    continue;
+                }
+
                 fprintf(fp, "  action=%d(%s) hidden=0x%04X chrflags=0x%X sleep=%d\n",
                         chr->actiontype, actionName(chr->actiontype),
                         chr->hidden, chr->chrflags, chr->sleep);
@@ -270,32 +418,55 @@ void debugDumpExecute(void) {
                         (void*)prop->stan);
 
                 if (model) {
+                    if (!debugDumpModelLooksSane(model)) {
+                        fprintf(fp, "  model=%p skipped: unsafe model/header state obj=%p datas=%p render_pos=%p\n",
+                                (void *)model,
+                                model != NULL ? (void *)model->obj : NULL,
+                                model != NULL ? (void *)model->datas : NULL,
+                                model != NULL ? (void *)model->render_pos : NULL);
+                        continue;
+                    }
+
                     fprintf(fp, "  model=%p anim=%p animlooping=%d speed=%.2f playspeed=%.2f\n",
                             (void*)model, (void*)model->anim,
                             model->animlooping, model->speed, model->playspeed);
                     fprintf(fp, "  scale=%.4f render_pos=%p field_20=%p\n",
                             model->scale, (void*)model->render_pos, (void*)chr->field_20);
 
-                    /* Dump ALL bone matrices */
+                    /* Dump bone matrices only when explicitly requested. This
+                     * path reads per-frame dyn memory and must stay non-fatal
+                     * when a model slot is stale or mid-transition. */
                     if (model->render_pos) {
-                        s32 nmat = (model->obj && model->obj->Skeleton) ? model->obj->Skeleton->numjoints : 0;
-                        if (nmat > 20) nmat = 20; /* safety cap */
-                        fprintf(fp, "  render_pos=%p numjoints=%d\n", (void*)model->render_pos, nmat);
-                        for (int bi = 0; bi < nmat; bi++) {
-                            float (*rp)[4] = (float (*)[4])&model->render_pos[bi];
-                            float diag_sum = rp[0][0]*rp[0][0] + rp[1][1]*rp[1][1] + rp[2][2]*rp[2][2];
-                            int valid = (diag_sum > 0.001f);
-                            fprintf(fp, "  bone[%d] trans=(%8.1f,%8.1f,%8.1f) diag=(%6.3f,%6.3f,%6.3f) %s\n",
-                                    bi, rp[3][0], rp[3][1], rp[3][2],
-                                    rp[0][0], rp[1][1], rp[2][2],
-                                    valid ? "OK" : "*** ZERO ***");
+                        s32 nmat = debugDumpMatrixCountForModel(model);
+                        size_t nbytes = (size_t)nmat * sizeof(RenderPosView);
+
+                        fprintf(fp, "  render_pos=%p matrices=%d dyn_live=%d\n",
+                                (void*)model->render_pos,
+                                nmat,
+                                debugDumpPtrInActiveDynVtxRange(model->render_pos, nbytes));
+
+                        if (debugDumpEnvFlag("GE007_DEBUG_DUMP_BONES") &&
+                            nmat > 0 &&
+                            debugDumpPtrInActiveDynVtxRange(model->render_pos, nbytes)) {
+                            if (nmat > 20) nmat = 20; /* safety cap */
+                            for (int bi = 0; bi < nmat; bi++) {
+                                float (*rp)[4] = (float (*)[4])&model->render_pos[bi];
+                                float diag_sum = rp[0][0]*rp[0][0] + rp[1][1]*rp[1][1] + rp[2][2]*rp[2][2];
+                                int valid = (diag_sum > 0.001f);
+                                fprintf(fp, "  bone[%d] trans=(%8.1f,%8.1f,%8.1f) diag=(%6.3f,%6.3f,%6.3f) %s\n",
+                                        bi, rp[3][0], rp[3][1], rp[3][2],
+                                        rp[0][0], rp[1][1], rp[2][2],
+                                        valid ? "OK" : "*** ZERO ***");
+                            }
+                        } else {
+                            fprintf(fp, "  bone dump skipped (set GE007_DEBUG_DUMP_BONES=1 for live dyn matrices)\n");
                         }
                     } else {
                         fprintf(fp, "  *** render_pos = NULL ***\n");
                     }
 
                     /* Check rwdata unk00/unk01 (the struct mismatch field) */
-                    if (model->obj && model->obj->RootNode) {
+                    if (debugDumpEnvFlag("GE007_DEBUG_DUMP_RWDATA") && model->obj && model->obj->RootNode) {
                         u8 *rwbytes = (u8 *)modelGetNodeRwData(model, model->obj->RootNode);
                         if (rwbytes) {
                             fprintf(fp, "  rwdata byte0=%d byte1=%d byte2=%d (unk00/unk01/unk02)\n",

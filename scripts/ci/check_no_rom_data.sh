@@ -54,13 +54,13 @@ if [ "$HAVE_GIT" -eq 1 ]; then
     '*.z64' '*.n64' '*.v64' '*.rom' '*.bin' '*.rz' '*.eeprom' '*.cdata*' \
     '*.ctl' '*.tbl' '*.sbk' '*.seq' '*.aifc' '*.aiff' '*.seg' \
     'baserom*' '*.o' '*.a' '*.so' '*.dll' '*.dylib' '*.exe' \
-    '*.bmp' '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp' '*.ico' '*.icns' '*.ppm' \
+    '*.bmp' '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp' '*.ico' '*.icns' '*.ppm' '*.pgm' '*.pnm' \
     '*.raw' '*.wav' '*.mp3' '*.ogg' '*.flac' '*.m4a' '*.aac' \
     '*.mp4' '*.mov' '*.m4v' '*.mkv' '*.avi' '*.webm' '*.jsonl' \
     '*.dmg' '*.zip' '*.7z' '*.tar' '*.tgz' '*.gz' 2>/dev/null || true)
 else
   forbidden=$(public_file_list \
-    | grep -E '(^|/)baserom|\.((z64|n64|v64|bin|rz|eeprom|ctl|tbl|sbk|seq|aifc|aiff|seg|o|a|so|dll|dylib|exe|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|dmg|zip|7z|tar|tgz|gz))$|\.cdata($|\.)' \
+    | grep -E '(^|/)baserom|\.((z64|n64|v64|bin|rz|eeprom|ctl|tbl|sbk|seq|aifc|aiff|seg|o|a|so|dll|dylib|exe|bmp|png|jpe?g|gif|webp|ico|icns|ppm|pgm|pnm|raw|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|dmg|zip|7z|tar|tgz|gz))$|\.cdata($|\.)' \
     || true)
 fi
 if [ -n "$forbidden" ]; then
@@ -93,7 +93,8 @@ while IFS= read -r f; do
   sz=$(wc -c < "$f")
   if [ "$sz" -gt 3145728 ]; then
     case "$f" in
-      *.c|*.h|*.cpp|*.s|*.csv|*.json) : ;;  # large source/metadata is allowed
+      *.c|*.h|*.cpp|*.s) : ;;  # large source is allowed
+      scripts/ge007.*-test_basis.csv|scripts/filelist.*.csv|scripts/filediff.*.csv) : ;;
       *) note "tracked file larger than 3 MB (possible blob): $f ($sz bytes)";;
     esac
   fi

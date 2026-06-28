@@ -398,6 +398,8 @@ void increment_num_times_killed_MwtGC(void);
 void sub_GAME_7F062BE4(Gfx **arg0);
 void sub_GAME_7F06908C(Gfx **arg0);
 
+#define PORT_VIEWMODEL_TRACE_MTX_SAMPLES 8
+
 typedef struct PortViewmodelTrace {
     s32 valid;
     s32 frame;
@@ -417,8 +419,26 @@ typedef struct PortViewmodelTrace {
     s32 shell_right_mask;
     s32 cuff[6];
     f32 root[3];
+    f32 render_root[3];
+    f32 render_root_diag[3];
+    s32 render_mtx_count;
+    s32 render_mtx_sampled;
+    f32 render_proj_fovy;
+    f32 render_proj_aspect;
+    f32 render_proj_view[4];
+    f32 render_mtx[PORT_VIEWMODEL_TRACE_MTX_SAMPLES][3];
     f32 world[3];
     f32 muzzle[3];
+    f32 pose_smooth[3];
+    f32 pose_base[3];
+    f32 pose_target[3];
+    f32 pose_stats[3];
+    f32 pose_screen[5];
+    f32 pose_accum[3];
+    f32 pose_player[7];
+    f32 pose_blend_state[5];
+    f32 pose_blendpos[4][3];
+    s32 pose_blend_meta[2];
     f32 switch2[3];
     f32 switch3[3];
     f32 switch4[3];

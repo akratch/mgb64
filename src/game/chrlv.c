@@ -102,8 +102,136 @@ static s32 g_ChrSpawnTracePad = -1;
 static s32 g_ChrSpawnTraceBody = -1;
 static s32 s_pcChrlvAiMoveTraceEnabled = -1;
 static s32 s_pcChrlvTravelAnimTraceEnabled = -1;
+static s32 s_pcChrlvMagicTraceEnabled = -1;
+static s32 s_pcChrlvMagicTraceBudget = 0;
+static s32 s_pcChrlvMagicTraceChrnum = INT_MIN;
+static s32 s_GuardObjectShotTraceEnabled = -1;
+static s32 s_GuardObjectShotTraceBudget = 160;
+static s32 s_GuardObjectShotTraceChrnum = INT_MIN;
+static s32 s_GuardObjectShotTracePad = INT_MIN;
+static s32 s_GuardBondShotTraceEnabled = -1;
+static s32 s_GuardBondShotTraceBudget = 160;
+static s32 s_GuardBondShotTraceChrnum = INT_MIN;
 
 static s32 chrlvPropHasRenderedRoom(const PropRecord *prop);
+
+static s32 guardObjectShotTraceEnabled(void)
+{
+    const char *value;
+
+    if (s_GuardObjectShotTraceEnabled < 0) {
+        value = getenv("GE007_TRACE_GUARD_OBJECT_SHOTS");
+        s_GuardObjectShotTraceEnabled =
+            value != NULL && *value != '\0' && *value != '0' ? 1 : 0;
+
+        value = getenv("GE007_TRACE_GUARD_OBJECT_SHOTS_BUDGET");
+        if (value != NULL && *value != '\0') {
+            s_GuardObjectShotTraceBudget = atoi(value);
+        }
+
+        value = getenv("GE007_TRACE_GUARD_OBJECT_SHOTS_CHRNUM");
+        if (value != NULL && *value != '\0') {
+            s_GuardObjectShotTraceChrnum = atoi(value);
+        }
+
+        value = getenv("GE007_TRACE_GUARD_OBJECT_SHOTS_PAD");
+        if (value != NULL && *value != '\0') {
+            s_GuardObjectShotTracePad = atoi(value);
+        }
+    }
+
+    return s_GuardObjectShotTraceEnabled;
+}
+
+static s32 guardObjectShotTraceMatches(const ChrRecord *chr, const ObjectRecord *obj)
+{
+    if (!guardObjectShotTraceEnabled()) {
+        return 0;
+    }
+
+    if (s_GuardObjectShotTraceBudget == 0 || chr == NULL || obj == NULL) {
+        return 0;
+    }
+
+    if (s_GuardObjectShotTraceChrnum != INT_MIN
+        && chr->chrnum != s_GuardObjectShotTraceChrnum) {
+        return 0;
+    }
+
+    if (s_GuardObjectShotTracePad != INT_MIN
+        && obj->pad != s_GuardObjectShotTracePad) {
+        return 0;
+    }
+
+    if (s_GuardObjectShotTraceBudget > 0) {
+        s_GuardObjectShotTraceBudget--;
+    }
+
+    return 1;
+}
+
+static s32 guardBondShotTraceEnabled(void)
+{
+    const char *value;
+
+    if (s_GuardBondShotTraceEnabled < 0) {
+        value = getenv("GE007_TRACE_GUARD_BOND_SHOTS");
+        s_GuardBondShotTraceEnabled =
+            value != NULL && *value != '\0' && *value != '0' ? 1 : 0;
+
+        value = getenv("GE007_TRACE_GUARD_BOND_SHOTS_BUDGET");
+        if (value != NULL && *value != '\0') {
+            s_GuardBondShotTraceBudget = atoi(value);
+        }
+
+        value = getenv("GE007_TRACE_GUARD_BOND_SHOTS_CHRNUM");
+        if (value != NULL && *value != '\0') {
+            s_GuardBondShotTraceChrnum = atoi(value);
+        }
+    }
+
+    return s_GuardBondShotTraceEnabled;
+}
+
+static s32 guardBondShotTraceMatches(const ChrRecord *chr)
+{
+    if (!guardBondShotTraceEnabled()) {
+        return 0;
+    }
+
+    if (s_GuardBondShotTraceBudget == 0 || chr == NULL) {
+        return 0;
+    }
+
+    if (s_GuardBondShotTraceChrnum != INT_MIN
+        && chr->chrnum != s_GuardBondShotTraceChrnum) {
+        return 0;
+    }
+
+    if (s_GuardBondShotTraceBudget > 0) {
+        s_GuardBondShotTraceBudget--;
+    }
+
+    return 1;
+}
+
+static s32 chrlvMagicTravelShouldUseRenderedPathExit(const ChrRecord *self)
+{
+    if (self == NULL) {
+        return 1;
+    }
+
+    /* The stock route evidence shows authored intro cameras should not wake a
+     * background magic-travel guard merely because the hidden route crosses a
+     * currently rendered cinematic room. Actual PROPFLAG_ONSCREEN visibility
+     * still exits magic; this only suppresses the rendered-path shortcut. */
+    if ((self->hidden & CHRHIDDEN_BACKGROUND_AI) != 0
+        && playerHasFrozenIntroCamera(g_CurrentPlayer)) {
+        return 0;
+    }
+
+    return 1;
+}
 
 static s32 pcChrlvAiMoveTraceEnabled(void)
 {
@@ -137,6 +265,77 @@ static s32 pcChrlvTravelAnimTraceEnabled(void)
     }
 
     return s_pcChrlvTravelAnimTraceEnabled;
+}
+
+static s32 pcChrlvMagicTraceEnabled(void)
+{
+    const char *value;
+    const char *chrnum_env;
+
+    if (s_pcChrlvMagicTraceEnabled < 0) {
+        value = getenv("GE007_TRACE_MAGIC_TRAVEL");
+        s_pcChrlvMagicTraceEnabled =
+            value != NULL && *value != '\0' && *value != '0' ? 1 : 0;
+        s_pcChrlvMagicTraceBudget = 240;
+
+        value = getenv("GE007_TRACE_MAGIC_TRAVEL_BUDGET");
+        if (value != NULL && *value != '\0') {
+            s_pcChrlvMagicTraceBudget = atoi(value);
+        }
+
+        chrnum_env = getenv("GE007_TRACE_CHRNUM");
+        if (chrnum_env != NULL && *chrnum_env != '\0') {
+            s_pcChrlvMagicTraceChrnum = (s32)strtol(chrnum_env, NULL, 0);
+        }
+    }
+
+    return s_pcChrlvMagicTraceEnabled && s_pcChrlvMagicTraceBudget != 0;
+}
+
+static void pcChrlvTraceMagicTravel(const char *kind,
+                                    const ChrRecord *self,
+                                    s32 sp_flag,
+                                    s32 onscreen,
+                                    s32 stan_related,
+                                    const PropRecord *prop)
+{
+    if (!pcChrlvMagicTraceEnabled() || self == NULL) {
+        return;
+    }
+
+    if (s_pcChrlvMagicTraceChrnum != INT_MIN
+        && self->chrnum != s_pcChrlvMagicTraceChrnum) {
+        return;
+    }
+
+    if (s_pcChrlvMagicTraceBudget > 0) {
+        s_pcChrlvMagicTraceBudget--;
+    }
+
+    fprintf(stderr,
+            "[MAGIC_TRAVEL] frame=%d global=%d kind=%s chr=%d action=%d "
+            "mode=%d sp=%d onscreen=%d stan_related=%d flags=0x%08X "
+            "chrflags=0x%08X hidden=0x%04X prop_rendered=%d "
+            "pos=(%.2f,%.2f,%.2f)\n",
+            g_frame_count_diag,
+            g_GlobalTimer,
+            kind,
+            self->chrnum,
+            self->actiontype,
+            (self->actiontype == ACT_PATROL)
+                ? self->act_patrol.waydata.mode
+                : ((self->actiontype == ACT_GOPOS) ? self->act_gopos.waydata.mode : -1),
+            sp_flag,
+            onscreen,
+            stan_related,
+            prop != NULL ? (unsigned int)prop->flags : 0U,
+            (unsigned int)self->chrflags,
+            (unsigned int)self->hidden,
+            chrlvPropHasRenderedRoom(prop),
+            prop != NULL ? prop->pos.x : 0.0f,
+            prop != NULL ? prop->pos.y : 0.0f,
+            prop != NULL ? prop->pos.z : 0.0f);
+    fflush(stderr);
 }
 
 static int stageFlagTraceEnabled(void)
@@ -7764,9 +7963,24 @@ void chrlvUpdateShotbondsum(ChrRecord *self, s32 *arg1, s32 *arg2, ITEM_IDS item
     f32 accuracy; // sp44
     s32 padding; // unused
     s32 in_aim_range;
+    s32 damage_showing_before;
+#ifdef NATIVE_PORT
+    f32 trace_shotbondsum_before;
+    f32 trace_bond_health_before;
+    f32 trace_bond_armor_before;
+    s32 trace_damage_call;
+#endif
 
     player_prop = get_curplayer_positiondata();
     self_prop = self->prop;
+    t2 = 0.0f;
+    accuracy = 0.0f;
+#ifdef NATIVE_PORT
+    trace_shotbondsum_before = self->shotbondsum;
+    trace_bond_health_before = g_CurrentPlayer != NULL ? g_CurrentPlayer->bondhealth : -1.0f;
+    trace_bond_armor_before = g_CurrentPlayer != NULL ? g_CurrentPlayer->bondarmour : -1.0f;
+    trace_damage_call = 0;
+#endif
 
     dx = player_prop->pos.f[0] - self_prop->pos.f[0];
     dy = player_prop->pos.f[1] - self_prop->pos.f[1];
@@ -7793,8 +8007,9 @@ void chrlvUpdateShotbondsum(ChrRecord *self, s32 *arg1, s32 *arg2, ITEM_IDS item
 
     *arg1 = in_aim_range;
     *arg2 = 0;
+    damage_showing_before = bondviewGetIfCurrentPlayerDamageShowTime();
 
-    if ((bondviewGetIfCurrentPlayerDamageShowTime() == 0) && (in_aim_range != 0))
+    if ((damage_showing_before == 0) && (in_aim_range != 0))
     {
         temp_f0_3 = sqrtf(dxdydz_square);
 
@@ -7858,6 +8073,9 @@ void chrlvUpdateShotbondsum(ChrRecord *self, s32 *arg1, s32 *arg2, ITEM_IDS item
             }
 
             bondviewCallRecordDamageKills(t2, subroty, -1, 1);
+#ifdef NATIVE_PORT
+            trace_damage_call = 1;
+#endif
 
             self->shotbondsum = 0.0f;
 
@@ -7867,6 +8085,49 @@ void chrlvUpdateShotbondsum(ChrRecord *self, s32 *arg1, s32 *arg2, ITEM_IDS item
             }
         }
     }
+
+#ifdef NATIVE_PORT
+    if (guardBondShotTraceMatches(self)) {
+        fprintf(stderr,
+            "[GUARD_BOND_SHOT] frame=%d global=%u clock=%d delta=%.5f chr=%d action=%d hidden=0x%x chrflags=0x%x item=%d firecount=(%d,%d) aim=%d damage_show=(%d,%d) call=%d dist=%.2f angle_diff=%.5f limit=%.5f shotbond=(%.5f,%.5f,%.5f) damage_amount=%.5f health=(%.5f,%.5f) armor=(%.5f,%.5f) ai_mod=(%.5f,%.5f) acc_rating=%d guard_pos=(%.2f,%.2f,%.2f) player_pos=(%.2f,%.2f,%.2f)\n",
+            g_frame_count_diag,
+            (unsigned int)g_GlobalTimer,
+            g_ClockTimer,
+            g_GlobalTimerDelta,
+            self->chrnum,
+            self->actiontype,
+            (unsigned int)self->hidden,
+            (unsigned int)self->chrflags,
+            item,
+            self->firecount[0],
+            self->firecount[1],
+            in_aim_range,
+            damage_showing_before,
+            bondviewGetIfCurrentPlayerDamageShowTime(),
+            trace_damage_call,
+            sqrtf(dxdydz_square),
+            angle_diff,
+            limit_angle,
+            trace_shotbondsum_before,
+            accuracy,
+            self->shotbondsum,
+            t2,
+            trace_bond_health_before,
+            g_CurrentPlayer != NULL ? g_CurrentPlayer->bondhealth : -1.0f,
+            trace_bond_armor_before,
+            g_CurrentPlayer != NULL ? g_CurrentPlayer->bondarmour : -1.0f,
+            g_AiAccuracyModifier,
+            g_AiDamageModifier,
+            self->accuracyrating,
+            self_prop->pos.f[0],
+            self_prop->pos.f[1],
+            self_prop->pos.f[2],
+            player_prop->pos.f[0],
+            player_prop->pos.f[1],
+            player_prop->pos.f[2]);
+        fflush(stderr);
+    }
+#endif
 }
 
 
@@ -8259,6 +8520,43 @@ void chrlvFireWeaponRelated(ChrRecord *self, s32 hand)
                                 }
                                 else if ((stanSavedColl_posData->type == PROP_TYPE_OBJ) || (stanSavedColl_posData->type == PROP_TYPE_WEAPON))
                                 {
+#ifdef NATIVE_PORT
+                                    if (guardObjectShotTraceMatches(self, stanSavedColl_posData->obj)) {
+                                        fprintf(stderr,
+                                            "[GUARD_OBJECT_SHOT] frame=%d global=%u chr=%d action=%d hidden=0x%x item=%d hand=%d firecount=(%d,%d) target_prop_type=%d obj=%d type=%d pad=%d damage=%.3f shot_from=(%.2f,%.2f,%.2f) dir=(%.5f,%.5f,%.5f) hit=(%.2f,%.2f,%.2f) dist2=%.2f sp230=%d sp234=%d sp22c=%d player=(%.2f,%.2f,%.2f)\n",
+                                            g_frame_count_diag,
+                                            (unsigned int)g_GlobalTimer,
+                                            self->chrnum,
+                                            self->actiontype,
+                                            (unsigned int)self->hidden,
+                                            prop_selfchr->act_attack.attack_item,
+                                            hand,
+                                            self->firecount[0],
+                                            self->firecount[1],
+                                            stanSavedColl_posData->type,
+                                            stanSavedColl_posData->obj->obj,
+                                            stanSavedColl_posData->obj->type,
+                                            stanSavedColl_posData->obj->pad,
+                                            bondwalkItemGetDestructionAmount(prop_selfchr->act_attack.attack_item),
+                                            sp240.f[0],
+                                            sp240.f[1],
+                                            sp240.f[2],
+                                            sp220.f[0],
+                                            sp220.f[1],
+                                            sp220.f[2],
+                                            sp258.f[0],
+                                            sp258.f[1],
+                                            sp258.f[2],
+                                            sp20C,
+                                            sp230,
+                                            sp234,
+                                            sp22C,
+                                            player_prop->pos.f[0],
+                                            player_prop->pos.f[1],
+                                            player_prop->pos.f[2]);
+                                        fflush(stderr);
+                                    }
+#endif
                                     chrobjMaybeDetonateObjectIfFlags(
                                         stanSavedColl_posData->obj,
                                         bondwalkItemGetDestructionAmount(prop_selfchr->act_attack.attack_item),
@@ -10750,13 +11048,22 @@ void chrlvTickGoPos(ChrRecord *self)
     {
         chrlvActGoposRelated(self, &sp58, &sp54);
 
-        if ((sp74 == 0)
-            && ((self_prop->flags & PROPFLAG_ONSCREEN) || (chrlvStanRoomRelated(self, &sp58, sp54) == 0)))
         {
-            chrlvActGoposSetTargetPosRelated(self);
-            self->act_gopos.unk9c = g_GlobalTimer;
+            s32 onscreen = (self_prop->flags & PROPFLAG_ONSCREEN) != 0;
+            s32 stan_related = chrlvStanRoomRelated(self, &sp58, sp54);
 
-            return;
+            pcChrlvTraceMagicTravel("gopos", self, sp74, onscreen, stan_related, self_prop);
+
+            if ((sp74 == 0)
+                && (onscreen
+                    || ((stan_related == 0)
+                        && chrlvMagicTravelShouldUseRenderedPathExit(self))))
+            {
+                chrlvActGoposSetTargetPosRelated(self);
+                self->act_gopos.unk9c = g_GlobalTimer;
+
+                return;
+            }
         }
 
         chrlvTravelTickMagic(self, &self->act_gopos.waydata, chrlvModelScaleAnimationRelated(self), &sp58, sp54);
@@ -10930,15 +11237,24 @@ void chrlvTickPatrol(ChrRecord *self)
 
     if (self->act_patrol.waydata.mode == WAYMODE_MAGIC)
     {
-        if ((sp34 == 0)
-            && ((self_prop->flags & PROPFLAG_ONSCREEN) || (chrlvStanRoomRelatedPad(self, temp_v0) == 0)))
         {
-            self->act_patrol.lastvisible60 = g_GlobalTimer;
-            chrlvSetNextActPatrolStepPadPos(self);
-        }
-        else
-        {
-            chrlvTravelTickMagic(self, &self->act_patrol.waydata, D_80030984, &temp_v0->pos, temp_v0->stan);
+            s32 onscreen = (self_prop->flags & PROPFLAG_ONSCREEN) != 0;
+            s32 stan_related = chrlvStanRoomRelatedPad(self, temp_v0);
+
+            pcChrlvTraceMagicTravel("patrol", self, sp34, onscreen, stan_related, self_prop);
+
+            if ((sp34 == 0)
+                && (onscreen
+                    || ((stan_related == 0)
+                        && chrlvMagicTravelShouldUseRenderedPathExit(self))))
+            {
+                self->act_patrol.lastvisible60 = g_GlobalTimer;
+                chrlvSetNextActPatrolStepPadPos(self);
+            }
+            else
+            {
+                chrlvTravelTickMagic(self, &self->act_patrol.waydata, D_80030984, &temp_v0->pos, temp_v0->stan);
+            }
         }
     }
     else

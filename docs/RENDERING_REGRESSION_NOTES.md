@@ -88,11 +88,21 @@ The visible symptoms were level-specific but shared renderer causes:
    GoldenEye's sky coordinates arrive in world-repeat space and then pass
    through the native VBO texture packing path. Defaulting `GE007_SKY_UV_SCALE`
    to `1.0` stretched the cloud texture into broad bands on Depot, Surface,
-   Frigate, Cradle, and other sky-heavy levels. The native default is `3.5`,
-   which restores the dense cloud repeat seen in the older renderer path while
-   keeping the split-screen viewport-aware sky draw.
+   Frigate, Cradle, and other sky-heavy levels. A `3.5` backend repeat creates
+   high-frequency horizon fans on Frigate and Cradle because the game already
+   applies environment `CloudRepeat`/`WaterRepeat` before the native VBO pack.
+   The native default is `1.5`, which keeps cloud detail without those horizon
+   fan artifacts while preserving split-screen viewport-aware sky draw.
 
-9. **Texture attribution must use stable `G_SETTEX` texture numbers.**
+9. **Frigate's secondary water/backdrop room shell should not shade.**
+   Room 57's secondary display list uses texture 655, IA8 54x54, XLU coverage
+   wrap render state (`0x0C1849D8`) and no depth update. Treating it as ordinary
+   alpha exposes large room-shell triangles over the ocean/sky. The native
+   shader path now classifies that material signature and forces alpha to zero;
+   `GE007_TRACE_ROOM_ALPHA=1`, `GE007_SKIP_ROOM_DL=secondary`, and
+   `GE007_TINT_ROOM_DL=secondary` are the focused controls.
+
+10. **Texture attribution must use stable `G_SETTEX` texture numbers.**
    `settex_gl_tex_id` is an OpenGL upload id and changes with cache/upload
    order. Using it for `GE007_TINT_TEX` or `GE007_SKIP_TEX` made focused probes
    point at the wrong material after unrelated renderer changes. The tint/skip
@@ -102,7 +112,7 @@ The visible symptoms were level-specific but shared renderer causes:
    band, so crop-level color metrics are not enough without texture-number tint
    and material traces at the actual capture frame.
 
-10. **Deterministic input freeze must not suppress scripted look probes.**
+11. **Deterministic input freeze must not suppress scripted look probes.**
     The screenshot and oracle lanes use `--deterministic`, which sets
     `g_freezeInput` so live keyboard, mouse, and gamepad input cannot leak into
     local captures. Scripted `GE007_AUTO_LOOK_*` probes are different: they are

@@ -2786,6 +2786,9 @@ void setFontTables(s32 arg0, s32 arg1);
 
 Gfx * sub_GAME_7F087A08(Gfx *arg0);
 void sub_GAME_7F0876C4(coord3d *cam_pos, coord3d *cam_look, coord3d *cam_up);
+#ifdef NATIVE_PORT
+s32 bondviewApplyNativeRenderCameraClearance(coord3d *cam_pos, const coord3d *cam_look, const char *source);
+#endif
 s32 bond_pressed_reload_activate(void);
 Gfx* write_stan_tiles_in_yellow(Gfx *arg0);
 Gfx * maybe_mp_interface(Gfx *arg0);

@@ -541,12 +541,14 @@ void init_menus_or_reset(void)
 #ifdef NATIVE_PORT
     {
         extern const char *g_pcStartRamrom;
+        extern int g_pcDirectBootLevelActive;
         extern int g_pcStartLevel;
         extern int g_pcStartMultiplayer;
 
         if (g_pcStartRamrom != NULL) {
             const char *start_ramrom = g_pcStartRamrom;
             g_pcStartRamrom = NULL;
+            g_pcDirectBootLevelActive = 0;
             if (!pcRamromStartReplayByName(start_ramrom)) {
                 menu_update = MENU_FILE_SELECT;
             }
@@ -560,16 +562,19 @@ void init_menus_or_reset(void)
             MPSCENARIOS mp_scenario = (MPSCENARIOS)g_pcStartMpScenario;
             s32 mp_timelimit = g_pcStartMpTimeLimitSecs;
             g_pcStartMultiplayer = 0;
+            g_pcDirectBootLevelActive = 0;
             pc_apply_mp_selection(mp_players, mp_stage, mp_scenario, mp_timelimit);
         } else if (g_pcStartLevel >= 0) {
             extern int g_pcStartDifficulty;
             LEVELID start_level = (LEVELID)g_pcStartLevel;
             s32 start_difficulty = g_pcStartDifficulty;
             g_pcStartLevel = -1;
+            g_pcDirectBootLevelActive = 1;
             pc_apply_level_selection(start_level, start_difficulty);
         } else if (portUsePcSelector()) {
             /* Explicit PC-only selector for automation/dev workflows.
              * Default player boots should follow the original menu path. */
+            g_pcDirectBootLevelActive = 0;
             pc_selector_cursor = 0;
             pc_difficulty_cursor = DIFFICULTY_AGENT;
             pc_selecting_difficulty = 0;

@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "game/ramromreplay.h"
 #endif
 
@@ -27,7 +28,19 @@ u64 g_randomSeed = 0xAB8D9F7781280783;
 static u64 s_pcRandomGetNextCallCount = 0;
 static s32 s_pcRandomTraceRamromActive = 0;
 static s32 s_pcRandomTraceEnabled = -1;
+static s32 s_pcRandomTraceForceEnabled = -1;
 static s32 s_pcRandomTraceRemaining = 0;
+static u64 s_pcRandomTraceAfterCall = 0;
+
+typedef struct PcScriptedRandomCallSeedEvent {
+    u64 call;
+    u64 seed;
+    s32 applied;
+} PcScriptedRandomCallSeedEvent;
+
+static PcScriptedRandomCallSeedEvent s_pcRandomCallSeedEvents[64];
+static s32 s_pcRandomCallSeedEventCount = 0;
+static s32 s_pcRandomCallSeedEventsLoaded = 0;
 
 u64 pcRandomGetNextCallCount(void)
 {
@@ -39,9 +52,134 @@ void pcRandomTraceSetRamromActive(s32 active)
     s_pcRandomTraceRamromActive = active ? 1 : 0;
 }
 
+static void pcRandomAddCallSeedEvent(u64 call, u64 seed)
+{
+    PcScriptedRandomCallSeedEvent *event;
+
+    if (call == 0 ||
+        s_pcRandomCallSeedEventCount >=
+            (s32)(sizeof(s_pcRandomCallSeedEvents) / sizeof(s_pcRandomCallSeedEvents[0]))) {
+        return;
+    }
+
+    event = &s_pcRandomCallSeedEvents[s_pcRandomCallSeedEventCount++];
+    event->call = call;
+    event->seed = seed;
+    event->applied = 0;
+}
+
+static s32 pcRandomParseCallSeedSpec(const char *spec)
+{
+    char *end = NULL;
+    const char *seed_spec;
+    u64 call;
+    u64 seed;
+
+    if (spec == NULL || *spec == '\0') {
+        return 0;
+    }
+
+    call = strtoull(spec, &end, 0);
+    if (end == spec || *end != ':') {
+        return 0;
+    }
+
+    seed_spec = end + 1;
+    seed = strtoull(seed_spec, &end, 0);
+    if (end == seed_spec || *end != '\0') {
+        return 0;
+    }
+
+    pcRandomAddCallSeedEvent(call, seed);
+    return 1;
+}
+
+static void pcRandomLoadCallSeedEvents(void)
+{
+    const char *script;
+    const char *call_env;
+    const char *seed_env;
+
+    if (s_pcRandomCallSeedEventsLoaded) {
+        return;
+    }
+    s_pcRandomCallSeedEventsLoaded = 1;
+
+    script = getenv("GE007_AUTO_RNG_CALL_SEED_SCRIPT");
+    if (script != NULL) {
+        while (*script != '\0' &&
+               s_pcRandomCallSeedEventCount <
+                   (s32)(sizeof(s_pcRandomCallSeedEvents) / sizeof(s_pcRandomCallSeedEvents[0]))) {
+            char item[128];
+            size_t index = 0;
+            size_t count;
+
+            while (*script == ' ' || *script == '\t' || *script == ',' || *script == ';') {
+                script++;
+            }
+            if (*script == '\0') {
+                break;
+            }
+            while (script[index] != '\0' &&
+                   script[index] != ' ' &&
+                   script[index] != '\t' &&
+                   script[index] != ',' &&
+                   script[index] != ';') {
+                if (index + 1 < sizeof(item)) {
+                    item[index] = script[index];
+                }
+                index++;
+            }
+            count = index < sizeof(item) ? index : sizeof(item) - 1;
+            item[count] = '\0';
+            if (!pcRandomParseCallSeedSpec(item)) {
+                fprintf(stderr, "[AUTO_RNG_CALL_SEED] ignored malformed spec: %s\n", item);
+            }
+            script += index;
+        }
+    }
+
+    call_env = getenv("GE007_AUTO_RNG_CALL_SEED_CALL");
+    seed_env = getenv("GE007_AUTO_RNG_CALL_SEED");
+    if (s_pcRandomCallSeedEventCount == 0 &&
+        call_env != NULL && *call_env != '\0' &&
+        seed_env != NULL && *seed_env != '\0') {
+        char *call_end = NULL;
+        char *seed_end = NULL;
+        u64 call = strtoull(call_env, &call_end, 0);
+        u64 seed = strtoull(seed_env, &seed_end, 0);
+
+        if (call_end != call_env && *call_end == '\0' &&
+            seed_end != seed_env && *seed_end == '\0') {
+            pcRandomAddCallSeedEvent(call, seed);
+        }
+    }
+}
+
+static void pcRandomMaybeApplyCallSeedEvent(u64 call)
+{
+    pcRandomLoadCallSeedEvents();
+
+    for (s32 i = 0; i < s_pcRandomCallSeedEventCount; i++) {
+        PcScriptedRandomCallSeedEvent *event = &s_pcRandomCallSeedEvents[i];
+
+        if (event->applied || event->call != call) {
+            continue;
+        }
+
+        g_randomSeed = event->seed;
+        event->applied = 1;
+        fprintf(stderr,
+                "[AUTO_RNG_CALL_SEED] call=%llu seed=0x%016llX\n",
+                (unsigned long long)call,
+                (unsigned long long)g_randomSeed);
+    }
+}
+
 static s32 pcRandomTraceEnabled(void)
 {
     const char *budget;
+    const char *after_call;
 
     if (s_pcRandomTraceEnabled < 0) {
         s_pcRandomTraceEnabled = getenv("GE007_TRACE_RNG_CALLS") != NULL ? 1 : 0;
@@ -50,9 +188,23 @@ static s32 pcRandomTraceEnabled(void)
         if (budget != NULL && *budget != '\0') {
             s_pcRandomTraceRemaining = atoi(budget);
         }
+        after_call = getenv("GE007_TRACE_RNG_CALLS_AFTER");
+        if (after_call != NULL && *after_call != '\0') {
+            s_pcRandomTraceAfterCall = strtoull(after_call, NULL, 0);
+        }
     }
 
     return s_pcRandomTraceEnabled && s_pcRandomTraceRemaining != 0;
+}
+
+static s32 pcRandomTraceForceEnabled(void)
+{
+    if (s_pcRandomTraceForceEnabled < 0) {
+        s_pcRandomTraceForceEnabled =
+            getenv("GE007_TRACE_RNG_CALLS_FORCE") != NULL ? 1 : 0;
+    }
+
+    return s_pcRandomTraceForceEnabled;
 }
 
 static void pcRandomTraceDescribeAddress(void *address, uintptr_t *offset, const char **symbol)
@@ -81,7 +233,9 @@ static void pcRandomTraceCall(u64 call_count,
     const char *symbol;
     const char *parent_symbol;
 
-    if (!s_pcRandomTraceRamromActive || !pcRandomTraceEnabled()) {
+    if ((!s_pcRandomTraceRamromActive && !pcRandomTraceForceEnabled()) ||
+        !pcRandomTraceEnabled() ||
+        call_count < s_pcRandomTraceAfterCall) {
         return;
     }
 
@@ -116,6 +270,8 @@ static void pcRandomTraceCall(u64 call_count,
 u32 randomGetNext(void) {
     u64 t;
 #ifdef NATIVE_PORT
+    u64 next_call_count = s_pcRandomGetNextCallCount + 1;
+    pcRandomMaybeApplyCallSeedEvent(next_call_count);
     u64 before_seed = g_randomSeed;
     void *caller = __builtin_return_address(0);
 #if defined(__clang__)

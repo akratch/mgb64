@@ -97,6 +97,11 @@ extern void portTraceShotEvent(const char *phase,
                                s32 impact_type,
                                const coord3d *pos,
                                const coord3d *normal,
+                               const coord3d *screen_pos,
+                               const coord3d *screen_dir,
+                               const coord3d *attacker_pos,
+                               const coord3d *world_dir,
+                               const coord3d *dest,
                                f32 threshold);
 extern void portTraceBulletImpactMaterial(s32 texturenum, s32 hit_sound, s32 impact_type);
 extern void portTraceForcedGuardHitEvent(s32 chrnum, s32 hitpart, const char *source,
@@ -2316,6 +2321,9 @@ static s32 chraiTryForcedGuardHitList(ChrRecord *chr,
         if (temp_hit_list != NULL && chr->model->anim != NULL) {
             sub_GAME_7F0523F8(chr->prop, 0, &temp_hit_list);
             sub_GAME_7F0523F8(chr->prop, 1, &temp_hit_list);
+#ifdef NATIVE_PORT
+            sub_GAME_7F0523F8(chr->prop, 2, &temp_hit_list);
+#endif
         }
 
         local_head = temp_hit_list;
@@ -2578,7 +2586,6 @@ void chraiDefaultWeaponFireHandler(s32 hand) {
     u8 hit_type_byte;
 #ifdef NATIVE_PORT
     s32 trace_shot_id;
-    s32 glass_prop_hit_for_world;
     s32 world_impact_hit_sound;
 #endif
 
@@ -2591,7 +2598,6 @@ void chraiDefaultWeaponFireHandler(s32 hand) {
     neg_z = 0.0f;
 #ifdef NATIVE_PORT
     trace_shot_id = -1;
-    glass_prop_hit_for_world = 0;
     world_impact_hit_sound = HIT_DEFAULT;
 #endif
 
@@ -2771,6 +2777,11 @@ void chraiDefaultWeaponFireHandler(s32 hand) {
                        -1,
                        hit_something != 0 ? &hit_point : &dest_point,
                        hit_something != 0 ? &hit_output.normal : NULL,
+                       &gun_pos_raw,
+                       &bullet_dir_raw,
+                       &gun_pos,
+                       &bullet_dir,
+                       &dest_point,
                        threshold);
 #endif
 
@@ -2869,14 +2880,14 @@ check_weapon:
                                -1,
                                &hit->hitthing.unk00,
                                &hit->hitthing.unk0c,
+                               &gun_pos_raw,
+                               &bullet_dir_raw,
+                               &gun_pos,
+                               &bullet_dir,
+                               NULL,
                                threshold);
         }
 
-        if (hit->do_damage == 0 &&
-            (proptype == PROP_TYPE_OBJ || proptype == PROP_TYPE_WEAPON || proptype == PROP_TYPE_DOOR) &&
-            chrpropNativePropIsGlassLike(hit_prop)) {
-            glass_prop_hit_for_world = 1;
-        }
 #endif
 
         if (proptype == PROP_TYPE_CHR || proptype == PROP_TYPE_VIEWER) {
@@ -2920,6 +2931,11 @@ check_weapon:
                                        -1,
                                        &hit->hitthing.unk00,
                                        &hit->hitthing.unk0c,
+                                       &gun_pos_raw,
+                                       &bullet_dir_raw,
+                                       &gun_pos,
+                                       &bullet_dir,
+                                       NULL,
                                        threshold);
                 }
                 shotBgTracePrintf("clear-background frame=%d slot=%d hit_count=%d shoot_through=%d "
@@ -2957,6 +2973,11 @@ check_weapon:
                            -1,
                            NULL,
                            NULL,
+                           &gun_pos_raw,
+                           &bullet_dir_raw,
+                           &gun_pos,
+                           &bullet_dir,
+                           NULL,
                            threshold);
         shotBgTracePrintf("return frame=%d reason=no-impact-after-props hit_bg=%d hit_something=%d "
                           "hit_count=%d threshold=%.2f",
@@ -2992,13 +3013,6 @@ check_weapon:
 #endif
         }
 
-#ifdef NATIVE_PORT
-        if (glass_prop_hit_for_world && D_8004E86C[HIT_GLASS_XLU] != NULL) {
-            imgsnd = D_8004E86C[HIT_GLASS_XLU];
-            world_impact_hit_sound = HIT_GLASS_XLU;
-        }
-#endif
-
         if (do_effects != 0) {
             if (imgsnd->thing2_len > 0 && weapon_id != ITEM_WATCHLASER) {
                 rng = randomGetNext();
@@ -3024,6 +3038,11 @@ check_weapon:
                                    impact_type,
                                    &hit_point,
                                    &hit_output.normal,
+                                   &gun_pos_raw,
+                                   &bullet_dir_raw,
+                                   &gun_pos,
+                                   &bullet_dir,
+                                   &dest_point,
                                    threshold);
                 shotBgTracePrintf("create-world frame=%d impact=%d room=%d pos=(%.2f,%.2f,%.2f) "
                                   "normal=(%.3f,%.3f,%.3f) texture=%d",

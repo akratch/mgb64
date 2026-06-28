@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <assert.h>
 #include <unistd.h>
 
@@ -35,10 +36,12 @@
 #include "gfx_screen_config.h"
 #include "texture_pack.h"
 #include "bg.h"
+#include "fog.h"
 #include "front.h"
 #include "othermodemicrocode.h"
 #include "player.h"
 #include "textrelated.h"
+#include "unk_0A1DA0.h"
 #include "vi.h"
 
 /* GoldenEye uses base GBI. DO NOT define F3DEX_GBI_2 or F3DEX_GBI. */
@@ -79,6 +82,8 @@ void gfx_process_n64_dl(const uint8_t *data);
 static bool gfx_is_valid_pc_dl(uintptr_t addr);
 static bool gfx_is_static_pc_dl(uintptr_t addr);
 static const char *gfx_vtx_decode_mode_name(uint8_t mode);
+static bool gfx_mode_is_room_xlu(uint32_t mode);
+static bool gfx_diag_texturenum_matches_list(const char *spec, int texturenum);
 extern intptr_t get_BONDdata_field_10E0(void);
 extern int roomMatrixContainsAddress(const void *addr);
 extern int roomMatrixRoomFromAddress(const void *addr);
@@ -193,7 +198,7 @@ static inline float gfx_ratio_y(void)
     return gfx_current_dimensions.height / gfx_logical_screen_height();
 }
 
-#define MAX_BUFFERED 256
+#define MAX_BUFFERED 1024
 #define MAX_LIGHTS 2
 #define MAX_VERTICES 16  /* Rare's microcode uses 16, not 64 */
 enum GfxVtxDecodeMode {
@@ -242,6 +247,11 @@ static uintptr_t pc_gfx_range_end;
  * code and must not be byte-swapped as ROM data. */
 static uintptr_t pc_vtx_range_start;
 static uintptr_t pc_vtx_range_end;
+
+/* Extra PC DL regions for heap-allocated display lists (player struct, etc.) */
+#define MAX_EXTRA_PC_DL_REGIONS 16
+static struct { uintptr_t start, end; } s_extra_pc_dl[MAX_EXTRA_PC_DL_REGIONS];
+static int s_extra_pc_dl_count = 0;
 
 #define MAX_EXTRA_PC_VTX_REGIONS 64
 static struct {
@@ -435,6 +445,17 @@ static int gfx_guard_matrix_slot_for_addr(uintptr_t addr) {
 /* Draw-class tagging — set by top-level renderers, read by diagnostics */
 static enum DrawClass g_current_draw_class = DRAWCLASS_UNKNOWN;
 static int g_drawclass_tri_counts[DRAWCLASS_HUD + 1];
+struct GfxDrawClassBBox {
+    bool valid;
+    int tris;
+    float min_x;
+    float min_y;
+    float max_x;
+    float max_y;
+    float area2_sum;
+    float area2_max;
+};
+static struct GfxDrawClassBBox g_drawclass_bboxes[DRAWCLASS_HUD + 1];
 static bool g_sky_tri_mode = false;
 static bool g_sky_viewport_valid = false;
 static float g_sky_viewport_left = 0.0f;
@@ -632,13 +653,20 @@ void gfx_register_effect_dl_range(const char *label, const void *start, const vo
 }
 
 static const char *gfx_effect_label_for_addr(uintptr_t addr) {
+    const char *best_label = NULL;
+    uintptr_t best_span = (uintptr_t)-1;
+
     for (int i = effect_dl_range_count - 1; i >= 0; i--) {
         if (addr >= effect_dl_ranges[i].start && addr < effect_dl_ranges[i].end) {
-            return effect_dl_ranges[i].label;
+            uintptr_t span = effect_dl_ranges[i].end - effect_dl_ranges[i].start;
+            if (best_label == NULL || span < best_span) {
+                best_label = effect_dl_ranges[i].label;
+                best_span = span;
+            }
         }
     }
 
-    return NULL;
+    return best_label;
 }
 
 /* Command sequence counter — monotonically incremented on every RSP command */
@@ -695,6 +723,36 @@ static bool gfx_addr_is_pc_native_vertex_data(uintptr_t addr) {
     for (int i = 0; i < extra_pc_vtx_region_count; i++) {
         if (addr >= extra_pc_vtx_regions[i].start &&
             addr < extra_pc_vtx_regions[i].end) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool gfx_addr_is_pc_dynamic_data_range(uintptr_t addr, size_t size) {
+    if (size == 0) {
+        return false;
+    }
+
+    if (pc_gfx_range_start != 0 &&
+        addr >= pc_gfx_range_start &&
+        addr < pc_gfx_range_end &&
+        size <= pc_gfx_range_end - addr) {
+        return true;
+    }
+
+    if (pc_vtx_range_start != 0 &&
+        addr >= pc_vtx_range_start &&
+        addr < pc_vtx_range_end &&
+        size <= pc_vtx_range_end - addr) {
+        return true;
+    }
+
+    for (int i = 0; i < s_extra_pc_dl_count; i++) {
+        if (addr >= s_extra_pc_dl[i].start &&
+            addr < s_extra_pc_dl[i].end &&
+            size <= s_extra_pc_dl[i].end - addr) {
             return true;
         }
     }
@@ -827,6 +885,42 @@ static bool gfx_n64_dl_start_is_plausible(const void *addr) {
                    gfx_addr_is_n64_data_range((uintptr_t)half2, 8) &&
                    half1[0] == (uint8_t)G_RDPHALF_1 &&
                    half2[0] == (uint8_t)G_RDPHALF_2;
+        }
+        if (gfx_n64_opcode_is_prefix_boundary(opcode)) {
+            return true;
+        }
+    }
+
+    return true;
+}
+
+static bool gfx_pc_dl_start_is_plausible(const Gfx *addr) {
+    uintptr_t raw = (uintptr_t)addr;
+
+    if (gfx_is_static_pc_dl(raw)) {
+        return true;
+    }
+
+    if (!gfx_addr_is_pc_dynamic_data_range(raw, sizeof(Gfx))) {
+        return false;
+    }
+
+    for (int i = 0; i < 16; i++, addr++) {
+        if (!gfx_addr_is_pc_dynamic_data_range((uintptr_t)addr, sizeof(Gfx))) {
+            return false;
+        }
+
+        uint8_t opcode = (uint8_t)(addr->words.w0 >> 24);
+        if (!gfx_n64_opcode_can_start_dl(opcode)) {
+            return false;
+        }
+        if (opcode == G_TEXRECT || opcode == G_TEXRECTFLIP) {
+            const Gfx *half1 = addr + 1;
+            const Gfx *half2 = addr + 2;
+            return gfx_addr_is_pc_dynamic_data_range((uintptr_t)half1, sizeof(Gfx)) &&
+                   gfx_addr_is_pc_dynamic_data_range((uintptr_t)half2, sizeof(Gfx)) &&
+                   ((uint8_t)(half1->words.w0 >> 24)) == (uint8_t)G_RDPHALF_1 &&
+                   ((uint8_t)(half2->words.w0 >> 24)) == (uint8_t)G_RDPHALF_2;
         }
         if (gfx_n64_opcode_is_prefix_boundary(opcode)) {
             return true;
@@ -1051,6 +1145,44 @@ static void *gfx_resolve_static_game_texture(uint32_t token,
     return tex->data;
 }
 
+static void *gfx_resolve_loaded_texture_pointer_token(uint32_t token,
+                                                      uintptr_t *cache_key_out) {
+    struct texpool *pool = ptr_texture_alloc_start;
+    uintptr_t raw = (uintptr_t)token;
+    void *match = NULL;
+
+    if (pool == NULL) {
+        return NULL;
+    }
+
+    if (pool->start != NULL && pool->leftpos != NULL) {
+        uintptr_t start = (uintptr_t)pool->start;
+        uintptr_t left = (uintptr_t)pool->leftpos;
+
+        if (raw >= start && raw < left) {
+            if (cache_key_out != NULL) {
+                *cache_key_out = raw;
+            }
+            return (void *)raw;
+        }
+    }
+
+    for (struct tex *cur = pool->rightpos; cur != NULL && cur < pool->end; cur++) {
+        if (cur->data != NULL && (uint32_t)(uintptr_t)cur->data == token) {
+            if (match != NULL && match != cur->data) {
+                return NULL;
+            }
+            match = cur->data;
+        }
+    }
+
+    if (match != NULL && cache_key_out != NULL) {
+        *cache_key_out = (uintptr_t)match;
+    }
+
+    return match;
+}
+
 static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
                                              uintptr_t *cache_key_out,
                                              bool *is_static_game_texture_out,
@@ -1078,6 +1210,9 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
         }
 
         addr = gfx_resolve_addr(token);
+        if (addr == NULL) {
+            addr = gfx_resolve_loaded_texture_pointer_token(token, cache_key_out);
+        }
     } else {
         addr = (void *)raw_addr;
     }
@@ -1104,13 +1239,19 @@ static int g_diag_force_room_point_filter = -1;
 static int g_diag_convert_k4k5 = -1;
 static int g_diag_lod_fraction_override = INT32_MIN;
 static float g_diag_shade_scale = -1.0f;
+static float g_diag_room_alpha_env_scale = -1.0f;
 static int g_diag_noperspective_settex_texcoords = -1;
 static int g_diag_noperspective_settex_cc_texcoords = -1;
 static int g_diag_noperspective_settex_cc_inputs = -1;
 static int g_diag_noperspective_settex_cc_fog = -1;
+static int g_diag_noperspective_cc_texcoords = -1;
+static int g_diag_noperspective_cc_inputs = -1;
 static int g_diag_settex_cc_color_scale = -1;
 static int g_diag_settex_cc_color_scale_texsize = -1;
 static int g_diag_settex_cc_color_scale_texnum = -1;
+static int g_diag_settex_cc_alpha_scale = -1;
+static int g_diag_settex_cc_alpha_scale_texsize = -1;
+static int g_diag_settex_cc_alpha_scale_texnum = -1;
 static int g_diag_settex_cc_disable_n64_filter = -1;
 static int g_diag_settex_cc_disable_n64_filter_texsize = -1;
 static int g_diag_settex_cc_disable_n64_filter_texnum = -1;
@@ -1121,7 +1262,14 @@ static int g_diag_settex_cc_n64_filter_always_3point = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_texsize = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_texnum = -1;
 static int g_diag_settex_cc_n64_filter_always_3point_options = -1;
-static int g_diag_settex_clamped_non_texedge_n64_filter_always_3point = -1;
+static int g_settex_clamped_non_texedge_n64_filter_always_3point = -1;
+static int g_diag_loaded_tile_two_tex_n64_filter = -1;
+static int g_diag_alpha_from_tex_intensity_cc = -1;
+static int g_diag_xlu_coverage_a2c = -1;
+static int g_diag_xlu_coverage_wrap_thin_cc = -1;
+static int g_diag_xlu_coverage_stencil_cc = -1;
+static int g_diag_xlu_rdp_memory_blend_cc = -1;
+static int g_diag_xlu_rdp_cvg_memory_blend_cc = -1;
 static int g_diag_disable_shader_clamp = -1;
 
 static bool gfx_apply_texture_filter_override(bool linear_filter)
@@ -1239,6 +1387,34 @@ static float gfx_diag_shade_scale(void)
     return g_diag_shade_scale;
 }
 
+static float gfx_diag_room_alpha_env_scale(void)
+{
+    if (g_diag_room_alpha_env_scale < 0.0f) {
+        const char *env = getenv("GE007_DIAG_ROOM_ALPHA_ENV_SCALE");
+        if (env != NULL && env[0] != '\0') {
+            float value = strtof(env, NULL);
+            if (!portFloatIsFinite(value) || value < 0.0f) {
+                value = 1.0f;
+            }
+            if (value > 4.0f) {
+                value = 4.0f;
+            }
+            g_diag_room_alpha_env_scale = value;
+            if (g_diag_room_alpha_env_scale != 1.0f) {
+                fprintf(stderr,
+                        "[fast3d] DIAG ROOM ALPHA ENV SCALE %.4f "
+                        "(GE007_DIAG_ROOM_ALPHA_ENV_SCALE)\n",
+                        g_diag_room_alpha_env_scale);
+                fflush(stderr);
+            }
+        } else {
+            g_diag_room_alpha_env_scale = 1.0f;
+        }
+    }
+
+    return g_diag_room_alpha_env_scale;
+}
+
 static bool gfx_diag_noperspective_settex_texcoords_enabled(void)
 {
     if (g_diag_noperspective_settex_texcoords < 0) {
@@ -1313,6 +1489,195 @@ static bool gfx_diag_u64_matches_list(const char *spec, uint64_t value)
     }
 
     return false;
+}
+
+static bool gfx_diag_loaded_tile_two_tex_n64_filter_enabled(uint64_t cc_id)
+{
+    const char *env;
+
+    if (g_diag_loaded_tile_two_tex_n64_filter < 0) {
+        env = getenv("GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER");
+        g_diag_loaded_tile_two_tex_n64_filter =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_loaded_tile_two_tex_n64_filter) {
+            fprintf(stderr,
+                    "[fast3d] DIAG LOADED-TILE 2TEX N64 FILTER ENABLED "
+                    "spec=%s (GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_loaded_tile_two_tex_n64_filter <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER");
+    if (strcmp(env, "1") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, cc_id);
+}
+
+static bool gfx_diag_alpha_from_tex_intensity_cc_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_alpha_from_tex_intensity_cc < 0) {
+        env = getenv("GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC");
+        g_diag_alpha_from_tex_intensity_cc =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_alpha_from_tex_intensity_cc) {
+            fprintf(stderr,
+                    "[fast3d] DIAG ALPHA FROM TEX INTENSITY CC ENABLED "
+                    "spec=%s (GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_alpha_from_tex_intensity_cc <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
+static bool gfx_diag_xlu_coverage_a2c_enabled(uint32_t raw_mode)
+{
+    const char *env;
+
+    if (g_diag_xlu_coverage_a2c < 0) {
+        env = getenv("GE007_DIAG_XLU_COVERAGE_A2C");
+        g_diag_xlu_coverage_a2c =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_xlu_coverage_a2c) {
+            fprintf(stderr,
+                    "[fast3d] DIAG XLU COVERAGE A2C ENABLED "
+                    "spec=%s (GE007_DIAG_XLU_COVERAGE_A2C)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_xlu_coverage_a2c <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_XLU_COVERAGE_A2C");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, raw_mode);
+}
+
+static bool gfx_diag_xlu_coverage_wrap_thin_cc_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_xlu_coverage_wrap_thin_cc < 0) {
+        env = getenv("GE007_DIAG_XLU_COVERAGE_WRAP_THIN_CC");
+        g_diag_xlu_coverage_wrap_thin_cc =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_xlu_coverage_wrap_thin_cc) {
+            fprintf(stderr,
+                    "[fast3d] DIAG XLU COVERAGE WRAP THIN CC ENABLED "
+                    "spec=%s (GE007_DIAG_XLU_COVERAGE_WRAP_THIN_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_xlu_coverage_wrap_thin_cc <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_XLU_COVERAGE_WRAP_THIN_CC");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
+static bool gfx_diag_xlu_coverage_stencil_cc_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_xlu_coverage_stencil_cc < 0) {
+        env = getenv("GE007_DIAG_XLU_COVERAGE_STENCIL_CC");
+        g_diag_xlu_coverage_stencil_cc =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_xlu_coverage_stencil_cc) {
+            fprintf(stderr,
+                    "[fast3d] DIAG XLU COVERAGE STENCIL CC ENABLED "
+                    "spec=%s (GE007_DIAG_XLU_COVERAGE_STENCIL_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_xlu_coverage_stencil_cc <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_XLU_COVERAGE_STENCIL_CC");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
+static bool gfx_diag_xlu_rdp_memory_blend_cc_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_xlu_rdp_memory_blend_cc < 0) {
+        env = getenv("GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC");
+        g_diag_xlu_rdp_memory_blend_cc =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_xlu_rdp_memory_blend_cc) {
+            fprintf(stderr,
+                    "[fast3d] DIAG XLU RDP MEMORY BLEND CC ENABLED "
+                    "spec=%s (GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_xlu_rdp_memory_blend_cc <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
+static bool gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_xlu_rdp_cvg_memory_blend_cc < 0) {
+        env = getenv("GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC");
+        g_diag_xlu_rdp_cvg_memory_blend_cc =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_xlu_rdp_cvg_memory_blend_cc) {
+            fprintf(stderr,
+                    "[fast3d] DIAG XLU RDP CVG MEMORY BLEND CC ENABLED "
+                    "spec=%s (GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_xlu_rdp_cvg_memory_blend_cc <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC");
+    if (strcmp(env, "1") == 0 || strcmp(env, "*") == 0) {
+        return true;
+    }
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
 }
 
 static bool gfx_diag_size_matches_list(const char *spec, int width, int height)
@@ -1441,6 +1806,54 @@ static bool gfx_diag_noperspective_settex_cc_fog_enabled(uint64_t effective_cc_i
     return gfx_diag_u64_matches_list(env, effective_cc_id);
 }
 
+static bool gfx_diag_noperspective_cc_texcoords_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_noperspective_cc_texcoords < 0) {
+        env = getenv("GE007_DIAG_NOPERSPECTIVE_CC");
+        g_diag_noperspective_cc_texcoords =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_noperspective_cc_texcoords) {
+            fprintf(stderr,
+                    "[fast3d] DIAG NOPERSPECTIVE MATERIAL CC TEXCOORDS ENABLED "
+                    "spec=%s (GE007_DIAG_NOPERSPECTIVE_CC)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_noperspective_cc_texcoords <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_NOPERSPECTIVE_CC");
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
+static bool gfx_diag_noperspective_cc_inputs_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_noperspective_cc_inputs < 0) {
+        env = getenv("GE007_DIAG_NOPERSPECTIVE_CC_INPUTS");
+        g_diag_noperspective_cc_inputs =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_noperspective_cc_inputs) {
+            fprintf(stderr,
+                    "[fast3d] DIAG NOPERSPECTIVE MATERIAL CC INPUTS ENABLED "
+                    "spec=%s (GE007_DIAG_NOPERSPECTIVE_CC_INPUTS)\n",
+                    env);
+            fflush(stderr);
+        }
+    }
+    if (g_diag_noperspective_cc_inputs <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_NOPERSPECTIVE_CC_INPUTS");
+    return gfx_diag_u64_matches_list(env, effective_cc_id);
+}
+
 static bool gfx_diag_settex_cc_color_scale_enabled(uint64_t effective_cc_id)
 {
     const char *env;
@@ -1494,6 +1907,68 @@ static bool gfx_diag_settex_cc_color_scale_enabled(uint64_t effective_cc_id)
     }
     if (g_diag_settex_cc_color_scale_texnum > 0) {
         env = getenv("GE007_DIAG_SETTEX_CC_COLOR_SCALE_TEXNUM");
+        if (settex_texturenum < 0 ||
+            !gfx_diag_u64_matches_list(env, (uint64_t)settex_texturenum)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool gfx_diag_settex_cc_alpha_scale_enabled(uint64_t effective_cc_id)
+{
+    const char *env;
+
+    if (g_diag_settex_cc_alpha_scale < 0) {
+        env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE");
+        g_diag_settex_cc_alpha_scale =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_settex_cc_alpha_scale) {
+            const char *value = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_VALUE");
+            const char *texsize = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXSIZE");
+            const char *texnum = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXNUM");
+            fprintf(stderr,
+                    "[fast3d] DIAG SETTEX CC ALPHA SCALE ENABLED "
+                    "spec=%s value=%s texsize=%s texnum=%s "
+                    "(GE007_DIAG_SETTEX_CC_ALPHA_SCALE)\n",
+                    env,
+                    (value != NULL && value[0] != '\0') ? value : "1.000000",
+                    (texsize != NULL && texsize[0] != '\0') ? texsize : "*",
+                    (texnum != NULL && texnum[0] != '\0') ? texnum : "*");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_settex_cc_alpha_scale <= 0) {
+        return false;
+    }
+
+    env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE");
+    if (!gfx_diag_u64_matches_list(env, effective_cc_id)) {
+        return false;
+    }
+
+    if (g_diag_settex_cc_alpha_scale_texsize < 0) {
+        env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXSIZE");
+        g_diag_settex_cc_alpha_scale_texsize =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_settex_cc_alpha_scale_texsize > 0) {
+        int width = (int)(settex_tex_w + 0.5f);
+        int height = (int)(settex_tex_h + 0.5f);
+        env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXSIZE");
+        if (!gfx_diag_size_matches_list(env, width, height)) {
+            return false;
+        }
+    }
+
+    if (g_diag_settex_cc_alpha_scale_texnum < 0) {
+        env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXNUM");
+        g_diag_settex_cc_alpha_scale_texnum =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_settex_cc_alpha_scale_texnum > 0) {
+        env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_TEXNUM");
         if (settex_texturenum < 0 ||
             !gfx_diag_u64_matches_list(env, (uint64_t)settex_texturenum)) {
             return false;
@@ -1698,21 +2173,22 @@ static bool gfx_diag_settex_cc_n64_filter_always_3point_enabled(uint64_t effecti
     return true;
 }
 
-static bool gfx_diag_settex_clamped_non_texedge_n64_filter_always_3point_enabled(void)
+static bool gfx_settex_clamped_non_texedge_n64_filter_always_3point_enabled(void)
 {
-    if (g_diag_settex_clamped_non_texedge_n64_filter_always_3point < 0) {
+    if (g_settex_clamped_non_texedge_n64_filter_always_3point < 0) {
         const char *env = getenv("GE007_DIAG_SETTEX_CLAMPED_NON_TEXEDGE_N64_FILTER_ALWAYS_3POINT");
-        g_diag_settex_clamped_non_texedge_n64_filter_always_3point =
-            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
-        if (g_diag_settex_clamped_non_texedge_n64_filter_always_3point) {
+        g_settex_clamped_non_texedge_n64_filter_always_3point =
+            (env == NULL || env[0] == '\0' || strcmp(env, "0") != 0) ? 1 : 0;
+        if (env != NULL && env[0] != '\0') {
             fprintf(stderr,
-                    "[fast3d] DIAG SETTEX CLAMPED NON-TEXEDGE N64 FILTER ALWAYS 3POINT ENABLED "
-                    "(GE007_DIAG_SETTEX_CLAMPED_NON_TEXEDGE_N64_FILTER_ALWAYS_3POINT)\n");
+                    "[fast3d] SETTEX CLAMPED NON-TEXEDGE N64 FILTER ALWAYS 3POINT %s "
+                    "(GE007_DIAG_SETTEX_CLAMPED_NON_TEXEDGE_N64_FILTER_ALWAYS_3POINT)\n",
+                    g_settex_clamped_non_texedge_n64_filter_always_3point ? "ENABLED" : "DISABLED");
             fflush(stderr);
         }
     }
 
-    return g_diag_settex_clamped_non_texedge_n64_filter_always_3point > 0;
+    return g_settex_clamped_non_texedge_n64_filter_always_3point > 0;
 }
 
 static uint8_t gfx_scale_u8_channel(uint8_t channel, float scale)
@@ -1884,6 +2360,80 @@ struct GfxTriNdcMetrics {
     bool valid;
     bool has_mixed_w;
 };
+
+static void gfx_drawclass_bbox_reset(void) {
+    for (int i = 0; i <= DRAWCLASS_HUD; i++) {
+        g_drawclass_bboxes[i].valid = false;
+        g_drawclass_bboxes[i].tris = 0;
+        g_drawclass_bboxes[i].min_x = 99999.0f;
+        g_drawclass_bboxes[i].min_y = 99999.0f;
+        g_drawclass_bboxes[i].max_x = -99999.0f;
+        g_drawclass_bboxes[i].max_y = -99999.0f;
+        g_drawclass_bboxes[i].area2_sum = 0.0f;
+        g_drawclass_bboxes[i].area2_max = 0.0f;
+    }
+}
+
+static void gfx_drawclass_bbox_add(enum DrawClass cls,
+                                   const struct GfxTriNdcMetrics *metrics) {
+    if ((int)cls < 0 || cls > DRAWCLASS_HUD || metrics == NULL || !metrics->valid) {
+        return;
+    }
+
+    struct GfxDrawClassBBox *bbox = &g_drawclass_bboxes[cls];
+    if (!bbox->valid) {
+        bbox->valid = true;
+        bbox->min_x = metrics->min_x;
+        bbox->min_y = metrics->min_y;
+        bbox->max_x = metrics->max_x;
+        bbox->max_y = metrics->max_y;
+    } else {
+        if (metrics->min_x < bbox->min_x) bbox->min_x = metrics->min_x;
+        if (metrics->min_y < bbox->min_y) bbox->min_y = metrics->min_y;
+        if (metrics->max_x > bbox->max_x) bbox->max_x = metrics->max_x;
+        if (metrics->max_y > bbox->max_y) bbox->max_y = metrics->max_y;
+    }
+
+    bbox->tris++;
+    bbox->area2_sum += metrics->area2;
+    if (metrics->area2 > bbox->area2_max) {
+        bbox->area2_max = metrics->area2;
+    }
+}
+
+static void gfx_drawclass_bbox_trace_one(enum DrawClass cls) {
+    const struct GfxDrawClassBBox *bbox = &g_drawclass_bboxes[cls];
+    float width = gfx_logical_screen_width();
+    float height = gfx_logical_screen_height();
+    float screen_min_x = 0.0f;
+    float screen_min_y = 0.0f;
+    float screen_max_x = 0.0f;
+    float screen_max_y = 0.0f;
+
+    if (bbox->valid) {
+        screen_min_x = (bbox->min_x * 0.5f + 0.5f) * width;
+        screen_max_x = (bbox->max_x * 0.5f + 0.5f) * width;
+        screen_min_y = (0.5f - bbox->max_y * 0.5f) * height;
+        screen_max_y = (0.5f - bbox->min_y * 0.5f) * height;
+    }
+
+    fprintf(stderr,
+            " %s={valid=%d tris=%d ndc=[%.3f,%.3f]-[%.3f,%.3f] "
+            "screen=[%.1f,%.1f]-[%.1f,%.1f] area2_sum=%.3f area2_max=%.3f}",
+            gfx_draw_class_name(cls),
+            bbox->valid ? 1 : 0,
+            bbox->tris,
+            bbox->valid ? bbox->min_x : 0.0f,
+            bbox->valid ? bbox->min_y : 0.0f,
+            bbox->valid ? bbox->max_x : 0.0f,
+            bbox->valid ? bbox->max_y : 0.0f,
+            screen_min_x,
+            screen_min_y,
+            screen_max_x,
+            screen_max_y,
+            bbox->area2_sum,
+            bbox->area2_max);
+}
 
 /* ===== LRU texture cache =====
  * Hash table (1024 buckets) for O(1) lookup by N64 DRAM address.
@@ -2509,6 +3059,30 @@ static bool gfx_tri_is_critical_emitted_shard(const struct GfxTriNdcMetrics *met
            metrics->area2 > 4.50f;
 }
 
+static const char *gfx_effect_label_for_current_command(void);
+
+static bool gfx_tri_is_viewport_spanning_glass_shard(const struct GfxTriNdcMetrics *metrics,
+                                                     bool was_cpu_clipped) {
+    const char *effect_label;
+    float ndc_width;
+    float ndc_height;
+
+    if (!was_cpu_clipped || !metrics->valid) {
+        return false;
+    }
+
+    effect_label = gfx_effect_label_for_current_command();
+    if (effect_label == NULL || strstr(effect_label, "glass_shards") == NULL) {
+        return false;
+    }
+
+    ndc_width = metrics->max_x - metrics->min_x;
+    ndc_height = metrics->max_y - metrics->min_y;
+    return ndc_width >= 1.95f &&
+           ndc_height >= 1.50f &&
+           metrics->area2 >= 3.00f;
+}
+
 static bool gfx_mode_is_opaque_room_surface(uint32_t raw_mode, uint32_t eff_mode) {
     uint32_t mode = raw_mode ? raw_mode : eff_mode;
 
@@ -2561,6 +3135,8 @@ static bool gfx_mode_is_room_seam_strip(uint32_t raw_mode, uint32_t eff_mode) {
 struct ColorCombiner {
     uint64_t cc_id;
     uint32_t cc_options;
+    uint64_t shader_id0;
+    uint32_t shader_id1;
     struct ShaderProgram *prg;
     uint8_t shader_input_mapping[2][7]; /* [color/alpha][input_index] → G_CCMUX_* value */
 };
@@ -2599,6 +3175,19 @@ static struct RSP {
 
     struct LoadedVertex loaded_vertices[MAX_VERTICES + 4];
 } rsp;
+
+static bool gfx_current_draw_suppresses_room_fog(void) {
+    if (g_FogSkyIsEnabled != 0) {
+        return false;
+    }
+
+    if (g_current_draw_class == DRAWCLASS_ROOM) {
+        return true;
+    }
+
+    return rsp.modelview_matrix_stack_size > 0 &&
+           rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1];
+}
 
 static struct RDP {
     uint16_t palette[256];
@@ -2685,11 +3274,26 @@ static inline uint8_t gfx_effective_tile_desc_for_unit(uint8_t tile_base, int un
     int offset = unit;
 
     if (allow_lod_redirect && rdp.tex_lod && !rdp.tex_detail && rdp.tex_max_lod > 0) {
-        /* PD behavior: in mip LOD mode, TEXEL1 reuses the base tile rather
-         * than blindly advancing to tile+1. Firing effects use texSelect(...)
-         * with G_TL_LOD heavily; without this, GE can bind an invalid second
-         * tile and sample garbage or the zero texture. */
-        offset = 0;
+        uint8_t candidate = (uint8_t)(tile_base + offset);
+        bool candidate_live = false;
+
+        if (candidate < 8) {
+            uint16_t tmem = gfx_tile_tmem_index(candidate);
+            const typeof(rdp.loaded_texture[0]) *loaded =
+                &rdp.loaded_texture[tmem < 512 ? tmem : 0];
+            candidate_live =
+                loaded->addr != NULL &&
+                loaded->size_bytes != 0 &&
+                loaded->line_size_bytes != 0;
+        }
+
+        /* texSelect() LOD materials describe TEXEL1 as tile+1, but older
+         * native paths only populated the base LOADBLOCK slot. Keep the
+         * historical base-tile fallback for invalid endpoints while allowing
+         * synthesized TMEM mip aliases to supply the real lower-LOD tile. */
+        if (!candidate_live) {
+            offset = 0;
+        }
     }
 
     uint8_t tile_desc = (uint8_t)(tile_base + offset);
@@ -3406,9 +4010,16 @@ static void gfx_sync_current_dimensions_from_window(void) {
         (float)gfx_current_dimensions.height;
 }
 
-static float buf_vbo[MAX_BUFFERED * (48 * 3)]; /* 48 = pos + 2 texcoords + clamp extents + fog + inputs */
+static float buf_vbo[MAX_BUFFERED * (56 * 3)]; /* 56 = pos + diag attrs + 2 texcoords + clamp extents + fog + inputs */
+static float buf_vbo_sort_tmp[MAX_BUFFERED * (56 * 3)];
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
+static uint8_t buf_vbo_tri_sortable[MAX_BUFFERED];
+static float buf_vbo_tri_sort_key[MAX_BUFFERED];
+static uint32_t buf_vbo_tri_serial[MAX_BUFFERED];
+static uintptr_t buf_vbo_tri_cmd_addr[MAX_BUFFERED];
+static int buf_vbo_tri_room[MAX_BUFFERED];
+static uint32_t g_room_xlu_sort_serial = 0;
 
 /* Background clear color */
 static float clear_r = 0, clear_g = 0, clear_b = 0;
@@ -3546,15 +4157,42 @@ static int g_diag_trace_displaycast_materials = -1; /* GE007_TRACE_DISPLAYCAST_M
 static int g_diag_trace_displaycast_materials_all = -1; /* GE007_TRACE_DISPLAYCAST_MATERIALS_ALL=1 */
 static int g_diag_trace_displaycast_materials_after_frame = -2; /* GE007_TRACE_DISPLAYCAST_MATERIALS_AFTER_FRAME=N */
 static int g_diag_trace_displaycast_materials_budget = INT32_MIN; /* GE007_TRACE_DISPLAYCAST_MATERIALS_BUDGET=N */
+static int g_diag_trace_bullet_impact_materials = -1; /* GE007_TRACE_BULLET_IMPACT_MATERIALS=1 */
+static int g_diag_trace_bullet_impact_materials_after_frame = -2; /* GE007_TRACE_BULLET_IMPACT_MATERIALS_AFTER_FRAME=N */
+static int g_diag_trace_bullet_impact_materials_budget = INT32_MIN; /* GE007_TRACE_BULLET_IMPACT_MATERIALS_BUDGET=N */
+static int g_diag_trace_bullet_impact_materials_effect_loaded = 0; /* GE007_TRACE_BULLET_IMPACT_MATERIALS_EFFECT=label */
+static const char *g_diag_trace_bullet_impact_materials_effect = NULL;
 static int g_diag_trace_texgen_materials = -1; /* GE007_TRACE_TEXGEN_MATERIALS=1 */
 static int g_diag_trace_goldeneye_logo_materials = -1; /* GE007_TRACE_GOLDENEYE_LOGO_MATERIALS=1 */
 static int g_diag_trace_texgen_materials_after_frame = -2; /* GE007_TRACE_TEXGEN_MATERIALS_AFTER_FRAME=N */
 static int g_diag_trace_texgen_materials_budget = INT32_MIN; /* GE007_TRACE_TEXGEN_MATERIALS_BUDGET=N */
+static int g_diag_trace_texgen_materials_effect_loaded = 0; /* GE007_TRACE_TEXGEN_MATERIALS_EFFECT=label */
+static const char *g_diag_trace_texgen_materials_effect = NULL;
+static int g_diag_trace_glass_shard_coverage = -1; /* GE007_TRACE_GLASS_SHARD_COVERAGE=1 */
+static int g_diag_trace_glass_shard_coverage_after_frame = INT32_MIN; /* GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME=N */
+static int g_diag_trace_glass_shard_coverage_budget = INT32_MIN; /* GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET=N */
 static int g_diag_trace_settex_material_cc = -1; /* GE007_TRACE_SETTEX_MATERIAL_CC=list */
 static int g_diag_trace_settex_material_cc_after_frame = -2; /* GE007_TRACE_SETTEX_MATERIAL_CC_AFTER_FRAME=N */
 static int g_diag_trace_settex_material_cc_budget = INT32_MIN; /* GE007_TRACE_SETTEX_MATERIAL_CC_BUDGET=N */
 static int g_diag_trace_settex_material_cc_samples = -1; /* GE007_TRACE_SETTEX_MATERIAL_CC_SAMPLES=1 */
 static int g_diag_trace_settex_material_cc_verts = -1; /* GE007_TRACE_SETTEX_MATERIAL_CC_VERTS=1 */
+static int g_diag_trace_settex_fb_capture = -1; /* GE007_TRACE_SETTEX_FB_CAPTURE=1|*|cc-list */
+static int g_diag_trace_settex_fb_capture_after_frame = INT32_MIN; /* GE007_TRACE_SETTEX_FB_CAPTURE_AFTER_FRAME=N */
+static int g_diag_trace_settex_fb_capture_budget = INT32_MIN; /* GE007_TRACE_SETTEX_FB_CAPTURE_BUDGET=N */
+static int g_diag_trace_settex_fb_capture_texnum = -1; /* GE007_TRACE_SETTEX_FB_CAPTURE_TEXNUM=list */
+static int g_diag_trace_settex_fb_capture_texsize = -1; /* GE007_TRACE_SETTEX_FB_CAPTURE_TEXSIZE=WxH */
+static int g_diag_trace_settex_fb_capture_pad = INT32_MIN; /* GE007_TRACE_SETTEX_FB_CAPTURE_PAD=N */
+static int g_diag_trace_settex_fb_capture_max_dim = INT32_MIN; /* GE007_TRACE_SETTEX_FB_CAPTURE_MAX_DIM=N */
+static int g_diag_trace_settex_fb_capture_serial = 0;
+static int g_diag_trace_settex_pixel = -1; /* GE007_TRACE_SETTEX_PIXEL=1|*|cc-list */
+static int g_diag_trace_settex_pixel_after_frame = INT32_MIN; /* GE007_TRACE_SETTEX_PIXEL_AFTER_FRAME=N */
+static int g_diag_trace_settex_pixel_budget = INT32_MIN; /* GE007_TRACE_SETTEX_PIXEL_BUDGET=N */
+static int g_diag_trace_settex_pixel_texnum = -1; /* GE007_TRACE_SETTEX_PIXEL_TEXNUM=list */
+static int g_diag_trace_settex_pixel_texsize = -1; /* GE007_TRACE_SETTEX_PIXEL_TEXSIZE=WxH */
+static int g_diag_trace_settex_pixel_target_x = INT32_MIN; /* GE007_TRACE_SETTEX_PIXEL_X=N */
+static int g_diag_trace_settex_pixel_target_y = INT32_MIN; /* GE007_TRACE_SETTEX_PIXEL_Y=N */
+static int g_diag_trace_settex_pixel_inside_only = -1; /* GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY=1 */
+static int g_diag_trace_settex_pixel_serial = 0;
 static int g_diag_debug_cmd_range_enabled = -1; /* GE007_DEBUG_CMD_RANGE=min:max */
 static uintptr_t g_diag_debug_cmd_min = 0;
 static uintptr_t g_diag_debug_cmd_max = 0;
@@ -3651,6 +4289,9 @@ static int g_effect_tri_trace_enabled = -1;
 static int g_effect_tri_trace_after_frame = -2;
 static int g_effect_tri_trace_budget = INT32_MIN;
 static const char *g_effect_tri_trace_label = NULL;
+static int g_effect_tri_trace_unlabeled = -1;
+static int g_effect_tri_trace_emits_only = -1;
+static const char *g_effect_tri_trace_drawclass = NULL;
 static int g_effect_cmd_trace_enabled = -1;
 static int g_effect_cmd_trace_budget = INT32_MIN;
 #define EFFECT_LABEL_STACK_MAX 64
@@ -3706,6 +4347,98 @@ static bool gfx_effect_tri_trace_label_matches(const char *label) {
            strstr(label, g_effect_tri_trace_label) != NULL;
 }
 
+static int gfx_effect_tri_trace_unlabeled_enabled(void) {
+    if (g_effect_tri_trace_unlabeled < 0) {
+        const char *env = getenv("GE007_EFFECT_TRI_TRACE_UNLABELED");
+        g_effect_tri_trace_unlabeled =
+            (env != NULL && env[0] != '\0' && env[0] != '0') ? 1 : 0;
+    }
+
+    return g_effect_tri_trace_unlabeled;
+}
+
+static int gfx_effect_tri_trace_emits_only_enabled(void) {
+    if (g_effect_tri_trace_emits_only < 0) {
+        const char *env = getenv("GE007_EFFECT_TRI_TRACE_EMITS_ONLY");
+        g_effect_tri_trace_emits_only =
+            (env != NULL && env[0] != '\0' && env[0] != '0') ? 1 : 0;
+    }
+
+    return g_effect_tri_trace_emits_only;
+}
+
+static int gfx_effect_tri_shard_piece_index(uintptr_t src_addr) {
+    uintptr_t base;
+    uintptr_t rel;
+    uintptr_t piece_size = sizeof(s_shattered_window_piece);
+    uintptr_t vertex_offset = offsetof(s_shattered_window_piece, field_0x38);
+    uintptr_t vertex_bytes = sizeof(Vtx) * 3U;
+    uintptr_t piece_index;
+    uintptr_t piece_offset;
+
+    if (src_addr == 0 || ptr_shattered_window_pieces == NULL || piece_size == 0) {
+        return -1;
+    }
+
+    base = (uintptr_t)ptr_shattered_window_pieces;
+    if (src_addr < base) {
+        return -1;
+    }
+
+    rel = src_addr - base;
+    piece_index = rel / piece_size;
+    piece_offset = rel % piece_size;
+    if (piece_index >= (uintptr_t)SHATTERED_WINDOW_PIECES_BUFFER_LEN ||
+        piece_offset < vertex_offset ||
+        piece_offset >= vertex_offset + vertex_bytes) {
+        return -1;
+    }
+
+    return (int)piece_index;
+}
+
+static int gfx_effect_tri_shard_vertex_slot(uintptr_t src_addr) {
+    uintptr_t base;
+    uintptr_t rel;
+    uintptr_t piece_size = sizeof(s_shattered_window_piece);
+    uintptr_t vertex_offset = offsetof(s_shattered_window_piece, field_0x38);
+    uintptr_t piece_offset;
+
+    if (src_addr == 0 || ptr_shattered_window_pieces == NULL || piece_size == 0) {
+        return -1;
+    }
+
+    base = (uintptr_t)ptr_shattered_window_pieces;
+    if (src_addr < base) {
+        return -1;
+    }
+
+    rel = src_addr - base;
+    piece_offset = rel % piece_size;
+    if (piece_offset < vertex_offset ||
+        piece_offset >= vertex_offset + sizeof(Vtx) * 3U) {
+        return -1;
+    }
+
+    return (int)((piece_offset - vertex_offset) / sizeof(Vtx));
+}
+
+static bool gfx_effect_tri_trace_drawclass_matches(void) {
+    const char *drawclass;
+
+    if (g_effect_tri_trace_drawclass == NULL) {
+        g_effect_tri_trace_drawclass = getenv("GE007_EFFECT_TRI_TRACE_DRAWCLASS");
+    }
+
+    if (g_effect_tri_trace_drawclass == NULL ||
+        g_effect_tri_trace_drawclass[0] == '\0') {
+        return true;
+    }
+
+    drawclass = gfx_draw_class_name(g_current_draw_class);
+    return strstr(drawclass, g_effect_tri_trace_drawclass) != NULL;
+}
+
 static const char *gfx_effect_label_for_current_command(void) {
     const char *label = gfx_effect_label_for_addr(g_diag_current_cmd_addr);
 
@@ -3746,8 +4479,520 @@ static const char *gfx_blend_mode_diag_name(enum GfxBlendMode mode) {
             return "alpha";
         case GFX_BLEND_MODULATE:
             return "modulate";
+        case GFX_BLEND_ALPHA_COVERAGE:
+            return "alpha_coverage";
+        case GFX_BLEND_ALPHA_CVG_WRAP_STENCIL:
+            return "alpha_cvg_wrap_stencil";
+        case GFX_BLEND_ALPHA_RDP_MEMORY:
+            return "alpha_rdp_memory";
+        case GFX_BLEND_ALPHA_RDP_CVG_MEMORY:
+            return "alpha_rdp_cvg_memory";
         default:
             return "unknown";
+    }
+}
+
+static bool gfx_raw_mode_has_xlu_coverage_flags(uint32_t mode) {
+    return (mode & ZMODE_DEC) == ZMODE_XLU &&
+           (mode & AA_EN) != 0 &&
+           (mode & CLR_ON_CVG) != 0 &&
+           (mode & FORCE_BL) != 0;
+}
+
+static bool gfx_raw_mode_has_xlu_wrap_color_on_coverage(uint32_t mode) {
+    return gfx_raw_mode_has_xlu_coverage_flags(mode) &&
+           (mode & CVG_DST_SAVE) == CVG_DST_WRAP &&
+           (mode & IM_RD) != 0 &&
+           (mode & CVG_X_ALPHA) == 0 &&
+           (mode & ALPHA_CVG_SEL) == 0;
+}
+
+static bool gfx_room_water_alpha_suppress_needed(int dl_room,
+                                                  const char *dl_which,
+                                                  bool room_matrix,
+                                                  enum GfxBlendMode blend_mode,
+                                                  bool depth_test,
+                                                  bool depth_update,
+                                                  bool depth_compare,
+                                                  uint16_t zmode,
+                                                  bool texture_edge,
+                                                  uint32_t raw_mode)
+{
+    /*
+     * Frigate's secondary room-water/backdrop shell uses XLU coverage wrap
+     * state that should not visibly shade the PC framebuffer.  Leaving even a
+     * small alpha contribution exposes large room-shell triangles across the
+     * sky/ocean background.
+     */
+    return room_matrix &&
+           dl_room >= 0 &&
+           dl_which != NULL &&
+           strcmp(dl_which, "secondary") == 0 &&
+           settex_active &&
+           settex_texturenum == 655 &&
+           settex_fmt == G_IM_FMT_IA &&
+           settex_siz == G_IM_SIZ_8b &&
+           (int)(settex_tex_w + 0.5f) == 54 &&
+           (int)(settex_tex_h + 0.5f) == 54 &&
+           blend_mode == GFX_BLEND_ALPHA &&
+           depth_test &&
+           depth_compare &&
+           !depth_update &&
+           zmode == ZMODE_XLU &&
+           !texture_edge &&
+           gfx_raw_mode_has_xlu_wrap_color_on_coverage(raw_mode);
+}
+
+static const char *gfx_zmode_diag_name(uint32_t mode) {
+    switch (mode & ZMODE_DEC) {
+        case ZMODE_OPA:
+            return "opa";
+        case ZMODE_INTER:
+            return "inter";
+        case ZMODE_XLU:
+            return "xlu";
+        case ZMODE_DEC:
+            return "dec";
+        default:
+            return "?";
+    }
+}
+
+static const char *gfx_cvg_dst_diag_name(uint32_t mode) {
+    switch (mode & CVG_DST_SAVE) {
+        case CVG_DST_CLAMP:
+            return "clamp";
+        case CVG_DST_WRAP:
+            return "wrap";
+        case CVG_DST_FULL:
+            return "full";
+        case CVG_DST_SAVE:
+            return "save";
+        default:
+            return "?";
+    }
+}
+
+static uint32_t gfx_blender_field(uint32_t mode, int cycle, int field) {
+    static const uint8_t shifts[2][4] = {
+        {30, 26, 22, 18},
+        {28, 24, 20, 16},
+    };
+
+    if (cycle < 0 || cycle > 1 || field < 0 || field > 3) {
+        return 0;
+    }
+
+    return (mode >> shifts[cycle][field]) & 3U;
+}
+
+#define GLASS_SHARD_COVERAGE_GRID_W 64
+#define GLASS_SHARD_COVERAGE_GRID_H 48
+
+struct GlassShardCoverageTrace {
+    int frame;
+    uint16_t grid[GLASS_SHARD_COVERAGE_GRID_W * GLASS_SHARD_COVERAGE_GRID_H];
+    uint32_t tri_count;
+    uint32_t cell_hits;
+    uint32_t raw_mode;
+    uint32_t raw_mode_mismatch;
+    uint32_t eff_mode;
+    uint32_t eff_mode_mismatch;
+    uint32_t other_mode_h;
+    uint32_t other_mode_h_mismatch;
+    uint32_t geom;
+    uint32_t geom_mismatch;
+    uint64_t cc;
+    uint32_t cc_mismatch;
+    uint32_t cc_options;
+    uint32_t cc_options_mismatch;
+    enum GfxBlendMode blend_mode;
+    uint32_t blend_mismatch;
+    enum GfxBlendMode api_blend_mode;
+    uint32_t api_blend_mismatch;
+    uint32_t depth_test_count;
+    uint32_t depth_update_count;
+    uint32_t depth_compare_count;
+    uint32_t depth_source_prim_count;
+    uint32_t alpha_count;
+    uint32_t texture_edge_count;
+    uint32_t use_fog_count;
+    uint32_t shade_alpha_min;
+    uint32_t shade_alpha_max;
+    uint32_t shade_rgb_min;
+    uint32_t shade_rgb_max;
+    float min_x;
+    float min_y;
+    float max_x;
+    float max_y;
+    float max_area2;
+};
+
+static struct GlassShardCoverageTrace g_glass_shard_coverage_trace;
+
+static bool gfx_trace_glass_shard_coverage_enabled(void) {
+    if (g_diag_trace_glass_shard_coverage < 0) {
+        const char *env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE");
+        g_diag_trace_glass_shard_coverage =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+
+    return g_diag_trace_glass_shard_coverage > 0;
+}
+
+static int gfx_trace_glass_shard_coverage_after_frame(void) {
+    if (g_diag_trace_glass_shard_coverage_after_frame == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME");
+        g_diag_trace_glass_shard_coverage_after_frame = env ? atoi(env) : 0;
+    }
+
+    return g_diag_trace_glass_shard_coverage_after_frame;
+}
+
+static int gfx_trace_glass_shard_coverage_take_budget(void) {
+    if (g_diag_trace_glass_shard_coverage_budget == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET");
+        g_diag_trace_glass_shard_coverage_budget = env ? atoi(env) : 120;
+    }
+
+    if (g_diag_trace_glass_shard_coverage_budget == 0) {
+        return 0;
+    }
+
+    if (g_diag_trace_glass_shard_coverage_budget > 0) {
+        g_diag_trace_glass_shard_coverage_budget--;
+    }
+
+    return 1;
+}
+
+static void gfx_trace_glass_shard_coverage_reset(int frame) {
+    memset(&g_glass_shard_coverage_trace, 0, sizeof(g_glass_shard_coverage_trace));
+    g_glass_shard_coverage_trace.frame = frame;
+    g_glass_shard_coverage_trace.shade_alpha_min = 255;
+    g_glass_shard_coverage_trace.shade_rgb_min = 255;
+    g_glass_shard_coverage_trace.min_x = 1.0f;
+    g_glass_shard_coverage_trace.min_y = 1.0f;
+    g_glass_shard_coverage_trace.max_x = -1.0f;
+    g_glass_shard_coverage_trace.max_y = -1.0f;
+}
+
+static void gfx_trace_glass_shard_coverage_frame_begin(void) {
+    if (!gfx_trace_glass_shard_coverage_enabled()) {
+        return;
+    }
+
+    gfx_trace_glass_shard_coverage_reset(g_frame_count_diag);
+}
+
+static void gfx_trace_glass_shard_coverage_frame_end(void) {
+    struct GlassShardCoverageTrace *trace = &g_glass_shard_coverage_trace;
+    uint32_t cells_touched = 0;
+    uint32_t overlap_cells = 0;
+    uint32_t max_cell = 0;
+
+    if (!gfx_trace_glass_shard_coverage_enabled() ||
+        trace->frame != g_frame_count_diag ||
+        trace->tri_count == 0 ||
+        g_frame_count_diag < gfx_trace_glass_shard_coverage_after_frame()) {
+        return;
+    }
+
+    if (!gfx_trace_glass_shard_coverage_take_budget()) {
+        return;
+    }
+
+    for (int i = 0; i < GLASS_SHARD_COVERAGE_GRID_W * GLASS_SHARD_COVERAGE_GRID_H; i++) {
+        uint32_t value = trace->grid[i];
+        if (value == 0) {
+            continue;
+        }
+
+        cells_touched++;
+        if (value > 1) {
+            overlap_cells++;
+        }
+        if (value > max_cell) {
+            max_cell = value;
+        }
+    }
+
+    fprintf(stderr,
+            "[SHARD-COVERAGE] frame=%d tris=%u raw=0x%08X raw_mismatch=%u "
+            "eff=0x%08X eff_mismatch=%u omh=0x%08X omh_mismatch=%u "
+            "cc=0x%016llX cc_mismatch=%u opts=0x%08X opts_mismatch=%u geom=0x%08X geom_mismatch=%u "
+            "mode_decode={z=%s cvg=%s aa=%d imrd=%d clr_on_cvg=%d cvg_x_alpha=%d alpha_cvg=%d force_bl=%d "
+            "b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
+            "blend=%s blend_mismatch=%u api_blend=%s api_blend_mismatch=%u "
+            "depth_counts=(test=%u,upd=%u,cmp=%u,prim=%u) alpha=%u texedge=%u fog=%u "
+            "grid=%dx%d cells=%u cell_hits=%u overlap_cells=%u max_cell=%u avg_hits=%.2f "
+            "union_ndc=[%.3f,%.3f]-[%.3f,%.3f] max_area2=%.5f "
+            "shadeA=(%u,%u) shadeRGB=(%u,%u)\n",
+            trace->frame,
+            trace->tri_count,
+            trace->raw_mode,
+            trace->raw_mode_mismatch,
+            trace->eff_mode,
+            trace->eff_mode_mismatch,
+            trace->other_mode_h,
+            trace->other_mode_h_mismatch,
+            (unsigned long long)trace->cc,
+            trace->cc_mismatch,
+            trace->cc_options,
+            trace->cc_options_mismatch,
+            trace->geom,
+            trace->geom_mismatch,
+            gfx_zmode_diag_name(trace->raw_mode),
+            gfx_cvg_dst_diag_name(trace->raw_mode),
+            (trace->raw_mode & AA_EN) != 0 ? 1 : 0,
+            (trace->raw_mode & IM_RD) != 0 ? 1 : 0,
+            (trace->raw_mode & CLR_ON_CVG) != 0 ? 1 : 0,
+            (trace->raw_mode & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (trace->raw_mode & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (trace->raw_mode & FORCE_BL) != 0 ? 1 : 0,
+            gfx_blender_field(trace->raw_mode, 0, 0),
+            gfx_blender_field(trace->raw_mode, 0, 1),
+            gfx_blender_field(trace->raw_mode, 0, 2),
+            gfx_blender_field(trace->raw_mode, 0, 3),
+            gfx_blender_field(trace->raw_mode, 1, 0),
+            gfx_blender_field(trace->raw_mode, 1, 1),
+            gfx_blender_field(trace->raw_mode, 1, 2),
+            gfx_blender_field(trace->raw_mode, 1, 3),
+            gfx_blend_mode_diag_name(trace->blend_mode),
+            trace->blend_mismatch,
+            gfx_blend_mode_diag_name(trace->api_blend_mode),
+            trace->api_blend_mismatch,
+            trace->depth_test_count,
+            trace->depth_update_count,
+            trace->depth_compare_count,
+            trace->depth_source_prim_count,
+            trace->alpha_count,
+            trace->texture_edge_count,
+            trace->use_fog_count,
+            GLASS_SHARD_COVERAGE_GRID_W,
+            GLASS_SHARD_COVERAGE_GRID_H,
+            cells_touched,
+            trace->cell_hits,
+            overlap_cells,
+            max_cell,
+            cells_touched > 0 ? (double)trace->cell_hits / (double)cells_touched : 0.0,
+            trace->min_x,
+            trace->min_y,
+            trace->max_x,
+            trace->max_y,
+            trace->max_area2,
+            trace->shade_alpha_min,
+            trace->shade_alpha_max,
+            trace->shade_rgb_min,
+            trace->shade_rgb_max);
+    fflush(stderr);
+}
+
+static int gfx_trace_glass_shard_coverage_cell(float ndc, int grid_size) {
+    int cell;
+
+    if (ndc < -1.0f) {
+        ndc = -1.0f;
+    } else if (ndc > 1.0f) {
+        ndc = 1.0f;
+    }
+
+    cell = (int)floorf(((ndc + 1.0f) * 0.5f) * (float)grid_size);
+    if (cell < 0) {
+        return 0;
+    }
+    if (cell >= grid_size) {
+        return grid_size - 1;
+    }
+
+    return cell;
+}
+
+static void gfx_trace_glass_shard_coverage_note(const char *effect_label,
+                                                const struct GfxTriNdcMetrics *metrics,
+                                                bool metrics_ok,
+                                                uint64_t effective_cc_id,
+                                                uint32_t cc_options,
+                                                enum GfxBlendMode blend_mode,
+                                                enum GfxBlendMode api_blend_mode,
+                                                bool use_alpha,
+                                                bool use_fog,
+                                                bool texture_edge,
+                                                bool depth_test,
+                                                bool depth_update,
+                                                bool depth_compare,
+                                                bool depth_source_prim,
+                                                const struct LoadedVertex *v1,
+                                                const struct LoadedVertex *v2,
+                                                const struct LoadedVertex *v3) {
+    struct GlassShardCoverageTrace *trace = &g_glass_shard_coverage_trace;
+    uint32_t shade_rgb_min;
+    uint32_t shade_rgb_max;
+    uint32_t shade_alpha_min;
+    uint32_t shade_alpha_max;
+    int min_x_cell;
+    int max_x_cell;
+    int min_y_cell;
+    int max_y_cell;
+
+    if (!gfx_trace_glass_shard_coverage_enabled() ||
+        g_frame_count_diag < gfx_trace_glass_shard_coverage_after_frame() ||
+        effect_label == NULL ||
+        strstr(effect_label, "glass_shards") == NULL ||
+        !metrics_ok ||
+        !metrics->valid) {
+        return;
+    }
+
+    if (trace->frame != g_frame_count_diag) {
+        gfx_trace_glass_shard_coverage_reset(g_frame_count_diag);
+    }
+
+    if (trace->tri_count == 0) {
+        trace->raw_mode = rdp.other_mode_l_raw;
+        trace->eff_mode = rdp.other_mode_l;
+        trace->other_mode_h = rdp.other_mode_h;
+        trace->geom = rsp.geometry_mode;
+        trace->cc = effective_cc_id;
+        trace->cc_options = cc_options;
+        trace->blend_mode = blend_mode;
+        trace->api_blend_mode = api_blend_mode;
+    } else {
+        if (trace->raw_mode != rdp.other_mode_l_raw) {
+            trace->raw_mode_mismatch++;
+        }
+        if (trace->eff_mode != rdp.other_mode_l) {
+            trace->eff_mode_mismatch++;
+        }
+        if (trace->other_mode_h != rdp.other_mode_h) {
+            trace->other_mode_h_mismatch++;
+        }
+        if (trace->geom != rsp.geometry_mode) {
+            trace->geom_mismatch++;
+        }
+        if (trace->cc != effective_cc_id) {
+            trace->cc_mismatch++;
+        }
+        if (trace->cc_options != cc_options) {
+            trace->cc_options_mismatch++;
+        }
+        if (trace->blend_mode != blend_mode) {
+            trace->blend_mismatch++;
+        }
+        if (trace->api_blend_mode != api_blend_mode) {
+            trace->api_blend_mismatch++;
+        }
+    }
+
+    trace->tri_count++;
+    if (depth_test) {
+        trace->depth_test_count++;
+    }
+    if (depth_update) {
+        trace->depth_update_count++;
+    }
+    if (depth_compare) {
+        trace->depth_compare_count++;
+    }
+    if (depth_source_prim) {
+        trace->depth_source_prim_count++;
+    }
+    if (use_alpha) {
+        trace->alpha_count++;
+    }
+    if (texture_edge) {
+        trace->texture_edge_count++;
+    }
+    if (use_fog) {
+        trace->use_fog_count++;
+    }
+
+    if (metrics->min_x < trace->min_x) {
+        trace->min_x = metrics->min_x;
+    }
+    if (metrics->min_y < trace->min_y) {
+        trace->min_y = metrics->min_y;
+    }
+    if (metrics->max_x > trace->max_x) {
+        trace->max_x = metrics->max_x;
+    }
+    if (metrics->max_y > trace->max_y) {
+        trace->max_y = metrics->max_y;
+    }
+    if (metrics->area2 > trace->max_area2) {
+        trace->max_area2 = metrics->area2;
+    }
+
+    shade_alpha_min = v1->color.a;
+    shade_alpha_max = v1->color.a;
+    shade_rgb_min = v1->color.r;
+    shade_rgb_max = v1->color.r;
+    const struct LoadedVertex *verts[3] = {v1, v2, v3};
+    for (int vi = 0; vi < 3; vi++) {
+        const struct LoadedVertex *v = verts[vi];
+        uint32_t rgb_min = v->color.r;
+        uint32_t rgb_max = v->color.r;
+        if (v->color.g < rgb_min) {
+            rgb_min = v->color.g;
+        }
+        if (v->color.b < rgb_min) {
+            rgb_min = v->color.b;
+        }
+        if (v->color.g > rgb_max) {
+            rgb_max = v->color.g;
+        }
+        if (v->color.b > rgb_max) {
+            rgb_max = v->color.b;
+        }
+        if (rgb_min < shade_rgb_min) {
+            shade_rgb_min = rgb_min;
+        }
+        if (rgb_max > shade_rgb_max) {
+            shade_rgb_max = rgb_max;
+        }
+        if (v->color.a < shade_alpha_min) {
+            shade_alpha_min = v->color.a;
+        }
+        if (v->color.a > shade_alpha_max) {
+            shade_alpha_max = v->color.a;
+        }
+    }
+    if (shade_rgb_min < trace->shade_rgb_min) {
+        trace->shade_rgb_min = shade_rgb_min;
+    }
+    if (shade_rgb_max > trace->shade_rgb_max) {
+        trace->shade_rgb_max = shade_rgb_max;
+    }
+    if (shade_alpha_min < trace->shade_alpha_min) {
+        trace->shade_alpha_min = shade_alpha_min;
+    }
+    if (shade_alpha_max > trace->shade_alpha_max) {
+        trace->shade_alpha_max = shade_alpha_max;
+    }
+
+    min_x_cell = gfx_trace_glass_shard_coverage_cell(metrics->min_x, GLASS_SHARD_COVERAGE_GRID_W);
+    max_x_cell = gfx_trace_glass_shard_coverage_cell(metrics->max_x, GLASS_SHARD_COVERAGE_GRID_W);
+    min_y_cell = gfx_trace_glass_shard_coverage_cell(metrics->min_y, GLASS_SHARD_COVERAGE_GRID_H);
+    max_y_cell = gfx_trace_glass_shard_coverage_cell(metrics->max_y, GLASS_SHARD_COVERAGE_GRID_H);
+    if (max_x_cell < min_x_cell) {
+        int tmp = min_x_cell;
+        min_x_cell = max_x_cell;
+        max_x_cell = tmp;
+    }
+    if (max_y_cell < min_y_cell) {
+        int tmp = min_y_cell;
+        min_y_cell = max_y_cell;
+        max_y_cell = tmp;
+    }
+
+    for (int y = min_y_cell; y <= max_y_cell; y++) {
+        for (int x = min_x_cell; x <= max_x_cell; x++) {
+            uint16_t *cell = &trace->grid[y * GLASS_SHARD_COVERAGE_GRID_W + x];
+            if (*cell != UINT16_MAX) {
+                (*cell)++;
+            }
+            trace->cell_hits++;
+        }
     }
 }
 
@@ -3779,6 +5024,41 @@ static bool gfx_trace_displaycast_materials_all_enabled(void) {
     }
 
     return g_diag_trace_displaycast_materials_all > 0;
+}
+
+static bool gfx_trace_bullet_impact_materials_enabled(const char *effect_label) {
+    const char *env;
+
+    if (effect_label == NULL || strstr(effect_label, "bullet_impact") == NULL) {
+        return false;
+    }
+    if (!g_diag_trace_bullet_impact_materials_effect_loaded) {
+        g_diag_trace_bullet_impact_materials_effect =
+            getenv("GE007_TRACE_BULLET_IMPACT_MATERIALS_EFFECT");
+        g_diag_trace_bullet_impact_materials_effect_loaded = 1;
+    }
+    if (g_diag_trace_bullet_impact_materials_effect != NULL &&
+        g_diag_trace_bullet_impact_materials_effect[0] != '\0' &&
+        strstr(effect_label, g_diag_trace_bullet_impact_materials_effect) == NULL) {
+        return false;
+    }
+    if (g_diag_trace_bullet_impact_materials < 0) {
+        env = getenv("GE007_TRACE_BULLET_IMPACT_MATERIALS");
+        g_diag_trace_bullet_impact_materials =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_bullet_impact_materials_after_frame < -1) {
+        env = getenv("GE007_TRACE_BULLET_IMPACT_MATERIALS_AFTER_FRAME");
+        g_diag_trace_bullet_impact_materials_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_bullet_impact_materials_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_BULLET_IMPACT_MATERIALS_BUDGET");
+        g_diag_trace_bullet_impact_materials_budget = env ? atoi(env) : 64;
+    }
+
+    return g_diag_trace_bullet_impact_materials > 0 &&
+           g_frame_count_diag >= g_diag_trace_bullet_impact_materials_after_frame &&
+           g_diag_trace_bullet_impact_materials_budget != 0;
 }
 
 static bool gfx_trace_settex_material_cc_enabled(uint64_t settex_material_cc_id) {
@@ -3843,6 +5123,997 @@ static bool gfx_trace_settex_material_cc_verts_enabled(void) {
         }
     }
     return g_diag_trace_settex_material_cc_verts > 0;
+}
+
+struct GfxSettexFramebufferCapture {
+    bool active;
+    int serial;
+    int frame;
+    int tri;
+    int rect_x;
+    int rect_y;
+    int rect_w;
+    int rect_h;
+    int gl_x;
+    int gl_y;
+    int texnum;
+    int tex_w;
+    int tex_h;
+    float screen_min_x;
+    float screen_min_y;
+    float screen_max_x;
+    float screen_max_y;
+    uint64_t settex_material_cc_id;
+    uint8_t *pre_rgb;
+};
+
+struct GfxSettexPixelProbe {
+    bool active;
+    bool source_valid;
+    bool sample_valid[2];
+    int serial;
+    int frame;
+    int tri;
+    int target_x;
+    int target_y;
+    int fb_x;
+    int fb_y;
+    int gl_x;
+    int gl_y;
+    int texnum;
+    int tex_w;
+    int tex_h;
+    bool inside;
+    float bary[3];
+    float screen_min_x;
+    float screen_min_y;
+    float screen_max_x;
+    float screen_max_y;
+    uint64_t settex_material_cc_id;
+    uint64_t effective_cc_id;
+    uint32_t cc_options;
+    uint32_t raw_mode;
+    enum GfxBlendMode blend_mode;
+    enum GfxBlendMode api_blend_mode;
+    uint8_t lod_fraction;
+    float uv0[2];
+    float uv1[2];
+    int xy0[2];
+    int xy1[2];
+    uint8_t t0n[4];
+    uint8_t t0l[4];
+    uint8_t t0p[4];
+    uint8_t t1n[4];
+    uint8_t t1l[4];
+    uint8_t t1p[4];
+    uint8_t shade[4];
+    uint8_t fog[4];
+    uint8_t shaderN_comb[4];
+    uint8_t shaderN_frag[4];
+    uint8_t shaderL_comb[4];
+    uint8_t shaderL_frag[4];
+    uint8_t shaderP_comb[4];
+    uint8_t shaderP_frag[4];
+    uint8_t pre_rgb[3];
+};
+
+static int gfx_diag_env_int_clamped(const char *name, int fallback, int min_value, int max_value)
+{
+    const char *env = getenv(name);
+    long value;
+    char *end;
+
+    if (env == NULL || env[0] == '\0') {
+        return fallback;
+    }
+
+    value = strtol(env, &end, 0);
+    if (end == env) {
+        return fallback;
+    }
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value > max_value) {
+        value = max_value;
+    }
+    return (int)value;
+}
+
+static bool gfx_trace_settex_fb_capture_enabled(uint64_t settex_material_cc_id)
+{
+    const char *env;
+
+    if (g_diag_trace_settex_fb_capture < 0) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE");
+        g_diag_trace_settex_fb_capture =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_trace_settex_fb_capture) {
+            const char *after = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_AFTER_FRAME");
+            const char *budget = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_BUDGET");
+            const char *texnum = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXNUM");
+            const char *texsize = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXSIZE");
+            const char *dir = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_DIR");
+            fprintf(stderr,
+                    "[fast3d] TRACE SETTEX FB CAPTURE spec=%s after=%s budget=%s "
+                    "texnum=%s texsize=%s dir=%s (GE007_TRACE_SETTEX_FB_CAPTURE)\n",
+                    env,
+                    (after != NULL && after[0] != '\0') ? after : "0",
+                    (budget != NULL && budget[0] != '\0') ? budget : "16",
+                    (texnum != NULL && texnum[0] != '\0') ? texnum : "*",
+                    (texsize != NULL && texsize[0] != '\0') ? texsize : "*",
+                    (dir != NULL && dir[0] != '\0') ? dir : "-");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_trace_settex_fb_capture_after_frame == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_AFTER_FRAME");
+        g_diag_trace_settex_fb_capture_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_settex_fb_capture_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_BUDGET");
+        g_diag_trace_settex_fb_capture_budget = env ? atoi(env) : 16;
+    }
+
+    if (g_diag_trace_settex_fb_capture <= 0 ||
+        g_diag_trace_settex_fb_capture_budget == 0 ||
+        g_frame_count_diag < g_diag_trace_settex_fb_capture_after_frame) {
+        return false;
+    }
+
+    env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE");
+    if (strcmp(env, "1") != 0 &&
+        strcmp(env, "*") != 0 &&
+        !gfx_diag_u64_matches_list(env, settex_material_cc_id)) {
+        return false;
+    }
+
+    if (g_diag_trace_settex_fb_capture_texnum < 0) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXNUM");
+        g_diag_trace_settex_fb_capture_texnum =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_settex_fb_capture_texnum > 0) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXNUM");
+        if (settex_texturenum < 0 ||
+            !gfx_diag_texturenum_matches_list(env, settex_texturenum)) {
+            return false;
+        }
+    }
+
+    if (g_diag_trace_settex_fb_capture_texsize < 0) {
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXSIZE");
+        g_diag_trace_settex_fb_capture_texsize =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_settex_fb_capture_texsize > 0) {
+        int width = (int)(settex_tex_w + 0.5f);
+        int height = (int)(settex_tex_h + 0.5f);
+        env = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_TEXSIZE");
+        if (!gfx_diag_size_matches_list(env, width, height)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static int gfx_trace_settex_fb_capture_pad(void)
+{
+    if (g_diag_trace_settex_fb_capture_pad == INT32_MIN) {
+        g_diag_trace_settex_fb_capture_pad =
+            gfx_diag_env_int_clamped("GE007_TRACE_SETTEX_FB_CAPTURE_PAD", 2, 0, 64);
+    }
+    return g_diag_trace_settex_fb_capture_pad;
+}
+
+static int gfx_trace_settex_fb_capture_max_dim(void)
+{
+    if (g_diag_trace_settex_fb_capture_max_dim == INT32_MIN) {
+        g_diag_trace_settex_fb_capture_max_dim =
+            gfx_diag_env_int_clamped("GE007_TRACE_SETTEX_FB_CAPTURE_MAX_DIM", 160, 1, 2048);
+    }
+    return g_diag_trace_settex_fb_capture_max_dim;
+}
+
+static void gfx_settex_fb_capture_crop_axis(int *min_v, int *max_v, int limit, int bounds_max)
+{
+    int width = *max_v - *min_v;
+    int center;
+
+    if (limit <= 0 || width <= limit) {
+        return;
+    }
+
+    center = (*min_v + *max_v) / 2;
+    *min_v = center - limit / 2;
+    *max_v = *min_v + limit;
+    if (*min_v < 0) {
+        *max_v -= *min_v;
+        *min_v = 0;
+    }
+    if (*max_v > bounds_max) {
+        *min_v -= *max_v - bounds_max;
+        *max_v = bounds_max;
+        if (*min_v < 0) {
+            *min_v = 0;
+        }
+    }
+}
+
+static bool gfx_settex_fb_capture_rect_from_ndc(const struct GfxTriNdcMetrics *metrics,
+                                                struct GfxSettexFramebufferCapture *capture)
+{
+    float logical_w;
+    float logical_h;
+    float ratio_x;
+    float ratio_y;
+    int pad;
+    int max_dim;
+    int left;
+    int top;
+    int right;
+    int bottom;
+
+    if (metrics == NULL || !metrics->valid ||
+        gfx_current_dimensions.width == 0 || gfx_current_dimensions.height == 0) {
+        return false;
+    }
+
+    logical_w = gfx_logical_screen_width();
+    logical_h = gfx_logical_screen_height();
+    ratio_x = gfx_ratio_x();
+    ratio_y = gfx_ratio_y();
+    pad = gfx_trace_settex_fb_capture_pad();
+    max_dim = gfx_trace_settex_fb_capture_max_dim();
+
+    capture->screen_min_x = (metrics->min_x * 0.5f + 0.5f) * logical_w;
+    capture->screen_max_x = (metrics->max_x * 0.5f + 0.5f) * logical_w;
+    capture->screen_min_y = (0.5f - metrics->max_y * 0.5f) * logical_h;
+    capture->screen_max_y = (0.5f - metrics->min_y * 0.5f) * logical_h;
+
+    left = (int)floorf(capture->screen_min_x * ratio_x) - pad;
+    right = (int)ceilf(capture->screen_max_x * ratio_x) + pad;
+    top = (int)floorf(capture->screen_min_y * ratio_y) - pad;
+    bottom = (int)ceilf(capture->screen_max_y * ratio_y) + pad;
+
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right > (int)gfx_current_dimensions.width) right = (int)gfx_current_dimensions.width;
+    if (bottom > (int)gfx_current_dimensions.height) bottom = (int)gfx_current_dimensions.height;
+
+    gfx_settex_fb_capture_crop_axis(&left, &right, max_dim, (int)gfx_current_dimensions.width);
+    gfx_settex_fb_capture_crop_axis(&top, &bottom, max_dim, (int)gfx_current_dimensions.height);
+
+    if (right <= left || bottom <= top) {
+        return false;
+    }
+
+    capture->rect_x = left;
+    capture->rect_y = top;
+    capture->rect_w = right - left;
+    capture->rect_h = bottom - top;
+    capture->gl_x = left;
+    capture->gl_y = (int)gfx_current_dimensions.height - bottom;
+    return true;
+}
+
+static bool gfx_settex_fb_capture_write_ppm(const char *path,
+                                            const uint8_t *rgb,
+                                            int width,
+                                            int height)
+{
+    FILE *fp;
+
+    if (path == NULL || path[0] == '\0' || rgb == NULL ||
+        width <= 0 || height <= 0) {
+        return false;
+    }
+
+    fp = fopen(path, "wb");
+    if (fp == NULL) {
+        return false;
+    }
+    fprintf(fp, "P6\n%d %d\n255\n", width, height);
+    for (int row = height - 1; row >= 0; row--) {
+        fwrite(rgb + (size_t)row * (size_t)width * 3U,
+               1, (size_t)width * 3U, fp);
+    }
+    fclose(fp);
+    return true;
+}
+
+static bool gfx_settex_fb_capture_make_path(char *dst,
+                                            size_t dst_size,
+                                            const char *dir,
+                                            const struct GfxSettexFramebufferCapture *capture,
+                                            const char *suffix)
+{
+    int written;
+
+    if (dst == NULL || dst_size == 0 || dir == NULL || dir[0] == '\0') {
+        return false;
+    }
+
+    written = snprintf(dst, dst_size,
+                       "%s/settex_fb_frame%05d_tri%06d_%03d_%s.ppm",
+                       dir,
+                       capture->frame,
+                       capture->tri,
+                       capture->serial,
+                       suffix);
+    return written > 0 && (size_t)written < dst_size;
+}
+
+static void gfx_settex_fb_capture_log_read_failure(
+    const char *status,
+    const struct GfxSettexFramebufferCapture *capture)
+{
+    fprintf(stderr,
+            "[SETTEX-FB-CAPTURE] status=%s frame=%d tri=%d serial=%d "
+            "cc=0x%016llx texnum=%d wh=%dx%d "
+            "rect=[%d,%d,%d,%d] gl_rect=[%d,%d,%d,%d] "
+            "screen_bbox=[%.2f,%.2f,%.2f,%.2f]\n",
+            status,
+            capture->frame,
+            capture->tri,
+            capture->serial,
+            (unsigned long long)capture->settex_material_cc_id,
+            capture->texnum,
+            capture->tex_w,
+            capture->tex_h,
+            capture->rect_x,
+            capture->rect_y,
+            capture->rect_w,
+            capture->rect_h,
+            capture->gl_x,
+            capture->gl_y,
+            capture->rect_w,
+            capture->rect_h,
+            capture->screen_min_x,
+            capture->screen_min_y,
+            capture->screen_max_x,
+            capture->screen_max_y);
+    fflush(stderr);
+}
+
+static bool gfx_settex_fb_capture_begin(struct GfxSettexFramebufferCapture *capture,
+                                        uint64_t settex_material_cc_id,
+                                        const struct GfxTriNdcMetrics *metrics)
+{
+    size_t byte_count;
+
+    memset(capture, 0, sizeof(*capture));
+    if (!settex_active ||
+        !gfx_trace_settex_fb_capture_enabled(settex_material_cc_id)) {
+        return false;
+    }
+    if (gfx_rapi == NULL || gfx_rapi->read_framebuffer_rgb == NULL) {
+        return false;
+    }
+
+    capture->serial = g_diag_trace_settex_fb_capture_serial++;
+    capture->frame = g_frame_count_diag;
+    capture->tri = g_tri_count_diag;
+    capture->settex_material_cc_id = settex_material_cc_id;
+    capture->texnum = settex_texturenum;
+    capture->tex_w = (int)(settex_tex_w + 0.5f);
+    capture->tex_h = (int)(settex_tex_h + 0.5f);
+
+    if (!gfx_settex_fb_capture_rect_from_ndc(metrics, capture)) {
+        return false;
+    }
+
+    if (g_diag_trace_settex_fb_capture_budget > 0) {
+        g_diag_trace_settex_fb_capture_budget--;
+    }
+
+    byte_count = (size_t)capture->rect_w * (size_t)capture->rect_h * 3U;
+    capture->pre_rgb = (uint8_t *)malloc(byte_count);
+    if (capture->pre_rgb == NULL) {
+        gfx_settex_fb_capture_log_read_failure("pre_alloc_failed", capture);
+        return false;
+    }
+
+    gfx_flush();
+    if (!gfx_rapi->read_framebuffer_rgb(capture->gl_x,
+                                        capture->gl_y,
+                                        capture->rect_w,
+                                        capture->rect_h,
+                                        capture->pre_rgb)) {
+        gfx_settex_fb_capture_log_read_failure("pre_read_failed", capture);
+        free(capture->pre_rgb);
+        capture->pre_rgb = NULL;
+        return false;
+    }
+
+    capture->active = true;
+    return true;
+}
+
+static void gfx_settex_fb_capture_finish(struct GfxSettexFramebufferCapture *capture)
+{
+    uint8_t *post_rgb;
+    size_t pixel_count;
+    size_t byte_count;
+    uint64_t pre_sum[3] = {0, 0, 0};
+    uint64_t post_sum[3] = {0, 0, 0};
+    uint64_t abs_sum[3] = {0, 0, 0};
+    uint64_t changed = 0;
+    double inv_pixels;
+    double inv_channels;
+    const char *dir;
+    char pre_path[512] = "";
+    char post_path[512] = "";
+    bool wrote_pre = false;
+    bool wrote_post = false;
+
+    if (capture == NULL || !capture->active || capture->pre_rgb == NULL) {
+        return;
+    }
+
+    byte_count = (size_t)capture->rect_w * (size_t)capture->rect_h * 3U;
+    pixel_count = (size_t)capture->rect_w * (size_t)capture->rect_h;
+    post_rgb = (uint8_t *)malloc(byte_count);
+    if (post_rgb == NULL) {
+        gfx_settex_fb_capture_log_read_failure("post_alloc_failed", capture);
+        free(capture->pre_rgb);
+        capture->pre_rgb = NULL;
+        capture->active = false;
+        return;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(capture->gl_x,
+                                        capture->gl_y,
+                                        capture->rect_w,
+                                        capture->rect_h,
+                                        post_rgb)) {
+        gfx_settex_fb_capture_log_read_failure("post_read_failed", capture);
+        free(post_rgb);
+        free(capture->pre_rgb);
+        capture->pre_rgb = NULL;
+        capture->active = false;
+        return;
+    }
+
+    for (size_t idx = 0; idx < byte_count; idx += 3) {
+        bool pixel_changed = false;
+        for (int ch = 0; ch < 3; ch++) {
+            int pre = capture->pre_rgb[idx + (size_t)ch];
+            int post = post_rgb[idx + (size_t)ch];
+            int delta = post - pre;
+            pre_sum[ch] += (uint64_t)pre;
+            post_sum[ch] += (uint64_t)post;
+            abs_sum[ch] += (uint64_t)(delta < 0 ? -delta : delta);
+            if (delta != 0) {
+                pixel_changed = true;
+            }
+        }
+        if (pixel_changed) {
+            changed++;
+        }
+    }
+
+    dir = getenv("GE007_TRACE_SETTEX_FB_CAPTURE_DIR");
+    if (dir != NULL && dir[0] != '\0') {
+        bool pre_path_ok = gfx_settex_fb_capture_make_path(pre_path, sizeof(pre_path),
+                                                           dir, capture, "pre");
+        bool post_path_ok = gfx_settex_fb_capture_make_path(post_path, sizeof(post_path),
+                                                            dir, capture, "post");
+        wrote_pre = pre_path_ok &&
+            gfx_settex_fb_capture_write_ppm(pre_path,
+                                            capture->pre_rgb,
+                                            capture->rect_w,
+                                            capture->rect_h);
+        wrote_post = post_path_ok &&
+            gfx_settex_fb_capture_write_ppm(post_path,
+                                            post_rgb,
+                                            capture->rect_w,
+                                            capture->rect_h);
+    }
+
+    inv_pixels = pixel_count > 0 ? 1.0 / (double)pixel_count : 0.0;
+    inv_channels = pixel_count > 0 ? 1.0 / ((double)pixel_count * 3.0) : 0.0;
+    fprintf(stderr,
+            "[SETTEX-FB-CAPTURE] status=ok frame=%d tri=%d serial=%d "
+            "cc=0x%016llx texnum=%d wh=%dx%d "
+            "rect=[%d,%d,%d,%d] gl_rect=[%d,%d,%d,%d] "
+            "screen_bbox=[%.2f,%.2f,%.2f,%.2f] "
+            "pre_mean=(%.3f,%.3f,%.3f) post_mean=(%.3f,%.3f,%.3f) "
+            "mean_abs_rgb=%.3f changed=%llu/%zu changed_pct=%.3f "
+            "pre_ppm=%s post_ppm=%s\n",
+            capture->frame,
+            capture->tri,
+            capture->serial,
+            (unsigned long long)capture->settex_material_cc_id,
+            capture->texnum,
+            capture->tex_w,
+            capture->tex_h,
+            capture->rect_x,
+            capture->rect_y,
+            capture->rect_w,
+            capture->rect_h,
+            capture->gl_x,
+            capture->gl_y,
+            capture->rect_w,
+            capture->rect_h,
+            capture->screen_min_x,
+            capture->screen_min_y,
+            capture->screen_max_x,
+            capture->screen_max_y,
+            (double)pre_sum[0] * inv_pixels,
+            (double)pre_sum[1] * inv_pixels,
+            (double)pre_sum[2] * inv_pixels,
+            (double)post_sum[0] * inv_pixels,
+            (double)post_sum[1] * inv_pixels,
+            (double)post_sum[2] * inv_pixels,
+            (double)(abs_sum[0] + abs_sum[1] + abs_sum[2]) * inv_channels,
+            (unsigned long long)changed,
+            pixel_count,
+            pixel_count > 0 ? (double)changed * 100.0 / (double)pixel_count : 0.0,
+            wrote_pre ? pre_path : "-",
+            wrote_post ? post_path : "-");
+    fflush(stderr);
+
+    free(post_rgb);
+    free(capture->pre_rgb);
+    capture->pre_rgb = NULL;
+    capture->active = false;
+}
+
+static bool gfx_trace_settex_pixel_enabled(uint64_t settex_material_cc_id)
+{
+    const char *env;
+
+    if (g_diag_trace_settex_pixel < 0) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL");
+        g_diag_trace_settex_pixel =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_trace_settex_pixel) {
+            const char *after = getenv("GE007_TRACE_SETTEX_PIXEL_AFTER_FRAME");
+            const char *budget = getenv("GE007_TRACE_SETTEX_PIXEL_BUDGET");
+            const char *texnum = getenv("GE007_TRACE_SETTEX_PIXEL_TEXNUM");
+            const char *texsize = getenv("GE007_TRACE_SETTEX_PIXEL_TEXSIZE");
+            const char *x = getenv("GE007_TRACE_SETTEX_PIXEL_X");
+            const char *y = getenv("GE007_TRACE_SETTEX_PIXEL_Y");
+            fprintf(stderr,
+                    "[fast3d] TRACE SETTEX PIXEL spec=%s after=%s budget=%s "
+                    "texnum=%s texsize=%s target=%s,%s (GE007_TRACE_SETTEX_PIXEL)\n",
+                    env,
+                    (after != NULL && after[0] != '\0') ? after : "0",
+                    (budget != NULL && budget[0] != '\0') ? budget : "64",
+                    (texnum != NULL && texnum[0] != '\0') ? texnum : "*",
+                    (texsize != NULL && texsize[0] != '\0') ? texsize : "*",
+                    (x != NULL && x[0] != '\0') ? x : "?",
+                    (y != NULL && y[0] != '\0') ? y : "?");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_trace_settex_pixel_after_frame == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_AFTER_FRAME");
+        g_diag_trace_settex_pixel_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_settex_pixel_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_BUDGET");
+        g_diag_trace_settex_pixel_budget = env ? atoi(env) : 64;
+    }
+    if (g_diag_trace_settex_pixel_target_x == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_X");
+        g_diag_trace_settex_pixel_target_x = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_settex_pixel_target_y == INT32_MIN) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_Y");
+        g_diag_trace_settex_pixel_target_y = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_settex_pixel_inside_only < 0) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY");
+        g_diag_trace_settex_pixel_inside_only =
+            (env == NULL || env[0] == '\0' || strcmp(env, "0") != 0) ? 1 : 0;
+    }
+
+    if (g_diag_trace_settex_pixel <= 0 ||
+        g_diag_trace_settex_pixel_budget == 0 ||
+        g_frame_count_diag < g_diag_trace_settex_pixel_after_frame ||
+        g_diag_trace_settex_pixel_target_x < 0 ||
+        g_diag_trace_settex_pixel_target_y < 0) {
+        return false;
+    }
+
+    env = getenv("GE007_TRACE_SETTEX_PIXEL");
+    if (strcmp(env, "1") != 0 &&
+        strcmp(env, "*") != 0 &&
+        !gfx_diag_u64_matches_list(env, settex_material_cc_id)) {
+        return false;
+    }
+
+    if (g_diag_trace_settex_pixel_texnum < 0) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXNUM");
+        g_diag_trace_settex_pixel_texnum =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_settex_pixel_texnum > 0) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXNUM");
+        if (settex_texturenum < 0 ||
+            !gfx_diag_texturenum_matches_list(env, settex_texturenum)) {
+            return false;
+        }
+    }
+
+    if (g_diag_trace_settex_pixel_texsize < 0) {
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXSIZE");
+        g_diag_trace_settex_pixel_texsize =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+    if (g_diag_trace_settex_pixel_texsize > 0) {
+        int width = (int)(settex_tex_w + 0.5f);
+        int height = (int)(settex_tex_h + 0.5f);
+        env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXSIZE");
+        if (!gfx_diag_size_matches_list(env, width, height)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool gfx_trace_settex_pixel_texture_needs_rgba(int texturenum, int width, int height)
+{
+    const char *env = getenv("GE007_TRACE_SETTEX_PIXEL");
+    if (env == NULL || env[0] == '\0' || strcmp(env, "0") == 0) {
+        return false;
+    }
+
+    env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXNUM");
+    if (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0 &&
+        (texturenum < 0 || !gfx_diag_texturenum_matches_list(env, texturenum))) {
+        return false;
+    }
+
+    env = getenv("GE007_TRACE_SETTEX_PIXEL_TEXSIZE");
+    if (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0 &&
+        !gfx_diag_size_matches_list(env, width, height)) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool gfx_settex_pixel_probe_barycentric(const struct GfxTriNdcMetrics *metrics,
+                                               float target_x,
+                                               float target_y,
+                                               float bary[3],
+                                               float screen_bbox[4])
+{
+    float logical_w;
+    float logical_h;
+    float sx[3];
+    float sy[3];
+    float denom;
+
+    if (metrics == NULL || !metrics->valid) {
+        return false;
+    }
+
+    logical_w = gfx_logical_screen_width();
+    logical_h = gfx_logical_screen_height();
+    for (int i = 0; i < 3; i++) {
+        sx[i] = (metrics->ndc[i][0] * 0.5f + 0.5f) * logical_w;
+        sy[i] = (0.5f - metrics->ndc[i][1] * 0.5f) * logical_h;
+        if (!portFloatIsFinite(sx[i]) || !portFloatIsFinite(sy[i])) {
+            return false;
+        }
+    }
+
+    screen_bbox[0] = (metrics->min_x * 0.5f + 0.5f) * logical_w;
+    screen_bbox[2] = (metrics->max_x * 0.5f + 0.5f) * logical_w;
+    screen_bbox[1] = (0.5f - metrics->max_y * 0.5f) * logical_h;
+    screen_bbox[3] = (0.5f - metrics->min_y * 0.5f) * logical_h;
+
+    denom = (sy[1] - sy[2]) * (sx[0] - sx[2]) +
+            (sx[2] - sx[1]) * (sy[0] - sy[2]);
+    if (!portFloatIsFinite(denom) || fabsf(denom) < 0.000001f) {
+        return false;
+    }
+
+    bary[0] = ((sy[1] - sy[2]) * (target_x - sx[2]) +
+               (sx[2] - sx[1]) * (target_y - sy[2])) / denom;
+    bary[1] = ((sy[2] - sy[0]) * (target_x - sx[2]) +
+               (sx[0] - sx[2]) * (target_y - sy[2])) / denom;
+    bary[2] = 1.0f - bary[0] - bary[1];
+
+    if (!portFloatIsFinite(bary[0]) ||
+        !portFloatIsFinite(bary[1]) ||
+        !portFloatIsFinite(bary[2])) {
+        return false;
+    }
+
+    return bary[0] >= -0.0001f && bary[0] <= 1.0001f &&
+           bary[1] >= -0.0001f && bary[1] <= 1.0001f &&
+           bary[2] >= -0.0001f && bary[2] <= 1.0001f;
+}
+
+static void gfx_settex_pixel_probe_log_failure(
+    const char *status,
+    const struct GfxSettexPixelProbe *probe)
+{
+    fprintf(stderr,
+            "[SETTEX-PIXEL] {"
+            "\"status\":\"%s\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
+            "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            "\"texnum\":%d,\"wh\":[%d,%d],"
+            "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
+            "\n",
+            status,
+            probe->frame,
+            probe->tri,
+            probe->serial,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside ? 1 : 0,
+            probe->bary[0],
+            probe->bary[1],
+            probe->bary[2],
+            (unsigned long long)probe->settex_material_cc_id,
+            (unsigned long long)probe->effective_cc_id,
+            probe->cc_options,
+            probe->raw_mode,
+            gfx_blend_mode_diag_name(probe->blend_mode),
+            gfx_blend_mode_diag_name(probe->api_blend_mode),
+            probe->texnum,
+            probe->tex_w,
+            probe->tex_h,
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y);
+    fflush(stderr);
+}
+
+static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
+                                         uint64_t settex_material_cc_id,
+                                         uint64_t effective_cc_id,
+                                         uint32_t cc_options,
+                                         uint32_t raw_mode,
+                                         enum GfxBlendMode blend_mode,
+                                         enum GfxBlendMode api_blend_mode,
+                                         const struct GfxTriNdcMetrics *metrics)
+{
+    float screen_bbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ratio_x;
+    float ratio_y;
+
+    memset(probe, 0, sizeof(*probe));
+    if (!settex_active ||
+        !gfx_trace_settex_pixel_enabled(settex_material_cc_id)) {
+        return false;
+    }
+    if (gfx_rapi == NULL || gfx_rapi->read_framebuffer_rgb == NULL ||
+        gfx_current_dimensions.width == 0 || gfx_current_dimensions.height == 0) {
+        return false;
+    }
+
+    probe->serial = g_diag_trace_settex_pixel_serial++;
+    probe->frame = g_frame_count_diag;
+    probe->tri = g_tri_count_diag;
+    probe->target_x = g_diag_trace_settex_pixel_target_x;
+    probe->target_y = g_diag_trace_settex_pixel_target_y;
+    probe->settex_material_cc_id = settex_material_cc_id;
+    probe->effective_cc_id = effective_cc_id;
+    probe->cc_options = cc_options;
+    probe->raw_mode = raw_mode;
+    probe->blend_mode = blend_mode;
+    probe->api_blend_mode = api_blend_mode;
+    probe->texnum = settex_texturenum;
+    probe->tex_w = (int)(settex_tex_w + 0.5f);
+    probe->tex_h = (int)(settex_tex_h + 0.5f);
+    probe->inside = gfx_settex_pixel_probe_barycentric(
+        metrics,
+        (float)probe->target_x + 0.5f,
+        (float)probe->target_y + 0.5f,
+        probe->bary,
+        screen_bbox);
+    probe->screen_min_x = screen_bbox[0];
+    probe->screen_min_y = screen_bbox[1];
+    probe->screen_max_x = screen_bbox[2];
+    probe->screen_max_y = screen_bbox[3];
+
+    if (g_diag_trace_settex_pixel_inside_only > 0 && !probe->inside) {
+        return false;
+    }
+
+    ratio_x = gfx_ratio_x();
+    ratio_y = gfx_ratio_y();
+    probe->fb_x = (int)floorf(((float)probe->target_x + 0.5f) * ratio_x);
+    probe->fb_y = (int)floorf(((float)probe->target_y + 0.5f) * ratio_y);
+    if (probe->fb_x < 0) probe->fb_x = 0;
+    if (probe->fb_y < 0) probe->fb_y = 0;
+    if (probe->fb_x >= (int)gfx_current_dimensions.width) {
+        probe->fb_x = (int)gfx_current_dimensions.width - 1;
+    }
+    if (probe->fb_y >= (int)gfx_current_dimensions.height) {
+        probe->fb_y = (int)gfx_current_dimensions.height - 1;
+    }
+    probe->gl_x = probe->fb_x;
+    probe->gl_y = (int)gfx_current_dimensions.height - 1 - probe->fb_y;
+
+    if (g_diag_trace_settex_pixel_budget > 0) {
+        g_diag_trace_settex_pixel_budget--;
+    }
+
+    gfx_flush();
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        probe->pre_rgb)) {
+        gfx_settex_pixel_probe_log_failure("pre_read_failed", probe);
+        return false;
+    }
+
+    probe->active = true;
+    return true;
+}
+
+static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
+{
+    uint8_t post_rgb[3] = {0, 0, 0};
+    int delta[3];
+    bool changed;
+
+    if (probe == NULL || !probe->active) {
+        return;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        post_rgb)) {
+        gfx_settex_pixel_probe_log_failure("post_read_failed", probe);
+        probe->active = false;
+        return;
+    }
+
+    for (int ch = 0; ch < 3; ch++) {
+        delta[ch] = (int)post_rgb[ch] - (int)probe->pre_rgb[ch];
+    }
+    changed = delta[0] != 0 || delta[1] != 0 || delta[2] != 0;
+    fprintf(stderr,
+            "[SETTEX-PIXEL] {"
+            "\"status\":\"ok\",\"frame\":%d,\"tri\":%d,\"serial\":%d,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside\":%d,\"bary\":[%.6f,%.6f,%.6f],"
+            "\"cc\":\"0x%016llx\",\"effcc\":\"0x%016llx\","
+            "\"opts\":\"0x%08X\",\"raw\":\"0x%08X\","
+            "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            "\"texnum\":%d,\"wh\":[%d,%d],"
+            "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+            "\"src_valid\":%d,\"sample_valid\":[%d,%d],\"lod\":%u,"
+            "\"uv0\":[%.6f,%.6f],\"xy0\":[%d,%d],"
+            "\"t0n\":[%u,%u,%u,%u],\"t0l\":[%u,%u,%u,%u],\"t0p\":[%u,%u,%u,%u],"
+            "\"uv1\":[%.6f,%.6f],\"xy1\":[%d,%d],"
+            "\"t1n\":[%u,%u,%u,%u],\"t1l\":[%u,%u,%u,%u],\"t1p\":[%u,%u,%u,%u],"
+            "\"shade\":[%u,%u,%u,%u],\"fog\":[%u,%u,%u,%u],"
+            "\"shaderN_comb\":[%u,%u,%u,%u],\"shaderN_frag\":[%u,%u,%u,%u],"
+            "\"shaderL_comb\":[%u,%u,%u,%u],\"shaderL_frag\":[%u,%u,%u,%u],"
+            "\"shaderP_comb\":[%u,%u,%u,%u],\"shaderP_frag\":[%u,%u,%u,%u],"
+            "\"pre\":[%u,%u,%u],\"post\":[%u,%u,%u],"
+            "\"delta\":[%d,%d,%d],\"changed\":%d}"
+            "\n",
+            probe->frame,
+            probe->tri,
+            probe->serial,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside ? 1 : 0,
+            probe->bary[0],
+            probe->bary[1],
+            probe->bary[2],
+            (unsigned long long)probe->settex_material_cc_id,
+            (unsigned long long)probe->effective_cc_id,
+            probe->cc_options,
+            probe->raw_mode,
+            gfx_blend_mode_diag_name(probe->blend_mode),
+            gfx_blend_mode_diag_name(probe->api_blend_mode),
+            probe->texnum,
+            probe->tex_w,
+            probe->tex_h,
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y,
+            probe->source_valid ? 1 : 0,
+            probe->sample_valid[0] ? 1 : 0,
+            probe->sample_valid[1] ? 1 : 0,
+            probe->lod_fraction,
+            probe->uv0[0],
+            probe->uv0[1],
+            probe->xy0[0],
+            probe->xy0[1],
+            probe->t0n[0],
+            probe->t0n[1],
+            probe->t0n[2],
+            probe->t0n[3],
+            probe->t0l[0],
+            probe->t0l[1],
+            probe->t0l[2],
+            probe->t0l[3],
+            probe->t0p[0],
+            probe->t0p[1],
+            probe->t0p[2],
+            probe->t0p[3],
+            probe->uv1[0],
+            probe->uv1[1],
+            probe->xy1[0],
+            probe->xy1[1],
+            probe->t1n[0],
+            probe->t1n[1],
+            probe->t1n[2],
+            probe->t1n[3],
+            probe->t1l[0],
+            probe->t1l[1],
+            probe->t1l[2],
+            probe->t1l[3],
+            probe->t1p[0],
+            probe->t1p[1],
+            probe->t1p[2],
+            probe->t1p[3],
+            probe->shade[0],
+            probe->shade[1],
+            probe->shade[2],
+            probe->shade[3],
+            probe->fog[0],
+            probe->fog[1],
+            probe->fog[2],
+            probe->fog[3],
+            probe->shaderN_comb[0],
+            probe->shaderN_comb[1],
+            probe->shaderN_comb[2],
+            probe->shaderN_comb[3],
+            probe->shaderN_frag[0],
+            probe->shaderN_frag[1],
+            probe->shaderN_frag[2],
+            probe->shaderN_frag[3],
+            probe->shaderL_comb[0],
+            probe->shaderL_comb[1],
+            probe->shaderL_comb[2],
+            probe->shaderL_comb[3],
+            probe->shaderL_frag[0],
+            probe->shaderL_frag[1],
+            probe->shaderL_frag[2],
+            probe->shaderL_frag[3],
+            probe->shaderP_comb[0],
+            probe->shaderP_comb[1],
+            probe->shaderP_comb[2],
+            probe->shaderP_comb[3],
+            probe->shaderP_frag[0],
+            probe->shaderP_frag[1],
+            probe->shaderP_frag[2],
+            probe->shaderP_frag[3],
+            probe->pre_rgb[0],
+            probe->pre_rgb[1],
+            probe->pre_rgb[2],
+            post_rgb[0],
+            post_rgb[1],
+            post_rgb[2],
+            delta[0],
+            delta[1],
+            delta[2],
+            changed ? 1 : 0);
+    fflush(stderr);
+    probe->active = false;
 }
 
 struct GfxTexcoordFootprintMetrics {
@@ -4139,6 +6410,32 @@ static float gfx_interp_tri_center(float a,
     return (a * iw1 + b * iw2 + c * iw3) / denom;
 }
 
+static float gfx_interp_tri_bary(float a,
+                                 float b,
+                                 float c,
+                                 const float bary[3],
+                                 const struct LoadedVertex *v1,
+                                 const struct LoadedVertex *v2,
+                                 const struct LoadedVertex *v3,
+                                 bool noperspective)
+{
+    if (noperspective ||
+        fabsf(v1->w) < 0.0001f ||
+        fabsf(v2->w) < 0.0001f ||
+        fabsf(v3->w) < 0.0001f) {
+        return a * bary[0] + b * bary[1] + c * bary[2];
+    }
+
+    float iw1 = 1.0f / v1->w;
+    float iw2 = 1.0f / v2->w;
+    float iw3 = 1.0f / v3->w;
+    float denom = bary[0] * iw1 + bary[1] * iw2 + bary[2] * iw3;
+    if (!portFloatIsFinite(denom) || fabsf(denom) < 0.0001f) {
+        return a * bary[0] + b * bary[1] + c * bary[2];
+    }
+    return (a * bary[0] * iw1 + b * bary[1] * iw2 + c * bary[2] * iw3) / denom;
+}
+
 static uint32_t gfx_addr_to_segment_id(uintptr_t addr);
 
 static bool gfx_loaded_vertex_raw_rgba(const struct LoadedVertex *v, uint8_t out[4])
@@ -4356,6 +6653,100 @@ static bool gfx_sample_settex_unit_center(const struct LoadedVertex *v1,
     return true;
 }
 
+static bool gfx_sample_settex_unit_bary(const struct LoadedVertex *v1,
+                                        const struct LoadedVertex *v2,
+                                        const struct LoadedVertex *v3,
+                                        const float bary[3],
+                                        uint32_t cc_options,
+                                        int ti,
+                                        uint8_t tex_tile_base,
+                                        uint32_t tex_width,
+                                        uint32_t tex_height,
+                                        bool settex_mirror_tex1,
+                                        bool mirror_tex1_from_tex0,
+                                        struct GfxSettexTexelSample *out)
+{
+    float uv[3][2];
+    const struct SetTexTileState *tile_state;
+    uint8_t cms;
+    uint8_t cmt;
+    float sx;
+    float sy;
+    int x0, y0;
+    int x1, y1;
+    float tx, ty;
+    uint8_t c00[4], c10[4], c01[4], c11[4];
+    bool noperspective =
+        (cc_options & SHADER_OPT_NOPERSPECTIVE_TEXCOORDS) != 0;
+
+    memset(out, 0, sizeof(*out));
+    if (settex_rgba_pixels == NULL || settex_rgba_w == 0 || settex_rgba_h == 0) {
+        return false;
+    }
+
+    gfx_compute_vbo_texcoord_for_unit(v1, ti, tex_tile_base, tex_width, tex_height,
+                                      settex_mirror_tex1, mirror_tex1_from_tex0,
+                                      &uv[0][0], &uv[0][1]);
+    gfx_compute_vbo_texcoord_for_unit(v2, ti, tex_tile_base, tex_width, tex_height,
+                                      settex_mirror_tex1, mirror_tex1_from_tex0,
+                                      &uv[1][0], &uv[1][1]);
+    gfx_compute_vbo_texcoord_for_unit(v3, ti, tex_tile_base, tex_width, tex_height,
+                                      settex_mirror_tex1, mirror_tex1_from_tex0,
+                                      &uv[2][0], &uv[2][1]);
+
+    out->u = gfx_interp_tri_bary(uv[0][0], uv[1][0], uv[2][0],
+                                 bary, v1, v2, v3, noperspective);
+    out->v = gfx_interp_tri_bary(uv[0][1], uv[1][1], uv[2][1],
+                                 bary, v1, v2, v3, noperspective);
+    if (!portFloatIsFinite(out->u) || !portFloatIsFinite(out->v)) {
+        return false;
+    }
+
+    struct SetTexTileState effective_tile_state;
+    if (gfx_get_settex_effective_tile_state(tex_tile_base, ti, &effective_tile_state)) {
+        tile_state = &effective_tile_state;
+        cms = tile_state->cms;
+        cmt = tile_state->cmt;
+    } else {
+        tile_state = NULL;
+        cms = G_TX_WRAP;
+        cmt = G_TX_WRAP;
+    }
+    (void)tile_state;
+
+    sx = out->u * (float)settex_rgba_w;
+    sy = out->v * (float)settex_rgba_h;
+    out->x = (int)floorf(sx);
+    out->y = (int)floorf(sy);
+    gfx_settex_fetch_rgba(out->x, out->y, cms, cmt, out->nearest);
+
+    sx -= 0.5f;
+    sy -= 0.5f;
+    x0 = (int)floorf(sx);
+    y0 = (int)floorf(sy);
+    x1 = x0 + 1;
+    y1 = y0 + 1;
+    tx = sx - (float)x0;
+    ty = sy - (float)y0;
+    if (tx < 0.0f) tx = 0.0f;
+    if (tx > 1.0f) tx = 1.0f;
+    if (ty < 0.0f) ty = 0.0f;
+    if (ty > 1.0f) ty = 1.0f;
+    gfx_settex_fetch_rgba(x0, y0, cms, cmt, c00);
+    gfx_settex_fetch_rgba(x1, y0, cms, cmt, c10);
+    gfx_settex_fetch_rgba(x0, y1, cms, cmt, c01);
+    gfx_settex_fetch_rgba(x1, y1, cms, cmt, c11);
+    for (int i = 0; i < 4; i++) {
+        uint8_t a = gfx_lerp_u8(c00[i], c10[i], tx);
+        uint8_t b = gfx_lerp_u8(c01[i], c11[i], tx);
+        out->linear[i] = gfx_lerp_u8(a, b, ty);
+    }
+    gfx_settex_sample_3point_rgba(out->u, out->v, cms, cmt, out->threepoint);
+
+    out->valid = true;
+    return true;
+}
+
 static void gfx_interp_shade_center(const struct LoadedVertex *v1,
                                     const struct LoadedVertex *v2,
                                     const struct LoadedVertex *v3,
@@ -4371,6 +6762,24 @@ static void gfx_interp_shade_center(const struct LoadedVertex *v1,
                                                    v1, v2, v3, noperspective));
     out[3] = gfx_float_to_u8(gfx_interp_tri_center(v1->color.a, v2->color.a, v3->color.a,
                                                    v1, v2, v3, noperspective));
+}
+
+static void gfx_interp_shade_bary(const struct LoadedVertex *v1,
+                                  const struct LoadedVertex *v2,
+                                  const struct LoadedVertex *v3,
+                                  const float bary[3],
+                                  uint32_t cc_options,
+                                  uint8_t out[4])
+{
+    bool noperspective = (cc_options & SHADER_OPT_NOPERSPECTIVE_INPUTS) != 0;
+    out[0] = gfx_float_to_u8(gfx_interp_tri_bary(v1->color.r, v2->color.r, v3->color.r,
+                                                 bary, v1, v2, v3, noperspective));
+    out[1] = gfx_float_to_u8(gfx_interp_tri_bary(v1->color.g, v2->color.g, v3->color.g,
+                                                 bary, v1, v2, v3, noperspective));
+    out[2] = gfx_float_to_u8(gfx_interp_tri_bary(v1->color.b, v2->color.b, v3->color.b,
+                                                 bary, v1, v2, v3, noperspective));
+    out[3] = gfx_float_to_u8(gfx_interp_tri_bary(v1->color.a, v2->color.a, v3->color.a,
+                                                 bary, v1, v2, v3, noperspective));
 }
 
 static void gfx_eval_settex_lod_shade_sample(const uint8_t tex0[4],
@@ -4410,10 +6819,421 @@ static void gfx_eval_settex_lod_shade_sample(const uint8_t tex0[4],
     out_256[3] = shade[3];
 }
 
+static float gfx_diag_u8_to_unit(uint8_t value)
+{
+    return (float)value / 255.0f;
+}
+
+static float gfx_diag_clamp_unit(float value)
+{
+    if (!portFloatIsFinite(value)) return 0.0f;
+    if (value < 0.0f) return 0.0f;
+    if (value > 1.0f) return 1.0f;
+    return value;
+}
+
+static uint8_t gfx_diag_unit_to_u8(float value)
+{
+    return gfx_float_to_u8(gfx_diag_clamp_unit(value) * 255.0f);
+}
+
+static float gfx_diag_settex_cc_color_scale_trace_value(void)
+{
+    const char *env = getenv("GE007_DIAG_SETTEX_CC_COLOR_SCALE_VALUE");
+    if (env != NULL && env[0] != '\0') {
+        float value = (float)atof(env);
+        if (portFloatIsFinite(value)) {
+            return value;
+        }
+    }
+    return 1.02f;
+}
+
+static float gfx_diag_settex_cc_alpha_scale_trace_value(void)
+{
+    const char *env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_VALUE");
+    if (env != NULL && env[0] != '\0') {
+        float value = (float)atof(env);
+        if (portFloatIsFinite(value)) {
+            return value;
+        }
+    }
+    return 1.0f;
+}
+
+static void gfx_diag_rgba_u8_to_unit(const uint8_t in[4], float out[4])
+{
+    for (int i = 0; i < 4; i++) {
+        out[i] = gfx_diag_u8_to_unit(in[i]);
+    }
+}
+
+static void gfx_diag_rgba_color_to_unit(const struct RGBA *in, float out[4])
+{
+    out[0] = gfx_diag_u8_to_unit(in->r);
+    out[1] = gfx_diag_u8_to_unit(in->g);
+    out[2] = gfx_diag_u8_to_unit(in->b);
+    out[3] = gfx_diag_u8_to_unit(in->a);
+}
+
+static void gfx_interp_fog_center(const struct LoadedVertex *v1,
+                                  const struct LoadedVertex *v2,
+                                  const struct LoadedVertex *v3,
+                                  uint32_t cc_options,
+                                  bool fog_use_fixed_alpha,
+                                  uint8_t out[4])
+{
+    bool noperspective = (cc_options & SHADER_OPT_NOPERSPECTIVE_FOG) != 0;
+    out[0] = rdp.fog_color.r;
+    out[1] = rdp.fog_color.g;
+    out[2] = rdp.fog_color.b;
+    out[3] = fog_use_fixed_alpha
+        ? rdp.fog_color.a
+        : gfx_float_to_u8(gfx_interp_tri_center(v1->fog, v2->fog, v3->fog,
+                                                v1, v2, v3, noperspective));
+}
+
+static void gfx_interp_fog_bary(const struct LoadedVertex *v1,
+                                const struct LoadedVertex *v2,
+                                const struct LoadedVertex *v3,
+                                const float bary[3],
+                                uint32_t cc_options,
+                                bool fog_use_fixed_alpha,
+                                uint8_t out[4])
+{
+    bool noperspective = (cc_options & SHADER_OPT_NOPERSPECTIVE_FOG) != 0;
+    out[0] = rdp.fog_color.r;
+    out[1] = rdp.fog_color.g;
+    out[2] = rdp.fog_color.b;
+    out[3] = fog_use_fixed_alpha
+        ? rdp.fog_color.a
+        : gfx_float_to_u8(gfx_interp_tri_bary(v1->fog, v2->fog, v3->fog,
+                                              bary, v1, v2, v3, noperspective));
+}
+
+static void gfx_diag_combiner_source_rgba(uint32_t source,
+                                          const uint8_t shade[4],
+                                          uint8_t lod_fraction,
+                                          bool scale_room_alpha_env,
+                                          float out[4])
+{
+    struct RGBA tmp;
+
+    switch (source) {
+        case G_CCMUX_PRIMITIVE:
+            gfx_diag_rgba_color_to_unit(&rdp.prim_color, out);
+            return;
+        case G_CCMUX_SHADE:
+        {
+            float shade_scale = gfx_diag_shade_scale();
+            for (int i = 0; i < 4; i++) {
+                uint8_t value = shade[i];
+                if (i < 3 && shade_scale != 1.0f) {
+                    value = gfx_scale_u8_channel(value, shade_scale);
+                }
+                out[i] = gfx_diag_u8_to_unit(value);
+            }
+            return;
+        }
+        case G_CCMUX_ENVIRONMENT:
+            tmp = rdp.env_color;
+            if (scale_room_alpha_env) {
+                tmp.a = gfx_scale_u8_channel(tmp.a, gfx_diag_room_alpha_env_scale());
+            }
+            gfx_diag_rgba_color_to_unit(&tmp, out);
+            return;
+        case G_CCMUX_PRIMITIVE_ALPHA:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(rdp.prim_color.a);
+            return;
+        case G_CCMUX_SHADE_ALPHA:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(shade[3]);
+            return;
+        case G_CCMUX_ENV_ALPHA:
+        {
+            uint8_t env_alpha = rdp.env_color.a;
+            if (scale_room_alpha_env) {
+                env_alpha = gfx_scale_u8_channel(env_alpha, gfx_diag_room_alpha_env_scale());
+            }
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(env_alpha);
+            return;
+        }
+        case G_CCMUX_K4:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(G_CV_K4);
+            return;
+        case G_CCMUX_K5:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(G_CV_K5);
+            return;
+        case G_CCMUX_LOD_FRACTION:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(lod_fraction);
+            return;
+        case G_CCMUX_PRIM_LOD_FRAC:
+            out[0] = out[1] = out[2] = out[3] = gfx_diag_u8_to_unit(rdp.prim_lod_fraction);
+            return;
+        default:
+            out[0] = out[1] = out[2] = out[3] = 0.0f;
+            return;
+    }
+}
+
+static void gfx_diag_build_shader_inputs(const struct ColorCombiner *comb,
+                                         const uint8_t shade[4],
+                                         uint8_t lod_fraction,
+                                         bool scale_room_alpha_env,
+                                         float inputs[7][4])
+{
+    for (int i = 0; i < 7; i++) {
+        float color_source[4];
+        float alpha_source[4];
+        gfx_diag_combiner_source_rgba(comb->shader_input_mapping[0][i],
+                                      shade, lod_fraction,
+                                      scale_room_alpha_env,
+                                      color_source);
+        gfx_diag_combiner_source_rgba(comb->shader_input_mapping[1][i],
+                                      shade, lod_fraction,
+                                      scale_room_alpha_env,
+                                      alpha_source);
+        inputs[i][0] = color_source[0];
+        inputs[i][1] = color_source[1];
+        inputs[i][2] = color_source[2];
+        inputs[i][3] = alpha_source[3];
+    }
+}
+
+static float gfx_diag_shader_item_channel(uint8_t item,
+                                          int channel,
+                                          const float tex0[4],
+                                          const float tex1[4],
+                                          const float inputs[7][4],
+                                          const float combined[4])
+{
+    if (item >= SHADER_INPUT_1 && item <= SHADER_INPUT_7) {
+        return inputs[item - SHADER_INPUT_1][channel];
+    }
+
+    switch (item) {
+        case SHADER_0:
+            return 0.0f;
+        case SHADER_TEXEL0:
+            return tex0[channel];
+        case SHADER_TEXEL0A:
+            return tex0[3];
+        case SHADER_TEXEL1:
+            return tex1[channel];
+        case SHADER_TEXEL1A:
+            return tex1[3];
+        case SHADER_1:
+            return 1.0f;
+        case SHADER_COMBINED:
+            return combined[channel];
+        case SHADER_NOISE:
+            /* Screen/frame-dependent in GLSL; the room-glass target does not
+             * use it after normal out-of-range K4 handling. */
+            return 0.0f;
+        default:
+            return 0.0f;
+    }
+}
+
+static float gfx_diag_eval_formula_channel(const uint8_t c[4],
+                                           int channel,
+                                           const float tex0[4],
+                                           const float tex1[4],
+                                           const float inputs[7][4],
+                                           const float combined[4])
+{
+    float a = gfx_diag_shader_item_channel(c[0], channel, tex0, tex1, inputs, combined);
+    float b = gfx_diag_shader_item_channel(c[1], channel, tex0, tex1, inputs, combined);
+    float mul = gfx_diag_shader_item_channel(c[2], channel, tex0, tex1, inputs, combined);
+    float d = gfx_diag_shader_item_channel(c[3], channel, tex0, tex1, inputs, combined);
+    return (a - b) * mul + d;
+}
+
+static void gfx_eval_settex_shader_sample(const struct ColorCombiner *comb,
+                                          const uint8_t tex0_u8[4],
+                                          const uint8_t tex1_u8[4],
+                                          const uint8_t shade[4],
+                                          const uint8_t fog[4],
+                                          uint8_t lod_fraction,
+                                          bool apply_fog,
+                                          bool room_matrix,
+                                          enum GfxBlendMode blend_mode,
+                                          uint8_t out_comb[4],
+                                          uint8_t out_frag[4])
+{
+    struct CCFeatures features;
+    float tex0[4], tex1[4], fog_unit[4];
+    float inputs[7][4];
+    float texel[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bool scale_room_alpha_env =
+        room_matrix &&
+        settex_active &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_mode_is_room_xlu(rdp.other_mode_l_raw) &&
+        gfx_diag_room_alpha_env_scale() != 1.0f;
+
+    if (comb == NULL) {
+        memset(out_comb, 0, 4);
+        memset(out_frag, 0, 4);
+        return;
+    }
+
+    gfx_cc_get_features(comb->shader_id0, comb->shader_id1, &features);
+    gfx_diag_rgba_u8_to_unit(tex0_u8, tex0);
+    gfx_diag_rgba_u8_to_unit(tex1_u8, tex1);
+    gfx_diag_rgba_u8_to_unit(fog, fog_unit);
+    gfx_diag_build_shader_inputs(comb, shade, lod_fraction,
+                                 scale_room_alpha_env, inputs);
+
+    int cycles = features.opt_2cyc ? 2 : 1;
+    for (int cycle = 0; cycle < cycles; cycle++) {
+        float next[4] = {0.0f, 0.0f, 0.0f, features.opt_alpha ? 0.0f : 1.0f};
+        for (int channel = 0; channel < 3; channel++) {
+            next[channel] = gfx_diag_eval_formula_channel(features.c[cycle][0],
+                                                          channel, tex0, tex1,
+                                                          inputs, texel);
+        }
+        if (features.opt_alpha) {
+            next[3] = gfx_diag_eval_formula_channel(features.c[cycle][1],
+                                                    3, tex0, tex1,
+                                                    inputs, texel);
+        }
+        if (cycle == 0 && cycles == 2) {
+            for (int channel = 0; channel < 4; channel++) {
+                if (next[channel] < -1.01f) next[channel] = -1.01f;
+                if (next[channel] > 1.01f) next[channel] = 1.01f;
+            }
+        }
+        memcpy(texel, next, sizeof(texel));
+    }
+
+    for (int channel = 0; channel < 4; channel++) {
+        texel[channel] = gfx_diag_clamp_unit(texel[channel]);
+    }
+    for (int channel = 0; channel < 4; channel++) {
+        out_comb[channel] = gfx_diag_unit_to_u8(texel[channel]);
+    }
+
+    if (features.opt_fog && apply_fog) {
+        for (int channel = 0; channel < 3; channel++) {
+            texel[channel] =
+                texel[channel] +
+                (fog_unit[channel] - texel[channel]) * fog_unit[3];
+        }
+    }
+
+    if (features.opt_texture_edge && features.opt_alpha) {
+        texel[3] = texel[3] > 0.19f ? 1.0f : 0.0f;
+    }
+
+    if (features.diag_color_scale) {
+        float scale = gfx_diag_settex_cc_color_scale_trace_value();
+        int channels = features.opt_alpha ? 3 : 4;
+        for (int channel = 0; channel < channels; channel++) {
+            texel[channel] = gfx_diag_clamp_unit(texel[channel] * scale);
+        }
+    }
+    if (features.opt_alpha && features.diag_alpha_scale) {
+        float scale = gfx_diag_settex_cc_alpha_scale_trace_value();
+        texel[3] = gfx_diag_clamp_unit(texel[3] * scale);
+    }
+    if (features.opt_alpha && features.room_water_alpha_suppress) {
+        texel[3] = 0.0f;
+    }
+
+    for (int channel = 0; channel < 4; channel++) {
+        out_frag[channel] = gfx_diag_unit_to_u8(texel[channel]);
+    }
+}
+
+static void gfx_settex_pixel_probe_populate_source(
+    struct GfxSettexPixelProbe *probe,
+    const struct ColorCombiner *comb,
+    const struct LoadedVertex *v1,
+    const struct LoadedVertex *v2,
+    const struct LoadedVertex *v3,
+    uint8_t tex_tile_base,
+    const bool used_textures[2],
+    uint32_t tex_width0,
+    uint32_t tex_height0,
+    uint32_t tex_width1,
+    uint32_t tex_height1,
+    enum GfxBlendMode blend_mode,
+    bool use_fog,
+    bool room_matrix,
+    bool fog_use_fixed_alpha,
+    uint8_t lod_fraction,
+    bool settex_mirror_tex1,
+    bool mirror_tex1_from_tex0)
+{
+    struct GfxSettexTexelSample sample0;
+    struct GfxSettexTexelSample sample1;
+
+    if (probe == NULL || !probe->active || !probe->inside || comb == NULL) {
+        return;
+    }
+
+    probe->lod_fraction = lod_fraction;
+    probe->sample_valid[0] = used_textures[0] &&
+        gfx_sample_settex_unit_bary(v1, v2, v3, probe->bary,
+                                    probe->cc_options, 0,
+                                    tex_tile_base, tex_width0, tex_height0,
+                                    settex_mirror_tex1, mirror_tex1_from_tex0,
+                                    &sample0);
+    probe->sample_valid[1] = used_textures[1] &&
+        gfx_sample_settex_unit_bary(v1, v2, v3, probe->bary,
+                                    probe->cc_options, 1,
+                                    tex_tile_base, tex_width1, tex_height1,
+                                    settex_mirror_tex1, mirror_tex1_from_tex0,
+                                    &sample1);
+    gfx_interp_shade_bary(v1, v2, v3, probe->bary,
+                          probe->cc_options, probe->shade);
+    gfx_interp_fog_bary(v1, v2, v3, probe->bary,
+                        probe->cc_options, fog_use_fixed_alpha, probe->fog);
+
+    if (probe->sample_valid[0]) {
+        probe->uv0[0] = sample0.u;
+        probe->uv0[1] = sample0.v;
+        probe->xy0[0] = sample0.x;
+        probe->xy0[1] = sample0.y;
+        memcpy(probe->t0n, sample0.nearest, sizeof(probe->t0n));
+        memcpy(probe->t0l, sample0.linear, sizeof(probe->t0l));
+        memcpy(probe->t0p, sample0.threepoint, sizeof(probe->t0p));
+    }
+    if (probe->sample_valid[1]) {
+        probe->uv1[0] = sample1.u;
+        probe->uv1[1] = sample1.v;
+        probe->xy1[0] = sample1.x;
+        probe->xy1[1] = sample1.y;
+        memcpy(probe->t1n, sample1.nearest, sizeof(probe->t1n));
+        memcpy(probe->t1l, sample1.linear, sizeof(probe->t1l));
+        memcpy(probe->t1p, sample1.threepoint, sizeof(probe->t1p));
+    }
+
+    if (probe->sample_valid[0] && probe->sample_valid[1]) {
+        gfx_eval_settex_shader_sample(comb, probe->t0n, probe->t1n,
+                                      probe->shade, probe->fog, lod_fraction,
+                                      use_fog, room_matrix, blend_mode,
+                                      probe->shaderN_comb,
+                                      probe->shaderN_frag);
+        gfx_eval_settex_shader_sample(comb, probe->t0l, probe->t1l,
+                                      probe->shade, probe->fog, lod_fraction,
+                                      use_fog, room_matrix, blend_mode,
+                                      probe->shaderL_comb,
+                                      probe->shaderL_frag);
+        gfx_eval_settex_shader_sample(comb, probe->t0p, probe->t1p,
+                                      probe->shade, probe->fog, lod_fraction,
+                                      use_fog, room_matrix, blend_mode,
+                                      probe->shaderP_comb,
+                                      probe->shaderP_frag);
+        probe->source_valid = true;
+    }
+}
+
 static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                               uint64_t settex_material_cc_id,
                                               uint64_t effective_cc_id,
                                               uint32_t cc_options,
+                                              const struct ColorCombiner *comb,
                                               const struct LoadedVertex *v1,
                                               const struct LoadedVertex *v2,
                                               const struct LoadedVertex *v3,
@@ -4431,6 +7251,8 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                               bool depth_test,
                                               bool depth_update,
                                               bool depth_compare,
+                                              bool room_matrix,
+                                              bool fog_use_fixed_alpha,
                                               uint8_t lod_fraction,
                                               bool settex_mirror_tex1,
                                               bool mirror_tex1_from_tex0) {
@@ -4459,7 +7281,7 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                                 settex_mirror_tex1,
                                                 mirror_tex1_from_tex0,
                                                 &fp1);
-    char sample_buf[2200] = "";
+    char sample_buf[4096] = "";
     char vert_buf[2600] = "";
     float screen_min_x = 0.0f;
     float screen_min_y = 0.0f;
@@ -4488,6 +7310,13 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
         uint8_t comb_3point_float[4] = {0, 0, 0, 0};
         uint8_t comb_scratch_255[4] = {0, 0, 0, 0};
         uint8_t comb_scratch_256[4] = {0, 0, 0, 0};
+        uint8_t fog_center[4] = {0, 0, 0, 0};
+        uint8_t shader_nearest_comb[4] = {0, 0, 0, 0};
+        uint8_t shader_linear_comb[4] = {0, 0, 0, 0};
+        uint8_t shader_3point_comb[4] = {0, 0, 0, 0};
+        uint8_t shader_nearest_frag[4] = {0, 0, 0, 0};
+        uint8_t shader_linear_frag[4] = {0, 0, 0, 0};
+        uint8_t shader_3point_frag[4] = {0, 0, 0, 0};
         bool sample0_ok = used_textures[0] &&
             gfx_sample_settex_unit_center(v1, v2, v3, cc_options, 0,
                                           tex_tile_base, tex_width0, tex_height0,
@@ -4499,6 +7328,8 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                           settex_mirror_tex1, mirror_tex1_from_tex0,
                                           &sample1);
         gfx_interp_shade_center(v1, v2, v3, cc_options, shade_center);
+        gfx_interp_fog_center(v1, v2, v3, cc_options,
+                              fog_use_fixed_alpha, fog_center);
         if (sample0_ok && sample1_ok) {
             gfx_eval_settex_lod_shade_sample(sample0.linear, sample1.linear,
                                              shade_center, lod_fraction,
@@ -4515,6 +7346,21 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                                              comb_3point_float,
                                              comb_scratch_255,
                                              comb_scratch_256);
+            gfx_eval_settex_shader_sample(comb, sample0.nearest, sample1.nearest,
+                                          shade_center, fog_center, lod_fraction,
+                                          use_fog, room_matrix, blend_mode,
+                                          shader_nearest_comb,
+                                          shader_nearest_frag);
+            gfx_eval_settex_shader_sample(comb, sample0.linear, sample1.linear,
+                                          shade_center, fog_center, lod_fraction,
+                                          use_fog, room_matrix, blend_mode,
+                                          shader_linear_comb,
+                                          shader_linear_frag);
+            gfx_eval_settex_shader_sample(comb, sample0.threepoint, sample1.threepoint,
+                                          shade_center, fog_center, lod_fraction,
+                                          use_fog, room_matrix, blend_mode,
+                                          shader_3point_comb,
+                                          shader_3point_frag);
         }
         snprintf(sample_buf, sizeof(sample_buf),
                  "sample=1 sample_valid=(%d,%d) interp=(tex=%s,input=%s) "
@@ -4523,10 +7369,14 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                  "uv1=(%.6f,%.6f) xy1=(%d,%d) "
                  "t1n=(%u,%u,%u,%u) t1l=(%u,%u,%u,%u) t1p=(%u,%u,%u,%u) "
                  "shadec=(%u,%u,%u,%u) lodc=%u "
+                 "fogc=(%u,%u,%u,%u) "
                  "combN_float=(%u,%u,%u,%u) "
                  "combL_float=(%u,%u,%u,%u) combL_255=(%u,%u,%u,%u) "
                  "combL_256=(%u,%u,%u,%u) "
-                 "combP_float=(%u,%u,%u,%u)",
+                 "combP_float=(%u,%u,%u,%u) "
+                 "shaderN_comb=(%u,%u,%u,%u) shaderN_frag=(%u,%u,%u,%u) "
+                 "shaderL_comb=(%u,%u,%u,%u) shaderL_frag=(%u,%u,%u,%u) "
+                 "shaderP_comb=(%u,%u,%u,%u) shaderP_frag=(%u,%u,%u,%u)",
                  sample0_ok ? 1 : 0,
                  sample1_ok ? 1 : 0,
                  (cc_options & SHADER_OPT_NOPERSPECTIVE_TEXCOORDS) ? "nopersp" : "persp",
@@ -4567,6 +7417,7 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                  sample1_ok ? sample1.threepoint[3] : 0,
                  shade_center[0], shade_center[1], shade_center[2], shade_center[3],
                  lod_fraction,
+                 fog_center[0], fog_center[1], fog_center[2], fog_center[3],
                  comb_nearest_float[0], comb_nearest_float[1],
                  comb_nearest_float[2], comb_nearest_float[3],
                  comb_linear_float[0], comb_linear_float[1],
@@ -4576,7 +7427,19 @@ static void gfx_trace_settex_material_cc_emit(uint64_t cc_id,
                  comb_linear_256[0], comb_linear_256[1],
                  comb_linear_256[2], comb_linear_256[3],
                  comb_3point_float[0], comb_3point_float[1],
-                 comb_3point_float[2], comb_3point_float[3]);
+                 comb_3point_float[2], comb_3point_float[3],
+                 shader_nearest_comb[0], shader_nearest_comb[1],
+                 shader_nearest_comb[2], shader_nearest_comb[3],
+                 shader_nearest_frag[0], shader_nearest_frag[1],
+                 shader_nearest_frag[2], shader_nearest_frag[3],
+                 shader_linear_comb[0], shader_linear_comb[1],
+                 shader_linear_comb[2], shader_linear_comb[3],
+                 shader_linear_frag[0], shader_linear_frag[1],
+                 shader_linear_frag[2], shader_linear_frag[3],
+                 shader_3point_comb[0], shader_3point_comb[1],
+                 shader_3point_comb[2], shader_3point_comb[3],
+                 shader_3point_frag[0], shader_3point_frag[1],
+                 shader_3point_frag[2], shader_3point_frag[3]);
     }
     if (gfx_trace_settex_material_cc_verts_enabled()) {
         uint8_t raw0[4], raw1[4], raw2[4];
@@ -4837,6 +7700,7 @@ static void gfx_trace_displaycast_material_emit(
     float uvn0[3][2] = {{0}};
     float uvn1[3][2] = {{0}};
     bool trace_all_classes;
+    const char *effect_label;
 
     if (!gfx_trace_displaycast_materials_enabled()) {
         return;
@@ -4855,6 +7719,7 @@ static void gfx_trace_displaycast_material_emit(
     }
 
     g_diag_trace_displaycast_materials_budget--;
+    effect_label = gfx_effect_label_for_current_command();
 
     td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
     td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
@@ -4898,7 +7763,7 @@ static void gfx_trace_displaycast_material_emit(
     }
 
     fprintf(stderr,
-            "[DISPLAYCAST-MATERIAL] frame=%d tri=%d cmd=%p class=%s "
+            "[DISPLAYCAST-MATERIAL] frame=%d tri=%d cmd=%p class=%s effect=%s "
             "cc=0x%016llx effcc=0x%016llx combcc=0x%016llx opts=0x%08X "
             "oml_raw=0x%08X oml=0x%08X omh=0x%08X geom=0x%08X first=%u base=%u "
             "inputs=%u mapC=(%u,%u,%u,%u,%u,%u,%u) mapA=(%u,%u,%u,%u,%u,%u,%u) "
@@ -4926,6 +7791,7 @@ static void gfx_trace_displaycast_material_emit(
             g_tri_count_diag,
             (void *)g_diag_current_cmd_addr,
             gfx_draw_class_name(g_current_draw_class),
+            effect_label != NULL ? effect_label : "-",
             (unsigned long long)cc_id,
             (unsigned long long)effective_cc_id,
             (unsigned long long)comb->cc_id,
@@ -5117,7 +7983,271 @@ static void gfx_trace_displaycast_material_emit(
     fflush(stderr);
 }
 
-static bool gfx_trace_texgen_materials_enabled(void) {
+static void gfx_trace_bullet_impact_material_emit(
+    const struct LoadedVertex *v1,
+    const struct LoadedVertex *v2,
+    const struct LoadedVertex *v3,
+    const struct GfxTriNdcMetrics *ndc_metrics,
+    bool ndc_metrics_ok,
+    const struct ColorCombiner *comb,
+    uint64_t cc_id,
+    uint64_t effective_cc_id,
+    uint32_t cc_options,
+    uint8_t tex_tile_base,
+    bool allow_lod_redirect,
+    const bool used_textures[2],
+    uint32_t tex_width0,
+    uint32_t tex_height0,
+    uint32_t tex_width1,
+    uint32_t tex_height1,
+    uint8_t num_inputs,
+    enum GfxBlendMode blend_mode,
+    bool use_alpha,
+    bool use_fog,
+    bool texture_edge,
+    bool use_noise,
+    bool depth_test,
+    bool depth_update,
+    bool depth_compare,
+    bool depth_source_prim,
+    int zmode,
+    bool settex_mirror_tex1,
+    bool mirror_tex1_from_tex0)
+{
+    const char *effect_label = gfx_effect_label_for_current_command();
+    uint8_t td0;
+    uint8_t td1;
+    const typeof(rdp.texture_tile[0]) *tile0;
+    const typeof(rdp.texture_tile[0]) *tile1;
+    const typeof(rdp.loaded_texture[0]) *load0;
+    const typeof(rdp.loaded_texture[0]) *load1;
+    float uvn0[3][2] = {{0}};
+    float uvn1[3][2] = {{0}};
+
+    if (!gfx_trace_bullet_impact_materials_enabled(effect_label)) {
+        return;
+    }
+    if (g_diag_trace_bullet_impact_materials_budget > 0) {
+        g_diag_trace_bullet_impact_materials_budget--;
+    }
+
+    td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
+    td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
+    tile0 = &rdp.texture_tile[td0 < 8 ? td0 : 0];
+    tile1 = &rdp.texture_tile[td1 < 8 ? td1 : 0];
+    load0 = gfx_loaded_texture_for_tile(td0);
+    load1 = gfx_loaded_texture_for_tile(td1);
+
+    if (used_textures[0]) {
+        gfx_compute_vbo_texcoord_for_unit(v1, 0, tex_tile_base,
+                                          tex_width0, tex_height0,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn0[0][0], &uvn0[0][1]);
+        gfx_compute_vbo_texcoord_for_unit(v2, 0, tex_tile_base,
+                                          tex_width0, tex_height0,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn0[1][0], &uvn0[1][1]);
+        gfx_compute_vbo_texcoord_for_unit(v3, 0, tex_tile_base,
+                                          tex_width0, tex_height0,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn0[2][0], &uvn0[2][1]);
+    }
+    if (used_textures[1]) {
+        gfx_compute_vbo_texcoord_for_unit(v1, 1, tex_tile_base,
+                                          tex_width1, tex_height1,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn1[0][0], &uvn1[0][1]);
+        gfx_compute_vbo_texcoord_for_unit(v2, 1, tex_tile_base,
+                                          tex_width1, tex_height1,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn1[1][0], &uvn1[1][1]);
+        gfx_compute_vbo_texcoord_for_unit(v3, 1, tex_tile_base,
+                                          tex_width1, tex_height1,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0,
+                                          &uvn1[2][0], &uvn1[2][1]);
+    }
+
+    fprintf(stderr,
+            "[BULLET-IMPACT-MATERIAL] frame=%d tri=%d cmd=%p effect=%s class=%s "
+            "cc=0x%016llx effcc=0x%016llx combcc=0x%016llx opts=0x%08X "
+            "oml_raw=0x%08X oml=0x%08X omh=0x%08X geom=0x%08X first=%u base=%u "
+            "inputs=%u mapC=(%u,%u,%u,%u,%u,%u,%u) mapA=(%u,%u,%u,%u,%u,%u,%u) "
+            "blend=%s alpha=%d fog=%d texedge=%d noise=%d depth=(%d,%d,%d,%d,%d) "
+            "tex_used=(%d,%d) tex_wh=(%u,%u)/(%u,%u) bound=(%u,%u) "
+            "tile0={td=%u fmt=%u siz=%u cms=%u cmt=%u pal=%u ul=%u,%u lr=%u,%u wh=%u,%u line=%u} "
+            "load0={addr=%p size=%u full=%u line=%u dsize=%u dline=%u key=0x%llx} "
+            "tile1={td=%u fmt=%u siz=%u cms=%u cmt=%u pal=%u ul=%u,%u lr=%u,%u wh=%u,%u line=%u} "
+            "load1={addr=%p size=%u full=%u line=%u dsize=%u dline=%u key=0x%llx} "
+            "prim=(%u,%u,%u,%u) env=(%u,%u,%u,%u) fogc=(%u,%u,%u,%u) "
+            "shade0=(%u,%u,%u,%u) shade1=(%u,%u,%u,%u) shade2=(%u,%u,%u,%u) "
+            "uvraw=(%.2f,%.2f;%.2f,%.2f;%.2f,%.2f) "
+            "uvn0=(%.6f,%.6f;%.6f,%.6f;%.6f,%.6f) "
+            "uvn1=(%.6f,%.6f;%.6f,%.6f;%.6f,%.6f) "
+            "ndc_ok=%d ndc=[%.3f,%.3f]-[%.3f,%.3f] area=%.6f mixedw=%d\n",
+            g_frame_count_diag,
+            g_tri_count_diag,
+            (void *)g_diag_current_cmd_addr,
+            effect_label != NULL ? effect_label : "-",
+            gfx_draw_class_name(g_current_draw_class),
+            (unsigned long long)cc_id,
+            (unsigned long long)effective_cc_id,
+            (unsigned long long)(comb != NULL ? comb->cc_id : 0),
+            cc_options,
+            rdp.other_mode_l_raw,
+            rdp.other_mode_l,
+            rdp.other_mode_h,
+            rsp.geometry_mode,
+            rdp.first_tile_index,
+            tex_tile_base,
+            num_inputs,
+            comb != NULL ? comb->shader_input_mapping[0][0] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][1] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][2] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][3] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][4] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][5] : 0,
+            comb != NULL ? comb->shader_input_mapping[0][6] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][0] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][1] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][2] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][3] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][4] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][5] : 0,
+            comb != NULL ? comb->shader_input_mapping[1][6] : 0,
+            gfx_blend_mode_diag_name(blend_mode),
+            use_alpha ? 1 : 0,
+            use_fog ? 1 : 0,
+            texture_edge ? 1 : 0,
+            use_noise ? 1 : 0,
+            depth_test ? 1 : 0,
+            depth_update ? 1 : 0,
+            depth_compare ? 1 : 0,
+            depth_source_prim ? 1 : 0,
+            zmode,
+            used_textures[0] ? 1 : 0,
+            used_textures[1] ? 1 : 0,
+            tex_width0,
+            tex_height0,
+            tex_width1,
+            tex_height1,
+            rendering_state.bound_texture_id[0],
+            rendering_state.bound_texture_id[1],
+            td0,
+            tile0->fmt,
+            tile0->siz,
+            tile0->cms,
+            tile0->cmt,
+            tile0->palette,
+            tile0->uls,
+            tile0->ult,
+            tile0->lrs,
+            tile0->lrt,
+            tile0->width,
+            tile0->height,
+            tile0->line_size_bytes,
+            load0->addr,
+            load0->size_bytes,
+            load0->full_size_bytes,
+            load0->line_size_bytes,
+            gfx_loaded_texture_decode_size_bytes(load0),
+            gfx_loaded_texture_decode_line_size_bytes(load0),
+            (unsigned long long)load0->cache_key,
+            td1,
+            tile1->fmt,
+            tile1->siz,
+            tile1->cms,
+            tile1->cmt,
+            tile1->palette,
+            tile1->uls,
+            tile1->ult,
+            tile1->lrs,
+            tile1->lrt,
+            tile1->width,
+            tile1->height,
+            tile1->line_size_bytes,
+            load1->addr,
+            load1->size_bytes,
+            load1->full_size_bytes,
+            load1->line_size_bytes,
+            gfx_loaded_texture_decode_size_bytes(load1),
+            gfx_loaded_texture_decode_line_size_bytes(load1),
+            (unsigned long long)load1->cache_key,
+            rdp.prim_color.r,
+            rdp.prim_color.g,
+            rdp.prim_color.b,
+            rdp.prim_color.a,
+            rdp.env_color.r,
+            rdp.env_color.g,
+            rdp.env_color.b,
+            rdp.env_color.a,
+            rdp.fog_color.r,
+            rdp.fog_color.g,
+            rdp.fog_color.b,
+            rdp.fog_color.a,
+            v1->color.r,
+            v1->color.g,
+            v1->color.b,
+            v1->color.a,
+            v2->color.r,
+            v2->color.g,
+            v2->color.b,
+            v2->color.a,
+            v3->color.r,
+            v3->color.g,
+            v3->color.b,
+            v3->color.a,
+            v1->u,
+            v1->v,
+            v2->u,
+            v2->v,
+            v3->u,
+            v3->v,
+            uvn0[0][0],
+            uvn0[0][1],
+            uvn0[1][0],
+            uvn0[1][1],
+            uvn0[2][0],
+            uvn0[2][1],
+            uvn1[0][0],
+            uvn1[0][1],
+            uvn1[1][0],
+            uvn1[1][1],
+            uvn1[2][0],
+            uvn1[2][1],
+            ndc_metrics_ok ? 1 : 0,
+            ndc_metrics_ok ? ndc_metrics->min_x : 0.0f,
+            ndc_metrics_ok ? ndc_metrics->min_y : 0.0f,
+            ndc_metrics_ok ? ndc_metrics->max_x : 0.0f,
+            ndc_metrics_ok ? ndc_metrics->max_y : 0.0f,
+            ndc_metrics_ok ? ndc_metrics->area2 : 0.0f,
+            ndc_metrics_ok && ndc_metrics->has_mixed_w ? 1 : 0);
+    fflush(stderr);
+}
+
+static bool gfx_trace_texgen_material_effect_matches(const char *effect_label) {
+    if (!g_diag_trace_texgen_materials_effect_loaded) {
+        g_diag_trace_texgen_materials_effect =
+            getenv("GE007_TRACE_TEXGEN_MATERIALS_EFFECT");
+        g_diag_trace_texgen_materials_effect_loaded = 1;
+    }
+
+    if (g_diag_trace_texgen_materials_effect == NULL ||
+        g_diag_trace_texgen_materials_effect[0] == '\0' ||
+        strcmp(g_diag_trace_texgen_materials_effect, "*") == 0) {
+        return true;
+    }
+
+    return effect_label != NULL &&
+           strstr(effect_label, g_diag_trace_texgen_materials_effect) != NULL;
+}
+
+static bool gfx_trace_texgen_materials_enabled(const char *effect_label) {
     bool general;
     bool goldeneye_logo;
 
@@ -5151,7 +8281,11 @@ static bool gfx_trace_texgen_materials_enabled(void) {
         g_diag_trace_goldeneye_logo_materials > 0 &&
         current_menu == MENU_GOLDENEYE_LOGO;
 
-    return general || goldeneye_logo;
+    if (!general && !goldeneye_logo) {
+        return false;
+    }
+
+    return gfx_trace_texgen_material_effect_matches(effect_label);
 }
 
 static void gfx_trace_texgen_material_emit(
@@ -5193,10 +8327,14 @@ static void gfx_trace_texgen_material_emit(
     const typeof(rdp.loaded_texture[0]) *load1;
     const Light_t *ambient = NULL;
     const Light_t *light0 = NULL;
+    const char *effect_label = NULL;
     float uvn0[3][2] = {{0}};
     float uvn1[3][2] = {{0}};
+    enum GfxBlendMode api_blend_mode = blend_mode;
 
-    if (!gfx_trace_texgen_materials_enabled()) {
+    effect_label = gfx_effect_label_for_current_command();
+
+    if (!gfx_trace_texgen_materials_enabled(effect_label)) {
         return;
     }
     if (!used_textures[0] && !used_textures[1]) {
@@ -5205,6 +8343,24 @@ static void gfx_trace_texgen_material_emit(
 
     if (g_diag_trace_texgen_materials_budget > 0) {
         g_diag_trace_texgen_materials_budget--;
+    }
+
+    if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
+    } else if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_RDP_MEMORY;
+    } else if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
+    } else if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
+        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
     }
 
     td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
@@ -5258,9 +8414,11 @@ static void gfx_trace_texgen_material_emit(
     }
 
     fprintf(stderr,
-            "[TEXGEN-MATERIAL] frame=%d tri=%d menu=%d timer=%d cmd=%p class=%s prop=%d "
+            "[TEXGEN-MATERIAL] frame=%d tri=%d menu=%d timer=%d cmd=%p class=%s effect=%s prop=%d "
             "cc=0x%016llx effcc=0x%016llx combcc=0x%016llx opts=0x%08X "
             "oml_raw=0x%08X oml=0x%08X omh=0x%08X geom=0x%08X first=%u base=%u "
+            "mode_decode={z=%s cvg=%s aa=%d imrd=%d clr_on_cvg=%d cvg_x_alpha=%d alpha_cvg=%d force_bl=%d "
+            "b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
             "inputs=%u lodfrac=%u texscale=(%u,%u) tex_used=(%d,%d) tex_wh=(%u,%u)/(%u,%u) "
             "tile0={td=%u fmt=%u siz=%u cms=%u cmt=%u pal=%u shift=%u,%u "
             "ul=%u,%u lr=%u,%u wh=%u,%u tmem=%u line=%u} "
@@ -5281,7 +8439,7 @@ static void gfx_trace_texgen_material_emit(
             "clip0=(%.2f,%.2f,%.2f,%.2f) clip1=(%.2f,%.2f,%.2f,%.2f) "
             "clip2=(%.2f,%.2f,%.2f,%.2f) "
             "ndc_ok=%d ndc=[%.3f,%.3f]-[%.3f,%.3f] area=%.6f mixedw=%d "
-            "blend=%s alpha=%d fog=%d texedge=%d noise=%d depth=(%d,%d,%d,%d,%d) "
+            "blend=%s api_blend=%s alpha=%d fog=%d texedge=%d noise=%d depth=(%d,%d,%d,%d,%d) "
             "mirror=(%d,%d) settex=%d\n",
             g_frame_count_diag,
             g_tri_count_diag,
@@ -5289,6 +8447,7 @@ static void gfx_trace_texgen_material_emit(
             g_MenuTimer,
             (void *)g_diag_current_cmd_addr,
             gfx_draw_class_name(g_current_draw_class),
+            effect_label ? effect_label : "-",
             g_current_prop_context.active ? 1 : 0,
             (unsigned long long)cc_id,
             (unsigned long long)effective_cc_id,
@@ -5300,6 +8459,22 @@ static void gfx_trace_texgen_material_emit(
             rsp.geometry_mode,
             rdp.first_tile_index,
             tex_tile_base,
+            gfx_zmode_diag_name(rdp.other_mode_l_raw),
+            gfx_cvg_dst_diag_name(rdp.other_mode_l_raw),
+            (rdp.other_mode_l_raw & AA_EN) != 0 ? 1 : 0,
+            (rdp.other_mode_l_raw & IM_RD) != 0 ? 1 : 0,
+            (rdp.other_mode_l_raw & CLR_ON_CVG) != 0 ? 1 : 0,
+            (rdp.other_mode_l_raw & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (rdp.other_mode_l_raw & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (rdp.other_mode_l_raw & FORCE_BL) != 0 ? 1 : 0,
+            gfx_blender_field(rdp.other_mode_l_raw, 0, 0),
+            gfx_blender_field(rdp.other_mode_l_raw, 0, 1),
+            gfx_blender_field(rdp.other_mode_l_raw, 0, 2),
+            gfx_blender_field(rdp.other_mode_l_raw, 0, 3),
+            gfx_blender_field(rdp.other_mode_l_raw, 1, 0),
+            gfx_blender_field(rdp.other_mode_l_raw, 1, 1),
+            gfx_blender_field(rdp.other_mode_l_raw, 1, 2),
+            gfx_blender_field(rdp.other_mode_l_raw, 1, 3),
             num_inputs,
             lod_fraction,
             rsp.texture_scaling_factor.s,
@@ -5451,6 +8626,7 @@ static void gfx_trace_texgen_material_emit(
             ndc_metrics_ok ? ndc_metrics->area2 : 0.0f,
             ndc_metrics_ok && ndc_metrics->has_mixed_w ? 1 : 0,
             gfx_blend_mode_diag_name(blend_mode),
+            gfx_blend_mode_diag_name(api_blend_mode),
             use_alpha ? 1 : 0,
             use_fog ? 1 : 0,
             texture_edge ? 1 : 0,
@@ -5477,7 +8653,14 @@ static bool gfx_effect_tri_trace_should_log(const char **out_label) {
         return false;
     }
 
+    if (!gfx_effect_tri_trace_drawclass_matches()) {
+        return false;
+    }
+
     label = gfx_effect_label_for_current_command();
+    if (label == NULL && gfx_effect_tri_trace_unlabeled_enabled()) {
+        label = "unlabeled";
+    }
     if (!gfx_effect_tri_trace_label_matches(label)) {
         return false;
     }
@@ -5499,10 +8682,17 @@ static void gfx_effect_tri_trace_transform_context(const char *event,
     uint8_t stack_pos = rsp.modelview_matrix_stack_size > 0 ?
         rsp.modelview_matrix_stack_size - 1 : 0;
     const float (*mv)[4] = rsp.modelview_matrix_stack[stack_pos];
+    uint8_t raw1[4];
+    uint8_t raw2[4];
+    uint8_t raw3[4];
+    bool raw1_ok = gfx_loaded_vertex_raw_rgba(v1, raw1);
+    bool raw2_ok = gfx_loaded_vertex_raw_rgba(v2, raw2);
+    bool raw3_ok = gfx_loaded_vertex_raw_rgba(v3, raw3);
 
     fprintf(stderr,
             "[EFFECT-TRI-XFORM] frame=%d event=%s label=%s reason=%s "
             "proj10e0=%d mv_stack=%u mv_room=%d mv_room_id=%d mv_float=%d "
+            "lighting=%d texgen=%d texgen_linear=%d fog_geom=%d "
             "mv_params=0x%02X mv_cmd=%p mv_src=%p "
             "Pdiag=(%.4f,%.4f,%.4f,%.4f) P3=(%.2f,%.2f,%.2f,%.2f) "
             "MVdiag=(%.4f,%.4f,%.4f,%.4f) MV3=(%.2f,%.2f,%.2f,%.2f) "
@@ -5516,6 +8706,10 @@ static void gfx_effect_tri_trace_transform_context(const char *event,
             rsp.modelview_is_room_matrix[stack_pos] ? 1 : 0,
             rsp.modelview_room_id[stack_pos],
             rsp.modelview_is_float_port[stack_pos] ? 1 : 0,
+            (rsp.geometry_mode & G_LIGHTING) ? 1 : 0,
+            (rsp.geometry_mode & G_TEXTURE_GEN) ? 1 : 0,
+            (rsp.geometry_mode & G_TEXTURE_GEN_LINEAR) ? 1 : 0,
+            (rsp.geometry_mode & G_FOG) ? 1 : 0,
             rsp.modelview_params[stack_pos],
             (void *)rsp.modelview_cmd_addr[stack_pos],
             (void *)rsp.modelview_source_addr[stack_pos],
@@ -5535,6 +8729,8 @@ static void gfx_effect_tri_trace_transform_context(const char *event,
             "ob1=(%d,%d,%d) ob2=(%d,%d,%d) ob3=(%d,%d,%d) "
             "src=(%p,%p,%p) vtxcmd=(%p,%p,%p) loadseq=(%u,%u,%u) "
             "slot=(%u,%u,%u) load=(%u:%u,%u:%u,%u:%u) decode=(%u,%u,%u) "
+            "rawrgba=(%d:%u,%u,%u,%u;%d:%u,%u,%u,%u;%d:%u,%u,%u,%u) "
+            "shade=(%u,%u,%u,%u;%u,%u,%u,%u;%u,%u,%u,%u) "
             "vroom=(%d,%d,%d) "
             "mtxcmd=(%p,%p,%p) mtxsrc=(%p,%p,%p) mtxparams=(0x%02X,0x%02X,0x%02X) "
             "mtxstack=(%u,%u,%u) guardmtx=(%d,%d,%d) "
@@ -5565,6 +8761,24 @@ static void gfx_effect_tri_trace_transform_context(const char *event,
             v1->dbg_vtx_decode_mode,
             v2->dbg_vtx_decode_mode,
             v3->dbg_vtx_decode_mode,
+            raw1_ok ? 1 : 0,
+            raw1[0], raw1[1], raw1[2], raw1[3],
+            raw2_ok ? 1 : 0,
+            raw2[0], raw2[1], raw2[2], raw2[3],
+            raw3_ok ? 1 : 0,
+            raw3[0], raw3[1], raw3[2], raw3[3],
+            v1->color.r,
+            v1->color.g,
+            v1->color.b,
+            v1->color.a,
+            v2->color.r,
+            v2->color.g,
+            v2->color.b,
+            v2->color.a,
+            v3->color.r,
+            v3->color.g,
+            v3->color.b,
+            v3->color.a,
             v1->room_id,
             v2->room_id,
             v3->room_id,
@@ -5601,13 +8815,18 @@ static void gfx_effect_tri_trace_reject(const char *reason,
                                         uint32_t clip_reason_flags) {
     const char *label;
 
+    if (gfx_effect_tri_trace_emits_only_enabled()) {
+        return;
+    }
+
     if (!gfx_effect_tri_trace_should_log(&label)) {
         return;
     }
 
     fprintf(stderr,
             "[EFFECT-TRI] frame=%d event=reject label=%s reason=%s tri=%d cmd=%p "
-            "drawclass=%s raw=0x%08X eff=0x%08X geom=0x%08X cpuclip=%d reasons=0x%X "
+            "drawclass=%s raw=0x%08X eff=0x%08X omh=0x%08X cc=0x%016llX geom=0x%08X "
+            "cpuclip=%d reasons=0x%X "
             "cliprej=(0x%02X,0x%02X,0x%02X) ndc_ok=%d bbox=[%.3f,%.3f]-[%.3f,%.3f] area2=%.5f "
             "clip1=(%.2f,%.2f,%.2f,%.2f) clip2=(%.2f,%.2f,%.2f,%.2f) clip3=(%.2f,%.2f,%.2f,%.2f)\n",
             g_frame_count_diag,
@@ -5618,6 +8837,8 @@ static void gfx_effect_tri_trace_reject(const char *reason,
             gfx_draw_class_name(g_current_draw_class),
             rdp.other_mode_l_raw,
             rdp.other_mode_l,
+            rdp.other_mode_h,
+            (unsigned long long)rdp.combine_mode,
             rsp.geometry_mode,
             was_cpu_clipped ? 1 : 0,
             clip_reason_flags,
@@ -5661,15 +8882,30 @@ static void gfx_effect_tri_trace_emit(const struct LoadedVertex *v1,
                                       bool depth_source_prim,
                                       uint16_t zmode) {
     const char *label;
+    int shard_piece0;
+    int shard_piece1;
+    int shard_piece2;
+    int shard_slot0;
+    int shard_slot1;
+    int shard_slot2;
 
     if (!gfx_effect_tri_trace_should_log(&label)) {
         return;
     }
 
+    shard_piece0 = gfx_effect_tri_shard_piece_index(v1->src_addr);
+    shard_piece1 = gfx_effect_tri_shard_piece_index(v2->src_addr);
+    shard_piece2 = gfx_effect_tri_shard_piece_index(v3->src_addr);
+    shard_slot0 = gfx_effect_tri_shard_vertex_slot(v1->src_addr);
+    shard_slot1 = gfx_effect_tri_shard_vertex_slot(v2->src_addr);
+    shard_slot2 = gfx_effect_tri_shard_vertex_slot(v3->src_addr);
+
     fprintf(stderr,
             "[EFFECT-TRI] frame=%d event=emit label=%s tri=%d cmd=%p drawclass=%s "
+            "src=(%p,%p,%p) shard_piece=(%d,%d,%d) shard_slot=(%d,%d,%d) "
             "blend=%s alpha=%d fog=%d texedge=%d tex=%d used=(%d,%d) texwh=(%ux%u,%ux%u) "
-            "settex=%d gl=(%u,%u) raw=0x%08X eff=0x%08X geom=0x%08X depth=(%d,%d,%d,%d,0x%03X) "
+            "settex=%d gl=(%u,%u) raw=0x%08X eff=0x%08X omh=0x%08X cc=0x%016llX geom=0x%08X "
+            "depth=(%d,%d,%d,%d,0x%03X) "
             "viewport=(%d,%d,%d,%d) scissor=(%d,%d,%d,%d) inputs=%u "
             "cpuclip=%d reasons=0x%X ndc_ok=%d bbox=[%.3f,%.3f]-[%.3f,%.3f] area2=%.5f "
             "shade0=(%u,%u,%u,%u) shadeA=(%u,%u,%u) uv0=(%.2f,%.2f) uv1=(%.2f,%.2f) uv2=(%.2f,%.2f)\n",
@@ -5678,6 +8914,15 @@ static void gfx_effect_tri_trace_emit(const struct LoadedVertex *v1,
             g_tri_count_diag,
             (void *)g_diag_current_cmd_addr,
             gfx_draw_class_name(g_current_draw_class),
+            (void *)v1->src_addr,
+            (void *)v2->src_addr,
+            (void *)v3->src_addr,
+            shard_piece0,
+            shard_piece1,
+            shard_piece2,
+            shard_slot0,
+            shard_slot1,
+            shard_slot2,
             gfx_blend_mode_diag_name(blend_mode),
             use_alpha ? 1 : 0,
             use_fog ? 1 : 0,
@@ -5694,6 +8939,8 @@ static void gfx_effect_tri_trace_emit(const struct LoadedVertex *v1,
             rendering_state.bound_texture_id[1],
             rdp.other_mode_l_raw,
             rdp.other_mode_l,
+            rdp.other_mode_h,
+            (unsigned long long)rdp.combine_mode,
             rsp.geometry_mode,
             depth_test ? 1 : 0,
             depth_update ? 1 : 0,
@@ -5813,6 +9060,18 @@ static int g_diag_dump_settex_textures = -1; /* GE007_DUMP_SETTEX_TEXTURES=list 
 static int g_diag_dump_loaded_textures = -1; /* GE007_DUMP_LOADED_TEXTURES=list */
 static int g_diag_dump_loaded_texture_limit = INT32_MIN; /* GE007_DUMP_LOADED_TEXTURE_LIMIT=N */
 static int g_diag_dump_loaded_texture_after_frame = INT32_MIN; /* GE007_DUMP_LOADED_TEXTURES_AFTER_FRAME=N */
+static int g_diag_swap_ia8_nibbles = -1; /* GE007_DIAG_SWAP_IA8_NIBBLES=1|*|key-list */
+static const char *g_diag_swap_ia8_nibbles_spec = NULL;
+enum GfxDiagIA8ChannelMode {
+    GFX_DIAG_IA8_CHANNEL_DEFAULT = 0,
+    GFX_DIAG_IA8_CHANNEL_RGB_FROM_ALPHA = 1,
+    GFX_DIAG_IA8_CHANNEL_ALPHA_FROM_INTENSITY = 2,
+    GFX_DIAG_IA8_CHANNEL_SWAP = 3
+};
+static int g_diag_ia8_channel_mode_loaded = 0; /* GE007_DIAG_IA8_CHANNEL_MODE=mode[:key-list] */
+static enum GfxDiagIA8ChannelMode g_diag_ia8_channel_mode = GFX_DIAG_IA8_CHANNEL_DEFAULT;
+static const char *g_diag_ia8_channel_mode_spec = NULL;
+static const char *g_diag_ia8_channel_mode_keys = NULL;
 static int g_diag_settex_mirror_tex1 = -1; /* GE007_DIAG_SETTEX_MIRROR_TEX1=1 */
 static int g_diag_no_settex_linearize = -1; /* GE007_DIAG_NO_SETTEX_LINEARIZE=1 */
 static int g_diag_disable_n64_filter = -1; /* GE007_DISABLE_N64_FILTER=1 */
@@ -6206,6 +9465,17 @@ static inline bool gfx_dump_muzzle_settex_enabled(void) {
     return g_diag_dump_muzzle_settex > 0;
 }
 
+static const char *gfx_dump_muzzle_settex_dir(void)
+{
+    const char *dir = getenv("GE007_DUMP_MUZZLE_SETTEX_DIR");
+
+    if (dir == NULL || dir[0] == '\0') {
+        dir = "/tmp";
+    }
+
+    return dir;
+}
+
 static bool gfx_diag_texturenum_matches_list(const char *spec, int texturenum) {
     const char *p;
 
@@ -6325,6 +9595,116 @@ static bool gfx_diag_texture_key_matches_list(const char *spec, uintptr_t textur
     return false;
 }
 
+static bool gfx_diag_swap_ia8_nibbles_for_key(uintptr_t texture_key) {
+    if (g_diag_swap_ia8_nibbles < 0) {
+        g_diag_swap_ia8_nibbles_spec = getenv("GE007_DIAG_SWAP_IA8_NIBBLES");
+        g_diag_swap_ia8_nibbles =
+            (g_diag_swap_ia8_nibbles_spec != NULL &&
+             g_diag_swap_ia8_nibbles_spec[0] != '\0' &&
+             strcmp(g_diag_swap_ia8_nibbles_spec, "0") != 0) ? 1 : 0;
+    }
+
+    if (g_diag_swap_ia8_nibbles <= 0) {
+        return false;
+    }
+    if (strcmp(g_diag_swap_ia8_nibbles_spec, "1") == 0 ||
+        strcmp(g_diag_swap_ia8_nibbles_spec, "*") == 0) {
+        return true;
+    }
+
+    return gfx_diag_texture_key_matches_list(g_diag_swap_ia8_nibbles_spec,
+                                             texture_key);
+}
+
+static bool gfx_diag_ia8_mode_name_matches(const char *spec,
+                                           size_t mode_len,
+                                           const char *name)
+{
+    return strlen(name) == mode_len && strncmp(spec, name, mode_len) == 0;
+}
+
+static const char *gfx_diag_ia8_channel_mode_name(enum GfxDiagIA8ChannelMode mode)
+{
+    switch (mode) {
+        case GFX_DIAG_IA8_CHANNEL_RGB_FROM_ALPHA:
+            return "rgb_from_alpha";
+        case GFX_DIAG_IA8_CHANNEL_ALPHA_FROM_INTENSITY:
+            return "alpha_from_intensity";
+        case GFX_DIAG_IA8_CHANNEL_SWAP:
+            return "swap";
+        case GFX_DIAG_IA8_CHANNEL_DEFAULT:
+        default:
+            return "default";
+    }
+}
+
+static void gfx_diag_ia8_channel_mode_load(void)
+{
+    const char *colon;
+    size_t mode_len;
+
+    if (g_diag_ia8_channel_mode_loaded) {
+        return;
+    }
+
+    g_diag_ia8_channel_mode_loaded = 1;
+    g_diag_ia8_channel_mode_spec = getenv("GE007_DIAG_IA8_CHANNEL_MODE");
+    g_diag_ia8_channel_mode = GFX_DIAG_IA8_CHANNEL_DEFAULT;
+    g_diag_ia8_channel_mode_keys = NULL;
+
+    if (g_diag_ia8_channel_mode_spec == NULL ||
+        g_diag_ia8_channel_mode_spec[0] == '\0' ||
+        strcmp(g_diag_ia8_channel_mode_spec, "0") == 0 ||
+        strcmp(g_diag_ia8_channel_mode_spec, "default") == 0) {
+        return;
+    }
+
+    colon = strchr(g_diag_ia8_channel_mode_spec, ':');
+    mode_len = colon != NULL
+        ? (size_t)(colon - g_diag_ia8_channel_mode_spec)
+        : strlen(g_diag_ia8_channel_mode_spec);
+
+    if (gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "rgb_from_alpha") ||
+        gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "rgb-alpha") ||
+        gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "rgb")) {
+        g_diag_ia8_channel_mode = GFX_DIAG_IA8_CHANNEL_RGB_FROM_ALPHA;
+    } else if (gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "alpha_from_intensity") ||
+               gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "alpha-intensity") ||
+               gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "alpha")) {
+        g_diag_ia8_channel_mode = GFX_DIAG_IA8_CHANNEL_ALPHA_FROM_INTENSITY;
+    } else if (gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "swap") ||
+               gfx_diag_ia8_mode_name_matches(g_diag_ia8_channel_mode_spec, mode_len, "swap_nibbles")) {
+        g_diag_ia8_channel_mode = GFX_DIAG_IA8_CHANNEL_SWAP;
+    }
+
+    if (g_diag_ia8_channel_mode == GFX_DIAG_IA8_CHANNEL_DEFAULT) {
+        return;
+    }
+
+    g_diag_ia8_channel_mode_keys = (colon != NULL && colon[1] != '\0')
+        ? colon + 1
+        : "*";
+}
+
+static enum GfxDiagIA8ChannelMode gfx_diag_ia8_channel_mode_for_key(uintptr_t texture_key)
+{
+    gfx_diag_ia8_channel_mode_load();
+
+    if (g_diag_ia8_channel_mode != GFX_DIAG_IA8_CHANNEL_DEFAULT &&
+        g_diag_ia8_channel_mode_keys != NULL &&
+        (strcmp(g_diag_ia8_channel_mode_keys, "*") == 0 ||
+         strcmp(g_diag_ia8_channel_mode_keys, "1") == 0 ||
+         gfx_diag_texture_key_matches_list(g_diag_ia8_channel_mode_keys, texture_key))) {
+        return g_diag_ia8_channel_mode;
+    }
+
+    if (gfx_diag_swap_ia8_nibbles_for_key(texture_key)) {
+        return GFX_DIAG_IA8_CHANNEL_SWAP;
+    }
+
+    return GFX_DIAG_IA8_CHANNEL_DEFAULT;
+}
+
 static bool gfx_diag_dump_settex_texture_enabled(int texturenum) {
     const char *spec;
 
@@ -6377,6 +9757,17 @@ static int gfx_diag_dump_loaded_texture_limit(void) {
     }
 
     return g_diag_dump_loaded_texture_limit;
+}
+
+static bool gfx_diag_dump_loaded_texture_bypass_cache_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_DUMP_LOADED_TEXTURES_BYPASS_CACHE");
+        enabled = (env != NULL && env[0] != '\0' && env[0] != '0') ? 1 : 0;
+    }
+
+    return enabled != 0;
 }
 
 static bool gfx_diag_write_rgba_texture_dump(const char *path,
@@ -6826,6 +10217,101 @@ static void gfx_diag_dump_settex_texture(int texturenum,
     fflush(stderr);
 }
 
+static void gfx_diag_dump_settex_cached_texture(int texturenum,
+                                                const uint8_t *rgba,
+                                                int width,
+                                                int height,
+                                                uint32_t fmt,
+                                                uint32_t siz)
+{
+    static uint8_t dumped[4096];
+    char base[1024];
+    char path[1200];
+    char alpha_path[1200];
+    char info_path[1200];
+    const char *dir;
+    FILE *fp;
+    int texel_count = width * height;
+    int alpha_min = 255;
+    int alpha_max = 0;
+    int alpha_nonzero = 0;
+    uint64_t sum_r = 0;
+    uint64_t sum_g = 0;
+    uint64_t sum_b = 0;
+
+    if (texturenum < 0 || texturenum >= (int)sizeof(dumped) || dumped[texturenum]) {
+        return;
+    }
+    if (rgba == NULL || width <= 0 || height <= 0) {
+        return;
+    }
+    if (!gfx_diag_dump_settex_texture_enabled(texturenum)) {
+        return;
+    }
+
+    dumped[texturenum] = 1;
+    dir = getenv("GE007_DUMP_SETTEX_DIR");
+    if (dir == NULL || dir[0] == '\0') {
+        dir = "/tmp";
+    }
+
+    snprintf(base, sizeof(base), "%s/ge007_settex_%04d_cache", dir, texturenum);
+    snprintf(path, sizeof(path), "%s.rgba.ppm", base);
+    snprintf(alpha_path, sizeof(alpha_path), "%s.alpha.pgm", base);
+    snprintf(info_path, sizeof(info_path), "%s.info.txt", base);
+
+    for (int i = 0; i < texel_count; i++) {
+        const uint8_t *px = &rgba[i * 4];
+        int alpha = px[3];
+        if (alpha < alpha_min) {
+            alpha_min = alpha;
+        }
+        if (alpha > alpha_max) {
+            alpha_max = alpha;
+        }
+        if (alpha != 0) {
+            alpha_nonzero++;
+            sum_r += px[0];
+            sum_g += px[1];
+            sum_b += px[2];
+        }
+    }
+
+    (void)gfx_diag_write_rgba_texture_dump(path, alpha_path, rgba, width, height);
+
+    fp = fopen(info_path, "w");
+    if (fp != NULL) {
+        fprintf(fp,
+                "frame=%d\ntexturenum=%d\nstage=cache_hit\nsize=%dx%d\nfmt=%u\nsiz=%u\n"
+                "alpha_min=%d\nalpha_max=%d\nalpha_nonzero=%d/%d\n"
+                "avg_nonzero_rgb=%llu,%llu,%llu\n"
+                "rgba_path=%s\nalpha_path=%s\n",
+                g_frame_count_diag, texturenum, width, height, fmt, siz,
+                alpha_min, alpha_max, alpha_nonzero, texel_count,
+                alpha_nonzero ? (unsigned long long)(sum_r / (uint64_t)alpha_nonzero) : 0ull,
+                alpha_nonzero ? (unsigned long long)(sum_g / (uint64_t)alpha_nonzero) : 0ull,
+                alpha_nonzero ? (unsigned long long)(sum_b / (uint64_t)alpha_nonzero) : 0ull,
+                path, alpha_path);
+        if (texel_count >= 4) {
+            fprintf(fp,
+                    "first4_rgba=(%u,%u,%u,%u),(%u,%u,%u,%u),(%u,%u,%u,%u),(%u,%u,%u,%u)\n",
+                    rgba[0], rgba[1], rgba[2], rgba[3],
+                    rgba[4], rgba[5], rgba[6], rgba[7],
+                    rgba[8], rgba[9], rgba[10], rgba[11],
+                    rgba[12], rgba[13], rgba[14], rgba[15]);
+        }
+        fclose(fp);
+    }
+
+    fprintf(stderr,
+            "[SETTEX_CACHE_DUMP] frame=%d tex=%d %dx%d fmt=%u siz=%u "
+            "alpha[min=%d max=%d nonzero=%d/%d] paths=%s,%s,%s\n",
+            g_frame_count_diag, texturenum, width, height, fmt, siz,
+            alpha_min, alpha_max, alpha_nonzero, texel_count,
+            path, alpha_path, info_path);
+    fflush(stderr);
+}
+
 static inline bool gfx_diag_settex_mirror_tex1_enabled(void) {
     if (g_diag_settex_mirror_tex1 < 0) {
         g_diag_settex_mirror_tex1 =
@@ -7253,7 +10739,13 @@ static void gfx_check_diag_env(void) {
         const char *displaycast_materials_budget_env;
         const char *texgen_materials_after_env;
         const char *texgen_materials_budget_env;
+        const char *texgen_materials_effect_env;
+        const char *glass_shard_coverage_env;
+        const char *glass_shard_coverage_after_env;
+        const char *glass_shard_coverage_budget_env;
         const char *dump_settex_textures_env;
+        const char *swap_ia8_nibbles_env;
+        const char *ia8_channel_mode_env;
 
         g_diag_verbose = (getenv("GE007_VERBOSE") != NULL) ? 1 : 0;
         g_diag_no_fog = (getenv("GE007_NO_FOG") != NULL) ? 1 : 0;
@@ -7319,6 +10811,16 @@ static void gfx_check_diag_env(void) {
         g_diag_disable_eye_cc_override = (getenv("GE007_DISABLE_EYE_CC_OVERRIDE") != NULL) ? 1 : 0;
         dump_settex_textures_env = getenv("GE007_DUMP_SETTEX_TEXTURES");
         g_diag_dump_settex_textures = (dump_settex_textures_env != NULL) ? 1 : 0;
+        swap_ia8_nibbles_env = getenv("GE007_DIAG_SWAP_IA8_NIBBLES");
+        g_diag_swap_ia8_nibbles_spec = swap_ia8_nibbles_env;
+        g_diag_swap_ia8_nibbles =
+            (swap_ia8_nibbles_env != NULL &&
+             swap_ia8_nibbles_env[0] != '\0' &&
+             strcmp(swap_ia8_nibbles_env, "0") != 0) ? 1 : 0;
+        ia8_channel_mode_env = getenv("GE007_DIAG_IA8_CHANNEL_MODE");
+        g_diag_ia8_channel_mode_spec = ia8_channel_mode_env;
+        g_diag_ia8_channel_mode_loaded = 0;
+        gfx_diag_ia8_channel_mode_load();
         g_diag_settex_mirror_tex1 =
             (getenv("GE007_DIAG_SETTEX_MIRROR_TEX1") != NULL) ? 1 : 0;
         g_diag_no_settex_linearize =
@@ -7332,10 +10834,20 @@ static void gfx_check_diag_env(void) {
             (getenv("GE007_TRACE_TEXGEN_MATERIALS") != NULL) ? 1 : 0;
         g_diag_trace_goldeneye_logo_materials =
             (getenv("GE007_TRACE_GOLDENEYE_LOGO_MATERIALS") != NULL) ? 1 : 0;
+        glass_shard_coverage_env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE");
+        g_diag_trace_glass_shard_coverage =
+            (glass_shard_coverage_env != NULL &&
+             glass_shard_coverage_env[0] != '\0' &&
+             strcmp(glass_shard_coverage_env, "0") != 0) ? 1 : 0;
         displaycast_materials_after_env = getenv("GE007_TRACE_DISPLAYCAST_MATERIALS_AFTER_FRAME");
         displaycast_materials_budget_env = getenv("GE007_TRACE_DISPLAYCAST_MATERIALS_BUDGET");
         texgen_materials_after_env = getenv("GE007_TRACE_TEXGEN_MATERIALS_AFTER_FRAME");
         texgen_materials_budget_env = getenv("GE007_TRACE_TEXGEN_MATERIALS_BUDGET");
+        texgen_materials_effect_env = getenv("GE007_TRACE_TEXGEN_MATERIALS_EFFECT");
+        glass_shard_coverage_after_env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME");
+        glass_shard_coverage_budget_env = getenv("GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET");
+        g_diag_trace_texgen_materials_effect = texgen_materials_effect_env;
+        g_diag_trace_texgen_materials_effect_loaded = 1;
         g_diag_debug_cmd_range_enabled = gfx_parse_addr_range(debug_cmd_range_env,
                                                               &g_diag_debug_cmd_min,
                                                               &g_diag_debug_cmd_max) ? 1 : 0;
@@ -7417,6 +10929,10 @@ static void gfx_check_diag_env(void) {
             texgen_materials_after_env ? atoi(texgen_materials_after_env) : 0;
         g_diag_trace_texgen_materials_budget =
             texgen_materials_budget_env ? atoi(texgen_materials_budget_env) : 96;
+        g_diag_trace_glass_shard_coverage_after_frame =
+            glass_shard_coverage_after_env ? atoi(glass_shard_coverage_after_env) : 0;
+        g_diag_trace_glass_shard_coverage_budget =
+            glass_shard_coverage_budget_env ? atoi(glass_shard_coverage_budget_env) : 120;
         if (g_diag_no_fog) printf("[fast3d] FOG DISABLED (GE007_NO_FOG)\n");
         if (g_diag_fog_use_linear_depth) {
             printf("[fast3d] FOG LINEAR-DEPTH DIAGNOSTIC MODE (GE007_FOG_USE_LINEAR_DEPTH)\n");
@@ -7467,6 +10983,15 @@ static void gfx_check_diag_env(void) {
                    dump_settex_textures_env,
                    getenv("GE007_DUMP_SETTEX_DIR") ? getenv("GE007_DUMP_SETTEX_DIR") : "/tmp");
         }
+        if (g_diag_swap_ia8_nibbles) {
+            printf("[fast3d] DIAG IA8 NIBBLE SWAP spec=%s (GE007_DIAG_SWAP_IA8_NIBBLES)\n",
+                   swap_ia8_nibbles_env);
+        }
+        if (g_diag_ia8_channel_mode != GFX_DIAG_IA8_CHANNEL_DEFAULT) {
+            printf("[fast3d] DIAG IA8 CHANNEL MODE mode=%s keys=%s (GE007_DIAG_IA8_CHANNEL_MODE)\n",
+                   gfx_diag_ia8_channel_mode_name(g_diag_ia8_channel_mode),
+                   g_diag_ia8_channel_mode_keys ? g_diag_ia8_channel_mode_keys : "*");
+        }
         if (g_diag_settex_mirror_tex1) {
             printf("[fast3d] DIAG G_SETTEX TEXEL1 MIRROR ENABLED (GE007_DIAG_SETTEX_MIRROR_TEX1)\n");
         }
@@ -7487,12 +11012,23 @@ static void gfx_check_diag_env(void) {
             printf("[fast3d] TEXGEN MATERIAL TRACE ENABLED budget=%d "
                    "(GE007_TRACE_TEXGEN_MATERIALS/GE007_TRACE_GOLDENEYE_LOGO_MATERIALS)\n",
                    g_diag_trace_texgen_materials_budget);
+            if (texgen_materials_effect_env != NULL && texgen_materials_effect_env[0] != '\0') {
+                printf("[fast3d] TEXGEN MATERIAL TRACE EFFECT FILTER %s "
+                       "(GE007_TRACE_TEXGEN_MATERIALS_EFFECT)\n",
+                       texgen_materials_effect_env);
+            }
         }
         if ((g_diag_trace_texgen_materials || g_diag_trace_goldeneye_logo_materials) &&
             g_diag_trace_texgen_materials_after_frame > 0) {
             printf("[fast3d] TEXGEN MATERIAL TRACE AFTER FRAME %d "
                    "(GE007_TRACE_TEXGEN_MATERIALS_AFTER_FRAME)\n",
                    g_diag_trace_texgen_materials_after_frame);
+        }
+        if (g_diag_trace_glass_shard_coverage) {
+            printf("[fast3d] GLASS SHARD COVERAGE TRACE ENABLED after=%d budget=%d "
+                   "(GE007_TRACE_GLASS_SHARD_COVERAGE)\n",
+                   g_diag_trace_glass_shard_coverage_after_frame,
+                   g_diag_trace_glass_shard_coverage_budget);
         }
         if (g_diag_debug_cmd_range_enabled) {
             printf("[fast3d] DEBUG CMD RANGE %p:%p (GE007_DEBUG_CMD_RANGE)\n",
@@ -7696,14 +11232,245 @@ static void trace_log(const char *fmt, ...) {
 
 /* ===== Utility functions ===== */
 
+struct GfxRoomXluSortGroup {
+    size_t start;
+    size_t count;
+    float key;
+    uint32_t serial;
+    int room;
+};
+
+static struct GfxRoomXluSortGroup room_xlu_sort_groups[MAX_BUFFERED];
+
+static int gfx_room_xlu_sort_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_SORT_ROOM_XLU");
+        const char *disable_env = getenv("GE007_DISABLE_ROOM_XLU_SORT");
+        enabled = 1;
+        if ((env != NULL && env[0] == '0') ||
+            (disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static int gfx_trace_room_xlu_sort_enabled(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        enabled = getenv("GE007_TRACE_ROOM_XLU_SORT") != NULL ? 1 : 0;
+    }
+
+    return enabled;
+}
+
+static int gfx_trace_room_xlu_sort_after_frame(void) {
+    static int value = INT32_MIN;
+
+    if (value == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_ROOM_XLU_SORT_AFTER_FRAME");
+        value = env ? atoi(env) : 0;
+    }
+
+    return value;
+}
+
+static float gfx_room_xlu_tri_sort_key(const struct LoadedVertex *v1,
+                                       const struct LoadedVertex *v2,
+                                       const struct LoadedVertex *v3) {
+    const struct LoadedVertex *verts[3] = { v1, v2, v3 };
+    float sum = 0.0f;
+    int count = 0;
+
+    for (int i = 0; i < 3; i++) {
+        float depth = verts[i]->w;
+        if (portFloatIsFinite(depth) && depth > 0.0f) {
+            sum += depth;
+            count++;
+        }
+    }
+
+    if (count > 0) {
+        return sum / (float)count;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        float z = verts[i]->z;
+        float w = verts[i]->w;
+        if (portFloatIsFinite(z) &&
+            portFloatIsFinite(w) &&
+            fabsf(w) > 0.0001f) {
+            sum += z / w;
+            count++;
+        }
+    }
+
+    return count > 0 ? sum / (float)count : 0.0f;
+}
+
+static bool gfx_room_xlu_sort_group_precedes(const struct GfxRoomXluSortGroup *a,
+                                             const struct GfxRoomXluSortGroup *b) {
+    const float epsilon = 0.0001f;
+
+    if (a->key > b->key + epsilon) {
+        return true;
+    }
+    if (a->key < b->key - epsilon) {
+        return false;
+    }
+
+    return a->serial < b->serial;
+}
+
+static void gfx_room_xlu_sort_flush_segment(size_t segment_start,
+                                            size_t segment_end,
+                                            size_t tri_floats,
+                                            size_t stride) {
+    size_t group_count = 0;
+    size_t tri = segment_start;
+    size_t tmp_len = 0;
+    float min_key = 0.0f;
+    float max_key = 0.0f;
+
+    while (tri < segment_end && group_count < MAX_BUFFERED) {
+        uintptr_t cmd_addr = buf_vbo_tri_cmd_addr[tri];
+        size_t group_start = tri;
+        float key_sum = 0.0f;
+
+        while (tri < segment_end &&
+               buf_vbo_tri_cmd_addr[tri] == cmd_addr &&
+               group_count < MAX_BUFFERED) {
+            key_sum += buf_vbo_tri_sort_key[tri];
+            tri++;
+        }
+
+        room_xlu_sort_groups[group_count].start = group_start;
+        room_xlu_sort_groups[group_count].count = tri - group_start;
+        room_xlu_sort_groups[group_count].key =
+            key_sum / (float)room_xlu_sort_groups[group_count].count;
+        room_xlu_sort_groups[group_count].serial =
+            buf_vbo_tri_serial[group_start];
+        room_xlu_sort_groups[group_count].room =
+            buf_vbo_tri_room[group_start];
+
+        if (group_count == 0 ||
+            room_xlu_sort_groups[group_count].key < min_key) {
+            min_key = room_xlu_sort_groups[group_count].key;
+        }
+        if (group_count == 0 ||
+            room_xlu_sort_groups[group_count].key > max_key) {
+            max_key = room_xlu_sort_groups[group_count].key;
+        }
+
+        group_count++;
+    }
+
+    if (group_count <= 1) {
+        return;
+    }
+
+    for (size_t i = 1; i < group_count; i++) {
+        struct GfxRoomXluSortGroup group = room_xlu_sort_groups[i];
+        size_t j = i;
+
+        while (j > 0 &&
+               gfx_room_xlu_sort_group_precedes(&group,
+                                                &room_xlu_sort_groups[j - 1])) {
+            room_xlu_sort_groups[j] = room_xlu_sort_groups[j - 1];
+            j--;
+        }
+
+        room_xlu_sort_groups[j] = group;
+    }
+
+    for (size_t i = 0; i < group_count; i++) {
+        size_t src = room_xlu_sort_groups[i].start * tri_floats;
+        size_t len = room_xlu_sort_groups[i].count * tri_floats;
+
+        memcpy(&buf_vbo_sort_tmp[tmp_len], &buf_vbo[src],
+               len * sizeof(buf_vbo[0]));
+        tmp_len += len;
+    }
+
+    memcpy(&buf_vbo[segment_start * tri_floats], buf_vbo_sort_tmp,
+           tmp_len * sizeof(buf_vbo[0]));
+
+    if (gfx_trace_room_xlu_sort_enabled() &&
+        g_frame_count_diag >= gfx_trace_room_xlu_sort_after_frame()) {
+        static int sort_log_frame = -1;
+        static int sort_log_count = 0;
+
+        if (sort_log_frame != g_frame_count_diag) {
+            sort_log_frame = g_frame_count_diag;
+            sort_log_count = 0;
+        }
+
+        if (sort_log_count < 32) {
+            fprintf(stderr,
+                    "[ROOM-XLU-SORT] frame=%d segment=%zu:%zu groups=%zu tris=%zu "
+                    "stride=%zu key_range=[%.3f,%.3f] first_room=%d first_key=%.3f\n",
+                    g_frame_count_diag,
+                    segment_start,
+                    segment_end,
+                    group_count,
+                    segment_end - segment_start,
+                    stride,
+                    min_key,
+                    max_key,
+                    room_xlu_sort_groups[0].room,
+                    room_xlu_sort_groups[0].key);
+            fflush(stderr);
+            sort_log_count++;
+        }
+    }
+}
+
+static void gfx_sort_buffered_room_xlu_tris(size_t stride) {
+    size_t tri_floats;
+    size_t tri = 0;
+
+    if (!gfx_room_xlu_sort_enabled() ||
+        buf_vbo_num_tris <= 1 ||
+        stride == 0) {
+        return;
+    }
+
+    tri_floats = stride * 3;
+
+    while (tri < buf_vbo_num_tris) {
+        size_t segment_start;
+
+        while (tri < buf_vbo_num_tris && !buf_vbo_tri_sortable[tri]) {
+            tri++;
+        }
+
+        segment_start = tri;
+
+        while (tri < buf_vbo_num_tris && buf_vbo_tri_sortable[tri]) {
+            tri++;
+        }
+
+        if (tri > segment_start + 1) {
+            gfx_room_xlu_sort_flush_segment(segment_start, tri, tri_floats,
+                                            stride);
+        }
+    }
+}
+
 static void gfx_flush(void) {
     if (buf_vbo_len > 0) {
         static int flush_log = 0;
+        size_t stride = buf_vbo_num_tris != 0
+            ? buf_vbo_len / (buf_vbo_num_tris * 3)
+            : 0;
         if (g_diag_verbose > 0 && flush_log >= 50 && flush_log < 53 && buf_vbo_len >= 42) {
             /* Dump raw VBO data for settex triangles to see exact shader inputs.
              * Format: x,y,z,w, u,v, fog_r,fog_g,fog_b,fog_a, shade_r,shade_g,shade_b,shade_a */
-            int stride = buf_vbo_len / (buf_vbo_num_tris * 3);
-            printf("[VBO_DUMP_%d] stride=%d tris=%zu settex_id=%u fog=(%d,%d,%d)\n",
+            printf("[VBO_DUMP_%d] stride=%zu tris=%zu settex_id=%u fog=(%d,%d,%d)\n",
                    flush_log, stride, buf_vbo_num_tris, settex_gl_tex_id,
                    rdp.fog_color.r, rdp.fog_color.g, rdp.fog_color.b);
             for (int v = 0; v < 3 && v * stride < (int)buf_vbo_len; v++) {
@@ -7718,6 +11485,7 @@ static void gfx_flush(void) {
             fflush(stdout);
         }
         flush_log++;
+        gfx_sort_buffered_room_xlu_tris(stride);
         gfx_rapi->draw_triangles(buf_vbo, buf_vbo_len, buf_vbo_num_tris);
         buf_vbo_len = 0;
         buf_vbo_num_tris = 0;
@@ -7936,6 +11704,8 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint64_t cc_id, uint32_t
 
     comb->cc_id = cc_id;
     comb->cc_options = cc_options;
+    comb->shader_id0 = shader_id0;
+    comb->shader_id1 = shader_id1;
     comb->prg = gfx_lookup_or_create_shader_program(shader_id0, shader_id1);
     memcpy(comb->shader_input_mapping, shader_input_mapping, sizeof(shader_input_mapping));
     if (trace_eye_cc) {
@@ -8259,6 +12029,8 @@ static bool import_texture_ia8(int tile, int td) {
     const uint32_t size_bytes = gfx_loaded_texture_decode_size_bytes(loaded_texture);
     const uint32_t line_size_bytes = gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
     const uint32_t full_image_line_size_bytes = gfx_loaded_texture_decode_full_image_line_size_bytes(loaded_texture);
+    enum GfxDiagIA8ChannelMode channel_mode =
+        gfx_diag_ia8_channel_mode_for_key(loaded_texture->cache_key);
     uint32_t out = 0;
 
     if (line_size_bytes == 0 || !gfx_ensure_tex_decode_buf((size_t)size_bytes * 4)) return false;
@@ -8269,8 +12041,27 @@ static bool import_texture_ia8(int tile, int td) {
     for (uint32_t i = 0, row = 0; i < size_bytes; row++) {
         for (uint32_t k = 0; k < line_size_bytes && i < size_bytes; i++, k++, out++) {
             uint32_t j = gfx_static_texture_source_offset(loaded_texture, row, k, G_IM_SIZ_8b);
-            uint8_t intensity = src[j] >> 4;
-            uint8_t alpha = src[j] & 0xf;
+            uint8_t src_i = (src[j] >> 4) & 0xf;
+            uint8_t src_a = src[j] & 0xf;
+            uint8_t intensity = src_i;
+            uint8_t alpha = src_a;
+
+            switch (channel_mode) {
+                case GFX_DIAG_IA8_CHANNEL_RGB_FROM_ALPHA:
+                    intensity = src_a;
+                    break;
+                case GFX_DIAG_IA8_CHANNEL_ALPHA_FROM_INTENSITY:
+                    alpha = src_i;
+                    break;
+                case GFX_DIAG_IA8_CHANNEL_SWAP:
+                    intensity = src_a;
+                    alpha = src_i;
+                    break;
+                case GFX_DIAG_IA8_CHANNEL_DEFAULT:
+                default:
+                    break;
+            }
+
             rgba32_buf[4*out + 0] = SCALE_4_8(intensity);
             rgba32_buf[4*out + 1] = SCALE_4_8(intensity);
             rgba32_buf[4*out + 2] = SCALE_4_8(intensity);
@@ -8278,7 +12069,10 @@ static bool import_texture_ia8(int tile, int td) {
         }
     }
 
-    gfx_diag_dump_loaded_texture(__func__, loaded_texture, tile, td,
+    gfx_diag_dump_loaded_texture(channel_mode == GFX_DIAG_IA8_CHANNEL_DEFAULT
+                                     ? __func__
+                                     : gfx_diag_ia8_channel_mode_name(channel_mode),
+                                 loaded_texture, tile, td,
                                  rdp.texture_tile[td].fmt, rdp.texture_tile[td].siz,
                                  rgba32_buf, line_size_bytes, size_bytes / line_size_bytes);
     return gfx_rapi->upload_texture(rgba32_buf, line_size_bytes, size_bytes / line_size_bytes);
@@ -8790,6 +12584,11 @@ static bool import_texture(int slot, int tile_desc) {
         return false;
     }
 
+    if (gfx_diag_dump_loaded_texture_bypass_cache_enabled() &&
+        gfx_diag_dump_loaded_texture_enabled(loaded_texture->cache_key)) {
+        gfx_texture_cache_delete_by_texture_key(loaded_texture->cache_key);
+    }
+
     if (gfx_texture_cache_lookup(slot, &rendering_state.textures[slot],
                                  loaded_texture->cache_key, fmt, siz,
                                  decode_size_bytes,
@@ -9257,6 +13056,14 @@ static const char *gfx_diag_dl_domain_name(uintptr_t addr) {
     }
     if (pc_gfx_range_start != 0 && addr >= pc_gfx_range_start && addr < pc_gfx_range_end) {
         return "pc_dynamic";
+    }
+    if (pc_vtx_range_start != 0 && addr >= pc_vtx_range_start && addr < pc_vtx_range_end) {
+        return "pc_vtx";
+    }
+    for (int i = 0; i < s_extra_pc_dl_count; i++) {
+        if (addr >= s_extra_pc_dl[i].start && addr < s_extra_pc_dl[i].end) {
+            return "pc_extra";
+        }
     }
     if (gfx_is_static_pc_dl(addr)) {
         return "pc_static";
@@ -10080,6 +13887,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     bool critical_emitted_shard = ndc_metrics_ok &&
                                   gfx_tri_is_critical_emitted_shard(&ndc_metrics,
                                                                      was_cpu_clipped);
+    bool viewport_spanning_glass_shard = ndc_metrics_ok &&
+                                         gfx_tri_is_viewport_spanning_glass_shard(&ndc_metrics,
+                                                                                  was_cpu_clipped);
     bool extreme_postclip_room_shard = was_cpu_clipped &&
                                        dl_room >= 0 &&
                                        ndc_metrics_ok &&
@@ -10126,6 +13936,38 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_trace_guard_pathology(was_cpu_clipped ? "emit_clipped" : "emit",
                                   v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
                                   diag_vtx1_idx, diag_vtx2_idx, diag_vtx3_idx);
+    }
+
+    if (viewport_spanning_glass_shard) {
+        static int glass_reject_log_frame = -1;
+        static int glass_reject_log_count = 0;
+
+        if (glass_reject_log_frame != g_frame_count_diag) {
+            glass_reject_log_frame = g_frame_count_diag;
+            glass_reject_log_count = 0;
+        }
+
+        if (g_diag_trace_shards && glass_reject_log_count < 12) {
+            glass_reject_log_count++;
+            fprintf(stderr,
+                    "[GFX-SHARD-POSTCLIP] frame=%d tri=%d cmd=%p effect=glass_shards "
+                    "result=reject_viewport_span reasons=0x%X "
+                    "ndc_bbox=[%.2f,%.2f]-[%.2f,%.2f] area2=%.2f\n",
+                    g_frame_count_diag,
+                    g_tri_count_diag,
+                    (void *)g_diag_current_cmd_addr,
+                    clip_reason_flags,
+                    ndc_metrics.min_x, ndc_metrics.min_y,
+                    ndc_metrics.max_x, ndc_metrics.max_y,
+                    ndc_metrics.area2);
+            fflush(stderr);
+        }
+
+        gfx_effect_tri_trace_reject("postclip_glass_shard",
+                                    v1, v2, v3,
+                                    &ndc_metrics, ndc_metrics_ok,
+                                    was_cpu_clipped, clip_reason_flags);
+        return;
     }
 
     if (extreme_postclip_room_shard) {
@@ -10371,10 +14213,11 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
 
         if (emitted_shard_log_count < 24) {
+            const char *effect_label = gfx_effect_label_for_current_command();
             emitted_shard_log_count++;
             fprintf(stderr,
                     "[GFX-SHARD] frame=%d tri=%d cmd=%p offset=%s0x%zX domain=%s drawclass=%d "
-                    "weapon=%d guard=%d rooms=(%d,%d,%d) dl_room=%d dl=%s mv_room=%d "
+                    "effect=%s weapon=%d guard=%d rooms=(%d,%d,%d) dl_room=%d dl=%s mv_room=%d "
                     "cpuclip=%d cliprej=(0x%02X,0x%02X,0x%02X) reasons=0x%X "
                     "ndc_bbox=[%.2f,%.2f]-[%.2f,%.2f] area2=%.2f "
                     "clip1=(%.1f,%.1f,%.1f,%.1f) clip2=(%.1f,%.1f,%.1f,%.1f) clip3=(%.1f,%.1f,%.1f,%.1f)\n",
@@ -10383,6 +14226,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                     (size_t)cmd_offset,
                     gfx_diag_dl_domain_name(g_diag_current_cmd_addr),
                     g_current_draw_class,
+                    effect_label ? effect_label : "-",
                     g_executing_weapon_dl ? 1 : 0,
                     g_executing_guard_dl ? 1 : 0,
                     v1->room_id, v2->room_id, v3->room_id,
@@ -10473,7 +14317,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     bool use_fog = ((fog_other_mode_l >> 30) == G_BL_CLR_FOG) ||
                    ((fog_other_mode_l >> 26) == G_BL_A_FOG);
     bool fog_use_fixed_alpha = use_fog && ((fog_other_mode_l >> 26) & 3) == G_BL_A_FOG;
-    if (g_diag_no_fog > 0) {
+    if (g_diag_no_fog > 0 || gfx_current_draw_suppresses_room_fog()) {
         use_fog = false;
         fog_use_fixed_alpha = false;
     }
@@ -10736,14 +14580,44 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             }
             if (trace_room_alpha_count < 48) {
                 int room = -1;
+                int vertex_room = -1;
+                int mv_room = -1;
+                int dl_room = -1;
+                const char *dl_which = NULL;
+                const char *room_source = "none";
+                uintptr_t cmd_offset = 0;
+                bool has_cmd_offset = false;
+
                 if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
-                    room = v1->room_id;
+                    vertex_room = v1->room_id;
+                }
+                if (rsp.modelview_matrix_stack_size > 0 &&
+                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
+                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
+                }
+                dl_room = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which);
+                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
+                                                          NULL, NULL, NULL, &cmd_offset);
+
+                if (vertex_room >= 0) {
+                    room = vertex_room;
+                    room_source = "vtx";
+                } else if (mv_room >= 0) {
+                    room = mv_room;
+                    room_source = "mtx";
+                } else if (dl_room >= 0) {
+                    room = dl_room;
+                    room_source = "dl";
                 }
                 fprintf(stderr,
-                        "[ROOM-ALPHA] frame=%d tri=%d room=%d raw=0x%08X eff=0x%08X "
+                        "[ROOM-ALPHA] frame=%d tri=%d room=%d source=%s "
+                        "vtx_room=%d mv_room=%d dl_room=%d dl=%s offset=%s0x%zX "
+                        "raw=0x%08X eff=0x%08X "
                         "zcmp=%d zupd=%d zmode=0x%03X blend=%d texedge=%d "
                         "envA=%d primA=%d shadeA=(%d,%d,%d) fog=(%d,%d,%d)\n",
-                        g_frame_count_diag, g_tri_count_diag, room,
+                        g_frame_count_diag, g_tri_count_diag, room, room_source,
+                        vertex_room, mv_room, dl_room, dl_which ? dl_which : "?",
+                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
                         rdp.other_mode_l_raw, rdp.other_mode_l,
                         depth_compare ? 1 : 0, depth_update ? 1 : 0, zmode,
                         (int)blend_mode, texture_edge ? 1 : 0,
@@ -10780,12 +14654,17 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             depth_test &&
             linear_filter &&
             gfx_n64_shader_filter_enabled();
+        bool loaded_tile_two_tex_filter_diag =
+            cc_features_for_options.used_textures[0] &&
+            cc_features_for_options.used_textures[1] &&
+            gfx_diag_loaded_tile_two_tex_n64_filter_enabled(cc_id);
         bool allow_loaded_tile_n64_filter = !g_texrect_uv_mode &&
             !settex_active &&
             linear_filter &&
             gfx_n64_shader_filter_enabled() &&
-            (cc_features_for_options.used_textures[0] !=
-             cc_features_for_options.used_textures[1]);
+            ((cc_features_for_options.used_textures[0] !=
+              cc_features_for_options.used_textures[1]) ||
+             loaded_tile_two_tex_filter_diag);
         uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
         struct SetTexTileState settex_tile0;
         if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
@@ -10912,6 +14791,43 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_diag_noperspective_settex_cc_fog_enabled(settex_material_cc_id)) {
         cc_options |= SHADER_OPT_NOPERSPECTIVE_FOG;
     }
+    if (!tint_match &&
+        gfx_diag_noperspective_cc_texcoords_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_TEXCOORDS;
+    }
+    if (!tint_match &&
+        gfx_diag_noperspective_cc_inputs_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
+    }
+    if (!tint_match && !settex_active && use_alpha &&
+        (cc_features_for_options.used_textures[0] ||
+         cc_features_for_options.used_textures[1]) &&
+        gfx_diag_alpha_from_tex_intensity_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY;
+    }
+    if (!tint_match && !settex_active && use_alpha &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        (cc_features_for_options.used_textures[0] ||
+         cc_features_for_options.used_textures[1]) &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_wrap_thin_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN;
+    }
+    if (!tint_match && use_alpha &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        (cc_features_for_options.used_textures[0] ||
+         cc_features_for_options.used_textures[1]) &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND;
+    } else if (!tint_match && use_alpha &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        (cc_features_for_options.used_textures[0] ||
+         cc_features_for_options.used_textures[1]) &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_RDP_MEMORY_BLEND;
+    }
     if (!tint_match && settex_active &&
         gfx_diag_settex_cc_disable_n64_filter_enabled(settex_material_cc_id)) {
         cc_options &= ~(SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER);
@@ -10922,9 +14838,16 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             (settex_material_cc_options &
              (SHADER_OPT_TEXEL0_CLAMP_S | SHADER_OPT_TEXEL0_CLAMP_T |
               SHADER_OPT_TEXEL1_CLAMP_S | SHADER_OPT_TEXEL1_CLAMP_T)) != 0;
-        if ((clamped_material &&
-             (settex_material_cc_options & SHADER_OPT_TEXTURE_EDGE) == 0 &&
-             gfx_diag_settex_clamped_non_texedge_n64_filter_always_3point_enabled()) ||
+        bool clamped_non_texedge_settex =
+            clamped_material &&
+            (settex_material_cc_options & SHADER_OPT_TEXTURE_EDGE) == 0;
+        /*
+         * Clamped non-cutout settex surfaces are authored for N64 filtering.
+         * The PC footprint shortcut can otherwise collapse them to nearest
+         * samples, which hardens translucent room glass and nearby wall shades.
+         */
+        if ((clamped_non_texedge_settex &&
+             gfx_settex_clamped_non_texedge_n64_filter_always_3point_enabled()) ||
             gfx_diag_settex_cc_n64_filter_always_3point_enabled(settex_material_cc_id,
                                                                 settex_material_cc_options)) {
             cc_options |= SHADER_OPT_N64_FILTER_ALWAYS_3POINT;
@@ -10934,6 +14857,176 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_diag_settex_cc_color_scale_enabled(settex_material_cc_id)) {
         cc_options |= SHADER_OPT_DIAG_COLOR_SCALE;
     }
+    if (!tint_match && settex_active &&
+        gfx_diag_settex_cc_alpha_scale_enabled(settex_material_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_ALPHA_SCALE;
+    }
+    if (!tint_match &&
+        gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
+                                              room_matrix,
+                                              blend_mode,
+                                              depth_test,
+                                              depth_update,
+                                              depth_compare,
+                                              zmode,
+                                              texture_edge,
+                                              rdp.other_mode_l_raw)) {
+        cc_options |= SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS;
+    }
+
+	    enum GfxBlendMode api_blend_mode = blend_mode;
+	    if (blend_mode == GFX_BLEND_ALPHA &&
+	        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+	        gfx_diag_xlu_rdp_cvg_memory_blend_cc_enabled(effective_cc_id)) {
+	        api_blend_mode = GFX_BLEND_ALPHA_RDP_CVG_MEMORY;
+    } else if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_rdp_memory_blend_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_RDP_MEMORY;
+    } else if (blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
+	    } else if (blend_mode == GFX_BLEND_ALPHA &&
+	        gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
+	        gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
+	        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
+	    }
+
+	    bool room_secondary_xlu_sort =
+	        dl_room >= 0 &&
+	        dl_which != NULL &&
+	        strcmp(dl_which, "secondary") == 0 &&
+	        room_matrix &&
+	        blend_mode == GFX_BLEND_ALPHA &&
+	        api_blend_mode == GFX_BLEND_ALPHA &&
+	        depth_test &&
+	        depth_compare &&
+	        !depth_update &&
+	        zmode == ZMODE_XLU &&
+	        !texture_edge &&
+	        !g_sky_tri_mode;
+	    float room_secondary_xlu_sort_key = room_secondary_xlu_sort
+	        ? gfx_room_xlu_tri_sort_key(v1, v2, v3)
+	        : 0.0f;
+
+    gfx_trace_glass_shard_coverage_note(gfx_effect_label_for_current_command(),
+                                         &ndc_metrics,
+                                         ndc_metrics_ok,
+                                         effective_cc_id,
+                                         cc_options,
+                                         blend_mode,
+                                         api_blend_mode,
+                                         use_alpha,
+                                         use_fog,
+                                         texture_edge,
+                                         depth_test,
+                                         depth_update,
+                                         depth_compare,
+                                         depth_source_prim,
+                                         v1,
+                                         v2,
+                                         v3);
+
+#ifdef NATIVE_PORT
+    {
+        static int trace_room_alpha_cc = -1;
+        static int trace_room_alpha_cc_count = 0;
+        static int trace_room_alpha_cc_frame = -1;
+
+        if (trace_room_alpha_cc < 0) {
+            trace_room_alpha_cc = (getenv("GE007_TRACE_ROOM_ALPHA") != NULL);
+        }
+
+        if (trace_room_alpha_cc && room_matrix && blend_mode == GFX_BLEND_ALPHA) {
+            if (trace_room_alpha_cc_frame != g_frame_count_diag) {
+                trace_room_alpha_cc_frame = g_frame_count_diag;
+                trace_room_alpha_cc_count = 0;
+            }
+
+            if (trace_room_alpha_cc_count < 48) {
+                int room = -1;
+                int vertex_room = -1;
+                int mv_room = -1;
+                int dl_room_trace = -1;
+                const char *dl_which_trace = NULL;
+                const char *room_source = "none";
+                uintptr_t cmd_offset = 0;
+                bool has_cmd_offset = false;
+
+                if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
+                    vertex_room = v1->room_id;
+                }
+                if (rsp.modelview_matrix_stack_size > 0 &&
+                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
+                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
+                }
+                dl_room_trace = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which_trace);
+                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
+                                                          NULL, NULL, NULL, &cmd_offset);
+
+                if (vertex_room >= 0) {
+                    room = vertex_room;
+                    room_source = "vtx";
+                } else if (mv_room >= 0) {
+                    room = mv_room;
+                    room_source = "mtx";
+                } else if (dl_room_trace >= 0) {
+                    room = dl_room_trace;
+                    room_source = "dl";
+                }
+
+                fprintf(stderr,
+                        "[ROOM-ALPHA-CC] frame=%d tri=%d room=%d source=%s "
+                        "dl_room=%d dl=%s offset=%s0x%zX raw=0x%08X eff=0x%08X "
+                        "mode_decode={z=%s cvg=%s aa=%d imrd=%d clr_on_cvg=%d cvg_x_alpha=%d alpha_cvg=%d force_bl=%d "
+                        "b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
+                        "cc=0x%016llX effcc=0x%016llX cc_changed=%d "
+                        "opts=0x%08X settexcc=0x%016llX settexopts=0x%08X "
+                        "blend=%d api_blend=%s alpha=%d fog=%d texedge=%d noise=%d "
+                        "settex=%d tile=%u first_tile=%u texrect_override=%d "
+                        "envA=%d primA=%d shadeA=(%d,%d,%d)\n",
+                        g_frame_count_diag, g_tri_count_diag, room, room_source,
+                        dl_room_trace, dl_which_trace ? dl_which_trace : "?",
+                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
+                        rdp.other_mode_l_raw, rdp.other_mode_l,
+                        gfx_zmode_diag_name(rdp.other_mode_l_raw),
+                        gfx_cvg_dst_diag_name(rdp.other_mode_l_raw),
+                        (rdp.other_mode_l_raw & AA_EN) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & IM_RD) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & CLR_ON_CVG) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & CVG_X_ALPHA) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & FORCE_BL) != 0 ? 1 : 0,
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 0),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 1),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 2),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 3),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 0),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 1),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 2),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 3),
+                        (unsigned long long)cc_id,
+                        (unsigned long long)effective_cc_id,
+                        effective_cc_id != cc_id ? 1 : 0,
+                        cc_options,
+                        (unsigned long long)settex_material_cc_id,
+                        settex_material_cc_options,
+                        (int)blend_mode, gfx_blend_mode_diag_name(api_blend_mode),
+                        use_alpha ? 1 : 0,
+                        use_fog ? 1 : 0, texture_edge ? 1 : 0,
+                        use_noise ? 1 : 0,
+                        settex_active ? 1 : 0,
+                        tex_tile_base,
+                        rdp.first_tile_index,
+                        g_texrect_tile_override,
+                        rdp.env_color.a, rdp.prim_color.a,
+                        v1->color.a, v2->color.a, v3->color.a);
+                trace_room_alpha_cc_count++;
+            }
+        }
+    }
+#endif
 
     struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(effective_cc_id, cc_options);
     struct ShaderProgram *prg = comb->prg;
@@ -10943,10 +15036,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_rapi->load_shader(prg);
         rendering_state.shader_program = prg;
     }
-    if (blend_mode != rendering_state.blend_mode) {
+    if (api_blend_mode != rendering_state.blend_mode) {
         gfx_flush();
-        gfx_rapi->set_blend_mode(blend_mode);
-        rendering_state.blend_mode = blend_mode;
+        gfx_rapi->set_blend_mode(api_blend_mode);
+        rendering_state.blend_mode = api_blend_mode;
     }
 
     uint8_t num_inputs;
@@ -11233,6 +15326,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                       settex_material_cc_id,
                                       effective_cc_id,
                                       cc_options,
+                                      comb,
                                       v1, v2, v3,
                                       &ndc_metrics,
                                       tex_tile_base,
@@ -11246,6 +15340,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                       depth_test,
                                       depth_update,
                                       depth_compare,
+                                      room_matrix,
+                                      fog_use_fixed_alpha,
                                       lod_fraction,
                                       settex_mirror_tex1,
                                       mirror_tex1_from_tex0);
@@ -11274,6 +15370,31 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                         zmode,
                                         settex_mirror_tex1,
                                         mirror_tex1_from_tex0);
+
+    gfx_trace_bullet_impact_material_emit(v1, v2, v3,
+                                          &ndc_metrics, ndc_metrics_ok,
+                                          comb,
+                                          cc_id,
+                                          effective_cc_id,
+                                          cc_options,
+                                          tex_tile_base,
+                                          allow_lod_redirect,
+                                          used_textures,
+                                          tex_width[0], tex_height[0],
+                                          tex_width[1], tex_height[1],
+                                          num_inputs,
+                                          blend_mode,
+                                          use_alpha,
+                                          use_fog,
+                                          texture_edge,
+                                          use_noise,
+                                          depth_test,
+                                          depth_update,
+                                          depth_compare,
+                                          depth_source_prim,
+                                          zmode,
+                                          settex_mirror_tex1,
+                                          mirror_tex1_from_tex0);
 
     gfx_trace_texgen_material_emit(v1, v2, v3,
                                    &ndc_metrics, ndc_metrics_ok,
@@ -11310,6 +15431,38 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                               tex_width[1], tex_height[1],
                               num_inputs, depth_test, depth_update,
                               depth_compare, depth_source_prim, zmode);
+
+    struct GfxSettexFramebufferCapture settex_fb_capture;
+    bool settex_fb_capture_active =
+        gfx_settex_fb_capture_begin(&settex_fb_capture,
+                                    settex_material_cc_id,
+                                    &ndc_metrics);
+    struct GfxSettexPixelProbe settex_pixel_probe;
+    bool settex_pixel_probe_active =
+        gfx_settex_pixel_probe_begin(&settex_pixel_probe,
+                                     settex_material_cc_id,
+                                     effective_cc_id,
+                                     cc_options,
+                                     rdp.other_mode_l_raw,
+                                     blend_mode,
+                                     api_blend_mode,
+                                     &ndc_metrics);
+    if (settex_pixel_probe_active) {
+        gfx_settex_pixel_probe_populate_source(&settex_pixel_probe,
+                                               comb,
+                                               v1, v2, v3,
+                                               tex_tile_base,
+                                               used_textures,
+                                               tex_width[0], tex_height[0],
+                                               tex_width[1], tex_height[1],
+                                               blend_mode,
+                                               use_fog,
+                                               room_matrix,
+                                               fog_use_fixed_alpha,
+                                               lod_fraction,
+                                               settex_mirror_tex1,
+                                               mirror_tex1_from_tex0);
+    }
 
     if (trace_eye_material) {
         fprintf(stderr,
@@ -11395,6 +15548,27 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     }
 
     bool z_is_from_0_to_1 = gfx_rapi->z_is_from_0_to_1();
+    float room_alpha_env_scale = gfx_diag_room_alpha_env_scale();
+    bool scale_room_alpha_env =
+        room_alpha_env_scale != 1.0f &&
+        room_matrix &&
+        settex_active &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_mode_is_room_xlu(rdp.other_mode_l_raw);
+    bool diag_rdp_cvg_memory =
+        (cc_options & SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND) != 0;
+    float diag_tri_ndc[6] = {0};
+
+    if (diag_rdp_cvg_memory) {
+        for (int tri_vi = 0; tri_vi < 3; tri_vi++) {
+            float w = v_arr[tri_vi]->w;
+            if (fabsf(w) < 0.0001f) {
+                w = (w < 0.0f) ? -0.0001f : 0.0001f;
+            }
+            diag_tri_ndc[tri_vi * 2 + 0] = v_arr[tri_vi]->x / w;
+            diag_tri_ndc[tri_vi * 2 + 1] = v_arr[tri_vi]->y / w;
+        }
+    }
 
     for (int vi = 0; vi < 3; vi++) {
         float z = v_arr[vi]->z, w = v_arr[vi]->w;
@@ -11405,6 +15579,14 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         buf_vbo[buf_vbo_len++] = v_arr[vi]->y;
         buf_vbo[buf_vbo_len++] = z;
         buf_vbo[buf_vbo_len++] = w;
+        if (diag_rdp_cvg_memory) {
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[0];
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[1];
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[2];
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[3];
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[4];
+            buf_vbo[buf_vbo_len++] = diag_tri_ndc[5];
+        }
 
         /* Per-texture UV processing: each used texture gets its own UV pair
          * with per-tile shifts, offsets, and dimensions (PD pattern). */
@@ -11472,7 +15654,14 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                         break;
                     }
                     case G_CCMUX_ENVIRONMENT:
-                        color = &rdp.env_color;
+                        if (k == 1 && scale_room_alpha_env) {
+                            tmp = rdp.env_color;
+                            tmp.a = gfx_scale_u8_channel(rdp.env_color.a,
+                                                         room_alpha_env_scale);
+                            color = &tmp;
+                        } else {
+                            color = &rdp.env_color;
+                        }
                         break;
                     case G_CCMUX_PRIMITIVE_ALPHA:
                         tmp.r = tmp.g = tmp.b = tmp.a = tint_match ? diag_tint_color.a : rdp.prim_color.a;
@@ -11483,7 +15672,11 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                         color = &tmp;
                         break;
                     case G_CCMUX_ENV_ALPHA:
-                        tmp.r = tmp.g = tmp.b = tmp.a = rdp.env_color.a;
+                        tmp.r = tmp.g = tmp.b = tmp.a =
+                            scale_room_alpha_env
+                                ? gfx_scale_u8_channel(rdp.env_color.a,
+                                                       room_alpha_env_scale)
+                                : rdp.env_color.a;
                         color = &tmp;
                         break;
                     case G_CCMUX_K4:
@@ -11554,6 +15747,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     }
     if ((int)g_current_draw_class >= 0 && g_current_draw_class <= DRAWCLASS_HUD) {
         g_drawclass_tri_counts[g_current_draw_class]++;
+        gfx_drawclass_bbox_add(g_current_draw_class, &ndc_metrics);
     }
     if (g_diag_trace_fog && g_frame_count_diag >= g_diag_trace_fog_after_frame) {
         static int fog_tri_log_count = 0;
@@ -11634,15 +15828,17 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         if (emitted_large_coverage && emit_large_log_count < 32) {
             const char *dl_which = NULL;
             int dl_room = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which);
+            const char *effect_label = gfx_effect_label_for_current_command();
             fprintf(stderr,
                     "[GFX-EMIT-BIG] frame=%d tri=%d v=(%u,%u,%u) rooms=(%d,%d,%d) "
-                    "dl_room=%d dl=%s mv_room=%d raw=0x%08X eff=0x%08X "
+                    "dl_room=%d dl=%s mv_room=%d effect=%s raw=0x%08X eff=0x%08X "
                     "ndc_bbox=[%.2f,%.2f]-[%.2f,%.2f] area2=%.2f settex=%d tex=%u fog=%d\n",
                     g_frame_count_diag, g_tri_count_diag,
                     (unsigned)diag_vtx1_idx, (unsigned)diag_vtx2_idx, (unsigned)diag_vtx3_idx,
                     v1->room_id, v2->room_id, v3->room_id,
                     dl_room, dl_which ? dl_which : "?",
                     rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1],
+                    effect_label ? effect_label : "-",
                     rdp.other_mode_l_raw, rdp.other_mode_l,
                     ndc_metrics.min_x, ndc_metrics.min_y,
                     ndc_metrics.max_x, ndc_metrics.max_y, ndc_metrics.area2,
@@ -11673,10 +15869,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         printf("    v1 obj=(%d,%d,%d) clip=(%.1f,%.1f,%.1f,%.1f)\n",
                (int)v1->x, (int)v1->y, (int)v1->z, v1->x, v1->y, v1->z, v1->w);
     }
-    if (g_diag_log_frame && g_frame_count_diag <= 1 && g_tri_count_diag <= 20) {
-        printf("  TRI[%d] v=(%d,%d,%d) cc=0x%016llX fog=%d tex=%d,%d shade=(%d,%d,%d,%d)\n",
-               g_tri_count_diag, diag_vtx1_idx, diag_vtx2_idx, diag_vtx3_idx,
-               (unsigned long long)rdp.combine_mode, use_fog, used_textures[0], used_textures[1],
+	    if (g_diag_log_frame && g_frame_count_diag <= 1 && g_tri_count_diag <= 20) {
+	        printf("  TRI[%d] v=(%d,%d,%d) cc=0x%016llX fog=%d tex=%d,%d shade=(%d,%d,%d,%d)\n",
+	               g_tri_count_diag, diag_vtx1_idx, diag_vtx2_idx, diag_vtx3_idx,
+	               (unsigned long long)rdp.combine_mode, use_fog, used_textures[0], used_textures[1],
                v1->color.r, v1->color.g, v1->color.b, v1->color.a);
         printf("    settex=%d uv0=(%.1f,%.1f) uv1=(%.1f,%.1f) texdim=%ux%u texscale=(%d,%d)\n",
                settex_active, v1->u, v1->v, v2->u, v2->v, tex_width[0], tex_height[0],
@@ -11701,11 +15897,31 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                    rsp.current_lights[0].dir[0], rsp.current_lights[0].dir[1], rsp.current_lights[0].dir[2]);
             printf("    geom_mode=0x%08X (LIGHTING=%d)\n",
                    rsp.geometry_mode, (rsp.geometry_mode & G_LIGHTING) != 0);
-        }
-        fflush(stdout);
-    }
-    if (++buf_vbo_num_tris == MAX_BUFFERED) {
+	        }
+	        fflush(stdout);
+	    }
+	    if (buf_vbo_num_tris < MAX_BUFFERED) {
+	        buf_vbo_tri_sortable[buf_vbo_num_tris] =
+	            room_secondary_xlu_sort ? 1 : 0;
+	        buf_vbo_tri_sort_key[buf_vbo_num_tris] =
+	            room_secondary_xlu_sort_key;
+	        buf_vbo_tri_serial[buf_vbo_num_tris] =
+	            ++g_room_xlu_sort_serial;
+	        buf_vbo_tri_cmd_addr[buf_vbo_num_tris] =
+	            g_diag_current_cmd_addr;
+	        buf_vbo_tri_room[buf_vbo_num_tris] = dl_room;
+	    }
+	    if (++buf_vbo_num_tris == MAX_BUFFERED) {
+	        gfx_flush();
+	    }
+    if (settex_fb_capture_active || settex_pixel_probe_active) {
         gfx_flush();
+        if (settex_fb_capture_active) {
+            gfx_settex_fb_capture_finish(&settex_fb_capture);
+        }
+        if (settex_pixel_probe_active) {
+            gfx_settex_pixel_probe_finish(&settex_pixel_probe);
+        }
     }
     gfx_trace_guard_tri("emit", v1, v2, v3, &ndc_metrics, ndc_metrics_ok, 0.0f, false);
 }
@@ -11793,14 +16009,16 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         }
         if (pathological_view_clip_shard && shard_log_count < 24) {
             bool full_trace = g_diag_trace_shards != 0;
+            const char *effect_label = gfx_effect_label_for_current_command();
             fprintf(stderr,
-                    "[GFX-SHARD-CANDIDATE] frame=%d tri=%d cmd=%p domain=%s drawclass=%d weapon=%d guard=%d "
+                    "[GFX-SHARD-CANDIDATE] frame=%d tri=%d cmd=%p domain=%s drawclass=%d effect=%s weapon=%d guard=%d "
                     "rooms=(%d,%d,%d) dl_room=%d dl=%s mv_room=%d "
                     "ndc_bbox=[%.2f,%.2f]-[%.2f,%.2f] area2=%.2f "
                     "clip1=(%.1f,%.1f,%.1f,%.1f) clip2=(%.1f,%.1f,%.1f,%.1f) clip3=(%.1f,%.1f,%.1f,%.1f)\n",
                     g_frame_count_diag, g_tri_count_diag, (void *)g_diag_current_cmd_addr,
                     gfx_diag_dl_domain_name(g_diag_current_cmd_addr),
                     g_current_draw_class,
+                    effect_label ? effect_label : "-",
                     g_executing_weapon_dl ? 1 : 0,
                     g_executing_guard_dl ? 1 : 0,
                     v1->room_id, v2->room_id, v3->room_id,
@@ -12050,7 +16268,9 @@ static void gfx_sp_geometry_mode(uint32_t clear, uint32_t set) {
     /* Force fog for legacy room/model paths, but leave texture-generated
      * reflection passes alone. Injecting stale fog into those passes makes
      * startup logos render as dark horizontal bands instead of silver models. */
-    if (rsp.geometry_mode & G_TEXTURE_GEN) {
+    if (gfx_current_draw_suppresses_room_fog()) {
+        rsp.geometry_mode &= ~G_FOG;
+    } else if (rsp.geometry_mode & G_TEXTURE_GEN) {
         rsp.geometry_mode &= ~G_FOG;
     } else if ((clear & G_TEXTURE_GEN) == 0) {
         rsp.geometry_mode |= G_FOG;
@@ -12395,8 +16615,13 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size,
                                      bool static_texture_has_lods) {
     gfx_trace_tex_pipeline_init();
     if (g_trace_tex_pipeline) {
-        fprintf(stderr, "[TEX-SETTIMG] addr=%p fmt=%u siz=%u width=%u frame=%d\n",
-                addr, format, size, width, g_frame_count_diag);
+        fprintf(stderr,
+                "[TEX-SETTIMG] addr=%p fmt=%u siz=%u width=%u cache=0x%llx static=%d lods=%d frame=%d\n",
+                addr, format, size, width,
+                (unsigned long long)cache_key,
+                is_static_game_texture ? 1 : 0,
+                static_texture_has_lods ? 1 : 0,
+                g_frame_count_diag);
     }
     if (gfx_trace_text_tex_active(addr)) {
         fprintf(stderr,
@@ -12472,6 +16697,65 @@ static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t t
 #endif
 }
 
+static void gfx_alias_lod_tile_from_loadblock(uint8_t tile,
+                                              uint32_t line_size_bytes,
+                                              uint32_t height)
+{
+    if (tile >= 8 ||
+        tile == G_TX_RENDERTILE ||
+        !rdp.tex_lod ||
+        rdp.tex_max_lod == 0 ||
+        line_size_bytes == 0 ||
+        height == 0) {
+        return;
+    }
+
+    uint16_t tmem = gfx_tile_tmem_index(tile);
+    if (tmem == 0 || tmem >= 512) {
+        return;
+    }
+
+    const typeof(rdp.loaded_texture[0]) *base = &rdp.loaded_texture[0];
+    if (base->addr == NULL || base->size_bytes == 0) {
+        return;
+    }
+
+    uint64_t start_offset = (uint64_t)tmem * 8U;
+    uint64_t required_size = (uint64_t)line_size_bytes * (uint64_t)height;
+    if (required_size == 0 ||
+        start_offset >= base->size_bytes ||
+        start_offset + required_size > base->size_bytes) {
+        return;
+    }
+
+    typeof(rdp.loaded_texture[0]) *alias = &rdp.loaded_texture[tmem];
+    const uint8_t *alias_addr = base->addr + start_offset;
+    uintptr_t alias_key = base->cache_key + (uintptr_t)start_offset;
+    bool same_alias =
+        alias->addr == alias_addr &&
+        alias->size_bytes == (uint32_t)required_size &&
+        alias->line_size_bytes == line_size_bytes &&
+        alias->cache_key == alias_key &&
+        alias->source_cache_key == base->source_cache_key;
+
+    if (!gfx_loaded_texture_is_static_game_texture(base)) {
+        gfx_texture_cache_delete_by_texture_key(alias_key);
+    }
+
+    alias->orig_size_bytes = (uint32_t)required_size;
+    alias->full_size_bytes = (uint32_t)required_size;
+    alias->size_bytes = (uint32_t)required_size;
+    alias->line_size_bytes = line_size_bytes;
+    alias->full_image_line_size_bytes = line_size_bytes;
+    alias->addr = alias_addr;
+    alias->cache_key = alias_key;
+    alias->source_cache_key = base->source_cache_key;
+    alias->static_texture_has_lods = base->static_texture_has_lods;
+    if (!same_alias) {
+        gfx_loaded_texture_clear_decode_footprint(alias);
+    }
+}
+
 static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint16_t lrs, uint16_t lrt) {
     if (tile < 8) {
         int32_t s_delta = (int32_t)lrs - (int32_t)uls;
@@ -12517,6 +16801,7 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
             render_line_size_bytes = tile_rect_line_size_bytes;
         }
         rdp.texture_tile[tile].line_size_bytes = render_line_size_bytes;
+        gfx_alias_lod_tile_from_loadblock(tile, render_line_size_bytes, height);
 
         {
             typeof(rdp.loaded_texture[0]) *loaded_texture =
@@ -12789,9 +17074,14 @@ static void gfx_dp_load_block(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t
         rdp.texture_to_load.static_texture_has_lods;
     gfx_loaded_texture_clear_decode_footprint(&rdp.loaded_texture[slot]);
     if (g_trace_tex_pipeline) {
-        fprintf(stderr, "[TEX-LOADBLOCK] slot=%u addr=%p size_bytes=%u lrs=%u siz=%u frame=%d\n",
+        fprintf(stderr,
+                "[TEX-LOADBLOCK] slot=%u addr=%p size_bytes=%u lrs=%u siz=%u cache=0x%llx static=%d lods=%d frame=%d\n",
                 slot, (void*)rdp.texture_to_load.addr, size_bytes, lrs,
-                rdp.texture_to_load.siz, g_frame_count_diag);
+                rdp.texture_to_load.siz,
+                (unsigned long long)rdp.texture_to_load.cache_key,
+                rdp.texture_to_load.is_static_game_texture ? 1 : 0,
+                rdp.texture_to_load.static_texture_has_lods ? 1 : 0,
+                g_frame_count_diag);
     }
     gfx_trace_text_tex_import("loadblock", (int)tile, G_TX_RENDERTILE, &rdp.loaded_texture[slot]);
     gfx_trace_texture_bytes("loadblock", (int)slot, G_TX_RENDERTILE);
@@ -12885,9 +17175,15 @@ static void gfx_dp_load_tile(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t 
         rdp.texture_to_load.static_texture_has_lods;
     gfx_loaded_texture_clear_decode_footprint(&rdp.loaded_texture[slot]);
     if (g_trace_tex_pipeline) {
-        fprintf(stderr, "[TEX-LOADTILE] slot=%u tile=%u addr=%p size_bytes=%u lrs=%u lrt=%u siz=%u frame=%d\n",
+        fprintf(stderr,
+                "[TEX-LOADTILE] slot=%u tile=%u addr=%p size_bytes=%u lrs=%u lrt=%u siz=%u cache=0x%llx source=0x%llx static=%d lods=%d frame=%d\n",
                 slot, tile, (void*)rdp.texture_to_load.addr, size_bytes,
-                lrs, lrt, rdp.texture_to_load.siz, g_frame_count_diag);
+                lrs, lrt, rdp.texture_to_load.siz,
+                (unsigned long long)rdp.loaded_texture[slot].cache_key,
+                (unsigned long long)rdp.loaded_texture[slot].source_cache_key,
+                rdp.texture_to_load.is_static_game_texture ? 1 : 0,
+                rdp.texture_to_load.static_texture_has_lods ? 1 : 0,
+                g_frame_count_diag);
     }
     if (tile < 8) {
         rdp.texture_tile[tile].uls = uls;
@@ -13343,7 +17639,7 @@ static void gfx_dp_set_color_image(uint32_t format, uint32_t size, uint32_t widt
 static void gfx_sync_other_mode_l_effective(void) {
     rdp.other_mode_l = rdp.other_mode_l_raw;
     rdp.palette_fmt = rdp.other_mode_h & (3U << G_MDSFT_TEXTLUT);
-    if (rsp.geometry_mode & G_FOG) {
+    if ((rsp.geometry_mode & G_FOG) && !gfx_current_draw_suppresses_room_fog()) {
         rdp.other_mode_l = (rdp.other_mode_l & 0x3FFFFFFF) | (3U << 30);
     }
 }
@@ -13398,6 +17694,12 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
                                        (uint32_t)settex_cache[i].tex_h,
                                        settex_cache[i].maxlod,
                                        settex_cache[i].unk0c_02 != 0);
+            gfx_diag_dump_settex_cached_texture(texturenum,
+                                                settex_cache[i].rgba,
+                                                (int)settex_cache[i].rgba_w,
+                                                (int)settex_cache[i].rgba_h,
+                                                settex_cache[i].fmt,
+                                                settex_cache[i].siz);
             gfx_log_settex_event("CACHE-HIT", "");
             return;
         }
@@ -13651,8 +17953,9 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
         int muzzle_idx = texturenum - 2157;
 
         if (!dumped_muzzle_tex[muzzle_idx]) {
-            char path[64];
-            char alpha_path[64];
+            char path[512];
+            char alpha_path[512];
+            const char *dump_dir = gfx_dump_muzzle_settex_dir();
             FILE *pf;
             FILE *af;
             int alpha_min = 255;
@@ -13664,8 +17967,8 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
 
             dumped_muzzle_tex[muzzle_idx] = 1;
 
-            snprintf(path, sizeof(path), "/tmp/ge007_muzzle_settex_%d.ppm", texturenum);
-            snprintf(alpha_path, sizeof(alpha_path), "/tmp/ge007_muzzle_settex_%d.alpha.pgm", texturenum);
+            snprintf(path, sizeof(path), "%s/ge007_muzzle_settex_%d.ppm", dump_dir, texturenum);
+            snprintf(alpha_path, sizeof(alpha_path), "%s/ge007_muzzle_settex_%d.alpha.pgm", dump_dir, texturenum);
             pf = fopen(path, "wb");
             af = fopen(alpha_path, "wb");
 
@@ -13791,7 +18094,9 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     }
     free(linear_tex_data);
     uint8_t *sample_rgba = NULL;
-    if (gfx_trace_settex_material_cc_samples_enabled()) {
+    if (gfx_trace_settex_material_cc_samples_enabled() ||
+        gfx_diag_dump_settex_texture_enabled(texturenum) ||
+        gfx_trace_settex_pixel_texture_needs_rgba(texturenum, w, h)) {
         sample_rgba = rgba;
     } else {
         free(rgba);
@@ -14122,6 +18427,31 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                     break;
                 }
 
+                if (is_pc && !gfx_pc_dl_start_is_plausible(dl_addr)) {
+                    gfx_note_n64_dl_non_dl_skip(false);
+                    static int s_skip_bad_pc_dl = 0;
+                    static int s_skip_bad_pc_dl_frame = -1;
+                    if (s_skip_bad_pc_dl_frame != g_frame_count_diag) {
+                        s_skip_bad_pc_dl_frame = g_frame_count_diag;
+                        s_skip_bad_pc_dl = 0;
+                    }
+                    if (++s_skip_bad_pc_dl <= 3 && gfx_runtime_debug_enabled()) {
+                        fprintf(stderr,
+                                "[GFX-DL] skipped non-DL PC data addr=%p op=0x%02X frame=%d depth=%d cmd=%p w0=0x%08X w1=0x%llX\n",
+                                (void *)dl_addr,
+                                gfx_addr_is_pc_dynamic_data_range((uintptr_t)dl_addr, sizeof(Gfx))
+                                    ? (uint8_t)(((const Gfx *)dl_addr)->words.w0 >> 24)
+                                    : 0xFF,
+                                g_frame_count_diag,
+                                dl_depth,
+                                (void *)cmd,
+                                (uint32_t)cmd->words.w0,
+                                (unsigned long long)cmd->words.w1);
+                        fflush(stderr);
+                    }
+                    break;
+                }
+
                 if (is_n64 && !is_pc) {
                     if (!gfx_n64_dl_start_is_plausible(dl_addr)) {
                         gfx_note_n64_dl_non_dl_skip(false);
@@ -14270,11 +18600,67 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                     }
                     g_resolve_failures.settimg_fail++;
                     if (g_resolve_failures.settimg_fail <= 5 && g_diag_verbose > 0) {
+                        const Gfx *prev_cmd = cmd - 1;
+                        const Gfx *next_cmd = cmd + 1;
+                        const Gfx *scan_cmd;
+                        uint32_t prev_w0 = 0;
+                        uintptr_t prev_w1 = 0;
+                        uint32_t next_w0 = 0;
+                        uintptr_t next_w1 = 0;
+                        const char *effect_label = gfx_effect_label_for_current_command();
+
+                        if (!in_dynamic_range || (uintptr_t)prev_cmd >= pc_gfx_range_start) {
+                            prev_w0 = prev_cmd->words.w0;
+                            prev_w1 = prev_cmd->words.w1;
+                        }
+                        if (!in_dynamic_range || (uintptr_t)next_cmd < pc_gfx_range_end) {
+                            next_w0 = next_cmd->words.w0;
+                            next_w1 = next_cmd->words.w1;
+                        }
                         fprintf(stderr,
-                                "[GFX-BAD] G_SETTIMG_PC: w1=0x%016llX seg=%d frame=%d\n",
+                                "[GFX-BAD] G_SETTIMG_PC: cmd=%p class=%s effect=%s "
+                                "w0=0x%08X w1=0x%016llX seg=%d frame=%d "
+                                "prev=(0x%08X,0x%016llX) next=(0x%08X,0x%016llX) "
+                                "prop=%p obj=%d pad=%d room=%d pass=%d alpha=%d model=%p "
+                                "texpool=%p start=%p left=%p right=%p end=%p\n",
+                                (void *)cmd,
+                                gfx_draw_class_name(g_current_draw_class),
+                                effect_label != NULL ? effect_label : "-",
+                                (uint32_t)cmd->words.w0,
                                 (unsigned long long)cmd->words.w1,
                                 (int)((cmd->words.w1 >> 24) & 0xF),
-                                g_frame_count_diag);
+                                g_frame_count_diag,
+                                prev_w0,
+                                (unsigned long long)prev_w1,
+                                next_w0,
+                                (unsigned long long)next_w1,
+                                g_current_prop_context.active ? g_current_prop_context.prop : NULL,
+                                g_current_prop_context.active ? g_current_prop_context.obj_type : -1,
+                                g_current_prop_context.active ? g_current_prop_context.pad : -1,
+                                g_current_prop_context.active ? g_current_prop_context.roomid : -1,
+                                g_current_prop_context.active ? g_current_prop_context.renderpass : -1,
+                                g_current_prop_context.active ? g_current_prop_context.withalpha : -1,
+                                g_current_prop_context.active ? g_current_prop_context.model : NULL,
+                                (void *)ptr_texture_alloc_start,
+                                ptr_texture_alloc_start != NULL ? ptr_texture_alloc_start->start : NULL,
+                                ptr_texture_alloc_start != NULL ? ptr_texture_alloc_start->leftpos : NULL,
+                                ptr_texture_alloc_start != NULL ? ptr_texture_alloc_start->rightpos : NULL,
+                                ptr_texture_alloc_start != NULL ? ptr_texture_alloc_start->end : NULL);
+                        for (scan_cmd = cmd - 8; scan_cmd <= cmd + 8; scan_cmd++) {
+                            uintptr_t scan_addr = (uintptr_t)scan_cmd;
+
+                            if (in_dynamic_range &&
+                                (scan_addr < pc_gfx_range_start || scan_addr >= pc_gfx_range_end)) {
+                                continue;
+                            }
+
+                            fprintf(stderr,
+                                    "[GFX-BAD-CONTEXT] rel=%ld cmd=%p w0=0x%08X w1=0x%016llX\n",
+                                    (long)(scan_cmd - cmd),
+                                    (void *)scan_cmd,
+                                    (uint32_t)scan_cmd->words.w0,
+                                    (unsigned long long)scan_cmd->words.w1);
+                        }
                     }
                     break;
                 }
@@ -15042,10 +19428,25 @@ void gfx_process_n64_dl(const uint8_t *data) {
                     gfx_process_n64_dl((const uint8_t *)dl_addr);
                 } else {
                     /* Jump to a PC DL from within an N64 DL */
-                    if (gfx_is_valid_pc_dl((uintptr_t)dl_addr) ||
-                        gfx_is_static_pc_dl((uintptr_t)dl_addr)) {
+                    bool is_pc_dl = gfx_is_valid_pc_dl((uintptr_t)dl_addr) ||
+                                    gfx_is_static_pc_dl((uintptr_t)dl_addr);
+                    if (is_pc_dl && gfx_pc_dl_start_is_plausible((const Gfx *)dl_addr)) {
                         gfx_effect_inherit_label_for_child_dl();
                         gfx_run_dl_pc((Gfx *)dl_addr);
+                    } else if (is_pc_dl) {
+                        gfx_note_n64_dl_non_dl_skip(true);
+                        if (trace_n64_dl && (trace_n64_dl_budget <= 0 || (int)exec_seq <= trace_n64_dl_budget)) {
+                            fprintf(stderr,
+                                    "[N64_DL_TRACE] frame=%d seq=%u skip_non_dl_pc addr=%p op=0x%02X parent=%p\n",
+                                    g_frame_count_diag,
+                                    exec_seq,
+                                    dl_addr,
+                                    gfx_addr_is_pc_dynamic_data_range((uintptr_t)dl_addr, sizeof(Gfx))
+                                        ? (uint8_t)(((const Gfx *)dl_addr)->words.w0 >> 24)
+                                        : 0xFF,
+                                    (void *)g_n64_dl_stack[entry_depth]);
+                            fflush(stderr);
+                        }
                     } else {
                         g_bad_cmd_count++;
                         g_resolve_failures.dl_fail++;
@@ -15567,11 +19968,14 @@ void gfx_run_dl(Gfx *dl) {
     g_pending_sky_tri_count_diag = 0;
     g_tri_count_diag = pending_sky_tris;
     g_sky_tri_count_diag = pending_sky_tris;
-    g_nonsky_tri_count_diag = 0;
-    g_n64_dl_exec_seq = 0;
-    g_frame_n64_dl_index = 0;
-    g_bad_cmd_count = 0;
+	    g_nonsky_tri_count_diag = 0;
+	    g_n64_dl_exec_seq = 0;
+	    g_frame_n64_dl_index = 0;
+	    g_room_xlu_sort_serial = 0;
+	    g_bad_cmd_count = 0;
     memset(g_drawclass_tri_counts, 0, sizeof(g_drawclass_tri_counts));
+    gfx_drawclass_bbox_reset();
+    gfx_trace_glass_shard_coverage_frame_begin();
     memset(g_n64_dl_stack, 0, sizeof(g_n64_dl_stack));
     memset(g_n64_dl_seq_stack, 0, sizeof(g_n64_dl_seq_stack));
     memset(&g_resolve_failures, 0, sizeof(g_resolve_failures));
@@ -15583,17 +19987,13 @@ void gfx_run_dl(Gfx *dl) {
      * unfogged.  Pre-seeding from the environment ensures correct fog
      * from the very first vertex. */
     {
-        extern void *fogGetCurrentEnvironmentp(void);
-        uint8_t *env = (uint8_t *)fogGetCurrentEnvironmentp();
+        CurrentEnvironmentRecord *env = fogGetCurrentEnvironmentp();
         if (env) {
-            /* CurrentEnvironmentRecord layout:
-             *   offset 0: s32 DifferenceFromFarIntensity (fog near)
-             *   offset 4: s32 FarIntensity (fog far)
-             *   offset 8: u8 Red, u8 Green, u8 Blue */
-            int32_t fog_min, fog_max;
-            memcpy(&fog_min, env + 0, 4);
-            memcpy(&fog_max, env + 4, 4);
-            uint8_t r = env[8], g = env[9], b = env[10];
+            int32_t fog_min = env->DifferenceFromFarIntensity;
+            int32_t fog_max = env->FarIntensity;
+            uint8_t r = env->Red;
+            uint8_t g = env->Green;
+            uint8_t b = env->Blue;
 
             /* gSPFogPosition formula: fog_mul = 128000/(max-min),
              * fog_offset = (500-min)*256/(max-min) */
@@ -15661,6 +20061,7 @@ void gfx_run_dl(Gfx *dl) {
     }
 
     gfx_rapi->end_frame();
+    gfx_trace_glass_shard_coverage_frame_end();
     visibility_scaled_matrix_region_count = 0;
 
     /* Close trace file */
@@ -15729,15 +20130,19 @@ void gfx_run_dl(Gfx *dl) {
 
     {
         static int trace_drawclass_enabled = -1;
+        static int trace_drawclass_bbox_enabled = -1;
         static int trace_drawclass_after_frame = -2;
         if (trace_drawclass_enabled < 0) {
             trace_drawclass_enabled = (getenv("GE007_TRACE_DRAWCLASS_TRIS") != NULL) ? 1 : 0;
+        }
+        if (trace_drawclass_bbox_enabled < 0) {
+            trace_drawclass_bbox_enabled = (getenv("GE007_TRACE_DRAWCLASS_BBOX") != NULL) ? 1 : 0;
         }
         if (trace_drawclass_after_frame < -1) {
             const char *env = getenv("GE007_TRACE_DRAWCLASS_AFTER_FRAME");
             trace_drawclass_after_frame = env ? atoi(env) : 0;
         }
-    if (trace_drawclass_enabled && g_frame_count_diag >= trace_drawclass_after_frame) {
+        if (trace_drawclass_enabled && g_frame_count_diag >= trace_drawclass_after_frame) {
             fprintf(stderr,
                     "[DRAWCLASS-TRIS] frame=%d total=%d sky=%d nonsky=%d unknown=%d room=%d weapon=%d chrprop=%d effect=%d hud=%d\n",
                     g_frame_count_diag,
@@ -15750,6 +20155,17 @@ void gfx_run_dl(Gfx *dl) {
                     g_drawclass_tri_counts[DRAWCLASS_CHRPROP],
                     g_drawclass_tri_counts[DRAWCLASS_EFFECT],
                     g_drawclass_tri_counts[DRAWCLASS_HUD]);
+            fflush(stderr);
+        }
+        if (trace_drawclass_bbox_enabled && g_frame_count_diag >= trace_drawclass_after_frame) {
+            fprintf(stderr, "[DRAWCLASS-BBOX] frame=%d", g_frame_count_diag);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_UNKNOWN);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_ROOM);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_WEAPON);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_CHRPROP);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_EFFECT);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_HUD);
+            fprintf(stderr, "\n");
             fflush(stderr);
         }
     }
@@ -15771,10 +20187,11 @@ void gfx_run_dl(Gfx *dl) {
  * synchronizes the texture and combiner state directly so that
  * gfx_emit_loaded_triangle sees the correct state when packing the VBO.
  *
- * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are in world-texture-repeat
- * space. The standard VBO packing divides by 32.0 (s10.5 -> float) then by the
- * texture width. GE007_SKY_UV_SCALE defaults to 3.5 so the native sky keeps the
- * original dense cloud repeat instead of stretching into broad bands.
+ * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are already in the repeat
+ * space built by the game from the active environment's CloudRepeat/WaterRepeat.
+ * The native backend applies a small normalization so the generated triangles
+ * keep visible cloud detail without the high-frequency horizon fan produced by
+ * the old over-repeat. GE007_SKY_UV_SCALE remains a diagnostic override.
  *
  * RSP BYPASS NOTE: On N64, sky triangles are raw RDP commands that bypass
  * all RSP processing — no backface culling, no clip rejection, no fog.
@@ -15928,7 +20345,7 @@ static void gfx_draw_sky_triangle_impl(
     static float sky_uv_scale = -1.0f;
     if (sky_uv_scale < 0) {
         const char *env = getenv("GE007_SKY_UV_SCALE");
-        sky_uv_scale = env ? (float)atof(env) : 3.5f;
+        sky_uv_scale = env ? (float)atof(env) : 1.5f;
     }
 
     for (int i = 0; i < 3; i++) {
@@ -16188,11 +20605,6 @@ void gfx_set_pc_vtx_range(void *start, size_t size) {
     pc_vtx_range_end = (uintptr_t)start + size;
 }
 
-/* Extra PC DL regions for heap-allocated display lists (player struct, etc.) */
-#define MAX_EXTRA_PC_DL_REGIONS 16
-static struct { uintptr_t start, end; } s_extra_pc_dl[MAX_EXTRA_PC_DL_REGIONS];
-static int s_extra_pc_dl_count = 0;
-
 void gfx_register_extra_pc_dl(void *addr, size_t size) {
     uintptr_t s = (uintptr_t)addr, e = s + size;
     for (int i = 0; i < s_extra_pc_dl_count; i++) {
@@ -16230,12 +20642,7 @@ void gfx_register_pc_vertex_region(void *addr, size_t size) {
 
 static bool gfx_is_valid_pc_dl(uintptr_t addr) {
     if (pc_gfx_range_start == 0) return true; /* Not configured yet — assume PC */
-    if (addr >= pc_gfx_range_start && addr < pc_gfx_range_end) return true;
-    for (int i = 0; i < s_extra_pc_dl_count; i++) {
-        if (addr >= s_extra_pc_dl[i].start && addr < s_extra_pc_dl[i].end)
-            return true;
-    }
-    return false;
+    return gfx_addr_is_pc_dynamic_data_range(addr, sizeof(Gfx));
 }
 
 /* Check if an address is a static PC display list (in the executable's data segment).

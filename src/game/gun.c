@@ -48,6 +48,15 @@ static int portSkipFpWeaponRender(void)
     return cached;
 }
 
+static int portSkipFpWeaponProjection(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("GE007_SKIP_FP_WEAPON_PROJECTION") != NULL;
+    }
+    return cached;
+}
+
 static int portDisableMuzzleFlash(void)
 {
     static int cached = -1;
@@ -2551,6 +2560,43 @@ static void portStoreTraceNodeBasis(f32 out[3][3], Model *model, ModelNode *node
     }
 }
 
+static f32 portTraceResolveViewmodelFovY(void)
+{
+    f32 world_fovy = getPlayer_c_perspfovy();
+    f32 weapon_fovy;
+
+    if (g_pcViewmodelFov > 0.0f) {
+        f32 base = bondviewGetBaseFovY();
+        f32 zoom_ratio = (base > 0.0f) ? (world_fovy / base) : 1.0f;
+        weapon_fovy = g_pcViewmodelFov * zoom_ratio;
+    } else {
+        weapon_fovy = world_fovy;
+    }
+
+    if (weapon_fovy <= 0.0f) {
+        weapon_fovy = g_ViBackData ? g_ViBackData->fovy : 60.0f;
+    }
+
+    return weapon_fovy;
+}
+
+static void portStoreTraceViewmodelProjection(PortViewmodelTrace *entry)
+{
+    if (entry == NULL) {
+        return;
+    }
+
+    entry->render_proj_fovy = portTraceResolveViewmodelFovY();
+    entry->render_proj_aspect = getPlayer_c_perspaspect();
+    if (entry->render_proj_aspect <= 0.0f) {
+        entry->render_proj_aspect = g_ViBackData ? g_ViBackData->aspect : (320.0f / 240.0f);
+    }
+    entry->render_proj_view[0] = getPlayer_c_screenleft();
+    entry->render_proj_view[1] = getPlayer_c_screentop();
+    entry->render_proj_view[2] = getPlayer_c_screenwidth();
+    entry->render_proj_view[3] = getPlayer_c_screenheight();
+}
+
 void portResetViewmodelTrace(s32 hand, s32 item, s32 visible)
 {
     extern int g_frame_count_diag;
@@ -2655,7 +2701,46 @@ void portUpdateViewmodelTrace(s32 hand, ITEM_IDS item, struct hand *handdata,
     entry->recoil_angle = handdata->field_A84;
     entry->bolt_recoil = handdata->field_A88;
     entry->depth = handdata->field_B64;
+    entry->pose_smooth[0] = portLoadFloatSlot(&handdata->field_930);
+    entry->pose_smooth[1] = portLoadFloatSlot(&handdata->field_934);
+    entry->pose_smooth[2] = portLoadFloatSlot(&handdata->field_938);
+    entry->pose_base[0] = portLoadFloatSlot(&handdata->field_A28);
+    entry->pose_base[1] = (f32)handdata->field_A2C;
+    entry->pose_base[2] = handdata->field_A30;
+    entry->pose_target[0] = handdata->field_A38;
+    entry->pose_target[1] = handdata->field_A3C;
+    entry->pose_target[2] = handdata->field_A40;
+    entry->pose_stats[0] = get_ptr_item_statistics(item)->PosY;
+    entry->pose_stats[1] = get_ptr_item_statistics(item)->PosZ;
+    entry->pose_stats[2] = get_ptr_item_statistics(item)->CrosshairSpeed;
+    entry->pose_accum[0] = portLoadFloatSlot(&handdata->field_954);
+    entry->pose_accum[1] = portLoadFloatSlot(&handdata->field_958);
+    entry->pose_accum[2] = portLoadFloatSlot(&handdata->field_95C);
+    entry->pose_blend_meta[0] = handdata->curblendpos;
+    entry->pose_blend_meta[1] = handdata->sideflag;
+    entry->pose_blend_state[0] = handdata->dampt;
+    entry->pose_blend_state[1] = handdata->blendscale;
+    entry->pose_blend_state[2] = handdata->blendscale1;
+    entry->pose_blend_state[3] = handdata->weapon_theta_displacement;
+    entry->pose_blend_state[4] = handdata->weapon_verta_displacement;
+    for (i = 0; i < 4; i++) {
+        entry->pose_blendpos[i][0] = handdata->blendpos[i].x;
+        entry->pose_blendpos[i][1] = handdata->blendpos[i].y;
+        entry->pose_blendpos[i][2] = handdata->blendpos[i].z;
+    }
     if (g_CurrentPlayer != NULL) {
+        entry->pose_screen[0] = g_CurrentPlayer->field_FFC.x;
+        entry->pose_screen[1] = g_CurrentPlayer->field_FFC.y;
+        entry->pose_screen[2] = g_CurrentPlayer->gun_azimuth_angle;
+        entry->pose_screen[3] = g_CurrentPlayer->gun_azimuth_turning;
+        entry->pose_screen[4] = g_CurrentPlayer->gunposamplitude;
+        entry->pose_player[0] = g_CurrentPlayer->gunposamplitude;
+        entry->pose_player[1] = g_CurrentPlayer->field_107C;
+        entry->pose_player[2] = g_CurrentPlayer->field_1080;
+        entry->pose_player[3] = g_CurrentPlayer->gunsync;
+        entry->pose_player[4] = g_CurrentPlayer->syncchange;
+        entry->pose_player[5] = g_CurrentPlayer->synccount;
+        entry->pose_player[6] = (f32)g_CurrentPlayer->syncoffset;
         entry->raw_hand_item = g_CurrentPlayer->hand_item[hand];
         entry->raw_pending = g_CurrentPlayer->field_2A44[hand];
         entry->raw_invis = g_CurrentPlayer->hand_invisible[hand];
@@ -2668,6 +2753,36 @@ void portUpdateViewmodelTrace(s32 hand, ITEM_IDS item, struct hand *handdata,
         entry->raw_ammo_reserve = get_ammo_count_for_weapon(item);
         entry->raw_mag_size = get_ptr_item_statistics(item)->MagSize;
         entry->raw_flags = get_ptr_item_statistics(item)->BitFlags;
+    }
+
+    if (model != NULL && model->render_pos != NULL) {
+        Mtxf *render_pos = (Mtxf *)model->render_pos;
+        s32 count = modelGetRenderPosCount(model);
+        s32 sample_count = count;
+
+        entry->render_root[0] = render_pos[0].m[3][0];
+        entry->render_root[1] = render_pos[0].m[3][1];
+        entry->render_root[2] = render_pos[0].m[3][2];
+        entry->render_root_diag[0] = render_pos[0].m[0][0];
+        entry->render_root_diag[1] = render_pos[0].m[1][1];
+        entry->render_root_diag[2] = render_pos[0].m[2][2];
+
+        if (sample_count < 0) {
+            sample_count = 0;
+        }
+        if (sample_count > PORT_VIEWMODEL_TRACE_MTX_SAMPLES) {
+            sample_count = PORT_VIEWMODEL_TRACE_MTX_SAMPLES;
+        }
+
+        entry->render_mtx_count = count;
+        entry->render_mtx_sampled = sample_count;
+        portStoreTraceViewmodelProjection(entry);
+
+        for (i = 0; i < sample_count; i++) {
+            entry->render_mtx[i][0] = render_pos[i].m[3][0];
+            entry->render_mtx[i][1] = render_pos[i].m[3][1];
+            entry->render_mtx[i][2] = render_pos[i].m[3][2];
+        }
     }
 
     if (model == NULL || itemheader == NULL) {
@@ -6170,15 +6285,15 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             if (timer_count > 0) {
                 f32 smooth_factor = 0.95f;
                 do {
-                    portStoreFloatSlot(&hp->field_930, blendpos_result.x + smooth_factor * portLoadFloatSlot(&hp->field_930));
-                    portStoreFloatSlot(&hp->field_934, blendpos_result.y + smooth_factor * portLoadFloatSlot(&hp->field_934));
-                    portStoreFloatSlot(&hp->field_938, blendpos_result.z + smooth_factor * portLoadFloatSlot(&hp->field_938));
-                    portStoreFloatSlot(&hp->field_93C, blendlook_result.x + smooth_factor * portLoadFloatSlot(&hp->field_93C));
-                    portStoreFloatSlot(&hp->field_940, blendlook_result.y + smooth_factor * portLoadFloatSlot(&hp->field_940));
-                    hp->field_944 = blendlook_result.z + smooth_factor * hp->field_944;
-                    portStoreFloatSlot(&hp->field_948, blendup_default.x + smooth_factor * portLoadFloatSlot(&hp->field_948));
-                    hp->field_94C = blendup_default.y + smooth_factor * hp->field_94C;
-                    portStoreFloatSlot(&hp->field_950, blendup_default.z + smooth_factor * portLoadFloatSlot(&hp->field_950));
+                    portStoreFloatSlot(&hp->field_954, blendpos_result.x + smooth_factor * portLoadFloatSlot(&hp->field_954));
+                    portStoreFloatSlot(&hp->field_958, blendpos_result.y + smooth_factor * portLoadFloatSlot(&hp->field_958));
+                    portStoreFloatSlot(&hp->field_95C, blendpos_result.z + smooth_factor * portLoadFloatSlot(&hp->field_95C));
+                    portStoreFloatSlot(&hp->field_960, blendlook_result.x + smooth_factor * portLoadFloatSlot(&hp->field_960));
+                    portStoreFloatSlot(&hp->field_964, blendlook_result.y + smooth_factor * portLoadFloatSlot(&hp->field_964));
+                    hp->field_968 = blendlook_result.z + smooth_factor * hp->field_968;
+                    portStoreFloatSlot(&hp->field_96C, blendup_default.x + smooth_factor * portLoadFloatSlot(&hp->field_96C));
+                    hp->field_970 = blendup_default.y + smooth_factor * hp->field_970;
+                    portStoreFloatSlot(&hp->field_974, blendup_default.z + smooth_factor * portLoadFloatSlot(&hp->field_974));
                     j++;
                 } while (j < timer_count);
             }
@@ -6187,40 +6302,40 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         {
             f32 scale = 0.050000012f;
 #ifdef NATIVE_PORT
-            /* Sanitize smooth results — NaN can propagate from uninitialized blend arrays.
-             * Decomp convention: field_930..field_950 are declared as s32 in bondview.h
-             * but used as floats throughout gun.c via *(f32 *)& type-pun casts. */
-            if (portIsNanF(portLoadFloatSlot(&hp->field_930))) portStoreFloatSlot(&hp->field_930, 0.0f);
-            if (portIsNanF(portLoadFloatSlot(&hp->field_934))) portStoreFloatSlot(&hp->field_934, 0.0f);
-            if (portIsNanF(portLoadFloatSlot(&hp->field_938))) portStoreFloatSlot(&hp->field_938, 0.0f);
-            if (portIsNanF(portLoadFloatSlot(&hp->field_93C))) portStoreFloatSlot(&hp->field_93C, 0.0f);
-            if (portIsNanF(portLoadFloatSlot(&hp->field_940))) portStoreFloatSlot(&hp->field_940, 0.0f);
-            if (portIsNanF(hp->field_944)) hp->field_944 = 0.0f;
-            if (portIsNanF(portLoadFloatSlot(&hp->field_948))) portStoreFloatSlot(&hp->field_948, 0.0f);
-            if (portIsNanF(hp->field_94C)) hp->field_94C = 0.0f;
-            if (portIsNanF(portLoadFloatSlot(&hp->field_950))) portStoreFloatSlot(&hp->field_950, 0.0f);
+            /* Sanitize ROM-layout blend accumulators before deriving the scaled
+             * viewmodel offsets. These slots are declared as s32 in bondview.h
+             * but are float-punned by the original gun code. */
+            if (portIsNanF(portLoadFloatSlot(&hp->field_954))) portStoreFloatSlot(&hp->field_954, 0.0f);
+            if (portIsNanF(portLoadFloatSlot(&hp->field_958))) portStoreFloatSlot(&hp->field_958, 0.0f);
+            if (portIsNanF(portLoadFloatSlot(&hp->field_95C))) portStoreFloatSlot(&hp->field_95C, 0.0f);
+            if (portIsNanF(portLoadFloatSlot(&hp->field_960))) portStoreFloatSlot(&hp->field_960, 0.0f);
+            if (portIsNanF(portLoadFloatSlot(&hp->field_964))) portStoreFloatSlot(&hp->field_964, 0.0f);
+            if (portIsNanF(hp->field_968)) hp->field_968 = 0.0f;
+            if (portIsNanF(portLoadFloatSlot(&hp->field_96C))) portStoreFloatSlot(&hp->field_96C, 0.0f);
+            if (portIsNanF(hp->field_970)) hp->field_970 = 0.0f;
+            if (portIsNanF(portLoadFloatSlot(&hp->field_974))) portStoreFloatSlot(&hp->field_974, 0.0f);
 #endif
-            portStoreFloatSlot(&hp->field_954, portLoadFloatSlot(&hp->field_930) * scale);
-            portStoreFloatSlot(&hp->field_958, portLoadFloatSlot(&hp->field_934) * scale);
-            portStoreFloatSlot(&hp->field_95C, portLoadFloatSlot(&hp->field_938) * scale);
-            portStoreFloatSlot(&hp->field_960, portLoadFloatSlot(&hp->field_93C) * scale);
-            portStoreFloatSlot(&hp->field_964, portLoadFloatSlot(&hp->field_940) * scale);
-            hp->field_968 = hp->field_944 * scale;
-            portStoreFloatSlot(&hp->field_96C, portLoadFloatSlot(&hp->field_948) * scale);
-            hp->field_970 = hp->field_94C * scale;
-            portStoreFloatSlot(&hp->field_974, portLoadFloatSlot(&hp->field_950) * scale);
+            portStoreFloatSlot(&hp->field_930, portLoadFloatSlot(&hp->field_954) * scale);
+            portStoreFloatSlot(&hp->field_934, portLoadFloatSlot(&hp->field_958) * scale);
+            portStoreFloatSlot(&hp->field_938, portLoadFloatSlot(&hp->field_95C) * scale);
+            portStoreFloatSlot(&hp->field_93C, portLoadFloatSlot(&hp->field_960) * scale);
+            portStoreFloatSlot(&hp->field_940, portLoadFloatSlot(&hp->field_964) * scale);
+            hp->field_944 = hp->field_968 * scale;
+            portStoreFloatSlot(&hp->field_948, portLoadFloatSlot(&hp->field_96C) * scale);
+            hp->field_94C = hp->field_970 * scale;
+            portStoreFloatSlot(&hp->field_950, portLoadFloatSlot(&hp->field_974) * scale);
         }
 
         if (hand == GUNRIGHT) {
             f32 pos_x = sub_GAME_7F05DCE8(GUNRIGHT);
-            gun_pos.x = pos_x + portLoadFloatSlot(&hp->field_954) + portLoadFloatSlot(&hp->field_A28);
+            gun_pos.x = pos_x + portLoadFloatSlot(&hp->field_930) + portLoadFloatSlot(&hp->field_A28);
         } else {
             f32 pos_x = sub_GAME_7F05DCE8(GUNLEFT);
-            gun_pos.x = pos_x + portLoadFloatSlot(&hp->field_954) - portLoadFloatSlot(&hp->field_A28);
+            gun_pos.x = pos_x + portLoadFloatSlot(&hp->field_930) - portLoadFloatSlot(&hp->field_A28);
         }
 
-        gun_pos.y = stats->PosY + portLoadFloatSlot(&hp->field_958) + hp->field_A2C;
-        gun_pos.z = stats->PosZ + portLoadFloatSlot(&hp->field_95C) + hp->field_A30;
+        gun_pos.y = stats->PosY + portLoadFloatSlot(&hp->field_934) + hp->field_A2C;
+        gun_pos.z = stats->PosZ + portLoadFloatSlot(&hp->field_938) + hp->field_A30;
 
         if (item == ITEM_ROCKETLAUNCH || item == ITEM_TRIGGER || item == ITEM_WATCHLASER) {
             f32 duck = g_CurrentPlayer->ducking_height_offset;
@@ -6366,8 +6481,8 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         {
             f32 zero = 0.0f;
             matrix_4x4_7F059908(&mtx_c, zero, zero, zero,
-                portLoadFloatSlot(&hp->field_960), portLoadFloatSlot(&hp->field_964), hp->field_968,
-                portLoadFloatSlot(&hp->field_96C), hp->field_970, portLoadFloatSlot(&hp->field_974));
+                portLoadFloatSlot(&hp->field_93C), portLoadFloatSlot(&hp->field_940), hp->field_944,
+                portLoadFloatSlot(&hp->field_948), hp->field_94C, portLoadFloatSlot(&hp->field_950));
             matrix_4x4_multiply_homogeneous_in_place(&mtx_c, &mtx_b);
         }
 
@@ -6471,7 +6586,7 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
                        "sway_y=%.2f disp_A2C=%.1f disp_A30=%.1f\n",
                        hand, item, gun_pos.x, gun_pos.y, gun_pos.z,
                        stats->PosY, stats->PosZ,
-                       portLoadFloatSlot(&hp->field_958), (f32)hp->field_A2C, hp->field_A30);
+                       portLoadFloatSlot(&hp->field_934), (f32)hp->field_A2C, hp->field_A30);
                 vm_diag++;
             }
         }
@@ -14809,10 +14924,12 @@ void sub_GAME_7F062BE4(Gfx **arg0) {
                 guPerspectiveF((f32 (*)[4])&s_weaponProjF, &wpn_persp_norm,
                     weapon_fovy, weapon_aspect,
                     1.0f, 300.0f, 1.0f);
-                gSPMatrix(gdl, osVirtualToPhysical((void *)&s_weaponProjF),
-                    G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION
-                    | G_MTX_FLOAT_PORT);
-                gdl++;
+                if (!portSkipFpWeaponProjection()) {
+                    gSPMatrix(gdl, osVirtualToPhysical((void *)&s_weaponProjF),
+                        G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION
+                        | G_MTX_FLOAT_PORT);
+                    gdl++;
+                }
             }
 #else
             handmodel = (Model *)&hand->field_B68;
@@ -17987,7 +18104,6 @@ check_state:
         case ITEM_FLAREPISTOL - 1:
         case ITEM_PITONGUN - 1:
         case ITEM_PLASTIQUE - 1:
-        case ITEM_CAMERA - 1:
             hand_ptr->when_detonating_mines_is_0 = 2;
             hand_ptr->field_890 = 0;
             hand_ptr->field_88C = 0;
@@ -18080,16 +18196,7 @@ check_state:
             hand_ptr->field_92C = 0;
             break;
 
-        default: // collectible / unknown
-            hand_ptr->when_detonating_mines_is_0 = 0;
-            hand_ptr->field_890 = 0;
-            hand_ptr->field_88C = 0;
-            hand_ptr->field_92C = 0;
-            break;
-        }
-
-        // Camera special handling within state 1
-        if (weapon_id == ITEM_CAMERA) {
+        case ITEM_CAMERA - 1:
             if (hand_ptr->field_88C == 0) {
                 currentPlayerSetFadeColour(0, 0, 0, 1.0f);
                 hand_ptr->field_92C = 0;
@@ -18099,6 +18206,14 @@ check_state:
                 hand_ptr->field_890 = 0;
                 hand_ptr->field_88C = 0;
             }
+            break;
+
+        default: // collectible / unknown
+            hand_ptr->when_detonating_mines_is_0 = 0;
+            hand_ptr->field_890 = 0;
+            hand_ptr->field_88C = 0;
+            hand_ptr->field_92C = 0;
+            break;
         }
     }
 
@@ -28485,6 +28600,200 @@ void sub_GAME_7F067B4C(coord3d* pos)
     g_CurrentPlayer->hands[GUNLEFT].item_related.z = g_CurrentPlayer->hands[GUNRIGHT].item_related.z = pos->z;
 }
 
+#ifdef NATIVE_PORT
+#define AUTO_CROSSHAIR_EVENTS_MAX 128
+
+typedef struct AutoCrosshairEvent {
+    int start;
+    int end;
+    f32 x;
+    f32 y;
+} AutoCrosshairEvent;
+
+static AutoCrosshairEvent s_autoCrosshairEvents[AUTO_CROSSHAIR_EVENTS_MAX];
+static int s_autoCrosshairInitialized = 0;
+static int s_autoCrosshairCount = 0;
+
+static void gunAddAutoCrosshairEvent(int start, int end, f32 x, f32 y)
+{
+    AutoCrosshairEvent *event;
+
+    if (start <= 0 || end < start || s_autoCrosshairCount >= AUTO_CROSSHAIR_EVENTS_MAX) {
+        return;
+    }
+
+    event = &s_autoCrosshairEvents[s_autoCrosshairCount++];
+    event->start = start;
+    event->end = end;
+    event->x = x;
+    event->y = y;
+}
+
+static int gunParseAutoCrosshairSpec(const char *spec, const char **next_spec)
+{
+    char *endptr;
+    long start;
+    long end;
+    f32 x;
+    f32 y;
+
+    start = strtol(spec, &endptr, 10);
+    if (endptr == spec || start <= 0) {
+        return 0;
+    }
+
+    end = start;
+    if (*endptr == '-') {
+        long parsed_end;
+        char *range_endptr;
+
+        parsed_end = strtol(endptr + 1, &range_endptr, 10);
+        if (range_endptr == endptr + 1 || parsed_end < start || *range_endptr != ':') {
+            return 0;
+        }
+
+        end = parsed_end;
+        spec = range_endptr + 1;
+    } else if (*endptr == ':') {
+        const char *payload = endptr + 1;
+        const char *cursor;
+        int colon_count = 0;
+
+        for (cursor = payload; *cursor != '\0' && *cursor != ',' && *cursor != ';' &&
+                *cursor != ' ' && *cursor != '\t'; cursor++) {
+            if (*cursor == ':') {
+                colon_count++;
+            }
+        }
+
+        spec = payload;
+        if (colon_count >= 2) {
+            long length;
+            char *length_endptr;
+
+            length = strtol(payload, &length_endptr, 10);
+            if (length_endptr == payload || length <= 0 || *length_endptr != ':') {
+                return 0;
+            }
+
+            end = start + length - 1;
+            spec = length_endptr + 1;
+        }
+    } else {
+        return 0;
+    }
+
+    x = strtof(spec, &endptr);
+    if (endptr == spec || *endptr != ':') {
+        return 0;
+    }
+
+    spec = endptr + 1;
+    y = strtof(spec, &endptr);
+    if (endptr == spec) {
+        return 0;
+    }
+
+    if (*endptr != '\0' && *endptr != ',' && *endptr != ';' && *endptr != ' ' && *endptr != '\t') {
+        return 0;
+    }
+
+    gunAddAutoCrosshairEvent((int)start, (int)end, x, y);
+    if (next_spec != NULL) {
+        *next_spec = endptr;
+    }
+
+    return 1;
+}
+
+static void gunInitAutoCrosshairEvents(void)
+{
+    const char *script_env;
+
+    if (s_autoCrosshairInitialized) {
+        return;
+    }
+
+    s_autoCrosshairInitialized = 1;
+    memset(s_autoCrosshairEvents, 0, sizeof(s_autoCrosshairEvents));
+
+    script_env = getenv("GE007_AUTO_CROSSHAIR_SCRIPT");
+    if (script_env != NULL && *script_env != '\0' &&
+        !(script_env[0] == '0' && script_env[1] == '\0')) {
+        while (*script_env != '\0' && s_autoCrosshairCount < AUTO_CROSSHAIR_EVENTS_MAX) {
+            while (*script_env == ' ' || *script_env == '\t' || *script_env == ',' || *script_env == ';') {
+                script_env++;
+            }
+
+            if (*script_env == '\0') {
+                break;
+            }
+
+            if (!gunParseAutoCrosshairSpec(script_env, &script_env)) {
+                break;
+            }
+        }
+    }
+
+    if (s_autoCrosshairCount == 0) {
+        const char *frame_env = getenv("GE007_AUTO_CROSSHAIR_FRAME");
+        const char *len_env = getenv("GE007_AUTO_CROSSHAIR_LEN");
+        const char *x_env = getenv("GE007_AUTO_CROSSHAIR_X");
+        const char *y_env = getenv("GE007_AUTO_CROSSHAIR_Y");
+
+        if (frame_env != NULL && *frame_env != '\0' &&
+            x_env != NULL && *x_env != '\0' &&
+            y_env != NULL && *y_env != '\0') {
+            long frame = strtol(frame_env, NULL, 10);
+            long length = 1;
+
+            if (len_env != NULL && *len_env != '\0') {
+                length = strtol(len_env, NULL, 10);
+                if (length <= 0) {
+                    length = 1;
+                }
+            }
+
+            gunAddAutoCrosshairEvent((int)frame, (int)(frame + length - 1),
+                    strtof(x_env, NULL), strtof(y_env, NULL));
+        }
+    }
+}
+
+static void gunMaybeApplyAutoCrosshair(void)
+{
+    extern int g_deterministic;
+    extern int g_frame_count_diag;
+    int i;
+
+    gunInitAutoCrosshairEvents();
+
+    if (!g_deterministic || s_autoCrosshairCount == 0 || g_CurrentPlayer == NULL) {
+        return;
+    }
+
+    for (i = 0; i < s_autoCrosshairCount; i++) {
+        AutoCrosshairEvent *event = &s_autoCrosshairEvents[i];
+
+        if (g_frame_count_diag < event->start || g_frame_count_diag > event->end) {
+            continue;
+        }
+
+        g_CurrentPlayer->crosshair_angle.x = event->x;
+        g_CurrentPlayer->crosshair_angle.y = event->y;
+        g_CurrentPlayer->field_FFC.x = event->x;
+        g_CurrentPlayer->field_FFC.y = event->y;
+
+        {
+            coord3d coords;
+            transformAndNormalizeByLength2Dto3D(&g_CurrentPlayer->field_FFC, &coords, 1000.0f);
+            sub_GAME_7F067AB4(&coords);
+        }
+        return;
+    }
+}
+#endif
+
 
 void caclulate_gun_crosshair_position_rotation(f32 turn_x, f32 turn_y, f32 guncrossdamp, f32 gunaimdamp)
 {
@@ -28554,6 +28863,9 @@ void caclulate_gun_crosshair_position_rotation(f32 turn_x, f32 turn_y, f32 guncr
 
     transformAndNormalizeByLength2Dto3D(&g_CurrentPlayer->field_FFC, &coords, 1000.0f);
     sub_GAME_7F067AB4(&coords);
+#ifdef NATIVE_PORT
+    gunMaybeApplyAutoCrosshair();
+#endif
 }
 
 
@@ -28627,6 +28939,9 @@ void sub_GAME_7F06802C(void)
 
     transformAndNormalizeByLength2Dto3D((coord2d *) &g_CurrentPlayer->field_FFC, &coord, 1000.0f);
     sub_GAME_7F067AB4(&coord);
+#ifdef NATIVE_PORT
+    gunMaybeApplyAutoCrosshair();
+#endif
 }
 
 
@@ -28649,6 +28964,9 @@ void sub_GAME_7F0680D4(coord3d * coord)
     g_CurrentPlayer->field_FFC.y = g_CurrentPlayer->crosshair_angle.y;
 
     sub_GAME_7F067AB4(&tmp);
+#ifdef NATIVE_PORT
+    gunMaybeApplyAutoCrosshair();
+#endif
 }
 
 
@@ -28698,6 +29016,7 @@ static void gunInitAutoAimDirEvents(void)
         while (*script_env != '\0' && s_autoAimDirCount < AUTO_AIM_DIR_EVENTS_MAX) {
             char *endptr;
             long frame;
+            long frame_end;
             float x;
             float y;
             float z;
@@ -28711,7 +29030,19 @@ static void gunInitAutoAimDirEvents(void)
             }
 
             frame = strtol(script_env, &endptr, 10);
-            if (endptr == script_env || *endptr != ':') {
+            if (endptr == script_env) {
+                break;
+            }
+            frame_end = frame;
+            if (*endptr == '-') {
+                char *range_endptr;
+                frame_end = strtol(endptr + 1, &range_endptr, 10);
+                if (range_endptr == endptr + 1 || frame_end < frame) {
+                    break;
+                }
+                endptr = range_endptr;
+            }
+            if (*endptr != ':') {
                 break;
             }
 
@@ -28735,11 +29066,14 @@ static void gunInitAutoAimDirEvents(void)
 
             script_env = endptr;
 
-            s_autoAimDirEvents[s_autoAimDirCount].frame = (int)frame;
-            s_autoAimDirEvents[s_autoAimDirCount].dir.x = x;
-            s_autoAimDirEvents[s_autoAimDirCount].dir.y = y;
-            s_autoAimDirEvents[s_autoAimDirCount].dir.z = z;
-            s_autoAimDirCount++;
+            while (frame <= frame_end && s_autoAimDirCount < AUTO_AIM_DIR_EVENTS_MAX) {
+                s_autoAimDirEvents[s_autoAimDirCount].frame = (int)frame;
+                s_autoAimDirEvents[s_autoAimDirCount].dir.x = x;
+                s_autoAimDirEvents[s_autoAimDirCount].dir.y = y;
+                s_autoAimDirEvents[s_autoAimDirCount].dir.z = z;
+                s_autoAimDirCount++;
+                frame++;
+            }
         }
     }
 
@@ -28826,6 +29160,10 @@ void bullet_path_from_screen_center(coord3d* arg0, coord3d* result, enum GUNHAND
             inaccuracy *= adsGetProfile(getCurrentPlayerWeaponId(arg2))->spread_mult;
         }
     }
+#endif
+
+#ifdef NATIVE_PORT
+    gunMaybeApplyAutoCrosshair();
 #endif
 
     scaledspread = (120.0f * inaccuracy) / viGetFovY();

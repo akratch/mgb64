@@ -28,6 +28,7 @@
 #include "game/lvl.h"
 #include "game/objecthandler.h"
 #include "game/player.h"
+#include "game/watch.h"
 #include "game/bondview_r.h"
 
 extern void fileCheckSaveStageDifficultyTime(save_data *folder,
@@ -46,6 +47,7 @@ extern void maybe_detonate_object(ObjectRecord *obj, f32 damage, coord3d *pos, I
 extern s32 objGetDestroyedLevel(ObjectRecord *obj);
 extern PadRecord *dword_CODE_bss_800799F8;
 extern CutsceneRecord *gBondViewCutscene;
+extern u64 g_randomSeed;
 
 /* ===== Globals ===== */
 u64 osClockRate = 46875000; /* N64 CPU counter rate (62.5 MHz * 3/4) */
@@ -715,6 +717,18 @@ typedef struct PcScriptedChrToPadEvent {
     int applied;
 } PcScriptedChrToPadEvent;
 
+typedef struct PcScriptedForceChrEvent {
+    int frame;
+    int chrnum;
+    float x;
+    float y;
+    float z;
+    float yaw_deg;
+    int pad;
+    int stop;
+    int applied;
+} PcScriptedForceChrEvent;
+
 typedef struct PcScriptedDamageChrEvent {
     int frame;
     int chrnum;
@@ -728,6 +742,12 @@ typedef struct PcScriptedObjectTagEvent {
     float amount;
     int applied;
 } PcScriptedObjectTagEvent;
+
+typedef struct PcScriptedStageFlagEvent {
+    int frame;
+    u32 flags;
+    int applied;
+} PcScriptedStageFlagEvent;
 
 typedef struct PcScriptedAttackRollChrEvent {
     int frame;
@@ -766,6 +786,19 @@ typedef struct PcScriptedFaceCoordEvent {
     float pitch_offset_deg;
     int applied;
 } PcScriptedFaceCoordEvent;
+
+typedef struct PcScriptedForcePlayerEvent {
+    int frame;
+    float x;
+    float y;
+    float z;
+    float yaw_deg;
+    float pitch_deg;
+    int has_camera_height;
+    float camera_height;
+    int pad;
+    int applied;
+} PcScriptedForcePlayerEvent;
 
 typedef struct PcScriptedEquipEvent {
     int frame;
@@ -860,6 +893,9 @@ static PcScriptedSetChrFlagEvent s_autoSetChrFlagEvents[PC_MAX_SCRIPTED_WARP_EVE
 static int s_autoChrToPadInitialized = 0;
 static int s_autoChrToPadCount = 0;
 static PcScriptedChrToPadEvent s_autoChrToPadEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
+static int s_autoForceChrInitialized = 0;
+static int s_autoForceChrCount = 0;
+static PcScriptedForceChrEvent s_autoForceChrEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
 static int s_autoDamageChrInitialized = 0;
 static int s_autoDamageChrCount = 0;
 static PcScriptedDamageChrEvent s_autoDamageChrEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
@@ -869,6 +905,12 @@ static PcScriptedObjectTagEvent s_autoCollectTagEvents[PC_MAX_SCRIPTED_WARP_EVEN
 static int s_autoDamageTagInitialized = 0;
 static int s_autoDamageTagCount = 0;
 static PcScriptedObjectTagEvent s_autoDamageTagEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
+static int s_autoSetStageFlagsInitialized = 0;
+static int s_autoSetStageFlagsCount = 0;
+static PcScriptedStageFlagEvent s_autoSetStageFlagsEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
+static int s_autoUnsetStageFlagsInitialized = 0;
+static int s_autoUnsetStageFlagsCount = 0;
+static PcScriptedStageFlagEvent s_autoUnsetStageFlagsEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
 static int s_autoAttackRollChrInitialized = 0;
 static int s_autoAttackRollChrCount = 0;
 static PcScriptedAttackRollChrEvent s_autoAttackRollChrEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
@@ -884,6 +926,9 @@ static PcScriptedFaceChrEvent s_autoFaceChrEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
 static int s_autoFaceCoordInitialized = 0;
 static int s_autoFaceCoordCount = 0;
 static PcScriptedFaceCoordEvent s_autoFaceCoordEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
+static int s_autoForcePlayerInitialized = 0;
+static int s_autoForcePlayerCount = 0;
+static PcScriptedForcePlayerEvent s_autoForcePlayerEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
 static int s_autoTankFaceCoordInitialized = 0;
 static int s_autoTankFaceCoordCount = 0;
 static PcScriptedFaceCoordEvent s_autoTankFaceCoordEvents[PC_MAX_SCRIPTED_WARP_EVENTS];
@@ -939,6 +984,9 @@ static int s_autoExitOnTitle = 0;
 static int s_autoExitOnTitleDelay = 2;
 static int s_autoExitOnTitleSeenFrame = -1;
 static int s_autoExitOnTitleApplied = 0;
+static int s_autoExitFrameInitialized = 0;
+static int s_autoExitFrame = -1;
+static int s_autoExitFrameApplied = 0;
 static int s_autoUnlockSoloInitialized = 0;
 static int s_autoUnlockSoloDone = 0;
 static char s_autoUnlockSoloSpec[256];
@@ -968,9 +1016,29 @@ typedef struct PcScriptedSfxEvent_s {
     int applied;
 } PcScriptedSfxEvent;
 
+enum { PC_MAX_SCRIPTED_RNG_SEED_EVENTS = 64 };
+typedef struct PcScriptedRngSeedEvent_s {
+    int frame;
+    u64 seed;
+    int applied;
+} PcScriptedRngSeedEvent;
+
+enum { PC_MAX_SCRIPTED_AUTOAIM_EVENTS = 32 };
+typedef struct PcScriptedAutoAimEvent_s {
+    int frame;
+    int enabled;
+    int applied;
+} PcScriptedAutoAimEvent;
+
 static int s_autoPlaySfxInitialized = 0;
 static int s_autoPlaySfxCount = 0;
 static PcScriptedSfxEvent s_autoPlaySfxEvents[PC_MAX_SCRIPTED_SFX_EVENTS];
+static int s_autoRngSeedInitialized = 0;
+static int s_autoRngSeedCount = 0;
+static PcScriptedRngSeedEvent s_autoRngSeedEvents[PC_MAX_SCRIPTED_RNG_SEED_EVENTS];
+static int s_autoAutoAimInitialized = 0;
+static int s_autoAutoAimCount = 0;
+static PcScriptedAutoAimEvent s_autoAutoAimEvents[PC_MAX_SCRIPTED_AUTOAIM_EVENTS];
 static ALSoundState *s_autoPlaySfxLastState = NULL;
 static int s_autoStopSfxInitialized = 0;
 static int s_autoStopSfxFrame = -1;
@@ -1006,6 +1074,199 @@ static int pcGetScriptedLookStep(void)
     return look_step;
 }
 
+static void pcAddScriptedRngSeedEvent(int frame, u64 seed)
+{
+    if (frame < 0 || s_autoRngSeedCount >= PC_MAX_SCRIPTED_RNG_SEED_EVENTS) {
+        return;
+    }
+
+    s_autoRngSeedEvents[s_autoRngSeedCount].frame = frame;
+    s_autoRngSeedEvents[s_autoRngSeedCount].seed = seed;
+    s_autoRngSeedEvents[s_autoRngSeedCount].applied = 0;
+    s_autoRngSeedCount++;
+}
+
+static void pcParseScriptedRngSeedEvents(const char *script)
+{
+    while (script != NULL && *script != '\0' &&
+           s_autoRngSeedCount < PC_MAX_SCRIPTED_RNG_SEED_EVENTS) {
+        char *endptr;
+        long frame;
+        long frame_end;
+        unsigned long long seed;
+
+        while (*script == ' ' || *script == '\t' ||
+               *script == ',' || *script == ';') {
+            script++;
+        }
+
+        if (*script == '\0') {
+            break;
+        }
+
+        frame = strtol(script, &endptr, 10);
+        if (endptr == script || *endptr != ':') {
+            break;
+        }
+
+        script = endptr + 1;
+        seed = strtoull(script, &endptr, 0);
+        if (endptr == script) {
+            break;
+        }
+
+        pcAddScriptedRngSeedEvent((int)frame, (u64)seed);
+        script = endptr;
+    }
+}
+
+static void pcMaybeApplyScriptedRngSeed(int input_frame)
+{
+    int i;
+
+    if (!s_autoRngSeedInitialized) {
+        const char *script_env;
+        const char *frame_env;
+        const char *seed_env;
+
+        s_autoRngSeedInitialized = 1;
+        memset(s_autoRngSeedEvents, 0, sizeof(s_autoRngSeedEvents));
+
+        script_env = getenv("GE007_AUTO_RNG_SEED_SCRIPT");
+        pcParseScriptedRngSeedEvents(script_env);
+
+        frame_env = getenv("GE007_AUTO_RNG_SEED_FRAME");
+        seed_env = getenv("GE007_AUTO_RNG_SEED");
+        if (s_autoRngSeedCount == 0 &&
+            frame_env != NULL && *frame_env != '\0' &&
+            seed_env != NULL && *seed_env != '\0') {
+            char *frame_end = NULL;
+            char *seed_end = NULL;
+            long frame = strtol(frame_env, &frame_end, 10);
+            unsigned long long seed = strtoull(seed_env, &seed_end, 0);
+
+            if (frame_end != frame_env && *frame_end == '\0' &&
+                seed_end != seed_env && *seed_end == '\0') {
+                pcAddScriptedRngSeedEvent((int)frame, (u64)seed);
+            }
+        }
+    }
+
+    for (i = 0; i < s_autoRngSeedCount; i++) {
+        if (s_autoRngSeedEvents[i].applied ||
+            input_frame != s_autoRngSeedEvents[i].frame) {
+            continue;
+        }
+
+        g_randomSeed = s_autoRngSeedEvents[i].seed;
+        s_autoRngSeedEvents[i].applied = 1;
+        fprintf(stderr,
+                "[AUTO_RNG_SEED] frame=%d seed=0x%016llX\n",
+                input_frame,
+                (unsigned long long)g_randomSeed);
+    }
+}
+
+static void pcAddScriptedAutoAimEvent(int frame, int enabled)
+{
+    if (frame < 0 || s_autoAutoAimCount >= PC_MAX_SCRIPTED_AUTOAIM_EVENTS) {
+        return;
+    }
+
+    s_autoAutoAimEvents[s_autoAutoAimCount].frame = frame;
+    s_autoAutoAimEvents[s_autoAutoAimCount].enabled = enabled ? 1 : 0;
+    s_autoAutoAimEvents[s_autoAutoAimCount].applied = 0;
+    s_autoAutoAimCount++;
+}
+
+static void pcParseScriptedAutoAimEvents(const char *script)
+{
+    while (script != NULL && *script != '\0' &&
+           s_autoAutoAimCount < PC_MAX_SCRIPTED_AUTOAIM_EVENTS) {
+        char *endptr;
+        long frame;
+        long enabled;
+
+        while (*script == ' ' || *script == '\t' ||
+               *script == ',' || *script == ';') {
+            script++;
+        }
+
+        if (*script == '\0') {
+            break;
+        }
+
+        frame = strtol(script, &endptr, 10);
+        if (endptr == script || *endptr != ':') {
+            break;
+        }
+
+        script = endptr + 1;
+        enabled = strtol(script, &endptr, 0);
+        if (endptr == script) {
+            break;
+        }
+
+        pcAddScriptedAutoAimEvent((int)frame, enabled != 0);
+        script = endptr;
+    }
+}
+
+static void pcMaybeApplyScriptedAutoAim(int input_frame)
+{
+    int i;
+
+    if (!s_autoAutoAimInitialized) {
+        const char *script_env;
+        const char *frame_env;
+        const char *enabled_env;
+
+        s_autoAutoAimInitialized = 1;
+        memset(s_autoAutoAimEvents, 0, sizeof(s_autoAutoAimEvents));
+
+        script_env = getenv("GE007_AUTO_AUTOAIM_SCRIPT");
+        pcParseScriptedAutoAimEvents(script_env);
+
+        frame_env = getenv("GE007_AUTO_AUTOAIM_FRAME");
+        enabled_env = getenv("GE007_AUTO_AUTOAIM");
+        if (s_autoAutoAimCount == 0 &&
+            frame_env != NULL && *frame_env != '\0' &&
+            enabled_env != NULL && *enabled_env != '\0') {
+            char *frame_end = NULL;
+            char *enabled_end = NULL;
+            long frame = strtol(frame_env, &frame_end, 10);
+            long enabled = strtol(enabled_env, &enabled_end, 0);
+
+            if (frame_end != frame_env && *frame_end == '\0' &&
+                enabled_end != enabled_env && *enabled_end == '\0') {
+                pcAddScriptedAutoAimEvent((int)frame, enabled != 0);
+            }
+        }
+    }
+
+    for (i = 0; i < s_autoAutoAimCount; i++) {
+        if (s_autoAutoAimEvents[i].applied ||
+            input_frame != s_autoAutoAimEvents[i].frame) {
+            continue;
+        }
+
+        cur_player_set_autoaim((u32)s_autoAutoAimEvents[i].enabled);
+        if (g_CurrentPlayer != NULL) {
+            set_BONDdata_autoaim_x(s_autoAutoAimEvents[i].enabled);
+            set_BONDdata_autoaim_y(s_autoAutoAimEvents[i].enabled);
+            g_CurrentPlayer->autoaim_target_x = NULL;
+            g_CurrentPlayer->autoaim_target_y = NULL;
+            g_CurrentPlayer->autoaimx = 0.0f;
+            g_CurrentPlayer->autoaimy = 0.0f;
+        }
+        s_autoAutoAimEvents[i].applied = 1;
+        fprintf(stderr,
+                "[AUTO_AUTOAIM] frame=%d enabled=%d\n",
+                input_frame,
+                s_autoAutoAimEvents[i].enabled);
+    }
+}
+
 static float pcWrapYawDegrees(float yaw)
 {
     while (yaw < 0.0f) {
@@ -1029,6 +1290,14 @@ static float pcSignedAtan2f(float y, float x)
 
     return angle;
 }
+
+#if defined(VERSION_EU)
+#define PC_SCRIPTED_FIELD_6C_FACTOR 0.20039999485f
+#define PC_SCRIPTED_FIELD_3B8_FACTOR 0.118799984455f
+#else
+#define PC_SCRIPTED_FIELD_6C_FACTOR 0.170000016689f
+#define PC_SCRIPTED_FIELD_3B8_FACTOR 0.100000023842f
+#endif
 
 static void pcInitScriptedWarp(void)
 {
@@ -2025,6 +2294,232 @@ static void pcMaybeApplyScriptedChrToPad(int input_frame)
     }
 }
 
+static void pcParseScriptedForceChrEvents(const char *script_env)
+{
+    if (script_env == NULL || *script_env == '\0' ||
+        (script_env[0] == '0' && script_env[1] == '\0')) {
+        return;
+    }
+
+    while (*script_env != '\0' && s_autoForceChrCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+        char *endptr;
+        long frame;
+        long frame_end;
+        long chrnum;
+        float x;
+        float y;
+        float z;
+        float yaw_deg;
+        int pad = -1;
+        int stop = 0;
+
+        while (*script_env == ' ' || *script_env == '\t' ||
+               *script_env == ',' || *script_env == ';') {
+            script_env++;
+        }
+
+        if (*script_env == '\0') {
+            break;
+        }
+
+        frame = strtol(script_env, &endptr, 10);
+        if (endptr == script_env) {
+            break;
+        }
+
+        frame_end = frame;
+        script_env = endptr;
+
+        if (*script_env == '-') {
+            script_env++;
+            frame_end = strtol(script_env, &endptr, 10);
+            if (endptr == script_env) {
+                break;
+            }
+            script_env = endptr;
+        }
+
+        if (*script_env != ':') {
+            break;
+        }
+
+        script_env++;
+        chrnum = strtol(script_env, &endptr, 10);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        x = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        y = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        z = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        yaw_deg = strtof(script_env, &endptr);
+        if (endptr == script_env) {
+            break;
+        }
+
+        script_env = endptr;
+
+        if (*script_env == ':') {
+            long pad_value;
+
+            script_env++;
+            pad_value = strtol(script_env, &endptr, 10);
+            if (endptr == script_env) {
+                break;
+            }
+            pad = (int)pad_value;
+            script_env = endptr;
+        }
+
+        if (*script_env == ':') {
+            long stop_value;
+
+            script_env++;
+            stop_value = strtol(script_env, &endptr, 10);
+            if (endptr == script_env) {
+                break;
+            }
+            stop = stop_value != 0;
+            script_env = endptr;
+        }
+
+        if (frame_end < frame) {
+            long temp = frame;
+            frame = frame_end;
+            frame_end = temp;
+        }
+
+        while (frame <= frame_end && s_autoForceChrCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+            s_autoForceChrEvents[s_autoForceChrCount].frame = (int)frame;
+            s_autoForceChrEvents[s_autoForceChrCount].chrnum = (int)chrnum;
+            s_autoForceChrEvents[s_autoForceChrCount].x = x;
+            s_autoForceChrEvents[s_autoForceChrCount].y = y;
+            s_autoForceChrEvents[s_autoForceChrCount].z = z;
+            s_autoForceChrEvents[s_autoForceChrCount].yaw_deg = yaw_deg;
+            s_autoForceChrEvents[s_autoForceChrCount].pad = pad;
+            s_autoForceChrEvents[s_autoForceChrCount].stop = stop;
+            s_autoForceChrEvents[s_autoForceChrCount].applied = 0;
+            s_autoForceChrCount++;
+            frame++;
+        }
+    }
+}
+
+static void pcInitScriptedForceChr(void)
+{
+    if (s_autoForceChrInitialized) {
+        return;
+    }
+
+    s_autoForceChrInitialized = 1;
+    memset(s_autoForceChrEvents, 0, sizeof(s_autoForceChrEvents));
+    s_autoForceChrCount = 0;
+
+    pcParseScriptedForceChrEvents(getenv("GE007_AUTO_FORCE_CHR_SCRIPT"));
+    pcParseScriptedForceChrEvents(getenv("GE007_AUTO_FORCE_CHR_SCRIPT_EXTRA"));
+}
+
+static void pcMaybeApplyScriptedForceChr(int input_frame)
+{
+    int i;
+
+    pcInitScriptedForceChr();
+
+    if (!g_deterministic || s_autoForceChrCount == 0) {
+        return;
+    }
+
+    for (i = 0; i < s_autoForceChrCount; i++) {
+        PcScriptedForceChrEvent *event = &s_autoForceChrEvents[i];
+        ChrRecord *chr;
+        PadRecord *pad = NULL;
+        StandTile *stan = NULL;
+        coord3d pos;
+        f32 yaw_rad;
+
+        if (event->applied ||
+            event->frame < 0 ||
+            event->chrnum < 0 ||
+            input_frame != event->frame) {
+            continue;
+        }
+
+        chr = chrFindByLiteralId(event->chrnum);
+        if (chr == NULL || chr->prop == NULL || chr->model == NULL) {
+            continue;
+        }
+
+        if (event->pad >= 0) {
+            pad = pcResolveScriptedPad(event->pad);
+        }
+        if (pad != NULL) {
+            stan = pad->stan;
+        }
+        if (stan == NULL) {
+            stan = chr->prop->stan;
+        }
+        if (stan == NULL) {
+            continue;
+        }
+
+        pos.x = event->x;
+        pos.y = event->y;
+        pos.z = event->z;
+        yaw_rad = pcWrapYawDegrees(event->yaw_deg) * (M_TAU_F / 360.0f);
+
+        sub_GAME_7F03D058(chr->prop, FALSE);
+
+        chr->prop->pos.x = pos.x;
+        chr->prop->pos.y = pos.y;
+        chr->prop->pos.z = pos.z;
+        chr->prop->stan = stan;
+        chr->chrflags |= CHRFLAG_INIT;
+        setsubroty(chr->model, yaw_rad);
+        setsuboffset(chr->model, &pos);
+        chrPositionRelated7F020D94(chr);
+        chr->sleep = 0;
+
+        if (event->stop) {
+            check_set_actor_standing_still(chr, 0x0008, event->pad);
+        }
+
+        event->applied = 1;
+
+        sub_GAME_7F03D058(chr->prop, TRUE);
+
+        if (getenv("GE007_VERBOSE")) {
+            fprintf(stderr,
+                    "[AUTO_FORCE_CHR] frame=%d chr=%d pos=(%.2f,%.2f,%.2f) yaw=%.2f pad=%d room=%d stop=%d\n",
+                    input_frame,
+                    event->chrnum,
+                    pos.x,
+                    pos.y,
+                    pos.z,
+                    pcWrapYawDegrees(event->yaw_deg),
+                    event->pad,
+                    stan->room,
+                    event->stop);
+            fflush(stderr);
+        }
+    }
+}
+
 static void pcInitScriptedDamageChr(void)
 {
     const char *script_env;
@@ -2369,6 +2864,120 @@ static void pcMaybeApplyScriptedDamageTag(int input_frame)
         if (objGetDestroyedLevel(obj) != 0) {
             s_autoDamageTagEvents[i].applied = 1;
         }
+    }
+}
+
+static void pcParseScriptedStageFlagEvents(const char *script_env,
+                                           PcScriptedStageFlagEvent *events,
+                                           int *count)
+{
+    if (script_env == NULL || *script_env == '\0' ||
+        (script_env[0] == '0' && script_env[1] == '\0')) {
+        return;
+    }
+
+    while (*script_env != '\0' && *count < PC_MAX_SCRIPTED_WARP_EVENTS) {
+        char *endptr;
+        long frame;
+        unsigned long flags;
+
+        while (*script_env == ' ' || *script_env == '\t' || *script_env == ',') {
+            script_env++;
+        }
+
+        if (*script_env == '\0') {
+            break;
+        }
+
+        frame = strtol(script_env, &endptr, 0);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        flags = strtoul(script_env, &endptr, 0);
+        if (endptr == script_env) {
+            break;
+        }
+
+        script_env = endptr;
+
+        events[*count].frame = (int)frame;
+        events[*count].flags = (u32)flags;
+        events[*count].applied = 0;
+        (*count)++;
+    }
+}
+
+static void pcInitScriptedSetStageFlags(void)
+{
+    if (s_autoSetStageFlagsInitialized) {
+        return;
+    }
+
+    s_autoSetStageFlagsInitialized = 1;
+    memset(s_autoSetStageFlagsEvents, 0, sizeof(s_autoSetStageFlagsEvents));
+    pcParseScriptedStageFlagEvents(getenv("GE007_AUTO_SET_STAGE_FLAGS_SCRIPT"),
+                                   s_autoSetStageFlagsEvents,
+                                   &s_autoSetStageFlagsCount);
+}
+
+static void pcInitScriptedUnsetStageFlags(void)
+{
+    if (s_autoUnsetStageFlagsInitialized) {
+        return;
+    }
+
+    s_autoUnsetStageFlagsInitialized = 1;
+    memset(s_autoUnsetStageFlagsEvents, 0, sizeof(s_autoUnsetStageFlagsEvents));
+    pcParseScriptedStageFlagEvents(getenv("GE007_AUTO_UNSET_STAGE_FLAGS_SCRIPT"),
+                                   s_autoUnsetStageFlagsEvents,
+                                   &s_autoUnsetStageFlagsCount);
+}
+
+static void pcMaybeApplyScriptedSetStageFlags(int input_frame)
+{
+    int i;
+
+    pcInitScriptedSetStageFlags();
+
+    if (!g_deterministic || s_autoSetStageFlagsCount == 0) {
+        return;
+    }
+
+    for (i = 0; i < s_autoSetStageFlagsCount; i++) {
+        if (s_autoSetStageFlagsEvents[i].applied ||
+            s_autoSetStageFlagsEvents[i].frame < 0 ||
+            s_autoSetStageFlagsEvents[i].flags == 0 ||
+            input_frame != s_autoSetStageFlagsEvents[i].frame) {
+            continue;
+        }
+
+        chrSetStageFlags(NULL, s_autoSetStageFlagsEvents[i].flags);
+        s_autoSetStageFlagsEvents[i].applied = 1;
+    }
+}
+
+static void pcMaybeApplyScriptedUnsetStageFlags(int input_frame)
+{
+    int i;
+
+    pcInitScriptedUnsetStageFlags();
+
+    if (!g_deterministic || s_autoUnsetStageFlagsCount == 0) {
+        return;
+    }
+
+    for (i = 0; i < s_autoUnsetStageFlagsCount; i++) {
+        if (s_autoUnsetStageFlagsEvents[i].applied ||
+            s_autoUnsetStageFlagsEvents[i].frame < 0 ||
+            s_autoUnsetStageFlagsEvents[i].flags == 0 ||
+            input_frame != s_autoUnsetStageFlagsEvents[i].frame) {
+            continue;
+        }
+
+        chrUnsetStageFlags(NULL, s_autoUnsetStageFlagsEvents[i].flags);
+        s_autoUnsetStageFlagsEvents[i].applied = 1;
     }
 }
 
@@ -3142,6 +3751,7 @@ static void pcParseScriptedFaceCoordEvents(const char *script_env)
     while (*script_env != '\0' && s_autoFaceCoordCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
         char *endptr;
         long frame;
+        long frame_end;
         float x;
         float y;
         float z;
@@ -3157,7 +3767,19 @@ static void pcParseScriptedFaceCoordEvents(const char *script_env)
         }
 
         frame = strtol(script_env, &endptr, 10);
-        if (endptr == script_env || *endptr != ':') {
+        if (endptr == script_env) {
+            break;
+        }
+        frame_end = frame;
+        if (*endptr == '-') {
+            char *range_endptr;
+            frame_end = strtol(endptr + 1, &range_endptr, 10);
+            if (range_endptr == endptr + 1 || frame_end < frame) {
+                break;
+            }
+            endptr = range_endptr;
+        }
+        if (*endptr != ':') {
             break;
         }
 
@@ -3197,14 +3819,17 @@ static void pcParseScriptedFaceCoordEvents(const char *script_env)
             }
         }
 
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].frame = (int)frame;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].x = x;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].y = y;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].z = z;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].yaw_offset_deg = yaw_offset_deg;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].pitch_offset_deg = pitch_offset_deg;
-        s_autoFaceCoordEvents[s_autoFaceCoordCount].applied = 0;
-        s_autoFaceCoordCount++;
+        while (frame <= frame_end && s_autoFaceCoordCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].frame = (int)frame;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].x = x;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].y = y;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].z = z;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].yaw_offset_deg = yaw_offset_deg;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].pitch_offset_deg = pitch_offset_deg;
+            s_autoFaceCoordEvents[s_autoFaceCoordCount].applied = 0;
+            s_autoFaceCoordCount++;
+            frame++;
+        }
     }
 }
 
@@ -3336,6 +3961,250 @@ static void pcMaybeApplyScriptedFaceCoord(int input_frame)
                     dx,
                     dy,
                     dz);
+            fflush(stderr);
+        }
+    }
+}
+
+static void pcParseScriptedForcePlayerEvents(const char *script_env)
+{
+    if (script_env == NULL || *script_env == '\0' ||
+        (script_env[0] == '0' && script_env[1] == '\0')) {
+        return;
+    }
+
+    while (*script_env != '\0' && s_autoForcePlayerCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+        char *endptr;
+        long frame;
+        long frame_end;
+        float x;
+        float y;
+        float z;
+        float yaw_deg;
+        float pitch_deg;
+        float camera_height = 0.0f;
+        int has_camera_height = 0;
+        int pad = -1;
+
+        while (*script_env == ' ' || *script_env == '\t' || *script_env == ',') {
+            script_env++;
+        }
+
+        if (*script_env == '\0') {
+            break;
+        }
+
+        frame = strtol(script_env, &endptr, 10);
+        if (endptr == script_env) {
+            break;
+        }
+
+        frame_end = frame;
+        if (*endptr == '-') {
+            char *range_endptr;
+            frame_end = strtol(endptr + 1, &range_endptr, 10);
+            if (range_endptr == endptr + 1 || frame_end < frame) {
+                break;
+            }
+            endptr = range_endptr;
+        }
+
+        if (*endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        x = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        y = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        z = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        yaw_deg = strtof(script_env, &endptr);
+        if (endptr == script_env || *endptr != ':') {
+            break;
+        }
+
+        script_env = endptr + 1;
+        pitch_deg = strtof(script_env, &endptr);
+        if (endptr == script_env) {
+            break;
+        }
+
+        script_env = endptr;
+
+        if (*script_env == ':') {
+            script_env++;
+            camera_height = strtof(script_env, &endptr);
+            if (endptr == script_env) {
+                break;
+            }
+            has_camera_height = 1;
+            script_env = endptr;
+        }
+
+        if (*script_env == ':') {
+            long pad_value;
+
+            script_env++;
+            pad_value = strtol(script_env, &endptr, 10);
+            if (endptr == script_env) {
+                break;
+            }
+            pad = (int)pad_value;
+            script_env = endptr;
+        }
+
+        while (frame <= frame_end && s_autoForcePlayerCount < PC_MAX_SCRIPTED_WARP_EVENTS) {
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].frame = (int)frame;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].x = x;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].y = y;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].z = z;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].yaw_deg = yaw_deg;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].pitch_deg = pitch_deg;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].has_camera_height = has_camera_height;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].camera_height = camera_height;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].pad = pad;
+            s_autoForcePlayerEvents[s_autoForcePlayerCount].applied = 0;
+            s_autoForcePlayerCount++;
+            frame++;
+        }
+    }
+}
+
+static void pcInitScriptedForcePlayer(void)
+{
+    if (s_autoForcePlayerInitialized) {
+        return;
+    }
+
+    s_autoForcePlayerInitialized = 1;
+    memset(s_autoForcePlayerEvents, 0, sizeof(s_autoForcePlayerEvents));
+    s_autoForcePlayerCount = 0;
+
+    pcParseScriptedForcePlayerEvents(getenv("GE007_AUTO_FORCE_PLAYER_SCRIPT"));
+    pcParseScriptedForcePlayerEvents(getenv("GE007_AUTO_FORCE_PLAYER_SCRIPT_EXTRA"));
+}
+
+static void pcMaybeApplyScriptedForcePlayer(int input_frame)
+{
+    int i;
+
+    pcInitScriptedForcePlayer();
+
+    if (!g_deterministic || s_autoForcePlayerCount == 0 ||
+        g_CurrentPlayer == NULL || g_CurrentPlayer->prop == NULL) {
+        return;
+    }
+
+    for (i = 0; i < s_autoForcePlayerCount; i++) {
+        PcScriptedForcePlayerEvent *event = &s_autoForcePlayerEvents[i];
+        PadRecord *pad = NULL;
+        StandTile *stan;
+        struct coord3d pos;
+        float camera_height;
+        float floor_y;
+
+        if (event->applied ||
+            event->frame < 0 ||
+            input_frame != event->frame) {
+            continue;
+        }
+
+        if (event->pad >= 0) {
+            pad = pcResolveScriptedPad(event->pad);
+        }
+
+        stan = pad != NULL ? pad->stan : g_CurrentPlayer->field_488.current_tile_ptr;
+        if (stan == NULL) {
+            stan = g_CurrentPlayer->prop->stan;
+        }
+        if (stan == NULL) {
+            continue;
+        }
+
+        camera_height = event->has_camera_height
+            ? event->camera_height
+            : g_CurrentPlayer->field_29BC;
+        if (camera_height <= 1.0f) {
+            camera_height = g_CurrentPlayer->standheight > 1.0f
+                ? g_CurrentPlayer->standheight
+                : 160.33334f;
+        }
+
+        if (event->has_camera_height) {
+            g_CurrentPlayer->field_29BC = camera_height;
+        }
+
+        pos.x = event->x;
+        pos.y = event->y;
+        pos.z = event->z;
+        floor_y = event->y - camera_height;
+
+        g_CurrentPlayer->field_70 = floor_y;
+        g_CurrentPlayer->stanHeight = floor_y;
+        g_CurrentPlayer->field_6C = floor_y / PC_SCRIPTED_FIELD_6C_FACTOR;
+        g_CurrentPlayer->field_7C = 0.0f;
+        g_CurrentPlayer->field_84 = 0.0f;
+        g_CurrentPlayer->field_88 = 0.0f;
+        g_CurrentPlayer->vertical_bounce_adjust = 0.0f;
+        g_CurrentPlayer->speedforwards = 0.0f;
+        g_CurrentPlayer->speedsideways = 0.0f;
+        g_CurrentPlayer->speedtheta = 0.0f;
+        g_CurrentPlayer->speedverta = 0.0f;
+        g_CurrentPlayer->bondshotspeed.x = 0.0f;
+        g_CurrentPlayer->bondshotspeed.y = 0.0f;
+        g_CurrentPlayer->bondshotspeed.z = 0.0f;
+
+        change_player_pos_to_target(&g_CurrentPlayer->field_488, &pos, stan);
+
+        g_CurrentPlayer->prop->pos.x = pos.x;
+        g_CurrentPlayer->prop->pos.y = pos.y;
+        g_CurrentPlayer->prop->pos.z = pos.z;
+        g_CurrentPlayer->prop->stan = stan;
+        g_CurrentPlayer->bondprevpos.x = pos.x;
+        g_CurrentPlayer->bondprevpos.y = pos.y;
+        g_CurrentPlayer->bondprevpos.z = pos.z;
+        g_CurrentPlayer->field_3B8.f[0] = g_CurrentPlayer->field_488.pos.f[0] / PC_SCRIPTED_FIELD_3B8_FACTOR;
+        g_CurrentPlayer->field_3B8.f[1] = g_CurrentPlayer->field_488.pos.f[1] / PC_SCRIPTED_FIELD_3B8_FACTOR;
+        g_CurrentPlayer->field_3B8.f[2] = g_CurrentPlayer->field_488.pos.f[2] / PC_SCRIPTED_FIELD_3B8_FACTOR;
+
+        g_CurrentPlayer->vv_theta = pcWrapYawDegrees(event->yaw_deg);
+        g_CurrentPlayer->vv_verta = event->pitch_deg;
+        bondviewApplyVertaTheta();
+        bondviewSyncViewBasisFromHead();
+
+        {
+            extern s32 g_BgCurrentRoom;
+            g_BgCurrentRoom = stan->room;
+        }
+
+        event->applied = 1;
+
+        if (getenv("GE007_VERBOSE")) {
+            fprintf(stderr,
+                    "[AUTO_FORCE_PLAYER] frame=%d pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f height=%.2f pad=%d room=%d\n",
+                    input_frame,
+                    pos.x,
+                    pos.y,
+                    pos.z,
+                    g_CurrentPlayer->vv_theta,
+                    g_CurrentPlayer->vv_verta,
+                    camera_height,
+                    event->pad,
+                    stan->room);
             fflush(stderr);
         }
     }
@@ -4513,6 +5382,49 @@ static void pcMaybeApplyAutoExitOnTitle(int input_frame)
     exit(0);
 }
 
+static void pcInitAutoExitFrame(void)
+{
+    const char *frame_env;
+
+    if (s_autoExitFrameInitialized) {
+        return;
+    }
+
+    s_autoExitFrameInitialized = 1;
+
+    frame_env = getenv("GE007_AUTO_EXIT_FRAME");
+    if (frame_env != NULL && frame_env[0] != '\0') {
+        s_autoExitFrame = (int)strtol(frame_env, NULL, 10);
+        if (s_autoExitFrame < 0) {
+            s_autoExitFrame = -1;
+        }
+    }
+}
+
+static void pcMaybeApplyAutoExitFrame(int input_frame)
+{
+    pcInitAutoExitFrame();
+
+    if (!g_deterministic || s_autoExitFrameApplied || s_autoExitFrame < 0) {
+        return;
+    }
+
+    /*
+     * Input hooks run before the frame's render/trace. Exit on the first tick
+     * after the requested frame so trace-based validators can require that
+     * GE007_AUTO_EXIT_FRAME itself was observed.
+     */
+    if (input_frame <= s_autoExitFrame) {
+        return;
+    }
+
+    fprintf(stderr,
+            "[GE007-PC] deterministic frame exit observed after frame %d; exiting\n",
+            s_autoExitFrame);
+    s_autoExitFrameApplied = 1;
+    exit(0);
+}
+
 static long pcParseLongToken(const char **cursor, int *ok)
 {
     char *endptr;
@@ -5016,20 +5928,26 @@ s32 osContGetReadData(OSContPad *data) {
     input_frame = g_frame_count_diag + 1;
     scripted_frontend_input = pcNativeFrontendInputActive();
     sndStubTick();
+    pcMaybeApplyScriptedRngSeed(input_frame);
+    pcMaybeApplyScriptedAutoAim(input_frame);
     pcMaybeApplyScriptedWarp(input_frame);
     pcMaybeApplyScriptedWarpChr(input_frame);
     pcMaybeApplyScriptedGuardSpawn(input_frame);
     pcMaybeApplyScriptedSetChrAI(input_frame);
     pcMaybeApplyScriptedSetChrFlag(input_frame);
     pcMaybeApplyScriptedChrToPad(input_frame);
+    pcMaybeApplyScriptedForceChr(input_frame);
     pcMaybeApplyScriptedDamageChr(input_frame);
     pcMaybeApplyScriptedCollectTag(input_frame);
     pcMaybeApplyScriptedDamageTag(input_frame);
+    pcMaybeApplyScriptedSetStageFlags(input_frame);
+    pcMaybeApplyScriptedUnsetStageFlags(input_frame);
     pcMaybeApplyScriptedAttackRollChr(input_frame);
     pcMaybeApplyScriptedAIMoveChr(input_frame);
     pcMaybeApplyScriptedAIReactChr(input_frame);
     pcMaybeApplyScriptedFaceChr(input_frame);
     pcMaybeApplyScriptedFaceCoord(input_frame);
+    pcMaybeApplyScriptedForcePlayer(input_frame);
     pcMaybeApplyScriptedTankFaceCoord(input_frame);
     pcMaybeApplyScriptedArmor(input_frame);
     pcMaybeApplyScriptedDamageBond(input_frame);
@@ -5044,6 +5962,7 @@ s32 osContGetReadData(OSContPad *data) {
     pcMaybeApplyScriptedEquip(input_frame);
     pcMaybeApplyScriptedEquipDual(input_frame);
     pcMaybeApplyScriptedMissionEnd(input_frame);
+    pcMaybeApplyAutoExitFrame(input_frame);
     if (pcScriptedInputPatternActive(&s_autoReloadPattern,
                                      "GE007_AUTO_RELOAD", input_frame)) {
         attempt_reload_item_in_hand(GUNRIGHT);

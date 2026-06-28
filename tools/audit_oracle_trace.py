@@ -83,6 +83,19 @@ def input_count(record: dict[str, Any], name: str) -> int:
     return value if value is not None else 0
 
 
+def force_state(record: dict[str, Any]) -> dict[str, Any]:
+    oracle = record.get("oracle")
+    if not isinstance(oracle, dict):
+        return {}
+    value = oracle.get("force")
+    return value if isinstance(value, dict) else {}
+
+
+def force_count(record: dict[str, Any], name: str) -> int:
+    value = parse_int(force_state(record).get(name))
+    return value if value is not None else 0
+
+
 def target_stage_matches(record: dict[str, Any], stage: int | None) -> bool:
     if stage is None:
         return True
@@ -154,6 +167,12 @@ def audit(args: argparse.Namespace) -> int:
     if args.min_horizontal_delta < 0.0:
         print("FAIL: --min-horizontal-delta must be non-negative")
         return 2
+    if args.min_force_player_applies < 0:
+        print("FAIL: --min-force-player-applies must be non-negative")
+        return 2
+    if args.min_force_player_stan_applies < 0:
+        print("FAIL: --min-force-player-stan-applies must be non-negative")
+        return 2
 
     records = load_trace(Path(args.trace))
     if not records:
@@ -174,6 +193,8 @@ def audit(args: argparse.Namespace) -> int:
     target_player_records = 0
     gameplay_input_records = 0
     moving_records = 0
+    max_force_player_applies = 0
+    max_force_player_stan_applies = 0
     first_position_record: dict[str, Any] | None = None
     last_position_record: dict[str, Any] | None = None
     first_position: list[float] | None = None
@@ -193,6 +214,12 @@ def audit(args: argparse.Namespace) -> int:
         suppressed_menu = input_count(record, "suppressed_menu_events")
         buttons = input_buttons(record)
         target_player = record.get("p") == 1 and target_stage_matches(record, stage)
+        force = force_state(record)
+        force_applies = force_count(record, "applies")
+        max_force_player_applies = max(max_force_player_applies, force_applies)
+        last_force_stan = parse_int(force.get("last_stan"))
+        if last_force_stan:
+            max_force_player_stan_applies = max(max_force_player_stan_applies, force_applies)
 
         total_menu_events += menu_events
         total_gameplay_events += gameplay_events
@@ -293,6 +320,8 @@ def audit(args: argparse.Namespace) -> int:
         f" suppressed_menu={total_suppressed_menu}"
     )
     print(f"  input_records: gameplay={gameplay_input_records}")
+    print(f"  force_player_applies: {max_force_player_applies}")
+    print(f"  force_player_stan_applies: {max_force_player_stan_applies}")
 
     if args.require_target_player and first_target_player is None:
         fail("target-stage player was never observed")
@@ -315,6 +344,19 @@ def audit(args: argparse.Namespace) -> int:
                 "horizontal position delta below threshold: "
                 f"{max_horizontal_delta:.6f} < {args.min_horizontal_delta:.6f}"
             )
+    if args.min_force_player_applies and max_force_player_applies < args.min_force_player_applies:
+        fail(
+            "force-player applies below threshold: "
+            f"{max_force_player_applies} < {args.min_force_player_applies}"
+        )
+    if (
+        args.min_force_player_stan_applies
+        and max_force_player_stan_applies < args.min_force_player_stan_applies
+    ):
+        fail(
+            "force-player resolved-stan applies below threshold: "
+            f"{max_force_player_stan_applies} < {args.min_force_player_stan_applies}"
+        )
     if (
         args.max_suppressed_menu_records is not None
         and total_suppressed_menu > args.max_suppressed_menu_records
@@ -335,6 +377,16 @@ def audit(args: argparse.Namespace) -> int:
                 "menu-to-gameplay gap below threshold: "
                 f"{menu_to_gameplay_gap} < {args.min_menu_to_gameplay_gap}"
             )
+    if args.require_first_gameplay_global is not None:
+        if first_gameplay_timeline is None:
+            fail("cannot verify first gameplay global because gameplay never started")
+        else:
+            first_global = parse_int(get_path(first_gameplay_timeline, ("move", "global")))
+            if first_global != args.require_first_gameplay_global:
+                fail(
+                    "first gameplay global mismatch: "
+                    f"{first_global} != {args.require_first_gameplay_global}"
+                )
 
     metrics = {
         "label": args.label,
@@ -351,6 +403,8 @@ def audit(args: argparse.Namespace) -> int:
             "suppressed_menu": total_suppressed_menu,
         },
         "max_horizontal_delta": max_horizontal_delta,
+        "max_force_player_applies": max_force_player_applies,
+        "max_force_player_stan_applies": max_force_player_stan_applies,
         "menu_to_gameplay_gap": menu_to_gameplay_gap,
         "first_target_player": record_summary(first_target_player),
         "first_gameplay_timeline": record_summary(first_gameplay_timeline),
@@ -365,8 +419,11 @@ def audit(args: argparse.Namespace) -> int:
             "min_gameplay_input_records": args.min_gameplay_input_records,
             "min_moving_records": args.min_moving_records,
             "min_horizontal_delta": args.min_horizontal_delta,
+            "min_force_player_applies": args.min_force_player_applies,
+            "min_force_player_stan_applies": args.min_force_player_stan_applies,
             "max_suppressed_menu_records": args.max_suppressed_menu_records,
             "min_menu_to_gameplay_gap": args.min_menu_to_gameplay_gap,
+            "require_first_gameplay_global": args.require_first_gameplay_global,
         },
     }
     write_json_metrics(args.json_out, metrics)
@@ -394,6 +451,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-gameplay-input-records", type=int, default=0)
     parser.add_argument("--min-moving-records", type=int, default=0)
     parser.add_argument("--min-horizontal-delta", type=float, default=0.0)
+    parser.add_argument("--min-force-player-applies", type=int, default=0)
+    parser.add_argument("--min-force-player-stan-applies", type=int, default=0)
+    parser.add_argument("--require-first-gameplay-global", type=int, default=None)
     parser.add_argument("--max-suppressed-menu-records", type=int, default=None)
     parser.add_argument("--min-menu-to-gameplay-gap", type=int, default=0)
     parser.add_argument("--allow-menu-after-player", action="store_true")

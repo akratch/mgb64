@@ -50,6 +50,7 @@ static int bboxTraceEnabled(void);
 static void bboxTracePrintf(const char *fmt, ...);
 static int portModelAnimFrameValueUsable(f32 frame);
 static int portModelAnimFrameSpanTooLarge(f32 frame1, f32 frame2);
+static f32 portModelSafePrimaryAnimFrame(Model *model, f32 preferred);
 static int portTraceAnimRootSkips(void);
 static void portLogAnimRootSkip(const char *phase, const char *reason,
                                 Model *model, ModelNode *rootNode,
@@ -108,6 +109,28 @@ static int portModelAnimFrameSpanTooLarge(f32 frame1, f32 frame2)
     }
 
     return span > 512.0f;
+}
+
+static f32 portModelSafePrimaryAnimFrame(Model *model, f32 preferred)
+{
+    if (portModelAnimFrameValueUsable(preferred)) {
+        return preferred;
+    }
+
+    if (model != NULL) {
+        if (model->animlooping != 0
+            && portModelAnimFrameValueUsable(model->animloopframe)
+            && model->animloopframe >= 0.0f)
+        {
+            return model->animloopframe;
+        }
+
+        if (portModelAnimFrameValueUsable(model->unk28)) {
+            return model->unk28;
+        }
+    }
+
+    return 0.0f;
 }
 
 static int portTraceAnimRootSkips(void)
@@ -7165,6 +7188,9 @@ void modelSetAnimPlaySpeed(Model *model, f32 animation_rate, f32 startframe) {
         return;
     }
     model->playspeed = animation_rate;
+#ifdef NATIVE_PORT
+    model->animrate = animation_rate;
+#endif
     model->unkb0 = 0.0f;
 }
 
@@ -7189,6 +7215,25 @@ void modelSetAnimFrame(Model* model, f32 frame)
 #ifdef NATIVE_PORT
     if (model == NULL) return;
     if (model->anim == NULL) return;
+    if (!portModelAnimFrameValueUsable(frame)) {
+        static int bad_frame_log = 0;
+        f32 safe_frame = portModelSafePrimaryAnimFrame(model, model->animloopframe);
+
+        if (bad_frame_log < 20) {
+            bad_frame_log++;
+            fprintf(stderr,
+                    "[ANIM_FRAME_SET_GUARD] model=%p chr=%p frame=%.3f safe=%.3f speed=%.3f playspeed=%.3f\n",
+                    (void *)model,
+                    model != NULL ? (void *)model->chr : NULL,
+                    frame,
+                    safe_frame,
+                    model != NULL ? model->speed : 0.0f,
+                    model != NULL ? model->playspeed : 0.0f);
+            fflush(stderr);
+        }
+
+        frame = safe_frame;
+    }
     /* Debug: check anim pointer alignment and readability */
     {
         uintptr_t animaddr = (uintptr_t)model->anim;
@@ -7236,6 +7281,20 @@ void modelSetAnimFrame2(Model* model, f32 frame1, f32 frame2)
     s32 framea;
     s32 frameb;
     bool forwards;
+
+#ifdef NATIVE_PORT
+    if (model == NULL) return;
+    if (!portModelAnimFrameValueUsable(frame1)) {
+        frame1 = portModelSafePrimaryAnimFrame(model, model->animloopframe);
+    }
+    if (!portModelAnimFrameValueUsable(frame2)) {
+        if (model->anim2 != NULL && portModelAnimFrameValueUsable(model->unk58)) {
+            frame2 = model->unk58;
+        } else {
+            frame2 = 0.0f;
+        }
+    }
+#endif
 
     modelSetAnimFrame(model, frame1);
 
@@ -7341,21 +7400,36 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
         || portModelAnimFrameSpanTooLarge(frame1, frame2))
     {
         static int frame_guard_log = 0;
+        f32 safe_frame1 = portModelSafePrimaryAnimFrame(model, frame2);
+        f32 safe_frame2 = frame2b_arg;
+
+        if (!portModelAnimFrameValueUsable(frame2)) {
+            safe_frame1 = portModelSafePrimaryAnimFrame(model, frame1);
+        }
+
+        if (!portModelAnimFrameValueUsable(safe_frame2)) {
+            if (model->anim2 != NULL && portModelAnimFrameValueUsable(model->unk58)) {
+                safe_frame2 = model->unk58;
+            } else {
+                safe_frame2 = 0.0f;
+            }
+        }
 
         if (frame_guard_log < 20) {
             frame_guard_log++;
             fprintf(stderr,
                     "[ANIM_FRAME2_GUARD] model=%p chr=%p frame1=%.3f frame2=%.3f "
-                    "speed=%.3f playspeed=%.3f\n",
+                    "safe1=%.3f safe2=%.3f speed=%.3f playspeed=%.3f\n",
                     (void *)model, model != NULL ? (void *)model->chr : NULL,
                     frame1, frame2,
+                    safe_frame1, safe_frame2,
                     model != NULL ? model->speed : 0.0f,
                     model != NULL ? model->playspeed : 0.0f);
             fflush(stderr);
         }
 
         if (model != NULL) {
-            modelSetAnimFrame2(model, frame2, frame2b_arg);
+            modelSetAnimFrame2(model, safe_frame1, safe_frame2);
         }
         return;
     }
@@ -8420,6 +8494,40 @@ void modelTickAnimQuarterSpeed(Model *model, s32 ticks, s32 arg2) {
     f32 numframesf;
     f32 animloopframe;
     f32 zero;
+
+#ifdef NATIVE_PORT
+    if (model == NULL || model->anim == NULL) {
+        return;
+    }
+
+    if (!portModelAnimFrameValueUsable(model->unk28)
+        || (model->anim2 != NULL && !portModelAnimFrameValueUsable(model->unk58)))
+    {
+        static int tick_frame_guard_log = 0;
+        f32 safe_frame = portModelSafePrimaryAnimFrame(model, model->animloopframe);
+        f32 safe_frame2 = 0.0f;
+
+        if (model->anim2 != NULL && portModelAnimFrameValueUsable(model->unk58)) {
+            safe_frame2 = model->unk58;
+        }
+
+        if (tick_frame_guard_log < 20) {
+            tick_frame_guard_log++;
+            fprintf(stderr,
+                    "[ANIM_TICK_FRAME_GUARD] model=%p chr=%p frame=%.3f frame2=%.3f safe=%.3f speed=%.3f playspeed=%.3f\n",
+                    (void *)model,
+                    model != NULL ? (void *)model->chr : NULL,
+                    model != NULL ? model->unk28 : 0.0f,
+                    model != NULL ? model->unk58 : 0.0f,
+                    safe_frame,
+                    model != NULL ? model->speed : 0.0f,
+                    model != NULL ? model->playspeed : 0.0f);
+            fflush(stderr);
+        }
+
+        modelSetAnimFrame2(model, safe_frame, safe_frame2);
+    }
+#endif
 
     frame = model->unk28;
     frame2acc = model->unk58;

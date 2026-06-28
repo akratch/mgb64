@@ -33,6 +33,7 @@ int g_mtxCallCount = 0;
 int g_pcStartLevel = -1;
 int g_pcStartDifficulty = DIFFICULTY_AGENT;
 const char *g_pcStartRamrom = NULL;
+int g_pcDirectBootLevelActive = 0;
 static int g_pcStartLevelForcedRaw = 0;
 
 /* Multiplayer direct-boot selection from command line.

@@ -50,18 +50,23 @@
 #include "game/chr.h"
 #include "game/chrobjhandler.h"
 #include "game/chrlv.h"
+#include "game/debugmenu_handler.h"
+#include "game/explosions.h"
 #include "game/initanitable.h"
 #include "game/lvl.h"
 #include "game/loadobjectmodel.h"
+#include "game/matrixmath.h"
 #include "game/mp_music.h"
 #include "game/objecthandler.h"
 #include "game/objective_status.h"
 #include "game/ramromreplay.h"
+#include "random.h"
 
 /* ===== Externs ===== */
 extern int g_deterministic;
 extern const char *g_traceStatePath;
 extern s32 mission_brief_index;
+extern u64 g_randomSeed;
 
 /* MP state (from lvl.c) */
 extern s32 D_80048394;  /* MP elapsed time in ticks */
@@ -73,6 +78,7 @@ extern int g_crashRecoveryCount;
 
 /* Per-frame room draw count (from bg.c) */
 extern s32 g_BgNumberOfRoomsDrawn;
+extern s_bound_info dword_CODE_bss_8007FFA0[];
 
 /* Current (0-based) player number, for the per-player "p" trace field. */
 extern s32 get_cur_playernum(void);
@@ -107,6 +113,7 @@ extern int g_frame_count_diag;
 extern int g_portRoomRenderFallbackFrame;
 extern int g_portRoomRenderFallbackRooms;
 extern int g_portRoomRenderFallbackTotal;
+extern f32 get_room_data_float1(void);
 
 /* Intro-state globals (from bondview.h) */
 extern enum CAMERAMODE g_CameraMode;
@@ -136,6 +143,1112 @@ static u64 traceIntroHashU32(u64 hash, u32 value) {
     hash ^= (u64)value;
     hash *= 1099511628211ULL;
     return hash;
+}
+
+static u32 traceReadU32Bytes(const void *base, size_t offset) {
+    u32 value = 0;
+
+    if (base != NULL) {
+        memcpy(&value, ((const u8 *)base) + offset, sizeof(value));
+    }
+
+    return value;
+}
+
+static void traceBuildGlassStateJson(char *out, size_t out_size) {
+    int active = 0;
+    int first_index = -1;
+    const s_shattered_window_piece *first = NULL;
+    u64 hash = 1469598103934665603ULL;
+    char sample_json[2048];
+    size_t sample_used = 0;
+    int sample_count = 0;
+
+    if (out_size == 0) {
+        return;
+    }
+    sample_json[0] = '[';
+    sample_json[1] = '\0';
+    sample_used = 1;
+
+    if (ptr_shattered_window_pieces == NULL ||
+        SHATTERED_WINDOW_PIECES_BUFFER_LEN <= 0 ||
+        SHATTERED_WINDOW_PIECES_BUFFER_LEN > 512) {
+        snprintf(out, out_size,
+                 "{\"present\":0,\"buffer_len\":%d,\"next\":%d,\"active\":0,"
+                 "\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x%016llX\"}",
+                 (int)SHATTERED_WINDOW_PIECES_BUFFER_LEN,
+                 (int)g_NextShardNum,
+                 (unsigned long long)hash);
+        return;
+    }
+
+    for (int i = 0; i < SHATTERED_WINDOW_PIECES_BUFFER_LEN; i++) {
+        const s_shattered_window_piece *piece = &ptr_shattered_window_pieces[i];
+
+        if (piece->piece <= 0) {
+            continue;
+        }
+
+        if (first == NULL) {
+            first = piece;
+            first_index = i;
+        }
+        active++;
+        if (sample_count < 4 && sample_used < sizeof(sample_json)) {
+            int written = snprintf(sample_json + sample_used,
+                                   sizeof(sample_json) - sample_used,
+                                   "%s{\"index\":%d,\"piece\":%d,"
+                                   "\"pos\":[%.2f,%.2f,%.2f],"
+                                   "\"rot\":[%.2f,%.2f,%.2f],"
+                                   "\"vel\":[%.2f,%.2f,%.2f],"
+                                   "\"angvel\":[%.2f,%.2f,%.2f],"
+                                   "\"v0\":[%d,%d,%d],\"v1\":[%d,%d,%d],"
+                                   "\"v2\":[%d,%d,%d]}",
+                                   sample_count == 0 ? "" : ",",
+                                   i,
+                                   (int)piece->piece,
+                                   piece->x,
+                                   piece->y,
+                                   piece->z,
+                                   piece->field_0x10,
+                                   piece->field_0x14,
+                                   piece->field_0x18,
+                                   piece->field_0x1c,
+                                   piece->field_0x20,
+                                   piece->field_0x24,
+                                   piece->field_0x28,
+                                   piece->field_0x2c,
+                                   piece->field_0x30,
+                                   piece->field_0x38,
+                                   piece->field_0x3a,
+                                   piece->field_0x3c,
+                                   piece->field_0x48,
+                                   piece->field_0x4a,
+                                   piece->field_0x4c,
+                                   piece->field_0x58,
+                                   piece->field_0x5a,
+                                   piece->field_0x5c);
+            if (written > 0) {
+                size_t remaining = sizeof(sample_json) - sample_used;
+                sample_used += (size_t)written < remaining ? (size_t)written : remaining - 1;
+            }
+            sample_count++;
+        }
+        for (size_t offset = 0; offset < sizeof(*piece); offset += sizeof(u32)) {
+            hash = traceIntroHashU32(hash, traceReadU32Bytes(piece, offset));
+        }
+    }
+    if (sample_used < sizeof(sample_json) - 1) {
+        sample_json[sample_used++] = ']';
+        sample_json[sample_used] = '\0';
+    } else {
+        sample_json[sizeof(sample_json) - 2] = ']';
+        sample_json[sizeof(sample_json) - 1] = '\0';
+    }
+
+    if (first != NULL) {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"buffer_len\":%d,\"next\":%d,\"active\":%d,"
+                 "\"first\":{\"index\":%d,\"piece\":%d,\"timer\":%d,"
+                 "\"pos\":[%.2f,%.2f,%.2f],"
+                 "\"age\":%.2f,\"rot_y\":%.2f,\"rot\":%.2f,\"rot_z\":%.2f},"
+                 "\"sample\":%s,"
+                 "\"hash\":\"0x%016llX\"}",
+                 (int)SHATTERED_WINDOW_PIECES_BUFFER_LEN,
+                 (int)g_NextShardNum,
+                 active,
+                 first_index,
+                 (int)first->piece,
+                 (int)first->piece,
+                 first->x,
+                 first->y,
+                 first->z,
+                 first->field_0x14,
+                 first->field_0x14,
+                 first->field_0x18,
+                 first->field_0x18,
+                 sample_json,
+                 (unsigned long long)hash);
+    } else {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"buffer_len\":%d,\"next\":%d,\"active\":0,"
+                 "\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x%016llX\"}",
+                 (int)SHATTERED_WINDOW_PIECES_BUFFER_LEN,
+                 (int)g_NextShardNum,
+                 (unsigned long long)hash);
+    }
+}
+
+static int traceGlassShardEmitEnabled(void) {
+    const char *value = getenv("GE007_GLASS_SHARDS");
+
+    return !(value != NULL && value[0] == '0');
+}
+
+static int traceGlassShardCompressFullMatrix(void) {
+    const char *value = getenv("GE007_GLASS_SHARD_COMPRESS");
+
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int traceGlassShardBasisScale(void) {
+    const char *value = getenv("GE007_GLASS_SHARD_BASIS_SCALE");
+
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int traceGlassShardNoBasisScale(void) {
+    const char *value = getenv("GE007_GLASS_SHARD_NO_BASIS_SCALE");
+
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int traceGlassShardSqrtBasis(void) {
+    const char *value = getenv("GE007_GLASS_SHARD_SQRT_BASIS");
+
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int traceGlassShardInvVisScale(void) {
+    const char *value = getenv("GE007_GLASS_SHARD_INV_VIS_SCALE");
+
+    return !(value != NULL && value[0] != '\0' && value[0] == '0');
+}
+
+static float traceMtxFixedElement(const Mtx *matrix, int row, int col) {
+    const u32 *words = (const u32 *)matrix;
+    u32 pair;
+    u32 shift;
+    u32 hi_word;
+    u32 lo_word;
+    s16 hi;
+    u16 lo;
+    s32 fixed;
+
+    if (matrix == NULL || row < 0 || row >= 4 || col < 0 || col >= 4) {
+        return 0.0f;
+    }
+
+    pair = (u32)row * 2u + (u32)col / 2u;
+    shift = (col & 1) ? 0u : 16u;
+    hi_word = words[pair];
+    lo_word = words[pair + 8u];
+    hi = (s16)((hi_word >> shift) & 0xffffu);
+    lo = (u16)((lo_word >> shift) & 0xffffu);
+    fixed = ((s32)hi << 16) | (s32)lo;
+
+    return (float)fixed / 65536.0f;
+}
+
+static void traceLoadCurrentField10E0(float out[4][4], int *valid, int *is_float) {
+    void *matrix = NULL;
+
+    *valid = 0;
+    *is_float = 0;
+    memset(out, 0, sizeof(float) * 16);
+
+    if (g_CurrentPlayer == NULL || g_CurrentPlayer->field_10E0 == 0) {
+        return;
+    }
+
+    matrix = (void *)(uintptr_t)g_CurrentPlayer->field_10E0;
+    if (bondviewField10E0IsFloat()) {
+        const Mtxf *src = (const Mtxf *)matrix;
+        *is_float = 1;
+        for (int row = 0; row < 4; row++) {
+            for (int col = 0; col < 4; col++) {
+                out[row][col] = src->m[row][col];
+            }
+        }
+    } else {
+        const Mtx *src = (const Mtx *)matrix;
+        for (int row = 0; row < 4; row++) {
+            for (int col = 0; col < 4; col++) {
+                out[row][col] = traceMtxFixedElement(src, row, col);
+            }
+        }
+    }
+
+    *valid = 1;
+}
+
+static void traceTransform4x4(const float matrix[4][4],
+                              float x,
+                              float y,
+                              float z,
+                              float w,
+                              float out[4]) {
+    out[0] = matrix[0][0] * x + matrix[1][0] * y + matrix[2][0] * z + matrix[3][0] * w;
+    out[1] = matrix[0][1] * x + matrix[1][1] * y + matrix[2][1] * z + matrix[3][1] * w;
+    out[2] = matrix[0][2] * x + matrix[1][2] * y + matrix[2][2] * z + matrix[3][2] * w;
+    out[3] = matrix[0][3] * x + matrix[1][3] * y + matrix[2][3] * z + matrix[3][3] * w;
+}
+
+static void traceTransformMtxf(const Mtxf *matrix,
+                               float x,
+                               float y,
+                               float z,
+                               float out[3]) {
+    out[0] = matrix->m[0][0] * x + matrix->m[1][0] * y + matrix->m[2][0] * z + matrix->m[3][0];
+    out[1] = matrix->m[0][1] * x + matrix->m[1][1] * y + matrix->m[2][1] * z + matrix->m[3][1];
+    out[2] = matrix->m[0][2] * x + matrix->m[1][2] * y + matrix->m[2][2] * z + matrix->m[3][2];
+}
+
+enum {
+    TRACE_GLASS_PROJECTION_SAMPLE_DEFAULT_MAX = 16,
+    TRACE_GLASS_PROJECTION_SAMPLE_ALL_MAX = 512,
+    TRACE_GLASS_SCALE_BASIS = 0,
+    TRACE_GLASS_SCALE_SQRT_BASIS = 1,
+    TRACE_GLASS_SCALE_NO_BASIS = 2,
+    TRACE_GLASS_SCALE_FULL_MATRIX = 3,
+    TRACE_GLASS_SCALE_INV_VIS_FULL = 4,
+    TRACE_GLASS_SCALE_COUNT = 5,
+};
+
+typedef struct TraceGlassProjectionSummary {
+    int active;
+    int projected;
+    int onscreen;
+    int behind;
+    int sample_count;
+    int include_sample;
+    int sample_limit;
+    int sample_truncated;
+    float union_min_x;
+    float union_min_y;
+    float union_max_x;
+    float union_max_y;
+    float max_area;
+    int max_index;
+    int max_timer;
+    int max_onscreen;
+    int max_behind;
+    float max_world[3];
+    float max_model[3][3];
+    float max_screen_bbox[4];
+    float max_clip_w[3];
+    float max_screen[3][2];
+    float max_local_bbox[4];
+    float max_local_area;
+    char sample_json[49152];
+    size_t sample_used;
+} TraceGlassProjectionSummary;
+
+static const char *traceGlassProjectionScaleModeName(int mode) {
+    switch (mode) {
+        case TRACE_GLASS_SCALE_BASIS: return "basis";
+        case TRACE_GLASS_SCALE_SQRT_BASIS: return "sqrt_basis";
+        case TRACE_GLASS_SCALE_NO_BASIS: return "no_basis";
+        case TRACE_GLASS_SCALE_FULL_MATRIX: return "full_matrix";
+        case TRACE_GLASS_SCALE_INV_VIS_FULL: return "inv_vis_full";
+        default: return "unknown";
+    }
+}
+
+static void traceGlassProjectionSummaryInit(TraceGlassProjectionSummary *summary,
+                                            int include_sample,
+                                            int sample_limit) {
+    memset(summary, 0, sizeof(*summary));
+    summary->include_sample = include_sample;
+    summary->sample_limit = sample_limit;
+    summary->union_min_x = FLT_MAX;
+    summary->union_min_y = FLT_MAX;
+    summary->union_max_x = -FLT_MAX;
+    summary->union_max_y = -FLT_MAX;
+    summary->max_index = -1;
+    summary->max_timer = 0;
+    summary->sample_json[0] = '[';
+    summary->sample_json[1] = '\0';
+    summary->sample_used = 1;
+}
+
+static void traceGlassProjectionSummaryFinish(TraceGlassProjectionSummary *summary) {
+    if (summary->onscreen == 0) {
+        summary->union_min_x = 0.0f;
+        summary->union_min_y = 0.0f;
+        summary->union_max_x = 0.0f;
+        summary->union_max_y = 0.0f;
+    }
+    if (summary->sample_used < sizeof(summary->sample_json) - 1u) {
+        summary->sample_json[summary->sample_used++] = ']';
+        summary->sample_json[summary->sample_used] = '\0';
+    } else {
+        summary->sample_json[sizeof(summary->sample_json) - 2u] = ']';
+        summary->sample_json[sizeof(summary->sample_json) - 1u] = '\0';
+    }
+}
+
+static void traceApplyGlassProjectionScaleMode(Mtxf *model,
+                                               int mode,
+                                               float room_scale,
+                                               float vis_scale) {
+    if (mode == TRACE_GLASS_SCALE_FULL_MATRIX) {
+        matrix_scalar_multiply_3(room_scale, &model->m[0][0]);
+    } else if (mode == TRACE_GLASS_SCALE_BASIS) {
+        matrix_scalar_multiply_2(room_scale, &model->m[0][0]);
+    } else if (mode == TRACE_GLASS_SCALE_SQRT_BASIS && room_scale > 0.0f) {
+        matrix_scalar_multiply_2(sqrtf(room_scale), &model->m[0][0]);
+    } else if (mode == TRACE_GLASS_SCALE_INV_VIS_FULL && vis_scale > 0.0f) {
+        matrix_scalar_multiply_3(1.0f / vis_scale, &model->m[0][0]);
+    }
+}
+
+static int traceGlassProjectionAllSamples(void) {
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *value = getenv("GE007_TRACE_GLASS_PROJECTION_ALL");
+        enabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+    }
+
+    return enabled;
+}
+
+static void traceGlassProjectionSummaryAddPiece(TraceGlassProjectionSummary *summary,
+                                                const float projection[4][4],
+                                                float viewport_left,
+                                                float viewport_top,
+                                                float viewport_width,
+                                                float viewport_height,
+                                                const Mtxf *model,
+                                                const s16 vertices[3][3],
+                                                const s_shattered_window_piece *piece,
+                                                int index) {
+    float sx[3] = {0.0f, 0.0f, 0.0f};
+    float sy[3] = {0.0f, 0.0f, 0.0f};
+    float sw[3] = {0.0f, 0.0f, 0.0f};
+    float model_points[3][3] = {{0.0f}};
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    float local_min_x = FLT_MAX;
+    float local_min_y = FLT_MAX;
+    float local_max_x = -FLT_MAX;
+    float local_max_y = -FLT_MAX;
+    int valid = 1;
+    int piece_behind = 0;
+    int piece_onscreen = 0;
+    float area;
+    float local_area;
+
+    summary->active++;
+
+    for (int vi = 0; vi < 3; vi++) {
+        float vx = (float)vertices[vi][0];
+        float vy = (float)vertices[vi][1];
+        float model_pos[3];
+        float clip[4];
+        float ndc_x;
+        float ndc_y;
+
+        if (vx < local_min_x) local_min_x = vx;
+        if (vy < local_min_y) local_min_y = vy;
+        if (vx > local_max_x) local_max_x = vx;
+        if (vy > local_max_y) local_max_y = vy;
+
+        traceTransformMtxf(model,
+                           vx,
+                           vy,
+                           (float)vertices[vi][2],
+                           model_pos);
+        model_points[vi][0] = model_pos[0];
+        model_points[vi][1] = model_pos[1];
+        model_points[vi][2] = model_pos[2];
+        traceTransform4x4(projection,
+                          model_pos[0],
+                          model_pos[1],
+                          model_pos[2],
+                          1.0f,
+                          clip);
+        sw[vi] = clip[3];
+        if (!__builtin_isfinite(clip[0]) || !__builtin_isfinite(clip[1]) ||
+            !__builtin_isfinite(clip[3]) || fabsf(clip[3]) < 0.000001f) {
+            valid = 0;
+            continue;
+        }
+        if (clip[3] <= 0.0f) {
+            piece_behind = 1;
+        }
+        ndc_x = clip[0] / clip[3];
+        ndc_y = clip[1] / clip[3];
+        sx[vi] = viewport_left + (ndc_x * 0.5f + 0.5f) * viewport_width;
+        sy[vi] = viewport_top + (0.5f - ndc_y * 0.5f) * viewport_height;
+        if (!__builtin_isfinite(sx[vi]) || !__builtin_isfinite(sy[vi])) {
+            valid = 0;
+            continue;
+        }
+        if (sx[vi] < min_x) min_x = sx[vi];
+        if (sy[vi] < min_y) min_y = sy[vi];
+        if (sx[vi] > max_x) max_x = sx[vi];
+        if (sy[vi] > max_y) max_y = sy[vi];
+    }
+
+    if (!valid || min_x == FLT_MAX || min_y == FLT_MAX || max_x == -FLT_MAX || max_y == -FLT_MAX) {
+        return;
+    }
+
+    summary->projected++;
+    if (piece_behind) {
+        summary->behind++;
+    }
+    area = (max_x - min_x) * (max_y - min_y);
+    if (area < 0.0f || !__builtin_isfinite(area)) {
+        area = 0.0f;
+    }
+
+    local_area = (local_max_x - local_min_x) * (local_max_y - local_min_y);
+    if (local_area < 0.0f || !__builtin_isfinite(local_area)) {
+        local_area = 0.0f;
+    }
+
+    piece_onscreen =
+        max_x >= viewport_left &&
+        max_y >= viewport_top &&
+        min_x <= viewport_left + viewport_width &&
+        min_y <= viewport_top + viewport_height;
+    if (piece_onscreen) {
+        summary->onscreen++;
+        if (min_x < summary->union_min_x) summary->union_min_x = min_x;
+        if (min_y < summary->union_min_y) summary->union_min_y = min_y;
+        if (max_x > summary->union_max_x) summary->union_max_x = max_x;
+        if (max_y > summary->union_max_y) summary->union_max_y = max_y;
+    }
+
+    if (area > summary->max_area) {
+        summary->max_area = area;
+        summary->max_index = index;
+        summary->max_timer = (int)piece->piece;
+        summary->max_onscreen = piece_onscreen;
+        summary->max_behind = piece_behind;
+        summary->max_world[0] = piece->x;
+        summary->max_world[1] = piece->y;
+        summary->max_world[2] = piece->z;
+        for (int vi = 0; vi < 3; vi++) {
+            summary->max_model[vi][0] = model_points[vi][0];
+            summary->max_model[vi][1] = model_points[vi][1];
+            summary->max_model[vi][2] = model_points[vi][2];
+        }
+        summary->max_screen_bbox[0] = min_x;
+        summary->max_screen_bbox[1] = min_y;
+        summary->max_screen_bbox[2] = max_x;
+        summary->max_screen_bbox[3] = max_y;
+        summary->max_clip_w[0] = sw[0];
+        summary->max_clip_w[1] = sw[1];
+        summary->max_clip_w[2] = sw[2];
+        summary->max_screen[0][0] = sx[0];
+        summary->max_screen[0][1] = sy[0];
+        summary->max_screen[1][0] = sx[1];
+        summary->max_screen[1][1] = sy[1];
+        summary->max_screen[2][0] = sx[2];
+        summary->max_screen[2][1] = sy[2];
+        summary->max_local_bbox[0] = local_min_x;
+        summary->max_local_bbox[1] = local_min_y;
+        summary->max_local_bbox[2] = local_max_x;
+        summary->max_local_bbox[3] = local_max_y;
+        summary->max_local_area = local_area;
+    }
+
+    if (summary->include_sample &&
+        summary->sample_count < summary->sample_limit &&
+        summary->sample_used < sizeof(summary->sample_json)) {
+        char piece_json[1024];
+        int written = snprintf(
+            piece_json,
+            sizeof(piece_json),
+            "%s{\"index\":%d,\"timer\":%d,\"onscreen\":%d,\"behind\":%d,"
+            "\"world\":[%.2f,%.2f,%.2f],"
+            "\"model\":[[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f]],"
+            "\"local_bbox\":[%.2f,%.2f,%.2f,%.2f],\"local_area\":%.2f,"
+            "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+            "\"screen_area\":%.2f,\"clip_w\":[%.4f,%.4f,%.4f],"
+            "\"screen\":[[%.2f,%.2f],[%.2f,%.2f],[%.2f,%.2f]]}",
+            summary->sample_count == 0 ? "" : ",",
+            index,
+            (int)piece->piece,
+            piece_onscreen,
+            piece_behind,
+            piece->x,
+            piece->y,
+            piece->z,
+            model_points[0][0],
+            model_points[0][1],
+            model_points[0][2],
+            model_points[1][0],
+            model_points[1][1],
+            model_points[1][2],
+            model_points[2][0],
+            model_points[2][1],
+            model_points[2][2],
+            local_min_x,
+            local_min_y,
+            local_max_x,
+            local_max_y,
+            local_area,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            area,
+            sw[0],
+            sw[1],
+            sw[2],
+            sx[0],
+            sy[0],
+            sx[1],
+            sy[1],
+            sx[2],
+            sy[2]);
+        if (written > 0 &&
+            (size_t)written < sizeof(piece_json) &&
+            summary->sample_used + (size_t)written < sizeof(summary->sample_json) - 1u) {
+            memcpy(summary->sample_json + summary->sample_used, piece_json, (size_t)written);
+            summary->sample_used += (size_t)written;
+            summary->sample_json[summary->sample_used] = '\0';
+            summary->sample_count++;
+        } else {
+            summary->sample_truncated = 1;
+        }
+    }
+}
+
+static void traceGlassProjectionMaxPieceJson(char *out,
+                                             size_t out_size,
+                                             const TraceGlassProjectionSummary *summary) {
+    snprintf(out, out_size,
+             "{\"index\":%d,\"timer\":%d,\"onscreen\":%d,\"behind\":%d,"
+             "\"world\":[%.2f,%.2f,%.2f],"
+             "\"model\":[[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f]],"
+             "\"local_bbox\":[%.2f,%.2f,%.2f,%.2f],\"local_area\":%.2f,"
+             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+             "\"screen_area\":%.2f,\"clip_w\":[%.4f,%.4f,%.4f],"
+             "\"screen\":[[%.2f,%.2f],[%.2f,%.2f],[%.2f,%.2f]]}",
+             summary->max_index,
+             summary->max_timer,
+             summary->max_onscreen,
+             summary->max_behind,
+             summary->max_world[0],
+             summary->max_world[1],
+             summary->max_world[2],
+             summary->max_model[0][0],
+             summary->max_model[0][1],
+             summary->max_model[0][2],
+             summary->max_model[1][0],
+             summary->max_model[1][1],
+             summary->max_model[1][2],
+             summary->max_model[2][0],
+             summary->max_model[2][1],
+             summary->max_model[2][2],
+             summary->max_local_bbox[0],
+             summary->max_local_bbox[1],
+             summary->max_local_bbox[2],
+             summary->max_local_bbox[3],
+             summary->max_local_area,
+             summary->max_screen_bbox[0],
+             summary->max_screen_bbox[1],
+             summary->max_screen_bbox[2],
+             summary->max_screen_bbox[3],
+             summary->max_area,
+             summary->max_clip_w[0],
+             summary->max_clip_w[1],
+             summary->max_clip_w[2],
+             summary->max_screen[0][0],
+             summary->max_screen[0][1],
+             summary->max_screen[1][0],
+             summary->max_screen[1][1],
+             summary->max_screen[2][0],
+             summary->max_screen[2][1]);
+}
+
+static void traceGlassProjectionSummaryJson(char *out,
+                                            size_t out_size,
+                                            const TraceGlassProjectionSummary *summary,
+                                            const char *scale_mode) {
+    char max_piece_json[1024];
+
+    traceGlassProjectionMaxPieceJson(max_piece_json, sizeof(max_piece_json), summary);
+    snprintf(out, out_size,
+             "{\"scale_mode\":\"%s\",\"active\":%d,\"projected\":%d,"
+             "\"onscreen\":%d,\"behind\":%d,"
+             "\"union_screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+             "\"max_screen_area\":%.2f,\"max_piece\":%s}",
+             scale_mode,
+             summary->active,
+             summary->projected,
+             summary->onscreen,
+             summary->behind,
+             summary->union_min_x,
+             summary->union_min_y,
+             summary->union_max_x,
+             summary->union_max_y,
+             summary->max_area,
+             max_piece_json);
+}
+
+static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
+    float projection[4][4];
+    int projection_valid = 0;
+    int projection_is_float = 0;
+    int emit_enabled = traceGlassShardEmitEnabled();
+    int compress_full = traceGlassShardCompressFullMatrix();
+    int basis_scale = traceGlassShardBasisScale();
+    int no_basis_scale = traceGlassShardNoBasisScale();
+    int sqrt_basis = traceGlassShardSqrtBasis();
+    int inv_vis_scale = traceGlassShardInvVisScale();
+    int sample_all = traceGlassProjectionAllSamples();
+    int sample_limit = sample_all ? TRACE_GLASS_PROJECTION_SAMPLE_ALL_MAX : TRACE_GLASS_PROJECTION_SAMPLE_DEFAULT_MAX;
+    int selected_mode = TRACE_GLASS_SCALE_INV_VIS_FULL;
+    float viewport_left = 0.0f;
+    float viewport_top = 0.0f;
+    float viewport_width = 320.0f;
+    float viewport_height = 240.0f;
+    float room_scale = 1.0f;
+    float vis_scale = 1.0f;
+    TraceGlassProjectionSummary summaries[TRACE_GLASS_SCALE_COUNT];
+    char selected_max_piece_json[1024];
+    char variant_basis_json[2048];
+    char variant_sqrt_basis_json[2048];
+    char variant_no_basis_json[2048];
+    char variant_full_matrix_json[2048];
+    char variant_inv_vis_full_json[2048];
+
+    if (out_size == 0) {
+        return;
+    }
+
+    if (g_CurrentPlayer != NULL) {
+        viewport_left = g_CurrentPlayer->c_screenleft;
+        viewport_top = g_CurrentPlayer->c_screentop;
+        viewport_width = g_CurrentPlayer->c_screenwidth;
+        viewport_height = g_CurrentPlayer->c_screenheight;
+    }
+
+    room_scale = get_room_data_float1();
+    if (!__builtin_isfinite(room_scale) || room_scale == 0.0f) {
+        room_scale = 1.0f;
+    }
+    vis_scale = bgGetLevelVisibilityScale();
+    if (!__builtin_isfinite(vis_scale) || vis_scale == 0.0f) {
+        vis_scale = 1.0f;
+    }
+
+    traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
+
+    if (compress_full) {
+        selected_mode = TRACE_GLASS_SCALE_FULL_MATRIX;
+    } else if (basis_scale) {
+        selected_mode = TRACE_GLASS_SCALE_BASIS;
+    } else if (no_basis_scale) {
+        selected_mode = TRACE_GLASS_SCALE_NO_BASIS;
+    } else if (sqrt_basis || !inv_vis_scale) {
+        selected_mode = TRACE_GLASS_SCALE_SQRT_BASIS;
+    }
+    for (int mode = 0; mode < TRACE_GLASS_SCALE_COUNT; mode++) {
+        traceGlassProjectionSummaryInit(&summaries[mode], mode == selected_mode, sample_limit);
+    }
+
+    if (g_CurrentPlayer == NULL ||
+        ptr_shattered_window_pieces == NULL ||
+        SHATTERED_WINDOW_PIECES_BUFFER_LEN <= 0 ||
+        SHATTERED_WINDOW_PIECES_BUFFER_LEN > 512 ||
+        !projection_valid) {
+        snprintf(out, out_size,
+                 "{\"present\":0,\"emit_enabled\":%d,\"projection_valid\":%d,"
+                 "\"projection_float\":%d,\"active\":0,\"projected\":0,"
+                 "\"onscreen\":0,\"behind\":0,\"sample\":[]}",
+                 emit_enabled,
+                 projection_valid,
+                 projection_is_float);
+        return;
+    }
+
+    for (int index = 0; index < SHATTERED_WINDOW_PIECES_BUFFER_LEN; index++) {
+        const s_shattered_window_piece *piece = &ptr_shattered_window_pieces[index];
+        Mtxf base_model;
+        const s16 vertices[3][3] = {
+            { piece->field_0x38, piece->field_0x3a, piece->field_0x3c },
+            { piece->field_0x48, piece->field_0x4a, piece->field_0x4c },
+            { piece->field_0x58, piece->field_0x5a, piece->field_0x5c },
+        };
+
+        if (piece->piece <= 0) {
+            continue;
+        }
+
+        matrix_4x4_set_position_and_rotation_around_xyz(
+            (coord3d *)&piece->x,
+            (coord3d *)&piece->field_0x10,
+            &base_model);
+        base_model.m[3][0] -= g_CurrentPlayer->current_model_pos.x;
+        base_model.m[3][1] -= g_CurrentPlayer->current_model_pos.y;
+        base_model.m[3][2] -= g_CurrentPlayer->current_model_pos.z;
+
+        for (int mode = 0; mode < TRACE_GLASS_SCALE_COUNT; mode++) {
+            Mtxf model = base_model;
+            traceApplyGlassProjectionScaleMode(&model, mode, room_scale, vis_scale);
+            traceGlassProjectionSummaryAddPiece(&summaries[mode],
+                                                projection,
+                                                viewport_left,
+                                                viewport_top,
+                                                viewport_width,
+                                                viewport_height,
+                                                &model,
+                                                vertices,
+                                                piece,
+                                                index);
+        }
+    }
+
+    for (int mode = 0; mode < TRACE_GLASS_SCALE_COUNT; mode++) {
+        traceGlassProjectionSummaryFinish(&summaries[mode]);
+    }
+    traceGlassProjectionSummaryJson(variant_basis_json,
+                                    sizeof(variant_basis_json),
+                                    &summaries[TRACE_GLASS_SCALE_BASIS],
+                                    traceGlassProjectionScaleModeName(TRACE_GLASS_SCALE_BASIS));
+    traceGlassProjectionSummaryJson(variant_sqrt_basis_json,
+                                    sizeof(variant_sqrt_basis_json),
+                                    &summaries[TRACE_GLASS_SCALE_SQRT_BASIS],
+                                    traceGlassProjectionScaleModeName(TRACE_GLASS_SCALE_SQRT_BASIS));
+    traceGlassProjectionSummaryJson(variant_no_basis_json,
+                                    sizeof(variant_no_basis_json),
+                                    &summaries[TRACE_GLASS_SCALE_NO_BASIS],
+                                    traceGlassProjectionScaleModeName(TRACE_GLASS_SCALE_NO_BASIS));
+    traceGlassProjectionSummaryJson(variant_full_matrix_json,
+                                    sizeof(variant_full_matrix_json),
+                                    &summaries[TRACE_GLASS_SCALE_FULL_MATRIX],
+                                    traceGlassProjectionScaleModeName(TRACE_GLASS_SCALE_FULL_MATRIX));
+    traceGlassProjectionSummaryJson(variant_inv_vis_full_json,
+                                    sizeof(variant_inv_vis_full_json),
+                                    &summaries[TRACE_GLASS_SCALE_INV_VIS_FULL],
+                                    traceGlassProjectionScaleModeName(TRACE_GLASS_SCALE_INV_VIS_FULL));
+    traceGlassProjectionMaxPieceJson(selected_max_piece_json,
+                                     sizeof(selected_max_piece_json),
+                                     &summaries[selected_mode]);
+
+    snprintf(out, out_size,
+             "{\"present\":1,\"source\":\"native_emit_projection\","
+             "\"emit_enabled\":%d,\"projection_valid\":%d,\"projection_float\":%d,"
+             "\"projection_diag\":[%.6f,%.6f,%.6f,%.6f],"
+             "\"projection_row3\":[%.6f,%.6f,%.6f,%.6f],"
+             "\"projection_col3\":[%.6f,%.6f,%.6f,%.6f],"
+             "\"compress_full_matrix\":%d,\"basis_scale\":%d,\"no_basis_scale\":%d,"
+             "\"sqrt_basis\":%d,\"inv_vis_scale\":%d,"
+             "\"room_scale\":%.8f,\"vis_scale\":%.8f,"
+             "\"scale_mode\":\"%s\","
+             "\"viewport\":[%.2f,%.2f,%.2f,%.2f],"
+             "\"active\":%d,\"projected\":%d,\"onscreen\":%d,\"behind\":%d,"
+             "\"sample_all\":%d,\"sample_limit\":%d,\"sample_count\":%d,\"sample_truncated\":%d,"
+             "\"union_screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+             "\"max_screen_area\":%.2f,"
+             "\"max_piece\":%s,"
+             "\"variants\":{\"basis\":%s,\"sqrt_basis\":%s,\"no_basis\":%s,\"full_matrix\":%s,\"inv_vis_full\":%s},"
+             "\"sample\":%s}",
+             emit_enabled,
+             projection_valid,
+             projection_is_float,
+             projection[0][0],
+             projection[1][1],
+             projection[2][2],
+             projection[3][3],
+             projection[3][0],
+             projection[3][1],
+             projection[3][2],
+             projection[3][3],
+             projection[0][3],
+             projection[1][3],
+             projection[2][3],
+             projection[3][3],
+             compress_full,
+             basis_scale,
+             no_basis_scale,
+             sqrt_basis,
+             inv_vis_scale,
+             room_scale,
+             vis_scale,
+             traceGlassProjectionScaleModeName(selected_mode),
+             viewport_left,
+             viewport_top,
+             viewport_width,
+             viewport_height,
+             summaries[selected_mode].active,
+             summaries[selected_mode].projected,
+             summaries[selected_mode].onscreen,
+             summaries[selected_mode].behind,
+             sample_all,
+             sample_limit,
+             summaries[selected_mode].sample_count,
+             summaries[selected_mode].sample_truncated,
+             summaries[selected_mode].union_min_x,
+             summaries[selected_mode].union_min_y,
+             summaries[selected_mode].union_max_x,
+             summaries[selected_mode].union_max_y,
+             summaries[selected_mode].max_area,
+             selected_max_piece_json,
+             variant_basis_json,
+             variant_sqrt_basis_json,
+             variant_no_basis_json,
+             variant_full_matrix_json,
+             variant_inv_vis_full_json,
+             summaries[selected_mode].sample_json);
+}
+
+static int traceObjectShotsTaken(const ObjectRecord *obj) {
+    if (obj == NULL) {
+        return 0;
+    }
+    if (!(obj->state & PROPSTATE_DESTROYED)) {
+        if (obj->damage == 0.0f) {
+            return 0;
+        }
+        return (int)((obj->maxdamage * 3.0f) / obj->damage);
+    }
+    return (int)(obj->maxdamage + 4.0f);
+}
+
+static int traceObjectDestroyedLevel(const ObjectRecord *obj) {
+    if (obj == NULL || !(obj->state & PROPSTATE_DESTROYED)) {
+        return 0;
+    }
+    return ((int)obj->maxdamage >> 2) + 1;
+}
+
+static void traceFormatGlassPropObjectJson(char *out,
+                                           size_t out_size,
+                                           const ObjectRecord *obj,
+                                           int setup_index,
+                                           float dist_sq) {
+    if (out_size == 0) {
+        return;
+    }
+    if (obj == NULL) {
+        snprintf(out, out_size, "{\"index\":-1}");
+        return;
+    }
+
+    snprintf(out,
+             out_size,
+             "{\"index\":%d,\"type\":%d,\"obj\":%d,\"pad\":%d,"
+             "\"state\":%u,\"runtime\":\"0x%08X\",\"remove\":%d,"
+             "\"destroyed_level\":%d,\"shots\":%d,\"has_prop\":%d,\"has_model\":%d,"
+             "\"damage\":%.4f,\"maxdamage\":%.4f,\"pos\":[%.2f,%.2f,%.2f],"
+             "\"dist_sq\":%.2f}",
+             setup_index,
+             obj->type,
+             obj->obj,
+             obj->pad,
+             (unsigned int)obj->state,
+             (unsigned int)obj->runtime_bitflags,
+             (obj->runtime_bitflags & RUNTIMEBITFLAG_REMOVE) ? 1 : 0,
+             traceObjectDestroyedLevel(obj),
+             traceObjectShotsTaken(obj),
+             obj->prop != NULL ? 1 : 0,
+             obj->model != NULL ? 1 : 0,
+             obj->damage,
+             obj->maxdamage,
+             obj->runtime_pos.x,
+             obj->runtime_pos.y,
+             obj->runtime_pos.z,
+             dist_sq);
+}
+
+static void traceBuildGlassPropsJson(char *out,
+                                     size_t out_size,
+                                     int has_player,
+                                     float player_x,
+                                     float player_y,
+                                     float player_z) {
+    enum { GLASS_PROP_SAMPLE_MAX = 32 };
+    PropDefHeaderRecord *cmd;
+    int setup_index = 0;
+    int count = 0;
+    int live = 0;
+    int with_prop = 0;
+    int with_model = 0;
+    int destroyed = 0;
+    int remove = 0;
+    int truncated = 0;
+    int sample_truncated = 0;
+    int sample_count = 0;
+    int sample_len = 0;
+    int nearest_index = -1;
+    int first_removed_index = -1;
+    int first_destroyed_index = -1;
+    float nearest_dist_sq = FLT_MAX;
+    float first_removed_dist_sq = 0.0f;
+    float first_destroyed_dist_sq = 0.0f;
+    const ObjectRecord *nearest_obj = NULL;
+    const ObjectRecord *first_removed_obj = NULL;
+    const ObjectRecord *first_destroyed_obj = NULL;
+    u64 hash = 1469598103934665603ULL;
+    char nearest_json[512];
+    char first_removed_json[512];
+    char first_destroyed_json[512];
+    char sample_json[12288];
+
+    if (out_size == 0) {
+        return;
+    }
+
+    nearest_json[0] = '\0';
+    first_removed_json[0] = '\0';
+    first_destroyed_json[0] = '\0';
+    sample_json[0] = '[';
+    sample_json[1] = '\0';
+    sample_len = 1;
+
+    if (g_CurrentSetup.propDefs == NULL) {
+        snprintf(out,
+                 out_size,
+                 "{\"present\":0,\"count\":0,\"live\":0,\"with_prop\":0,\"with_model\":0,"
+                 "\"destroyed\":0,\"remove\":0,\"truncated\":0,\"nearest\":{\"index\":-1},"
+                 "\"first_removed\":{\"index\":-1},\"first_destroyed\":{\"index\":-1},"
+                 "\"sample\":[],\"sample_truncated\":0,\"hash\":\"0x%016llX\"}",
+                 (unsigned long long)hash);
+        return;
+    }
+
+    for (cmd = g_CurrentSetup.propDefs;
+         cmd->type != PROPDEF_END && setup_index < 2048;
+         cmd += sizepropdef(cmd), setup_index++) {
+        const ObjectRecord *obj;
+        int obj_destroyed;
+        int obj_remove;
+        float dx = 0.0f;
+        float dy = 0.0f;
+        float dz = 0.0f;
+        float dist_sq = 0.0f;
+
+        if (cmd->type != PROPDEF_GLASS && cmd->type != PROPDEF_TINTED_GLASS) {
+            continue;
+        }
+
+        obj = (const ObjectRecord *)cmd;
+        obj_destroyed = (obj->state & PROPSTATE_DESTROYED) ? 1 : 0;
+        obj_remove = (obj->runtime_bitflags & RUNTIMEBITFLAG_REMOVE) ? 1 : 0;
+
+        count++;
+        if (obj->prop != NULL) {
+            with_prop++;
+        }
+        if (obj->model != NULL) {
+            with_model++;
+        }
+        if (obj->prop != NULL && !obj_remove) {
+            live++;
+        }
+        if (obj_destroyed) {
+            destroyed++;
+        }
+        if (obj_remove) {
+            remove++;
+        }
+
+        if (has_player) {
+            dx = obj->runtime_pos.x - player_x;
+            dy = obj->runtime_pos.y - player_y;
+            dz = obj->runtime_pos.z - player_z;
+            dist_sq = dx * dx + dy * dy + dz * dz;
+        }
+
+        if (nearest_obj == NULL || (has_player && dist_sq < nearest_dist_sq)) {
+            nearest_obj = obj;
+            nearest_index = setup_index;
+            nearest_dist_sq = dist_sq;
+        }
+        if (obj_remove && first_removed_obj == NULL) {
+            first_removed_obj = obj;
+            first_removed_index = setup_index;
+            first_removed_dist_sq = dist_sq;
+        }
+        if (obj_destroyed && first_destroyed_obj == NULL) {
+            first_destroyed_obj = obj;
+            first_destroyed_index = setup_index;
+            first_destroyed_dist_sq = dist_sq;
+        }
+        if (sample_count < GLASS_PROP_SAMPLE_MAX) {
+            char object_json[512];
+            int written;
+            traceFormatGlassPropObjectJson(object_json, sizeof(object_json), obj, setup_index, dist_sq);
+            written = snprintf(sample_json + sample_len,
+                               sizeof(sample_json) - (size_t)sample_len,
+                               "%s%s",
+                               sample_count == 0 ? "" : ",",
+                               object_json);
+            if (written > 0 && written < (int)(sizeof(sample_json) - (size_t)sample_len)) {
+                sample_len += written;
+                sample_count++;
+            } else {
+                sample_truncated = 1;
+            }
+        } else {
+            sample_truncated = 1;
+        }
+
+        hash = traceIntroHashU32(hash, (u32)setup_index);
+        hash = traceIntroHashU32(hash, (u32)obj->type);
+        hash = traceIntroHashU32(hash, (u32)obj->obj);
+        hash = traceIntroHashU32(hash, (u32)obj->pad);
+        hash = traceIntroHashU32(hash, (u32)obj->state);
+        hash = traceIntroHashU32(hash, obj->flags);
+        hash = traceIntroHashU32(hash, obj->flags2);
+        hash = traceIntroHashU32(hash, obj->runtime_bitflags);
+        hash = traceIntroHashU32(hash, obj->prop != NULL ? 1U : 0U);
+        hash = traceIntroHashU32(hash, obj->model != NULL ? 1U : 0U);
+        hash = traceIntroHashU32(hash, traceReadU32Bytes(&obj->runtime_pos.x, 0));
+        hash = traceIntroHashU32(hash, traceReadU32Bytes(&obj->runtime_pos.y, 0));
+        hash = traceIntroHashU32(hash, traceReadU32Bytes(&obj->runtime_pos.z, 0));
+        hash = traceIntroHashU32(hash, traceReadU32Bytes(&obj->maxdamage, 0));
+        hash = traceIntroHashU32(hash, traceReadU32Bytes(&obj->damage, 0));
+    }
+
+    if (setup_index >= 2048 && cmd->type != PROPDEF_END) {
+        truncated = 1;
+    }
+
+    traceFormatGlassPropObjectJson(nearest_json,
+                                   sizeof(nearest_json),
+                                   nearest_obj,
+                                   nearest_index,
+                                   nearest_obj != NULL ? nearest_dist_sq : 0.0f);
+    traceFormatGlassPropObjectJson(first_removed_json,
+                                   sizeof(first_removed_json),
+                                   first_removed_obj,
+                                   first_removed_index,
+                                   first_removed_dist_sq);
+    traceFormatGlassPropObjectJson(first_destroyed_json,
+                                   sizeof(first_destroyed_json),
+                                   first_destroyed_obj,
+                                   first_destroyed_index,
+                                   first_destroyed_dist_sq);
+    if (sample_len < (int)sizeof(sample_json) - 1) {
+        sample_json[sample_len++] = ']';
+        sample_json[sample_len] = '\0';
+    } else {
+        strcpy(sample_json, "[]");
+        sample_truncated = 1;
+    }
+
+    snprintf(out,
+             out_size,
+             "{\"present\":1,\"count\":%d,\"live\":%d,\"with_prop\":%d,\"with_model\":%d,"
+             "\"destroyed\":%d,\"remove\":%d,\"truncated\":%d,"
+             "\"nearest\":%s,\"first_removed\":%s,\"first_destroyed\":%s,"
+             "\"sample\":%s,\"sample_truncated\":%d,\"hash\":\"0x%016llX\"}",
+             count,
+             live,
+             with_prop,
+             with_model,
+             destroyed,
+             remove,
+             truncated,
+             nearest_json[0] ? nearest_json : "{\"index\":-1}",
+             first_removed_json[0] ? first_removed_json : "{\"index\":-1}",
+             first_destroyed_json[0] ? first_destroyed_json : "{\"index\":-1}",
+             sample_json,
+             sample_truncated,
+             (unsigned long long)hash);
 }
 
 static u16 traceAnimReadU16(const ModelAnimation *anim, size_t offset) {
@@ -459,6 +1572,11 @@ typedef struct TraceBulletImpactCreateEvent {
     float normal[3];
     float size[2];
     float normal_offset;
+    float normal_unit[3];
+    float axis_x[3];
+    float axis_y[3];
+    float raw_vertices[4][3];
+    int rounded_vertices[4][3];
 } TraceBulletImpactCreateEvent;
 
 typedef struct TraceBulletImpactRenderEvent {
@@ -530,10 +1648,17 @@ typedef struct TraceShotEvent {
     int hit_count;
     int shoot_through;
     int impact_type;
+    int ray_valid;
+    int dest_valid;
     float distance;
     float threshold;
     float pos[3];
     float normal[3];
+    float screen_pos[3];
+    float screen_dir[3];
+    float attacker_pos[3];
+    float world_dir[3];
+    float dest[3];
 } TraceShotEvent;
 
 static TraceShotEvent s_traceShotEvents[TRACE_SHOT_EVENTS_MAX];
@@ -835,6 +1960,11 @@ void portTraceShotEvent(const char *phase,
                         s32 impact_type,
                         const coord3d *pos,
                         const coord3d *normal,
+                        const coord3d *screen_pos,
+                        const coord3d *screen_dir,
+                        const coord3d *attacker_pos,
+                        const coord3d *world_dir,
+                        const coord3d *dest,
                         f32 threshold)
 {
     TraceShotEvent *event;
@@ -883,6 +2013,29 @@ void portTraceShotEvent(const char *phase,
         event->normal[1] = normal->y;
         event->normal[2] = normal->z;
     }
+
+    if (screen_pos != NULL && screen_dir != NULL && attacker_pos != NULL && world_dir != NULL) {
+        event->ray_valid = 1;
+        event->screen_pos[0] = screen_pos->x;
+        event->screen_pos[1] = screen_pos->y;
+        event->screen_pos[2] = screen_pos->z;
+        event->screen_dir[0] = screen_dir->x;
+        event->screen_dir[1] = screen_dir->y;
+        event->screen_dir[2] = screen_dir->z;
+        event->attacker_pos[0] = attacker_pos->x;
+        event->attacker_pos[1] = attacker_pos->y;
+        event->attacker_pos[2] = attacker_pos->z;
+        event->world_dir[0] = world_dir->x;
+        event->world_dir[1] = world_dir->y;
+        event->world_dir[2] = world_dir->z;
+    }
+
+    if (dest != NULL) {
+        event->dest_valid = 1;
+        event->dest[0] = dest->x;
+        event->dest[1] = dest->y;
+        event->dest[2] = dest->z;
+    }
 }
 
 void portTraceBulletImpactCreate(s32 slot,
@@ -897,9 +2050,16 @@ void portTraceBulletImpactCreate(s32 slot,
                                  const coord3d *normal,
                                  f32 size_x,
                                  f32 size_y,
-                                 f32 normal_offset)
+                                 f32 normal_offset,
+                                 const f32 normal_unit[3],
+                                 const f32 axis_x[3],
+                                 const f32 axis_y[3],
+                                 const f32 raw_vertices[4][3],
+                                 const s16 rounded_vertices[4][3])
 {
     TraceBulletImpactCreateEvent *event;
+    int i;
+    int j;
 
     if (!traceJsonEventTraceEnabled()) {
         return;
@@ -941,6 +2101,40 @@ void portTraceBulletImpactCreate(s32 slot,
         event->normal[0] = normal->x;
         event->normal[1] = normal->y;
         event->normal[2] = normal->z;
+    }
+
+    if (normal_unit != NULL) {
+        event->normal_unit[0] = normal_unit[0];
+        event->normal_unit[1] = normal_unit[1];
+        event->normal_unit[2] = normal_unit[2];
+    }
+
+    if (axis_x != NULL) {
+        event->axis_x[0] = axis_x[0];
+        event->axis_x[1] = axis_x[1];
+        event->axis_x[2] = axis_x[2];
+    }
+
+    if (axis_y != NULL) {
+        event->axis_y[0] = axis_y[0];
+        event->axis_y[1] = axis_y[1];
+        event->axis_y[2] = axis_y[2];
+    }
+
+    if (raw_vertices != NULL) {
+        for (i = 0; i < 4; i++) {
+            for (j = 0; j < 3; j++) {
+                event->raw_vertices[i][j] = raw_vertices[i][j];
+            }
+        }
+    }
+
+    if (rounded_vertices != NULL) {
+        for (i = 0; i < 4; i++) {
+            for (j = 0; j < 3; j++) {
+                event->rounded_vertices[i][j] = rounded_vertices[i][j];
+            }
+        }
     }
 
     if (s_traceBulletImpactPendingMaterialValid) {
@@ -1707,6 +2901,7 @@ static int traceStageObjectIsMissionRelevant(s32 type) {
         case PROPDEF_VEHICHLE:
         case PROPDEF_AIRCRAFT:
         case PROPDEF_SAFE:
+        case PROPDEF_GLASS:
         case PROPDEF_TINTED_GLASS:
         case PROPDEF_TANK:
             return 1;
@@ -2893,6 +4088,249 @@ typedef struct TracePropFloorSnapshot {
     float delta;
 } TracePropFloorSnapshot;
 
+typedef struct TraceActorSample {
+    int slot;
+    int chrnum;
+    int action;
+    int alert;
+    int sleep;
+    int hidden;
+    int hidden_bits;
+    int alive;
+    int onscreen;
+    int rendered;
+    int room;
+    float dist_sq;
+    float x;
+    float y;
+    float z;
+} TraceActorSample;
+
+static int tracePropRenderedInRooms(PropRecord *prop, int *out_room)
+{
+    int saw_room = 0;
+    int first_room = -1;
+    int i;
+
+    if (out_room != NULL) {
+        *out_room = -1;
+    }
+
+    if (prop == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < PROPRECORD_STAN_ROOM_LEN && prop->rooms[i] != 0xFF; i++) {
+        int room = prop->rooms[i];
+
+        if (first_room < 0) {
+            first_room = room;
+        }
+
+        saw_room = 1;
+        if (getROOMID_isRendered(room)) {
+            if (out_room != NULL) {
+                *out_room = first_room;
+            }
+            return 1;
+        }
+    }
+
+    if (first_room < 0 && prop->stan != NULL) {
+        first_room = getTileRoom(prop->stan);
+    }
+
+    if (out_room != NULL) {
+        *out_room = first_room;
+    }
+
+    return !saw_room && first_room >= 0 && getROOMID_isRendered(first_room);
+}
+
+static void traceInsertActorSample(TraceActorSample *samples,
+                                   int *sample_count,
+                                   const TraceActorSample *sample)
+{
+    enum { max_samples = 6 };
+    int slot = *sample_count;
+
+    if (slot < max_samples) {
+        (*sample_count)++;
+    } else if (sample->dist_sq < samples[max_samples - 1].dist_sq) {
+        slot = max_samples - 1;
+    } else {
+        return;
+    }
+
+    while (slot > 0 && sample->dist_sq < samples[slot - 1].dist_sq) {
+        samples[slot] = samples[slot - 1];
+        slot--;
+    }
+
+    samples[slot] = *sample;
+}
+
+static void traceBuildActorSummaryJson(char *out,
+                                       size_t out_size,
+                                       int has_player,
+                                       float player_x,
+                                       float player_y,
+                                       float player_z)
+{
+    TraceActorSample samples[6];
+    int sample_count = 0;
+    int slots = 0;
+    int live = 0;
+    int alive_count = 0;
+    int hidden_count = 0;
+    int onscreen_count = 0;
+    int rendered_count = 0;
+    size_t used = 0;
+    int i;
+
+    if (out_size == 0) {
+        return;
+    }
+
+    if (g_ChrSlots != NULL && g_NumChrSlots > 0 && g_NumChrSlots < 256) {
+        slots = g_NumChrSlots;
+        for (i = 0; i < g_NumChrSlots; i++) {
+            ChrRecord *chr = &g_ChrSlots[i];
+            PropRecord *prop;
+            TraceActorSample sample;
+            float dx;
+            float dy;
+            float dz;
+            int room = -1;
+            int rendered;
+
+            if (chr == NULL || chr->model == NULL || chr->chrnum < 0 || chr->chrnum >= 1000) {
+                continue;
+            }
+
+            live++;
+
+            prop = chr->prop;
+            rendered = tracePropRenderedInRooms(prop, &room);
+
+            if (chr->damage < chr->maxdamage) {
+                alive_count++;
+            }
+
+            if (chr->hidden != 0) {
+                hidden_count++;
+            }
+
+            if (prop != NULL && (prop->flags & PROPFLAG_ONSCREEN) != 0) {
+                onscreen_count++;
+            }
+
+            if (rendered) {
+                rendered_count++;
+            }
+
+            if (prop == NULL || prop->type != PROP_TYPE_CHR) {
+                continue;
+            }
+
+            dx = has_player ? prop->pos.x - player_x : 0.0f;
+            dy = has_player ? prop->pos.y - player_y : 0.0f;
+            dz = has_player ? prop->pos.z - player_z : 0.0f;
+
+            memset(&sample, 0, sizeof(sample));
+            sample.slot = i;
+            sample.chrnum = chr->chrnum;
+            sample.action = chr->actiontype;
+            sample.alert = chr->alertness;
+            sample.sleep = chr->sleep;
+            sample.hidden = chr->hidden != 0 ? 1 : 0;
+            sample.hidden_bits = chr->hidden;
+            sample.alive = chr->damage < chr->maxdamage ? 1 : 0;
+            sample.onscreen = (prop->flags & PROPFLAG_ONSCREEN) != 0 ? 1 : 0;
+            sample.rendered = rendered;
+            sample.room = room;
+            sample.dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+            sample.x = prop->pos.x;
+            sample.y = prop->pos.y;
+            sample.z = prop->pos.z;
+            traceInsertActorSample(samples, &sample_count, &sample);
+        }
+    }
+
+    {
+        int wrote = snprintf(out + used,
+                             out_size - used,
+                             "{\"slots\":%d,\"live\":%d,\"alive\":%d,\"hidden\":%d,"
+                             "\"onscreen\":%d,\"rendered\":%d,\"sample\":[",
+                             slots,
+                             live,
+                             alive_count,
+                             hidden_count,
+                             onscreen_count,
+                             rendered_count);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            snprintf(out,
+                     out_size,
+                     "{\"slots\":%d,\"live\":%d,\"alive\":%d,\"hidden\":%d,"
+                     "\"onscreen\":%d,\"rendered\":%d,\"sample\":[]}",
+                     slots,
+                     live,
+                     alive_count,
+                     hidden_count,
+                     onscreen_count,
+                     rendered_count);
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    for (i = 0; i < sample_count && used < out_size; i++) {
+        int wrote = snprintf(out + used,
+                             out_size - used,
+                             "%s{\"slot\":%d,\"chrnum\":%d,\"action\":%d,\"alert\":%d,\"sleep\":%d,"
+                             "\"hidden\":%d,\"hidden_bits\":%d,\"alive\":%d,\"onscreen\":%d,"
+                             "\"rendered\":%d,\"room\":%d,\"dist\":%.2f,\"pos\":[%.2f,%.2f,%.2f]}",
+                             i == 0 ? "" : ",",
+                             samples[i].slot,
+                             samples[i].chrnum,
+                             samples[i].action,
+                             samples[i].alert,
+                             samples[i].sleep,
+                             samples[i].hidden,
+                             samples[i].hidden_bits,
+                             samples[i].alive,
+                             samples[i].onscreen,
+                             samples[i].rendered,
+                             samples[i].room,
+                             sqrtf(samples[i].dist_sq),
+                             samples[i].x,
+                             samples[i].y,
+                             samples[i].z);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            used = out_size;
+            break;
+        }
+        used += (size_t)wrote;
+    }
+
+    if (used + 3 <= out_size) {
+        out[used++] = ']';
+        out[used++] = '}';
+        out[used] = '\0';
+    } else {
+        snprintf(out,
+                 out_size,
+                 "{\"slots\":%d,\"live\":%d,\"alive\":%d,\"hidden\":%d,"
+                 "\"onscreen\":%d,\"rendered\":%d,\"sample\":[]}",
+                 slots,
+                 live,
+                 alive_count,
+                 hidden_count,
+                 onscreen_count,
+                 rendered_count);
+    }
+}
+
 static void tracePropFloorSnapshot(PropRecord *prop, TracePropFloorSnapshot *out)
 {
     StandTile *tile;
@@ -3363,7 +4801,12 @@ static void traceBuildShotJson(char *out, size_t out_size)
                          "\"mtx\":%d,\"texture\":%d,\"player_room\":%d,\"best_room\":%d,"
                          "\"hit_bg\":%d,\"hit_something\":%d,\"hit_count\":%d,\"shoot_through\":%d,"
                          "\"impact\":%d,\"threshold\":%.2f,"
-                         "\"pos\":[%.2f,%.2f,%.2f],\"normal\":[%.4f,%.4f,%.4f]}",
+                         "\"pos\":[%.6f,%.6f,%.6f],\"normal\":[%.6f,%.6f,%.6f],"
+                         "\"ray\":{\"valid\":%d,\"screen_pos\":[%.6f,%.6f,%.6f],"
+                         "\"screen_dir\":[%.8f,%.8f,%.8f],"
+                         "\"attacker_pos\":[%.6f,%.6f,%.6f],"
+                         "\"world_dir\":[%.8f,%.8f,%.8f],"
+                         "\"dest_valid\":%d,\"dest\":[%.6f,%.6f,%.6f]}}",
                          i == 0 ? "" : ",",
                          event->frame,
                          event->shot_id,
@@ -3396,7 +4839,24 @@ static void traceBuildShotJson(char *out, size_t out_size)
                          event->pos[2],
                          event->normal[0],
                          event->normal[1],
-                         event->normal[2]);
+                         event->normal[2],
+                         event->ray_valid,
+                         event->screen_pos[0],
+                         event->screen_pos[1],
+                         event->screen_pos[2],
+                         event->screen_dir[0],
+                         event->screen_dir[1],
+                         event->screen_dir[2],
+                         event->attacker_pos[0],
+                         event->attacker_pos[1],
+                         event->attacker_pos[2],
+                         event->world_dir[0],
+                         event->world_dir[1],
+                         event->world_dir[2],
+                         event->dest_valid,
+                         event->dest[0],
+                         event->dest[1],
+                         event->dest[2]);
         if (wrote < 0 || (size_t)wrote >= out_size - used) {
             snprintf(out, out_size, "\"shot\":{\"count\":0,\"overflow\":1,\"events\":[]},");
             s_traceShotEventCount = 0;
@@ -3451,8 +4911,14 @@ static void traceBuildBulletImpactJson(char *out, size_t out_size)
                          "\"prop\":{\"type\":%d,\"obj_type\":%d,\"chrnum\":%d,\"obj\":%d,\"item\":%d,\"pad\":%d},"
                          "\"material\":{\"texture\":%d,\"hit_sound\":%d,\"impact\":%d},"
                          "\"model_pos\":%d,\"clear\":%d,\"image\":[%d,%d],"
-                         "\"pos\":[%.2f,%.2f,%.2f],\"normal\":[%.4f,%.4f,%.4f],"
-                         "\"size\":[%.2f,%.2f],\"normal_offset\":%.4f}",
+                         "\"pos\":[%.6f,%.6f,%.6f],\"normal\":[%.6f,%.6f,%.6f],"
+                         "\"size\":[%.6f,%.6f],\"normal_offset\":%.6f,"
+                         "\"basis\":{\"normal_unit\":[%.8f,%.8f,%.8f],"
+                         "\"axis_x\":[%.8f,%.8f,%.8f],"
+                         "\"axis_y\":[%.8f,%.8f,%.8f]},"
+                         "\"raw_v\":[[%.6f,%.6f,%.6f],[%.6f,%.6f,%.6f],"
+                         "[%.6f,%.6f,%.6f],[%.6f,%.6f,%.6f]],"
+                         "\"rounded_v\":[[%d,%d,%d],[%d,%d,%d],[%d,%d,%d],[%d,%d,%d]]}",
                          i == 0 ? "" : ",",
                          event->frame,
                          event->shot_id,
@@ -3480,7 +4946,40 @@ static void traceBuildBulletImpactJson(char *out, size_t out_size)
                          event->normal[2],
                          event->size[0],
                          event->size[1],
-                         event->normal_offset);
+                         event->normal_offset,
+                         event->normal_unit[0],
+                         event->normal_unit[1],
+                         event->normal_unit[2],
+                         event->axis_x[0],
+                         event->axis_x[1],
+                         event->axis_x[2],
+                         event->axis_y[0],
+                         event->axis_y[1],
+                         event->axis_y[2],
+                         event->raw_vertices[0][0],
+                         event->raw_vertices[0][1],
+                         event->raw_vertices[0][2],
+                         event->raw_vertices[1][0],
+                         event->raw_vertices[1][1],
+                         event->raw_vertices[1][2],
+                         event->raw_vertices[2][0],
+                         event->raw_vertices[2][1],
+                         event->raw_vertices[2][2],
+                         event->raw_vertices[3][0],
+                         event->raw_vertices[3][1],
+                         event->raw_vertices[3][2],
+                         event->rounded_vertices[0][0],
+                         event->rounded_vertices[0][1],
+                         event->rounded_vertices[0][2],
+                         event->rounded_vertices[1][0],
+                         event->rounded_vertices[1][1],
+                         event->rounded_vertices[1][2],
+                         event->rounded_vertices[2][0],
+                         event->rounded_vertices[2][1],
+                         event->rounded_vertices[2][2],
+                         event->rounded_vertices[3][0],
+                         event->rounded_vertices[3][1],
+                         event->rounded_vertices[3][2]);
         if (wrote < 0 || (size_t)wrote >= out_size - used) {
             snprintf(out, out_size, "\"impact\":{\"create_count\":0,\"render_count\":0,\"overflow\":1,\"creates\":[],\"renders\":[]},");
             s_traceBulletImpactCreateCount = 0;
@@ -3545,6 +5044,475 @@ static void traceBuildBulletImpactJson(char *out, size_t out_size)
     s_traceBulletImpactRenderCount = 0;
     s_traceBulletImpactOverflow = 0;
     s_traceBulletImpactPendingMaterialValid = 0;
+}
+
+static int traceRoomLocalToWorld(int room,
+                                 float local_x,
+                                 float local_y,
+                                 float local_z,
+                                 float *world_x,
+                                 float *world_y,
+                                 float *world_z)
+{
+    if (room < 0 || room >= g_MaxNumRooms || ptr_bgdata_room_fileposition_list == NULL) {
+        return 0;
+    }
+    if (world_x == NULL || world_y == NULL || world_z == NULL) {
+        return 0;
+    }
+    if (!__builtin_isfinite(room_data_float2) || room_data_float2 == 0.0f) {
+        return 0;
+    }
+
+    *world_x = (ptr_bgdata_room_fileposition_list[room].pos.f[0] + local_x) * room_data_float2;
+    *world_y = (ptr_bgdata_room_fileposition_list[room].pos.f[1] + local_y) * room_data_float2;
+    *world_z = (ptr_bgdata_room_fileposition_list[room].pos.f[2] + local_z) * room_data_float2;
+    return __builtin_isfinite(*world_x) && __builtin_isfinite(*world_y) && __builtin_isfinite(*world_z);
+}
+
+static int traceWorldImpactProjectionInvVisEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *value = getenv("GE007_BULLET_IMPACT_INV_VIS_SCALE");
+        enabled = (value != NULL && value[0] != '\0' && value[0] == '0') ? 0 : 1;
+    }
+
+    return enabled;
+}
+
+static int traceProjectRoomLocalQuad(int room,
+                                     const int v[4][3],
+                                     const float projection[4][4],
+                                     float viewport_left,
+                                     float viewport_top,
+                                     float viewport_width,
+                                     float viewport_height,
+                                     float model_v[4][3],
+                                     float screen_v[4][2],
+                                     float clip_w[4],
+                                     float bbox[4],
+                                     float *area,
+                                     int *behind,
+                                     int *onscreen)
+{
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    float room_x;
+    float room_y;
+    float room_z;
+    float scale;
+    float model_scale = 1.0f;
+
+    if (g_CurrentPlayer == NULL || ptr_bgdata_room_fileposition_list == NULL) {
+        return 0;
+    }
+    if (room < 0 || room >= g_MaxNumRooms) {
+        return 0;
+    }
+    if (!__builtin_isfinite(room_data_float2) || room_data_float2 == 0.0f) {
+        return 0;
+    }
+
+    room_x = ptr_bgdata_room_fileposition_list[room].pos.f[0];
+    room_y = ptr_bgdata_room_fileposition_list[room].pos.f[1];
+    room_z = ptr_bgdata_room_fileposition_list[room].pos.f[2];
+    scale = room_data_float2;
+    if (traceWorldImpactProjectionInvVisEnabled()) {
+        float vis_scale = bgGetLevelVisibilityScale();
+        if (__builtin_isfinite(vis_scale) && vis_scale != 0.0f && vis_scale != 1.0f) {
+            model_scale = 1.0f / vis_scale;
+        }
+    }
+    *behind = 0;
+    *onscreen = 0;
+
+    for (int vi = 0; vi < 4; vi++) {
+        float clip[4];
+        float ndc_x;
+        float ndc_y;
+
+        model_v[vi][0] = ((room_x + (float)v[vi][0]) * scale - g_CurrentPlayer->current_model_pos.f[0]) * model_scale;
+        model_v[vi][1] = ((room_y + (float)v[vi][1]) * scale - g_CurrentPlayer->current_model_pos.f[1]) * model_scale;
+        model_v[vi][2] = ((room_z + (float)v[vi][2]) * scale - g_CurrentPlayer->current_model_pos.f[2]) * model_scale;
+
+        traceTransform4x4(projection,
+                          model_v[vi][0],
+                          model_v[vi][1],
+                          model_v[vi][2],
+                          1.0f,
+                          clip);
+        clip_w[vi] = clip[3];
+        if (!__builtin_isfinite(clip[0]) || !__builtin_isfinite(clip[1]) ||
+            !__builtin_isfinite(clip[3]) || fabsf(clip[3]) < 0.000001f) {
+            return 0;
+        }
+        if (clip[3] <= 0.0f) {
+            *behind = 1;
+        }
+
+        ndc_x = clip[0] / clip[3];
+        ndc_y = clip[1] / clip[3];
+        screen_v[vi][0] = viewport_left + (ndc_x * 0.5f + 0.5f) * viewport_width;
+        screen_v[vi][1] = viewport_top + (0.5f - ndc_y * 0.5f) * viewport_height;
+        if (!__builtin_isfinite(screen_v[vi][0]) || !__builtin_isfinite(screen_v[vi][1])) {
+            return 0;
+        }
+
+        if (screen_v[vi][0] < min_x) min_x = screen_v[vi][0];
+        if (screen_v[vi][1] < min_y) min_y = screen_v[vi][1];
+        if (screen_v[vi][0] > max_x) max_x = screen_v[vi][0];
+        if (screen_v[vi][1] > max_y) max_y = screen_v[vi][1];
+    }
+
+    if (min_x == FLT_MAX || min_y == FLT_MAX || max_x == -FLT_MAX || max_y == -FLT_MAX) {
+        return 0;
+    }
+
+    bbox[0] = min_x;
+    bbox[1] = min_y;
+    bbox[2] = max_x;
+    bbox[3] = max_y;
+    *area = (max_x - min_x) * (max_y - min_y);
+    if (*area < 0.0f || !__builtin_isfinite(*area)) {
+        *area = 0.0f;
+    }
+    *onscreen =
+        max_x >= viewport_left &&
+        max_y >= viewport_top &&
+        min_x <= viewport_left + viewport_width &&
+        min_y <= viewport_top + viewport_height;
+    return 1;
+}
+
+static void traceBuildImpactStateJson(char *out, size_t out_size)
+{
+    u64 hash = 1469598103934665603ULL;
+    char sample_json[32768];
+    size_t sample_used = 1;
+    int sample_count = 0;
+    int occupied = 0;
+    int first_index = -1;
+    int first_room = -1;
+    int first_impact = -1;
+    float first_center_x = 0.0f;
+    float first_center_y = 0.0f;
+    float first_center_z = 0.0f;
+    float first_world_center_x = 0.0f;
+    float first_world_center_y = 0.0f;
+    float first_world_center_z = 0.0f;
+    int first_has_world = 0;
+    float projection[4][4];
+    int projection_valid = 0;
+    int projection_is_float = 0;
+    float viewport_left = 0.0f;
+    float viewport_top = 0.0f;
+    float viewport_width = 320.0f;
+    float viewport_height = 240.0f;
+    int i;
+
+    if (out_size == 0) {
+        return;
+    }
+
+    if (g_CurrentPlayer != NULL) {
+        viewport_left = g_CurrentPlayer->c_screenleft;
+        viewport_top = g_CurrentPlayer->c_screentop;
+        viewport_width = g_CurrentPlayer->c_screenwidth;
+        viewport_height = g_CurrentPlayer->c_screenheight;
+    }
+    traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
+
+    sample_json[0] = '[';
+    sample_json[1] = '\0';
+
+    if (g_BulletImpactBuffer == NULL || BULLET_IMPACT_BUFFER_LEN <= 0) {
+        snprintf(out, out_size,
+                 "{\"present\":0,\"buffer_len\":%d,\"current_slot\":%d,"
+                 "\"occupied\":0,\"first\":{\"index\":-1},\"sample\":[],"
+                 "\"projection\":{\"valid\":%d,\"float\":%d,\"source\":\"room_matrix_field10e0\","
+                 "\"viewport\":[%.2f,%.2f,%.2f,%.2f]},"
+                 "\"hash\":\"0x%016llX\"}",
+                 BULLET_IMPACT_BUFFER_LEN,
+                 g_NumImpactEntries,
+                 projection_valid,
+                 projection_is_float,
+                 viewport_left,
+                 viewport_top,
+                 viewport_width,
+                 viewport_height,
+                 (unsigned long long)hash);
+        return;
+    }
+
+    for (i = 0; i < BULLET_IMPACT_BUFFER_LEN; i++) {
+        struct BulletImpact *impact = &g_BulletImpactBuffer[i];
+        int v[4][3];
+        int tc[4][2];
+        int cn[4][4];
+        float world_v[4][3];
+        float center_x;
+        float center_y;
+        float center_z;
+        float world_center_x;
+        float world_center_y;
+        float world_center_z;
+        int has_world = impact->prop == NULL;
+        const PropRecord *impact_prop = impact->prop;
+        int prop_type = -1;
+        int prop_chrnum = -1;
+        int prop_obj_type = -1;
+        int prop_obj = -1;
+        int prop_pad = -1;
+        float model_v[4][3] = {{0.0f}};
+        float screen_v[4][2] = {{0.0f}};
+        float clip_w[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float screen_bbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float screen_area = 0.0f;
+        int projected = 0;
+        int projection_behind = 0;
+        int projection_onscreen = 0;
+        const char *projection_source = traceWorldImpactProjectionInvVisEnabled()
+            ? "room_matrix_field10e0_inv_vis"
+            : "room_matrix_field10e0";
+        int vi;
+
+        if (impact->room < 0) {
+            continue;
+        }
+
+        if (impact_prop != NULL) {
+            prop_type = impact_prop->type;
+            if (impact_prop->type == PROP_TYPE_CHR && impact_prop->chr != NULL) {
+                prop_chrnum = impact_prop->chr->chrnum;
+            } else if ((impact_prop->type == PROP_TYPE_OBJ ||
+                        impact_prop->type == PROP_TYPE_DOOR ||
+                        impact_prop->type == PROP_TYPE_WEAPON) &&
+                       impact_prop->obj != NULL) {
+                const ObjectRecord *obj = impact_prop->obj;
+                prop_obj_type = obj->type;
+                prop_obj = obj->obj;
+                prop_pad = obj->pad;
+            }
+        }
+
+        for (vi = 0; vi < 4; vi++) {
+            v[vi][0] = impact->vertex_list[vi].v.ob[0];
+            v[vi][1] = impact->vertex_list[vi].v.ob[1];
+            v[vi][2] = impact->vertex_list[vi].v.ob[2];
+            tc[vi][0] = impact->vertex_list[vi].v.tc[0];
+            tc[vi][1] = impact->vertex_list[vi].v.tc[1];
+            cn[vi][0] = impact->vertex_list[vi].v.cn[0];
+            cn[vi][1] = impact->vertex_list[vi].v.cn[1];
+            cn[vi][2] = impact->vertex_list[vi].v.cn[2];
+            cn[vi][3] = impact->vertex_list[vi].v.cn[3];
+            if (has_world) {
+                has_world = traceRoomLocalToWorld(impact->room,
+                                                  (float)v[vi][0],
+                                                  (float)v[vi][1],
+                                                  (float)v[vi][2],
+                                                  &world_v[vi][0],
+                                                  &world_v[vi][1],
+                                                  &world_v[vi][2]);
+            }
+        }
+
+        center_x = (float)(v[0][0] + v[1][0] + v[2][0] + v[3][0]) * 0.25f;
+        center_y = (float)(v[0][1] + v[1][1] + v[2][1] + v[3][1]) * 0.25f;
+        center_z = (float)(v[0][2] + v[1][2] + v[2][2] + v[3][2]) * 0.25f;
+        world_center_x = center_x;
+        world_center_y = center_y;
+        world_center_z = center_z;
+        if (has_world) {
+            world_center_x = (world_v[0][0] + world_v[1][0] + world_v[2][0] + world_v[3][0]) * 0.25f;
+            world_center_y = (world_v[0][1] + world_v[1][1] + world_v[2][1] + world_v[3][1]) * 0.25f;
+            world_center_z = (world_v[0][2] + world_v[1][2] + world_v[2][2] + world_v[3][2]) * 0.25f;
+            if (projection_valid) {
+                projected = traceProjectRoomLocalQuad(impact->room,
+                                                      v,
+                                                      projection,
+                                                      viewport_left,
+                                                      viewport_top,
+                                                      viewport_width,
+                                                      viewport_height,
+                                                      model_v,
+                                                      screen_v,
+                                                      clip_w,
+                                                      screen_bbox,
+                                                      &screen_area,
+                                                      &projection_behind,
+                                                      &projection_onscreen);
+            }
+        } else {
+            projection_source = "prop_matrix_not_traced";
+            for (vi = 0; vi < 4; vi++) {
+                world_v[vi][0] = (float)v[vi][0];
+                world_v[vi][1] = (float)v[vi][1];
+                world_v[vi][2] = (float)v[vi][2];
+            }
+        }
+
+        if (first_index < 0) {
+            first_index = i;
+            first_room = impact->room;
+            first_impact = impact->impact_type;
+            first_center_x = center_x;
+            first_center_y = center_y;
+            first_center_z = center_z;
+            first_world_center_x = world_center_x;
+            first_world_center_y = world_center_y;
+            first_world_center_z = world_center_z;
+            first_has_world = has_world ? 1 : 0;
+        }
+
+        occupied++;
+        hash = traceIntroHashU32(hash, (u32)i);
+        hash = traceIntroHashU32(hash, (u32)(u16)impact->room);
+        hash = traceIntroHashU32(hash, (u32)(u16)impact->impact_type);
+        hash = traceIntroHashU32(hash, (u32)(u8)impact->model_render_pos_index);
+        hash = traceIntroHashU32(hash, (u32)(u8)impact->room_clear_flag);
+        hash = traceIntroHashU32(hash, impact->prop != NULL ? 1U : 0U);
+        for (vi = 0; vi < 4; vi++) {
+            hash = traceIntroHashU32(hash, traceReadU32Bytes(&impact->vertex_list[vi], 0x00));
+            hash = traceIntroHashU32(hash, traceReadU32Bytes(&impact->vertex_list[vi], 0x04));
+            hash = traceIntroHashU32(hash, traceReadU32Bytes(&impact->vertex_list[vi], 0x08));
+            hash = traceIntroHashU32(hash, traceReadU32Bytes(&impact->vertex_list[vi], 0x0c));
+        }
+
+        if (sample_count < 4 && sample_used < sizeof(sample_json)) {
+            int remaining = (int)(sizeof(sample_json) - sample_used);
+            int wrote = snprintf(sample_json + sample_used,
+                                 (size_t)remaining,
+                                 "%s{\"index\":%d,\"room\":%d,\"impact\":%d,"
+                                 "\"model_pos\":%d,\"clear\":%d,\"prop\":%d,"
+                                 "\"prop_addr\":\"0x%llX\","
+                                 "\"prop_type\":%d,\"prop_chrnum\":%d,"
+                                 "\"prop_obj_type\":%d,\"prop_obj\":%d,\"prop_pad\":%d,"
+                                 "\"center\":[%.2f,%.2f,%.2f],"
+                                 "\"world\":%d,\"world_center\":[%.2f,%.2f,%.2f],"
+                                 "\"v\":[[%d,%d,%d],[%d,%d,%d],[%d,%d,%d],[%d,%d,%d]],"
+                                 "\"world_v\":[[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f],"
+                                 "[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f]],"
+                                 "\"tc\":[[%d,%d],[%d,%d],[%d,%d],[%d,%d]],"
+                                 "\"rgba\":[[%d,%d,%d,%d],[%d,%d,%d,%d],"
+                                 "[%d,%d,%d,%d],[%d,%d,%d,%d]],"
+                                 "\"projection\":{\"valid\":%d,\"source\":\"%s\","
+                                 "\"onscreen\":%d,\"behind\":%d,"
+                                 "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+                                 "\"screen_area\":%.2f,"
+                                 "\"clip_w\":[%.4f,%.4f,%.4f,%.4f],"
+                                 "\"model\":[[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f],"
+                                 "[%.2f,%.2f,%.2f],[%.2f,%.2f,%.2f]],"
+                                 "\"screen\":[[%.2f,%.2f],[%.2f,%.2f],"
+                                 "[%.2f,%.2f],[%.2f,%.2f]]}}",
+                                 sample_count == 0 ? "" : ",",
+                                 i,
+                                 impact->room,
+                                 impact->impact_type,
+                                 impact->model_render_pos_index,
+                                 impact->room_clear_flag,
+                                 impact->prop != NULL ? 1 : 0,
+                                 (unsigned long long)(uintptr_t)impact->prop,
+                                 prop_type,
+                                 prop_chrnum,
+                                 prop_obj_type,
+                                 prop_obj,
+                                 prop_pad,
+                                 center_x, center_y, center_z,
+                                 has_world ? 1 : 0,
+                                 world_center_x, world_center_y, world_center_z,
+                                 v[0][0], v[0][1], v[0][2],
+                                 v[1][0], v[1][1], v[1][2],
+                                 v[2][0], v[2][1], v[2][2],
+                                 v[3][0], v[3][1], v[3][2],
+                                 world_v[0][0], world_v[0][1], world_v[0][2],
+                                 world_v[1][0], world_v[1][1], world_v[1][2],
+                                 world_v[2][0], world_v[2][1], world_v[2][2],
+                                 world_v[3][0], world_v[3][1], world_v[3][2],
+                                 tc[0][0], tc[0][1],
+                                 tc[1][0], tc[1][1],
+                                 tc[2][0], tc[2][1],
+                                 tc[3][0], tc[3][1],
+                                 cn[0][0], cn[0][1], cn[0][2], cn[0][3],
+                                 cn[1][0], cn[1][1], cn[1][2], cn[1][3],
+                                 cn[2][0], cn[2][1], cn[2][2], cn[2][3],
+                                 cn[3][0], cn[3][1], cn[3][2], cn[3][3],
+                                 projected,
+                                 projection_source,
+                                 projection_onscreen,
+                                 projection_behind,
+                                 screen_bbox[0], screen_bbox[1], screen_bbox[2], screen_bbox[3],
+                                 screen_area,
+                                 clip_w[0], clip_w[1], clip_w[2], clip_w[3],
+                                 model_v[0][0], model_v[0][1], model_v[0][2],
+                                 model_v[1][0], model_v[1][1], model_v[1][2],
+                                 model_v[2][0], model_v[2][1], model_v[2][2],
+                                 model_v[3][0], model_v[3][1], model_v[3][2],
+                                 screen_v[0][0], screen_v[0][1],
+                                 screen_v[1][0], screen_v[1][1],
+                                 screen_v[2][0], screen_v[2][1],
+                                 screen_v[3][0], screen_v[3][1]);
+            if (wrote > 0) {
+                sample_used += (size_t)wrote < (size_t)remaining ? (size_t)wrote : (size_t)remaining - 1U;
+            }
+            sample_count++;
+        }
+    }
+
+    if (sample_used < sizeof(sample_json) - 1U) {
+        sample_json[sample_used++] = ']';
+        sample_json[sample_used] = '\0';
+    } else {
+        sample_json[sizeof(sample_json) - 2U] = ']';
+        sample_json[sizeof(sample_json) - 1U] = '\0';
+    }
+
+    if (first_index >= 0) {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"buffer_len\":%d,\"current_slot\":%d,"
+                 "\"occupied\":%d,\"first\":{\"index\":%d,\"room\":%d,"
+                 "\"impact\":%d,\"center\":[%.2f,%.2f,%.2f],"
+                 "\"world\":%d,\"world_center\":[%.2f,%.2f,%.2f]},"
+                 "\"projection\":{\"valid\":%d,\"float\":%d,\"source\":\"room_matrix_field10e0\","
+                 "\"viewport\":[%.2f,%.2f,%.2f,%.2f]},"
+                 "\"sample\":%s,\"hash\":\"0x%016llX\"}",
+                 BULLET_IMPACT_BUFFER_LEN,
+                 g_NumImpactEntries,
+                 occupied,
+                 first_index,
+                 first_room,
+                 first_impact,
+                 first_center_x, first_center_y, first_center_z,
+                 first_has_world,
+                 first_world_center_x, first_world_center_y, first_world_center_z,
+                 projection_valid,
+                 projection_is_float,
+                 viewport_left,
+                 viewport_top,
+                 viewport_width,
+                 viewport_height,
+                 sample_json,
+                 (unsigned long long)hash);
+    } else {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"buffer_len\":%d,\"current_slot\":%d,"
+                 "\"occupied\":0,\"first\":{\"index\":-1},\"sample\":[],"
+                 "\"projection\":{\"valid\":%d,\"float\":%d,\"source\":\"room_matrix_field10e0\","
+                 "\"viewport\":[%.2f,%.2f,%.2f,%.2f]},"
+                 "\"hash\":\"0x%016llX\"}",
+                 BULLET_IMPACT_BUFFER_LEN,
+                 g_NumImpactEntries,
+                 projection_valid,
+                 projection_is_float,
+                 viewport_left,
+                 viewport_top,
+                 viewport_width,
+                 viewport_height,
+                 (unsigned long long)hash);
+    }
 }
 
 static void traceBuildProjectileJson(char *out, size_t out_size)
@@ -3821,6 +5789,159 @@ static void traceBuildForcedGuardHitJson(char *out, size_t out_size)
     s_traceForcedGuardHitOverflow = 0;
 }
 
+static int traceProjectViewmodelPoint(const PortViewmodelTrace *trace,
+                                      const f32 pos[3],
+                                      f32 fovy,
+                                      f32 out_screen[2])
+{
+    f32 aspect;
+    f32 width;
+    f32 height;
+    f32 left;
+    f32 top;
+    f32 z;
+    f32 focal;
+    f32 ndc_x;
+    f32 ndc_y;
+
+    if (trace == NULL || pos == NULL || out_screen == NULL) {
+        return 0;
+    }
+
+    width = trace->render_proj_view[2];
+    height = trace->render_proj_view[3];
+    left = trace->render_proj_view[0];
+    top = trace->render_proj_view[1];
+    aspect = trace->render_proj_aspect;
+    z = -pos[2];
+
+    if (width <= 0.0f || height <= 0.0f || aspect <= 0.0f ||
+        fovy <= 0.0f || z <= 0.001f) {
+        out_screen[0] = 0.0f;
+        out_screen[1] = 0.0f;
+        return 0;
+    }
+
+    focal = 1.0f / tanf(fovy * 0.00872664626f);
+    if (!isFinite(focal)) {
+        out_screen[0] = 0.0f;
+        out_screen[1] = 0.0f;
+        return 0;
+    }
+
+    ndc_x = (pos[0] * focal / aspect) / z;
+    ndc_y = (pos[1] * focal) / z;
+    out_screen[0] = left + (ndc_x + 1.0f) * 0.5f * width;
+    out_screen[1] = top + (1.0f - ndc_y) * 0.5f * height;
+    return 1;
+}
+
+static void traceFormatViewmodelMtxJson(char *out,
+                                        size_t out_size,
+                                        const char *key,
+                                        const PortViewmodelTrace *trace)
+{
+    size_t used = 0;
+    int wrote;
+    s32 i;
+    s32 sampled;
+
+    if (out == NULL || out_size == 0 || key == NULL || trace == NULL) {
+        return;
+    }
+
+    out[0] = '\0';
+    sampled = trace->render_mtx_sampled;
+    if (sampled < 0) {
+        sampled = 0;
+    }
+    if (sampled > PORT_VIEWMODEL_TRACE_MTX_SAMPLES) {
+        sampled = PORT_VIEWMODEL_TRACE_MTX_SAMPLES;
+    }
+
+    wrote = snprintf(out, out_size,
+                     "\"%s\":{\"count\":%d,\"sampled\":%d,"
+                     "\"projection\":{\"fovy\":%.4f,\"aspect\":%.6f,"
+                     "\"view\":[%.2f,%.2f,%.2f,%.2f]},"
+                     "\"pos\":[",
+                     key,
+                     trace->render_mtx_count,
+                     sampled,
+                     trace->render_proj_fovy,
+                     trace->render_proj_aspect,
+                     trace->render_proj_view[0],
+                     trace->render_proj_view[1],
+                     trace->render_proj_view[2],
+                     trace->render_proj_view[3]);
+    if (wrote < 0 || (size_t)wrote >= out_size) {
+        snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+        return;
+    }
+    used = (size_t)wrote;
+
+    for (i = 0; i < sampled; i++) {
+        const f32 *pos = trace->render_mtx[i];
+        wrote = snprintf(out + used, out_size - used,
+                         "%s[%.2f,%.2f,%.2f]",
+                         i == 0 ? "" : ",",
+                         pos[0], pos[1], pos[2]);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    wrote = snprintf(out + used, out_size - used, "],\"screen\":[");
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+        return;
+    }
+    used += (size_t)wrote;
+
+    for (i = 0; i < sampled; i++) {
+        f32 screen[2];
+        int valid = traceProjectViewmodelPoint(trace, trace->render_mtx[i],
+                                               trace->render_proj_fovy, screen);
+        wrote = snprintf(out + used, out_size - used,
+                         "%s{\"valid\":%d,\"xy\":[%.2f,%.2f]}",
+                         i == 0 ? "" : ",",
+                         valid, screen[0], screen[1]);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    wrote = snprintf(out + used, out_size - used, "],\"screen50\":[");
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+        return;
+    }
+    used += (size_t)wrote;
+
+    for (i = 0; i < sampled; i++) {
+        f32 screen[2];
+        int valid = traceProjectViewmodelPoint(trace, trace->render_mtx[i],
+                                               50.0f, screen);
+        wrote = snprintf(out + used, out_size - used,
+                         "%s{\"valid\":%d,\"xy\":[%.2f,%.2f]}",
+                         i == 0 ? "" : ",",
+                         valid, screen[0], screen[1]);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    wrote = snprintf(out + used, out_size - used, "]},");
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        snprintf(out, out_size, "\"%s\":{\"overflow\":1},", key);
+    }
+}
+
 void portTraceFrame(void) {
     /* Fast bail: if tracing was never requested, do absolutely nothing.
      * This avoids touching any state that could be corrupted by DL overruns. */
@@ -3849,11 +5970,18 @@ void portTraceFrame(void) {
     float cam_target_x = 0, cam_target_y = 0, cam_target_z = 0;
     float cam_up_x = 0, cam_up_y = 0, cam_up_z = 0;
     float cam_floor_x = 0, cam_floor_y = 0, cam_floor_z = 0;
+    float render_cam_x = 0, render_cam_y = 0, render_cam_z = 0;
+    float render_cam_target_x = 0, render_cam_target_y = 0, render_cam_target_z = 0;
+    float render_cam_dx = 0, render_cam_dy = 0, render_cam_dz = 0;
     float room_basis_x = 0, room_basis_y = 0, room_basis_z = 0;
-    float vv_theta = 0, field_70 = 0, stanHeight = 0;
+    float vv_theta = 0, vv_verta = 0, vv_verta360 = 0;
+    float vv_cosverta = 0, vv_sinverta = 0;
+    float field_70 = 0, stanHeight = 0;
     float col_x = 0, col_y = 0, col_z = 0;
     float cam_dx = 0, cam_dy = 0, cam_dz = 0;
     float theta0 = 0, theta1 = 0, theta2 = 0;
+    float headlook_x = 0.0f, headlook_y = 0.0f, headlook_z = 0.0f;
+    float headup_x = 0.0f, headup_y = 0.0f, headup_z = 0.0f;
     float move_speed_forwards = 0.0f, move_speed_sideways = 0.0f;
     float move_speed_go = 0.0f, move_speed_strafe = 0.0f, move_speed_boost = 0.0f;
     float move_speed_theta = 0.0f, move_speed_verta = 0.0f;
@@ -4077,16 +6205,23 @@ void portTraceFrame(void) {
     char objective_difficulties_json[64];
     char objective_field_json[256];
     char tracked_chr_field_json[6144];
+    char actor_summary_json[4096];
+    char glass_state_json[4096];
+    char glass_projection_json[65536];
     char alarm_field_json[64];
     char spawn_field_json[4096];
     char shot_field_json[16384];
-    char impact_field_json[8192];
+    char impact_field_json[32768];
+    char impact_state_json[32768];
     char projectile_field_json[4096];
     char hit_field_json[4096];
     char forced_hit_field_json[4096];
     char drop_field_json[TRACE_GUARD_DROP_JSON_SIZE];
+    char glass_props_json[16384];
     char save_field_json[512];
     char ramrom_field_json[1024];
+    char weapon_right_mtx_json[4096];
+    char weapon_left_mtx_json[4096];
     PortViewmodelTrace weapon_left;
     PortViewmodelTrace weapon_right;
     const PropRecord *nearest_guard_for_trace = NULL;
@@ -4103,16 +6238,24 @@ void portTraceFrame(void) {
     objective_difficulties_json[2] = '\0';
     objective_field_json[0] = '\0';
     tracked_chr_field_json[0] = '\0';
+    snprintf(actor_summary_json, sizeof(actor_summary_json),
+             "{\"slots\":0,\"live\":0,\"alive\":0,\"hidden\":0,\"onscreen\":0,\"rendered\":0,\"sample\":[]}");
+    glass_state_json[0] = '\0';
+    glass_projection_json[0] = '\0';
     alarm_field_json[0] = '\0';
     spawn_field_json[0] = '\0';
     shot_field_json[0] = '\0';
     impact_field_json[0] = '\0';
+    impact_state_json[0] = '\0';
     projectile_field_json[0] = '\0';
     hit_field_json[0] = '\0';
     forced_hit_field_json[0] = '\0';
     drop_field_json[0] = '\0';
+    glass_props_json[0] = '\0';
     save_field_json[0] = '\0';
     ramrom_field_json[0] = '\0';
+    weapon_right_mtx_json[0] = '\0';
+    weapon_left_mtx_json[0] = '\0';
 
     if (trace_live_stage_globals && g_CurrentPlayer) {
         int frozen_intro_camera = playerHasFrozenIntroCamera(g_CurrentPlayer);
@@ -4127,6 +6270,10 @@ void portTraceFrame(void) {
             pz = g_CurrentPlayer->prop->pos.z;
         }
         vv_theta = g_CurrentPlayer->vv_theta;
+        vv_verta = g_CurrentPlayer->vv_verta;
+        vv_verta360 = g_CurrentPlayer->vv_verta360;
+        vv_cosverta = g_CurrentPlayer->vv_cosverta;
+        vv_sinverta = g_CurrentPlayer->vv_sinverta;
         field_70 = g_CurrentPlayer->field_70;
         stanHeight = g_CurrentPlayer->stanHeight;
         view_left = g_CurrentPlayer->viewleft;
@@ -4200,6 +6347,12 @@ void portTraceFrame(void) {
         move_head_x = g_CurrentPlayer->headpos.f[0];
         move_head_y = g_CurrentPlayer->headpos.f[1];
         move_head_z = g_CurrentPlayer->headpos.f[2];
+        headlook_x = g_CurrentPlayer->headlook.f[0];
+        headlook_y = g_CurrentPlayer->headlook.f[1];
+        headlook_z = g_CurrentPlayer->headlook.f[2];
+        headup_x = g_CurrentPlayer->headup.f[0];
+        headup_y = g_CurrentPlayer->headup.f[1];
+        headup_z = g_CurrentPlayer->headup.f[2];
         move_prev_x = g_CurrentPlayer->bondprevpos.f[0];
         move_prev_y = g_CurrentPlayer->bondprevpos.f[1];
         move_prev_z = g_CurrentPlayer->bondprevpos.f[2];
@@ -4216,23 +6369,48 @@ void portTraceFrame(void) {
             cam_floor_x = g_CurrentPlayer->pos3.x;
             cam_floor_y = g_CurrentPlayer->pos3.y;
             cam_floor_z = g_CurrentPlayer->pos3.z;
+            render_cam_x = cam_x;
+            render_cam_y = cam_y;
+            render_cam_z = cam_z;
+            render_cam_target_x = cam_target_x;
+            render_cam_target_y = cam_target_y;
+            render_cam_target_z = cam_target_z;
         } else {
+            float applied_view_x = g_CurrentPlayer->field_488.applied_view.x;
+            float applied_view_y = g_CurrentPlayer->field_488.applied_view.y;
+            float applied_view_z = g_CurrentPlayer->field_488.applied_view.z;
+
             cam_x = g_CurrentPlayer->field_488.pos.x;
             cam_y = g_CurrentPlayer->field_488.pos.y;
             cam_z = g_CurrentPlayer->field_488.pos.z;
-            cam_target_x = g_CurrentPlayer->field_488.pos.x + g_CurrentPlayer->field_488.applied_view.x;
-            cam_target_y = g_CurrentPlayer->field_488.pos.y + g_CurrentPlayer->field_488.applied_view.y;
-            cam_target_z = g_CurrentPlayer->field_488.pos.z + g_CurrentPlayer->field_488.applied_view.z;
+            cam_target_x = g_CurrentPlayer->field_488.pos.x + applied_view_x;
+            cam_target_y = g_CurrentPlayer->field_488.pos.y + applied_view_y;
+            cam_target_z = g_CurrentPlayer->field_488.pos.z + applied_view_z;
             cam_up_x = g_CurrentPlayer->field_488.applied_view2.x;
             cam_up_y = g_CurrentPlayer->field_488.applied_view2.y;
             cam_up_z = g_CurrentPlayer->field_488.applied_view2.z;
             cam_floor_x = g_CurrentPlayer->field_488.pos3.x;
             cam_floor_y = g_CurrentPlayer->field_488.pos3.y;
             cam_floor_z = g_CurrentPlayer->field_488.pos3.z;
+#ifdef NATIVE_PORT
+            render_cam_x = g_CurrentPlayer->field_488.collision_position.x;
+            render_cam_y = g_CurrentPlayer->field_488.collision_position.y;
+            render_cam_z = g_CurrentPlayer->field_488.collision_position.z;
+#else
+            render_cam_x = cam_x;
+            render_cam_y = cam_y;
+            render_cam_z = cam_z;
+#endif
+            render_cam_target_x = render_cam_x + applied_view_x;
+            render_cam_target_y = render_cam_y + applied_view_y;
+            render_cam_target_z = render_cam_z + applied_view_z;
         }
         cam_dx = cam_x - col_x;
         cam_dy = cam_y - col_y;
         cam_dz = cam_z - col_z;
+        render_cam_dx = render_cam_x - col_x;
+        render_cam_dy = render_cam_y - col_y;
+        render_cam_dz = render_cam_z - col_z;
         if (frozen_intro_camera) {
             float look_x = g_CurrentPlayer->pos2.x - g_CurrentPlayer->pos.x;
             float look_y = g_CurrentPlayer->pos2.y - g_CurrentPlayer->pos.y;
@@ -4648,6 +6826,14 @@ void portTraceFrame(void) {
                 int tracked_ai_list = chraiGetAIListID(tracked_chr->ailist, &tracked_ai_global);
                 int tracked_ai_cmd = -1;
                 int tracked_ai_arg0 = -1;
+                int tracked_patrol_mode = -1;
+                int tracked_patrol_age = -1;
+                int tracked_patrol_lastvisible = -1;
+                int tracked_patrol_nextstep = -1;
+                int tracked_patrol_forward = -1;
+                float tracked_patrol_speed = 0.0f;
+                float tracked_patrol_segdone = 0.0f;
+                float tracked_patrol_segtotal = 0.0f;
                 u8 tracked_react_latched = 0;
                 char tracked_rooms_json[64];
                 int tracked_room_count = 0;
@@ -4673,6 +6859,17 @@ void portTraceFrame(void) {
                 if (tracked_chr->ailist != NULL) {
                     tracked_ai_cmd = tracked_chr->ailist[tracked_chr->aioffset].cmd;
                     tracked_ai_arg0 = tracked_chr->ailist[tracked_chr->aioffset].val[0];
+                }
+
+                if (tracked_chr->actiontype == ACT_PATROL) {
+                    tracked_patrol_mode = tracked_chr->act_patrol.waydata.mode;
+                    tracked_patrol_age = tracked_chr->act_patrol.waydata.age;
+                    tracked_patrol_lastvisible = tracked_chr->act_patrol.lastvisible60;
+                    tracked_patrol_nextstep = tracked_chr->act_patrol.nextstep;
+                    tracked_patrol_forward = tracked_chr->act_patrol.forward;
+                    tracked_patrol_speed = tracked_chr->act_patrol.speed;
+                    tracked_patrol_segdone = tracked_chr->act_patrol.waydata.segdistdone;
+                    tracked_patrol_segtotal = tracked_chr->act_patrol.waydata.segdisttotal;
                 }
 
                 if (tracked_chr->model != NULL) {
@@ -4745,6 +6942,7 @@ void portTraceFrame(void) {
                          "\"chrflags\":\"0x%08X\",\"alive\":%d,"
                          "\"flag_hidden\":%d,\"flag_update_action\":%d,\"bg_ai\":%d,"
                          "\"action\":%d,\"alert\":%d,\"sleep\":%d,\"firecount\":%d,"
+                         "\"shotbondsum\":%.5f,\"accuracyrating\":%d,"
                          "\"damage\":%.4f,\"maxdamage\":%.4f,"
                          "\"padpreset\":%d,\"dist_to_bond\":%.2f,\"pos\":[%.2f,%.2f,%.2f],"
                          "\"floor\":{\"valid\":%d,\"nearest\":%d,\"room\":%d,\"y\":%.2f,\"delta\":%.2f},"
@@ -4752,6 +6950,8 @@ void portTraceFrame(void) {
                          "\"seen_age\":%d,\"heard_age\":%d,\"numarghs\":%d,\"numclosearghs\":%d,"
                          "\"saw_shot\":%d,\"saw_die\":%d},"
                          "\"ai\":{\"list\":%d,\"global\":%d,\"offset\":%d,\"return\":%d,\"cmd\":%d,\"arg0\":%d},"
+                         "\"patrol\":{\"mode\":%d,\"age\":%d,\"lastvisible\":%d,\"nextstep\":%d,"
+                         "\"forward\":%d,\"speed\":%.4f,\"segdistdone\":%.2f,\"segdisttotal\":%.2f},"
                          "\"room\":{\"stan\":%d,\"first\":%d,\"count\":%d,\"any_rendered\":%d,"
                          "\"first_rendered\":%d,\"rooms\":%s},"
                          "\"render\":{\"prop_flags\":\"0x%08X\",\"onscreen\":%d,\"seen_onscreen\":%d,"
@@ -4791,6 +6991,8 @@ void portTraceFrame(void) {
                          tracked_chr->alertness,
                          tracked_chr->sleep,
                          tracked_chr->firecount[0] + tracked_chr->firecount[1],
+                         tracked_chr->shotbondsum,
+                         tracked_chr->accuracyrating,
                          tracked_chr->damage,
                          tracked_chr->maxdamage,
                          tracked_chr->padpreset1,
@@ -4819,6 +7021,14 @@ void portTraceFrame(void) {
                          tracked_chr->aireturnlist,
                          tracked_ai_cmd,
                          tracked_ai_arg0,
+                         tracked_patrol_mode,
+                         tracked_patrol_age,
+                         tracked_patrol_lastvisible,
+                         tracked_patrol_nextstep,
+                         tracked_patrol_forward,
+                         tracked_patrol_speed,
+                         tracked_patrol_segdone,
+                         tracked_patrol_segtotal,
                          tracked_stan_room,
                          tracked_first_room,
                          tracked_room_count,
@@ -5031,6 +7241,7 @@ void portTraceFrame(void) {
     int menu_briefing_page = current_menu_briefing_page;
     int mission_failed = mission_failed_or_aborted ? 1 : 0;
     int bond_kia = g_isBondKIA ? 1 : 0;
+    int all_obj_complete = get_debug_all_obj_complete_flag() ? 1 : 0;
     int menu_entered = (s_prevMenu != menu);
     int title_gunbarrel_mode = (int)gunbarrel_mode;
     int title_eye_counter = intro_eye_counter;
@@ -5251,13 +7462,19 @@ void portTraceFrame(void) {
 
         if (has_player) {
             float *checks[] = {
-                &px, &py, &pz, &vv_theta, &field_70, &stanHeight,
+                &px, &py, &pz, &vv_theta, &vv_verta, &vv_verta360,
+                &vv_cosverta, &vv_sinverta, &field_70, &stanHeight,
                 &col_x, &col_y, &col_z, &cam_x, &cam_y, &cam_z,
                 &cam_target_x, &cam_target_y, &cam_target_z,
                 &cam_up_x, &cam_up_y, &cam_up_z,
                 &cam_floor_x, &cam_floor_y, &cam_floor_z,
+                &render_cam_x, &render_cam_y, &render_cam_z,
+                &render_cam_target_x, &render_cam_target_y, &render_cam_target_z,
+                &render_cam_dx, &render_cam_dy, &render_cam_dz,
                 &cam_dx, &cam_dy, &cam_dz,
                 &theta0, &theta1, &theta2,
+                &headlook_x, &headlook_y, &headlook_z,
+                &headup_x, &headup_y, &headup_z,
                 &move_speed_forwards, &move_speed_sideways,
                 &move_speed_go, &move_speed_strafe, &move_speed_boost,
                 &move_speed_theta, &move_speed_verta,
@@ -5290,7 +7507,8 @@ void portTraceFrame(void) {
             "\"front\":{\"menu\":%d,\"menu_pending\":%d,\"menu_prev\":%d,\"menu_timer\":%d,\"gamemode\":%d,\"stage\":%d,\"difficulty\":%d,"
             "\"loaded_stage\":%d,\"pending_stage\":%d,\"active_stage\":%d,\"mission_state\":%d,\"entered\":%d,"
             "\"cursor\":[%.2f,%.2f],\"folder\":%d,\"hover_folder\":%d,\"folder_option\":%d,\"folder_delete\":%d,\"folder_delete_choice\":%d,"
-            "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d},"
+            "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d,"
+            "\"all_obj_complete\":%d},"
             "\"assert\":{\"file_select\":%d,\"stage_menu\":%d,\"mission_start\":%d,\"post_mission\":%d},"
             "\"nan\":%d}\n",
             s_traceFrame, trace_player_num,
@@ -5314,7 +7532,7 @@ void portTraceFrame(void) {
             loaded_stage, pending_stage, active_stage, mission_state_id, menu_entered,
             menu_cursor_x, menu_cursor_y, menu_selected_folder, menu_hover_folder, menu_folder_option,
             menu_folder_delete, menu_folder_delete_choice, menu_highlight, menu_briefing, menu_briefing_page,
-            mission_failed, bond_kia,
+            mission_failed, bond_kia, all_obj_complete,
             s_assertFileSelectSeen, s_assertStageMenuSelected,
             s_assertMissionStartAuthentic, s_assertPostMissionTransition,
             nan_count);
@@ -5390,6 +7608,10 @@ void portTraceFrame(void) {
     if (weapon_right.frame == 0) {
         weapon_right.valid = 0;
     }
+    traceFormatViewmodelMtxJson(weapon_right_mtx_json, sizeof(weapon_right_mtx_json),
+                                "wr_mtx", &weapon_right);
+    traceFormatViewmodelMtxJson(weapon_left_mtx_json, sizeof(weapon_left_mtx_json),
+                                "wl_mtx", &weapon_left);
 
     if (trace_live_stage_globals) {
         for (int room = 1; room < g_MaxNumRooms; room++) {
@@ -5416,13 +7638,19 @@ void portTraceFrame(void) {
     int nan_count = 0;
     if (has_player) {
         float *checks[] = {
-            &px, &py, &pz, &vv_theta, &field_70, &stanHeight,
+            &px, &py, &pz, &vv_theta, &vv_verta, &vv_verta360,
+            &vv_cosverta, &vv_sinverta, &field_70, &stanHeight,
             &col_x, &col_y, &col_z, &cam_x, &cam_y, &cam_z,
             &cam_target_x, &cam_target_y, &cam_target_z,
             &cam_up_x, &cam_up_y, &cam_up_z,
             &cam_floor_x, &cam_floor_y, &cam_floor_z,
+            &render_cam_x, &render_cam_y, &render_cam_z,
+            &render_cam_target_x, &render_cam_target_y, &render_cam_target_z,
+            &render_cam_dx, &render_cam_dy, &render_cam_dz,
             &cam_dx, &cam_dy, &cam_dz,
             &theta0, &theta1, &theta2,
+            &headlook_x, &headlook_y, &headlook_z,
+            &headup_x, &headup_y, &headup_z,
             &move_speed_forwards, &move_speed_sideways,
             &move_speed_go, &move_speed_strafe, &move_speed_boost,
             &move_speed_theta, &move_speed_verta,
@@ -5440,10 +7668,15 @@ void portTraceFrame(void) {
         traceBuildGuardSpawnJson(spawn_field_json, sizeof(spawn_field_json));
         traceBuildShotJson(shot_field_json, sizeof(shot_field_json));
         traceBuildBulletImpactJson(impact_field_json, sizeof(impact_field_json));
+        traceBuildImpactStateJson(impact_state_json, sizeof(impact_state_json));
         traceBuildProjectileJson(projectile_field_json, sizeof(projectile_field_json));
         traceBuildGuardHitJson(hit_field_json, sizeof(hit_field_json));
         traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
         traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
+        traceBuildActorSummaryJson(actor_summary_json, sizeof(actor_summary_json), has_player, px, py, pz);
+        traceBuildGlassStateJson(glass_state_json, sizeof(glass_state_json));
+        traceBuildGlassProjectionJson(glass_projection_json, sizeof(glass_projection_json));
+        traceBuildGlassPropsJson(glass_props_json, sizeof(glass_props_json), has_player, px, py, pz);
     }
 
     /* Format to a stack buffer first, then write through the direct state-trace
@@ -5451,7 +7684,9 @@ void portTraceFrame(void) {
     {
         char linebuf[TRACE_FRAME_JSON_LINE_SIZE];
         char rendered_rooms_buf[192];
+        char draw_rooms_buf[192];
         int rendered_rooms_len = 0;
+        int draw_rooms_len = 0;
 
         rendered_rooms_buf[rendered_rooms_len++] = '[';
         for (int i = 0; i < rendered_rooms_sample_count; i++) {
@@ -5475,14 +7710,45 @@ void portTraceFrame(void) {
             strcpy(rendered_rooms_buf, "[]");
         }
 
+        draw_rooms_buf[draw_rooms_len++] = '[';
+        if (trace_live_stage_globals) {
+            int draw_count = g_BgNumberOfRoomsDrawn;
+            if (draw_count < 0) draw_count = 0;
+            if (draw_count > 16) draw_count = 16;
+            for (int i = 0; i < draw_count; i++) {
+                int written = snprintf(
+                    draw_rooms_buf + draw_rooms_len,
+                    sizeof(draw_rooms_buf) - (size_t)draw_rooms_len,
+                    "%s%d",
+                    i == 0 ? "" : ",",
+                    dword_CODE_bss_8007FFA0[i].roomid);
+                if (written < 0 ||
+                    written >= (int)(sizeof(draw_rooms_buf) - (size_t)draw_rooms_len)) {
+                    draw_rooms_len = 0;
+                    draw_rooms_buf[draw_rooms_len++] = '[';
+                    break;
+                }
+                draw_rooms_len += written;
+            }
+        }
+        if (draw_rooms_len < (int)sizeof(draw_rooms_buf) - 1) {
+            draw_rooms_buf[draw_rooms_len++] = ']';
+            draw_rooms_buf[draw_rooms_len] = '\0';
+        } else {
+            strcpy(draw_rooms_buf, "[]");
+        }
+
         int len = snprintf(linebuf, sizeof(linebuf),
             "{\"f\":%d,\"p\":%d,"
             "\"pos\":[%.2f,%.2f,%.2f],"
-            "\"cam_pos\":[%.2f,%.2f,%.2f],"
-            "\"cam_target\":[%.2f,%.2f,%.2f],"
-            "\"cam_up\":[%.2f,%.2f,%.2f],"
+            "\"cam_pos\":[%.4f,%.4f,%.4f],"
+            "\"cam_target\":[%.4f,%.4f,%.4f],"
+            "\"cam_up\":[%.6f,%.6f,%.6f],"
             "\"cam_floor\":[%.2f,%.2f,%.2f],"
             "\"cam_delta\":[%.2f,%.2f,%.2f],"
+            "\"render_cam_pos\":[%.4f,%.4f,%.4f],"
+            "\"render_cam_target\":[%.4f,%.4f,%.4f],"
+            "\"render_cam_delta\":[%.2f,%.2f,%.2f],"
             "\"room_basis\":[%.2f,%.2f,%.2f],"
             "\"view\":[%d,%d,%d,%d],"
             "\"vi_view\":[%d,%d,%d,%d],"
@@ -5490,13 +7756,22 @@ void portTraceFrame(void) {
             "\"floor\":%.2f,\"stan_h\":%.2f,"
             "\"col\":[%.2f,%.2f,%.2f],"
             "\"facing\":[%.4f,%.4f,%.4f],"
+            "\"view_basis\":{\"vv_verta\":%.4f,\"vv_verta360\":%.4f,"
+            "\"vv_cosverta\":%.6f,\"vv_sinverta\":%.6f,"
+            "\"headlook\":[%.4f,%.4f,%.4f],\"headup\":[%.4f,%.4f,%.4f]},"
             "\"move\":{\"speed\":[%.5f,%.5f],\"raw\":[%.5f,%.5f],\"boost\":%.5f,"
             "\"turn\":%.5f,\"pitch\":%.5f,\"max_t\":%d,"
             "\"head\":[%.3f,%.3f,%.3f],\"prev\":[%.2f,%.2f,%.2f],"
             "\"clock\":%d,\"dt\":%.2f,\"global\":%d},"
+            "\"rng\":{\"seed\":\"0x%016llX\",\"seed_low\":%u,\"call_count\":%llu},"
             "\"rooms\":{\"tile\":%d,\"portal\":%d,\"room_ptr\":%d,\"prop\":%d,\"cur\":%d,\"render\":%d,\"lookup\":%d,\"nearest\":%d,\"cam_lookup\":%d,\"cam_nearest\":%d,"
-            "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s},"
+            "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s,\"draw_sample\":%s},"
             "\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
+            "\"actors\":%s,"
+            "\"glass\":%s,"
+            "\"glass_projection\":%s,"
+            "\"glass_props\":%s,"
+            "\"impact_state\":%s,"
             "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
@@ -5558,7 +7833,8 @@ void portTraceFrame(void) {
             "\"front\":{\"menu\":%d,\"menu_pending\":%d,\"menu_prev\":%d,\"menu_timer\":%d,\"gamemode\":%d,\"stage\":%d,\"difficulty\":%d,"
             "\"loaded_stage\":%d,\"pending_stage\":%d,\"active_stage\":%d,\"mission_state\":%d,\"entered\":%d,"
             "\"cursor\":[%.2f,%.2f],\"folder\":%d,\"hover_folder\":%d,\"folder_option\":%d,\"folder_delete\":%d,\"folder_delete_choice\":%d,"
-            "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d},"
+            "\"highlight\":%d,\"briefing\":%d,\"briefing_page\":%d,\"mission_failed\":%d,\"bond_kia\":%d,"
+            "\"all_obj_complete\":%d},"
             "\"intro\":{\"timer\":%.2f,"
             "\"setup\":{\"anim_index\":%d,\"swirl\":{\"present\":%d,\"count\":%d,\"hash\":\"0x%016llX\","
             "\"current\":{\"index\":%d,\"flags\":%d,\"pos\":[%.4f,%.4f,%.4f],"
@@ -5588,7 +7864,19 @@ void portTraceFrame(void) {
             "\"weaponnum\":%d,\"watchmenu\":%d,\"anim\":%d,"
             "\"ammo_type\":%d,\"reserve\":%d,\"mag_size\":%d,\"flags\":%u},"
             "\"wr_a84\":%.5f,\"wr_a88\":%.5f,"
-            "\"wr_root\":[%.2f,%.2f,%.2f],\"wr_world\":[%.2f,%.2f,%.2f],\"wr_muzzle\":[%.2f,%.2f,%.2f],"
+            "\"wr_pose\":{\"smooth\":[%.4f,%.4f,%.4f],"
+            "\"base\":[%.4f,%.4f,%.4f],"
+            "\"target\":[%.4f,%.4f,%.4f],"
+            "\"stats\":[%.4f,%.4f,%.4f],"
+            "\"screen\":[%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"accum\":[%.4f,%.4f,%.4f],"
+            "\"player\":[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"blend_meta\":[%d,%d],"
+            "\"blend_state\":[%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"blendpos\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]]},"
+            "\"wr_root\":[%.2f,%.2f,%.2f],"
+            "\"wr_render_root\":[%.2f,%.2f,%.2f],\"wr_render_root_diag\":[%.4f,%.4f,%.4f],"
+            "\"wr_world\":[%.2f,%.2f,%.2f],\"wr_muzzle\":[%.2f,%.2f,%.2f],"
             "\"wr_sw2\":[%.2f,%.2f,%.2f],\"wr_sw3\":[%.2f,%.2f,%.2f],"
             "\"wr_sw4\":[%.2f,%.2f,%.2f],"
             "\"wr_sw6\":[%.2f,%.2f,%.2f],\"wr_sw7\":[%.2f,%.2f,%.2f],"
@@ -5598,6 +7886,7 @@ void portTraceFrame(void) {
             "\"wr_sw6_basis\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]],"
             "\"wr_sw7_basis\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]],"
             "\"wr_depth\":%.2f,"
+            "%s"
             "\"wl_valid\":%d,\"wl_item\":%d,\"wl_vis\":%d,\"wl_fire\":%d,\"wl_flash\":%d,\"wl_state\":%d,"
             "\"wl_hold\":%d,\"wl_switch1\":%d,\"wl_switches\":%d,\"wl_s060\":%d,\"wl_s078\":%d,"
             "\"wl_sxflash\":%d,\"wl_shell_l\":%d,\"wl_shell_r\":%d,"
@@ -5606,7 +7895,19 @@ void portTraceFrame(void) {
             "\"weaponnum\":%d,\"watchmenu\":%d,\"anim\":%d,"
             "\"ammo_type\":%d,\"reserve\":%d,\"mag_size\":%d,\"flags\":%u},"
             "\"wl_a84\":%.5f,\"wl_a88\":%.5f,"
-            "\"wl_root\":[%.2f,%.2f,%.2f],\"wl_world\":[%.2f,%.2f,%.2f],\"wl_muzzle\":[%.2f,%.2f,%.2f],"
+            "\"wl_pose\":{\"smooth\":[%.4f,%.4f,%.4f],"
+            "\"base\":[%.4f,%.4f,%.4f],"
+            "\"target\":[%.4f,%.4f,%.4f],"
+            "\"stats\":[%.4f,%.4f,%.4f],"
+            "\"screen\":[%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"accum\":[%.4f,%.4f,%.4f],"
+            "\"player\":[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"blend_meta\":[%d,%d],"
+            "\"blend_state\":[%.4f,%.4f,%.4f,%.4f,%.4f],"
+            "\"blendpos\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]]},"
+            "\"wl_root\":[%.2f,%.2f,%.2f],"
+            "\"wl_render_root\":[%.2f,%.2f,%.2f],\"wl_render_root_diag\":[%.4f,%.4f,%.4f],"
+            "\"wl_world\":[%.2f,%.2f,%.2f],\"wl_muzzle\":[%.2f,%.2f,%.2f],"
             "\"wl_sw2\":[%.2f,%.2f,%.2f],\"wl_sw3\":[%.2f,%.2f,%.2f],"
             "\"wl_sw4\":[%.2f,%.2f,%.2f],"
             "\"wl_sw6\":[%.2f,%.2f,%.2f],\"wl_sw7\":[%.2f,%.2f,%.2f],"
@@ -5616,6 +7917,7 @@ void portTraceFrame(void) {
             "\"wl_sw6_basis\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]],"
             "\"wl_sw7_basis\":[[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f],[%.4f,%.4f,%.4f]],"
             "\"wl_depth\":%.2f,"
+            "%s"
             "\"stub_hits\":{\"snd_total\":%u,\"snd_play\":%u,\"snd_legacy_overlap\":%u,"
             "\"snd_new_player_init\":%u,\"snd_get_playing_state\":%u,\"snd_deactivate\":%u,"
             "\"snd_deactivate_all_1\":%u,\"snd_deactivate_all_11\":%u,\"snd_deactivate_all_3\":%u,"
@@ -5629,6 +7931,9 @@ void portTraceFrame(void) {
             cam_up_x, cam_up_y, cam_up_z,
             cam_floor_x, cam_floor_y, cam_floor_z,
             cam_dx, cam_dy, cam_dz,
+            render_cam_x, render_cam_y, render_cam_z,
+            render_cam_target_x, render_cam_target_y, render_cam_target_z,
+            render_cam_dx, render_cam_dy, render_cam_dz,
             room_basis_x, room_basis_y, room_basis_z,
             view_left, view_top, view_w, view_h,
             vi_view_left, vi_view_top, vi_view_w, vi_view_h,
@@ -5636,16 +7941,27 @@ void portTraceFrame(void) {
             field_70, stanHeight,
             col_x, col_y, col_z,
             theta0, theta1, theta2,
+            vv_verta, vv_verta360, vv_cosverta, vv_sinverta,
+            headlook_x, headlook_y, headlook_z,
+            headup_x, headup_y, headup_z,
             move_speed_forwards, move_speed_sideways,
             move_speed_go, move_speed_strafe, move_speed_boost,
             move_speed_theta, move_speed_verta, move_speed_max_time60,
             move_head_x, move_head_y, move_head_z,
             move_prev_x, move_prev_y, move_prev_z,
             g_ClockTimer, g_GlobalTimerDelta, g_GlobalTimer,
+            (unsigned long long)g_randomSeed,
+            (unsigned int)(g_randomSeed & 0xFFFFFFFFULL),
+            (unsigned long long)pcRandomGetNextCallCount(),
             tile_room, portal_room, room_ptr_room, prop_room, cur_room, render_room, lookup_room, nearest_room,
             cam_lookup_room, cam_nearest_room,
-            rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf,
+            rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf, draw_rooms_buf,
             room_render_fallback_active, room_render_fallback_rooms, room_render_fallback_total,
+            actor_summary_json,
+            glass_state_json[0] ? glass_state_json : "{\"present\":0,\"buffer_len\":0,\"next\":0,\"active\":0,\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x0000000000000000\"}",
+            glass_projection_json[0] ? glass_projection_json : "{\"present\":0,\"emit_enabled\":0,\"projection_valid\":0,\"active\":0,\"projected\":0,\"onscreen\":0,\"behind\":0,\"sample\":[]}",
+            glass_props_json[0] ? glass_props_json : "{\"present\":0,\"count\":0,\"live\":0,\"with_prop\":0,\"with_model\":0,\"destroyed\":0,\"remove\":0,\"truncated\":0,\"nearest\":{\"index\":-1},\"first_removed\":{\"index\":-1},\"first_destroyed\":{\"index\":-1},\"sample\":[],\"sample_truncated\":0,\"hash\":\"0x0000000000000000\"}",
+            impact_state_json[0] ? impact_state_json : "{\"present\":0,\"buffer_len\":0,\"current_slot\":-1,\"occupied\":0,\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x0000000000000000\"}",
             tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
@@ -5726,7 +8042,7 @@ void portTraceFrame(void) {
             loaded_stage, pending_stage, active_stage, mission_state_id, menu_entered,
             menu_cursor_x, menu_cursor_y, menu_selected_folder, menu_hover_folder, menu_folder_option,
             menu_folder_delete, menu_folder_delete_choice, menu_highlight, menu_briefing, menu_briefing_page,
-            mission_failed, bond_kia,
+            mission_failed, bond_kia, all_obj_complete,
             intro_timer,
             intro_setup_anim_index,
             intro_swirl_present, intro_swirl_count, (unsigned long long)intro_swirl_hash,
@@ -5774,7 +8090,31 @@ void portTraceFrame(void) {
             weapon_right.raw_ammo_type, weapon_right.raw_ammo_reserve,
             weapon_right.raw_mag_size, weapon_right.raw_flags,
             weapon_right.recoil_angle, weapon_right.bolt_recoil,
+            weapon_right.pose_smooth[0], weapon_right.pose_smooth[1], weapon_right.pose_smooth[2],
+            weapon_right.pose_base[0], weapon_right.pose_base[1], weapon_right.pose_base[2],
+            weapon_right.pose_target[0], weapon_right.pose_target[1], weapon_right.pose_target[2],
+            weapon_right.pose_stats[0], weapon_right.pose_stats[1], weapon_right.pose_stats[2],
+            weapon_right.pose_screen[0], weapon_right.pose_screen[1], weapon_right.pose_screen[2],
+            weapon_right.pose_screen[3], weapon_right.pose_screen[4],
+            weapon_right.pose_accum[0], weapon_right.pose_accum[1], weapon_right.pose_accum[2],
+            weapon_right.pose_player[0], weapon_right.pose_player[1], weapon_right.pose_player[2],
+            weapon_right.pose_player[3], weapon_right.pose_player[4], weapon_right.pose_player[5],
+            weapon_right.pose_player[6],
+            weapon_right.pose_blend_meta[0], weapon_right.pose_blend_meta[1],
+            weapon_right.pose_blend_state[0], weapon_right.pose_blend_state[1],
+            weapon_right.pose_blend_state[2], weapon_right.pose_blend_state[3],
+            weapon_right.pose_blend_state[4],
+            weapon_right.pose_blendpos[0][0], weapon_right.pose_blendpos[0][1],
+            weapon_right.pose_blendpos[0][2],
+            weapon_right.pose_blendpos[1][0], weapon_right.pose_blendpos[1][1],
+            weapon_right.pose_blendpos[1][2],
+            weapon_right.pose_blendpos[2][0], weapon_right.pose_blendpos[2][1],
+            weapon_right.pose_blendpos[2][2],
+            weapon_right.pose_blendpos[3][0], weapon_right.pose_blendpos[3][1],
+            weapon_right.pose_blendpos[3][2],
             weapon_right.root[0], weapon_right.root[1], weapon_right.root[2],
+            weapon_right.render_root[0], weapon_right.render_root[1], weapon_right.render_root[2],
+            weapon_right.render_root_diag[0], weapon_right.render_root_diag[1], weapon_right.render_root_diag[2],
             weapon_right.world[0], weapon_right.world[1], weapon_right.world[2],
             weapon_right.muzzle[0], weapon_right.muzzle[1], weapon_right.muzzle[2],
             weapon_right.switch2[0], weapon_right.switch2[1], weapon_right.switch2[2],
@@ -5798,6 +8138,7 @@ void portTraceFrame(void) {
             weapon_right.switch7_basis[1][0], weapon_right.switch7_basis[1][1], weapon_right.switch7_basis[1][2],
             weapon_right.switch7_basis[2][0], weapon_right.switch7_basis[2][1], weapon_right.switch7_basis[2][2],
             weapon_right.depth,
+            weapon_right_mtx_json,
             weapon_left.valid, weapon_left.item, weapon_left.visible,
             weapon_left.firing, weapon_left.flash, weapon_left.state,
             weapon_left.hold_time, weapon_left.switch1, weapon_left.switch_count,
@@ -5813,7 +8154,31 @@ void portTraceFrame(void) {
             weapon_left.raw_ammo_type, weapon_left.raw_ammo_reserve,
             weapon_left.raw_mag_size, weapon_left.raw_flags,
             weapon_left.recoil_angle, weapon_left.bolt_recoil,
+            weapon_left.pose_smooth[0], weapon_left.pose_smooth[1], weapon_left.pose_smooth[2],
+            weapon_left.pose_base[0], weapon_left.pose_base[1], weapon_left.pose_base[2],
+            weapon_left.pose_target[0], weapon_left.pose_target[1], weapon_left.pose_target[2],
+            weapon_left.pose_stats[0], weapon_left.pose_stats[1], weapon_left.pose_stats[2],
+            weapon_left.pose_screen[0], weapon_left.pose_screen[1], weapon_left.pose_screen[2],
+            weapon_left.pose_screen[3], weapon_left.pose_screen[4],
+            weapon_left.pose_accum[0], weapon_left.pose_accum[1], weapon_left.pose_accum[2],
+            weapon_left.pose_player[0], weapon_left.pose_player[1], weapon_left.pose_player[2],
+            weapon_left.pose_player[3], weapon_left.pose_player[4], weapon_left.pose_player[5],
+            weapon_left.pose_player[6],
+            weapon_left.pose_blend_meta[0], weapon_left.pose_blend_meta[1],
+            weapon_left.pose_blend_state[0], weapon_left.pose_blend_state[1],
+            weapon_left.pose_blend_state[2], weapon_left.pose_blend_state[3],
+            weapon_left.pose_blend_state[4],
+            weapon_left.pose_blendpos[0][0], weapon_left.pose_blendpos[0][1],
+            weapon_left.pose_blendpos[0][2],
+            weapon_left.pose_blendpos[1][0], weapon_left.pose_blendpos[1][1],
+            weapon_left.pose_blendpos[1][2],
+            weapon_left.pose_blendpos[2][0], weapon_left.pose_blendpos[2][1],
+            weapon_left.pose_blendpos[2][2],
+            weapon_left.pose_blendpos[3][0], weapon_left.pose_blendpos[3][1],
+            weapon_left.pose_blendpos[3][2],
             weapon_left.root[0], weapon_left.root[1], weapon_left.root[2],
+            weapon_left.render_root[0], weapon_left.render_root[1], weapon_left.render_root[2],
+            weapon_left.render_root_diag[0], weapon_left.render_root_diag[1], weapon_left.render_root_diag[2],
             weapon_left.world[0], weapon_left.world[1], weapon_left.world[2],
             weapon_left.muzzle[0], weapon_left.muzzle[1], weapon_left.muzzle[2],
             weapon_left.switch2[0], weapon_left.switch2[1], weapon_left.switch2[2],
@@ -5837,6 +8202,7 @@ void portTraceFrame(void) {
             weapon_left.switch7_basis[1][0], weapon_left.switch7_basis[1][1], weapon_left.switch7_basis[1][2],
             weapon_left.switch7_basis[2][0], weapon_left.switch7_basis[2][1], weapon_left.switch7_basis[2][2],
             weapon_left.depth,
+            weapon_left_mtx_json,
             snd_stub_hits_total, snd_stub_hits_play, snd_stub_legacy_overlap_hits,
             snd_stub_new_player_init, snd_stub_get_playing_state, snd_stub_deactivate,
             snd_stub_deactivate_all_1, snd_stub_deactivate_all_11, snd_stub_deactivate_all_3,

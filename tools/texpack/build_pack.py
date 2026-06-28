@@ -7,24 +7,25 @@ Pipeline (all local, all from YOUR ROM dump -- nothing here is redistributable):
   1. Dump textures from the game:
        GE007_DUMP_SETTEX_TEXTURES='*' GE007_DUMP_SETTEX_DIR=/tmp/td \
          ./build/ge007 --level 33 ...            (static/world/HUD art, token-keyed)
-     (or GE007_DUMP_LOADED_TEXTURES='*' GE007_DUMP_LOADED_TEXTURE_DIR=/tmp/td)
+     Only the static settex dump is runtime-loadable today: the in-game loader probes
+     textures/tok%04d.png by settex token and has no hash-key path yet.
 
   2. Fetch the upscaler once:    tools/texpack/fetch_realesrgan.sh
 
   3. Build the pack:
        python3 tools/texpack/build_pack.py --dump /tmp/td --out /tmp/mypack
 
-  4. (Once the Phase 2 in-game loader lands) point the game at it:
+  4. Point the game at it (the in-game loader ships today):
        GE007_TEXTURE_PACK=/tmp/mypack ./build/ge007 ...
 
-Output layout matches the planned loader key (docs/PHASE2_PLAN.md):
-  <out>/textures/<token>.png
+Output layout matches the loader key (docs/REMASTER_ROADMAP.md, Engine B):
+  <out>/textures/tok####.png   (zero-padded 4-digit settex token; texture_pack.c:45)
 
 Requires Pillow (pip install -r tools/texpack/requirements.txt) only to decode the
-engine's .ppm dumps. Once the engine dumps PNG directly (Phase 2 STEP 4), Pillow is
-optional. The heavy lifting is the bundled Real-ESRGAN ncnn-vulkan (GPU).
+engine's .ppm dumps. Once the engine dumps PNG directly, Pillow is optional. The
+heavy lifting is the bundled Real-ESRGAN ncnn-vulkan (GPU).
 """
-import argparse, os, re, shutil, subprocess, sys, glob
+import argparse, csv, os, re, shutil, subprocess, sys, glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BIN = os.path.join(HERE, ".bin", "realesrgan", "realesrgan-ncnn-vulkan")
@@ -41,15 +42,25 @@ CLASS_MODEL = {
     "effect": "realesrgan-x4plus",
 }
 
-TOKEN_RE = re.compile(r"(?:settex_|tok)(\d+)|loaded_tex_\d+_f\d+_([0-9a-fA-F]+)")
+TOKEN_RE = re.compile(r"(?:settex_|tok)(\d+)")
+
+
+def normalize_token_key(raw):
+    """Return the runtime loader key for a static settex token."""
+    if raw is None:
+        return None
+    m = re.search(r"(?:settex_|tok)?(\d+)$", raw.strip())
+    if not m:
+        return None
+    return f"tok{int(m.group(1)):04d}"
 
 
 def parse_token(fname):
-    """Extract the pack key (settex token, or content/cache hash) from a dump name."""
+    """Extract the runtime pack key from a static settex dump name."""
     m = TOKEN_RE.search(fname)
     if not m:
         return None
-    return ("tok" + m.group(1)) if m.group(1) else ("h" + m.group(2))
+    return normalize_token_key(m.group(1))
 
 
 def _pil():
@@ -116,13 +127,34 @@ def tile_3x3(im):
 
 
 def load_manifest(dump_dir):
-    """token -> draw_class, if a *.texmanifest.csv is present (Phase 2 STEP 1)."""
+    """token -> draw_class, if a *.texmanifest.csv is present (manifest emit = §6 P1.2)."""
     cls = {}
     for mf in glob.glob(os.path.join(dump_dir, "*.texmanifest.csv")):
-        for line in open(mf):
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 7:
-                cls[parts[0]] = parts[6]
+        with open(mf, newline="") as fp:
+            reader = csv.reader(fp)
+            header = None
+            for row in reader:
+                parts = [p.strip() for p in row]
+                if not parts:
+                    continue
+                if header is None and any(p.lower() == "draw_class" for p in parts):
+                    header = [p.lower() for p in parts]
+                    continue
+                key = normalize_token_key(parts[0])
+                if key is None:
+                    continue
+                draw_class = ""
+                if header and "draw_class" in header:
+                    idx = header.index("draw_class")
+                    if idx < len(parts):
+                        draw_class = parts[idx]
+                elif len(parts) >= 8:
+                    draw_class = parts[7]
+                elif len(parts) >= 7:
+                    # Older scratch manifests had no tileable column.
+                    draw_class = parts[6]
+                if draw_class:
+                    cls[key] = draw_class.lower()
     return cls
 
 
@@ -156,10 +188,11 @@ def main():
 
     by_model = {}          # model -> [tokens] for the ESRGAN batch
     tiled = {}             # token -> (orig_w, orig_h) for seam-safe crop after upscale
-    n = lanczos_n = 0
+    n = lanczos_n = skipped_n = 0
     for s in srcs:
         tok = parse_token(os.path.basename(s))
         if not tok:
+            skipped_n += 1
             continue
         im = load_rgba(s)
         w, h = im.size
@@ -178,7 +211,12 @@ def main():
         by_model.setdefault(model, []).append(tok)
         n += 1
 
-    print(f"staged {n} textures ({lanczos_n} tiny->Lanczos, {len(tiled)} tileable->seam-safe); "
+    if n == 0:
+        sys.exit("no runtime-loadable static settex dumps found; use GE007_DUMP_SETTEX_TEXTURES, "
+                 "not GE007_DUMP_LOADED_TEXTURES/hash-key dumps")
+
+    print(f"staged {n} textures ({lanczos_n} tiny->Lanczos, {len(tiled)} tileable->seam-safe, "
+          f"{skipped_n} skipped non-settex/hash-key dumps); "
           f"AI-upscaling x{args.scale} with: {', '.join(by_model) or '(none)'}")
     for model, toks in by_model.items():
         mdir = os.path.join(stage, "_in_" + model); os.makedirs(mdir, exist_ok=True)

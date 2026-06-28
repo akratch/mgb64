@@ -2985,6 +2985,24 @@ s32 texFreeBytesInBuffer(struct texpool *arg0)
 
 void texLoadFromDisplayList(Gfx *gdl, struct texpool *arg1)
 {
+#ifdef NATIVE_PORT
+    Gfx *cmd = gdl;
+
+    while (((cmd->words.w0 >> 24) & 0xff) != (u8)G_ENDDL)
+    {
+        if (((cmd->words.w0 >> 24) & 0xff) == G_SETTIMG &&
+            (cmd->words.w1 & 0xffff0000U) == 0xabcd0000U)
+        {
+            u32 token = (u32)cmd->words.w1;
+
+            /* Preload only. Native fast3d needs the image-table token intact so
+             * static texture cache keys and CI/TLUT palette identity survive. */
+            texLoad(&token, arg1);
+        }
+
+        cmd++;
+    }
+#else
     u8 *bytes = (u8 *)gdl;
 
     while (bytes[0] != (u8)G_ENDDL)
@@ -2997,6 +3015,7 @@ void texLoadFromDisplayList(Gfx *gdl, struct texpool *arg1)
 
         bytes += 8;
     }
+#endif
 }
 
 

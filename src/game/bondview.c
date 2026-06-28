@@ -212,6 +212,385 @@ static int portCoord3dHasUsableLength(const coord3d *coord, f32 min_len2)
     return portIsFiniteF32(len2) && len2 >= min_len2;
 }
 
+static int bondviewNativeRenderCameraClearanceEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+    {
+        const char *disable_env = getenv("GE007_DISABLE_RENDER_CAMERA_CLEARANCE");
+        const char *enable_env = getenv("GE007_RENDER_CAMERA_CLEARANCE");
+
+        enabled = 1;
+
+        if (disable_env != NULL && disable_env[0] != '\0'
+            && !(disable_env[0] == '0' && disable_env[1] == '\0'))
+        {
+            enabled = 0;
+        }
+
+        if (enable_env != NULL && enable_env[0] != '\0')
+        {
+            enabled = !(enable_env[0] == '0' && enable_env[1] == '\0');
+        }
+    }
+
+    return enabled;
+}
+
+static f32 bondviewNativeRenderCameraExtraClearance(void)
+{
+    static int initialized = 0;
+    static f32 extra = 6.0f;
+
+    if (!initialized)
+    {
+        const char *env = getenv("GE007_RENDER_CAMERA_EXTRA_CLEARANCE");
+
+        if (env != NULL && env[0] != '\0')
+        {
+            f32 parsed = (f32)strtof(env, NULL);
+
+            if (portIsFiniteF32(parsed) && parsed >= 0.0f && parsed <= 30.0f)
+            {
+                extra = parsed;
+            }
+        }
+
+        initialized = 1;
+    }
+
+    return extra;
+}
+
+s32 bondviewApplyNativeRenderCameraClearance(coord3d *cam_pos, const coord3d *cam_look, const char *source)
+{
+    StandTile *tile;
+    f32 look_x;
+    f32 look_z;
+    f32 look_len2;
+    f32 look_inv_len;
+    f32 near_z;
+    f32 radius;
+    f32 height;
+    f32 always_30;
+    f32 clearance;
+    f32 probe_x;
+    f32 probe_z;
+    s32 clear;
+    f32 hit_distance;
+    f32 push;
+    f32 push_x;
+    f32 push_z;
+    s32 hit_kind;
+
+    if (!bondviewNativeRenderCameraClearanceEnabled()
+        || cam_pos == NULL
+        || cam_look == NULL
+        || g_CurrentPlayer == NULL
+        || playerHasFrozenIntroCamera(g_CurrentPlayer)
+        || (g_CameraMode != CAMERAMODE_FP
+            && g_CameraMode != CAMERAMODE_FP_NOINPUT
+            && g_CameraMode != CAMERAMODE_MP))
+    {
+        return 0;
+    }
+
+    if (!portCoord3dHasUsableLength(cam_pos, 0.0001f)
+        || !portCoord3dHasUsableLength(cam_look, 0.0001f))
+    {
+        return 0;
+    }
+
+    tile = g_CurrentPlayer->field_488.current_tile_ptr;
+
+    if (tile == NULL)
+    {
+        tile = g_CurrentPlayer->field_488.current_tile_ptr_for_portals;
+    }
+
+    if (tile == NULL)
+    {
+        return 0;
+    }
+
+    look_x = cam_look->x;
+    look_z = cam_look->z;
+    look_len2 = (look_x * look_x) + (look_z * look_z);
+
+    if (!portIsFiniteF32(look_len2) || look_len2 < 0.0001f)
+    {
+        return 0;
+    }
+
+    look_inv_len = 1.0f / sqrtf(look_len2);
+    look_x *= look_inv_len;
+    look_z *= look_inv_len;
+
+    near_z = g_CurrentPlayer->c_perspnear;
+    if (!portIsFiniteF32(near_z) || near_z < 1.0f || near_z > 100.0f)
+    {
+        near_z = 10.0f;
+    }
+
+    if (g_CurrentPlayer->prop != NULL)
+    {
+        bondviewGetCollisionRadius(g_CurrentPlayer->prop, &radius, &height, &always_30);
+    }
+    else
+    {
+        radius = g_CurrentPlayer->field_488.collision_radius;
+        height = 144.0f;
+        always_30 = 30.0f;
+    }
+
+    if (!portIsFiniteF32(radius) || radius < 8.0f || radius > 80.0f)
+    {
+        radius = 30.0f;
+    }
+    if (!portIsFiniteF32(height) || height < 1.0f || height > 300.0f)
+    {
+        height = 144.0f;
+    }
+    if (!portIsFiniteF32(always_30) || always_30 < 0.0f || always_30 > height)
+    {
+        always_30 = 30.0f;
+    }
+
+    clearance = radius + bondviewNativeRenderCameraExtraClearance();
+    if (clearance < near_z + 8.0f)
+    {
+        clearance = near_z + 8.0f;
+    }
+    if (clearance > 80.0f)
+    {
+        clearance = 80.0f;
+    }
+
+    probe_x = cam_pos->x + (look_x * clearance);
+    probe_z = cam_pos->z + (look_z * clearance);
+    hit_kind = 0;
+    hit_distance = clearance;
+    push_x = -look_x;
+    push_z = -look_z;
+
+    clear = stanTestLineUnobstructed(
+        &tile,
+        cam_pos->x,
+        cam_pos->z,
+        probe_x,
+        probe_z,
+        CDTYPE_OBJS | CDTYPE_DOORS | CDTYPE_PATHBLOCKER,
+        height,
+        always_30,
+        0.0f,
+        1.0f);
+
+    if (clear == 0)
+    {
+        hit_kind = 1;
+        hit_distance = stanSavedColl_someMin * clearance;
+        if (!portIsFiniteF32(hit_distance))
+        {
+            return 0;
+        }
+
+        if (hit_distance < 0.0f)
+        {
+            hit_distance = 0.0f;
+        }
+        else if (hit_distance > clearance)
+        {
+            hit_distance = clearance;
+        }
+    }
+    else
+    {
+        StandTile *volume_tile = g_CurrentPlayer->field_488.current_tile_ptr;
+        s32 volume;
+
+        if (volume_tile == NULL)
+        {
+            volume_tile = g_CurrentPlayer->field_488.current_tile_ptr_for_portals;
+        }
+
+        volume = stanTestVolume(
+            &volume_tile,
+            cam_pos->x,
+            cam_pos->z,
+            clearance,
+            CDTYPE_OBJS | CDTYPE_DOORS | CDTYPE_PATHBLOCKER,
+            height,
+            always_30);
+
+        if (volume >= 0)
+        {
+            coord3d edge_a;
+            coord3d edge_b;
+
+            if (getCollisionEdge_maybe(&edge_a, &edge_b))
+            {
+                f32 edge_x = edge_b.x - edge_a.x;
+                f32 edge_z = edge_b.z - edge_a.z;
+                f32 edge_len2 = (edge_x * edge_x) + (edge_z * edge_z);
+
+                if (portIsFiniteF32(edge_len2) && edge_len2 > 0.0001f)
+                {
+                    f32 t = (((cam_pos->x - edge_a.x) * edge_x) +
+                             ((cam_pos->z - edge_a.z) * edge_z)) / edge_len2;
+                    f32 closest_x;
+                    f32 closest_z;
+                    f32 away_x;
+                    f32 away_z;
+                    f32 away_len2;
+                    f32 away_inv_len;
+                    f32 forward_dist;
+
+                    if (t < 0.0f)
+                    {
+                        t = 0.0f;
+                    }
+                    else if (t > 1.0f)
+                    {
+                        t = 1.0f;
+                    }
+
+                    closest_x = edge_a.x + edge_x * t;
+                    closest_z = edge_a.z + edge_z * t;
+                    forward_dist = ((closest_x - cam_pos->x) * look_x) +
+                                   ((closest_z - cam_pos->z) * look_z);
+
+                    if (forward_dist >= -(near_z * 0.25f))
+                    {
+                        away_x = cam_pos->x - closest_x;
+                        away_z = cam_pos->z - closest_z;
+                        away_len2 = (away_x * away_x) + (away_z * away_z);
+
+                        if (portIsFiniteF32(away_len2) && away_len2 > 0.0001f)
+                        {
+                            away_inv_len = 1.0f / sqrtf(away_len2);
+                            hit_kind = 2;
+                            hit_distance = sqrtf(away_len2);
+                            push_x = away_x * away_inv_len;
+                            push_z = away_z * away_inv_len;
+                            tile = volume_tile;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            return 0;
+        }
+    }
+
+    if (hit_kind == 0)
+    {
+        return 0;
+    }
+
+    push = clearance - hit_distance;
+    if (push <= 0.01f)
+    {
+        return 0;
+    }
+    if (push > 80.0f)
+    {
+        push = 80.0f;
+    }
+
+    cam_pos->x += push_x * push;
+    cam_pos->z += push_z * push;
+
+    {
+        static int trace_enabled = -1;
+        static int trace_budget = 240;
+        static int trace_count = 0;
+        if (trace_enabled < 0)
+        {
+            const char *budget_env;
+            trace_enabled = (getenv("GE007_TRACE_CAMERA_CLEARANCE") != NULL);
+            budget_env = getenv("GE007_TRACE_CAMERA_CLEARANCE_BUDGET");
+            if (budget_env != NULL && budget_env[0] != '\0')
+            {
+                long parsed = strtol(budget_env, NULL, 10);
+                if (parsed > 0 && parsed <= 20000)
+                {
+                    trace_budget = (int)parsed;
+                }
+            }
+        }
+
+        if (trace_enabled && trace_count < trace_budget)
+        {
+            extern int g_frame_count_diag;
+            PropRecord *hit_prop = stanSavedColl_posData;
+            ObjectRecord *hit_obj = NULL;
+            DoorRecord *hit_door = NULL;
+            s32 hit_prop_type = -1;
+            s32 hit_obj_type = -1;
+            s32 hit_obj_id = -1;
+            s32 hit_obj_pad = -1;
+            s32 hit_door_state = -1;
+            f32 hit_door_open = 0.0f;
+
+            if (hit_prop != NULL)
+            {
+                hit_prop_type = hit_prop->type;
+
+                if (hit_prop->type == PROP_TYPE_DOOR && hit_prop->door != NULL)
+                {
+                    hit_door = hit_prop->door;
+                    hit_obj = (ObjectRecord *)hit_door;
+                    hit_door_state = hit_door->openstate;
+                    hit_door_open = hit_door->openPosition;
+                }
+                else if ((hit_prop->type == PROP_TYPE_OBJ || hit_prop->type == PROP_TYPE_WEAPON)
+                         && hit_prop->obj != NULL)
+                {
+                    hit_obj = hit_prop->obj;
+                }
+
+                if (hit_obj != NULL)
+                {
+                    hit_obj_type = hit_obj->type;
+                    hit_obj_id = hit_obj->obj;
+                    hit_obj_pad = hit_obj->pad;
+                }
+            }
+
+            fprintf(stderr,
+                    "[CAM-CLEARANCE] f=%d source=%s kind=%s hit=%.2f clearance=%.2f push=%.2f "
+                    "look=(%.4f,%.4f) dir=(%.4f,%.4f) new=(%.2f,%.2f,%.2f) tile_room=%d "
+                    "hit_prop_type=%d hit_obj_type=%d hit_obj=%d hit_pad=%d hit_door_state=%d hit_door_open=%.3f\n",
+                    g_frame_count_diag,
+                    source != NULL ? source : "-",
+                    hit_kind == 1 ? "line" : "volume",
+                    hit_distance,
+                    clearance,
+                    push,
+                    look_x,
+                    look_z,
+                    push_x,
+                    push_z,
+                    cam_pos->x,
+                    cam_pos->y,
+                    cam_pos->z,
+                    tile != NULL ? tile->room : -1,
+                    hit_prop_type,
+                    hit_obj_type,
+                    hit_obj_id,
+                    hit_obj_pad,
+                    hit_door_state,
+                    hit_door_open);
+            trace_count++;
+        }
+    }
+
+    return 1;
+}
+
 static f32 portNativeFallbackHeadHeight(void)
 {
     if (g_CurrentPlayer != NULL
@@ -5098,6 +5477,86 @@ static void bondviewPrepareNativeBondIntroChr(void)
     chr->sleep = 0;
     g_CurrentPlayer->room_pointer = NULL;
 }
+
+static s32 bondviewNativeIntroSkipRequested(u16 buttons, u16 oldbuttons)
+{
+    const s32 stick_deadzone = 8;
+
+    if (lvlGetControlsLockedFlag() != 0) {
+        return FALSE;
+    }
+
+    if (camera_transition_timer < 15.0f) {
+        return FALSE;
+    }
+
+    if ((buttons & ~oldbuttons & (ANY_BUTTON)) != 0) {
+        return TRUE;
+    }
+
+    if (abs((s32)joyGetStickX(PLAYER_1)) > stick_deadzone
+        || abs((s32)joyGetStickY(PLAYER_1)) > stick_deadzone) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void bondviewNativeFillCurrentCameraTargets(
+    struct coord3d *pos,
+    struct coord3d *pos2,
+    StandTile **stan,
+    struct coord3d *arg6)
+{
+    struct coord3d base = {0};
+    StandTile *tile = NULL;
+
+    if (g_CurrentPlayer != NULL) {
+        if (g_CurrentPlayer->prop != NULL) {
+            base = g_CurrentPlayer->prop->pos;
+            tile = g_CurrentPlayer->prop->stan;
+        } else {
+            base = g_CurrentPlayer->field_488.collision_position;
+            tile = g_CurrentPlayer->field_488.current_tile_ptr;
+        }
+    }
+
+    if (pos != NULL) {
+        *pos = base;
+    }
+
+    if (pos2 != NULL) {
+        *pos2 = base;
+        pos2->z += 1.0f;
+    }
+
+    if (stan != NULL) {
+        *stan = tile;
+    }
+
+    if (arg6 != NULL) {
+        *arg6 = base;
+    }
+}
+
+static void bondviewNativeSkipIntroToFp(
+    struct coord3d *pos,
+    struct coord3d *pos2,
+    StandTile **stan,
+    struct coord3d *arg6)
+{
+    if (getPlayerCount() != 1 || g_CurrentPlayer == NULL) {
+        return;
+    }
+
+    portApplyGameplaySpawnFromIntro();
+    maybe_solo_intro_camera_handler();
+    camera_fade_active = 0;
+    g_CameraAfterCinema = CAMERAMODE_NONE;
+    currentPlayerStartChrFade(0.0f, 1.0f);
+    bondviewSetCameraMode(CAMERAMODE_FP);
+    bondviewNativeFillCurrentCameraTargets(pos, pos2, stan, arg6);
+}
 #endif
 
 // Address 0x7F07A9B8 NTSC.
@@ -5874,6 +6333,13 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
 
     if ((g_CameraMode == CAMERAMODE_INTRO) || (g_CameraMode == CAMERAMODE_FADESWIRL))
     {
+#ifdef NATIVE_PORT
+        if (bondviewNativeIntroSkipRequested(buttons, oldbuttons))
+        {
+            bondviewNativeSkipIntroToFp(pos, pos2, stan, arg6);
+            return;
+        }
+#endif
         if (g_CameraMode == CAMERAMODE_INTRO)
         {
             if ((camera_transition_timer < 120.0f) && ((camera_transition_timer + g_GlobalTimerDelta) >= 120.0f))
@@ -6032,6 +6498,12 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
     else if (g_CameraMode == CAMERAMODE_SWIRL)
     {
 #ifdef NATIVE_PORT
+        if (bondviewNativeIntroSkipRequested(buttons, oldbuttons))
+        {
+            bondviewNativeSkipIntroToFp(pos, pos2, stan, arg6);
+            return;
+        }
+
         /* Safety: if swirl data is missing, skip to first-person */
         if (!g_IntroSwirl) {
             bondviewSetCameraMode(CAMERAMODE_FP);
@@ -9865,6 +10337,7 @@ void bondviewSyncViewBasisFromHead(void)
     f32 headup_y;
     f32 headup_z;
     int use_default_head_basis;
+    extern s32 g_pcSteadyView;
 #endif
 
     if (g_CurrentPlayer == NULL) {
@@ -9879,7 +10352,10 @@ void bondviewSyncViewBasisFromHead(void)
         || !portCoord3dHasUsableLength(&g_CurrentPlayer->headlook, 0.0001f)
         || !portCoord3dHasUsableLength(&g_CurrentPlayer->headup, 0.0001f);
 
-    if (use_default_head_basis) {
+    if (g_pcSteadyView || use_default_head_basis) {
+        /* Native mouse/right-stick look owns world camera orientation. Keep
+         * movement head animation in the position/weapon paths, but do not let
+         * the gait up-vector roll the whole level during normal PC play. */
         headlook_x = 0.0f;
         headlook_y = 0.0f;
         headlook_z = -1.0f;
@@ -9975,17 +10451,6 @@ void bondviewPrimeSpawnHeadState(void)
         return;
     }
 
-#ifdef NATIVE_PORT
-    /* Direct --level startup reaches spawn handoff with no gait model yet, so
-     * bondviewMoveAnimationTick safely uses bheadUpdate's null-model fallback.
-     * Clean-save frontend handoff can arrive with standheight still zero but
-     * player->model pointing into the previous stage mempool; skip only that
-     * stale non-NULL case. */
-    if (g_CurrentPlayer->standheight <= 1.0f && g_CurrentPlayer->model != NULL) {
-        bondviewSyncViewBasisFromHead();
-        return;
-    }
-#endif
     bondviewMoveAnimationTick(0.0f, 0.0f, 0.0f);
 }
 
@@ -14641,6 +15106,9 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
     Mtxf sp60;
     s32 j;
     s32 i;
+#ifdef NATIVE_PORT
+    s32 native_field_10e0_scaled = 0;
+#endif
 
     i = bondviewGetCurrentPlayersRoom();
     bondviewUpdateCurrentRoomPosition(i);
@@ -14823,10 +15291,22 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
     projmtx = currentPlayerGetProjectionMatrixF();
 
 #ifdef NATIVE_PORT
-    /* Native field_10E0 stores the combined room projection. Build it from
-     * the same visibility-scaled camera basis that field_5C will publish. */
+    /* Native large-room rendering expects field_10E0 to carry the level
+     * visibility scale. GE007_FIELD_10E0_SCALED=0 keeps the stock-style
+     * unscaled variant as a negative control for glass/Sky regression checks. */
+    {
+        static int scaled_field_10e0 = -1;
+        if (scaled_field_10e0 < 0) {
+            const char *e = getenv("GE007_FIELD_10E0_SCALED");
+            scaled_field_10e0 = (e != NULL && e[0] != '\0' && e[0] == '0') ? 0 : 1;
+        }
+        native_field_10e0_scaled = scaled_field_10e0;
+    }
+
     scale = bgGetLevelVisibilityScale();
-    matrix_scalar_multiply(scale, spC4.m[0]);
+    if (native_field_10e0_scaled) {
+        matrix_scalar_multiply(scale, spC4.m[0]);
+    }
 
     {
         static int clamp_field_10e0 = -1;
@@ -14902,6 +15382,10 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
 #ifndef NATIVE_PORT
     scale = bgGetLevelVisibilityScale();
     matrix_scalar_multiply(scale, spC4.m[0]);
+#else
+    if (!native_field_10e0_scaled) {
+        matrix_scalar_multiply(scale, spC4.m[0]);
+    }
 #endif
     guMtxF2L((f32 (*)[4]) &spC4, (Mtx* ) g_CurrentPlayer->field_5C);
     sub_GAME_7F059334((s32* ) g_CurrentPlayer->field_5C, (s32* ) g_CurrentPlayer->field_60);
@@ -14957,6 +15441,9 @@ Gfx *sub_GAME_7F087A08(Gfx *arg0) {
 #endif
         cam_look = coll->applied_view;
         cam_up = coll->applied_view2;
+#ifdef NATIVE_PORT
+        bondviewApplyNativeRenderCameraClearance(&cam_pos, &cam_look, "gameplay_matrix");
+#endif
     }
 
     /* Guard against zero-length look direction which would cause

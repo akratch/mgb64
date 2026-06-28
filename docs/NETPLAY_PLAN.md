@@ -14,6 +14,22 @@ record for taking that simulation online.
 > every GoldenEye symbol grounded to a real `file:line`. This plan is the *what
 > and why*; the port map is the *where and how*.
 
+> **⚠ Revision (2026-06-25):** A source-grounded adversarial review
+> ([NETPLAY_PLAN_REVIEW.md](NETPLAY_PLAN_REVIEW.md)) confirmed the architecture is
+> the right call but **refuted three load-bearing assumptions** that are corrected
+> inline below: (1) the host **cannot** replay a client's shot from raw
+> `vv_theta`/`vv_verta` and **RNG is correctness-bearing for hitscan** (§3d/§3e/§7)
+> — the "shooter-detects-hit + host-validates" model is now **primary**; (2)
+> single-process loopback **cannot** test host↔client divergence (sim state is
+> file-scope singletons) — N0c is re-scoped and a **two-process** `net_smoke.sh` is
+> the real correctness gate; (3) the §10 rollback budget is understated. The review
+> also flags **blocker-class scope gaps** the plan understates: **6 of 8 MP
+> scenarios** carry per-scenario state the wire never replicates (§4 / review §4.3),
+> "online split-screen" is blocked by `getPlayerCount()` coupling (review §4.4), and
+> lifecycle (pause/disconnect/results/names) + packet memory-safety (N5) are
+> design-absent. **Line numbers throughout this doc are stale; the corrected-anchor
+> table lives in the review (§5).** Read the review before acting on this plan.
+
 ---
 
 ## 1. The decision
@@ -86,9 +102,23 @@ own tick and interpolation works on tick deltas. The host's tick is canonical
 for event ordering.
 
 **The split-screen seam is for local couch players only.** The existing
-`osContGetReadData` `data[0..3]` routing (`stubs.c:5280`) feeds a host's *local*
-players. Remote players are puppets driven by the move-apply/interp path (§3b) —
-never by injected `OSContPad` bytes. Keep the two paths separate.
+`osContGetReadData` `data[0..3]` routing (func **`stubs.c:5000`**, local merge
+`:5426`, multi-pad fill loop `:5436`) feeds a host's *local* players. Remote
+players are puppets driven by the move-apply/interp path (§3b) — never by injected
+`OSContPad` bytes. Keep the two paths separate.
+
+> **⚠ Corrected (review §4.4):** "online split-screen" is **blocked** by an engine
+> coupling this plan reduces to "a puppet flag." `getPlayerCount()` (`player_2.c:92`)
+> is the **single** axis for match-players **and** local viewports **and** gfx budget
+> **and** divider geometry (`lvl.c:1564`, `fr.c:1779-1806`, `dyn.c:106`, `boss.c:607`).
+> Binding all 4 match-players into `g_playerPointers[]` makes a 2-local box render
+> **4 viewports / 4-way split / 4-player budget.** Required: a **second count**
+> `getLocalViewportCount()` and an audit of every `getPlayerCount()` callsite
+> (match-semantics → keep; local-presentation → switch). Input is keyed by player
+> number not local-slot (`lvl.c:5697-5769`, `bondview.c:10839` even adds
+> `+getPlayerCount()`) — define a `{playernum → local pad}` map, and make
+> move-record loop over **all** local players (the "its own player" singular below is
+> wrong for 2 couch players).
 
 ---
 
@@ -112,12 +142,20 @@ Build and unit-test this first; phases N2–N4 depend on it.
 
 ### 3b. The puppet gate — disable input for remote players
 GoldenEye has **no `controlmode == CONTROLMODE_NA` equivalent** (PD's mechanism).
-Add a per-player `g_NetPuppet[playernum]` flag and gate it in
-`bondviewMovePlayerUpdateViewport()` (`bondview.c:13915`, called from
-`lvl.c:5672`): for puppets, **skip** the `joyGetStickX/Y` + `platformGetPad-
-RightStick` reads and **set** `pos`/`vv_theta`/`vv_verta` from the interpolated
-network move instead of from `MoveBond()` (`bondview.c:14088`). The local player
-keeps the normal path.
+Add a per-player `g_NetPuppet[playernum]` flag and gate at the **`MoveBond()` call
+site** (`bondview.c:14485`, inside `bondviewMovePlayerUpdateViewport()`
+`bondview.c:14296`, called from `lvl.c:5736/5740`): for puppets, **skip** the
+`joyGetStickX/Y` (`lvl.c:5736/5740`) + `platformGetPadRightStick` (`lvl.c:5769`)
+reads, **do not call `MoveBond()`** (`bondview.c:12474`), and **set** the
+authoritative **`prop->pos` *and* `field_488.collision_position`** (+ tile/room) +
+`vv_theta`/`vv_verta`/`crouchpos` from the interpolated network move. The local
+player keeps the normal path.
+
+> **⚠ Corrected (review §3 / port-map §4c):** you cannot place a puppet by writing
+> the `struct player.pos` (camera) field — `MoveBond` re-derives position from
+> speed+collision and overwrites it. Write `prop->pos` + the collision twin and
+> bypass `MoveBond`. The flag must also gate the viewport/divider/gfx-budget loops
+> (review §4.4), which live *outside* this function.
 
 ### 3c. Sync-ID = prop array index
 `PropRecord` lives in the fixed array `pos_data_entry[POS_DATA_ENTRY_LEN]`
@@ -128,21 +166,43 @@ The wire references objects by `syncid`; the receiver resolves it back by index.
 Never put a raw pointer on the wire.
 
 ### 3d. Server-authoritative hit & damage resolution
-When a client's `ucmd` carries FIRE, the **host** reproduces the shot using that
-client's forwarded aim (`vv_theta`/`vv_verta`/crosshair) and applies damage
-through GoldenEye's existing path — `record_damage_kills()` (`bondview.c:20340`),
-death via `bondviewKillCurrentPlayer()` (`bondview.c:20279`). That call site is
+When a client's `ucmd` carries FIRE, the **host** applies damage through
+GoldenEye's existing path — `record_damage_kills()` (**`bondview.c:20737`**), death
+via `bondviewKillCurrentPlayer()` (**`bondview.c:20676`**). That call site is
 **wrapped to emit `SVC_CHR_DAMAGE`/kill events**. Clients never self-report
 kills; this is both correct and the main anti-cheat for scoring.
 
+> **⚠ Corrected (review §3.1):** the host **cannot** reproduce the shot from raw
+> forwarded `vv_theta`/`vv_verta`. The live shot path
+> `bullet_path_from_screen_center` (`gun.c:28756`) folds in the **auto-aim-deflected
+> crosshair** (`bondview.c:12178-12202`, a 25–30-tick target latch), **four
+> `RANDOMFRAC()` spread draws** from `g_randomSeed` per shot (`gun.c:28789-28795`),
+> the firer's movement, and the shooter's per-peer **FOV** — none in the raw angles.
+> Kill credit is also implicit `get_cur_playernum()` context (`ShotData` has no
+> firer id, `chrobjhandler.h:36`). **Primary model = "shooter-detects-hit +
+> host-validates":** the client forwards the **resolved** bullet vector / candidate
+> hit + target syncid; the host validates against authoritative state, applies
+> damage with `set_cur_player` set to the **firer**, and emits the event. Thread an
+> explicit firer id through `ShotData`.
+
 > GoldenEye health is **normalized** `bondhealth`/`bondarmour` (0..1) scaled by
-> per-player `actual_health`. `SVC_PLAYER_STATS` syncs the normalized values; the
-> scale is set at spawn from the synced scenario/handicap.
+> per-player `actual_health` **and `actual_armor`** (the paired scale; the wire must
+> carry **both** to reconstruct real HP — `bondview.c:20772/20803`). `SVC_PLAYER_STATS`
+> syncs the normalized values; the scale is set at spawn from the synced
+> scenario/handicap. **Define pickup-vs-damage ordering within a tick** (review §4.5).
 
 ### 3e. RNG push
 GoldenEye has **one** global seed `g_randomSeed` (`random.c:24`) — not PD's two.
-The host sends its seed; clients latch it. Used for cosmetic/spawn parity only,
-not for correctness (movement is client-auth, world is event-synced).
+The host sends its seed; clients latch it.
+
+> **⚠ Corrected (review §3.1):** RNG is **not** cosmetic-only. Weapon spread draws
+> `g_randomSeed` (4× per shot, `gun.c:28789-28795`), so it sets bullet direction
+> and is **correctness-bearing for hitscan**. Because the primary hit model forwards
+> the **resolved** vector (§3d), the host re-runs no spread RNG for shot geometry —
+> which is precisely why the resolved-vector model is now primary. The RNG push
+> remains useful for spawn/cosmetic parity, but the §7 risk-table entry "cross-
+> platform float drift in cosmetic RNG → irrelevant to correctness" is **withdrawn**
+> for the shooting path.
 
 ### 3f. Desync oracle — scoped correctly
 Hash and exchange the **server-authoritative subset only** — prop states by
@@ -169,18 +229,33 @@ all others.
 
 | Event | Message | GoldenEye call site to wrap |
 |---|---|---|
-| Damage / kill | `SVC_CHR_DAMAGE` | `record_damage_kills()` `bondview.c:20340` |
-| Weapon dropped on death | `SVC_CHR_DISARM` | death/disarm in `bondview.c` |
-| Projectile spawned | `SVC_PROP_SPAWN` | `projectileAllocate()` `chrobjhandler.c:2300` |
+| Damage / kill | `SVC_CHR_DAMAGE` | `record_damage_kills()` `bondview.c:20737` |
+| Weapon dropped on death | `SVC_CHR_DISARM` | `drop_inventory()` `chrobjhandler.c:48607` (kill path `bondview.c:20834`, `#if VERSION_US`) |
+| Projectile spawned | `SVC_PROP_SPAWN` | `projectileAllocate()` `chrobjhandler.c:2350` |
 | Projectile/object in flight | `SVC_PROP_MOVE` | projectile update tick |
-| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` | `object_interaction()` `chrobjhandler.c:8874` |
-| Door / lift | `SVC_PROP_DOOR/USE` | `propdoorInteract()` (`chrobjhandler.c`) |
-| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:844` |
+| Pickup (weapon/ammo/armor) | `SVC_PROP_PICKUP` | `object_interaction()` `chrobjhandler.c:9032` |
+| Door / lift | `SVC_PROP_DOOR/USE` | `propdoorInteract()` (`chrobjhandler.c:48070`) |
+| Explosion | (via spawn/damage) | `explosionCreate()` `explosions.c:873` |
 | Health/armor | `SVC_PLAYER_STATS` | periodic + on-change |
 | Scoreboard / match end | `SVC_STAGE_END` + stats | `mp_watch.c` |
 
 This event set *is* the correctness surface. Getting every weapon/door/pickup
 path wrapped is the bulk of the work — see the risk register (§7).
+
+> **⚠ Scope gap (review §4.3):** the table above covers **deathmatch
+> (kill-count) only**. GoldenEye has **8 MP scenarios**, and
+> `get_points_for_mp_player` (`mp_watch.c:791-842`) dispatches **four** scoring
+> models off scenario-specific state that **no event above replicates**: Flag Tag
+> `flag_counter`/possession (`lvl.c:5916-5940`), Golden Gun ownership +
+> `killed_gg_owner_count` bonus (`lvl.c:5943`, `gun.c:33454`), YOLT lives/elimination
+> (`lvl.c:2187-2777`, itself `GE007_MP_YOLT`-gated at 63% decomp), and team
+> assignment (overloaded `have_token_or_goldengun`, `front.c:7910`). Also missing:
+> the synced **MP weapon set** (`mp_weapon.c:218`) and `drop_inventory` on death —
+> the only flag/GG transfer — which is `#if defined(VERSION_US)` (`bondview.c:20834`).
+> **Decision:** either add per-scenario replication to N3 (feed
+> `get_points_for_mp_player` from authoritative fields) **or** narrow v1's DoD to
+> deathmatch-only and schedule scenarios as N3.5. Add new events: `SVC_FLAG_*`,
+> `SVC_GG_OWNER`, team/lives/weapon-set in the synced match-setup payload.
 
 ---
 
@@ -207,6 +282,25 @@ The concrete connect→play→repeat flow, grounded in the GoldenEye menu/stage 
    authoritatively, broadcasts `SVC_STAGE_END`; everyone returns to lobby and the
    process repeats from step 2.
 
+> **⚠ Lifecycle contracts missing (review §4.6) — design these in N3:**
+> - **Pause** is a global singleton that zeroes `g_ClockTimer` (`lvl.c:2023-2030`,
+>   `mp_watch.c:622-636`): any peer pausing freezes only its own sim and desyncs.
+>   Disable online, or make host-only + broadcast.
+> - **Disconnect:** fixed `g_playerPointers[]` slots mean "vanish" breaks viewport
+>   math + scoreboard, "leave the body" leaves a frozen puppet that still gates
+>   elimination. Keep the slot, mark "disconnected puppet," preserve score, exclude
+>   from elimination/continue counts.
+> - **Results-advance** gate `menu_count == player_count` (`mp_watch.c:649-665`)
+>   **deadlocks** on a dropped/AFK peer — make host-authoritative with ready-acks +
+>   timeout.
+> - **Names/chat:** no text-entry UI exists (zero `SDL_StartTextInput`); players are
+>   P1–P4 by character photo (`front.c:6371`). Derive identity from the chosen
+>   character or budget real SDL text-input UI — **not** an "S" task.
+> - **FOV is not cosmetic for targeting** (`bondview.c:1147`): force a canonical
+>   targeting FOV online or forward the resolved target.
+> - **Host-leave (v1):** match ends for all, clean `SVC_STAGE_END`, no migration —
+>   state it. Add a short reconnect grace window keyed by stable peer identity.
+
 ---
 
 ## 6. Phased execution plan
@@ -220,9 +314,21 @@ Phases map 1:1 to the port map's port order (§5 there).
 |---|---|---|
 | N0a. Vendor enet + port `netbuf.[ch]` | M | enet (MIT) under `lib/enet/`; LE byte-buffer serializer (`src/platform/net/netbuf.[ch]`). |
 | N0b. Frame pump + connection FSM | M | `netStartFrame`/`netEndFrame` in `boss.c` around `lvlManageMpGame` (`boss.c:602`); `CLSTATE_*` machine; enet host create/service (non-blocking, §7). |
-| N0c. Loopback mode | M | `--netplay loopback`: two in-process peers on one box, the whole pipeline testable in CI with no second machine. |
+| N0c. Loopback mode (transport only) | M | `--netplay loopback`: in-process **transport/serialization round-trip** only — see warning. |
+| N0d. **Two-process** `net_smoke.sh` | M | **The real correctness lane.** Launch host + client(s) as separate OS processes over `127.0.0.1`, per-process scripted input, inter-process event-hash diff. |
 
-**Gate:** loopback connects, `g_NetTick` advances on both peers, clean disconnect, zero new crashes, CTest + solo + split-screen lanes green.
+> **⚠ Corrected (review §3.2):** in-process loopback **cannot** test host↔client
+> divergence — sim state is file-scope singletons (`pos_data_entry[600]`,
+> `g_playerPointers[4]`, `g_playerPlayerData[4]`, `g_randomSeed`: one per process),
+> so two in-process peers are the **same** simulation and the desync oracle hashes
+> identical memory. PD itself forbids dual-role-in-one-process. Loopback is a
+> transport/serialization round-trip lane; the **two-process** lane (N0d) is what
+> gates correctness for N2–N5. "Event-hash divergence 0" is only meaningful measured
+> **between two processes** (review §3.5).
+
+**Gate:** loopback round-trips the wire format cleanly; **N0d** two-process match
+connects, `g_NetTick` advances independently on each peer, clean disconnect, zero
+new crashes, CTest + solo + split-screen lanes green.
 
 ### N1 — Auth, lobby, handshake
 | Task | Effort | Detail |
@@ -266,8 +372,17 @@ Phases map 1:1 to the port map's port order (§5 there).
 |---|---|---|
 | N5a. Server browser / query | S | Port the connectionless query protocol (`NET_QUERY_MAGIC`, CRC) for LAN/direct. |
 | N5b. Relay / join-by-code | L | Lightweight relay for NAT traversal (sm64coopdx's CoopNet and PD's servegame.com are references). |
+| N5c. **Untrusted-input contract (prerequisite)** | M | Validate `syncid ∈ [1..POS_DATA_ENTRY_LEN]` (reject, don't clamp); length-checked `netbuf` cursor; per-peer rate/size caps; fuzz lane on the apply handlers. |
 
-**Gate:** two machines connect over the internet via join-code with no port-forwarding; cross-platform (macOS/ARM ↔ x86) confirmed.
+> **⚠ Security gap (review §4.7):** join-by-code exposes the apply path to untrusted
+> peers, but attacker `syncid` indexes `pos_data_entry[600]` with **no bounds check**
+> (`netmsg.c:130`), and the `byteswap.h`-style read is a **raw deref** that over-reads
+> short packets. N5c is a **hard prerequisite** for N5b, not polish — without it
+> join-by-code is an RCE/DoS surface. The plan's only "security" elsewhere is
+> anti-cheat fairness. Also scope the relay's **ops/cost/kill-switch** (who runs it,
+> egress at host-relays-N fan-out, what happens to "online" if the service dies).
+
+**Gate:** two machines connect over the internet via join-code with no port-forwarding; cross-platform (macOS/ARM ↔ x86) confirmed; **N5c validation + fuzz lane green before N5b ships.**
 
 ---
 
@@ -327,15 +442,24 @@ predicting its own player and reconciling to host corrections. This is the
 cheat-resistant, "true Source-model" upgrade — and the only place prediction/
 reconciliation actually applies. PD does **not** do this today.
 
-**B. Same-build LAN rollback (tournament mode).** GoldenEye's state is unusually
-rollback-friendly: the match-relevant mutable state is **~85–90 KB and mostly
-contiguous** (`pos_data_entry[600]` 28.8 KB, `g_Projectiles[20]`, explosion
-buffers, `g_playerPlayerData[4]`, `g_randomSeed`), cheap to snapshot/restore
-(<1 ms). With the timestep pinned (`g_ClockTimer ≡ 1`) and RNG already serialized
-in `ramromreplay.c`, a GGPO/GekkoNet-style rollback path is realistic for
-**same-binary, same-arch LAN** 1v1–4P competitive play, where cross-platform
-float divergence is a non-issue. This is where the "snapshot the whole state"
-and "fixed timestep for determinism" ideas live — *not* in the v1 wire format.
+**B. Same-build LAN rollback (tournament mode).** A GGPO/GekkoNet-style rollback
+path is plausible for **same-binary, same-arch LAN** 1v1–4P, where cross-platform
+float divergence is a non-issue. This is where "snapshot the whole state" and
+"fixed timestep for determinism" live — *not* in the v1 wire format.
+
+> **⚠ Corrected (review §3.3):** the "~85–90 KB, mostly contiguous, <1 ms memcpy"
+> framing is **understated**. It omits the dominant mutable AI state **`g_ChrSlots`**
+> (heap-allocated, `ChrRecord` ~0x180–0x200 B each × `guards+10`, `initguards.c:33`),
+> plus `g_ActiveChrs`, `g_SmokeBuffer`, and explosion/smoke sub-buffers. On the
+> 64-bit target `PropRecord` is **88 B** so `pos_data_entry[600]` alone is **~51.6 KB**
+> (the 28.8 KB figure is N64 32-bit, itself low). The state is **separate per-stage
+> heap allocations**, not one block. And `ramromreplay.c` serializes seed+input,
+> **not** a state snapshot — that snapshot/restore code does not exist. Also: pinning
+> `g_ClockTimer ≡ 1` **changes `g_GlobalTimerDelta`**, scaling float-integrated motion
+> — the exact values the project's mandated **bit-stable ares movement oracle**
+> ([MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md) line 106) locks; the pin must be MP-only
+> and the SP oracle proven untouched. Treat §10.B as a **substantial future
+> investigation**, not "realistic" as written.
 
 ---
 

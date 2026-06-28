@@ -363,6 +363,9 @@ void initBONDdataforPlayer(s32 player_num)
     g_playerPointers[player_num]->standup[1].f[1] = 1.0f;
     g_playerPointers[player_num]->standup[1].f[2] = 0.0f;
     g_playerPointers[player_num]->standcnt = 0;
+#ifdef NATIVE_PORT
+    g_playerPointers[player_num]->model = NULL;
+#endif
 
     for (i = 0; i < 2; i++)
     {

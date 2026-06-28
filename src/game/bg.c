@@ -66,10 +66,12 @@ extern void sub_GAME_7F08976C(f32 scale);
 extern void bondviewUpdateCurrentRoomPosition(s32 room);
 extern void initializeRoomData(void);
 extern void transform3Dto2DWithZScaling(coord3d *in, coord3d *out);
+extern void mtx4TransformVecInPlace(Mtxf *matrix, struct coord3d *vector);
 extern void texCopyGdls(Gfx *arg0, Gfx *arg1, s32 arg2);
 extern s32 texLoadFromGdl(Gfx *src, s32 size, Gfx *dst, void *pool);
 extern s32 check_if_imageID_is_light(s32 imageID);
 extern void redarken_lights_in_room(s32 room_index);
+extern s_bound_info dword_CODE_bss_8007FFA0[];
 
 #ifdef NATIVE_PORT
 /* Line-triangle intersection output struct (defined in unk_092890.c) */
@@ -309,6 +311,163 @@ static int bgTraceTrisAfterFrame(void)
     return after_frame;
 }
 
+#define BG_TRANSPARENT_ROOM_SORT_MAX 256
+
+static int bgTransparentRoomSortEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_all = getenv("GE007_DISABLE_ROOM_XLU_SORT");
+        const char *sort_all = getenv("GE007_SORT_ROOM_XLU");
+        const char *sort_rooms = getenv("GE007_SORT_ROOM_XLU_ROOMS");
+
+        enabled = 1;
+
+        if ((disable_all != NULL && disable_all[0] != '\0' && disable_all[0] != '0')
+            || (sort_all != NULL && sort_all[0] == '0')
+            || (sort_rooms != NULL && sort_rooms[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static int bgTraceRoomXluSortEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        enabled = (getenv("GE007_TRACE_ROOM_XLU_SORT") != NULL);
+    }
+
+    return enabled;
+}
+
+static int bgTraceRoomXluSortAfterFrame(void)
+{
+    static int after_frame = -2;
+
+    if (after_frame < -1) {
+        const char *env = getenv("GE007_TRACE_ROOM_XLU_SORT_AFTER_FRAME");
+        if (env == NULL) {
+            env = getenv("GE007_TRACE_BG_AFTER_FRAME");
+        }
+        after_frame = env ? atoi(env) : 0;
+    }
+
+    return after_frame;
+}
+
+static f32 bgTransparentRoomDepthKey(s32 roomid)
+{
+    Mtxf *mtx;
+    s_room_info *room;
+    f32 minx;
+    f32 miny;
+    f32 minz;
+    f32 maxx;
+    f32 maxy;
+    f32 maxz;
+    f32 best_key = -1000000000.0f;
+    s32 xi;
+    s32 yi;
+    s32 zi;
+
+    if (roomid <= 0 || roomid >= g_MaxNumRooms) {
+        return 0.0f;
+    }
+
+    mtx = camGetWorldToScreenMtxf();
+    if (mtx == NULL) {
+        return 0.0f;
+    }
+
+    room = &g_BgRoomInfo[roomid];
+    minx = room->minbounds.x * room_data_float2;
+    miny = room->minbounds.y * room_data_float2;
+    minz = room->minbounds.z * room_data_float2;
+    maxx = room->maxbounds.x * room_data_float2;
+    maxy = room->maxbounds.y * room_data_float2;
+    maxz = room->maxbounds.z * room_data_float2;
+
+    for (xi = 0; xi < 2; xi++) {
+        for (yi = 0; yi < 2; yi++) {
+            for (zi = 0; zi < 2; zi++) {
+                coord3d corner;
+                f32 key;
+
+                corner.x = xi ? maxx : minx;
+                corner.y = yi ? maxy : miny;
+                corner.z = zi ? maxz : minz;
+                mtx4TransformVecInPlace(mtx, &corner);
+
+                key = -corner.z;
+                if (key > best_key) {
+                    best_key = key;
+                }
+            }
+        }
+    }
+
+    return best_key;
+}
+
+static void bgSortTransparentRoomOrderForBucket(s32 *order, f32 *keys, s32 count, s32 sort_bucket)
+{
+    s32 i;
+    s32 reordered = 0;
+
+    if (!bgTransparentRoomSortEnabled() || count <= 1) {
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        keys[i] = bgTransparentRoomDepthKey(dword_CODE_bss_8007FFA0[order[i]].roomid);
+    }
+
+    for (i = 1; i < count; i++) {
+        s32 order_value = order[i];
+        f32 key_value = keys[i];
+        s32 j = i - 1;
+
+        while (j >= 0 && keys[j] < key_value) {
+            order[j + 1] = order[j];
+            keys[j + 1] = keys[j];
+            j--;
+            reordered = 1;
+        }
+
+        order[j + 1] = order_value;
+        keys[j + 1] = key_value;
+    }
+
+    if (bgTraceRoomXluSortEnabled() && g_frame_count_diag >= bgTraceRoomXluSortAfterFrame()) {
+        static int trace_frame = -1;
+        static int trace_count = 0;
+
+        if (trace_frame != g_frame_count_diag) {
+            trace_frame = g_frame_count_diag;
+            trace_count = 0;
+        }
+
+        if (trace_count < 32) {
+            fprintf(stderr,
+                    "[BG-TRANS-SORT] frame=%d bucket=%d count=%d reordered=%d first_room=%d first_key=%.1f last_room=%d last_key=%.1f\n",
+                    g_frame_count_diag,
+                    sort_bucket,
+                    count,
+                    reordered,
+                    dword_CODE_bss_8007FFA0[order[0]].roomid,
+                    keys[0],
+                    dword_CODE_bss_8007FFA0[order[count - 1]].roomid,
+                    keys[count - 1]);
+            trace_count++;
+        }
+    }
+}
+
 static inline struct bbox2d *bgGetCurrentPlayerScreenBbox(void)
 {
     return (struct bbox2d *)&g_CurrentPlayer->screenxminf;
@@ -494,12 +653,24 @@ static int bgPortalBackfaceBypassApplies(s32 source_room, s32 portal_idx, s32 de
     return 1;
 }
 
+static int bgPortalBackfaceProjectFallbackEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_BACKFACE_PROJECT_FALLBACK");
+        enabled = env ? atoi(env) : 1;
+    }
+
+    return enabled;
+}
+
 static f32 bgPortalParentClipMinSpan(void)
 {
     static f32 value = -1.0f;
     if (value < 0.0f) {
         const char *env = getenv("GE007_PORTAL_PARENT_CLIP_MIN_SPAN");
-        value = env ? (f32)atof(env) : 8.0f;
+        value = env ? (f32)atof(env) : 0.0f;
     }
     return value;
 }
@@ -509,9 +680,33 @@ static f32 bgPortalAcceptedMinSpan(void)
     static f32 value = -1.0f;
     if (value < 0.0f) {
         const char *env = getenv("GE007_PORTAL_ACCEPTED_MIN_SPAN");
-        value = env ? (f32)atof(env) : 24.0f;
+        value = env ? (f32)atof(env) : 0.0f;
     }
     return value;
+}
+
+static int bgPortalRetryScreenClipEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_RETRY_SCREEN_CLIP");
+        enabled = env ? atoi(env) : 0;
+    }
+
+    return enabled;
+}
+
+static int bgPortalLegacyProjectClampEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_LEGACY_PROJECT_CLAMP");
+        enabled = env ? atoi(env) : 0;
+    }
+
+    return enabled;
 }
 
 static f32 bgPortalBboxWidth(const f32 *bbox)
@@ -531,6 +726,10 @@ static void bgExpandPortalBboxToMinSpan(f32 *bbox, f32 min_span)
     f32 cx = (bbox[0] + bbox[2]) * 0.5f;
     f32 cy = (bbox[1] + bbox[3]) * 0.5f;
     f32 half;
+
+    if (min_span <= 0.0f) {
+        return;
+    }
 
     if (width < min_span) {
         half = min_span * 0.5f;
@@ -590,7 +789,8 @@ static s32 bgPortalProjectVisibleBbox(s32 source_room, s32 portal_idx, const f32
     bgRectIntersect((struct bbox2d *)out_bbox,
                     (struct bbox2d *)&g_CurrentPlayer->screenxminf);
 
-    if (bgPortalBboxWidth(out_bbox) <= 0.0f || bgPortalBboxHeight(out_bbox) <= 0.0f) {
+    if (bgPortalRetryScreenClipEnabled()
+        && (bgPortalBboxWidth(out_bbox) <= 0.0f || bgPortalBboxHeight(out_bbox) <= 0.0f)) {
         out_bbox[0] = projected_bbox[0];
         out_bbox[1] = projected_bbox[1];
         out_bbox[2] = projected_bbox[2];
@@ -2594,15 +2794,40 @@ notdone --;
 
     for (i=b_max; i >= b_min; i--)
     {
-   #ifdef DEBUG
+#ifdef DEBUG
 notdone = g_BgNumberOfRoomsDrawn;
 #endif
 
+#ifdef NATIVE_PORT
+        s32 trans_order[BG_TRANSPARENT_ROOM_SORT_MAX];
+        f32 trans_keys[BG_TRANSPARENT_ROOM_SORT_MAX];
+        s32 trans_count = 0;
+        s32 trans_iter;
 
+        for (j=0; j<g_BgNumberOfRoomsDrawn; j++)
+        {
+            if (i == dword_CODE_bss_8007FFA0[j].unk1 && trans_count < BG_TRANSPARENT_ROOM_SORT_MAX)
+            {
+                trans_order[trans_count] = j;
+                trans_count++;
+            }
+#ifdef DEBUG
+notdone --;
+#endif
+        }
+
+        bgSortTransparentRoomOrderForBucket(trans_order, trans_keys, trans_count, i);
+
+        for (trans_iter=0; trans_iter<trans_count; trans_iter++)
+        {
+            j = trans_order[trans_iter];
+            {
+#else
         for (j=0; j<g_BgNumberOfRoomsDrawn; j++)
         {
             if (i == dword_CODE_bss_8007FFA0[j].unk1)
             {
+#endif
 #ifdef NATIVE_PORT
                 s32 tris_before_bg = g_tri_count_diag;
 #endif
@@ -2676,12 +2901,17 @@ notdone = g_BgNumberOfRoomsDrawn;
                         gdl = chrpropsRenderPass(gdl, dword_CODE_bss_8007FFA0[j].roomid, 1);
                     }
                 }
+#ifdef NATIVE_PORT
+            }
+        }
+#else
             }
             #ifdef DEBUG
 notdone --;
 #endif
 
         }
+#endif
     }
         #ifdef DEBUG
     assert(notdone==0);
@@ -5424,7 +5654,9 @@ Gfx *bgLevelRender(Gfx *arg0)
     /* A3: On N64, the video system sets baseline geometry mode before bgLevelRender.
      * On PC, we need to set it explicitly. GE rooms use baked vertex colors,
      * NOT hardware lighting — G_LIGHTING must be cleared. */
-    gSPSetGeometryMode(arg0++, G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK | G_FOG);
+    gSPSetGeometryMode(arg0++,
+        G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK |
+        (g_FogSkyIsEnabled ? G_FOG : 0));
     gSPClearGeometryMode(arg0++, G_TEXTURE_GEN | G_LIGHTING);
     gSPTexture(arg0++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
     /* Set GL clear color to match fog/sky for distance fadeout */
@@ -6481,6 +6713,18 @@ extern struct player *g_CurrentPlayer;
 
 #define BG_PORTAL_NEAR_Z_EPSILON 1.0f
 
+static int bgPortalNearClipEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_NEAR_CLIP");
+        enabled = env ? atoi(env) : 1;
+    }
+
+    return enabled;
+}
+
 static s32 bgClipPortalPolygonToNearPlane(coord3d *dst, const coord3d *src,
                                           s32 count, f32 near_z)
 {
@@ -6522,9 +6766,11 @@ s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1) {
     f32 scale;
     coord3d vertices[20];
     coord3d clipped_vertices[40];
+    coord3d *project_vertices;
     coord3d projected;
     s32 totalverts;
     s32 clipped_totalverts;
+    s32 project_totalverts;
     s32 count2;
     s32 i;
     s32 viscount;
@@ -6536,12 +6782,23 @@ s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1) {
     f32 screenx;
     f32 screeny;
     static int trace_portal_verts = -1;
+    static int trace_portal_verts_after_frame = -1;
+    static int trace_portal_verts_idx = -2;
     static int trace_portal_vert_count = 0;
+    s32 near_clip_enabled;
 
     entry = &table_for_portals[arg0];
 
     if (trace_portal_verts < 0) {
         trace_portal_verts = (getenv("GE007_TRACE_PORTAL_VERTS") != NULL);
+    }
+    if (trace_portal_verts_after_frame < 0) {
+        const char *env = getenv("GE007_TRACE_PORTAL_VERTS_AFTER_FRAME");
+        trace_portal_verts_after_frame = env ? atoi(env) : 0;
+    }
+    if (trace_portal_verts_idx == -2) {
+        const char *env = getenv("GE007_TRACE_PORTAL_VERTS_IDX");
+        trace_portal_verts_idx = env ? atoi(env) : -1;
     }
 
     if (entry->unk0 >= 0) {
@@ -6560,29 +6817,43 @@ s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1) {
         totalverts += count2;
     }
 
-    clipped_totalverts = bgClipPortalPolygonToNearPlane(
-        clipped_vertices, vertices, totalverts, -BG_PORTAL_NEAR_Z_EPSILON);
+    near_clip_enabled = bgPortalNearClipEnabled();
 
-    if (trace_portal_verts && g_frame_count_diag <= 1 && trace_portal_vert_count < 32) {
+    if (near_clip_enabled) {
+        clipped_totalverts = bgClipPortalPolygonToNearPlane(
+            clipped_vertices, vertices, totalverts, -BG_PORTAL_NEAR_Z_EPSILON);
+        project_vertices = clipped_vertices;
+        project_totalverts = clipped_totalverts;
+    } else {
+        clipped_totalverts = totalverts;
+        project_vertices = vertices;
+        project_totalverts = totalverts;
+    }
+
+    if (trace_portal_verts
+        && g_frame_count_diag >= trace_portal_verts_after_frame
+        && (trace_portal_verts_idx < 0 || trace_portal_verts_idx == arg0)
+        && trace_portal_vert_count < 32) {
         fprintf(stderr,
-                "[PORTAL-VERTS] frame=%d portal=%d total=%d clipped=%d\n",
-                g_frame_count_diag, arg0, totalverts, clipped_totalverts);
-        for (i = 0; i < clipped_totalverts && i < 12; i++) {
+                "[PORTAL-VERTS] frame=%d portal=%d total=%d clipped=%d near_clip=%d\n",
+                g_frame_count_diag, arg0, totalverts, clipped_totalverts,
+                near_clip_enabled);
+        for (i = 0; i < project_totalverts && i < 12; i++) {
             fprintf(stderr,
                     "  v[%d]=(%.1f,%.1f,%.1f)\n",
                     i,
-                    clipped_vertices[i].x,
-                    clipped_vertices[i].y,
-                    clipped_vertices[i].z);
+                    project_vertices[i].x,
+                    project_vertices[i].y,
+                    project_vertices[i].z);
         }
         trace_portal_vert_count++;
     }
 
     viscount = 0;
 
-    if (clipped_totalverts > 0) {
-        for (i = 0; i < clipped_totalverts; i++) {
-            z = clipped_vertices[i].z;
+    if (project_totalverts > 0) {
+        for (i = 0; i < project_totalverts; i++) {
+            z = project_vertices[i].z;
 
             /* GE portal projection treats camera-space Z <= 0 as the visible
              * half-space. sub_GAME_7F0B5528 already clips portal polygons
@@ -6590,15 +6861,25 @@ s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1) {
              * explode when transform3Dto2DWithZScaling divides by Z. Clip
              * to a small negative epsilon before projecting so portal bboxes
              * stay finite for intro cameras grazing the near plane. */
-            if (-BG_PORTAL_NEAR_Z_EPSILON < z) {
+            if (z > 0.0f) {
+                continue;
+            }
+            if (near_clip_enabled && -BG_PORTAL_NEAR_Z_EPSILON < z) {
                 continue;
             }
 
-            transform3Dto2DWithZScaling(&clipped_vertices[i], &projected);
+            transform3Dto2DWithZScaling(&project_vertices[i], &projected);
             screenx = projected.x;
             screeny = projected.y;
 
-            if (trace_portal_verts && g_frame_count_diag <= 1 && trace_portal_vert_count < 32) {
+            if (!__builtin_isfinite(screenx) || !__builtin_isfinite(screeny)) {
+                continue;
+            }
+
+            if (trace_portal_verts
+                && g_frame_count_diag >= trace_portal_verts_after_frame
+                && (trace_portal_verts_idx < 0 || trace_portal_verts_idx == arg0)
+                && trace_portal_vert_count < 32) {
                 fprintf(stderr,
                         "    p[%d]=(%.1f,%.1f) z=%.1f\n",
                         i, screenx, screeny, z);
@@ -6633,19 +6914,24 @@ s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1) {
         right = 0.0f;
         bottom = 0.0f;
     } else {
-        if (left < g_CurrentPlayer->screenxminf) {
-            left = g_CurrentPlayer->screenxminf;
+        /* Stock stores the raw projected portal bounds here. Callers intersect
+         * those bounds with parent/screen rectangles and reject empty windows.
+         * Clamping here can turn a wholly off-screen portal into a degenerate
+         * box, which the stock-compatible fallback below expands to full screen. */
+        if (bgPortalLegacyProjectClampEnabled()) {
+            if (left < g_CurrentPlayer->screenxminf) {
+                left = g_CurrentPlayer->screenxminf;
+            }
+            if (top < g_CurrentPlayer->screenyminf) {
+                top = g_CurrentPlayer->screenyminf;
+            }
+            if (right > g_CurrentPlayer->screenxmaxf) {
+                right = g_CurrentPlayer->screenxmaxf;
+            }
+            if (bottom > g_CurrentPlayer->screenymaxf) {
+                bottom = g_CurrentPlayer->screenymaxf;
+            }
         }
-        if (top < g_CurrentPlayer->screenyminf) {
-            top = g_CurrentPlayer->screenyminf;
-        }
-        if (right > g_CurrentPlayer->screenxmaxf) {
-            right = g_CurrentPlayer->screenxmaxf;
-        }
-        if (bottom > g_CurrentPlayer->screenymaxf) {
-            bottom = g_CurrentPlayer->screenymaxf;
-        }
-
         if (right <= left || bottom <= top) {
             left = g_CurrentPlayer->screenxminf;
             top = g_CurrentPlayer->screenyminf;
@@ -11799,9 +12085,28 @@ void sub_GAME_7F0B7DE4(s32 arg0, s32 arg1, s32 arg2, s32 arg3, f32 *arg4) {
     entry = (s32 *)(dword_CODE_bss_8007C100 + (D_800448A0 << 5));
 
     if (arg3 >= 2) {
-        if (sub_GAME_7F0B7DA8((g_BgPortals[arg2].connectedRoom2 ^ g_BgPortals[arg2].connectedRoom1) ^ arg1) >= 9) {
+        s32 dest_room = (g_BgPortals[arg2].connectedRoom2 ^ g_BgPortals[arg2].connectedRoom1) ^ arg1;
+        u8 portal_count = sub_GAME_7F0B7DA8(dest_room);
+#ifdef NATIVE_PORT
+        if (bgShouldTracePortal(arg1, arg2, dest_room)) {
+            fprintf(stderr,
+                    "[BG-PORTAL-QUEUE] %s src=%d portal=%d dest=%d depth=%d room_count=%u\n",
+                    portal_count >= 9 ? "drop" : "enqueue",
+                    arg1, arg2, dest_room, arg3, portal_count);
+        }
+#endif
+        if (portal_count >= 9) {
             return;
         }
+#ifdef NATIVE_PORT
+    } else if (bgShouldTracePortal(arg1, arg2,
+                                  (g_BgPortals[arg2].connectedRoom2 ^ g_BgPortals[arg2].connectedRoom1) ^ arg1)) {
+        fprintf(stderr,
+                "[BG-PORTAL-QUEUE] enqueue src=%d portal=%d dest=%d depth=%d room_count=shallow\n",
+                arg1, arg2,
+                (g_BgPortals[arg2].connectedRoom2 ^ g_BgPortals[arg2].connectedRoom1) ^ arg1,
+                arg3);
+#endif
     }
 
     entry[0] = arg0;
@@ -12162,9 +12467,6 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
         return gdl;
     }
 
-    /* Store depth in per-portal tracking array (byte access) */
-    ((u8 *)D_800442FC)[portal_idx] = (u8)depth;
-
     /* Get player position and compute portal normal */
     player_pos = bondviewGetCurrentPlayersPosition();
     sub_GAME_7F0B96CC(portal_idx, &metric);
@@ -12194,7 +12496,8 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
                             "[BG-PORTAL] bypass=backface_r1 src=%d portal=%d dest=%d\n",
                             source_room, portal_idx, dest_room);
                 }
-            } else if (!(controlbytes1 & 2)
+            } else if (bgPortalBackfaceProjectFallbackEnabled()
+                       && !(controlbytes1 & 2)
                        && bgPortalProjectVisibleBbox(source_room, portal_idx,
                                                     (const f32 *)parent_bbox, local_bbox,
                                                     trace_portal, "backface_r1")) {
@@ -12227,7 +12530,8 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
                             "[BG-PORTAL] bypass=backface_r2 src=%d portal=%d dest=%d\n",
                             source_room, portal_idx, dest_room);
                 }
-            } else if (!(controlbytes1 & 2)
+            } else if (bgPortalBackfaceProjectFallbackEnabled()
+                       && !(controlbytes1 & 2)
                        && bgPortalProjectVisibleBbox(source_room, portal_idx,
                                                     (const f32 *)parent_bbox, local_bbox,
                                                     trace_portal, "backface_r2")) {
@@ -12317,6 +12621,11 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
         }
         return gdl;
     }
+
+    /* Stock writes the portal-depth byte only after side/projection/bbox tests
+     * have left a drawable portal window. Keep this later write position so
+     * rejected portals don't look traversed in diagnostics or later checks. */
+    ((u8 *)D_800442FC)[portal_idx] = (u8)depth;
 
     /* Validate bbox has positive area */
     if (!(local_bbox[0] < local_bbox[2])) {
@@ -14847,15 +15156,14 @@ void sub_GAME_7F0B8A6C(void) {
      *
      * Portal BFS can under-admit directly adjacent interior rooms at sharp
      * transitions when the portal projection falls just outside the current
-     * screen-space test. The engine already tracks these rooms via
-     * room_neighbor_to_rendered; drawing that one-hop neighbor set is a much
-     * narrower fix than frustum-all admission and avoids the texture /
-     * overdraw regressions from drawing every room. */
+     * screen-space test. Keep this as an opt-in diagnostic: stock Dam renders
+     * only the portal-admitted rooms at the glass corridor checkpoint, while
+     * default-on promotion over-admits neighbor rooms. */
     {
         static int draw_neighbor_rooms = -1;
         if (draw_neighbor_rooms < 0) {
             const char *env = getenv("GE007_DRAW_NEIGHBOR_ROOMS");
-            draw_neighbor_rooms = env ? atoi(env) : 1;
+            draw_neighbor_rooms = env ? atoi(env) : 0;
         }
 
         if (draw_neighbor_rooms) {

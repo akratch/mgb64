@@ -51,7 +51,12 @@ extern void portTraceBulletImpactCreate(s32 slot,
                                         const coord3d *normal,
                                         f32 size_x,
                                         f32 size_y,
-                                        f32 normal_offset);
+                                        f32 normal_offset,
+                                        const f32 normal_unit[3],
+                                        const f32 axis_x[3],
+                                        const f32 axis_y[3],
+                                        const f32 raw_vertices[4][3],
+                                        const s16 rounded_vertices[4][3]);
 extern void portTraceBulletImpactRender(const PropRecord *prop,
                                         s32 world,
                                         s32 alpha_pass,
@@ -65,6 +70,15 @@ static int portDisableBulletImpacts(void)
     static int cached = -1;
     if (cached < 0) {
         cached = getenv("GE007_DISABLE_BULLET_IMPACTS") != NULL;
+    }
+    return cached;
+}
+
+static int portDisablePropBulletImpacts(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("GE007_DISABLE_PROP_BULLET_IMPACTS") != NULL;
     }
     return cached;
 }
@@ -3265,6 +3279,11 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
         return;
     }
 
+    if (prop != NULL && portDisablePropBulletImpacts())
+    {
+        return;
+    }
+
 #endif
 
     spE0 = g_BulletImpactDefaultVertex;
@@ -3481,19 +3500,74 @@ void explosionCreateBulletImpact(struct coord3d *pos, struct coord3d *arg1, s16 
     }
 
 #ifdef NATIVE_PORT
-    portTraceBulletImpactCreate(g_NumImpactEntries,
-                                impact_type,
-                                room,
-                                prop,
-                                model_render_pos_index,
-                                room_clear_flag,
-                                impactimages[impact_type].width,
-                                impactimages[impact_type].height,
-                                &spA0,
-                                arg1,
-                                sp9C,
-                                sp98,
-                                decal_lift);
+    {
+        const f32 trace_normal_unit[3] = { spDC, spD8, spD4 };
+        const f32 trace_axis_x[3] = { spC4, zero, spBC };
+        const f32 trace_axis_y[3] = { spB8, spB4, spB0 };
+        const f32 trace_raw_vertices[4][3] = {
+            {
+                (spA0.f[0] - (sp9C * spC4)) - (sp98 * spB8),
+                (spA0.f[1] - zero) - (sp98 * spB4),
+                (spA0.f[2] - (sp9C * spBC)) - (sp98 * spB0),
+            },
+            {
+                (spA0.f[0] - (sp9C * spC4)) + (sp98 * spB8),
+                (spA0.f[1] - zero) + (sp98 * spB4),
+                (spA0.f[2] - (sp9C * spBC)) + (sp98 * spB0),
+            },
+            {
+                spA0.f[0] + (sp9C * spC4) + (sp98 * spB8),
+                spA0.f[1] + zero + (sp98 * spB4),
+                spA0.f[2] + (sp9C * spBC) + (sp98 * spB0),
+            },
+            {
+                (spA0.f[0] + (sp9C * spC4)) - (sp98 * spB8),
+                (spA0.f[1] + zero) - (sp98 * spB4),
+                (spA0.f[2] + (sp9C * spBC)) - (sp98 * spB0),
+            },
+        };
+        const s16 trace_rounded_vertices[4][3] = {
+            {
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[0].v.ob[0],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[0].v.ob[1],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[0].v.ob[2],
+            },
+            {
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[1].v.ob[0],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[1].v.ob[1],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[1].v.ob[2],
+            },
+            {
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[2].v.ob[0],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[2].v.ob[1],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[2].v.ob[2],
+            },
+            {
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[3].v.ob[0],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[3].v.ob[1],
+                g_BulletImpactBuffer[g_NumImpactEntries].vertex_list[3].v.ob[2],
+            },
+        };
+
+        portTraceBulletImpactCreate(g_NumImpactEntries,
+                                    impact_type,
+                                    room,
+                                    prop,
+                                    model_render_pos_index,
+                                    room_clear_flag,
+                                    impactimages[impact_type].width,
+                                    impactimages[impact_type].height,
+                                    &spA0,
+                                    arg1,
+                                    sp9C,
+                                    sp98,
+                                    decal_lift,
+                                    trace_normal_unit,
+                                    trace_axis_x,
+                                    trace_axis_y,
+                                    trace_raw_vertices,
+                                    trace_rounded_vertices);
+    }
 
     if (portTraceBulletImpacts())
     {
@@ -3597,6 +3671,11 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
 
 #ifdef NATIVE_PORT
     if (portDisableBulletImpacts())
+    {
+        return gdl;
+    }
+
+    if (arg1 != NULL && portDisablePropBulletImpacts())
     {
         return gdl;
     }
@@ -3712,7 +3791,11 @@ Gfx *explosionRenderBulletImpactOnProp(Gfx *gdl, PropRecord *arg1, s32 arg2)
                             if (var_s5 != g_BulletImpactBuffer[i].room)
                             {
                                 var_s5 = g_BulletImpactBuffer[i].room;
+#ifdef NATIVE_PORT
+                                gdl = applyRoomMatrixToDisplayListForWorldImpact(gdl, g_BulletImpactBuffer[i].room);
+#else
                                 gdl = applyRoomMatrixToDisplayList(gdl, g_BulletImpactBuffer[i].room);
+#endif
                             }
                         }
     

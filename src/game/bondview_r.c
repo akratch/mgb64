@@ -125,22 +125,23 @@ static void portPrimeSpawnHeightState(void) {
 }
 
 static s32 portIntroEnabled(void) {
-    static int enable_intro = -1;
-    if (enable_intro < 0) {
-        const char *enable_env = getenv("GE007_ENABLE_LEVEL_INTRO");
-        const char *disable_env = getenv("GE007_DISABLE_LEVEL_INTRO");
+    extern int g_pcDirectBootLevelActive;
+    const char *enable_env = getenv("GE007_ENABLE_LEVEL_INTRO");
+    const char *disable_env = getenv("GE007_DISABLE_LEVEL_INTRO");
 
-        if (disable_env != NULL && disable_env[0] != '\0' &&
-            !(disable_env[0] == '0' && disable_env[1] == '\0')) {
-            enable_intro = 0;
-        } else if (enable_env != NULL && enable_env[0] != '\0' &&
-                   !(enable_env[0] == '0' && enable_env[1] == '\0')) {
-            enable_intro = 1;
-        } else {
-            enable_intro = g_deterministic ? 0 : 1;
-        }
+    if (disable_env != NULL && disable_env[0] != '\0' &&
+        !(disable_env[0] == '0' && disable_env[1] == '\0')) {
+        return 0;
     }
-    return enable_intro;
+
+    if (enable_env != NULL && enable_env[0] != '\0' &&
+        !(enable_env[0] == '0' && enable_env[1] == '\0')) {
+        return 1;
+    }
+
+    /* Keep direct/dev boots on the short FP handoff, but normal gameplay should
+     * follow the authored level intro path. */
+    return g_pcDirectBootLevelActive ? 0 : 1;
 }
 
 static s32 portChooseIntroCameraIndex(s32 camera_count) {
@@ -1175,10 +1176,8 @@ void bondviewLoadSetupIntroSection(void)
             }
             bondviewSetCameraMode(CAMERAMODE_INTRO);
         } else {
-            /* Deterministic direct-boot baselines keep the short handoff unless
-             * GE007_ENABLE_LEVEL_INTRO=1 is set. Normal play uses authored
-             * level intros by default, with GE007_DISABLE_LEVEL_INTRO=1 as the
-             * explicit investigation fallback. */
+            /* Native direct-boot defaults to the short FP handoff. Authored
+             * intro parity is still available with GE007_ENABLE_LEVEL_INTRO=1. */
             if (portIntroEnabled() && getenv("GE007_VERBOSE")) {
                 fprintf(stderr, "[INTRO] authentic intro requested but no swirl data; falling back to gameplay spawn\n");
             }

@@ -128,15 +128,23 @@ void sets_a_bunch_of_BONDdata_values_to_default(void)
      * player->model pointer is stale. Rebuild the lightweight gait model
      * unconditionally instead of trusting a non-NULL value from prior state. */
     g_CurrentPlayer->model = mempAllocBytesInBank(sizeof(Model), MEMPOOL_STAGE);
-    memset(g_CurrentPlayer->model, 0, sizeof(Model));
-    {
+
+    if (g_CurrentPlayer->model != NULL) {
         /* Allocate rwdata pointer array (player_gait_object has ~4 nodes max, allocate 32) */
-        u32 *rwdata_buf = mempAllocBytesInBank(sizeof(uintptr_t) * 32, MEMPOOL_STAGE);
-        memset(rwdata_buf, 0, sizeof(uintptr_t) * 32);
-        animInit(PLAYER_MODEL(g_CurrentPlayer), &player_gait_object_header, rwdata_buf);
+        u32 *rwdata_buf;
+
+        memset(g_CurrentPlayer->model, 0, sizeof(Model));
+        rwdata_buf = mempAllocBytesInBank(sizeof(uintptr_t) * 32, MEMPOOL_STAGE);
+
+        if (rwdata_buf != NULL) {
+            memset(rwdata_buf, 0, sizeof(uintptr_t) * 32);
+            animInit(PLAYER_MODEL(g_CurrentPlayer), &player_gait_object_header, rwdata_buf);
+            modelSetScale(PLAYER_MODEL(g_CurrentPlayer), IDO_POINT_ONE);
+            modelSetAnimPlaySpeed(PLAYER_MODEL(g_CurrentPlayer), ANIMRATE, 0.0f);
+        } else {
+            g_CurrentPlayer->model = NULL;
+        }
     }
-    modelSetScale(PLAYER_MODEL(g_CurrentPlayer), IDO_POINT_ONE);
-    modelSetAnimPlaySpeed(PLAYER_MODEL(g_CurrentPlayer), ANIMRATE, 0.0f);
 #else
     animInit(&g_CurrentPlayer->model, &player_gait_object_header, &g_CurrentPlayer->field_654);
     modelSetScale(&g_CurrentPlayer->model, IDO_POINT_ONE);
@@ -147,6 +155,9 @@ void sets_a_bunch_of_BONDdata_values_to_default(void)
 #endif
 
     g_CurrentPlayer->headanim = 0;
+#ifdef NATIVE_PORT
+    g_CurrentPlayer->field_5C0 = g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe;
+#endif
 
     g_CurrentPlayer->headdamp = DAMPVAL;
 
@@ -257,6 +268,9 @@ void sets_a_bunch_of_BONDdata_values_to_default(void)
         modelSetAnimLooping(PLAYER_MODEL(g_CurrentPlayer), g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe, 0.0f);
         modelSetAnimEndFrame(PLAYER_MODEL(g_CurrentPlayer), g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].endframe);
         modelSetAnimFlipFunction(PLAYER_MODEL(g_CurrentPlayer), bheadFlipAnimation);
+#ifdef NATIVE_PORT
+        g_CurrentPlayer->field_5C0 = g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe;
+#endif
 
 #ifdef NATIVE_PORT
         if (!pcBheadDeferRamromFirstBlockIdleRoll())

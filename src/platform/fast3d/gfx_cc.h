@@ -63,6 +63,12 @@ enum {
 #define SHADER_OPT_NOPERSPECTIVE_FOG (1 << 16)
 #define SHADER_OPT_DIAG_COLOR_SCALE (1 << 17)
 #define SHADER_OPT_N64_FILTER_ALWAYS_3POINT (1 << 18)
+#define SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY (1 << 19)
+#define SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN (1 << 20)
+#define SHADER_OPT_DIAG_RDP_MEMORY_BLEND (1 << 21)
+#define SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND (1 << 22)
+#define SHADER_OPT_DIAG_ALPHA_SCALE (1 << 23)
+#define SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS (1 << 24)
 
 struct CCFeatures {
     uint8_t c[2][2][4];       /* [cycle][color_or_alpha][component A/B/C/D] */
@@ -79,6 +85,12 @@ struct CCFeatures {
     bool noperspective_fog;
     bool diag_color_scale;
     bool n64_filter_always_3point;
+    bool diag_alpha_from_tex_intensity;
+    bool diag_xlu_coverage_wrap_thin;
+    bool diag_rdp_memory_blend;
+    bool diag_rdp_cvg_memory_blend;
+    bool diag_alpha_scale;
+    bool room_water_alpha_suppress;
     int num_inputs;
     bool do_single[2][2];     /* [cycle][color_or_alpha] */
     bool do_multiply[2][2];

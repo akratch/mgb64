@@ -3230,9 +3230,15 @@ extern struct ChrModelFileRecord c_item_entries[];
         }
 
     //[This struct uses original names]
+#ifdef NATIVE_PORT
+    typedef uintptr_t MonitorCmdWord;
+#else
+    typedef u32 MonitorCmdWord;
+#endif
+
     typedef struct MonitorRecord
     {
-        u32 *cmdlist;   // 0x80	4	image pointer for this monitor
+        MonitorCmdWord *cmdlist;   // 0x80	4	image pointer for this monitor
         u16 offset;     // 0x84	2	[runtime] cur. #commands from start of routine
         s16 pause60;    // 0x86	2	[runtime] loop counter
         struct sImageTableEntry *tconfig;      //0x88	4	[runtime] monitor image# or p->image header

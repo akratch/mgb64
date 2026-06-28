@@ -66,7 +66,7 @@ Each is independent — e.g. keep the HD textures + SSAA but turn off only bloom
 
 ## HD texture pipeline
 
-HD packs are built **from your own ROM** with the GPU AI-upscaler in
+HD packs are built **from your own ROM's static settex dumps** with the GPU AI-upscaler in
 [`tools/texpack`](../tools/texpack/README.md) (Real-ESRGAN, with seam-safe tiling
 and anti-hallucination for tiny textures):
 ```bash
@@ -76,11 +76,15 @@ python3 tools/texpack/build_pack.py --dump /tmp/td --out ~/ge007_hd --model real
 GE007_TEXTURE_PACK=~/ge007_hd ./build/ge007 --level 33
 ```
 
+The runtime loader consumes `textures/tok####.png` only. Hash-key
+`GE007_DUMP_LOADED_TEXTURES` dumps are not runtime-loadable yet.
+
 ### ⚠️ Copyright / provenance — packs stay local
-Texture dumps and HD packs are **derivative works of the original game art**
-(personal-use, your own ROM) and are **never committed**: `*.png`/`*.bmp`/`*.ppm`
-are gitignored *and* the `scripts/ci/check_no_rom_data.sh` contamination guard
-hard-fails on any tracked image. The repo ships only first-party tooling + the
-public-domain `stb_image.h` decoder. The loader reads a user-supplied pack at
-runtime (default empty = stock). See [PHASE2_PLAN.md](PHASE2_PLAN.md) and
-[REMASTER_ROADMAP.md](REMASTER_ROADMAP.md).
+Texture dumps, AI-upscaled packs, and `synth_texture.py --match` outputs are
+**derivative works of the original game art** (personal-use, your own ROM) and are
+**never committed**: image/dump formats are gitignored and the
+`scripts/ci/check_no_rom_data.sh` contamination guard hard-fails on tracked images.
+The repo ships first-party tooling, the public-domain `stb_image.h` decoder, and
+only vetted distributable art/presets. The loader reads a user-supplied pack at
+runtime (default empty = stock). See [REMASTER_ROADMAP.md](REMASTER_ROADMAP.md) —
+the single master plan (copyright model in §1b, texture strategy in §3).

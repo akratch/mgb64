@@ -63,8 +63,26 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_native_switch_access.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_sdk_surface.py"
             "${CMAKE_SOURCE_DIR}/tools/check_native_stub_surface.py"
+            "${CMAKE_SOURCE_DIR}/tools/analyze_stock_rdp_command_stream.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_command_stream_regression.py"
+            "${CMAKE_SOURCE_DIR}/tools/analyze_stock_rdp_pixel_probe.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_pixel_probe_regression.py"
+            "${CMAKE_SOURCE_DIR}/tools/analyze_glass_center_handoff.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_glass_center_handoff_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
+    )
+    add_test(
+        NAME port_stock_rdp_command_stream_analyzer_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_command_stream_regression.py"
+    )
+    add_test(
+        NAME port_stock_rdp_pixel_probe_analyzer_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_pixel_probe_regression.py"
+    )
+    add_test(
+        NAME port_glass_center_handoff_analyzer_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_center_handoff_regression.py"
     )
     add_test(
         NAME port_native_sdk_surface_guard

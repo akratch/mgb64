@@ -705,6 +705,9 @@ Gfx *fogSetRenderFogColor(Gfx *gdl, s32 arg1)
 {
     if (g_FogSkyIsEnabled == 0)
     {
+#ifdef NATIVE_PORT
+        gSPClearGeometryMode(gdl++, G_FOG);
+#endif
         return gdl;
     }
 
@@ -735,6 +738,9 @@ Gfx *fogRenderClearFogMode(Gfx *gdl)
 {
     if (g_FogSkyIsEnabled == 0)
     {
+#ifdef NATIVE_PORT
+        gSPClearGeometryMode(gdl++, G_FOG);
+#endif
         return gdl;
     }
 

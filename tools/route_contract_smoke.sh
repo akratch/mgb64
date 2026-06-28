@@ -112,22 +112,42 @@ validate_route_contract() {
     local route_path
     local route_name
     local native_env
+    local stock_env
     local ares_input
+    local actor_compare_args
     local compare_kind
 
-    route_path="$(python3 tools/rom_oracle_route.py resolve "$route")"
-    python3 tools/rom_oracle_route.py validate "$route_path"
-    route_name="$(python3 tools/rom_oracle_route.py field "$route_path" name)"
-    compare_kind="$(python3 tools/rom_oracle_route.py field "$route_path" compare_kind)"
-    native_env="$(python3 tools/rom_oracle_route.py native-env "$route_path")"
-    ares_input="$(python3 tools/rom_oracle_route.py ares-input "$route_path")"
+    if ! route_path="$(python3 tools/rom_oracle_route.py resolve "$route")"; then
+        return 1
+    fi
+    if ! python3 tools/rom_oracle_route.py validate "$route_path"; then
+        return 1
+    fi
+    if ! route_name="$(python3 tools/rom_oracle_route.py field "$route_path" name)"; then
+        return 1
+    fi
+    if ! compare_kind="$(python3 tools/rom_oracle_route.py field "$route_path" compare_kind)"; then
+        return 1
+    fi
+    if ! native_env="$(python3 tools/rom_oracle_route.py native-env "$route_path")"; then
+        return 1
+    fi
+    if ! stock_env="$(python3 tools/rom_oracle_route.py stock-env "$route_path")"; then
+        return 1
+    fi
+    if ! ares_input="$(python3 tools/rom_oracle_route.py ares-input "$route_path")"; then
+        return 1
+    fi
+    if ! actor_compare_args="$(python3 tools/rom_oracle_route.py actor-compare-args "$route_path")"; then
+        return 1
+    fi
 
     if [[ -z "$route_name" ]]; then
         echo "FAIL: route has empty name: $route_path" >&2
         return 1
     fi
     case "$compare_kind" in
-        movement|intro) ;;
+        movement|intro|visual|glass) ;;
         *)
             echo "FAIL: route has unsupported compare_kind: $route_name $compare_kind" >&2
             return 1
@@ -137,7 +157,7 @@ validate_route_contract() {
         echo "FAIL: route did not emit an ares input script header: $route_name" >&2
         return 1
     fi
-    if grep -q $'\r' <<<"$native_env$ares_input"; then
+    if grep -q $'\r' <<<"$native_env$stock_env$ares_input$actor_compare_args"; then
         echo "FAIL: route adapters contain CRLF bytes: $route_name" >&2
         return 1
     fi

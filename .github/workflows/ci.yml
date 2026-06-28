@@ -55,8 +55,17 @@ jobs:
             tools/check_native_switch_access.py \
             tools/check_native_sdk_surface.py \
             tools/check_native_stub_surface.py \
+            tools/analyze_stock_rdp_command_stream.py \
+            tools/check_stock_rdp_command_stream_regression.py \
+            tools/analyze_stock_rdp_pixel_probe.py \
+            tools/check_stock_rdp_pixel_probe_regression.py \
+            tools/analyze_glass_center_handoff.py \
+            tools/check_glass_center_handoff_regression.py \
             tools/export_github_launch_items.py \
             macos/Scripts/generate_app_icon.py
+          python3 tools/check_stock_rdp_command_stream_regression.py
+          python3 tools/check_stock_rdp_pixel_probe_regression.py
+          python3 tools/check_glass_center_handoff_regression.py
           python3 tools/check_shell_syntax.py
 
   # Build the native executable without ROM-derived assets. The port loads game

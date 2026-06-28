@@ -91,6 +91,52 @@ static s32 chrNativeShouldTraceViewerRender(void)
             return FALSE;
     }
 }
+
+static s32 chrNativeShouldSkipRenderChrnum(s32 chrnum)
+{
+    enum { MAX_SKIP_CHRNUMS = 32 };
+    static s32 initialized = FALSE;
+    static s32 skip_chrnums[MAX_SKIP_CHRNUMS];
+    static s32 skip_count = 0;
+    s32 i;
+
+    if (!initialized) {
+        const char *cursor = getenv("GE007_SKIP_RENDER_CHRNUMS");
+        initialized = TRUE;
+
+        while (cursor != NULL && *cursor != '\0' && skip_count < MAX_SKIP_CHRNUMS) {
+            char *end = NULL;
+            long value;
+
+            while (*cursor == ',' || *cursor == ';' || *cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+
+            if (*cursor == '\0') {
+                break;
+            }
+
+            value = strtol(cursor, &end, 0);
+            if (end == cursor) {
+                cursor++;
+                continue;
+            }
+
+            if (value >= 0 && value < 1000) {
+                skip_chrnums[skip_count++] = (s32)value;
+            }
+            cursor = end;
+        }
+    }
+
+    for (i = 0; i < skip_count; i++) {
+        if (skip_chrnums[i] == chrnum) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
 #endif
 
 // data
@@ -3221,17 +3267,34 @@ void disable_sounds_attached_to_player_then_something(PropRecord *prop)
     model = (void *)chr->model;
 
 #ifdef NATIVE_PORT
-    if ((chr->ptr_SEbuffer1 != NULL) && (sndGetPlayingState(chr->ptr_SEbuffer1) != 0))
+    if (sndStateIsOwnedBySlot(chr->ptr_SEbuffer1, &chr->ptr_SEbuffer1)
+        && sndGetPlayingState(chr->ptr_SEbuffer1) != 0)
     {
         sndDeactivate(chr->ptr_SEbuffer1);
     }
+    chr->ptr_SEbuffer1 = NULL;
 
-    if ((chr->ptr_SEbuffer2 != NULL) && (sndGetPlayingState(chr->ptr_SEbuffer2) != 0))
+    if (sndStateIsOwnedBySlot(chr->ptr_SEbuffer2, &chr->ptr_SEbuffer2)
+        && sndGetPlayingState(chr->ptr_SEbuffer2) != 0)
     {
         sndDeactivate(chr->ptr_SEbuffer2);
     }
-#endif
+    chr->ptr_SEbuffer2 = NULL;
 
+    if (sndStateIsOwnedBySlot(chr->ptr_SEbuffer3, &chr->ptr_SEbuffer3)
+        && sndGetPlayingState(chr->ptr_SEbuffer3) != 0)
+    {
+        sndDeactivate(chr->ptr_SEbuffer3);
+    }
+    chr->ptr_SEbuffer3 = NULL;
+
+    if (sndStateIsOwnedBySlot(chr->ptr_SEbuffer4, &chr->ptr_SEbuffer4)
+        && sndGetPlayingState(chr->ptr_SEbuffer4) != 0)
+    {
+        sndDeactivate(chr->ptr_SEbuffer4);
+    }
+    chr->ptr_SEbuffer4 = NULL;
+#else
     if ((chr->ptr_SEbuffer3 != NULL) && (sndGetPlayingState(chr->ptr_SEbuffer3) != 0))
     {
         sndDeactivate(chr->ptr_SEbuffer3);
@@ -3241,8 +3304,12 @@ void disable_sounds_attached_to_player_then_something(PropRecord *prop)
     {
         sndDeactivate(chr->ptr_SEbuffer4);
     }
+#endif
 
-    sub_GAME_7F050DE8(model);
+    if (model != NULL)
+    {
+        sub_GAME_7F050DE8(model);
+    }
     chrpropDeregisterRooms(prop);
 
     p = prop->child;
@@ -3250,17 +3317,32 @@ void disable_sounds_attached_to_player_then_something(PropRecord *prop)
     {
         PropRecord *next = p->nextSibling;
         objDetach(p);
+#ifdef NATIVE_PORT
+        if ((p->type == PROP_TYPE_OBJ || p->type == PROP_TYPE_WEAPON || p->type == PROP_TYPE_DOOR)
+            && p->obj != NULL
+            && p->obj->prop == p)
+        {
+            objFreePermanently(p->obj, TRUE);
+        }
+#else
         objFreePermanently((void *)p->chr, 1);
+#endif
         p = next;
     }
 
-    clear_aircraft_model_obj(model);
+    prop->child = NULL;
+
+    if (model != NULL)
+    {
+        clear_aircraft_model_obj(model);
+    }
 
     chr->model = NULL;
     chr->chrnum = -1;
     if (chr->field_20 != NULL)
     {
         sub_GAME_7F06B248(chr->field_20);
+        chr->field_20 = NULL;
     }
 }
 #else
@@ -4756,6 +4838,38 @@ void chrPositionRelated7F020D94(ChrRecord *self)
     chrpropRegisterRooms(myprop);
 }
 
+#ifdef NATIVE_PORT
+static s32 chrShouldHoldMagicTravelPropPosition(ChrRecord *chr)
+{
+    if (chr == NULL) {
+        return 0;
+    }
+
+    if (chr->actiontype == ACT_PATROL &&
+        chr->act_patrol.waydata.mode == WAYMODE_MAGIC) {
+        return 1;
+    }
+
+    if (chr->actiontype == ACT_GOPOS &&
+        chr->act_gopos.waydata.mode == WAYMODE_MAGIC) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static s32 chrShouldSuppressIntroMagicTravelVisibility(ChrRecord *chr)
+{
+    if (chr == NULL) {
+        return 0;
+    }
+
+    return chrShouldHoldMagicTravelPropPosition(chr)
+        && (chr->hidden & CHRHIDDEN_BACKGROUND_AI) != 0
+        && playerHasFrozenIntroCamera(g_CurrentPlayer);
+}
+#endif
+
 
 
 
@@ -4769,6 +4883,12 @@ void chrPositionRelated7F020E40(ChrRecord *chr, s32 arg1)
 
     model = chr->model;
     prop = chr->prop;
+
+#ifdef NATIVE_PORT
+    if (chrShouldHoldMagicTravelPropPosition(chr)) {
+        return;
+    }
+#endif
 
     if (!(chr->hidden & CHRHIDDEN_FREEZE))
     {
@@ -5162,6 +5282,17 @@ s32 chrTickBeams(PropRecord *prop) {
         visible = 0;
     }
 
+#ifdef NATIVE_PORT
+    /* Stock keeps hidden/background magic-travel patrols from being considered
+     * seen by detached authored intro cameras. Without this, the native room or
+     * frustum visibility pass can latch PROPFLAG_ONSCREEN/CHRFLAG_HAS_BEEN_ON_SCREEN
+     * for guards whose gameplay prop is intentionally snapped off the virtual
+     * travel position until stock says the magic segment has completed. */
+    if (visible && chrShouldSuppressIntroMagicTravelVisibility(chr)) {
+        visible = 0;
+    }
+#endif
+
     if (!visible) {
         /* H1b (mid-life-hide fix): match the N64 not-visible path
          * (.L7F021A34-.L7F021A88) — clear PROPFLAG_ONSCREEN on the chr prop and
@@ -5270,6 +5401,9 @@ s32 chrTickBeams(PropRecord *prop) {
     if (model->anim != NULL) {
         sub_GAME_7F0523F8(prop, 0, &chr->field_20);
         sub_GAME_7F0523F8(prop, 1, &chr->field_20);
+#ifdef NATIVE_PORT
+        sub_GAME_7F0523F8(prop, 2, &chr->field_20);
+#endif
     }
 
     return 0;
@@ -8036,6 +8170,11 @@ Gfx *chrRenderProp(PropRecord *prop, Gfx *gdl, s32 withalpha)
     if (chr == NULL) return gdl;
     chrmodel = chr->model;
     if (chrmodel == NULL) return gdl;
+#ifdef NATIVE_PORT
+    if (chrNativeShouldSkipRenderChrnum(chr->chrnum)) {
+        return gdl;
+    }
+#endif
     chrfadealpha = (s32) chr->fadealpha;
 
 #ifdef NATIVE_PORT
@@ -9348,6 +9487,9 @@ void sub_GAME_7F022648(PropRecord *prop, struct ShotData *shotdata) {
             if (temp_hit_list != NULL && model->anim != NULL) {
                 sub_GAME_7F0523F8(prop, 0, &temp_hit_list);
                 sub_GAME_7F0523F8(prop, 1, &temp_hit_list);
+#ifdef NATIVE_PORT
+                sub_GAME_7F0523F8(prop, 2, &temp_hit_list);
+#endif
             }
 
             local_head = temp_hit_list;

@@ -185,6 +185,39 @@ static int tex_gl_enabled = 0;
 
 #define GE007_NUM_TEXTURES 0xBB9U
 
+static uintptr_t gfx_resolve_loaded_texture_pointer_addr(uint32_t token) {
+    struct texpool *pool = ptr_texture_alloc_start;
+    uintptr_t raw = (uintptr_t)token;
+    uintptr_t match = 0;
+
+    if (pool == NULL) {
+        return 0;
+    }
+
+    if (pool->start != NULL && pool->leftpos != NULL) {
+        uintptr_t start = (uintptr_t)pool->start;
+        uintptr_t left = (uintptr_t)pool->leftpos;
+
+        if (raw >= start && raw < left) {
+            return raw;
+        }
+    }
+
+    for (struct tex *cur = pool->rightpos; cur != NULL && cur < pool->end; cur++) {
+        if (cur->data != NULL && (uint32_t)(uintptr_t)cur->data == token) {
+            uintptr_t data = (uintptr_t)cur->data;
+
+            if (match != 0 && match != data) {
+                return 0;
+            }
+
+            match = data;
+        }
+    }
+
+    return match;
+}
+
 static uintptr_t gfx_resolve_texture_image_addr(uintptr_t raw_addr) {
     if (raw_addr == 0) {
         return 0;
@@ -194,6 +227,11 @@ static uintptr_t gfx_resolve_texture_image_addr(uintptr_t raw_addr) {
         void *resolved = gfx_resolve_addr((uint32_t)raw_addr);
         if (resolved != NULL) {
             return (uintptr_t)resolved;
+        }
+
+        uintptr_t loaded_texture = gfx_resolve_loaded_texture_pointer_addr((uint32_t)raw_addr);
+        if (loaded_texture != 0) {
+            return loaded_texture;
         }
 
         if ((uint32_t)raw_addr < GE007_NUM_TEXTURES) {

@@ -21,6 +21,8 @@ The public lane is intentionally narrow:
 | `tools/audit_intro_trace.py` | audits native intro actor/readiness/render/animation fields |
 | `tools/compare_movement_trace.py` | compares aligned movement fields and reports first divergence |
 | `tools/compare_intro_trace.py` | compares active level-intro camera path fields |
+| `tools/compare_combat_health_trace.py` | compares stock/native health and damage-HUD phase at visual checkpoints |
+| `tools/compare_glass_projection_trace.py` | compares stock/native falling-glass shard projection and screen coverage summaries |
 | `tools/audit_screenshot_health.py` | rejects missing, wrong-size, blank, or nearly monochrome native route screenshots |
 | `tools/intro_trace_summary.py` | emits stable intro setup/camera/Bond-animation digests and timer-keyed stock/native comparisons |
 | `tools/summarize_intro_census.py` | summarizes native intro setup/render/animation coverage across traces |
@@ -74,6 +76,26 @@ Prepare the local ares build:
 tools/prepare_ares_movement_oracle_build.sh
 ```
 
+In this workspace, the macOS instrumented ares binary is expected at:
+
+```sh
+build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares
+```
+
+Check that path first before searching `PATH`, `/tmp`, or `/Applications`. On
+Linux builds the equivalent executable may be
+`build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares`. This
+must be the locally instrumented movement-oracle build; if a route or trace field
+such as `glass_projection` is missing, rerun
+`tools/prepare_ares_movement_oracle_build.sh` instead of using a system ares
+binary.
+
+Quick sanity check:
+
+```sh
+test -x build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares && echo "ares OK"
+```
+
 Then run the comparison:
 
 ```sh
@@ -82,9 +104,6 @@ tools/movement_oracle_capture.sh \
   --ares-bin build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares \
   --rom /path/to/GoldenEye.z64
 ```
-
-On Linux builds the ares executable may be
-`build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares`.
 
 To compare a native capture against an already-produced stock trace:
 
@@ -111,6 +130,7 @@ Route files use schema `mgb64.rom_oracle.route.v1`:
   "native_speedframes": 3,
   "stock_speedframes": 3,
   "stock_gameplay_start_global": 1146,
+  "stock_require_first_gameplay_global": 1146,
   "stock_menu_close_on_player": true,
   "native_render_audit": true,
   "native_min_moving_records": 60,
@@ -158,6 +178,11 @@ Provider-specific fields are optional:
   It defaults to `stock_frames`. Use it when a route needs extra stock frontend
   frames for traces/comparison but the meaningful visual checkpoint is an earlier
   gameplay frame.
+- `native_screenshot_game_timer` and `stock_screenshot_game_timer` optionally
+  switch screenshots from process-frame triggers to `g_GlobalTimer` triggers.
+  Use these for visual parity checkpoints that need the same mission tick across
+  native direct boot and stock frontend boot. The stock ares hook also requires
+  the configured `stock_level` before the timer can fire.
 - `native_level` and `stock_level` override `level` for the native direct-boot
   target and stock-oracle target-stage gate respectively. `stock_level` does not
   by itself select a mission in the stock frontend; it tells the ares hook which
@@ -167,7 +192,52 @@ Provider-specific fields are optional:
 - `native_env` is an object of extra `KEY=value` pairs for native capture.
   Intro routes use this to enable authored level intros during deterministic
   direct boot and, when needed, pin the native selected intro camera to the
-  stock camera selected by the scripted boot path.
+  stock camera selected by the scripted boot path. For focused visual routes,
+  `GE007_AUTO_FACE_COORD_SCRIPT` and `GE007_AUTO_AIM_DIR_SCRIPT` accept compact
+  inclusive ranges such as `45-158:x:y:z`, keeping camera and shot direction
+  fixed through a screenshot without expanding the route into many one-frame
+  entries. When the stock side uses `MGB64_ARES_FORCE_PLAYER_SCRIPT`, prefer the
+  native counterpart
+  `GE007_AUTO_FORCE_PLAYER_SCRIPT=START-END:X:Y:Z:YAW_DEG:PITCH_DEG[:EYE_OFFSET[:PAD]]`
+  so native pose, floor/height, tile basis, and current background room are
+  pinned to the same checkpoint before interpreting visual deltas.
+- `stock_env` is an object of extra `KEY=value` pairs for the instrumented ares
+  stock capture. The visual oracle can use
+  `MGB64_ARES_FORCE_PLAYER_SCRIPT=START:LEN:X:Y:Z:YAW_DEG:PITCH_DEG:EYE_OFFSET[:PAD]`
+  to hold stock Bond at a target checkpoint on the stock gameplay timeline.
+  `X:Y:Z` is the viewer/camera position; `EYE_OFFSET` seeds the floor/height
+  state as `Y - EYE_OFFSET`. The optional `PAD` resolves
+  `g_CurrentSetup.pads[PAD].stan` or bound pad `PAD - 10000`, then writes the
+  player tile, portal tile, prop stan, and current background room. The hook
+  deliberately leaves `player->current_model_pos` under ROM control because it
+  is the room render basis, not the viewer position. Add
+  `stock_min_force_player_applies` when a route depends on this hook, and
+  `stock_min_force_player_stan_applies` when it must prove pad-to-stan
+  resolution worked. Use
+  `MGB64_ARES_RNG_SEED_SCRIPT=GAMEPLAY_FRAME:SEED` when a visual route must
+  stabilize stock firing or shard generation across frontend-timing jitter.
+  Add `MGB64_ARES_RNG_SEED_REPEAT=1` when the target gameplay frame can be
+  sampled by multiple VI frames and the route needs every duplicate sample pinned.
+  Use `MGB64_ARES_CROSSHAIR_SCRIPT=START:LEN:X:Y` or `START-END:X:Y` to force
+  stock `crosshair_angle` and `field_FFC` before scripted fire input while still
+  letting the ROM run its normal shot path.
+  Some visual routes remain sensitive to stock ares frontend/update cadence even
+  with forced pose and crosshair. For those, keep active-glass/actor guards in
+  front of pixel comparison, archive clean and dirty traces in `/tmp`, and
+  classify stock misses such as local prop impacts with `glass.active=0` as
+  route-origin evidence unless a native focused guard reproduces the same
+  renderer/material failure.
+- `native_config` is an object of `Section.Key: value` pairs passed to native as
+  repeated `--config-override Section.Key=value` arguments. Use it for visual
+  routes that must not inherit local play settings from `ge007.ini`; for stock
+  parity captures, pin values such as `Video.FovY=60`, `Video.RenderScale=1`,
+  `Video.WindowWidth=640`, `Video.WindowHeight=480`, `Video.WindowMode=windowed`,
+  `Video.RetroFilter=on`, and post-FX identity settings directly in the route.
+  The native capture wrapper runs with an isolated `--savedir` under the output
+  directory, so route overrides are recorded in local artifacts instead of
+  mutating the repo-root/user `ge007.ini`. After capture, the wrapper audits the
+  generated native config and fails if any route override is absent or persisted
+  with the wrong value.
 - `native_render_audit: true` runs `tools/audit_render_trace.py` on the native
   trace. Built-in routes keep this strict: zero crash recoveries, unhandled GBI
   commands, display-list resolve failures, room-render fallback records, and
@@ -194,11 +264,22 @@ Provider-specific fields are optional:
   capture. Use this when comparing against stock ROM traces that advance game
   logic by multiple N64 frames per update.
 - `stock_speedframes` sets the stock gameplay-frame divisor used by the ares
-  hook. It defaults to `native_speedframes` when omitted.
+  hook. It defaults to `native_speedframes` when omitted. Set it explicitly for
+  stock routes with gameplay-phase controller input; deriving it from the live
+  stock timer delta can change between video frames and make route input windows
+  non-monotonic.
 - `stock_gameplay_start_global` is the earliest stock `g_GlobalTimer` value
-  that can start the gameplay event timeline. This prevents player structs that
-  exist during intro/setup from consuming movement events before controls are
-  live.
+  that can start the gameplay event timeline. When set, the instrumented ares
+  oracle also uses this configured tick as the fixed gameplay-frame origin, so
+  small differences in the first observed target-stage frame do not shift all
+  gameplay-phase events. This prevents player structs that exist during
+  intro/setup from consuming movement events before controls are live.
+- `stock_require_first_gameplay_global` is a stricter audit precondition for
+  cadence-sensitive visual/state routes. It does not change stock timing; it
+  fails the stock trace if the first observed gameplay record does not have the
+  expected `move.global` value. Ares-backed captures retry this precondition up
+  to `MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES` times (default `4`) and preserve
+  failed attempts with `.attemptN` suffixes in the artifact directory.
 - `stock_menu_close_on_player` defaults to `true`. It closes stock `phase:
   "menu"` automation as soon as the target-stage player exists, before the later
   movement timeline starts. Keep this enabled for movement parity routes: a
@@ -237,7 +318,8 @@ Provider-specific fields are optional:
 - `compare_align: "gameplay-frame"` aligns stock `oracle.gameplay_frame` with
   native frame `f`. Use it for multi-segment routes where repeated stock video
   frames would make index/move alignment drift at segment boundaries.
-- `compare_kind` selects the comparator: `movement` by default, or `intro`.
+- `compare_kind` selects the comparator: `movement` by default, `intro`, or
+  `visual`.
 - Movement `compare_profile` selects the field set: `full`, `dynamics`,
   `scalar-speed`, or `timing`. The stock Dam route uses `scalar-speed` because
   the stock ROM's timer can move from 3-frame to 2-frame updates after the
@@ -252,6 +334,67 @@ Provider-specific fields are optional:
   windows because stock video traces can contain several samples for one game
   tick. Duplicate key samples are collapsed to the last sample for that key so
   comparisons use the settled per-tick state.
+- Visual routes compare stock/native screenshots with
+  `tools/compare_screenshots.py`, writing `visual_compare_<route>.json`,
+  `visual_compare_<route>.txt`, and a heatmap PNG. Visual `compare_align` can
+  be `global`, `frame`, or `index`; visual `compare_profile` can be `full`,
+  `screenshot`, `active-normalized`, or `logical-viewport`. The comparison JSON
+  always includes presentation metrics for both images: active bbox, active
+  coverage, margins, active aspect, center offset, and a coarse border class. Use
+  those metrics to decide whether a visual delta is caused by viewport/crop
+  policy before treating it as renderer material drift. `active-normalized`
+  crops each provider to its nonblack bbox and resizes the test crop to the
+  baseline crop size before comparing active viewport content.
+  Routes may also define `visual_regions` entries as
+  `{ "name": "...", "roi": [x, y, width, height] }`. The wrapper passes those
+  regions to `tools/compare_screenshots.py --region NAME:X,Y,W,H`, and the
+  visual comparison JSON records per-region changed-pixel, mean-color,
+  per-channel, color-count, and feature metrics under `regions`. Feature metrics
+  include bright/near-white counts, bright connected components, and warm
+  red/orange counts for effect-vs-HUD triage. Region coordinates are final
+  comparison coordinates after any active-normalized or logical-viewport
+  crop/resize, so keep them tied to the route's declared presentation profile.
+  The stock ares oracle arms screenshots from the N64 VI hook, then writes the
+  next post-`Screen::refresh()` presented viewport to `stock_<route>.ppm`,
+  scaling that source viewport to the route screenshot dimensions. Do not
+  threshold stock/native visual routes until the route declares the accepted
+  presentation normalization policy, such as full presented frame, active crop,
+  active-normalized viewport, or a route-specific transform. A valid stock trace
+  can prove camera, room, and force-hook state while the remaining pixel delta
+  still reflects provider crop/guard margins or real material drift.
+- Visual routes also compare stock/native `combat.health` at the screenshot
+  checkpoint with `tools/compare_combat_health_trace.py`, writing
+  `combat_health_compare_<route>.json`. This is a warning-class artifact by
+  default, but routes can set `compare_require_health_match`,
+  `compare_health_tolerance`, and `compare_damage_show_tolerance` to make health
+  and damage/health HUD phase a pre-pixel gate. The report records Bond health,
+  damage/health HUD timers, first health drop, and first-glass-active offsets so
+  HUD damage does not get misclassified as a renderer material bug.
+- Stock visual traces include `combat.crosshair` and `combat.screen` for the
+  player aim fields used by GoldenEye's shot path. When
+  `MGB64_ARES_CROSSHAIR_SCRIPT` is active, `oracle.crosshair_force` records
+  event count, apply count, last gameplay frame, and last forced `[x,y]`.
+- Visual or glass routes can declare actor-contamination guards with
+  `compare_actor_chrnums`, optional `compare_actor_fields`,
+  `compare_actor_frame`, and `compare_actor_position_tolerance`. The wrapper
+  converts those fields into `tools/compare_glass_trace.py --require-actor-match`
+  arguments and writes `actor_compare_<route>.json`. Use this when a visual route
+  should fail until a sampled guard/HUD/content state matches before its pixel
+  delta is promoted to a renderer gate.
+- Before changing visual screenshot frames, run
+  `tools/score_visual_checkpoints.py --require-active stock.jsonl native.jsonl`.
+  It scores candidate frame pairs across shard timer, health/HUD state, actor
+  fields/position, visible actor count, and active-shard count, and reports the
+  best strict match if one exists. This keeps route-timing experiments from
+  promoting a checkpoint that only fixes one visible symptom.
+- Stock trace `rooms.dl` entries summarize the current rendered-room sample's
+  primary and secondary room buffers from `g_BgRoomInfo`. Each summary includes
+  room flags, point/primary/secondary pointers and sizes, command counts,
+  texture/combine/env-alpha counts, render-mode values observed directly in the
+  scanned buffer, raw hashes, and combiner hashes. This is read-only RDRAM
+  evidence for room-buffer contents. It is not a full RSP/RDP draw-state hook:
+  inherited othermode, fog, geometry mode, texture state, and sort/depth policy
+  can still differ even when the scanned room buffers match.
 - `compare_start_intro_timer` and `compare_end_intro_timer` restrict intro
   comparisons to a timer window. Dam's swirl route uses this to compare the
   deterministic `ACT_BONDINTRO` segment before the later idle handoff, whose
@@ -293,6 +436,7 @@ Inspect generated adapters with:
 
 ```sh
 python3 tools/rom_oracle_route.py native-env dam_forward_stop
+python3 tools/rom_oracle_route.py native-config dam_glass_visual_probe
 python3 tools/rom_oracle_route.py ares-input dam_forward_stop
 ```
 
@@ -315,6 +459,17 @@ The movement comparator consumes JSONL records with:
   `oracle.gameplay_origin_input` for stock traces, when available.
 - `oracle.input` for stock traces: last injected buttons/stick, active menu
   and gameplay events, suppressed events, and the menu-closed gate.
+- `oracle.crosshair_force` for stock traces, when a route forces the stock
+  crosshair/gunsight fields.
+- `combat.crosshair` and `combat.screen` for stock visual traces, mirroring the
+  stock player aim fields consumed by shot generation.
+- `combat.health` for stock and native traces: Bond health, armor, actual
+  health/armor, damage and health HUD timers, damage types, and screen-fade RGBA.
+  Visual routes use this to tell HUD phase mismatches apart from material
+  rendering defects.
+- `track.firecount`, `track.shotbondsum`, and `track.accuracyrating` when
+  `MGB64_ARES_TRACE_CHRNUM=N` is set, matching the native `GE007_TRACE_CHRNUM=N`
+  actor root-cause fields for guard fire/damage cadence work.
 - `watch.state` for stock traces, when the player layout is known.
 
 The stock hook writes to `MGB64_ARES_ORACLE_TRACE`. The legacy
@@ -338,6 +493,17 @@ The default symbol layout is USA:
 | `g_ClockTimer` | `0x80048374` |
 | `g_GlobalTimerDelta` | `0x80048378` |
 | `g_GlobalTimer` | `0x8004837c` |
+| `g_CurrentSetup` | `0x80075d00` |
+| `g_BgCurrentRoom` | `0x80044838` |
+| `g_BgNumberOfRoomsDrawn` | `0x8004483c` |
+| `D_8004489C` portal depth limit | `0x8004489c` |
+| `list_visible_rooms_in_cur_global_vis_packet` | `0x8007bfa0` |
+| `num_visible_rooms_in_cur_global_vis_packet` | `0x8007c038` |
+| `dword_CODE_bss_8007FFA0` rendered-room list | `0x8007ffa0` |
+| `D_800442FC` portal depth bytes | `0x800442fc` |
+| `table_for_portals` projection cache | `0x80081618` |
+| `g_BgPortals` pointer | `0x8007ff80` |
+| `g_BgRoomInfo` | `0x80041414` |
 | `g_CameraMode` | `0x80036494` |
 | `g_CameraAfterCinema` | `0x80036498` |
 | `camera_transition_timer` | `0x800364a4` |
@@ -348,11 +514,18 @@ The default symbol layout is USA:
 | `ptr_animation_table` pointer | `0x80069538` |
 | `player->prop` | `0x00a8` |
 | `player view mode / intro camera vectors` | `0x0000..0x0028` |
-| `field_488 camera vectors` | `0x0488..0x04dc` |
+| `field_488.current_tile_ptr` | `0x0488` |
+| `field_488.collision_position` | `0x048c` |
+| `field_488.theta_transform` | `0x0498` |
+| `field_488.pos3 / floor` | `0x04a4` |
+| `field_488.collision_radius` | `0x04b0` |
+| `field_488.pos / camera` | `0x04b4` |
+| `field_488.applied_view` | `0x04c0` |
+| `field_488.applied_up` | `0x04cc` |
+| `field_488.portal_tile_ptr` | `0x04d8` |
 | `speedsideways/speedstrafe/speedforwards/speedboost/max_t` | `0x016c..0x017c` |
 | `speedtheta/speedverta` | `0x014c`, `0x0160` |
 | `bondprevpos` | `0x0408` |
-| `field_488.collision_position` | `0x048c` |
 | `headpos` | `0x04fc` |
 | `speedgo` | `0x2a4c` |
 | `prop->pos` | `0x0008` |
@@ -362,7 +535,24 @@ known JP layout or override individual addresses with:
 
 - `MGB64_ARES_CURRENT_PLAYER`;
 - `MGB64_ARES_PLAYER_POINTERS`;
+- `MGB64_ARES_CURRENT_SETUP`;
 - `MGB64_ARES_CURRENT_STAGE`;
+- `MGB64_ARES_BG_CURRENT_ROOM`;
+- `MGB64_ARES_BG_ROOMS_DRAWN_COUNT`;
+- `MGB64_ARES_BG_PORTAL_DEPTH_LIMIT`;
+- `MGB64_ARES_BG_VISIBLE_ROOMS`;
+- `MGB64_ARES_BG_VISIBLE_ROOMS_COUNT`;
+- `MGB64_ARES_BG_RENDERED_ROOMS`;
+- `MGB64_ARES_BG_PORTAL_DEPTH_BYTES`;
+- `MGB64_ARES_BG_PORTAL_PROJECTION_CACHE`;
+- `MGB64_ARES_BG_PORTALS_POINTER`;
+- `MGB64_ARES_BG_ROOM_INFO`;
+- `MGB64_ARES_BG_ROOM_INFO_STRIDE`;
+- `MGB64_ARES_BG_ROOM_INFO_PORTAL_COUNT_OFFSET`;
+- `MGB64_ARES_BG_ROOM_FILEPOSITION_LIST`;
+- `MGB64_ARES_BG_ROOM_POS_LIST`;
+- `MGB64_ARES_ROOM_DATA_FLOAT2`;
+- `MGB64_ARES_BG_PORTAL_TRACE_INDEX`;
 - `MGB64_ARES_CLOCK_TIMER`;
 - `MGB64_ARES_GLOBAL_TIMER_DELTA`;
 - `MGB64_ARES_GLOBAL_TIMER`.
@@ -435,7 +625,8 @@ and maximum per-frame step for both traces. When invoked through
 `compare_<route>.json` with record counts, filters, aligned keys, summaries,
 max deltas, and any divergence details. The route wrapper also writes
 `summary_<route>.json`, a top-level manifest that links the native/stock traces,
-screenshot, audit JSON, comparison JSON, and any timer-summary comparison JSON.
+screenshot, audit JSON, comparison JSON, optional actor-comparison JSON, and any
+timer-summary comparison JSON.
 
 `tools/compare_intro_trace.py` filters active intro records by camera mode
 (`intro,fadeswirl,swirl` by default) and compares camera path vectors. By

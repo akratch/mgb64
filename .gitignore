@@ -74,6 +74,8 @@ bin/*
 *.gif
 *.webp
 *.ppm
+*.pgm
+*.pnm
 *.raw
 *.wav
 *.mp3

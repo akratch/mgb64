@@ -22,6 +22,7 @@ STOCK_TRACE=""
 NATIVE_ONLY=0
 NO_COMPARE=0
 COMPARE_ALIGN=""
+EXTRA_NATIVE_CONFIG_OVERRIDES=()
 
 usage() {
     cat <<'USAGE'
@@ -39,6 +40,9 @@ Options:
   --native-only         only capture native trace
   --no-compare          capture traces but do not run the route comparator
   --align MODE          comparator alignment (default: route compare_align)
+  --native-config-override KEY=VALUE
+                       append a native --config-override after route config;
+                       may be repeated for renderer/config A/B probes
   --timeout SECONDS     per-process timeout (default: 60)
 
 Artifacts are ROM-derived local validation data. Do not commit captured traces,
@@ -59,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --native-only) NATIVE_ONLY=1; shift ;;
         --no-compare) NO_COMPARE=1; shift ;;
         --align) COMPARE_ALIGN="$2"; shift 2 ;;
+        --native-config-override) EXTRA_NATIVE_CONFIG_OVERRIDES+=("$2"); shift 2 ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
@@ -92,6 +97,8 @@ STOCK_LEVEL="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_level
 NATIVE_FRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_frames)"
 STOCK_FRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_frames)"
 STOCK_SCREENSHOT_FRAME="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_screenshot_frame)"
+NATIVE_SCREENSHOT_GAME_TIMER="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_screenshot_game_timer)"
+STOCK_SCREENSHOT_GAME_TIMER="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_screenshot_game_timer)"
 NATIVE_SPEEDFRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_speedframes)"
 STOCK_SPEEDFRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_speedframes)"
 STOCK_GAMEPLAY_START_GLOBAL="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_gameplay_start_global)"
@@ -102,13 +109,33 @@ STOCK_MIN_MOVING_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH
 STOCK_MIN_GAMEPLAY_INPUT_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_gameplay_input_records)"
 STOCK_MAX_SUPPRESSED_MENU_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_max_suppressed_menu_records)"
 STOCK_MIN_MENU_TO_GAMEPLAY_GAP="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_menu_to_gameplay_gap)"
+STOCK_MIN_FORCE_PLAYER_APPLIES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_force_player_applies)"
+STOCK_MIN_FORCE_PLAYER_STAN_APPLIES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_force_player_stan_applies)"
+STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_require_first_gameplay_global)"
 if [[ -z "$COMPARE_ALIGN" ]]; then
     COMPARE_ALIGN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_align)"
 fi
 COMPARE_PROFILE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_profile)"
 COMPARE_KIND="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_kind)"
+COMPARE_ACTOR_FRAME="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_actor_frame)"
+COMPARE_REQUIRE_HEALTH_MATCH="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_health_match)"
+COMPARE_HEALTH_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_health_tolerance)"
+COMPARE_DAMAGE_SHOW_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_damage_show_tolerance)"
 COMPARE_MAX_ALIGNED="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_max_aligned)"
 COMPARE_MIN_ALIGNED="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_min_aligned)"
+COMPARE_REQUIRE_ACTIVE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_active)"
+COMPARE_REQUIRE_HASH_MATCH="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_hash_match)"
+COMPARE_FIRST_ACTIVE_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_first_active_tolerance)"
+COMPARE_MAX_ACTIVE_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_max_active_tolerance)"
+COMPARE_FIRST_POSITION_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_first_position_tolerance)"
+COMPARE_FIRST_SAMPLE_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_first_sample_tolerance)"
+COMPARE_REQUIRE_PROP_DESTROYED="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_prop_destroyed)"
+COMPARE_REQUIRE_IMPACT_ACTIVE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_impact_active)"
+COMPARE_REQUIRE_IMPACT_MATCH="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_impact_match)"
+COMPARE_IMPACT_POSITION_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_impact_position_tolerance)"
+COMPARE_IMPACT_POSITION_POINTS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_impact_position_points)"
+COMPARE_PROP_POSITION_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_prop_position_tolerance)"
+COMPARE_MAX_BUFFER_LEN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_max_buffer_len)"
 COMPARE_NORMALIZE_POSITION="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_normalize_position)"
 COMPARE_GAMEPLAY_WINDOWS="$(python3 tools/rom_oracle_route.py gameplay-windows "$ROUTE_PATH")"
 COMPARE_CAMERA_MODES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_camera_modes)"
@@ -169,6 +196,14 @@ if [[ ! "$STOCK_SCREENSHOT_FRAME" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: route stock_screenshot_frame must be a positive integer: $STOCK_SCREENSHOT_FRAME" >&2
     exit 2
 fi
+if [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" && ! "$NATIVE_SCREENSHOT_GAME_TIMER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "FAIL: route native_screenshot_game_timer must be a positive integer when set: $NATIVE_SCREENSHOT_GAME_TIMER" >&2
+    exit 2
+fi
+if [[ -n "$STOCK_SCREENSHOT_GAME_TIMER" && ! "$STOCK_SCREENSHOT_GAME_TIMER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "FAIL: route stock_screenshot_game_timer must be a positive integer when set: $STOCK_SCREENSHOT_GAME_TIMER" >&2
+    exit 2
+fi
 if [[ -n "$NATIVE_SPEEDFRAMES" && ! "$NATIVE_SPEEDFRAMES" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: route native_speedframes must be a positive integer when set: $NATIVE_SPEEDFRAMES" >&2
     exit 2
@@ -186,7 +221,10 @@ for value_name in \
     STOCK_MIN_MOVING_RECORDS \
     STOCK_MIN_GAMEPLAY_INPUT_RECORDS \
     STOCK_MAX_SUPPRESSED_MENU_RECORDS \
-    STOCK_MIN_MENU_TO_GAMEPLAY_GAP
+    STOCK_MIN_MENU_TO_GAMEPLAY_GAP \
+    STOCK_MIN_FORCE_PLAYER_APPLIES \
+    STOCK_MIN_FORCE_PLAYER_STAN_APPLIES \
+    STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL
 do
     value="${!value_name}"
     if [[ -n "$value" && ! "$value" =~ ^[0-9]+$ ]]; then
@@ -214,9 +252,9 @@ case "$STOCK_MENU_CLOSE_ON_PLAYER" in
         ;;
 esac
 case "$COMPARE_KIND" in
-    movement|intro) ;;
+    movement|intro|visual|glass) ;;
     *)
-        echo "FAIL: route compare_kind must be movement or intro: $COMPARE_KIND" >&2
+        echo "FAIL: route compare_kind must be movement, intro, visual, or glass: $COMPARE_KIND" >&2
         exit 2
         ;;
 esac
@@ -235,7 +273,7 @@ if [[ "$COMPARE_KIND" == "movement" ]]; then
             exit 2
             ;;
     esac
-else
+elif [[ "$COMPARE_KIND" == "intro" ]]; then
     case "$COMPARE_ALIGN" in
     active-index|global|frame|intro-timer) ;;
         *)
@@ -250,6 +288,36 @@ esac
             exit 2
             ;;
     esac
+elif [[ "$COMPARE_KIND" == "visual" ]]; then
+    case "$COMPARE_ALIGN" in
+        global|frame|index) ;;
+        *)
+            echo "FAIL: visual --align must be global, frame, or index: $COMPARE_ALIGN" >&2
+            exit 2
+            ;;
+    esac
+    case "$COMPARE_PROFILE" in
+        full|screenshot|active-normalized|logical-viewport) ;;
+        *)
+            echo "FAIL: visual compare_profile must be full, screenshot, active-normalized, or logical-viewport: $COMPARE_PROFILE" >&2
+            exit 2
+            ;;
+    esac
+else
+    case "$COMPARE_ALIGN" in
+        global|frame|index) ;;
+        *)
+            echo "FAIL: glass --align must be global, frame, or index: $COMPARE_ALIGN" >&2
+            exit 2
+            ;;
+    esac
+    case "$COMPARE_PROFILE" in
+        full|state|shatter-state) ;;
+        *)
+            echo "FAIL: glass compare_profile must be full, state, or shatter-state: $COMPARE_PROFILE" >&2
+            exit 2
+            ;;
+    esac
 fi
 if [[ -n "$COMPARE_MAX_ALIGNED" && ! "$COMPARE_MAX_ALIGNED" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: route compare_max_aligned must be a positive integer when set: $COMPARE_MAX_ALIGNED" >&2
@@ -258,6 +326,72 @@ fi
 if [[ -n "$COMPARE_MIN_ALIGNED" && ! "$COMPARE_MIN_ALIGNED" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: route compare_min_aligned must be a positive integer when set: $COMPARE_MIN_ALIGNED" >&2
     exit 2
+fi
+for value_name in \
+    COMPARE_FIRST_ACTIVE_TOLERANCE \
+    COMPARE_MAX_ACTIVE_TOLERANCE
+do
+    value="${!value_name}"
+    if [[ -n "$value" && ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "FAIL: route ${value_name} must be a non-negative integer when set: $value" >&2
+        exit 2
+    fi
+done
+if [[ -n "$COMPARE_MAX_BUFFER_LEN" && ! "$COMPARE_MAX_BUFFER_LEN" =~ ^[1-9][0-9]*$ ]]; then
+    echo "FAIL: route COMPARE_MAX_BUFFER_LEN must be a positive integer when set: $COMPARE_MAX_BUFFER_LEN" >&2
+    exit 2
+fi
+if [[ -n "$COMPARE_FIRST_POSITION_TOLERANCE" ]]; then
+    python3 - "$COMPARE_FIRST_POSITION_TOLERANCE" <<'PY'
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    print(f"FAIL: route COMPARE_FIRST_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+if value <= 0.0:
+    print(f"FAIL: route COMPARE_FIRST_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+fi
+if [[ -n "$COMPARE_PROP_POSITION_TOLERANCE" ]]; then
+    python3 - "$COMPARE_PROP_POSITION_TOLERANCE" <<'PY'
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    print(f"FAIL: route COMPARE_PROP_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+if value <= 0.0:
+    print(f"FAIL: route COMPARE_PROP_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+fi
+if [[ -n "$COMPARE_IMPACT_POSITION_TOLERANCE" ]]; then
+    python3 - "$COMPARE_IMPACT_POSITION_TOLERANCE" <<'PY'
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    print(f"FAIL: route COMPARE_IMPACT_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+if value <= 0.0:
+    print(f"FAIL: route COMPARE_IMPACT_POSITION_TOLERANCE must be a positive number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+fi
+if [[ -n "$COMPARE_FIRST_SAMPLE_TOLERANCE" ]]; then
+    python3 - "$COMPARE_FIRST_SAMPLE_TOLERANCE" <<'PY'
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    print(f"FAIL: route COMPARE_FIRST_SAMPLE_TOLERANCE must be a non-negative number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+if value < 0.0:
+    print(f"FAIL: route COMPARE_FIRST_SAMPLE_TOLERANCE must be a non-negative number when set: {sys.argv[1]}", file=sys.stderr)
+    raise SystemExit(2)
+PY
 fi
 if [[ -n "$COMPARE_START_ACTIVE_FRAME" && ! "$COMPARE_START_ACTIVE_FRAME" =~ ^[1-9][0-9]*$ ]]; then
     echo "FAIL: route compare_start_active_frame must be a positive integer when set: $COMPARE_START_ACTIVE_FRAME" >&2
@@ -315,13 +449,19 @@ PY
 NATIVE_TRACE="$OUT_DIR/native_${ROUTE_NAME}.jsonl"
 NATIVE_LOG="$OUT_DIR/native_${ROUTE_NAME}.log"
 COMPARE_JSON="$OUT_DIR/compare_${ROUTE_NAME}.json"
+ACTOR_COMPARE_JSON="$OUT_DIR/actor_compare_${ROUTE_NAME}.json"
 SUMMARY_COMPARE_JSON="$OUT_DIR/summary_compare_${ROUTE_NAME}.json"
+VISUAL_COMPARE_JSON="$OUT_DIR/visual_compare_${ROUTE_NAME}.json"
+VISUAL_COMPARE_TXT="$OUT_DIR/visual_compare_${ROUTE_NAME}.txt"
+VISUAL_COMPARE_HEATMAP="$OUT_DIR/visual_compare_${ROUTE_NAME}.png"
+HEALTH_COMPARE_JSON="$OUT_DIR/combat_health_compare_${ROUTE_NAME}.json"
 CAPTURE_SUMMARY_JSON="$OUT_DIR/summary_${ROUTE_NAME}.json"
 NATIVE_SCREENSHOT_JSON="$OUT_DIR/native_${ROUTE_NAME}.screenshot.json"
 NATIVE_RENDER_JSON="$OUT_DIR/native_${ROUTE_NAME}.render.json"
 NATIVE_MOVEMENT_JSON="$OUT_DIR/native_${ROUTE_NAME}.movement.json"
 NATIVE_INTRO_SUMMARY_JSON="$OUT_DIR/native_${ROUTE_NAME}.intro-summary.json"
 NATIVE_INTRO_AUDIT_JSON="$OUT_DIR/native_${ROUTE_NAME}.intro-audit.json"
+NATIVE_SAVE_DIR="$OUT_DIR/native_savedir"
 STOCK_SCREENSHOT="$OUT_DIR/stock_${ROUTE_NAME}.ppm"
 STOCK_SCREENSHOT_JSON="$OUT_DIR/stock_${ROUTE_NAME}.screenshot.json"
 STOCK_AUDIT_JSON="$OUT_DIR/stock_${ROUTE_NAME}.audit.json"
@@ -337,17 +477,115 @@ SCREENSHOT_DST="$OUT_DIR/native_${ROUTE_NAME}.bmp"
 validation_acquire_runtime_lock
 trap 'validation_release_runtime_lock' EXIT INT TERM
 
+audit_native_effective_config() {
+    local config_file="$NATIVE_SAVE_DIR/ge007.ini"
+    local native_config=()
+
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        native_config+=("$line")
+    done < <(python3 tools/rom_oracle_route.py native-config "$ROUTE_PATH")
+    if [[ "${#EXTRA_NATIVE_CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+        native_config+=("${EXTRA_NATIVE_CONFIG_OVERRIDES[@]}")
+    fi
+
+    if [[ "${#native_config[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    python3 - "$config_file" "${native_config[@]}" <<'PY'
+import math
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+overrides = sys.argv[2:]
+
+if not config_path.is_file():
+    print(f"FAIL: missing generated native config for override audit: {config_path}")
+    raise SystemExit(1)
+
+values = {}
+section = None
+for raw in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or line.startswith(";"):
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        section = line[1:-1].strip()
+        continue
+    if section and "=" in line:
+        key, value = line.split("=", 1)
+        values[f"{section}.{key.strip()}"] = value.strip()
+
+
+def equal_value(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    try:
+        e = float(expected)
+        a = float(actual)
+    except ValueError:
+        return False
+    return math.isfinite(e) and math.isfinite(a) and abs(e - a) <= 1e-6
+
+
+failures = []
+expected_by_key = {}
+for override in overrides:
+    if "=" not in override:
+        failures.append(f"malformed override: {override}")
+        continue
+    full_key, expected = override.split("=", 1)
+    expected_by_key[full_key] = expected
+
+for full_key, expected in expected_by_key.items():
+    # The validation default can use -1 as a center-window request. The runtime
+    # persists the resolved screen position, so this request is not stable
+    # evidence that the binary ignored the override path.
+    if full_key in ("Video.WindowX", "Video.WindowY") and expected == "-1":
+        continue
+
+    actual = values.get(full_key)
+    if actual is None:
+        failures.append(f"{full_key}: missing from generated config")
+    elif not equal_value(expected, actual):
+        failures.append(f"{full_key}: expected {expected!r}, got {actual!r}")
+
+if failures:
+    print("FAIL: native config override audit")
+    for failure in failures:
+        print(f"  {failure}")
+    raise SystemExit(1)
+
+print("PASS: native config override audit")
+PY
+}
+
 run_native_capture() {
     local env_cmd=()
     local native_env=()
+    local native_config_args=()
     local native_timing_env=()
+    local native_screenshot_args=()
 
     while IFS= read -r line; do
         native_env+=("$line")
     done < <(python3 tools/rom_oracle_route.py native-env "$ROUTE_PATH")
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        native_config_args+=(--config-override "$line")
+    done < <(python3 tools/rom_oracle_route.py native-config "$ROUTE_PATH")
+    if [[ "${#EXTRA_NATIVE_CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
+        for line in "${EXTRA_NATIVE_CONFIG_OVERRIDES[@]}"; do
+            native_config_args+=(--config-override "$line")
+        done
+    fi
     if [[ -n "$NATIVE_SPEEDFRAMES" ]]; then
         native_timing_env+=(GE007_DETERMINISTIC_SPEEDFRAMES="$NATIVE_SPEEDFRAMES")
     fi
+    rm -rf "$NATIVE_SAVE_DIR"
+    mkdir -p "$NATIVE_SAVE_DIR"
     rm -f "$NATIVE_TRACE" "$NATIVE_LOG" "$SCREENSHOT_SRC" "$SCREENSHOT_DST"
     rm -f "$NATIVE_SCREENSHOT_JSON" "$NATIVE_RENDER_JSON" "$NATIVE_MOVEMENT_JSON"
     rm -f "$NATIVE_INTRO_SUMMARY_JSON" "$NATIVE_INTRO_AUDIT_JSON" "$CAPTURE_SUMMARY_JSON"
@@ -368,17 +606,31 @@ run_native_capture() {
     if [[ "${#native_env[@]}" -gt 0 ]]; then
         env_cmd+=("${native_env[@]}")
     fi
+    if [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" ]]; then
+        native_screenshot_args=(--screenshot-game-timer "$NATIVE_SCREENSHOT_GAME_TIMER")
+    else
+        native_screenshot_args=(--screenshot-frame "$NATIVE_FRAMES")
+    fi
+
+    env_cmd+=("$BINARY")
+    if [[ "${#native_config_args[@]}" -gt 0 ]]; then
+        env_cmd+=("${native_config_args[@]}")
+    fi
     env_cmd+=(
-        "$BINARY"
+        --savedir "$NATIVE_SAVE_DIR"
         --rom "$ROM"
         --level "$NATIVE_LEVEL"
         --deterministic
         --trace-state "$NATIVE_TRACE"
-        --screenshot-frame "$NATIVE_FRAMES"
+        "${native_screenshot_args[@]}"
         --screenshot-label "$SCREENSHOT_LABEL"
         --screenshot-exit)
 
-    echo "  native: route=${ROUTE_NAME} level=${NATIVE_LEVEL} frames=${NATIVE_FRAMES}"
+    if [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" ]]; then
+        echo "  native: route=${ROUTE_NAME} level=${NATIVE_LEVEL} frames=${NATIVE_FRAMES} screenshot_game_timer=${NATIVE_SCREENSHOT_GAME_TIMER}"
+    else
+        echo "  native: route=${ROUTE_NAME} level=${NATIVE_LEVEL} frames=${NATIVE_FRAMES}"
+    fi
     if ! validation_run_with_timeout "$TIMEOUT_SECONDS" "${env_cmd[@]}" >"$NATIVE_LOG" 2>&1; then
         echo "FAIL: native oracle capture failed" >&2
         tail -40 "$NATIVE_LOG" | sed 's/^/  /' >&2
@@ -400,16 +652,21 @@ run_native_capture() {
         --expect-size 640x480 \
         --json-out "$NATIVE_SCREENSHOT_JSON" \
         "$SCREENSHOT_DST"
+    audit_native_effective_config
 }
 
 run_stock_capture() {
     local ares_pid=""
     local elapsed=0
     local trace_lines=0
+    local stock_env=()
     local stock_timing_env=()
     local stock_cmd=()
 
     python3 tools/rom_oracle_route.py ares-input "$ROUTE_PATH" >"$ARES_INPUT"
+    while IFS= read -r line; do
+        stock_env+=("$line")
+    done < <(python3 tools/rom_oracle_route.py stock-env "$ROUTE_PATH")
     mkdir -p "$SAVES_DIR"
     rm -f "$STOCK_OUT_TRACE" "$STOCK_LOG" "$STOCK_SCREENSHOT" "$STOCK_SCREENSHOT_JSON"
 
@@ -421,7 +678,11 @@ run_stock_capture() {
     fi
     stock_timing_env+=(MGB64_ARES_CLOSE_MENU_ON_PLAYER="$STOCK_MENU_CLOSE_ON_PLAYER")
 
-    echo "  stock:  route=${ROUTE_NAME} level=${STOCK_LEVEL} frames=${STOCK_FRAMES} screenshot_frame=${STOCK_SCREENSHOT_FRAME}"
+    if [[ -n "$STOCK_SCREENSHOT_GAME_TIMER" ]]; then
+        echo "  stock:  route=${ROUTE_NAME} level=${STOCK_LEVEL} frames=${STOCK_FRAMES} screenshot_game_timer=${STOCK_SCREENSHOT_GAME_TIMER}"
+    else
+        echo "  stock:  route=${ROUTE_NAME} level=${STOCK_LEVEL} frames=${STOCK_FRAMES} screenshot_frame=${STOCK_SCREENSHOT_FRAME}"
+    fi
     stock_cmd=(env
         MGB64_ARES_ORACLE_TRACE="$STOCK_OUT_TRACE" \
         MGB64_ARES_MOVEMENT_TRACE="$STOCK_OUT_TRACE" \
@@ -430,6 +691,12 @@ run_stock_capture() {
         MGB64_ARES_SCREENSHOT_PATH="$STOCK_SCREENSHOT" \
         MGB64_ARES_SCREENSHOT_FRAME="$STOCK_SCREENSHOT_FRAME" \
         MGB64_ARES_TARGET_STAGE="$STOCK_LEVEL")
+    if [[ -n "$STOCK_SCREENSHOT_GAME_TIMER" ]]; then
+        stock_cmd+=(MGB64_ARES_SCREENSHOT_GAME_TIMER="$STOCK_SCREENSHOT_GAME_TIMER")
+    fi
+    if [[ "${#stock_env[@]}" -gt 0 ]]; then
+        stock_cmd+=("${stock_env[@]}")
+    fi
     if [[ "${#stock_timing_env[@]}" -gt 0 ]]; then
         stock_cmd+=("${stock_timing_env[@]}")
     fi
@@ -500,6 +767,94 @@ run_stock_capture() {
         --expect-size 640x480 \
         --json-out "$STOCK_SCREENSHOT_JSON" \
         "$STOCK_SCREENSHOT"
+}
+
+stock_first_gameplay_global() {
+    python3 - "$STOCK_OUT_TRACE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    handle = path.open("r", encoding="utf-8", errors="replace")
+except OSError:
+    sys.exit(0)
+
+with handle:
+    for line in handle:
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        oracle = record.get("oracle")
+        if not isinstance(oracle, dict):
+            continue
+        inp = oracle.get("input")
+        if not isinstance(inp, dict):
+            continue
+        gameplay_frame = inp.get("gameplay_frame")
+        try:
+            gameplay_frame = int(gameplay_frame)
+        except (TypeError, ValueError):
+            continue
+        if gameplay_frame <= 0:
+            continue
+        move = record.get("move")
+        if isinstance(move, dict) and move.get("global") is not None:
+            print(move.get("global"))
+        break
+PY
+}
+
+preserve_stock_attempt() {
+    local attempt="$1"
+    local suffix=".attempt${attempt}"
+
+    [[ -s "$STOCK_OUT_TRACE" ]] && cp "$STOCK_OUT_TRACE" "${STOCK_OUT_TRACE}${suffix}"
+    [[ -s "$STOCK_LOG" ]] && cp "$STOCK_LOG" "${STOCK_LOG}${suffix}"
+    [[ -s "$STOCK_SCREENSHOT" ]] && cp "$STOCK_SCREENSHOT" "${STOCK_SCREENSHOT}${suffix}"
+    [[ -s "$STOCK_SCREENSHOT_JSON" ]] && cp "$STOCK_SCREENSHOT_JSON" "${STOCK_SCREENSHOT_JSON}${suffix}"
+}
+
+run_stock_capture_with_route_control_retries() {
+    local max_attempts=1
+    local attempt=1
+    local first_global=""
+
+    if [[ -n "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+        max_attempts="${MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES:-4}"
+        if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
+            echo "FAIL: MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES must be a positive integer: $max_attempts" >&2
+            exit 2
+        fi
+    fi
+
+    while [[ "$attempt" -le "$max_attempts" ]]; do
+        if [[ "$max_attempts" -gt 1 ]]; then
+            echo "  stock attempt ${attempt}/${max_attempts}"
+        fi
+        run_stock_capture
+
+        if [[ -z "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+            return 0
+        fi
+
+        first_global="$(stock_first_gameplay_global | tr -d '[:space:]')"
+        if [[ "$first_global" == "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+            return 0
+        fi
+
+        echo "  stock attempt ${attempt}/${max_attempts}: first gameplay global ${first_global:-missing}, expected ${STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL}" >&2
+        preserve_stock_attempt "$attempt"
+        attempt=$((attempt + 1))
+    done
+
+    echo "FAIL: stock route control did not reach first gameplay global ${STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL} after ${max_attempts} attempt(s)" >&2
+    exit 1
 }
 
 echo "=== ROM Oracle Capture ==="
@@ -668,7 +1023,7 @@ case "$NATIVE_INTRO_AUDIT" in
 esac
 
 if [[ "$NATIVE_ONLY" -eq 0 && -n "$ARES_BIN" && -z "$STOCK_TRACE" ]]; then
-    run_stock_capture
+    run_stock_capture_with_route_control_retries
 fi
 
 echo ""
@@ -683,13 +1038,17 @@ fi
 
 if [[ "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "$ARES_BIN" ) ]]; then
     echo ""
-    audit_args=(--kind "$COMPARE_KIND" --label "stock ${ROUTE_NAME}" --require-stage "$STOCK_LEVEL" --require-target-player)
-    if [[ "$COMPARE_KIND" == "movement" ]]; then
+    stock_audit_kind="$COMPARE_KIND"
+    if [[ "$stock_audit_kind" == "visual" || "$stock_audit_kind" == "glass" ]]; then
+        stock_audit_kind="movement"
+    fi
+    audit_args=(--kind "$stock_audit_kind" --label "stock ${ROUTE_NAME}" --require-stage "$STOCK_LEVEL" --require-target-player)
+    if [[ "$COMPARE_KIND" == "movement" || "$COMPARE_KIND" == "glass" ]]; then
         audit_args+=(--require-gameplay-input)
         if [[ -n "$STOCK_MIN_GAMEPLAY_INPUT_RECORDS" ]]; then
             audit_args+=(--min-gameplay-input-records "$STOCK_MIN_GAMEPLAY_INPUT_RECORDS")
         fi
-        if [[ -n "$STOCK_MIN_MOVING_RECORDS" ]]; then
+        if [[ "$COMPARE_KIND" == "movement" && -n "$STOCK_MIN_MOVING_RECORDS" ]]; then
             audit_args+=(--min-moving-records "$STOCK_MIN_MOVING_RECORDS")
         fi
     fi
@@ -699,17 +1058,253 @@ if [[ "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "$ARES_BIN" ) ]]; then
     if [[ -n "$STOCK_MIN_MENU_TO_GAMEPLAY_GAP" ]]; then
         audit_args+=(--min-menu-to-gameplay-gap "$STOCK_MIN_MENU_TO_GAMEPLAY_GAP")
     fi
+    if [[ -n "$STOCK_MIN_FORCE_PLAYER_APPLIES" ]]; then
+        audit_args+=(--min-force-player-applies "$STOCK_MIN_FORCE_PLAYER_APPLIES")
+    fi
+    if [[ -n "$STOCK_MIN_FORCE_PLAYER_STAN_APPLIES" ]]; then
+        audit_args+=(--min-force-player-stan-applies "$STOCK_MIN_FORCE_PLAYER_STAN_APPLIES")
+    fi
+    if [[ -n "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+        audit_args+=(--require-first-gameplay-global "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL")
+    fi
     audit_args+=(--json-out "$STOCK_AUDIT_JSON")
     python3 tools/audit_oracle_trace.py "${audit_args[@]}" "$STOCK_OUT_TRACE"
 fi
 
 if [[ "$NO_COMPARE" -eq 0 && "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "$ARES_BIN" ) ]]; then
     echo ""
+    ROUTE_EXIT_STATUS=0
     compare_args=(--align "$COMPARE_ALIGN" --profile "$COMPARE_PROFILE")
+    actor_compare_args=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        actor_compare_args+=("$line")
+    done < <(python3 tools/rom_oracle_route.py actor-compare-args "$ROUTE_PATH")
+    visual_precompare_status=0
+
+    if [[ "$COMPARE_KIND" == "visual" ]]; then
+        health_compare_args=(
+            --baseline-label "stock ${ROUTE_NAME}"
+            --test-label "native ${ROUTE_NAME}"
+            --json-out "$HEALTH_COMPARE_JSON"
+        )
+        if [[ -n "$STOCK_SCREENSHOT_GAME_TIMER" ]]; then
+            health_compare_args+=(--baseline-global "$STOCK_SCREENSHOT_GAME_TIMER")
+        else
+            health_compare_args+=(--baseline-frame "$STOCK_SCREENSHOT_FRAME")
+        fi
+        if [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" ]]; then
+            health_compare_args+=(--test-global "$NATIVE_SCREENSHOT_GAME_TIMER")
+        else
+            health_compare_args+=(--test-frame "$NATIVE_FRAMES")
+        fi
+        if [[ -n "$COMPARE_HEALTH_TOLERANCE" ]]; then
+            health_compare_args+=(--health-tolerance "$COMPARE_HEALTH_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_DAMAGE_SHOW_TOLERANCE" ]]; then
+            health_compare_args+=(--damage-show-tolerance "$COMPARE_DAMAGE_SHOW_TOLERANCE")
+        fi
+        case "$COMPARE_REQUIRE_HEALTH_MATCH" in
+            1|true|True|TRUE|yes|YES)
+                health_compare_args+=(--require-match)
+                ;;
+        esac
+        if ! python3 tools/compare_combat_health_trace.py \
+            "${health_compare_args[@]}" \
+            "$STOCK_OUT_TRACE" \
+            "$NATIVE_TRACE"
+        then
+            visual_precompare_status=1
+        fi
+        echo ""
+    fi
+
+    if [[ "$COMPARE_KIND" == "visual" && "${#actor_compare_args[@]}" -gt 0 ]]; then
+        visual_actor_compare_args=("${actor_compare_args[@]}")
+        actor_baseline_frame=""
+        actor_test_frame=""
+        if [[ "$COMPARE_ACTOR_FRAME" == "screenshot" && -s "$HEALTH_COMPARE_JSON" ]]; then
+            actor_checkpoint_frames="$(python3 - "$HEALTH_COMPARE_JSON" <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+try:
+    report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    baseline = report.get("baseline_checkpoint", {}).get("frame")
+    test = report.get("test_checkpoint", {}).get("frame")
+    if isinstance(baseline, int) and baseline > 0 and isinstance(test, int) and test > 0:
+        print(f"{baseline} {test}")
+except Exception:
+    pass
+PY
+)"
+            if [[ "$actor_checkpoint_frames" =~ ^[0-9]+[[:space:]][0-9]+$ ]]; then
+                actor_baseline_frame="${actor_checkpoint_frames%%[[:space:]]*}"
+                actor_test_frame="${actor_checkpoint_frames##*[[:space:]]}"
+            fi
+        fi
+        if [[ -n "$actor_baseline_frame" ]]; then
+            visual_actor_compare_args+=(--actor-baseline-frame "$actor_baseline_frame")
+        elif [[ -n "$STOCK_SCREENSHOT_GAME_TIMER" ]]; then
+            visual_actor_compare_args+=(--actor-baseline-global "$STOCK_SCREENSHOT_GAME_TIMER")
+        else
+            visual_actor_compare_args+=(--actor-baseline-frame "$STOCK_SCREENSHOT_FRAME")
+        fi
+        if [[ -n "$actor_test_frame" ]]; then
+            visual_actor_compare_args+=(--actor-test-frame "$actor_test_frame")
+        elif [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" ]]; then
+            visual_actor_compare_args+=(--actor-test-global "$NATIVE_SCREENSHOT_GAME_TIMER")
+        else
+            native_actor_frame=$((NATIVE_FRAMES - 1))
+            if [[ "$native_actor_frame" -lt 1 ]]; then
+                native_actor_frame=1
+            fi
+            visual_actor_compare_args+=(--actor-test-frame "$native_actor_frame")
+        fi
+        if ! python3 tools/compare_glass_trace.py \
+            --json-out "$ACTOR_COMPARE_JSON" \
+            "${visual_actor_compare_args[@]}" \
+            "$STOCK_OUT_TRACE" \
+            "$NATIVE_TRACE"
+        then
+            visual_precompare_status=1
+        fi
+        echo ""
+    fi
+
+    visual_glass_compare_args=()
+    visual_glass_compare_requested=0
+    case "$COMPARE_REQUIRE_ACTIVE" in
+        1|true|True|TRUE|yes|YES)
+            visual_glass_compare_args+=(--require-active)
+            visual_glass_compare_requested=1
+            ;;
+    esac
+    case "$COMPARE_REQUIRE_HASH_MATCH" in
+        1|true|True|TRUE|yes|YES)
+            visual_glass_compare_args+=(--require-hash-match)
+            visual_glass_compare_requested=1
+            ;;
+    esac
+    case "$COMPARE_REQUIRE_PROP_DESTROYED" in
+        1|true|True|TRUE|yes|YES)
+            visual_glass_compare_args+=(--require-prop-destroyed)
+            visual_glass_compare_requested=1
+            ;;
+    esac
+    case "$COMPARE_REQUIRE_IMPACT_ACTIVE" in
+        1|true|True|TRUE|yes|YES)
+            visual_glass_compare_args+=(--require-impact-active)
+            visual_glass_compare_requested=1
+            ;;
+    esac
+    case "$COMPARE_REQUIRE_IMPACT_MATCH" in
+        1|true|True|TRUE|yes|YES)
+            visual_glass_compare_args+=(--require-impact-match)
+            visual_glass_compare_requested=1
+            ;;
+    esac
+    if [[ -n "$COMPARE_FIRST_ACTIVE_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--first-active-tolerance "$COMPARE_FIRST_ACTIVE_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_MAX_ACTIVE_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--max-active-tolerance "$COMPARE_MAX_ACTIVE_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_FIRST_POSITION_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--first-position-tolerance "$COMPARE_FIRST_POSITION_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_FIRST_SAMPLE_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--first-sample-tolerance "$COMPARE_FIRST_SAMPLE_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_PROP_POSITION_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--prop-position-tolerance "$COMPARE_PROP_POSITION_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_IMPACT_POSITION_TOLERANCE" ]]; then
+        visual_glass_compare_args+=(--impact-position-tolerance "$COMPARE_IMPACT_POSITION_TOLERANCE")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_IMPACT_POSITION_POINTS" ]]; then
+        visual_glass_compare_args+=(--impact-position-points "$COMPARE_IMPACT_POSITION_POINTS")
+        visual_glass_compare_requested=1
+    fi
+    if [[ -n "$COMPARE_MAX_BUFFER_LEN" ]]; then
+        visual_glass_compare_args+=(--max-buffer-len "$COMPARE_MAX_BUFFER_LEN")
+        visual_glass_compare_requested=1
+    fi
+    if [[ "$COMPARE_KIND" == "visual" && "$visual_glass_compare_requested" -eq 1 ]]; then
+        if ! python3 tools/compare_glass_trace.py \
+            --json-out "$COMPARE_JSON" \
+            "${visual_glass_compare_args[@]}" \
+            "$STOCK_OUT_TRACE" \
+            "$NATIVE_TRACE"
+        then
+            visual_precompare_status=1
+        fi
+        echo ""
+    fi
+
     if [[ -n "$COMPARE_MAX_ALIGNED" ]]; then
         compare_args+=(--max-aligned "$COMPARE_MAX_ALIGNED")
     fi
-    if [[ "$COMPARE_KIND" == "movement" ]]; then
+    if [[ "$COMPARE_KIND" == "glass" ]]; then
+        glass_compare_args=(--json-out "$COMPARE_JSON")
+        case "$COMPARE_REQUIRE_ACTIVE" in
+            1|true|True|TRUE|yes|YES)
+                glass_compare_args+=(--require-active)
+                ;;
+        esac
+        case "$COMPARE_REQUIRE_HASH_MATCH" in
+            1|true|True|TRUE|yes|YES)
+                glass_compare_args+=(--require-hash-match)
+                ;;
+        esac
+        case "$COMPARE_REQUIRE_PROP_DESTROYED" in
+            1|true|True|TRUE|yes|YES)
+                glass_compare_args+=(--require-prop-destroyed)
+                ;;
+        esac
+        case "$COMPARE_REQUIRE_IMPACT_ACTIVE" in
+            1|true|True|TRUE|yes|YES)
+                glass_compare_args+=(--require-impact-active)
+                ;;
+        esac
+        case "$COMPARE_REQUIRE_IMPACT_MATCH" in
+            1|true|True|TRUE|yes|YES)
+                glass_compare_args+=(--require-impact-match)
+                ;;
+        esac
+        if [[ -n "$COMPARE_FIRST_ACTIVE_TOLERANCE" ]]; then
+            glass_compare_args+=(--first-active-tolerance "$COMPARE_FIRST_ACTIVE_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_MAX_ACTIVE_TOLERANCE" ]]; then
+            glass_compare_args+=(--max-active-tolerance "$COMPARE_MAX_ACTIVE_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_FIRST_POSITION_TOLERANCE" ]]; then
+            glass_compare_args+=(--first-position-tolerance "$COMPARE_FIRST_POSITION_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_FIRST_SAMPLE_TOLERANCE" ]]; then
+            glass_compare_args+=(--first-sample-tolerance "$COMPARE_FIRST_SAMPLE_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_PROP_POSITION_TOLERANCE" ]]; then
+            glass_compare_args+=(--prop-position-tolerance "$COMPARE_PROP_POSITION_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_IMPACT_POSITION_TOLERANCE" ]]; then
+            glass_compare_args+=(--impact-position-tolerance "$COMPARE_IMPACT_POSITION_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_IMPACT_POSITION_POINTS" ]]; then
+            glass_compare_args+=(--impact-position-points "$COMPARE_IMPACT_POSITION_POINTS")
+        fi
+        if [[ -n "$COMPARE_MAX_BUFFER_LEN" ]]; then
+            glass_compare_args+=(--max-buffer-len "$COMPARE_MAX_BUFFER_LEN")
+        fi
+        python3 tools/compare_glass_trace.py "${glass_compare_args[@]}" "$STOCK_OUT_TRACE" "$NATIVE_TRACE"
+    elif [[ "$COMPARE_KIND" == "movement" ]]; then
         compare_args+=(--baseline-stage "$STOCK_LEVEL" --test-stage "$NATIVE_LEVEL")
         if [[ -n "$COMPARE_GAMEPLAY_WINDOWS" ]]; then
             while IFS= read -r window; do
@@ -728,7 +1323,7 @@ if [[ "$NO_COMPARE" -eq 0 && "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "
         esac
         compare_args+=(--json-out "$COMPARE_JSON")
         python3 tools/compare_movement_trace.py "${compare_args[@]}" "$STOCK_OUT_TRACE" "$NATIVE_TRACE"
-    else
+    elif [[ "$COMPARE_KIND" == "intro" ]]; then
         if [[ -n "$COMPARE_CAMERA_MODES" ]]; then
             compare_args+=(--camera-modes "$COMPARE_CAMERA_MODES")
         fi
@@ -820,10 +1415,62 @@ if [[ "$NO_COMPARE" -eq 0 && "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "
         else
             echo "Skipping timer-summary comparison for ${COMPARE_ALIGN} intro alignment; strict intro comparator already ran."
         fi
+    else
+        if [[ "$visual_precompare_status" -ne 0 ]]; then
+            echo "FAIL: visual pre-pixel guard(s) failed; refusing screenshot pixel comparison" >&2
+            ROUTE_EXIT_STATUS=1
+        else
+            if [[ ! -s "$STOCK_SCREENSHOT" ]]; then
+                echo "FAIL: visual comparison requires a stock screenshot; rerun with --ares-bin or use --no-compare with --stock-trace" >&2
+                exit 1
+            fi
+            visual_compare_args=(
+                --per-channel \
+                --heatmap "$VISUAL_COMPARE_HEATMAP" \
+                --json-out "$VISUAL_COMPARE_JSON" \
+                "$STOCK_SCREENSHOT" \
+                "$SCREENSHOT_DST"
+            )
+            if [[ "$COMPARE_PROFILE" == "active-normalized" ]]; then
+                visual_compare_args=(--normalize-active "${visual_compare_args[@]}")
+            fi
+            if [[ "$COMPARE_PROFILE" == "logical-viewport" ]]; then
+                logical_args=()
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] || continue
+                    logical_args+=("$line")
+                done < <(python3 tools/rom_oracle_route.py visual-logical-args "$ROUTE_PATH")
+                visual_compare_args=("${logical_args[@]}" "${visual_compare_args[@]}")
+            fi
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                visual_compare_args+=(--region "$line")
+            done < <(python3 tools/rom_oracle_route.py visual-regions "$ROUTE_PATH")
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                visual_compare_args+=(--exclude-region "$line")
+            done < <(python3 tools/rom_oracle_route.py visual-exclude-regions "$ROUTE_PATH")
+            python3 tools/compare_screenshots.py "${visual_compare_args[@]}" | tee "$VISUAL_COMPARE_TXT"
+        fi
+
+    fi
+
+    if [[ "$COMPARE_KIND" != "visual" && "${#actor_compare_args[@]}" -gt 0 ]]; then
+        echo ""
+        python3 tools/compare_glass_trace.py \
+            --json-out "$ACTOR_COMPARE_JSON" \
+            "${actor_compare_args[@]}" \
+            "$STOCK_OUT_TRACE" \
+            "$NATIVE_TRACE"
     fi
 else
+    ROUTE_EXIT_STATUS=0
     echo ""
-    echo "Native capture complete. Add --stock-trace or --ares-bin to run ROM-vs-native comparison."
+    if [[ "$NATIVE_ONLY" -eq 0 && ( -n "$STOCK_TRACE" || -n "$ARES_BIN" ) ]]; then
+        echo "Captures complete. Comparison was disabled with --no-compare."
+    else
+        echo "Native capture complete. Add --stock-trace or --ares-bin to run ROM-vs-native comparison."
+    fi
 fi
 
 python3 - \
@@ -836,6 +1483,8 @@ python3 - \
     "$NATIVE_FRAMES" \
     "$STOCK_FRAMES" \
     "$STOCK_SCREENSHOT_FRAME" \
+    "$NATIVE_SCREENSHOT_GAME_TIMER" \
+    "$STOCK_SCREENSHOT_GAME_TIMER" \
     "$NATIVE_TRACE" \
     "$STOCK_OUT_TRACE" \
     "$SCREENSHOT_DST" \
@@ -848,7 +1497,13 @@ python3 - \
     "$STOCK_SCREENSHOT_JSON" \
     "$STOCK_AUDIT_JSON" \
     "$COMPARE_JSON" \
-    "$SUMMARY_COMPARE_JSON" <<'PY'
+    "$ACTOR_COMPARE_JSON" \
+    "$SUMMARY_COMPARE_JSON" \
+    "$VISUAL_COMPARE_JSON" \
+    "$VISUAL_COMPARE_TXT" \
+    "$VISUAL_COMPARE_HEATMAP" \
+    "$HEALTH_COMPARE_JSON" \
+    "$ROUTE_EXIT_STATUS" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -863,6 +1518,8 @@ from pathlib import Path
     native_frames,
     stock_frames,
     stock_screenshot_frame,
+    native_screenshot_game_timer,
+    stock_screenshot_game_timer,
     native_trace,
     stock_trace,
     native_screenshot,
@@ -875,8 +1532,14 @@ from pathlib import Path
     stock_screenshot_json,
     stock_audit_json,
     compare_json,
+    actor_compare_json,
     summary_compare_json,
-) = sys.argv[1:23]
+    visual_compare_json,
+    visual_compare_txt,
+    visual_compare_heatmap,
+    health_compare_json,
+    route_exit_status,
+) = sys.argv[1:31]
 
 
 def existing(path: str) -> str | None:
@@ -904,10 +1567,16 @@ artifacts = {
     "stock_screenshot_health_json": existing(stock_screenshot_json),
     "stock_audit_json": existing(stock_audit_json),
     "compare_json": existing(compare_json),
+    "actor_compare_json": existing(actor_compare_json),
     "summary_compare_json": existing(summary_compare_json),
+    "visual_compare_json": existing(visual_compare_json),
+    "visual_compare_txt": existing(visual_compare_txt),
+    "visual_compare_heatmap": existing(visual_compare_heatmap),
+    "health_compare_json": existing(health_compare_json),
 }
 payload = {
-    "status": "pass",
+    "status": "pass" if int(route_exit_status) == 0 else "fail",
+    "exit_status": int(route_exit_status),
     "route": route_name,
     "route_path": route_path,
     "compare_kind": compare_kind,
@@ -916,6 +1585,8 @@ payload = {
     "native_frames": int(native_frames),
     "stock_frames": int(stock_frames),
     "stock_screenshot_frame": int(stock_screenshot_frame),
+    "native_screenshot_game_timer": int(native_screenshot_game_timer) if native_screenshot_game_timer else None,
+    "stock_screenshot_game_timer": int(stock_screenshot_game_timer) if stock_screenshot_game_timer else None,
     "artifacts": artifacts,
     "native_screenshot_health": load_json(native_screenshot_json),
     "native_render": load_json(native_render_json),
@@ -925,7 +1596,10 @@ payload = {
     "stock_screenshot_health": load_json(stock_screenshot_json),
     "stock_audit": load_json(stock_audit_json),
     "comparison": load_json(compare_json),
+    "actor_comparison": load_json(actor_compare_json),
     "summary_comparison": load_json(summary_compare_json),
+    "visual_comparison": load_json(visual_compare_json),
+    "health_comparison": load_json(health_compare_json),
 }
 with open(summary_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
@@ -934,4 +1608,9 @@ print(f"summary_json: {summary_path}")
 PY
 
 echo ""
-echo "=== ROM Oracle Capture: PASS ==="
+if [[ "$ROUTE_EXIT_STATUS" -eq 0 ]]; then
+    echo "=== ROM Oracle Capture: PASS ==="
+else
+    echo "=== ROM Oracle Capture: FAIL ==="
+fi
+exit "$ROUTE_EXIT_STATUS"

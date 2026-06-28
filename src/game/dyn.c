@@ -84,18 +84,17 @@ void dynInitMemory(void) {
         g_VtxBuffers[2] = (g_VtxBuffers[1] + vtxSize);
         memset(g_GfxBuffers[0], 0, gfxSize * 2);
         memset(g_VtxBuffers[0], 0, vtxSize * 2);
-        /* Register the PC DL buffer range so gfx_process_dl can validate
-         * G_DL target addresses (prevents crash on garbage pointers).
-         * Also register the VTX buffer — dynAllocate allocates sub-DLs,
-         * matrices, and vertices from VTX space (g_GfxMemPos starts at
-         * g_VtxBuffers[0]), so gSPDisplayList targets land there too. */
+        /* Register the current PC DL and VTX pools so gfx_process_dl can
+         * validate G_DL targets without relying on stale heap addresses.
+         * dynAllocate stores sub-DLs, matrices, and vertices in VTX space
+         * (g_GfxMemPos starts at g_VtxBuffers[0]), so the renderer treats
+         * the current VTX pool as a possible native DL source after an opcode
+         * plausibility check. */
         {
             extern void gfx_set_pc_dl_range(void *start, size_t size);
             extern void gfx_set_pc_vtx_range(void *start, size_t size);
-            extern void gfx_register_extra_pc_dl(void *addr, size_t size);
             gfx_set_pc_dl_range(g_GfxBuffers[0], gfxSize * 2);
             gfx_set_pc_vtx_range(g_VtxBuffers[0], vtxSize * 2);
-            gfx_register_extra_pc_dl(g_VtxBuffers[0], vtxSize * 2);
         }
         printf("[DYN] PC malloc'd GFX=%dKB×2 VTX=%dKB×2 gfx=[%p,%p) vtx=%p (playercount=%d)\n",
                gfxSize/1024, vtxSize/1024,

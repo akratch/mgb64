@@ -85,14 +85,18 @@ struct ShaderProgram {
     uint8_t num_inputs;
     bool used_textures[2];
     uint8_t num_floats;
-    GLint attrib_locations[16];
-    uint8_t attrib_sizes[16];
+    GLint attrib_locations[20];
+    uint8_t attrib_sizes[20];
     uint8_t num_attribs;
     bool used_noise;
     GLint frame_count_location;
     GLint window_height_location;
     bool used_n64_filter;
     GLint n64_filter_scale_location;
+    bool diag_rdp_memory_blend;
+    bool diag_rdp_cvg_memory_blend;
+    GLint diag_framebuffer_origin_location;
+    GLint diag_viewport_location;
     /* Texture-cutout (alpha-edge) shader: drives GL_SAMPLE_ALPHA_TO_COVERAGE
      * when the multisample scene target is bound (see gfx_opengl_update_a2c_state). */
     bool opt_texture_edge;
@@ -111,6 +115,8 @@ static int g_diag_noperspective_texcoords = -1; /* GE007_DIAG_NOPERSPECTIVE_TEXC
 static int g_diag_quantize_combiner = -1; /* GE007_DIAG_QUANTIZE_COMBINER=1 */
 static int g_diag_settex_cc_color_scale_checked; /* GE007_DIAG_SETTEX_CC_COLOR_SCALE_VALUE=N */
 static float g_diag_settex_cc_color_scale_value = 1.02f;
+static int g_diag_settex_cc_alpha_scale_checked; /* GE007_DIAG_SETTEX_CC_ALPHA_SCALE_VALUE=N */
+static float g_diag_settex_cc_alpha_scale_value = 1.0f;
 static int g_diag_n64_filter_always_3point = -1; /* GE007_DIAG_N64_FILTER_ALWAYS_3POINT=1 */
 static int g_diag_n64_filter_nearest_threshold_checked; /* GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD=N */
 static int g_diag_n64_filter_nearest_threshold_enabled;
@@ -121,6 +127,30 @@ static float g_diag_n64_filter_clamped_non_texedge_nearest_threshold = 1.0f;
 static int g_diag_n64_filter_non_texedge_nearest_threshold_checked; /* GE007_DIAG_N64_FILTER_NON_TEXEDGE_NEAREST_THRESHOLD=N */
 static int g_diag_n64_filter_non_texedge_nearest_threshold_enabled;
 static float g_diag_n64_filter_non_texedge_nearest_threshold = 1.0f;
+static int g_diag_zmode_xlu_less = -1; /* GE007_DIAG_ZMODE_XLU_LESS=1 */
+static int g_diag_zmode_dec_less = -1; /* GE007_DIAG_ZMODE_DEC_LESS=1 */
+static int g_diag_zmode_dec_no_poly_offset = -1; /* GE007_DIAG_ZMODE_DEC_NO_POLY_OFFSET=1 */
+static int g_diag_zmode_dec_offset_checked; /* GE007_DIAG_ZMODE_DEC_OFFSET_FACTOR/UNITS=N */
+static float g_diag_zmode_dec_offset_factor = -2.0f;
+static float g_diag_zmode_dec_offset_units = -2.0f;
+static int g_diag_alpha_blend_checked; /* GE007_DIAG_ALPHA_BLEND=premult|add|copy|inv_alpha */
+static int g_diag_alpha_blend_mode;
+static int g_diag_alpha_coverage_logged;
+static int g_diag_xlu_coverage_wrap_thin_rate_checked; /* GE007_DIAG_XLU_COVERAGE_WRAP_THIN_RATE=N */
+static float g_diag_xlu_coverage_wrap_thin_rate = 0.25f;
+static int g_diag_xlu_coverage_stencil_checked; /* GE007_DIAG_XLU_COVERAGE_STENCIL_CC=... */
+static int g_diag_xlu_coverage_stencil_enabled;
+static int g_diag_xlu_coverage_stencil_increment_checked; /* GE007_DIAG_XLU_COVERAGE_STENCIL_INCREMENT=N */
+static int g_diag_xlu_coverage_stencil_increment = 4;
+static int g_diag_xlu_coverage_stencil_logged;
+static int g_diag_xlu_rdp_memory_blend_checked; /* GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC=... */
+static int g_diag_xlu_rdp_memory_blend_enabled;
+static int g_diag_xlu_rdp_memory_blend_logged;
+static int g_diag_xlu_rdp_cvg_memory_blend_checked; /* GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=... */
+static int g_diag_xlu_rdp_cvg_memory_blend_enabled;
+static int g_diag_xlu_rdp_cvg_memory_blend_logged;
+static int g_diag_alpha_from_tex_intensity_mix_checked; /* GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX=N */
+static float g_diag_alpha_from_tex_intensity_mix = 1.0f;
 
 static bool gfx_diag_noperspective_inputs_enabled(void) {
     if (g_diag_noperspective_inputs < 0) {
@@ -162,6 +192,101 @@ static float gfx_parse_diag_float_threshold(const char *env, float fallback) {
     if (value < 0.0f) value = 0.0f;
     if (value > 4.0f) value = 4.0f;
     return value;
+}
+
+static float gfx_parse_diag_unit_float(const char *env, float fallback) {
+    float value = fallback;
+    if (env != NULL && env[0] != '\0') {
+        char *end = NULL;
+        value = strtof(env, &end);
+        if (end == env || value != value) {
+            value = fallback;
+        }
+    }
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    return value;
+}
+
+static float gfx_diag_alpha_from_tex_intensity_mix(void) {
+    if (!g_diag_alpha_from_tex_intensity_mix_checked) {
+        const char *env = getenv("GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX");
+        g_diag_alpha_from_tex_intensity_mix =
+            gfx_parse_diag_unit_float(env, g_diag_alpha_from_tex_intensity_mix);
+        if (env != NULL && env[0] != '\0') {
+            fprintf(stderr,
+                    "[fast3d] DIAG ALPHA FROM TEX INTENSITY mix=%.6f "
+                    "(GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX)\n",
+                    g_diag_alpha_from_tex_intensity_mix);
+            fflush(stderr);
+        }
+        g_diag_alpha_from_tex_intensity_mix_checked = 1;
+    }
+    return g_diag_alpha_from_tex_intensity_mix;
+}
+
+static float gfx_diag_xlu_coverage_wrap_thin_rate(void) {
+    if (!g_diag_xlu_coverage_wrap_thin_rate_checked) {
+        const char *env = getenv("GE007_DIAG_XLU_COVERAGE_WRAP_THIN_RATE");
+        g_diag_xlu_coverage_wrap_thin_rate =
+            gfx_parse_diag_unit_float(env, g_diag_xlu_coverage_wrap_thin_rate);
+        fprintf(stderr,
+                "[fast3d] DIAG XLU COVERAGE WRAP THIN rate=%.6f "
+                "(GE007_DIAG_XLU_COVERAGE_WRAP_THIN_RATE)\n",
+                g_diag_xlu_coverage_wrap_thin_rate);
+        fflush(stderr);
+        g_diag_xlu_coverage_wrap_thin_rate_checked = 1;
+    }
+    return g_diag_xlu_coverage_wrap_thin_rate;
+}
+
+static bool gfx_diag_xlu_coverage_stencil_enabled(void) {
+    if (!g_diag_xlu_coverage_stencil_checked) {
+        const char *env = getenv("GE007_DIAG_XLU_COVERAGE_STENCIL_CC");
+        g_diag_xlu_coverage_stencil_enabled =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        g_diag_xlu_coverage_stencil_checked = 1;
+    }
+    return g_diag_xlu_coverage_stencil_enabled != 0;
+}
+
+static int gfx_diag_xlu_coverage_stencil_increment(void) {
+    if (!g_diag_xlu_coverage_stencil_increment_checked) {
+        const char *env = getenv("GE007_DIAG_XLU_COVERAGE_STENCIL_INCREMENT");
+        if (env != NULL && env[0] != '\0') {
+            int value = atoi(env);
+            if (value < 1) value = 1;
+            if (value > 8) value = 8;
+            g_diag_xlu_coverage_stencil_increment = value;
+        }
+        fprintf(stderr,
+                "[fast3d] DIAG XLU COVERAGE STENCIL increment=%d "
+                "(GE007_DIAG_XLU_COVERAGE_STENCIL_INCREMENT)\n",
+                g_diag_xlu_coverage_stencil_increment);
+        fflush(stderr);
+        g_diag_xlu_coverage_stencil_increment_checked = 1;
+    }
+    return g_diag_xlu_coverage_stencil_increment;
+}
+
+static bool gfx_diag_xlu_rdp_memory_blend_enabled(void) {
+    if (!g_diag_xlu_rdp_memory_blend_checked) {
+        const char *env = getenv("GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC");
+        g_diag_xlu_rdp_memory_blend_enabled =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        g_diag_xlu_rdp_memory_blend_checked = 1;
+    }
+    return g_diag_xlu_rdp_memory_blend_enabled != 0;
+}
+
+static bool gfx_diag_xlu_rdp_cvg_memory_blend_enabled(void) {
+    if (!g_diag_xlu_rdp_cvg_memory_blend_checked) {
+        const char *env = getenv("GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC");
+        g_diag_xlu_rdp_cvg_memory_blend_enabled =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        g_diag_xlu_rdp_cvg_memory_blend_checked = 1;
+    }
+    return g_diag_xlu_rdp_cvg_memory_blend_enabled != 0;
 }
 
 static float gfx_diag_n64_filter_nearest_threshold(bool texture_edge,
@@ -277,6 +402,147 @@ static float gfx_diag_settex_cc_color_scale_value(void) {
     return g_diag_settex_cc_color_scale_value;
 }
 
+static float gfx_diag_settex_cc_alpha_scale_value(void) {
+    if (!g_diag_settex_cc_alpha_scale_checked) {
+        const char *env = getenv("GE007_DIAG_SETTEX_CC_ALPHA_SCALE_VALUE");
+        if (env != NULL && env[0] != '\0') {
+            char *end = NULL;
+            float value = strtof(env, &end);
+            if (end != env && value == value) {
+                if (value < 0.0f) value = 0.0f;
+                if (value > 4.0f) value = 4.0f;
+                g_diag_settex_cc_alpha_scale_value = value;
+            }
+        }
+        fprintf(stderr,
+                "[fast3d] DIAG SETTEX CC ALPHA SCALE value=%.6f "
+                "(GE007_DIAG_SETTEX_CC_ALPHA_SCALE_VALUE)\n",
+                g_diag_settex_cc_alpha_scale_value);
+        fflush(stderr);
+        g_diag_settex_cc_alpha_scale_checked = 1;
+    }
+    return g_diag_settex_cc_alpha_scale_value;
+}
+
+static bool gfx_diag_zmode_xlu_less_enabled(void) {
+    if (g_diag_zmode_xlu_less < 0) {
+        g_diag_zmode_xlu_less =
+            (getenv("GE007_DIAG_ZMODE_XLU_LESS") != NULL) ? 1 : 0;
+        if (g_diag_zmode_xlu_less) {
+            fprintf(stderr,
+                    "[fast3d] DIAG ZMODE_XLU depth func GL_LESS "
+                    "(GE007_DIAG_ZMODE_XLU_LESS)\n");
+            fflush(stderr);
+        }
+    }
+    return g_diag_zmode_xlu_less > 0;
+}
+
+static bool gfx_diag_zmode_dec_less_enabled(void) {
+    if (g_diag_zmode_dec_less < 0) {
+        g_diag_zmode_dec_less =
+            (getenv("GE007_DIAG_ZMODE_DEC_LESS") != NULL) ? 1 : 0;
+        if (g_diag_zmode_dec_less) {
+            fprintf(stderr,
+                    "[fast3d] DIAG ZMODE_DEC depth func GL_LESS "
+                    "(GE007_DIAG_ZMODE_DEC_LESS)\n");
+            fflush(stderr);
+        }
+    }
+    return g_diag_zmode_dec_less > 0;
+}
+
+static bool gfx_diag_zmode_dec_no_poly_offset_enabled(void) {
+    if (g_diag_zmode_dec_no_poly_offset < 0) {
+        g_diag_zmode_dec_no_poly_offset =
+            (getenv("GE007_DIAG_ZMODE_DEC_NO_POLY_OFFSET") != NULL) ? 1 : 0;
+        if (g_diag_zmode_dec_no_poly_offset) {
+            fprintf(stderr,
+                    "[fast3d] DIAG ZMODE_DEC polygon offset disabled "
+                    "(GE007_DIAG_ZMODE_DEC_NO_POLY_OFFSET)\n");
+            fflush(stderr);
+        }
+    }
+    return g_diag_zmode_dec_no_poly_offset > 0;
+}
+
+static float gfx_parse_diag_depth_offset(const char *env, float fallback) {
+    float value = fallback;
+    if (env != NULL && env[0] != '\0') {
+        char *end = NULL;
+        value = strtof(env, &end);
+        if (end == env || value != value) {
+            value = fallback;
+        }
+    }
+    if (value < -16.0f) value = -16.0f;
+    if (value > 16.0f) value = 16.0f;
+    return value;
+}
+
+static void gfx_diag_zmode_dec_offset_values(float *factor, float *units) {
+    if (!g_diag_zmode_dec_offset_checked) {
+        const char *factor_env = getenv("GE007_DIAG_ZMODE_DEC_OFFSET_FACTOR");
+        const char *units_env = getenv("GE007_DIAG_ZMODE_DEC_OFFSET_UNITS");
+        if (factor_env != NULL && factor_env[0] != '\0') {
+            g_diag_zmode_dec_offset_factor =
+                gfx_parse_diag_depth_offset(factor_env,
+                                            g_diag_zmode_dec_offset_factor);
+        }
+        if (units_env != NULL && units_env[0] != '\0') {
+            g_diag_zmode_dec_offset_units =
+                gfx_parse_diag_depth_offset(units_env,
+                                            g_diag_zmode_dec_offset_units);
+        }
+        if ((factor_env != NULL && factor_env[0] != '\0') ||
+            (units_env != NULL && units_env[0] != '\0')) {
+            fprintf(stderr,
+                    "[fast3d] DIAG ZMODE_DEC polygon offset factor=%.6f units=%.6f "
+                    "(GE007_DIAG_ZMODE_DEC_OFFSET_FACTOR/UNITS)\n",
+                    g_diag_zmode_dec_offset_factor,
+                    g_diag_zmode_dec_offset_units);
+            fflush(stderr);
+        }
+        g_diag_zmode_dec_offset_checked = 1;
+    }
+    *factor = g_diag_zmode_dec_offset_factor;
+    *units = g_diag_zmode_dec_offset_units;
+}
+
+static int gfx_diag_alpha_blend_mode(void) {
+    if (!g_diag_alpha_blend_checked) {
+        const char *env = getenv("GE007_DIAG_ALPHA_BLEND");
+
+        if (env != NULL && env[0] != '\0') {
+            if (strcmp(env, "premult") == 0) {
+                g_diag_alpha_blend_mode = 1;
+            } else if (strcmp(env, "add") == 0) {
+                g_diag_alpha_blend_mode = 2;
+            } else if (strcmp(env, "copy") == 0) {
+                g_diag_alpha_blend_mode = 3;
+            } else if (strcmp(env, "inv_alpha") == 0) {
+                g_diag_alpha_blend_mode = 4;
+            } else {
+                fprintf(stderr,
+                        "[fast3d] Ignoring invalid GE007_DIAG_ALPHA_BLEND=%s "
+                        "(expected premult, add, copy, or inv_alpha)\n",
+                        env);
+                fflush(stderr);
+            }
+        }
+        if (g_diag_alpha_blend_mode) {
+            fprintf(stderr,
+                    "[fast3d] DIAG alpha blend mode=%s "
+                    "(GE007_DIAG_ALPHA_BLEND)\n",
+                    env);
+            fflush(stderr);
+        }
+        g_diag_alpha_blend_checked = 1;
+    }
+
+    return g_diag_alpha_blend_mode;
+}
+
 static bool gfx_opengl_z_is_from_0_to_1(void) {
     return false;
 }
@@ -348,8 +614,16 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
 
 /* True only while the multisample scene FBO is bound (set in start_frame). */
 static bool g_scene_target_multisampled;
-/* Tracks the live blend-enable so A2C only engages on blend-DISABLED cutouts. */
+/* Tracks the live blend-enable so default A2C only engages on blend-DISABLED cutouts. */
 static bool g_blend_disabled = true;
+/* Default-off XLU coverage diagnostic; true only for GFX_BLEND_ALPHA_COVERAGE. */
+static bool g_blend_alpha_coverage;
+/* Default-off XLU coverage-memory diagnostic; true only for stencil blend mode. */
+static bool g_blend_alpha_cvg_wrap_stencil;
+/* Default-off RDP memory-color diagnostic; true only for memory blend mode. */
+static bool g_blend_alpha_rdp_memory;
+/* Default-off RDP coverage + memory-color diagnostic. */
+static bool g_blend_alpha_rdp_cvg_memory;
 
 /* GL_SAMPLE_ALPHA_TO_COVERAGE is core GL 3.3; provide the token defensively. */
 #ifndef GL_SAMPLE_ALPHA_TO_COVERAGE
@@ -366,17 +640,19 @@ static bool gfx_opengl_a2c_enabled(void) {
     return g_a2c_force != 0;
 }
 
-/* Engage alpha-to-coverage ONLY when: the multisample scene target is bound,
- * the current shader is a texture-edge/cutout shader, blend is disabled, and
- * the env override allows it. Re-evaluated on both shader and blend changes
- * (load_shader runs before set_blend_mode in gfx_pc, and blend can change
- * without a shader change). On the single-sample output/default FB this is
- * always false, so the output pass is unaffected even though it does not
- * save/restore A2C state. */
+/* Engage alpha-to-coverage only for the default blend-disabled texture-edge
+ * cutout path, or for the default-off XLU coverage diagnostic blend mode. Both
+ * require a multisample scene target and the env override to allow A2C.
+ * Re-evaluated on both shader and blend changes (load_shader runs before
+ * set_blend_mode in gfx_pc, and blend can change without a shader change). On
+ * the single-sample output/default FB this is always false, so the output pass
+ * is unaffected even though it does not save/restore A2C state. */
 static void gfx_opengl_update_a2c_state(void) {
-    bool on = g_scene_target_multisampled && g_blend_disabled &&
-              current_shader_program != NULL &&
-              current_shader_program->opt_texture_edge &&
+    bool cutout_a2c = g_blend_disabled &&
+                      current_shader_program != NULL &&
+                      current_shader_program->opt_texture_edge;
+    bool on = g_scene_target_multisampled &&
+              (cutout_a2c || g_blend_alpha_coverage) &&
               gfx_opengl_a2c_enabled();
     if (on) {
         glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
@@ -515,6 +791,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     append_line(vs_buf, &vs_len, "#version 330 core");
 #endif
     append_line(vs_buf, &vs_len, "in vec4 aVtxPos;");
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(vs_buf, &vs_len, "in vec4 aDiagTri01;");
+        append_line(vs_buf, &vs_len, "in vec2 aDiagTri2;");
+        append_line(vs_buf, &vs_len, "noperspective out vec4 vDiagTri01;");
+        append_line(vs_buf, &vs_len, "noperspective out vec2 vDiagTri2;");
+        num_floats += 6;
+    }
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "in vec2 aTexCoord%d;\n", i);
@@ -548,6 +831,10 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
     append_line(vs_buf, &vs_len, "void main() {");
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(vs_buf, &vs_len, "vDiagTri01 = aDiagTri01;");
+        append_line(vs_buf, &vs_len, "vDiagTri2 = aDiagTri2;");
+    }
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
@@ -608,11 +895,23 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         fs_len += ge007_sprintf(fs_buf + fs_len, "%sin vec%d vInput%d;\n",
                                  input_interp, cc_features.opt_alpha ? 4 : 3, i + 1);
     }
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(fs_buf, &fs_len, "noperspective in vec4 vDiagTri01;");
+        append_line(fs_buf, &fs_len, "noperspective in vec2 vDiagTri2;");
+    }
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
     }
     if (cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex1;");
+    }
+    if (cc_features.opt_alpha &&
+        (cc_features.diag_rdp_memory_blend || cc_features.diag_rdp_cvg_memory_blend)) {
+        append_line(fs_buf, &fs_len, "uniform sampler2D uDiagFramebuffer;");
+        append_line(fs_buf, &fs_len, "uniform vec2 uDiagFramebufferOrigin;");
+    }
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(fs_buf, &fs_len, "uniform vec4 uDiagViewport;");
     }
 
     if (cc_features.n64_filter[0] || cc_features.n64_filter[1]) {
@@ -666,6 +965,23 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
         append_line(fs_buf, &fs_len, "}");
     }
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(fs_buf, &fs_len, "float diagEdge(vec2 a, vec2 b, vec2 p) {");
+        append_line(fs_buf, &fs_len, "    return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);");
+        append_line(fs_buf, &fs_len, "}");
+        append_line(fs_buf, &fs_len, "float diagInsideTri(vec2 p, vec2 a, vec2 b, vec2 c) {");
+        append_line(fs_buf, &fs_len, "    float e0 = diagEdge(a, b, p);");
+        append_line(fs_buf, &fs_len, "    float e1 = diagEdge(b, c, p);");
+        append_line(fs_buf, &fs_len, "    float e2 = diagEdge(c, a, p);");
+        append_line(fs_buf, &fs_len, "    bool hasNeg = (e0 < 0.0) || (e1 < 0.0) || (e2 < 0.0);");
+        append_line(fs_buf, &fs_len, "    bool hasPos = (e0 > 0.0) || (e1 > 0.0) || (e2 > 0.0);");
+        append_line(fs_buf, &fs_len, "    return (hasNeg && hasPos) ? 0.0 : 1.0;");
+        append_line(fs_buf, &fs_len, "}");
+        append_line(fs_buf, &fs_len, "float diagCoverageSample(vec2 pixelOffset, vec2 a, vec2 b, vec2 c) {");
+        append_line(fs_buf, &fs_len, "    vec2 p = ((gl_FragCoord.xy + pixelOffset - uDiagViewport.xy) / uDiagViewport.zw) * 2.0 - 1.0;");
+        append_line(fs_buf, &fs_len, "    return diagInsideTri(p, a, b, c);");
+        append_line(fs_buf, &fs_len, "}");
+    }
 
     append_line(fs_buf, &fs_len, "void main() {");
 
@@ -703,6 +1019,19 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.used_textures[1]) {
         const char *sample_fn = cc_features.n64_filter[1] ? "n64TextureFilter" : "texture";
         fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, sampleTexCoord1);\n", sample_fn);
+    }
+    if (cc_features.opt_alpha && cc_features.diag_alpha_from_tex_intensity) {
+        float mix = gfx_diag_alpha_from_tex_intensity_mix();
+        if (cc_features.used_textures[0]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                     "texVal0.a = mix(texVal0.a, texVal0.r, %.9g);\n",
+                                     mix);
+        }
+        if (cc_features.used_textures[1]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                     "texVal1.a = mix(texVal1.a, texVal1.r, %.9g);\n",
+                                     mix);
+        }
     }
 
     /* 2-cycle combiner: emit formula for each cycle.
@@ -770,6 +1099,65 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
                                     "texel = clamp(texel * %.9f, 0.0, 1.0);\n",
                                     scale);
         }
+    }
+
+    if (cc_features.opt_alpha && cc_features.diag_alpha_scale) {
+        float scale = gfx_diag_settex_cc_alpha_scale_value();
+        fs_len += ge007_sprintf(fs_buf + fs_len,
+                                "texel.a = clamp(texel.a * %.9f, 0.0, 1.0);\n",
+                                scale);
+    }
+    if (cc_features.opt_alpha && cc_features.room_water_alpha_suppress) {
+        append_line(fs_buf, &fs_len, "texel.a = 0.0;");
+    }
+
+    if (cc_features.opt_alpha && cc_features.diag_xlu_coverage_wrap_thin) {
+        float rate = gfx_diag_xlu_coverage_wrap_thin_rate();
+        fs_len += ge007_sprintf(fs_buf + fs_len,
+                                "float coverageWrapHash = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);\n"
+                                "if (coverageWrapHash >= %.9f) discard;\n",
+                                rate);
+    }
+
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        append_line(fs_buf, &fs_len, "vec2 memoryUv = (gl_FragCoord.xy - uDiagFramebufferOrigin) / vec2(textureSize(uDiagFramebuffer, 0));");
+        append_line(fs_buf, &fs_len, "vec4 memoryColor = texture(uDiagFramebuffer, clamp(memoryUv, vec2(0.0), vec2(1.0)));");
+        append_line(fs_buf, &fs_len, "vec2 diagTri0 = vDiagTri01.xy;");
+        append_line(fs_buf, &fs_len, "vec2 diagTri1 = vDiagTri01.zw;");
+        append_line(fs_buf, &fs_len, "vec2 diagTri2 = vDiagTri2;");
+        append_line(fs_buf, &fs_len, "float coverageCount = 0.0;");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2(-0.500, -0.375), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2( 0.000, -0.375), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2(-0.250, -0.125), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2( 0.250, -0.125), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2(-0.500,  0.125), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2( 0.000,  0.125), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2(-0.250,  0.375), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "coverageCount += diagCoverageSample(vec2( 0.250,  0.375), diagTri0, diagTri1, diagTri2);");
+        append_line(fs_buf, &fs_len, "if (coverageCount < 0.5) discard;");
+        append_line(fs_buf, &fs_len, "float memoryCoverage = floor(floor(clamp(memoryColor.a, 0.0, 1.0) * 255.0 + 0.5) / 32.0);");
+        append_line(fs_buf, &fs_len, "float coverageTotal = coverageCount + memoryCoverage;");
+        append_line(fs_buf, &fs_len, "float coverageWrap = step(8.0, coverageTotal);");
+        append_line(fs_buf, &fs_len, "float newCoverage = mod(coverageTotal, 8.0);");
+        append_line(fs_buf, &fs_len, "float newCoverageAlpha = (newCoverage * 32.0) / 255.0;");
+        append_line(fs_buf, &fs_len, "float pixelAlphaByte = floor(clamp(texel.a, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "float a0 = floor(pixelAlphaByte / 8.0);");
+        append_line(fs_buf, &fs_len, "float a1 = floor((255.0 - pixelAlphaByte) / 8.0);");
+        append_line(fs_buf, &fs_len, "vec3 pixelByte = floor(clamp(texel.rgb, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "vec3 memoryByte = floor(clamp(memoryColor.rgb, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "vec3 blendedByte = floor((pixelByte * a0 + memoryByte * (a1 + 1.0)) / 32.0);");
+        append_line(fs_buf, &fs_len, "vec3 outByte = mix(memoryByte, blendedByte, coverageWrap);");
+        append_line(fs_buf, &fs_len, "texel = vec4(clamp(outByte / 255.0, 0.0, 1.0), newCoverageAlpha);");
+    } else if (cc_features.opt_alpha && cc_features.diag_rdp_memory_blend) {
+        append_line(fs_buf, &fs_len, "vec2 memoryUv = (gl_FragCoord.xy - uDiagFramebufferOrigin) / vec2(textureSize(uDiagFramebuffer, 0));");
+        append_line(fs_buf, &fs_len, "vec4 memoryColor = texture(uDiagFramebuffer, clamp(memoryUv, vec2(0.0), vec2(1.0)));");
+        append_line(fs_buf, &fs_len, "float pixelAlphaByte = floor(clamp(texel.a, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "float a0 = floor(pixelAlphaByte / 8.0);");
+        append_line(fs_buf, &fs_len, "float a1 = floor((255.0 - pixelAlphaByte) / 8.0);");
+        append_line(fs_buf, &fs_len, "vec3 pixelByte = floor(clamp(texel.rgb, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "vec3 memoryByte = floor(clamp(memoryColor.rgb, 0.0, 1.0) * 255.0 + 0.5);");
+        append_line(fs_buf, &fs_len, "vec3 blendedByte = floor((pixelByte * a0 + memoryByte * (a1 + 1.0)) / 32.0);");
+        append_line(fs_buf, &fs_len, "texel = vec4(clamp(blendedByte / 255.0, 0.0, 1.0), 1.0);");
     }
 
     if (cc_features.opt_alpha) {
@@ -845,6 +1233,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aVtxPos");
     prg->attrib_sizes[cnt] = 4;
     ++cnt;
+    if (cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend) {
+        prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aDiagTri01");
+        prg->attrib_sizes[cnt] = 4;
+        ++cnt;
+        prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aDiagTri2");
+        prg->attrib_sizes[cnt] = 2;
+        ++cnt;
+    }
 
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
@@ -901,6 +1297,15 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->n64_filter_scale_location = prg->used_n64_filter
         ? glGetUniformLocation(shader_program, "uN64FilterScale")
         : -1;
+    prg->diag_rdp_memory_blend = cc_features.opt_alpha && cc_features.diag_rdp_memory_blend;
+    prg->diag_rdp_cvg_memory_blend = cc_features.opt_alpha && cc_features.diag_rdp_cvg_memory_blend;
+    prg->diag_framebuffer_origin_location =
+        (prg->diag_rdp_memory_blend || prg->diag_rdp_cvg_memory_blend)
+        ? glGetUniformLocation(shader_program, "uDiagFramebufferOrigin")
+        : -1;
+    prg->diag_viewport_location = prg->diag_rdp_cvg_memory_blend
+        ? glGetUniformLocation(shader_program, "uDiagViewport")
+        : -1;
 
     gfx_opengl_load_shader(prg);
 
@@ -911,6 +1316,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.used_textures[1]) {
         GLint sampler_location = glGetUniformLocation(shader_program, "uTex1");
         glUniform1i(sampler_location, 1);
+    }
+    if (cc_features.opt_alpha &&
+        (cc_features.diag_rdp_memory_blend || cc_features.diag_rdp_cvg_memory_blend)) {
+        GLint sampler_location = glGetUniformLocation(shader_program, "uDiagFramebuffer");
+        glUniform1i(sampler_location, 2);
     }
 
     return prg;
@@ -1041,14 +1451,25 @@ static void gfx_opengl_set_depth_mode(bool depth_test, bool depth_update,
                      * after CPU clipping. Using GL_LESS here leaves thin gaps
                      * where later coplanar/clipped fragments fail the compare,
                      * showing the "blue shard" leaks seen in interior levels. */
-                    glDepthFunc(GL_LEQUAL);
+                    glDepthFunc((zmode == 0x800 &&
+                                 gfx_diag_zmode_xlu_less_enabled()) ?
+                                GL_LESS : GL_LEQUAL);
                     glDisable(GL_POLYGON_OFFSET_FILL);
                     glPolygonOffset(0, 0);
                     break;
                 case 0xc00: /* ZMODE_DEC */
-                    glDepthFunc(GL_LEQUAL);
-                    glEnable(GL_POLYGON_OFFSET_FILL);
-                    glPolygonOffset(-2, -2);
+                    glDepthFunc(gfx_diag_zmode_dec_less_enabled() ?
+                                GL_LESS : GL_LEQUAL);
+                    if (gfx_diag_zmode_dec_no_poly_offset_enabled()) {
+                        glDisable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(0, 0);
+                    } else {
+                        float factor;
+                        float units;
+                        gfx_diag_zmode_dec_offset_values(&factor, &units);
+                        glEnable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(factor, units);
+                    }
                     break;
             }
         } else {
@@ -1074,19 +1495,184 @@ static void gfx_opengl_set_scissor(int x, int y, int width, int height) {
 }
 
 static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
-    if (mode == GFX_BLEND_DISABLED) {
+    if (mode == GFX_BLEND_DISABLED ||
+        mode == GFX_BLEND_ALPHA_RDP_MEMORY ||
+        mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY) {
         glDisable(GL_BLEND);
     } else {
         glEnable(GL_BLEND);
         if (mode == GFX_BLEND_MODULATE) {
             glBlendFunc(GL_DST_COLOR, GL_ZERO);
         } else {
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            switch (gfx_diag_alpha_blend_mode()) {
+                case 1:
+                    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                    break;
+                case 2:
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+                    break;
+                case 3:
+                    glBlendFunc(GL_ONE, GL_ZERO);
+                    break;
+                case 4:
+                    glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+                    break;
+                default:
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    break;
+            }
         }
     }
-    /* A2C must not engage on blended draws (coverage*srcAlpha double-applies). */
+    if (mode == GFX_BLEND_ALPHA_COVERAGE && !g_diag_alpha_coverage_logged) {
+        fprintf(stderr,
+                "[fast3d] DIAG alpha coverage blend active; requires Video.MSAA>0 "
+                "for GL_SAMPLE_ALPHA_TO_COVERAGE to affect output\n");
+        fflush(stderr);
+        g_diag_alpha_coverage_logged = 1;
+    }
+    if (mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL &&
+        !g_diag_xlu_coverage_stencil_logged) {
+        fprintf(stderr,
+                "[fast3d] DIAG XLU coverage stencil blend active; "
+                "requires stencil-backed scene target\n");
+        fflush(stderr);
+        g_diag_xlu_coverage_stencil_logged = 1;
+    }
+    if (mode == GFX_BLEND_ALPHA_RDP_MEMORY &&
+        !g_diag_xlu_rdp_memory_blend_logged) {
+        fprintf(stderr,
+                "[fast3d] DIAG XLU RDP memory blend active; "
+                "shader samples framebuffer memory color\n");
+        fflush(stderr);
+        g_diag_xlu_rdp_memory_blend_logged = 1;
+    }
+    if (mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY &&
+        !g_diag_xlu_rdp_cvg_memory_blend_logged) {
+        fprintf(stderr,
+                "[fast3d] DIAG XLU RDP coverage memory blend active; "
+                "shader samples framebuffer memory color and tracks coverage alpha\n");
+        fflush(stderr);
+        g_diag_xlu_rdp_cvg_memory_blend_logged = 1;
+    }
+    /* Default A2C must not engage on blended draws (coverage*srcAlpha double-applies).
+     * GFX_BLEND_ALPHA_COVERAGE is a default-off diagnostic override. */
     g_blend_disabled = (mode == GFX_BLEND_DISABLED);
+    g_blend_alpha_coverage = (mode == GFX_BLEND_ALPHA_COVERAGE);
+    g_blend_alpha_cvg_wrap_stencil = (mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
+    g_blend_alpha_rdp_memory = (mode == GFX_BLEND_ALPHA_RDP_MEMORY);
+    g_blend_alpha_rdp_cvg_memory = (mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY);
     gfx_opengl_update_a2c_state();
+}
+
+static GLuint g_diag_framebuffer_snapshot_tex;
+static int g_diag_framebuffer_snapshot_w;
+static int g_diag_framebuffer_snapshot_h;
+
+static bool gfx_opengl_ensure_framebuffer_snapshot_texture(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    if (g_diag_framebuffer_snapshot_tex == 0) {
+        glGenTextures(1, &g_diag_framebuffer_snapshot_tex);
+    }
+    glBindTexture(GL_TEXTURE_2D, g_diag_framebuffer_snapshot_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    if (g_diag_framebuffer_snapshot_w != width ||
+        g_diag_framebuffer_snapshot_h != height) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        g_diag_framebuffer_snapshot_w = width;
+        g_diag_framebuffer_snapshot_h = height;
+    }
+    return true;
+}
+
+static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
+    GLint saved_active_texture = 0;
+    GLint saved_texture2 = 0;
+    GLint saved_read_fbo = 0;
+    GLint saved_draw_fbo = 0;
+
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &saved_active_texture);
+    glActiveTexture(GL_TEXTURE2);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &saved_texture2);
+    if (!gfx_opengl_ensure_framebuffer_snapshot_texture(viewport[2], viewport[3])) {
+        glBindTexture(GL_TEXTURE_2D, (GLuint)saved_texture2);
+        glActiveTexture((GLenum)saved_active_texture);
+        return false;
+    }
+
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &saved_read_fbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_draw_fbo);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                        viewport[0], viewport[1],
+                        viewport[2], viewport[3]);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
+
+    if (current_shader_program != NULL &&
+        current_shader_program->diag_framebuffer_origin_location >= 0) {
+        glUniform2f(current_shader_program->diag_framebuffer_origin_location,
+                    (float)viewport[0], (float)viewport[1]);
+    }
+    if (current_shader_program != NULL &&
+        current_shader_program->diag_viewport_location >= 0) {
+        glUniform4f(current_shader_program->diag_viewport_location,
+                    (float)viewport[0], (float)viewport[1],
+                    (float)viewport[2], (float)viewport[3]);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, g_diag_framebuffer_snapshot_tex);
+    glActiveTexture((GLenum)saved_active_texture);
+    return true;
+}
+
+static void gfx_opengl_draw_triangles_cvg_wrap_stencil(size_t buf_vbo_num_tris) {
+    GLboolean saved_color_mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    GLboolean saved_depth_mask = GL_FALSE;
+    GLboolean saved_stencil = glIsEnabled(GL_STENCIL_TEST);
+    int increment = gfx_diag_xlu_coverage_stencil_increment();
+    int threshold = 8 - increment;
+
+    glGetBooleanv(GL_COLOR_WRITEMASK, saved_color_mask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &saved_depth_mask);
+
+    glEnable(GL_STENCIL_TEST);
+    for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
+        GLint first = (GLint)(tri * 3);
+
+        glColorMask(saved_color_mask[0], saved_color_mask[1],
+                    saved_color_mask[2], saved_color_mask[3]);
+        glDepthMask(saved_depth_mask);
+        glStencilMask(0x00);
+        glStencilFunc(GL_LEQUAL, threshold, 0x07);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        glDrawArrays(GL_TRIANGLES, first, 3);
+
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glDepthMask(GL_FALSE);
+        glStencilMask(0x07);
+        glStencilFunc(GL_ALWAYS, 0, 0x07);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_INCR_WRAP);
+        for (int i = 0; i < increment; i++) {
+            glDrawArrays(GL_TRIANGLES, first, 3);
+        }
+    }
+
+    glColorMask(saved_color_mask[0], saved_color_mask[1],
+                saved_color_mask[2], saved_color_mask[3]);
+    glDepthMask(saved_depth_mask);
+    glStencilMask(0xff);
+    glStencilFunc(GL_ALWAYS, 0, 0xff);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    if (!saved_stencil) {
+        glDisable(GL_STENCIL_TEST);
+    }
 }
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -1094,7 +1680,19 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
         gfx_opengl_set_uniforms(current_shader_program);
     }
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    if ((g_blend_alpha_rdp_memory && gfx_diag_xlu_rdp_memory_blend_enabled()) ||
+        (g_blend_alpha_rdp_cvg_memory && gfx_diag_xlu_rdp_cvg_memory_blend_enabled())) {
+        GLint viewport[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
+            (void)gfx_opengl_copy_framebuffer_snapshot(viewport);
+            glDrawArrays(GL_TRIANGLES, (GLint)(tri * 3), 3);
+        }
+    } else if (g_blend_alpha_cvg_wrap_stencil && gfx_diag_xlu_coverage_stencil_enabled()) {
+        gfx_opengl_draw_triangles_cvg_wrap_stencil(buf_vbo_num_tris);
+    } else {
+        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    }
 }
 
 static int g_diag_output_vi_filter_checked;
@@ -1128,6 +1726,8 @@ static int g_output_filter_logical_h;
 static int g_diag_output_filter_color_checked;
 static float g_diag_output_filter_color_scale = 1.0f;
 static float g_diag_output_filter_color_bias;
+static int g_diag_output_rgb555_checked; /* GE007_DIAG_OUTPUT_RGB555=1|dither */
+static int g_diag_output_rgb555_mode;
 static GLuint g_scene_fbo;
 static GLuint g_scene_color_tex;
 static GLuint g_scene_depth_rb;
@@ -1136,10 +1736,60 @@ static GLuint g_scene_msaa_color_rb;
 static GLuint g_scene_msaa_depth_rb;
 static int g_scene_w;
 static int g_scene_h;
+static bool g_scene_has_stencil;
 static int g_scene_msaa_w;
 static int g_scene_msaa_h;
 static int g_scene_msaa_samples;
+static bool g_scene_msaa_has_stencil;
 static bool g_scene_target_bound;
+
+static bool gfx_opengl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
+    GLint saved_pack_alignment = 4;
+    GLint saved_read_fbo = 0;
+    GLint saved_draw_fbo = 0;
+    GLint saved_read_buffer = GL_BACK;
+    GLboolean saved_scissor = GL_FALSE;
+    GLuint read_fbo;
+
+    if (rgb_out == NULL || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    glGetIntegerv(GL_PACK_ALIGNMENT, &saved_pack_alignment);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &saved_read_fbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
+    glGetIntegerv(GL_READ_BUFFER, &saved_read_buffer);
+    saved_scissor = glIsEnabled(GL_SCISSOR_TEST);
+
+    read_fbo = (GLuint)saved_draw_fbo;
+    if (g_scene_target_bound && g_scene_target_multisampled) {
+        glDisable(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
+        glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                          0, 0, g_scene_w, g_scene_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        read_fbo = g_scene_fbo;
+    }
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
+    glReadBuffer(read_fbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb_out);
+    GLenum err = glGetError();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)saved_draw_fbo);
+    glReadBuffer((GLenum)saved_read_buffer);
+    glPixelStorei(GL_PACK_ALIGNMENT, saved_pack_alignment);
+    if (saved_scissor) {
+        glEnable(GL_SCISSOR_TEST);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
+
+    return err == GL_NO_ERROR;
+}
 
 /* Largest square offscreen dimension this GL context can allocate.  The scene
  * color attachment is a TEXTURE (GL_MAX_TEXTURE_SIZE) while the depth and MSAA
@@ -1218,12 +1868,16 @@ static int gfx_opengl_effective_msaa_samples(void) {
 static bool gfx_opengl_scene_target_enabled(void) {
     float render_scale = gfx_opengl_effective_render_scale();
     return render_scale > 1.001f ||
-           gfx_opengl_effective_msaa_samples() > 0;
+           gfx_opengl_effective_msaa_samples() > 0 ||
+           gfx_diag_xlu_coverage_stencil_enabled() ||
+           gfx_diag_xlu_rdp_memory_blend_enabled() ||
+           gfx_diag_xlu_rdp_cvg_memory_blend_enabled();
 }
 
 static bool gfx_opengl_ensure_scene_target(int width, int height) {
     GLenum status;
     int samples = gfx_opengl_effective_msaa_samples();
+    bool need_stencil = gfx_diag_xlu_coverage_stencil_enabled();
     GLint saved_active_texture = 0;
     GLint saved_texture0 = 0;
 
@@ -1261,20 +1915,35 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 
-    if (g_scene_w != width || g_scene_h != height) {
+    if (g_scene_w != width || g_scene_h != height ||
+        g_scene_has_stencil != need_stencil) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth_rb);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glRenderbufferStorage(GL_RENDERBUFFER,
+                              need_stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24,
+                              width, height);
         g_scene_w = width;
         g_scene_h = height;
+        g_scene_has_stencil = need_stencil;
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            g_scene_color_tex, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
-                              g_scene_depth_rb);
+    if (need_stencil) {
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                  GL_RENDERBUFFER, g_scene_depth_rb);
+    } else {
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, g_scene_depth_rb);
+    }
     status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         static int warned;
@@ -1304,24 +1973,38 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
 
         if (g_scene_msaa_w != width ||
             g_scene_msaa_h != height ||
-            g_scene_msaa_samples != samples) {
+            g_scene_msaa_samples != samples ||
+            g_scene_msaa_has_stencil != need_stencil) {
             glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_color_rb);
             glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8,
                                              width, height);
             glBindRenderbuffer(GL_RENDERBUFFER, g_scene_msaa_depth_rb);
             glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                             need_stencil ? GL_DEPTH24_STENCIL8 :
                                              GL_DEPTH_COMPONENT24,
                                              width, height);
             g_scene_msaa_w = width;
             g_scene_msaa_h = height;
             g_scene_msaa_samples = samples;
+            g_scene_msaa_has_stencil = need_stencil;
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, g_scene_msaa_fbo);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                   GL_RENDERBUFFER, g_scene_msaa_color_rb);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+        if (need_stencil) {
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                      GL_RENDERBUFFER, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                                      GL_RENDERBUFFER, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                      GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+        } else {
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                      GL_RENDERBUFFER, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                      GL_RENDERBUFFER, g_scene_msaa_depth_rb);
+        }
         status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             static int warned_msaa;
@@ -1613,6 +2296,38 @@ static void gfx_opengl_check_output_filter_color_diag(void) {
     }
 }
 
+static int gfx_opengl_diag_output_rgb555_mode(void) {
+    if (!g_diag_output_rgb555_checked) {
+        const char *env = getenv("GE007_DIAG_OUTPUT_RGB555");
+
+        if (env != NULL && env[0] != '\0') {
+            if (strcmp(env, "1") == 0 ||
+                strcmp(env, "on") == 0 ||
+                strcmp(env, "true") == 0) {
+                g_diag_output_rgb555_mode = 1;
+            } else if (strcmp(env, "dither") == 0) {
+                g_diag_output_rgb555_mode = 2;
+            } else if (strcmp(env, "0") != 0 && strcmp(env, "off") != 0) {
+                fprintf(stderr,
+                        "[fast3d] Ignoring invalid GE007_DIAG_OUTPUT_RGB555=%s "
+                        "(expected 1, on, true, dither, 0, or off)\n",
+                        env);
+                fflush(stderr);
+            }
+        }
+        if (g_diag_output_rgb555_mode) {
+            fprintf(stderr,
+                    "[fast3d] DIAG output RGB555 mode=%s "
+                    "(GE007_DIAG_OUTPUT_RGB555)\n",
+                    g_diag_output_rgb555_mode == 2 ? "dither" : "quantize");
+            fflush(stderr);
+        }
+        g_diag_output_rgb555_checked = 1;
+    }
+
+    return g_diag_output_rgb555_mode;
+}
+
 static float gfx_opengl_output_gamma(void) {
     if (g_pcVideoGamma < 0.5f) {
         return 0.5f;
@@ -1654,6 +2369,7 @@ static bool gfx_opengl_output_color_adjust_active(void) {
     /* Gamma + the diag color knobs are always honored (display/diag, not remaster). */
     if (g_diag_output_filter_color_scale != 1.0f ||
         g_diag_output_filter_color_bias != 0.0f ||
+        gfx_opengl_diag_output_rgb555_mode() != 0 ||
         gamma < 0.999f || gamma > 1.001f) {
         return true;
     }
@@ -1737,6 +2453,7 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform float uLevelCon;\n"
         "uniform vec3 uColorTint;\n"
         "uniform int uTonemap;\n"
+        "uniform int uRgb555;\n"
         "const float kBayer4[16] = float[16](\n"
         "    0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
         "   12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
@@ -1902,6 +2619,15 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "        rgb += vec3(t / 255.0);\n"
         "        rgb = clamp(rgb, 0.0, 1.0);\n"
         "    }\n"
+        "    if (uRgb555 != 0) {\n"
+        "        float threshold = 0.5;\n"
+        "        if (uRgb555 == 2) {\n"
+        "            ivec2 dp = ivec2(gl_FragCoord.xy) & 3;\n"
+        "            threshold += kBayer4[dp.y * 4 + dp.x] - 0.5;\n"
+        "        }\n"
+        "        rgb = floor(clamp(rgb, 0.0, 1.0) * 31.0 + threshold) / 31.0;\n"
+        "        rgb = clamp(rgb, 0.0, 1.0);\n"
+        "    }\n"
         "    outColor = vec4(rgb, color.a);\n"
         "}\n";
 
@@ -2031,6 +2757,8 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
     }
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uTonemap"),
                 (apply_post && g_pcTonemap) ? 1 : 0);
+    glUniform1i(glGetUniformLocation(g_output_filter_program, "uRgb555"),
+                apply_post ? gfx_opengl_diag_output_rgb555_mode() : 0);
     glBindVertexArray(g_output_filter_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -2315,9 +3043,11 @@ static void gfx_opengl_init(void) {
 static void gfx_opengl_on_resize(void) {
     g_scene_w = 0;
     g_scene_h = 0;
+    g_scene_has_stencil = false;
     g_scene_msaa_w = 0;
     g_scene_msaa_h = 0;
     g_scene_msaa_samples = 0;
+    g_scene_msaa_has_stencil = false;
 }
 
 static float g_clear_r = 0, g_clear_g = 0, g_clear_b = 0;
@@ -2356,7 +3086,8 @@ static void gfx_opengl_start_frame(void) {
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE);
     glClearColor(g_clear_r, g_clear_g, g_clear_b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+            (gfx_diag_xlu_coverage_stencil_enabled() ? GL_STENCIL_BUFFER_BIT : 0));
     glEnable(GL_SCISSOR_TEST);
 }
 
@@ -2420,6 +3151,7 @@ struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_set_scissor,
     gfx_opengl_set_blend_mode,
     gfx_opengl_draw_triangles,
+    gfx_opengl_read_framebuffer_rgb,
     gfx_opengl_init,
     gfx_opengl_on_resize,
     gfx_opengl_start_frame,

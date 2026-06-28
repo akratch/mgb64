@@ -52,6 +52,8 @@ static int g_SetupLinkTraceEnabled = -1;
 static int g_SetupLinkTraceBudget = -1;
 static int g_TintedGlassTraceEnabled = -1;
 static int g_TintedGlassTraceBudget = -1;
+static int g_HatTraceEnabled = -1;
+static int g_HatTraceBudget = -1;
 
 static int monitorTraceEnabled(void)
 {
@@ -88,6 +90,47 @@ static void monitorTracePrintf(const char *fmt, ...)
 
     va_start(ap, fmt);
     fprintf(stderr, "[MONITOR_TRACE] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    fflush(stderr);
+}
+
+static int hatTraceEnabled(void)
+{
+    const char *value;
+
+    if (g_HatTraceEnabled >= 0) {
+        return g_HatTraceEnabled;
+    }
+
+    value = getenv("GE007_HAT_TRACE");
+    g_HatTraceEnabled = (value != NULL && value[0] != '\0' && value[0] != '0') ? 1 : 0;
+
+    value = getenv("GE007_HAT_TRACE_BUDGET");
+    g_HatTraceBudget = (value != NULL && value[0] != '\0') ? atoi(value) : 200;
+
+    return g_HatTraceEnabled;
+}
+
+static void hatTracePrintf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!hatTraceEnabled()) {
+        return;
+    }
+
+    if (g_HatTraceBudget == 0) {
+        return;
+    }
+
+    if (g_HatTraceBudget > 0) {
+        g_HatTraceBudget--;
+    }
+
+    va_start(ap, fmt);
+    fprintf(stderr, "[HAT_TRACE] setup ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -262,6 +305,18 @@ void alloc_init_GUARDdata_entries(s32 count);
 void sub_GAME_7F005540(s32 arg0);
 void sub_GAME_7F005624(s32 arg0);
 void alloc_false_GUARDdata_to_exec_global_action(void);
+
+#ifdef NATIVE_PORT
+static s32 cctvGetTargetPad(const CCTVRecord *cctv)
+{
+    return cctv != NULL ? cctv->cctv_pad : -1;
+}
+#else
+static s32 cctvGetTargetPad(const CCTVRecord *cctv)
+{
+    return cctv != NULL ? cctv->pad : -1;
+}
+#endif
 
 s32 load_proptype(PROPDEF_TYPE type)
 {
@@ -827,8 +882,31 @@ void setupHat(s32 arg0, ObjectRecord* hat, s32 cmdindex)
 {
     if (hat->flags & PROPFLAG_ASSIGNEDTOCHR) {
         ChrRecord* chr = chrFindByLiteralId(hat->pad);
+#ifdef NATIVE_PORT
+        hatTracePrintf(
+            "cmd=%d obj=%d pad=%d flags=0x%08x flags2=0x%08x assigned=1 chr=%p chrnum=%d chr_prop=%p chr_model=%p",
+            cmdindex,
+            hat->obj,
+            hat->pad,
+            (unsigned int)hat->flags,
+            (unsigned int)hat->flags2,
+            (void *)chr,
+            chr != NULL ? chr->chrnum : -1,
+            chr != NULL ? (void *)chr->prop : NULL,
+            chr != NULL ? (void *)chr->model : NULL);
+#endif
         if (chr && chr->prop && chr->model) {
             hatAssignToChr((HatRecord *)hat, chr);
+#ifdef NATIVE_PORT
+            hatTracePrintf(
+                "assigned cmd=%d obj=%d target_chr=%d hat_prop=%p hat_model=%p chr_hat=%p",
+                cmdindex,
+                hat->obj,
+                chr->chrnum,
+                (void *)hat->prop,
+                (void *)hat->model,
+                (void *)chr->handle_positiondata_hat);
+#endif
         }
         #ifdef DEBUG
         else
@@ -837,6 +915,15 @@ void setupHat(s32 arg0, ObjectRecord* hat, s32 cmdindex)
         }
         #endif
     } else {
+#ifdef NATIVE_PORT
+        hatTracePrintf(
+            "cmd=%d obj=%d pad=%d flags=0x%08x flags2=0x%08x assigned=0 default_obj=1",
+            cmdindex,
+            hat->obj,
+            hat->pad,
+            (unsigned int)hat->flags,
+            (unsigned int)hat->flags2);
+#endif
         domakedefaultobj(arg0, hat, cmdindex);
     }
 }
@@ -857,10 +944,13 @@ void setupCctv(s32 arg0, CCTVRecord *arg1, s32 cmdindex)
     struct PadRecord *sp50;
     struct coord3d sp44;
     Mtxf *sp3C;
+    s32 targetPad;
 
     domakedefaultobj(arg0, (struct ObjectRecord*)arg1, cmdindex);
 
-    if (arg1->pad >= 0)
+    targetPad = cctvGetTargetPad(arg1);
+
+    if (targetPad >= 0)
     {
 #ifdef NATIVE_PORT
         temp_a2 = (struct coord3d *)modelGetSwitchDataSafe(
@@ -875,13 +965,13 @@ void setupCctv(s32 arg0, CCTVRecord *arg1, s32 cmdindex)
         temp_a2 = (struct coord3d*)arg1->model->obj->Switches[0]->Data;
 #endif
 
-        if (isNotBoundPad(arg1->pad))
+        if (isNotBoundPad(targetPad))
         {
-            sp50 = &g_CurrentSetup.pads[arg1->pad];
+            sp50 = &g_CurrentSetup.pads[targetPad];
         }
         else
         {
-            sp50 = (struct PadRecord *)&g_CurrentSetup.boundpads[getBoundPadNum(arg1->pad)];
+            sp50 = (struct PadRecord *)&g_CurrentSetup.boundpads[getBoundPadNum(targetPad)];
         }
 
         sp44.f[0] = temp_a2->f[0];
@@ -920,7 +1010,7 @@ void setupCctv(s32 arg0, CCTVRecord *arg1, s32 cmdindex)
             arg1->obj,
             (void *)arg1->model,
             (arg1->model && arg1->model->obj && arg1->model->obj->debugName) ? arg1->model->obj->debugName : "<unnamed>",
-            arg1->pad,
+            targetPad,
             (void *)modelGetSwitchNodeSafe(arg1->model != NULL ? arg1->model->obj : NULL, 0),
             sp44.f[0], sp44.f[1], sp44.f[2]);
 #endif
@@ -1944,6 +2034,40 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
                 tg->portalnum = be_s32(src + 0x8C);
                 raw_unk90 = be_s32(src + 0x90);
                 memcpy(&tg->unk90, &raw_unk90, sizeof(raw_unk90));
+                break;
+            }
+
+            /* --- CCTVRecord (N64=236, PC=sizeof(CCTVRecord)) ---
+             * Native ObjectRecord is wider, and the authored target pad at N64
+             * 0x80 is not the ObjectRecord home pad. Convert each setup field
+             * into the native offsets instead of using the generic extra-copy. */
+            case PROPDEF_CCTV: {
+                CCTVRecord *c = (CCTVRecord *)dst;
+                s32 raw_unkcc;
+                s32 raw_unkd0;
+                s32 raw_unkdc;
+                s32 raw_unke8;
+
+                memset(c, 0, sizeof(CCTVRecord));
+                propdef_convert_objectrecord(src, (ObjectRecord *)c);
+                c->cctv_pad = be_s32(src + 0x80);
+                for (s32 i = 0; i < 16; i++) {
+                    ((f32 *)&c->unk84)[i] = be_float(src + 0x84 + i * 4);
+                }
+                c->unkC4 = be_float(src + 0xC4);
+                c->unkC8 = be_float(src + 0xC8);
+                raw_unkcc = be_s32(src + 0xCC);
+                raw_unkd0 = be_s32(src + 0xD0);
+                memcpy(&c->unkCC, &raw_unkcc, sizeof(raw_unkcc));
+                memcpy(&c->unkD0, &raw_unkd0, sizeof(raw_unkd0));
+                c->unkD4 = be_s32(src + 0xD4);
+                c->unkD8 = be_float(src + 0xD8);
+                raw_unkdc = be_s32(src + 0xDC);
+                memcpy(&c->unkDC, &raw_unkdc, sizeof(raw_unkdc));
+                c->timer = be_s32(src + 0xE0);
+                c->convert_to_f32 = be_s32(src + 0xE4);
+                raw_unke8 = be_s32(src + 0xE8);
+                memcpy(&c->unkE8, &raw_unke8, sizeof(raw_unke8));
                 break;
             }
 
@@ -3055,6 +3179,7 @@ void proplvreset2(s32 stageId)
             collectcount += load_proptype(PROPDEF_MAGAZINE);
             collectcount += load_proptype(PROPDEF_COLLECTABLE);
             collectcount += load_proptype(PROPDEF_KEY);
+            collectcount += load_proptype(PROPDEF_HAT);
             collectcount += load_proptype(PROPDEF_CCTV);
             collectcount += load_proptype(PROPDEF_AUTOGUN);
             collectcount += load_proptype(PROPDEF_RACK);

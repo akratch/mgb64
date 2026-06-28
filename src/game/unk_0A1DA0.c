@@ -25,7 +25,9 @@ extern Mtx *currentPlayerGetMatrix10C8(void);
  * matrix pointer to 32 bits, so the per-piece matrix_4x4_f32_to_s32 writes 64
  * bytes to a garbage address -> the glass-shatter SEGV. */
 extern Mtx *dynAllocateMatrix(void);
+extern void *dynAllocate(s32 size);
 extern f32 get_room_data_float1(void); /* room compression scale (returns f32; prototype avoids implicit-int) */
+extern f32 bgGetLevelVisibilityScale(void);
 
 #ifndef VERSION_EU
 #define SCALAR_1_7F0A2160 1.5f
@@ -1117,7 +1119,7 @@ glabel update_broken_windows
 
 
 #ifdef NATIVE_PORT
-static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=1 enables (default OFF pending visual sign-off) */
+static int s_ge007_glass_shards = -1; /* GE007_GLASS_SHARDS=0 disables the default shard pass for A/B. */
 static int ge007_glass_shards_enabled(void)
 {
     if (s_ge007_glass_shards < 0) {
@@ -1140,6 +1142,9 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     Mtx *mtx;
     Mtxf mtxf;
     s_shattered_window_piece *piece;
+#ifdef NATIVE_PORT
+    s32 use_float_mtx;
+#endif
 
 #ifdef NATIVE_PORT
     if (!ge007_glass_shards_enabled()) {
@@ -1148,6 +1153,14 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
     /* Defensive: the per-piece loop dereferences both; bail rather than SEGV. */
     if (g_CurrentPlayer == NULL || ptr_shattered_window_pieces == NULL) {
         return gdl;
+    }
+    {
+        static int s_fixed_mtx = -1;
+        if (s_fixed_mtx < 0) {
+            const char *e = getenv("GE007_GLASS_SHARD_FIXED_MTX");
+            s_fixed_mtx = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+        }
+        use_float_mtx = !s_fixed_mtx;
     }
 #endif
 
@@ -1243,8 +1256,6 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
                 }
             }
 #endif
-            mtx = dynAllocateMatrix();
-
             matrix_4x4_set_position_and_rotation_around_xyz(
                 &piece->x, (coord3d *)&piece->field_0x10, &mtxf);
 
@@ -1253,28 +1264,76 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
             mtxf.m[3][2] -= g_CurrentPlayer->current_model_pos.z;
 
 #ifdef NATIVE_PORT
-            /* Compress the shard modelview by the room scale (get_room_data_float1,
-             * the same factor the explosion and bullet-impact effects multiply
-             * their positions by). Without this, shards render at full uncompressed
-             * size on scaled levels (Dam roomScale~0.234, Surface, Archives) -> a
-             * full-screen blur. GE007_GLASS_SHARD_NO_SCALE=1 disables for A/B. */
-            {
-                static int s_noscale = -1;
-                if (s_noscale < 0) {
-                    const char *e = getenv("GE007_GLASS_SHARD_NO_SCALE");
-                    s_noscale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
-                }
-                if (!s_noscale) {
-                    matrix_scalar_multiply_3(get_room_data_float1(), &mtxf.m[0][0]);
-                }
-            }
+	            /* Native field_10E0 carries the large-room visibility scale. The
+	             * falling-shard pass is an isolated projection*view effect path, so
+	             * scale the full shard model by inverse visibility scale to cancel
+	             * that native-only view compression without changing global room
+	             * rendering. The older sqrt-basis path remains an A/B control. */
+		            {
+		                static int s_compress = -1;
+		                static int s_basis_scale = -1;
+		                static int s_no_basis_scale = -1;
+		                static int s_sqrt_basis = -1;
+		                static int s_inv_vis_scale = -1;
+		                if (s_compress < 0) {
+		                    const char *e = getenv("GE007_GLASS_SHARD_COMPRESS");
+		                    s_compress = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		                }
+		                if (s_basis_scale < 0) {
+		                    const char *e = getenv("GE007_GLASS_SHARD_BASIS_SCALE");
+		                    s_basis_scale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		                }
+		                if (s_no_basis_scale < 0) {
+		                    const char *e = getenv("GE007_GLASS_SHARD_NO_BASIS_SCALE");
+		                    s_no_basis_scale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		                }
+		                if (s_sqrt_basis < 0) {
+		                    const char *e = getenv("GE007_GLASS_SHARD_SQRT_BASIS");
+		                    s_sqrt_basis = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		                }
+		                if (s_inv_vis_scale < 0) {
+		                    const char *e = getenv("GE007_GLASS_SHARD_INV_VIS_SCALE");
+		                    s_inv_vis_scale = (e != NULL && e[0] != '\0' && e[0] == '0') ? 0 : 1;
+		                }
+		                if (s_compress) {
+		                    matrix_scalar_multiply_3(get_room_data_float1(), &mtxf.m[0][0]);
+		                } else if (s_basis_scale) {
+		                    matrix_scalar_multiply_2(get_room_data_float1(), &mtxf.m[0][0]);
+		                } else if (s_no_basis_scale) {
+		                    /* Explicit negative control: old unscaled local basis with
+		                     * the native scaled field_10E0 projection. */
+		                } else if (s_sqrt_basis || !s_inv_vis_scale) {
+		                    f32 room_scale = get_room_data_float1();
+		                    if (room_scale > 0.0f) {
+		                        matrix_scalar_multiply_2(sqrtf(room_scale), &mtxf.m[0][0]);
+		                    }
+		                } else {
+		                    f32 vis_scale = bgGetLevelVisibilityScale();
+		                    if (vis_scale > 0.0f) {
+		                        matrix_scalar_multiply_3(1.0f / vis_scale, &mtxf.m[0][0]);
+		                    }
+		                }
+		            }
 #endif
 
-            matrix_4x4_f32_to_s32(&mtxf, (Mtxf *)mtx);
+#ifdef NATIVE_PORT
+            if (use_float_mtx) {
+                Mtxf *mtxf_dyn = (Mtxf *)dynAllocate(sizeof(Mtxf));
+                memcpy(mtxf_dyn, &mtxf, sizeof(Mtxf));
 
-            gdl->words.w0 = 0x01020040;
-            gdl->words.w1 = osVirtualToPhysical(mtx);
-            gdl++;
+                gdl->words.w0 = 0x01020040 | (G_MTX_FLOAT_PORT << 16);
+                gdl->words.w1 = osVirtualToPhysical(mtxf_dyn);
+                gdl++;
+            } else
+#endif
+            {
+                mtx = dynAllocateMatrix();
+                matrix_4x4_f32_to_s32(&mtxf, (Mtxf *)mtx);
+
+                gdl->words.w0 = 0x01020040;
+                gdl->words.w1 = osVirtualToPhysical(mtx);
+                gdl++;
+            }
 
             gdl->words.w0 = 0x04200030;
             gdl->words.w1 = osVirtualToPhysical((void *)((u8 *)piece + 0x38));
