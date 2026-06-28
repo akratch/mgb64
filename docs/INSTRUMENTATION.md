@@ -386,6 +386,42 @@ Rows are emitted as `[TRI-PIXEL]` JSON. Leave
 when auditing edge coverage or suspected non-triangle/rect handoffs. The
 `GE007_TRACE_TRI_PIXEL` value accepts `1`, `*`, or an effective-combiner list,
 and `GE007_TRACE_TRI_PIXEL_DRAWCLASS=name` limits rows to matching draw classes.
+Triangle rows now include a `rect` object. For ordinary world triangles this is
+`op:"none"`; for `FILLRECT`, `TEXRECT`, and `TEXRECTFLIP` converted through the
+triangle path it records the raw RDP rectangle, expanded draw rectangle, tile,
+ST deltas, derived UV extent, cycle type, fill/primitive colors, and which of
+the two generated triangles is being probed. Use
+`GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` to suppress ordinary triangles and isolate
+screen-space rectangle ownership.
+
+Deferred secondary-room XLU batches are drawn after their source triangles have
+been queued, so their final pixel ownership is not visible as a normal
+`[TRI-PIXEL]` post-draw row. Use the default-off deferred probe when a
+triangle trace shows a pre/post gap that may be caused by sorted room XLU:
+
+```sh
+OUT=/tmp/mgb64_native_room_xlu_defer_pixel_probe
+env GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1 \
+  GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME=122 \
+  GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET=256 \
+  GE007_TRACE_ROOM_XLU_DEFER_PIXEL_X=94 \
+  GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y=95 \
+  GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY=0 \
+  tools/movement_oracle_capture.sh \
+    --route dam_regular_glass_shatter_pad10092_impact_visual_probe \
+    --native-only --no-compare \
+    --out-dir "$OUT" \
+    --rom baserom.u.z64 \
+    --binary build/ge007 \
+    --no-build
+```
+
+Rows are emitted as `[ROOM-XLU-DEFER-PIXEL]` JSON and include batch index,
+room, command address, draw class, combiner, raw/effective othermodes, saved
+blend/depth state, batch bbox, pre/post RGB, delta, and changed flag. The Dam
+pad10092 `[94,95]` proof run on 2026-06-28 produced 68 rect-only rows with zero
+target changes and zero deferred-room-XLU rows, ruling out both classes for the
+remaining local `[8,8,8] -> [10,10,10]` triangle-probe gap.
 
 Summarize a capture with:
 

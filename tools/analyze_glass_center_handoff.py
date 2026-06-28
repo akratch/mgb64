@@ -457,6 +457,7 @@ def compact_native_pixel_row(row: dict[str, Any] | None) -> dict[str, Any] | Non
         "mode",
         "blend",
         "api_blend",
+        "rect",
         "texnum",
         "wh",
         "screen_bbox",

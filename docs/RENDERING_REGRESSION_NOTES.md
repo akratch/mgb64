@@ -177,6 +177,18 @@ The visible symptoms were level-specific but shared renderer causes:
     `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as the focused negative control; on
     the Dam target it restores the late sky overwrite.
 
+16. **Final-owner gaps need draw-boundary probes before behavior changes.**
+    A `[TRI-PIXEL]` pre/post discontinuity does not automatically mean an
+    unhandled RDP opcode exists. Screen-space rectangles are converted through
+    `gfx_sp_tri1()`, and secondary-room XLU can be queued for later sorted
+    emission. The native pixel probes now carry a `rect` object for
+    `FILLRECT`/`TEXRECT` triangles, `GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` isolates
+    those rows, and `GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1` brackets sorted
+    deferred-room batches. Dam pad10092 logical `[94,95]` ruled out both
+    classes for the remaining `[8,8,8] -> [10,10,10]` local gap: 68 rect rows
+    changed zero pixels and the route emitted no deferred-room-XLU pixel rows.
+    Treat that as a trace-routing result, not a blend/depth fix.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -235,6 +247,11 @@ Use these habits before accepting renderer changes:
 - Treat `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as a negative control. It should
   only be used to prove native direct sky final ownership; default sky should
   not overwrite pixels already owned by room depth.
+- When a pixel-owner trace jumps between logged triangles, first rerun with
+  `GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` and
+  `GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1`. Do not patch draw order, alpha, or fog
+  policy until rectangles and deferred secondary-room XLU have been proved in
+  or out.
 - Do not use `g_freezeInput` as a blanket native-look gate. It should remove
   live input from deterministic captures while preserving authored
   `GE007_AUTO_LOOK_*` probes. Use `tools/scripted_look_smoke.sh` before

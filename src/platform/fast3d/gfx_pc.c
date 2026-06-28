@@ -2361,6 +2361,74 @@ struct GfxTriNdcMetrics {
     bool has_mixed_w;
 };
 
+enum GfxRectDiagKind {
+    GFX_RECT_DIAG_NONE = 0,
+    GFX_RECT_DIAG_FILLRECT,
+    GFX_RECT_DIAG_TEXRECT,
+    GFX_RECT_DIAG_TEXRECT_FLIP,
+};
+
+struct GfxRectDiagState {
+    bool active;
+    enum GfxRectDiagKind kind;
+    int tri_index;
+    int32_t raw_ulx, raw_uly, raw_lrx, raw_lry;
+    int32_t draw_ulx, draw_uly, draw_lrx, draw_lry;
+    uint8_t tile;
+    bool flip;
+    int16_t uls, ult, dsdx, dtdy;
+    float uv_uls, uv_ult, uv_lrs, uv_lrt;
+    uint32_t cycle_type;
+    bool color_image_is_z;
+    struct RGBA fill_color;
+    struct RGBA prim_color;
+};
+
+static struct GfxRectDiagState g_rect_diag_state;
+
+static const char *gfx_rect_diag_kind_name(enum GfxRectDiagKind kind)
+{
+    switch (kind) {
+        case GFX_RECT_DIAG_FILLRECT: return "fillrect";
+        case GFX_RECT_DIAG_TEXRECT: return "texrect";
+        case GFX_RECT_DIAG_TEXRECT_FLIP: return "texrectflip";
+        case GFX_RECT_DIAG_NONE:
+        default: return "none";
+    }
+}
+
+#define GFX_RECT_DIAG_JSON_FMT \
+    "\"rect\":{\"op\":\"%s\",\"active\":%d,\"tri\":%d," \
+    "\"raw\":[%d,%d,%d,%d],\"draw\":[%d,%d,%d,%d]," \
+    "\"tile\":%u,\"flip\":%d,\"st\":[%d,%d],\"deltas\":[%d,%d]," \
+    "\"uv\":[%.3f,%.3f,%.3f,%.3f],\"cycle\":%u," \
+    "\"fill\":[%u,%u,%u,%u],\"prim\":[%u,%u,%u,%u],\"cimg_z\":%d},"
+
+#define GFX_RECT_DIAG_JSON_ARGS(rect_ptr) \
+    gfx_rect_diag_kind_name((rect_ptr)->kind), \
+    (rect_ptr)->active ? 1 : 0, \
+    (rect_ptr)->tri_index, \
+    (rect_ptr)->raw_ulx, (rect_ptr)->raw_uly, \
+    (rect_ptr)->raw_lrx, (rect_ptr)->raw_lry, \
+    (rect_ptr)->draw_ulx, (rect_ptr)->draw_uly, \
+    (rect_ptr)->draw_lrx, (rect_ptr)->draw_lry, \
+    (unsigned)(rect_ptr)->tile, \
+    (rect_ptr)->flip ? 1 : 0, \
+    (rect_ptr)->uls, (rect_ptr)->ult, \
+    (rect_ptr)->dsdx, (rect_ptr)->dtdy, \
+    (rect_ptr)->uv_uls, (rect_ptr)->uv_ult, \
+    (rect_ptr)->uv_lrs, (rect_ptr)->uv_lrt, \
+    (unsigned)((rect_ptr)->cycle_type >> G_MDSFT_CYCLETYPE), \
+    (unsigned)(rect_ptr)->fill_color.r, \
+    (unsigned)(rect_ptr)->fill_color.g, \
+    (unsigned)(rect_ptr)->fill_color.b, \
+    (unsigned)(rect_ptr)->fill_color.a, \
+    (unsigned)(rect_ptr)->prim_color.r, \
+    (unsigned)(rect_ptr)->prim_color.g, \
+    (unsigned)(rect_ptr)->prim_color.b, \
+    (unsigned)(rect_ptr)->prim_color.a, \
+    (rect_ptr)->color_image_is_z ? 1 : 0
+
 static void gfx_drawclass_bbox_reset(void) {
     for (int i = 0; i <= DRAWCLASS_HUD; i++) {
         g_drawclass_bboxes[i].valid = false;
@@ -4086,7 +4154,13 @@ struct GfxRoomXluDeferredBatch {
     size_t stride;
     float key;
     uint32_t serial;
+    uintptr_t cmd_addr;
     int room;
+    enum DrawClass draw_class;
+    uint64_t combine_mode;
+    uint32_t raw_mode;
+    uint32_t effective_mode;
+    uint32_t other_mode_h;
     struct RenderingState state;
 };
 
@@ -4273,7 +4347,15 @@ static int g_diag_trace_tri_pixel_target_x = INT32_MIN; /* GE007_TRACE_TRI_PIXEL
 static int g_diag_trace_tri_pixel_target_y = INT32_MIN; /* GE007_TRACE_TRI_PIXEL_Y=N */
 static int g_diag_trace_tri_pixel_inside_only = -1; /* GE007_TRACE_TRI_PIXEL_INSIDE_ONLY=1 */
 static int g_diag_trace_tri_pixel_drawclass = -1; /* GE007_TRACE_TRI_PIXEL_DRAWCLASS=name */
+static int g_diag_trace_tri_pixel_rect_only = -1; /* GE007_TRACE_TRI_PIXEL_RECT_ONLY=1 */
 static int g_diag_trace_tri_pixel_serial = 0;
+static int g_diag_trace_room_xlu_defer_pixel = -1; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1 */
+static int g_diag_trace_room_xlu_defer_pixel_after_frame = INT32_MIN; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME=N */
+static int g_diag_trace_room_xlu_defer_pixel_budget = INT32_MIN; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET=N */
+static int g_diag_trace_room_xlu_defer_pixel_target_x = INT32_MIN; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_X=N */
+static int g_diag_trace_room_xlu_defer_pixel_target_y = INT32_MIN; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y=N */
+static int g_diag_trace_room_xlu_defer_pixel_inside_only = -1; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY=0 */
+static int g_diag_trace_room_xlu_defer_pixel_serial = 0;
 static int g_diag_debug_cmd_range_enabled = -1; /* GE007_DEBUG_CMD_RANGE=min:max */
 static uintptr_t g_diag_debug_cmd_min = 0;
 static uintptr_t g_diag_debug_cmd_max = 0;
@@ -5396,6 +5478,7 @@ struct GfxSettexPixelProbe {
     enum DrawClass draw_class;
     int dl_room;
     const char *dl_which;
+    struct GfxRectDiagState rect;
     enum GfxBlendMode blend_mode;
     enum GfxBlendMode api_blend_mode;
     bool depth_test;
@@ -5458,6 +5541,7 @@ struct GfxTriPixelProbe {
     enum DrawClass draw_class;
     int dl_room;
     const char *dl_which;
+    struct GfxRectDiagState rect;
     enum GfxBlendMode blend_mode;
     enum GfxBlendMode api_blend_mode;
     bool depth_test;
@@ -5474,6 +5558,40 @@ struct GfxTriPixelProbe {
     int texnum;
     int tex_w;
     int tex_h;
+    uint8_t pre_rgb[3];
+};
+
+struct GfxRoomXluDeferPixelProbe {
+    bool active;
+    bool inside_bbox;
+    int serial;
+    int frame;
+    size_t batch_index;
+    size_t batch_count;
+    int target_x;
+    int target_y;
+    int fb_x;
+    int fb_y;
+    int gl_x;
+    int gl_y;
+    int room;
+    uint32_t serial_batch;
+    uintptr_t cmd_addr;
+    enum DrawClass draw_class;
+    uint64_t combine_mode;
+    uint32_t raw_mode;
+    uint32_t effective_mode;
+    uint32_t other_mode_h;
+    enum GfxBlendMode blend_mode;
+    uint8_t depth_mode;
+    size_t tris;
+    size_t len;
+    size_t stride;
+    float key;
+    float screen_min_x;
+    float screen_min_y;
+    float screen_max_x;
+    float screen_max_y;
     uint8_t pre_rgb[3];
 };
 
@@ -6070,15 +6188,17 @@ static bool gfx_trace_tri_pixel_enabled(uint64_t effective_cc_id)
             const char *after = getenv("GE007_TRACE_TRI_PIXEL_AFTER_FRAME");
             const char *budget = getenv("GE007_TRACE_TRI_PIXEL_BUDGET");
             const char *drawclass = getenv("GE007_TRACE_TRI_PIXEL_DRAWCLASS");
+            const char *rect_only = getenv("GE007_TRACE_TRI_PIXEL_RECT_ONLY");
             const char *x = getenv("GE007_TRACE_TRI_PIXEL_X");
             const char *y = getenv("GE007_TRACE_TRI_PIXEL_Y");
             fprintf(stderr,
                     "[fast3d] TRACE TRI PIXEL spec=%s after=%s budget=%s "
-                    "drawclass=%s target=%s,%s (GE007_TRACE_TRI_PIXEL)\n",
+                    "drawclass=%s rect_only=%s target=%s,%s (GE007_TRACE_TRI_PIXEL)\n",
                     env,
                     (after != NULL && after[0] != '\0') ? after : "0",
                     (budget != NULL && budget[0] != '\0') ? budget : "64",
                     (drawclass != NULL && drawclass[0] != '\0') ? drawclass : "*",
+                    (rect_only != NULL && rect_only[0] != '\0') ? rect_only : "0",
                     (x != NULL && x[0] != '\0') ? x : "?",
                     (y != NULL && y[0] != '\0') ? y : "?");
             fflush(stderr);
@@ -6105,12 +6225,21 @@ static bool gfx_trace_tri_pixel_enabled(uint64_t effective_cc_id)
         g_diag_trace_tri_pixel_inside_only =
             (env == NULL || env[0] == '\0' || strcmp(env, "0") != 0) ? 1 : 0;
     }
+    if (g_diag_trace_tri_pixel_rect_only < 0) {
+        env = getenv("GE007_TRACE_TRI_PIXEL_RECT_ONLY");
+        g_diag_trace_tri_pixel_rect_only =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
 
     if (g_diag_trace_tri_pixel <= 0 ||
         g_diag_trace_tri_pixel_budget == 0 ||
         g_frame_count_diag < g_diag_trace_tri_pixel_after_frame ||
         g_diag_trace_tri_pixel_target_x < 0 ||
         g_diag_trace_tri_pixel_target_y < 0) {
+        return false;
+    }
+    if (g_diag_trace_tri_pixel_rect_only > 0 &&
+        !g_rect_diag_state.active) {
         return false;
     }
 
@@ -6210,6 +6339,7 @@ static void gfx_tri_pixel_probe_log_failure(
             "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
             "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            GFX_RECT_DIAG_JSON_FMT
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
             "\n",
             status,
@@ -6260,6 +6390,7 @@ static void gfx_tri_pixel_probe_log_failure(
             probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
+            GFX_RECT_DIAG_JSON_ARGS(&probe->rect),
             probe->screen_min_x,
             probe->screen_min_y,
             probe->screen_max_x,
@@ -6334,6 +6465,7 @@ static bool gfx_tri_pixel_probe_begin(struct GfxTriPixelProbe *probe,
     probe->draw_class = draw_class;
     probe->dl_room = dl_room;
     probe->dl_which = dl_which;
+    probe->rect = g_rect_diag_state;
     probe->settex = settex_active;
     probe->texnum = settex_active ? settex_texturenum : -1;
     probe->tex_w = settex_active ? (int)(settex_tex_w + 0.5f) : 0;
@@ -6426,6 +6558,7 @@ static void gfx_tri_pixel_probe_finish(struct GfxTriPixelProbe *probe)
             "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
             "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            GFX_RECT_DIAG_JSON_FMT
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
             "\"pre\":[%u,%u,%u],\"post\":[%u,%u,%u],"
             "\"delta\":[%d,%d,%d],\"changed\":%d}"
@@ -6477,6 +6610,364 @@ static void gfx_tri_pixel_probe_finish(struct GfxTriPixelProbe *probe)
             probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
+            GFX_RECT_DIAG_JSON_ARGS(&probe->rect),
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y,
+            probe->pre_rgb[0],
+            probe->pre_rgb[1],
+            probe->pre_rgb[2],
+            post_rgb[0],
+            post_rgb[1],
+            post_rgb[2],
+            delta[0],
+            delta[1],
+            delta[2],
+            changed ? 1 : 0);
+    fflush(stderr);
+    probe->active = false;
+}
+
+static bool gfx_trace_room_xlu_defer_pixel_enabled(void)
+{
+    const char *env;
+
+    if (g_diag_trace_room_xlu_defer_pixel < 0) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL");
+        g_diag_trace_room_xlu_defer_pixel =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_trace_room_xlu_defer_pixel) {
+            const char *after = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME");
+            const char *budget = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET");
+            const char *inside = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY");
+            const char *x = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_X");
+            const char *y = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y");
+            fprintf(stderr,
+                    "[fast3d] TRACE ROOM XLU DEFER PIXEL after=%s budget=%s "
+                    "inside_only=%s target=%s,%s (GE007_TRACE_ROOM_XLU_DEFER_PIXEL)\n",
+                    (after != NULL && after[0] != '\0') ? after : "0",
+                    (budget != NULL && budget[0] != '\0') ? budget : "64",
+                    (inside != NULL && inside[0] != '\0') ? inside : "0",
+                    (x != NULL && x[0] != '\0') ? x : "?",
+                    (y != NULL && y[0] != '\0') ? y : "?");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_after_frame == INT32_MIN) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME");
+        g_diag_trace_room_xlu_defer_pixel_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET");
+        g_diag_trace_room_xlu_defer_pixel_budget = env ? atoi(env) : 64;
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_target_x == INT32_MIN) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_X");
+        g_diag_trace_room_xlu_defer_pixel_target_x = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_target_y == INT32_MIN) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y");
+        g_diag_trace_room_xlu_defer_pixel_target_y = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_inside_only < 0) {
+        env = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY");
+        g_diag_trace_room_xlu_defer_pixel_inside_only =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+
+    return g_diag_trace_room_xlu_defer_pixel > 0 &&
+           g_diag_trace_room_xlu_defer_pixel_budget != 0 &&
+           g_frame_count_diag >= g_diag_trace_room_xlu_defer_pixel_after_frame &&
+           g_diag_trace_room_xlu_defer_pixel_target_x >= 0 &&
+           g_diag_trace_room_xlu_defer_pixel_target_y >= 0;
+}
+
+static bool gfx_room_xlu_deferred_batch_screen_bbox(
+    const struct GfxRoomXluDeferredBatch *batch,
+    float screen_bbox[4])
+{
+    bool valid = false;
+    float min_x = 0.0f;
+    float min_y = 0.0f;
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    float logical_w;
+    float logical_h;
+
+    if (batch == NULL || batch->vbo == NULL || batch->stride < 4 ||
+        batch->tris == 0 || gfx_current_dimensions.width == 0 ||
+        gfx_current_dimensions.height == 0) {
+        return false;
+    }
+
+    for (size_t tri = 0; tri < batch->tris; tri++) {
+        for (size_t vi = 0; vi < 3; vi++) {
+            size_t base = tri * batch->stride * 3 + vi * batch->stride;
+            float x = batch->vbo[base + 0];
+            float y = batch->vbo[base + 1];
+            float w = batch->vbo[base + 3];
+            float ndc_x;
+            float ndc_y;
+
+            if (!portFloatIsFinite(x) ||
+                !portFloatIsFinite(y) ||
+                !portFloatIsFinite(w) ||
+                fabsf(w) < 0.000001f) {
+                continue;
+            }
+
+            ndc_x = x / w;
+            ndc_y = y / w;
+            if (!portFloatIsFinite(ndc_x) || !portFloatIsFinite(ndc_y)) {
+                continue;
+            }
+            if (!valid) {
+                min_x = max_x = ndc_x;
+                min_y = max_y = ndc_y;
+                valid = true;
+            } else {
+                if (ndc_x < min_x) min_x = ndc_x;
+                if (ndc_x > max_x) max_x = ndc_x;
+                if (ndc_y < min_y) min_y = ndc_y;
+                if (ndc_y > max_y) max_y = ndc_y;
+            }
+        }
+    }
+
+    if (!valid) {
+        return false;
+    }
+
+    logical_w = gfx_logical_screen_width();
+    logical_h = gfx_logical_screen_height();
+    screen_bbox[0] = (min_x * 0.5f + 0.5f) * logical_w;
+    screen_bbox[2] = (max_x * 0.5f + 0.5f) * logical_w;
+    screen_bbox[1] = (0.5f - max_y * 0.5f) * logical_h;
+    screen_bbox[3] = (0.5f - min_y * 0.5f) * logical_h;
+    return true;
+}
+
+static void gfx_room_xlu_defer_pixel_probe_log_failure(
+    const char *status,
+    const struct GfxRoomXluDeferPixelProbe *probe)
+{
+    uint16_t zmode = (uint16_t)(probe->depth_mode & 0x30) << 6;
+
+    fprintf(stderr,
+            "[ROOM-XLU-DEFER-PIXEL] {"
+            "\"status\":\"%s\",\"frame\":%d,\"serial\":%d,"
+            "\"batch\":%zu,\"batches\":%zu,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside_bbox\":%d,\"drawclass\":\"%s\",\"room\":%d,"
+            "\"cmd\":\"%p\",\"batch_serial\":%u,\"tris\":%zu,\"len\":%zu,\"stride\":%zu,"
+            "\"key\":%.6f,\"cc\":\"0x%016llx\","
+            "\"raw\":\"0x%08X\",\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"blend\":\"%s\",\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
+            "\n",
+            status,
+            probe->frame,
+            probe->serial,
+            probe->batch_index,
+            probe->batch_count,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside_bbox ? 1 : 0,
+            gfx_draw_class_name(probe->draw_class),
+            probe->room,
+            (void *)probe->cmd_addr,
+            probe->serial_batch,
+            probe->tris,
+            probe->len,
+            probe->stride,
+            probe->key,
+            (unsigned long long)probe->combine_mode,
+            probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            (probe->depth_mode & 1) != 0 ? 1 : 0,
+            (probe->depth_mode & 2) != 0 ? 1 : 0,
+            (probe->depth_mode & 4) != 0 ? 1 : 0,
+            (probe->depth_mode & 8) != 0 ? 1 : 0,
+            gfx_zmode_diag_name(zmode),
+            zmode,
+            gfx_blend_mode_diag_name(probe->blend_mode),
+            probe->screen_min_x,
+            probe->screen_min_y,
+            probe->screen_max_x,
+            probe->screen_max_y);
+    fflush(stderr);
+}
+
+static bool gfx_room_xlu_defer_pixel_probe_begin(
+    struct GfxRoomXluDeferPixelProbe *probe,
+    const struct GfxRoomXluDeferredBatch *batch,
+    size_t batch_index,
+    size_t batch_count)
+{
+    float bbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ratio_x;
+    float ratio_y;
+
+    memset(probe, 0, sizeof(*probe));
+    if (!gfx_trace_room_xlu_defer_pixel_enabled()) {
+        return false;
+    }
+    if (batch == NULL ||
+        gfx_rapi == NULL ||
+        gfx_rapi->read_framebuffer_rgb == NULL ||
+        gfx_current_dimensions.width == 0 ||
+        gfx_current_dimensions.height == 0) {
+        return false;
+    }
+
+    probe->serial = g_diag_trace_room_xlu_defer_pixel_serial++;
+    probe->frame = g_frame_count_diag;
+    probe->batch_index = batch_index;
+    probe->batch_count = batch_count;
+    probe->target_x = g_diag_trace_room_xlu_defer_pixel_target_x;
+    probe->target_y = g_diag_trace_room_xlu_defer_pixel_target_y;
+    probe->room = batch->room;
+    probe->serial_batch = batch->serial;
+    probe->cmd_addr = batch->cmd_addr;
+    probe->draw_class = batch->draw_class;
+    probe->combine_mode = batch->combine_mode;
+    probe->raw_mode = batch->raw_mode;
+    probe->effective_mode = batch->effective_mode;
+    probe->other_mode_h = batch->other_mode_h;
+    probe->blend_mode = batch->state.blend_mode;
+    probe->depth_mode = batch->state.depth_mode;
+    probe->tris = batch->tris;
+    probe->len = batch->len;
+    probe->stride = batch->stride;
+    probe->key = batch->key;
+
+    if (gfx_room_xlu_deferred_batch_screen_bbox(batch, bbox)) {
+        float tx = (float)probe->target_x + 0.5f;
+        float ty = (float)probe->target_y + 0.5f;
+        probe->screen_min_x = bbox[0];
+        probe->screen_min_y = bbox[1];
+        probe->screen_max_x = bbox[2];
+        probe->screen_max_y = bbox[3];
+        probe->inside_bbox =
+            tx >= bbox[0] && tx <= bbox[2] &&
+            ty >= bbox[1] && ty <= bbox[3];
+    }
+    if (g_diag_trace_room_xlu_defer_pixel_inside_only > 0 &&
+        !probe->inside_bbox) {
+        return false;
+    }
+
+    ratio_x = gfx_ratio_x();
+    ratio_y = gfx_ratio_y();
+    probe->fb_x = (int)floorf(((float)probe->target_x + 0.5f) * ratio_x);
+    probe->fb_y = (int)floorf(((float)probe->target_y + 0.5f) * ratio_y);
+    if (probe->fb_x < 0) probe->fb_x = 0;
+    if (probe->fb_y < 0) probe->fb_y = 0;
+    if (probe->fb_x >= (int)gfx_current_dimensions.width) {
+        probe->fb_x = (int)gfx_current_dimensions.width - 1;
+    }
+    if (probe->fb_y >= (int)gfx_current_dimensions.height) {
+        probe->fb_y = (int)gfx_current_dimensions.height - 1;
+    }
+    probe->gl_x = probe->fb_x;
+    probe->gl_y = (int)gfx_current_dimensions.height - 1 - probe->fb_y;
+
+    if (g_diag_trace_room_xlu_defer_pixel_budget > 0) {
+        g_diag_trace_room_xlu_defer_pixel_budget--;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        probe->pre_rgb)) {
+        gfx_room_xlu_defer_pixel_probe_log_failure("pre_read_failed", probe);
+        return false;
+    }
+
+    probe->active = true;
+    return true;
+}
+
+static void gfx_room_xlu_defer_pixel_probe_finish(
+    struct GfxRoomXluDeferPixelProbe *probe)
+{
+    uint8_t post_rgb[3] = {0, 0, 0};
+    int delta[3];
+    bool changed;
+    uint16_t zmode;
+
+    if (probe == NULL || !probe->active) {
+        return;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(probe->gl_x,
+                                        probe->gl_y,
+                                        1,
+                                        1,
+                                        post_rgb)) {
+        gfx_room_xlu_defer_pixel_probe_log_failure("post_read_failed", probe);
+        probe->active = false;
+        return;
+    }
+
+    for (int ch = 0; ch < 3; ch++) {
+        delta[ch] = (int)post_rgb[ch] - (int)probe->pre_rgb[ch];
+    }
+    changed = delta[0] != 0 || delta[1] != 0 || delta[2] != 0;
+    zmode = (uint16_t)(probe->depth_mode & 0x30) << 6;
+    fprintf(stderr,
+            "[ROOM-XLU-DEFER-PIXEL] {"
+            "\"status\":\"ok\",\"frame\":%d,\"serial\":%d,"
+            "\"batch\":%zu,\"batches\":%zu,"
+            "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"inside_bbox\":%d,\"drawclass\":\"%s\",\"room\":%d,"
+            "\"cmd\":\"%p\",\"batch_serial\":%u,\"tris\":%zu,\"len\":%zu,\"stride\":%zu,"
+            "\"key\":%.6f,\"cc\":\"0x%016llx\","
+            "\"raw\":\"0x%08X\",\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\","
+            "\"depth\":{\"test\":%d,\"upd\":%d,\"cmp\":%d,\"prim\":%d,"
+            "\"zmode\":\"%s\",\"zraw\":\"0x%03X\"},"
+            "\"blend\":\"%s\",\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+            "\"pre\":[%u,%u,%u],\"post\":[%u,%u,%u],"
+            "\"delta\":[%d,%d,%d],\"changed\":%d}"
+            "\n",
+            probe->frame,
+            probe->serial,
+            probe->batch_index,
+            probe->batch_count,
+            probe->target_x,
+            probe->target_y,
+            probe->fb_x,
+            probe->fb_y,
+            probe->gl_x,
+            probe->gl_y,
+            probe->inside_bbox ? 1 : 0,
+            gfx_draw_class_name(probe->draw_class),
+            probe->room,
+            (void *)probe->cmd_addr,
+            probe->serial_batch,
+            probe->tris,
+            probe->len,
+            probe->stride,
+            probe->key,
+            (unsigned long long)probe->combine_mode,
+            probe->raw_mode,
+            probe->effective_mode,
+            probe->other_mode_h,
+            (probe->depth_mode & 1) != 0 ? 1 : 0,
+            (probe->depth_mode & 2) != 0 ? 1 : 0,
+            (probe->depth_mode & 4) != 0 ? 1 : 0,
+            (probe->depth_mode & 8) != 0 ? 1 : 0,
+            gfx_zmode_diag_name(zmode),
+            zmode,
+            gfx_blend_mode_diag_name(probe->blend_mode),
             probe->screen_min_x,
             probe->screen_min_y,
             probe->screen_max_x,
@@ -6514,6 +7005,7 @@ static void gfx_settex_pixel_probe_log_failure(
             "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
             "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            GFX_RECT_DIAG_JSON_FMT
             "\"texnum\":%d,\"wh\":[%d,%d],"
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f]}"
             "\n",
@@ -6561,6 +7053,7 @@ static void gfx_settex_pixel_probe_log_failure(
             probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
+            GFX_RECT_DIAG_JSON_ARGS(&probe->rect),
             probe->texnum,
             probe->tex_w,
             probe->tex_h,
@@ -6659,6 +7152,7 @@ static bool gfx_settex_pixel_probe_begin(struct GfxSettexPixelProbe *probe,
     probe->draw_class = draw_class;
     probe->dl_room = dl_room;
     probe->dl_which = dl_which;
+    probe->rect = g_rect_diag_state;
     probe->texnum = settex_texturenum;
     probe->tex_w = (int)(settex_tex_w + 0.5f);
     probe->tex_h = (int)(settex_tex_h + 0.5f);
@@ -6763,6 +7257,7 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             "\"cvg_x_alpha\":%d,\"alpha_cvg\":%d,\"force_bl\":%d,"
             "\"fog\":%d,\"fog_fixed\":%d,\"texedge\":%d,\"roommtx\":%d,\"sky\":%d},"
             "\"blend\":\"%s\",\"api_blend\":\"%s\","
+            GFX_RECT_DIAG_JSON_FMT
             "\"texnum\":%d,\"wh\":[%d,%d],"
             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
             "\"src_valid\":%d,\"sample_valid\":[%d,%d],\"lod\":%u,"
@@ -6822,6 +7317,7 @@ static void gfx_settex_pixel_probe_finish(struct GfxSettexPixelProbe *probe)
             probe->sky_tri_mode ? 1 : 0,
             gfx_blend_mode_diag_name(probe->blend_mode),
             gfx_blend_mode_diag_name(probe->api_blend_mode),
+            GFX_RECT_DIAG_JSON_ARGS(&probe->rect),
             probe->texnum,
             probe->tex_w,
             probe->tex_h,
@@ -12353,12 +12849,22 @@ static void gfx_room_xlu_deferred_draw_pending(void) {
 
     for (size_t i = 0; i < room_xlu_deferred_count; i++) {
         struct GfxRoomXluDeferredBatch *batch = &room_xlu_deferred_batches[i];
+        struct GfxRoomXluDeferPixelProbe pixel_probe;
+        bool pixel_probe_active;
         if (batch->vbo == NULL || batch->len == 0 || batch->tris == 0) {
             continue;
         }
 
         gfx_apply_rendering_state_snapshot(&batch->state);
+        pixel_probe_active =
+            gfx_room_xlu_defer_pixel_probe_begin(&pixel_probe,
+                                                 batch,
+                                                 i,
+                                                 room_xlu_deferred_count);
         gfx_rapi->draw_triangles(batch->vbo, batch->len, batch->tris);
+        if (pixel_probe_active) {
+            gfx_room_xlu_defer_pixel_probe_finish(&pixel_probe);
+        }
         free(batch->vbo);
         batch->vbo = NULL;
     }
@@ -12448,7 +12954,13 @@ static bool gfx_room_xlu_defer_buffer(size_t stride) {
         batch->stride = stride;
         batch->key = group->key;
         batch->serial = group->serial != 0 ? group->serial : ++room_xlu_deferred_serial;
+        batch->cmd_addr = buf_vbo_tri_cmd_addr[group->start];
         batch->room = group->room;
+        batch->draw_class = g_current_draw_class;
+        batch->combine_mode = rdp.combine_mode;
+        batch->raw_mode = rdp.other_mode_l_raw;
+        batch->effective_mode = rdp.other_mode_l;
+        batch->other_mode_h = rdp.other_mode_h;
         batch->state = rendering_state;
     }
 
@@ -18528,6 +19040,12 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     if (cycle_type == G_CYC_COPY) {
         rdp.other_mode_h = (rdp.other_mode_h & ~(3U << G_MDSFT_TEXTFILT)) | G_TF_POINT;
     }
+    if (g_rect_diag_state.active) {
+        g_rect_diag_state.draw_ulx = ulx;
+        g_rect_diag_state.draw_uly = uly;
+        g_rect_diag_state.draw_lrx = lrx;
+        g_rect_diag_state.draw_lry = lry;
+    }
 
     if (trace_rect_conversion < 0) {
         trace_rect_conversion = (getenv("GE007_TRACE_RECT_CONVERSION") != NULL);
@@ -18624,8 +19142,17 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
      * so the tri1 draw path sees the cleared G_FOG state. */
     gfx_sync_other_mode_l_effective();
 
+    if (g_rect_diag_state.active) {
+        g_rect_diag_state.tri_index = 0;
+    }
     gfx_sp_tri1(MAX_VERTICES + 0, MAX_VERTICES + 1, MAX_VERTICES + 3);
+    if (g_rect_diag_state.active) {
+        g_rect_diag_state.tri_index = 1;
+    }
     gfx_sp_tri1(MAX_VERTICES + 1, MAX_VERTICES + 2, MAX_VERTICES + 3);
+    if (g_rect_diag_state.active) {
+        g_rect_diag_state.tri_index = -1;
+    }
 
     rsp.geometry_mode = geometry_mode_saved;
     gfx_sync_other_mode_l_effective();  /* restore fog override state */
@@ -18748,6 +19275,29 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
         bool saved_texrect_uv_mode = g_texrect_uv_mode;
         int saved_texrect_tile_override = g_texrect_tile_override;
         uint8_t saved_first_tile_index = rdp.first_tile_index;
+        struct GfxRectDiagState saved_rect_diag = g_rect_diag_state;
+        memset(&g_rect_diag_state, 0, sizeof(g_rect_diag_state));
+        g_rect_diag_state.active = true;
+        g_rect_diag_state.kind = flip ? GFX_RECT_DIAG_TEXRECT_FLIP : GFX_RECT_DIAG_TEXRECT;
+        g_rect_diag_state.tri_index = -1;
+        g_rect_diag_state.raw_ulx = ulx;
+        g_rect_diag_state.raw_uly = uly;
+        g_rect_diag_state.raw_lrx = lrx;
+        g_rect_diag_state.raw_lry = lry;
+        g_rect_diag_state.tile = tile;
+        g_rect_diag_state.flip = flip;
+        g_rect_diag_state.uls = uls;
+        g_rect_diag_state.ult = ult;
+        g_rect_diag_state.dsdx = dsdx;
+        g_rect_diag_state.dtdy = dtdy;
+        g_rect_diag_state.uv_uls = uls_edge;
+        g_rect_diag_state.uv_ult = ult_edge;
+        g_rect_diag_state.uv_lrs = lrs;
+        g_rect_diag_state.uv_lrt = lrt;
+        g_rect_diag_state.cycle_type = rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE);
+        g_rect_diag_state.color_image_is_z = rdp.color_image_address == rdp.z_buf_address;
+        g_rect_diag_state.fill_color = rdp.fill_color;
+        g_rect_diag_state.prim_color = rdp.prim_color;
         g_texrect_uv_mode = true;
         g_texrect_tile_override = tile;
         rdp.first_tile_index = tile;
@@ -18755,6 +19305,7 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
         rdp.first_tile_index = saved_first_tile_index;
         g_texrect_tile_override = saved_texrect_tile_override;
         g_texrect_uv_mode = saved_texrect_uv_mode;
+        g_rect_diag_state = saved_rect_diag;
     }
     rdp.combine_mode = saved_combine_mode;
 }
@@ -18837,9 +19388,23 @@ static void gfx_dp_fill_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t
                                color_comb(0, 0, 0, G_CCMUX_SHADE), alpha_comb(0, 0, 0, G_ACMUX_SHADE));
     }
     bool saved_fillrect_draw_active = g_fillrect_draw_active;
+    struct GfxRectDiagState saved_rect_diag = g_rect_diag_state;
+    memset(&g_rect_diag_state, 0, sizeof(g_rect_diag_state));
+    g_rect_diag_state.active = true;
+    g_rect_diag_state.kind = GFX_RECT_DIAG_FILLRECT;
+    g_rect_diag_state.tri_index = -1;
+    g_rect_diag_state.raw_ulx = ulx;
+    g_rect_diag_state.raw_uly = uly;
+    g_rect_diag_state.raw_lrx = lrx;
+    g_rect_diag_state.raw_lry = lry;
+    g_rect_diag_state.cycle_type = mode;
+    g_rect_diag_state.color_image_is_z = rdp.color_image_address == rdp.z_buf_address;
+    g_rect_diag_state.fill_color = rdp.fill_color;
+    g_rect_diag_state.prim_color = rdp.prim_color;
     g_fillrect_draw_active = true;
     gfx_draw_rectangle(ulx, uly, lrx, lry);
     g_fillrect_draw_active = saved_fillrect_draw_active;
+    g_rect_diag_state = saved_rect_diag;
     rdp.combine_mode = saved_combine_mode;
     if (mode == G_CYC_FILL) {
         rdp.other_mode_l_raw = saved_oml_raw;
