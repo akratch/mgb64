@@ -150,9 +150,34 @@ static int portPropRecordPointerLooksValid(const PropRecord *prop)
         ((ptr - first) % sizeof(pos_data_entry[0])) == 0;
 }
 
+static int portPropRecordIsFreeListEntry(const PropRecord *needle)
+{
+    const PropRecord *prop = ptr_obj_pos_list_final_entry;
+    s32 guard = 0;
+
+    while (prop != NULL && guard < POS_DATA_ENTRY_LEN)
+    {
+        if (!portPropRecordPointerLooksValid(prop))
+        {
+            return 0;
+        }
+
+        if (prop == needle)
+        {
+            return 1;
+        }
+
+        prop = prop->prev;
+        guard++;
+    }
+
+    return 0;
+}
+
 static int portPropRecordCanObjDrop(const PropRecord *prop)
 {
-    if (!portPropRecordPointerLooksValid(prop)) {
+    if (!portPropRecordPointerLooksValid(prop) ||
+        portPropRecordIsFreeListEntry(prop)) {
         return 0;
     }
 
@@ -172,6 +197,11 @@ static int portPropRecordCanObjectTick(const PropRecord *prop)
 
     obj = prop->obj;
     return obj != NULL && obj->prop == prop;
+}
+
+static int portPropRecordOwnsObject(const PropRecord *prop, const ObjectRecord *obj)
+{
+    return portPropRecordCanObjectTick(prop) && prop->obj == obj;
 }
 
 static int portPrepareObjectChildTick(PropRecord *parent, PropRecord *child, PropRecord **next, s32 *guard)
@@ -3415,6 +3445,25 @@ void objFree(ObjectRecord* obj, s32 freeprop, s32 canregen)
     if (obj->prop != NULL)
     {
         prop = obj->prop;
+#ifdef NATIVE_PORT
+        if (!portPropRecordOwnsObject(prop, obj))
+        {
+            objectTracePrintf(
+                "event=objfree_stale_prop obj=%p objtype=%d model=%p prop=%p prop_valid=%d prop_free=%d prop_type=%d prop_obj=%p freeprop=%d canregen=%d",
+                (void *)obj,
+                obj->type,
+                (void *)obj->model,
+                (void *)prop,
+                portPropRecordPointerLooksValid(prop),
+                portPropRecordPointerLooksValid(prop) ? portPropRecordIsFreeListEntry(prop) : 0,
+                portPropRecordPointerLooksValid(prop) ? prop->type : -1,
+                (portPropRecordPointerLooksValid(prop) && !portPropRecordIsFreeListEntry(prop)) ? (void *)prop->obj : NULL,
+                freeprop,
+                canregen);
+            obj->prop = NULL;
+            return;
+        }
+#endif
         explosionClearBulletImpactRoomByFlag(prop, FALSE);
         explosionClearBulletImpactRoomByFlag(prop, TRUE);
 
