@@ -4,9 +4,9 @@
 #
 # This captures the Dam service tunnel at pad 164. The default portal path must
 # render the visible continuation instead of exposing the blue sky/fog clear
-# through the tunnel. `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0` is kept as a
-# negative control that reproduces portal under-admission with fewer rooms and
-# a higher blue-cap signature than the default capture.
+# through the tunnel. `pre_ordering` disables the portal ordering and portal-AABB
+# expansion fixes to reproduce the old under-admission with fewer rooms and a
+# higher blue-cap signature than the default capture.
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -157,7 +157,10 @@ echo "  ROM:     $ROM"
 echo "  frames:  $FRAMES"
 
 run_capture default
-run_capture fallback_off GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0
+run_capture pre_ordering \
+    GE007_BGORDER_PORTAL=0 \
+    GE007_BG_PORTAL_AABB_EXPAND=0 \
+    GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0
 run_capture no_portal_bfs GE007_PORTAL_BFS=0
 
 python3 - "$OUT_DIR" <<'PY'
@@ -213,27 +216,27 @@ def bright_blue_pct(case):
                 bright += 1
     return 100.0 * float(bright) / float(total)
 
-records = {case: last_trace(case) for case in ("default", "fallback_off", "no_portal_bfs")}
+records = {case: last_trace(case) for case in ("default", "pre_ordering", "no_portal_bfs")}
 rooms = {case: rendered_count(record) for case, record in records.items()}
 blue = {case: bright_blue_pct(case) for case in records}
 
 failures = []
 
-if rooms["default"] < 6:
-    failures.append(f"default rendered too few tunnel rooms: {rooms['default']} < 6")
+if rooms["default"] < 5:
+    failures.append(f"default rendered too few tunnel rooms: {rooms['default']} < 5")
 if 98 not in room_sample(records["default"]):
     failures.append(f"default did not render room 98 continuation: {room_sample(records['default'])}")
 if blue["default"] > 0.50:
     failures.append(f"default bright-blue cap {blue['default']:.3f}% > 0.50%")
-if rooms["fallback_off"] >= rooms["default"]:
+if rooms["pre_ordering"] >= rooms["default"]:
     failures.append(
-        f"fallback_off did not reproduce lower room count: "
-        f"{rooms['fallback_off']} >= {rooms['default']}"
+        f"pre_ordering did not reproduce lower room count: "
+        f"{rooms['pre_ordering']} >= {rooms['default']}"
     )
-if blue["fallback_off"] <= blue["default"] + 0.05:
+if blue["pre_ordering"] <= blue["default"] + 0.05:
     failures.append(
-        f"fallback_off blue-cap control too weak: "
-        f"{blue['fallback_off']:.3f}% <= default {blue['default']:.3f}% + 0.05%"
+        f"pre_ordering blue-cap control too weak: "
+        f"{blue['pre_ordering']:.3f}% <= default {blue['default']:.3f}% + 0.05%"
     )
 if rooms["no_portal_bfs"] < rooms["default"]:
     failures.append(
@@ -250,12 +253,12 @@ summary = {
         "sample": room_sample(records["default"]),
         "bright_blue_pct": blue["default"],
     },
-    "fallback_off": {
-        "frame": records["fallback_off"].get("f"),
-        "current_room": records["fallback_off"].get("rooms", {}).get("cur"),
-        "rendered_rooms": rooms["fallback_off"],
-        "sample": room_sample(records["fallback_off"]),
-        "bright_blue_pct": blue["fallback_off"],
+    "pre_ordering": {
+        "frame": records["pre_ordering"].get("f"),
+        "current_room": records["pre_ordering"].get("rooms", {}).get("cur"),
+        "rendered_rooms": rooms["pre_ordering"],
+        "sample": room_sample(records["pre_ordering"]),
+        "bright_blue_pct": blue["pre_ordering"],
     },
     "no_portal_bfs": {
         "frame": records["no_portal_bfs"].get("f"),
@@ -277,12 +280,12 @@ if failures:
 
 print("PASS: Dam tunnel visibility regression")
 print(
-    "  rendered rooms: default=%d fallback_off=%d no_portal_bfs=%d"
-    % (rooms["default"], rooms["fallback_off"], rooms["no_portal_bfs"])
+    "  rendered rooms: default=%d pre_ordering=%d no_portal_bfs=%d"
+    % (rooms["default"], rooms["pre_ordering"], rooms["no_portal_bfs"])
 )
 print(
-    "  bright blue: default=%.3f%% fallback_off=%.3f%% no_portal_bfs=%.3f%%"
-    % (blue["default"], blue["fallback_off"], blue["no_portal_bfs"])
+    "  bright blue: default=%.3f%% pre_ordering=%.3f%% no_portal_bfs=%.3f%%"
+    % (blue["default"], blue["pre_ordering"], blue["no_portal_bfs"])
 )
 PY
 

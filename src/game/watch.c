@@ -3148,14 +3148,7 @@ Gfx *draw_current_hand_item_and_ammo(Gfx *gdl) {
         gdl = set_enviro_fog_for_items_in_solo_watch_menu(gdl, weapontext, &mtxf_combined, 255, 0x64DC6428);
     }
 
-#ifdef NATIVE_PORT
-    /* The Mission Status ammo overlay path still emits an unstable display-list
-     * sequence on the host build. Keep the current item model and titles, but
-     * skip the ammo digits until the 64-bit-safe port of sub_GAME_7F06A334 is
-     * validated. */
-#else
     gdl = sub_GAME_7F06A334(gdl);
-#endif
     gdl = microcode_constructor(gdl);
 
     xpos = 96;

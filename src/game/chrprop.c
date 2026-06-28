@@ -8796,7 +8796,40 @@ void sub_GAME_7F03F540(struct ModelRoData_BoundingBoxRecord *bbox, Mtxf* arg1, s
 #ifdef NONMATCHING
 #ifdef PORT_FIXME_STUBS
 s32 sub_GAME_7F03F598(coord3d* pos, f32 arg1, BoundPadRecord *boundpads) {
-    return 0;
+    f32 relx;
+    f32 rely;
+    f32 relz;
+    coord3d side;
+    f32 projection;
+
+    if (pos == NULL || boundpads == NULL) {
+        return 0;
+    }
+
+    relx = pos->x - boundpads->pos.x;
+    rely = pos->y - boundpads->pos.y;
+    relz = pos->z - boundpads->pos.z;
+
+    side.x = (boundpads->up.y * boundpads->look.z) - (boundpads->look.y * boundpads->up.z);
+    side.y = (boundpads->look.x * boundpads->up.z) - (boundpads->look.z * boundpads->up.x);
+    side.z = (boundpads->up.x * boundpads->look.y) - (boundpads->look.x * boundpads->up.y);
+
+    projection = (relx * boundpads->look.x) + (rely * boundpads->look.y) + (relz * boundpads->look.z);
+    if ((boundpads->bbox.zmax + arg1) < projection || projection < (boundpads->bbox.zmin - arg1)) {
+        return 0;
+    }
+
+    projection = (relx * boundpads->up.x) + (rely * boundpads->up.y) + (relz * boundpads->up.z);
+    if ((boundpads->bbox.ymax + arg1) < projection || projection < (boundpads->bbox.ymin - arg1)) {
+        return 0;
+    }
+
+    projection = (relx * side.x) + (rely * side.y) + (relz * side.z);
+    if ((boundpads->bbox.xmax + arg1) < projection || projection < (boundpads->bbox.xmin - arg1)) {
+        return 0;
+    }
+
+    return 1;
 }
 #else
 s32 sub_GAME_7F03F598(coord3d* pos, f32 arg1, BoundPadRecord *boundpads) {

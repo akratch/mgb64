@@ -272,6 +272,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("native_intro_max_first_present_frame", "")
     if field == "native_intro_max_first_render_frame":
         return route.get("native_intro_max_first_render_frame", "")
+    if field == "stock_require_first_gameplay_global":
+        return route.get("stock_require_first_gameplay_global", "")
     if field not in route:
         raise SystemExit(f"FAIL: route has no field: {field}")
     return route[field]

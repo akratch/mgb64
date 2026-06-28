@@ -1772,6 +1772,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_DISABLE_NATIVE_POLE_FILTER=1` | bypass native custom-FX pole filters for diagnosis |
 | `GE007_SFX_TRACE_JSONL=path.jsonl` | trace SFX submits, voice starts/stops, volume/pan updates, owner-slot clears, stale post ignores, and native caller/line tags |
 | `GE007_TRACE_CHRNUM=N` | add one native guard's AI/action/render/patrol state to `--trace-state` |
+| `GE007_PERF_TRACE=1` / `GE007_PERF_TRACE_AFTER_FRAME=N` / `GE007_PERF_TRACE_BUDGET=N` | log per-frame wall-clock pacing (`interval_ms`, render/work time before cap delay, sleep delay, and sync overhead) for local performance triage |
 | `MGB64_ARES_TRACE_CHRNUM=N` | add comparable stock-oracle guard tracking to route traces |
 | `GE007_TRACE_MAGIC_TRAVEL=1` / `GE007_TRACE_MAGIC_TRAVEL_BUDGET=N` | log native `WAYMODE_MAGIC` patrol/gopos exit predicates for the `GE007_TRACE_CHRNUM` guard |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |
@@ -1887,7 +1888,11 @@ that this instrumentation is meant to keep from recurring.
 
 Renderer acceptance captures should use a clean config profile or explicit
 overrides. A repo-root run can load local `ge007.ini`; values such as
-`Video.FovY=75` deliberately change composition and pixel metrics. The
+`Video.FovY=75` deliberately change composition and pixel metrics. Large
+Retina/high-DPI windows also multiply the GL drawable size when
+`Video.HiDPI=1`, so leave the default `Video.HiDPI=0` for performance-sensitive
+gameplay/perf captures unless the test is explicitly about native display-pixel
+output. The
 playability smoke lane pins its validation window by default; for stock visual
 baselines, keep that default and add only the probe-specific overrides, such as
 `--config-override Video.FovY=60 --config-override Video.RenderScale=1` or
@@ -2004,7 +2009,9 @@ smoke runs and human play sessions.
 | `GE007_TRACE_RDP_RENDER_MODES_DRAWCLASS=name` / `GE007_TRACE_RDP_RENDER_MODES_EFFECT=label` | optional filters for `[RDP-MODE]`; use drawclass filters such as `room` or `effect`, and effect labels such as `glass_shards`, to keep broad render-mode captures bounded |
 | `GE007_TRACE_ROOM_ALPHA=1` | log the first alpha-blended room triangles each frame, including raw/effective render mode, decoded N64 coverage/blender fields (`mode_decode`), depth flags, texture-edge classification, alpha sources, room attribution source, vertex/modelview/display-list rooms, room-DL command offset, and post-LUT combiner/options (`ROOM-ALPHA-CC`) |
 | `GE007_TRACE_DRAWCLASS_BBOX=1` / `GE007_TRACE_DRAWCLASS_AFTER_FRAME=N` | log per-frame NDC and logical-screen bboxes for emitted triangles by draw class (`unknown`, `room`, `weapon`, `chrprop`, `effect`, `hud`); use with `GE007_TRACE_DRAWCLASS_TRIS=1` when separating foreground, room-alpha, effect, and HUD footprints |
-| `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0|1` | toggle projected-visible backface traversal in native portal BFS; default `1` prevents tight tunnel under-admission, while `0` is a negative-control repro for the old Dam blue-cap tunnel view |
+| `GE007_BGORDER_PORTAL=0|1` | toggle the native `bgOrderPortal` room-direction pass; default `1` mirrors stock portal ordering, while `0` is an A/B control for pre-ordering room traversal |
+| `GE007_BG_PORTAL_AABB_EXPAND=0|1` | toggle room AABB expansion from connected portal vertices; default `1` mirrors stock setup, while `0` is a focused room-bound A/B control |
+| `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0|1` | toggle projected-visible backface traversal in native portal BFS; default `0` keeps the old broad native fallback opt-in only |
 | `GE007_PORTAL_PARENT_CLIP_MIN_SPAN=N` | skip parent-bbox clipping only when the parent window is narrower/shorter than `N`; default `0` means stock-style parent clipping always applies |
 | `GE007_PORTAL_ACCEPTED_MIN_SPAN=N` | expand accepted portal bboxes to at least `N` pixels for A/B only; default `0` disables the old native widening that could admit stock-rejected portals |
 | `GE007_PORTAL_RETRY_SCREEN_CLIP=1` | retry portal screen clipping without the parent bbox after an empty clip for A/B only; default off |
@@ -3653,10 +3660,10 @@ tools/dam_portal_regression.sh --no-build \
 ```
 
 `tools/dam_tunnel_visibility_regression.sh` is the complementary Dam pad-164
-tunnel under-admission guard. It verifies the default projected-visible
-backface traversal renders the tunnel continuation and uses
-`GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0` as the negative control that exposes
-the old blue-cap view.
+tunnel under-admission guard. It verifies the default portal ordering and
+portal-AABB expansion render the tunnel continuation and uses the script's
+`pre_ordering` capture as the negative control that exposes the old blue-cap
+view.
 
 ```sh
 tools/dam_tunnel_visibility_regression.sh --no-build \

@@ -17,6 +17,7 @@ EXPECTED_DEFAULTS = {
     "Video.WindowX": "-1",
     "Video.WindowY": "-1",
     "Video.Display": "0",
+    "Video.HiDPI": "0",
     "Video.FullscreenWidth": "0",
     "Video.FullscreenHeight": "0",
     "Video.FullscreenRefresh": "0",
@@ -24,9 +25,9 @@ EXPECTED_DEFAULTS = {
     "Video.VSync": "adaptive",
     "Video.FrameCap": "60",
     "Video.Gamma": "1",
-    "Video.RenderScale": "1",
+    "Video.RenderScale": "2",
     "Video.MSAA": "0",
-    "Video.FovY": "60",
+    "Video.FovY": "50",
     "Video.RetroFilter": "auto",
     "Input.MouseSensitivity": "0.15",
     "Input.MouseSensitivityAim": "0.05",
@@ -43,6 +44,7 @@ WindowHeight=768
 WindowX=10
 WindowY=20
 Display=1
+HiDPI=1
 FullscreenWidth=1920
 FullscreenHeight=1080
 FullscreenRefresh=60
@@ -170,6 +172,7 @@ def main() -> int:
                 "Video.WindowX": "10",
                 "Video.WindowY": "20",
                 "Video.Display": "1",
+                "Video.HiDPI": "1",
                 "Video.FullscreenWidth": "1920",
                 "Video.FullscreenHeight": "1080",
                 "Video.FullscreenRefresh": "60",

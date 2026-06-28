@@ -128,6 +128,35 @@ static int g_traceRequested = -1;
 /* ===== Frame timing ===== */
 static u32 g_lastFrameTime = 0;
 static int g_frameSyncCallCount = 0;
+static int g_perfTraceEnabled = -1;
+static int g_perfTraceAfterFrame = 0;
+static int g_perfTraceBudget = 0;
+static Uint64 g_perfLastFrameStart = 0;
+
+static int platformPerfTraceEnabled(void) {
+    if (g_perfTraceEnabled < 0) {
+        const char *env = getenv("GE007_PERF_TRACE");
+        const char *after_env = getenv("GE007_PERF_TRACE_AFTER_FRAME");
+        const char *budget_env = getenv("GE007_PERF_TRACE_BUDGET");
+
+        g_perfTraceEnabled = env != NULL && atoi(env) != 0;
+        g_perfTraceAfterFrame = after_env != NULL ? atoi(after_env) : 0;
+        g_perfTraceBudget = budget_env != NULL ? atoi(budget_env) : 600;
+        if (g_perfTraceBudget < 0) {
+            g_perfTraceBudget = 0;
+        }
+    }
+
+    return g_perfTraceEnabled;
+}
+
+static double platformPerfCounterMs(Uint64 start, Uint64 end) {
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    if (freq == 0 || end < start) {
+        return 0.0;
+    }
+    return (double)(end - start) * 1000.0 / (double)freq;
+}
 
 static int platformTraceRequested(void) {
     extern const char *g_traceStatePath;
@@ -251,6 +280,7 @@ static s32 g_cfgWindowH = 810;
 static s32 g_cfgWindowX = -1;
 static s32 g_cfgWindowY = -1;
 static s32 g_cfgDisplayIndex = 0;
+static s32 g_cfgHiDpi = 0;
 static s32 g_cfgFullscreenW = 0;
 static s32 g_cfgFullscreenH = 0;
 static s32 g_cfgFullscreenRefresh = 0;
@@ -1431,6 +1461,11 @@ void platformRegisterConfig(void)
                         "--config-override Video.Display=VALUE",
                         "Display",
                         "Zero-based SDL display index for window and fullscreen placement.");
+    settingsRegisterInt("Video.HiDPI", &g_cfgHiDpi, 0, 0, 1,
+                        SETTING_SCOPE_RESTART, "GE007_HIDPI",
+                        "--config-override Video.HiDPI=0|1",
+                        "HiDPI",
+                        "Allow Retina/high-DPI drawable sizes. Off keeps rendering at the configured window size for steadier performance.");
     settingsRegisterInt("Video.FullscreenWidth", &g_cfgFullscreenW, 0, 0, 7680,
                         SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_WIDTH",
                         "--config-override Video.FullscreenWidth=VALUE",
@@ -1897,12 +1932,13 @@ int platformInitSDL(void) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
     {
-        int disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
+        int diag_disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
+        int enable_highdpi = g_cfgHiDpi != 0 && !diag_disable_highdpi;
         int window_x;
         int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 
-        if (!disable_highdpi) {
+        if (enable_highdpi) {
             window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
         }
 
@@ -1960,6 +1996,8 @@ int platformInitSDL(void) {
            glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
     if (platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI")) {
         printf("[SDL] HiDPI window mode disabled (GE007_DIAG_DISABLE_HIGHDPI)\n");
+    } else if (!g_cfgHiDpi) {
+        printf("[SDL] HiDPI window mode disabled (Video.HiDPI=0)\n");
     }
     if (g_backgroundWindow) {
         printf("[SDL] Background window mode enabled (GE007_BACKGROUND)\n");
@@ -2173,8 +2211,19 @@ void platformSetWindowTitle(const char *title) {
 
 void platformFrameSync(void) {
     OSScClient *client;
+    int perf_trace = platformPerfTraceEnabled();
+    Uint64 perf_start = perf_trace ? SDL_GetPerformanceCounter() : 0;
+    double perf_interval_ms = 0.0;
+    u32 perf_work_ms;
+    u32 perf_delay_ms = 0;
 
     g_frameSyncCallCount++;
+    if (perf_trace) {
+        if (g_perfLastFrameStart != 0) {
+            perf_interval_ms = platformPerfCounterMs(g_perfLastFrameStart, perf_start);
+        }
+        g_perfLastFrameStart = perf_start;
+    }
     {
         extern void pcAdvanceDeterministicCountForFrame(void);
         pcAdvanceDeterministicCountForFrame();
@@ -2209,8 +2258,10 @@ void platformFrameSync(void) {
     u32 now = SDL_GetTicks();
     u32 elapsed = now - g_lastFrameTime;
     u32 frame_delay_ms = platformFrameDelayMs();
+    perf_work_ms = elapsed;
     if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
-        SDL_Delay(frame_delay_ms - elapsed);
+        perf_delay_ms = frame_delay_ms - elapsed;
+        SDL_Delay(perf_delay_ms);
     }
     g_lastFrameTime = SDL_GetTicks();
 
@@ -2260,6 +2311,23 @@ void platformFrameSync(void) {
     os_scheduler.frameCount++;
     for (client = os_scheduler.clientList; client != NULL; client = client->next) {
         osSendMesg(client->msgQ, (OSMesg)&os_scheduler.retraceMsg, OS_MESG_NOBLOCK);
+    }
+
+    if (perf_trace &&
+        g_frameSyncCallCount >= g_perfTraceAfterFrame &&
+        g_perfTraceBudget > 0) {
+        extern s32 g_GlobalTimer;
+        Uint64 perf_end = SDL_GetPerformanceCounter();
+        printf("[PERF] frame=%d global=%d interval_ms=%.3f work_ms=%u "
+               "delay_ms=%u sync_ms=%.3f cap_ms=%u\n",
+               g_frameSyncCallCount,
+               (int)g_GlobalTimer,
+               perf_interval_ms,
+               perf_work_ms,
+               perf_delay_ms,
+               platformPerfCounterMs(perf_start, perf_end),
+               frame_delay_ms);
+        g_perfTraceBudget--;
     }
 }
 

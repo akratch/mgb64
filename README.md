@@ -171,6 +171,9 @@ colors unchanged.
 `Video.RenderScale` adjusts the internal scene framebuffer from `1.0` to `2.0`
 for supersampling. `Video.MSAA` accepts `0`, `2`, `4`, or `8` samples for scene
 anti-aliasing.
+`Video.HiDPI` controls Retina/high-DPI drawable rendering. It defaults to `0`
+for steadier performance on large windows; set it to `1` for opt-in native
+display-pixel rendering.
 `Video.FovY` controls the normal gameplay vertical field of view from `45` to
 `90` degrees; scoped weapons and watch animations still use their own zoom
 values.

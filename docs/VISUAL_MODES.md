@@ -41,6 +41,7 @@ GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33
 | **`Video.RemasterFX`** | `1` | Master post-FX switch. `0` = bypass **all** cinematic post-FX (grade, tonemap, bloom, vignette, sharpen, dither, FXAA) → faithful look. HD textures + SSAA unaffected. |
 | **`Video.TexturePack`** | *(empty)* | Directory of an HD texture pack (`textures/tok####.png`). Empty = stock textures. |
 | **`Video.RenderScale`** | `2.0` | Internal supersampling (1.0–4.0). Fidelity only; never changes the look. |
+| **`Video.HiDPI`** | `0` | Retina/high-DPI drawable opt-in. Keep off for steadier large-window performance; use `1` when native display-pixel sharpness is worth the fill-rate cost. |
 
 ## All visual flags
 
@@ -56,6 +57,7 @@ GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33
 | `Video.OutputDither` | `1` | Anti-banding ordered dither. |
 | `Video.GradePresets` | `1` | Subtle per-level mood grade. |
 | `Video.MSAA` | `0` | Multisample AA (redundant with SSAA; off by default). |
+| `Video.HiDPI` | `0` | High-DPI drawable opt-in; large Retina windows can be fill-rate bound, especially on outdoor fog/alpha-heavy stages. |
 | `Input.ModernCrosshair` / `Input.HitMarkers` | `1` / `1` | Modern reticle / on-hit markers. |
 | `Input.ReticleTargetFeedback` | `1` | Reticle turns green on an enemy. |
 | `Input.ViewmodelSway` | `1.0` | Subtle weapon sway. |

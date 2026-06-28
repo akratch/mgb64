@@ -659,7 +659,31 @@ static int bgPortalBackfaceProjectFallbackEnabled(void)
 
     if (enabled < 0) {
         const char *env = getenv("GE007_PORTAL_BACKFACE_PROJECT_FALLBACK");
-        enabled = env ? atoi(env) : 1;
+        enabled = env ? atoi(env) : 0;
+    }
+
+    return enabled;
+}
+
+static int bgPortalOrderingEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_BGORDER_PORTAL");
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static int bgPortalAabbExpandEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_BG_PORTAL_AABB_EXPAND");
+        enabled = env ? (atoi(env) != 0) : 1;
     }
 
     return enabled;
@@ -16383,7 +16407,65 @@ glabel sub_GAME_7F0B9338
 
 #ifdef NONMATCHING
 #ifdef PORT_FIXME_STUBS
-void sub_GAME_7F0B95D8(s32 arg0) {
+void sub_GAME_7F0B95D8(s32 room) {
+    s32 portalIndex;
+
+    if (!bgPortalAabbExpandEnabled()) {
+        return;
+    }
+
+    if (g_BgPortals == NULL || room < 0 || room >= g_MaxNumRooms) {
+        return;
+    }
+
+    for (portalIndex = 0; g_BgPortals[portalIndex].offset_portal != 0; portalIndex++) {
+        bg_portal_data_entry *entry = &g_BgPortals[portalIndex];
+        bg_portal_entry *portal;
+        coord3d *points;
+        s32 pointIndex;
+
+        if (entry->connectedRoom1 != room && entry->connectedRoom2 != room) {
+            continue;
+        }
+
+#ifdef NATIVE_PORT
+        portal = bgGetPortalEntryPtr(portalIndex);
+#else
+        portal = entry->offset_portal;
+#endif
+
+        if (portal == NULL) {
+            continue;
+        }
+
+        points = &portal->point;
+
+        for (pointIndex = 0; pointIndex < portal->numPoints; pointIndex++) {
+            coord3d *point = &points[pointIndex];
+            s_room_info *roomInfo = &g_BgRoomInfo[room];
+
+            if (point->x < roomInfo->minbounds.x) {
+                roomInfo->minbounds.x = point->x;
+            }
+            if (point->x > roomInfo->maxbounds.x) {
+                roomInfo->maxbounds.x = point->x;
+            }
+
+            if (point->y < roomInfo->minbounds.y) {
+                roomInfo->minbounds.y = point->y;
+            }
+            if (point->y > roomInfo->maxbounds.y) {
+                roomInfo->maxbounds.y = point->y;
+            }
+
+            if (point->z < roomInfo->minbounds.z) {
+                roomInfo->minbounds.z = point->z;
+            }
+            if (point->z > roomInfo->maxbounds.z) {
+                roomInfo->maxbounds.z = point->z;
+            }
+        }
+    }
 }
 #else
 void sub_GAME_7F0B95D8(s32 arg0) {
@@ -17118,7 +17200,71 @@ void bgSwapConnectedRooms(s32 index)
 #ifdef NONMATCHING
 #ifdef PORT_FIXME_STUBS
 f32 sub_GAME_7F0B9B94(s32 arg0) {
-    return 0.0f;
+    bg_portal_data_entry *entry;
+    bg_portal_entry *portal;
+    coord3d room1Center;
+    coord3d room2Center;
+    struct PortalMetric metric;
+    f32 room1Dot;
+    f32 room2Dot;
+    s32 swapped;
+
+#ifdef NATIVE_PORT
+    if (!bgPortalOrderingEnabled()) {
+        return 0.0f;
+    }
+#endif
+
+    if (g_BgPortals == NULL || arg0 < 0) {
+        return 0.0f;
+    }
+
+    entry = &g_BgPortals[arg0];
+    if (entry->offset_portal == 0) {
+        return 0.0f;
+    }
+
+#ifdef NATIVE_PORT
+    portal = bgGetPortalEntryPtr(arg0);
+#else
+    portal = entry->offset_portal;
+#endif
+
+    if (portal == NULL || portal->numPoints < 3) {
+        return 0.0f;
+    }
+
+    sub_GAME_7F0B92B4(entry->connectedRoom1, room1Center.f);
+    sub_GAME_7F0B92B4(entry->connectedRoom2, room2Center.f);
+    sub_GAME_7F0B96CC(arg0, &metric);
+
+    room1Dot = metric.normal.x * room1Center.x
+        + metric.normal.y * room1Center.y
+        + metric.normal.z * room1Center.z;
+
+    swapped = 0;
+    if (metric.max < room1Dot) {
+        f32 oldMin = metric.min;
+
+        bgSwapConnectedRooms(arg0);
+
+        metric.normal.x = -metric.normal.x;
+        metric.normal.y = -metric.normal.y;
+        metric.normal.z = -metric.normal.z;
+        metric.min = -metric.max;
+        metric.max = -oldMin;
+        swapped = 1;
+    }
+
+    room2Dot = metric.normal.x * room2Center.x
+        + metric.normal.y * room2Center.y
+        + metric.normal.z * room2Center.z;
+
+    if (room2Dot <= metric.min && swapped) {
+        bgSwapConnectedRooms(arg0);
+    }
+
+    return room2Dot;
 }
 #else
 //bgorderPortal

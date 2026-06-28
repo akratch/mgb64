@@ -38,11 +38,11 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
   max `3.99`, and median clip-w ratio `1.0006`. Pixel presentation remains open.
 - Closed: the Dam service-tunnel draw-distance/blue-sky regression is fixed and
   covered by `tools/dam_tunnel_visibility_regression.sh`. The current default
-  capture renders the tunnel continuation (`6` rooms) with `0.000%` bright-blue
-  cap pixels, while the negative-control fallback-off capture reproduces the
-  regression (`3` rooms with a higher blue-cap signature than default). Latest
-  validation in the full suite: `/tmp/mgb64_dam_visual_regression_suite_current`
-  (`default=6` rooms, `fallback_off=3`, `no_portal_bfs=54`).
+  capture renders the tunnel continuation (`5` rooms, including room `98`) with
+  `0.000%` bright-blue cap pixels, while the `pre_ordering` negative control
+  reproduces the regression (`3` rooms with a higher blue-cap signature than
+  default). Latest validation: `/tmp/mgb64_dam_tunnel_updated_21017`
+  (`default=5` rooms, `pre_ordering=3`, `no_portal_bfs=64`).
 - Closed: the Surface 1 sky-dominance/player-above-map visual regression is fixed
   and covered by `tools/surface_projection_regression.sh`. The cause was the
   glass investigation promoting a stock-style unscaled `field_10E0` default;
@@ -55,6 +55,16 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
   The submitted setup counts were normal Surface 1 data, not Castle/Citadel data.
   Native direct level boots now default to the immediate first-person handoff;
   authored intros are opt-in with `GE007_ENABLE_LEVEL_INTRO=1`.
+- Closed: the latest Surface 1/2 live choppiness report was a Retina/HiDPI
+  drawable fill-rate issue, not a portal, glass, or coverage-memory regression.
+  Large macOS windows with HiDPI enabled rendered a roughly 4K-class drawable and
+  made Surface's fog/alpha-heavy scene render-bound. Native now defaults
+  `Video.HiDPI=0`, preserving remaster FX and the current portal/glass gains
+  while keeping `Video.HiDPI=1` available for opt-in native display-pixel output.
+  Current proof: `/tmp/mgb64_perf_hidpi_fix_26211` drops Surface default work
+  from about `47 ms` with HiDPI on to about `12 ms` with HiDPI off, and
+  `/tmp/mgb64_surface_playability_hidpi_fix_26857` passes Surface 1 and Surface 2
+  playability.
 - Guarded: the Bunker darkness report is not caused by the `field_10E0` Surface
   fix or an effect-texture/material regression, and now has a repeatable native
   guard in `tools/bunker_brightness_regression.sh`. Current proof
@@ -919,6 +929,10 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 - Direct native `--level` boots now skip authored intro camera mode by default so
   playability/dev runs start in first-person. Use `GE007_ENABLE_LEVEL_INTRO=1`
   for intro parity captures.
+- Retina/high-DPI rendering is opt-in through `Video.HiDPI=1`. The default
+  `Video.HiDPI=0` keeps large macOS windows at the configured drawable size,
+  which restores Surface 1/2 frame budget without disabling remaster FX, portal
+  ordering, portal-AABB expansion, or glass shard material work.
 - First-person render camera clearance is now applied only to native gameplay
   camera rendering. It uses the existing stan/prop collision queries and moves
   only the temporary render eye; gameplay collision, prop position, and movement
@@ -926,10 +940,11 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
   `GE007_DISABLE_RENDER_CAMERA_CLEARANCE=1`. Tune the extra surface skin with
   `GE007_RENDER_CAMERA_EXTRA_CLEARANCE`.
 - Dam portal BFS now keeps the pad-140 water/sky over-admission case tight while
-  also admitting projected-visible backface continuations in the service tunnel.
-  `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0` remains a negative-control repro
-  for the pad-164 blue tunnel cap, and the legacy projection/widening bundle
-  remains A/B-only for the old pad-140 over-admission signature.
+  also admitting service-tunnel continuations through stock-style portal
+  ordering and portal-AABB expansion. `GE007_BGORDER_PORTAL=0` plus
+  `GE007_BG_PORTAL_AABB_EXPAND=0` remains the negative-control repro for the
+  pad-164 blue tunnel cap, and the legacy projection/widening bundle remains
+  A/B-only for the old pad-140 over-admission signature.
 - Tinted glass no longer uses the old always-cloudy 96/255 alpha floor. The
   default render floor is 16/255, with `GE007_TINTED_GLASS_MIN_OPACITY=96` kept
   as a negative-control A/B and `=0` available for raw distance-opacity parity
@@ -2306,6 +2321,14 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
     pad-140 over-admission guard after the default fallback change: default
     stays at `5` rooms, the legacy bundle stays at `40`, and default vs
     no-portal-BFS remains `0.000%` changed.
+  - Dam tunnel visibility control refresh, 2026-06-28:
+    `/tmp/mgb64_dam_tunnel_updated_21017` passes after retiring the default-on
+    backface fallback. Default renders `5` tunnel rooms, includes room `98`, and
+    has `0.000%` bright-blue cap pixels. The `pre_ordering` negative control
+    (`GE007_BGORDER_PORTAL=0`, `GE007_BG_PORTAL_AABB_EXPAND=0`, and fallback
+    off) reproduces the old `3`-room view with `4.564%` bright-blue cap pixels,
+    while `GE007_PORTAL_BFS=0` renders `64` rooms with `0.000%` bright-blue cap
+    pixels.
   - Post-tunnel-fix validation, 2026-06-26:
     `/tmp/mgb64_render_camera_after_tunnel_fix_1782464989`,
     `/tmp/mgb64_glass_material_after_tunnel_fix_1782465134`,

@@ -33008,7 +33008,97 @@ glabel generate_ammo_total_microcode
 
 #ifdef NONMATCHING
 #ifdef PORT_FIXME_STUBS
+#ifdef NATIVE_PORT
+Gfx *sub_GAME_7F06A334(Gfx *gdl) {
+    ITEM_IDS leftWeapon;
+    ITEM_IDS rightWeapon;
+    s32 ammoType;
+    AmmoStats *stats;
+    struct sImageTableEntry *image;
+    s32 iconWidth;
+    s32 clip;
+    s32 reserve;
+    bool noClipReloads;
+
+    if (g_CurrentPlayer == NULL) {
+        return gdl;
+    }
+
+    leftWeapon = getCurrentPlayerWeaponId(GUNLEFT);
+    rightWeapon = getCurrentPlayerWeaponId(GUNRIGHT);
+
+    if ((s32)rightWeapon <= 0) {
+        return gdl;
+    }
+
+    ammoType = get_ammo_type_for_weapon(rightWeapon);
+    if (ammoType <= AMMO_NONE || ammoType >= AMMO_RELATED_MAX) {
+        return gdl;
+    }
+
+    if (bondwalkItemCheckBitflags(rightWeapon, WEAPONSTATBITFLAG_HIDE_AMMO_DISPLAY) != 0) {
+        return gdl;
+    }
+
+    stats = &ammo_related[ammoType];
+    image = portGetAmmoImage(ammoType);
+    iconWidth = image != NULL ? (s32)image->width : 5;
+
+    if (image != NULL) {
+        gdl = (Gfx *)set_rgba_redirect_generate_microcode(
+            gdl,
+            image,
+            200.0f,
+            180.0f,
+            (f32)(viGetViewTop() + viGetViewHeight() - 20),
+            0,
+            portGetAmmoIconYOffset(stats),
+            1);
+    }
+
+    gdl = microcode_constructor(gdl);
+
+    noClipReloads = (bondwalkItemCheckBitflags(rightWeapon, WEAPONSTATBITFLAG_NO_CLIP_RELOADS) != 0);
+    if (noClipReloads) {
+        clip = 0;
+        reserve = g_CurrentPlayer->hands[GUNRIGHT].weapon_ammo_in_magazine
+            + g_CurrentPlayer->ammoheldarr[ammoType];
+
+        if (leftWeapon == rightWeapon) {
+            reserve += g_CurrentPlayer->hands[GUNLEFT].weapon_ammo_in_magazine;
+        }
+    } else {
+        clip = g_CurrentPlayer->hands[GUNRIGHT].weapon_ammo_in_magazine;
+        reserve = g_CurrentPlayer->ammoheldarr[ammoType];
+    }
+
+    if (!noClipReloads) {
+        gdl = gunDrawHudInteger(
+            gdl,
+            clip,
+            196 - (iconWidth >> 1),
+            HUDHALIGN_RIGHT,
+            177,
+            HUDVALIGN_MIDDLE,
+            0);
+    }
+
+    if (reserve > 0 || noClipReloads) {
+        gdl = gunDrawHudInteger(
+            gdl,
+            reserve,
+            ((iconWidth + 1) >> 1) + 203,
+            HUDHALIGN_LEFT,
+            177,
+            HUDVALIGN_MIDDLE,
+            0);
+    }
+
+    return combiner_bayer_lod_perspective(gdl);
+}
+#else
 s32 sub_GAME_7F06A334(s32 arg0) { return arg0; }
+#endif
 #else
 s32 sub_GAME_7F06A334(s32 arg0) {
     void *sp30;
