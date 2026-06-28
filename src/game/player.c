@@ -342,7 +342,7 @@ Gfx *skyRender(Gfx *gdl)
 #ifdef NATIVE_PORT
     /* Sky rendering: enabled by default. The NATIVE_PORT intercepts in
      * sub_GAME_7F097818 / sub_GAME_7F098A2C replace raw RDP commands with
-     * direct native sky triangle submission.
+     * queued native sky triangle markers.
      * Disable with GE007_NO_SKY=1 to fall back to solid-fill.
      *
      * The three required matrices are: Matrix10D4, ProjectionMatrixF, and
@@ -907,8 +907,8 @@ Gfx *skyRender(Gfx *gdl)
             gDPSetRenderMode(gdl++, G_RM_OPA_SURF, G_RM_OPA_SURF2);
 
 #ifdef NATIVE_PORT
-            /* Water sky path: same timing issue as cloud path — sync state
-             * before the triangle intercepts fire. Uses WaterImageId. */
+            /* Water sky path: queue the texture/env state for the native marker
+             * replay. Uses WaterImageId. */
             {
                 gfx_prepare_sky_rendering(
                     skywaterimages[fogGetCurrentEnvironmentp()->WaterImageId].index,
@@ -1356,11 +1356,10 @@ Gfx *skyRender(Gfx *gdl)
             SHADE, ENVIRONMENT, TEXEL0, ENVIRONMENT, 0, 0, 0, SHADE);
 
 #ifdef NATIVE_PORT
-    /* Synchronize the renderer's texture/combiner/blend state BEFORE the
-     * sky triangle intercepts fire.  The GBI commands above (texSelect,
-     * SetEnvColor, SetCombineLERP) were written to the display list buffer
-     * and won't be processed until gfx_run_dl — but our sky triangles bypass
-     * the DL entirely.  This call sets the state directly. */
+    /* Queue the renderer's texture/env state for the native marker replay.
+     * The GBI setup above remains in the display list and executes in-order;
+     * the marker keeps the native triangle payload at the original raw-RDP
+     * command phase. */
     {
         gfx_prepare_sky_rendering(
             skywaterimages[fogGetCurrentEnvironmentp()->SkyImageId].index,
@@ -1534,19 +1533,18 @@ bool sub_GAME_7F0977B4(SkyRelated38 *arg0, SkyRelated38 *arg1)
 Gfx *sub_GAME_7F097818(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRelated38 *arg3, f32 arg4, bool textured)
 {
 #ifdef NATIVE_PORT
-    /* PC port: emit sky triangles from the original clip-space coordinates.
-     * Texture/combiner/blend state is set by gfx_prepare_sky_rendering()
-     * called earlier in skyRender() — the GBI commands in the display list
-     * haven't been processed yet at this point. */
+    /* PC port: queue sky triangles from the original clip-space coordinates
+     * and write a marker where the raw RDP triangle would have appeared. */
     {
         static int use_screen_space = -1;
+        uintptr_t marker;
 
         if (use_screen_space < 0) {
             use_screen_space = getenv("GE007_SKY_SCREENSPACE") != NULL ? 1 : 0;
         }
 
         if (use_screen_space) {
-            gfx_draw_sky_triangle(
+            marker = gfx_draw_sky_triangle(
                 arg1->unk28, arg1->unk2c, arg1->unk08, arg1->unk0c,
                 (uint8_t)arg1->r, (uint8_t)arg1->g, (uint8_t)arg1->b, (uint8_t)arg1->a,
                 arg1->unk20, arg1->unk24,
@@ -1557,7 +1555,7 @@ Gfx *sub_GAME_7F097818(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
                 (uint8_t)arg3->r, (uint8_t)arg3->g, (uint8_t)arg3->b, (uint8_t)arg3->a,
                 arg3->unk20, arg3->unk24);
         } else {
-            gfx_draw_sky_clip_triangle(
+            marker = gfx_draw_sky_clip_triangle(
                 arg1->unk00, arg1->unk04, arg1->unk08, arg1->unk0c,
                 (uint8_t)arg1->r, (uint8_t)arg1->g, (uint8_t)arg1->b, (uint8_t)arg1->a,
                 arg1->unk20, arg1->unk24,
@@ -1568,6 +1566,7 @@ Gfx *sub_GAME_7F097818(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
                 (uint8_t)arg3->r, (uint8_t)arg3->g, (uint8_t)arg3->b, (uint8_t)arg3->a,
                 arg3->unk20, arg3->unk24);
         }
+        gfx_write_sky_triangle_marker(gdl++, marker);
         return gdl;
     }
 #endif
@@ -2067,8 +2066,8 @@ Gfx *sub_GAME_7F098A2C(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
 {
 #ifdef NATIVE_PORT
     /* PC port: the N64 builder walks this quad as edge spans rather than a
-     * single fixed diagonal. Submit both diagonals to preserve full coverage
-     * for the clipped sky shapes GE produces at the horizon. */
+     * single fixed diagonal. Queue both diagonals and write markers so replay
+     * remains in the original raw-RDP command phase. */
     {
         static int use_screen_space = -1;
 
@@ -2077,8 +2076,9 @@ Gfx *sub_GAME_7F098A2C(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
         }
 
 #define DRAW_SKY_TRI(v0, v1, v2) do { \
+            uintptr_t marker; \
             if (use_screen_space) { \
-                gfx_draw_sky_triangle( \
+                marker = gfx_draw_sky_triangle( \
                     (v0)->unk28, (v0)->unk2c, (v0)->unk08, (v0)->unk0c, \
                     (uint8_t)(v0)->r, (uint8_t)(v0)->g, (uint8_t)(v0)->b, (uint8_t)(v0)->a, \
                     (v0)->unk20, (v0)->unk24, \
@@ -2089,7 +2089,7 @@ Gfx *sub_GAME_7F098A2C(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
                     (uint8_t)(v2)->r, (uint8_t)(v2)->g, (uint8_t)(v2)->b, (uint8_t)(v2)->a, \
                     (v2)->unk20, (v2)->unk24); \
             } else { \
-                gfx_draw_sky_clip_triangle( \
+                marker = gfx_draw_sky_clip_triangle( \
                     (v0)->unk00, (v0)->unk04, (v0)->unk08, (v0)->unk0c, \
                     (uint8_t)(v0)->r, (uint8_t)(v0)->g, (uint8_t)(v0)->b, (uint8_t)(v0)->a, \
                     (v0)->unk20, (v0)->unk24, \
@@ -2100,6 +2100,7 @@ Gfx *sub_GAME_7F098A2C(Gfx *gdl, SkyRelated38 *arg1, SkyRelated38 *arg2, SkyRela
                     (uint8_t)(v2)->r, (uint8_t)(v2)->g, (uint8_t)(v2)->b, (uint8_t)(v2)->a, \
                     (v2)->unk20, (v2)->unk24); \
             } \
+            gfx_write_sky_triangle_marker(gdl++, marker); \
         } while (0)
         DRAW_SKY_TRI(arg1, arg2, arg3);
         DRAW_SKY_TRI(arg1, arg3, arg4);

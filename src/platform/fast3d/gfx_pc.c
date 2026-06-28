@@ -84,6 +84,8 @@ static bool gfx_is_static_pc_dl(uintptr_t addr);
 static const char *gfx_vtx_decode_mode_name(uint8_t mode);
 static bool gfx_mode_is_room_xlu(uint32_t mode);
 static bool gfx_diag_texturenum_matches_list(const char *spec, int texturenum);
+static void gfx_native_sky_queue_reset(void);
+static void gfx_native_sky_replay_marker(uintptr_t marker);
 extern intptr_t get_BONDdata_field_10E0(void);
 extern int roomMatrixContainsAddress(const void *addr);
 extern int roomMatrixRoomFromAddress(const void *addr);
@@ -3384,6 +3386,42 @@ static struct RenderingState {
     bool bound_texture_linear[2];
     uint8_t bound_texture_cms[2], bound_texture_cmt[2];
 } rendering_state;
+
+#define GFX_NATIVE_SKY_QUEUE_MAX_BATCHES 64
+#define GFX_NATIVE_SKY_QUEUE_MAX_TRIS 1024
+#define GFX_NATIVE_SKY_MARKER_W0 ((uintptr_t)0x00534B59u) /* G_NOOP + "SKY" */
+
+struct GfxQueuedSkyBatch {
+    uint32_t texture_num;
+    struct RGBA env_color;
+    float screen_left;
+    float screen_top;
+    float screen_width;
+    float screen_height;
+    size_t first_tri;
+    size_t tri_count;
+};
+
+struct GfxQueuedSkyTri {
+    bool clip_space_xy;
+    uint16_t batch_index;
+    float x[3];
+    float y[3];
+    float z[3];
+    float w[3];
+    float u[3];
+    float v[3];
+    struct RGBA color[3];
+};
+
+static struct GfxQueuedSkyBatch g_native_sky_batches[GFX_NATIVE_SKY_QUEUE_MAX_BATCHES];
+static struct GfxQueuedSkyTri g_native_sky_tris[GFX_NATIVE_SKY_QUEUE_MAX_TRIS];
+static size_t g_native_sky_batch_count = 0;
+static size_t g_native_sky_tri_count = 0;
+static size_t g_native_sky_current_batch = SIZE_MAX;
+static bool g_native_sky_replaying = false;
+static bool g_native_sky_overflow_logged = false;
+static int g_native_sky_queue_enabled = -1; /* GE007_DISABLE_SKY_QUEUE=1 */
 
 static inline uint16_t gfx_tile_tmem_index(uint8_t tile_desc)
 {
@@ -20749,11 +20787,15 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 break;
 
             /* Sync commands — no-op on PC */
+            case 0x00: /* G_SPNOOP / native sky replay marker */
+                if (cmd->words.w0 == GFX_NATIVE_SKY_MARKER_W0) {
+                    gfx_native_sky_replay_marker(cmd->words.w1);
+                }
+                break;
             case G_RDPFULLSYNC:
             case G_RDPTILESYNC:
             case G_RDPPIPESYNC:
             case G_RDPLOADSYNC:
-            case 0x00: /* G_SPNOOP */
                 break;
 
             /* G_RDPHALF_1/G_RDPHALF_2 as standalone (not part of TEXRECT) */
@@ -21913,6 +21955,7 @@ void gfx_run_dl(Gfx *dl) {
                 buf_vbo_len = 0;
                 buf_vbo_num_tris = 0;
                 gfx_room_xlu_deferred_reset();
+                gfx_native_sky_queue_reset();
                 dl_depth = 0;
                 effect_dl_range_count = 0;
                 draw_class_dl_range_count = 0;
@@ -22064,6 +22107,7 @@ void gfx_run_dl(Gfx *dl) {
 
     gfx_rapi->end_frame();
     gfx_trace_glass_shard_coverage_frame_end();
+    gfx_native_sky_queue_reset();
     visibility_scaled_matrix_region_count = 0;
 
     /* Close trace file */
@@ -22184,10 +22228,9 @@ void gfx_run_dl(Gfx *dl) {
  * directly into the vertex buffer and submit through the standard pipeline.
  *
  * TIMING NOTE: The game code writes texture/combiner/blend GBI commands to
- * the display list buffer, but our sky triangle intercept runs BEFORE the
- * DL interpreter processes those commands.  gfx_prepare_sky_rendering()
- * synchronizes the texture and combiner state directly so that
- * gfx_emit_loaded_triangle sees the correct state when packing the VBO.
+ * the display list buffer while building the frame. Native sky triangles are
+ * queued at build time and replayed from PC-only G_NOOP markers when the DL
+ * interpreter reaches the original raw-RDP triangle phase.
  *
  * UV NOTE: Sky UVs from SkyRelated38.unk20/unk24 are already in the repeat
  * space built by the game from the active environment's CloudRepeat/WaterRepeat.
@@ -22201,8 +22244,8 @@ void gfx_run_dl(Gfx *dl) {
  * triangle submission, then restores the caller's RSP state.
  *
  * VIEWPORT NOTE: The game computes SkyRelated38 from the current player's
- * viewport. Carry that viewport into the direct native draw so split-screen
- * sky maps to the same sub-rectangle instead of the full window. */
+ * viewport. Carry that viewport into marker replay so split-screen sky maps
+ * to the same sub-rectangle instead of the full window. */
 
 static struct XYWidthHeight gfx_sky_viewport_to_drawable(void)
 {
@@ -22265,48 +22308,221 @@ static struct XYWidthHeight gfx_sky_viewport_to_drawable(void)
     return viewport;
 }
 
-void gfx_prepare_sky_rendering(uint32_t texture_num,
-                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
-                               float screen_left, float screen_top,
-                               float screen_width, float screen_height) {
-    /* Flush any pending geometry from previous draw state */
-    gfx_trace_sky_prep_pixel_event("prepare_begin");
-    gfx_flush();
-    gfx_trace_sky_prep_pixel_event("prepare_after_flush");
+static bool gfx_native_sky_queue_is_enabled(void)
+{
+    if (g_native_sky_queue_enabled < 0) {
+        const char *disable = getenv("GE007_DISABLE_SKY_QUEUE");
+        const char *enable = getenv("GE007_SKY_QUEUE");
+        g_native_sky_queue_enabled =
+            (disable != NULL && disable[0] != '\0' && strcmp(disable, "0") != 0) ||
+            (enable != NULL && strcmp(enable, "0") == 0)
+                ? 0
+                : 1;
+        if (!g_native_sky_queue_enabled) {
+            fprintf(stderr,
+                    "[fast3d] native sky queue disabled "
+                    "(GE007_DISABLE_SKY_QUEUE/GE007_SKY_QUEUE)\n");
+            fflush(stderr);
+        }
+    }
 
+    return g_native_sky_queue_enabled > 0;
+}
+
+static void gfx_native_sky_queue_reset(void)
+{
+    g_native_sky_batch_count = 0;
+    g_native_sky_tri_count = 0;
+    g_native_sky_current_batch = SIZE_MAX;
+    g_native_sky_replaying = false;
+    g_native_sky_overflow_logged = false;
+}
+
+static void gfx_native_sky_queue_log_drop(const char *what)
+{
+    if (!g_native_sky_overflow_logged) {
+        fprintf(stderr,
+                "[fast3d] native sky queue dropped %s "
+                "(batches=%zu/%d tris=%zu/%d)\n",
+                what != NULL ? what : "entry",
+                g_native_sky_batch_count,
+                GFX_NATIVE_SKY_QUEUE_MAX_BATCHES,
+                g_native_sky_tri_count,
+                GFX_NATIVE_SKY_QUEUE_MAX_TRIS);
+        fflush(stderr);
+        g_native_sky_overflow_logged = true;
+    }
+}
+
+static void gfx_apply_sky_rendering_state(uint32_t texture_num,
+                                          uint8_t env_r,
+                                          uint8_t env_g,
+                                          uint8_t env_b,
+                                          float screen_left,
+                                          float screen_top,
+                                          float screen_width,
+                                          float screen_height,
+                                          const char *begin_event,
+                                          const char *after_flush_event,
+                                          const char *after_settex_event,
+                                          const char *after_state_event)
+{
     g_sky_viewport_left = screen_left;
     g_sky_viewport_top = screen_top;
     g_sky_viewport_width = screen_width;
     g_sky_viewport_height = screen_height;
     g_sky_viewport_valid = true;
 
-    /* Load the sky texture via the same path as G_SETTEX (Rare's texture-by-number).
-     * This sets settex_active, settex_gl_tex_id, settex_tex_w/h. */
-    gfx_handle_settex(0, texture_num);
-    gfx_trace_sky_prep_pixel_event("prepare_after_settex");
+    if (begin_event != NULL) {
+        gfx_trace_sky_prep_pixel_event(begin_event);
+    }
+    gfx_flush();
+    if (after_flush_event != NULL) {
+        gfx_trace_sky_prep_pixel_event(after_flush_event);
+    }
 
-    /* Set environment color — used by the sky combiner as the base sky tint */
+    /* Load the sky texture via the same path as G_SETTEX (Rare's
+     * texture-by-number). This sets settex_active, settex_gl_tex_id,
+     * and settex_tex_w/h for the standard triangle emitter. */
+    gfx_handle_settex(0, texture_num);
+    if (after_settex_event != NULL) {
+        gfx_trace_sky_prep_pixel_event(after_settex_event);
+    }
+
     rdp.env_color.r = env_r;
     rdp.env_color.g = env_g;
     rdp.env_color.b = env_b;
     rdp.env_color.a = 255;
 
-    /* Set the sky cloud combiner: (SHADE-ENV)*TEXEL0+ENV for both cycles.
-     *   Color: A=SHADE(4), B=ENV(5), C=TEXEL0(1), D=ENV(5)
-     *   Alpha: A=0, B=0, C=0, D=SHADE(4) */
     gfx_dp_set_combine_mode(
         color_comb(G_CCMUX_SHADE, G_CCMUX_ENVIRONMENT, G_CCMUX_TEXEL0, G_CCMUX_ENVIRONMENT),
         alpha_comb(0, 0, 0, G_ACMUX_SHADE),
         color_comb(G_CCMUX_SHADE, G_CCMUX_ENVIRONMENT, G_CCMUX_TEXEL0, G_CCMUX_ENVIRONMENT),
         alpha_comb(0, 0, 0, G_ACMUX_SHADE));
 
-    /* Enable bilinear filtering for the sky texture (smooth clouds) */
     rdp.other_mode_h = (rdp.other_mode_h & ~(3U << G_MDSFT_TEXTFILT)) | G_TF_BILERP;
-
-    /* Set render mode for opaque sky surface */
     rdp.other_mode_l_raw = 0x0C192078; /* G_RM_AA_ZB_OPA_SURF / G_RM_AA_ZB_OPA_SURF2 */
     gfx_sync_other_mode_l_effective();
-    gfx_trace_sky_prep_pixel_event("prepare_after_state");
+
+    if (after_state_event != NULL) {
+        gfx_trace_sky_prep_pixel_event(after_state_event);
+    }
+}
+
+static size_t gfx_native_sky_begin_batch(uint32_t texture_num,
+                                         uint8_t env_r,
+                                         uint8_t env_g,
+                                         uint8_t env_b,
+                                         float screen_left,
+                                         float screen_top,
+                                         float screen_width,
+                                         float screen_height)
+{
+    struct GfxQueuedSkyBatch *batch;
+
+    if (g_native_sky_batch_count >= GFX_NATIVE_SKY_QUEUE_MAX_BATCHES) {
+        gfx_native_sky_queue_log_drop("batch");
+        g_native_sky_current_batch = SIZE_MAX;
+        return SIZE_MAX;
+    }
+
+    batch = &g_native_sky_batches[g_native_sky_batch_count];
+    batch->texture_num = texture_num;
+    batch->env_color.r = env_r;
+    batch->env_color.g = env_g;
+    batch->env_color.b = env_b;
+    batch->env_color.a = 255;
+    batch->screen_left = screen_left;
+    batch->screen_top = screen_top;
+    batch->screen_width = screen_width;
+    batch->screen_height = screen_height;
+    batch->first_tri = g_native_sky_tri_count;
+    batch->tri_count = 0;
+
+    g_native_sky_current_batch = g_native_sky_batch_count;
+    g_native_sky_batch_count++;
+
+    return g_native_sky_current_batch;
+}
+
+static uintptr_t gfx_native_sky_enqueue_triangle(
+    bool clip_space_xy,
+    const float xs[3],
+    const float ys[3],
+    const float zs[3],
+    const float ws[3],
+    const uint8_t rs[3],
+    const uint8_t gs[3],
+    const uint8_t bs[3],
+    const uint8_t as[3],
+    const float us[3],
+    const float vs[3])
+{
+    struct GfxQueuedSkyBatch *batch;
+    struct GfxQueuedSkyTri *tri;
+
+    if (g_native_sky_current_batch == SIZE_MAX ||
+        g_native_sky_current_batch >= g_native_sky_batch_count) {
+        gfx_native_sky_queue_log_drop("triangle without batch");
+        return 0;
+    }
+    if (g_native_sky_tri_count >= GFX_NATIVE_SKY_QUEUE_MAX_TRIS) {
+        gfx_native_sky_queue_log_drop("triangle");
+        return 0;
+    }
+
+    batch = &g_native_sky_batches[g_native_sky_current_batch];
+    tri = &g_native_sky_tris[g_native_sky_tri_count];
+    tri->clip_space_xy = clip_space_xy;
+    tri->batch_index = (uint16_t)g_native_sky_current_batch;
+    for (int i = 0; i < 3; i++) {
+        tri->x[i] = xs[i];
+        tri->y[i] = ys[i];
+        tri->z[i] = zs[i];
+        tri->w[i] = ws[i];
+        tri->u[i] = us[i];
+        tri->v[i] = vs[i];
+        tri->color[i].r = rs[i];
+        tri->color[i].g = gs[i];
+        tri->color[i].b = bs[i];
+        tri->color[i].a = as[i];
+    }
+
+    batch->tri_count++;
+    g_native_sky_tri_count++;
+
+    return g_native_sky_tri_count;
+}
+
+void gfx_prepare_sky_rendering(uint32_t texture_num,
+                               uint8_t env_r, uint8_t env_g, uint8_t env_b,
+                               float screen_left, float screen_top,
+                               float screen_width, float screen_height) {
+    if (gfx_native_sky_queue_is_enabled() && !g_native_sky_replaying) {
+        gfx_trace_sky_prep_pixel_event("queue_prepare");
+        gfx_native_sky_begin_batch(texture_num,
+                                   env_r,
+                                   env_g,
+                                   env_b,
+                                   screen_left,
+                                   screen_top,
+                                   screen_width,
+                                   screen_height);
+        return;
+    }
+
+    gfx_apply_sky_rendering_state(texture_num,
+                                  env_r,
+                                  env_g,
+                                  env_b,
+                                  screen_left,
+                                  screen_top,
+                                  screen_width,
+                                  screen_height,
+                                  "prepare_begin",
+                                  "prepare_after_flush",
+                                  "prepare_after_settex",
+                                  "prepare_after_state");
 
     /* Backface culling and fog are disabled per triangle in
      * gfx_draw_sky_triangle().
@@ -22316,7 +22532,7 @@ void gfx_prepare_sky_rendering(uint32_t texture_num,
      * intercept routes through gfx_sp_tri1 which DOES check geometry_mode. */
 }
 
-static void gfx_draw_sky_triangle_impl(
+static uintptr_t gfx_draw_sky_triangle_impl(
     bool clip_space_xy,
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
@@ -22338,6 +22554,22 @@ static void gfx_draw_sky_triangle_impl(
     uint8_t as[3] = { a0, a1, a2 };
     float us[3] = { u0, u1, u2 };
     float vs[3] = { v0, v1, v2 };
+
+    if (gfx_native_sky_queue_is_enabled() && !g_native_sky_replaying) {
+        gfx_trace_sky_prep_pixel_event("queue_tri");
+        return gfx_native_sky_enqueue_triangle(clip_space_xy,
+                                               xs,
+                                               ys,
+                                               zs,
+                                               ws,
+                                               rs,
+                                               gs,
+                                               bs,
+                                               as,
+                                               us,
+                                               vs);
+    }
+
     gfx_sync_current_dimensions_from_window();
     struct XYWidthHeight fullscreen_viewport = {0, 0, gfx_current_dimensions.width, gfx_current_dimensions.height};
     struct XYWidthHeight player_viewport = gfx_sky_viewport_to_drawable();
@@ -22405,7 +22637,7 @@ static void gfx_draw_sky_triangle_impl(
     gfx_sp_tri1(0, 1, 2);
     g_sky_tri_mode = false;
     int sky_tri_delta = g_sky_tri_count_diag - sky_tris_before;
-    if (sky_tri_delta > 0) {
+    if (sky_tri_delta > 0 && !g_native_sky_replaying) {
         g_pending_sky_tri_count_diag += sky_tri_delta;
     }
     rsp.geometry_mode = geometry_mode_saved;
@@ -22413,9 +22645,78 @@ static void gfx_draw_sky_triangle_impl(
     rdp.viewport = viewport_saved;
     rdp.scissor = scissor_saved;
     rdp.viewport_or_scissor_changed = true;
+
+    return 0;
 }
 
-void gfx_draw_sky_clip_triangle(
+static void gfx_native_sky_replay_marker(uintptr_t marker)
+{
+    size_t tri_index;
+    const struct GfxQueuedSkyTri *tri;
+    const struct GfxQueuedSkyBatch *batch;
+
+    if (marker == 0) {
+        return;
+    }
+
+    tri_index = (size_t)(marker - 1);
+    if (tri_index >= g_native_sky_tri_count) {
+        if (gfx_runtime_debug_enabled()) {
+            fprintf(stderr,
+                    "[fast3d] invalid native sky marker=%zu tri_count=%zu frame=%d\n",
+                    tri_index,
+                    g_native_sky_tri_count,
+                    g_frame_count_diag);
+            fflush(stderr);
+        }
+        return;
+    }
+
+    tri = &g_native_sky_tris[tri_index];
+    if (tri->batch_index >= g_native_sky_batch_count) {
+        if (gfx_runtime_debug_enabled()) {
+            fprintf(stderr,
+                    "[fast3d] invalid native sky batch=%u batch_count=%zu frame=%d\n",
+                    tri->batch_index,
+                    g_native_sky_batch_count,
+                    g_frame_count_diag);
+            fflush(stderr);
+        }
+        return;
+    }
+
+    batch = &g_native_sky_batches[tri->batch_index];
+    gfx_apply_sky_rendering_state(batch->texture_num,
+                                  batch->env_color.r,
+                                  batch->env_color.g,
+                                  batch->env_color.b,
+                                  batch->screen_left,
+                                  batch->screen_top,
+                                  batch->screen_width,
+                                  batch->screen_height,
+                                  "replay_prepare_begin",
+                                  "replay_after_flush",
+                                  "replay_after_settex",
+                                  "replay_after_state");
+
+    g_native_sky_replaying = true;
+    (void)gfx_draw_sky_triangle_impl(tri->clip_space_xy,
+                                     tri->x[0], tri->y[0], tri->z[0], tri->w[0],
+                                     tri->color[0].r, tri->color[0].g,
+                                     tri->color[0].b, tri->color[0].a,
+                                     tri->u[0], tri->v[0],
+                                     tri->x[1], tri->y[1], tri->z[1], tri->w[1],
+                                     tri->color[1].r, tri->color[1].g,
+                                     tri->color[1].b, tri->color[1].a,
+                                     tri->u[1], tri->v[1],
+                                     tri->x[2], tri->y[2], tri->z[2], tri->w[2],
+                                     tri->color[2].r, tri->color[2].g,
+                                     tri->color[2].b, tri->color[2].a,
+                                     tri->u[2], tri->v[2]);
+    g_native_sky_replaying = false;
+}
+
+uintptr_t gfx_draw_sky_clip_triangle(
     float x0, float y0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -22426,13 +22727,13 @@ void gfx_draw_sky_clip_triangle(
     uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
     float u2, float v2)
 {
-    gfx_draw_sky_triangle_impl(true,
+    return gfx_draw_sky_triangle_impl(true,
         x0, y0, z0, w0, r0, g0, b0, a0, u0, v0,
         x1, y1, z1, w1, r1, g1, b1, a1, u1, v1,
         x2, y2, z2, w2, r2, g2, b2, a2, u2, v2);
 }
 
-void gfx_draw_sky_triangle(
+uintptr_t gfx_draw_sky_triangle(
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -22443,10 +22744,26 @@ void gfx_draw_sky_triangle(
     uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
     float u2, float v2)
 {
-    gfx_draw_sky_triangle_impl(false,
+    return gfx_draw_sky_triangle_impl(false,
         sx0, sy0, z0, w0, r0, g0, b0, a0, u0, v0,
         sx1, sy1, z1, w1, r1, g1, b1, a1, u1, v1,
         sx2, sy2, z2, w2, r2, g2, b2, a2, u2, v2);
+}
+
+void gfx_write_sky_triangle_marker(Gfx *gdl, uintptr_t marker)
+{
+    if (gdl == NULL) {
+        return;
+    }
+
+    if (marker == 0 || !gfx_native_sky_queue_is_enabled()) {
+        gdl->words.w0 = 0;
+        gdl->words.w1 = 0;
+        return;
+    }
+
+    gdl->words.w0 = GFX_NATIVE_SKY_MARKER_W0;
+    gdl->words.w1 = marker;
 }
 
 /* Snapshot end-of-frame render stats for port_trace.c */

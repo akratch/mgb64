@@ -164,18 +164,21 @@ The visible symptoms were level-specific but shared renderer causes:
     shader ids. After room alpha LUTs, eye overrides, or tint overrides, rescan
     the effective combiner before classifying blend/memory behavior.
 
-15. **Native direct sky must behave as a backdrop when PC rooms draw early.**
-    The PC room path renders background rooms before the gameplay
-    `skyRender()` call that submits native direct sky triangles. Without an
-    occlusion policy, those sky triangles run with no depth test and can become
-    the final owner of pixels that an earlier room/terrain draw already wrote.
-    Dam's pad10092 target exposed this directly: `[TRI-PIXEL]` showed a late
-    sky triangle (`raw=0x0C192078`, `sky=1`) rewriting the target from
-    `[10,10,10]` to `[44,72,114]`. Native sky now renders at far clip depth,
-    depth-compares against existing room depth, and does not update depth, so
-    it fills untouched backdrop pixels without cutting through rooms. Use
-    `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as the focused negative control; on
-    the Dam target it restores the late sky overwrite.
+15. **Native sky must replay in display-list phase and behave as backdrop.**
+    `skyRender()` builds normal GBI setup/fill commands and raw RDP sky
+    triangles. The native port cannot interpret those raw RDP triangle packets,
+    but it also must not draw them immediately while the game is still building
+    the frame. Native sky triangles are now queued during `skyRender()` and
+    replayed from PC-only `G_NOOP` markers when `gfx_run_dl()` reaches the
+    original raw-RDP command phase. That preserves fill/setup ordering, keeps
+    split-screen viewport ownership local to the player pane, and avoids
+    mutating the previous/current GL framebuffer outside normal DL execution.
+    The earlier backdrop-depth policy still matters during replay: sky renders
+    at far clip depth, depth-compares against existing room depth, and does not
+    update depth, so it fills untouched backdrop pixels without cutting through
+    rooms. Use `GE007_DISABLE_SKY_QUEUE=1` as the phase-order negative control
+    and `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as the depth-owner negative
+    control.
 
 16. **Final-owner gaps need draw-boundary probes before behavior changes.**
     A `[TRI-PIXEL]` pre/post discontinuity does not automatically mean an
@@ -191,8 +194,11 @@ The visible symptoms were level-specific but shared renderer causes:
     68 rect rows changed zero pixels and the route emitted no
     deferred-room-XLU pixel rows. The sky-prep probe then showed
     `prepare_begin` already at `[10,10,10]`, proving the change happened before
-    native sky setup and pointing the next investigation at frame-phase
-    scheduling. Treat that as a trace-routing result, not a blend/depth fix.
+    native sky setup. Queue replay fixes that phase-order class: the refreshed
+    Dam pad10092 `[94,95]` default probe has zero same-frame `[TRI-PIXEL]`
+    post/pre jumps, while `GE007_DISABLE_SKY_QUEUE=1` restores the old
+    tri1080-to-sky gap. Treat draw-boundary probes as trace-routing evidence
+    before changing blend, depth, fog, or texture policy.
 
 ## Guardrails
 
@@ -250,17 +256,22 @@ Use these habits before accepting renderer changes:
 - Treat `GE007_SKY_UV_SCALE=1.0` as a negative control. It is useful for proving
   sky UV bugs, but it is not the calibrated native default.
 - Treat `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` as a negative control. It should
-  only be used to prove native direct sky final ownership; default sky should
-  not overwrite pixels already owned by room depth.
+  only be used to prove native sky depth ownership; default sky should not
+  overwrite pixels already owned by room depth.
+- Treat `GE007_DISABLE_SKY_QUEUE=1` as a negative control. It restores native
+  sky's old out-of-band draw timing and should only be used to prove a
+  frame-phase or marker-replay hypothesis.
 - When a pixel-owner trace jumps between logged triangles, first rerun with
   `GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` and
   `GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1`. Do not patch draw order, alpha, or fog
   policy until rectangles and deferred secondary-room XLU have been proved in
   or out.
 - When the remaining owner jump is adjacent to native sky, add
-  `GE007_TRACE_SKY_PREP_PIXEL=1`. If `prepare_begin` already has the unexpected
-  pixel color, the evidence points at frame-phase scheduling or queued native
-  command ownership, not sky texture sampling or fog math.
+  `GE007_TRACE_SKY_PREP_PIXEL=1`. In the default path, expect `queue_*` events
+  during display-list construction and `replay_*` events during `gfx_run_dl()`;
+  if `GE007_DISABLE_SKY_QUEUE=1` restores an unexplained jump, the evidence
+  points at frame-phase scheduling or marker replay, not sky texture sampling
+  or fog math.
 - Do not use `g_freezeInput` as a blanket native-look gate. It should remove
   live input from deterministic captures while preserving authored
   `GE007_AUTO_LOOK_*` probes. Use `tools/scripted_look_smoke.sh` before

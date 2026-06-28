@@ -424,8 +424,8 @@ target changes and zero deferred-room-XLU rows, ruling out both classes for the
 remaining local `[8,8,8] -> [10,10,10]` triangle-probe gap.
 
 When the all-triangle trace still has a pre/post discontinuity next to native
-sky draws, use the default-off sky preparation probe to bracket the direct sky
-setup path:
+sky draws, use the default-off sky preparation probe to bracket native sky queue
+and marker replay:
 
 ```sh
 OUT=/tmp/mgb64_native_sky_prep_pixel_probe
@@ -444,14 +444,18 @@ env GE007_TRACE_SKY_PREP_PIXEL=1 \
 ```
 
 Rows are emitted as `[SKY-PREP-PIXEL]` JSON and sample the framebuffer at
-`gfx_prepare_sky_rendering()`, sky triangle submission, and the sky triangle
-emit-state checkpoints. They include the target/framebuffer coordinates,
-current RGB, previous same-frame RGB, triangle counter, sky/settex state,
-raw/effective othermodes, geometry mode, renderer depth/blend state, viewport,
-and scissor. This probe is for phase-order attribution: if
-`prepare_begin` already sees the unexpected color, the pixel changed before the
-native sky setup function ran and the next target is command scheduling or
-frame phase ownership rather than sky texture, fog, or blend state.
+`gfx_prepare_sky_rendering()`, queue insertion, marker replay, sky triangle
+submission, and sky triangle emit-state checkpoints. They include the
+target/framebuffer coordinates, current RGB, previous same-frame RGB, triangle
+counter, sky/settex state, raw/effective othermodes, geometry mode, renderer
+depth/blend state, viewport, and scissor. In the default queued path, expect
+`queue_prepare`/`queue_tri` during display-list construction and
+`replay_*`/`sky_tri_*` when the interpreter reaches the PC-only marker. Use
+`GE007_DISABLE_SKY_QUEUE=1` as the negative control: on the Dam pad10092
+`[94,95]` proof target, default queue replay removes same-frame
+`[TRI-PIXEL]` post/pre jumps, while disabling the queue reproduces the old
+tri1080-to-sky `[8,8,8] -> [10,10,10]` gap with `prepare_begin` already at
+`[10,10,10]`.
 
 Summarize a capture with:
 
@@ -1701,7 +1705,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
 | `GE007_TINT_TEX=min:max`, `GE007_SKIP_TEX=min:max` | tint or skip `G_SETTEX` texture-number ranges; these match stable game texture numbers, not transient GL upload ids |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
-| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N`, `GE007_DISABLE_SKY_BACKDROP_DEPTH=1` | sky isolation, legacy sky path, UV-scale probes, and the native sky backdrop-depth negative control |
+| `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N`, `GE007_DISABLE_SKY_BACKDROP_DEPTH=1`, `GE007_DISABLE_SKY_QUEUE=1` | sky isolation, legacy sky path, UV-scale probes, native sky backdrop-depth negative control, and native sky queue phase-order negative control |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
 Fog regressions can masquerade as texture loss on distant stages. N64

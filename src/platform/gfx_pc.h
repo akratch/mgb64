@@ -89,10 +89,10 @@ void gfx_set_prop_context(const void *prop,
 void gfx_clear_prop_context(void);
 void gfx_register_effect_dl_range(const char *label, const void *start, const void *end);
 
-/* Synchronize rendering state for sky triangles.  Must be called BEFORE
- * gfx_draw_sky_triangle() to ensure the correct texture, combiner, and
- * blend state — because the game's GBI commands (texSelect, SetCombine)
- * are written to the display list buffer and haven't been processed yet. */
+/* Queue rendering state for native sky triangles. Must be called BEFORE
+ * gfx_draw_sky_triangle(). Native sky is replayed from PC-only display-list
+ * markers so it runs at the same frame phase as the original raw RDP sky
+ * triangles rather than drawing while the game is still building the DL. */
 void gfx_prepare_sky_rendering(uint32_t texture_num,
                                uint8_t env_r, uint8_t env_g, uint8_t env_b,
                                float screen_left, float screen_top,
@@ -113,7 +113,7 @@ float gfx_get_aspect_x_factor(void);
  *
  * Used by player.c skyRender() to replace raw RDP triangle commands
  * that the DL interpreter cannot process. */
-void gfx_draw_sky_clip_triangle(
+uintptr_t gfx_draw_sky_clip_triangle(
     float x0, float y0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -123,7 +123,7 @@ void gfx_draw_sky_clip_triangle(
     float x2, float y2, float z2, float w2,
     uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
     float u2, float v2);
-void gfx_draw_sky_triangle(
+uintptr_t gfx_draw_sky_triangle(
     float sx0, float sy0, float z0, float w0,
     uint8_t r0, uint8_t g0, uint8_t b0, uint8_t a0,
     float u0, float v0,
@@ -133,5 +133,6 @@ void gfx_draw_sky_triangle(
     float sx2, float sy2, float z2, float w2,
     uint8_t r2, uint8_t g2, uint8_t b2, uint8_t a2,
     float u2, float v2);
+void gfx_write_sky_triangle_marker(Gfx *gdl, uintptr_t marker);
 
 #endif /* GFX_PC_H */
