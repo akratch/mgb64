@@ -1354,6 +1354,7 @@ static int g_diag_xlu_coverage_stencil_cc = -1;
 static int g_diag_xlu_rdp_memory_blend_cc = -1;
 static int g_diag_xlu_rdp_cvg_memory_blend_cc = -1;
 static int g_diag_disable_shader_clamp = -1;
+static int g_diag_disable_shader_tile_mask = -1;
 
 static bool gfx_apply_texture_filter_override(bool linear_filter)
 {
@@ -1380,6 +1381,16 @@ static bool gfx_diag_disable_shader_clamp_enabled(void)
     }
 
     return g_diag_disable_shader_clamp > 0;
+}
+
+static bool gfx_diag_disable_shader_tile_mask_enabled(void)
+{
+    if (g_diag_disable_shader_tile_mask < 0) {
+        g_diag_disable_shader_tile_mask =
+            (getenv("GE007_DIAG_DISABLE_SHADER_TILE_MASK") != NULL) ? 1 : 0;
+    }
+
+    return g_diag_disable_shader_tile_mask > 0;
 }
 
 static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
@@ -4048,6 +4059,78 @@ static bool gfx_shader_clamp_needed_for_settex(uint8_t tex_tile_base,
         (uint32_t)(settex_tex_h + 0.5f));
 }
 
+static inline bool gfx_shader_tile_mask_mode_needs_shader(uint8_t cm,
+                                                          uint8_t mask,
+                                                          uint32_t texture_size)
+{
+    uint32_t mask_size;
+
+    if (gfx_diag_disable_shader_tile_mask_enabled()) {
+        return false;
+    }
+    if ((cm & G_TX_CLAMP) != 0 || mask == 0 || mask >= 31 ||
+        texture_size == 0) {
+        return false;
+    }
+
+    mask_size = 1U << mask;
+    return mask_size != 0 && mask_size < texture_size;
+}
+
+static bool gfx_shader_tile_mask_needed_for_loaded_tile(uint8_t tile_desc,
+                                                        int axis,
+                                                        bool force_clamp)
+{
+    const typeof(rdp.texture_tile[0]) *tile;
+    uint32_t tex_width;
+    uint32_t tex_height;
+    uint8_t cm;
+    uint8_t mask;
+    uint32_t texture_size;
+
+    if (tile_desc >= 8 ||
+        !gfx_loaded_tile_texture_dimensions(tile_desc, &tex_width, &tex_height)) {
+        return false;
+    }
+
+    tile = &rdp.texture_tile[tile_desc];
+    if (axis == 0) {
+        cm = force_clamp ? G_TX_CLAMP : tile->cms;
+        mask = tile->masks;
+        texture_size = tex_width;
+    } else {
+        cm = force_clamp ? G_TX_CLAMP : tile->cmt;
+        mask = tile->maskt;
+        texture_size = tex_height;
+    }
+
+    return gfx_shader_tile_mask_mode_needs_shader(cm, mask, texture_size);
+}
+
+static bool gfx_shader_tile_mask_needed_for_settex(const struct SetTexTileState *tile_state,
+                                                   int axis)
+{
+    uint8_t cm;
+    uint8_t mask;
+    uint32_t texture_size;
+
+    if (tile_state == NULL || !tile_state->valid) {
+        return false;
+    }
+
+    if (axis == 0) {
+        cm = tile_state->cms;
+        mask = tile_state->masks;
+        texture_size = (uint32_t)(settex_tex_w + 0.5f);
+    } else {
+        cm = tile_state->cmt;
+        mask = tile_state->maskt;
+        texture_size = (uint32_t)(settex_tex_h + 0.5f);
+    }
+
+    return gfx_shader_tile_mask_mode_needs_shader(cm, mask, texture_size);
+}
+
 static inline bool gfx_shader_clamp_enabled(uint32_t cc_options,
                                             int tex_unit,
                                             int axis)
@@ -4060,6 +4143,23 @@ static inline bool gfx_shader_clamp_enabled(uint32_t cc_options,
     } else {
         bit = axis == 0 ? SHADER_OPT_TEXEL1_CLAMP_S :
                           SHADER_OPT_TEXEL1_CLAMP_T;
+    }
+
+    return (cc_options & bit) != 0;
+}
+
+static inline bool gfx_shader_tile_mask_enabled(uint32_t cc_options,
+                                                int tex_unit,
+                                                int axis)
+{
+    uint32_t bit;
+
+    if (tex_unit == 0) {
+        bit = axis == 0 ? SHADER_OPT_TEXEL0_MASK_S :
+                          SHADER_OPT_TEXEL0_MASK_T;
+    } else {
+        bit = axis == 0 ? SHADER_OPT_TEXEL1_MASK_S :
+                          SHADER_OPT_TEXEL1_MASK_T;
     }
 
     return (cc_options & bit) != 0;
@@ -4086,6 +4186,64 @@ static inline float gfx_shader_clamp_coord(uint32_t logical_size,
     }
 
     return ((float)logical_size - 0.5f) / (float)texture_size;
+}
+
+static inline float gfx_shader_tile_mask_period(uint8_t cm, uint8_t mask)
+{
+    uint32_t mask_size;
+
+    if (mask == 0 || mask >= 31) {
+        return 0.0f;
+    }
+
+    mask_size = 1U << mask;
+    if (mask_size == 0) {
+        return 0.0f;
+    }
+
+    return (cm & G_TX_MIRROR) != 0 ? -(float)mask_size : (float)mask_size;
+}
+
+static bool gfx_get_shader_tile_mask_period(uint8_t tex_tile_base,
+                                            int tex_unit,
+                                            bool settex_mirror_tex1,
+                                            bool mirror_tex1_from_tex0,
+                                            bool allow_lod_redirect,
+                                            int axis,
+                                            float *out_period)
+{
+    struct SetTexTileState settex_tile;
+    uint8_t cm;
+    uint8_t mask;
+
+    if ((tex_unit == 0 && settex_active) ||
+        (tex_unit == 1 && settex_mirror_tex1)) {
+        if (!gfx_get_settex_effective_tile_state(tex_tile_base, tex_unit,
+                                                 &settex_tile)) {
+            return false;
+        }
+
+        cm = axis == 0 ? settex_tile.cms : settex_tile.cmt;
+        mask = axis == 0 ? settex_tile.masks : settex_tile.maskt;
+    } else {
+        uint8_t tile_unit = (tex_unit == 1 && mirror_tex1_from_tex0) ? 0 : (uint8_t)tex_unit;
+        uint8_t tile_desc =
+            gfx_effective_tile_desc_for_unit(tex_tile_base, tile_unit,
+                                             allow_lod_redirect);
+        if (tile_desc >= 8) {
+            return false;
+        }
+
+        cm = axis == 0 ? rdp.texture_tile[tile_desc].cms :
+                         rdp.texture_tile[tile_desc].cmt;
+        mask = axis == 0 ? rdp.texture_tile[tile_desc].masks :
+                           rdp.texture_tile[tile_desc].maskt;
+    }
+
+    if (out_period != NULL) {
+        *out_period = gfx_shader_tile_mask_period(cm, mask);
+    }
+    return true;
 }
 
 static void gfx_compute_vbo_texcoord_for_unit(const struct LoadedVertex *vertex,
@@ -4266,8 +4424,8 @@ static void gfx_sync_current_dimensions_from_window(void) {
         (float)gfx_current_dimensions.height;
 }
 
-static float buf_vbo[MAX_BUFFERED * (56 * 3)]; /* 56 = pos + diag attrs + 2 texcoords + clamp extents + fog + inputs */
-static float buf_vbo_sort_tmp[MAX_BUFFERED * (56 * 3)];
+static float buf_vbo[MAX_BUFFERED * (64 * 3)]; /* pos + diag attrs + texcoords + clamp/mask extents + fog + inputs */
+static float buf_vbo_sort_tmp[MAX_BUFFERED * (64 * 3)];
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
 static uint8_t buf_vbo_tri_sortable[MAX_BUFFERED];
@@ -12511,6 +12669,8 @@ static void gfx_check_diag_env(void) {
              getenv("GE007_DISABLE_N64_3POINT") != NULL) ? 1 : 0;
         g_diag_disable_shader_clamp =
             (getenv("GE007_DIAG_DISABLE_SHADER_CLAMP") != NULL) ? 1 : 0;
+        g_diag_disable_shader_tile_mask =
+            (getenv("GE007_DIAG_DISABLE_SHADER_TILE_MASK") != NULL) ? 1 : 0;
         g_diag_convert_k4k5 = (getenv("GE007_DIAG_CONVERT_K4K5") != NULL) ? 1 : 0;
         (void)gfx_diag_lod_fraction_override();
         (void)gfx_diag_shade_scale();
@@ -12691,6 +12851,7 @@ static void gfx_check_diag_env(void) {
         if (g_diag_force_room_point_filter) printf("[fast3d] ROOM POINT FILTER FORCED (GE007_FORCE_ROOM_POINT_FILTER)\n");
         if (g_diag_disable_n64_filter) printf("[fast3d] N64 SHADER FILTER DISABLED (GE007_DISABLE_N64_FILTER/GE007_DISABLE_N64_3POINT)\n");
         if (g_diag_disable_shader_clamp) printf("[fast3d] DIAG SHADER CLAMP DISABLED (GE007_DIAG_DISABLE_SHADER_CLAMP)\n");
+        if (g_diag_disable_shader_tile_mask) printf("[fast3d] DIAG SHADER TILE MASK DISABLED (GE007_DIAG_DISABLE_SHADER_TILE_MASK)\n");
         if (g_diag_convert_k4k5) printf("[fast3d] DIAG K4/K5 CONVERT ENABLED (GE007_DIAG_CONVERT_K4K5)\n");
         if (g_diag_lod_fraction_override >= 0) {
             printf("[fast3d] DIAG LOD FRACTION OVERRIDE %d (GE007_DIAG_LOD_FRACTION)\n",
@@ -16726,6 +16887,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             cc_features_for_options.used_textures[0] &&
             cc_features_for_options.used_textures[1] &&
             gfx_diag_loaded_tile_two_tex_n64_filter_enabled(cc_id);
+        bool allow_mask_n64_filter = !g_texrect_uv_mode &&
+            linear_filter &&
+            gfx_n64_shader_filter_enabled();
         bool allow_loaded_tile_n64_filter = !g_texrect_uv_mode &&
             !settex_active &&
             linear_filter &&
@@ -16735,12 +16899,23 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
              loaded_tile_two_tex_filter_diag);
         uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
         struct SetTexTileState settex_tile0;
+        bool tex0_tile_masked = false;
         if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
             if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 0, &settex_tile0)) {
                 cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
             }
             if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 1, &settex_tile0)) {
                 cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 0)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
+                tex0_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 1)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
+                tex0_tile_masked = true;
             }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         } else if (td0 < 8) {
@@ -16752,17 +16927,43 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             if (gfx_shader_clamp_needed_for_loaded_tile(td0, 1, is_font_texture)) {
                 cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
             }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
+                tex0_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
+                tex0_tile_masked = true;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[0])
                 cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
         }
+        if (tex0_tile_masked &&
+            allow_mask_n64_filter &&
+            cc_features_for_options.used_textures[0]) {
+            cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
+        }
         uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
         struct SetTexTileState settex_tile1;
+        bool tex1_tile_masked = false;
         if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
             if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 0, &settex_tile1)) {
                 cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
             }
             if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 1, &settex_tile1)) {
                 cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 0)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
+                tex1_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 1)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
+                tex1_tile_masked = true;
             }
             if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         } else if (td1 < 8) {
@@ -16774,8 +16975,23 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             if (gfx_shader_clamp_needed_for_loaded_tile(td1, 1, is_font_texture)) {
                 cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
             }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
+                tex1_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
+                tex1_tile_masked = true;
+            }
             if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[1])
                 cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
+        }
+        if (tex1_tile_masked &&
+            allow_mask_n64_filter &&
+            cc_features_for_options.used_textures[1]) {
+            cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
         }
     }
 
@@ -17765,6 +17981,24 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                     gfx_shader_clamp_coord(tex_clamp_height[ti],
                                            tex_height[ti]);
             }
+            if (gfx_shader_tile_mask_enabled(cc_options, ti, 0)) {
+                float mask_period = 0.0f;
+                (void)gfx_get_shader_tile_mask_period(tex_tile_base, ti,
+                                                      settex_mirror_tex1,
+                                                      mirror_tex1_from_tex0,
+                                                      allow_lod_redirect,
+                                                      0, &mask_period);
+                buf_vbo[buf_vbo_len++] = mask_period;
+            }
+            if (gfx_shader_tile_mask_enabled(cc_options, ti, 1)) {
+                float mask_period = 0.0f;
+                (void)gfx_get_shader_tile_mask_period(tex_tile_base, ti,
+                                                      settex_mirror_tex1,
+                                                      mirror_tex1_from_tex0,
+                                                      allow_lod_redirect,
+                                                      1, &mask_period);
+                buf_vbo[buf_vbo_len++] = mask_period;
+            }
         }
 
         if (use_fog) {
@@ -17867,30 +18101,46 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
     }
     if (trace_eye_material) {
-        size_t stride = 4 + (use_texture ? 2 : 0) + (use_fog ? 4 : 0) + (num_inputs * (use_alpha ? 4 : 3));
-        if (buf_vbo_len >= stride) {
-        const float *base = &buf_vbo[buf_vbo_len - stride];
-        fprintf(stderr,
-                "[EYE-VBO] frame=%d stride=%zu pos=(%.3f,%.3f,%.3f,%.3f) uv=(%.3f,%.3f)",
-                g_frame_count_diag,
-                stride,
-                base[0], base[1], base[2], base[3],
-                use_texture ? base[4] : 0.0f,
-                use_texture ? base[5] : 0.0f);
-        if (num_inputs > 0) {
-            size_t input_base = 4 + (use_texture ? 2 : 0) + (use_fog ? 4 : 0);
-            fprintf(stderr, " input1=(");
-            fprintf(stderr, "%.3f,%.3f,%.3f",
-                    base[input_base + 0],
-                    base[input_base + 1],
-                    base[input_base + 2]);
-            if (use_alpha) {
-                fprintf(stderr, ",%.3f", base[input_base + 3]);
+        size_t stride = 4 + (diag_rdp_cvg_memory ? 6 : 0);
+        size_t tex_base = stride;
+        size_t input_base;
+        for (int ti = 0; ti < 2; ti++) {
+            if (!used_textures[ti]) {
+                continue;
             }
-            fprintf(stderr, ")");
+            stride += 2;
+            if (gfx_shader_clamp_enabled(cc_options, ti, 0)) stride++;
+            if (gfx_shader_clamp_enabled(cc_options, ti, 1)) stride++;
+            if (gfx_shader_tile_mask_enabled(cc_options, ti, 0)) stride++;
+            if (gfx_shader_tile_mask_enabled(cc_options, ti, 1)) stride++;
         }
-        fprintf(stderr, "\n");
-        fflush(stderr);
+        if (use_fog) {
+            stride += 4;
+        }
+        input_base = stride;
+        stride += num_inputs * (use_alpha ? 4 : 3);
+        if (buf_vbo_len >= stride) {
+            const float *base = &buf_vbo[buf_vbo_len - stride];
+            fprintf(stderr,
+                    "[EYE-VBO] frame=%d stride=%zu pos=(%.3f,%.3f,%.3f,%.3f) uv=(%.3f,%.3f)",
+                    g_frame_count_diag,
+                    stride,
+                    base[0], base[1], base[2], base[3],
+                    use_texture ? base[tex_base] : 0.0f,
+                    use_texture ? base[tex_base + 1] : 0.0f);
+            if (num_inputs > 0) {
+                fprintf(stderr, " input1=(");
+                fprintf(stderr, "%.3f,%.3f,%.3f",
+                        base[input_base + 0],
+                        base[input_base + 1],
+                        base[input_base + 2]);
+                if (use_alpha) {
+                    fprintf(stderr, ",%.3f", base[input_base + 3]);
+                }
+                fprintf(stderr, ")");
+            }
+            fprintf(stderr, "\n");
+            fflush(stderr);
         }
     }
     g_tri_count_diag++;

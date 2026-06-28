@@ -69,6 +69,10 @@ enum {
 #define SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND (1 << 22)
 #define SHADER_OPT_DIAG_ALPHA_SCALE (1 << 23)
 #define SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS (1 << 24)
+#define SHADER_OPT_TEXEL0_MASK_S (1u << 25)
+#define SHADER_OPT_TEXEL0_MASK_T (1u << 26)
+#define SHADER_OPT_TEXEL1_MASK_S (1u << 27)
+#define SHADER_OPT_TEXEL1_MASK_T (1u << 28)
 
 struct CCFeatures {
     uint8_t c[2][2][4];       /* [cycle][color_or_alpha][component A/B/C/D] */
@@ -79,6 +83,7 @@ struct CCFeatures {
     bool opt_2cyc;
     bool used_textures[2];
     bool clamp[2][2];         /* [texture 0/1][S/T] — shader-side UV clamping */
+    bool tile_mask[2][2];     /* [texture 0/1][S/T] — shader-side N64 mask wrap */
     bool n64_filter[2];       /* [texture 0/1] — N64-native shader texture filter */
     bool noperspective_texcoords;
     bool noperspective_inputs;

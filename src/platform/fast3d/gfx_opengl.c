@@ -85,8 +85,8 @@ struct ShaderProgram {
     uint8_t num_inputs;
     bool used_textures[2];
     uint8_t num_floats;
-    GLint attrib_locations[20];
-    uint8_t attrib_sizes[20];
+    GLint attrib_locations[24];
+    uint8_t attrib_sizes[24];
     uint8_t num_attribs;
     bool used_noise;
     GLint frame_count_location;
@@ -801,8 +801,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     struct CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
 
-    char vs_buf[8192];
-    char fs_buf[12288];
+    char vs_buf[12288];
+    char fs_buf[18000];
     size_t vs_len = 0;
     size_t fs_len = 0;
     size_t num_floats = 4;
@@ -814,6 +814,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         "noperspective " : "";
     const char *fog_interp = cc_features.noperspective_fog ? "noperspective " : "";
     bool quantize_combiner = gfx_diag_quantize_combiner_enabled();
+    bool uses_tile_mask =
+        cc_features.tile_mask[0][0] || cc_features.tile_mask[0][1] ||
+        cc_features.tile_mask[1][0] || cc_features.tile_mask[1][1];
 
     /* Use GLSL 150 for macOS Core Profile compatibility, 330 elsewhere */
 #ifdef __APPLE__
@@ -846,6 +849,16 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
                                              texcoord_interp, axis_name, i);
                     num_floats += 1;
                 }
+                if (cc_features.tile_mask[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "in float aTexMask%c%d;\n",
+                                             axis_name, i);
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "%sout float vTexMask%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                    num_floats += 1;
+                }
             }
         }
     }
@@ -874,6 +887,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
                     const char axis_name = axis == 0 ? 'S' : 'T';
                     vs_len += ge007_sprintf(vs_buf + vs_len,
                                              "vTexClamp%c%d = aTexClamp%c%d;\n",
+                                             axis_name, i, axis_name, i);
+                }
+                if (cc_features.tile_mask[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    vs_len += ge007_sprintf(vs_buf + vs_len,
+                                             "vTexMask%c%d = aTexMask%c%d;\n",
                                              axis_name, i, axis_name, i);
                 }
             }
@@ -915,6 +934,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
                                              "%sin float vTexClamp%c%d;\n",
                                              texcoord_interp, axis_name, i);
                 }
+                if (cc_features.tile_mask[i][axis]) {
+                    const char axis_name = axis == 0 ? 'S' : 'T';
+                    fs_len += ge007_sprintf(fs_buf + fs_len,
+                                             "%sin float vTexMask%c%d;\n",
+                                             texcoord_interp, axis_name, i);
+                }
             }
         }
     }
@@ -945,6 +970,22 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "uniform vec4 uDiagViewport;");
     }
 
+    if (uses_tile_mask || cc_features.n64_filter[0] || cc_features.n64_filter[1]) {
+        append_line(fs_buf, &fs_len, "float n64TileMaskAxis(float texelCoord, float maskPeriod) {");
+        append_line(fs_buf, &fs_len, "    float extent = abs(maskPeriod);");
+        append_line(fs_buf, &fs_len, "    if (extent <= 0.5) return texelCoord;");
+        append_line(fs_buf, &fs_len, "    float coord = mod(texelCoord, maskPeriod < 0.0 ? extent * 2.0 : extent);");
+        append_line(fs_buf, &fs_len, "    if (maskPeriod < 0.0 && coord >= extent) coord = extent * 2.0 - coord;");
+        append_line(fs_buf, &fs_len, "    return coord;");
+        append_line(fs_buf, &fs_len, "}");
+        append_line(fs_buf, &fs_len, "vec2 n64TileMaskUv(vec2 uv, vec2 texSize, float maskS, float maskT) {");
+        append_line(fs_buf, &fs_len, "    vec2 texelCoord = uv * texSize;");
+        append_line(fs_buf, &fs_len, "    texelCoord.s = n64TileMaskAxis(texelCoord.s, maskS);");
+        append_line(fs_buf, &fs_len, "    texelCoord.t = n64TileMaskAxis(texelCoord.t, maskT);");
+        append_line(fs_buf, &fs_len, "    return texelCoord / texSize;");
+        append_line(fs_buf, &fs_len, "}");
+    }
+
     if (cc_features.n64_filter[0] || cc_features.n64_filter[1]) {
         bool always_3point = cc_features.n64_filter_always_3point ||
             gfx_diag_n64_filter_always_3point_enabled();
@@ -956,7 +997,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
                                                   clamped,
                                                   1.0f);
         append_line(fs_buf, &fs_len, "uniform vec2 uN64FilterScale;");
-        append_line(fs_buf, &fs_len, "vec4 n64TextureFilter(sampler2D tex, vec2 uv) {");
+        append_line(fs_buf, &fs_len, "vec4 n64TextureFilter(sampler2D tex, vec2 uv, float maskS, float maskT) {");
         append_line(fs_buf, &fs_len, "    vec2 texSize = vec2(textureSize(tex, 0));");
         append_line(fs_buf, &fs_len, "    vec2 texelCoord = uv * texSize;");
         if (!always_3point) {
@@ -966,15 +1007,15 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             fs_len += ge007_sprintf(fs_buf + fs_len,
                                      "    if (max(footprint.x, footprint.y) < %.9f) {\n",
                                      nearest_threshold);
-            append_line(fs_buf, &fs_len, "        return textureLod(tex, (floor(texelCoord) + vec2(0.5)) / texSize, 0.0);");
+            append_line(fs_buf, &fs_len, "        return textureLod(tex, n64TileMaskUv((floor(texelCoord) + vec2(0.5)) / texSize, texSize, maskS, maskT), 0.0);");
             append_line(fs_buf, &fs_len, "    }");
         }
         append_line(fs_buf, &fs_len, "    vec2 offset = fract(uv * texSize - vec2(0.5));");
         append_line(fs_buf, &fs_len, "    offset -= step(1.0, offset.x + offset.y);");
         append_line(fs_buf, &fs_len, "    vec2 baseUv = uv - offset / texSize;");
-        append_line(fs_buf, &fs_len, "    vec4 c0 = textureLod(tex, baseUv, 0.0);");
-        append_line(fs_buf, &fs_len, "    vec4 c1 = textureLod(tex, baseUv + vec2(sign(offset.x), 0.0) / texSize, 0.0);");
-        append_line(fs_buf, &fs_len, "    vec4 c2 = textureLod(tex, baseUv + vec2(0.0, sign(offset.y)) / texSize, 0.0);");
+        append_line(fs_buf, &fs_len, "    vec4 c0 = textureLod(tex, n64TileMaskUv(baseUv, texSize, maskS, maskT), 0.0);");
+        append_line(fs_buf, &fs_len, "    vec4 c1 = textureLod(tex, n64TileMaskUv(baseUv + vec2(sign(offset.x), 0.0) / texSize, texSize, maskS, maskT), 0.0);");
+        append_line(fs_buf, &fs_len, "    vec4 c2 = textureLod(tex, n64TileMaskUv(baseUv + vec2(0.0, sign(offset.y)) / texSize, texSize, maskS, maskT), 0.0);");
         append_line(fs_buf, &fs_len, "    return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);");
         append_line(fs_buf, &fs_len, "}");
     }
@@ -1023,10 +1064,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         fs_len += ge007_sprintf(fs_buf + fs_len,
                                  "vec2 sampleTexCoord%d = vTexCoord%d;\n",
                                  i, i);
-        if (cc_features.clamp[i][0] || cc_features.clamp[i][1]) {
+        if (cc_features.clamp[i][0] || cc_features.clamp[i][1] ||
+            cc_features.tile_mask[i][0] || cc_features.tile_mask[i][1]) {
             fs_len += ge007_sprintf(fs_buf + fs_len,
                                      "vec2 texSize%d = vec2(textureSize(uTex%d, 0));\n",
                                      i, i);
+        }
+        if (cc_features.clamp[i][0] || cc_features.clamp[i][1]) {
             if (cc_features.clamp[i][0] && cc_features.clamp[i][1]) {
                 fs_len += ge007_sprintf(fs_buf + fs_len,
                                          "sampleTexCoord%d = clamp(vTexCoord%d, 0.5 / texSize%d, vec2(vTexClampS%d, vTexClampT%d));\n",
@@ -1044,12 +1088,34 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     if (cc_features.used_textures[0]) {
-        const char *sample_fn = cc_features.n64_filter[0] ? "n64TextureFilter" : "texture";
-        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal0 = %s(uTex0, sampleTexCoord0);\n", sample_fn);
+        const char *mask_s = cc_features.tile_mask[0][0] ? "vTexMaskS0" : "0.0";
+        const char *mask_t = cc_features.tile_mask[0][1] ? "vTexMaskT0" : "0.0";
+        if (cc_features.n64_filter[0]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                    "vec4 texVal0 = n64TextureFilter(uTex0, sampleTexCoord0, %s, %s);\n",
+                                    mask_s, mask_t);
+        } else if (cc_features.tile_mask[0][0] || cc_features.tile_mask[0][1]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                    "vec4 texVal0 = texture(uTex0, n64TileMaskUv(sampleTexCoord0, texSize0, %s, %s));\n",
+                                    mask_s, mask_t);
+        } else {
+            append_line(fs_buf, &fs_len, "vec4 texVal0 = texture(uTex0, sampleTexCoord0);");
+        }
     }
     if (cc_features.used_textures[1]) {
-        const char *sample_fn = cc_features.n64_filter[1] ? "n64TextureFilter" : "texture";
-        fs_len += ge007_sprintf(fs_buf + fs_len, "vec4 texVal1 = %s(uTex1, sampleTexCoord1);\n", sample_fn);
+        const char *mask_s = cc_features.tile_mask[1][0] ? "vTexMaskS1" : "0.0";
+        const char *mask_t = cc_features.tile_mask[1][1] ? "vTexMaskT1" : "0.0";
+        if (cc_features.n64_filter[1]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                    "vec4 texVal1 = n64TextureFilter(uTex1, sampleTexCoord1, %s, %s);\n",
+                                    mask_s, mask_t);
+        } else if (cc_features.tile_mask[1][0] || cc_features.tile_mask[1][1]) {
+            fs_len += ge007_sprintf(fs_buf + fs_len,
+                                    "vec4 texVal1 = texture(uTex1, n64TileMaskUv(sampleTexCoord1, texSize1, %s, %s));\n",
+                                    mask_s, mask_t);
+        } else {
+            append_line(fs_buf, &fs_len, "vec4 texVal1 = texture(uTex1, sampleTexCoord1);");
+        }
     }
     if (cc_features.opt_alpha && cc_features.diag_alpha_from_tex_intensity) {
         float mix = gfx_diag_alpha_from_tex_intensity_mix();
@@ -1283,6 +1349,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
             for (int axis = 0; axis < 2; axis++) {
                 if (cc_features.clamp[i][axis]) {
                     ge007_sprintf(name, "aTexClamp%c%d", axis == 0 ? 'S' : 'T', i);
+                    prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
+                    prg->attrib_sizes[cnt] = 1;
+                    ++cnt;
+                }
+                if (cc_features.tile_mask[i][axis]) {
+                    ge007_sprintf(name, "aTexMask%c%d", axis == 0 ? 'S' : 'T', i);
                     prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, name);
                     prg->attrib_sizes[cnt] = 1;
                     ++cnt;

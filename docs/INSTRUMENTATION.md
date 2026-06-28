@@ -1779,6 +1779,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_DISABLE_LOADBLOCK_STRIDED_FOOTPRINT=1` | negative control for row-pitch smearing; disables the default LOADBLOCK strided decode footprint without changing source texture bytes |
 | `GE007_TINT_TEX=min:max`, `GE007_SKIP_TEX=min:max` | tint or skip `G_SETTEX` texture-number ranges; these match stable game texture numbers, not transient GL upload ids |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
+| `GE007_DIAG_DISABLE_SHADER_TILE_MASK=1` | negative control for shader-side N64 tile-mask wrap/mirror; use only to prove mask-period sampling is involved |
 | `GE007_NO_SKY=1`, `GE007_SKIP_SKY=1`, `GE007_SKY_SCREENSPACE=1`, `GE007_SKY_UV_SCALE=N`, `GE007_DISABLE_SKY_BACKDROP_DEPTH=1`, `GE007_DISABLE_SKY_QUEUE=1` | sky isolation, legacy sky path, UV-scale probes, native sky backdrop-depth negative control, and native sky queue phase-order negative control |
 | `GE007_BUILD_JOBS=N` | cap build parallelism (default 4) |
 
@@ -1829,13 +1830,19 @@ separate during review so one fix does not hide another:
    than decoded-source stride.
 3. **Rare `G_SETTEX` tile state:** stale ordinary TMEM tile descriptors can
    survive next to the active texture-by-number state. A healthy
-   `GE007_TRACE_SETTEX_MATERIAL_CC='*'` trace has shader clamp bits that agree
-   with the decoded `settex` fallback tile state. If `tile0`/`tile1` says wrap
-   but `opts` still carries `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will
-   clamp repeated room coordinates to an edge row/column and stretch it across
-   the surface. The renderer should only trust an authored room tile descriptor
-   when its clamp, shift, offset, and dimensions match the current `G_SETTEX`
-   state.
+   `GE007_TRACE_SETTEX_MATERIAL_CC='*'` trace has `tilex0`/`tilex1` extended
+   state and shader clamp/mask bits that agree with the decoded effective
+   `G_SETTEX` tile state. If `tile0`/`tile1` says wrap but `opts` still carries
+   `SHADER_OPT_TEXEL*_CLAMP_*`, native rendering will clamp repeated room
+   coordinates to an edge row/column and stretch it across the surface. If
+   `masks`/`maskt` describe a period smaller than the uploaded texture extent,
+   the shader must apply that repeat/mirror period in texel space before
+   filtering; ordinary GL repeat/mirror repeats the full upload and is not
+   equivalent. Surface's active proof is a used two-texture material with
+   `opts=0x18003012`, a 32x32 upload, and
+   `tilex1=(2,0,4,4,8,0,62,62)`. The renderer should only trust an authored
+   room tile descriptor when its format/size, clamp/wrap, masks, shift, offset,
+   line, TMEM, and dimensions match the current `G_SETTEX` state.
 4. **Material attribution:** `G_SETTEX` texture numbers and OpenGL upload ids
    are not interchangeable. Use `GE007_TINT_TEX`/`GE007_SKIP_TEX` to isolate
    stable game texture numbers, then confirm the material with
@@ -1893,6 +1900,7 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_DIAG_NO_SETTEX_LINEARIZE=1` | disable the `G_SETTEX` UV linearization path for A/B only; not a Dam glass fix by itself |
 | `GE007_DIAG_SETTEX_MIRROR_TEX1=1` | force `G_SETTEX` texel1 coordinate mirroring for A/B only |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP=1` | negative control for shader-side UV clamp; use only to prove clamp policy/coordinates are involved |
+| `GE007_DIAG_DISABLE_SHADER_TILE_MASK=1` | negative control for shader-side N64 tile-mask wrap/mirror; use only to prove mask-period sampling is involved |
 | `GE007_DIAG_CONVERT_K4K5=1` | A/B combiner K4/K5 conversion; strong negative control on Dam glass |
 | `GE007_DIAG_SWAP_IA8_NIBBLES=1|*|key-list` | default-off loaded-tile IA8 decode A/B; swaps intensity/alpha nibbles globally or for selected texture cache keys, useful for shard texture-payload semantics checks |
 | `GE007_DIAG_IA8_CHANNEL_MODE=mode[:key-list]` | default-off loaded-tile IA8 channel A/B; modes are `rgb_from_alpha`, `alpha_from_intensity`, and `swap`, optionally scoped to texture cache keys |

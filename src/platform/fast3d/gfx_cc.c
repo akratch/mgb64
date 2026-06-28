@@ -25,6 +25,10 @@ void gfx_cc_get_features(uint64_t shader_id0, uint32_t shader_id1, struct CCFeat
     cc_features->clamp[0][1] = (shader_id1 & SHADER_OPT_TEXEL0_CLAMP_T) != 0;
     cc_features->clamp[1][0] = (shader_id1 & SHADER_OPT_TEXEL1_CLAMP_S) != 0;
     cc_features->clamp[1][1] = (shader_id1 & SHADER_OPT_TEXEL1_CLAMP_T) != 0;
+    cc_features->tile_mask[0][0] = (shader_id1 & SHADER_OPT_TEXEL0_MASK_S) != 0;
+    cc_features->tile_mask[0][1] = (shader_id1 & SHADER_OPT_TEXEL0_MASK_T) != 0;
+    cc_features->tile_mask[1][0] = (shader_id1 & SHADER_OPT_TEXEL1_MASK_S) != 0;
+    cc_features->tile_mask[1][1] = (shader_id1 & SHADER_OPT_TEXEL1_MASK_T) != 0;
     cc_features->n64_filter[0] = (shader_id1 & SHADER_OPT_TEXEL0_N64_FILTER) != 0;
     cc_features->n64_filter[1] = (shader_id1 & SHADER_OPT_TEXEL1_N64_FILTER) != 0;
     cc_features->noperspective_texcoords = (shader_id1 & SHADER_OPT_NOPERSPECTIVE_TEXCOORDS) != 0;

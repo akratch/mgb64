@@ -219,6 +219,24 @@ The visible symptoms were level-specific but shared renderer causes:
     tri1080-to-sky gap. Treat draw-boundary probes as trace-routing evidence
     before changing blend, depth, fog, or texture policy.
 
+17. **Shader sampling must honor N64 tile masks before filtering.**
+    GL repeat/mirror repeats the full uploaded texture. N64 tile masks can
+    repeat or mirror a smaller texel-period inside that upload, so masked axes
+    must be wrapped in shader texel space before any nearest, bilinear, or
+    N64 3-point samples are taken. The default renderer now emits per-axis mask
+    shader flags only for used texture units, passes signed mask periods
+    (negative means mirror), wraps the sample coordinate before filtering, and
+    promotes masked linear textures to shader N64 filtering so every 3-point
+    tap sees the same effective tile period. Use
+    `GE007_DIAG_DISABLE_SHADER_TILE_MASK=1` as the focused negative control.
+    2026-06-28 proof: a bounded Surface probe logged 80
+    `[SETTEX-MATERIAL-CC]` rows with 76 active used `TEXEL1` S/T mask rows; the
+    first active row was `opts=0x18003012`, `texnum=1264`, `tex_used=(1,1)`,
+    and `tilex1=(2,0,4,4,8,0,62,62)` on a 32x32 upload. A tightened Dam trace
+    logged zero mask bits in 200 rows, proving the option gate does not emit
+    dead unused-`TEXEL1` variants. Surface renderer parity capture still passed
+    with the shader tile-mask path live.
+
 ## Guardrails
 
 Use these habits before accepting renderer changes:
@@ -254,6 +272,9 @@ Use these habits before accepting renderer changes:
 - When reviewing `G_SETTEX` changes, trace material clamp/shift/offset state
   with `GE007_TRACE_SETTEX_MATERIAL_CC='*'` before changing global sampler
   policy.
+- When reviewing `G_SETTEX` tile changes, inspect both `tilex*` extended state
+  and mask option bits (`0x02000000` through `0x10000000`). Mask bits should
+  appear only for texture units consumed by `tex_used`.
 - When reviewing `G_SETTEX` LOD changes, inspect the material trace `lodgate`
   fields before tuning color or alpha. For authored room-XLU trilerp, the
   durable proof is draw class, raw room-XLU mode, valid `G_SETTEX` tile 1, and
