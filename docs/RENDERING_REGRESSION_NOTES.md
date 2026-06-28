@@ -200,6 +200,12 @@ Use these habits before accepting renderer changes:
   compare against `Video.RenderScale=1`, then audit raw GL state restored by the
   scene-target/output-filter helpers. Do not assume the material trace is wrong;
   queued VBOs can be correct while the GL binding they flush against is stale.
+- RDP framebuffer-memory blend paths must snapshot a single-sample color
+  source. With `Video.MSAA>0`, resolve the MSAA scene target into `g_scene_fbo`
+  before copying into the shader snapshot texture; copying directly from the
+  multisample draw FBO is not a portable GL path. The focused Surface guard is
+  default versus `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` at both `Video.MSAA=0`
+  and `Video.MSAA=4`.
 
 ## Validation
 

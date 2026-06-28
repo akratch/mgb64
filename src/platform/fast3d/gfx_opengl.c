@@ -612,6 +612,20 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
     }
 }
 
+static GLuint g_scene_fbo;
+static GLuint g_scene_color_tex;
+static GLuint g_scene_depth_rb;
+static GLuint g_scene_msaa_fbo;
+static GLuint g_scene_msaa_color_rb;
+static GLuint g_scene_msaa_depth_rb;
+static int g_scene_w;
+static int g_scene_h;
+static bool g_scene_has_stencil;
+static int g_scene_msaa_w;
+static int g_scene_msaa_h;
+static int g_scene_msaa_samples;
+static bool g_scene_msaa_has_stencil;
+static bool g_scene_target_bound;
 /* True only while the multisample scene FBO is bound (set in start_frame). */
 static bool g_scene_target_multisampled;
 /* Tracks the live blend-enable so default A2C only engages on blend-DISABLED cutouts. */
@@ -1597,6 +1611,9 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
     GLint saved_texture2 = 0;
     GLint saved_read_fbo = 0;
     GLint saved_draw_fbo = 0;
+    GLint saved_read_buffer = GL_BACK;
+    GLboolean saved_scissor = GL_FALSE;
+    GLuint read_fbo;
 
     glGetIntegerv(GL_ACTIVE_TEXTURE, &saved_active_texture);
     glActiveTexture(GL_TEXTURE2);
@@ -1609,11 +1626,42 @@ static bool gfx_opengl_copy_framebuffer_snapshot(GLint viewport[4]) {
 
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &saved_read_fbo);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_draw_fbo);
+    glGetIntegerv(GL_READ_BUFFER, &saved_read_buffer);
+    saved_scissor = glIsEnabled(GL_SCISSOR_TEST);
+
+    read_fbo = (GLuint)saved_draw_fbo;
+    /* RDP memory-blend shaders sample the previous framebuffer color through a
+     * normal 2D texture. If gameplay is rendering into the MSAA scene target,
+     * resolve color first; glCopyTexSubImage2D from a multisample read FBO is
+     * driver-dependent and can fail exactly on the translucent materials this
+     * path exists to emulate. */
+    if (g_scene_target_bound &&
+        g_scene_target_multisampled &&
+        g_scene_msaa_fbo != 0 &&
+        g_scene_fbo != 0 &&
+        read_fbo == g_scene_msaa_fbo) {
+        glDisable(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
+        glBlitFramebuffer(0, 0, g_scene_w, g_scene_h,
+                          0, 0, g_scene_w, g_scene_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        read_fbo = g_scene_fbo;
+    }
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
+    glReadBuffer(read_fbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                         viewport[0], viewport[1],
                         viewport[2], viewport[3]);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)saved_draw_fbo);
+    glReadBuffer((GLenum)saved_read_buffer);
+    if (saved_scissor) {
+        glEnable(GL_SCISSOR_TEST);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
 
     if (current_shader_program != NULL &&
         current_shader_program->diag_framebuffer_origin_location >= 0) {
@@ -1727,21 +1775,6 @@ static float g_diag_output_filter_color_scale = 1.0f;
 static float g_diag_output_filter_color_bias;
 static int g_diag_output_rgb555_checked; /* GE007_DIAG_OUTPUT_RGB555=1|dither */
 static int g_diag_output_rgb555_mode;
-static GLuint g_scene_fbo;
-static GLuint g_scene_color_tex;
-static GLuint g_scene_depth_rb;
-static GLuint g_scene_msaa_fbo;
-static GLuint g_scene_msaa_color_rb;
-static GLuint g_scene_msaa_depth_rb;
-static int g_scene_w;
-static int g_scene_h;
-static bool g_scene_has_stencil;
-static int g_scene_msaa_w;
-static int g_scene_msaa_h;
-static int g_scene_msaa_samples;
-static bool g_scene_msaa_has_stencil;
-static bool g_scene_target_bound;
-
 static bool gfx_opengl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
     GLint saved_pack_alignment = 4;
     GLint saved_read_fbo = 0;
