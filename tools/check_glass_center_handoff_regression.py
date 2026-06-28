@@ -299,7 +299,21 @@ def main() -> int:
     assert payload["stock_pixel"]["selected_sample"]["tile_state"]["fmt"] == 4
     assert payload["stock_pixel"]["selected_sample"]["combiner"]["alpha"][0] == [7, 0, 4, 1]
     assert payload["stock_pixel"]["selected_sample"]["draw_word_count"] == 44
+    assert payload["stock_pixel"]["selected_sample_index"] == 1
     assert payload["stock_pixel"]["selection_reason"] == "last_changed_sample"
+    assert payload["stock_pixel"]["selected_framebuffer_input_reason"] == "previous_emitted_same_frame_sample"
+    assert payload["stock_pixel"]["selected_framebuffer_input"]["texture_image"] == "0x00aaa0"
+    assert payload["stock_pixel"]["selected_framebuffer_input"]["rgba"] == [40, 40, 40, 224]
+    assert payload["stock_pixel"]["selected_framebuffer_input_vs_selected_rgb"]["delta"] == [-16, -16, -16]
+    assert payload["stock_pixel"]["selected_raw_transition"] == {
+        "before": "0x00002948",
+        "after": "0x000018c7",
+    }
+    assert payload["stock_pixel"]["selected_hidden_transition"] == {
+        "before": "0x00000003",
+        "after": "0x00000003",
+        "delta": 0,
+    }
     assert payload["stock_pixel"]["last_sample"]["texture_image"] == "0x00ddd0"
     assert payload["stock_pixel"]["last_sample"]["luma"] == 99.0
     assert payload["stock_command_region"]["final_owner_states"] == 2
@@ -319,6 +333,7 @@ def main() -> int:
     assert payload["native_pixel"]["selected_final"]["post"] == [24, 24, 24]
     assert payload["native_pixel"]["selected_post_vs_stock_rgb"]["mean_abs_rgb"] == 0.0
     assert any("pixel probe as final-pixel authority" in item for item in payload["warnings"])
+    assert any("stock framebuffer input candidate" in item for item in payload["interpretation"])
     assert any("native texnum 654 fragment source" in item for item in payload["interpretation"])
     assert any("native settex pixel probe" in item for item in payload["interpretation"])
 

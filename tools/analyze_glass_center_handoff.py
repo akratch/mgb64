@@ -64,6 +64,19 @@ def luma(rgb: list[Any] | None) -> float | None:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def parse_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    return None
+
+
 def point_in_rect(point: list[int], rect: Any) -> bool:
     if not isinstance(rect, list) or len(rect) != 4:
         return False
@@ -158,6 +171,58 @@ def compact_stats(record: dict[str, Any] | None) -> dict[str, Any] | None:
         "max_records",
     )
     return {key: record[key] for key in keys if key in record}
+
+
+def selected_sample_index(samples: list[dict[str, Any]],
+                          selected_sample: dict[str, Any] | None) -> int | None:
+    if selected_sample is None:
+        return None
+    for index, record in enumerate(samples):
+        if record is selected_sample:
+            return index
+    return None
+
+
+def stock_framebuffer_input_summary(samples: list[dict[str, Any]],
+                                    selected_sample: dict[str, Any] | None) -> dict[str, Any]:
+    index = selected_sample_index(samples, selected_sample)
+    prior_candidate = samples[index - 1] if index is not None and index > 0 else None
+    prior = None
+    reason = "none"
+    if prior_candidate is not None and selected_sample is not None:
+        if prior_candidate.get("frame_context") == selected_sample.get("frame_context"):
+            prior = prior_candidate
+            reason = "previous_emitted_same_frame_sample"
+        else:
+            reason = "previous_emitted_sample_from_different_frame"
+    selected_rgba = selected_sample.get("rgba") if selected_sample else None
+    prior_rgba = prior.get("rgba") if prior else None
+    selected_raw = selected_sample.get("raw") if selected_sample else None
+    selected_hidden = selected_sample.get("hidden") if selected_sample else None
+    prior_raw = prior.get("raw") if prior else None
+    prior_hidden = prior.get("hidden") if prior else None
+
+    hidden_delta = None
+    prior_hidden_int = parse_int_or_none(prior_hidden)
+    selected_hidden_int = parse_int_or_none(selected_hidden)
+    if prior_hidden_int is not None and selected_hidden_int is not None:
+        hidden_delta = selected_hidden_int - prior_hidden_int
+
+    return {
+        "selected_sample_index": index,
+        "framebuffer_input_reason": reason,
+        "framebuffer_input_sample": compact_sample(prior),
+        "framebuffer_input_vs_selected_rgb": rgb_delta(selected_rgba, prior_rgba),
+        "raw_transition": {
+            "before": prior_raw,
+            "after": selected_raw,
+        },
+        "hidden_transition": {
+            "before": prior_hidden,
+            "after": selected_hidden,
+            "delta": hidden_delta,
+        },
+    }
 
 
 def top_counter(counter: Counter[tuple[Any, ...]], limit: int) -> list[dict[str, Any]]:
@@ -263,6 +328,8 @@ def stock_pixel_summary(
             for record in selected_frame_rows
         )
 
+    framebuffer_input = stock_framebuffer_input_summary(samples, selected_sample)
+
     return {
         "total_rows": len(records),
         "sample_rows": len(samples),
@@ -272,6 +339,12 @@ def stock_pixel_summary(
         "last_sample": compact_sample(last_sample),
         "last_stats": compact_stats(last_stats),
         "selected_sample": compact_sample(selected_sample),
+        "selected_sample_index": framebuffer_input["selected_sample_index"],
+        "selected_framebuffer_input_reason": framebuffer_input["framebuffer_input_reason"],
+        "selected_framebuffer_input": framebuffer_input["framebuffer_input_sample"],
+        "selected_framebuffer_input_vs_selected_rgb": framebuffer_input["framebuffer_input_vs_selected_rgb"],
+        "selected_raw_transition": framebuffer_input["raw_transition"],
+        "selected_hidden_transition": framebuffer_input["hidden_transition"],
         "selection_reason": selection_reason,
         "selection_filters": {
             "frame_context": selected_frame_context,
@@ -601,6 +674,17 @@ def build_interpretation(payload: dict[str, Any]) -> tuple[list[str], list[str]]
         f"raw={selected_sample.get('raw')} hidden={selected_sample.get('hidden')} "
         f"rgba={selected_sample.get('rgba')}"
     )
+    framebuffer_input = stock.get("selected_framebuffer_input") or {}
+    framebuffer_delta = stock.get("selected_framebuffer_input_vs_selected_rgb") or {}
+    if framebuffer_input:
+        notes.append(
+            "stock framebuffer input candidate before selected sample: "
+            f"reason={stock.get('selected_framebuffer_input_reason')} "
+            f"texture={normalize_hex(framebuffer_input.get('texture_image'))} "
+            f"raw={framebuffer_input.get('raw')} hidden={framebuffer_input.get('hidden')} "
+            f"rgba={framebuffer_input.get('rgba')} "
+            f"delta_to_selected={framebuffer_delta.get('delta')}"
+        )
     if last_sample and selected_sample and last_sample != selected_sample:
         notes.append(
             "last emitted stock sample differs from the selected authority: "
@@ -738,6 +822,7 @@ def print_human(payload: dict[str, Any]) -> None:
     print(
         "selected sample: "
         f"selection={stock.get('selection_reason')} "
+        f"index={stock.get('selected_sample_index')} "
         f"frame_context={selected_sample.get('frame_context')} "
         f"frame_draw={selected_sample.get('frame_draw_sequence')} "
         f"fb={selected_sample.get('fb_addr')} "
@@ -758,6 +843,21 @@ def print_human(payload: dict[str, Any]) -> None:
             f"blend={selected_sample.get('blend_cycles')} "
             f"combiner={selected_sample.get('combiner')} "
             f"draw_words={selected_sample.get('draw_word_count')}"
+        )
+    framebuffer_input = stock.get("selected_framebuffer_input") or {}
+    if framebuffer_input:
+        framebuffer_delta = stock.get("selected_framebuffer_input_vs_selected_rgb") or {}
+        hidden_transition = stock.get("selected_hidden_transition") or {}
+        print(
+            "selected framebuffer input: "
+            f"reason={stock.get('selected_framebuffer_input_reason')} "
+            f"frame_context={framebuffer_input.get('frame_context')} "
+            f"frame_draw={framebuffer_input.get('frame_draw_sequence')} "
+            f"texture={framebuffer_input.get('texture_image')} "
+            f"raw={framebuffer_input.get('raw')} hidden={framebuffer_input.get('hidden')} "
+            f"rgba={framebuffer_input.get('rgba')} "
+            f"delta_to_selected={framebuffer_delta.get('delta')} "
+            f"hidden_delta={hidden_transition.get('delta')}"
         )
     print(
         "last sample: "

@@ -255,7 +255,12 @@ readback failures at target `183,165`. The selected authoritative sample is
 RGBA `[24,24,24,224]`. The handoff analyzer selects the last changed stock
 pixel sample by default, not merely the last emitted row; pass
 `--stock-frame-context`, `--stock-fb-addr`, or `--stock-texture-image` only when
-intentionally pinning an alternate stock color-image state.
+intentionally pinning an alternate stock color-image state. The analyzer also
+reports `selected_framebuffer_input` from the previous emitted sample in the same
+`frame_context`, plus `selected_framebuffer_input_vs_selected_rgb`,
+`selected_raw_transition`, and `selected_hidden_transition`. If the previous
+emitted row is from a different frame, the input candidate is left empty rather
+than treating stale frame memory as the selected draw's framebuffer input.
 
 The current handoff join is:
 
@@ -290,7 +295,9 @@ rows and the selected post pixel is `[25,25,25]`, while the stock final pixel is
 `[24,24,24]`. That makes the center pixel a near-match, not proof of an
 eight-luma renderer defect. The next implementation target should be driven by
 multi-pixel stock/native final-output evidence across the room-glass ROI before
-promoting any translucent-composition change.
+promoting any translucent-composition change; include the new same-frame stock
+framebuffer-input fields in that comparison so source, memory color, hidden
+coverage, and final output can be separated per pixel.
 
 Two additional current probes show why a multi-pixel pass is required:
 `/tmp/mgb64_pixel_handoff_176_158_1782631121` samples stock/aligned `176,158`

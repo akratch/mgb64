@@ -413,7 +413,11 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  `texture_image=0x12f2f0`, bbox `[176,154,190,172]`, raw `0x000018c7`,
 	  hidden `0x00000003`, decoded RGBA `[24,24,24,224]`. The handoff analyzer
 	  now uses `stock_pixel.selected_sample` (last changed stock sample by
-	  default) for native comparisons, not merely the last emitted row.
+	  default) for native comparisons, not merely the last emitted row. It also
+	  reports the previous emitted same-`frame_context` sample as
+	  `selected_framebuffer_input`, with RGB, raw-word, and hidden-coverage
+	  transitions, so the next multi-pixel pass can separate stock source,
+	  framebuffer memory, hidden coverage, and final output per target.
 	  The handoff join `/tmp/mgb64_glass_center_handoff_current` makes the
 	  remaining ownership nuance explicit: the command-stream span/bbox model
 	  contains five `0x8012f2f0` hits in `projected_impact` but also three later
