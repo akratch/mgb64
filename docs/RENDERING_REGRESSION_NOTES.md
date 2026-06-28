@@ -177,6 +177,10 @@ The visible symptoms were level-specific but shared renderer causes:
     and identical gameplay state for `239` compared frames. The original Surface
     guard `/tmp/mgb64_surface_xlu_cvg_guard_final` still passed with
     `873` promoted rows, `873` disabled-run candidates, and a `2.139%` delta.
+    The remaining Jungle `envA` candidates are a checked negative:
+    `/tmp/mgb64_jungle_envA_cvg_ab_1782661591` promoted all `93` leftovers via
+    the diagnostic but produced a `0`-pixel delta, so the `envA=255` default gate
+    stays narrow.
 
 13. **Room `G_SETTEX` LOD endpoints are draw semantics, not matrix semantics.**
     Dam's pad10092 room-glass source trace showed `G_SETTEX` trilerp draws
