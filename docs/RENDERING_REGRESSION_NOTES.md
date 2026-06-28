@@ -184,10 +184,15 @@ The visible symptoms were level-specific but shared renderer causes:
     emission. The native pixel probes now carry a `rect` object for
     `FILLRECT`/`TEXRECT` triangles, `GE007_TRACE_TRI_PIXEL_RECT_ONLY=1` isolates
     those rows, and `GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1` brackets sorted
-    deferred-room batches. Dam pad10092 logical `[94,95]` ruled out both
-    classes for the remaining `[8,8,8] -> [10,10,10]` local gap: 68 rect rows
-    changed zero pixels and the route emitted no deferred-room-XLU pixel rows.
-    Treat that as a trace-routing result, not a blend/depth fix.
+    deferred-room batches. If the remaining gap sits next to native sky,
+    `GE007_TRACE_SKY_PREP_PIXEL=1` brackets sky setup and emit-state
+    checkpoints. Dam pad10092 logical `[94,95]` ruled out rects and
+    deferred-room XLU for the remaining `[8,8,8] -> [10,10,10]` local gap:
+    68 rect rows changed zero pixels and the route emitted no
+    deferred-room-XLU pixel rows. The sky-prep probe then showed
+    `prepare_begin` already at `[10,10,10]`, proving the change happened before
+    native sky setup and pointing the next investigation at frame-phase
+    scheduling. Treat that as a trace-routing result, not a blend/depth fix.
 
 ## Guardrails
 
@@ -252,6 +257,10 @@ Use these habits before accepting renderer changes:
   `GE007_TRACE_ROOM_XLU_DEFER_PIXEL=1`. Do not patch draw order, alpha, or fog
   policy until rectangles and deferred secondary-room XLU have been proved in
   or out.
+- When the remaining owner jump is adjacent to native sky, add
+  `GE007_TRACE_SKY_PREP_PIXEL=1`. If `prepare_begin` already has the unexpected
+  pixel color, the evidence points at frame-phase scheduling or queued native
+  command ownership, not sky texture sampling or fog math.
 - Do not use `g_freezeInput` as a blanket native-look gate. It should remove
   live input from deterministic captures while preserving authored
   `GE007_AUTO_LOOK_*` probes. Use `tools/scripted_look_smoke.sh` before

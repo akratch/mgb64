@@ -4356,6 +4356,12 @@ static int g_diag_trace_room_xlu_defer_pixel_target_x = INT32_MIN; /* GE007_TRAC
 static int g_diag_trace_room_xlu_defer_pixel_target_y = INT32_MIN; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y=N */
 static int g_diag_trace_room_xlu_defer_pixel_inside_only = -1; /* GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY=0 */
 static int g_diag_trace_room_xlu_defer_pixel_serial = 0;
+static int g_diag_trace_sky_prep_pixel = -1; /* GE007_TRACE_SKY_PREP_PIXEL=1 */
+static int g_diag_trace_sky_prep_pixel_after_frame = INT32_MIN; /* GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME=N */
+static int g_diag_trace_sky_prep_pixel_budget = INT32_MIN; /* GE007_TRACE_SKY_PREP_PIXEL_BUDGET=N */
+static int g_diag_trace_sky_prep_pixel_target_x = INT32_MIN; /* GE007_TRACE_SKY_PREP_PIXEL_X=N */
+static int g_diag_trace_sky_prep_pixel_target_y = INT32_MIN; /* GE007_TRACE_SKY_PREP_PIXEL_Y=N */
+static int g_diag_trace_sky_prep_pixel_serial = 0;
 static int g_diag_debug_cmd_range_enabled = -1; /* GE007_DEBUG_CMD_RANGE=min:max */
 static uintptr_t g_diag_debug_cmd_min = 0;
 static uintptr_t g_diag_debug_cmd_max = 0;
@@ -6984,6 +6990,197 @@ static void gfx_room_xlu_defer_pixel_probe_finish(
             changed ? 1 : 0);
     fflush(stderr);
     probe->active = false;
+}
+
+static bool gfx_trace_sky_prep_pixel_enabled(void)
+{
+    const char *env;
+
+    if (g_diag_trace_sky_prep_pixel < 0) {
+        env = getenv("GE007_TRACE_SKY_PREP_PIXEL");
+        g_diag_trace_sky_prep_pixel =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+        if (g_diag_trace_sky_prep_pixel) {
+            const char *after = getenv("GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME");
+            const char *budget = getenv("GE007_TRACE_SKY_PREP_PIXEL_BUDGET");
+            const char *x = getenv("GE007_TRACE_SKY_PREP_PIXEL_X");
+            const char *y = getenv("GE007_TRACE_SKY_PREP_PIXEL_Y");
+            fprintf(stderr,
+                    "[fast3d] TRACE SKY PREP PIXEL after=%s budget=%s "
+                    "target=%s,%s (GE007_TRACE_SKY_PREP_PIXEL)\n",
+                    (after != NULL && after[0] != '\0') ? after : "0",
+                    (budget != NULL && budget[0] != '\0') ? budget : "64",
+                    (x != NULL && x[0] != '\0') ? x : "?",
+                    (y != NULL && y[0] != '\0') ? y : "?");
+            fflush(stderr);
+        }
+    }
+    if (g_diag_trace_sky_prep_pixel_after_frame == INT32_MIN) {
+        env = getenv("GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME");
+        g_diag_trace_sky_prep_pixel_after_frame = env ? atoi(env) : 0;
+    }
+    if (g_diag_trace_sky_prep_pixel_budget == INT32_MIN) {
+        env = getenv("GE007_TRACE_SKY_PREP_PIXEL_BUDGET");
+        g_diag_trace_sky_prep_pixel_budget = env ? atoi(env) : 64;
+    }
+    if (g_diag_trace_sky_prep_pixel_target_x == INT32_MIN) {
+        env = getenv("GE007_TRACE_SKY_PREP_PIXEL_X");
+        g_diag_trace_sky_prep_pixel_target_x = env ? atoi(env) : -1;
+    }
+    if (g_diag_trace_sky_prep_pixel_target_y == INT32_MIN) {
+        env = getenv("GE007_TRACE_SKY_PREP_PIXEL_Y");
+        g_diag_trace_sky_prep_pixel_target_y = env ? atoi(env) : -1;
+    }
+
+    return g_diag_trace_sky_prep_pixel > 0 &&
+           g_diag_trace_sky_prep_pixel_budget != 0 &&
+           g_frame_count_diag >= g_diag_trace_sky_prep_pixel_after_frame &&
+           g_diag_trace_sky_prep_pixel_target_x >= 0 &&
+           g_diag_trace_sky_prep_pixel_target_y >= 0;
+}
+
+static void gfx_trace_sky_prep_pixel_event(const char *event)
+{
+    static bool have_prev = false;
+    static uint8_t prev_rgb[3] = {0, 0, 0};
+    static int prev_frame = -1;
+    int target_x;
+    int target_y;
+    int fb_x;
+    int fb_y;
+    int gl_x;
+    int gl_y;
+    float ratio_x;
+    float ratio_y;
+    uint8_t rgb[3] = {0, 0, 0};
+    int delta[3] = {0, 0, 0};
+    bool changed_prev = false;
+
+    if (!gfx_trace_sky_prep_pixel_enabled() ||
+        gfx_rapi == NULL ||
+        gfx_rapi->read_framebuffer_rgb == NULL ||
+        gfx_current_dimensions.width == 0 ||
+        gfx_current_dimensions.height == 0) {
+        return;
+    }
+
+    target_x = g_diag_trace_sky_prep_pixel_target_x;
+    target_y = g_diag_trace_sky_prep_pixel_target_y;
+    ratio_x = gfx_ratio_x();
+    ratio_y = gfx_ratio_y();
+    fb_x = (int)floorf(((float)target_x + 0.5f) * ratio_x);
+    fb_y = (int)floorf(((float)target_y + 0.5f) * ratio_y);
+    if (fb_x < 0) fb_x = 0;
+    if (fb_y < 0) fb_y = 0;
+    if (fb_x >= (int)gfx_current_dimensions.width) {
+        fb_x = (int)gfx_current_dimensions.width - 1;
+    }
+    if (fb_y >= (int)gfx_current_dimensions.height) {
+        fb_y = (int)gfx_current_dimensions.height - 1;
+    }
+    gl_x = fb_x;
+    gl_y = (int)gfx_current_dimensions.height - 1 - fb_y;
+
+    if (g_diag_trace_sky_prep_pixel_budget > 0) {
+        g_diag_trace_sky_prep_pixel_budget--;
+    }
+
+    if (!gfx_rapi->read_framebuffer_rgb(gl_x, gl_y, 1, 1, rgb)) {
+        fprintf(stderr,
+                "[SKY-PREP-PIXEL] {\"status\":\"read_failed\","
+                "\"frame\":%d,\"serial\":%d,\"event\":\"%s\","
+                "\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d]}\n",
+                g_frame_count_diag,
+                g_diag_trace_sky_prep_pixel_serial++,
+                event != NULL ? event : "-",
+                target_x,
+                target_y,
+                fb_x,
+                fb_y,
+                gl_x,
+                gl_y);
+        fflush(stderr);
+        return;
+    }
+
+    if (!have_prev || prev_frame != g_frame_count_diag) {
+        have_prev = true;
+        prev_rgb[0] = rgb[0];
+        prev_rgb[1] = rgb[1];
+        prev_rgb[2] = rgb[2];
+        prev_frame = g_frame_count_diag;
+    } else {
+        for (int ch = 0; ch < 3; ch++) {
+            delta[ch] = (int)rgb[ch] - (int)prev_rgb[ch];
+            if (delta[ch] != 0) {
+                changed_prev = true;
+            }
+        }
+    }
+
+    fprintf(stderr,
+            "[SKY-PREP-PIXEL] {"
+            "\"status\":\"ok\",\"frame\":%d,\"serial\":%d,\"event\":\"%s\","
+            "\"tri\":%d,\"target\":[%d,%d],\"fb\":[%d,%d],\"gl\":[%d,%d],"
+            "\"rgb\":[%u,%u,%u],\"prev\":[%u,%u,%u],"
+            "\"delta_prev\":[%d,%d,%d],\"changed_prev\":%d,"
+            "\"sky\":%d,\"settex\":%d,\"texnum\":%d,"
+            "\"raw\":\"0x%08X\",\"effmode\":\"0x%08X\",\"omh\":\"0x%08X\","
+            "\"geom\":\"0x%08X\",\"rs_depth\":%u,\"rs_blend\":\"%s\","
+            "\"rdp_vp\":[%d,%d,%d,%d],\"rs_vp\":[%d,%d,%d,%d],"
+            "\"rdp_sc\":[%d,%d,%d,%d],\"rs_sc\":[%d,%d,%d,%d]}"
+            "\n",
+            g_frame_count_diag,
+            g_diag_trace_sky_prep_pixel_serial++,
+            event != NULL ? event : "-",
+            g_tri_count_diag,
+            target_x,
+            target_y,
+            fb_x,
+            fb_y,
+            gl_x,
+            gl_y,
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            prev_rgb[0],
+            prev_rgb[1],
+            prev_rgb[2],
+            delta[0],
+            delta[1],
+            delta[2],
+            changed_prev ? 1 : 0,
+            g_sky_tri_mode ? 1 : 0,
+            settex_active ? 1 : 0,
+            settex_active ? settex_texturenum : -1,
+            rdp.other_mode_l_raw,
+            rdp.other_mode_l,
+            rdp.other_mode_h,
+            rsp.geometry_mode,
+            rendering_state.depth_mode,
+            gfx_blend_mode_diag_name(rendering_state.blend_mode),
+            rdp.viewport.x,
+            rdp.viewport.y,
+            rdp.viewport.width,
+            rdp.viewport.height,
+            rendering_state.viewport.x,
+            rendering_state.viewport.y,
+            rendering_state.viewport.width,
+            rendering_state.viewport.height,
+            rdp.scissor.x,
+            rdp.scissor.y,
+            rdp.scissor.width,
+            rdp.scissor.height,
+            rendering_state.scissor.x,
+            rendering_state.scissor.y,
+            rendering_state.scissor.width,
+            rendering_state.scissor.height);
+    fflush(stderr);
+
+    prev_rgb[0] = rgb[0];
+    prev_rgb[1] = rgb[1];
+    prev_rgb[2] = rgb[2];
+    prev_frame = g_frame_count_diag;
 }
 
 static void gfx_settex_pixel_probe_log_failure(
@@ -15832,11 +16029,17 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                          (depth_compare ? 4 : 0) | (depth_source_prim ? 8 : 0) |
                          (zmode >> 6);
 
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_before_depth");
+    }
     if (depth_mode != rendering_state.depth_mode) {
         gfx_flush();
         gfx_rapi->set_depth_mode(depth_test, depth_update, depth_compare,
                                   depth_source_prim, zmode);
         rendering_state.depth_mode = depth_mode;
+    }
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_depth");
     }
 
     if (rdp.viewport_or_scissor_changed) {
@@ -15851,6 +16054,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             rendering_state.scissor = rdp.scissor;
         }
         rdp.viewport_or_scissor_changed = false;
+    }
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_viewport");
     }
 
     if (gfx_critical_room_shard_logging_enabled() && critical_emitted_shard) {
@@ -16705,6 +16911,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         gfx_rapi->set_blend_mode(api_blend_mode);
         rendering_state.blend_mode = api_blend_mode;
     }
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_program_blend");
+    }
 
     uint8_t num_inputs;
     bool used_textures[2];
@@ -17001,6 +17210,9 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                                          allow_footprint_lod,
                                                          settex_authored_lod_endpoint);
     bool use_texture = used_textures[0] || used_textures[1];
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_textures");
+    }
 
     gfx_trace_settex_material_cc_emit(cc_id,
                                       settex_material_cc_id,
@@ -22058,7 +22270,9 @@ void gfx_prepare_sky_rendering(uint32_t texture_num,
                                float screen_left, float screen_top,
                                float screen_width, float screen_height) {
     /* Flush any pending geometry from previous draw state */
+    gfx_trace_sky_prep_pixel_event("prepare_begin");
     gfx_flush();
+    gfx_trace_sky_prep_pixel_event("prepare_after_flush");
 
     g_sky_viewport_left = screen_left;
     g_sky_viewport_top = screen_top;
@@ -22069,6 +22283,7 @@ void gfx_prepare_sky_rendering(uint32_t texture_num,
     /* Load the sky texture via the same path as G_SETTEX (Rare's texture-by-number).
      * This sets settex_active, settex_gl_tex_id, settex_tex_w/h. */
     gfx_handle_settex(0, texture_num);
+    gfx_trace_sky_prep_pixel_event("prepare_after_settex");
 
     /* Set environment color — used by the sky combiner as the base sky tint */
     rdp.env_color.r = env_r;
@@ -22091,6 +22306,7 @@ void gfx_prepare_sky_rendering(uint32_t texture_num,
     /* Set render mode for opaque sky surface */
     rdp.other_mode_l_raw = 0x0C192078; /* G_RM_AA_ZB_OPA_SURF / G_RM_AA_ZB_OPA_SURF2 */
     gfx_sync_other_mode_l_effective();
+    gfx_trace_sky_prep_pixel_event("prepare_after_state");
 
     /* Backface culling and fog are disabled per triangle in
      * gfx_draw_sky_triangle().
@@ -22130,6 +22346,8 @@ static void gfx_draw_sky_triangle_impl(
     struct XYWidthHeight viewport_saved = rdp.viewport;
     struct XYWidthHeight scissor_saved = rdp.scissor;
     uint32_t geometry_mode_saved = rsp.geometry_mode;
+
+    gfx_trace_sky_prep_pixel_event("sky_tri_begin");
 
     /* Sky UV diagnostic scale. */
     static float sky_uv_scale = -1.0f;
@@ -22183,6 +22401,7 @@ static void gfx_draw_sky_triangle_impl(
     gfx_sync_other_mode_l_effective();
     int sky_tris_before = g_sky_tri_count_diag;
     g_sky_tri_mode = true;
+    gfx_trace_sky_prep_pixel_event("sky_tri_before_sp");
     gfx_sp_tri1(0, 1, 2);
     g_sky_tri_mode = false;
     int sky_tri_delta = g_sky_tri_count_diag - sky_tris_before;

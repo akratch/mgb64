@@ -423,6 +423,36 @@ pad10092 `[94,95]` proof run on 2026-06-28 produced 68 rect-only rows with zero
 target changes and zero deferred-room-XLU rows, ruling out both classes for the
 remaining local `[8,8,8] -> [10,10,10]` triangle-probe gap.
 
+When the all-triangle trace still has a pre/post discontinuity next to native
+sky draws, use the default-off sky preparation probe to bracket the direct sky
+setup path:
+
+```sh
+OUT=/tmp/mgb64_native_sky_prep_pixel_probe
+env GE007_TRACE_SKY_PREP_PIXEL=1 \
+  GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME=122 \
+  GE007_TRACE_SKY_PREP_PIXEL_BUDGET=80 \
+  GE007_TRACE_SKY_PREP_PIXEL_X=94 \
+  GE007_TRACE_SKY_PREP_PIXEL_Y=95 \
+  tools/movement_oracle_capture.sh \
+    --route dam_regular_glass_shatter_pad10092_impact_visual_probe \
+    --native-only --no-compare \
+    --out-dir "$OUT" \
+    --rom baserom.u.z64 \
+    --binary build/ge007 \
+    --no-build
+```
+
+Rows are emitted as `[SKY-PREP-PIXEL]` JSON and sample the framebuffer at
+`gfx_prepare_sky_rendering()`, sky triangle submission, and the sky triangle
+emit-state checkpoints. They include the target/framebuffer coordinates,
+current RGB, previous same-frame RGB, triangle counter, sky/settex state,
+raw/effective othermodes, geometry mode, renderer depth/blend state, viewport,
+and scissor. This probe is for phase-order attribution: if
+`prepare_begin` already sees the unexpected color, the pixel changed before the
+native sky setup function ran and the next target is command scheduling or
+frame phase ownership rather than sky texture, fog, or blend state.
+
 Summarize a capture with:
 
 ```sh
