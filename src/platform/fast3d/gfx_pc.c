@@ -4608,6 +4608,13 @@ static const char *g_diag_trace_texgen_materials_effect = NULL;
 static int g_diag_trace_glass_shard_coverage = -1; /* GE007_TRACE_GLASS_SHARD_COVERAGE=1 */
 static int g_diag_trace_glass_shard_coverage_after_frame = INT32_MIN; /* GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME=N */
 static int g_diag_trace_glass_shard_coverage_budget = INT32_MIN; /* GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET=N */
+static int g_diag_trace_rdp_render_modes = -1; /* GE007_TRACE_RDP_RENDER_MODES=1 */
+static int g_diag_trace_rdp_render_modes_after_frame = INT32_MIN; /* GE007_TRACE_RDP_RENDER_MODES_AFTER_FRAME=N */
+static int g_diag_trace_rdp_render_modes_budget = INT32_MIN; /* GE007_TRACE_RDP_RENDER_MODES_BUDGET=N */
+static int g_diag_trace_rdp_render_modes_drawclass_loaded = 0; /* GE007_TRACE_RDP_RENDER_MODES_DRAWCLASS=name */
+static const char *g_diag_trace_rdp_render_modes_drawclass = NULL;
+static int g_diag_trace_rdp_render_modes_effect_loaded = 0; /* GE007_TRACE_RDP_RENDER_MODES_EFFECT=label */
+static const char *g_diag_trace_rdp_render_modes_effect = NULL;
 static int g_diag_trace_settex_material_cc = -1; /* GE007_TRACE_SETTEX_MATERIAL_CC=list */
 static int g_diag_trace_settex_material_cc_after_frame = -2; /* GE007_TRACE_SETTEX_MATERIAL_CC_AFTER_FRAME=N */
 static int g_diag_trace_settex_material_cc_budget = INT32_MIN; /* GE007_TRACE_SETTEX_MATERIAL_CC_BUDGET=N */
@@ -5178,6 +5185,211 @@ static uint32_t gfx_blender_field(uint32_t mode, int cycle, int field) {
     }
 
     return (mode >> shifts[cycle][field]) & 3U;
+}
+
+static const char *gfx_rdp_memory_blend_class_name(enum GfxRdpMemoryBlendClass blend_class) {
+    switch (blend_class) {
+        case GFX_RDP_MEMORY_BLEND_COLOR:
+            return "color";
+        case GFX_RDP_MEMORY_BLEND_COVERAGE:
+            return "coverage";
+        case GFX_RDP_MEMORY_BLEND_NONE:
+        default:
+            return "none";
+    }
+}
+
+static bool gfx_trace_rdp_render_modes_enabled(void) {
+    if (g_diag_trace_rdp_render_modes < 0) {
+        const char *env = getenv("GE007_TRACE_RDP_RENDER_MODES");
+        g_diag_trace_rdp_render_modes =
+            (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+    }
+
+    return g_diag_trace_rdp_render_modes > 0;
+}
+
+static int gfx_trace_rdp_render_modes_after_frame(void) {
+    if (g_diag_trace_rdp_render_modes_after_frame == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_RDP_RENDER_MODES_AFTER_FRAME");
+        g_diag_trace_rdp_render_modes_after_frame = env ? atoi(env) : 0;
+    }
+
+    return g_diag_trace_rdp_render_modes_after_frame;
+}
+
+static bool gfx_trace_rdp_render_modes_take_budget(void) {
+    if (g_diag_trace_rdp_render_modes_budget == INT32_MIN) {
+        const char *env = getenv("GE007_TRACE_RDP_RENDER_MODES_BUDGET");
+        g_diag_trace_rdp_render_modes_budget = env ? atoi(env) : 256;
+    }
+
+    if (g_diag_trace_rdp_render_modes_budget == 0) {
+        return false;
+    }
+    if (g_diag_trace_rdp_render_modes_budget > 0) {
+        g_diag_trace_rdp_render_modes_budget--;
+    }
+    return true;
+}
+
+static const char *gfx_trace_rdp_render_modes_drawclass_filter(void) {
+    if (!g_diag_trace_rdp_render_modes_drawclass_loaded) {
+        g_diag_trace_rdp_render_modes_drawclass =
+            getenv("GE007_TRACE_RDP_RENDER_MODES_DRAWCLASS");
+        g_diag_trace_rdp_render_modes_drawclass_loaded = 1;
+    }
+
+    return g_diag_trace_rdp_render_modes_drawclass;
+}
+
+static const char *gfx_trace_rdp_render_modes_effect_filter(void) {
+    if (!g_diag_trace_rdp_render_modes_effect_loaded) {
+        g_diag_trace_rdp_render_modes_effect =
+            getenv("GE007_TRACE_RDP_RENDER_MODES_EFFECT");
+        g_diag_trace_rdp_render_modes_effect_loaded = 1;
+    }
+
+    return g_diag_trace_rdp_render_modes_effect;
+}
+
+static bool gfx_trace_rdp_render_modes_filters_match(const char *effect_label) {
+    const char *drawclass_filter = gfx_trace_rdp_render_modes_drawclass_filter();
+    const char *effect_filter = gfx_trace_rdp_render_modes_effect_filter();
+    const char *drawclass = gfx_draw_class_name(g_current_draw_class);
+
+    if (drawclass_filter != NULL && drawclass_filter[0] != '\0' &&
+        strstr(drawclass, drawclass_filter) == NULL) {
+        return false;
+    }
+
+    if (effect_filter != NULL && effect_filter[0] != '\0' &&
+        strcmp(effect_filter, "*") != 0 &&
+        (effect_label == NULL || strstr(effect_label, effect_filter) == NULL)) {
+        return false;
+    }
+
+    return true;
+}
+
+static void gfx_trace_rdp_render_mode_note(
+    uint64_t cc_id,
+    uint64_t effective_cc_id,
+    uint32_t cc_options,
+    enum GfxBlendMode blend_mode,
+    enum GfxBlendMode api_blend_mode,
+    enum GfxRdpMemoryBlendClass rdp_memory_blend_class,
+    bool room_xlu_cvg_memory,
+    bool room_water_alpha_suppress,
+    bool room_secondary_xlu_sort,
+    bool uses_texture0,
+    bool uses_texture1,
+    bool use_alpha,
+    bool use_fog,
+    bool texture_edge,
+    bool use_noise,
+    bool depth_test,
+    bool depth_update,
+    bool depth_compare,
+    bool depth_source_prim,
+    bool room_matrix,
+    int dl_room,
+    const char *dl_which,
+    bool has_cmd_offset,
+    uintptr_t cmd_offset,
+    const struct GfxTriNdcMetrics *ndc_metrics,
+    bool ndc_metrics_ok)
+{
+    const char *effect_label;
+    uint32_t raw = rdp.other_mode_l_raw;
+    uint32_t eff = rdp.other_mode_l;
+
+    if (!gfx_trace_rdp_render_modes_enabled() ||
+        g_frame_count_diag < gfx_trace_rdp_render_modes_after_frame()) {
+        return;
+    }
+
+    effect_label = gfx_effect_label_for_current_command();
+    if (!gfx_trace_rdp_render_modes_filters_match(effect_label) ||
+        !gfx_trace_rdp_render_modes_take_budget()) {
+        return;
+    }
+
+    fprintf(stderr,
+            "[RDP-MODE] frame=%d tri=%d cmd=%p class=%s effect=%s "
+            "roommtx=%d dl_room=%d dl=%s offset=%s0x%zX "
+            "raw=0x%08X eff=0x%08X omh=0x%08X geom=0x%08X "
+            "cc=0x%016llX effcc=0x%016llX opts=0x%08X "
+            "settex=%d texnum=%d wh=%.0fx%.0f tex_used=(%d,%d) "
+            "blend=%s api_blend=%s rdp_mem=%s room_cvg=%d water_suppress=%d room_sort=%d "
+            "alpha=%d fog=%d texedge=%d noise=%d "
+            "depth=(test=%d,upd=%d,cmp=%d,prim=%d,z=%s) "
+            "decode={z=%s cvg=%s zcmp=%d zupd=%d aa=%d imrd=%d clr_on_cvg=%d "
+            "cvg_x_alpha=%d alpha_cvg=%d force_bl=%d b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
+            "ndc_ok=%d bbox=[%.3f,%.3f,%.3f,%.3f] area2=%.5f\n",
+            g_frame_count_diag,
+            g_tri_count_diag,
+            (void *)g_diag_current_cmd_addr,
+            gfx_draw_class_name(g_current_draw_class),
+            effect_label ? effect_label : "-",
+            room_matrix ? 1 : 0,
+            dl_room,
+            dl_which ? dl_which : "?",
+            has_cmd_offset ? "" : "?",
+            (size_t)cmd_offset,
+            raw,
+            eff,
+            rdp.other_mode_h,
+            rsp.geometry_mode,
+            (unsigned long long)cc_id,
+            (unsigned long long)effective_cc_id,
+            cc_options,
+            settex_active ? 1 : 0,
+            settex_active ? settex_texturenum : -1,
+            settex_active ? settex_tex_w : 0.0f,
+            settex_active ? settex_tex_h : 0.0f,
+            uses_texture0 ? 1 : 0,
+            uses_texture1 ? 1 : 0,
+            gfx_blend_mode_diag_name(blend_mode),
+            gfx_blend_mode_diag_name(api_blend_mode),
+            gfx_rdp_memory_blend_class_name(rdp_memory_blend_class),
+            room_xlu_cvg_memory ? 1 : 0,
+            room_water_alpha_suppress ? 1 : 0,
+            room_secondary_xlu_sort ? 1 : 0,
+            use_alpha ? 1 : 0,
+            use_fog ? 1 : 0,
+            texture_edge ? 1 : 0,
+            use_noise ? 1 : 0,
+            depth_test ? 1 : 0,
+            depth_update ? 1 : 0,
+            depth_compare ? 1 : 0,
+            depth_source_prim ? 1 : 0,
+            gfx_zmode_diag_name(raw),
+            gfx_zmode_diag_name(raw),
+            gfx_cvg_dst_diag_name(raw),
+            (raw & Z_CMP) != 0 ? 1 : 0,
+            (raw & Z_UPD) != 0 ? 1 : 0,
+            (raw & AA_EN) != 0 ? 1 : 0,
+            (raw & IM_RD) != 0 ? 1 : 0,
+            (raw & CLR_ON_CVG) != 0 ? 1 : 0,
+            (raw & CVG_X_ALPHA) != 0 ? 1 : 0,
+            (raw & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+            (raw & FORCE_BL) != 0 ? 1 : 0,
+            gfx_blender_field(raw, 0, 0),
+            gfx_blender_field(raw, 0, 1),
+            gfx_blender_field(raw, 0, 2),
+            gfx_blender_field(raw, 0, 3),
+            gfx_blender_field(raw, 1, 0),
+            gfx_blender_field(raw, 1, 1),
+            gfx_blender_field(raw, 1, 2),
+            gfx_blender_field(raw, 1, 3),
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? 1 : 0,
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? ndc_metrics->min_x : 0.0f,
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? ndc_metrics->min_y : 0.0f,
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? ndc_metrics->max_x : 0.0f,
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? ndc_metrics->max_y : 0.0f,
+            ndc_metrics_ok && ndc_metrics != NULL && ndc_metrics->valid ? ndc_metrics->area2 : 0.0f);
+    fflush(stderr);
 }
 
 #define GLASS_SHARD_COVERAGE_GRID_W 64
@@ -17207,6 +17419,33 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     float room_secondary_xlu_sort_key = room_secondary_xlu_sort
         ? gfx_room_xlu_tri_sort_key(v1, v2, v3)
         : 0.0f;
+
+    gfx_trace_rdp_render_mode_note(cc_id,
+                                   effective_cc_id,
+                                   cc_options,
+                                   blend_mode,
+                                   api_blend_mode,
+                                   rdp_memory_blend_class,
+                                   room_xlu_cvg_memory,
+                                   room_water_alpha_suppress,
+                                   room_secondary_xlu_sort,
+                                   effective_cc_features_for_options.used_textures[0],
+                                   effective_cc_features_for_options.used_textures[1],
+                                   use_alpha,
+                                   use_fog,
+                                   texture_edge,
+                                   use_noise,
+                                   depth_test,
+                                   depth_update,
+                                   depth_compare,
+                                   depth_source_prim,
+                                   room_matrix,
+                                   dl_room,
+                                   dl_which,
+                                   has_cmd_offset,
+                                   cmd_offset,
+                                   &ndc_metrics,
+                                   ndc_metrics_ok);
 
     gfx_trace_glass_shard_coverage_note(gfx_effect_label_for_current_command(),
                                          &ndc_metrics,

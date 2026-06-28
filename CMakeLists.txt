@@ -79,6 +79,8 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/analyze_room_glass_source_reconstruction.py"
             "${CMAKE_SOURCE_DIR}/tools/check_room_glass_source_reconstruction_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/check_rdp_coverage_memory_backend_guard.py"
+            "${CMAKE_SOURCE_DIR}/tools/summarize_rdp_render_mode_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_rdp_render_mode_trace_summary_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
@@ -118,6 +120,10 @@ if(BUILD_TESTING)
     add_test(
         NAME port_rdp_coverage_memory_backend_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_rdp_coverage_memory_backend_guard.py"
+    )
+    add_test(
+        NAME port_rdp_render_mode_trace_summary_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_rdp_render_mode_trace_summary_regression.py"
     )
     add_test(
         NAME port_native_sdk_surface_guard

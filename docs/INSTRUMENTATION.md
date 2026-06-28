@@ -1981,6 +1981,8 @@ smoke runs and human play sessions.
 | `GE007_TRACE_N64_OML=1` | log selected N64 `G_SETOTHERMODE_L` state transitions |
 | `GE007_TRACE_VIEWPORT=1` / `GE007_TRACE_VIEWPORT_AFTER_FRAME=N` / `GE007_TRACE_VIEWPORT_BUDGET=N` | log raw N64 viewport scale/translate, logical VI size, drawable size, aspect adjustment, and final drawable `xywh`; use when separating game viewport guard bands from presentation/crop bugs |
 | `GE007_TRACE_BG_ROOM_PTRS=1` | log primary/secondary room display-list pointers as rooms render |
+| `GE007_TRACE_RDP_RENDER_MODES=1` / `GE007_TRACE_RDP_RENDER_MODES_AFTER_FRAME=N` / `GE007_TRACE_RDP_RENDER_MODES_BUDGET=N` | log normalized per-triangle `[RDP-MODE]` rows after final native depth/blend/shader classification, including raw/effective othermodes, decoded coverage/blender flags, depth policy, final API blend, draw class, effect label, settex identity, and NDC bbox |
+| `GE007_TRACE_RDP_RENDER_MODES_DRAWCLASS=name` / `GE007_TRACE_RDP_RENDER_MODES_EFFECT=label` | optional filters for `[RDP-MODE]`; use drawclass filters such as `room` or `effect`, and effect labels such as `glass_shards`, to keep broad render-mode captures bounded |
 | `GE007_TRACE_ROOM_ALPHA=1` | log the first alpha-blended room triangles each frame, including raw/effective render mode, decoded N64 coverage/blender fields (`mode_decode`), depth flags, texture-edge classification, alpha sources, room attribution source, vertex/modelview/display-list rooms, room-DL command offset, and post-LUT combiner/options (`ROOM-ALPHA-CC`) |
 | `GE007_TRACE_DRAWCLASS_BBOX=1` / `GE007_TRACE_DRAWCLASS_AFTER_FRAME=N` | log per-frame NDC and logical-screen bboxes for emitted triangles by draw class (`unknown`, `room`, `weapon`, `chrprop`, `effect`, `hud`); use with `GE007_TRACE_DRAWCLASS_TRIS=1` when separating foreground, room-alpha, effect, and HUD footprints |
 | `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0|1` | toggle projected-visible backface traversal in native portal BFS; default `1` prevents tight tunnel under-admission, while `0` is a negative-control repro for the old Dam blue-cap tunnel view |
@@ -2006,6 +2008,13 @@ smoke runs and human play sessions.
 | `GE007_TRACE_VEHICLE_AI=1` / `GE007_TRACE_VEHICLE_AI_BUDGET=N` | log vehicle AI commands as they bind authored paths and target speeds |
 | `GE007_TRACE_VEHICLE_STATE=1` / `GE007_TRACE_VEHICLE_STATE_BUDGET=N` / `GE007_TRACE_VEHICLE_STATE_INTERVAL=N` | log per-frame vehicle path, speed, waypoint, and movement decisions; use the interval to reduce noise |
 | `GE007_VERBOSE=1` | broad legacy diagnostic output, including the focused logs above |
+
+Use `tools/summarize_rdp_render_mode_trace.py` on `[RDP-MODE]` logs before
+adding another render-mode special case. The summary groups raw modes by final
+native API blend, depth mode, draw class, `G_SETTEX` identity, and coverage
+flags, and highlights unpromoted `ZMODE_XLU` + `CVG_DST_WRAP` +
+`CLR_ON_CVG` + `IM_RD` + `FORCE_BL` candidates that are still using ordinary
+alpha blending.
 
 `tools/compare_glass_shard_pixel_oracle.py` measures active-glass screenshot
 deltas under individual traced shard-piece masks. It uses the same logical
