@@ -132,7 +132,21 @@ The visible symptoms were level-specific but shared renderer causes:
     differently from the RDP. The default renderer now routes the narrow
     fogged secondary-room coverage-wrap class through the RDP coverage-memory
     shader/backend path; `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` is the focused
-    escape hatch. Surface's look-sweep proof is intentionally material-level:
+    escape hatch. The OpenGL backend now also treats that default promotion as a
+    scene-target requirement, so coverage-memory draws sample a known RGBA8
+    target rather than the window backbuffer. Normal blended color draws preserve
+    the scene-target alpha channel, leaving it as synthetic RDP coverage memory
+    for later coverage-wrap/color-on-coverage blends instead of blended opacity
+    history. 2026-06-28 backend validation: the focused CTest guard set passed,
+    Surface default versus disabled coverage-memory at frame 360 still produced a
+    focused `2.593%` screenshot delta with identical movement
+    (`/tmp/mgb64_surface_cvg_memory_backend_1782654476`), default still matched
+    the explicit `0x00f78e4f0ebe2d12` diagnostic exactly
+    (`/tmp/mgb64_surface_cvg_memory_diag_match_1782654512`), Dam glass material
+    regression passed (`/tmp/mgb64_glass_material_cvg_backend_1782654534`), and
+    Dam/Surface playability smoke passed
+    (`/tmp/mgb64_playability_dam_surface_cvg_backend_1782654560`). Surface's
+    look-sweep proof is intentionally material-level:
     disabling the promoted class changes 35,815 pixels at frame 360, while the
     promoted default matches the old explicit
     `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=0x00f78e4f0ebe2d12` diagnostic
@@ -292,6 +306,10 @@ Use these habits before accepting renderer changes:
   multisample draw FBO is not a portable GL path. The focused Surface guard is
   default versus `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` at both `Video.MSAA=0`
   and `Video.MSAA=4`.
+- RDP coverage-memory blend paths must not use ordinary alpha-blend output alpha
+  as their coverage store. Keep `tools/check_rdp_coverage_memory_backend_guard.py`
+  green when changing scene-target enablement, blend-mode state, or
+  framebuffer-memory shader setup.
 
 ## Validation
 

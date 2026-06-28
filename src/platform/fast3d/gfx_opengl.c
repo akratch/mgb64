@@ -149,6 +149,8 @@ static int g_diag_xlu_rdp_memory_blend_logged;
 static int g_diag_xlu_rdp_cvg_memory_blend_checked; /* GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=... */
 static int g_diag_xlu_rdp_cvg_memory_blend_enabled;
 static int g_diag_xlu_rdp_cvg_memory_blend_logged;
+static int g_room_xlu_cvg_memory_checked; /* GE007_ROOM_XLU_CVG_MEMORY / GE007_DISABLE_ROOM_XLU_CVG_MEMORY */
+static int g_room_xlu_cvg_memory_enabled;
 static int g_diag_alpha_from_tex_intensity_mix_checked; /* GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX=N */
 static float g_diag_alpha_from_tex_intensity_mix = 1.0f;
 
@@ -287,6 +289,21 @@ static bool gfx_diag_xlu_rdp_cvg_memory_blend_enabled(void) {
         g_diag_xlu_rdp_cvg_memory_blend_checked = 1;
     }
     return g_diag_xlu_rdp_cvg_memory_blend_enabled != 0;
+}
+
+static bool gfx_opengl_room_xlu_cvg_memory_enabled(void) {
+    if (!g_room_xlu_cvg_memory_checked) {
+        const char *disable_env = getenv("GE007_DISABLE_ROOM_XLU_CVG_MEMORY");
+        const char *enable_env = getenv("GE007_ROOM_XLU_CVG_MEMORY");
+
+        g_room_xlu_cvg_memory_enabled = 1;
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            g_room_xlu_cvg_memory_enabled = 0;
+        }
+        g_room_xlu_cvg_memory_checked = 1;
+    }
+    return g_room_xlu_cvg_memory_enabled != 0;
 }
 
 static float gfx_diag_n64_filter_nearest_threshold(bool texture_edge,
@@ -1575,6 +1592,24 @@ static void gfx_opengl_set_blend_mode(enum GfxBlendMode mode) {
     g_blend_alpha_cvg_wrap_stencil = (mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
     g_blend_alpha_rdp_memory = (mode == GFX_BLEND_ALPHA_RDP_MEMORY);
     g_blend_alpha_rdp_cvg_memory = (mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY);
+    /*
+     * The coverage-memory shader stores its synthetic 3-bit coverage in the
+     * scene-target alpha channel. Ordinary GL alpha blending would otherwise
+     * rewrite that channel with opacity history, so preserve it for non-RDP
+     * blended color draws and let opaque/RDP-memory draws explicitly write it.
+     */
+    {
+        bool preserve_coverage_alpha =
+            g_scene_target_bound &&
+            (gfx_opengl_room_xlu_cvg_memory_enabled() ||
+             gfx_diag_xlu_rdp_cvg_memory_blend_enabled()) &&
+            (mode == GFX_BLEND_ALPHA ||
+             mode == GFX_BLEND_MODULATE ||
+             mode == GFX_BLEND_ALPHA_COVERAGE ||
+             mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE,
+                    preserve_coverage_alpha ? GL_FALSE : GL_TRUE);
+    }
     gfx_opengl_update_a2c_state();
 }
 
@@ -1903,7 +1938,8 @@ static bool gfx_opengl_scene_target_enabled(void) {
            gfx_opengl_effective_msaa_samples() > 0 ||
            gfx_diag_xlu_coverage_stencil_enabled() ||
            gfx_diag_xlu_rdp_memory_blend_enabled() ||
-           gfx_diag_xlu_rdp_cvg_memory_blend_enabled();
+           gfx_diag_xlu_rdp_cvg_memory_blend_enabled() ||
+           gfx_opengl_room_xlu_cvg_memory_enabled();
 }
 
 static bool gfx_opengl_ensure_scene_target(int width, int height) {
@@ -3117,6 +3153,7 @@ static void gfx_opengl_start_frame(void) {
 
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glClearColor(g_clear_r, g_clear_g, g_clear_b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
             (gfx_diag_xlu_coverage_stencil_enabled() ? GL_STENCIL_BUFFER_BIT : 0));
@@ -3141,6 +3178,7 @@ static void gfx_opengl_resolve_scene_target(void) {
     }
 
     glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     if (g_scene_target_multisampled) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_msaa_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scene_fbo);
