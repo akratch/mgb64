@@ -1791,6 +1791,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_AUTO_UNSET_STAGE_FLAGS_SCRIPT=FRAME:FLAGS[,..]` | deterministic objective/control hook; clears stage flags at the listed frames, with decimal or hex flags |
 | `GE007_AUTO_EXIT_ON_TITLE=1` / `GE007_AUTO_EXIT_ON_TITLE_DELAY=N` | exit deterministic validation after returning to the title stage |
 | `GE007_AUTO_EXIT_FRAME=N` | exit deterministic validation on the first tick after frame `N`, so trace-based gates can require frame `N` was observed |
+| `GE007_DOOR_FLOOR_COLLISION=0` / `GE007_DISABLE_DOOR_FLOOR_COLLISION=1` | disable native closed-door floor candidates for A/B; used by the Surface II hatch guard to reproduce the old drop-through path while keeping normal lateral closed-door collision intact |
 | `GE007_AUTO_SELECT_LEVEL=name` / `GE007_AUTO_SELECT_DELAY=N` | frontend selector route for full/no-arg boot probes; prefer named levels such as `bunker1` when a numeric value could be a menu index |
 | `GE007_AUTO_ADD_ITEM_FRAME=N` / `GE007_AUTO_ADD_ITEM=ID` | deterministic inventory injection hook; used by equipment crash repros such as Bunker datathief item `55` |
 | `GE007_AUTO_EQUIP_ITEM_FRAME=N` / `GE007_AUTO_EQUIP_ITEM=ID` | deterministic equipment hook; pair with inventory injection for viewmodel/watch-item repros |
@@ -3785,6 +3786,22 @@ tools/dam_objective_progression_smoke.sh --no-build \
 This is objective-condition coverage. It does not replace a full organic Dam
 route that moves from spawn through alarms/modem/data/bungee with stock-like
 combat, navigation, and end-state timing.
+
+### Surface II final-flow smoke
+
+`tools/surface2_final_flow_smoke.sh` validates the two scripted contracts around
+the Surface II silo transition. The hatch capture places Bond on top of the
+closed silo hatch and requires the traced floor to stay on the door collision
+surface; the disabled control runs the same capture with
+`GE007_DOOR_FLOOR_COLLISION=0` and requires the old drop-through floor to
+reappear. The final-exit capture completes the Agent-relevant objectives,
+places Bond on final pad `289`, presses A, and requires `obj.all_complete=1`
+before the title/menu return. This is not a full organic Surface II route.
+
+```sh
+tools/surface2_final_flow_smoke.sh --no-build \
+  --out-dir "$(mktemp -d /tmp/mgb64_surface2_final_flow.XXXXXX)"
+```
 
 ### GFX DL provenance regression
 

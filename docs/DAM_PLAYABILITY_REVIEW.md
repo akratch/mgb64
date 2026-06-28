@@ -78,23 +78,24 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
   default-vs-disabled Surface guard (`2.089%` delta), and
   `/tmp/mgb64_surface2_perf_rectsnap_final.LNzHKP` reports Surface 2
   `avg_work=9.81 ms`, `max_work=15 ms` at `2056x1257`.
-- Checked: Surface 2 Agent completion and hatch state still match the authored
-  setup after the renderer fix. `/tmp/mgb64_surface2_exit_final.JlIzSo`
-  completes objective tags `0` and `1`, enters final pad `289`, presses A on
-  the mission end screen, and observes title return at frame `186`.
-  `/tmp/mgb64_surface2_hatch_gate_final.WmzI3N` confirms the six hatch door
-  pieces (`obj=139`, pads `7..12`) remain closed at the lower-hatch checkpoint
-  (`open_pos=0`, `state=0`) and still require `keyflags=0x00000004`.
-  The forced pad-9 AI probe
-  `/tmp/mgb64_surface2_ai_100f_pad9_novsync.eNE0Hb` reaches list `0x100F` and
-  hits `AI_IFObjectiveAllCompleted` with objectives incomplete before the
-  fallback title path, so it is not evidence of objective bypass in normal play.
-- Checked: the glass shatter/material lane still passes with the optimized
-  coverage-memory backend. `/tmp/mgb64_glass_material_rectsnap_guard` passes
+- Closed/guarded: Surface 2's silo hatch regression was the vertical floor path
+  ignoring closed-door collision even though lateral movement was blocked by the
+  six authored hatch pieces (`obj=139`, pads `7..12`). Native now lets closed
+  doors in the current/portal room contribute a floor candidate from their
+  collision polygon and Bond radius. `GE007_DOOR_FLOOR_COLLISION=0` (or
+  `GE007_DISABLE_DOOR_FLOOR_COLLISION=1`) is the A/B gate. Current proof:
+  `tools/surface2_final_flow_smoke.sh --no-build` at
+  `/tmp/mgb64_surface2_final_flow_final_guard` keeps the closed hatch top at
+  `-158.43..-158.43`, while the disabled control reproduces the drop to
+  `-369.68`. The same smoke keeps the scripted final-pad path healthy:
+  Surface 2 Agent objective trace reaches `obj.all_complete=1` at frame `82`
+  (`statuses=[0,1,0,1]`) and returns to title at frame `179`.
+- Checked: the glass shatter/material lane still passes after the Surface 2
+  hatch/final-flow fix. `/tmp/mgb64_glass_material_after_surface2_guard` passes
   `tools/glass_material_regression.sh`, including the regular-glass bullet hit
   (`first_shatter_frame=108`, `pieces=90`, `max_active=90`), shard material rows
   (`rows=500`, raw mode `0C1849D8`, combiner `00F38E4F020A2D12`), and shard
-  coverage rows (`api_blend=alpha`).
+  coverage rows (`rows=25`, `api_blend=alpha`).
 - Guarded: the Bunker darkness report is not caused by the `field_10E0` Surface
   fix or an effect-texture/material regression, and now has a repeatable native
   guard in `tools/bunker_brightness_regression.sh`. Current proof

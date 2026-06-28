@@ -76,6 +76,7 @@ s32 chrTickBeams(PropRecord *prop);
 static int s_nativeLoadingBondIntroChr = 0;
 static f32 bondviewGetNativeBaseFovY(void);
 static int bondviewTraceNativeFovEnabled(void);
+extern int g_frame_count_diag;
 
 /*
  * ADS (aim-down-sights) per-player side state. Keyed by get_cur_playernum()
@@ -166,6 +167,124 @@ static int portUseNativeSyntheticWalkMovement(void)
 static int portIsFiniteF32(f32 value)
 {
     return value == value && value > -3.402823466e+38f && value < 3.402823466e+38f;
+}
+
+static int bondviewClosedDoorFloorCollisionEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_DOOR_FLOOR_COLLISION");
+        const char *enable_env = getenv("GE007_DOOR_FLOOR_COLLISION");
+
+        enabled = 1;
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static f32 bondviewClosedDoorFloorCandidate(f32 stan_floor, f32 collision_radius)
+{
+    s32 rooms[3];
+    s32 room_count = 0;
+    s16 *lookup_index;
+    f32 best_floor = stan_floor;
+    coord3d probe;
+
+    if (!bondviewClosedDoorFloorCollisionEnabled() ||
+        g_CurrentPlayer == NULL ||
+        g_CurrentPlayer->prop == NULL)
+    {
+        return best_floor;
+    }
+
+    if (g_CurrentPlayer->field_488.current_tile_ptr != NULL) {
+        rooms[room_count++] = g_CurrentPlayer->field_488.current_tile_ptr->room;
+    }
+
+    if (g_CurrentPlayer->field_488.current_tile_ptr_for_portals != NULL) {
+        s32 portal_room = g_CurrentPlayer->field_488.current_tile_ptr_for_portals->room;
+        if (room_count == 0 || rooms[0] != portal_room) {
+            rooms[room_count++] = portal_room;
+        }
+    }
+
+    if (room_count == 0) {
+        return best_floor;
+    }
+
+    rooms[room_count] = -1;
+    roomGetProps(rooms);
+
+    probe = g_CurrentPlayer->field_488.collision_position;
+
+    for (lookup_index = ptr_list_object_lookup_indices; *lookup_index >= 0; lookup_index++) {
+        PropRecord *prop = &pos_data_entry[*lookup_index];
+        rect4f *polygon = NULL;
+        s32 edges = 0;
+        f32 y_a = 0.0f;
+        f32 y_b = 0.0f;
+        f32 top_y;
+        f32 bottom_y;
+
+        if (prop->type != PROP_TYPE_DOOR || prop->door == NULL) {
+            continue;
+        }
+
+        if (!propIsOfCdType(prop, CDTYPE_CLOSEDDOORS)) {
+            continue;
+        }
+
+        chraiGetCollisionBounds(prop, &polygon, &edges, &y_a, &y_b);
+        if (polygon == NULL || edges <= 0) {
+            continue;
+        }
+
+        top_y = y_a > y_b ? y_a : y_b;
+        bottom_y = y_a > y_b ? y_b : y_a;
+
+        if (top_y <= best_floor + 0.1f) {
+            continue;
+        }
+
+        if (g_CurrentPlayer->field_70 < bottom_y - 5.0f) {
+            continue;
+        }
+
+        if (g_CurrentPlayer->field_70 < top_y - 120.0f) {
+            continue;
+        }
+
+        if (!chrpropTestPointInPolygon(&probe, polygon, edges)
+            && !chrobjTestPointPolygonCollision(&probe,
+                                                collision_radius,
+                                                polygon,
+                                                edges))
+        {
+            continue;
+        }
+
+        best_floor = top_y;
+
+        if (getenv("GE007_TRACE_COLLISION") != NULL) {
+            fprintf(stderr,
+                    "[PROP_FLOOR] frame=%d door_obj=%d pad=%d floor=%.2f stan=%.2f player_floor=%.2f y=[%.2f,%.2f]\n",
+                    g_frame_count_diag,
+                    prop->door->obj,
+                    prop->door->pad,
+                    top_y,
+                    stan_floor,
+                    g_CurrentPlayer->field_70,
+                    bottom_y,
+                    top_y);
+        }
+    }
+
+    return best_floor;
 }
 
 static f32 portNativeSyntheticWalkScale(void)
@@ -10614,6 +10733,10 @@ void bondviewUpdatePlayerY(s32 use_stanHeight, f32 stanHeight_offset)
                 g_CurrentPlayer->field_488.current_tile_ptr,
                 g_CurrentPlayer->field_488.collision_position.f[0],
                 g_CurrentPlayer->field_488.collision_position.f[2]);
+
+#ifdef NATIVE_PORT
+            sp64 = bondviewClosedDoorFloorCandidate(sp64, collision_radius);
+#endif
 
 #ifdef NATIVE_PORT
             {

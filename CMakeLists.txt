@@ -228,6 +228,7 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_frigate_progression_smoke frigate_progression_smoke.sh 240)
     add_port_validation_smoke(port_surface1_progression_smoke surface1_progression_smoke.sh 180)
     add_port_validation_smoke(port_surface2_progression_smoke surface2_progression_smoke.sh 240)
+    add_port_validation_smoke(port_surface2_final_flow_smoke surface2_final_flow_smoke.sh 180)
     add_port_validation_smoke(port_archives_progression_smoke archives_progression_smoke.sh 180)
     add_port_validation_smoke(port_bunker2_progression_smoke bunker2_progression_smoke.sh 240)
     add_port_validation_smoke(port_depot_progression_smoke depot_progression_smoke.sh 180)
