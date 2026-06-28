@@ -450,7 +450,14 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  `10.0`, and lower-right `24.0`; native source, stock same-frame framebuffer
 	  input, and hidden-coverage transitions all vary by pixel. Treat the next fix
 	  as per-pixel RDP source/framebuffer/coverage/output work, not as a global
-	  alpha or color scalar. The matching forced room-glass coverage-memory
+	  alpha or color scalar. The equation summary
+	  `/tmp/mgb64_glass_handoff_points_source_equation_1782655314.json` shows the
+	  observed native `pre -> post` pixels would require source RGB near `10.5`,
+	  `22.0`, and `9.5`, while the reconstructed sources are `32`, `0`, and `22`;
+	  native pre also differs from the stock framebuffer-input candidate by
+	  `35.333..70.667` mean_abs_rgb. That makes source/raster evidence and
+	  prior-owner ordering the next target before any global blend change. The
+	  matching forced room-glass coverage-memory
 	  diagnostic
 	  `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314` remains a negative
 	  control: center, left, and lower-right report `4.0`, `10.0`, and `25.0`

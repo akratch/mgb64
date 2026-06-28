@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import tempfile
 
@@ -106,8 +107,21 @@ def main() -> int:
     assert payload["points"][0]["stock_framebuffer_input_rgba"] == [20, 20, 20, 224]
     assert payload["points"][1]["native_source_rgba"] == [10, 10, 10, 102]
     assert payload["points"][1]["native_post_vs_stock_rgb"]["delta"] == [-21, -21, -21]
+    assert payload["points"][0]["native_required_source_from_pre_post_alpha"] == [32.5, 32.5, 32.5]
+    assert payload["points"][0]["native_pre_vs_stock_framebuffer_input_rgb"]["mean_abs_rgb"] == 0.0
+    assert math.isclose(
+        payload["points"][0]["native_required_source_vs_reconstructed_rgb"]["mean_abs_rgb"],
+        22.5,
+    )
+    assert payload["summary"]["native_required_source_vs_reconstructed_rgb"]["points"] == 2
+    assert math.isclose(
+        payload["summary"]["native_required_source_vs_reconstructed_rgb"]["max"],
+        22.5,
+    )
+    assert payload["summary"]["native_pre_vs_stock_framebuffer_input_rgb"]["max"] == 0.0
     assert payload["summary"]["hidden_transitions"][0]["points"] == 1
     assert any("off points >1: 1" in item for item in payload["interpretation"])
+    assert any("requires source-vs-reconstructed" in item for item in payload["interpretation"])
 
     print("PASS: glass handoff points summary regression")
     return 0

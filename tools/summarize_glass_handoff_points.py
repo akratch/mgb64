@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,45 @@ def rgb_delta(a: list[Any] | None, b: list[Any] | None) -> dict[str, Any] | None
         "mean_abs_rgb": sum(abs(item) for item in delta) / 3.0,
         "luma_delta": luma([a[0], a[1], a[2]]) - luma([b[0], b[1], b[2]]),
     }
+
+
+def float_rgb_delta(a: list[Any] | None, b: list[Any] | None) -> dict[str, Any] | None:
+    if not isinstance(a, list) or not isinstance(b, list) or len(a) < 3 or len(b) < 3:
+        return None
+    try:
+        delta = [float(a[index]) - float(b[index]) for index in range(3)]
+    except (TypeError, ValueError):
+        return None
+    return {
+        "delta": delta,
+        "mean_abs_rgb": sum(abs(item) for item in delta) / 3.0,
+        "luma_delta": luma([a[0], a[1], a[2]]) - luma([b[0], b[1], b[2]]),
+    }
+
+
+def required_source_rgb(output: list[Any] | None,
+                        underlay: list[Any] | None,
+                        alpha: Any) -> list[float] | None:
+    if (
+        not isinstance(output, list) or
+        not isinstance(underlay, list) or
+        len(output) < 3 or
+        len(underlay) < 3
+    ):
+        return None
+    try:
+        alpha_unit = float(alpha) / 255.0
+        out = [float(output[index]) for index in range(3)]
+        base = [float(underlay[index]) for index in range(3)]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(alpha_unit) or alpha_unit <= 0.0:
+        return None
+    inv_alpha = 1.0 - alpha_unit
+    return [
+        (out[index] - base[index] * inv_alpha) / alpha_unit
+        for index in range(3)
+    ]
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -66,7 +106,15 @@ def summarize_point(label: str, path: Path, payload: dict[str, Any]) -> dict[str
     framebuffer_input = stock.get("selected_framebuffer_input") or {}
     stock_rgba = selected.get("rgba")
     native_post = native_final.get("post")
+    native_pre = native_final.get("pre")
     native_source = native_final.get("shaderL_frag")
+    native_alpha = native_source[3] if isinstance(native_source, list) and len(native_source) >= 4 else None
+    native_required_source = required_source_rgb(native_post, native_pre, native_alpha)
+    stock_required_source = required_source_rgb(
+        stock_rgba,
+        framebuffer_input.get("rgba"),
+        native_alpha,
+    )
     delta = first_rgb_delta(native_pixel, native_post, stock_rgba)
 
     missing: list[str] = []
@@ -93,9 +141,14 @@ def summarize_point(label: str, path: Path, payload: dict[str, Any]) -> dict[str
         "stock_framebuffer_input_rgba": framebuffer_input.get("rgba"),
         "stock_framebuffer_input_vs_selected_rgb": stock.get("selected_framebuffer_input_vs_selected_rgb"),
         "stock_hidden_transition": stock.get("selected_hidden_transition"),
-        "native_pre": native_final.get("pre"),
+        "native_pre": native_pre,
         "native_source_rgba": native_source,
         "native_source_luma": luma(native_source),
+        "native_required_source_from_pre_post_alpha": native_required_source,
+        "native_required_source_vs_reconstructed_rgb": float_rgb_delta(native_required_source, native_source),
+        "native_pre_vs_stock_framebuffer_input_rgb": rgb_delta(native_pre, framebuffer_input.get("rgba")),
+        "stock_required_source_from_framebuffer_input_alpha": stock_required_source,
+        "stock_required_source_vs_native_source_rgb": float_rgb_delta(stock_required_source, native_source),
         "native_post": native_post,
         "native_post_luma": luma(native_post),
         "native_changed": native_final.get("changed"),
@@ -112,6 +165,18 @@ def build_summary(points: list[dict[str, Any]]) -> dict[str, Any]:
         for point in points
         if isinstance(point.get("native_post_vs_stock_rgb"), dict) and
         point["native_post_vs_stock_rgb"].get("mean_abs_rgb") is not None
+    ]
+    required_source_deltas = [
+        point["native_required_source_vs_reconstructed_rgb"]["mean_abs_rgb"]
+        for point in points
+        if isinstance(point.get("native_required_source_vs_reconstructed_rgb"), dict) and
+        point["native_required_source_vs_reconstructed_rgb"].get("mean_abs_rgb") is not None
+    ]
+    input_gaps = [
+        point["native_pre_vs_stock_framebuffer_input_rgb"]["mean_abs_rgb"]
+        for point in points
+        if isinstance(point.get("native_pre_vs_stock_framebuffer_input_rgb"), dict) and
+        point["native_pre_vs_stock_framebuffer_input_rgb"].get("mean_abs_rgb") is not None
     ]
     hidden_transitions = Counter()
     for point in points:
@@ -133,6 +198,18 @@ def build_summary(points: list[dict[str, Any]]) -> dict[str, Any]:
             "mean": sum(deltas) / len(deltas) if deltas else None,
             "max": max(deltas) if deltas else None,
         },
+        "native_required_source_vs_reconstructed_rgb": {
+            "points": len(required_source_deltas),
+            "min": min(required_source_deltas) if required_source_deltas else None,
+            "mean": sum(required_source_deltas) / len(required_source_deltas) if required_source_deltas else None,
+            "max": max(required_source_deltas) if required_source_deltas else None,
+        },
+        "native_pre_vs_stock_framebuffer_input_rgb": {
+            "points": len(input_gaps),
+            "min": min(input_gaps) if input_gaps else None,
+            "mean": sum(input_gaps) / len(input_gaps) if input_gaps else None,
+            "max": max(input_gaps) if input_gaps else None,
+        },
         "hidden_transitions": [
             {"before": before, "after": after, "points": count}
             for (before, after), count in hidden_transitions.most_common()
@@ -142,6 +219,8 @@ def build_summary(points: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_interpretation(summary: dict[str, Any], points: list[dict[str, Any]]) -> list[str]:
     mean_abs = summary.get("mean_abs_rgb") or {}
+    required = summary.get("native_required_source_vs_reconstructed_rgb") or {}
+    input_gap = summary.get("native_pre_vs_stock_framebuffer_input_rgb") or {}
     notes = [
         f"{summary['points_with_stock_and_native']}/{summary['points']} points have both stock and native final pixels",
         f"near/exact points <=1 mean_abs_rgb: {summary['near_points_le_1']}; off points >1: {summary['off_points_gt_1']}",
@@ -150,6 +229,16 @@ def build_interpretation(summary: dict[str, Any], points: list[dict[str, Any]]) 
         notes.append(
             "native post versus stock final mean_abs_rgb range: "
             f"min={mean_abs.get('min'):.3f} mean={mean_abs.get('mean'):.3f} max={mean_abs.get('max'):.3f}"
+        )
+    if required.get("max") is not None:
+        notes.append(
+            "native observed pre/post requires source-vs-reconstructed mean_abs_rgb: "
+            f"min={required.get('min'):.3f} mean={required.get('mean'):.3f} max={required.get('max'):.3f}"
+        )
+    if input_gap.get("max") is not None:
+        notes.append(
+            "native pre pixel versus stock framebuffer-input mean_abs_rgb: "
+            f"min={input_gap.get('min'):.3f} mean={input_gap.get('mean'):.3f} max={input_gap.get('max'):.3f}"
         )
     missing_input = [point["label"] for point in points if not point.get("stock_framebuffer_input_rgba")]
     if missing_input:
@@ -200,7 +289,8 @@ def print_human(payload: dict[str, Any]) -> None:
             f"mean_abs_rgb={delta.get('mean_abs_rgb')} "
             f"fb_in={point.get('stock_framebuffer_input_rgba')} "
             f"hidden={point.get('stock_hidden_transition')} "
-            f"source={point.get('native_source_rgba')}"
+            f"source={point.get('native_source_rgba')} "
+            f"required_source={point.get('native_required_source_from_pre_post_alpha')}"
         )
     if payload.get("failures"):
         print("failures:")

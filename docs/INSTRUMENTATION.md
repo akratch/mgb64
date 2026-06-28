@@ -325,6 +325,14 @@ room-glass source differs per point (`[32,32,32,102]`, `[0,0,0,102]`,
 hidden coverage transition is `0x1 -> 0x3`. The next renderer change should be
 evaluated per pixel against source, framebuffer memory, hidden coverage, and
 final post output rather than by a single global opacity or color scalar.
+The same reducer now inverts the observed native `pre -> post` pixels through
+the selected native source alpha. The current equation summary
+`/tmp/mgb64_glass_handoff_points_source_equation_1782655314.json` shows native
+would need source RGB near `10.5`, `22.0`, and `9.5` to produce the observed
+post pixels, while the reconstructed sources are `32`, `0`, and `22`. It also
+shows the native pre pixel differs from the stock framebuffer-input candidate by
+`35.333..70.667` mean_abs_rgb. Treat those as source/raster and prior-owner
+ordering leads before changing the global blend equation.
 The matching forced room-glass coverage-memory diagnostic
 `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=0x00738e4f020a2d12` remains a checked
 negative on this lane: `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314`
