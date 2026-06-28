@@ -454,7 +454,12 @@ state traces, and logs are ROM-derived local artifacts and should remain in `/tm
 	  diagnostic
 	  `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314` remains a negative
 	  control: center, left, and lower-right report `4.0`, `10.0`, and `25.0`
-	  mean_abs_rgb, slightly worse than the default source-enriched run.
+	  mean_abs_rgb, slightly worse than the default source-enriched run. The
+	  paired run comparison
+	  `/tmp/mgb64_glass_handoff_run_compare_rdp_cvg_1782655314.json` classifies
+	  that diagnostic as `0` wins, `2` regressions, and `1` neutral point versus
+	  default, so this should remain a guardrail instead of an implementation
+	  direction.
 	  That multi-point lane has now started: `/tmp/mgb64_pixel_handoff_176_158_1782631121`
 	  samples stock/aligned `176,158` mapped to native `88,89` and reports stock
 	  `[32,32,32]` versus native `[22,22,22]`, while

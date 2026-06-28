@@ -86,6 +86,7 @@ The public validation surface is organized into these lanes:
 | Stock RDP pixel probe | Dev-only ares Parallel-RDP post-draw framebuffer samples for exact stock per-pixel output | `analyze_stock_rdp_pixel_probe.py` |
 | Glass center handoff | Read-only join from stock center-pixel output to stock command-region and native settex evidence | `analyze_glass_center_handoff.py` |
 | Glass handoff points | Batch summary of multiple stock/native handoff JSONs with source, framebuffer-input, hidden-coverage, and final-output fields | `summarize_glass_handoff_points.py` |
+| Glass handoff run compare | Baseline-vs-candidate classification for handoff point summaries; reports per-point wins, regressions, and neutral deltas | `compare_glass_handoff_runs.py` |
 | Bullet impact sequence | Sampled stock/native bullet-impact sequence parity at selected frames; catches later-impact drift hidden by first-impact gates | `compare_bullet_impact_sequence.py` |
 | Glass contributor isolation | Native-only A/B ownership sweep for Dam active, impact, and pad-10092 impact glass fixtures | `glass_contributor_isolation_regression.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
@@ -329,6 +330,12 @@ The matching forced room-glass coverage-memory diagnostic
 negative on this lane: `/tmp/mgb64_glass_handoff_points_rdp_cvg_1782655314`
 reports center `4.0`, left `10.0`, and lower-right `25.0` mean_abs_rgb, worse
 than the default source-enriched run (`3.0`, `10.0`, `24.0`).
+Use `tools/compare_glass_handoff_runs.py` for future candidate runs so each
+renderer change is classified against the same baseline. The current forced
+coverage-memory comparison is
+`/tmp/mgb64_glass_handoff_run_compare_rdp_cvg_1782655314.json`: `0` wins, `2`
+regressions, and `1` neutral point, with a `+0.667` mean_abs_rgb aggregate
+delta.
 
 2026-06-28 glass tie-off: pause here unless resuming the bounded raw-state
 handoff. The next useful capture is one stock Parallel-RDP pixel-probe rerun at
@@ -498,6 +505,8 @@ The ROM-free analyzer regression guard is:
 python3 tools/check_stock_rdp_command_stream_regression.py
 python3 tools/check_stock_rdp_pixel_probe_regression.py
 python3 tools/check_glass_center_handoff_regression.py
+python3 tools/check_glass_handoff_points_regression.py
+python3 tools/check_glass_handoff_run_compare_regression.py
 python3 tools/check_room_glass_source_reconstruction_regression.py
 ```
 
