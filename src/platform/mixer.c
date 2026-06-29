@@ -175,6 +175,7 @@ static struct {
     uint8_t env_sample_xor;
     uint8_t pole_sample_xor;
     uint8_t disable_pole_filter;
+    uint8_t disable_raw16_swap;
 
     /* Virtual DMEM */
     union {
@@ -230,6 +231,12 @@ void mixerInit(void) {
                                            MIXER_POLE_SAMPLE_XOR_DEFAULT);
     rspa.disable_pole_filter =
         mixerEnvFlagBit("GE007_DISABLE_NATIVE_POLE_FILTER", 0);
+    /* RAW16 (uncompressed PCM) instrument samples are stored big-endian in the
+     * N64 ROM. The mixer reads DMEM as host-native int16, so they must be
+     * byte-swapped on load (ADPCM is byte-stream-decoded and unaffected).
+     * Default-on correctness fix; set the env var to A/B the old behavior. */
+    rspa.disable_raw16_swap =
+        mixerEnvFlagBit("GE007_DISABLE_RAW16_BYTESWAP", 0);
     rspa.stats.envSampleXor = rspa.env_sample_xor;
     rspa.stats.poleSampleXor = rspa.pole_sample_xor;
 }
@@ -272,6 +279,29 @@ void mixerLoadBuffer(const void *addr) {
     uint16_t nbytes = ROUND_UP_8(rspa.sb_count);
     if (addr && nbytes > 0 && rspa.sb_dmemin + nbytes <= DMEM_SIZE)
         memcpy(BUF_U8(rspa.sb_dmemin), addr, nbytes);
+}
+
+/* Like mixerLoadBuffer, but byte-swaps each 16-bit word big-endian -> host.
+ * Used only for RAW16 (uncompressed PCM) sample data, which is stored
+ * big-endian in the N64 ROM and read back from DMEM as host int16 by the
+ * resampler. ADPCM loads must NOT use this (their data is a byte stream). */
+void mixerLoadBufferSwap16(const void *addr) {
+    uint16_t nbytes = ROUND_UP_8(rspa.sb_count);
+    if (!addr || nbytes == 0 || rspa.sb_dmemin + nbytes > DMEM_SIZE)
+        return;
+    if (rspa.disable_raw16_swap) {
+        memcpy(BUF_U8(rspa.sb_dmemin), addr, nbytes);
+        return;
+    }
+    {
+        const uint8_t *src = (const uint8_t *)addr;
+        uint8_t *dst = BUF_U8(rspa.sb_dmemin);
+        uint16_t i;
+        for (i = 0; i + 1 < nbytes; i += 2) {
+            dst[i]     = src[i + 1];
+            dst[i + 1] = src[i];
+        }
+    }
 }
 
 /* ===== Save buffer (DMEM → DRAM) ===== */

@@ -28,6 +28,7 @@ void mixerSetBuffer(unsigned int flags, unsigned int dmemin,
                     unsigned int dmemout, unsigned int count);
 void mixerClearBuffer(unsigned int dmem, unsigned int count);
 void mixerLoadBuffer(const void *addr);
+void mixerLoadBufferSwap16(const void *addr);
 void mixerSaveBuffer(void *addr);
 void mixerADPCMdec(unsigned int flags, void *state);
 void mixerResample(unsigned int flags, unsigned int pitch, void *state);
@@ -95,6 +96,7 @@ void mixerGetStats(PortMixerStats *out);
 #define aClearBuffer(pkt, d, c)      ((void)(pkt), mixerClearBuffer((d), (c)))
 #define aSetBuffer(pkt, f, i, o, c)  ((void)(pkt), mixerSetBuffer((f), (i), (o), (c)))
 #define aLoadBuffer(pkt, s)          ((void)(pkt), mixerLoadBuffer((const void *)(s)))
+#define aLoadBufferSwap16(pkt, s)    ((void)(pkt), mixerLoadBufferSwap16((const void *)(s)))
 #define aSaveBuffer(pkt, s)          ((void)(pkt), mixerSaveBuffer((void *)(s)))
 #define aADPCMdec(pkt, f, s)         ((void)(pkt), mixerADPCMdec((f), (void *)(s)))
 #define aResample(pkt, f, p, s)      ((void)(pkt), mixerResample((f), (p), (void *)(s)))

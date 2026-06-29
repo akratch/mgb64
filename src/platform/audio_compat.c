@@ -4430,7 +4430,7 @@ Acmd *alRaw16Pull(void *filter, s16 *outp, s32 out_count,
             byte_count += (s32)dram_align;
             aSetBuffer(ptr++, 0, *outp, 0,
                        load_buffer_dma_count(byte_count));
-            aLoadBuffer(ptr++,
+            aLoadBufferSwap16(ptr++,
                         (void *)(uintptr_t)(dram_location - dram_align));
         } else {
             dram_align = 0;
@@ -4460,7 +4460,7 @@ Acmd *alRaw16Pull(void *filter, s16 *outp, s32 out_count,
 
             aSetBuffer(ptr++, 0, output_pos + (s16)dmem_align, 0,
                        load_buffer_dma_count(byte_count));
-            aLoadBuffer(ptr++,
+            aLoadBufferSwap16(ptr++,
                         (void *)(uintptr_t)(dram_location - dram_align));
 
             if (dram_align != 0 || dmem_align != 0) {
@@ -4492,7 +4492,7 @@ Acmd *alRaw16Pull(void *filter, s16 *outp, s32 out_count,
             byte_count += (s32)dram_align;
             aSetBuffer(ptr++, 0, *outp, 0,
                        load_buffer_dma_count(byte_count));
-            aLoadBuffer(ptr++,
+            aLoadBufferSwap16(ptr++,
                         (void *)(uintptr_t)(dram_location - dram_align));
         } else {
             dram_align = 0;
