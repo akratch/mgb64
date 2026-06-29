@@ -2156,9 +2156,15 @@ Gfx *constructor_menu00_legalscreen(Gfx *DL)
     char *txt;
     Mtxf sp58;
     struct legal_screen_text *legal_text_ptr;
+#ifdef NATIVE_PORT
+    Gfx *frontend_model_start;
+#endif
 
     spE4 = D_8002AABC;
 
+#ifdef NATIVE_PORT
+    frontend_model_start = DL;
+#endif
     DL = insert_imageDL(DL);
     matrix_4x4_7F059694(&spA0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
     spE4.unk_matrix = &spA0;
@@ -2171,6 +2177,9 @@ Gfx *constructor_menu00_legalscreen(Gfx *DL)
     spE4.gdl = DL;
     subdraw(&spE4, logoinst);
     DL = spE4.gdl;
+#ifdef NATIVE_PORT
+    gfx_register_draw_class_dl_range(DRAWCLASS_FRONTEND, frontend_model_start, DL);
+#endif
 
 #ifndef NATIVE_PORT
     for (i = 0; i < modelGetRenderPosCount(logoinst); i++)

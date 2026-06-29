@@ -2926,25 +2926,6 @@ static void portSetRenderSuppressForSubtree(Model *model,
     }
 }
 
-static void portApplySniperViewmodelSuppressions(Model *model, ITEM_IDS item)
-{
-    static const s32 sniper_hidden_rels[] = {
-        0x138,
-        0x168,
-        0x1b0,
-        0x228,
-    };
-    s32 i;
-
-    if (model == NULL || item != ITEM_SNIPERRIFLE) {
-        return;
-    }
-
-    for (i = 0; i < (s32)(sizeof(sniper_hidden_rels) / sizeof(sniper_hidden_rels[0])); i++) {
-        portSetNodeRenderSuppress(model, sniper_hidden_rels[i], 1);
-    }
-}
-
 static ITEM_IDS s_portLoadedViewmodelItem[2] = {
     ITEM_UNARMED,
     ITEM_UNARMED,
@@ -3359,7 +3340,6 @@ static Model *portPrepareFirstPersonWeaponModel(struct hand *hand,
     matrix_4x4_copy(&view_root, &matrices[0]);
     portApplyFirstPersonWeaponAuthoring(model, itemheader, hand, gunhand, item,
                                         &view_root);
-    portApplySniperViewmodelSuppressions(model, item);
     /* Match the original first-person path: authored switch/BSP/head
      * relations must be resolved after we finish per-frame node overrides,
      * otherwise some weapon families never expose their draw branches. */

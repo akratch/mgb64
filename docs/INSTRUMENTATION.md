@@ -1470,6 +1470,12 @@ and `capture_summary.json` for the capture-health layer; screenshots, JSONL
 traces, logs, and summaries are ROM-derived local artifacts and must not be
 committed.
 
+Current native coverage proof: `/tmp/mgb64_intro_census_all_postfix_1782731865`
+passed all 20 supported solo stages after hardening native portal projection for
+invalid Aztec global-visibility portal references. The fixed Aztec path produces
+1,199 records, active intro/swirl/Bond render coverage, zero render crashes,
+zero NaNs, zero room-fallback records, and zero display-list resolver failures.
+
 For per-trace fingerprints that can be compared against a stock-ROM oracle trace,
 use:
 
@@ -1649,6 +1655,94 @@ tools/startup_music_reference_check.sh \
 Use `--report-only` while tuning or when first onboarding a new reference
 capture. Omit it once the current thresholds describe an accepted baseline that
 should fail on future regressions.
+
+#### Startup visual/title workflow
+
+Use `tools/startup_visual_parity_capture.sh` for boot/title visual work. The
+wrapper pins the native port to a 640x480 original-look config, captures a
+1,800-frame native title trace, audits title-state progression with
+`tools/audit_startup_trace.py`, and saves local screenshot checkpoints for the
+legal screen, Nintendo/Rare logo phases, gunbarrel, blood overlay, and fades.
+It also writes `native_phase_samples.tsv` and mirrors each native phase into
+`captures.tsv`, `comparisons.tsv`, and `summary.json` so visual pairs can be
+checked against `front.menu`, `gunbarrel_mode`, blood state, Rare rotation, and
+Nintendo rotation/scale. The screenshot health gate is intentionally permissive
+because valid startup frames can be sparse, solid red, or black; the trace audit
+and phase index are the state gates.
+
+```sh
+tools/startup_visual_parity_capture.sh \
+  --no-build \
+  --rom baserom.u.z64 \
+  --binary build/ge007 \
+  --out-dir /tmp/mgb64_startup_visual
+```
+
+When a movement-oracle ares build is available, add stock checkpoints and a
+phase-selected screenshot comparison. The default pair compares native frame 120
+against stock frame 300, which aligns the legal-screen presentation rather than
+raw process frame number.
+
+```sh
+tools/startup_visual_parity_capture.sh \
+  --no-build \
+  --rom baserom.u.z64 \
+  --binary build/ge007 \
+  --ares-bin build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares \
+  --native-shot-frames "120" \
+  --stock-shot-frames "300" \
+  --out-dir /tmp/mgb64_startup_visual_legal
+```
+
+The legal-screen pair also guards the frontend model-fog path. A fixed native
+capture should keep the active bboxes aligned and preserve the bright red seal
+component; `/tmp/mgb64_startup_visual_legal_frontendfog_1782733239` measured 804
+native warm pixels against 812 stock warm pixels, with the largest bright seal
+component at roughly 53x55 versus stock 54x54. Keep all generated traces,
+PPM/BMP files, and JSON comparisons local.
+
+Use phase labels before interpreting logo diffs. A false Rare comparison was
+native frame `600` versus stock frame `900`; the phase index shows native `600`
+is still `nintendo` (`menu=1`, `nintendo_rotation=4.7124`) while stock `900`
+is in the Rare logo window. The aligned current proof
+`/tmp/mgb64_startup_phase_compare_rare_aligned` uses native `864`
+(`phase=rare`, `rare=178`) against stock `900` and reports `9.1%` changed
+pixels with matching warm-object footprint, so do not chase Rare texture
+decode from the old `600:900` pair.
+
+The remaining Nintendo-logo lead is RDP coverage/VI behavior, not simple phase,
+fog, texture decode, or GL blend factors. The current sparse stock/native sweep
+is `/tmp/mgb64_startup_nintendo_stock_sweep`; the best broad-metric checkpoint
+is native `570` (`menu=1`, `timer=320`, `nintendo=4.1888`) against stock `630`,
+with `9.29%` changed pixels and active bboxes `[101,165,311,151]` versus
+`[113,166,290,152]`. That pair is still visibly too hard/white on native.
+
+Stock RDP proof for that checkpoint is
+`/tmp/mgb64_startup_nintendo_rdp_ops_630`: the main logo material emits `4228`
+`TriShadeTextureZBuffer` draws with
+`combine=0xfc127e24/0xfffff9fc`,
+`other=0xef882c3f/0x00502048`, env `0`, image `0x8016cbd8`, and a 32x32
+I-format texture. Native trace `/tmp/mgb64_startup_nintendo_tex_trace_1782741840`
+matches the important draw state: `oml_raw=0x00502048`, no forced fog, ambient
+white plus black directional light, combiner `0x009ffe4f19ffe4f1`, texture-gen
+scale `2048,2048`, and a dumped 32x32 I8 payload with alpha from intensity
+(`713/1024` nonzero alpha texels). The stock sidecar's texture-image `siz=2`
+appears to be SETTIMG-side state; the native payload itself is not currently a
+proven format mismatch.
+
+Negative controls are now checked. `GE007_KEEP_TEXTURE_GEN_FOG=1` makes the logo
+too dark (`0` bright pixels in
+`/tmp/mgb64_startup_nintendo_sweep_keep_texgen_fog`). Global 3-point filtering,
+forced output VI filtering, and RGB555 quantization did not close the gap.
+`/tmp/mgb64_startup_nintendo_alpha_sweep_1782741365` shows default, premult, and
+copy GL blend factors are pixel-identical, additive blending is worse, and
+inverted alpha blanks the logo; `GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC` is a
+no-op because the combiner's final alpha is already `1`. A local final-alpha
+probe reduced changed pixels only from `9.29%` to `9.22%` while increasing bright
+pixels (`10970 -> 12088`, stock `8102`), so final alpha is not the fix. Next
+useful work should target `G_RM_AA_OPA_SURF2` / `ALPHA_CVG_SEL` coverage and VI
+AA semantics for texture-gen triangles, ideally with stock per-pixel RDP probes,
+before changing native brightness, fog, or texture format paths.
 
 The lower-level commands below are equivalent and useful when comparing
 previously captured files with custom offsets or durations.
@@ -2029,9 +2123,11 @@ smoke runs and human play sessions.
 | `GE007_PORTAL_RETRY_SCREEN_CLIP=1` | retry portal screen clipping without the parent bbox after an empty clip for A/B only; default off |
 | `GE007_PORTAL_LEGACY_PROJECT_CLAMP=1` | restore the old native `sub_GAME_7F0B5864` pre-clamp behavior for legacy over-admission A/B only; default returns stock-style raw projected bboxes |
 | `GE007_PORTAL_NEAR_CLIP=0|1` | toggle native portal near-plane epsilon clipping; default `1` avoids huge near-plane projection values while preserving stock-style bbox rejection through caller clipping |
-| `GE007_AUTO_NEIGHBOR_ROOMS=0|1` | toggle the cull-limited one-hop neighbor room fallback; default `1` only on Train to cover rear-car shutter/window backdrop holes without enabling broad neighbor admission on Dam |
-| `GE007_DRAW_NEIGHBOR_ROOMS=1` | broad one-hop neighbor room diagnostic; remains opt-in because it bypasses the Train cull-limited default and can over-admit unrelated portal neighbors |
+| `GE007_PORTAL_EDGE_RESCUE=0|1` | toggle the default native portal-edge rescue for rooms rejected only because the projected portal aperture collapsed to an empty screen rect; rescued rooms must be one-hop neighbors of rendered rooms, pass room-AABB screen culling, and do not enqueue more portals |
+| `GE007_AUTO_NEIGHBOR_ROOMS=0|1` | legacy alias for `GE007_PORTAL_EDGE_RESCUE` when the canonical variable is unset |
+| `GE007_DRAW_NEIGHBOR_ROOMS=1` | broad one-hop neighbor room diagnostic; remains opt-in because it admits every marked portal neighbor with a fullscreen bbox and can over-admit unrelated rooms |
 | `GE007_TRACE_PORTAL_VERTS=1` / `GE007_TRACE_PORTAL_VERTS_IDX=N` / `GE007_TRACE_PORTAL_VERTS_AFTER_FRAME=N` | log transformed/projected vertices for portal projection probes |
+| `GE007_TRACE_BLOOD_ANIM=1` | log native ROM-backed gunbarrel blood animation decode frames, including packed stream offsets, finish state, nonzero texel count, and max decoded nibble |
 | `GE007_TRACE_TINTED_GLASS=1` / `GE007_TRACE_TINTED_GLASS_BUDGET=N` | log tinted-glass setup/update/render opacity, including raw opacity, render opacity, and the active min-opacity floor |
 | `GE007_TRACE_BULLET_IMPACTS=1` | log bullet-impact create/render events, including whether prop-attached impacts used the textured or legacy flat path |
 | `GE007_TRACE_BULLET_IMPACT_MATERIALS=1` / `GE007_TRACE_BULLET_IMPACT_MATERIALS_EFFECT=label` / `GE007_TRACE_BULLET_IMPACT_MATERIALS_AFTER_FRAME=N` / `GE007_TRACE_BULLET_IMPACT_MATERIALS_BUDGET=N` | log concise post-classification material state for labelled bullet-impact effect triangles, including raw/effective render mode, blend/depth flags, texture keys, vertex colors, UVs, and NDC bbox; use the effect filter for `bullet_impact_world` or `bullet_impact_prop_textured` when one family would otherwise consume the budget |
@@ -2041,6 +2137,7 @@ smoke runs and human play sessions.
 | `GE007_TRACE_SHARDS=1` / `GE007_TRACE_SHARDS_AFTER_FRAME=N` | log large projected triangles and pathological clipping candidates; effect display-list ranges are labelled (for example `effect=glass_shards`) so shard-specific artifacts can be separated from rooms, props, and guard geometry |
 | `GE007_EFFECT_TRI_TRACE=1` / `GE007_EFFECT_TRI_TRACE_LABEL=glass_shards` / `GE007_EFFECT_TRI_TRACE_AFTER_FRAME=N` / `GE007_EFFECT_TRI_TRACE_BUDGET=N` | read-only per-effect-triangle trace with emit/reject state, render mode, other-mode high, combiner id, geometry flags, NDC bbox, UVs, raw VTX RGBA, post-light shade, and transform context; use label filters to keep logs bounded |
 | `GE007_EFFECT_TRI_TRACE_UNLABELED=1` / `GE007_EFFECT_TRI_TRACE_DRAWCLASS=effect` / `GE007_EFFECT_TRI_TRACE_EMITS_ONLY=1` | focused add-ons for `GE007_EFFECT_TRI_TRACE`; allow unlabeled commands to be tagged as `unlabeled`, filter rows by draw class name, and preserve the trace budget for emitted triangles by suppressing reject rows |
+| `GE007_KEEP_TEXTURE_GEN_FOG=1` | diagnostic negative control that preserves `G_FOG` when `G_TEXTURE_GEN` is active; useful for the startup Nintendo logo, where the default no-fog path is over-bright but full preserved fog is too dark. Do not use as a broad parity default without scoping the affected material path |
 | `GE007_TRACE_TEXGEN_MATERIALS_EFFECT=label` | optional effect-label filter for `GE007_TRACE_TEXGEN_MATERIALS`; use `glass_shards` to keep room/pane texgen rows from consuming the budget before the active shard display list |
 | `GE007_DUMP_LOADED_TEXTURES=list` / `GE007_DUMP_LOADED_TEXTURES_AFTER_FRAME=N` / `GE007_DUMP_LOADED_TEXTURE_LIMIT=N` / `GE007_DUMP_LOADED_TEXTURE_DIR=path` / `GE007_DUMP_LOADED_TEXTURES_BYPASS_CACHE=1` | dump decoded traditional TMEM texture imports as PPM/PGM/source/info files; use `*` for all keys, or a cache-key list/range for focused texture payload checks. Cache bypass is diagnostic-only and forces a fresh upload/dump for matching keys |
 | `GE007_TRACE_BLEND_CLASSIFY=1` | log first-seen raw render-mode classifications |

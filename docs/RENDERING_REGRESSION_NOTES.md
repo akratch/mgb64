@@ -278,18 +278,21 @@ The visible symptoms were level-specific but shared renderer causes:
     dead unused-`TEXEL1` variants. Surface renderer parity capture still passed
     with the shader tile-mask path live.
 
-18. **Train rear-car window slats need a cull-limited neighbor fallback.**
-    Room 51's rear office windows can face the exterior/shutter geometry at a
-    grazing angle where portal BFS keeps only the current room. That leaves a
-    sky/backdrop-heavy window fill instead of the adjacent Train geometry behind
-    the slats. The old `GE007_DRAW_NEIGHBOR_ROOMS=1` diagnostic proves the
-    missing-room class, but it is too broad for Dam because it admits every
-    one-hop neighbor with a fullscreen bbox. The default path now enables a
-    narrower `GE007_AUTO_NEIGHBOR_ROOMS` fallback only on Train: visible one-hop
-    neighbors are added only after their room AABB intersects the current screen
-    frustum. Keep `GE007_AUTO_NEIGHBOR_ROOMS=0` as the negative control, and use
+18. **Portal edge rescue covers empty-aperture one-hop under-admission.**
+    Train room 51's rear office windows can face exterior/shutter geometry at a
+    grazing angle where portal 59 to room 53 passes the room/side/depth checks,
+    but its projected portal aperture collapses to an empty 2D bbox. Plain
+    portal BFS then keeps only the current room, leaving a sky/backdrop-heavy
+    window fill instead of the adjacent Train geometry behind the slats.
+    `GE007_DRAW_NEIGHBOR_ROOMS=1` proves the missing-room class, but remains too
+    broad because it admits every one-hop neighbor with a fullscreen bbox. The
+    default path now records only empty-aperture portal rejects, then rescues the
+    exact destination room after normal BFS if the source room rendered, the
+    destination is still a marked one-hop neighbor, and the destination room AABB
+    intersects the viewport. Rescued rooms do not enqueue further portals. Keep
+    `GE007_PORTAL_EDGE_RESCUE=0` as the negative control, and use
     `tools/train_window_backdrop_regression.sh` before changing portal BFS,
-    Train room ordering, native sky backdrop depth, or neighbor-room policy.
+    native sky backdrop depth, or neighbor-room policy.
 
 ## Guardrails
 

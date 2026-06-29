@@ -264,6 +264,8 @@ void texReset(void)
     u32 size;
 
 #ifdef NATIVE_PORT
+    texResetPaletteCache();
+
     /* On PC, GlobalImageTable.c is compiled directly into the binary.
      * No ROM copy needed — just point the image table pointers at the
      * compiled-in data arrays. The N64 version copies from ROM and rebases

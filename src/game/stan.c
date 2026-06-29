@@ -41,7 +41,9 @@ struct StanPrefixRecord stan_prefix;
 /* PORT: On N64, firststaninroom through dword_CODE_bss_8007B354 were contiguous BSS,
  * with firststaninroom as the base of a room-pointer array accessed via raw byte offsets.
  * For 64-bit, we use proper typed arrays instead. */
+#ifndef STAN_MAX_ROOMS
 #define STAN_MAX_ROOMS 256
+#endif
 StandTile *firststaninroom[STAN_MAX_ROOMS]; /* first tile per room (was s32 + adjacent BSS) */
 s16 stan_room_bbox[STAN_MAX_ROOMS][6]; /* per-room AABB: min_x,min_y,min_z,max_x,max_y,max_z */
 s32 dword_CODE_bss_8007B9DC; /* total room count */

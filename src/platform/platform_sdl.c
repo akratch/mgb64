@@ -1027,6 +1027,14 @@ f32 g_pcViewmodelSway    = 1.0f;  /* Input.ViewmodelSway     remaster default: s
 s32 g_pcModernCrosshair  = 1;     /* Input.ModernCrosshair   remaster default: crisp hip-fire reticle ON */
 s32 g_pcHitMarkers       = 1;     /* Input.HitMarkers        remaster default: on-hit marker ON */
 s32 g_pcReticleTargetFeedback = 1; /* Input.ReticleTargetFeedback remaster default: tint reticle on-target ON */
+s32 g_pcMinimapEnabled   = 1;     /* Input.MinimapEnabled    remaster tactical minimap ON */
+s32 g_pcMinimapMode      = 0;     /* Input.MinimapMode       0 local north-up, 1 overview, 2 local rotating */
+s32 g_pcMinimapObjectives = 1;    /* Input.MinimapObjectives objective layer ON once implemented */
+s32 g_pcMinimapEnemyFireReveal = 1; /* Input.MinimapEnemyFireReveal red pings on audible guard fire */
+s32 g_pcMinimapShowAllEnemies = 0; /* Input.MinimapShowAllEnemies debug/accessibility assist */
+f32 g_pcMinimapOpacity   = 0.85f; /* Input.MinimapOpacity    overlay alpha */
+f32 g_pcMinimapSize      = 1.0f;  /* Input.MinimapSize       overlay scale */
+s32 g_pcMinimapSharpOverlay = 1;  /* Input.MinimapSharpOverlay native post-filter overlay */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -1749,6 +1757,46 @@ void platformRegisterConfig(void)
                         "--config-override Input.ReticleTargetFeedback=VALUE",
                         "Reticle target feedback",
                         "Tint the modern reticle green and thicken the dot when your crosshair is over an enemy (0 = off).");
+    settingsRegisterInt("Input.MinimapEnabled", &g_pcMinimapEnabled, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_ENABLED",
+                        "--config-override Input.MinimapEnabled=VALUE",
+                        "Minimap",
+                        "Draw the modern tactical minimap during single-player gameplay (0 = off).");
+    settingsRegisterInt("Input.MinimapMode", &g_pcMinimapMode, 0, 0, 2,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_MODE",
+                        "--config-override Input.MinimapMode=VALUE",
+                        "Minimap mode",
+                        "0 = local tactical north-up; 1 = floor overview north-up; 2 = local rotating player-up.");
+    settingsRegisterInt("Input.MinimapObjectives", &g_pcMinimapObjectives, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_OBJECTIVES",
+                        "--config-override Input.MinimapObjectives=VALUE",
+                        "Minimap objectives",
+                        "Enable objective pins once the objective layer is implemented (0 = off).");
+    settingsRegisterInt("Input.MinimapEnemyFireReveal", &g_pcMinimapEnemyFireReveal, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_ENEMY_FIRE_REVEAL",
+                        "--config-override Input.MinimapEnemyFireReveal=VALUE",
+                        "Minimap enemy fire",
+                        "Briefly reveal guards on the minimap when they fire audible unsuppressed weapons (0 = off).");
+    settingsRegisterInt("Input.MinimapShowAllEnemies", &g_pcMinimapShowAllEnemies, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_SHOW_ALL_ENEMIES",
+                        "--config-override Input.MinimapShowAllEnemies=VALUE",
+                        "Minimap all enemies",
+                        "Debug/accessibility assist that reveals all recorded enemy fire events, including suppressed shots.");
+    settingsRegisterFloat("Input.MinimapOpacity", &g_pcMinimapOpacity, 0.85f, 0.0f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_MINIMAP_OPACITY",
+                          "--config-override Input.MinimapOpacity=VALUE",
+                          "Minimap opacity",
+                          "Alpha for the modern minimap overlay.");
+    settingsRegisterFloat("Input.MinimapSize", &g_pcMinimapSize, 1.0f, 0.5f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_MINIMAP_SIZE",
+                          "--config-override Input.MinimapSize=VALUE",
+                          "Minimap size",
+                          "Scale for the modern minimap overlay.");
+    settingsRegisterInt("Input.MinimapSharpOverlay", &g_pcMinimapSharpOverlay, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_MINIMAP_SHARP_OVERLAY",
+                        "--config-override Input.MinimapSharpOverlay=VALUE",
+                        "Minimap sharp overlay",
+                        "Draw the minimap after the retro output filter for a crisp modern overlay (0 = disable first-pass renderer).");
 }
 
 void platformGetMouseDelta(int *dx, int *dy) {

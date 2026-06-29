@@ -98,8 +98,10 @@ void texLoadFromModelFileHeader(ModelFileHeader* arg0, struct texpool* arg1);
 
 #ifdef NATIVE_PORT
 /* CI texture palette cache — texInflateZlib stores palettes here,
- * gfx_handle_settex retrieves them for GL texture creation. */
-#define TEX_PALETTE_CACHE_SIZE 256
+ * gfx_handle_settex retrieves them for GL texture creation.
+ * Texture IDs are 12-bit in struct tex; palette contents remain capped at
+ * 256 colours per texture. */
+#define TEX_PALETTE_CACHE_SIZE 0x1000
 struct tex_palette_entry {
     s32 texturenum;
     s32 numcolours;
@@ -109,6 +111,7 @@ extern struct tex_palette_entry g_TexPaletteCache[];
 extern s32 g_TexPaletteCacheCount;
 void texStorePalette(s32 texturenum, u16 *palette, s32 numcolours);
 u16 *texGetPalette(s32 texturenum, s32 *numcolours_out);
+void texResetPaletteCache(void);
 int portDumpTextureToPpm(s32 texturenum, const char *path);
 #endif
 

@@ -2373,6 +2373,11 @@ void projectileFree(Projectile* projectile)
 
     if (projectile->flags & PROJECTILEFLAG_LAUNCHING)
     {
+#ifdef NATIVE_PORT
+        chrobjClearStaleSoundSlot(&projectile->sound1, "projectile_free");
+        chrobjClearStaleSoundSlot(&projectile->sound2, "projectile_free");
+#endif
+
         sound1 = projectile->sound1;
         if ((sound1 != 0) && (sndGetPlayingState((ALSoundState* ) sound1) != 0))
         {
@@ -2384,6 +2389,11 @@ void projectileFree(Projectile* projectile)
         {
             sndDeactivate((ALSoundState* ) projectile->sound2);
         }
+
+#ifdef NATIVE_PORT
+        projectile->sound1 = NULL;
+        projectile->sound2 = NULL;
+#endif
     }
     projectile->flags |= PROJECTILEFLAG_FREE;
 }
@@ -2408,6 +2418,8 @@ void projectileReset(Projectile *projectile)
     projectile->unk8C = 0.05f;
     projectile->unk90 = 0;
     projectile->unk94 = 0.0f;
+    projectile->sound1 = NULL;
+    projectile->sound2 = NULL;
     projectile->unkA0 = -1;
     projectile->unkA4 = 0;
     projectile->unkA8 = 0;
@@ -5068,23 +5080,24 @@ s32 handles_projectile_motion(struct ObjectRecord *obj, f32 *arg1, struct coord3
     }
 
     proj = obj->projectile;
+    if (proj == NULL) {
+        return result;
+    }
 
 #ifdef NATIVE_PORT
-    if (proj != NULL) {
-        projectileTracePrintf(
-            "frame=%d event=motion_begin obj=%d type=%d pad=%d rtflags=0x%08x projflags=0x%08x "
-            "pos=(%.2f,%.2f,%.2f) dest=(%.2f,%.2f,%.2f) speed=(%.2f,%.2f,%.2f) rooms=[%d,%d,%d,%d]",
-            g_frame_count_diag,
-            obj->obj,
-            obj->type,
-            obj->pad,
-            (unsigned int)obj->runtime_bitflags,
-            (unsigned int)proj->flags,
-            obj->runtime_pos.x, obj->runtime_pos.y, obj->runtime_pos.z,
-            dest.x, dest.y, dest.z,
-            proj->speed.x, proj->speed.y, proj->speed.z,
-            proj->unkCC, proj->unkCD, proj->unkCE, proj->unkCF);
-    }
+    projectileTracePrintf(
+        "frame=%d event=motion_begin obj=%d type=%d pad=%d rtflags=0x%08x projflags=0x%08x "
+        "pos=(%.2f,%.2f,%.2f) dest=(%.2f,%.2f,%.2f) speed=(%.2f,%.2f,%.2f) rooms=[%d,%d,%d,%d]",
+        g_frame_count_diag,
+        obj->obj,
+        obj->type,
+        obj->pad,
+        (unsigned int)obj->runtime_bitflags,
+        (unsigned int)proj->flags,
+        obj->runtime_pos.x, obj->runtime_pos.y, obj->runtime_pos.z,
+        dest.x, dest.y, dest.z,
+        proj->speed.x, proj->speed.y, proj->speed.z,
+        proj->unkCC, proj->unkCD, proj->unkCE, proj->unkCF);
 #endif
 
     if (!(proj->flags & 4)) {
@@ -7018,10 +7031,10 @@ void sub_GAME_7F043650(struct WeaponObjRecord *wobj) {
     ObjectRecord *obj = (ObjectRecord *)wobj;
     u32 bitflags;
     struct Projectile *proj;
-    s16 sfx_table[3];
+    ALSoundState **sound_slot;
     s32 saved_idx;
     s32 random_idx;
-    s32 idx4;
+    s16 sfx_id;
 
     bitflags = obj->runtime_bitflags;
 
@@ -7030,32 +7043,38 @@ void sub_GAME_7F043650(struct WeaponObjRecord *wobj) {
     }
 
     proj = obj->projectile;
+    if (proj == NULL) {
+        return;
+    }
 
     if ((proj->flags & 1) && proj->unk90 <= 0 && (bitflags & 0x20)) {
-        *(s32 *)sfx_table = *(s32 *)Throwing_knife_SFX;
-        *(s16 *)(sfx_table + 2) = *(s16 *)((u8 *)Throwing_knife_SFX + 4);
-
-        saved_idx = proj->unkA4;
+        saved_idx = (s32)proj->unkA4;
+        if (saved_idx < 0 || saved_idx > 1) {
+            saved_idx = 0;
+            proj->unkA4 = 0;
+        }
 
         random_idx = randomGetNext() % 3;
+        sfx_id = Throwing_knife_SFX[random_idx];
 
-        proj = obj->projectile;
+        sound_slot = saved_idx == 0 ? &proj->sound1 : &proj->sound2;
+
+#ifdef NATIVE_PORT
+        chrobjClearStaleSoundSlot(sound_slot, "knife_throw");
+#endif
 
         if ((s32)proj->unkA0 < (s32)(g_GlobalTimer - 6)) {
-            idx4 = saved_idx << 2;
-
-            if (((ALSoundState **)&proj->sound1)[saved_idx] != NULL) {
-                if (sndGetPlayingState(((ALSoundState **)&proj->sound1)[saved_idx])) {
+            if (*sound_slot != NULL) {
+                if (sndGetPlayingState(*sound_slot)) {
                     proj = obj->projectile;
-                    sndDeactivate(((ALSoundState **)&proj->sound1)[saved_idx]);
+                    sndDeactivate(*sound_slot);
                 }
             }
         }
 
         proj = obj->projectile;
-        idx4 = saved_idx << 2;
 
-        if (((ALSoundState **)&proj->sound1)[saved_idx] != NULL) {
+        if (*sound_slot != NULL) {
             return;
         }
 
@@ -7063,14 +7082,18 @@ void sub_GAME_7F043650(struct WeaponObjRecord *wobj) {
             return;
         }
 
-        ((ALSoundState **)&obj->projectile->sound1)[saved_idx] =
+        *sound_slot =
             sndPlaySfx((struct ALBankAlt_s *)g_musicSfxBufferPtr,
-                        sfx_table[random_idx],
-                        ((ALSoundState **)&obj->projectile->sound1)[saved_idx]);
+                        sfx_id,
+#ifdef NATIVE_PORT
+                        (ALSoundState *)sound_slot);
+#else
+                        *sound_slot);
+#endif
 
         proj = obj->projectile;
         chrobjSndCreatePostEventDefault(
-            ((ALSoundState **)&proj->sound1)[saved_idx],
+            *sound_slot,
             &obj->prop->pos);
 
         proj = obj->projectile;
@@ -7080,6 +7103,11 @@ void sub_GAME_7F043650(struct WeaponObjRecord *wobj) {
         proj->unkA4 = 1 - saved_idx;
     } else {
         obj->runtime_bitflags = bitflags & ~0x20;
+
+#ifdef NATIVE_PORT
+        chrobjClearStaleSoundSlot(&proj->sound1, "knife_throw_stop");
+        chrobjClearStaleSoundSlot(&proj->sound2, "knife_throw_stop");
+#endif
 
         if (proj->sound1 != NULL && sndGetPlayingState(proj->sound1)) {
             proj = obj->projectile;
@@ -7091,6 +7119,14 @@ void sub_GAME_7F043650(struct WeaponObjRecord *wobj) {
             proj = obj->projectile;
             sndDeactivate(proj->sound2);
         }
+
+#ifdef NATIVE_PORT
+        proj = obj->projectile;
+        if (proj != NULL) {
+            proj->sound1 = NULL;
+            proj->sound2 = NULL;
+        }
+#endif
     }
 }
 #endif /* PORT_FIXME_STUBS */

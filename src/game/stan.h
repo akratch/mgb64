@@ -38,6 +38,13 @@ extern f32 stanSavedColl_someMin;
 extern PropRecord *stanSavedColl_posData;
 extern struct StandTile *standTileStart;
 extern s32 stanlinelog_flag;
+#ifdef NATIVE_PORT
+#define STAN_MAX_ROOMS 256
+extern f32 inv_level_scale;
+extern u8 list_of_tilesizes[];
+extern struct StandTile *firststaninroom[STAN_MAX_ROOMS];
+extern s32 dword_CODE_bss_8007B9DC;
+#endif
 
 /////////////////
 // prototypes

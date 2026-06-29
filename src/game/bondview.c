@@ -57,6 +57,7 @@
 #include "ge_debug.h"
 #ifdef NATIVE_PORT
 #include "ads_profiles.h"
+#include "minimap.h"
 #endif
 
 /* Forward declarations for functions without headers */
@@ -20598,6 +20599,9 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
     arg0 = generate_ammo_total_microcode(arg0);
     arg0 = countdownTimerRender(arg0);
     arg0 = display_red_blue_on_radar(arg0);
+#ifdef NATIVE_PORT
+    minimap_queue_current_player_snapshot();
+#endif
     arg0 = currentPlayerDrawFade(arg0);
 #ifdef NATIVE_PORT
     gfx_register_draw_class_dl_range(DRAWCLASS_HUD, drawclass_start, arg0);

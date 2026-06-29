@@ -6,8 +6,8 @@
 # shuttered window beside the rear-car desk. Portal BFS can render only room 51
 # there, leaving the sky/backdrop texture visible through slats that should be
 # partially covered by the one-hop exterior/window neighbor rooms. The default
-# Train-only neighbor promotion must render those adjacent rooms; disabling
-# GE007_AUTO_NEIGHBOR_ROOMS reproduces the leak control.
+# portal-edge rescue must render that rejected adjacent room; disabling
+# GE007_PORTAL_EDGE_RESCUE reproduces the leak control.
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -159,13 +159,13 @@ echo "  ROM:     $ROM"
 echo "  frames:  $FRAMES"
 
 run_capture default
-run_capture auto_disabled GE007_AUTO_NEIGHBOR_ROOMS=0
+run_capture rescue_disabled GE007_PORTAL_EDGE_RESCUE=0
 
 "$PYTHON_BIN" tools/compare_screenshots.py \
-    --json-out "$OUT_DIR/default_vs_auto_disabled.json" \
+    --json-out "$OUT_DIR/default_vs_rescue_disabled.json" \
     "$OUT_DIR/default/screenshot_default.bmp" \
-    "$OUT_DIR/auto_disabled/screenshot_auto_disabled.bmp" \
-    >"$OUT_DIR/default_vs_auto_disabled.txt"
+    "$OUT_DIR/rescue_disabled/screenshot_rescue_disabled.bmp" \
+    >"$OUT_DIR/default_vs_rescue_disabled.txt"
 
 "$PYTHON_BIN" - "$OUT_DIR" <<'PY'
 import json
@@ -219,12 +219,12 @@ def bright_blue_pct(case):
                 bright += 1
     return 100.0 * float(bright) / float(total)
 
-records = {case: last_trace(case) for case in ("default", "auto_disabled")}
+records = {case: last_trace(case) for case in ("default", "rescue_disabled")}
 rooms = {case: rendered_count(record) for case, record in records.items()}
 samples = {case: room_sample(record) for case, record in records.items()}
 blue = {case: bright_blue_pct(case) for case in records}
 
-compare = json.loads((root / "default_vs_auto_disabled.json").read_text(encoding="utf-8"))
+compare = json.loads((root / "default_vs_rescue_disabled.json").read_text(encoding="utf-8"))
 changed_pct = float(compare.get("changed_pct", 0.0))
 
 failures = []
@@ -233,19 +233,19 @@ if rooms["default"] < 2:
     failures.append(f"default rendered too few Train rear-window rooms: {rooms['default']} < 2")
 if 53 not in samples["default"]:
     failures.append(f"default sample missing visible adjacent room 53: {samples['default']}")
-if rooms["auto_disabled"] >= rooms["default"]:
+if rooms["rescue_disabled"] >= rooms["default"]:
     failures.append(
-        f"auto-disabled control did not lower room count: "
-        f"{rooms['auto_disabled']} >= {rooms['default']}"
+        f"rescue-disabled control did not lower room count: "
+        f"{rooms['rescue_disabled']} >= {rooms['default']}"
     )
-if blue["default"] + 0.20 >= blue["auto_disabled"]:
+if blue["default"] + 0.20 >= blue["rescue_disabled"]:
     failures.append(
         f"default sky-blue window leak too close to disabled control: "
-        f"{blue['default']:.3f}% + 0.20 >= {blue['auto_disabled']:.3f}%"
+        f"{blue['default']:.3f}% + 0.20 >= {blue['rescue_disabled']:.3f}%"
     )
 if changed_pct < 5.0:
     failures.append(
-        f"default vs auto-disabled visual delta too small: {changed_pct:.3f}% < 5.0%"
+        f"default vs rescue-disabled visual delta too small: {changed_pct:.3f}% < 5.0%"
     )
 
 summary = {
@@ -257,12 +257,12 @@ summary = {
         "sample": samples["default"],
         "bright_blue_pct": blue["default"],
     },
-    "auto_disabled": {
-        "frame": records["auto_disabled"].get("f"),
-        "current_room": records["auto_disabled"].get("rooms", {}).get("cur"),
-        "rendered_rooms": rooms["auto_disabled"],
-        "sample": samples["auto_disabled"],
-        "bright_blue_pct": blue["auto_disabled"],
+    "rescue_disabled": {
+        "frame": records["rescue_disabled"].get("f"),
+        "current_room": records["rescue_disabled"].get("rooms", {}).get("cur"),
+        "rendered_rooms": rooms["rescue_disabled"],
+        "sample": samples["rescue_disabled"],
+        "bright_blue_pct": blue["rescue_disabled"],
     },
     "changed_pct": changed_pct,
     "failures": failures,
@@ -282,8 +282,8 @@ print(
     % (rooms["default"], samples["default"], blue["default"])
 )
 print(
-    "  auto_disabled: rooms=%d sample=%s bright_blue=%.3f%%"
-    % (rooms["auto_disabled"], samples["auto_disabled"], blue["auto_disabled"])
+    "  rescue_disabled: rooms=%d sample=%s bright_blue=%.3f%%"
+    % (rooms["rescue_disabled"], samples["rescue_disabled"], blue["rescue_disabled"])
 )
 print("  changed_pct=%.3f%%" % changed_pct)
 print("  artifacts: %s" % root)

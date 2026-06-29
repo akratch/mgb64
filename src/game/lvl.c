@@ -86,6 +86,7 @@ void set_favorite_weapon_for_every_player(void);
 #include <math.h>
 #include "platform/gfx_pc.h"
 #include "ads_profiles.h"
+#include "minimap.h"
 extern int g_frame_count_diag;
 extern int g_tri_count_diag;
 
@@ -568,6 +569,9 @@ void lvlStageLoad(s32 stage)
     g_pc_stage_reload_pending = 1;
 #endif
     g_CurrentStageToLoad = stage;
+#ifdef NATIVE_PORT
+    minimap_stage_reset((LEVEL_INDEX)stage);
+#endif
 
     // this if block pushes where g_CurrentStageToLoad gets loaded to the
     // top of the method. Maybe a debug log about which level is loaded.
@@ -663,6 +667,9 @@ void lvlStageLoad(s32 stage)
         }
 
         load_bg_file(g_CurrentStageToLoad);
+#ifdef NATIVE_PORT
+        minimap_build_level_cache((LEVEL_INDEX)g_CurrentStageToLoad);
+#endif
         skySetStageNum(g_CurrentStageToLoad);
 
         // HACK: This method call is wrong. The function takes one argument, but the asm calls it without
@@ -740,6 +747,9 @@ void lvlStageLoad(s32 stage)
     init_guards();
     bodiesReset(stage);
     proplvreset2(stage);
+#ifdef NATIVE_PORT
+    minimap_setup_ready();
+#endif
     alloc_explosion_smoke_casing_scorch_impact_buffers();
     alloc_shattered_window_pieces();
     sub_GAME_7F007290();
@@ -2073,6 +2083,9 @@ void lvlManageMpGame(void)
     temp_v0 = g_ClockTimer;
     g_GlobalTimerDelta = (f32) temp_v0;
     g_GlobalTimer += temp_v0;
+#ifdef NATIVE_PORT
+    minimap_tick();
+#endif
 
     /* Section B: Cheat activation on first gameplay frame */
     if ((g_CurrentStageToLoad != LEVELID_TITLE) && (D_80048394 == 0) && (g_ClockTimer > 0))

@@ -32,6 +32,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "ge_debug.h"
+#ifdef NATIVE_PORT
+#include "minimap.h"
+#endif
 #include "ramromreplay.h"
 extern int g_frame_count_diag;
 extern void portTraceLatchChrReaction(const ChrRecord *chr);
@@ -8609,6 +8612,9 @@ void chrlvFireWeaponRelated(ChrRecord *self, s32 hand)
             }
 
             play_sound = (sp27C != 0) || (sp278 != 0);
+#ifdef NATIVE_PORT
+            minimap_note_guard_fired(self, hand, prop_selfchr->act_attack.attack_item, play_sound);
+#endif
 
             sub_GAME_7F02BFE4(self, hand, play_sound);
         }

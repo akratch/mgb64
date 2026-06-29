@@ -54,6 +54,52 @@ static s16 sndKeyMapNextBankIndex(const ALKeyMap *keyMap) {
     return sndPublicSfxIdToBankIndex(sndKeyMapNextPublicSfxId(keyMap));
 }
 
+static ALInstrument *sndGetFirstInstrument(struct ALBankAlt_s *soundBank) {
+    if (soundBank == NULL || soundBank->instArray[0] == NULL) {
+        return NULL;
+    }
+
+    return (ALInstrument *)soundBank->instArray[0];
+}
+
+static ALSound *sndGetBankSound(struct ALBankAlt_s *soundBank, s16 bankSoundIndex) {
+    ALInstrument *instrument = sndGetFirstInstrument(soundBank);
+
+    if (instrument == NULL || bankSoundIndex < 0 ||
+        bankSoundIndex >= instrument->soundCount) {
+        return NULL;
+    }
+
+    return instrument->soundArray[bankSoundIndex];
+}
+
+static s32 sndSfxSlotIndexFromKeyMap(const ALKeyMap *keyMap) {
+    s32 slot;
+
+    if (keyMap == NULL) {
+        return -1;
+    }
+
+    slot = (s32)(keyMap->keyMin & 0x3f);
+    return slot < SFX_SLOT_COUNT ? slot : -1;
+}
+
+static s16 sndSfxSlotVolumeForKeyMap(const ALKeyMap *keyMap) {
+    s32 slot = sndSfxSlotIndexFromKeyMap(keyMap);
+
+    if (slot < 0 || g_sndSfxSlotVolume == NULL) {
+        return (s16)0x7fff;
+    }
+
+    return g_sndSfxSlotVolume[slot];
+}
+
+static s32 sndKeyMapUsesSfxSlot(const ALKeyMap *keyMap, u8 slot) {
+    s32 keyMapSlot = sndSfxSlotIndexFromKeyMap(keyMap);
+
+    return keyMapSlot >= 0 && keyMapSlot == (s32)slot;
+}
+
 #ifdef PORT_SND_STUBS
 /* --- Stub implementations for snd.c ---
  * This file uses deep libultra audio internals (ALSndPlayer internal struct
@@ -214,7 +260,7 @@ static s32 sndStubSlotIndexForSound(const ALSound *sound) {
         return -1;
     }
 
-    return (s32)(sound->keyMap->keyMin & 0x3f);
+    return sndSfxSlotIndexFromKeyMap(sound->keyMap);
 }
 
 static f32 sndStubComputeSlotScaleForSound(const ALSound *sound) {
@@ -854,12 +900,10 @@ ALSoundState *sndPlaySfx(struct ALBankAlt_s *soundBank, s16 soundIndex, ALSoundS
     sndStubEnsureSlotVolumes();
 
     if (g_sndBootswitchSound || soundIndex <= 0) return NULL;
-    if (bank == NULL || bank->instArray[0] == NULL) return NULL;
-
     bankSoundIndex = sndPublicSfxIdToBankIndex(soundIndex);
     if (bankSoundIndex < 0) return NULL;
 
-    sound = bank->instArray[0]->soundArray[bankSoundIndex];
+    sound = sndGetBankSound(bank, bankSoundIndex);
     if (sound == NULL) return NULL;
 
     newState = sndStubAllocState();
@@ -887,7 +931,7 @@ ALSoundState *sndPlaySfx(struct ALBankAlt_s *soundBank, s16 soundIndex, ALSoundS
 
         while (chainIndex >= 0 && meta != NULL &&
                meta->voiceCount < SND_STUB_MAX_VOICES_PER_STATE) {
-            ALSound *chainSound = bank->instArray[0]->soundArray[chainIndex];
+            ALSound *chainSound = sndGetBankSound(bank, chainIndex);
             PortSfxPlayParams params;
             s32 voiceIdx;
             s32 delaySamples;
@@ -1087,8 +1131,8 @@ void sndSetSfxSlotVolume(u8 arg0, u16 arg1) {
         (double)g_sndSfxVolumeScale,
         sndStubAuthoredMixEnabled());
     for (item = s_sndStubAllStates; item != NULL; item = item->nextAll) {
-        if (item->active && item->state.sound != NULL && item->state.sound->keyMap != NULL &&
-            ((item->state.sound->keyMap->keyMin & 0x3f) == arg0)) {
+        if (item->active && item->state.sound != NULL &&
+            sndKeyMapUsesSfxSlot(item->state.sound->keyMap, arg0)) {
             ALMicroTime rampUsec = 0;
             if (sndStubAuthoredMixEnabled() && item->state.sound->envelope != NULL) {
                 rampUsec = item->state.sound->envelope->releaseTime;
@@ -1536,7 +1580,6 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
     s32 vtmp;                           // sp 0x90 = 144
     ALMicroTime delta;                  // ...
     s32 msgtype;                        // ...
-    u8 aaa; // using "pan" u8 space
     ALPan pan;                          // ...
     s32 done_state;                     // sp 0x80 = 128
     s32 allocVoiceSuccess;              // sp 0x7c = 124
@@ -1668,8 +1711,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
 
                     delta = (ALMicroTime)((f32)snd->envelope->attackTime / state->pitch_2c / state->pitch_28);
 
-                    aaa = keyMap->keyMin & 0x3f;
-                    tmp = g_sndSfxSlotVolume[aaa];
+                    tmp = sndSfxSlotVolumeForKeyMap(keyMap);
                     vol = state->vol;
                     vtmp = ((vol * (snd->envelope->attackVolume * snd->sampleVolume)) / (AL_VOL_FULL * AL_VOL_FULL)) * tmp;
                     vtmp = vtmp / 0x7fff;
@@ -1844,7 +1886,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                 state->vol = event->vol.vol;
                 if (state->playingState == AL_PLAYING)
                 {
-                    tmp = g_sndSfxSlotVolume[keyMap->keyMin & 0x3f];
+                    tmp = sndSfxSlotVolumeForKeyMap(keyMap);
                     vol = state->vol;
                     vtmp =
                         vol * (snd->envelope->decayVolume * snd->sampleVolume)
@@ -1879,7 +1921,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                 {
                     delta = ((f32)snd->envelope->releaseTime / state->pitch_28 / state->pitch_2c);
 
-                    tmp = g_sndSfxSlotVolume[keyMap->keyMin & 0x3f];
+                    tmp = sndSfxSlotVolumeForKeyMap(keyMap);
                     vol = state->vol;
                     vtmp =
                         vol * (snd->envelope->decayVolume * snd->sampleVolume)
@@ -1909,7 +1951,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
             {
                 if ((state->unk3e & 2) == 0)
                 {
-                    tmp = g_sndSfxSlotVolume[keyMap->keyMin & 0x3f];
+                    tmp = sndSfxSlotVolumeForKeyMap(keyMap);
                     vol = state->vol;
                     vtmp =
                         (vol * (snd->envelope->decayVolume * snd->sampleVolume)
@@ -3104,7 +3146,7 @@ ALSoundState *sndPlaySfx(struct ALBankAlt_s *soundBank, s16 soundIndex, ALSoundS
  * // end old comments.
  *
  * @param soundBank sound bank
- * @param soundIndex index into sound bank: soundBank->instArray[0]->soundArray[soundIndex]
+ * @param soundIndex public SFX id, translated before indexing the bank's sound array
  * @param pendingState Optional pointer. If provided, its link.next pointer will be
  * to the newly created soundState.
  */
@@ -3176,7 +3218,7 @@ static ALSoundState *sndPlaySfxInternal(struct ALBankAlt_s *soundBank, s16 sound
         return sndPlaySfxReturn(NULL);
     }
 
-    if (soundBank == NULL || soundBank->instArray[0] == NULL)
+    if (sndGetFirstInstrument(soundBank) == NULL)
     {
         return sndPlaySfxReturn(NULL);
     }
@@ -3189,8 +3231,9 @@ static ALSoundState *sndPlaySfxInternal(struct ALBankAlt_s *soundBank, s16 sound
         s16 submitBankSoundIndex;
         s32 entrySubmit;
 
-        sound = (soundBank->instArray[0]->soundArray[soundIndex]);
-        if (sound == NULL || sound->keyMap == NULL)
+        sound = sndGetBankSound(soundBank, soundIndex);
+        if (sound == NULL || sound->keyMap == NULL ||
+            sound->envelope == NULL || sound->wavetable == NULL)
         {
             break;
         }
@@ -3438,6 +3481,11 @@ void sndSetScalerApplyVolumeAllSfxSlot(f32 volumeScale)
  */
 u16 sndGetSfxSlotNaturalVolume(u8 sfxIndex)
 {
+    if (sfxIndex >= SFX_SLOT_COUNT || g_sndSfxSlotNaturalVolume == NULL)
+    {
+        return 0x7FFF;
+    }
+
     return g_sndSfxSlotNaturalVolume[sfxIndex];
 }
 
@@ -3453,6 +3501,13 @@ void sndSetSfxSlotVolume(u8 sfxIndex, u16 volume)
     ALSoundState *item;
     u32 i;
 
+    if (sfxIndex >= SFX_SLOT_COUNT ||
+        g_sndSfxSlotNaturalVolume == NULL ||
+        g_sndSfxSlotVolume == NULL)
+    {
+        return;
+    }
+
     g_sndSfxSlotNaturalVolume[sfxIndex] = volume;
     g_sndSfxSlotVolume[sfxIndex] = (s16) ((f32) volume * g_sndSfxVolumeScale);
 
@@ -3460,9 +3515,9 @@ void sndSetSfxSlotVolume(u8 sfxIndex, u16 volume)
     {
         item = &((ALSoundState *)g_sndPlayerPtr->sndState)[i];
 
-        if (sndStateIsLive(item) && item->sound->keyMap != NULL)
+        if (sndStateIsLive(item))
         {
-            if ((item->sound->keyMap->keyMin & 0x3f) == sfxIndex)
+            if (sndKeyMapUsesSfxSlot(item->sound->keyMap, sfxIndex))
             {
                 evt.common.type = AL_SNDP_RELEASE_EVT;
                 evt.common.state = item;

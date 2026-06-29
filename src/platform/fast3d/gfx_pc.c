@@ -44,6 +44,7 @@
 #include "textrelated.h"
 #include "unk_0A1DA0.h"
 #include "vi.h"
+#include "minimap_overlay.h"
 
 /* GoldenEye uses base GBI. DO NOT define F3DEX_GBI_2 or F3DEX_GBI. */
 
@@ -447,7 +448,7 @@ static int gfx_guard_matrix_slot_for_addr(uintptr_t addr) {
 
 /* Draw-class tagging — set by top-level renderers, read by diagnostics */
 static enum DrawClass g_current_draw_class = DRAWCLASS_UNKNOWN;
-static int g_drawclass_tri_counts[DRAWCLASS_HUD + 1];
+static int g_drawclass_tri_counts[DRAWCLASS_COUNT];
 struct GfxDrawClassBBox {
     bool valid;
     int tris;
@@ -458,7 +459,7 @@ struct GfxDrawClassBBox {
     float area2_sum;
     float area2_max;
 };
-static struct GfxDrawClassBBox g_drawclass_bboxes[DRAWCLASS_HUD + 1];
+static struct GfxDrawClassBBox g_drawclass_bboxes[DRAWCLASS_COUNT];
 static bool g_sky_tri_mode = false;
 static bool g_sky_viewport_valid = false;
 static float g_sky_viewport_left = 0.0f;
@@ -513,6 +514,7 @@ static const char *gfx_draw_class_name(enum DrawClass cls) {
         case DRAWCLASS_CHRPROP: return "chrprop";
         case DRAWCLASS_EFFECT: return "effect";
         case DRAWCLASS_HUD: return "hud";
+        case DRAWCLASS_FRONTEND: return "frontend";
         case DRAWCLASS_UNKNOWN:
         default: return "unknown";
     }
@@ -526,7 +528,7 @@ void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, con
     uintptr_t s = (uintptr_t)start;
     uintptr_t e = (uintptr_t)end;
 
-    if ((int)cls < 0 || cls > DRAWCLASS_HUD || cls == DRAWCLASS_UNKNOWN || s == 0 || e <= s) {
+    if ((int)cls < 0 || cls >= DRAWCLASS_COUNT || cls == DRAWCLASS_UNKNOWN || s == 0 || e <= s) {
         return;
     }
 
@@ -2524,7 +2526,7 @@ static const char *gfx_rect_diag_kind_name(enum GfxRectDiagKind kind)
     (rect_ptr)->color_image_is_z ? 1 : 0
 
 static void gfx_drawclass_bbox_reset(void) {
-    for (int i = 0; i <= DRAWCLASS_HUD; i++) {
+    for (int i = 0; i < DRAWCLASS_COUNT; i++) {
         g_drawclass_bboxes[i].valid = false;
         g_drawclass_bboxes[i].tris = 0;
         g_drawclass_bboxes[i].min_x = 99999.0f;
@@ -2538,7 +2540,7 @@ static void gfx_drawclass_bbox_reset(void) {
 
 static void gfx_drawclass_bbox_add(enum DrawClass cls,
                                    const struct GfxTriNdcMetrics *metrics) {
-    if ((int)cls < 0 || cls > DRAWCLASS_HUD || metrics == NULL || !metrics->valid) {
+    if ((int)cls < 0 || cls >= DRAWCLASS_COUNT || metrics == NULL || !metrics->valid) {
         return;
     }
 
@@ -3395,6 +3397,10 @@ static struct RSP {
 } rsp;
 
 static bool gfx_current_draw_suppresses_room_fog(void) {
+    if (g_current_draw_class == DRAWCLASS_FRONTEND) {
+        return true;
+    }
+
     if (g_FogSkyIsEnabled != 0) {
         return false;
     }
@@ -3416,6 +3422,7 @@ static struct RDP {
         uint8_t siz;
         uint32_t width;
         uintptr_t cache_key;
+        uint32_t static_texture_num;
         bool skip_load_via_settex;
         bool is_static_game_texture;
         bool static_texture_has_lods;
@@ -3465,6 +3472,28 @@ static struct RDP {
     void *z_buf_address;
     void *color_image_address;
 } rdp;
+
+#define GFX_CC_MODULATEIA_PRIM 0x00ef9e3f1ef9e3f1ULL
+
+static bool gfx_texrect_is_ge_blood_overlay(uint64_t cc_id)
+{
+    if (!g_texrect_uv_mode ||
+        cc_id != GFX_CC_MODULATEIA_PRIM ||
+        rdp.prim_color.r != 0x96 ||
+        rdp.prim_color.g != 0x00 ||
+        rdp.prim_color.b != 0x00 ||
+        rdp.prim_color.a != 0xB4) {
+        return false;
+    }
+
+    uint8_t tile_idx = rdp.first_tile_index < 8 ? rdp.first_tile_index : 0;
+    const typeof(rdp.texture_tile[0]) *tile = &rdp.texture_tile[tile_idx];
+
+    return tile->fmt == G_IM_FMT_I &&
+           tile->siz == G_IM_SIZ_4b &&
+           tile->width == 96 &&
+           tile->height == 80;
+}
 
 static void gfx_trace_text_tex_import(const char *stage, int tile, int td,
                                       const __typeof__(rdp.loaded_texture[0]) *loaded_texture);
@@ -16810,7 +16839,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     bool frontend_settex_material =
         settex_active &&
         !room_matrix &&
-        g_current_draw_class == DRAWCLASS_UNKNOWN;
+        (g_current_draw_class == DRAWCLASS_UNKNOWN ||
+         g_current_draw_class == DRAWCLASS_FRONTEND);
     uint32_t fog_other_mode_l =
         frontend_settex_material ? rdp.other_mode_l_raw : rdp.other_mode_l;
     bool use_fog = ((fog_other_mode_l >> 30) == G_BL_CLR_FOG) ||
@@ -16870,6 +16900,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
             case 0x00504B50: /* observed GE alpha overlay CLD_SURF2 variant */
             case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
+            case 0x00552048: /* observed GE blood/flash CLD_SURF2 variant */
             case 0x0C184B50: /* PASS + ZB_CLD_SURF2 */
             case 0x0C184DD8: /* PASS + AA_ZB_XLU_DECAL2 */
             case 0xC8104DD8: /* FOG_SHADE_A + AA_ZB_XLU_DECAL2 */
@@ -17019,6 +17050,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         /* FILLRECT has no texture coverage alpha. GoldenEye uses the same
          * OPA_INTER/CLD-style render modes for primitive full-screen fades,
          * where thresholding alpha turns damage flashes into opaque blocks. */
+        texture_edge = false;
+    }
+    if (texture_edge && gfx_texrect_is_ge_blood_overlay(cc_id)) {
+        /* The gunbarrel/gameplay blood I4 mask uses CLD_SURF, but still needs
+         * soft texture alpha multiplied by primitive alpha. The generic
+         * texture-edge path alpha-tests it into a fully opaque red quad. */
         texture_edge = false;
     }
 
@@ -18450,7 +18487,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     } else {
         g_nonsky_tri_count_diag++;
     }
-    if ((int)g_current_draw_class >= 0 && g_current_draw_class <= DRAWCLASS_HUD) {
+    if ((int)g_current_draw_class >= 0 && g_current_draw_class < DRAWCLASS_COUNT) {
         g_drawclass_tri_counts[g_current_draw_class]++;
         gfx_drawclass_bbox_add(g_current_draw_class, &ndc_metrics);
     }
@@ -18963,12 +19000,16 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
 static void gfx_sp_geometry_mode(uint32_t clear, uint32_t set) {
     static int trace_geom_mode = -1;
     static int trace_geom_after_frame = 0;
+    static int keep_texture_gen_fog = -1;
     uint32_t before = rsp.geometry_mode;
 
     if (trace_geom_mode < 0) {
         const char *after_env = getenv("GE007_TRACE_GEOM_AFTER_FRAME");
         trace_geom_mode = getenv("GE007_TRACE_GEOM_MODE") != NULL ? 1 : 0;
         trace_geom_after_frame = after_env ? atoi(after_env) : 0;
+    }
+    if (keep_texture_gen_fog < 0) {
+        keep_texture_gen_fog = getenv("GE007_KEEP_TEXTURE_GEN_FOG") != NULL ? 1 : 0;
     }
 
     rsp.geometry_mode &= ~clear;
@@ -18978,7 +19019,7 @@ static void gfx_sp_geometry_mode(uint32_t clear, uint32_t set) {
      * startup logos render as dark horizontal bands instead of silver models. */
     if (gfx_current_draw_suppresses_room_fog()) {
         rsp.geometry_mode &= ~G_FOG;
-    } else if (rsp.geometry_mode & G_TEXTURE_GEN) {
+    } else if ((rsp.geometry_mode & G_TEXTURE_GEN) && !keep_texture_gen_fog) {
         rsp.geometry_mode &= ~G_FOG;
     } else if ((clear & G_TEXTURE_GEN) == 0) {
         rsp.geometry_mode |= G_FOG;
@@ -19346,6 +19387,8 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size,
     rdp.texture_to_load.siz = size;
     rdp.texture_to_load.width = width;
     rdp.texture_to_load.cache_key = cache_key;
+    rdp.texture_to_load.static_texture_num =
+        is_static_game_texture ? (uint32_t)cache_key : UINT32_MAX;
     rdp.texture_to_load.skip_load_via_settex = false;
     rdp.texture_to_load.is_static_game_texture = is_static_game_texture;
     rdp.texture_to_load.static_texture_has_lods = static_texture_has_lods;
@@ -19660,6 +19703,8 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
 static void gfx_dp_load_tlut(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
     gfx_texture_cache_delete_by_palette_addr(rdp.palette_addrs[0]);
     gfx_texture_cache_delete_by_palette_addr(rdp.palette_addrs[1]);
+    rdp.palette_addrs[0] = NULL;
+    rdp.palette_addrs[1] = NULL;
 
     if (tile >= 8) {
         return;
@@ -19670,48 +19715,129 @@ static void gfx_dp_load_tlut(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t 
     rdp.texture_tile[tile].lrs = lrs;
     rdp.texture_tile[tile].lrt = lrt;
 
+    if (lrs < uls || lrt < ult) {
+        rdp.textures_changed[0] = true;
+        rdp.textures_changed[1] = true;
+        return;
+    }
+
     uint32_t width = (lrs - uls + 1);
     uint32_t height = (lrt - ult + 1);
     uint32_t pitch = rdp.texture_to_load.width + 1;
     uint32_t count = width * height;
-    const uint16_t *base = (const uint16_t *)rdp.texture_to_load.addr + pitch * ult + uls;
-
-    if (rdp.texture_tile[tile].tmem == 256) {
-        rdp.palette_addrs[0] = (const uint8_t *)base;
-        if (count >= 256) {
-            rdp.palette_addrs[1] = (const uint8_t *)(base + 128);
-        }
-    } else {
-        rdp.palette_addrs[1] = (const uint8_t *)base;
-    }
+    uint32_t src_index = pitch * ult + uls;
+    const uint16_t *base = rdp.texture_to_load.addr != NULL ?
+        (const uint16_t *)rdp.texture_to_load.addr + src_index : NULL;
+    const uint16_t *static_palette = NULL;
+    s32 static_palette_colours = 0;
+    bool used_static_palette = false;
 
     uint32_t palofs = rdp.texture_tile[tile].tmem - 256;
     if (palofs >= 256) {
         palofs = 0;
     }
-    if (palofs + count > 256) {
+    if (count > 256 - palofs) {
         count = 256 - palofs;
     }
 
-    for (uint32_t i = 0; i < count; ++i) {
-        uint16_t value = base[i];
-        if (!rdp.texture_to_load.is_static_game_texture) {
-            value = (uint16_t)((value << 8) | (value >> 8));
+    if (rdp.texture_to_load.is_static_game_texture &&
+        rdp.texture_to_load.static_texture_num < GE007_NUM_TEXTURES) {
+        static_palette = texGetPalette((s32)rdp.texture_to_load.static_texture_num,
+                                       &static_palette_colours);
+        if (static_palette_colours > 256) {
+            static_palette_colours = 256;
         }
-        rdp.palette[palofs + i] = value;
+    }
+
+    if (static_palette != NULL && static_palette_colours > 0) {
+        if (src_index >= (uint32_t)static_palette_colours) {
+            src_index = 0;
+        }
+        if (src_index + count > (uint32_t)static_palette_colours) {
+            count = (uint32_t)static_palette_colours - src_index;
+        }
+
+        if (rdp.texture_tile[tile].tmem == 256) {
+            rdp.palette_addrs[0] = (const uint8_t *)(static_palette + src_index);
+            if (count >= 256) {
+                rdp.palette_addrs[1] = (const uint8_t *)(static_palette + src_index + 128);
+            }
+        } else {
+            rdp.palette_addrs[1] = (const uint8_t *)(static_palette + src_index);
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            rdp.palette[palofs + i] = static_palette[src_index + i];
+        }
+        used_static_palette = true;
+    } else if (base != NULL) {
+        if (rdp.texture_tile[tile].tmem == 256) {
+            rdp.palette_addrs[0] = (const uint8_t *)base;
+            if (count >= 256) {
+                rdp.palette_addrs[1] = (const uint8_t *)(base + 128);
+            }
+        } else {
+            rdp.palette_addrs[1] = (const uint8_t *)base;
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            uint16_t value = base[i];
+            value = (uint16_t)((value << 8) | (value >> 8));
+            rdp.palette[palofs + i] = value;
+        }
+    } else if (count > 0) {
+        memset(&rdp.palette[palofs], 0, count * sizeof(rdp.palette[0]));
     }
 
     rdp.textures_changed[0] = true;
     rdp.textures_changed[1] = true;
+    uint16_t palette_sample[4] = { 0, 0, 0, 0 };
+    for (uint32_t i = 0; i < 4 && i < count && palofs + i < 256; ++i) {
+        palette_sample[i] = rdp.palette[palofs + i];
+    }
+    if (used_static_palette) {
+        static int static_tlut_log = 0;
+        static int static_tlut_logo_log = 0;
+        const bool goldeneye_logo_tlut = current_menu == MENU_GOLDENEYE_LOGO;
+
+        gfx_trace_tex_pipeline_init();
+        if (g_trace_tex_pipeline &&
+            (static_tlut_log < 32 || (goldeneye_logo_tlut && static_tlut_logo_log < 32))) {
+            fprintf(stderr,
+                    "[TEX-TLUT-STATIC] frame=%d tex=%u tile=%u uls=%u ult=%u "
+                    "menu=%d logo=%d palofs=%u count=%u src=%u colours=%d "
+                    "first4=[%04x %04x %04x %04x]\n",
+                    g_frame_count_diag,
+                    rdp.texture_to_load.static_texture_num,
+                    tile,
+                    uls,
+                    ult,
+                    current_menu,
+                    goldeneye_logo_tlut ? 1 : 0,
+                    palofs,
+                    count,
+                    src_index,
+                    static_palette_colours,
+                    palette_sample[0],
+                    palette_sample[1],
+                    palette_sample[2],
+                    palette_sample[3]);
+            if (goldeneye_logo_tlut) {
+                static_tlut_logo_log++;
+            } else {
+                static_tlut_log++;
+            }
+        }
+    }
     {
         static int tlut_log = 0;
         if (g_diag_verbose > 0 && tlut_log < 10) {
             printf("[TLUT_%d] tile=%d uls=%u ult=%u lrs=%u lrt=%u palofs=%u count=%u base=%p first4=[%04x %04x %04x %04x]",
                    tlut_log, tile, uls, ult, lrs, lrt, palofs, count, (void *)base,
-                   rdp.palette[palofs + 0],
-                   rdp.palette[palofs + 1],
-                   rdp.palette[palofs + 2],
-                   rdp.palette[palofs + 3]);
+                   palette_sample[0],
+                   palette_sample[1],
+                   palette_sample[2],
+                   palette_sample[3]);
             printf("\n");
             fflush(stdout);
             tlut_log++;
@@ -20197,6 +20323,10 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
     }
     if (g_diag_trace_texrect &&
         ((abs(width) <= 256 && abs(height) <= 256) ||
+         (abs(width) >= 1200 && abs(height) >= 900) ||
+         (rdp.prim_color.r == 150 && rdp.prim_color.g == 0 &&
+          rdp.prim_color.b == 0) ||
+         rdp.other_mode_l_raw == 0x00552048 ||
          (g_frame_count_diag >= 790 && g_frame_count_diag <= 791))) {
         uint8_t td = (g_texrect_tile_override >= 0) ?
             (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
@@ -20223,7 +20353,8 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
         fprintf(stderr,
                 "[TEXRECT] frame=%d flip=%d rect=(%d,%d)-(%d,%d) draw=(%d,%d)-(%d,%d) wh=(%d,%d) tile=%u first=%u "
                 "st=(%d,%d) dsdx=%d dtdy=%d uv=(%.1f,%.1f)->(%.1f,%.1f) fmt=%u siz=%u tilewh=(%u,%u) line=%u "
-                "load_bytes=%u cache=0x%llx addr=%p combine=0x%016llx oml=0x%08x omh=0x%08x\n",
+                "load_bytes=%u cache=0x%llx addr=%p combine=0x%016llx oml=0x%08x omh=0x%08x "
+                "prim=(%u,%u,%u,%u) class=%s\n",
                 g_frame_count_diag, flip ? 1 : 0, ulx, uly, lrx, lry, draw_ulx, draw_uly, draw_lrx, draw_lry, width, height, tile,
                 td, uls, ult, dsdx, dtdy, uls_edge, ult_edge, lrs, lrt,
                 td < 8 ? rdp.texture_tile[td].fmt : 0,
@@ -20231,7 +20362,10 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
                 tile_w, tile_h, line_bytes, load_bytes,
                 (unsigned long long)cache_key, load_addr,
                 (unsigned long long)rdp.combine_mode,
-                rdp.other_mode_l_raw, rdp.other_mode_h);
+                rdp.other_mode_l_raw, rdp.other_mode_h,
+                rdp.prim_color.r, rdp.prim_color.g,
+                rdp.prim_color.b, rdp.prim_color.a,
+                gfx_draw_class_name(g_current_draw_class));
         fflush(stderr);
     }
 
@@ -22836,6 +22970,9 @@ void gfx_run_dl(Gfx *dl) {
     }
 
     gfx_rapi->end_frame();
+#ifdef NATIVE_PORT
+    minimap_overlay_draw_queued_frames();
+#endif
     gfx_trace_glass_shard_coverage_frame_end();
     gfx_native_sky_queue_reset();
     visibility_scaled_matrix_region_count = 0;
@@ -22920,7 +23057,7 @@ void gfx_run_dl(Gfx *dl) {
         }
         if (trace_drawclass_enabled && g_frame_count_diag >= trace_drawclass_after_frame) {
             fprintf(stderr,
-                    "[DRAWCLASS-TRIS] frame=%d total=%d sky=%d nonsky=%d unknown=%d room=%d weapon=%d chrprop=%d effect=%d hud=%d\n",
+                    "[DRAWCLASS-TRIS] frame=%d total=%d sky=%d nonsky=%d unknown=%d room=%d weapon=%d chrprop=%d effect=%d hud=%d frontend=%d\n",
                     g_frame_count_diag,
                     g_tri_count_diag,
                     g_sky_tri_count_diag,
@@ -22930,7 +23067,8 @@ void gfx_run_dl(Gfx *dl) {
                     g_drawclass_tri_counts[DRAWCLASS_WEAPON],
                     g_drawclass_tri_counts[DRAWCLASS_CHRPROP],
                     g_drawclass_tri_counts[DRAWCLASS_EFFECT],
-                    g_drawclass_tri_counts[DRAWCLASS_HUD]);
+                    g_drawclass_tri_counts[DRAWCLASS_HUD],
+                    g_drawclass_tri_counts[DRAWCLASS_FRONTEND]);
             fflush(stderr);
         }
         if (trace_drawclass_bbox_enabled && g_frame_count_diag >= trace_drawclass_after_frame) {
@@ -22941,6 +23079,7 @@ void gfx_run_dl(Gfx *dl) {
             gfx_drawclass_bbox_trace_one(DRAWCLASS_CHRPROP);
             gfx_drawclass_bbox_trace_one(DRAWCLASS_EFFECT);
             gfx_drawclass_bbox_trace_one(DRAWCLASS_HUD);
+            gfx_drawclass_bbox_trace_one(DRAWCLASS_FRONTEND);
             fprintf(stderr, "\n");
             fflush(stderr);
         }

@@ -72,6 +72,8 @@ enum DrawClass {
     DRAWCLASS_CHRPROP,
     DRAWCLASS_EFFECT,
     DRAWCLASS_HUD,
+    DRAWCLASS_FRONTEND,
+    DRAWCLASS_COUNT,
 };
 void gfx_set_draw_class(enum DrawClass cls);
 void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, const void *end);

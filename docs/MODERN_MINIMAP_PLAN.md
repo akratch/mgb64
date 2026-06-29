@@ -1,8 +1,9 @@
 # Modern Minimap: Design, Architecture, and Game Hooks
 
-> Status: **design / not yet implemented.** This is a code-grounded survey for a
-> sharp, modern minimap with full level layout, objective pins, player heading,
-> and temporary enemy guard reveals when guards fire. Code references were traced
+> Status: **implemented vertical slice plus local tactical/objective pass.**
+> This is a code-grounded survey for a sharp, modern minimap with adaptive
+> local layout, objective pins, player heading, current-tile context, and
+> temporary enemy guard reveals when guards fire. Code references were traced
 > against the current tree; line numbers are approximate and will drift.
 
 ---
@@ -33,14 +34,49 @@ Recommended architecture:
 This gives the "modern" result: accurate map geometry, clean icons, smooth
 alpha fades, sharp strokes, high-DPI scaling, and split-screen correctness.
 
+First execution pass:
+
+- Implement a **testable vertical slice**, not only no-op scaffolding.
+- Include settings, stage reset/build hooks, per-pane snapshots, STAN cache
+  construction, JSON dump support, and a native overlay that draws a
+  player-centered adaptive local tactical map plus the player marker.
+- Include the first enemy-fire reveal feed and red TTL pins, gated by the
+  minimap settings.
+- Include objective pins for resolvable object, room, and deposit criteria;
+  use off-local edge indicators when the default local zoom clips the target.
+- Preserve a robust disabled path: when `Input.MinimapEnabled=0`, no snapshots
+  should be queued and no overlay should draw.
+
+Current implementation state:
+
+- `Input.MinimapMode=0` is the default local tactical view. The viewport is
+  player-centered and adapts its local radius to nearby playable geometry so
+  compact spaces such as Train remain readable while Dam still gets a broader
+  outdoor tactical slice.
+- `Input.MinimapMode=1` remains a north-up floor overview/debug view.
+- `Input.MinimapMode=2` is an optional player-up rotating local tactical view
+  for players who prefer a more COD-like presentation.
+- Objective pins resolve through live props first, then setup pads or bound
+  pads. Room/deposit criteria use the same pad-to-STAN-room rules as objective
+  status checks.
+- The renderer clusters repeated off-local objective indicators by objective
+  index and edge position so multi-target objectives do not create a stack of
+  identical arrows.
+- The renderer highlights the player's current STAN tile inside the current
+  room/floor context, which is the primary scale-alignment validation cue.
+- Guard fire reveals stale-fade quickly when the guard dies, is removed, becomes
+  hidden, or loses its prop.
+
 ---
 
 ## 1. Player-Facing Target
 
 The target is a COD-like tactical minimap adapted to GoldenEye's mission design:
 
-- **Full map layout**: the whole discovered/configured stage layout is visible
-  inside the minimap by default, not only a tiny local radar circle.
+- **Local tactical layout**: the minimap shows a cropped, player-centered slice
+  of the current floor by default. Full-stage layouts belong in an overview mode
+  because distant STAN islands and unreachable slices make a corner minimap too
+  compressed during normal play.
 - **Player marker**: a clear directional arrow based on `g_CurrentPlayer->vv_theta`.
 - **Objective pins**: incomplete mission objectives appear at their live object,
   pad, or room location.
@@ -53,18 +89,19 @@ The target is a COD-like tactical minimap adapted to GoldenEye's mission design:
 
 Default recommendation:
 
-- **Mode**: north-up full-stage fit.
+- **Mode**: north-up local tactical view by default; a floor overview can remain
+  available for debugging or objective-driven use.
 - **Player heading**: arrow rotates, map does not.
 - **Enemy layer**: reveal-on-fire only.
 - **Objective layer**: incomplete objectives only.
 - **Feature gate**: on by default if the port's remaster HUD defaults are meant
   to be modern, otherwise behind `Input.MinimapEnabled`.
 
-Optional later mode:
+Optional secondary mode:
 
 - **Rotating local minimap**: player-centered, COD-style, clipped to local radius.
-  This should be a secondary setting because the user specifically asked for the
-  full map layout to be present.
+  This is exposed as `Input.MinimapMode=2`; the default stays north-up because
+  GoldenEye's objective layouts are easier to compare when map north is stable.
 
 ---
 
@@ -93,8 +130,8 @@ per-pane inputs are already available.
 
 ### HUD display order
 
-`src/game/bondview.c:20285` defines `maybe_mp_interface(Gfx *arg0)`, the key HUD
-path. Around `src/game/bondview.c:20458-20478`, the draw order is:
+`src/game/bondview.c:20408` defines `maybe_mp_interface(Gfx *arg0)`, the key HUD
+path. Around `src/game/bondview.c:20581-20601`, the draw order is:
 
 1. `gunDrawSight(&arg0)`
 2. native hit marker
@@ -135,10 +172,10 @@ The PC renderer path is in `src/platform/fast3d/gfx_pc.c`.
 `gfx_run_dl`:
 
 - starts the backend frame with `gfx_rapi->start_frame()` around
-  `src/platform/fast3d/gfx_pc.c:22799`
+  `src/platform/fast3d/gfx_pc.c:22887`
 - executes the display list
 - flushes pending drawing
-- calls `gfx_rapi->end_frame()` around `src/platform/fast3d/gfx_pc.c:22838`
+- calls `gfx_rapi->end_frame()` around `src/platform/fast3d/gfx_pc.c:22926`
 
 The OpenGL backend resolves the scene and applies the output VI/retro filter in
 `src/platform/fast3d/gfx_opengl.c:3271`:
@@ -151,7 +188,7 @@ static void gfx_opengl_end_frame(void) {
 ```
 
 The final swap happens in `gfx_end_frame()` at
-`src/platform/fast3d/gfx_pc.c:23545`.
+`src/platform/fast3d/gfx_pc.c:23633`.
 
 Preferred hook:
 
@@ -234,18 +271,22 @@ Relevant globals/helpers:
 ### Iteration pattern
 
 `src/game/stan.c:348` already has the clean native walk used to compute room
-bounds:
+bounds. The current native tree still primarily advances tiles using the
+high-nibble point count:
 
 ```c
 StandTile *tile = stan_prefix.ptr_firstroom;
 while (*(s32 *)tile != 0) {
-    s32 pointCount = (tile->tail.half >> 12) & 0xF;
+s32 pointCount = (tile->tail.half >> 12) & 0xF;
     ...
     tile = (StandTile *)((u8 *)tile + list_of_tilesizes[pointCount]);
 }
 ```
 
-The minimap cache should use the same walk.
+The minimap cache should use the same walk. Do **not** switch this pass to
+`STAN_POINT_COUNT(tile)` without first reconciling the macro against the active
+native walkers; the macro currently reads the low nibble while most tile-size
+walks use the high nibble.
 
 ### Coordinate scale
 
@@ -523,18 +564,18 @@ Important points:
 Recommended minimap hook:
 
 ```c
-if (sp27C != 0 || sp278 != 0) {
-    minimap_note_guard_fired(
-        self,
-        hand,
-        prop_selfchr->act_attack.attack_item,
-        play_sound != 0);
-}
+minimap_note_guard_fired(
+    self,
+    hand,
+    prop_selfchr->act_attack.attack_item,
+    play_sound != 0);
 ```
 
 Place it after `play_sound` is computed and before or after
 `sub_GAME_7F02BFE4(...)`. This captures real firing attempts after the function's
-main validation has run.
+main validation has run. The minimap handler applies the audible/suppressed
+filters internally so debug `ShowAllEnemies` mode can still observe otherwise
+hidden firing attempts.
 
 ### Audible and suppressed weapons
 
@@ -819,13 +860,13 @@ Suggested globals:
 
 ```c
 s32 g_pcMinimapEnabled = 1;
-s32 g_pcMinimapMode = 0;              /* 0 full north-up, 1 local rotating */
+s32 g_pcMinimapMode = 0;              /* 0 local north-up, 1 overview, 2 local rotating */
 s32 g_pcMinimapObjectives = 1;
 s32 g_pcMinimapEnemyFireReveal = 1;
 s32 g_pcMinimapShowAllEnemies = 0;    /* debug/accessibility assist */
 f32 g_pcMinimapOpacity = 0.85f;
 f32 g_pcMinimapSize = 1.0f;
-s32 g_pcMinimapSharpOverlay = 1;      /* 0 display-list fallback */
+s32 g_pcMinimapSharpOverlay = 1;      /* 0 disables native overlay */
 ```
 
 Suggested config keys:
@@ -833,7 +874,7 @@ Suggested config keys:
 | Key | Type / default | Range | Scope |
 |---|---:|---:|---|
 | `Input.MinimapEnabled` | int, 1 | 0..1 | live |
-| `Input.MinimapMode` | int, 0 | 0..1 | live |
+| `Input.MinimapMode` | int, 0 | 0..2 | live |
 | `Input.MinimapObjectives` | int, 1 | 0..1 | live |
 | `Input.MinimapEnemyFireReveal` | int, 1 | 0..1 | live |
 | `Input.MinimapShowAllEnemies` | int, 0 | 0..1 | live |
@@ -886,6 +927,7 @@ Dump:
 - room bboxes
 - player position
 - player current room
+- player current STAN tile ID
 - objective pins
 - active enemy reveals
 
@@ -919,11 +961,12 @@ Use stages that stress different aspects:
 - Multiplayer: either disabled by default or one snapshot per split-screen pane.
 - Death/menu/watch states: minimap should hide or dim consistently with HUD.
 - Retro filter on/off: minimap remains sharp when `SharpOverlay=1`.
-- Screenshot capture: decide whether screenshots should include overlay. If yes,
-  draw before screenshot capture; if no, draw after.
+- Screenshot capture: screenshots include the native overlay in the SDL capture
+  path, which makes minimap crops useful for automated visual review.
 
-Current `gfx_run_dl` screenshot capture occurs before `gfx_rapi->end_frame()`.
-If overlay screenshots matter, move or duplicate capture after overlay draw.
+The debug dump updates after setup conversion and on each queued snapshot when
+`GE007_MINIMAP_DUMP` is set, so validation can inspect setup readiness plus live
+player/objective/enemy state instead of only the initial stage geometry.
 
 ---
 
@@ -1062,6 +1105,7 @@ Acceptance:
 
 - firing unsuppressed guards appear briefly
 - silenced guard weapons do not reveal by default
+- debug show-all mode can include suppressed or non-audible firing attempts
 - dead/removed guards are cleaned up safely
 
 ### MM-6: Polish and options
@@ -1084,8 +1128,8 @@ Acceptance:
 
 Geometry:
 
-- `src/game/bg.c:3529` `load_bg_file(...)`
-- `src/game/bg.c:3616` final `setLevelScale(...)`
+- `src/game/bg.c:3684` `load_bg_file(...)`
+- `src/game/bg.c:3771` final `setLevelScale(...)`
 - `src/game/stan.c:348` STAN tile walk pattern
 
 Setup/objectives:
@@ -1131,8 +1175,9 @@ Settings:
    separately configurable. A purist preset should disable it.
 
 2. **Should undiscovered rooms be hidden?**
-   The user asked for full map layout present fully. Default should show the full
-   layout. A later "discovery" mode could reveal rooms as visited.
+   Default now shows the local tactical layout around the player. A later
+   "discovery" mode could reveal rooms as visited, and the floor overview can
+   remain available for debugging or objective-led map review.
 
 3. **Should enemy pings require audible sound or only weapon fire?**
    COD-like behavior suggests audible unsuppressed fire. Use `audible` and
@@ -1144,8 +1189,8 @@ Settings:
    snapshot system with objective/enemy layers disabled.
 
 5. **Should screenshots include the overlay?**
-   Current screenshot capture happens before backend `end_frame`. If minimap
-   screenshots matter, move capture after overlay draw.
+   Yes. The SDL screenshot path captures the final frame with the native overlay,
+   which keeps visual validation aligned with what the player sees.
 
 ---
 

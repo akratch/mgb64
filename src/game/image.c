@@ -120,15 +120,30 @@ struct tex_palette_entry g_TexPaletteCache[TEX_PALETTE_CACHE_SIZE];
 s32 g_TexPaletteCacheCount = 0;
 
 void texStorePalette(s32 texturenum, u16 *palette, s32 numcolours) {
-    /* Check if already cached */
+    if (texturenum < 0 || texturenum >= TEX_PALETTE_CACHE_SIZE) {
+        return;
+    }
+    if (palette == NULL || numcolours <= 0) {
+        return;
+    }
+    if (numcolours > 256) {
+        numcolours = 256;
+    }
+
     for (s32 i = 0; i < g_TexPaletteCacheCount; i++) {
-        if (g_TexPaletteCache[i].texturenum == texturenum) return;
+        if (g_TexPaletteCache[i].texturenum == texturenum) {
+            g_TexPaletteCache[i].numcolours = numcolours;
+            for (s32 j = 0; j < numcolours; j++) {
+                g_TexPaletteCache[i].palette[j] = palette[j];
+            }
+            return;
+        }
     }
     if (g_TexPaletteCacheCount >= TEX_PALETTE_CACHE_SIZE) return;
     struct tex_palette_entry *e = &g_TexPaletteCache[g_TexPaletteCacheCount++];
     e->texturenum = texturenum;
     e->numcolours = numcolours;
-    for (s32 i = 0; i < numcolours && i < 256; i++) {
+    for (s32 i = 0; i < numcolours; i++) {
         e->palette[i] = palette[i];
     }
 }
@@ -141,6 +156,10 @@ u16 *texGetPalette(s32 texturenum, s32 *numcolours_out) {
         }
     }
     return NULL;
+}
+
+void texResetPaletteCache(void) {
+    g_TexPaletteCacheCount = 0;
 }
 
 static void portRgba16ToRgba32(u16 rgba16, u8 *out)
