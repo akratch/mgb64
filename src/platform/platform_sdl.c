@@ -1799,6 +1799,54 @@ void platformRegisterConfig(void)
                         "Draw the minimap after the retro output filter for a crisp modern overlay (0 = disable first-pass renderer).");
 }
 
+/* `--faithful` preset: the documented "Faithful original" mode (VISUAL_MODES.md
+ * §1) as one switch. These pin the remaster departures back to their pre-remaster
+ * (N64-faithful) values for this launch only; everything is still independently
+ * settable, and the values are applied transiently (never written to ge007.ini).
+ *
+ * Video.RemasterFX=0 is the master post-FX bypass, so the individual grade /
+ * tonemap / bloom / vignette / sharpen / dither / FXAA / GradePresets /
+ * Saturation / Contrast / Brightness settings do NOT need listing here. Only the
+ * departures RemasterFX does not cover are pinned below.
+ *
+ * Deliberately NOT touched: Input.SteadyView (a PC mouse/stick-look correctness
+ * default, not a cinematic effect) and the compile-time EXPLOSION_BUFFER_LEN
+ * 6->16 effect-slot bump (not a runtime setting). */
+static const struct {
+    const char *key;
+    const char *value;
+} s_faithfulPreset[] = {
+    { "Video.RemasterFX",            "0" },      /* bypass the whole post-FX stack */
+    { "Video.RenderScale",           "1" },      /* native res (no supersampling)  */
+    { "Video.MSAA",                  "0" },
+    { "Video.TexturePack",           "" },       /* stock textures (no HD pack)    */
+    { "Video.FovY",                  "60" },     /* classic 4:3 vertical FOV       */
+    { "Video.ViewmodelFov",          "60" },
+    { "Input.ModernCrosshair",       "0" },
+    { "Input.HitMarkers",            "0" },
+    { "Input.ReticleTargetFeedback", "0" },
+    { "Input.ViewmodelSway",         "0" },      /* additive sway off (purely added) */
+    { "Input.GamepadLookCurve",      "1.0" },    /* linear (vanilla)               */
+    { "Input.GamepadDeadzone",       "0.2441" }, /* legacy 8000/32767 corner       */
+    { "Input.GamepadRadialDeadzone", "0" },      /* per-axis square (vanilla)      */
+    { "Input.GamepadFpsScale",       "0" },      /* per-frame look (vanilla)       */
+    { "Input.MinimapEnabled",        "0" },      /* tactical minimap/radar off     */
+};
+
+int platformApplyFaithfulPreset(void)
+{
+    int applied = 0;
+    size_t i;
+
+    for (i = 0; i < sizeof(s_faithfulPreset) / sizeof(s_faithfulPreset[0]); i++) {
+        if (settingsApplyFaithfulValue(s_faithfulPreset[i].key, s_faithfulPreset[i].value)) {
+            applied++;
+        }
+    }
+
+    return applied;
+}
+
 void platformGetMouseDelta(int *dx, int *dy) {
     extern int g_freezeInput;
 

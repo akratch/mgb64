@@ -197,6 +197,71 @@ def assert_render_scale_min_clamp(binary: Path) -> None:
         )
 
 
+FAITHFUL_EXPECTED = {
+    "Video.RemasterFX": "0",
+    "Video.RenderScale": "1",
+    "Video.MSAA": "0",
+    "Video.TexturePack": "",
+    "Video.FovY": "60",
+    "Video.ViewmodelFov": "60",
+    "Input.ModernCrosshair": "0",
+    "Input.HitMarkers": "0",
+    "Input.ReticleTargetFeedback": "0",
+    "Input.ViewmodelSway": "0",
+    "Input.GamepadLookCurve": "1",
+    "Input.GamepadDeadzone": "0.2441",
+    "Input.GamepadRadialDeadzone": "0",
+    "Input.GamepadFpsScale": "0",
+    "Input.MinimapEnabled": "0",
+}
+
+
+def assert_faithful_preset(binary: Path) -> None:
+    """Pin the --faithful preset (VISUAL_MODES.md section 1): it forces the
+    pre-remaster baseline, wins over a saved remaster ge007.ini, yields to an
+    explicit per-setting override, and never persists to disk."""
+    with tempfile.TemporaryDirectory(prefix="mgb64_faithful_") as temp:
+        savedir = Path(temp)
+        config_path = savedir / "ge007.ini"
+        # Seed a custom remaster config: --faithful must override it for the run.
+        config_path.write_text(
+            "[Video]\nRenderScale=4\nFovY=95\nRemasterFX=1\n"
+            "[Input]\nMinimapEnabled=1\nModernCrosshair=1\n",
+            encoding="utf-8",
+        )
+
+        faithful_dump = parse_dump(run_binary(binary, savedir, "--faithful", "--dump-config"))
+        assert_values(faithful_dump, FAITHFUL_EXPECTED, "faithful preset")
+
+        # Explicit per-setting overrides win over the faithful baseline.
+        override_dump = parse_dump(
+            run_binary(
+                binary, savedir,
+                "--faithful",
+                "--config-override", "Video.FovY=90",
+                "--dump-config",
+            )
+        )
+        assert_values(
+            override_dump,
+            {"Video.FovY": "90", "Video.RenderScale": "1", "Video.RemasterFX": "0"},
+            "faithful + explicit override precedence",
+        )
+
+        # A faithful session is read-only for config: even a save-triggering
+        # invocation must leave ge007.ini BYTE-FOR-BYTE unchanged -- neither
+        # writing faithful values nor dropping the user's pre-existing custom
+        # values (RenderScale=4 / FovY=95 / ...) back to defaults.
+        seed_text = config_path.read_text(encoding="utf-8")
+        run_binary(binary, savedir, "--faithful", "--config-set", "Input.InvertY=1")
+        after_text = config_path.read_text(encoding="utf-8")
+        if after_text != seed_text:
+            raise SystemExit(
+                "FAIL: a --faithful session modified ge007.ini (must be read-only)\n"
+                f"--- before ---\n{seed_text}\n--- after ---\n{after_text}"
+            )
+
+
 def main() -> int:
     args = parse_args()
     binary = Path(args.binary).resolve()
@@ -204,6 +269,7 @@ def main() -> int:
         raise SystemExit(f"FAIL: native binary not found: {binary}")
 
     assert_render_scale_min_clamp(binary)
+    assert_faithful_preset(binary)
 
     with tempfile.TemporaryDirectory(prefix="mgb64_config_roundtrip_") as temp:
         savedir = Path(temp)

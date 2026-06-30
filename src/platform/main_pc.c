@@ -398,6 +398,7 @@ extern void configInit(void);
 
 /* Platform config — defined in platform_sdl.c */
 extern void platformRegisterConfig(void);
+extern int platformApplyFaithfulPreset(void);
 
 /* Default ROM path — can be overridden via command line */
 static const char *DEFAULT_ROM_PATHS[] = {
@@ -510,6 +511,7 @@ int main(int argc, char **argv)
     int configOverrideCount = 0;
     int configSetCount = 0;
     int resetConfig = 0;
+    int faithful = 0;
     int listSettings = 0;
     int listDisplays = 0;
     int dumpConfig = 0;
@@ -539,6 +541,8 @@ int main(int argc, char **argv)
             dumpConfig = 1;
         } else if (strcmp(argv[i], "--reset-config") == 0) {
             resetConfig = 1;
+        } else if (strcmp(argv[i], "--faithful") == 0) {
+            faithful = 1;
         } else if (strcmp(argv[i], "--config-override") == 0 && i + 1 < argc) {
             if (configOverrideCount >= PC_MAX_CONFIG_SET_ARGS) {
                 fprintf(stderr, "[CONFIG] Too many --config-override values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
@@ -693,6 +697,23 @@ int main(int argc, char **argv)
     portAudioRegisterConfig();
     configInit();
 
+    /* --faithful: apply the "Faithful original" preset (VISUAL_MODES.md section 1)
+     * as a transient baseline BEFORE env/CLI overrides, so any explicit env var or
+     * --config-override still wins and `--faithful --dump-config` reflects the
+     * faithful values. Marked SETTING_OVERRIDE_FAITHFUL so configSave never
+     * persists it -- the user's saved remaster ge007.ini is left untouched. */
+    if (faithful) {
+        int n = platformApplyFaithfulPreset();
+        /* A faithful session is read-only for config: suppress every save path
+         * (clean shutdown, in-game menu, --config-set/--reset-config) so the
+         * user's saved remaster ge007.ini is left byte-for-byte untouched. */
+        configSetSaveSuppressed(1);
+        printf("[CONFIG] --faithful: pinned %d setting(s) to the pre-remaster baseline "
+               "(RemasterFX off, native res, stock textures, classic FOV, no modern "
+               "crosshair/hitmarkers, vanilla pad aim, minimap off). Read-only session: ge007.ini is not modified.\n",
+               n);
+    }
+
     settingsApplyEnvOverrides();
     for (int i = 0; i < configOverrideCount; i++) {
         if (!pcApplyConfigArg(configOverrideArgs[i], 1)) {
@@ -708,7 +729,10 @@ int main(int argc, char **argv)
         }
     }
     if (resetConfig || configSetCount > 0) {
-        if (!configSave()) {
+        if (faithful) {
+            printf("[CONFIG] --faithful is a read-only session; --config-set/--reset-config "
+                   "was applied to this run only and NOT written to ge007.ini.\n");
+        } else if (!configSave()) {
             return 1;
         }
     }

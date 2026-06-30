@@ -20,7 +20,8 @@ typedef enum SettingScope {
 typedef enum SettingOverrideSource {
     SETTING_OVERRIDE_NONE,
     SETTING_OVERRIDE_ENV,
-    SETTING_OVERRIDE_CLI
+    SETTING_OVERRIDE_CLI,
+    SETTING_OVERRIDE_FAITHFUL
 } SettingOverrideSource;
 
 typedef union SettingValue {
@@ -76,6 +77,12 @@ const char *settingsOverrideSourceName(SettingOverrideSource source);
 const char *settingsEnumTokenForValue(const Setting *setting, s32 value);
 void settingsFormatEnumOptions(const Setting *setting, char *out, size_t out_size);
 void settingsMarkCliOverride(const char *key);
+/* Force one setting to its faithful (pre-remaster) value for this launch only.
+ * Applies via configSetValue (validated/clamped) and marks the setting as a
+ * transient SETTING_OVERRIDE_FAITHFUL override so configSave never persists it
+ * -- a `--faithful` run leaves the user's saved ge007.ini untouched. Returns 1
+ * if the value was applied. Used by platformApplyFaithfulPreset(). */
+s32 settingsApplyFaithfulValue(const char *key, const char *value);
 void settingsApplyEnvOverrides(void);
 void settingsResetAllToDefaults(void);
 void settingsPrintList(FILE *f);

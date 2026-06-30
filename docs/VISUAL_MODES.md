@@ -11,12 +11,27 @@ All flags are live `Video.*`/`Input.*` settings (also settable per-launch via
 ## The three modes
 
 ### 1. Faithful original (pixel-accurate)
-The stock N64 look. No HD textures, no post-FX.
+The stock N64 look and feel. No HD textures, no post-FX, classic FOV, no modern
+crosshair/hitmarkers, vanilla gamepad aim, no minimap. **One flag:**
 ```bash
-./build/ge007 --level 33 --config-override Video.RemasterFX=0
+./build/ge007 --level 33 --faithful
 ```
-For a *byte-faithful* presentation also pin: `Video.RenderScale=1 Video.MSAA=0
-Video.FovY=60 Video.ViewmodelFov=60 Input.ModernCrosshair=0 Input.HitMarkers=0`.
+`--faithful` pins the whole pre-remaster baseline for that launch **only**. A
+faithful session is **read-only for config** — `ge007.ini` is never rewritten
+(not on quit, not from the in-game menu, and `--config-set`/`--reset-config` are
+not persisted while it is active), so it never disturbs your saved remaster
+config. It is exactly equivalent to:
+`Video.RemasterFX=0 Video.RenderScale=1 Video.MSAA=0 Video.TexturePack=""
+Video.FovY=60 Video.ViewmodelFov=60 Input.ModernCrosshair=0 Input.HitMarkers=0
+Input.ReticleTargetFeedback=0 Input.ViewmodelSway=0 Input.GamepadLookCurve=1.0
+Input.GamepadDeadzone=0.2441 Input.GamepadRadialDeadzone=0 Input.GamepadFpsScale=0
+Input.MinimapEnabled=0`.
+
+An explicit `--config-override`/`GE007_*` still wins over the preset (e.g.
+`--faithful --config-override Video.FovY=90` = faithful but wide FOV). Two things
+`--faithful` intentionally leaves alone: `Input.SteadyView` (a PC mouse/stick-look
+correctness default, not a cinematic effect — toggle it separately if you want the
+gait camera roll) and the compile-time effect-slot count.
 
 ### 2. Faithful upscale (original look, higher fidelity)
 The original art direction, but with **HD textures + supersampling** — crisp, not

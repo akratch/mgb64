@@ -437,10 +437,26 @@ static s32 replaceConfigFile(const char *tmp_path, const char *path) {
 #endif
 }
 
+/* When set (by a `--faithful` launch), configSave() is a no-op: a faithful
+ * session forces the pre-remaster baseline into the live settings for that run
+ * only, so writing them back -- whether on clean shutdown, the in-game menu, or
+ * --config-set/--reset-config -- would clobber the user's saved remaster config.
+ * Suppressing the whole save keeps ge007.ini byte-for-byte untouched. */
+static s32 s_configSaveSuppressed = 0;
+
+void configSetSaveSuppressed(s32 suppressed)
+{
+    s_configSaveSuppressed = suppressed ? 1 : 0;
+}
+
 s32 configSave(void)
 {
     char path[PATH_MAX];
     char tmp_path[PATH_MAX];
+
+    if (s_configSaveSuppressed) {
+        return 1; /* faithful session: ge007.ini intentionally left untouched */
+    }
     u8 unknown_written[CONFIG_MAX_UNKNOWN_SETTINGS] = {0};
     const char *saved_path = savedirPath(CONFIG_FILENAME);
     snprintf(path, sizeof(path), "%s", saved_path);

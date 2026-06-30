@@ -131,6 +131,7 @@ Useful runtime options:
 | `--list-settings` | Print registered persistent settings and exit. Does not require a ROM. |
 | `--dump-config` | Print the current config view after loading `ge007.ini` and exit. Does not require a ROM. |
 | `--config-override KEY=VALUE` | Override a persistent setting for this run without saving it. Repeatable. |
+| `--faithful` | Boot the pixel-/feel-faithful original (post-FX off, native res, stock textures, classic FOV, no modern crosshair/hitmarkers/minimap, vanilla pad aim) for this run only. Transient — does not modify `ge007.ini`. Explicit `--config-override` still wins. See [docs/VISUAL_MODES.md](docs/VISUAL_MODES.md). |
 | `--config-set KEY=VALUE` | Set a persistent config value, save `ge007.ini`, and exit. Repeatable. Does not require a ROM. |
 | `--reset-config` | Reset registered persistent settings to defaults, save `ge007.ini`, and exit. Does not require a ROM. |
 | `--no-input-grab` | Do not capture the mouse. Useful while testing windowed startup. |

@@ -209,10 +209,11 @@ const char *settingsScopeName(SettingScope scope)
 const char *settingsOverrideSourceName(SettingOverrideSource source)
 {
     switch (source) {
-        case SETTING_OVERRIDE_NONE: return "none";
-        case SETTING_OVERRIDE_ENV:  return "env";
-        case SETTING_OVERRIDE_CLI:  return "cli";
-        default:                    return "unknown";
+        case SETTING_OVERRIDE_NONE:     return "none";
+        case SETTING_OVERRIDE_ENV:      return "env";
+        case SETTING_OVERRIDE_CLI:      return "cli";
+        case SETTING_OVERRIDE_FAITHFUL: return "faithful";
+        default:                        return "unknown";
     }
 }
 
@@ -272,6 +273,22 @@ void settingsMarkCliOverride(const char *key)
     if (setting != NULL) {
         setting->override_source = SETTING_OVERRIDE_CLI;
     }
+}
+
+s32 settingsApplyFaithfulValue(const char *key, const char *value)
+{
+    Setting *setting = settingsFindMutable(key);
+
+    if (setting == NULL || value == NULL) {
+        return 0;
+    }
+
+    if (!configSetValue(key, value)) {
+        return 0;
+    }
+
+    setting->override_source = SETTING_OVERRIDE_FAITHFUL;
+    return 1;
 }
 
 void settingsApplyEnvOverrides(void)

@@ -43,6 +43,10 @@ void configInit(void);
 /* Save current values to ge007.ini. Returns 1 on success. */
 s32 configSave(void);
 
+/* When suppressed (set by a `--faithful` launch), configSave() becomes a no-op so
+ * a transient faithful session never rewrites the user's saved ge007.ini. */
+void configSetSaveSuppressed(s32 suppressed);
+
 /* Set a registered setting from a string value. Returns 1 if the key exists. */
 s32 configSetValue(const char *key, const char *value);
 
