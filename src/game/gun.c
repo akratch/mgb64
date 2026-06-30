@@ -18354,7 +18354,15 @@ machinegun_fire:
             }
 
             hand_ptr->weapon_ammo_in_magazine--;
-            if (fallback_fire_transform != 0) {
+            /* The watch laser's firing rates (auto=0xFF, single=0) make its
+             * state-3 recoil interpolation a no-op, so field_8EC is never
+             * managed during firing and retains the ~40-degree raise rotation
+             * left over from the equip animation. field_92C is set on every
+             * fire frame, which would then multiply that stale rotation into
+             * the viewmodel and pitch the hand down for one frame per shot
+             * (the "glitches up and down" jitter). Reset it to identity here,
+             * mirroring the machinegun fallback path. */
+            if (fallback_fire_transform != 0 || weapon_id == ITEM_WATCHLASER) {
                 matrix_4x4_set_identity(&hand_ptr->field_8EC);
             }
             hand_ptr->field_92C++;
@@ -31775,6 +31783,16 @@ static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
     s32 clip = no_clip_reloads ? 0 : g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
     s32 reserve = get_ammo_count_for_weapon(weapon);
     bool is_left_hand = (hand == GUNLEFT);
+
+    /* Clip-limited single-pool weapons (watch laser, watch magnet) keep their
+     * entire ammo count in the magazine; the AMMO_CLIP_LIMIT flag forces the
+     * reserve pool (ammoheldarr) to 0 on equip. Since no_clip_reloads weapons
+     * render only the reserve number, fold the equipped magazine into it so
+     * these weapons show their real count instead of reading empty. */
+    if (no_clip_reloads &&
+        bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_AMMO_CLIP_LIMIT) != 0) {
+        reserve += g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
+    }
 
     /* Weapons with no ammo tracking (e.g. unarmed) return negative */
     if (reserve < 0 && clip <= 0) return gdl;
