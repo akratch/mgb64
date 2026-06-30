@@ -20,17 +20,19 @@ DO_BUILD=1
 TIMEOUT_SECONDS=45
 TIMEOUT_BIN="$(validation_resolve_timeout_cmd)"
 FRAME=420
+OUT_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
         --binary) BINARY="$2"; shift 2 ;;
         --rom) ROM="$2"; shift 2 ;;
+        --out-dir) OUT_DIR="$2"; shift 2 ;;
         --no-build) DO_BUILD=0; shift ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
         --frame) FRAME="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: $0 [--rom PATH] [--binary PATH] [--build-dir DIR] [--no-build]"
+            echo "Usage: $0 [--rom PATH] [--binary PATH] [--build-dir DIR] [--out-dir DIR] [--no-build]"
             exit 0 ;;
         *) echo "Unknown arg: $1" >&2; exit 2 ;;
     esac
@@ -52,8 +54,20 @@ validation_require_binary "$BINARY"
 validation_require_file "$ROM" "ROM"
 validation_acquire_runtime_lock
 
-TMPDIR="$(mktemp -d /tmp/ge007_save_persist.XXXXXX)"
-TRACE_PREFIX="/tmp/ge007_save_$$"
+REMOVE_ARTIFACTS=1
+if [[ -n "$OUT_DIR" ]]; then
+    mkdir -p "$OUT_DIR"
+    OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+    TMPDIR="$OUT_DIR/save"
+    TRACE_PREFIX="$OUT_DIR/ge007_save"
+    REMOVE_ARTIFACTS=0
+    rm -rf "$TMPDIR"
+    mkdir -p "$TMPDIR"
+    rm -f "${TRACE_PREFIX}"*.jsonl "${TRACE_PREFIX}"*.log
+else
+    TMPDIR="$(mktemp -d /tmp/ge007_save_persist.XXXXXX)"
+    TRACE_PREFIX="/tmp/ge007_save_$$"
+fi
 SEED0_TRACE="${TRACE_PREFIX}_seed_folder0.jsonl"
 SEED1_TRACE="${TRACE_PREFIX}_seed_folder1.jsonl"
 RELOAD_TRACE="${TRACE_PREFIX}_reload.jsonl"
@@ -62,8 +76,10 @@ SEED1_LOG="${TRACE_PREFIX}_seed_folder1.log"
 RELOAD_LOG="${TRACE_PREFIX}_reload.log"
 
 cleanup() {
-    rm -rf "$TMPDIR"
-    rm -f "${TRACE_PREFIX}"*.jsonl "${TRACE_PREFIX}"*.log
+    if [[ "$REMOVE_ARTIFACTS" -eq 1 ]]; then
+        rm -rf "$TMPDIR"
+        rm -f "${TRACE_PREFIX}"*.jsonl "${TRACE_PREFIX}"*.log
+    fi
     validation_release_runtime_lock
 }
 trap cleanup EXIT INT TERM
@@ -127,6 +143,9 @@ run_seed_case() {
 }
 
 echo "=== Save Persistence ==="
+if [[ -n "$OUT_DIR" ]]; then
+    echo "  out-dir: $OUT_DIR"
+fi
 echo "  savedir: $TMPDIR"
 
 run_seed_case \

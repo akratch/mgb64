@@ -5,6 +5,8 @@
 # This is a scripted end-state smoke, not an organic objective-completion route.
 # It direct-boots Dam, triggers the deterministic mission-success hook, and
 # verifies the frontend reaches the mission-report path without failure/KIA flags.
+# It then restarts without the mission-success hook and verifies the completed
+# Dam/Agent save state is visible from the same savedir.
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,6 +22,7 @@ OUT_DIR="/tmp/mgb64_dam_mission_flow_$$"
 LEVEL=33
 MISSION_END_FRAME=120
 EXIT_DELAY=60
+RELOAD_FRAME=240
 
 usage() {
     cat <<'USAGE'
@@ -98,8 +101,10 @@ TRACE="$OUT_DIR/trace.jsonl"
 LOG="$OUT_DIR/run.log"
 SUMMARY="$OUT_DIR/summary.json"
 SAVE_DIR="$OUT_DIR/save"
+RELOAD_TRACE="$OUT_DIR/reload_trace.jsonl"
+RELOAD_LOG="$OUT_DIR/reload.log"
 
-rm -f "$TRACE" "$LOG" "$SUMMARY"
+rm -f "$TRACE" "$LOG" "$SUMMARY" "$RELOAD_TRACE" "$RELOAD_LOG"
 mkdir -p "$SAVE_DIR"
 
 echo "=== Dam Mission Flow Smoke ==="
@@ -109,6 +114,7 @@ echo "  ROM:     $ROM"
 echo "  level:   $LEVEL"
 echo "  mission-end-frame: $MISSION_END_FRAME"
 echo "  exit-delay: $EXIT_DELAY"
+echo "  reload-frame: $RELOAD_FRAME"
 
 if ! validation_run_with_timeout "$TIMEOUT_SECONDS" \
     env -u GE007_DEBUG \
@@ -222,6 +228,27 @@ for record in records:
         except (TypeError, ValueError):
             pass
 
+def completion_frames(frames, folder, level_id, difficulty_id):
+    hits = []
+    for frame in frames:
+        save = frame.get("save") or {}
+        valid = save.get("valid") or []
+        level = save.get("level") or []
+        difficulty = save.get("difficulty") or []
+        if len(valid) > folder and len(level) > folder and len(difficulty) > folder:
+            try:
+                if (
+                    int(valid[folder]) == 1
+                    and int(level[folder]) == level_id
+                    and int(difficulty[folder]) == difficulty_id
+                ):
+                    hits.append(frame.get("f"))
+            except (TypeError, ValueError):
+                pass
+    return hits
+
+mission_save_hits = completion_frames(records, 0, 0, 0)
+
 summary = {
     "status": "pass",
     "records": len(records),
@@ -232,6 +259,8 @@ summary = {
     "first_report_frame": report_records[0]["f"] if report_records else None,
     "first_success_report_frame": success_report_records[0]["f"] if success_report_records else None,
     "first_title_frame": title_records[0]["f"] if title_records else None,
+    "mission_save_completion_frames": mission_save_hits,
+    "first_mission_save_completion_frame": mission_save_hits[0] if mission_save_hits else None,
     "max_dl": max_dl,
     "transitions": transitions,
 }
@@ -251,6 +280,8 @@ if not success_report_records:
     failures.append("mission report was not reached with all_obj_complete=1, mission_failed=0, bond_kia=0")
 if not title_records:
     failures.append("title stage was not observed after mission end")
+if not mission_save_hits:
+    failures.append("mission-success trace never reported folder 0 Dam/Agent completion in save state")
 for key, value in max_dl.items():
     if value != 0:
         failures.append(f"display-list resolve counter {key} reached {value}")
@@ -273,7 +304,123 @@ print(f"  records={len(records)} objective_records={len(objective_records)}")
 print(f"  first_report_frame={summary['first_report_frame']}")
 print(f"  first_success_report_frame={summary['first_success_report_frame']}")
 print(f"  first_title_frame={summary['first_title_frame']}")
+print(f"  first_mission_save_completion_frame={summary['first_mission_save_completion_frame']}")
 print(f"  max_dl={json.dumps(max_dl, sort_keys=True)}")
+print(f"summary_json: {summary_path}")
+PY
+
+if [[ ! -s "$SAVE_DIR/ge007_eeprom.bin" ]]; then
+    echo "FAIL: mission-flow run did not create ge007_eeprom.bin" >&2
+    exit 1
+fi
+
+if ! GE007_AUTO_START='20:3,80:3,140:3,200:3' \
+     validation_run_with_timeout "$TIMEOUT_SECONDS" \
+    env -u GE007_DEBUG \
+        SDL_AUDIODRIVER="${GE007_VALIDATION_SDL_AUDIODRIVER:-dummy}" \
+        GE007_MUTE=1 \
+        GE007_DETERMINISTIC_STABLE_COUNT=1 \
+        GE007_NO_VSYNC=1 \
+        GE007_BACKGROUND=1 \
+        GE007_NO_INPUT_GRAB=1 \
+        GE007_TRACE_FLOW_ONLY=1 \
+        "$BINARY" \
+        --savedir "$SAVE_DIR" \
+        --rom "$ROM" \
+        --deterministic \
+        --trace-state "$RELOAD_TRACE" \
+        --screenshot-frame "$RELOAD_FRAME" \
+        --screenshot-label dam_mission_reload \
+        --screenshot-exit >"$RELOAD_LOG" 2>&1; then
+    echo "FAIL: mission-flow save reload capture failed" >&2
+    tail -60 "$RELOAD_LOG" | sed 's/^/  /' >&2
+    exit 1
+fi
+
+if grep -qF "[GEASSERT]" "$RELOAD_LOG"; then
+    echo "FAIL: GEASSERT fired during mission-flow save reload" >&2
+    grep -F "[GEASSERT]" "$RELOAD_LOG" | head -5 | sed 's/^/  /' >&2
+    exit 1
+fi
+if [[ ! -s "$RELOAD_TRACE" ]]; then
+    echo "FAIL: reload trace was not written: $RELOAD_TRACE" >&2
+    tail -60 "$RELOAD_LOG" | sed 's/^/  /' >&2
+    exit 1
+fi
+
+python3 - "$RELOAD_TRACE" "$SUMMARY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+reload_trace_path = Path(sys.argv[1])
+summary_path = Path(sys.argv[2])
+
+records = []
+for line in reload_trace_path.read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if line:
+        records.append(json.loads(line))
+
+def completion_frames(frames, folder, level_id, difficulty_id):
+    hits = []
+    for frame in frames:
+        save = frame.get("save") or {}
+        valid = save.get("valid") or []
+        level = save.get("level") or []
+        difficulty = save.get("difficulty") or []
+        if len(valid) > folder and len(level) > folder and len(difficulty) > folder:
+            try:
+                if (
+                    int(valid[folder]) == 1
+                    and int(level[folder]) == level_id
+                    and int(difficulty[folder]) == difficulty_id
+                ):
+                    hits.append(frame.get("f"))
+            except (TypeError, ValueError):
+                pass
+    return hits
+
+front_records = [r for r in records if isinstance(r.get("front"), dict)]
+title_records = [
+    r for r in front_records
+    if int(r["front"].get("loaded_stage", -1)) == 90
+    and int(r["front"].get("active_stage", -1)) == 90
+]
+reload_save_hits = completion_frames(records, 0, 0, 0)
+
+summary = json.loads(summary_path.read_text(encoding="utf-8"))
+summary["reload_records"] = len(records)
+summary["reload_front_records"] = len(front_records)
+summary["first_reload_title_frame"] = title_records[0]["f"] if title_records else None
+summary["reload_save_completion_frames"] = reload_save_hits
+summary["first_reload_save_completion_frame"] = reload_save_hits[0] if reload_save_hits else None
+
+failures = []
+if not records:
+    failures.append("reload trace had no records")
+if not title_records:
+    failures.append("reload trace never observed title stage")
+if not reload_save_hits:
+    failures.append("reload trace did not report folder 0 Dam/Agent completion from persisted save")
+
+if failures:
+    summary["status"] = "fail"
+    summary.setdefault("failures", []).extend(failures)
+
+summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+if failures:
+    print("FAIL: Dam mission-flow reload persistence")
+    for failure in failures:
+        print(f"  {failure}")
+    print(f"summary_json: {summary_path}")
+    raise SystemExit(1)
+
+print("PASS: Dam mission-flow reload persistence")
+print(f"  reload_records={len(records)} reload_front_records={len(front_records)}")
+print(f"  first_reload_title_frame={summary['first_reload_title_frame']}")
+print(f"  first_reload_save_completion_frame={summary['first_reload_save_completion_frame']}")
 print(f"summary_json: {summary_path}")
 PY
 

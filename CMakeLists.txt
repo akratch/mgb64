@@ -40,6 +40,7 @@ if(BUILD_TESTING)
         COMMAND python3 -m py_compile
             "${CMAKE_SOURCE_DIR}/tools/audit_oracle_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/audit_intro_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_minimap_dump.py"
             "${CMAKE_SOURCE_DIR}/tools/audit_render_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/audit_screenshot_health.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_audio.py"
@@ -53,6 +54,10 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/summarize_intro_census.py"
             "${CMAKE_SOURCE_DIR}/tools/summarize_build_warnings.py"
             "${CMAKE_SOURCE_DIR}/tools/assert_stub_hits_zero.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_hidden_guard_contract.py"
+            "${CMAKE_SOURCE_DIR}/tools/audit_knife_impact.py"
+            "${CMAKE_SOURCE_DIR}/tools/campaign_route_smoke.py"
+            "${CMAKE_SOURCE_DIR}/tools/route_target_reach.py"
             "${CMAKE_SOURCE_DIR}/tools/check_markdown_links.py"
             "${CMAKE_SOURCE_DIR}/tools/check_shell_syntax.py"
             "${CMAKE_SOURCE_DIR}/tools/check_github_branch_protection.py"
@@ -203,7 +208,7 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_room_render_matrix_smoke room_render_matrix_smoke.sh 180)
     add_port_validation_smoke(port_room_transition_matrix_smoke room_transition_matrix_smoke.sh 180)
     add_port_validation_smoke(port_route_room_render_matrix_smoke route_room_render_matrix_smoke.sh 600)
-    add_port_validation_smoke(port_rom_oracle_route_contract route_contract_smoke.sh 300
+    add_port_validation_smoke(port_rom_oracle_route_contract route_contract_smoke.sh 900
         --native-smoke
         --all
         --timeout 120
@@ -220,7 +225,8 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_monitor_behavior_smoke monitor_behavior_smoke.sh 120)
     add_port_validation_smoke(port_setup_link_smoke setup_link_smoke.sh 180)
     add_port_validation_smoke(port_stage_mission_setup_smoke stage_mission_setup_smoke.sh 180)
-    add_port_validation_smoke(port_dam_progression_smoke dam_progression_smoke.sh 180)
+    add_port_validation_smoke(port_campaign_route_smoke campaign_route_smoke.sh 900)
+    add_port_validation_smoke(port_dam_progression_smoke dam_progression_smoke.sh 300)
     add_port_validation_smoke(port_facility_progression_smoke facility_progression_smoke.sh 240)
     add_port_validation_smoke(port_runway_progression_smoke runway_progression_smoke.sh 240)
     add_port_validation_smoke(port_silo_progression_smoke silo_progression_smoke.sh 240)
@@ -241,6 +247,10 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_door_behavior_smoke door_behavior_smoke.sh 120)
     add_port_validation_smoke(port_door_motion_smoke door_motion_smoke.sh 120)
     add_port_validation_smoke(port_interaction_smoke interaction_smoke.sh 120)
+    add_port_validation_smoke(port_hidden_guard_contract_smoke hidden_guard_contract_smoke.sh 240)
+    add_port_validation_smoke(port_knife_impact_smoke knife_impact_smoke.sh 180)
+    add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
+    add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
     add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
     add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360

@@ -1,6 +1,7 @@
 # Modern Minimap: Design, Architecture, and Game Hooks
 
-> Status: **implemented vertical slice plus local tactical/objective pass.**
+> Status: **implemented vertical slice plus all-stage local tactical/objective
+> validation pass.**
 > This is a code-grounded survey for a sharp, modern minimap with adaptive
 > local layout, objective pins, player heading, current-tile context, and
 > temporary enemy guard reveals when guards fire. Code references were traced
@@ -66,6 +67,14 @@ Current implementation state:
   room/floor context, which is the primary scale-alignment validation cue.
 - Guard fire reveals stale-fade quickly when the guard dies, is removed, becomes
   hidden, or loses its prop.
+- Enemy reveal slots store guard literal IDs and resolve fresh `ChrRecord`
+  pointers per tick. They no longer retain raw character pointers across guard
+  removal/reuse.
+- `tools/minimap_smoke.sh` is the promoted local ROM-backed gate. It runs all 20
+  solo stages by default, audits `GE007_MINIMAP_DUMP`, setup pad/objective
+  dumps, and `GE007_MINIMAP_OVERLAY_DUMP`, then repeats disabled-path parity
+  checks to prove the cache still builds while snapshots and overlay drawing
+  remain off.
 
 ---
 
@@ -933,7 +942,7 @@ Dump:
 
 Compare against existing trace patterns in `src/platform/port_trace.c`.
 
-Visual checks:
+Visual/manual checks:
 
 1. Draw the player's current STAN tile highlighted.
 2. Draw the player marker at `prop->pos`.
@@ -961,12 +970,20 @@ Use stages that stress different aspects:
 - Multiplayer: either disabled by default or one snapshot per split-screen pane.
 - Death/menu/watch states: minimap should hide or dim consistently with HUD.
 - Retro filter on/off: minimap remains sharp when `SharpOverlay=1`.
-- Screenshot capture: screenshots include the native overlay in the SDL capture
-  path, which makes minimap crops useful for automated visual review.
+- Screenshot capture: screenshots are still useful scene-health evidence. The
+  promoted automated overlay proof is `GE007_MINIMAP_OVERLAY_DUMP`, which records
+  queued/drawn frames, pin counts, draw calls, framebuffer size, and vertices
+  flushed without depending on screenshot timing.
 
 The debug dump updates after setup conversion and on each queued snapshot when
 `GE007_MINIMAP_DUMP` is set, so validation can inspect setup readiness plus live
 player/objective/enemy state instead of only the initial stage geometry.
+
+`tools/audit_minimap_dump.py` cross-checks these artifacts. With
+`--require-objective-pins-from-stage`, it derives expected objective icons from
+setup criteria, object tags, pads, and bound pads instead of hard-coding level
+expectations. With `--reference-minimap`, it compares enabled/disabled cache
+parity for stage, readiness, geometry counts, overflow count, rooms, and bbox.
 
 ---
 

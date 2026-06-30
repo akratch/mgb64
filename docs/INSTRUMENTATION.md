@@ -57,6 +57,7 @@ The public validation surface is organized into these lanes:
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
 | Scripted look | Deterministic input-freeze isolation while preserving authored `GE007_AUTO_LOOK_*` probes | `scripted_look_smoke.sh` |
 | Damage HUD | Deterministic Bond damage, active health/damage timers, visible health/armor rings, optional HUD-class triangle check | `damage_hud_smoke.sh` |
+| Combat | Active guard fire, hidden-guard no-phantom-fire/no-damage gates, thrown-knife impact and flight-SFX crash regressions | `hidden_guard_contract_smoke.sh`, `knife_impact_smoke.sh`, `knife_throw_sfx_smoke.sh` |
 | Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
 | Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
 | Multiplayer | Split-screen deathmatch boot; asserts the two framebuffer halves are measurably dissimilar | `mp_smoke.sh` |
@@ -788,6 +789,26 @@ The output directory defaults to `/tmp/mgb64_damage_hud_smoke_*` and contains
 per-level screenshots, logs, JSONL traces, render audit JSON, damage-HUD audit
 JSON, and a `summary.tsv`. Keep these ROM-derived artifacts local.
 
+### Combat guard and knife smokes
+
+```sh
+./tools/hidden_guard_contract_smoke.sh --no-build
+./tools/knife_impact_smoke.sh --no-build
+./tools/knife_throw_sfx_smoke.sh --no-build
+```
+
+The hidden-guard lane warps a Dam guard into an active firing setup, then hides
+it in two modes. The H2 mode clears `CHRFLAG_00040000` and requires the hidden
+guard's AI/firecount to freeze with no further Bond damage. The H1 mode leaves
+the update-action bit set, requires the AI to keep ticking, and still requires
+firecount and Bond health to stay stable, isolating the hidden-fire discharge
+gate. Both modes fail if the guard did not fire while visible.
+
+The knife impact lane equips Bond with throwing knives, lands an accepted Bond
+knife hit on a live guard, and proves the throwknife guard-impact branch exits
+cleanly instead of crashing. The knife SFX lane keeps thrown knives in flight
+long enough to require only valid whoosh SFX submissions from the object handler.
+
 ### Stability soak
 
 ```sh
@@ -1360,7 +1381,294 @@ Runs deterministic processes against an isolated `--savedir`. The first process
 seeds Dam/Agent completion into folder 0; the second process seeds a
 Dam-through-Runway Secret Agent range into folder 1; the final process starts
 without the seed helper and verifies the state trace reloads both folders from
-`ge007_eeprom.bin`.
+`ge007_eeprom.bin`. Use `--out-dir DIR` to preserve traces, logs, screenshots,
+the isolated save directory, and the final EEPROM. The state trace includes the
+`save` block while still in the frontend/title path, before a live player exists.
+The Dam mission-flow smoke below separately proves that the scripted mission
+success path itself writes folder 0 Dam/Agent completion and that a fresh process
+reload observes it from the generated EEPROM.
+
+### Native playability regression suite
+
+```sh
+tools/native_playability_regression_suite.sh --no-build \
+  --out-dir "$(mktemp -d /tmp/mgb64_native_playability_regression.XXXXXX)"
+```
+
+This is the long-running local guard orchestrator for broad native-port posture.
+It can build once, run CTest, then run focused ROM-backed gates for playability,
+structured campaign route contracts and input traversal, Dam progression,
+Surface II final flow, combat/guard/knife behavior, renderer parity, MP
+split-screen, save persistence, and minimap coverage. Use `--skip-ctest` after a
+separate full CTest pass. Use `--skip-combat` only when iterating outside combat.
+Use `--full` when you want the broader all-level variants where the sub-gates
+expose them.
+
+### Campaign route smoke
+
+```sh
+tools/campaign_route_smoke.sh --no-build \
+  --out-dir "$(mktemp -d /tmp/mgb64_campaign_route_smoke.XXXXXX)"
+```
+
+`tools/campaign_route_smoke.sh` runs JSON route contracts from
+`tools/campaign_routes/` through the native binary, then audits trace evidence.
+Each route runs with an isolated clean save directory under its artifact
+directory so stale EEPROM files cannot satisfy persistence assertions.
+Each passing route now prints a compact evidence line and writes an `evidence`
+object into its `summary.json`. The evidence block reports the highest
+conservative capability tier (`T0` boot/trace through `T5` stage loop),
+stock-input vs. direct-setup status, opened door objects, collect types,
+nonzero keyflags, objective/status evidence, report frame, and reload frame. The
+top-level summary also records tier counts and route-class counts so broad runs
+show whether they advanced traversal, interaction, mission-state, or stage-loop
+coverage.
+Use `tools/route_target_reach.py` when scouting a route toward a specific setup
+object without making that target a pass/fail assertion yet. It reads route
+artifacts, matches setup rows with repeated `--target KEY=VALUE` filters, and
+reports best horizontal, same-floor, vertical, and full-distance approach. Pass
+`--setup-dump existing/stage_pads.jsonl` to analyze older scout artifacts that
+did not request their own setup dump.
+The default routes currently cover input traversal for Dam, Facility, Surface 1,
+Surface II, Bunker 1, Frigate, Statue, Train, Control, Caverns, and Cradle,
+plus scripted Dam objective criteria progression, Dam guard-pressure combat,
+Dam player-fire combat, a Dam scripted mission composite that joins native
+traversal with objective/report/save-reload proof, Dam mission-report return and Surface II
+final exit with save/reload persistence, Bunker 1 datathief
+equipment/debug-dump regression, Facility door open/reverse interaction,
+Facility stock-spawn bathroom-door traversal, Facility stock-spawn two-door
+chain, Surface 1 key pickup, Bunker 1 stock-spawn door/collect and
+two-door/collect chains, Cradle stock-spawn body-armour pickup, plus
+Statue/Control/Caverns stock-spawn door traversal contracts. Dam has
+both the existing ROM-oracle-backed spawn movement route and a native-only
+multi-waypoint controller route that pushes deeper into the later Dam pad
+cluster. Surface 1, Surface II, Frigate, Statue, Train, and Cradle also have
+native-only multi-waypoint controller routes: Surface 1 reaches later snowfield
+pads `80`, `79`, and `77`; Surface II drives from the outdoor stock spawn
+through setup pads `30`, `71`, `70`, `69`, `68`, and broad late pad `78` with
+more than 10,500 horizontal units of reach; Frigate reaches the
+stern-side/pad-150 exterior sequence and a far deck pad `145` after more than
+2,800 horizontal units; Statue reaches
+park/lower-cluster pads `222`, `214`, `207`, and `208`; Train reaches the
+room-3 car cluster around boundpads `12` and `14`; and Cradle reaches pad `121`
+plus a later authored pad cluster. Statue also has an `input_interaction` route
+that backs from stock spawn to door object `183`/pad `6`, sweeps view with
+controller look input, presses real `B`, and asserts normal `door allow`,
+`0->1`, opening displacement, and finish-open trace evidence. Cradle also has an `input_interaction` route
+that backs from stock spawn to body-armour object `115`/pad `124` and asserts
+object type `21` collect/free trace evidence. Input traversal routes are labelled
+`input_traversal`; they require active
+controller-path input automation, forbid direct state automation, check position
+milestones, and reject mission-failure/KIA frontend flags. The ROM-oracle Dam
+route inherits native input windows, config, frame count, and deterministic
+speedframes from `tools/rom_oracle_routes/dam_strafe_matrix.json`. The native
+Dam multi-waypoint route and the other traversal routes are campaign-route specs
+with declarative `input_segments` controller windows. Each segment has `start`,
+`duration`, and `inputs` fields, and compiles to the existing native
+`GE007_AUTO_*` input windows. Supported input names include movement directions,
+`a`, `b`, `fire`, `aim`, `start`, C-buttons, D-pad, look, menu/frontend,
+reload, and weapon-cycle inputs. The route loader validates segment keys, input
+names, and duplicate raw env collisions so route authors do not have to
+hand-maintain comma-separated automation strings for normal controller input.
+Scripted contracts can also use `input_segments` for their real-button
+portions, such as Facility door `B` presses, Dam guard-fire input, and Surface
+II final-pad activation.
+
+The input traversal routes also carry setup-backed waypoint assertions through
+`setup_target_milestones`. These match real stage setup pad rows from a
+per-route `GE007_DUMP_STAGE_PADS` artifact and require the controller-driven
+player trace to pass within a conservative horizontal threshold. This ties the
+fragile traversal lanes to authored setup geography instead of only checking
+relative displacement. The waypoint assertions are still traversal evidence, not
+objective-completion proof.
+
+Scripted contracts use `scripted_events` for deterministic setup hooks instead
+of raw `GE007_AUTO_*` strings where the route harness has semantic coverage.
+Supported sections cover pad warps, chr-relative warps, face-coordinate events,
+forced player pose, tag damage, stage flag set/unset, guard AI assignment,
+item add/equip, debug dump, mission end, and title-return exit delay. The
+compiler emits the existing native automation env and records it in each route
+summary as `scripted_event_env`; the loader rejects collisions with manually
+authored raw env for the same native key. This keeps the contracts declarative
+while preserving the native hooks already used by the validation binary. The
+deterministic mission/equipment/door/pickup/combat contracts are labelled
+`scripted_contract`; they prove mission, interaction, inventory, combat, and
+stability contracts and provide a reusable route assertion format, but they are
+not yet full organic objective-completion navigation routes.
+Stock-spawn interaction routes such as Facility, Bunker 1, Control, and Caverns
+are labelled `input_interaction`; they use only controller input and normal
+interact paths, but still prove focused interaction/progression slices rather
+than full mission navigation.
+
+The route auditor fails on missing deterministic exit markers, GEASSERT rows,
+render/DL counters, bad-command/crash/nan counters, missing position,
+objective, generic state, or setup-target milestones, missing required input
+automation, unexpected direct state automation, missing required log patterns
+or regex log count assertions, mission failure/KIA flags, missing title return,
+or title return before objective completion when the route requires it. Generic
+state milestones can assert nested trace paths such as
+`combat.health.actual_h`, `watch.hands.active[1]`, or `wr_raw.weaponnum`.
+Tier reporting is informational and never relaxes these pass/fail assertions.
+`setup_target_milestones` match route-authored target fields against a
+per-route `GE007_DUMP_STAGE_PADS` artifact and compare player position to the
+matched setup row with horizontal, full-distance, or Y-delta limits. This keeps
+scripted placement contracts and traversal waypoint checks tied to real stage
+setup objects instead of hard-coded player coordinates. Route specs can also
+assert `save_completion` in the mission trace and `reload_save_completion`,
+which restarts the binary against the route save directory without route
+automation and verifies the persisted `save` block from the generated EEPROM.
+
+The Dam mission-report and Surface II final-exit contracts use the reusable
+reload assertion. Dam requires the scripted success path to reach menu `12`, set
+folder 0 Dam/Agent completion in the mission trace, restart from the same
+savedir, and observe that persisted completion again on title/menu frames.
+Surface II requires the final pad path to complete Agent-relevant objectives,
+return to title/menu state, set folder 0 Surface II/Agent completion, restart
+from the same savedir, and observe the persisted completion again.
+
+The Dam native mission composite contract is a bridge between traversal and
+mission-state proof. It starts from normal Dam spawn, runs the same
+controller-driven multi-waypoint lane through setup pads `10`, `293`, `287`,
+and `288`, then uses declarative scripted events to advance Dam's real objective
+criteria, trigger a success report, write folder 0 Dam/Agent completion, and
+verify that completion after a fresh process reload. This proves the movement,
+objective vector, report path, and persistence systems can compose in one route,
+but it still does not claim organic alarm/modem/data/bungee placement.
+
+The Surface II native multi-waypoint traversal contract is input-only. It starts
+from the normal Surface II spawn at setup pad `30`, drives `forward` and `left`,
+passes near setup pads `71`, `70`, `69`, and `68`, and reaches the broad late
+outdoor area near pad `78` after more than 10,500 horizontal units of reach.
+It requires active controller-path input, no direct state automation, stable
+front-end/render counters, and setup-backed waypoint proximity. This proves a
+long native outdoor traversal lane, not objective setup, final silo activation,
+mission report, or persistence from an organic completion.
+
+The Facility door contract uses deterministic setup only to place Bond at door
+object `158`, then presses real `B` input twice. It requires two interact
+`door allow` traces, a `0->1` open transition, opening displacement, a `1->2`
+reverse-to-closing transition, closing displacement, moving-door camera
+clearance hits with non-zero `hit_door_open`, setup-derived proximity to door
+object `158`/pad `77`, and post-sequence health/stage stability. This makes the
+door regression a campaign route contract without claiming stock-like Facility
+navigation.
+
+The Facility stock-spawn bathroom-door traversal contract is input-only. It
+starts from normal Facility spawn, drives `forward`+`left`, sweeps view with
+`look_left`, presses real `B`, and requires a normal `door allow` for bathroom
+door object `159`, a `0->1` open transition, at least 20 opening displacement
+rows, setup-derived proximity to object `159` pads `67` and `68`, more than
+1,200 horizontal units of later reach, and stable Facility frontend state. This
+proves one organic spawn-to-door-to-later-area Facility lane without claiming
+objective completion or the scripted object-`158` door regression path.
+
+The Facility stock-spawn two-door chain contract extends that lane. It opens
+object `159`, doubles back to secondary door object `155` near pad `75`, and
+opens that door through another real `B` interaction. It requires setup-derived
+proximity to object `159` pads `67`/`68` and object `155` pad `75`, one
+`door allow` and `0->1` open transition for each door, object-`155`
+displacement plus finish-open rows, and stable Facility frontend state after
+the second door opens. This is stronger route-authored interaction coverage,
+but it still does not claim Facility objectives, keycards, bottling-room flow,
+alarms, or mission completion.
+
+The Frigate native multi-waypoint traversal contract is input-only. It starts
+from normal Frigate spawn near pad `176`, drives `back`+`right` into the
+stern-side/lifeboat cluster at pads `153`, `152`, `151`, and `150`, then drives
+`forward`+`right` across pads `149`, `144`, `60`, and `145`. It requires more
+than 2,800 horizontal units of reach with stable Frigate frontend state. This
+proves a much deeper deck traversal lane than the short pad-150 route without
+claiming objective, hostage, interior-door, or ending progress.
+
+The Surface 1 key pickup contract uses deterministic setup only to place Bond on
+the tagged key's pad. The normal proximity pickup path then emits
+`collect begin`/`collect success`, raises inventory count, sets keyflags
+`0x00000001`, proves setup-derived proximity to key pad `17`, and remains
+stable through frame 180. This proves pickup and key inventory behavior without
+claiming a stock-like route from Surface spawn to the hut/key area.
+
+The Bunker 1 stock-spawn door/collect contract is input-only. It starts from the
+normal Bunker 1 spawn, drives `forward`+`right`, presses real `B`, and requires
+the first corridor door object `140` to emit a normal `door allow`, a `0->1`
+open transition, and opening displacement rows. The route then continues into
+the next-room prop cluster near setup object `32`/pad `10052`, emits normal
+collect `begin`/`free` traces for object type `20`, and remains on Bunker 1
+without mission-failure/KIA frontend flags. This proves one organic
+spawn-to-door-to-pickup interaction path without claiming objective completion.
+
+The Bunker 1 stock-spawn two-door/collect contract extends that lane. It opens
+object `140`, collects the same next-room object type `20`, turns toward second
+door object `138` near setup pad `14`, and opens it through another real `B`
+interaction. It requires setup-derived proximity to object `140`/pad `16`,
+object `32`/pad `10052`, and object `138`/pad `14`, plus `door allow`, `0->1`
+transition, displacement, and finish-open rows for both doors. This is stronger
+stock-spawn interaction coverage, but it still does not claim Bunker 1 keycard,
+objective, datathief pickup, mission ending, report, or persistence progress.
+
+The Train native multi-waypoint traversal contract is input-only. It starts from
+the normal Train spawn at pad `186`, drives `forward`+`left`, reaches the room-3
+car cluster near boundpads `12` and `14`, and requires more than 790 horizontal
+units of reach with stable Train frontend state. This proves a deeper
+narrow-car traversal lane than the short spawn movement guard without claiming
+objective, hostage, door, or ending progress.
+
+The Statue stock-spawn door traversal contract is input-only. It starts from
+normal Statue spawn, backs/right-strafes to spawn-side door object `183` near
+setup pad `6`, uses look input to enter the door interaction angle, and presses
+real `B` once. It requires a normal `door allow`, `0->1` door-open transition,
+opening displacement rows, a finish-open row, setup-derived proximity to stock
+spawn pad `21` and door object `183`/pad `6`, and stable Statue frontend state.
+This proves one organic spawn-to-door interaction lane without claiming Valentin,
+flight-recorder, objective, ending, report, or persistence progress.
+
+The Control stock-spawn door traversal contract is input-only. It drives
+`forward`+`right`, presses real `B` at console-area door object `144`, requires
+a normal `door allow`, `0->1` door-open transition, opening displacement rows,
+and setup-derived proximity to door object `144`/pad `163`. It then pushes
+forward into the later console-area cluster near pad `49` and remains on
+Control without mission-failure/KIA frontend flags. This proves one organic
+spawn-to-door-to-later-area interaction lane without claiming objective
+completion.
+
+The Caverns stock-spawn door traversal contract is input-only. It drives to
+door object `144`, presses real `B`, backs off to clear the opening, then
+pushes forward into the next room cluster near pad `191`. It requires a normal
+`door allow`, `0->1` door-open transition, opening displacement rows,
+setup-derived proximity to door object `144`/pad `108`, and stable Caverns
+frontend state through the route exit. This proves one organic
+spawn-to-door-to-next-room interaction lane without claiming objective
+completion.
+
+The Dam guard-pressure contract uses deterministic setup only to place Bond near
+a live guard and put that guard on the persistent attack AI list. The normal
+guard-owned shot path then emits `GUARD_BOND_SHOT` accumulator rows, increments
+the guard firecount, damages Bond, and leaves the stage/front-end state stable.
+The final health floor accepts one or two normal `0.0625` damage applications
+while still requiring Bond survival, active Dam stage, and no mission failure.
+This proves route-level combat pressure without claiming stock-like Dam
+navigation or stealth/combat decision making.
+
+The Dam player-fire contract uses deterministic setup only to place Bond near a
+live guard, then holds real fire input. The normal player-owned weapon path must
+emit accepted guard-hit events, advance weapon shot counters, apply lethal guard
+damage, and remain stable through the route exit. This proves route-level
+offensive combat without claiming stock-like Dam approach or aiming decisions.
+
+### Minimap smoke
+
+```sh
+tools/minimap_smoke.sh --no-build \
+  --out-dir "$(mktemp -d /tmp/mgb64_minimap_smoke.XXXXXX)"
+```
+
+The minimap smoke direct-boots all 20 solo stages by default. For each enabled
+capture it audits screenshot health, render health, `GE007_MINIMAP_DUMP`, setup
+pad/objective dumps, and `GE007_MINIMAP_OVERLAY_DUMP`. The minimap auditor
+derives expected objective pins from stage setup criteria instead of hard-coding
+per-level pins. The disabled pass repeats selected stages with
+`Input.MinimapEnabled=0`, requires no queued snapshots and overlay `no_queue`,
+and compares the disabled cache against the enabled reference for geometry
+parity.
 
 ### Deterministic regression (pixel / state / audio)
 
@@ -2120,12 +2428,20 @@ smoke runs and human play sessions.
 | `GE007_PORTAL_BACKFACE_PROJECT_FALLBACK=0|1` | toggle projected-visible backface traversal in native portal BFS; default `0` keeps the old broad native fallback opt-in only |
 | `GE007_PORTAL_PARENT_CLIP_MIN_SPAN=N` | skip parent-bbox clipping only when the parent window is narrower/shorter than `N`; default `0` means stock-style parent clipping always applies |
 | `GE007_PORTAL_ACCEPTED_MIN_SPAN=N` | expand accepted portal bboxes to at least `N` pixels for A/B only; default `0` disables the old native widening that could admit stock-rejected portals |
+| `GE007_PORTAL_ACCEPTED_PAD=N` / `_X=N` / `_Y=N` | pad accepted portal bboxes by a fixed screen-space margin for A/B; default `0`, clamped to the current screen bounds |
 | `GE007_PORTAL_RETRY_SCREEN_CLIP=1` | retry portal screen clipping without the parent bbox after an empty clip for A/B only; default off |
 | `GE007_PORTAL_LEGACY_PROJECT_CLAMP=1` | restore the old native `sub_GAME_7F0B5864` pre-clamp behavior for legacy over-admission A/B only; default returns stock-style raw projected bboxes |
 | `GE007_PORTAL_NEAR_CLIP=0|1` | toggle native portal near-plane epsilon clipping; default `1` avoids huge near-plane projection values while preserving stock-style bbox rejection through caller clipping |
-| `GE007_PORTAL_EDGE_RESCUE=0|1` | toggle the default native portal-edge rescue for rooms rejected only because the projected portal aperture collapsed to an empty screen rect; rescued rooms must be one-hop neighbors of rendered rooms, pass room-AABB screen culling, and do not enqueue more portals |
+| `GE007_PORTAL_EDGE_RESCUE=0|1` | toggle the default native portal-edge rescue for rooms rejected because the projected portal aperture collapsed or failed; empty-bbox rescues can continue through connected portals with a bounded screen rect, while project-fail rescues default to trigger-only fallback handling |
+| `GE007_PORTAL_EDGE_RESCUE_CONTINUE=0|1` / `GE007_PORTAL_EDGE_RESCUE_MIN_SPAN=N` / `GE007_PORTAL_EDGE_RESCUE_BACKFACE_FALLBACK=0|1` | tune continuation for collapsed portal-edge rescues; defaults keep continuation enabled with a 24px minimum continuation bbox and projected backface fallback only while draining rescued continuation portals |
+| `GE007_PORTAL_PROJECT_FRUSTUM_FALLBACK=0|1` / `GE007_PORTAL_PROJECT_FRUSTUM_FALLBACK_MAX_EXTRA=N` | toggle guarded frustum rebuild after a portal projection failure; default `1` rebuilds only when the frustum result is at most `N` rooms broader than the portal result (`12` by default), avoiding broad over-admission while fixing small missing-room corrections such as Streets pad 129 |
+| `GE007_PORTAL_PROJECT_RESCUE=0|1` / `GE007_PORTAL_PROJECT_RESCUE_ADMIT=0|1` / `GE007_PORTAL_PROJECT_RESCUE_CONTINUE=0|1` | tune project-fail rescue detection; default detects projected destination AABBs, does not directly admit the failed destination, and does not continue from project-fail candidates |
 | `GE007_AUTO_NEIGHBOR_ROOMS=0|1` | legacy alias for `GE007_PORTAL_EDGE_RESCUE` when the canonical variable is unset |
 | `GE007_DRAW_NEIGHBOR_ROOMS=1` | broad one-hop neighbor room diagnostic; remains opt-in because it admits every marked portal neighbor with a fullscreen bbox and can over-admit unrelated rooms |
+| `GE007_VIS_SUPPLEMENT=0|1` / `GE007_VIS_SUPPLEMENT_MAX_EXTRA=N` / `GE007_VIS_SUPPLEMENT_MAX_AABB_GAP=N` / `GE007_VIS_SUPPLEMENT_MAX_UNPROJECTED_AABB_GAP=N` | default-on bounded visibility supplement; after normal portal/global visibility it admits a small number of frustum-visible rooms whose AABBs are adjacent to already-rendered rooms, catching room-owned floor/ceiling seams without rendering all rooms; unprojectable candidates default to a stricter 1-unit adjacency gate |
+| `GE007_TRACE_VIS_SUPPLEMENT=1` | log each room admitted by the bounded visibility supplement, including nearest rendered room, AABB distance, and diagnostic projected bbox |
+| `GE007_FORCE_ADMIT_ROOMS='25,...'` | diagnostic-only room draw-list override; adds listed rooms after normal portal visibility with the current fullscreen view bbox, useful for proving whether a missing visual surface belongs to a specific room |
+| `GE007_TRACE_ROOM_PROJECT=1` / `GE007_TRACE_ROOM_PROJECT_ROOM='23,24,25'` / `GE007_TRACE_ROOM_PROJECT_AFTER_FRAME=N` / `GE007_TRACE_ROOM_PROJECT_BUDGET=N` | log whether selected rooms are frustum-visible, AABB-projectable, marked rendered, and present in the draw list before/after forced admits |
 | `GE007_TRACE_PORTAL_VERTS=1` / `GE007_TRACE_PORTAL_VERTS_IDX=N` / `GE007_TRACE_PORTAL_VERTS_AFTER_FRAME=N` | log transformed/projected vertices for portal projection probes |
 | `GE007_TRACE_BLOOD_ANIM=1` | log native ROM-backed gunbarrel blood animation decode frames, including packed stream offsets, finish state, nonzero texel count, and max decoded nibble |
 | `GE007_TRACE_TINTED_GLASS=1` / `GE007_TRACE_TINTED_GLASS_BUDGET=N` | log tinted-glass setup/update/render opacity, including raw opacity, render opacity, and the active min-opacity floor |
@@ -3856,8 +4172,12 @@ return path for Dam. It enables objective tracing, triggers the existing scripte
 mission-success hook, waits until the title/menu path is observed, then asserts
 that menu `12` is reached with `front.all_obj_complete=1`,
 `front.mission_failed=0`, `front.bond_kia=0`, and all DL resolve counters still
-zero. This is a scripted end-state smoke; it does not replace an organic route
-that completes Dam objectives and exits through the bungee jump.
+zero. It also verifies that the mission-success trace reports folder 0
+Dam/Agent completion, restarts the native binary against the same `--savedir`
+without the mission-success hook, and asserts the reload trace reports
+`save.valid[0]=1`, `save.level[0]=0`, and `save.difficulty[0]=0`. This is a
+scripted end-state smoke; it does not replace an organic route that completes
+Dam objectives and exits through the bungee jump.
 
 ```sh
 tools/dam_mission_flow_smoke.sh --no-build \
@@ -3883,6 +4203,19 @@ tools/dam_objective_progression_smoke.sh --no-build \
 This is objective-condition coverage. It does not replace a full organic Dam
 route that moves from spawn through alarms/modem/data/bungee with stock-like
 combat, navigation, and end-state timing.
+
+### Dam progression aggregate smoke
+
+`tools/dam_progression_smoke.sh` keeps the CTest
+`port_dam_progression_smoke` lane active by composing the current strongest Dam
+sub-gates: deterministic spawn movement, objective criteria progression, and
+mission-flow return plus persisted save reload. This is still scripted
+progression coverage, not an organic route solver.
+
+```sh
+tools/dam_progression_smoke.sh --no-build \
+  --out-dir "$(mktemp -d /tmp/mgb64_dam_progression.XXXXXX)"
+```
 
 ### Surface II final-flow smoke
 

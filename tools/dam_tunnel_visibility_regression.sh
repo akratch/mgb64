@@ -201,6 +201,9 @@ def rendered_count(record):
 def room_sample(record):
     return record.get("rooms", {}).get("vis", {}).get("sample", [])
 
+def room_draw_sample(record):
+    return record.get("rooms", {}).get("vis", {}).get("draw_sample", [])
+
 def bright_blue_pct(case):
     path = root / case / f"screenshot_{case}.bmp"
     with Image.open(path) as image:
@@ -224,8 +227,12 @@ failures = []
 
 if rooms["default"] < 5:
     failures.append(f"default rendered too few tunnel rooms: {rooms['default']} < 5")
-if 98 not in room_sample(records["default"]):
-    failures.append(f"default did not render room 98 continuation: {room_sample(records['default'])}")
+if 98 not in room_sample(records["default"]) and 98 not in room_draw_sample(records["default"]):
+    failures.append(
+        "default did not render room 98 continuation: "
+        f"sample={room_sample(records['default'])} "
+        f"draw_sample={room_draw_sample(records['default'])}"
+    )
 if blue["default"] > 0.50:
     failures.append(f"default bright-blue cap {blue['default']:.3f}% > 0.50%")
 if rooms["pre_ordering"] >= rooms["default"]:
@@ -251,6 +258,7 @@ summary = {
         "current_room": records["default"].get("rooms", {}).get("cur"),
         "rendered_rooms": rooms["default"],
         "sample": room_sample(records["default"]),
+        "draw_sample": room_draw_sample(records["default"]),
         "bright_blue_pct": blue["default"],
     },
     "pre_ordering": {
@@ -258,6 +266,7 @@ summary = {
         "current_room": records["pre_ordering"].get("rooms", {}).get("cur"),
         "rendered_rooms": rooms["pre_ordering"],
         "sample": room_sample(records["pre_ordering"]),
+        "draw_sample": room_draw_sample(records["pre_ordering"]),
         "bright_blue_pct": blue["pre_ordering"],
     },
     "no_portal_bfs": {
@@ -265,6 +274,7 @@ summary = {
         "current_room": records["no_portal_bfs"].get("rooms", {}).get("cur"),
         "rendered_rooms": rooms["no_portal_bfs"],
         "sample": room_sample(records["no_portal_bfs"]),
+        "draw_sample": room_draw_sample(records["no_portal_bfs"]),
         "bright_blue_pct": blue["no_portal_bfs"],
     },
     "failures": failures,

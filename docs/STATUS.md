@@ -23,13 +23,31 @@ you know what to expect and where help is most valuable.
   descriptor/offset tables, model-header glue), never ROM media.
 - **Save persistence has smoke coverage:** deterministic solo completions are
   written to two save folders across separate processes, then reloaded from disk
-  after a final process restart (`tools/save_persistence_check.sh`).
+  after a final process restart (`tools/save_persistence_check.sh`). The trace
+  writer now emits the frontend save summary even before a live player exists,
+  so this gate can validate title/menu reload state directly instead of relying
+  only on logs and EEPROM bytes. `tools/dam_mission_flow_smoke.sh` separately
+  proves that Dam's scripted mission-success path writes folder 0 Dam/Agent
+  completion and that a fresh process reload observes it from the generated
+  EEPROM.
 - **Direct gameplay input has smoke coverage:** `tools/playability_smoke.sh`
   direct-boots levels deterministically, applies real gameplay stick input, and
   requires movement records, horizontal player displacement, clean watch state,
   zero assertions, screenshot-health-clean captures, and render-health-clean
   traces. It writes per-attempt audit JSON plus a top-level `summary.json` so
   local ROM-backed playability evidence can be reviewed without scraping logs.
+- **Modern minimap coverage is all-stage and opt-out-safe:** `tools/minimap_smoke.sh`
+  direct-boots every solo stage by default, audits STAN cache readiness,
+  objective pins derived from setup criteria, overlay draw summaries, screenshot
+  health, render health, and then repeats disabled-mode parity checks to prove
+  `Input.MinimapEnabled=0` queues no snapshots and draws no overlay while the
+  cache remains deterministic.
+- **Native playability guard orchestration exists:** `tools/native_playability_regression_suite.sh`
+  is the local long-running convenience lane for build/CTest plus playability,
+  structured campaign route contracts/input traversal, Dam progression, Surface
+  II final flow, combat/guard/knife behavior, renderer parity, MP split-screen,
+  save persistence, and minimap coverage. The individual gates remain the source
+  of truth for focused triage.
 - **2-player split-screen multiplayer is wired (input + launch + aim):** the
   native port opens every connected pad into its own player slot, fills
   `data[1..3]` so `joyGetControllerCount() >= 2` unblocks the MP menus, direct-boots
@@ -172,12 +190,109 @@ you know what to expect and where help is most valuable.
   render-health counters.
 - Some gameplay/behavior differences and occasional instability or crashes.
   Movement-speed parity has targeted ROM-backed Dam coverage and all-level
-  deterministic native playability smoke coverage, but broader movement edge
-  cases, mission flow, menus, combat behavior, and organic input paths still
-  need reference-backed expansion. `tools/soak_stability.sh` is the headless
-  deterministic measurement path for crash/render-health regressions over long
-  per-stage runs (no numeric stability budget is claimed yet); `tools/asan_smoke.sh`
-  adds a report-only ASan/UBSan lane.
+  deterministic native playability smoke coverage. Dam now has an active
+  progression wrapper that composes spawn movement, real objective criteria
+  advancement, and mission-report return, Surface II has a final-flow guard,
+  and `tools/campaign_route_smoke.sh` provides a JSON route-contract layer for
+  mission assertions plus fragile-set input traversal across Dam, Facility,
+  Surface 1, Surface II, Bunker 1, Frigate, Statue, Train, Control, Caverns,
+  and Cradle.
+  Native route specs now have declarative `input_segments` for controller
+  windows, which compile to the existing `GE007_AUTO_*` input hooks and reduce
+  raw env-string drift while promoted routes grow. The traversal routes also
+  assert setup-backed waypoint proximity against real stage pads, so their
+  controller movement is tied to authored level geography rather than only
+  relative displacement. `campaign_route_smoke.py` now also reports a
+  conservative capability tier for each route (`T0` boot/trace through `T5`
+  stage loop), plus opened doors, collect types, keyflags, report/reload frames,
+  stock-input status, and aggregate tier counts in the top-level summary. This
+  makes the durable baseline and future scout promotion thresholds explicit
+  instead of treating route count alone as progress. The current corrected
+  default route run passes 34/34 with tier counts `T1=17`, `T2=9`, `T3=3`,
+  `T4=2`, and `T5=3`. `tools/route_target_reach.py` now gives exploratory
+  route batches a reusable setup-target reach diagnostic, including same-floor
+  and vertical separation, so failed scouts can be bounded without pretending
+  distance alone is gameplay progress. Dam additionally has a native-only multi-waypoint
+  traversal lane that reaches the later authored pad cluster around pads
+  `293`/`287`/`288`, plus a scripted mission composite that runs that
+  controller lane before proving Dam objective-vector progression,
+  mission-report return, and save/reload persistence in one route; Surface 1
+  now has a native-only snowfield lane that
+  reaches pads `80`/`79`/`77`; Surface II now has a native-only outdoor lane
+  from stock spawn through pads `30`/`71`/`70`/`69`/`68` and broad late pad
+  `78`, with more than 10,500 horizontal units of reach; Frigate has a
+  native-only deck lane that reaches
+  pads `176`/`153`/`152`/`151`/`150`/`149`/`144`/`60`/`145` and more than 2,800
+  horizontal units; Statue has a native-only park/lower-cluster lane
+  that reaches pads `222`/`214`/`207`/`208`, plus a stock-spawn door route that
+  backs to door object `183`/pad `6`, opens it with a single real `B` press, and
+  proves `door allow`, `0->1`, displacement, and finish-open trace evidence
+  without warp, force, or stage-state automation; Train has a native-only narrow-car
+  lane that reaches room-3 boundpads `12`/`14`; and Cradle has a native-only
+  multi-waypoint traversal lane that reaches pad `121` plus later pad-cluster
+  targets, plus a stock-spawn body-armour pickup route that reaches object
+  `115` at pad `124` and proves the normal object type `21` collect/free path,
+  all without warp, force, item injection, or stage-state automation. Bunker 1 now also
+  has stock-spawn input-interaction routes that open the first corridor door,
+  reach the next-room prop cluster, collect an object through normal
+  interact/door/collect paths, and in the longer chain turn to second door
+  object `138` near pad `14` and open it through another real `B` interaction,
+  all without warp, force, item injection, or stage-state automation. Facility
+  now also has a stock-spawn input-interaction
+  route that reaches the bathroom door cluster, opens object `159` through real
+  `B` interaction, and pushes deeper than 1,200 horizontal units without warp,
+  force, or stage-state automation; a second Facility stock-spawn route now
+  chains that into a real object-`155` door open near pad `75`, again without
+  warp, force, or stage-state automation. Control and Caverns now also have
+  stock-spawn input-interaction routes that open door object `144` through real `B`
+  interaction and push into later room/pad clusters without warp, force, or
+  stage-state automation. Scripted routes now use
+  declarative `scripted_events` for deterministic setup hooks such as warps,
+  face targets, forced pose, tag damage, stage flags, guard AI, item equip,
+  mission end, and title exit, with raw-env collision validation. They can also
+  assert `setup_target_milestones`, which tie deterministic placements to real
+  setup dump rows such as Facility door object `158`/pad `77` and Surface 1 key
+  pad `17`. The suite also carries scripted contracts for Dam mission-report,
+  the Dam native mission composite, Surface II input-only outdoor traversal,
+  and Surface II final-exit save/reload persistence, Dam guard pressure,
+  Dam player-fire guard damage,
+  Bunker 1 datathief equipment/debug-dump stability plus stock-spawn
+  door/collect and two-door/collect interaction, Control/Caverns stock-spawn
+  door traversal,
+  Facility door open/reverse interaction, Facility stock-spawn two-door
+  interaction, and Surface 1 proximity key pickup.
+  Focused combat gates cover
+  active guard fire, hidden-guard no-phantom-fire/no-damage
+  behavior, a throwing-knife guard impact crash path, and throwing-knife flight
+  SFX submissions. The default objective/report/exit/equipment/door/pickup/combat
+  contracts are still scripted, and the input routes are traversal or focused
+  interaction slices, not full objective-completion navigation.
+  Full mission routes with broader menus, route-driven combat encounters,
+  organic pickup paths, route-driven doors, alarms, endings, mission report, and
+  persistence from organic completion still need reference-backed expansion.
+  The latest Surface 1 stock-spawn key-route scouts did not promote: 36
+  controller-pattern captures stayed at least about 3,652 horizontal units from
+  the key area and never emitted key collect/keyflag evidence.
+  Bunker 1's promoted two-door/collect chain improves stock-spawn interaction
+  depth, but the key/objective scout boundary remains: the first continuation
+  pass found nearby second-door object `138` and a later angle pass promoted that
+  door, while key pad `8` still did not emit key collect/keyflag evidence. A
+  later key-return scout was stopped after 34 logs/33 summaries with no
+  `objtype=4` pickup, no nonzero keyflag, and no key-door evidence, so it was
+  not promoted. A follow-up 12-route lower-floor branch scout also did not
+  promote: all routes preserved the existing two-door/collect evidence but
+  emitted no key/keyflag/key-door rows, and the best same-floor key approach
+  remained about 492 horizontal units from key object `86`/pad `8`.
+  Surface II now has a long stock-spawn traversal lane plus a separate scripted
+  final-exit persistence contract, but no organic bridge from spawn through
+  objective setup to the final silo/report/reload flow yet.
+  Follow-up Surface II bridge scouts passed process/render audits but did not
+  promote: the best candidates stayed roughly 25,120 horizontal units from final
+  pad `289` and remained closest to the spawn-side pad cluster.
+  `tools/soak_stability.sh` is the headless deterministic measurement path for
+  crash/render-health regressions over long per-stage runs (no numeric
+  stability budget is claimed yet); `tools/asan_smoke.sh` adds a report-only
+  ASan/UBSan lane.
 - Audio is functional and the SFX mapping/owner-slot path has been validated.
   Native music now follows ABI1 little-endian sample-lane ordering for the
   envmixer and custom pole-filter paths, with additive aux-return mixing. It
@@ -194,7 +309,7 @@ you know what to expect and where help is most valuable.
 - Improve renderer accuracy for a specific effect (compare against a reference
   emulator).
 - Expand organic menu/mission-flow validation beyond the current deterministic
-  multi-folder EEPROM persistence smoke check.
+  multi-folder EEPROM and scripted Dam mission-success persistence checks.
 - Port build ergonomics: local build coverage on more platforms, packaging.
 - Documentation: expand build notes for your platform.
 
