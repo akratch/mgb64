@@ -34,6 +34,7 @@
 /* Forward declarations for functions used before definition */
 void sub_GAME_7F0B4810(f32 arg0);
 s32 sub_GAME_7F0B5208(s32 arg0, void *arg1);
+s32 sub_GAME_7F0B5488(coord3d* arg0, coord3d* arg1);
 s32 sub_GAME_7F0B5864(s32 arg0, f32 *arg1);
 void sub_GAME_7F0B66E8(void);
 void sub_GAME_7F0B7DE4(s32 arg0, s32 arg1, s32 arg2, s32 arg3, f32 *arg4);
@@ -47,9 +48,14 @@ void sub_GAME_7F0B6994(s32 arg0);
 f32 sub_GAME_7F0B9990(s32 arg0);
 f32 sub_GAME_7F0B9B94(s32 arg0);
 void bgUpdateCurrentPlayerScreenMinMax(void);
+extern s32 g_BgCurrentRoom;
+extern s32 g_BgNumberOfRoomsDrawn;
+extern s32 D_800442FC[];
+extern bg_portal_data_entry *g_BgPortals;
 
 /* Forward declarations for functions defined later in this file */
 s32 sub_GAME_7F0B39BC(int curroom, int unk1, bbox2d *screensize, s32 next);
+void sub_GAME_7F0B3BC4(void);
 s32 bgRectIntersect(struct bbox2d *a, struct bbox2d *b);
 s32 sub_GAME_7F0B993C(s32 arg0);
 s32 sub_GAME_7F0B9F14(s32 portalnum, coord3d *arg1, coord3d *arg2);
@@ -88,11 +94,16 @@ extern s32 intersectLineTriangle(Vtx *arg0, Vtx *arg1, Vtx *arg2,
 extern int g_frame_count_diag;
 
 #define PORT_ROOM_RENDER_OVERRIDE_MAX 32
+#define PORT_VIS_SUPPLEMENT_MAX_CANDIDATES 64
 static int g_PortRoomRenderOverrideInitialized = 0;
 static int g_PortForceRenderedRooms[PORT_ROOM_RENDER_OVERRIDE_MAX];
 static int g_PortForceRenderedRoomCount = 0;
 static int g_PortForceUnrenderedRooms[PORT_ROOM_RENDER_OVERRIDE_MAX];
 static int g_PortForceUnrenderedRoomCount = 0;
+static int g_PortSkipBgRooms[PORT_ROOM_RENDER_OVERRIDE_MAX];
+static int g_PortSkipBgRoomCount = 0;
+static int g_PortForceAdmitRooms[PORT_ROOM_RENDER_OVERRIDE_MAX];
+static int g_PortForceAdmitRoomCount = 0;
 
 static void portParseRoomRenderOverrideList(const char *env, int *rooms, int *count)
 {
@@ -138,6 +149,44 @@ static void portInitRoomRenderOverrides(void)
     portParseRoomRenderOverrideList(getenv("GE007_FORCE_UNRENDERED_ROOMS"),
                                     g_PortForceUnrenderedRooms,
                                     &g_PortForceUnrenderedRoomCount);
+    portParseRoomRenderOverrideList(getenv("GE007_SKIP_BG_ROOMS"),
+                                    g_PortSkipBgRooms,
+                                    &g_PortSkipBgRoomCount);
+    portParseRoomRenderOverrideList(getenv("GE007_FORCE_ADMIT_ROOMS"),
+                                    g_PortForceAdmitRooms,
+                                    &g_PortForceAdmitRoomCount);
+}
+
+static s32 portRoomListContains(s32 room, int *rooms, int count)
+{
+    int i;
+
+    for (i = 0; i < count; i++) {
+        if (rooms[i] == room) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static s32 portShouldSkipBgRoomDraw(s32 room)
+{
+    static int allow_current_room_skip = -1;
+
+    if (allow_current_room_skip < 0) {
+        const char *env = getenv("GE007_SKIP_BG_ALLOW_CURRENT");
+        allow_current_room_skip = env ? (atoi(env) != 0) : 0;
+    }
+
+    if (!allow_current_room_skip && room == g_BgCurrentRoom) {
+        return 0;
+    }
+
+    portInitRoomRenderOverrides();
+
+    return portRoomListContains(room, g_PortForceUnrenderedRooms, g_PortForceUnrenderedRoomCount)
+        || portRoomListContains(room, g_PortSkipBgRooms, g_PortSkipBgRoomCount);
 }
 
 static void portApplyRoomRenderOverrides(void)
@@ -484,10 +533,49 @@ static inline void bgCopyCurrentPlayerScreenBboxToFloats(f32 *dst)
 static int bgVisTraceEnabled(void)
 {
     static int enabled = -1;
+    static int after_frame = -1;
+    static int room_filter_loaded = 0;
+    static int room_filter_count = 0;
+    static int room_filter[PORT_ROOM_RENDER_OVERRIDE_MAX];
+
     if (enabled < 0) {
-        enabled = (getenv("BG_VIS_TRACE") != NULL);
+        const char *env = getenv("BG_VIS_TRACE");
+        enabled = (env != NULL && env[0] != '\0' && env[0] != '0');
     }
-    return enabled;
+
+    if (after_frame < 0) {
+        const char *env = getenv("BG_VIS_TRACE_AFTER_FRAME");
+        after_frame = env ? atoi(env) : 0;
+    }
+
+    if (!room_filter_loaded) {
+        const char *env = getenv("BG_VIS_TRACE_ROOM");
+        room_filter_loaded = 1;
+        portParseRoomRenderOverrideList(env, room_filter, &room_filter_count);
+    }
+
+    if (!enabled) {
+        return 0;
+    }
+
+    if (g_frame_count_diag < after_frame) {
+        return 0;
+    }
+
+    if (room_filter_count > 0) {
+        int matched = 0;
+        for (int i = 0; i < room_filter_count; i++) {
+            if (g_BgCurrentRoom == room_filter[i]) {
+                matched = 1;
+                break;
+            }
+        }
+        if (!matched) {
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 static int bgVisTraceBudget(void)
@@ -506,6 +594,14 @@ typedef struct BgRoomAdmitTraceContext {
     s32 portal_idx;
     s32 depth;
 } BgRoomAdmitTraceContext;
+
+typedef struct BgVisibilitySupplementCandidate {
+    s32 room;
+    s32 nearest_room;
+    s32 projected;
+    f32 distance_sq;
+    f32 projected_bbox[4];
+} BgVisibilitySupplementCandidate;
 
 static BgRoomAdmitTraceContext g_BgRoomAdmitTraceContext = { NULL, -1, -1, -1 };
 
@@ -547,8 +643,12 @@ static int bgPortalTraceFilterValue(const char *name)
 static int bgShouldTracePortal(s32 source_room, s32 portal_idx, s32 dest_room)
 {
     static int trace_all = -1;
-    static int filter_src = -2;
-    static int filter_dest = -2;
+    static int filter_src_loaded = 0;
+    static int filter_src_count = 0;
+    static int filter_src[PORT_ROOM_RENDER_OVERRIDE_MAX];
+    static int filter_dest_loaded = 0;
+    static int filter_dest_count = 0;
+    static int filter_dest[PORT_ROOM_RENDER_OVERRIDE_MAX];
     static int filter_idx = -2;
     static int trace_count = 0;
 
@@ -559,11 +659,17 @@ static int bgShouldTracePortal(s32 source_room, s32 portal_idx, s32 dest_room)
     if (trace_all < 0) {
         trace_all = (getenv("GE007_TRACE_PORTAL_ALL") != NULL);
     }
-    if (filter_src == -2) {
-        filter_src = bgPortalTraceFilterValue("GE007_TRACE_PORTAL_SRC");
+    if (!filter_src_loaded) {
+        filter_src_loaded = 1;
+        portParseRoomRenderOverrideList(getenv("GE007_TRACE_PORTAL_SRC"),
+                                        filter_src,
+                                        &filter_src_count);
     }
-    if (filter_dest == -2) {
-        filter_dest = bgPortalTraceFilterValue("GE007_TRACE_PORTAL_DEST");
+    if (!filter_dest_loaded) {
+        filter_dest_loaded = 1;
+        portParseRoomRenderOverrideList(getenv("GE007_TRACE_PORTAL_DEST"),
+                                        filter_dest,
+                                        &filter_dest_count);
     }
     if (filter_idx == -2) {
         filter_idx = bgPortalTraceFilterValue("GE007_TRACE_PORTAL_IDX");
@@ -574,17 +680,19 @@ static int bgShouldTracePortal(s32 source_room, s32 portal_idx, s32 dest_room)
     }
 
     if (!trace_all) {
-        if (filter_src >= 0 && filter_src != source_room) {
+        if (filter_src_count > 0
+            && !portRoomListContains(source_room, filter_src, filter_src_count)) {
             return 0;
         }
-        if (filter_dest >= 0 && filter_dest != dest_room) {
+        if (filter_dest_count > 0
+            && !portRoomListContains(dest_room, filter_dest, filter_dest_count)) {
             return 0;
         }
         if (filter_idx >= 0 && filter_idx != portal_idx) {
             return 0;
         }
 
-        if (filter_src < 0 && filter_dest < 0 && filter_idx < 0) {
+        if (filter_src_count <= 0 && filter_dest_count <= 0 && filter_idx < 0) {
             return 0;
         }
     }
@@ -614,6 +722,56 @@ static int bgRoomAdmitTraceBudget(void)
         budget = env ? atoi(env) : 256;
     }
     return budget;
+}
+
+static int bgRoomAdmitTraceShouldLog(s32 room)
+{
+    static int after_frame = -1;
+    static int room_filter_loaded = 0;
+    static int room_filter_count = 0;
+    static int room_filter[PORT_ROOM_RENDER_OVERRIDE_MAX];
+    static int src_filter_loaded = 0;
+    static int src_filter_count = 0;
+    static int src_filter[PORT_ROOM_RENDER_OVERRIDE_MAX];
+
+    if (!bgRoomAdmitTraceEnabled()) {
+        return 0;
+    }
+
+    if (after_frame < 0) {
+        const char *env = getenv("GE007_TRACE_ROOM_ADMIT_AFTER_FRAME");
+        after_frame = env ? atoi(env) : 0;
+    }
+
+    if (g_frame_count_diag < after_frame) {
+        return 0;
+    }
+
+    if (!room_filter_loaded) {
+        const char *env = getenv("GE007_TRACE_ROOM_ADMIT_ROOM");
+        room_filter_loaded = 1;
+        portParseRoomRenderOverrideList(env, room_filter, &room_filter_count);
+    }
+
+    if (room_filter_count > 0
+        && !portRoomListContains(room, room_filter, room_filter_count)) {
+        return 0;
+    }
+
+    if (!src_filter_loaded) {
+        const char *env = getenv("GE007_TRACE_ROOM_ADMIT_SRC");
+        src_filter_loaded = 1;
+        portParseRoomRenderOverrideList(env, src_filter, &src_filter_count);
+    }
+
+    if (src_filter_count > 0
+        && !portRoomListContains(g_BgRoomAdmitTraceContext.source_room,
+                                 src_filter,
+                                 src_filter_count)) {
+        return 0;
+    }
+
+    return 1;
 }
 
 static int bgPortalBackfaceBypassApplies(s32 source_room, s32 portal_idx, s32 dest_room)
@@ -665,6 +823,27 @@ static int bgPortalBackfaceProjectFallbackEnabled(void)
     return enabled;
 }
 
+static s32 bgPortalEdgeRescueContinuationActive = 0;
+
+static int bgPortalEdgeRescueBackfaceFallbackEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_EDGE_RESCUE_BACKFACE_FALLBACK");
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static int bgPortalBackfaceProjectFallbackAllowed(void)
+{
+    return bgPortalBackfaceProjectFallbackEnabled()
+        || (bgPortalEdgeRescueContinuationActive > 0
+            && bgPortalEdgeRescueBackfaceFallbackEnabled());
+}
+
 static int bgPortalOrderingEnabled(void)
 {
     static int enabled = -1;
@@ -709,6 +888,79 @@ static f32 bgPortalAcceptedMinSpan(void)
     return value;
 }
 
+static f32 bgPortalAcceptedPadX(void)
+{
+    static f32 value = -1.0f;
+
+    if (value < 0.0f) {
+        const char *env = getenv("GE007_PORTAL_ACCEPTED_PAD_X");
+
+        if (env == NULL) {
+            env = getenv("GE007_PORTAL_ACCEPTED_PAD");
+        }
+
+        value = env ? (f32)atof(env) : 0.0f;
+
+        if (value < 0.0f) {
+            value = 0.0f;
+        }
+    }
+
+    return value;
+}
+
+static f32 bgPortalAcceptedPadY(void)
+{
+    static f32 value = -1.0f;
+
+    if (value < 0.0f) {
+        const char *env = getenv("GE007_PORTAL_ACCEPTED_PAD_Y");
+
+        if (env == NULL) {
+            env = getenv("GE007_PORTAL_ACCEPTED_PAD");
+        }
+
+        value = env ? (f32)atof(env) : 0.0f;
+
+        if (value < 0.0f) {
+            value = 0.0f;
+        }
+    }
+
+    return value;
+}
+
+static f32 bgPortalEdgeRescueContinuationMinSpan(void)
+{
+    static f32 value = -1.0f;
+
+    if (value < 0.0f) {
+        const char *env = getenv("GE007_PORTAL_EDGE_RESCUE_MIN_SPAN");
+        value = env ? (f32)atof(env) : 24.0f;
+
+        if (value < 0.0f) {
+            value = 0.0f;
+        }
+    }
+
+    return value;
+}
+
+static f32 bgPortalCurrentAcceptedMinSpan(void)
+{
+    f32 value = bgPortalAcceptedMinSpan();
+
+    if (bgPortalEdgeRescueContinuationActive > 0) {
+        f32 rescue_value = bgPortalEdgeRescueContinuationMinSpan();
+
+        if (rescue_value > value) {
+            value = rescue_value;
+        }
+    }
+
+    return value;
+}
+
 static int bgPortalRetryScreenClipEnabled(void)
 {
     static int enabled = -1;
@@ -740,17 +992,23 @@ extern s32 levelentry_index;
 #define BG_PORTAL_PROJECT_REJECT_EMPTY_BBOX 2
 
 #define BG_PORTAL_EDGE_RESCUE_MAX 64
+#define BG_PORTAL_RESCUE_REASON_EMPTY_BBOX 1
+#define BG_PORTAL_RESCUE_REASON_PROJECT_FAIL 2
 
 typedef struct BgPortalEdgeRescueCandidate {
     s32 source_room;
     s32 dest_room;
     s32 portal_idx;
     s32 depth;
+    s32 reason;
+    s32 from_continuation;
+    f32 bbox[4];
 } BgPortalEdgeRescueCandidate;
 
 static BgPortalEdgeRescueCandidate bgPortalEdgeRescueCandidates[BG_PORTAL_EDGE_RESCUE_MAX];
 static s32 bgPortalEdgeRescueCount = 0;
 static s32 bgPortalEdgeRescueOverflow = 0;
+static s32 bgPortalProjectRescuePromotedThisFrame = 0;
 
 static int bgPortalEdgeRescueEnabled(void)
 {
@@ -781,6 +1039,31 @@ static f32 bgPortalBboxHeight(const f32 *bbox)
 
 static void bgSetRoomAdmitTraceContext(const char *reason, s32 source_room, s32 portal_idx, s32 depth);
 static void bgClearRoomAdmitTraceContext(void);
+
+static void bgPadPortalBbox(f32 *bbox, f32 pad_x, f32 pad_y)
+{
+    if (pad_x <= 0.0f && pad_y <= 0.0f) {
+        return;
+    }
+
+    bbox[0] -= pad_x;
+    bbox[1] -= pad_y;
+    bbox[2] += pad_x;
+    bbox[3] += pad_y;
+
+    if (bbox[0] < g_CurrentPlayer->screenxminf) {
+        bbox[0] = g_CurrentPlayer->screenxminf;
+    }
+    if (bbox[1] < g_CurrentPlayer->screenyminf) {
+        bbox[1] = g_CurrentPlayer->screenyminf;
+    }
+    if (bbox[2] > g_CurrentPlayer->screenxmaxf) {
+        bbox[2] = g_CurrentPlayer->screenxmaxf;
+    }
+    if (bbox[3] > g_CurrentPlayer->screenymaxf) {
+        bbox[3] = g_CurrentPlayer->screenymaxf;
+    }
+}
 
 static void bgExpandPortalBboxToMinSpan(f32 *bbox, f32 min_span)
 {
@@ -825,6 +1108,9 @@ static s32 bgPortalProjectVisibleBbox(s32 source_room, s32 portal_idx, const f32
                                       s32 *reject_reason)
 {
     f32 projected_bbox[4];
+    f32 unpadded_bbox[4];
+    f32 pad_x;
+    f32 pad_y;
 
     if (reject_reason) {
         *reject_reason = BG_PORTAL_PROJECT_REJECT_NONE;
@@ -870,13 +1156,23 @@ static s32 bgPortalProjectVisibleBbox(s32 source_room, s32 portal_idx, const f32
                         (struct bbox2d *)&g_CurrentPlayer->screenxminf);
     }
 
-    bgExpandPortalBboxToMinSpan(out_bbox, bgPortalAcceptedMinSpan());
+    bgExpandPortalBboxToMinSpan(out_bbox, bgPortalCurrentAcceptedMinSpan());
+
+    unpadded_bbox[0] = out_bbox[0];
+    unpadded_bbox[1] = out_bbox[1];
+    unpadded_bbox[2] = out_bbox[2];
+    unpadded_bbox[3] = out_bbox[3];
+    pad_x = bgPortalAcceptedPadX();
+    pad_y = bgPortalAcceptedPadY();
+    bgPadPortalBbox(out_bbox, pad_x, pad_y);
 
     if (trace_portal) {
         fprintf(stderr,
-                "[BG-PORTAL] bbox src=%d portal=%d phase=%s projected=(%.1f,%.1f,%.1f,%.1f) clipped=(%.1f,%.1f,%.1f,%.1f)\n",
-                source_room, portal_idx, phase ? phase : "?",
+                "[BG-PORTAL] frame=%d bbox src=%d portal=%d phase=%s projected=(%.1f,%.1f,%.1f,%.1f) clipped=(%.1f,%.1f,%.1f,%.1f) pad=(%.1f,%.1f) padded=(%.1f,%.1f,%.1f,%.1f)\n",
+                g_frame_count_diag, source_room, portal_idx, phase ? phase : "?",
                 projected_bbox[0], projected_bbox[1], projected_bbox[2], projected_bbox[3],
+                unpadded_bbox[0], unpadded_bbox[1], unpadded_bbox[2], unpadded_bbox[3],
+                pad_x, pad_y,
                 out_bbox[0], out_bbox[1], out_bbox[2], out_bbox[3]);
     }
 
@@ -900,10 +1196,243 @@ static void bgClearPortalEdgeRescueCandidates(void)
 {
     bgPortalEdgeRescueCount = 0;
     bgPortalEdgeRescueOverflow = 0;
+    bgPortalProjectRescuePromotedThisFrame = 0;
+}
+
+static s32 bgProjectRoomAabbToScreenBbox(s32 room_id, f32 *out_bbox)
+{
+    s_room_info *room;
+    s32 front_count = 0;
+
+    if (out_bbox == NULL || room_id <= 0 || room_id >= g_MaxNumRooms) {
+        return 0;
+    }
+
+    room = &g_BgRoomInfo[room_id];
+
+    out_bbox[0] = g_CurrentPlayer->screenxmaxf;
+    out_bbox[1] = g_CurrentPlayer->screenymaxf;
+    out_bbox[2] = g_CurrentPlayer->screenxminf;
+    out_bbox[3] = g_CurrentPlayer->screenyminf;
+
+    for (s32 corner_idx = 0; corner_idx < 8; corner_idx++) {
+        coord3d corner;
+        coord3d projected;
+
+        corner.x = (corner_idx & 1) ? room->minbounds.x : room->maxbounds.x;
+        corner.y = (corner_idx & 2) ? room->minbounds.y : room->maxbounds.y;
+        corner.z = (corner_idx & 4) ? room->minbounds.z : room->maxbounds.z;
+
+        if (sub_GAME_7F0B5488(&corner, &projected) != 0) {
+            continue;
+        }
+
+        if (front_count == 0) {
+            out_bbox[0] = projected.x;
+            out_bbox[1] = projected.y;
+            out_bbox[2] = projected.x;
+            out_bbox[3] = projected.y;
+        } else {
+            if (projected.x < out_bbox[0]) out_bbox[0] = projected.x;
+            if (projected.y < out_bbox[1]) out_bbox[1] = projected.y;
+            if (projected.x > out_bbox[2]) out_bbox[2] = projected.x;
+            if (projected.y > out_bbox[3]) out_bbox[3] = projected.y;
+        }
+        front_count++;
+    }
+
+    if (front_count == 0) {
+        return 0;
+    }
+
+    if (!bgRectIntersect((struct bbox2d *)out_bbox,
+                         (struct bbox2d *)&g_CurrentPlayer->screenxminf)) {
+        return 0;
+    }
+
+    return out_bbox[2] > out_bbox[0] && out_bbox[3] > out_bbox[1];
+}
+
+static int bgPortalEdgeRescueContinuationEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_EDGE_RESCUE_CONTINUE");
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static int bgPortalProjectFailRescueEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_PROJECT_RESCUE");
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static int bgPortalProjectFailContinuationEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_PROJECT_RESCUE_CONTINUE");
+        enabled = env ? (atoi(env) != 0) : 0;
+    }
+
+    return enabled;
+}
+
+static int bgPortalProjectFailAdmitEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_PROJECT_RESCUE_ADMIT");
+        enabled = env ? (atoi(env) != 0) : 0;
+    }
+
+    return enabled;
+}
+
+static int bgPortalProjectFrustumFallbackEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_PORTAL_PROJECT_FRUSTUM_FALLBACK");
+
+        if (env == NULL) {
+            env = getenv("GE007_PORTAL_FRUSTUM_SUPPLEMENT");
+        }
+
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static s32 bgPortalProjectFrustumFallbackMaxExtraRooms(void)
+{
+    static s32 max_extra_rooms = -1;
+
+    if (max_extra_rooms < 0) {
+        const char *env = getenv("GE007_PORTAL_PROJECT_FRUSTUM_FALLBACK_MAX_EXTRA");
+        max_extra_rooms = env ? atoi(env) : 12;
+
+        if (max_extra_rooms < 0) {
+            max_extra_rooms = 0;
+        }
+    }
+
+    return max_extra_rooms;
+}
+
+static void bgMarkPortalNeighborsToRendered(bg_portal_data_entry *portals)
+{
+    bg_portal_data_entry *cur = portals;
+
+    if (cur == NULL || cur->offset_portal == 0) {
+        return;
+    }
+
+    do {
+        u8 room1 = cur->connectedRoom1;
+        u8 room2 = cur->connectedRoom2;
+        u8 vis1 = g_BgRoomInfo[room1].room_rendered;
+        u8 vis2;
+
+        if (vis1 != 0) {
+            vis2 = g_BgRoomInfo[room2].room_rendered;
+            if (vis2 == 0) {
+                g_BgRoomInfo[room2].room_neighbor_to_rendered = 1;
+                goto next_portal;
+            }
+        }
+
+        vis2 = g_BgRoomInfo[room2].room_rendered;
+        if (vis2 == 0) {
+            goto next_portal_check;
+        }
+        if (vis1 != 0) {
+            goto next_portal_check;
+        }
+        g_BgRoomInfo[room1].room_neighbor_to_rendered = 1;
+next_portal:
+next_portal_check:
+        cur++;
+    } while (cur->offset_portal != 0);
+}
+
+static s32 bgCountFrustumVisibleRooms(bbox2d *player_bbox)
+{
+    s32 count = 0;
+
+    if (levelentry_index == LEVEL_INDEX_CRAD) {
+        count++;
+    }
+
+    for (s32 room = 1; room < g_MaxNumRooms; room++) {
+        if (sub_GAME_7F0B5208(room, player_bbox)) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static void bgClearFrameVisibilityState(void)
+{
+    sub_GAME_7F0B3BC4();
+
+    for (s32 room = 0; room < g_MaxNumRooms && room < 200; room++) {
+        g_BgRoomInfo[room].room_rendered = 0;
+        g_BgRoomInfo[room].room_neighbor_to_rendered = 0;
+        g_BgRoomInfo[room].room_loaded_mask = 0;
+    }
+
+    memset(D_800442FC, 0, 200);
+}
+
+static void bgRebuildFrustumAllVisibility(bbox2d *player_bbox)
+{
+    bgClearFrameVisibilityState();
+
+    if (levelentry_index == LEVEL_INDEX_CRAD) {
+        sub_GAME_7F0B39BC(9, 0, player_bbox, 1);
+    }
+
+    for (s32 room = 1; room < g_MaxNumRooms; room++) {
+        if (sub_GAME_7F0B5208(room, player_bbox)) {
+            bgSetRoomAdmitTraceContext("portal_project_frustum_fallback", -1, -1, 0);
+            sub_GAME_7F0B39BC(room, 0, player_bbox, 1);
+            bgClearRoomAdmitTraceContext();
+        }
+    }
+
+    bgMarkPortalNeighborsToRendered(g_BgPortals);
+}
+
+static void bgQueueConnectedRoomPortalsExcept(s32 seed_room, f32 *screen_bbox,
+                                              s32 skip_portal, s32 depth);
+
+static void bgDrainPortalQueue(void)
+{
+    s32 tmp = 0;
+
+    while (sub_GAME_7F0B7EE4(&tmp)) {
+    }
 }
 
 static void bgRecordPortalEdgeRescueCandidate(s32 source_room, s32 portal_idx, s32 dest_room,
-                                              s32 depth, s32 trace_portal)
+                                              s32 depth, s32 reason, const f32 *bbox,
+                                              s32 trace_portal)
 {
     s32 i;
 
@@ -941,12 +1470,31 @@ static void bgRecordPortalEdgeRescueCandidate(s32 source_room, s32 portal_idx, s
     bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].dest_room = dest_room;
     bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].portal_idx = portal_idx;
     bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].depth = depth;
+    bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].reason = reason;
+    bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].from_continuation =
+        bgPortalEdgeRescueContinuationActive > 0;
+    if (bbox != NULL) {
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[0] = bbox[0];
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[1] = bbox[1];
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[2] = bbox[2];
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[3] = bbox[3];
+    } else {
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[0] = g_CurrentPlayer->screenxminf;
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[1] = g_CurrentPlayer->screenyminf;
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[2] = g_CurrentPlayer->screenxmaxf;
+        bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount].bbox[3] = g_CurrentPlayer->screenymaxf;
+    }
     bgPortalEdgeRescueCount++;
 
     if (trace_portal) {
         fprintf(stderr,
-                "[BG-PORTAL-RESCUE] candidate src=%d portal=%d dest=%d depth=%d\n",
-                source_room, portal_idx, dest_room, depth);
+                "[BG-PORTAL-RESCUE] candidate src=%d portal=%d dest=%d depth=%d reason=%d continued=%d bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                source_room, portal_idx, dest_room, depth, reason,
+                bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount - 1].from_continuation,
+                bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount - 1].bbox[0],
+                bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount - 1].bbox[1],
+                bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount - 1].bbox[2],
+                bgPortalEdgeRescueCandidates[bgPortalEdgeRescueCount - 1].bbox[3]);
     }
 }
 
@@ -964,6 +1512,8 @@ static void bgPromotePortalEdgeRescueCandidates(bbox2d *player_bbox)
         s32 dest_room = candidate->dest_room;
         s32 portal_idx = candidate->portal_idx;
         s32 depth = candidate->depth;
+        s32 reason = candidate->reason;
+        s32 from_continuation = candidate->from_continuation;
 
         if (source_room <= 0 || source_room >= g_MaxNumRooms
             || dest_room <= 0 || dest_room >= g_MaxNumRooms) {
@@ -971,15 +1521,35 @@ static void bgPromotePortalEdgeRescueCandidates(bbox2d *player_bbox)
         }
 
         if (!g_BgRoomInfo[source_room].room_rendered
-            || !g_BgRoomInfo[dest_room].room_neighbor_to_rendered
             || g_BgRoomInfo[dest_room].room_rendered) {
+            continue;
+        }
+
+        if (!from_continuation
+            && !g_BgRoomInfo[dest_room].room_neighbor_to_rendered) {
             continue;
         }
 
         {
             s32 trace_portal = bgShouldTracePortal(source_room, portal_idx, dest_room);
+            f32 continuation_bbox[4];
+            bbox2d *admit_bbox = player_bbox;
 
-            if (!sub_GAME_7F0B5208(dest_room, player_bbox)) {
+            if (reason == BG_PORTAL_RESCUE_REASON_PROJECT_FAIL) {
+                bgPortalProjectRescuePromotedThisFrame = 1;
+
+                if (!bgPortalProjectFailAdmitEnabled()) {
+                    if (trace_portal) {
+                        fprintf(stderr,
+                                "[BG-PORTAL-RESCUE] trigger_only src=%d portal=%d dest=%d depth=%d reason=%d\n",
+                                source_room, portal_idx, dest_room, depth, reason);
+                    }
+                    continue;
+                }
+            }
+
+            if (reason != BG_PORTAL_RESCUE_REASON_PROJECT_FAIL
+                && !sub_GAME_7F0B5208(dest_room, player_bbox)) {
                 if (trace_portal) {
                     fprintf(stderr,
                             "[BG-PORTAL-RESCUE] reject=room_cull src=%d portal=%d dest=%d\n",
@@ -988,17 +1558,93 @@ static void bgPromotePortalEdgeRescueCandidates(bbox2d *player_bbox)
                 continue;
             }
 
+            if (reason == BG_PORTAL_RESCUE_REASON_PROJECT_FAIL) {
+                admit_bbox = (bbox2d *)candidate->bbox;
+            }
+
             bgSetRoomAdmitTraceContext("portal_edge_rescue", source_room, portal_idx, depth);
-            sub_GAME_7F0B39BC(dest_room, depth, player_bbox, 0);
+            sub_GAME_7F0B39BC(dest_room, depth, admit_bbox, 0);
             bgClearRoomAdmitTraceContext();
 
             if (trace_portal) {
                 fprintf(stderr,
-                        "[BG-PORTAL-RESCUE] admit src=%d portal=%d dest=%d depth=%d overflow=%d\n",
-                        source_room, portal_idx, dest_room, depth, bgPortalEdgeRescueOverflow);
+                        "[BG-PORTAL-RESCUE] admit src=%d portal=%d dest=%d depth=%d reason=%d overflow=%d\n",
+                        source_room, portal_idx, dest_room, depth, reason,
+                        bgPortalEdgeRescueOverflow);
             }
+
+            if (!bgPortalEdgeRescueContinuationEnabled()) {
+                continue;
+            }
+
+            if (reason == BG_PORTAL_RESCUE_REASON_PROJECT_FAIL
+                && !bgPortalProjectFailContinuationEnabled()) {
+                continue;
+            }
+
+            continuation_bbox[0] = candidate->bbox[0];
+            continuation_bbox[1] = candidate->bbox[1];
+            continuation_bbox[2] = candidate->bbox[2];
+            continuation_bbox[3] = candidate->bbox[3];
+            bgExpandPortalBboxToMinSpan(continuation_bbox,
+                                        bgPortalEdgeRescueContinuationMinSpan());
+
+            if (continuation_bbox[2] <= continuation_bbox[0]
+                || continuation_bbox[3] <= continuation_bbox[1]) {
+                if (trace_portal) {
+                    fprintf(stderr,
+                            "[BG-PORTAL-RESCUE] skip_continue_empty src=%d portal=%d dest=%d bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                            source_room, portal_idx, dest_room,
+                            continuation_bbox[0], continuation_bbox[1],
+                            continuation_bbox[2], continuation_bbox[3]);
+                }
+                continue;
+            }
+
+            if (trace_portal) {
+                fprintf(stderr,
+                        "[BG-PORTAL-RESCUE] continue src=%d portal=%d dest=%d depth=%d bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                        source_room, portal_idx, dest_room, depth + 1,
+                        continuation_bbox[0], continuation_bbox[1],
+                        continuation_bbox[2], continuation_bbox[3]);
+            }
+
+            bgQueueConnectedRoomPortalsExcept(dest_room, continuation_bbox,
+                                              portal_idx, depth + 1);
+            bgPortalEdgeRescueContinuationActive++;
+            bgDrainPortalQueue();
+            bgPortalEdgeRescueContinuationActive--;
         }
     }
+}
+
+static void bgApplyPortalProjectFrustumFallback(bbox2d *player_bbox)
+{
+    enum CAMERAMODE camera_mode;
+    s32 current_rooms;
+    s32 frustum_rooms;
+
+    if (!bgPortalProjectFrustumFallbackEnabled()
+        || !bgPortalProjectRescuePromotedThisFrame
+        || player_bbox == NULL) {
+        return;
+    }
+
+    camera_mode = bondviewGetCameraMode();
+    if (camera_mode == CAMERAMODE_INTRO
+        || camera_mode == CAMERAMODE_FADESWIRL
+        || camera_mode == CAMERAMODE_SWIRL) {
+        return;
+    }
+
+    current_rooms = g_BgNumberOfRoomsDrawn;
+    frustum_rooms = bgCountFrustumVisibleRooms(player_bbox);
+
+    if (frustum_rooms > current_rooms + bgPortalProjectFrustumFallbackMaxExtraRooms()) {
+        return;
+    }
+
+    bgRebuildFrustumAllVisibility(player_bbox);
 }
 
 static void bgSetRoomAdmitTraceContext(const char *reason, s32 source_room, s32 portal_idx, s32 depth)
@@ -1017,17 +1663,432 @@ static void bgClearRoomAdmitTraceContext(void)
     g_BgRoomAdmitTraceContext.depth = -1;
 }
 
-static void bgTraceRoomSummaryIfRequested(s32 room)
+static s32 bgFindRoomDrawIndex(s32 room)
 {
-    static int requested_room = -2;
+    s32 i;
 
-    if (requested_room == -2) {
-        const char *env = getenv("GE007_TRACE_ROOM_SUMMARY");
-        requested_room = env ? atoi(env) : -1;
+    for (i = 0; i < g_BgNumberOfRoomsDrawn; i++) {
+        if (dword_CODE_bss_8007FFA0[i].roomid == room) {
+            return i;
+        }
     }
 
-    if (requested_room < 0 || requested_room != room) {
+    return -1;
+}
+
+static int bgTraceRoomProjectEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_TRACE_ROOM_PROJECT");
+        enabled = (env != NULL && env[0] != '\0' && env[0] != '0');
+    }
+
+    return enabled;
+}
+
+static int bgTraceRoomProjectAfterFrame(void)
+{
+    static int after_frame = -1;
+
+    if (after_frame < 0) {
+        const char *env = getenv("GE007_TRACE_ROOM_PROJECT_AFTER_FRAME");
+        after_frame = env ? atoi(env) : 0;
+    }
+
+    return after_frame;
+}
+
+static int bgTraceRoomProjectBudget(void)
+{
+    static int budget = -1;
+
+    if (budget < 0) {
+        const char *env = getenv("GE007_TRACE_ROOM_PROJECT_BUDGET");
+        budget = env ? atoi(env) : 512;
+    }
+
+    return budget;
+}
+
+static void bgTraceRoomProjectIfRequested(const char *phase, bbox2d *player_bbox)
+{
+    static int room_filter_loaded = 0;
+    static int room_filter_count = 0;
+    static int room_filter[PORT_ROOM_RENDER_OVERRIDE_MAX];
+    static int trace_count = 0;
+    s32 room;
+
+    if (!bgTraceRoomProjectEnabled()
+        || player_bbox == NULL
+        || g_frame_count_diag < bgTraceRoomProjectAfterFrame()) {
         return;
+    }
+
+    if (!room_filter_loaded) {
+        const char *env = getenv("GE007_TRACE_ROOM_PROJECT_ROOM");
+
+        if (env == NULL) {
+            env = getenv("GE007_TRACE_ROOM_PROJECT_ROOMS");
+        }
+
+        room_filter_loaded = 1;
+        portParseRoomRenderOverrideList(env, room_filter, &room_filter_count);
+    }
+
+    for (room = 1; room < g_MaxNumRooms; room++) {
+        f32 projected_bbox[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        f32 draw_bbox[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        s32 draw_idx;
+        s32 frustum_visible;
+        s32 projected;
+
+        if (room_filter_count > 0
+            && !portRoomListContains(room, room_filter, room_filter_count)) {
+            continue;
+        }
+
+        if (trace_count >= bgTraceRoomProjectBudget()) {
+            return;
+        }
+
+        draw_idx = bgFindRoomDrawIndex(room);
+        if (draw_idx >= 0) {
+            draw_bbox[0] = dword_CODE_bss_8007FFA0[draw_idx].bbox.min.x;
+            draw_bbox[1] = dword_CODE_bss_8007FFA0[draw_idx].bbox.min.y;
+            draw_bbox[2] = dword_CODE_bss_8007FFA0[draw_idx].bbox.max.x;
+            draw_bbox[3] = dword_CODE_bss_8007FFA0[draw_idx].bbox.max.y;
+        }
+
+        frustum_visible = sub_GAME_7F0B5208(room, player_bbox);
+        projected = bgProjectRoomAabbToScreenBbox(room, projected_bbox);
+
+        fprintf(stderr,
+                "[ROOM-PROJECT] frame=%d phase=%s room=%d frustum=%d projected=%d rendered=%d draw_idx=%d "
+                "project_bbox=(%.1f,%.1f,%.1f,%.1f) draw_bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                g_frame_count_diag,
+                phase ? phase : "?",
+                room,
+                frustum_visible,
+                projected,
+                g_BgRoomInfo[room].room_rendered,
+                draw_idx,
+                projected_bbox[0], projected_bbox[1],
+                projected_bbox[2], projected_bbox[3],
+                draw_bbox[0], draw_bbox[1],
+                draw_bbox[2], draw_bbox[3]);
+        trace_count++;
+    }
+}
+
+static void bgForceAdmitRoomsForDiagnostics(bbox2d *player_bbox)
+{
+    s32 i;
+
+    if (player_bbox == NULL) {
+        return;
+    }
+
+    portInitRoomRenderOverrides();
+
+    for (i = 0; i < g_PortForceAdmitRoomCount; i++) {
+        s32 room = g_PortForceAdmitRooms[i];
+
+        if (room <= 0 || room >= g_MaxNumRooms) {
+            continue;
+        }
+
+        bgSetRoomAdmitTraceContext("force_admit_room", g_BgCurrentRoom, -1, 0);
+        sub_GAME_7F0B39BC(room, 0, player_bbox, 1);
+        bgClearRoomAdmitTraceContext();
+    }
+}
+
+static int bgVisibilitySupplementEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_VIS_SUPPLEMENT");
+
+        if (env == NULL) {
+            env = getenv("GE007_VISIBILITY_SUPPLEMENT");
+        }
+
+        enabled = env ? (atoi(env) != 0) : 1;
+    }
+
+    return enabled;
+}
+
+static s32 bgVisibilitySupplementMaxExtraRooms(void)
+{
+    static s32 max_extra_rooms = -1;
+
+    if (max_extra_rooms < 0) {
+        const char *env = getenv("GE007_VIS_SUPPLEMENT_MAX_EXTRA");
+        max_extra_rooms = env ? atoi(env) : 12;
+
+        if (max_extra_rooms < 0) {
+            max_extra_rooms = 0;
+        }
+        if (max_extra_rooms > PORT_VIS_SUPPLEMENT_MAX_CANDIDATES) {
+            max_extra_rooms = PORT_VIS_SUPPLEMENT_MAX_CANDIDATES;
+        }
+    }
+
+    return max_extra_rooms;
+}
+
+static f32 bgVisibilitySupplementMaxAabbGap(void)
+{
+    static f32 max_gap = -1.0f;
+
+    if (max_gap < 0.0f) {
+        const char *env = getenv("GE007_VIS_SUPPLEMENT_MAX_AABB_GAP");
+        max_gap = env ? (f32)atof(env) : 16.0f;
+
+        if (max_gap < 0.0f) {
+            max_gap = 0.0f;
+        }
+    }
+
+    return max_gap;
+}
+
+static f32 bgVisibilitySupplementMaxUnprojectedAabbGap(void)
+{
+    static f32 max_gap = -1.0f;
+
+    if (max_gap < 0.0f) {
+        const char *env = getenv("GE007_VIS_SUPPLEMENT_MAX_UNPROJECTED_AABB_GAP");
+        max_gap = env ? (f32)atof(env) : 1.0f;
+
+        if (max_gap < 0.0f) {
+            max_gap = 0.0f;
+        }
+    }
+
+    return max_gap;
+}
+
+static int bgVisibilitySupplementTraceEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *env = getenv("GE007_TRACE_VIS_SUPPLEMENT");
+        enabled = (env != NULL && env[0] != '\0' && env[0] != '0');
+    }
+
+    return enabled;
+}
+
+static f32 bgAabbAxisGap(f32 amin, f32 amax, f32 bmin, f32 bmax)
+{
+    if (amax < bmin) {
+        return bmin - amax;
+    }
+
+    if (bmax < amin) {
+        return amin - bmax;
+    }
+
+    return 0.0f;
+}
+
+static f32 bgRoomAabbDistanceSq(s32 room_a, s32 room_b)
+{
+    s_room_info *a = &g_BgRoomInfo[room_a];
+    s_room_info *b = &g_BgRoomInfo[room_b];
+    f32 dx = bgAabbAxisGap(a->minbounds.x, a->maxbounds.x,
+                           b->minbounds.x, b->maxbounds.x);
+    f32 dy = bgAabbAxisGap(a->minbounds.y, a->maxbounds.y,
+                           b->minbounds.y, b->maxbounds.y);
+    f32 dz = bgAabbAxisGap(a->minbounds.z, a->maxbounds.z,
+                           b->minbounds.z, b->maxbounds.z);
+
+    return dx * dx + dy * dy + dz * dz;
+}
+
+static s32 bgFindNearestRenderedRoomByAabb(s32 room, f32 max_gap_sq,
+                                           s32 *out_nearest_room,
+                                           f32 *out_distance_sq)
+{
+    s32 i;
+    s32 nearest_room = -1;
+    f32 nearest_distance_sq = max_gap_sq;
+
+    for (i = 0; i < g_BgNumberOfRoomsDrawn; i++) {
+        s32 rendered_room = dword_CODE_bss_8007FFA0[i].roomid;
+        f32 distance_sq;
+
+        if (rendered_room <= 0 || rendered_room >= g_MaxNumRooms
+            || rendered_room == room) {
+            continue;
+        }
+
+        distance_sq = bgRoomAabbDistanceSq(room, rendered_room);
+        if (distance_sq <= nearest_distance_sq) {
+            nearest_distance_sq = distance_sq;
+            nearest_room = rendered_room;
+        }
+    }
+
+    if (nearest_room < 0) {
+        return 0;
+    }
+
+    if (out_nearest_room) {
+        *out_nearest_room = nearest_room;
+    }
+    if (out_distance_sq) {
+        *out_distance_sq = nearest_distance_sq;
+    }
+
+    return 1;
+}
+
+static void bgInsertVisibilitySupplementCandidate(BgVisibilitySupplementCandidate *candidates,
+                                                  s32 *candidate_count,
+                                                  const BgVisibilitySupplementCandidate *candidate)
+{
+    s32 insert_at = *candidate_count;
+    s32 i;
+
+    for (i = 0; i < *candidate_count; i++) {
+        if (candidate->distance_sq < candidates[i].distance_sq
+            || (candidate->distance_sq == candidates[i].distance_sq
+                && candidate->room < candidates[i].room)) {
+            insert_at = i;
+            break;
+        }
+    }
+
+    if (*candidate_count < PORT_VIS_SUPPLEMENT_MAX_CANDIDATES) {
+        (*candidate_count)++;
+    } else if (insert_at >= PORT_VIS_SUPPLEMENT_MAX_CANDIDATES) {
+        return;
+    }
+
+    for (i = *candidate_count - 1; i > insert_at; i--) {
+        candidates[i] = candidates[i - 1];
+    }
+
+    candidates[insert_at] = *candidate;
+}
+
+static void bgApplyVisibilitySupplement(bbox2d *player_bbox)
+{
+    BgVisibilitySupplementCandidate candidates[PORT_VIS_SUPPLEMENT_MAX_CANDIDATES];
+    s32 candidate_count = 0;
+    s32 max_extra_rooms;
+    f32 max_gap;
+    f32 max_gap_sq;
+    f32 max_unprojected_gap_sq;
+    s32 room;
+    s32 i;
+    s32 trace_enabled;
+
+    if (!bgVisibilitySupplementEnabled() || player_bbox == NULL) {
+        return;
+    }
+
+    max_extra_rooms = bgVisibilitySupplementMaxExtraRooms();
+    if (max_extra_rooms <= 0) {
+        return;
+    }
+
+    max_gap = bgVisibilitySupplementMaxAabbGap();
+    max_gap_sq = max_gap * max_gap;
+    max_gap = bgVisibilitySupplementMaxUnprojectedAabbGap();
+    max_unprojected_gap_sq = max_gap * max_gap;
+    trace_enabled = bgVisibilitySupplementTraceEnabled();
+
+    for (room = 1; room < g_MaxNumRooms; room++) {
+        BgVisibilitySupplementCandidate candidate;
+        s32 nearest_room = -1;
+        f32 distance_sq = 0.0f;
+
+        if (g_BgRoomInfo[room].room_rendered
+            || g_BgRoomInfo[room].room_loaded_mask != 0) {
+            continue;
+        }
+
+        if (!sub_GAME_7F0B5208(room, player_bbox)) {
+            continue;
+        }
+
+        if (!bgFindNearestRenderedRoomByAabb(room, max_gap_sq,
+                                             &nearest_room, &distance_sq)) {
+            continue;
+        }
+
+        memset(&candidate, 0, sizeof(candidate));
+        candidate.room = room;
+        candidate.nearest_room = nearest_room;
+        candidate.distance_sq = distance_sq;
+        candidate.projected = bgProjectRoomAabbToScreenBbox(room, candidate.projected_bbox);
+
+        if (!candidate.projected && distance_sq > max_unprojected_gap_sq) {
+            continue;
+        }
+
+        bgInsertVisibilitySupplementCandidate(candidates, &candidate_count, &candidate);
+    }
+
+    for (i = 0; i < candidate_count && i < max_extra_rooms; i++) {
+        BgVisibilitySupplementCandidate *candidate = &candidates[i];
+
+        if (trace_enabled) {
+            fprintf(stderr,
+                    "[VIS-SUPPLEMENT] frame=%d add room=%d nearest=%d dist_sq=%.2f projected=%d "
+                    "project_bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                    g_frame_count_diag,
+                    candidate->room,
+                    candidate->nearest_room,
+                    candidate->distance_sq,
+                    candidate->projected,
+                    candidate->projected_bbox[0],
+                    candidate->projected_bbox[1],
+                    candidate->projected_bbox[2],
+                    candidate->projected_bbox[3]);
+        }
+
+        bgSetRoomAdmitTraceContext("visibility_supplement", candidate->nearest_room, -1, 0);
+        sub_GAME_7F0B39BC(candidate->room, 0, player_bbox, 1);
+        bgClearRoomAdmitTraceContext();
+    }
+}
+
+static void bgTraceRoomSummaryIfRequested(s32 room)
+{
+    static int requested_loaded = 0;
+    static int requested_count = 0;
+    static int requested_rooms[PORT_ROOM_RENDER_OVERRIDE_MAX];
+
+    if (!requested_loaded) {
+        const char *env = getenv("GE007_TRACE_ROOM_SUMMARY");
+        requested_loaded = 1;
+        portParseRoomRenderOverrideList(env, requested_rooms, &requested_count);
+    }
+
+    if (requested_count <= 0) {
+        return;
+    }
+
+    {
+        int matched = 0;
+        for (int i = 0; i < requested_count; i++) {
+            if (requested_rooms[i] == room) {
+                matched = 1;
+                break;
+            }
+        }
+        if (!matched) {
+            return;
+        }
     }
 
     if (room <= 0 || room >= g_MaxNumRooms || ptr_bgdata_room_fileposition_list == NULL) {
@@ -1116,7 +2177,6 @@ static void bgTraceRoomDlIfRequested(s32 room, const u8 *dl_base, const u8 *vtx_
     fflush(stderr);
 }
 
-extern bg_portal_data_entry *g_BgPortals;
 extern f32 room_data_float1;
 
 static int bgIsDetachedAuthoredCamera(enum CAMERAMODE camera_mode)
@@ -1248,7 +2308,8 @@ s32 bgResolveRoomByPortalPosition(s32 seed_room, const coord3d *position)
     return current_room;
 }
 
-static void bgQueueConnectedRoomPortals(s32 seed_room, f32 *screen_bbox)
+static void bgQueueConnectedRoomPortalsExcept(s32 seed_room, f32 *screen_bbox,
+                                              s32 skip_portal, s32 depth)
 {
     bg_portal_data_entry *portals = g_BgPortals;
     s32 portalIndex = 0;
@@ -1260,14 +2321,20 @@ static void bgQueueConnectedRoomPortals(s32 seed_room, f32 *screen_bbox)
     }
 
     do {
-        if (seed_room == cur->connectedRoom1 || seed_room == cur->connectedRoom2) {
-            sub_GAME_7F0B7DE4(0, seed_room, portalIndex, 1, screen_bbox);
+        if (portalIndex != skip_portal
+            && (seed_room == cur->connectedRoom1 || seed_room == cur->connectedRoom2)) {
+            sub_GAME_7F0B7DE4(0, seed_room, portalIndex, depth, screen_bbox);
             cur = (bg_portal_data_entry *)((u8 *)g_BgPortals + byteOffset);
         }
         portalIndex++;
         byteOffset += 8;
         cur++;
     } while (cur->offset_portal != 0);
+}
+
+static void bgQueueConnectedRoomPortals(s32 seed_room, f32 *screen_bbox)
+{
+    bgQueueConnectedRoomPortalsExcept(seed_room, screen_bbox, -1, 1);
 }
 #endif
 
@@ -2359,10 +3426,10 @@ s32 sub_GAME_7F0B39BC(int curroom,int unk1, bbox2d * screensize, s32 next)
 
     if (g_BgRoomInfo[curroom].room_loaded_mask != '\0') {
 #ifdef NATIVE_PORT
-        if (bgRoomAdmitTraceEnabled() && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
+        if (bgRoomAdmitTraceShouldLog(curroom) && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
             fprintf(stderr,
-                    "[ROOM-ADMIT] skip_loaded room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
-                    curroom, unk1, next,
+                    "[ROOM-ADMIT] frame=%d skip_loaded room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
+                    g_frame_count_diag, curroom, unk1, next,
                     g_BgRoomAdmitTraceContext.reason ? g_BgRoomAdmitTraceContext.reason : "?",
                     g_BgRoomAdmitTraceContext.source_room,
                     g_BgRoomAdmitTraceContext.portal_idx,
@@ -2390,10 +3457,10 @@ s32 sub_GAME_7F0B39BC(int curroom,int unk1, bbox2d * screensize, s32 next)
             dword_CODE_bss_8007FFA0[i].next = (void *)(temp | (intptr_t)next);
 
 #ifdef NATIVE_PORT
-            if (bgRoomAdmitTraceEnabled() && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
+            if (bgRoomAdmitTraceShouldLog(curroom) && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
                 fprintf(stderr,
-                        "[ROOM-ADMIT] merge room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
-                        curroom, unk1, next,
+                        "[ROOM-ADMIT] frame=%d merge room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
+                        g_frame_count_diag, curroom, unk1, next,
                         g_BgRoomAdmitTraceContext.reason ? g_BgRoomAdmitTraceContext.reason : "?",
                         g_BgRoomAdmitTraceContext.source_room,
                         g_BgRoomAdmitTraceContext.portal_idx,
@@ -2427,10 +3494,10 @@ s32 sub_GAME_7F0B39BC(int curroom,int unk1, bbox2d * screensize, s32 next)
     dword_CODE_bss_8007FFA0[g_BgNumberOfRoomsDrawn].bbox.max.y = bbox_src->max.y;
     dword_CODE_bss_8007FFA0[g_BgNumberOfRoomsDrawn].next = (void *)(intptr_t)next;
 #ifdef NATIVE_PORT
-    if (bgRoomAdmitTraceEnabled() && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
+    if (bgRoomAdmitTraceShouldLog(curroom) && trace_room_admit_count < bgRoomAdmitTraceBudget()) {
         fprintf(stderr,
-                "[ROOM-ADMIT] add room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
-                curroom, unk1, next,
+                "[ROOM-ADMIT] frame=%d add room=%d depth=%d next=%d reason=%s src=%d portal=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
+                g_frame_count_diag, curroom, unk1, next,
                 g_BgRoomAdmitTraceContext.reason ? g_BgRoomAdmitTraceContext.reason : "?",
                 g_BgRoomAdmitTraceContext.source_room,
                 g_BgRoomAdmitTraceContext.portal_idx,
@@ -9295,7 +10362,14 @@ Gfx *sub_GAME_7F0B677C(Gfx *arg0, s32 room_index)
     if (trace_bg_room_ptrs < 0) {
         trace_bg_room_ptrs = (getenv("GE007_TRACE_BG_ROOM_PTRS") != NULL);
     }
-    if (skip_room == room_index) {
+    if (skip_room == room_index || portShouldSkipBgRoomDraw(room_index)) {
+        if (trace_bg_room_ptrs) {
+            fprintf(stderr,
+                    "[BG-ROOM-SKIP] kind=primary frame=%d room=%d\n",
+                    g_frame_count_diag,
+                    room_index);
+            fflush(stderr);
+        }
         return arg0;
     }
     if (trace_bg_room_ptrs && room_index >= 1 && room_index < g_MaxNumRooms) {
@@ -9364,7 +10438,14 @@ Gfx *sub_GAME_7F0B6898(Gfx *arg0, s32 room_index)
     if (trace_bg_room_ptrs < 0) {
         trace_bg_room_ptrs = (getenv("GE007_TRACE_BG_ROOM_PTRS") != NULL);
     }
-    if (skip_room == room_index) {
+    if (skip_room == room_index || portShouldSkipBgRoomDraw(room_index)) {
+        if (trace_bg_room_ptrs) {
+            fprintf(stderr,
+                    "[BG-ROOM-SKIP] kind=secondary frame=%d room=%d\n",
+                    g_frame_count_diag,
+                    room_index);
+            fflush(stderr);
+        }
         return arg0;
     }
     if (trace_bg_room_ptrs && room_index >= 1 && room_index < g_MaxNumRooms) {
@@ -12677,7 +13758,7 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
                             "[BG-PORTAL] bypass=backface_r1 src=%d portal=%d dest=%d\n",
                             source_room, portal_idx, dest_room);
                 }
-            } else if (bgPortalBackfaceProjectFallbackEnabled()
+            } else if (bgPortalBackfaceProjectFallbackAllowed()
                        && !(controlbytes1 & 2)
                        && bgPortalProjectVisibleBbox(source_room, portal_idx,
                                                     (const f32 *)parent_bbox, local_bbox,
@@ -12711,7 +13792,7 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
                             "[BG-PORTAL] bypass=backface_r2 src=%d portal=%d dest=%d\n",
                             source_room, portal_idx, dest_room);
                 }
-            } else if (bgPortalBackfaceProjectFallbackEnabled()
+            } else if (bgPortalBackfaceProjectFallbackAllowed()
                        && !(controlbytes1 & 2)
                        && bgPortalProjectVisibleBbox(source_room, portal_idx,
                                                     (const f32 *)parent_bbox, local_bbox,
@@ -12781,7 +13862,16 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
                                               trace_portal, "main", &reject_reason)) {
                 if (reject_reason == BG_PORTAL_PROJECT_REJECT_EMPTY_BBOX) {
                     bgRecordPortalEdgeRescueCandidate(source_room, portal_idx, dest_room,
-                                                      depth, trace_portal);
+                                                      depth,
+                                                      BG_PORTAL_RESCUE_REASON_EMPTY_BBOX,
+                                                      local_bbox, trace_portal);
+                } else if (reject_reason == BG_PORTAL_PROJECT_REJECT_PROJECT
+                           && bgPortalProjectFailRescueEnabled()
+                           && bgProjectRoomAabbToScreenBbox(dest_room, local_bbox)) {
+                    bgRecordPortalEdgeRescueCandidate(source_room, portal_idx, dest_room,
+                                                      depth,
+                                                      BG_PORTAL_RESCUE_REASON_PROJECT_FAIL,
+                                                      local_bbox, trace_portal);
                 }
                 return gdl;
             }
@@ -12839,8 +13929,8 @@ s32 sub_GAME_7F0B7F84(s32 gdl, s32 source_room, s32 portal_idx, s32 depth, s32 *
         bgClearRoomAdmitTraceContext();
         if (trace_portal) {
             fprintf(stderr,
-                    "[BG-PORTAL] accept src=%d portal=%d dest=%d depth=%d flag=%d queued=%d bbox=(%.1f,%.1f,%.1f,%.1f)\n",
-                    source_room, portal_idx, dest_room, depth, flag, already_queued,
+                    "[BG-PORTAL] frame=%d accept src=%d portal=%d dest=%d depth=%d flag=%d queued=%d bbox=(%.1f,%.1f,%.1f,%.1f)\n",
+                    g_frame_count_diag, source_room, portal_idx, dest_room, depth, flag, already_queued,
                     local_bbox[0], local_bbox[1], local_bbox[2], local_bbox[3]);
         }
         if (already_queued) {
@@ -13529,7 +14619,7 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
         opcode = pc[0];
 
 #ifdef NATIVE_PORT
-        if (trace_enabled && g_viscmd_diag_frame < 2 && trace_count < bgVisTraceBudget()) {
+        if (trace_enabled && trace_count < bgVisTraceBudget()) {
             fprintf(stderr,
                     "[BG-VIS-TRACE] depth=%d pc=%p op=%02X size=%u flag=%d curvis=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
                     my_trace_depth,
@@ -13698,7 +14788,7 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
                     inrange = (hi >= room);
                 }
 #ifdef NATIVE_PORT
-                if (trace_enabled && g_viscmd_diag_frame < 2 && trace_count < bgVisTraceBudget()) {
+                if (trace_enabled && trace_count < bgVisTraceBudget()) {
                     fprintf(stderr,
                             "[BG-VIS-TRACE]   range room=%d lo=%d hi=%d -> %d\n",
                             room, lo, hi, inrange);
@@ -13748,7 +14838,7 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
                 if (current_visibility == 0) {
                     s32 vis_room = vis_read_s32(pc, 0xC);
 #ifdef NATIVE_PORT
-                    if (trace_enabled && g_viscmd_diag_frame < 2 && trace_count < bgVisTraceBudget()) {
+                    if (trace_enabled && trace_count < bgVisTraceBudget()) {
                         fprintf(stderr,
                                 "[BG-VIS-TRACE]   add_visible_room room=%d bbox=(%.0f,%.0f,%.0f,%.0f)\n",
                                 vis_room,
@@ -13770,13 +14860,13 @@ void *parse_global_vis_command_list(u8 *pc, s32 flag) {
                         list_visible_rooms_in_cur_global_vis_packet[num_visible_rooms_in_cur_global_vis_packet] = (char)vis_room;
                         num_visible_rooms_in_cur_global_vis_packet++;
 #ifdef NATIVE_PORT
-                        if (trace_enabled && g_viscmd_diag_frame < 2 && trace_count < bgVisTraceBudget()) {
+                        if (trace_enabled && trace_count < bgVisTraceBudget()) {
                             fprintf(stderr, "[BG-VIS-TRACE]   added room=%d\n", vis_room);
                             trace_count++;
                         }
 #endif
 #ifdef NATIVE_PORT
-                    } else if (trace_enabled && g_viscmd_diag_frame < 2 && trace_count < bgVisTraceBudget()) {
+                    } else if (trace_enabled && trace_count < bgVisTraceBudget()) {
                         fprintf(stderr, "[BG-VIS-TRACE]   rejected room=%d\n", vis_room);
                         trace_count++;
 #endif
@@ -15003,7 +16093,6 @@ void sub_GAME_7F0B8A6C(void) {
     s_room_info *roomptr;
     u8 *byteptr;
     bg_portal_data_entry *portals = NULL;
-    bg_portal_data_entry *cur;
     s32 portalIndex;
     s32 byteOffset;
     s32 i;
@@ -15308,46 +16397,24 @@ void sub_GAME_7F0B8A6C(void) {
     }
 
     /* Mark room_neighbor_to_rendered for portal-connected rooms */
-    cur = portals;
-    if (cur->offset_portal != 0) {
-        do {
-            u8 room1 = cur->connectedRoom1;
-            u8 room2 = cur->connectedRoom2;
-            u8 vis1 = g_BgRoomInfo[room1].room_rendered;
-            u8 vis2;
-
-            if (vis1 != 0) {
-                vis2 = g_BgRoomInfo[room2].room_rendered;
-                if (vis2 == 0) {
-                    g_BgRoomInfo[room2].room_neighbor_to_rendered = 1;
-                    goto next_portal;
-                }
-            }
-
-            vis2 = g_BgRoomInfo[room2].room_rendered;
-            if (vis2 == 0) {
-                goto next_portal_check;
-            }
-            if (vis1 != 0) {
-                goto next_portal_check;
-            }
-            g_BgRoomInfo[room1].room_neighbor_to_rendered = 1;
-        next_portal:
-        next_portal_check:
-            cur++;
-        } while (cur->offset_portal != 0);
-    }
+    bgMarkPortalNeighborsToRendered(portals);
 
 #ifdef NATIVE_PORT
-    /* Promote only portal rooms that normal BFS rejected because the projected
-     * aperture collapsed to an empty screen rect. This is a generic native-port
-     * edge rescue: the rejected destination must still be a one-hop neighbor of
-     * a rendered source room, and its own room AABB must intersect the viewport.
-     * Unlike the broad diagnostic below, rescued rooms do not enqueue further
-     * portals. */
+    /* Promote portal rooms that normal BFS rejected because the projected
+     * aperture collapsed or failed. Empty-bbox rescues can continue through
+     * connected portals with a bounded screen rect; project-fail rescues only
+     * trigger a guarded frustum rebuild when that rebuild is a small correction. */
     {
         bbox2d *player_bbox = (bbox2d *)&g_CurrentPlayer->screenxminf;
         bgPromotePortalEdgeRescueCandidates(player_bbox);
+        bgApplyPortalProjectFrustumFallback(player_bbox);
+        bgTraceRoomProjectIfRequested("post_portal", player_bbox);
+        bgApplyVisibilitySupplement(player_bbox);
+        bgTraceRoomProjectIfRequested("post_visibility", player_bbox);
+        bgForceAdmitRoomsForDiagnostics(player_bbox);
+        if (g_PortForceAdmitRoomCount > 0) {
+            bgTraceRoomProjectIfRequested("post_force", player_bbox);
+        }
     }
 
     /* Broad one-hop neighbor diagnostic. This intentionally remains opt-in

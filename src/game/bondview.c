@@ -288,6 +288,66 @@ static f32 bondviewClosedDoorFloorCandidate(f32 stan_floor, f32 collision_radius
     return best_floor;
 }
 
+static int bondviewFloorReattachEnabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *disable_env = getenv("GE007_DISABLE_FLOOR_REATTACH");
+        const char *enable_env = getenv("GE007_FLOOR_REATTACH");
+
+        enabled = 1;
+        if ((disable_env != NULL && disable_env[0] != '\0' && disable_env[0] != '0') ||
+            (enable_env != NULL && enable_env[0] == '0')) {
+            enabled = 0;
+        }
+    }
+
+    return enabled;
+}
+
+static f32 bondviewFloorReattachMinDrop(void)
+{
+    static int cached = 0;
+    static f32 min_drop = 16.0f;
+
+    if (!cached) {
+        const char *env = getenv("GE007_FLOOR_REATTACH_MIN_DROP");
+
+        if (env != NULL && env[0] != '\0') {
+            f32 parsed = (f32)strtof(env, NULL);
+
+            if (portIsFiniteF32(parsed) && parsed >= 0.0f && parsed <= 120.0f) {
+                min_drop = parsed;
+            }
+        }
+
+        cached = 1;
+    }
+
+    return min_drop;
+}
+
+static int bondviewShouldReattachLowerFloor(f32 carried_floor, f32 sampled_floor, f32 stanHeight_offset)
+{
+    if (!bondviewFloorReattachEnabled()) {
+        return 0;
+    }
+
+    if (g_CurrentPlayer == NULL
+        || g_CurrentPlayer->field_488.current_tile_ptr == NULL
+        || !portIsFiniteF32(carried_floor)
+        || !portIsFiniteF32(sampled_floor)) {
+        return 0;
+    }
+
+    if (stanHeight_offset > 0.01f) {
+        return 0;
+    }
+
+    return carried_floor - sampled_floor >= bondviewFloorReattachMinDrop();
+}
+
 static f32 portNativeSyntheticWalkScale(void)
 {
     static int cached = 0;
@@ -10719,10 +10779,41 @@ void bondviewUpdatePlayerY(s32 use_stanHeight, f32 stanHeight_offset)
                 g_CurrentPlayer->field_488.collision_position.f[0],
                 g_CurrentPlayer->field_488.collision_position.f[2]);
 
+#ifdef NATIVE_PORT
+            bondviewGetCollisionRadius(g_CurrentPlayer->prop, &collision_radius, &height, &always_30);
+            temp_f0 = bondviewClosedDoorFloorCandidate(temp_f0, collision_radius);
+#endif
+
             if (g_CurrentPlayer->stanHeight < temp_f0)
             {
                 g_CurrentPlayer->stanHeight = temp_f0;
             }
+#ifdef NATIVE_PORT
+            else if (bondviewShouldReattachLowerFloor(
+                g_CurrentPlayer->stanHeight,
+                temp_f0,
+                stanHeight_offset))
+            {
+                f32 old_stanHeight = g_CurrentPlayer->stanHeight;
+
+                g_CurrentPlayer->stanHeight = temp_f0;
+
+                if (getenv("GE007_TRACE_COLLISION") != NULL) {
+                    fprintf(stderr,
+                            "[FLOOR_REATTACH] frame=%d tile=%p room=%d old=%.2f sampled=%.2f field_70=%.2f offset=%.2f pos=(%.1f,%.1f)\n",
+                            g_frame_count_diag,
+                            (void*)g_CurrentPlayer->field_488.current_tile_ptr,
+                            g_CurrentPlayer->field_488.current_tile_ptr
+                                ? g_CurrentPlayer->field_488.current_tile_ptr->room : -1,
+                            old_stanHeight,
+                            temp_f0,
+                            g_CurrentPlayer->field_70,
+                            stanHeight_offset,
+                            g_CurrentPlayer->field_488.collision_position.f[0],
+                            g_CurrentPlayer->field_488.collision_position.f[2]);
+                }
+            }
+#endif
         }
         else
         {
@@ -11002,14 +11093,17 @@ void bondviewUpdatePlayerCollisionPositionFields(void)
     stanlinelog_flag = sp28;
 
 #ifdef NATIVE_PORT
-    /* Preserve the portal tile if walkTilesBetweenPoints returns NULL.
-     * A NULL result means the tile walk failed (no continuous path between
-     * collision_position and pos). Overwriting with NULL causes
-     * bondviewGetCurrentPlayersRoom() to return hardcoded room 1, which
-     * breaks room visibility on levels like Facility where the player's
-     * actual room is far from room 1. */
+    /* Preserve a usable portal room seed when walkTilesBetweenPoints returns
+     * NULL. A NULL result means the tile walk failed (no continuous path
+     * between collision_position and pos). Overwriting with NULL causes
+     * bondviewGetCurrentPlayersRoom() to return hardcoded room 1, but carrying
+     * an older portal tile can seed visibility from a stale room after a floor
+     * or stair transition. Prefer the current collision tile when it exists. */
     if (sp2C != NULL) {
         g_CurrentPlayer->field_488.current_tile_ptr_for_portals = sp2C;
+    } else if (g_CurrentPlayer->field_488.current_tile_ptr != NULL) {
+        g_CurrentPlayer->field_488.current_tile_ptr_for_portals =
+            g_CurrentPlayer->field_488.current_tile_ptr;
     } else if (g_CurrentPlayer->field_488.current_tile_ptr_for_portals == NULL) {
         /* Fallback: if portal tile was never set (e.g., first tick before spawn),
          * use the regular collision tile as a best-effort room source. */

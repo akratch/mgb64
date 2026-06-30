@@ -92,6 +92,7 @@ extern intptr_t get_BONDdata_field_10E0(void);
 extern int roomMatrixContainsAddress(const void *addr);
 extern int roomMatrixRoomFromAddress(const void *addr);
 extern int g_frame_count_diag;
+extern s32 g_BgCurrentRoom;
 extern uintptr_t virtualaddress;
 extern Mtx *matrixBufferRareLogo0;
 extern Mtx *matrixBufferGunbarrel0;
@@ -1585,6 +1586,17 @@ static bool gfx_diag_u64_matches_list(const char *spec, uint64_t value)
     }
 
     return false;
+}
+
+static bool gfx_diag_current_room_matches_env(const char *env_name)
+{
+    const char *spec = getenv(env_name);
+
+    if (spec == NULL || spec[0] == '\0' || (spec[0] == '0' && spec[1] == '\0')) {
+        return true;
+    }
+
+    return gfx_diag_u64_matches_list(spec, (uint64_t)g_BgCurrentRoom);
 }
 
 static bool gfx_diag_loaded_tile_two_tex_n64_filter_enabled(uint64_t cc_id)
@@ -5338,6 +5350,10 @@ static bool gfx_trace_rdp_render_modes_filters_match(const char *effect_label) {
     const char *effect_filter = gfx_trace_rdp_render_modes_effect_filter();
     const char *drawclass = gfx_draw_class_name(g_current_draw_class);
 
+    if (!gfx_diag_current_room_matches_env("GE007_TRACE_RDP_RENDER_MODES_ROOM")) {
+        return false;
+    }
+
     if (drawclass_filter != NULL && drawclass_filter[0] != '\0' &&
         strstr(drawclass, drawclass_filter) == NULL) {
         return false;
@@ -6783,16 +6799,19 @@ static bool gfx_trace_tri_pixel_enabled(uint64_t effective_cc_id)
             const char *after = getenv("GE007_TRACE_TRI_PIXEL_AFTER_FRAME");
             const char *budget = getenv("GE007_TRACE_TRI_PIXEL_BUDGET");
             const char *drawclass = getenv("GE007_TRACE_TRI_PIXEL_DRAWCLASS");
+            const char *room = getenv("GE007_TRACE_TRI_PIXEL_ROOM");
             const char *rect_only = getenv("GE007_TRACE_TRI_PIXEL_RECT_ONLY");
             const char *x = getenv("GE007_TRACE_TRI_PIXEL_X");
             const char *y = getenv("GE007_TRACE_TRI_PIXEL_Y");
             fprintf(stderr,
                     "[fast3d] TRACE TRI PIXEL spec=%s after=%s budget=%s "
-                    "drawclass=%s rect_only=%s target=%s,%s (GE007_TRACE_TRI_PIXEL)\n",
+                    "drawclass=%s room=%s rect_only=%s target=%s,%s "
+                    "(GE007_TRACE_TRI_PIXEL)\n",
                     env,
                     (after != NULL && after[0] != '\0') ? after : "0",
                     (budget != NULL && budget[0] != '\0') ? budget : "64",
                     (drawclass != NULL && drawclass[0] != '\0') ? drawclass : "*",
+                    (room != NULL && room[0] != '\0') ? room : "*",
                     (rect_only != NULL && rect_only[0] != '\0') ? rect_only : "0",
                     (x != NULL && x[0] != '\0') ? x : "?",
                     (y != NULL && y[0] != '\0') ? y : "?");
@@ -6831,6 +6850,9 @@ static bool gfx_trace_tri_pixel_enabled(uint64_t effective_cc_id)
         g_frame_count_diag < g_diag_trace_tri_pixel_after_frame ||
         g_diag_trace_tri_pixel_target_x < 0 ||
         g_diag_trace_tri_pixel_target_y < 0) {
+        return false;
+    }
+    if (!gfx_diag_current_room_matches_env("GE007_TRACE_TRI_PIXEL_ROOM")) {
         return false;
     }
     if (g_diag_trace_tri_pixel_rect_only > 0 &&
@@ -7236,14 +7258,17 @@ static bool gfx_trace_room_xlu_defer_pixel_enabled(void)
             const char *after = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME");
             const char *budget = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET");
             const char *inside = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY");
+            const char *room = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_ROOM");
             const char *x = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_X");
             const char *y = getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y");
             fprintf(stderr,
                     "[fast3d] TRACE ROOM XLU DEFER PIXEL after=%s budget=%s "
-                    "inside_only=%s target=%s,%s (GE007_TRACE_ROOM_XLU_DEFER_PIXEL)\n",
+                    "inside_only=%s room=%s target=%s,%s "
+                    "(GE007_TRACE_ROOM_XLU_DEFER_PIXEL)\n",
                     (after != NULL && after[0] != '\0') ? after : "0",
                     (budget != NULL && budget[0] != '\0') ? budget : "64",
                     (inside != NULL && inside[0] != '\0') ? inside : "0",
+                    (room != NULL && room[0] != '\0') ? room : "*",
                     (x != NULL && x[0] != '\0') ? x : "?",
                     (y != NULL && y[0] != '\0') ? y : "?");
             fflush(stderr);
@@ -7274,6 +7299,7 @@ static bool gfx_trace_room_xlu_defer_pixel_enabled(void)
     return g_diag_trace_room_xlu_defer_pixel > 0 &&
            g_diag_trace_room_xlu_defer_pixel_budget != 0 &&
            g_frame_count_diag >= g_diag_trace_room_xlu_defer_pixel_after_frame &&
+           gfx_diag_current_room_matches_env("GE007_TRACE_ROOM_XLU_DEFER_PIXEL_ROOM") &&
            g_diag_trace_room_xlu_defer_pixel_target_x >= 0 &&
            g_diag_trace_room_xlu_defer_pixel_target_y >= 0;
 }
@@ -7592,13 +7618,15 @@ static bool gfx_trace_sky_prep_pixel_enabled(void)
         if (g_diag_trace_sky_prep_pixel) {
             const char *after = getenv("GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME");
             const char *budget = getenv("GE007_TRACE_SKY_PREP_PIXEL_BUDGET");
+            const char *room = getenv("GE007_TRACE_SKY_PREP_PIXEL_ROOM");
             const char *x = getenv("GE007_TRACE_SKY_PREP_PIXEL_X");
             const char *y = getenv("GE007_TRACE_SKY_PREP_PIXEL_Y");
             fprintf(stderr,
                     "[fast3d] TRACE SKY PREP PIXEL after=%s budget=%s "
-                    "target=%s,%s (GE007_TRACE_SKY_PREP_PIXEL)\n",
+                    "room=%s target=%s,%s (GE007_TRACE_SKY_PREP_PIXEL)\n",
                     (after != NULL && after[0] != '\0') ? after : "0",
                     (budget != NULL && budget[0] != '\0') ? budget : "64",
+                    (room != NULL && room[0] != '\0') ? room : "*",
                     (x != NULL && x[0] != '\0') ? x : "?",
                     (y != NULL && y[0] != '\0') ? y : "?");
             fflush(stderr);
@@ -7624,6 +7652,7 @@ static bool gfx_trace_sky_prep_pixel_enabled(void)
     return g_diag_trace_sky_prep_pixel > 0 &&
            g_diag_trace_sky_prep_pixel_budget != 0 &&
            g_frame_count_diag >= g_diag_trace_sky_prep_pixel_after_frame &&
+           gfx_diag_current_room_matches_env("GE007_TRACE_SKY_PREP_PIXEL_ROOM") &&
            g_diag_trace_sky_prep_pixel_target_x >= 0 &&
            g_diag_trace_sky_prep_pixel_target_y >= 0;
 }
@@ -22796,6 +22825,132 @@ void gfx_init(void) {
     n64_dl_region_count = 0;
 }
 
+static void gfx_diag_screenshot_series_capture_if_due(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    static int after_frame = 0;
+    static int every = 30;
+    static int limit = 240;
+    static int written = 0;
+    static const char *dir = NULL;
+    static const char *prefix = NULL;
+    static const char *room_spec = NULL;
+
+    if (!initialized) {
+        const char *env;
+
+        initialized = 1;
+        dir = getenv("GE007_SCREENSHOT_SERIES_DIR");
+        enabled = (dir != NULL && dir[0] != '\0' && strcmp(dir, "0") != 0);
+        prefix = getenv("GE007_SCREENSHOT_SERIES_PREFIX");
+        if (prefix == NULL || prefix[0] == '\0') {
+            prefix = "capture";
+        }
+        room_spec = getenv("GE007_SCREENSHOT_SERIES_ROOM");
+        if (room_spec != NULL && (room_spec[0] == '\0' ||
+                                  (room_spec[0] == '0' && room_spec[1] == '\0'))) {
+            room_spec = NULL;
+        }
+
+        env = getenv("GE007_SCREENSHOT_SERIES_AFTER_FRAME");
+        after_frame = env ? atoi(env) : 0;
+        if (after_frame < 0) {
+            after_frame = 0;
+        }
+
+        env = getenv("GE007_SCREENSHOT_SERIES_EVERY");
+        every = env ? atoi(env) : 30;
+        if (every < 1) {
+            every = 1;
+        }
+
+        env = getenv("GE007_SCREENSHOT_SERIES_LIMIT");
+        limit = env ? atoi(env) : 240;
+        if (limit < 0) {
+            limit = 0;
+        }
+
+        if (enabled) {
+            fprintf(stderr,
+                    "[SCREENSHOT-SERIES] enabled dir=\"%s\" prefix=\"%s\" "
+                    "after=%d every=%d limit=%d room=\"%s\"\n",
+                    dir, prefix, after_frame, every, limit,
+                    room_spec != NULL ? room_spec : "*");
+            fflush(stderr);
+        }
+    }
+
+    if (!enabled ||
+        g_frame_count_diag < after_frame ||
+        (room_spec != NULL &&
+         !gfx_diag_u64_matches_list(room_spec, (uint64_t)g_BgCurrentRoom)) ||
+        (limit > 0 && written >= limit) ||
+        ((g_frame_count_diag - after_frame) % every) != 0) {
+        return;
+    }
+
+    {
+        int sw = gfx_current_dimensions.width;
+        int sh = gfx_current_dimensions.height;
+        size_t pixel_bytes;
+        uint8_t *pixels;
+        char path[1024];
+        int path_len;
+        FILE *sf;
+
+        if (sw <= 0 || sh <= 0) {
+            return;
+        }
+
+        pixel_bytes = (size_t)sw * (size_t)sh * 3;
+        pixels = (uint8_t *)malloc(pixel_bytes);
+        if (pixels == NULL) {
+            fprintf(stderr,
+                    "[SCREENSHOT-SERIES] frame=%d failed=malloc bytes=%zu\n",
+                    g_frame_count_diag, pixel_bytes);
+            fflush(stderr);
+            return;
+        }
+
+        glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+
+        path_len = snprintf(path, sizeof(path), "%s/%s_f%06d.ppm",
+                            dir, prefix, g_frame_count_diag);
+        if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
+            fprintf(stderr,
+                    "[SCREENSHOT-SERIES] frame=%d failed=path_too_long\n",
+                    g_frame_count_diag);
+            fflush(stderr);
+            free(pixels);
+            return;
+        }
+
+        sf = fopen(path, "wb");
+        if (sf == NULL) {
+            fprintf(stderr,
+                    "[SCREENSHOT-SERIES] frame=%d failed=fopen path=\"%s\"\n",
+                    g_frame_count_diag, path);
+            fflush(stderr);
+            free(pixels);
+            return;
+        }
+
+        fprintf(sf, "P6\n%d %d\n255\n", sw, sh);
+        for (int row = sh - 1; row >= 0; row--) {
+            fwrite(pixels + (size_t)row * (size_t)sw * 3, 1, (size_t)sw * 3, sf);
+        }
+        fclose(sf);
+        free(pixels);
+
+        written++;
+        fprintf(stderr,
+                "[SCREENSHOT-SERIES] frame=%d room=%d path=\"%s\" size=[%d,%d] index=%d\n",
+                g_frame_count_diag, g_BgCurrentRoom, path, sw, sh, written);
+        fflush(stderr);
+    }
+}
+
 void gfx_run_dl(Gfx *dl) {
     if (!dl) return;
 
@@ -22936,6 +23091,7 @@ void gfx_run_dl(Gfx *dl) {
     gfx_run_dl_pc(dl);
     gfx_flush();
     gfx_room_xlu_deferred_draw_pending();
+    gfx_diag_screenshot_series_capture_if_due();
     {
         extern volatile int g_gfxRecoveryActive;
         g_gfxRecoveryActive = 0;

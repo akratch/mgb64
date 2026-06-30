@@ -48098,6 +48098,12 @@ bool door7F0555F8(DoorRecord *door, bool altcoordsystem)
 
         if ((sp50 >= -limit) && (sp50 <= limit) && (sp4c >= -limit) && (sp4c <= limit))
         {
+#ifdef NATIVE_PORT
+            doorTraceDoorPrintf(door, "interact angle select alt=%d mode=direct left=%.5f right=%.5f",
+                    altcoordsystem ? 1 : 0,
+                    sp50,
+                    sp4c);
+#endif
             g_InteractProp = door->prop;
             checkmore = FALSE;
         }
@@ -48124,9 +48130,24 @@ bool door7F0555F8(DoorRecord *door, bool altcoordsystem)
 
             if ((sp4c - sp50) < M_PI_F && (sp50 < 0.0f) && (sp4c > 0.0f))
             {
+#ifdef NATIVE_PORT
+                doorTraceDoorPrintf(door, "interact angle select alt=%d mode=span left=%.5f right=%.5f",
+                        altcoordsystem ? 1 : 0,
+                        sp50,
+                        sp4c);
+#endif
                 g_InteractProp = door->prop;
                 checkmore = FALSE;
             }
+#ifdef NATIVE_PORT
+            else
+            {
+                doorTraceDoorPrintf(door, "interact angle reject alt=%d left=%.5f right=%.5f",
+                        altcoordsystem ? 1 : 0,
+                        sp50,
+                        sp4c);
+            }
+#endif
         }
     }
 
@@ -48143,6 +48164,7 @@ bool doorTestForInteract(PropRecord *prop)
     f32 xdiff;
     f32 ydiff;
     f32 zdiff;
+    f32 xzdist2;
     BoundPadRecord *boundpads;
     u8 rooms1[32];
     u8 rooms2[32];
@@ -48161,10 +48183,23 @@ bool doorTestForInteract(PropRecord *prop)
 		xdiff = door->runtime_pos.x - playerprop->pos.x;
 		ydiff = door->runtime_pos.y - playerprop->pos.y;
 		zdiff = door->runtime_pos.z - playerprop->pos.z;
+        xzdist2 = xdiff * xdiff + zdiff * zdiff;
 
-		if (xdiff * xdiff + zdiff * zdiff < 40000.0f && ydiff < 200.0f && ydiff > -200.0f)
+		if (xzdist2 < 40000.0f && ydiff < 200.0f && ydiff > -200.0f)
         {
 			maybe = TRUE;
+#ifdef NATIVE_PORT
+            doorTraceDoorPrintf(door,
+                    "interact proximity maybe mode=direct xz2=%.3f y=%.3f player=(%.2f,%.2f,%.2f) door=(%.2f,%.2f,%.2f)",
+                    xzdist2,
+                    ydiff,
+                    playerprop->pos.x,
+                    playerprop->pos.y,
+                    playerprop->pos.z,
+                    door->runtime_pos.x,
+                    door->runtime_pos.y,
+                    door->runtime_pos.z);
+#endif
 		}
         else
         {
@@ -48176,6 +48211,18 @@ bool doorTestForInteract(PropRecord *prop)
                 if (sub_GAME_7F03F598(&playerprop->pos, 150.0f, boundpads) != 0)
                 {
                     maybe = TRUE;
+#ifdef NATIVE_PORT
+                    doorTraceDoorPrintf(door,
+                            "interact proximity maybe mode=boundpad xz2=%.3f y=%.3f player=(%.2f,%.2f,%.2f) door=(%.2f,%.2f,%.2f)",
+                            xzdist2,
+                            ydiff,
+                            playerprop->pos.x,
+                            playerprop->pos.y,
+                            playerprop->pos.z,
+                            door->runtime_pos.x,
+                            door->runtime_pos.y,
+                            door->runtime_pos.z);
+#endif
                 }
             }
 		}
@@ -48189,7 +48236,33 @@ bool doorTestForInteract(PropRecord *prop)
                 checkmore = door7F0555F8(door, TRUE);
             }
 		}
+#ifdef NATIVE_PORT
+        else
+        {
+            doorTraceDoorPrintf(door,
+                    "interact proximity reject xz2=%.3f y=%.3f player=(%.2f,%.2f,%.2f) door=(%.2f,%.2f,%.2f)",
+                    xzdist2,
+                    ydiff,
+                    playerprop->pos.x,
+                    playerprop->pos.y,
+                    playerprop->pos.z,
+                    door->runtime_pos.x,
+                    door->runtime_pos.y,
+                    door->runtime_pos.z);
+        }
+#endif
 	}
+#ifdef NATIVE_PORT
+    else
+    {
+        doorTraceDoorPrintf(door,
+                "interact unavailable flags=0x%08x maxFrac=%.3f propflags=0x%02x onscreen=%d",
+                door->flags,
+                door->maxFrac,
+                (unsigned int)prop->flags,
+                (prop->flags & PROPFLAG_ONSCREEN) ? 1 : 0);
+    }
+#endif
 
 	return checkmore;
 }

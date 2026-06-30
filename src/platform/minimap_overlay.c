@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <ultra64.h>
 
@@ -85,6 +87,67 @@ static GLint s_minimap_screen_location = -1;
 static int s_minimap_shader_failed;
 static MinimapOverlayVertex s_minimap_vertices[MINIMAP_OVERLAY_MAX_VERTICES];
 static size_t s_minimap_vertex_count;
+static u32 s_minimap_trace_draw_calls;
+static u32 s_minimap_trace_vertices_flushed;
+
+typedef struct MinimapOverlayTraceSummary {
+    const char *status;
+    u32 queued_frames;
+    u32 drawn_frames;
+    u32 layout_failures;
+    u32 objective_pins;
+    u32 enemy_pins;
+    u32 draw_calls;
+    u32 vertices_flushed;
+    int fb_width;
+    int fb_height;
+    u32 cache_ready;
+    u32 cache_poly_count;
+    u32 cache_overflow_count;
+} MinimapOverlayTraceSummary;
+
+static const char *minimap_overlay_dump_path(void)
+{
+    const char *path = getenv("GE007_MINIMAP_OVERLAY_DUMP");
+
+    if (path == NULL || path[0] == '\0' || (path[0] == '0' && path[1] == '\0')) {
+        return NULL;
+    }
+
+    return path;
+}
+
+static void minimap_overlay_dump_summary(const MinimapOverlayTraceSummary *summary)
+{
+    const char *path = minimap_overlay_dump_path();
+    FILE *file;
+
+    if (path == NULL || summary == NULL) {
+        return;
+    }
+
+    file = fopen(path, "w");
+    if (file == NULL) {
+        return;
+    }
+
+    fprintf(file, "{\n");
+    fprintf(file, "  \"status\": \"%s\",\n", summary->status != NULL ? summary->status : "unknown");
+    fprintf(file, "  \"queued_frames\": %u,\n", summary->queued_frames);
+    fprintf(file, "  \"drawn_frames\": %u,\n", summary->drawn_frames);
+    fprintf(file, "  \"layout_failures\": %u,\n", summary->layout_failures);
+    fprintf(file, "  \"objective_pins\": %u,\n", summary->objective_pins);
+    fprintf(file, "  \"enemy_pins\": %u,\n", summary->enemy_pins);
+    fprintf(file, "  \"draw_calls\": %u,\n", summary->draw_calls);
+    fprintf(file, "  \"vertices_flushed\": %u,\n", summary->vertices_flushed);
+    fprintf(file, "  \"fb_width\": %d,\n", summary->fb_width);
+    fprintf(file, "  \"fb_height\": %d,\n", summary->fb_height);
+    fprintf(file, "  \"cache_ready\": %u,\n", summary->cache_ready);
+    fprintf(file, "  \"cache_poly_count\": %u,\n", summary->cache_poly_count);
+    fprintf(file, "  \"cache_overflow_count\": %u\n", summary->cache_overflow_count);
+    fprintf(file, "}\n");
+    fclose(file);
+}
 
 static float minimap_overlay_clampf(float value, float min_value, float max_value)
 {
@@ -242,6 +305,8 @@ static void minimap_overlay_flush(void)
                  s_minimap_vertices,
                  GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)s_minimap_vertex_count);
+    s_minimap_trace_draw_calls++;
+    s_minimap_trace_vertices_flushed += (u32)s_minimap_vertex_count;
     s_minimap_vertex_count = 0;
 }
 
@@ -1496,25 +1561,25 @@ static void minimap_overlay_draw_enemy_pins(const MinimapFrame *frame,
     }
 }
 
-static void minimap_overlay_draw_frame(const MinimapLevelCache *cache,
-                                       const MinimapFrame *frame,
-                                       int fb_width,
-                                       int fb_height)
+static int minimap_overlay_draw_frame(const MinimapLevelCache *cache,
+                                      const MinimapFrame *frame,
+                                      int fb_width,
+                                      int fb_height)
 {
     MinimapOverlayLayout layout;
     float opacity;
 
     if (!frame->enabled || frame->view_width <= 0 || frame->view_height <= 0) {
-        return;
+        return 0;
     }
 
     opacity = minimap_overlay_clampf(g_pcMinimapOpacity, 0.0f, 1.0f);
     if (opacity <= 0.0f) {
-        return;
+        return 0;
     }
 
     if (!minimap_overlay_build_layout(cache, frame, fb_width, fb_height, &layout)) {
-        return;
+        return 0;
     }
 
     minimap_overlay_flush();
@@ -1534,6 +1599,8 @@ static void minimap_overlay_draw_frame(const MinimapLevelCache *cache,
     minimap_overlay_draw_enemy_pins(frame, &layout, opacity);
     minimap_overlay_draw_player(frame, &layout, opacity);
     minimap_overlay_flush();
+
+    return 1;
 }
 
 static void minimap_overlay_save_gl_state(MinimapOverlayGlState *state)
@@ -1589,6 +1656,7 @@ void minimap_overlay_draw_queued_frames(void)
 {
     const MinimapLevelCache *cache = minimap_get_level_cache();
     const MinimapFrameQueue *queue = minimap_get_frame_queue();
+    MinimapOverlayTraceSummary trace_summary;
     MinimapOverlayGlState state;
     GLint viewport[4] = {0, 0, 0, 0};
     int fb_width;
@@ -1596,12 +1664,28 @@ void minimap_overlay_draw_queued_frames(void)
     u32 i;
     extern SDL_Window *g_sdlWindow;
 
+    memset(&trace_summary, 0, sizeof(trace_summary));
+    trace_summary.status = "no_queue";
+    trace_summary.cache_ready = (cache != NULL && cache->ready) ? 1 : 0;
+    trace_summary.cache_poly_count = cache != NULL ? cache->poly_count : 0;
+    trace_summary.cache_overflow_count = cache != NULL ? cache->overflow_count : 0;
+    s_minimap_trace_draw_calls = 0;
+    s_minimap_trace_vertices_flushed = 0;
+
     if (queue == NULL || queue->count == 0) {
+        minimap_overlay_dump_summary(&trace_summary);
         return;
+    }
+    trace_summary.queued_frames = queue->count;
+    for (i = 0; i < queue->count; i++) {
+        trace_summary.objective_pins += queue->frames[i].objective_count;
+        trace_summary.enemy_pins += queue->frames[i].enemy_count;
     }
 
     if (!minimap_is_enabled() || cache == NULL || !cache->ready) {
         minimap_clear_frame_queue();
+        trace_summary.status = "disabled_or_not_ready";
+        minimap_overlay_dump_summary(&trace_summary);
         return;
     }
 
@@ -1622,13 +1706,19 @@ void minimap_overlay_draw_queued_frames(void)
 
     if (fb_width <= 0 || fb_height <= 0) {
         minimap_clear_frame_queue();
+        trace_summary.status = "invalid_framebuffer";
+        minimap_overlay_dump_summary(&trace_summary);
         return;
     }
+    trace_summary.fb_width = fb_width;
+    trace_summary.fb_height = fb_height;
 
     minimap_overlay_save_gl_state(&state);
     if (!minimap_overlay_ensure_program()) {
         minimap_overlay_restore_gl_state(&state);
         minimap_clear_frame_queue();
+        trace_summary.status = "shader_failed";
+        minimap_overlay_dump_summary(&trace_summary);
         return;
     }
 
@@ -1647,10 +1737,18 @@ void minimap_overlay_draw_queued_frames(void)
     glUniform2f(s_minimap_screen_location, (float)fb_width, (float)fb_height);
 
     for (i = 0; i < queue->count; i++) {
-        minimap_overlay_draw_frame(cache, &queue->frames[i], fb_width, fb_height);
+        if (minimap_overlay_draw_frame(cache, &queue->frames[i], fb_width, fb_height)) {
+            trace_summary.drawn_frames++;
+        } else {
+            trace_summary.layout_failures++;
+        }
     }
 
     minimap_overlay_flush();
     minimap_overlay_restore_gl_state(&state);
     minimap_clear_frame_queue();
+    trace_summary.status = trace_summary.drawn_frames > 0 ? "drawn" : "no_drawn_frames";
+    trace_summary.draw_calls = s_minimap_trace_draw_calls;
+    trace_summary.vertices_flushed = s_minimap_trace_vertices_flushed;
+    minimap_overlay_dump_summary(&trace_summary);
 }

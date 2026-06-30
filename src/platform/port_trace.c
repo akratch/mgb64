@@ -1352,6 +1352,15 @@ static int traceFlowOnlyEnabled(void) {
     return enabled;
 }
 
+static int traceFullRoomListsEnabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("GE007_TRACE_FULL_ROOM_LIST");
+        enabled = env ? (atoi(env) != 0) : 0;
+    }
+    return enabled;
+}
+
 /* Frontend/title transitions can leave stage pointers non-null after unload. */
 static int traceLiveStageGlobalsSafe(void) {
     int stage_menu_active;
@@ -5998,7 +6007,7 @@ void portTraceFrame(void) {
     int room_render_fallback_active = 0;
     int room_render_fallback_rooms = 0;
     int room_render_fallback_total = 0;
-    int rendered_rooms_sample[16];
+    int rendered_rooms_sample[204];
     int rendered_rooms_sample_count = 0;
     int has_player = 0;
     /* 1-based current player number for the "p" field. 0 = no current player.
@@ -6256,6 +6265,113 @@ void portTraceFrame(void) {
     ramrom_field_json[0] = '\0';
     weapon_right_mtx_json[0] = '\0';
     weapon_left_mtx_json[0] = '\0';
+
+    {
+        int folder;
+        size_t valid_out = 0;
+        size_t level_out = 0;
+        size_t difficulty_out = 0;
+        char valid_json[32];
+        char level_json[64];
+        char difficulty_json[64];
+
+        valid_json[0] = '[';
+        level_json[0] = '[';
+        difficulty_json[0] = '[';
+        valid_out = 1;
+        level_out = 1;
+        difficulty_out = 1;
+
+        for (folder = FOLDER1; folder < MAX_FOLDER_COUNT; folder++) {
+            int wrote;
+            int valid = fileGetSaveForFoldernum((u32)folder) != NULL ? 1 : 0;
+            LEVEL_SOLO_SEQUENCE level = SP_LEVEL_NONE;
+            DIFFICULTY difficulty = DIFFICULTY_MULTI;
+
+            fileGetHighestStageDifficultyCompletedForFolder(folder, &level, &difficulty);
+
+            wrote = snprintf(valid_json + valid_out,
+                             sizeof(valid_json) - valid_out,
+                             "%s%d",
+                             folder == FOLDER1 ? "" : ",",
+                             valid);
+            if (wrote < 0 || (size_t)wrote >= sizeof(valid_json) - valid_out) {
+                break;
+            }
+            valid_out += (size_t)wrote;
+
+            wrote = snprintf(level_json + level_out,
+                             sizeof(level_json) - level_out,
+                             "%s%d",
+                             folder == FOLDER1 ? "" : ",",
+                             (int)level);
+            if (wrote < 0 || (size_t)wrote >= sizeof(level_json) - level_out) {
+                break;
+            }
+            level_out += (size_t)wrote;
+
+            wrote = snprintf(difficulty_json + difficulty_out,
+                             sizeof(difficulty_json) - difficulty_out,
+                             "%s%d",
+                             folder == FOLDER1 ? "" : ",",
+                             (int)difficulty);
+            if (wrote < 0 || (size_t)wrote >= sizeof(difficulty_json) - difficulty_out) {
+                break;
+            }
+            difficulty_out += (size_t)wrote;
+        }
+
+        if (valid_out + 2 <= sizeof(valid_json)) {
+            valid_json[valid_out++] = ']';
+            valid_json[valid_out] = '\0';
+        } else {
+            valid_json[sizeof(valid_json) - 2] = ']';
+            valid_json[sizeof(valid_json) - 1] = '\0';
+        }
+
+        if (level_out + 2 <= sizeof(level_json)) {
+            level_json[level_out++] = ']';
+            level_json[level_out] = '\0';
+        } else {
+            level_json[sizeof(level_json) - 2] = ']';
+            level_json[sizeof(level_json) - 1] = '\0';
+        }
+
+        if (difficulty_out + 2 <= sizeof(difficulty_json)) {
+            difficulty_json[difficulty_out++] = ']';
+            difficulty_json[difficulty_out] = '\0';
+        } else {
+            difficulty_json[sizeof(difficulty_json) - 2] = ']';
+            difficulty_json[sizeof(difficulty_json) - 1] = '\0';
+        }
+
+        snprintf(save_field_json,
+                 sizeof(save_field_json),
+                 "\"save\":{\"valid\":%s,\"level\":%s,\"difficulty\":%s,"
+                 "\"copy_count\":%d,\"copy_source\":%d,\"copy_target\":%d,\"copy_result\":%d,"
+                 "\"delete_count\":%d,\"delete_folder\":%d,\"delete_result\":%d},",
+                 valid_json,
+                 level_json,
+                 difficulty_json,
+#ifdef NATIVE_PORT
+                 port_save_copy_count,
+                 port_save_copy_source,
+                 port_save_copy_target,
+                 port_save_copy_result,
+                 port_save_delete_count,
+                 port_save_delete_folder,
+                 port_save_delete_result
+#else
+                 0,
+                 -1,
+                 -1,
+                 0,
+                 0,
+                 -1,
+                 0
+#endif
+                 );
+    }
 
     if (trace_live_stage_globals && g_CurrentPlayer) {
         int frozen_intro_camera = playerHasFrozenIntroCamera(g_CurrentPlayer);
@@ -6649,113 +6765,6 @@ void portTraceFrame(void) {
                      objective_statuses_json,
                      objective_text_ids_json,
                      objective_difficulties_json);
-        }
-
-        {
-            int folder;
-            size_t valid_out = 0;
-            size_t level_out = 0;
-            size_t difficulty_out = 0;
-            char valid_json[32];
-            char level_json[64];
-            char difficulty_json[64];
-
-            valid_json[0] = '[';
-            level_json[0] = '[';
-            difficulty_json[0] = '[';
-            valid_out = 1;
-            level_out = 1;
-            difficulty_out = 1;
-
-            for (folder = FOLDER1; folder < MAX_FOLDER_COUNT; folder++) {
-                int wrote;
-                int valid = fileGetSaveForFoldernum((u32)folder) != NULL ? 1 : 0;
-                LEVEL_SOLO_SEQUENCE level = SP_LEVEL_NONE;
-                DIFFICULTY difficulty = DIFFICULTY_MULTI;
-
-                fileGetHighestStageDifficultyCompletedForFolder(folder, &level, &difficulty);
-
-                wrote = snprintf(valid_json + valid_out,
-                                 sizeof(valid_json) - valid_out,
-                                 "%s%d",
-                                 folder == FOLDER1 ? "" : ",",
-                                 valid);
-                if (wrote < 0 || (size_t)wrote >= sizeof(valid_json) - valid_out) {
-                    break;
-                }
-                valid_out += (size_t)wrote;
-
-                wrote = snprintf(level_json + level_out,
-                                 sizeof(level_json) - level_out,
-                                 "%s%d",
-                                 folder == FOLDER1 ? "" : ",",
-                                 (int)level);
-                if (wrote < 0 || (size_t)wrote >= sizeof(level_json) - level_out) {
-                    break;
-                }
-                level_out += (size_t)wrote;
-
-                wrote = snprintf(difficulty_json + difficulty_out,
-                                 sizeof(difficulty_json) - difficulty_out,
-                                 "%s%d",
-                                 folder == FOLDER1 ? "" : ",",
-                                 (int)difficulty);
-                if (wrote < 0 || (size_t)wrote >= sizeof(difficulty_json) - difficulty_out) {
-                    break;
-                }
-                difficulty_out += (size_t)wrote;
-            }
-
-            if (valid_out + 2 <= sizeof(valid_json)) {
-                valid_json[valid_out++] = ']';
-                valid_json[valid_out] = '\0';
-            } else {
-                valid_json[sizeof(valid_json) - 2] = ']';
-                valid_json[sizeof(valid_json) - 1] = '\0';
-            }
-
-            if (level_out + 2 <= sizeof(level_json)) {
-                level_json[level_out++] = ']';
-                level_json[level_out] = '\0';
-            } else {
-                level_json[sizeof(level_json) - 2] = ']';
-                level_json[sizeof(level_json) - 1] = '\0';
-            }
-
-            if (difficulty_out + 2 <= sizeof(difficulty_json)) {
-                difficulty_json[difficulty_out++] = ']';
-                difficulty_json[difficulty_out] = '\0';
-            } else {
-                difficulty_json[sizeof(difficulty_json) - 2] = ']';
-                difficulty_json[sizeof(difficulty_json) - 1] = '\0';
-            }
-
-            snprintf(save_field_json,
-                     sizeof(save_field_json),
-                     "\"save\":{\"valid\":%s,\"level\":%s,\"difficulty\":%s,"
-                     "\"copy_count\":%d,\"copy_source\":%d,\"copy_target\":%d,\"copy_result\":%d,"
-                     "\"delete_count\":%d,\"delete_folder\":%d,\"delete_result\":%d},",
-                     valid_json,
-                     level_json,
-                     difficulty_json,
-#ifdef NATIVE_PORT
-                     port_save_copy_count,
-                     port_save_copy_source,
-                     port_save_copy_target,
-                     port_save_copy_result,
-                     port_save_delete_count,
-                     port_save_delete_folder,
-                     port_save_delete_result
-#else
-                     0,
-                     -1,
-                     -1,
-                     0,
-                     0,
-                     -1,
-                     0
-#endif
-                     );
         }
 
         tank_in = in_tank_flag ? 1 : 0;
@@ -7619,7 +7628,10 @@ void portTraceFrame(void) {
 
             if (ri->room_rendered) {
                 rendered_rooms_count++;
-                if (rendered_rooms_sample_count < (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))) {
+                int rendered_sample_limit = traceFullRoomListsEnabled()
+                    ? (int)(sizeof(rendered_rooms_sample) / sizeof(rendered_rooms_sample[0]))
+                    : 16;
+                if (rendered_rooms_sample_count < rendered_sample_limit) {
                     rendered_rooms_sample[rendered_rooms_sample_count++] = room;
                 }
             }
@@ -7683,8 +7695,8 @@ void portTraceFrame(void) {
      * helper so crash recovery cannot splice records together through stdio. */
     {
         char linebuf[TRACE_FRAME_JSON_LINE_SIZE];
-        char rendered_rooms_buf[192];
-        char draw_rooms_buf[192];
+        char rendered_rooms_buf[1024];
+        char draw_rooms_buf[1024];
         int rendered_rooms_len = 0;
         int draw_rooms_len = 0;
 
@@ -7714,7 +7726,9 @@ void portTraceFrame(void) {
         if (trace_live_stage_globals) {
             int draw_count = g_BgNumberOfRoomsDrawn;
             if (draw_count < 0) draw_count = 0;
-            if (draw_count > 16) draw_count = 16;
+            if (draw_count > (traceFullRoomListsEnabled() ? 204 : 16)) {
+                draw_count = traceFullRoomListsEnabled() ? 204 : 16;
+            }
             for (int i = 0; i < draw_count; i++) {
                 int written = snprintf(
                     draw_rooms_buf + draw_rooms_len,

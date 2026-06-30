@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "minimap.h"
+#include "chr.h"
 #include "fr.h"
 #include "loadobjectmodel.h"
 #include "lvl.h"
@@ -22,8 +23,7 @@
 #define MINIMAP_OBJECTIVE_MAX_RECORDS_PER_ENTRY 64
 
 typedef struct MinimapEnemyReveal {
-    s16 chrnum;
-    ChrRecord *chr;
+    s32 chrnum;
     f32 x;
     f32 y;
     f32 z;
@@ -377,6 +377,15 @@ static s32 minimap_chr_reveal_should_stale_fade(ChrRecord *chr)
         || (chr->chrflags & CHRFLAG_HIDDEN) != 0;
 }
 
+static ChrRecord *minimap_resolve_reveal_chr(const MinimapEnemyReveal *reveal)
+{
+    if (reveal == NULL || reveal->chrnum < 0) {
+        return NULL;
+    }
+
+    return chrFindByLiteralId(reveal->chrnum);
+}
+
 static void minimap_stale_fade_reveal(MinimapEnemyReveal *reveal)
 {
     if (reveal->ttl60 > MINIMAP_REVEAL_STALE_FADE_TTL60) {
@@ -402,8 +411,7 @@ void minimap_note_guard_fired(ChrRecord *chr, s32 hand, s32 itemid, s32 audible)
 
     for (i = 0; i < MINIMAP_MAX_ENEMY_PINS; i++) {
         if (s_minimap_reveals[i].active
-            && (s_minimap_reveals[i].chr == chr
-                || s_minimap_reveals[i].chrnum == chr->chrnum)) {
+            && s_minimap_reveals[i].chrnum == chr->chrnum) {
             slot = i;
             break;
         }
@@ -418,7 +426,6 @@ void minimap_note_guard_fired(ChrRecord *chr, s32 hand, s32 itemid, s32 audible)
 
     s_minimap_reveals[slot].active = 1;
     s_minimap_reveals[slot].suppressed = suppressed ? 1 : 0;
-    s_minimap_reveals[slot].chr = chr;
     s_minimap_reveals[slot].chrnum = chr->chrnum;
     s_minimap_reveals[slot].ttl60 = MINIMAP_REVEAL_TTL60;
     s_minimap_reveals[slot].ttl60_max = MINIMAP_REVEAL_TTL60;
@@ -439,6 +446,7 @@ void minimap_tick(void)
 
     for (i = 0; i < MINIMAP_MAX_ENEMY_PINS; i++) {
         MinimapEnemyReveal *reveal = &s_minimap_reveals[i];
+        ChrRecord *chr;
 
         if (!reveal->active) {
             continue;
@@ -450,15 +458,16 @@ void minimap_tick(void)
             continue;
         }
 
-        if (minimap_chr_reveal_should_stale_fade(reveal->chr)) {
+        chr = minimap_resolve_reveal_chr(reveal);
+        if (minimap_chr_reveal_should_stale_fade(chr)) {
             minimap_stale_fade_reveal(reveal);
         }
 
-        if (reveal->chr != NULL && reveal->chr->prop != NULL) {
-            reveal->x = reveal->chr->prop->pos.x;
-            reveal->y = reveal->chr->prop->pos.y;
-            reveal->z = reveal->chr->prop->pos.z;
-            reveal->room = reveal->chr->prop->stan != NULL ? reveal->chr->prop->stan->room : reveal->room;
+        if (chr != NULL && chr->prop != NULL) {
+            reveal->x = chr->prop->pos.x;
+            reveal->y = chr->prop->pos.y;
+            reveal->z = chr->prop->pos.z;
+            reveal->room = chr->prop->stan != NULL ? chr->prop->stan->room : reveal->room;
         }
     }
 }
