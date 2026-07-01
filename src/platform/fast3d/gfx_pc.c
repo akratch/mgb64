@@ -4430,8 +4430,18 @@ static void gfx_sync_current_dimensions_from_window(void) {
      * factor preserves aspect_ratio (clamping each axis independently, or
      * clamping inside ensure_scene_target, would distort or crop). */
     {
-        extern int gfx_opengl_max_offscreen_dim(void);
-        int max_dim = gfx_opengl_max_offscreen_dim();
+        int max_dim;
+#ifdef __APPLE__
+        extern bool gfx_backend_use_metal(void);
+        if (gfx_backend_use_metal()) {
+            extern int gfx_metal_max_offscreen_dim(void);
+            max_dim = gfx_metal_max_offscreen_dim();
+        } else
+#endif
+        {
+            extern int gfx_opengl_max_offscreen_dim(void);
+            max_dim = gfx_opengl_max_offscreen_dim();
+        }
         int largest = scaled_w > scaled_h ? scaled_w : scaled_h;
 
         if (max_dim > 0 && largest > max_dim) {
@@ -23177,10 +23187,18 @@ void gfx_run_dl(Gfx *dl) {
         g_vtx_zero_count = g_vtx_max_count = g_vtx_total_count = 0;
         g_vtx_sample_count = 0;
     }
-    /* Set clear color BEFORE start_frame, which does the glClear */
+    /* Set clear color BEFORE start_frame, which does the clear */
     {
-        extern void gfx_opengl_set_clear_color(float r, float g, float b);
-        gfx_opengl_set_clear_color(clear_r, clear_g, clear_b);
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            extern void gfx_metal_set_clear_color(float r, float g, float b);
+            gfx_metal_set_clear_color(clear_r, clear_g, clear_b);
+        } else
+#endif
+        {
+            extern void gfx_opengl_set_clear_color(float r, float g, float b);
+            gfx_opengl_set_clear_color(clear_r, clear_g, clear_b);
+        }
     }
     gfx_rapi->start_frame();
 
@@ -23936,6 +23954,9 @@ unsigned int gfx_get_segment_mask(void) {
 
 void gfx_end_frame(void) {
     extern SDL_Window *g_sdlWindow;
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) return;  /* Metal presents its drawable in gfx_metal end_frame */
+#endif
     SDL_GL_SwapWindow(g_sdlWindow);
 }
 

@@ -321,6 +321,9 @@ set(FAST3D_SOURCES
 # Native Metal backend (macOS-only, opt-in at runtime). GL TU stays on all platforms.
 if(APPLE)
     list(APPEND FAST3D_SOURCES src/platform/fast3d/gfx_metal.mm)
+    # ARC for the Metal TU only (manages id<MTL...>/CAMetalLayer/drawable lifetimes).
+    set_source_files_properties(src/platform/fast3d/gfx_metal.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 # glad OpenGL loader (not needed on macOS — uses framework directly)

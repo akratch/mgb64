@@ -119,6 +119,10 @@ static void platformClosePadByInstance(SDL_JoystickID id) {
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
 static SDL_GLContext  g_glContext  = NULL;
+#ifdef __APPLE__
+extern bool gfx_backend_use_metal(void);  /* fast3d/gfx_backend.h */
+SDL_MetalView g_metalView = NULL;          /* non-static: gfx_metal reads its CAMetalLayer */
+#endif
 static int g_sdlQuit = 0;
 static int g_forceNoVsync = 0;
 static int g_backgroundWindow = 0;
@@ -597,6 +601,11 @@ void platformSaveScreenshot(void) {
     int native_size_screenshot = getenv("GE007_DIAG_SCREENSHOT_NATIVE_SIZE") != NULL;
 
     if (g_sdlWindow != NULL) {
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            SDL_Metal_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
+        } else
+#endif
         SDL_GL_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
     }
 
@@ -2107,6 +2116,11 @@ int platformInitSDL(void) {
         int window_x;
         int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            window_flags = SDL_WINDOW_METAL | SDL_WINDOW_RESIZABLE;
+        }
+#endif
 
         if (enable_highdpi) {
             window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
@@ -2135,12 +2149,25 @@ int platformInitSDL(void) {
 
     platformApplyWindowMode();
 
-    g_glContext = SDL_GL_CreateContext(g_sdlWindow);
-    if (!g_glContext) {
-        fprintf(stderr, "[SDL] GL context creation failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(g_sdlWindow);
-        SDL_Quit();
-        return -1;
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        g_metalView = SDL_Metal_CreateView(g_sdlWindow);
+        if (!g_metalView) {
+            fprintf(stderr, "[SDL] Metal view creation failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(g_sdlWindow);
+            SDL_Quit();
+            return -1;
+        }
+    } else
+#endif
+    {
+        g_glContext = SDL_GL_CreateContext(g_sdlWindow);
+        if (!g_glContext) {
+            fprintf(stderr, "[SDL] GL context creation failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(g_sdlWindow);
+            SDL_Quit();
+            return -1;
+        }
     }
 
     /* Load OpenGL function pointers via glad (not needed on macOS) */
@@ -2162,6 +2189,11 @@ int platformInitSDL(void) {
     }
 
     g_lastFrameTime = SDL_GetTicks();
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        printf("[SDL] Window created (native Metal)\n");
+    } else
+#endif
     printf("[SDL] Window created (OpenGL %s, GLSL %s)\n",
            glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
     if (platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI")) {
@@ -2193,6 +2225,14 @@ int platformInitSDL(void) {
 
     return 0;
 }
+
+#ifdef __APPLE__
+/* Returns the CAMetalLayer* (as void*) backing the SDL Metal view, for the
+ * native Metal backend to render into. NULL when not on the Metal path. */
+void *platformGetMetalLayer(void) {
+    return g_metalView ? SDL_Metal_GetLayer(g_metalView) : NULL;
+}
+#endif
 
 /**
  * Process SDL events and check for quit.
