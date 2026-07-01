@@ -195,6 +195,9 @@ f32 g_pcVignette = 0.15f;        /* remaster default: soft edge falloff for dept
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
+s32 g_pcSsao = 0;                /* default OFF (identity-first landing; flip on at the review checkpoint) */
+f32 g_pcSsaoRadius = 0.5f;       /* AO sample radius, fraction of screen height */
+f32 g_pcSsaoIntensity = 1.0f;    /* occlusion darkening strength */
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcSharpen = 0.15f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
@@ -1562,6 +1565,22 @@ void platformRegisterConfig(void)
                           "--config-override Video.BloomIntensity=VALUE",
                           "Bloom intensity",
                           "Strength of the bloom halo added to the image.");
+    settingsRegisterInt("Video.Ssao", &g_pcSsao, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SSAO",
+                        "--config-override Video.Ssao=VALUE",
+                        "SSAO",
+                        "Screen-space ambient occlusion: depth-based contact darkening in "
+                        "corners and under geometry. 0 = off.");
+    settingsRegisterFloat("Video.SsaoRadius", &g_pcSsaoRadius, 0.5f, 0.05f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_RADIUS",
+                          "--config-override Video.SsaoRadius=VALUE",
+                          "SSAO radius",
+                          "AO sample radius as a fraction of screen height.");
+    settingsRegisterFloat("Video.SsaoIntensity", &g_pcSsaoIntensity, 1.0f, 0.0f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_INTENSITY",
+                          "--config-override Video.SsaoIntensity=VALUE",
+                          "SSAO intensity",
+                          "Strength of the ambient-occlusion darkening.");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",

@@ -50,9 +50,11 @@ run() {  # $1=label ; remaining args = --config-override ...
 }
 
 echo "sim-invariance-gate: replay=$REPLAY frame=$FRAME render_scale=$SCALE"
-OFF="$(run off --config-override Video.RemasterFX=0 --config-override Video.RenderScale=$SCALE)"
+OFF="$(run off --config-override Video.RemasterFX=0 --config-override Video.RenderScale=$SCALE \
+               --config-override Video.Ssao=0)"
 ON="$(run on  --config-override Video.RemasterFX=1 --config-override Video.RenderScale=$SCALE \
-              --config-override Video.Bloom=1 --config-override Video.Fxaa=1)"
+              --config-override Video.Bloom=1 --config-override Video.Fxaa=1 \
+              --config-override Video.Ssao=1)"
 echo "  OFF (screen-space off): $OFF"
 echo "  ON  (screen-space on):  $ON"
 

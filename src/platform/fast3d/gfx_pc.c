@@ -15369,6 +15369,11 @@ static void gfx_update_mp_matrix(void) {
 
 /* ===== RSP command handlers ===== */
 
+/* Perspective depth-linearization coefficients from the last scene projection,
+ * consumed by the SSAO output pass in gfx_opengl.c (§4 T1.1). */
+float g_pc_ssao_proj_a = 0.0f;
+float g_pc_ssao_proj_b = 0.0f;
+
 static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *source_addr) {
     float matrix[4][4];
     bool is_room_matrix_addr = false;
@@ -15417,6 +15422,18 @@ static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *
         } else {
             gfx_matrix_mul(rsp.P_matrix, matrix, rsp.P_matrix);
             rsp.projection_is_field_10e0 = false;
+        }
+        /* Stash perspective depth-linearization coefficients for the SSAO output
+         * pass (§4 T1.1): view distance = B / (A + 2*d - 1), with A=P[2][2],
+         * B=P[3][2]. clip.w depends on view.z only for a perspective projection
+         * (P[2][3] != 0), so HUD/ortho passes are skipped. The frame uses several
+         * perspectives (world far~200, props, viewmodel near~2); keep the one with
+         * the LARGEST far plane (|B|) — the main world view, where AO matters — and
+         * reset per frame in the backend's start_frame. */
+        if (fabsf(rsp.P_matrix[2][3]) > 0.5f &&
+            fabsf(rsp.P_matrix[3][2]) > fabsf(g_pc_ssao_proj_b)) {
+            g_pc_ssao_proj_a = rsp.P_matrix[2][2];
+            g_pc_ssao_proj_b = rsp.P_matrix[3][2];
         }
     } else {
         if ((parameters & G_MTX_PUSH) && rsp.modelview_matrix_stack_size < 11) {
