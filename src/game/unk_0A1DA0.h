@@ -55,7 +55,14 @@ typedef struct bondstruct_unk_8007A170 {
     s16 unk04;
     s16 unk06;
     f32 unk08;           /* scale or float param */
-    void *unk0C_ptr;     /* image table pointer (was u32 on N64) */
+    u32 unk0C_handle;    /* effect-image handle (enum EffectImageHandle). Was a
+                          * 32-bit image-table pointer on N64; keeping it 4 bytes
+                          * (NOT a 64-bit void*) preserves the N64 struct layout so
+                          * the named fields stay at their N64 byte offsets — the
+                          * same offsets the raw 0x3C-stride pool reads/writes by
+                          * hand — and drops the struct to 4-byte alignment so the
+                          * raw pool is no longer misaligned (was UBSan @unk04).
+                          * Resolve to a real pointer via effect_image_from_handle. */
     f32 unk10;           /* pos.x */
     f32 unk14;           /* pos.y */
     f32 unk18;           /* pos.z */
@@ -64,6 +71,18 @@ typedef struct bondstruct_unk_8007A170 {
     f32 unk24;           /* scale */
     u32 unk28;           /* RGBA color packed */
 } bondstruct_unk_8007A170;
+
+/* Small fixed set of effect images referenced by
+ * bondstruct_unk_8007A170.unk0C_handle. The N64 stored a 32-bit image-table
+ * pointer inline; on 64-bit a real pointer doesn't fit the 4-byte slot without
+ * shifting the layout, so we store a handle and resolve it at render time
+ * (effect_image_from_handle in unk_0A1DA0.c). */
+enum EffectImageHandle {
+    EFFECT_IMG_NONE      = 0,
+    EFFECT_IMG_FLARE     = 1,
+    EFFECT_IMG_SMOKE     = 2,
+    EFFECT_IMG_SCATTERED = 3,
+};
 
 extern s32 SHATTERED_WINDOW_PIECES_BUFFER_LEN;
 extern s_shattered_window_piece* ptr_shattered_window_pieces;
