@@ -632,7 +632,7 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
 
 static GLuint g_scene_fbo;
 static GLuint g_scene_color_tex;
-static GLuint g_scene_depth_rb;
+static GLuint g_scene_depth_tex;   /* sampleable single-sample depth (for SSAO/T1.1) */
 static GLuint g_scene_msaa_fbo;
 static GLuint g_scene_msaa_color_rb;
 static GLuint g_scene_msaa_depth_rb;
@@ -2263,8 +2263,8 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
     if (g_scene_color_tex == 0) {
         glGenTextures(1, &g_scene_color_tex);
     }
-    if (g_scene_depth_rb == 0) {
-        glGenRenderbuffers(1, &g_scene_depth_rb);
+    if (g_scene_depth_tex == 0) {
+        glGenTextures(1, &g_scene_depth_tex);
     }
 
     glBindTexture(GL_TEXTURE_2D, g_scene_color_tex);
@@ -2279,10 +2279,22 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
         g_scene_has_stencil != need_stencil) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth_rb);
-        glRenderbufferStorage(GL_RENDERBUFFER,
-                              need_stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24,
-                              width, height);
+        /* Depth as a sampleable texture (single-sample) so the output pass can
+         * read it for SSAO (§4 T1.1). NEAREST + clamp: depth must not filter. */
+        glBindTexture(GL_TEXTURE_2D, g_scene_depth_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        if (need_stencil) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, width, height, 0,
+                         GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+        } else {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
+                         GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+        }
         g_scene_w = width;
         g_scene_h = height;
         g_scene_has_stencil = need_stencil;
@@ -2292,17 +2304,15 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            g_scene_color_tex, 0);
     if (need_stencil) {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, g_scene_depth_rb);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                               GL_TEXTURE_2D, g_scene_depth_tex, 0);
     } else {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, g_scene_depth_rb);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                               GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, g_scene_depth_tex, 0);
     }
     status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
