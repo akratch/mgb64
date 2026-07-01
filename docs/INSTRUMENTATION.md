@@ -1823,6 +1823,30 @@ strict vector/path parity on a specific aligned route window.
 metrics that it prints, including failure counts. Validation wrappers use this
 for compact evidence files instead of scraping human-readable audit output.
 
+### Performance census & budgets
+
+The performance regression harness (`docs/PERFORMANCE_PLAN.md`) measures per-level
+frame time deterministically and enforces budgets.
+
+```sh
+# Frame-time census of all 20 levels (default vs XLU-copy-disabled A/B):
+tools/perf_census.sh                       # -> baselines/perf_census_latest.csv
+tools/perf_census.sh jungle cradle         # a subset
+
+# Enforce budgets (hard floor 60fps / 16.6ms, target 120fps / 8.3ms):
+python3 tools/perf_budget_check.py baselines/perf_census_latest.csv \
+    --baseline baselines/perf_census_baseline.csv
+
+# Both in one CTest-compatible gate (opt-in lane port_perf_budget_smoke):
+tools/perf_budget_smoke.sh --no-build --levels "jungle dam surface2 cradle"
+```
+
+Each census run boots the port headless + deterministic and averages the
+`GE007_PERF_TRACE` `work_ms`. Numbers are reference-hardware sensitive (GPU/driver
+bound), so treat `baselines/perf_census_baseline.csv` as machine-relative and
+re-baseline on a new machine. The `speedup` column (`default_ms / xluoff_ms`)
+isolates the per-triangle framebuffer-copy defect described in the plan.
+
 ## Reading the artifacts
 
 `regression_test.sh` captures per level into a temp dir (kept on failure or with
@@ -2185,6 +2209,8 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_SFX_TRACE_JSONL=path.jsonl` | trace SFX submits, voice starts/stops, volume/pan updates, owner-slot clears, stale post ignores, and native caller/line tags |
 | `GE007_TRACE_CHRNUM=N` | add one native guard's AI/action/render/patrol state to `--trace-state` |
 | `GE007_PERF_TRACE=1` / `GE007_PERF_TRACE_AFTER_FRAME=N` / `GE007_PERF_TRACE_BUDGET=N` | log per-frame wall-clock pacing (`interval_ms`, render/work time before cap delay, sleep delay, and sync overhead) for local performance triage |
+| `GE007_XLU_SNAPSHOT_MODE=perbatch\|pertri` | translucent RDP-memory blend framebuffer-snapshot granularity (`docs/PERFORMANCE_PLAN.md` M1). Default `perbatch` (one framebuffer copy per draw batch); `pertri` restores the legacy per-triangle copy for exact-parity A/B |
+| `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` | disable the room XLU coverage-memory blend path entirely (kills the per-triangle framebuffer copy; the `xluoff` column in `tools/perf_census.sh`) |
 | `MGB64_ARES_TRACE_CHRNUM=N` | add comparable stock-oracle guard tracking to route traces |
 | `GE007_TRACE_MAGIC_TRAVEL=1` / `GE007_TRACE_MAGIC_TRAVEL_BUDGET=N` | log native `WAYMODE_MAGIC` patrol/gopos exit predicates for the `GE007_TRACE_CHRNUM` guard |
 | `GE007_TRACE_OBJECTIVES=1` | add objective data to the state trace |

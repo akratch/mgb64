@@ -21,7 +21,7 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$REPO/build/ge007"
+BIN="${BIN:-$REPO/build/ge007}"          # override with BIN=... for out-of-tree builds
 CENSUS_OUT="${CENSUS_OUT:-$REPO/baselines/perf_census_latest.csv}"
 FRAMES="${PERF_FRAMES:-180}"           # total frames before auto-exit
 AFTER="${PERF_AFTER:-80}"              # start sampling after warmup
