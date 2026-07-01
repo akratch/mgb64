@@ -15,7 +15,16 @@
 >      reconstruction) is hang‑safe but shows **horizontal precision banding on receding ground**:
 >      GoldenEye's huge far plane compresses world depth to ~0.999x, so 24‑bit non‑linear depth
 >      quantization noise ≈ the crease signal. No occlusion floor separates creases from banding.
-> - **REQUIRED FIX (promotes the "deferred" item to mandatory): a LINEAR‑DEPTH PREPASS** — write
+> - **DEEP‑RESEARCH VERDICT (102‑agent adversarial research + empirical test):** the top cheap fix
+>   `textureLod(depth,uv,0.0)` was **tested and did NOT clear the hang** → not implicit‑derivative UB,
+>   not pixel‑count. Equal‑fetch‑count planar AO runs fine → the trigger is the reconstruction OPS
+>   (`ndc/projX`,`ndc/projY` divides + `cross`/`normalize`): an **op‑level bug in Apple's deprecated,
+>   unmaintained GL‑4.1‑over‑Metal translator** (frozen since 2018), not fixable in‑shader. **Durable
+>   fix = a NATIVE METAL backend** — our exact lineage, **Ship of Harkinian / libultraship (Fast3D),
+>   already ships one** (metal‑cpp); base fast3d has only GL/D3D. That is the proven template (weeks of
+>   work; also unblocks all future screen‑space FX). Untested long‑shot before committing to it: a
+>   half‑res separate RGBA8 AO pass. `textureLod` + NaN‑guard remain correctness wins to fold in.
+> - **(superseded) LINEAR‑DEPTH PREPASS** — write
 >   per‑draw view‑space Z (R32F) during scene render (each draw's own `P_matrix`). Gives clean
 >   linear depth (kills banding) **and** lets AO read `linZ` from a texture instead of the
 >   hang‑prone per‑sample proj‑divide. Touches the scene‑render path (MRT or a re‑submit prepass) →
