@@ -1098,12 +1098,41 @@ static void mtl_set_scissor(int x, int y, int width, int height) {
     s_sc_set = true;
 }
 
+/* Mirror gfx_opengl.c:310-322 — default ON unless disabled by env. */
+static bool mtl_room_cvg_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *d = getenv("GE007_DISABLE_ROOM_XLU_CVG_MEMORY");
+        const char *e = getenv("GE007_ROOM_XLU_CVG_MEMORY");
+        cached = 1;
+        if ((d != NULL && d[0] != '\0' && d[0] != '0') || (e != NULL && e[0] == '0')) cached = 0;
+    }
+    return cached != 0;
+}
+/* Mirror gfx_opengl.c:300-308 — diag override (default off). */
+static bool mtl_diag_cvg_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *e = getenv("GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC");
+        cached = (e != NULL && e[0] != '\0' && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
 static void mtl_set_blend_mode(enum GfxBlendMode mode) {
     s_blend = mode;
-    /* Coverage-alpha preservation (gfx_opengl.c:1692-1703) is gated on the
-     * default-off room/diag coverage-memory features, so alpha stays writable
-     * on the faithful base path. Wired fully with the RDP path (3.3). */
-    s_preserve_cov_alpha = false;
+    /* Coverage-alpha preservation (gfx_opengl.c:1692-1703): when the
+     * coverage-memory feature is active, ordinary translucent draws must NOT
+     * overwrite the 3-bit coverage the RDP-CVG-memory shader stores in the
+     * scene-target alpha channel. Metal always renders to the sampleable
+     * offscreen (== GL's scene target, which is bound-by-default because
+     * room_xlu_cvg_memory defaults on, gfx_opengl.c:2277), so gate on the
+     * feature + the same four blend modes GL masks. Resolved into the PSO
+     * colorWriteMask at draw time. */
+    s_preserve_cov_alpha =
+        (mtl_room_cvg_enabled() || mtl_diag_cvg_enabled()) &&
+        (mode == GFX_BLEND_ALPHA || mode == GFX_BLEND_MODULATE ||
+         mode == GFX_BLEND_ALPHA_COVERAGE || mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
 }
 
 static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -1212,6 +1241,20 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
 static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
     if (rgb_out == NULL || width <= 0 || height <= 0 || s_scene_color == nil || s_device == nil) {
         return false;
+    }
+    /* If a frame is in flight (encoder open), flush its draws so the readback
+     * sees THIS frame's content, then resume the frame (Load-preserved). Metal
+     * serializes command buffers by commit order, so without this a mid-frame
+     * readback (GE007_SCREENSHOT, diag pixel probes) would capture the previous
+     * committed frame. The main screenshot/parity path reads between frames
+     * (s_enc == nil, s_cmdbuf already committed) and is unaffected. */
+    if (s_enc != nil && s_cmdbuf != nil) {
+        [s_enc endEncoding];
+        s_enc = nil;
+        [s_cmdbuf commit];
+        [s_cmdbuf waitUntilCompleted];
+        s_cmdbuf = [s_queue commandBuffer];
+        mtl_open_scene_encoder(false);
     }
     /* Clamp the requested rect to the attachment. */
     if (x < 0) { width += x; x = 0; }
