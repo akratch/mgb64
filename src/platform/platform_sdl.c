@@ -2328,7 +2328,22 @@ void platformFrameSync(void) {
     /* Fire any expired OS timers */
     platformCheckTimers();
 
-    /* Process SDL events */
+    /* Frame pacing — wait until next configured frame boundary. */
+    u32 now = SDL_GetTicks();
+    u32 elapsed = now - g_lastFrameTime;
+    u32 frame_delay_ms = platformFrameDelayMs();
+    perf_work_ms = elapsed;
+    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
+        perf_delay_ms = frame_delay_ms - elapsed;
+        SDL_Delay(perf_delay_ms);
+    }
+    g_lastFrameTime = SDL_GetTicks();
+
+    /* Process SDL events AFTER the pacing wait, so the simulation that runs on the
+     * retrace below consumes the freshest possible input. Polling before the wait
+     * left mouse/stick deltas up to one frame-cap stale on high-refresh displays;
+     * this removes that latency. Identity at 60 Hz / vsync-locked (delay ~= 0).
+     * Deterministic mode freezes input, so trace/screenshot gates are unaffected. */
     platformPollEvents();
     platformApplyAutoMuteToggles();
 
@@ -2349,17 +2364,6 @@ void platformFrameSync(void) {
         }
     }
 #endif
-
-    /* Frame pacing — wait until next configured frame boundary. */
-    u32 now = SDL_GetTicks();
-    u32 elapsed = now - g_lastFrameTime;
-    u32 frame_delay_ms = platformFrameDelayMs();
-    perf_work_ms = elapsed;
-    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
-        perf_delay_ms = frame_delay_ms - elapsed;
-        SDL_Delay(perf_delay_ms);
-    }
-    g_lastFrameTime = SDL_GetTicks();
 
     /* Swap the GL framebuffer (shows whatever was rendered) */
     if (g_sdlWindow) {

@@ -2,6 +2,10 @@ name: CI
 
 on:
   workflow_dispatch:
+  # Run the build / zero-warning / CTest / contamination gates automatically on
+  # every PR. Push is intentionally omitted to respect the local-preflight posture
+  # (contributors run the smoke lanes locally); PR is the shared gate.
+  pull_request:
 
 permissions:
   contents: read

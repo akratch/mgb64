@@ -16361,10 +16361,20 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                      uint32_t clip_reason_flags,
                                      uint8_t diag_vtx1_idx,
                                      uint8_t diag_vtx2_idx,
-                                     uint8_t diag_vtx3_idx) {
+                                     uint8_t diag_vtx3_idx,
+                                     const struct GfxTriNdcMetrics *precomputed_ndc) {
     struct LoadedVertex *v_arr[3] = {v1, v2, v3};
     struct GfxTriNdcMetrics ndc_metrics;
-    bool ndc_metrics_ok = gfx_tri_compute_ndc_metrics(v1, v2, v3, &ndc_metrics);
+    bool ndc_metrics_ok;
+    if (precomputed_ndc != NULL) {
+        /* gfx_sp_tri1's unclipped path already computed these for the same,
+         * unmutated v1/v2/v3 — reuse instead of recomputing. Byte-identical:
+         * gfx_tri_compute_ndc_metrics's return value always equals out->valid. */
+        ndc_metrics = *precomputed_ndc;
+        ndc_metrics_ok = ndc_metrics.valid;
+    } else {
+        ndc_metrics_ok = gfx_tri_compute_ndc_metrics(v1, v2, v3, &ndc_metrics);
+    }
     const char *dl_which = NULL;
     int dl_room = -1;
     uintptr_t cmd_offset = 0;
@@ -19025,7 +19035,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             gfx_emit_loaded_triangle(&clipped[0], &clipped[i], &clipped[i + 1],
                                      true,
                                      clip_reason_flags,
-                                     vtx1_idx, vtx2_idx, vtx3_idx);
+                                     vtx1_idx, vtx2_idx, vtx3_idx,
+                                     NULL); /* fan verts differ from sp_tri1's — recompute */
         }
         if (logged_shard_candidate) {
             fprintf(stderr,
@@ -19046,7 +19057,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         return;
     }
 
-    gfx_emit_loaded_triangle(v1, v2, v3, false, GFX_CLIP_REASON_NONE, vtx1_idx, vtx2_idx, vtx3_idx);
+    gfx_emit_loaded_triangle(v1, v2, v3, false, GFX_CLIP_REASON_NONE, vtx1_idx, vtx2_idx, vtx3_idx,
+                             &ndc_metrics); /* reuse sp_tri1's metrics for the unmutated verts */
     if (logged_shard_candidate) {
         fprintf(stderr,
                 "[GFX-SHARD-CANDIDATE-RESULT] frame=%d cmd=%p result=emit emitted=%d domain=%s\n",

@@ -15,6 +15,9 @@
 u8  *g_romData = NULL;
 u32  g_romSize = 0;
 
+/* GoldenEye 007 is a 12 MB (96 Mbit) cartridge in every region (U/E/J). */
+#define GE007_ROM_SIZE_BYTES 0xC00000
+
 /**
  * Load the .z64 ROM file into memory.
  */
@@ -29,8 +32,26 @@ int platformInitRom(const char *path) {
     long size = ftell(f);
     rewind(f);
 
-    if (size <= 0 || size > 64 * 1024 * 1024) {
-        fprintf(stderr, "[ROM] Invalid ROM size: %ld\n", size);
+    if (size <= 0) {
+        fprintf(stderr, "[ROM] Could not determine size of: %s\n", path);
+        fclose(f);
+        return -1;
+    }
+
+    /* GoldenEye 007 is a 12 MB (96 Mbit) cartridge in every region (U/E/J), so a
+     * valid dump is exactly this size in any byte order. Anything else is the
+     * wrong game, an over-dump with a copier header, or a truncated file — all of
+     * which would otherwise sail past here and then read out of bounds when the
+     * hardcoded file-table offsets (up to ~9.4 MB) are DMA'd. Fail loudly instead. */
+    if (size != GE007_ROM_SIZE_BYTES) {
+        fprintf(stderr,
+                "[ROM] %s is %ld bytes, but a GoldenEye 007 ROM must be exactly "
+                "%d bytes (12 MB).\n"
+                "[ROM] This does not look like a valid ROM (wrong game, a headered/"
+                "over-dumped file, or a truncated download).\n"
+                "[ROM] Expected SHA-1s are in ge007.u.sha1 / ge007.e.sha1 / "
+                "ge007.j.sha1.\n",
+                path, size, GE007_ROM_SIZE_BYTES);
         fclose(f);
         return -1;
     }
@@ -62,7 +83,7 @@ int platformInitRom(const char *path) {
     if (g_romData[0] == 0x37 && g_romData[1] == 0x80) {
         /* .v64 — swap every 2 bytes */
         fprintf(stderr, "[ROM] Detected .v64 byte-swapped format, converting...\n");
-        for (u32 i = 0; i < g_romSize; i += 2) {
+        for (u32 i = 0; i + 1 < g_romSize; i += 2) {
             u8 tmp = g_romData[i];
             g_romData[i] = g_romData[i + 1];
             g_romData[i + 1] = tmp;
@@ -70,7 +91,7 @@ int platformInitRom(const char *path) {
     } else if (g_romData[0] == 0x40 && g_romData[1] == 0x12) {
         /* .n64 — swap every 4 bytes */
         fprintf(stderr, "[ROM] Detected .n64 little-endian format, converting...\n");
-        for (u32 i = 0; i < g_romSize; i += 4) {
+        for (u32 i = 0; i + 3 < g_romSize; i += 4) {
             u8 a = g_romData[i], b = g_romData[i+1];
             u8 c = g_romData[i+2], d = g_romData[i+3];
             g_romData[i] = d; g_romData[i+1] = c;
