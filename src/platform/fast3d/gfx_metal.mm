@@ -549,7 +549,11 @@ static void mtl_generate_msl(MetalShader *ms, TB *s) {
     }
 
     if (cc.opt_alpha && cc.diag_rdp_cvg_memory_blend) {
-        tb_str(s, "    float2 memoryUv = (fragCoord - u.diagFbOrigin) / float2(uDiagFramebuffer.get_width(), uDiagFramebuffer.get_height());\n");
+        /* memoryUv samples the framebuffer SNAPSHOT (a direct top-left copy of
+         * the scene color), so it uses Metal-native in.position (top-left) —
+         * NOT the GL-oriented flipped fragCoord that coverage/noise use.
+         * u.diagFbOrigin is the top-left viewport origin (Phase 3.3). */
+        tb_str(s, "    float2 memoryUv = (in.position.xy - u.diagFbOrigin) / float2(uDiagFramebuffer.get_width(), uDiagFramebuffer.get_height());\n");
         tb_str(s, "    float4 memoryColor = uDiagFramebuffer.sample(smpDiag, clamp(memoryUv, float2(0.0), float2(1.0)));\n");
         tb_str(s, "    float2 diagTri0 = vDiagTri01.xy;\n");
         tb_str(s, "    float2 diagTri1 = vDiagTri01.zw;\n");
@@ -575,7 +579,11 @@ static void mtl_generate_msl(MetalShader *ms, TB *s) {
         tb_str(s, "    float3 outByte = mix(memoryByte, blendedByte, coverageWrap);\n");
         tb_str(s, "    texel = float4(clamp(outByte / 255.0, 0.0, 1.0), newCoverageAlpha);\n");
     } else if (cc.opt_alpha && cc.diag_rdp_memory_blend) {
-        tb_str(s, "    float2 memoryUv = (fragCoord - u.diagFbOrigin) / float2(uDiagFramebuffer.get_width(), uDiagFramebuffer.get_height());\n");
+        /* memoryUv samples the framebuffer SNAPSHOT (a direct top-left copy of
+         * the scene color), so it uses Metal-native in.position (top-left) —
+         * NOT the GL-oriented flipped fragCoord that coverage/noise use.
+         * u.diagFbOrigin is the top-left viewport origin (Phase 3.3). */
+        tb_str(s, "    float2 memoryUv = (in.position.xy - u.diagFbOrigin) / float2(uDiagFramebuffer.get_width(), uDiagFramebuffer.get_height());\n");
         tb_str(s, "    float4 memoryColor = uDiagFramebuffer.sample(smpDiag, clamp(memoryUv, float2(0.0), float2(1.0)));\n");
         tb_str(s, "    float pixelAlphaByte = floor(clamp(texel.a, 0.0, 1.0) * 255.0 + 0.5);\n");
         tb_str(s, "    float a0 = floor(pixelAlphaByte / 8.0);\n");
@@ -692,6 +700,8 @@ struct MtlUniforms {
  * RDP snapshot; the drawable is framebufferOnly and cannot serve those). */
 static id<MTLTexture> s_scene_color = nil;
 static id<MTLTexture> s_scene_depth = nil;
+static id<MTLTexture> s_snapshot_tex = nil;  /* XLU/RDP framebuffer snapshot (3.3) */
+static id<MTLSamplerState> s_snapshot_sampler = nil;
 static int s_fb_w = 0, s_fb_h = 0;
 static id<MTLRenderCommandEncoder> s_enc = nil;
 static id<MTLTexture> s_white_tex = nil;   /* 1x1 white for unbound tiles */
@@ -751,6 +761,14 @@ static void mtl_ensure_targets(int w, int h) {
     dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     dd.storageMode = MTLStorageModePrivate;
     s_scene_depth = [s_device newTextureWithDescriptor:dd];
+    /* XLU/RDP snapshot target: a copy of the scene color the fragment can sample
+     * mid-frame (Phase 3.3). Same format so the blit-copy is exact. */
+    MTLTextureDescriptor *sd =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:w height:h mipmapped:NO];
+    sd.usage = MTLTextureUsageShaderRead;
+    sd.storageMode = MTLStorageModePrivate;
+    s_snapshot_tex = [s_device newTextureWithDescriptor:sd];
     s_fb_w = w;
     s_fb_h = h;
     /* Match the drawable to the render resolution so the end_frame blit is
@@ -879,6 +897,23 @@ static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t c
     return s;
 }
 
+/* Open the scene render encoder. clear=true clears color+depth (frame start);
+ * clear=false preserves prior contents (Load) — used to resume after an XLU/RDP
+ * snapshot forces an encoder break. */
+static void mtl_open_scene_encoder(bool clear) {
+    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+    rpd.colorAttachments[0].texture = s_scene_color;
+    rpd.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+    if (clear) rpd.colorAttachments[0].clearColor = MTLClearColorMake(s_clear_r, s_clear_g, s_clear_b, 1.0);
+    rpd.depthAttachment.texture = s_scene_depth;
+    rpd.depthAttachment.loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+    rpd.depthAttachment.storeAction = MTLStoreActionStore;
+    if (clear) rpd.depthAttachment.clearDepth = 1.0;
+    s_enc = [s_cmdbuf renderCommandEncoderWithDescriptor:rpd];
+    [s_enc setDepthClipMode:MTLDepthClipModeClamp];
+}
+
 /* ---- init / frame lifecycle ---------------------------------------------- */
 
 static void mtl_init(void) {
@@ -901,6 +936,16 @@ static void mtl_init(void) {
     s_textures = [NSMutableDictionary dictionary];
     s_depth_cache = [NSMutableDictionary dictionary];
     s_sampler_cache = [NSMutableDictionary dictionary];
+    {
+        /* Clamp+linear sampler for the XLU/RDP framebuffer snapshot (index 2). */
+        MTLSamplerDescriptor *ss = [[MTLSamplerDescriptor alloc] init];
+        ss.minFilter = MTLSamplerMinMagFilterLinear;
+        ss.magFilter = MTLSamplerMinMagFilterLinear;
+        ss.mipFilter = MTLSamplerMipFilterNotMipmapped;
+        ss.sAddressMode = MTLSamplerAddressModeClampToEdge;
+        ss.tAddressMode = MTLSamplerAddressModeClampToEdge;
+        s_snapshot_sampler = [s_device newSamplerStateWithDescriptor:ss];
+    }
     /* Invariance-critical (parent plan §2.1): the CPU clipper reads
      * g_depth_clamp_enabled; Metal uses native depth-clamp, so force it true. */
     g_depth_clamp_enabled = true;
@@ -926,18 +971,7 @@ static void mtl_start_frame(void) {
     if (s_scene_color == nil) return;
 
     s_cmdbuf = [s_queue commandBuffer];
-    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-    rpd.colorAttachments[0].texture = s_scene_color;
-    rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
-    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-    rpd.colorAttachments[0].clearColor = MTLClearColorMake(s_clear_r, s_clear_g, s_clear_b, 1.0);
-    rpd.depthAttachment.texture = s_scene_depth;
-    rpd.depthAttachment.loadAction = MTLLoadActionClear;
-    rpd.depthAttachment.storeAction = MTLStoreActionStore;
-    rpd.depthAttachment.clearDepth = 1.0;
-    s_enc = [s_cmdbuf renderCommandEncoderWithDescriptor:rpd];
-    /* Native depth-clamp (equivalent to GL_DEPTH_CLAMP; matches g_depth_clamp). */
-    [s_enc setDepthClipMode:MTLDepthClipModeClamp];
+    mtl_open_scene_encoder(true);
 
     if (!s_logged_first_frame) {
         fprintf(stderr, "[metal] first frame: scene %dx%d, geometry encoder open\n", s_fb_w, s_fb_h);
@@ -1075,6 +1109,26 @@ static void mtl_set_blend_mode(enum GfxBlendMode mode) {
 static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     if (s_enc == nil || s_cur_shader == nil || buf_vbo_num_tris == 0 || buf_vbo == NULL) return;
     MetalShader *ms = s_cur_shader;
+
+    /* RDP-memory / coverage-memory blend: the fragment samples the framebuffer
+     * "memory" color it blends against. Metal can't sample the attachment being
+     * written, so end the encoder, blit-copy the scene color into a sampled
+     * snapshot, and resume with loadAction=Load (§4 risk #1 — no LUS template).
+     * Per-batch (default GL behavior); full-fb copy (correctness-first). */
+    bool rdp_mem = (ms->diagRdpMemory || ms->diagRdpCvgMemory) &&
+                   (s_blend == GFX_BLEND_ALPHA_RDP_MEMORY ||
+                    s_blend == GFX_BLEND_ALPHA_RDP_CVG_MEMORY);
+    if (rdp_mem && s_snapshot_tex != nil) {
+        [s_enc endEncoding];
+        id<MTLBlitCommandEncoder> b = [s_cmdbuf blitCommandEncoder];
+        [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+              sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(s_fb_w, s_fb_h, 1)
+                 toTexture:s_snapshot_tex destinationSlice:0 destinationLevel:0
+         destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [b endEncoding];
+        mtl_open_scene_encoder(false);
+    }
+
     mtl_build_vertex_descriptor(ms);
 
     id<MTLRenderPipelineState> pso = mtl_pso_for(ms, s_blend, 1, !s_preserve_cov_alpha);
@@ -1125,6 +1179,15 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
     u.frameCount = (int)s_frame_count_metal;
     u.winH = s_vp_h > 0 ? s_vp_h : s_fb_h;   /* GL current_height = viewport height (noise scale) */
     u.fbH = s_fb_h;                          /* attachment height (fragcoord flip) */
+    /* RDP diag uniforms: full-fb snapshot -> origin 0 (memoryUv = in.position/fb);
+     * diagViewport is the GL(bottom-left) viewport for the coverage NDC
+     * reconstruction, which pairs with the GL-oriented flipped fragCoord. */
+    u.diagFbOrigin[0] = 0.0f;
+    u.diagFbOrigin[1] = 0.0f;
+    u.diagViewport[0] = (float)s_vp_x;
+    u.diagViewport[1] = (float)s_vp_y;
+    u.diagViewport[2] = (float)s_vp_w;
+    u.diagViewport[3] = (float)s_vp_h;
     [s_enc setFragmentBytes:&u length:sizeof u atIndex:1];
 
     for (int t = 0; t < 2; t++) {
@@ -1133,6 +1196,10 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
         if (tex == nil) tex = s_white_tex;
         [s_enc setFragmentTexture:tex atIndex:t];
         [s_enc setFragmentSamplerState:mtl_sampler_for(s_tile_linear[t], s_tile_cms[t], s_tile_cmt[t]) atIndex:t];
+    }
+    if (rdp_mem) {
+        [s_enc setFragmentTexture:s_snapshot_tex atIndex:2];
+        [s_enc setFragmentSamplerState:s_snapshot_sampler atIndex:2];
     }
 
     [s_enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 * buf_vbo_num_tris];
