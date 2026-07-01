@@ -1,5 +1,29 @@
 # MGB64 Remaster — Track‑1 Lighting: Phased Execution Plan
 
+> ## ⚠ EXECUTION STATUS (2026‑07‑01)
+> - **P0 foundation — ✅ SHIPPED** (`64f9574`): proj view‑ray capture (`P[0][0]`/`P[1][1]`),
+>   SSAO v2 settings, one‑time MSAA warn + hard‑disable. No visual change; A2 SSAO intact.
+> - **P1a‑quality — ⛔ BLOCKED on this host**, reverted; tree stable at P0. **Two compounding
+>   walls on macOS arm64 / Apple GL 4.1‑over‑Metal:**
+>   1. **Per‑sample view‑position reconstruction HANGS the GPU** — `vec3(ndc.x/uProjX,
+>      ndc.y/uProjY,-1)*linZ` + `cross`/`normalize`. Wedges the Metal driver at runtime (0% CPU,
+>      resists `timeout`; ~4 min recovery, wedges other GL processes meanwhile). Reproduced both
+>      as a separate FBO pass and inline; **not** a shader‑size issue (fewer samples still hang).
+>      A2's depth‑delta AO and the planar approach below do **not** hang — the hang is exactly the
+>      per‑sample proj‑divide + cross/normalize.
+>   2. **Depth‑only fallback bands.** Planar‑prediction AO (local `linZ` gradient; no
+>      reconstruction) is hang‑safe but shows **horizontal precision banding on receding ground**:
+>      GoldenEye's huge far plane compresses world depth to ~0.999x, so 24‑bit non‑linear depth
+>      quantization noise ≈ the crease signal. No occlusion floor separates creases from banding.
+> - **REQUIRED FIX (promotes the "deferred" item to mandatory): a LINEAR‑DEPTH PREPASS** — write
+>   per‑draw view‑space Z (R32F) during scene render (each draw's own `P_matrix`). Gives clean
+>   linear depth (kills banding) **and** lets AO read `linZ` from a texture instead of the
+>   hang‑prone per‑sample proj‑divide. Touches the scene‑render path (MRT or a re‑submit prepass) →
+>   larger change + own dual‑case identity re‑validation; **should be validated on non‑Apple‑GL
+>   hardware too** (the hang may be Apple‑specific). Until then, **A2 SSAO stays the default‑off
+>   shipped SSAO.** (Ops note: a stale `Video.MSAA=2` in the run‑CWD `ge007.ini` silently disables
+>   SSAO via `g_scene_depth_valid=!multisampled` — `rm ge007.ini` / force `MSAA=0`.)
+
 **Grounding (verified against tree):** the shipped SSAO is the depth‑delta wash at `gfx_opengl.c:2963‑2997` (raw depth‑delta, 1.5% floor, no AO texture, no normal, one global far‑plane linearization). Single‑projection capture keeps largest‑|B| (`gfx_pc.c:15433‑15436`). `g_scene_depth_valid = !multisampled` (`:3588`). The scene resolve blit is a **separate** function, `gfx_opengl_resolve_scene_target` (`:3552‑3582`), called at `end_frame:3593` **before** `gfx_opengl_apply_output_vi_filter` (`:3219`). `Video.Ssao` defaults off but `Video.RemasterFX` defaults **on** (`platform_sdl.c:207`), and SSAO gates on `g_pcRemasterFX && g_pcSsao` (`:2239`). `GlobalLight` is a single hard‑coded constant — WSW `(77,77,46)` at `bg.c:2740`, uploaded via `gSPSetLights1` right after `G_LIGHTING` is cleared (`bg.c:6991→7000`).
 
 ---
