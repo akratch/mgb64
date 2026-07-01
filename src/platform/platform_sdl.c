@@ -600,6 +600,17 @@ void platformSaveScreenshot(void) {
     unsigned char *source_pixels = NULL;
     int native_size_screenshot = getenv("GE007_DIAG_SCREENSHOT_NATIVE_SIZE") != NULL;
 
+#ifdef __APPLE__
+    /* This path reads the framebuffer with a direct glReadPixels (below), which
+     * has no meaning — and crashes — on the Metal backend (no GL context). A
+     * Metal blit-readback lands in Phase 3; until then, screenshots are a no-op
+     * on the Metal path. */
+    if (gfx_backend_use_metal()) {
+        fprintf(stderr, "[metal] screenshot skipped (GL readback unavailable; Phase 3)\n");
+        return;
+    }
+#endif
+
     if (g_sdlWindow != NULL) {
 #ifdef __APPLE__
         if (gfx_backend_use_metal()) {

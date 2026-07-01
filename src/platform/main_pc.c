@@ -524,13 +524,15 @@ int main(int argc, char **argv)
     /* Force line-buffered stdout so crash diagnostics appear */
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
-    signal(SIGSEGV, crashHandler);
+    if (!getenv("GE007_NO_CRASH_HANDLER")) {  /* leave signals raw for debuggers */
+        signal(SIGSEGV, crashHandler);
 #if !defined(__SANITIZE_ADDRESS__) && !__has_feature(address_sanitizer)
-    /* ASAN uses SIGBUS internally for shadow memory probing.
-     * Don't intercept it in sanitizer builds. */
-    signal(SIGBUS, crashHandler);
+        /* ASAN uses SIGBUS internally for shadow memory probing.
+         * Don't intercept it in sanitizer builds. */
+        signal(SIGBUS, crashHandler);
 #endif
-    signal(SIGABRT, crashHandler);
+        signal(SIGABRT, crashHandler);
+    }
 
     /* Parse command line */
     for (int i = 1; i < argc; i++) {

@@ -23242,7 +23242,14 @@ void gfx_run_dl(Gfx *dl) {
 
     gfx_rapi->end_frame();
 #ifdef NATIVE_PORT
-    minimap_overlay_draw_queued_frames();
+    /* The minimap overlay renders with DIRECT OpenGL calls (glGetIntegerv,
+     * glDrawArrays, ...) outside the gfx_rapi vtable, so it would crash on the
+     * Metal path (no GL context). Skip it there until it is ported to the
+     * backend vtable (or a Metal overlay). */
+#ifdef __APPLE__
+    if (!gfx_backend_use_metal())
+#endif
+        minimap_overlay_draw_queued_frames();
 #endif
     gfx_trace_glass_shard_coverage_frame_end();
     gfx_native_sky_queue_reset();
