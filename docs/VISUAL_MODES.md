@@ -67,6 +67,7 @@ GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33
 | `Video.Saturation` / `Contrast` / `Brightness` | `1.15` / `1.08` / `0.04` | Output color grade (`1`/`1`/`0` = identity). |
 | `Video.Tonemap` | `1` | Gentle filmic shadow-lift + highlight rolloff. |
 | `Video.Bloom` (+`BloomThreshold`/`Intensity`) | `1` (0.8/0.5) | Light bleed on bright areas. |
+| `Video.Ssao` (+`SsaoRadius`/`SsaoIntensity`) | `0` (0.5/1.0) | Screen-space ambient occlusion: depth-based contact darkening in crevices/corners/under geometry. Opt-in (needs `RemasterFX=1`); forces the internal scene buffer when on. |
 | `Video.Vignette` | `0.15` | Soft edge falloff. |
 | `Video.Fxaa` / `Video.Sharpen` | `1` / `0.15` | Edge AA / adaptive sharpen. |
 | `Video.OutputDither` | `1` | Anti-banding ordered dither. |

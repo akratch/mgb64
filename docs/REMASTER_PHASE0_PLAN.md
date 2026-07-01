@@ -1,7 +1,15 @@
 # MGB64 Remaster — Phase 0 "First Light" (design spec)
 
-**Date:** 2026-07-01 · **Branch:** `robustness/remaster-hardening` · **Status:** design
-approved, ready for implementation plan.
+**Date:** 2026-07-01 · **Branch:** `robustness/remaster-hardening` · **Status:** ✅ **SHIPPED**
+(R1 `ceb71a5`, R2 `6f0b405`, R3 `9b47469`/`20e4686`/`6cae93f`, A1 `3fc3ace`, A2 `6c93c46`).
+Implementation plan: `docs/superpowers/plans/2026-07-01-remaster-phase0-first-light.md`.
+
+> **Two harness gotchas learned in build‑out (both cost real time):**
+> 1. **`--ramrom <demo>` renders black headless** — use it for the deterministic sim‑hash
+>    *gate*, but capture visual screenshots with **`--level <id>`** (direct boot renders
+>    gameplay). Every early SSAO screenshot showed 0% change because it was a black frame.
+> 2. **R3's ASLR fix is a pointer *value* window, not `-no-pie`/`MAP_FIXED`** (arm64 rejects
+>    non‑PIE; malloc/mmap bases still slide). See R3 below.
 
 Phase 0 of the remaster golden path ([REMASTER_ROADMAP.md](REMASTER_ROADMAP.md) §6).
 It builds the **gameplay-invariance enforcement machine first**, then lands the first
