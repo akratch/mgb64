@@ -2,12 +2,15 @@
 
 *Status: **APPROVED + Phase 1 IN PROGRESS** on branch `feat/metal-backend`. §0 pre-flight tested → ruled out (native Metal required). Task-level plan: `docs/superpowers/plans/2026-07-01-metal-backend-phase1.md`.*
 
-> **PHASE 1 PROGRESS (branch feat/metal-backend):**
+> **PHASE 1 — ✅ COMPLETE (branch feat/metal-backend). Both GO/NO-GO spikes GO. Next: Phase 2 (combiner→MSL).**
 > - ✅ **Task 1** (`ec641e5`) — ObjC++ build fork (`enable_language(OBJCXX)`, `.mm`, Metal/QuartzCore frameworks, all `if(APPLE)`) + stub `gfx_metal_api` (22-fn vtable). Header gotcha solved: project `include/math.h` shim shadows system `<math.h>` → suppress Carbon `fp.h` via `__FP__` locally.
-> - ✅ **Task 2** (`8fbfa53`) — `gfx_backend_use_metal()` selector (`GE007_RENDERER=metal`) + seam branch at `gfx_pc.c:22879` + `g_depth_clamp_enabled` invariance hoist. Verified via pre-render init logs.
-> - ✅ **Tasks 3+4** (`bdea1ae`) — SDL Metal window (`SDL_WINDOW_METAL`+`SDL_Metal_CreateView`→`CAMetalLayer`), 3 non-vtable couplings backend-aware, and real `gfx_metal.mm` bring-up: **on Apple M3 Max the native Metal window acquires a 1440×810 drawable and encodes+presents a clear pass each frame — no GL-over-Metal, no hang.** GL default byte-identical (renders + screenshots normally).
-> - ⛔ **KNOWN BOUNDARY:** `GE007_RENDERER=metal` SIGSEGVs in `gfx_run_dl` (frame 1, op 0xB8) — the DL interpreter needs real shaders/textures/draws (Phase 2/3). Bring-up (clear+present) is proven; opt-in + default-off so nothing ships broken.
-> - ⏭ **Next:** the `gfx_run_dl` crash-safety / Phase 2 (combiner→MSL, the make-or-break go/no-go) + Phase-1 Spikes A (cross-backend invariance) & B (RDP/XLU snapshot).
+> - ✅ **Task 2** (`8fbfa53`) — `gfx_backend_use_metal()` selector (`GE007_RENDERER=metal`) + seam branch at `gfx_pc.c:22879` + `g_depth_clamp_enabled` invariance hoist.
+> - ✅ **Tasks 3+4** (`bdea1ae`) — SDL Metal window (`SDL_WINDOW_METAL`+`SDL_Metal_CreateView`→`CAMetalLayer`), 3 non-vtable couplings backend-aware, real `gfx_metal.mm` bring-up: **M3 Max native Metal window acquires a 1440×810 drawable + encodes+presents a clear pass every frame — no GL-over-Metal, no hang.**
+> - ✅ **Crash-safety** (`6498da6`) — root-caused the frame-1 SIGSEGV: two port frontend paths (`minimap_overlay_draw_queued_frames`, `platformSaveScreenshot`) call OpenGL DIRECTLY outside the vtable (a coupling this plan MISSED). Guarded on Metal → **the full game loop now runs STABLY (clear-only) to frame 90, exit 0.** GL byte-identical.
+> - ✅ **Spike A — GO** (`d2ad783`): GL and Metal produce the IDENTICAL sim-state hash (`5c2983a3f0b7345f`) for the same deterministic run — cross-backend CPU/gameplay pipeline is byte-invariant (hash even folds render bookkeeping and still matches). Metal deterministic run-to-run.
+> - ✅ **Spike B — GO** (`d2ad783`): standalone Metal test proves the RDP/XLU snapshot round-trip (blit color-attachment → sampled texture → fragment sample) works exactly — the #1 no-template FRESH risk is feasible.
+> - 📌 **Field note:** on this M3 Max the GL path now frequently HANGS (the flaky GL-over-Metal translator) while native Metal runs clean + deterministic every time — live validation of the whole effort.
+> - ⏭ **Phase 2 (make-or-break GO/NO-GO):** the combiner→MSL shader translator. Then Phase 3 (geometry/textures/readback — un-stub `draw_triangles`/`upload_texture`/`read_framebuffer_rgb`), Phase 4 (remaster post-FX), Phase 5 (SSAO payoff).
 
 ## 1. Strategy & Honest Ceiling
 
