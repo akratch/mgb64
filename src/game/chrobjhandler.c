@@ -27966,9 +27966,23 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
         while (!yielding && command_budget-- > 0) {
             MonitorCmdWord *cmd = &screen->cmdlist[screen->offset];
             u32 type = (u32)cmd[0];
-            u32 arg1u = (u32)cmd[1];
-            s32 arg1 = (s32)arg1u;
-            u32 arg2 = (u32)cmd[2];
+            u32 arg1u = 0;
+            s32 arg1 = 0;
+            u32 arg2 = 0;
+
+            /* cmd[1]/cmd[2] are this command's argument words. The single-word
+             * commands (STOPSCROLL, RESTART/MONLOOP, YIELD) carry no arguments and
+             * are what terminates a command array, so reading cmd[1]/cmd[2] for them
+             * over-reads past the array end -- a harmless adjacent-global read on
+             * N64, but a real out-of-bounds under AddressSanitizer. Only fetch the
+             * argument words for the multi-word commands that actually consume them
+             * (well-formed arrays always carry a multi-word command's args in-bounds;
+             * only the trailing single-word terminator lacks them). */
+            if (type != TVCMD_STOPSCROLL && type != TVCMD_RESTART && type != TVCMD_YIELD) {
+                arg1u = (u32)cmd[1];
+                arg1 = (s32)arg1u;
+                arg2 = (u32)cmd[2];
+            }
 
             if (screen->offset > 4096) {
                 save_ptr_monitor_ani_code_to_obj_ani_slot(screen, monAnim33BlackSolid);
