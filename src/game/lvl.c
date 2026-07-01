@@ -271,8 +271,13 @@ static int pc_load_room(int roomID) {
 
     /* Post-load fixups matching original N64 path (bg.c:6900-6995) */
     {
+        extern void lf_populate_room_lightfixtures(s32 room);
         extern void redarken_lights_in_room(s32 room_index);
         extern void sub_GAME_7F0B6994(s32 arg0);
+        /* Native replacement for the texLoadFromGdl light-fixture population the
+         * PC bg-room loader skips (shoot-out-the-lights; default-off). Must run
+         * before redarken so the light_fixture_table is fresh for this room. */
+        lf_populate_room_lightfixtures(roomID);
         redarken_lights_in_room(roomID);
         sub_GAME_7F0B6994(roomID);
     }
