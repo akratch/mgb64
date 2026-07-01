@@ -50,8 +50,18 @@ extern float g_pcBloomIntensity;
 extern int g_pcSsao;
 extern float g_pcSsaoRadius;
 extern float g_pcSsaoIntensity;
+extern float g_pcSsaoBias;          /* horizon elevation bias (self-occlusion reject) */
+extern float g_pcSsaoPower;         /* AO contrast exponent */
+extern float g_pcSsaoFarCutoff;     /* world-Z beyond which AO fades to 0 */
+extern float g_pcSsaoNearCut;       /* depth <= this = viewmodel/near, no AO */
+extern float g_pcSsaoSkyCut;        /* depth >= this = sky, no AO */
+extern int   g_pcSsaoHalfRes;       /* render AO at half scene res (P1a-perf) */
+extern int   g_pcSsaoBlur;          /* separable bilateral blur pass (P1a-perf) */
+extern float g_pcSsaoBlurDepthSharp;/* bilateral depth-weight sharpness */
 extern float g_pc_ssao_proj_a;   /* scene projection A=P[2][2] (depth linearization) */
 extern float g_pc_ssao_proj_b;   /* scene projection B=P[3][2] */
+extern float g_pc_ssao_proj_x;   /* scene projection P[0][0] (view-ray x) */
+extern float g_pc_ssao_proj_y;   /* scene projection P[1][1] (view-ray y) */
 extern int g_pcFxaa;
 extern float g_pcSharpen;
 extern int g_pcGradePresets;
@@ -2236,7 +2246,24 @@ static int gfx_opengl_effective_msaa_samples(void) {
  * plus its own Video.Ssao key. When active it needs the sampleable scene depth
  * texture, which only exists when the scene renders to the FBO (below). */
 static bool gfx_opengl_output_ssao_active(void) {
-    return g_pcRemasterFX && g_pcSsao != 0;
+    if (!(g_pcRemasterFX && g_pcSsao != 0)) {
+        return false;
+    }
+    /* Depth is only resolved to the sampleable single-sample texture on the
+     * non-MSAA path (g_scene_depth_valid = !multisampled). Under MSAA, SSAO
+     * silently no-ops — warn once so it is not a mystery, and keep it off. */
+    if (gfx_opengl_effective_msaa_samples() > 0) {
+        static int warned_ssao_msaa;
+        if (!warned_ssao_msaa) {
+            fprintf(stderr, "[fast3d] SSAO disabled while Video.MSAA>0 (scene depth is "
+                            "not resolved from the multisample buffer); use RenderScale "
+                            "for anti-aliasing, or set Video.MSAA=0.\n");
+            fflush(stderr);
+            warned_ssao_msaa = 1;
+        }
+        return false;
+    }
+    return true;
 }
 
 static bool gfx_opengl_scene_target_enabled(void) {
@@ -3519,6 +3546,8 @@ static void gfx_opengl_start_frame(void) {
     g_scene_target_multisampled = false;
     g_scene_depth_valid = false;
     g_pc_ssao_proj_b = 0.0f;   /* reset per frame; the largest-far scene proj wins */
+    g_pc_ssao_proj_x = 0.0f;
+    g_pc_ssao_proj_y = 0.0f;
 
     if (gfx_opengl_scene_target_enabled() &&
         gfx_opengl_ensure_scene_target((int)gfx_current_dimensions.width,

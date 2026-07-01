@@ -15373,6 +15373,8 @@ static void gfx_update_mp_matrix(void) {
  * consumed by the SSAO output pass in gfx_opengl.c (§4 T1.1). */
 float g_pc_ssao_proj_a = 0.0f;
 float g_pc_ssao_proj_b = 0.0f;
+float g_pc_ssao_proj_x = 0.0f;   /* P[0][0] — view-ray x scale (FOV/aspect) */
+float g_pc_ssao_proj_y = 0.0f;   /* P[1][1] — view-ray y scale (FOV)        */
 
 static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *source_addr) {
     float matrix[4][4];
@@ -15434,6 +15436,8 @@ static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *
             fabsf(rsp.P_matrix[3][2]) > fabsf(g_pc_ssao_proj_b)) {
             g_pc_ssao_proj_a = rsp.P_matrix[2][2];
             g_pc_ssao_proj_b = rsp.P_matrix[3][2];
+            g_pc_ssao_proj_x = rsp.P_matrix[0][0];
+            g_pc_ssao_proj_y = rsp.P_matrix[1][1];
         }
     } else {
         if ((parameters & G_MTX_PUSH) && rsp.modelview_matrix_stack_size < 11) {
