@@ -83,6 +83,24 @@ maintainability wins in platform-owned code.
 - Keep provenance notes in the public provenance docs when possible instead of
   scattering historical source-path notes through code.
 
+## Performance Discipline (renderer)
+
+The per-vertex and per-triangle code paths run tens of thousands of times per
+frame on a single thread; that thread is the frame's critical path. See
+`docs/RENDERING_ARCHITECTURE.md` for the pipeline and two cautionary case studies.
+
+- **Nothing runs per-primitive unless it draws that primitive.** Keep diagnostics,
+  room/effect attribution, provenance/`dbg_*` bookkeeping, and string matching out
+  of per-vertex / per-triangle loops. Hoist to per-command, memoize on a stable
+  key, or gate behind a latched flag so it costs nothing when inactive.
+- **A per-level feature must not tax the other levels.** Give perf-sensitive
+  features a scope, a budget, and a `GE007_*` A/B escape hatch (default-on-global
+  is how the two shipped render defects happened).
+- **Framebuffer readback and GL state churn are batch-level, never per-primitive.**
+- **Measure.** Run `tools/perf_census.sh` before/after any renderer change and keep
+  every level within `docs/PERFORMANCE_PLAN.md` §6 (60 fps hard floor, 120 fps
+  target). The opt-in `port_perf_budget_smoke` CTest lane enforces it.
+
 ## Pull Request Expectations
 
 - Keep changes focused by subsystem.

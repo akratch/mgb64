@@ -9,9 +9,38 @@ supported by two independent subsystem audits (fast3d hot path; bg.c culling). -
 
 # MGB64 Native Port — Performance Roadmap ("Make It Rip")
 
-**Status:** Plan / not yet implemented. Investigation complete and reproducible.
+**Status:** M0–M2 **SHIPPED** (branch `perf/make-it-rip`). Goal met: all 20 levels
+now **101–189 fps** (was: 5 below 60, Jungle at 18). M3–M5 assessed and deferred
+as scalability/hardening (rationale in §5); M6 docs/governance in progress.
 **Owner:** rendering/port.
 **Companion docs:** `docs/RENDER_PORT_SURVEY.md` (rendering correctness), `docs/REMASTER_ROADMAP.md` (visual features), `docs/INSTRUMENTATION.md` (harness).
+
+## 0. Results (as executed, 2026-07-01)
+
+Two behavior-safe changes moved every level above 100 fps on the reference
+machine (M3 Max, -O3). Measured mean per-frame `work_ms`, deterministic spawn:
+
+| Level | Before | After M1+M2 | | Level | Before | After M1+M2 |
+|---|---:|---:|---|---|---:|---:|
+| jungle | 18 fps | **131 fps** | | dam | 50 fps | **137 fps** |
+| cradle | 30 fps | **165 fps** | | control | 71 fps | **127 fps** |
+| surface2 | 42 fps | **180 fps** | | egypt | 71 fps | **116 fps** |
+| surface1 | 54 fps | **183 fps** | | frigate | 76 fps | **107 fps** |
+| statue | 83 fps | **158 fps** | | *(all others)* | 106–270 | **155–189** |
+
+- **M1** (per-batch XLU snapshot) fixed the five Tier-A levels — e.g. Jungle
+  55.2→8.4 ms (7.3×). Validated pixel-identical on Dam glass (0/0/0 diff),
+  imperceptible on Jungle foliage (0.18/0.26/0.09 avg/255), both XLU visual
+  regression lanes pass (MSAA 0 and 4), ASan/UBSan clean, adversarial review
+  found 0 confirmed defects.
+- **M2** (glass-label hoist + room-cmd-offset memoization) fixed the Tier-B floor
+  — e.g. Dam 18.9→8.3 ms (60→137 fps), Control/Egypt/Frigate similarly. Proven
+  **byte-identical** (Dam+Jungle 0/0/0 diff vs the M1 binary); interleaved A/B
+  vs the true baseline binary shows no regression on any level (fast levels
+  slightly *faster*).
+- **What we did NOT need to touch:** the HD remaster (SSAA/post-FX ≈ 0.5–1 ms),
+  compiler flags, or draw-call batching (GL submission is only ~7% of frame
+  post-fix — see §5 M3).
 
 ---
 
@@ -227,7 +256,11 @@ Each milestone: **Goal · Work · Acceptance · Expected · Risk · A/B knob.**
 Sequence: **M0 → M1 → M2 → M3**, with M4/M5/M6 in parallel/after. M1 alone makes
 the game playable everywhere; M0 is the guardrail that must land first.
 
-### M0 — Standing performance harness & budgets *(foundation; P3)*
+### M0 — Standing performance harness & budgets ✅ SHIPPED *(foundation; P3)*
+> **Done** (commits `perf(M0)`): `tools/perf_census.sh`, `tools/perf_budget_check.py`,
+> `tools/perf_budget_smoke.sh`, opt-in `port_perf_budget_smoke` CTest lane,
+> `baselines/perf_census_baseline.csv` (now the post-fix good-state), docs.
+
 - **Goal:** performance becomes measurable and non-regressable before we optimize.
 - **Work:**
   - Promote the ad-hoc census into a committed script (`tools/perf_census.sh`)
@@ -245,7 +278,13 @@ the game playable everywhere; M0 is the guardrail that must land first.
 - **Risk:** low. Headless GL needs a GUI session on macOS (documented caveat).
 - **A/B knob:** n/a (tooling).
 
-### M1 — Kill the per-triangle framebuffer stall *(Tier A; P1/P2/P5)*
+### M1 — Kill the per-triangle framebuffer stall ✅ SHIPPED *(Tier A; P1/P2/P5)*
+> **Done** (commit `perf(M1)`, `gfx_opengl.c`): per-batch snapshot (option 1 below),
+> default `perbatch` with `GE007_XLU_SNAPSHOT_MODE=pertri` escape hatch. Result:
+> Jungle 18→131 fps and the other four Tier-A levels to 158–183 fps. Validated as
+> in §0; adversarial review = 0 confirmed defects. Option 2 (per-pass) and option 3
+> (material/level scoping) were unnecessary — per-batch already reaches the floor.
+
 - **Goal:** remove the per-triangle serialization; keep Dam-glass visual parity.
 - **Work (in priority order):**
   1. **Batch the snapshot.** In `gfx_opengl_draw_triangles`, take the framebuffer
@@ -275,7 +314,22 @@ the game playable everywhere; M0 is the guardrail that must land first.
 - **A/B knob:** `GE007_DISABLE_ROOM_XLU_CVG_MEMORY` (existing);
   add `GE007_XLU_SNAPSHOT_MODE=pertri|perbatch|perpass`.
 
-### M2 — De-pollute the CPU hot path *(Tier B floor; P1)*
+### M2 — De-pollute the CPU hot path ✅ SHIPPED (behavior-identical variant) *(Tier B floor; P1)*
+> **Done** (commit `perf(M2)`, `gfx_pc.c`): rather than a broad compile-time `GFX_DIAG`
+> gate (which would require enclosing every trace *reader* too, in a 1 MB shared file),
+> we took the two **behavior-identical** wins that eliminate the Tier-B floor:
+> (a) hoist the per-vertex glass effect-label lookup out of `gfx_sp_vertex`'s loop
+> (it is constant per DL command); (b) **memoize** `gfx_diag_room_cmd_offset` — the
+> O(rooms) room-attribution scan that ran per-triangle — into a 1-entry cache keyed on
+> the command address, invalidated per frame. Proven **byte-identical** (0/0/0 diff).
+> Result: Dam 60→137 fps, Control/Egypt/Frigate 71–76→107–139 fps.
+>
+> **Remaining (optional, low value now):** compile-time gating of the ~27 per-vertex
+> `dbg_*` stores and the ~40 per-triangle diagnostic predicates. Post-fix profiling
+> shows these are a small residual (the room-scan was the dominant cost), and gating
+> the writes safely requires latching every trace consumer — deferred as hardening,
+> not a perf need. See §5-notes.
+
 - **Goal:** the per-primitive path does only rendering; dev bookkeeping is gated.
 - **Work:**
   - Move all per-triangle/per-vertex diagnostics (room attribution, NDC dup,
@@ -299,7 +353,16 @@ the game playable everywhere; M0 is the guardrail that must land first.
   in a `GFX_DIAG` build.
 - **A/B knob:** build-time `-DGFX_DIAG=ON` restores full instrumentation.
 
-### M3 — Draw-call & vertex efficiency *(Tier B ceiling; P5, scalability)*
+### M3 — Draw-call & vertex efficiency ⏸️ DEFERRED (no current-HW benefit) *(Tier B ceiling; P5, scalability)*
+> **Assessed & deferred.** Post-M1/M2 profiling of the slowest level (Frigate,
+> ~107 fps) shows `gfx_flush` → GL draw submission is only **~7 % of frame time**;
+> the residual is the CPU DL interpreter + legitimate software T&L, not draw-call
+> overhead. A persistent-VBO / indexed-drawing refactor is medium-risk (Fast3D
+> depth/XLU ordering) for **≈0 benefit on current hardware** where every level
+> already exceeds 100 fps. Kept as a *scalability* item for 4K / high-refresh /
+> weak-GPU targets, to be revisited only if a profile shows submission-bound frames.
+> The plan below stands as the implementation spec when that day comes.
+
 - **Goal:** raise the throughput ceiling for all levels and higher resolutions.
 - **Work (incremental, measure each):**
   - Replace per-flush `glBufferData` orphaning with a persistent /
@@ -316,7 +379,14 @@ the game playable everywhere; M0 is the guardrail that must land first.
   A/B and validate the full screenshot suite.
 - **A/B knob:** `GE007_FAST3D_BATCHING=0` restores per-material-run draws.
 
-### M4 — Open-level culling correctness *(§4.4; correctness-first, gameplay-safe)*
+### M4 — Open-level culling correctness ⏸️ DEFERRED (gameplay risk > reward) *(§4.4; correctness-first, gameplay-safe)*
+> **Assessed & deferred.** Worth ~1 ms of geometry and coupled to gameplay
+> (`room_rendered → auto-aim`, `chr.c:5205`); measured earlier that naive disabling
+> can *hurt* (Jungle 55→79 ms by changing the visible set). With every level now
+> ≥100 fps, the gameplay-invariance risk outweighs a sub-millisecond gain. Left as a
+> future correctness item behind the existing `GE007_VIS_*` knobs, gated on the
+> playability/route/auto-aim smoke lanes.
+
 - **Goal:** submit only what's needed on open levels, without changing gameplay.
 - **Work:** revisit the over-admission heuristics for open geometry; tune
   `bgApplyVisibilitySupplement` budget / frustum-fallback thresholds so open
@@ -330,7 +400,13 @@ the game playable everywhere; M0 is the guardrail that must land first.
   knobs, with the caveat that naive disabling can hurt.
 - **A/B knob:** `GE007_VIS_SUPPLEMENT`, `GE007_PORTAL_*` (existing).
 
-### M5 — Remaster scoping & dynamic resolution *(future-proofing; P2)*
+### M5 — Remaster scoping & dynamic resolution ⏸️ DEFERRED (remaster ≈ free) *(future-proofing; P2)*
+> **Assessed & deferred.** Direct measurement refuted the earlier assumption that
+> SSAA/post-FX were expensive: the whole remaster pipeline costs **~0.5–1 ms/frame**
+> on the reference GPU, and `--faithful` barely moves any level. No perf action
+> needed today. Dynamic resolution remains a worthwhile *min-spec feature* (not a
+> fix) for a future hardware-scaling pass; spec below.
+
 - **Goal:** keep the (currently ~free) remaster free on weaker GPUs and at 4K.
 - **Work:** scope Dam-specific visual features to Dam; add optional **dynamic
   resolution scaling** that trades `RenderScale` to hold a target frame time on
@@ -339,7 +415,11 @@ the game playable everywhere; M0 is the guardrail that must land first.
 - **Acceptance:** target-FPS held on a min-spec profile; no change on reference HW.
 - **Risk:** low. **A/B knob:** `Video.RenderScale`, `Video.RemasterFX`, `--faithful`.
 
-### M6 — Documentation & governance *(P1–P3; "well-built for future work")*
+### M6 — Documentation & governance ✅ SHIPPED *(P1–P3; "well-built for future work")*
+> **Done:** `docs/RENDERING_ARCHITECTURE.md` (frame pipeline, hot-path boundary rule,
+> the two cost-center case studies, the snapshot model); a **Performance discipline**
+> section added to `docs/CODING_STYLE.md`; this plan's §0 results + living §6 budget
+> table + the post-fix `baselines/perf_census_baseline.csv`.
 - **Goal:** the discipline outlives this plan.
 - **Work:**
   - A `docs/RENDERING_ARCHITECTURE.md`: the frame pipeline, the opaque/XLU
