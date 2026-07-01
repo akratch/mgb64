@@ -973,6 +973,13 @@ static int platformDiagMenuScreenshotDue(void) {
 
 static void platformFinishAutoScreenshotIfRequested(void) {
     if (g_autoScreenshotExit) {
+        /* Emit the sim-state invariance hash BEFORE any teardown, while the
+         * pool/globals are intact (remaster P0.2 gate). No-op unless requested. */
+        {
+            extern void simStateHashEmitIfRequested(int frame, const char *replay);
+            extern const char *g_pcStartRamrom;
+            simStateHashEmitIfRequested(g_frameSyncCallCount, g_pcStartRamrom);
+        }
         extern int g_crashRecoveryCount;
         if (g_crashRecoveryCount > 0) {
             printf("[GE007-PC] Auto-screenshot complete, but %d crash recoveries occurred; build needed recovery, exiting with error.\n",

@@ -33,6 +33,9 @@ int g_mtxCallCount = 0;
 int g_pcStartLevel = -1;
 int g_pcStartDifficulty = DIFFICULTY_AGENT;
 const char *g_pcStartRamrom = NULL;
+/* --sim-state-hash-out <path>: at deterministic screenshot-exit, hash the mutable
+ * simulation state and write it here (remaster P0.2 invariance gate). NULL = off. */
+const char *g_simStateHashOut = NULL;
 int g_pcDirectBootLevelActive = 0;
 static int g_pcStartLevelForcedRaw = 0;
 
@@ -580,6 +583,8 @@ int main(int argc, char **argv)
             g_freezeInput = 1; /* deterministic implies frozen input */
         } else if (strcmp(argv[i], "--trace-state") == 0 && i + 1 < argc) {
             pcSetTraceStatePath(argv[++i]);
+        } else if (strcmp(argv[i], "--sim-state-hash-out") == 0 && i + 1 < argc) {
+            g_simStateHashOut = argv[++i];
         } else if (strcmp(argv[i], "--mission") == 0 && i + 1 < argc) {
             int mission = 0;
             const PcStartStage *stage;

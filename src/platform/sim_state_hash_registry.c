@@ -8,6 +8,11 @@
 #include "sim_state_hash.h"
 #include "boss.h"        /* bossGetPcPoolBase / bossGetPcPoolSize */
 #include "game/lvl.h"    /* g_ClockTimer, g_GlobalTimer          */
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Set from --sim-state-hash-out (defined in main_pc.c). */
+extern const char *g_simStateHashOut;
 
 /*
  * The mutable simulation-state region set. [0] is the 8 MB s_pcPool arena where
@@ -31,4 +36,30 @@ void simHashRegistryBuild(SimHashRegion *out, int *n) {
     out[i].size = sizeof g_GlobalTimer;
     i++;
     *n = i;
+}
+
+void simStateHashEmitIfRequested(int frame, const char *replay) {
+    if (!g_simStateHashOut) {
+        return;
+    }
+    SimHashRegion regs[SIM_HASH_MAX_REGIONS];
+    int n = 0;
+    simHashRegistryBuild(regs, &n);
+
+    /* Optional raw-pool dump for divergence diagnosis (GE007_SIM_HASH_DUMP=path). */
+    {
+        const char *dump = getenv("GE007_SIM_HASH_DUMP");
+        if (dump && bossGetPcPoolBase()) {
+            FILE *df = fopen(dump, "wb");
+            if (df) {
+                fwrite(bossGetPcPoolBase(), 1, bossGetPcPoolSize(), df);
+                fclose(df);
+            }
+        }
+    }
+
+    uint64_t h = sim_state_hash_compute(regs, n);
+    sim_state_hash_emit_json(g_simStateHashOut, h, regs, n, frame, replay);
+    fprintf(stderr, "[SIM-HASH] %016llx frame=%d replay=%s regions=%d -> %s\n",
+            (unsigned long long)h, frame, replay ? replay : "", n, g_simStateHashOut);
 }

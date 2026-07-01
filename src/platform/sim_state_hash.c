@@ -12,40 +12,55 @@ static inline uint64_t fnv1a(uint64_t h, const void *p, size_t n) {
     return h;
 }
 
+/* Neutral token for a pointer word (its ASLR-varied value carries no logical
+ * state). Chosen to be an implausible literal game-data word. */
+#define SIM_NORM_TOKEN 0xFEEDFACECAFEBEEFULL
+
 /*
- * If `w` points into one of the registered regions, return a base-independent
- * token (region index + 1, in the high bits) XOR the in-region offset. Otherwise
- * return `w` verbatim. This canonicalizes intra-state pointers so the hash does
- * not depend on ASLR-varied absolute addresses, while a genuine (non-pointer)
- * data word is hashed literally.
+ * Userspace-pointer value window (macOS arm64). Everything below PAGEZERO's top
+ * (4 GB) cannot be a valid pointer; the ceiling (2^47) is the userspace address
+ * limit and sits far below where float pairs land (~1e18), so genuine 32-bit
+ * float pairs stored as 64-bit words keep full hash sensitivity. This is a pure
+ * VALUE test, so it classifies a given word identically across ASLR'd runs —
+ * unlike a range-membership test, whose ranges move with ASLR.
  */
-static uint64_t canon_word(uintptr_t w, const SimHashRegion *rg, int n) {
-    for (int k = 0; k < n; k++) {
-        if (!rg[k].base) continue;
-        uintptr_t lo = (uintptr_t)rg[k].base;
-        uintptr_t hi = lo + rg[k].size;
-        if (w >= lo && w < hi) {
-            return ((uint64_t)(k + 1) << 48) ^ (uint64_t)(w - lo);
-        }
+#define SIM_PTR_LO 0x0000000100000000ULL
+#define SIM_PTR_HI 0x0000800000000000ULL
+
+/*
+ * Canonicalize `w`:
+ *  - inside a hashed region -> (index+1, offset) token: ASLR-invariant and keeps
+ *    which in-region object it targets (full sensitivity for pool-internal links);
+ *  - else in the pointer value window -> a single constant token: a pointer into
+ *    some unregistered allocation (a dylib, the ROM buffer, the heap) whose
+ *    absolute value is meaningless across runs;
+ *  - else -> `w` literally (genuine non-pointer data: small ints, flags, floats).
+ */
+static uint64_t canon_word(uintptr_t w, const SimHashRegion *hr, int nh) {
+    for (int k = 0; k < nh; k++) {
+        if (!hr[k].base) continue;
+        uintptr_t lo = (uintptr_t)hr[k].base, hi = lo + hr[k].size;
+        if (w >= lo && w < hi) return ((uint64_t)(k + 1) << 48) ^ (uint64_t)(w - lo);
     }
+    if ((uint64_t)w >= SIM_PTR_LO && (uint64_t)w < SIM_PTR_HI) return SIM_NORM_TOKEN;
     return (uint64_t)w;
 }
 
-uint64_t sim_state_hash_compute(const SimHashRegion *rg, int n) {
+uint64_t sim_state_hash_compute(const SimHashRegion *hr, int nh) {
     uint64_t h = FNV64_OFFSET;
-    for (int k = 0; k < n; k++) {
+    for (int k = 0; k < nh; k++) {
         /* Hash the region name so a changed/reordered region set is detectable. */
-        h = fnv1a(h, rg[k].name ? rg[k].name : "", rg[k].name ? strlen(rg[k].name) : 0);
-        if (!rg[k].base || rg[k].size == 0) continue;
+        h = fnv1a(h, hr[k].name ? hr[k].name : "", hr[k].name ? strlen(hr[k].name) : 0);
+        if (!hr[k].base || hr[k].size == 0) continue;
 
-        const unsigned char *b = (const unsigned char *)rg[k].base;
-        size_t sz = rg[k].size, i = 0;
+        const unsigned char *b = (const unsigned char *)hr[k].base;
+        size_t sz = hr[k].size, i = 0;
         /* Pointer-aligned words get canonicalized; a trailing sub-word tail is
          * hashed raw (it cannot hold a full pointer). */
         for (; i + sizeof(uintptr_t) <= sz; i += sizeof(uintptr_t)) {
             uintptr_t w;
             memcpy(&w, b + i, sizeof w);                 /* alignment-safe */
-            uint64_t c = canon_word(w, rg, n);
+            uint64_t c = canon_word(w, hr, nh);
             h = fnv1a(h, &c, sizeof c);
         }
         if (i < sz) h = fnv1a(h, b + i, sz - i);

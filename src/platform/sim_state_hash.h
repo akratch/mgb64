@@ -14,14 +14,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Upper bound on registered state regions (pool + curated globals). */
+#define SIM_HASH_MAX_REGIONS 32
+
 typedef struct {
     const char *name;   /* stable identity; hashed so region-set changes are caught */
     const void *base;   /* runtime base address of the region                       */
     size_t      size;   /* region length in bytes                                   */
 } SimHashRegion;
 
-/* FNV-1a over the regions, with intra-state pointer normalization. Deterministic
- * for identical logical state regardless of ASLR. */
+/*
+ * FNV-1a over the regions with intra-state pointer normalization. A word inside a
+ * region is canonicalized to a base-independent (index,offset) token; a word in
+ * the userspace-pointer value window is neutralized to a constant; anything else
+ * (genuine data) is hashed literally. Deterministic for identical logical state
+ * regardless of ASLR.
+ */
 uint64_t sim_state_hash_compute(const SimHashRegion *regions, int n);
 
 /* Write the gate result as JSON (hash, frame, replay, region names+sizes). */
@@ -30,7 +38,11 @@ int sim_state_hash_emit_json(const char *path, uint64_t hash,
                              int frame, const char *replay);
 
 /* Fill `out` with the state region set: [0] = pool, [1..] = curated globals.
- * `*n` returns the count. Defined in sim_state_hash.c (registry section). */
+ * `*n` returns the count. Defined in sim_state_hash_registry.c (game build only). */
 void simHashRegistryBuild(SimHashRegion *out, int *n);
+
+/* If g_simStateHashOut is set, build the registry, hash it, and emit the JSON.
+ * Called at deterministic screenshot-exit, before teardown. Game build only. */
+void simStateHashEmitIfRequested(int frame, const char *replay);
 
 #endif /* SIM_STATE_HASH_H */
