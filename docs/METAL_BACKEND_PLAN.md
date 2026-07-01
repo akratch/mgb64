@@ -1,6 +1,13 @@
 # Native Metal Rendering Backend for MGB64 Fast3D — Phased Scoping Plan
 
-*Status: scoping / go-no-go. Revised after adversarial code-verification pass. Read §0 and §4 before deciding.*
+*Status: **APPROVED + Phase 1 IN PROGRESS** on branch `feat/metal-backend`. §0 pre-flight tested → ruled out (native Metal required). Task-level plan: `docs/superpowers/plans/2026-07-01-metal-backend-phase1.md`.*
+
+> **PHASE 1 PROGRESS (branch feat/metal-backend):**
+> - ✅ **Task 1** (`ec641e5`) — ObjC++ build fork (`enable_language(OBJCXX)`, `.mm`, Metal/QuartzCore frameworks, all `if(APPLE)`) + stub `gfx_metal_api` (22-fn vtable). Header gotcha solved: project `include/math.h` shim shadows system `<math.h>` → suppress Carbon `fp.h` via `__FP__` locally.
+> - ✅ **Task 2** (`8fbfa53`) — `gfx_backend_use_metal()` selector (`GE007_RENDERER=metal`) + seam branch at `gfx_pc.c:22879` + `g_depth_clamp_enabled` invariance hoist. Verified via pre-render init logs.
+> - ✅ **Tasks 3+4** (`bdea1ae`) — SDL Metal window (`SDL_WINDOW_METAL`+`SDL_Metal_CreateView`→`CAMetalLayer`), 3 non-vtable couplings backend-aware, and real `gfx_metal.mm` bring-up: **on Apple M3 Max the native Metal window acquires a 1440×810 drawable and encodes+presents a clear pass each frame — no GL-over-Metal, no hang.** GL default byte-identical (renders + screenshots normally).
+> - ⛔ **KNOWN BOUNDARY:** `GE007_RENDERER=metal` SIGSEGVs in `gfx_run_dl` (frame 1, op 0xB8) — the DL interpreter needs real shaders/textures/draws (Phase 2/3). Bring-up (clear+present) is proven; opt-in + default-off so nothing ships broken.
+> - ⏭ **Next:** the `gfx_run_dl` crash-safety / Phase 2 (combiner→MSL, the make-or-break go/no-go) + Phase-1 Spikes A (cross-backend invariance) & B (RDP/XLU snapshot).
 
 ## 1. Strategy & Honest Ceiling
 
