@@ -316,6 +316,7 @@ set(FAST3D_SOURCES
     src/platform/fast3d/gfx_pc.c
     src/platform/fast3d/gfx_opengl.c
     src/platform/fast3d/gfx_cc.c
+    src/platform/fast3d/gfx_backend.c
 )
 # Native Metal backend (macOS-only, opt-in at runtime). GL TU stays on all platforms.
 if(APPLE)

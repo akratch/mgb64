@@ -22839,6 +22839,10 @@ void gfx_process_n64_dl(const uint8_t *data) {
 /* ===== Public API ===== */
 
 extern struct GfxRenderingAPI gfx_opengl_api;
+#ifdef __APPLE__
+extern struct GfxRenderingAPI gfx_metal_api;   /* native Metal backend (opt-in) */
+extern bool gfx_backend_use_metal(void);        /* gfx_backend.c */
+#endif
 
 /* Tables defined in gfx_ptr.h (declared extern there) */
 uintptr_t gfx_segment_table[16];
@@ -22876,8 +22880,22 @@ static void gfx_sp_reset(void) {
 }
 
 void gfx_init(void) {
+#ifdef __APPLE__
+    gfx_rapi = gfx_backend_use_metal() ? &gfx_metal_api : &gfx_opengl_api;
+#else
     gfx_rapi = &gfx_opengl_api;
+#endif
     gfx_rapi->init();
+#ifdef __APPLE__
+    /* g_depth_clamp_enabled is a cross-backend invariance coupling: the CPU
+     * clipper's GFX_CLIP_Z_SCALE (:219/:223) reads it, and OpenGL sets it inside
+     * gfx_opengl_init(). Metal's init does not run GL's init, so set it here or
+     * the near-frustum triangle admission — and thus the sim-state hash —
+     * silently diverges from the GL path. */
+    if (gfx_backend_use_metal()) {
+        g_depth_clamp_enabled = true;
+    }
+#endif
 
     /* Clear state */
     tex_cache_init();

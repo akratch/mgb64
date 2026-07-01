@@ -25,6 +25,7 @@
 
 #import <Metal/Metal.h>
 
+#include <stdio.h>
 #include "gfx_rendering_api.h"
 
 /* ---- Phase 1 stubs: no-op / default returns ------------------------------- */
@@ -71,7 +72,9 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
 static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
     (void)x; (void)y; (void)width; (void)height; (void)rgb_out; return false;
 }
-static void mtl_init(void) {}
+static void mtl_init(void) {
+    fprintf(stderr, "[metal] native Metal backend selected (Phase 1: bring-up stub)\n");
+}
 static void mtl_on_resize(void) {}
 static void mtl_start_frame(void) {}
 static void mtl_end_frame(void) {}
