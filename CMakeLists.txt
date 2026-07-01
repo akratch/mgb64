@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(ge007 C)
 
+# macOS-only native Metal rendering backend (opt-in; GL stays default). The
+# backend TU is Objective-C++ against the system Metal/QuartzCore frameworks —
+# no metal-cpp vendoring. Guarded so Linux/Windows are untouched.
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 include(CTest)
 
@@ -309,6 +317,10 @@ set(FAST3D_SOURCES
     src/platform/fast3d/gfx_opengl.c
     src/platform/fast3d/gfx_cc.c
 )
+# Native Metal backend (macOS-only, opt-in at runtime). GL TU stays on all platforms.
+if(APPLE)
+    list(APPEND FAST3D_SOURCES src/platform/fast3d/gfx_metal.mm)
+endif()
 
 # glad OpenGL loader (not needed on macOS — uses framework directly)
 if(NOT APPLE)
@@ -485,6 +497,9 @@ if(APPLE)
     target_link_libraries(ge007
         ${OPENGL_LIB}
         m
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework Foundation"
     )
     if(SDL2_FOUND)
         target_link_libraries(ge007 SDL2::SDL2)
