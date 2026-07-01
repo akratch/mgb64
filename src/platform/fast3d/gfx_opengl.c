@@ -1912,6 +1912,66 @@ static bool gfx_opengl_rdp_cvg_snapshot_rects_enabled(void) {
     return enabled != 0;
 }
 
+/* Union of every triangle's screen-space snapshot rect in the batch. Returns
+ * false (→ caller copies the full viewport) if any triangle is degenerate, so
+ * the snapshot region always covers at least what each triangle would sample. */
+static bool gfx_opengl_compute_batch_snapshot_rect(const float buf_vbo[],
+                                                   size_t buf_vbo_len,
+                                                   size_t buf_vbo_num_tris,
+                                                   const GLint viewport[4],
+                                                   GLint out_rect[4]) {
+    GLint acc[4] = {0, 0, 0, 0};
+    bool any = false;
+
+    for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
+        GLint r[4];
+        if (!gfx_opengl_compute_tri_snapshot_rect(buf_vbo, buf_vbo_len,
+                                                  buf_vbo_num_tris, tri,
+                                                  viewport, r)) {
+            return false;
+        }
+        if (!any) {
+            acc[0] = r[0]; acc[1] = r[1]; acc[2] = r[2]; acc[3] = r[3];
+            any = true;
+        } else {
+            GLint x0 = acc[0] < r[0] ? acc[0] : r[0];
+            GLint y0 = acc[1] < r[1] ? acc[1] : r[1];
+            GLint x1 = (acc[0] + acc[2]) > (r[0] + r[2]) ? (acc[0] + acc[2]) : (r[0] + r[2]);
+            GLint y1 = (acc[1] + acc[3]) > (r[1] + r[3]) ? (acc[1] + acc[3]) : (r[1] + r[3]);
+            acc[0] = x0; acc[1] = y0; acc[2] = x1 - x0; acc[3] = y1 - y0;
+        }
+    }
+    if (!any) {
+        return false;
+    }
+    out_rect[0] = acc[0]; out_rect[1] = acc[1];
+    out_rect[2] = acc[2]; out_rect[3] = acc[3];
+    return out_rect[2] > 0 && out_rect[3] > 0;
+}
+
+enum GfxXluSnapshotMode {
+    GFX_XLU_SNAPSHOT_PER_BATCH = 0,  /* one framebuffer copy per draw batch (default) */
+    GFX_XLU_SNAPSHOT_PER_TRI   = 1,  /* legacy: one copy per triangle (exact-parity A/B) */
+};
+
+/* Granularity of the RDP-memory-blend framebuffer snapshot. Default per-batch
+ * removes the per-triangle GPU pipeline stall (docs/PERFORMANCE_PLAN.md M1);
+ * GE007_XLU_SNAPSHOT_MODE=pertri restores the legacy path for A/B. */
+static enum GfxXluSnapshotMode gfx_opengl_xlu_snapshot_mode(void) {
+    static int mode = -1;
+
+    if (mode < 0) {
+        const char *env = getenv("GE007_XLU_SNAPSHOT_MODE");
+        mode = GFX_XLU_SNAPSHOT_PER_BATCH;
+        if (env != NULL && env[0] != '\0' &&
+            (strcmp(env, "pertri") == 0 || strcmp(env, "per-tri") == 0 ||
+             strcmp(env, "tri") == 0 || strcmp(env, "1") == 0)) {
+            mode = GFX_XLU_SNAPSHOT_PER_TRI;
+        }
+    }
+    return (enum GfxXluSnapshotMode)mode;
+}
+
 static void gfx_opengl_draw_triangles_cvg_wrap_stencil(size_t buf_vbo_num_tris) {
     GLboolean saved_color_mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
     GLboolean saved_depth_mask = GL_FALSE;
@@ -1963,18 +2023,44 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
     if (g_blend_alpha_rdp_memory || g_blend_alpha_rdp_cvg_memory) {
         GLint viewport[4] = {0, 0, 0, 0};
         glGetIntegerv(GL_VIEWPORT, viewport);
-        for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
-            GLint snapshot_rect[4];
+        if (gfx_opengl_xlu_snapshot_mode() == GFX_XLU_SNAPSHOT_PER_TRI) {
+            /* Legacy exact-parity path: re-snapshot the framebuffer before every
+             * triangle. Correct for intra-batch overlap but issues one
+             * framebuffer copy + pipeline stall per triangle — the Tier-A
+             * bottleneck. Kept as GE007_XLU_SNAPSHOT_MODE=pertri for A/B. */
+            for (size_t tri = 0; tri < buf_vbo_num_tris; tri++) {
+                GLint snapshot_rect[4];
+                const GLint *requested_rect = NULL;
+                if (g_blend_alpha_rdp_cvg_memory &&
+                    gfx_opengl_rdp_cvg_snapshot_rects_enabled() &&
+                    gfx_opengl_compute_tri_snapshot_rect(buf_vbo, buf_vbo_len,
+                                                         buf_vbo_num_tris, tri,
+                                                         viewport, snapshot_rect)) {
+                    requested_rect = snapshot_rect;
+                }
+                (void)gfx_opengl_copy_framebuffer_snapshot(viewport, requested_rect);
+                glDrawArrays(GL_TRIANGLES, (GLint)(tri * 3), 3);
+            }
+        } else {
+            /* Default per-batch path: one framebuffer snapshot (union of the
+             * batch's triangle rects) then a single draw. The snapshot region
+             * covers every triangle's sampled pixels, so each fragment reads the
+             * same framebuffer memory it would under the per-triangle path,
+             * except for triangles that overlap *within this one same-material
+             * batch* (glass panes and foliage cards, which are coplanar /
+             * non-overlapping). Removes the per-triangle stall. See
+             * docs/PERFORMANCE_PLAN.md M1. */
+            GLint batch_rect[4];
             const GLint *requested_rect = NULL;
             if (g_blend_alpha_rdp_cvg_memory &&
                 gfx_opengl_rdp_cvg_snapshot_rects_enabled() &&
-                gfx_opengl_compute_tri_snapshot_rect(buf_vbo, buf_vbo_len,
-                                                     buf_vbo_num_tris, tri,
-                                                     viewport, snapshot_rect)) {
-                requested_rect = snapshot_rect;
+                gfx_opengl_compute_batch_snapshot_rect(buf_vbo, buf_vbo_len,
+                                                       buf_vbo_num_tris,
+                                                       viewport, batch_rect)) {
+                requested_rect = batch_rect;
             }
             (void)gfx_opengl_copy_framebuffer_snapshot(viewport, requested_rect);
-            glDrawArrays(GL_TRIANGLES, (GLint)(tri * 3), 3);
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(3 * buf_vbo_num_tris));
         }
     } else if (g_blend_alpha_cvg_wrap_stencil && gfx_diag_xlu_coverage_stencil_enabled()) {
         gfx_opengl_draw_triangles_cvg_wrap_stencil(buf_vbo_num_tris);
