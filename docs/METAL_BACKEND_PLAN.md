@@ -12,13 +12,15 @@ Add a second `GfxRenderingAPI` implementation — `gfx_metal_api` — alongside 
 
 ---
 
-## 0. Pre-Flight Gate — prove the payoff can't be bought cheaply on GL (do this FIRST)
+## 0. Pre-Flight Gate — ✅ TESTED 2026-07-01 → RULED OUT (native Metal confirmed)
 
 The entire stated payoff (§5, Phase 5) is "SSAO without the `Depth32Float`+`ShaderRead` op-hang." Before committing to a months-long backend, **test and reject the cheap GL-only dodge**: render the SSAO depth pre-pass into a **color-encoded** target (`R32F` or packed `RGBA8`) and sample *that* as an ordinary color texture, sidestepping the specific depth-texture-sampling op that hangs the deprecated translator — while staying on GL everywhere.
 
-- **Deliverable:** a spike branch that routes the SSAO depth input through a color-encoded texture on the existing GL path on macOS.
-- **Decision:** if this unblocks Phase-1 lighting, it is **days, not weeks**, and this whole plan is mooted (or deferred to a pure fidelity/perf nicety). If it still hangs or produces unacceptable precision/banding, that failure is the actual justification for the native backend — capture the evidence and proceed to Phase 1.
-- **Effort:** ~2–4 days. **Risk:** LOW to run; HIGH value as a project-killer.
+> **RESULT — §0 is dead; native Metal is required.** Ran the definitive isolation: the reconstruction AO (proj-divide + cross/normalize) with its source texture bound to a **COLOR** texture instead of the depth texture (`GE007_SSAO_COLORDEPTH`, identical math). It **hangs identically to reading depth** (exit 137, ~45s force-kill). Therefore the trigger is **NOT** the depth-texture-sample op (a color `sampler2D` hangs too) — it is the **reconstruction math itself**, regardless of texture format. The color-encode dodge cannot help, and (corollary) neither can a linZ-only linear-depth prepass, since it still needs the per-sample `ndc/projX`,`ndc/projY` divide. This *confirms* the native Metal backend rather than mooting it.
+
+- **Deliverable:** ✅ isolation spike run (reverted; tree at P0).
+- **Decision:** ✅ hang persists on the color source → native backend justified → proceed to Phase 1.
+- **Effort:** ~1hr (done). **Value:** HIGH — converted "should we spend weeks?" into a definitive yes.
 
 *(The other historical stopgap — keep patching GL-over-Metal / disable SSAO on macOS — is not a fix: it's an op-level driver bug on a deprecated path Apple can remove, and the prior `textureLod` fix already failed. The color-encoded dodge above is the *good* cheap option and must be ruled out on its own merits.)*
 
