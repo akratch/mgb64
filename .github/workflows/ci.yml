@@ -93,6 +93,8 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build --parallel 4 2>&1 | tee build/mgb64-build.log
+      - name: Sim/render separation (R1)
+        run: ./scripts/ci/check_sim_render_separation.sh
       - name: Summarize build warnings
         if: always()
         run: |
