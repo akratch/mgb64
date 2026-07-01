@@ -27,6 +27,8 @@ jobs:
           ./scripts/ci/check_release_ready.sh
       - name: Check ignored artifact hygiene
         run: ./scripts/ci/check_high_risk_ignored_artifacts.sh
+      - name: Timing lock (R2)
+        run: ./scripts/ci/check_timing_lock.sh
       - name: Check Docker build context
         run: docker build --check .
       - name: Run public static validation
