@@ -600,17 +600,6 @@ void platformSaveScreenshot(void) {
     unsigned char *source_pixels = NULL;
     int native_size_screenshot = getenv("GE007_DIAG_SCREENSHOT_NATIVE_SIZE") != NULL;
 
-#ifdef __APPLE__
-    /* This path reads the framebuffer with a direct glReadPixels (below), which
-     * has no meaning — and crashes — on the Metal backend (no GL context). A
-     * Metal blit-readback lands in Phase 3; until then, screenshots are a no-op
-     * on the Metal path. */
-    if (gfx_backend_use_metal()) {
-        fprintf(stderr, "[metal] screenshot skipped (GL readback unavailable; Phase 3)\n");
-        return;
-    }
-#endif
-
     if (g_sdlWindow != NULL) {
 #ifdef __APPLE__
         if (gfx_backend_use_metal()) {
@@ -646,15 +635,31 @@ void platformSaveScreenshot(void) {
         return;
     }
 
-    /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
-     * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
-     * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
-     * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
-     * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
-     * last fully-presented frame (deterministic). Restore GL_BACK after. */
-    glReadBuffer(GL_FRONT);
-    glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
-    glReadBuffer(GL_BACK);
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        /* Metal: blit-readback of the last composited scene texture (the
+         * backend returns GL-convention bottom-left RGB, so downstream BMP/VI
+         * handling is unchanged). */
+        extern bool gfx_backend_read_framebuffer_rgb(int, int, int, int, unsigned char *);
+        if (!gfx_backend_read_framebuffer_rgb(0, 0, src_w, src_h, source_pixels)) {
+            fprintf(stderr, "[metal] screenshot readback failed\n");
+            free(source_pixels);
+            free(pixels);
+            return;
+        }
+    } else
+#endif
+    {
+        /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
+         * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
+         * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
+         * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
+         * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
+         * last fully-presented frame (deterministic). Restore GL_BACK after. */
+        glReadBuffer(GL_FRONT);
+        glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+        glReadBuffer(GL_BACK);
+    }
 
     if (src_w == w && src_h == h) {
         memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);

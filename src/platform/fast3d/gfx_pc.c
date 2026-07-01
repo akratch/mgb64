@@ -22928,6 +22928,17 @@ void gfx_init(void) {
     n64_dl_region_count = 0;
 }
 
+/* Backend-routed framebuffer readback for the platform screenshot path (which
+ * lives in a different TU and cannot see the static gfx_rapi). GL reads via
+ * glReadPixels; Metal via a blit-readback. Both return GL-convention RGB
+ * (bottom-left origin). Returns false if no backend/readback is available. */
+bool gfx_backend_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
+    if (gfx_rapi == NULL || gfx_rapi->read_framebuffer_rgb == NULL) {
+        return false;
+    }
+    return gfx_rapi->read_framebuffer_rgb(x, y, width, height, rgb_out);
+}
+
 static void gfx_diag_screenshot_series_capture_if_due(void)
 {
     static int initialized = 0;
@@ -23223,6 +23234,13 @@ void gfx_run_dl(Gfx *dl) {
                 int sh = gfx_current_dimensions.height;
                 uint8_t *pixels = (uint8_t *)malloc(sw * sh * 3);
                 if (pixels) {
+#ifdef __APPLE__
+                    /* Metal has no GL context; route through the backend
+                     * readback. GL path unchanged (byte-identical). */
+                    if (gfx_backend_use_metal() && gfx_rapi && gfx_rapi->read_framebuffer_rgb) {
+                        gfx_rapi->read_framebuffer_rgb(0, 0, sw, sh, pixels);
+                    } else
+#endif
                     glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
                     FILE *sf = fopen(spath, "wb");
                     if (sf) {

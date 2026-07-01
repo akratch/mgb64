@@ -41,6 +41,7 @@
 extern "C" {
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "gfx_screen_config.h"
 }
 
 /* Growable text buffer. STL (<string>/<vector>) is unusable in this TU because
@@ -81,7 +82,17 @@ extern "C" void *platformGetMetalLayer(void);  /* platform_sdl.c */
  * and the CPU vertex/clip pipeline is byte-identical to GL. */
 extern "C" {
     extern bool g_depth_clamp_enabled;
+    /* Minimal re-declarations (avoid pulling gfx_pc.h -> ultra64.h into this TU).
+     * Layout must match src/platform/gfx_pc.h and src/vi.h. */
+    struct GfxDimensions { uint32_t width, height; float aspect_ratio; };
+    extern struct GfxDimensions gfx_current_dimensions;
+    short viGetX(void);
+    short viGetY(void);
 }
+
+/* N64 tile wrap flags (PR/gbi.h) — declared locally to avoid the N64 header. */
+#define GE007_G_TX_MIRROR 0x1
+#define GE007_G_TX_CLAMP  0x2
 
 /* Device/queue/layer live for the process; per-frame drawable & command buffer
  * are strong statics so ARC keeps them alive across the start_frame/end_frame
@@ -661,7 +672,214 @@ static void mtl_unload_shader(struct ShaderProgram *old_prg) {
     if (s_cur_shader == (MetalShader *)old_prg) s_cur_shader = nullptr;
 }
 
-/* ---- Bring-up: init / clear / present (Phase 1) --------------------------- */
+/* ==========================================================================
+ * Phase 3 — render targets, deferred state, caches, draw flush
+ * ========================================================================== */
+
+/* Uniform block — byte layout MUST match `struct Uniforms` in the generated MSL
+ * (mtl_generate_msl). 16-byte aligned, 48 bytes total. */
+struct MtlUniforms {
+    float diagViewport[4];   /* 0  */
+    float n64FilterScale[2]; /* 16 */
+    float diagFbOrigin[2];   /* 24 */
+    int   frameCount;        /* 32 */
+    int   winH;              /* 36 */
+    int   fbH;               /* 40 */
+    int   _pad;              /* 44 -> 48 */
+};
+
+/* Offscreen scene targets (color is sampleable + blittable for readback and the
+ * RDP snapshot; the drawable is framebufferOnly and cannot serve those). */
+static id<MTLTexture> s_scene_color = nil;
+static id<MTLTexture> s_scene_depth = nil;
+static int s_fb_w = 0, s_fb_h = 0;
+static id<MTLRenderCommandEncoder> s_enc = nil;
+static id<MTLTexture> s_white_tex = nil;   /* 1x1 white for unbound tiles */
+
+/* Deferred render state (set by the vtable setters, resolved in draw_triangles). */
+static enum GfxBlendMode s_blend = GFX_BLEND_DISABLED;
+static bool s_preserve_cov_alpha = false;
+static bool s_depth_test = false, s_depth_update = false, s_depth_compare = false;
+static uint16_t s_zmode = 0;
+static uint32_t s_tile_tex[2] = {0, 0};
+static bool s_tile_linear[2] = {false, false};
+static uint32_t s_tile_cms[2] = {0, 0}, s_tile_cmt[2] = {0, 0};
+static uint32_t s_last_selected_id = 0;
+static int s_vp_x = 0, s_vp_y = 0, s_vp_w = 0, s_vp_h = 0;
+static int s_sc_x = 0, s_sc_y = 0, s_sc_w = 0, s_sc_h = 0;
+static bool s_sc_set = false;
+static uint32_t s_frame_count_metal = 0;
+
+/* Texture registry (id -> MTLTexture) + pipeline/depth/sampler caches. */
+static NSMutableDictionary<NSNumber *, id<MTLTexture>> *s_textures = nil;
+static NSMutableDictionary<NSNumber *, id<MTLDepthStencilState>> *s_depth_cache = nil;
+static NSMutableDictionary<NSNumber *, id<MTLSamplerState>> *s_sampler_cache = nil;
+
+static id<MTLTexture> mtl_lookup_tex(uint32_t id) {
+    if (id == 0 || s_textures == nil) return nil;
+    return s_textures[@(id)];
+}
+
+/* Port of gfx_opengl_axis_filter_scale (gfx_opengl.c:594-615). */
+static float mtl_axis_filter_scale(uint32_t drawable_size, int logical_size, int fallback) {
+    if (logical_size <= 0) logical_size = fallback;
+    if (drawable_size == 0 || logical_size <= 0) return 1.0f;
+    float scale = (float)drawable_size / (float)logical_size;
+    if (scale < 1.0f) return 1.0f;
+    if (scale > 64.0f) return 64.0f;
+    return scale;
+}
+
+static MTLSamplerAddressMode mtl_wrap(uint32_t v) {
+    if (v & GE007_G_TX_CLAMP) return MTLSamplerAddressModeClampToEdge;
+    return (v & GE007_G_TX_MIRROR) ? MTLSamplerAddressModeMirrorRepeat
+                                   : MTLSamplerAddressModeRepeat;
+}
+
+static void mtl_ensure_targets(int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    if (s_scene_color != nil && s_fb_w == w && s_fb_h == h) return;
+    MTLTextureDescriptor *cd =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:w height:h mipmapped:NO];
+    cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    cd.storageMode = MTLStorageModePrivate;
+    s_scene_color = [s_device newTextureWithDescriptor:cd];
+    MTLTextureDescriptor *dd =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                           width:w height:h mipmapped:NO];
+    dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    dd.storageMode = MTLStorageModePrivate;
+    s_scene_depth = [s_device newTextureWithDescriptor:dd];
+    s_fb_w = w;
+    s_fb_h = h;
+    /* Match the drawable to the render resolution so the end_frame blit is
+     * size-exact; the compositor scales the drawable to the window (this is the
+     * SSAA downsample, mirroring GL's resolve_scene_target blit). */
+    if (s_layer != nil) s_layer.drawableSize = CGSizeMake(w, h);
+}
+
+static void mtl_ensure_white(void) {
+    if (s_white_tex != nil) return;
+    MTLTextureDescriptor *d =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                           width:1 height:1 mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead;
+    s_white_tex = [s_device newTextureWithDescriptor:d];
+    uint8_t white[4] = {255, 255, 255, 255};
+    [s_white_tex replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:white bytesPerRow:4];
+}
+
+static void mtl_build_vertex_descriptor(MetalShader *ms) {
+    if (ms->vtxDesc != nil) return;
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    for (int i = 0; i < ms->numAttrs; i++) {
+        MtlAttr a = ms->attrs[i];
+        MTLVertexFormat fmt = a.size == 1 ? MTLVertexFormatFloat
+                            : a.size == 2 ? MTLVertexFormatFloat2
+                            : a.size == 3 ? MTLVertexFormatFloat3
+                                          : MTLVertexFormatFloat4;
+        vd.attributes[a.index].format = fmt;
+        vd.attributes[a.index].offset = (NSUInteger)a.offset * sizeof(float);
+        vd.attributes[a.index].bufferIndex = 0;
+    }
+    vd.layouts[0].stride = (NSUInteger)ms->numFloats * sizeof(float);
+    vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    vd.layouts[0].stepRate = 1;
+    ms->vtxDesc = vd;
+}
+
+/* Metal bakes blend/format/samples/writeMask into the PSO, so the GL immediate
+ * setters collapse to this lazily-cached lookup keyed on the dynamic state. */
+static id<MTLRenderPipelineState> mtl_pso_for(MetalShader *ms, enum GfxBlendMode blend,
+                                              int samples, bool write_alpha) {
+    uint64_t key = (uint64_t)(blend & 0xF) |
+                   ((uint64_t)(samples & 0xFF) << 4) |
+                   ((uint64_t)(write_alpha ? 1 : 0) << 12);
+    NSNumber *k = @(key);
+    id<MTLRenderPipelineState> pso = ms->psoCache[k];
+    if (pso != nil) return pso;
+
+    MTLRenderPipelineDescriptor *d = [[MTLRenderPipelineDescriptor alloc] init];
+    d.vertexFunction = ms->vtxFn;
+    d.fragmentFunction = ms->fragFn;
+    d.vertexDescriptor = ms->vtxDesc;
+    d.rasterSampleCount = samples;
+    d.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+
+    MTLRenderPipelineColorAttachmentDescriptor *ca = d.colorAttachments[0];
+    ca.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    MTLColorWriteMask wm = MTLColorWriteMaskRed | MTLColorWriteMaskGreen | MTLColorWriteMaskBlue;
+    if (write_alpha) wm |= MTLColorWriteMaskAlpha;
+    ca.writeMask = wm;
+
+    /* Blend factors mirror gfx_opengl_set_blend_mode:1619-1647 (default diag). */
+    bool enable = (blend == GFX_BLEND_ALPHA || blend == GFX_BLEND_MODULATE ||
+                   blend == GFX_BLEND_ALPHA_COVERAGE ||
+                   blend == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
+    ca.blendingEnabled = enable;
+    if (enable) {
+        if (blend == GFX_BLEND_MODULATE) {
+            ca.sourceRGBBlendFactor = MTLBlendFactorDestinationColor;
+            ca.destinationRGBBlendFactor = MTLBlendFactorZero;
+            ca.sourceAlphaBlendFactor = MTLBlendFactorDestinationAlpha;
+            ca.destinationAlphaBlendFactor = MTLBlendFactorZero;
+        } else {
+            ca.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+            ca.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            ca.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+            ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+        }
+        ca.rgbBlendOperation = MTLBlendOperationAdd;
+        ca.alphaBlendOperation = MTLBlendOperationAdd;
+    }
+
+    NSError *err = nil;
+    pso = [s_device newRenderPipelineStateWithDescriptor:d error:&err];
+    if (pso == nil) {
+        fprintf(stderr, "[metal] FATAL: PSO build failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        abort();
+    }
+    ms->psoCache[k] = pso;
+    return pso;
+}
+
+static id<MTLDepthStencilState> mtl_depth_state_for(bool test, bool update, bool compare, uint16_t zmode) {
+    uint64_t key = (test ? 1 : 0) | (update ? 2 : 0) | (compare ? 4 : 0) | ((uint64_t)zmode << 3);
+    NSNumber *k = @(key);
+    id<MTLDepthStencilState> ds = s_depth_cache[k];
+    if (ds != nil) return ds;
+    MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+    /* GL: test+compare -> LEQUAL (all live zmodes); test+!compare -> ALWAYS
+     * (write-only); !test -> disabled (ALWAYS, no write). */
+    dd.depthCompareFunction = (test && compare) ? MTLCompareFunctionLessEqual
+                                                : MTLCompareFunctionAlways;
+    dd.depthWriteEnabled = (test && update);
+    ds = [s_device newDepthStencilStateWithDescriptor:dd];
+    s_depth_cache[k] = ds;
+    return ds;
+}
+
+static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t cmt) {
+    uint64_t key = (linear ? 1 : 0) | ((uint64_t)(cms & 0xFFFF) << 1) | ((uint64_t)(cmt & 0xFFFF) << 17);
+    NSNumber *k = @(key);
+    id<MTLSamplerState> s = s_sampler_cache[k];
+    if (s != nil) return s;
+    MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
+    MTLSamplerMinMagFilter f = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+    sd.minFilter = f;
+    sd.magFilter = f;
+    sd.mipFilter = MTLSamplerMipFilterNotMipmapped;
+    sd.sAddressMode = mtl_wrap(cms);
+    sd.tAddressMode = mtl_wrap(cmt);
+    sd.maxAnisotropy = linear ? 16 : 1;
+    s = [s_device newSamplerStateWithDescriptor:sd];
+    s_sampler_cache[k] = s;
+    return s;
+}
+
+/* ---- init / frame lifecycle ---------------------------------------------- */
 
 static void mtl_init(void) {
     s_device = MTLCreateSystemDefaultDevice();
@@ -674,10 +892,15 @@ static void mtl_init(void) {
     if (s_layer != nil) {
         s_layer.device = s_device;
         s_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        s_layer.framebufferOnly = YES;  /* present-only for now; readback lands in Phase 3/4 */
+        /* NO: the scene is composited offscreen and blitted into the drawable at
+         * end_frame; a framebufferOnly drawable can't be a blit destination. */
+        s_layer.framebufferOnly = NO;
     } else {
         fprintf(stderr, "[metal] WARNING: no CAMetalLayer from platform — present will be skipped\n");
     }
+    s_textures = [NSMutableDictionary dictionary];
+    s_depth_cache = [NSMutableDictionary dictionary];
+    s_sampler_cache = [NSMutableDictionary dictionary];
     /* Invariance-critical (parent plan §2.1): the CPU clipper reads
      * g_depth_clamp_enabled; Metal uses native depth-clamp, so force it true. */
     g_depth_clamp_enabled = true;
@@ -687,47 +910,70 @@ static void mtl_init(void) {
 
 static void mtl_start_frame(void) {
     if (s_layer == nil || s_queue == nil) return;
-    @autoreleasepool {
-        s_drawable = [s_layer nextDrawable];
-        if (s_drawable == nil) return;
-        MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-        rpd.colorAttachments[0].texture = s_drawable.texture;
-        rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
-        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-        rpd.colorAttachments[0].clearColor = MTLClearColorMake(s_clear_r, s_clear_g, s_clear_b, 1.0);
-        s_cmdbuf = [s_queue commandBuffer];
-        /* Phase 1/2: open+close the encoder so loadAction=Clear runs. Geometry
-         * (draw_triangles) will record into this encoder in Phase 3. */
-        id<MTLRenderCommandEncoder> enc = [s_cmdbuf renderCommandEncoderWithDescriptor:rpd];
-        [enc endEncoding];
-        if (!s_logged_first_frame) {
-            fprintf(stderr, "[metal] first frame: drawable %.0fx%.0f, clear pass encoded\n",
-                    (double)s_drawable.texture.width, (double)s_drawable.texture.height);
-            s_logged_first_frame = true;
-        }
+    s_frame_count_metal++;
+    /* Render at the frontend's resolution (gfx_current_dimensions), which the
+     * viewports/T&L are computed against — NOT the raw layer size, which can be
+     * a 2x render-scale/SSAA smaller. */
+    int rw = (int)gfx_current_dimensions.width;
+    int rh = (int)gfx_current_dimensions.height;
+    if (rw <= 0 || rh <= 0) {
+        CGSize ds = s_layer.drawableSize;
+        rw = (int)ds.width;
+        rh = (int)ds.height;
+    }
+    mtl_ensure_targets(rw, rh);
+    mtl_ensure_white();
+    if (s_scene_color == nil) return;
+
+    s_cmdbuf = [s_queue commandBuffer];
+    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+    rpd.colorAttachments[0].texture = s_scene_color;
+    rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
+    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+    rpd.colorAttachments[0].clearColor = MTLClearColorMake(s_clear_r, s_clear_g, s_clear_b, 1.0);
+    rpd.depthAttachment.texture = s_scene_depth;
+    rpd.depthAttachment.loadAction = MTLLoadActionClear;
+    rpd.depthAttachment.storeAction = MTLStoreActionStore;
+    rpd.depthAttachment.clearDepth = 1.0;
+    s_enc = [s_cmdbuf renderCommandEncoderWithDescriptor:rpd];
+    /* Native depth-clamp (equivalent to GL_DEPTH_CLAMP; matches g_depth_clamp). */
+    [s_enc setDepthClipMode:MTLDepthClipModeClamp];
+
+    if (!s_logged_first_frame) {
+        fprintf(stderr, "[metal] first frame: scene %dx%d, geometry encoder open\n", s_fb_w, s_fb_h);
+        s_logged_first_frame = true;
     }
 }
 
 static void mtl_end_frame(void) {
-    @autoreleasepool {
-        if (s_cmdbuf != nil && s_drawable != nil) {
-            [s_cmdbuf presentDrawable:s_drawable];
-            [s_cmdbuf commit];
-        }
-        s_drawable = nil;
-        s_cmdbuf = nil;
+    if (s_enc != nil) {
+        [s_enc endEncoding];
+        s_enc = nil;
     }
+    if (s_cmdbuf == nil) return;
+    s_drawable = [s_layer nextDrawable];
+    if (s_drawable != nil && s_scene_color != nil &&
+        (int)s_drawable.texture.width == s_fb_w && (int)s_drawable.texture.height == s_fb_h) {
+        id<MTLBlitCommandEncoder> b = [s_cmdbuf blitCommandEncoder];
+        [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+              sourceOrigin:MTLOriginMake(0, 0, 0)
+                sourceSize:MTLSizeMake(s_fb_w, s_fb_h, 1)
+                 toTexture:s_drawable.texture destinationSlice:0 destinationLevel:0
+         destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [b endEncoding];
+        [s_cmdbuf presentDrawable:s_drawable];
+    }
+    [s_cmdbuf commit];
+    s_drawable = nil;
+    s_cmdbuf = nil;
 }
 
 static void mtl_finish_render(void) {
-    /* Phase 1/2: nothing to flush beyond the committed present. A blocking
-     * waitUntilCompleted lands with the readback path (Phase 3). */
+    /* Present is committed in end_frame; readback issues its own waited cmdbuf. */
 }
 
 static void mtl_on_resize(void) {
-    /* SDL's Metal view resizes the CAMetalLayer with the window; nextDrawable
-     * tracks it. Explicit drawableSize management lands with the offscreen
-     * targets (Phase 3/4). */
+    /* Targets are re-created lazily in start_frame when drawableSize changes. */
 }
 
 /* ---- Non-vtable couplings (called directly from gfx_pc.c, backend-aware) --- */
@@ -742,39 +988,202 @@ extern "C" int gfx_metal_max_offscreen_dim(void) {
     return 16384;  /* Apple GPU max 2D texture dimension; matches Apple GL's GL_MAX_TEXTURE_SIZE */
 }
 
-/* ---- Phase 3 stubs (geometry/textures/readback) ---------------------------
- * draw_triangles is still a no-op, so create_and_load's real programs compile
- * and bind bookkeeping runs, but nothing is rasterized yet — each frame is the
- * clear. Real geometry lands in Phase 3.1. */
+/* ---- Vtable: state setters (record only) + textures + draw ---------------- */
+
 static bool mtl_z_is_from_0_to_1(void) { return true; }
+
 static uint32_t mtl_new_texture(void) {
-    static uint32_t next_id = 1;
+    static uint32_t next_id = 1;  /* nonzero, monotonic — 0 reads as "unset" */
     return next_id++;
 }
-static void mtl_delete_texture(uint32_t texture_id) { (void)texture_id; }
-static void mtl_select_texture(int tile, uint32_t texture_id) { (void)tile; (void)texture_id; }
+
+static void mtl_delete_texture(uint32_t texture_id) {
+    if (texture_id != 0 && s_textures != nil) {
+        [s_textures removeObjectForKey:@(texture_id)];
+    }
+}
+
+static void mtl_select_texture(int tile, uint32_t texture_id) {
+    if (tile >= 0 && tile < 2) s_tile_tex[tile] = texture_id;
+    s_last_selected_id = texture_id;  /* upload target = most-recently selected id */
+}
+
 static bool mtl_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
-    (void)rgba32_buf; (void)width; (void)height; return true;
+    if (rgba32_buf == NULL || width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+        return false;
+    }
+    MTLTextureDescriptor *d =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                           width:width height:height mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead;
+    d.storageMode = MTLStorageModeShared;
+    id<MTLTexture> tex = [s_device newTextureWithDescriptor:d];
+    if (tex == nil) return false;
+    [tex replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
+             withBytes:rgba32_buf bytesPerRow:(NSUInteger)width * 4];
+    if (s_last_selected_id != 0 && s_textures != nil) {
+        s_textures[@(s_last_selected_id)] = tex;
+    }
+    return true;
 }
-static void mtl_set_sampler_parameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) {
-    (void)sampler; (void)linear_filter; (void)cms; (void)cmt;
+
+static void mtl_set_sampler_parameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+    if (tile < 0 || tile >= 2) return;
+    s_tile_linear[tile] = linear_filter;
+    s_tile_cms[tile] = cms;
+    s_tile_cmt[tile] = cmt;
 }
+
 static void mtl_set_depth_mode(bool depth_test, bool depth_update, bool depth_compare,
                                bool depth_source_prim, uint16_t zmode) {
-    (void)depth_test; (void)depth_update; (void)depth_compare; (void)depth_source_prim; (void)zmode;
+    (void)depth_source_prim;
+    s_depth_test = depth_test;
+    s_depth_update = depth_update;
+    s_depth_compare = depth_compare;
+    s_zmode = zmode;
 }
+
 static void mtl_set_viewport(int x, int y, int width, int height) {
-    (void)x; (void)y; (void)width; (void)height;
+    s_vp_x = x;
+    s_vp_y = y;
+    s_vp_w = width;
+    s_vp_h = height;
+    if (getenv("GE007_METAL_DEBUG_VP")) {
+        static int n = 0;
+        if (n++ < 16)
+            fprintf(stderr, "[metal-vp] set_viewport(%d,%d,%d,%d) fb=%dx%d flipY=%d\n",
+                    x, y, width, height, s_fb_w, s_fb_h, s_fb_h - (y + height));
+    }
 }
+
 static void mtl_set_scissor(int x, int y, int width, int height) {
-    (void)x; (void)y; (void)width; (void)height;
+    s_sc_x = x;
+    s_sc_y = y;
+    s_sc_w = width;
+    s_sc_h = height;
+    s_sc_set = true;
 }
-static void mtl_set_blend_mode(enum GfxBlendMode mode) { (void)mode; }
+
+static void mtl_set_blend_mode(enum GfxBlendMode mode) {
+    s_blend = mode;
+    /* Coverage-alpha preservation (gfx_opengl.c:1692-1703) is gated on the
+     * default-off room/diag coverage-memory features, so alpha stays writable
+     * on the faithful base path. Wired fully with the RDP path (3.3). */
+    s_preserve_cov_alpha = false;
+}
+
 static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    (void)buf_vbo; (void)buf_vbo_len; (void)buf_vbo_num_tris;
+    if (s_enc == nil || s_cur_shader == nil || buf_vbo_num_tris == 0 || buf_vbo == NULL) return;
+    MetalShader *ms = s_cur_shader;
+    mtl_build_vertex_descriptor(ms);
+
+    id<MTLRenderPipelineState> pso = mtl_pso_for(ms, s_blend, 1, !s_preserve_cov_alpha);
+    [s_enc setRenderPipelineState:pso];
+    [s_enc setDepthStencilState:mtl_depth_state_for(s_depth_test, s_depth_update, s_depth_compare, s_zmode)];
+    /* ZMODE_DEC decal polygon offset (gfx_opengl.c:1582-1595, factor/units -2). */
+    if (s_zmode == 0xc00 && s_depth_test && s_depth_compare) {
+        [s_enc setDepthBias:-7.5e-6f slopeScale:-2.0f clamp:0.0f];
+    } else {
+        [s_enc setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    }
+
+    /* Viewport / scissor with GL(bottom-left) -> Metal(top-left) Y-flip. */
+    MTLViewport vp;
+    vp.originX = s_vp_x;
+    vp.originY = s_fb_h - (s_vp_y + s_vp_h);
+    vp.width = s_vp_w;
+    vp.height = s_vp_h;
+    vp.znear = 0.0;
+    vp.zfar = 1.0;
+    if (vp.width > 0 && vp.height > 0) [s_enc setViewport:vp];
+
+    int sx = s_sc_set ? s_sc_x : 0;
+    int sy = s_sc_set ? s_sc_y : 0;
+    int sw = s_sc_set ? s_sc_w : s_fb_w;
+    int sh = s_sc_set ? s_sc_h : s_fb_h;
+    int myTop = s_fb_h - (sy + sh);         /* flip */
+    if (myTop < 0) { sh += myTop; myTop = 0; }
+    if (sx < 0) { sw += sx; sx = 0; }
+    if (sx + sw > s_fb_w) sw = s_fb_w - sx;
+    if (myTop + sh > s_fb_h) sh = s_fb_h - myTop;
+    if (sw > 0 && sh > 0) {
+        MTLScissorRect sc = {(NSUInteger)sx, (NSUInteger)myTop, (NSUInteger)sw, (NSUInteger)sh};
+        [s_enc setScissorRect:sc];
+    }
+
+    /* Per-draw vertex buffer (correctness-first; a ring pool is a later perf
+     * pass — parity, not fps, is the Phase-3 goal). */
+    id<MTLBuffer> vb = [s_device newBufferWithBytes:buf_vbo
+                                             length:buf_vbo_len * sizeof(float)
+                                            options:MTLResourceStorageModeShared];
+    [s_enc setVertexBuffer:vb offset:0 atIndex:0];
+
+    MtlUniforms u;
+    memset(&u, 0, sizeof u);
+    u.n64FilterScale[0] = mtl_axis_filter_scale(gfx_current_dimensions.width, viGetX(), DESIRED_SCREEN_WIDTH);
+    u.n64FilterScale[1] = mtl_axis_filter_scale(gfx_current_dimensions.height, viGetY(), DESIRED_SCREEN_HEIGHT);
+    u.frameCount = (int)s_frame_count_metal;
+    u.winH = s_vp_h > 0 ? s_vp_h : s_fb_h;   /* GL current_height = viewport height (noise scale) */
+    u.fbH = s_fb_h;                          /* attachment height (fragcoord flip) */
+    [s_enc setFragmentBytes:&u length:sizeof u atIndex:1];
+
+    for (int t = 0; t < 2; t++) {
+        if (!ms->usedTextures[t]) continue;
+        id<MTLTexture> tex = mtl_lookup_tex(s_tile_tex[t]);
+        if (tex == nil) tex = s_white_tex;
+        [s_enc setFragmentTexture:tex atIndex:t];
+        [s_enc setFragmentSamplerState:mtl_sampler_for(s_tile_linear[t], s_tile_cms[t], s_tile_cmt[t]) atIndex:t];
+    }
+
+    [s_enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 * buf_vbo_num_tris];
 }
+
+/* ---- readback (3.4): blit offscreen -> shared buffer, wait, RGB out -------
+ * Returns bytes in GL's convention (bottom-left origin, row 0 = bottom) so the
+ * existing screenshot/probe consumers (calibrated to glReadPixels) are
+ * unchanged. Source region is Y-flipped into the top-left scene texture. */
 static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
-    (void)x; (void)y; (void)width; (void)height; (void)rgb_out; return false;
+    if (rgb_out == NULL || width <= 0 || height <= 0 || s_scene_color == nil || s_device == nil) {
+        return false;
+    }
+    /* Clamp the requested rect to the attachment. */
+    if (x < 0) { width += x; x = 0; }
+    if (y < 0) { height += y; y = 0; }
+    if (x + width > s_fb_w) width = s_fb_w - x;
+    if (y + height > s_fb_h) height = s_fb_h - y;
+    if (width <= 0 || height <= 0) return false;
+
+    int src_top = s_fb_h - (y + height);   /* GL bottom-left y -> Metal top-left origin */
+    if (src_top < 0) src_top = 0;
+
+    NSUInteger bpr = (NSUInteger)width * 4;
+    id<MTLBuffer> buf = [s_device newBufferWithLength:bpr * (NSUInteger)height
+                                             options:MTLResourceStorageModeShared];
+    if (buf == nil) return false;
+
+    id<MTLCommandBuffer> cb = [s_queue commandBuffer];
+    id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+    [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+          sourceOrigin:MTLOriginMake(x, src_top, 0)
+            sourceSize:MTLSizeMake(width, height, 1)
+              toBuffer:buf destinationOffset:0
+     destinationBytesPerRow:bpr destinationBytesPerImage:bpr * (NSUInteger)height];
+    [b endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    const uint8_t *src = (const uint8_t *)buf.contents;  /* BGRA, top-to-bottom */
+    for (int row = 0; row < height; row++) {
+        /* rgb_out row r is GL bottom-up; Metal buffer row 0 = top of region. */
+        const uint8_t *srow = src + (size_t)(height - 1 - row) * bpr;
+        uint8_t *drow = rgb_out + (size_t)row * (size_t)width * 3;
+        for (int col = 0; col < width; col++) {
+            drow[col * 3 + 0] = srow[col * 4 + 2];  /* R (BGRA -> RGB) */
+            drow[col * 3 + 1] = srow[col * 4 + 1];  /* G */
+            drow[col * 3 + 2] = srow[col * 4 + 0];  /* B */
+        }
+    }
+    return true;
 }
 
 /* Positional init MUST match the field order in gfx_rendering_api.h. C linkage
