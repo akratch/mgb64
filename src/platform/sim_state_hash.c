@@ -71,3 +71,6 @@ int sim_state_hash_emit_json(const char *path, uint64_t hash,
     fclose(f);
     return 0;
 }
+
+/* simHashRegistryBuild() lives in sim_state_hash_registry.c (game-coupled, so it
+ * is kept out of this file to keep the ROM-free unit test dependency-free). */
