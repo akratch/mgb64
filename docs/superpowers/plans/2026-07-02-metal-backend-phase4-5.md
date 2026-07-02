@@ -22,6 +22,8 @@
 
 ---
 
+> **PHASE 4 — ✅ COMPLETE (commits 2642bba + 982fa96).** T1–T7 done. The output-VI-filter runs as a fullscreen chain in `mtl_end_frame` (FXAA/CAS/bloom/grade/tonemap/gamma/vignette/dither/rgb555); scene→`s_final_color`→drawable, `s_final_color` also the readback source (screenshots match display); mid-frame readback reads the pre-filter scene. **Correction to this plan:** GL's filter is a **2-pass** pipeline (resolve pre-pass + final) and applies colorScale/bias/gamma OUTSIDE the apply_post guard → TWICE; a review caught the single-pass diverging at non-default gamma, so Metal now runs the faithful **2-pass** (pass1 apply_post=0→`s_filter_low` 8-bit intermediate, pass2 apply_post=1→`s_final_color`), matching GL. Validated: gamma=1 byte-exact (facility 2.8%, most levels 2.6–3.0%); gamma≠1 ~9% (intermediate-rounding tolerance, was ~60%); gate-off byte-identical (dam 4.0%); compare_state MATCH; ASan clean; RSS flat 60→600; strict-clean; GL byte-identical. Deferred (diag-only): the `GE007_DIAG_OUTPUT_VI_FILTER` downscale (filterMode 1/2/3 need a bottom-left remap — documented in code). **Next: Phase 5 (SSAO).**
+
 ## PHASE 4 — base output filter (no SSAO)
 
 ### T1. Scene-color ShaderRead
