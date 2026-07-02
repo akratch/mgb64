@@ -47,6 +47,21 @@ extern float g_pcVignette;
 extern int g_pcBloom;
 extern float g_pcBloomThreshold;
 extern float g_pcBloomIntensity;
+extern int g_pcSsao;
+extern float g_pcSsaoRadius;
+extern float g_pcSsaoIntensity;
+extern float g_pcSsaoBias;          /* horizon elevation bias (self-occlusion reject) */
+extern float g_pcSsaoPower;         /* AO contrast exponent */
+extern float g_pcSsaoFarCutoff;     /* world-Z beyond which AO fades to 0 */
+extern float g_pcSsaoNearCut;       /* depth <= this = viewmodel/near, no AO */
+extern float g_pcSsaoSkyCut;        /* depth >= this = sky, no AO */
+extern int   g_pcSsaoHalfRes;       /* render AO at half scene res (P1a-perf) */
+extern int   g_pcSsaoBlur;          /* separable bilateral blur pass (P1a-perf) */
+extern float g_pcSsaoBlurDepthSharp;/* bilateral depth-weight sharpness */
+extern float g_pc_ssao_proj_a;   /* scene projection A=P[2][2] (depth linearization) */
+extern float g_pc_ssao_proj_b;   /* scene projection B=P[3][2] */
+extern float g_pc_ssao_proj_x;   /* scene projection P[0][0] (view-ray x) */
+extern float g_pc_ssao_proj_y;   /* scene projection P[1][1] (view-ray y) */
 extern int g_pcFxaa;
 extern float g_pcSharpen;
 extern int g_pcGradePresets;
@@ -632,7 +647,7 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
 
 static GLuint g_scene_fbo;
 static GLuint g_scene_color_tex;
-static GLuint g_scene_depth_rb;
+static GLuint g_scene_depth_tex;   /* sampleable single-sample depth (for SSAO/T1.1) */
 static GLuint g_scene_msaa_fbo;
 static GLuint g_scene_msaa_color_rb;
 static GLuint g_scene_msaa_depth_rb;
@@ -644,6 +659,9 @@ static int g_scene_msaa_h;
 static int g_scene_msaa_samples;
 static bool g_scene_msaa_has_stencil;
 static bool g_scene_target_bound;
+/* True after a frame rendered scene depth into the sampleable (single-sample)
+ * g_scene_depth_tex — the precondition for SSAO to read valid depth. */
+static bool g_scene_depth_valid;
 /* True only while the multisample scene FBO is bound (set in start_frame). */
 static bool g_scene_target_multisampled;
 /* Tracks the live blend-enable so default A2C only engages on blend-DISABLED cutouts. */
@@ -2224,10 +2242,35 @@ static int gfx_opengl_effective_msaa_samples(void) {
     return effective;
 }
 
+/* SSAO is a remaster screen-space effect: gated by the master RemasterFX switch
+ * plus its own Video.Ssao key. When active it needs the sampleable scene depth
+ * texture, which only exists when the scene renders to the FBO (below). */
+static bool gfx_opengl_output_ssao_active(void) {
+    if (!(g_pcRemasterFX && g_pcSsao != 0)) {
+        return false;
+    }
+    /* Depth is only resolved to the sampleable single-sample texture on the
+     * non-MSAA path (g_scene_depth_valid = !multisampled). Under MSAA, SSAO
+     * silently no-ops — warn once so it is not a mystery, and keep it off. */
+    if (gfx_opengl_effective_msaa_samples() > 0) {
+        static int warned_ssao_msaa;
+        if (!warned_ssao_msaa) {
+            fprintf(stderr, "[fast3d] SSAO disabled while Video.MSAA>0 (scene depth is "
+                            "not resolved from the multisample buffer); use RenderScale "
+                            "for anti-aliasing, or set Video.MSAA=0.\n");
+            fflush(stderr);
+            warned_ssao_msaa = 1;
+        }
+        return false;
+    }
+    return true;
+}
+
 static bool gfx_opengl_scene_target_enabled(void) {
     float render_scale = gfx_opengl_effective_render_scale();
     return render_scale > 1.001f ||
            gfx_opengl_effective_msaa_samples() > 0 ||
+           gfx_opengl_output_ssao_active() ||   /* force scene FBO so depth is sampleable */
            gfx_diag_xlu_coverage_stencil_enabled() ||
            gfx_diag_xlu_rdp_memory_blend_enabled() ||
            gfx_diag_xlu_rdp_cvg_memory_blend_enabled() ||
@@ -2263,8 +2306,8 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
     if (g_scene_color_tex == 0) {
         glGenTextures(1, &g_scene_color_tex);
     }
-    if (g_scene_depth_rb == 0) {
-        glGenRenderbuffers(1, &g_scene_depth_rb);
+    if (g_scene_depth_tex == 0) {
+        glGenTextures(1, &g_scene_depth_tex);
     }
 
     glBindTexture(GL_TEXTURE_2D, g_scene_color_tex);
@@ -2279,10 +2322,22 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
         g_scene_has_stencil != need_stencil) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth_rb);
-        glRenderbufferStorage(GL_RENDERBUFFER,
-                              need_stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24,
-                              width, height);
+        /* Depth as a sampleable texture (single-sample) so the output pass can
+         * read it for SSAO (§4 T1.1). NEAREST + clamp: depth must not filter. */
+        glBindTexture(GL_TEXTURE_2D, g_scene_depth_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        if (need_stencil) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, width, height, 0,
+                         GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+        } else {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
+                         GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+        }
         g_scene_w = width;
         g_scene_h = height;
         g_scene_has_stencil = need_stencil;
@@ -2292,17 +2347,15 @@ static bool gfx_opengl_ensure_scene_target(int width, int height) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            g_scene_color_tex, 0);
     if (need_stencil) {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, g_scene_depth_rb);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                               GL_TEXTURE_2D, g_scene_depth_tex, 0);
     } else {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, g_scene_depth_rb);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                               GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, g_scene_depth_tex, 0);
     }
     status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -2806,6 +2859,13 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "uniform int uBloom;\n"
         "uniform float uBloomThreshold;\n"
         "uniform float uBloomIntensity;\n"
+        "uniform sampler2D uDepthTex;\n"
+        "uniform int uSsao;\n"
+        "uniform float uSsaoRadius;\n"
+        "uniform float uSsaoIntensity;\n"
+        "uniform float uSsaoAspect;\n"
+        "uniform float uSsaoProjA;\n"
+        "uniform float uSsaoProjB;\n"
         "uniform int uFilterMode;\n"
         "uniform int uFxaa;\n"
         "uniform float uSharpen;\n"
@@ -2921,8 +2981,47 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    vec3 outc = clamp(sum * rcpW, mn, mx);\n"
         "    return mix(rgbC, outc, clamp(uSharpen, 0.0, 1.0));\n"
         "}\n"
+        /* Screen-space ambient occlusion from the scene depth texture. Works on
+         * raw (non-linear) window depth: a neighbour that is nearer than the
+         * centre by more than a small, depth-adaptive margin is a contact
+         * occluder. The margin scales with (1-depth) so it tracks the depth
+         * buffer's non-linear precision (tight far, loose near). Sky/far
+         * (depth ~= 1) gets no AO. */
+        "const vec2 kSsaoDir[8] = vec2[8](\n"
+        "    vec2( 1.0, 0.0), vec2( 0.7071, 0.7071), vec2(0.0, 1.0), vec2(-0.7071, 0.7071),\n"
+        "    vec2(-1.0, 0.0), vec2(-0.7071,-0.7071), vec2(0.0,-1.0), vec2( 0.7071,-0.7071));\n"
+        /* view-space distance (positive) from window depth d */
+        "float ssaoLinZ(float d) {\n"
+        "    return uSsaoProjB / (uSsaoProjA + 2.0 * d - 1.0);\n"
+        "}\n"
+        "float ssaoAO(vec2 uv) {\n"
+        "    float cd = texture(uDepthTex, uv).r;\n"
+        "    if (cd >= 0.99999) return 0.0;\n"
+        "    float cz = ssaoLinZ(cd);\n"                       /* centre distance */
+        "    float occ = 0.0;\n"
+        "    for (int i = 0; i < 8; ++i) {\n"
+        "        vec2 dir = kSsaoDir[i];\n"
+        "        dir.x /= max(uSsaoAspect, 0.001);\n"
+        "        for (int s = 1; s <= 2; ++s) {\n"
+        "            vec2 o = dir * uSsaoRadius * float(s);\n"
+        "            float nz = ssaoLinZ(texture(uDepthTex, uv + o).r);\n"
+        "            float diff = cz - nz;\n"                   /* >0: neighbour nearer */
+        /* thresholds are fractions of the centre distance -> scale-invariant across
+         * the scene. The higher floor (1.5%) skips gentle receding slopes (no
+         * normals to reject self-occlusion), so the effect reads as contact
+         * darkening in creases/corners rather than a flat wash; the ceiling (12%)
+         * ignores silhouette gaps that would halo. */
+        "            if (diff > cz * 0.015 && diff < cz * 0.12) occ += 1.0 / float(s);\n"
+        "        }\n"
+        "    }\n"
+        "    return occ / 12.0;\n"
+        "}\n"
         "void main() {\n"
         "    vec4 color = sampleDst(gl_FragCoord.xy);\n"
+        "    if (uSsao == 1) {\n"
+        "        float ao = 1.0 - uSsaoIntensity * ssaoAO(vTexCoord);\n"
+        "        color.rgb *= clamp(ao, 0.0, 1.0);\n"
+        "    }\n"
         "    if (uApplyPost == 1 && uFxaa == 1) {\n"
         "        color.rgb = fxaa(gl_FragCoord.xy, color.rgb);\n"
         "    }\n"
@@ -3098,6 +3197,27 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
                 g_pcBloomThreshold);
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uBloomIntensity"),
                 g_pcBloomIntensity);
+    {
+        int ssao_on = (apply_post && g_pcSsao != 0 && g_scene_depth_valid &&
+                       g_pc_ssao_proj_b != 0.0f) ? 1 : 0;
+        if (ssao_on) {
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, g_scene_depth_tex);
+            glActiveTexture(GL_TEXTURE0);
+        }
+        glUniform1i(glGetUniformLocation(g_output_filter_program, "uDepthTex"), 1);
+        glUniform1i(glGetUniformLocation(g_output_filter_program, "uSsao"), ssao_on);
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uSsaoRadius"),
+                    g_pcSsaoRadius * 0.02f);   /* radius key -> UV offset scale */
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uSsaoIntensity"),
+                    g_pcSsaoIntensity);
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uSsaoAspect"),
+                    src_h > 0 ? (float)src_w / (float)src_h : 1.0f);
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uSsaoProjA"),
+                    g_pc_ssao_proj_a);
+        glUniform1f(glGetUniformLocation(g_output_filter_program, "uSsaoProjB"),
+                    g_pc_ssao_proj_b);
+    }
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFilterMode"),
                 filter_mode);
     glUniform1i(glGetUniformLocation(g_output_filter_program, "uFxaa"),
@@ -3169,8 +3289,10 @@ static void gfx_opengl_apply_output_vi_filter(void) {
     use_bloom = (g_pcBloom != 0) && g_pcRemasterFX;
     use_fxaa = (g_pcFxaa != 0) && g_pcRemasterFX;
     bool use_tonemap = (g_pcTonemap != 0) && g_pcRemasterFX;
+    bool use_ssao = gfx_opengl_output_ssao_active() && g_scene_depth_valid;
     use_sharpen = (gfx_opengl_output_sharpen() > 0.0f);
-    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen && !use_tonemap) {
+    if (!use_vi_filter && !use_color_adjust && !use_bloom && !use_fxaa && !use_sharpen &&
+        !use_tonemap && !use_ssao) {
         return;
     }
     if (!use_vi_filter) {
@@ -3422,6 +3544,10 @@ static void gfx_opengl_start_frame(void) {
     frame_count++;
     g_scene_target_bound = false;
     g_scene_target_multisampled = false;
+    g_scene_depth_valid = false;
+    g_pc_ssao_proj_b = 0.0f;   /* reset per frame; the largest-far scene proj wins */
+    g_pc_ssao_proj_x = 0.0f;
+    g_pc_ssao_proj_y = 0.0f;
 
     if (gfx_opengl_scene_target_enabled() &&
         gfx_opengl_ensure_scene_target((int)gfx_current_dimensions.width,
@@ -3485,6 +3611,10 @@ static void gfx_opengl_resolve_scene_target(void) {
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, drawable_w, drawable_h);
+    /* The single-sample scene depth texture now holds this frame's depth (the
+     * MSAA path leaves depth only in the multisample renderbuffer, which SSAO
+     * cannot sample — so it is only valid when not multisampled). */
+    g_scene_depth_valid = !g_scene_target_multisampled;
     g_scene_target_bound = false;
 }
 

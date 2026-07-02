@@ -141,7 +141,8 @@ and the full flag table are in [VISUAL_MODES.md](VISUAL_MODES.md).
 | **Shipped tool, prototype content** | `synth_texture.py` gravel + rock generators | The script and two presets exist; the tone‑match/look validation is **Dam‑only** so far (`tok0022` ground win, `tok0949` rock rejected as a geometry/UV seam problem). |
 | **Not built** | `texmanifest` C emit | `build_pack.py` can read `*.texmanifest.csv`, but no C dump path emits it yet. |
 | **Not built** | Router / `--cc0-library` / broader synth library | The per‑surface Router, manifest‑driven open‑licensed substitution, and synth presets beyond gravel/rock are target architecture, not current tooling. |
-| **Not built** | CI sim invariance + static sim/render separation | No `scripts/ci/check_sim_render_separation.sh` exists, and `.github/workflows/ci.yml` has no invariance job yet. This is §6 P0. |
+| **Shipped** | P0 rails (invariance enforcement) | `scripts/ci/check_sim_render_separation.sh` (R1, nm denylist) + `scripts/ci/check_timing_lock.sh` (R2) run in CI; `--sim-state-hash-out` + `tools/sim_invariance_gate.sh` (R3) are the local RAMROM gate (ROM-free `ctest -R sim_state_hash` in CI). See §6 P0 and `docs/REMASTER_PHASE0_PLAN.md`. |
+| **Shipped** | Sampleable depth texture + SSAO (first lighting artifact) | `Video.Ssao`/`GE007_SSAO` (default off): scene depth is now a texture (A1); the output pass computes depth-linearized contact AO (A2). Identity-off byte-identical; invariance gate green. |
 
 **Honest ceiling (established):** this is a beautiful **remaster**, not native PBR.
 Env geometry clears `G_LIGHTING` (`bg.c:5440`) → **no normals reach the shader** →
@@ -291,19 +292,21 @@ The order I'd actually build. Each step is independently landable, flagged, and
 A/B‑testable. **Stop‑and‑evaluate** checkpoints are marked ◆. Through P4 *nothing
 touches the simulation.*
 
-**P0 — Rails (days, do first).** Build the enforcement that §1a describes.
+**P0 — Rails (days, do first). ✅ SHIPPED** — built and CI‑wired; see
+`docs/REMASTER_PHASE0_PLAN.md`. The three rows below are annotated with what the
+implementation corrected against this doc's original sketch.
 
-| Item | First steps | Acceptance |
+| Item | First steps (as built) | Acceptance |
 |---|---|---|
-| **P0.1 Static sim/render separation** | Add `scripts/ci/check_sim_render_separation.sh`; build native objects; use `nm -u` (`otool -Iv` fallback on macOS only if needed) to reject OpenGL `gl[A-Z]*`/`GL_*`, `gfx_*`, `gfx_opengl_*`, `texture_pack_*`, `g_pcTexturePack`, material/FBO symbols from simulation owners. Allowlist renderer/platform TUs, diagnostics, and explicit one‑way bridge declarations. Wire it into `.github/workflows/ci.yml`, which currently has no such step. | A seeded violation in a throwaway local branch fails the script; the real tree passes; CI runs the script before native build. |
-| **P0.2 RAMROM sim hash gate** | Add a native `--sim-state-hash-out <json>` or equivalent script. Hash the native logical equivalent of N64 mutable game RAM: `.data`/`.bss` game symbols corresponding to `__dataSegmentVaddrStart.._dataSegmentVaddrEnd` and `_bssSegmentStart.._bssSegmentEnd` (`ge007.ld:196-223`), excluding platform/render caches, framebuffers/stacks, allocator bookkeeping, trace counters, and logs. Use the symbol map on native because those regions are not one contiguous host address range. | `ramrom_Dam_1` (or alias `dam1`) run to deterministic frame **3600** hashes identical with all remaster flags at identity vs stress‑ON (`Video.RemasterFX=1`, `Video.RenderScale=4`, max post‑FX, local texture pack if present). The JSON records the include/exclude symbol sets, frame, ROM region, replay name, and hash. `tools/compare_state.py`/render‑health stays green as a bootstrap, but the P0 gate is not accepted until the hash exists. |
-| **P0.3 Timing lock** | Keep the PC clamp and RAMROM bypass in `lvl.c` (`g_ClockTimer` assignment and replay bypass at `lvl.c:2042-2056`). Add a small source check or unit assertion so future remaster code cannot write `g_ClockTimer`. | RAMROM trace reports replay block `speedframes` unchanged through `pc_ramrom_trace_state` (`ramromreplay.h:42-80`, `port_trace.c:5169-5182`); no remaster TU defines or writes `g_ClockTimer`; P0.2 hash is unchanged by render load. |
+| **P0.1 Static sim/render separation ✅** | `scripts/ci/check_sim_render_separation.sh`: `nm -u` the built `src/game/*.c.o` and reject a **denylist of renderer‑*backend* reads** — `_gfx_opengl_`, `_texture_pack_`, `_g_pcTexturePack`, `_gl[A-Z]`, `_glad_gl`. **Correction:** a blanket `gfx_*` ban is wrong — 10 sim TUs legitimately call the fast3d *submission* API (`gfx_run_dl`, `gfx_register_*`, `gfx_set_*`, `gfx_ptr_*`), which is **allowed**. `src/game` is already clean of `GL_*`. In CI `linux-build`. | Seeded violation fails; real tree passes; CI runs it after the native build. ✅ |
+| **P0.2 RAMROM sim hash gate ✅** | Native `--sim-state-hash-out <json>` (emitted at deterministic screenshot‑exit) hashes the **8 MB `s_pcPool` arena (`boss.c`) + curated `.bss`/`.data` game globals** — the native model is host globals/heap, NOT a contiguous guest region, so the segment‑symbol approach below does not apply. **Determinism vs ASLR:** `-no-pie`/`MAP_FIXED` is **infeasible on macOS arm64**; instead the hash **canonicalizes pointer‑valued words by VALUE** (any word in the userspace‑pointer window `[4 GB, 2^47)` → constant token; region‑internal pointers → `(region,offset)`), which is stable across ASLR'd runs (a range‑*membership* test is not). `tools/sim_invariance_gate.sh` runs `dam1` OFF vs ON at fixed RenderScale (culling changes are gameplay‑neutral render bookkeeping, covered by the gameplay‑field trace). | `dam1` OFF vs ON hashes identical; same‑flags deterministic; a seeded render→sim write diverges. CI runs the ROM‑free hash unit test (`ctest -R sim_state_hash`); the full replay gate is a local preflight (CI is ROM‑free). ✅ |
+| **P0.3 Timing lock ✅** | `scripts/ci/check_timing_lock.sh`: only `lvl.c`+`front.c` may write `g_ClockTimer` (clamp + RAMROM bypass at `lvl.c:2060‑2083`, bypass `:2076` — anchors drifted from the 2042‑2056 cited here). ROM‑free → CI hygiene job. | Only the two owners write it; a seeded third writer fails; clamp/bypass removal fails. ✅ |
 
 **P1 — Foundation (days).**
 
 | Item | First steps | Acceptance |
 |---|---|---|
-| **P1.1 Sampleable depth texture** | Replace the scene depth renderbuffer (`gfx_opengl.c:1267-1277`) with a `GL_DEPTH_COMPONENT24` texture attached to the scene FBO; preserve resize and fallback behavior. Feed `rsp.P_matrix` (`gfx_pc.c:2623-2624`) and the backend z convention into the output pass for linearization. | With the feature flag off, canonical Dam frame screenshots are byte‑identical and P0 hash matches. With it on, a debug depth capture at Dam frame **180** is nonblank/nonflat, has near/far ordering correct on foreground guardrail vs sky, and render‑health stays zero. |
+| **P1.1 Sampleable depth texture ✅** | Shipped: single‑sample scene depth is now a `GL_DEPTH_COMPONENT24` texture attached to the scene FBO (`gfx_opengl_ensure_scene_target`); the perspective near/far (`A=P[2][2]`, `B=P[3][2]`) is captured at projection load in `gfx_pc.c` and fed to the output pass. **Note:** visual/depth captures must use `--level <id>` (direct boot renders gameplay); `--ramrom` demos render black headless (use them for the deterministic *hash* gate, not screenshots). | Byte‑identical with SSAO off (faithful sha unchanged); depth non‑blank/ordered. ✅ |
 | **P1.2 `texmanifest` C emit** | Add an opt‑in dump beside `GE007_DUMP_SETTEX_TEXTURES`: one CSV row per static token, `token,w,h,fmt,siz,avgRGB,tileable,draw_class`. `DrawClass` tagging already exists (`gfx_pc.c:435-437`); `build_pack.py --route` already consumes the manifest. | On a Dam dump, row count equals the unique static settex token count observed in the trace, `tok0022` is `ROOM`, and `build_pack.py --route` chooses the manifest model class. Manifest files remain gitignored because `avgRGB` is ROM‑derived metadata. |
 
 **P2 — Texture remaster, productionized (separate deliverables).**
@@ -317,7 +320,11 @@ touches the simulation.*
 | **P2.5 First level production pass** | week+ | Dam pack uses AI only for detailed art, generic/procedural for ground where accepted, stock for rock walls until T1.3. Screenshot refs are local artifacts, never committed; only route JSON, manifests, hashes, and notices are reviewable. |
 
 **P3 — Modern lighting, no‑normals (weeks each).**
- 1. **SSAO** (§4 T1.2) — biggest modern cue per effort. ◆
+ 1. **SSAO** (§4 T1.2) — biggest modern cue per effort. ◆ **✅ SHIPPED** (v1, `Video.Ssao`
+    default off): depth‑linearized contact AO in the output pass, scale‑invariant
+    thresholds (no normals). First visible remaster‑lighting artifact; identity‑off
+    byte‑identical, invariance gate green, ASan clean. Tuning + a normal‑free
+    self‑occlusion refinement (planar prediction) remain as polish.
  2. **Smooth env normals** (§4 T1.3) — fixes ground banding + rock seams (the surfaces
     texture work *couldn't* fix). ◆
  3. **Sun shadow map** (§4 T1.4) — first real cast shadows.

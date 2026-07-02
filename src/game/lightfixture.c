@@ -108,10 +108,48 @@ s32 check_if_imageID_is_light(s32 imageID)
 
 
 #ifdef NATIVE_PORT
+/* "Shoot out the lights": darken a light fixture's surface when shot. Default
+ * OFF (opt-in) pending in-game verification of correct-surface darkening; set
+ * GE007_SHOOT_OUT_LIGHTS=1 to enable. When off, the parent effect fn and the
+ * room-load population pass both early-return, so the tables stay empty and the
+ * build is byte-identical to the previous stub. See docs/SHOOT_OUT_LIGHTS_PLAN.md. */
+static int s_ge007_shoot_lights = -1;
+int ge007_shoot_out_lights_enabled(void)
+{
+    if (s_ge007_shoot_lights < 0) {
+        const char *e = getenv("GE007_SHOOT_OUT_LIGHTS");
+        s_ge007_shoot_lights = (e != NULL && e[0] == '1') ? 1 : 0;
+    }
+    return s_ge007_shoot_lights;
+}
+
+/* Read a big-endian 32-bit word from a raw N64 display-list byte stream. The
+ * room DLs the renderer/hit-test walk are raw big-endian F3DEX bytes, so we
+ * cannot use the host-endian Gfx union to parse them. Mirrors bgReadBe32. */
+static u32 lf_read_be32(const u8 *p)
+{
+    return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | (u32)p[3];
+}
+
 Vtx * return_ptr_vertex_of_entry_room(Gfx * gfx, s32 room_index)
 {
-    /* PORT_TODO: N64 display list parsing - needs reimplementation for PC */
-    return NULL;
+    /* Walk backward (8-byte DL command stride, NOT sizeof(Gfx)==16 on native) to
+     * the governing G_VTX (0x04); its dma.addr is the vertex-pool segment addr.
+     * Rebase segment 0x0E (SPSEGMENT_BG_VTX) onto the room's vertex pool, in
+     * uintptr_t (the reference's (s32) cast truncates 64-bit pointers). */
+    const u8 *cmd = (const u8 *)gfx;
+    const u8 *dl_start = (const u8 *)g_BgRoomInfo[room_index].ptr_expanded_mapping_info;
+
+    while (cmd[0] != 0x04 /* G_VTX */) {
+        cmd -= 8;
+        if (cmd < dl_start) { return NULL; } /* guard: malformed / no leading G_VTX */
+    }
+
+    u32 addr = lf_read_be32(cmd + 4);
+    if ((addr & 0xFF000000u) == 0x0E000000u) {
+        return (Vtx *)((uintptr_t)g_BgRoomInfo[room_index].ptr_point_index + (addr & 0x00FFFFFFu));
+    }
+    return (Vtx *)(uintptr_t)addr;
 }
 #else
 Vtx * return_ptr_vertex_of_entry_room(Gfx * gfx, s32 room_index)
@@ -135,8 +173,23 @@ Vtx * return_ptr_vertex_of_entry_room(Gfx * gfx, s32 room_index)
 #ifdef NATIVE_PORT
 void extract_vertex_indices_from_triangle(Gfx* gfx, u32 tri_type, s32* idx1, s32* idx2, s32* idx3)
 {
-    /* PORT_TODO: N64 display list parsing */
-    *idx1 = *idx2 = *idx3 = 0;
+    /* Raw big-endian F3DEX decode. G_TRI1 (0xBF): indices at bytes 5,6,7 each /10
+     * (base-GBI DMEM stride). G_TRI4 (0xB1): raw 4-bit indices, NO /10, for
+     * sub-triangle k = tri_type-1. Matches the authoritative collision walker
+     * (bg.c G_TRI1 ~:11369, G_TRI4 decode). */
+    const u8 *cmd = (const u8 *)gfx;
+    if (tri_type == 0) {
+        *idx1 = cmd[5] / 10;
+        *idx2 = cmd[6] / 10;
+        *idx3 = cmd[7] / 10;
+    } else {
+        s32 k  = (s32)tri_type - 1;          /* 0..3 */
+        u32 w0 = lf_read_be32(cmd + 0);
+        u32 w1 = lf_read_be32(cmd + 4);
+        *idx1 = (s32)((w1 >> (8 * k))     & 0xF);
+        *idx2 = (s32)((w1 >> (8 * k + 4)) & 0xF);
+        *idx3 = (s32)((w0 >> (4 * k))     & 0xF);
+    }
 }
 #else
 void extract_vertex_indices_from_triangle(Gfx* gfx, u32 tri_type, s32* idx1, s32* idx2, s32* idx3)
@@ -340,7 +393,108 @@ s32 sub_GAME_7F0BBCCC(coord16 * coord, s32 room_index)
 #ifdef NATIVE_PORT
 void sub_GAME_7F0BBE0C(Gfx * gfx, u32 tri_type, s32 room_index)
 {
-    /* PORT_TODO: N64 display list light fixture processing */
+    s16 diff_z_12, diff_z_13, diff_z_23;
+    s16 diff_y_12, diff_y_13, diff_y_23;
+    s16 diff_x_12, diff_x_13, diff_x_23;
+    coord16 coord1, coord2, coord3, coord4, coord5, coord6;
+    f32 dist_tween, inv_dist_12, inv_dist_23, inv_dist_13, dist_nn;
+    coord3d origin, calc_coord;
+    s32 i, j;
+    s8 exec, exec2;
+
+    /* Default-off A/B: byte-identical to the previous stub when disabled. */
+    if (!ge007_shoot_out_lights_enabled()) { return; }
+
+    for (i = 0; i < LIGHTFIXTURE_TABLE_MAX; i++)
+    {
+        if (room_index != light_fixture_table[i].room_index) { continue; }
+        if (gfx <  light_fixture_table[i].ptr_start_pertinent_DL) { continue; }
+        if (gfx >= light_fixture_table[i].ptr_end_pertinent_DL)   { continue; }
+
+        if (darkened_light_table_contains_triangle(gfx, tri_type, light_fixture_table[i].room_index) != 0) { return; }
+
+        darken_triangle_in_room(gfx, tri_type, light_fixture_table[i].room_index);
+        extract_vertex_coords_from_triangle(gfx, tri_type, light_fixture_table[i].room_index, &coord1, &coord2, &coord3);
+
+        diff_x_12 = coord1.AsArray[0] - coord2.AsArray[0];
+        diff_x_23 = coord1.AsArray[0] - coord3.AsArray[0];
+        diff_x_13 = coord2.AsArray[0] - coord3.AsArray[0];
+
+        diff_y_12 = coord1.AsArray[1] - coord2.AsArray[1];
+        diff_y_23 = coord1.AsArray[1] - coord3.AsArray[1];
+        diff_y_13 = coord2.AsArray[1] - coord3.AsArray[1];
+
+        diff_z_12 = coord1.AsArray[2] - coord2.AsArray[2];
+        diff_z_23 = coord1.AsArray[2] - coord3.AsArray[2];
+        diff_z_13 = coord2.AsArray[2] - coord3.AsArray[2];
+
+        dist_nn = sqrtf((diff_x_12 * diff_x_12) + (diff_y_12 * diff_y_12) + (diff_z_12 * diff_z_12));
+        inv_dist_12 = 10.0f / (get_room_data_float2() * dist_nn);
+
+        dist_nn = sqrtf((diff_x_23 * diff_x_23) + (diff_y_23 * diff_y_23) + (diff_z_23 * diff_z_23));
+        inv_dist_23 = 10.0f / (get_room_data_float2() * dist_nn);
+
+        dist_nn = sqrtf((diff_x_13 * diff_x_13) + (diff_y_13 * diff_y_13) + (diff_z_13 * diff_z_13));
+        inv_dist_13 = 10.0f / (get_room_data_float2() * dist_nn);
+
+        getRoomPositionScaledByIndex(light_fixture_table[i].room_index, &origin);
+
+        for (dist_tween = 0.0f; dist_tween < 1.0f; dist_tween += inv_dist_12)
+        {
+            calc_coord.x = ((coord2.AsArray[0] + (diff_x_12 * dist_tween)) * get_room_data_float2()) + origin.f[0];
+            calc_coord.y = ((coord2.AsArray[1] + (diff_y_12 * dist_tween)) * get_room_data_float2()) + origin.f[1];
+            calc_coord.z = ((coord2.AsArray[2] + (diff_z_12 * dist_tween)) * get_room_data_float2()) + origin.f[2];
+            sub_GAME_7F0A2160(&calc_coord, 0.0f, 10.0f);
+        }
+
+        for (dist_tween = 0.0f; dist_tween < 1.0f; dist_tween += inv_dist_23)
+        {
+            calc_coord.x = ((coord3.AsArray[0] + (diff_x_23 * dist_tween)) * get_room_data_float2()) + origin.f[0];
+            calc_coord.y = ((coord3.AsArray[1] + (diff_y_23 * dist_tween)) * get_room_data_float2()) + origin.f[1];
+            calc_coord.z = ((coord3.AsArray[2] + (diff_z_23 * dist_tween)) * get_room_data_float2()) + origin.f[2];
+            sub_GAME_7F0A2160(&calc_coord, 0.0f, 10.0f);
+        }
+
+        for (dist_tween = 0.0f; dist_tween < 1.0f; dist_tween += inv_dist_13)
+        {
+            calc_coord.x = ((coord3.AsArray[0] + (diff_x_13 * dist_tween)) * get_room_data_float2()) + origin.f[0];
+            calc_coord.y = ((coord3.AsArray[1] + (diff_y_13 * dist_tween)) * get_room_data_float2()) + origin.f[1];
+            calc_coord.z = ((coord3.AsArray[2] + (diff_z_13 * dist_tween)) * get_room_data_float2()) + origin.f[2];
+            sub_GAME_7F0A2160(&calc_coord, 0.0f, 10.0f);
+        }
+
+        /* Neighbour scan: raw 8-byte DL command stride (NOT gfx2++/sizeof(Gfx)==16),
+         * opcode = command byte 0 (0xBF G_TRI1 / 0xB1 G_TRI4). */
+        {
+            const u8 *p   = (const u8 *)light_fixture_table[i].ptr_start_pertinent_DL;
+            const u8 *end = (const u8 *)light_fixture_table[i].ptr_end_pertinent_DL;
+            for (; p < end; p += 8)
+            {
+                if (p[0] == 0xBF /* G_TRI1 */)
+                {
+                    exec = 0;
+                    extract_vertex_coords_from_triangle((Gfx *)p, 0U, light_fixture_table[i].room_index, &coord4, &coord5, &coord6);
+                    if (sub_GAME_7F0BBCCC(&coord4, light_fixture_table[i].room_index) != 0)      { exec = 1; }
+                    else if (sub_GAME_7F0BBCCC(&coord5, light_fixture_table[i].room_index) != 0) { exec = 1; }
+                    else if (sub_GAME_7F0BBCCC(&coord6, light_fixture_table[i].room_index) != 0) { exec = 1; }
+                    if (exec != 0) { darken_triangle_in_room((Gfx *)p, 0U, light_fixture_table[i].room_index); }
+                }
+                else if (p[0] == 0xB1 /* G_TRI4 */)
+                {
+                    for (j = 0; j < 4; j++)
+                    {
+                        exec2 = 0;
+                        extract_vertex_coords_from_triangle((Gfx *)p, j + 1, light_fixture_table[i].room_index, &coord4, &coord5, &coord6);
+                        if (sub_GAME_7F0BBCCC(&coord4, light_fixture_table[i].room_index) != 0)      { exec2 = 1; }
+                        else if (sub_GAME_7F0BBCCC(&coord5, light_fixture_table[i].room_index) != 0) { exec2 = 1; }
+                        else if (sub_GAME_7F0BBCCC(&coord6, light_fixture_table[i].room_index) != 0) { exec2 = 1; }
+                        if (exec2 != 0) { darken_triangle_in_room((Gfx *)p, j + 1, light_fixture_table[i].room_index); }
+                    }
+                }
+            }
+        }
+        return;
+    }
 }
 #else
 void sub_GAME_7F0BBE0C(Gfx * gfx, u32 tri_type, s32 room_index)

@@ -3601,7 +3601,7 @@ void sub_GAME_7F0A3BD8(void)
 
     for (i = start_index; (i < UNK_8007A170_MAX) ^ 0; i++)
     {
-        dword_CODE_bss_8007A170[i].unk0C_ptr = NULL;
+        dword_CODE_bss_8007A170[i].unk0C_handle = EFFECT_IMG_NONE;
         dword_CODE_bss_8007A170[i].unk04 = 0;
         dword_CODE_bss_8007A170[i].unk00 = 0;
     }
@@ -3617,6 +3617,19 @@ void sub_GAME_7F0A3BD8(void)
 extern struct sImageTableEntry *flareimage2;
 extern struct sImageTableEntry *explosion_smokeimages;
 extern struct sImageTableEntry *scattered_explosions;
+
+/* Resolve an EffectImageHandle stored in unk0C_handle back to the real image
+ * pointer. See the header note on why the handle indirection exists (a 64-bit
+ * pointer can't be stored inline in the N64 struct layout without breaking it). */
+static struct sImageTableEntry *effect_image_from_handle(u32 handle) {
+    switch (handle) {
+        case EFFECT_IMG_FLARE:     return flareimage2;
+        case EFFECT_IMG_SMOKE:     return explosion_smokeimages;
+        case EFFECT_IMG_SCATTERED: return scattered_explosions;
+        default:                   return NULL;
+    }
+}
+
 void sub_GAME_7F0A3C08(void *entry_ptr, coord3d *pos, s32 type, f32 scale, s16 extra) {
     bondstruct_unk_8007A170 *entry = (bondstruct_unk_8007A170 *)entry_ptr;
     f32 angle;
@@ -3631,23 +3644,23 @@ void sub_GAME_7F0A3C08(void *entry_ptr, coord3d *pos, s32 type, f32 scale, s16 e
     if (type == 4) {
         entry->unk04 = 1;
         entry->unk08 = 1.0f;
-        entry->unk0C_ptr = flareimage2;
+        entry->unk0C_handle = EFFECT_IMG_FLARE;
     } else if (type == 1) {
         entry->unk04 = 11;
         entry->unk08 = 0.5f;
-        entry->unk0C_ptr = explosion_smokeimages;
+        entry->unk0C_handle = EFFECT_IMG_SMOKE;
     } else if (type == 3) {
         entry->unk04 = 9;
         entry->unk08 = 0.5f;
-        entry->unk0C_ptr = scattered_explosions;
+        entry->unk0C_handle = EFFECT_IMG_SCATTERED;
     } else if (type == 6) {
         entry->unk04 = 100;
         entry->unk08 = 0.0f;
-        entry->unk0C_ptr = flareimage2;
+        entry->unk0C_handle = EFFECT_IMG_FLARE;
     } else {
         entry->unk04 = 11;
         entry->unk08 = 0.5f;
-        entry->unk0C_ptr = explosion_smokeimages;
+        entry->unk0C_handle = EFFECT_IMG_SMOKE;
     }
 
     {
@@ -4181,7 +4194,7 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     vertices[2] = vtxtemplate;
     vertices[3] = vtxtemplate;
 
-    frameData = (u8 *)arg0->unk0C_ptr;
+    frameData = (u8 *)effect_image_from_handle(arg0->unk0C_handle);
 
     vertices[0].v.ob[0] = (posX - mrow0_scaleA.x - mrow1_scaleB.x) * get_room_data_float1() - roomPos->x;
     vertices[0].v.ob[1] = (posY - mrow0_scaleA.y - mrow1_scaleB.y) * get_room_data_float1() - roomPos->y;

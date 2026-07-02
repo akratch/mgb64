@@ -62,6 +62,15 @@
  * bossMainloop skips rspGfxTaskStart when this is set to avoid processing
  * stale DL commands that reference freed memory. */
 int g_pc_stage_reload_pending = 0;
+
+/* The native game memory arena (replaces N64 BSS-relative addressing). Lifted to
+ * file scope so the sim-state-hash invariance gate can hash it as the primary
+ * mutable-state region. Base + size are stable for a run; contents are the
+ * simulation state. */
+static u8    *s_pcPool = NULL;
+static size_t s_pcPoolSize = 0;
+const void *bossGetPcPoolBase(void) { return s_pcPool; }
+size_t      bossGetPcPoolSize(void) { return s_pcPoolSize; }
 #endif
 
 #ifdef REFRESH_PAL
@@ -233,7 +242,6 @@ void bossInitMainthreadData(void)
      * N64 has ~4MB RDRAM; allocate 8MB for headroom. */
     {
         #define PC_POOL_SIZE (8 * 1024 * 1024)
-        static u8 *s_pcPool = NULL;
         if (!s_pcPool) {
             s_pcPool = (u8 *)malloc(PC_POOL_SIZE);
             if (!s_pcPool) {
@@ -241,6 +249,7 @@ void bossInitMainthreadData(void)
                 exit(1);
             }
             memset(s_pcPool, 0, PC_POOL_SIZE);
+            s_pcPoolSize = PC_POOL_SIZE;
         }
         mempCheckMemflagTokens((intptr_t)s_pcPool, PC_POOL_SIZE);
     }

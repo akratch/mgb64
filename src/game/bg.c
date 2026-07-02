@@ -298,6 +298,84 @@ static s16 bgFindTextureForTriangleCommand(u8 *dl_base, u8 *cmd)
     return -1;
 }
 
+/* ---- Shoot-out-the-lights: native room-load population of light_fixture_table ----
+ * The N64 loader populated this table inside texLoadFromGdl, which the native
+ * bg-room loader skips; without a native population pass the feature is a silent
+ * no-op (docs/SHOOT_OUT_LIGHTS_PLAN.md, blocker D1). Walk the raw room DL and, for
+ * each contiguous run of same-light-texture triangles, record its [start,end) span
+ * as pointers into the SAME raw DL the hit test and renderer use
+ * (g_BgRoomInfo[room].ptr_expanded_mapping_info), so the hit-test range check
+ * (lightfixture.c) can match. Default-off; runs once per room load. */
+extern int  ge007_shoot_out_lights_enabled(void);
+extern void clear_light_fixturetable_in_room(s32 room_index);
+extern void add_entry_to_init_lightfixture_table(Gfx *DL);
+extern void save_ptrDL_enpoint_to_current_init_lightfixture_table(Gfx *dl_end);
+extern s32  check_if_imageID_is_light(s32 imageID);
+
+static int lf_populate_one_dl(u8 *dl, u32 len)
+{
+    u8 *end;
+    u8 *p;
+    s16 cur_light_tex = -1;   /* -1 => not currently inside a light run */
+    int runs = 0;
+
+    if (dl == NULL || len < 8) { return 0; }
+    end = dl + len;
+
+    for (p = dl; p + 8 <= end; p += 8) {
+        u8 op = p[0];
+        s16 tex;
+        int is_light;
+
+        if (op != 0xBF /* G_TRI1 */ && op != 0xB1 /* G_TRI4 */) { continue; }
+
+        tex = bgFindTextureForTriangleCommand(dl, p);
+        is_light = (tex >= 0 && check_if_imageID_is_light(tex) != 0);
+
+        if (is_light) {
+            if (tex != cur_light_tex) {
+                if (cur_light_tex >= 0) {
+                    save_ptrDL_enpoint_to_current_init_lightfixture_table((Gfx *)p);
+                }
+                add_entry_to_init_lightfixture_table((Gfx *)p);
+                cur_light_tex = tex;
+                runs++;
+            }
+        } else if (cur_light_tex >= 0) {
+            save_ptrDL_enpoint_to_current_init_lightfixture_table((Gfx *)p);
+            cur_light_tex = -1;
+        }
+    }
+
+    if (cur_light_tex >= 0) {
+        save_ptrDL_enpoint_to_current_init_lightfixture_table((Gfx *)end);
+    }
+    return runs;
+}
+
+void lf_populate_room_lightfixtures(s32 room)
+{
+    if (!ge007_shoot_out_lights_enabled()) { return; }
+    if (room <= 0 || room >= MAXROOMCOUNT) { return; }  /* room 0 = empty-slot sentinel */
+
+    clear_light_fixturetable_in_room(room);
+
+    {
+        int nprim = lf_populate_one_dl((u8 *)g_BgRoomInfo[room].ptr_expanded_mapping_info,
+                                       g_BgRoomInfo[room].usize_primary_DL_binary);
+        int nsec  = lf_populate_one_dl((u8 *)g_BgRoomInfo[room].ptr_secondary_expanded_mapping_info,
+                                       g_BgRoomInfo[room].usize_secondary_DL_binary);
+#ifdef LF_POPULATE_DEBUG
+        if (nprim + nsec > 0) {
+            fprintf(stderr, "[LF] room %d: %d light runs (primary %d, secondary %d)\n",
+                    room, nprim + nsec, nprim, nsec);
+        }
+#else
+        (void)nprim; (void)nsec;
+#endif
+    }
+}
+
 static int bgHitTraceEnabled(void)
 {
     static int enabled = -1;

@@ -178,6 +178,14 @@ if(BUILD_TESTING)
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         )
     endif()
+
+    # Sim-state invariance hash primitive — ROM-free unit test (remaster P0.2 rail).
+    add_executable(test_sim_state_hash
+        "${CMAKE_SOURCE_DIR}/tests/test_sim_state_hash.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/sim_state_hash.c"
+    )
+    target_include_directories(test_sim_state_hash PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME sim_state_hash COMMAND test_sim_state_hash)
 endif()
 
 if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baserom.u.z64")

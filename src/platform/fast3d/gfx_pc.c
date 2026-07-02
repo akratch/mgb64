@@ -15369,6 +15369,13 @@ static void gfx_update_mp_matrix(void) {
 
 /* ===== RSP command handlers ===== */
 
+/* Perspective depth-linearization coefficients from the last scene projection,
+ * consumed by the SSAO output pass in gfx_opengl.c (§4 T1.1). */
+float g_pc_ssao_proj_a = 0.0f;
+float g_pc_ssao_proj_b = 0.0f;
+float g_pc_ssao_proj_x = 0.0f;   /* P[0][0] — view-ray x scale (FOV/aspect) */
+float g_pc_ssao_proj_y = 0.0f;   /* P[1][1] — view-ray y scale (FOV)        */
+
 static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *source_addr) {
     float matrix[4][4];
     bool is_room_matrix_addr = false;
@@ -15417,6 +15424,20 @@ static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *
         } else {
             gfx_matrix_mul(rsp.P_matrix, matrix, rsp.P_matrix);
             rsp.projection_is_field_10e0 = false;
+        }
+        /* Stash perspective depth-linearization coefficients for the SSAO output
+         * pass (§4 T1.1): view distance = B / (A + 2*d - 1), with A=P[2][2],
+         * B=P[3][2]. clip.w depends on view.z only for a perspective projection
+         * (P[2][3] != 0), so HUD/ortho passes are skipped. The frame uses several
+         * perspectives (world far~200, props, viewmodel near~2); keep the one with
+         * the LARGEST far plane (|B|) — the main world view, where AO matters — and
+         * reset per frame in the backend's start_frame. */
+        if (fabsf(rsp.P_matrix[2][3]) > 0.5f &&
+            fabsf(rsp.P_matrix[3][2]) > fabsf(g_pc_ssao_proj_b)) {
+            g_pc_ssao_proj_a = rsp.P_matrix[2][2];
+            g_pc_ssao_proj_b = rsp.P_matrix[3][2];
+            g_pc_ssao_proj_x = rsp.P_matrix[0][0];
+            g_pc_ssao_proj_y = rsp.P_matrix[1][1];
         }
     } else {
         if ((parameters & G_MTX_PUSH) && rsp.modelview_matrix_stack_size < 11) {
@@ -16361,10 +16382,20 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                      uint32_t clip_reason_flags,
                                      uint8_t diag_vtx1_idx,
                                      uint8_t diag_vtx2_idx,
-                                     uint8_t diag_vtx3_idx) {
+                                     uint8_t diag_vtx3_idx,
+                                     const struct GfxTriNdcMetrics *precomputed_ndc) {
     struct LoadedVertex *v_arr[3] = {v1, v2, v3};
     struct GfxTriNdcMetrics ndc_metrics;
-    bool ndc_metrics_ok = gfx_tri_compute_ndc_metrics(v1, v2, v3, &ndc_metrics);
+    bool ndc_metrics_ok;
+    if (precomputed_ndc != NULL) {
+        /* gfx_sp_tri1's unclipped path already computed these for the same,
+         * unmutated v1/v2/v3 — reuse instead of recomputing. Byte-identical:
+         * gfx_tri_compute_ndc_metrics's return value always equals out->valid. */
+        ndc_metrics = *precomputed_ndc;
+        ndc_metrics_ok = ndc_metrics.valid;
+    } else {
+        ndc_metrics_ok = gfx_tri_compute_ndc_metrics(v1, v2, v3, &ndc_metrics);
+    }
     const char *dl_which = NULL;
     int dl_room = -1;
     uintptr_t cmd_offset = 0;
@@ -19025,7 +19056,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             gfx_emit_loaded_triangle(&clipped[0], &clipped[i], &clipped[i + 1],
                                      true,
                                      clip_reason_flags,
-                                     vtx1_idx, vtx2_idx, vtx3_idx);
+                                     vtx1_idx, vtx2_idx, vtx3_idx,
+                                     NULL); /* fan verts differ from sp_tri1's — recompute */
         }
         if (logged_shard_candidate) {
             fprintf(stderr,
@@ -19046,7 +19078,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         return;
     }
 
-    gfx_emit_loaded_triangle(v1, v2, v3, false, GFX_CLIP_REASON_NONE, vtx1_idx, vtx2_idx, vtx3_idx);
+    gfx_emit_loaded_triangle(v1, v2, v3, false, GFX_CLIP_REASON_NONE, vtx1_idx, vtx2_idx, vtx3_idx,
+                             &ndc_metrics); /* reuse sp_tri1's metrics for the unmutated verts */
     if (logged_shard_candidate) {
         fprintf(stderr,
                 "[GFX-SHARD-CANDIDATE-RESULT] frame=%d cmd=%p result=emit emitted=%d domain=%s\n",

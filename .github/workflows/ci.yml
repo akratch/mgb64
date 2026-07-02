@@ -2,6 +2,10 @@ name: CI
 
 on:
   workflow_dispatch:
+  # Run the build / zero-warning / CTest / contamination gates automatically on
+  # every PR. Push is intentionally omitted to respect the local-preflight posture
+  # (contributors run the smoke lanes locally); PR is the shared gate.
+  pull_request:
 
 permissions:
   contents: read
@@ -23,6 +27,8 @@ jobs:
           ./scripts/ci/check_release_ready.sh
       - name: Check ignored artifact hygiene
         run: ./scripts/ci/check_high_risk_ignored_artifacts.sh
+      - name: Timing lock (R2)
+        run: ./scripts/ci/check_timing_lock.sh
       - name: Check Docker build context
         run: docker build --check .
       - name: Run public static validation
@@ -89,6 +95,8 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build --parallel 4 2>&1 | tee build/mgb64-build.log
+      - name: Sim/render separation (R1)
+        run: ./scripts/ci/check_sim_render_separation.sh
       - name: Summarize build warnings
         if: always()
         run: |

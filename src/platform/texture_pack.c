@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "stb_image.h"
 
@@ -32,10 +33,39 @@ bool texture_pack_enabled(void) {
     return g_pcTexturePack[0] != '\0';
 }
 
+/* One-time sanity check of the configured pack. A non-empty Video.TexturePack is
+ * the ONLY thing that "enables" the pack, so a typo'd or missing directory would
+ * otherwise silently render stock with zero diagnostics — the single most common
+ * user error for a headline remaster feature. Warn once (and confirm on success). */
+static void texture_pack_validate_once(void) {
+    static int validated = 0;
+    if (validated) {
+        return;
+    }
+    validated = 1;
+    if (!texture_pack_enabled()) {
+        return;
+    }
+
+    char dir[1200];
+    snprintf(dir, sizeof(dir), "%s/textures", g_pcTexturePack);
+    struct stat st;
+    if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        fprintf(stderr,
+                "[texpack] WARNING: texture pack '%s' has no readable 'textures/' "
+                "directory (looked for '%s'). HD textures are DISABLED — rendering "
+                "stock. Check Video.TexturePack / GE007_TEXTURE_PACK.\n",
+                g_pcTexturePack, dir);
+    } else {
+        fprintf(stderr, "[texpack] HD texture pack active: %s\n", g_pcTexturePack);
+    }
+}
+
 bool texture_pack_try_load(int token, uint8_t **out_rgba, int *out_w, int *out_h) {
     if (!texture_pack_enabled() || token < 0 || token >= TEXPACK_MAX_TOKENS) {
         return false;
     }
+    texture_pack_validate_once();
     if (!s_miss_init) { memset(s_miss, 0, sizeof(s_miss)); s_miss_init = 1; }
     if (s_miss[token]) {
         return false;

@@ -195,6 +195,17 @@ f32 g_pcVignette = 0.15f;        /* remaster default: soft edge falloff for dept
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
+s32 g_pcSsao = 0;                /* default OFF (identity-first landing; flip on at the review checkpoint) */
+f32 g_pcSsaoRadius = 0.5f;       /* AO sample radius, fraction of screen height */
+f32 g_pcSsaoIntensity = 1.0f;    /* occlusion darkening strength */
+f32 g_pcSsaoBias = 0.03f;        /* horizon elevation bias — rejects flat-surface self-occlusion */
+f32 g_pcSsaoPower = 1.6f;        /* AO contrast exponent */
+f32 g_pcSsaoFarCutoff = 128.0f;  /* world-Z beyond which AO fades to 0 (noisy-depth zone) */
+f32 g_pcSsaoNearCut = 0.02f;     /* window-depth <= this = viewmodel/near: no AO */
+f32 g_pcSsaoSkyCut = 0.9999f;    /* window-depth >= this = sky: no AO */
+s32 g_pcSsaoHalfRes = 0;         /* render AO at half scene res (P1a-perf) */
+s32 g_pcSsaoBlur = 0;            /* separable bilateral blur pass (P1a-perf) */
+f32 g_pcSsaoBlurDepthSharp = 8.0f; /* bilateral blur depth-weight sharpness */
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
 f32 g_pcSharpen = 0.15f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
@@ -973,6 +984,13 @@ static int platformDiagMenuScreenshotDue(void) {
 
 static void platformFinishAutoScreenshotIfRequested(void) {
     if (g_autoScreenshotExit) {
+        /* Emit the sim-state invariance hash BEFORE any teardown, while the
+         * pool/globals are intact (remaster P0.2 gate). No-op unless requested. */
+        {
+            extern void simStateHashEmitIfRequested(int frame, const char *replay);
+            extern const char *g_pcStartRamrom;
+            simStateHashEmitIfRequested(g_frameSyncCallCount, g_pcStartRamrom);
+        }
         extern int g_crashRecoveryCount;
         if (g_crashRecoveryCount > 0) {
             printf("[GE007-PC] Auto-screenshot complete, but %d crash recoveries occurred; build needed recovery, exiting with error.\n",
@@ -1555,6 +1573,62 @@ void platformRegisterConfig(void)
                           "--config-override Video.BloomIntensity=VALUE",
                           "Bloom intensity",
                           "Strength of the bloom halo added to the image.");
+    settingsRegisterInt("Video.Ssao", &g_pcSsao, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SSAO",
+                        "--config-override Video.Ssao=VALUE",
+                        "SSAO",
+                        "Screen-space ambient occlusion: depth-based contact darkening in "
+                        "corners and under geometry. 0 = off.");
+    settingsRegisterFloat("Video.SsaoRadius", &g_pcSsaoRadius, 0.5f, 0.05f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_RADIUS",
+                          "--config-override Video.SsaoRadius=VALUE",
+                          "SSAO radius",
+                          "AO sample radius as a fraction of screen height.");
+    settingsRegisterFloat("Video.SsaoIntensity", &g_pcSsaoIntensity, 1.0f, 0.0f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_INTENSITY",
+                          "--config-override Video.SsaoIntensity=VALUE",
+                          "SSAO intensity",
+                          "Strength of the ambient-occlusion darkening.");
+    settingsRegisterFloat("Video.SsaoBias", &g_pcSsaoBias, 0.03f, 0.0f, 0.5f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_BIAS",
+                          "--config-override Video.SsaoBias=VALUE",
+                          "SSAO bias",
+                          "Horizon elevation bias; rejects flat-surface self-occlusion.");
+    settingsRegisterFloat("Video.SsaoPower", &g_pcSsaoPower, 1.6f, 0.5f, 4.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_POWER",
+                          "--config-override Video.SsaoPower=VALUE",
+                          "SSAO power",
+                          "AO contrast exponent (higher = punchier creases).");
+    settingsRegisterFloat("Video.SsaoFarCutoff", &g_pcSsaoFarCutoff, 128.0f, 8.0f, 4096.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_FAR_CUTOFF",
+                          "--config-override Video.SsaoFarCutoff=VALUE",
+                          "SSAO far cutoff",
+                          "World-space distance beyond which AO fades to 0 (noisy-depth zone).");
+    settingsRegisterFloat("Video.SsaoNearCut", &g_pcSsaoNearCut, 0.02f, 0.0f, 0.5f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_NEAR_CUT",
+                          "--config-override Video.SsaoNearCut=VALUE",
+                          "SSAO near cut",
+                          "Window-depth at/below which pixels (viewmodel) get no AO.");
+    settingsRegisterFloat("Video.SsaoSkyCut", &g_pcSsaoSkyCut, 0.9999f, 0.9f, 1.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_SKY_CUT",
+                          "--config-override Video.SsaoSkyCut=VALUE",
+                          "SSAO sky cut",
+                          "Window-depth at/above which pixels (sky) get no AO.");
+    settingsRegisterInt("Video.SsaoHalfRes", &g_pcSsaoHalfRes, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SSAO_HALF_RES",
+                        "--config-override Video.SsaoHalfRes=VALUE",
+                        "SSAO half-res",
+                        "Render AO at half the internal scene resolution (cheaper).");
+    settingsRegisterInt("Video.SsaoBlur", &g_pcSsaoBlur, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SSAO_BLUR",
+                        "--config-override Video.SsaoBlur=VALUE",
+                        "SSAO blur",
+                        "Separable depth-aware (bilateral) blur of the AO buffer.");
+    settingsRegisterFloat("Video.SsaoBlurDepthSharp", &g_pcSsaoBlurDepthSharp, 8.0f, 0.5f, 64.0f,
+                          SETTING_SCOPE_LIVE, "GE007_SSAO_BLUR_DEPTH_SHARP",
+                          "--config-override Video.SsaoBlurDepthSharp=VALUE",
+                          "SSAO blur depth sharpness",
+                          "Bilateral blur depth-weight sharpness (higher = edge-preserving).");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",
@@ -2328,7 +2402,22 @@ void platformFrameSync(void) {
     /* Fire any expired OS timers */
     platformCheckTimers();
 
-    /* Process SDL events */
+    /* Frame pacing — wait until next configured frame boundary. */
+    u32 now = SDL_GetTicks();
+    u32 elapsed = now - g_lastFrameTime;
+    u32 frame_delay_ms = platformFrameDelayMs();
+    perf_work_ms = elapsed;
+    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
+        perf_delay_ms = frame_delay_ms - elapsed;
+        SDL_Delay(perf_delay_ms);
+    }
+    g_lastFrameTime = SDL_GetTicks();
+
+    /* Process SDL events AFTER the pacing wait, so the simulation that runs on the
+     * retrace below consumes the freshest possible input. Polling before the wait
+     * left mouse/stick deltas up to one frame-cap stale on high-refresh displays;
+     * this removes that latency. Identity at 60 Hz / vsync-locked (delay ~= 0).
+     * Deterministic mode freezes input, so trace/screenshot gates are unaffected. */
     platformPollEvents();
     platformApplyAutoMuteToggles();
 
@@ -2349,17 +2438,6 @@ void platformFrameSync(void) {
         }
     }
 #endif
-
-    /* Frame pacing — wait until next configured frame boundary. */
-    u32 now = SDL_GetTicks();
-    u32 elapsed = now - g_lastFrameTime;
-    u32 frame_delay_ms = platformFrameDelayMs();
-    perf_work_ms = elapsed;
-    if (frame_delay_ms > 0 && elapsed < frame_delay_ms) {
-        perf_delay_ms = frame_delay_ms - elapsed;
-        SDL_Delay(perf_delay_ms);
-    }
-    g_lastFrameTime = SDL_GetTicks();
 
     /* Swap the GL framebuffer (shows whatever was rendered) */
     if (g_sdlWindow) {
