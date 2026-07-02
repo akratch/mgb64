@@ -104,6 +104,11 @@ extern "C" {
     extern float g_pcVideoGamma, g_pcVideoSaturation, g_pcVideoContrast, g_pcVideoBrightness;
     extern float g_pcVignette, g_pcBloomThreshold, g_pcBloomIntensity, g_pcSharpen;
     extern float g_pcGradeLevelSat, g_pcGradeLevelCon, g_pcGradeLevelTintR, g_pcGradeLevelTintG, g_pcGradeLevelTintB;
+    /* SSAO (Phase 5). proj_a/b are the scene-projection coefficients the frontend
+     * (gfx_sp_matrix) raises each scene frame; proj_b == 0 gates SSAO off (menu). */
+    extern int   g_pcSsao;
+    extern float g_pcSsaoRadius, g_pcSsaoIntensity;
+    extern float g_pc_ssao_proj_a, g_pc_ssao_proj_b;
 }
 
 /* N64 tile wrap flags (PR/gbi.h) — declared locally to avoid the N64 header. */
@@ -723,6 +728,7 @@ static id<MTLTexture> s_snapshot_tex = nil;  /* XLU/RDP framebuffer snapshot (3.
 static id<MTLTexture> s_final_color = nil;   /* Phase 4 output-filter result (present + readback source) */
 static id<MTLTexture> s_filter_low = nil;    /* Phase 4 output-filter 8-bit intermediate (GL's pre-pass low_tex) */
 static id<MTLSamplerState> s_snapshot_sampler = nil;
+static id<MTLSamplerState> s_depth_sampler = nil;  /* nearest/clamp for SSAO depth reads (Phase 5) */
 static int s_fb_w = 0, s_fb_h = 0;
 static id<MTLRenderCommandEncoder> s_enc = nil;
 static id<MTLTexture> s_white_tex = nil;   /* 1x1 white for unbound tiles */
@@ -803,12 +809,13 @@ static void mtl_ensure_targets(int w, int h) {
     cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     cd.storageMode = MTLStorageModePrivate;
     id<MTLTexture> color = [s_device newTextureWithDescriptor:cd];
-    /* Depth: render target only for now. Phase 5 SSAO samples it — re-add
-     * MTLTextureUsageShaderRead (+ storeAction=Store) there. */
+    /* Depth: render target + ShaderRead so Phase 5 SSAO can sample it (the
+     * render pass stores it — storeAction=Store in mtl_open_scene_encoder). This
+     * native Depth32Float sample is the whole point: it op-hangs GL-over-Metal. */
     MTLTextureDescriptor *dd =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                                            width:w height:h mipmapped:NO];
-    dd.usage = MTLTextureUsageRenderTarget;
+    dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     dd.storageMode = MTLStorageModePrivate;
     id<MTLTexture> depth = [s_device newTextureWithDescriptor:dd];
     /* XLU/RDP snapshot target: a copy of the scene color the fragment samples
@@ -1047,6 +1054,15 @@ static void mtl_init(void) {
         ss.sAddressMode = MTLSamplerAddressModeClampToEdge;
         ss.tAddressMode = MTLSamplerAddressModeClampToEdge;
         s_snapshot_sampler = [s_device newSamplerStateWithDescriptor:ss];
+        /* SSAO depth sampler: NEAREST (no interpolation across depth
+         * discontinuities) + clampToEdge; non-comparison (returns the depth). */
+        MTLSamplerDescriptor *ds = [[MTLSamplerDescriptor alloc] init];
+        ds.minFilter = MTLSamplerMinMagFilterNearest;
+        ds.magFilter = MTLSamplerMinMagFilterNearest;
+        ds.mipFilter = MTLSamplerMipFilterNotMipmapped;
+        ds.sAddressMode = MTLSamplerAddressModeClampToEdge;
+        ds.tAddressMode = MTLSamplerAddressModeClampToEdge;
+        s_depth_sampler = [s_device newSamplerStateWithDescriptor:ds];
     }
     /* Invariance-critical (parent plan §2.1): the CPU clipper reads
      * g_depth_clamp_enabled; Metal uses native depth-clamp, so force it true. */
@@ -1060,6 +1076,11 @@ static void mtl_start_frame(void) {
                        * the C game loop never drains and RSS/drawable pool grow. */
     if (s_layer == nil || s_queue == nil) return;
     s_frame_count_metal++;
+    /* Reset the SSAO scene-projection coefficient each frame (mirrors
+     * gfx_opengl_start_frame): gfx_sp_matrix only ever RAISES proj_b, so without
+     * this the `proj_b != 0` SSAO gate would latch on forever and menu/HUD frames
+     * would feed stale coefficients. Render-only global — gameplay-invariant. */
+    g_pc_ssao_proj_b = 0.0f;
     /* Render at the frontend's resolution (gfx_current_dimensions), which the
      * viewports/T&L are computed against — NOT the raw layer size, which can be
      * a 2x render-scale/SSAA smaller. */
@@ -1242,12 +1263,32 @@ static bool mtl_ensure_filter_program(void) {
     tb_str(&s, "  float peak = -0.125 - 0.075 * u.sharpen; float3 wgt = amp * peak;\n");
     tb_str(&s, "  float3 sum = rgbC + (n + so + w + e) * wgt; float3 rcpW = 1.0 / (1.0 + 4.0 * wgt);\n");
     tb_str(&s, "  float3 outc = clamp(sum * rcpW, mn, mx); return mix(rgbC, outc, clamp(u.sharpen, 0.0, 1.0));\n}\n");
+    /* SSAO (Phase 5) — ports gfx_opengl.c:2984-3018. Reads native Depth32Float
+     * (the op that hangs GL-over-Metal). depth2d.sample returns a float (no .r).
+     * ssaoLinZ reuses GL's 2d-1 window->NDC mapping verbatim: the frontend's
+     * z=(z+w)/2 remap makes Metal window depth == GL window depth. */
+    tb_str(&s, "constant float2 kSsaoDir[8] = { float2(1.0,0.0), float2(0.7071,0.7071), float2(0.0,1.0), float2(-0.7071,0.7071), float2(-1.0,0.0), float2(-0.7071,-0.7071), float2(0.0,-1.0), float2(0.7071,-0.7071) };\n");
+    tb_str(&s, "static float ssaoLinZ(float d, constant FilterUniforms& u) { return u.ssaoProjB / (u.ssaoProjA + 2.0 * d - 1.0); }\n");
+    tb_str(&s, "static float ssaoAO(depth2d<float> uDepthTex, sampler depSmp, constant FilterUniforms& u, float2 uv) {\n");
+    tb_str(&s, "  float cd = uDepthTex.sample(depSmp, uv); if (cd >= 0.99999) return 0.0;\n");
+    tb_str(&s, "  float cz = ssaoLinZ(cd, u); float occ = 0.0;\n");
+    tb_str(&s, "  for (int i = 0; i < 8; ++i) {\n");
+    tb_str(&s, "    float2 dir = kSsaoDir[i]; dir.x /= max(u.ssaoAspect, 0.001);\n");
+    tb_str(&s, "    for (int sp = 1; sp <= 2; ++sp) {\n");
+    tb_str(&s, "      float2 o = dir * u.ssaoRadius * float(sp);\n");
+    tb_str(&s, "      float nz = ssaoLinZ(uDepthTex.sample(depSmp, uv + o), u); float diff = cz - nz;\n");
+    tb_str(&s, "      if (diff > cz * 0.015 && diff < cz * 0.12) occ += 1.0 / float(sp);\n    }\n  }\n");
+    tb_str(&s, "  return occ / 12.0;\n}\n");
     /* Main — orientation: sampleDst/fxaa/casSharpen use UNFLIPPED in.position
      * (scene + drawable are both top-left; self-consistent like GL's bottom-up);
      * bloom/vignette use the V-flipped vTexCoord; dither/rgb555 reconstruct GL's
      * bottom-left pixel index (fbH - position.y) for pixel-exact pattern parity. */
-    tb_str(&s, "fragment float4 filterFragment(FVO in [[stage_in]], constant FilterUniforms& u [[buffer(1)]], texture2d<float> uTex [[texture(0)]], sampler colSmp [[sampler(0)]]) {\n");
+    tb_str(&s, "fragment float4 filterFragment(FVO in [[stage_in]], constant FilterUniforms& u [[buffer(1)]], texture2d<float> uTex [[texture(0)]], sampler colSmp [[sampler(0)]], depth2d<float> uDepthTex [[texture(1)]], sampler depSmp [[sampler(1)]]) {\n");
     tb_str(&s, "  float4 color = sampleDst(uTex, u, in.position.xy);\n");
+    /* SSAO folded in right after sampling, before FXAA/bloom/grade (matches GL
+     * main() :3020-3024). Depth sampled at the V-flipped vTexCoord (same visual
+     * pixel as color); the 8 symmetric directions make it flip-invariant. */
+    tb_str(&s, "  if (u.ssao == 1) { float ao = 1.0 - u.ssaoIntensity * ssaoAO(uDepthTex, depSmp, u, in.vTexCoord); color.rgb *= clamp(ao, 0.0, 1.0); }\n");
     tb_str(&s, "  if (u.applyPost == 1 && u.fxaa == 1) color.rgb = fxaa(uTex, u, in.position.xy, color.rgb);\n");
     tb_str(&s, "  if (u.applyPost == 1 && u.bloom == 1) {\n");
     tb_str(&s, "    float2 texel = 1.0 / u.srcSize; float3 bloom = float3(0.0); float wsum = 0.0; const int R = 3;\n");
@@ -1351,7 +1392,15 @@ static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u, int apply_post
     u->applyPost = (apply_post && g_pcRemasterFX) ? 1 : 0;
     u->dither = g_pcOutputDither ? 1 : 0;   /* shader gates on applyPost */
     u->bloom = g_pcBloom ? 1 : 0;           /* shader gates on applyPost */
-    u->ssao = 0;                            /* Phase 5 */
+    /* SSAO (Phase 5): final pass only, gated like gfx_opengl.c:3201 (apply_post &&
+     * Ssao && proj_b != 0; RemasterFX implied by apply_post). No MSAA clause —
+     * Metal is single-sample here, so the GL "SSAO off under MSAA" limit is gone. */
+    u->ssao = (apply_post && g_pcRemasterFX && g_pcSsao != 0 && g_pc_ssao_proj_b != 0.0f) ? 1 : 0;
+    u->ssaoRadius = g_pcSsaoRadius * 0.02f;  /* radius key -> UV offset scale (load-bearing) */
+    u->ssaoIntensity = g_pcSsaoIntensity;
+    u->ssaoAspect = s_fb_h > 0 ? (float)s_fb_w / (float)s_fb_h : 1.0f;
+    u->ssaoProjA = g_pc_ssao_proj_a;
+    u->ssaoProjB = g_pc_ssao_proj_b;
     /* Mode 0 (bilinear) is the only mode used here; src == dst makes it an
      * identity fetch, and its centered kernel commutes with the top-left/
      * bottom-left flip so the unflipped in.position is byte-exact. Modes 1/2/3
@@ -1393,6 +1442,10 @@ static bool mtl_run_output_filter(id<MTLCommandBuffer> cmdbuf) {
         [enc setFragmentBytes:&u length:sizeof u atIndex:1];
         [enc setFragmentTexture:passes_src[pass] atIndex:0];
         [enc setFragmentSamplerState:s_filter_smp atIndex:0];
+        /* Scene depth for SSAO (final pass samples it when u.ssao==1; bound in
+         * both passes so the declared depth2d arg is always satisfied). */
+        [enc setFragmentTexture:s_scene_depth atIndex:1];
+        [enc setFragmentSamplerState:s_depth_sampler atIndex:1];
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [enc endEncoding];
     }
