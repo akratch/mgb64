@@ -721,6 +721,7 @@ static id<MTLTexture> s_scene_color = nil;
 static id<MTLTexture> s_scene_depth = nil;
 static id<MTLTexture> s_snapshot_tex = nil;  /* XLU/RDP framebuffer snapshot (3.3) */
 static id<MTLTexture> s_final_color = nil;   /* Phase 4 output-filter result (present + readback source) */
+static id<MTLTexture> s_filter_low = nil;    /* Phase 4 output-filter 8-bit intermediate (GL's pre-pass low_tex) */
 static id<MTLSamplerState> s_snapshot_sampler = nil;
 static int s_fb_w = 0, s_fb_h = 0;
 static id<MTLRenderCommandEncoder> s_enc = nil;
@@ -826,8 +827,9 @@ static void mtl_ensure_targets(int w, int h) {
     fd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     fd.storageMode = MTLStorageModePrivate;
     id<MTLTexture> finalc = [s_device newTextureWithDescriptor:fd];
+    id<MTLTexture> low = [s_device newTextureWithDescriptor:fd];  /* same desc: RT + ShaderRead */
 
-    if (color == nil || depth == nil || snap == nil || finalc == nil) {
+    if (color == nil || depth == nil || snap == nil || finalc == nil || low == nil) {
         /* Partial allocation failure: bind nothing broken. Leave s_fb_w/h
          * unchanged so the line-above early-out doesn't latch a bad size and
          * start_frame's `s_scene_color == nil` guard skips the frame; next frame
@@ -837,6 +839,7 @@ static void mtl_ensure_targets(int w, int h) {
         s_scene_depth = nil;
         s_snapshot_tex = nil;
         s_final_color = nil;
+        s_filter_low = nil;
         s_readback_src = nil;
         return;
     }
@@ -844,6 +847,7 @@ static void mtl_ensure_targets(int w, int h) {
     s_scene_depth = depth;
     s_snapshot_tex = snap;
     s_final_color = finalc;
+    s_filter_low = low;
     s_readback_src = color;  /* until a frame sets it */
     s_fb_w = w;
     s_fb_h = h;
@@ -1162,7 +1166,7 @@ static bool mtl_output_filter_active(void) {
            g_pcOutputDither != 0 ||
            mtl_clampf(g_pcVignette, 0.0f, 1.0f) > 0.0001f ||
            g_pcFxaa != 0 ||
-           mtl_clampf(g_pcSharpen, 0.0f, 1.0f) > 0.0001f ||
+           mtl_clampf(g_pcSharpen, 0.0f, 1.0f) > 0.0f ||   /* GL's use_sharpen gate is >0 (:3293) */
            g_pcTonemap != 0 ||
            g_pcBloom != 0 ||
            (g_pcGradePresets && (g_pcGradeLevelSat != 1.0f || g_pcGradeLevelCon != 1.0f ||
@@ -1317,10 +1321,13 @@ static bool mtl_ensure_filter_program(void) {
     return s_filter_pso != nil && s_filter_smp != nil;
 }
 
-/* Fill the filter uniforms for a single pass (src == dst == scene, mode 0,
- * apply_post = 1), mirroring gfx_opengl_draw_output_filter_texture:3176-3241.
- * SSAO fields are zeroed (Phase 5). */
-static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u) {
+/* Fill the filter uniforms for one pass, mirroring the per-pass values in
+ * gfx_opengl_draw_output_filter_texture:3176-3241. `apply_post` is GL's pass
+ * argument (0 = pre-pass, 1 = final pass). colorScale/colorBias/gamma are set
+ * regardless of apply_post (GL applies them in BOTH passes — see the 2-pass note
+ * on mtl_run_output_filter); everything else is apply_post-gated exactly as GL.
+ * SSAO fields are zeroed (Phase 5). src == dst == scene (mode 0). */
+static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u, int apply_post) {
     memset(u, 0, sizeof *u);
     int gp = g_pcGradePresets ? 1 : 0;
     u->colorTint[0] = gp ? g_pcGradeLevelTintR : 1.0f;
@@ -1338,39 +1345,57 @@ static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u) {
     u->vignette = mtl_clampf(g_pcVignette, 0.0f, 1.0f);
     u->bloomThreshold = g_pcBloomThreshold;
     u->bloomIntensity = g_pcBloomIntensity;
-    u->sharpen = mtl_clampf(g_pcSharpen, 0.0f, 1.0f);
+    u->sharpen = apply_post ? mtl_clampf(g_pcSharpen, 0.0f, 1.0f) : 0.0f;
     u->levelSat = gp ? g_pcGradeLevelSat : 1.0f;
     u->levelCon = gp ? g_pcGradeLevelCon : 1.0f;
-    u->applyPost = g_pcRemasterFX ? 1 : 0;
-    u->dither = g_pcOutputDither ? 1 : 0;
-    u->bloom = g_pcBloom ? 1 : 0;
-    u->ssao = 0;                 /* Phase 5 */
-    u->filterMode = 0;           /* bilinear; src == dst -> identity fetch */
-    u->fxaa = (g_pcRemasterFX && g_pcFxaa) ? 1 : 0;
-    u->tonemap = (g_pcRemasterFX && g_pcTonemap) ? 1 : 0;
-    u->rgb555 = mtl_diag_rgb555_mode();
+    u->applyPost = (apply_post && g_pcRemasterFX) ? 1 : 0;
+    u->dither = g_pcOutputDither ? 1 : 0;   /* shader gates on applyPost */
+    u->bloom = g_pcBloom ? 1 : 0;           /* shader gates on applyPost */
+    u->ssao = 0;                            /* Phase 5 */
+    /* Mode 0 (bilinear) is the only mode used here; src == dst makes it an
+     * identity fetch, and its centered kernel commutes with the top-left/
+     * bottom-left flip so the unflipped in.position is byte-exact. Modes 1/2/3
+     * (nearest / aspect-fit, for the deferred VI-downscale 2-pass) do NOT commute
+     * with the flip — when that feature lands, feed them a bottom-left dst coord
+     * (dstSize.y - position.y) and read the mirrored src row, or the letterbox
+     * bar lands on the wrong edge and content shifts a row vs GL. */
+    u->filterMode = 0;
+    u->fxaa = (apply_post && g_pcFxaa) ? 1 : 0;
+    u->tonemap = (apply_post && g_pcTonemap) ? 1 : 0;
+    u->rgb555 = apply_post ? mtl_diag_rgb555_mode() : 0;
     u->fbH = s_fb_h;
 }
 
-/* Run the output filter as a single fullscreen pass into s_final_color (which is
- * then blitted to the drawable AND used as the readback source, so screenshots
- * capture the post-filter image like GL). Returns false if the program isn't
- * available (caller blits the raw scene instead). */
+/* Run the output filter as GL's TWO passes (gfx_opengl_apply_output_vi_filter is
+ * a resolve pre-pass + a final pass even without VI downscale): pass 1 applies
+ * colorScale/bias/gamma into an 8-bit intermediate (s_filter_low, apply_post=0);
+ * pass 2 reads that and applies the full post-FX into s_final_color
+ * (apply_post=1). Because colorScale/bias/gamma live OUTSIDE GL's apply_post
+ * guard, GL applies each TWICE with an 8-bit round between — so Metal must too
+ * or it diverges at non-default gamma / color-scale/bias. At the default gamma=1
+ * (scale 1, bias 0) pass 1 is an identity 8-bit copy, so this stays byte-exact
+ * with the prior single-pass. s_final_color is then blitted to the drawable AND
+ * used as the readback source. Returns false if unavailable (caller blits raw). */
 static bool mtl_run_output_filter(id<MTLCommandBuffer> cmdbuf) {
-    if (!mtl_ensure_filter_program() || s_scene_color == nil || s_final_color == nil) return false;
-    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-    rpd.colorAttachments[0].texture = s_final_color;
-    rpd.colorAttachments[0].loadAction = MTLLoadActionDontCare;  /* triangle covers all */
-    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-    id<MTLRenderCommandEncoder> enc = [cmdbuf renderCommandEncoderWithDescriptor:rpd];
-    [enc setRenderPipelineState:s_filter_pso];
+    if (!mtl_ensure_filter_program() || s_scene_color == nil ||
+        s_filter_low == nil || s_final_color == nil) return false;
     struct MtlFilterUniforms u;
-    mtl_fill_filter_uniforms(&u);
-    [enc setFragmentBytes:&u length:sizeof u atIndex:1];
-    [enc setFragmentTexture:s_scene_color atIndex:0];
-    [enc setFragmentSamplerState:s_filter_smp atIndex:0];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-    [enc endEncoding];
+    id<MTLTexture> passes_src[2] = { s_scene_color, s_filter_low };
+    id<MTLTexture> passes_dst[2] = { s_filter_low, s_final_color };
+    for (int pass = 0; pass < 2; pass++) {
+        MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+        rpd.colorAttachments[0].texture = passes_dst[pass];
+        rpd.colorAttachments[0].loadAction = MTLLoadActionDontCare;  /* triangle covers all */
+        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> enc = [cmdbuf renderCommandEncoderWithDescriptor:rpd];
+        [enc setRenderPipelineState:s_filter_pso];
+        mtl_fill_filter_uniforms(&u, pass /* 0 = pre-pass, 1 = final */);
+        [enc setFragmentBytes:&u length:sizeof u atIndex:1];
+        [enc setFragmentTexture:passes_src[pass] atIndex:0];
+        [enc setFragmentSamplerState:s_filter_smp atIndex:0];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [enc endEncoding];
+    }
     return true;
 }
 
