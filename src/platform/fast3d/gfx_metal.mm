@@ -98,6 +98,12 @@ extern "C" {
     extern struct GfxDimensions gfx_current_dimensions;
     short viGetX(void);
     short viGetY(void);
+    /* Output-VI-filter (Phase 4) config — defined in platform_sdl.c / gfx_pc.c.
+     * Types match the extern declarations in gfx_opengl.c:38-74. */
+    extern int   g_pcRemasterFX, g_pcBloom, g_pcFxaa, g_pcTonemap, g_pcGradePresets, g_pcOutputDither;
+    extern float g_pcVideoGamma, g_pcVideoSaturation, g_pcVideoContrast, g_pcVideoBrightness;
+    extern float g_pcVignette, g_pcBloomThreshold, g_pcBloomIntensity, g_pcSharpen;
+    extern float g_pcGradeLevelSat, g_pcGradeLevelCon, g_pcGradeLevelTintR, g_pcGradeLevelTintG, g_pcGradeLevelTintB;
 }
 
 /* N64 tile wrap flags (PR/gbi.h) — declared locally to avoid the N64 header. */
@@ -714,10 +720,15 @@ struct MtlUniforms {
 static id<MTLTexture> s_scene_color = nil;
 static id<MTLTexture> s_scene_depth = nil;
 static id<MTLTexture> s_snapshot_tex = nil;  /* XLU/RDP framebuffer snapshot (3.3) */
+static id<MTLTexture> s_final_color = nil;   /* Phase 4 output-filter result (present + readback source) */
 static id<MTLSamplerState> s_snapshot_sampler = nil;
 static int s_fb_w = 0, s_fb_h = 0;
 static id<MTLRenderCommandEncoder> s_enc = nil;
 static id<MTLTexture> s_white_tex = nil;   /* 1x1 white for unbound tiles */
+/* The texture actually presented this frame — what readback/screenshots must
+ * read (post-filter when the filter ran, else the raw scene). GL reads its
+ * post-filter default framebuffer; this keeps Metal screenshots consistent. */
+static id<MTLTexture> s_readback_src = nil;
 
 /* Deferred render state (set by the vtable setters, resolved in draw_triangles). */
 static enum GfxBlendMode s_blend = GFX_BLEND_DISABLED;
@@ -782,13 +793,13 @@ static void mtl_ensure_targets(int w, int h) {
     if (w > cap) w = cap;
     if (h > cap) h = cap;
     if (s_scene_color != nil && s_fb_w == w && s_fb_h == h) return;
-    /* Scene color: render target + blit source (present/readback/snapshot). NOT
-     * sampled in a shader — the sampled copy is s_snapshot_tex — so it does NOT
-     * need ShaderRead; omitting it keeps the faster RT-compressed layout. */
+    /* Scene color: render target + blit source (present/readback/snapshot) AND
+     * the Phase-4 output-filter source (sampled/read in the filter fragment), so
+     * it needs ShaderRead. */
     MTLTextureDescriptor *cd =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                            width:w height:h mipmapped:NO];
-    cd.usage = MTLTextureUsageRenderTarget;
+    cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     cd.storageMode = MTLStorageModePrivate;
     id<MTLTexture> color = [s_device newTextureWithDescriptor:cd];
     /* Depth: render target only for now. Phase 5 SSAO samples it — re-add
@@ -807,8 +818,16 @@ static void mtl_ensure_targets(int w, int h) {
     sd.usage = MTLTextureUsageShaderRead;
     sd.storageMode = MTLStorageModePrivate;
     id<MTLTexture> snap = [s_device newTextureWithDescriptor:sd];
+    /* Phase-4 output-filter result: render target + blit source (present) +
+     * readback source. */
+    MTLTextureDescriptor *fd =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:w height:h mipmapped:NO];
+    fd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    fd.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> finalc = [s_device newTextureWithDescriptor:fd];
 
-    if (color == nil || depth == nil || snap == nil) {
+    if (color == nil || depth == nil || snap == nil || finalc == nil) {
         /* Partial allocation failure: bind nothing broken. Leave s_fb_w/h
          * unchanged so the line-above early-out doesn't latch a bad size and
          * start_frame's `s_scene_color == nil` guard skips the frame; next frame
@@ -817,11 +836,15 @@ static void mtl_ensure_targets(int w, int h) {
         s_scene_color = nil;
         s_scene_depth = nil;
         s_snapshot_tex = nil;
+        s_final_color = nil;
+        s_readback_src = nil;
         return;
     }
     s_scene_color = color;
     s_scene_depth = depth;
     s_snapshot_tex = snap;
+    s_final_color = finalc;
+    s_readback_src = color;  /* until a frame sets it */
     s_fb_w = w;
     s_fb_h = h;
     /* Match the drawable to the render resolution so the end_frame blit is
@@ -1073,6 +1096,284 @@ static void mtl_start_frame(void) {
   }
 }
 
+/* ==========================================================================
+ * Phase 4 — output-VI-filter post-FX (FXAA / bloom / grade / tonemap / gamma /
+ * vignette / CAS sharpen / Bayer dither / RGB555). Fullscreen-triangle chain run
+ * in end_frame, sampling s_scene_color. Ports gfx_opengl.c:2833-3091 (minus SSAO,
+ * which lands in Phase 5) + the per-pass uniform values (gfx_opengl.c:3163-3244).
+ * ========================================================================== */
+
+/* C mirror of the MSL `struct FilterUniforms` — 16-byte aligned, 144 bytes.
+ * Field offsets match the MSL struct (float4@0, float2@16/24, 17 floats@32,
+ * 9 ints@100); trailing pad rounds MSL's align-16 size to 144. */
+struct MtlFilterUniforms {
+    float colorTint[4];     /* 0  (float4; .xyz used) */
+    float srcSize[2];       /* 16 */
+    float dstSize[2];       /* 24 */
+    float colorScale, colorBias, gamma, saturation, contrast, brightness, vignette,
+          bloomThreshold, bloomIntensity, sharpen, levelSat, levelCon,
+          ssaoRadius, ssaoIntensity, ssaoAspect, ssaoProjA, ssaoProjB;  /* 32..99 */
+    int applyPost, dither, bloom, ssao, filterMode, fxaa, tonemap, rgb555, fbH;  /* 100..135 */
+    int _pad[2];            /* 136..143 -> 144 */
+};
+
+static id<MTLLibrary>            s_filter_lib = nil;
+static id<MTLRenderPipelineState> s_filter_pso = nil;
+static id<MTLSamplerState>       s_filter_smp = nil;
+
+static float mtl_clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+/* Diag knobs (default identity) — cached like the other env checks. */
+static float mtl_diag_color_scale(void) {
+    static float v = -1.0f;
+    if (v < 0.0f) { const char *e = getenv("GE007_DIAG_OUTPUT_COLOR_SCALE"); v = (e && e[0]) ? (float)atof(e) : 1.0f; }
+    return v;
+}
+static float mtl_diag_color_bias(void) {
+    static int checked = 0; static float v = 0.0f;
+    if (!checked) { const char *e = getenv("GE007_DIAG_OUTPUT_COLOR_BIAS"); if (e && e[0]) v = (float)atof(e); checked = 1; }
+    return v;
+}
+static int mtl_diag_rgb555_mode(void) {
+    static int m = -1;
+    if (m < 0) {
+        const char *e = getenv("GE007_DIAG_OUTPUT_RGB555");
+        m = 0;
+        if (e && e[0]) {
+            if (!strcmp(e, "1") || !strcmp(e, "on") || !strcmp(e, "true")) m = 1;
+            else if (!strcmp(e, "dither")) m = 2;
+        }
+    }
+    return m;
+}
+
+/* Gate mirrors gfx_opengl_output_color_adjust_active (gfx_opengl.c:2779-2808)
+ * plus the separate bloom term from apply_output_vi_filter's gate (:3289-3295).
+ * VI-downscale + SSAO terms are out of Phase-4 scope (single-pass, SSAO off). */
+static bool mtl_output_filter_active(void) {
+    float gamma = mtl_clampf(g_pcVideoGamma, 0.5f, 2.5f);
+    /* gamma + diag color/rgb555 are honored even with RemasterFX off (display). */
+    if (mtl_diag_color_scale() != 1.0f || mtl_diag_color_bias() != 0.0f ||
+        mtl_diag_rgb555_mode() != 0 || gamma < 0.999f || gamma > 1.001f) return true;
+    if (!g_pcRemasterFX) return false;
+    return mtl_clampf(g_pcVideoSaturation, 0.0f, 2.0f) != 1.0f ||
+           mtl_clampf(g_pcVideoContrast, 0.5f, 2.0f) != 1.0f ||
+           mtl_clampf(g_pcVideoBrightness, -0.5f, 0.5f) != 0.0f ||
+           g_pcOutputDither != 0 ||
+           mtl_clampf(g_pcVignette, 0.0f, 1.0f) > 0.0001f ||
+           g_pcFxaa != 0 ||
+           mtl_clampf(g_pcSharpen, 0.0f, 1.0f) > 0.0001f ||
+           g_pcTonemap != 0 ||
+           g_pcBloom != 0 ||
+           (g_pcGradePresets && (g_pcGradeLevelSat != 1.0f || g_pcGradeLevelCon != 1.0f ||
+                                 g_pcGradeLevelTintR != 1.0f || g_pcGradeLevelTintG != 1.0f ||
+                                 g_pcGradeLevelTintB != 1.0f));
+}
+
+/* Build + compile the fullscreen filter library/PSO/sampler once. Returns false
+ * (caller falls back to the straight blit) on any failure. */
+static bool mtl_ensure_filter_program(void) {
+    if (s_filter_pso != nil) return true;
+    if (s_device == nil) return false;
+    TB s; tb_init(&s, 32768);
+    tb_str(&s, "#include <metal_stdlib>\nusing namespace metal;\n");
+    tb_str(&s, "struct FilterUniforms {\n");
+    tb_str(&s, "  float4 colorTint; float2 srcSize; float2 dstSize;\n");
+    tb_str(&s, "  float colorScale, colorBias, gamma, saturation, contrast, brightness, vignette, bloomThreshold, bloomIntensity, sharpen, levelSat, levelCon, ssaoRadius, ssaoIntensity, ssaoAspect, ssaoProjA, ssaoProjB;\n");
+    tb_str(&s, "  int applyPost, dither, bloom, ssao, filterMode, fxaa, tonemap, rgb555, fbH;\n");
+    tb_str(&s, "};\n");
+    tb_str(&s, "constant float kBayer4[16] = { 0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0, 12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0, 3.0/16.0, 11.0/16.0, 1.0/16.0, 9.0/16.0, 15.0/16.0, 7.0/16.0, 13.0/16.0, 5.0/16.0 };\n");
+    tb_str(&s, "struct FVO { float4 position [[position]]; float2 vTexCoord; };\n");
+    /* Fullscreen triangle; V-flip vTexCoord so v=0 is the TOP of the top-left
+     * scene texture (bloom/vignette sample via vTexCoord). */
+    tb_str(&s, "vertex FVO filterVS(uint vid [[vertex_id]]) {\n");
+    tb_str(&s, "  const float2 kPos[3] = { float2(-1.0,-1.0), float2(3.0,-1.0), float2(-1.0,3.0) };\n");
+    tb_str(&s, "  FVO o; o.position = float4(kPos[vid], 0.0, 1.0);\n");
+    tb_str(&s, "  o.vTexCoord = float2(kPos[vid].x * 0.5 + 0.5, 0.5 - kPos[vid].y * 0.5); return o;\n}\n");
+    /* Color helpers (thread tex+uniforms explicitly — MSL free funcs see no globals).
+     * texelFetch -> uTex.read(uint2) with GL's clamp preserved. */
+    tb_str(&s, "static float4 sampleNearest(texture2d<float> uTex, constant FilterUniforms& u, float2 d) {\n");
+    tb_str(&s, "  int2 p = int2(floor(d * u.srcSize / u.dstSize)); p = clamp(p, int2(0), int2(u.srcSize) - int2(1)); return uTex.read(uint2(p));\n}\n");
+    tb_str(&s, "static float2 fitSizeForAspect(float2 b, float a) { float ba = b.x / b.y; if (ba > a) return float2(b.y * a, b.y); return float2(b.x, b.x / a); }\n");
+    tb_str(&s, "static float4 sampleFitSrcToDst(texture2d<float> uTex, constant FilterUniforms& u, float2 d) {\n");
+    tb_str(&s, "  float sa = u.srcSize.x / u.srcSize.y; float2 fs = fitSizeForAspect(u.dstSize, sa); float2 off = floor((u.dstSize - fs) * 0.5);\n");
+    tb_str(&s, "  if (d.x < off.x || d.y < off.y || d.x >= off.x + fs.x || d.y >= off.y + fs.y) return float4(0.0,0.0,0.0,1.0);\n");
+    tb_str(&s, "  int2 p = int2(floor((d - off) * u.srcSize / fs)); p = clamp(p, int2(0), int2(u.srcSize) - int2(1)); return uTex.read(uint2(p));\n}\n");
+    tb_str(&s, "static float4 sampleFitLogical(texture2d<float> uTex, constant FilterUniforms& u, float2 d) {\n");
+    tb_str(&s, "  float da = u.dstSize.x / u.dstSize.y; float2 fs = fitSizeForAspect(u.srcSize, da); float2 off = floor((u.srcSize - fs) * 0.5);\n");
+    tb_str(&s, "  int2 p = int2(floor(off + d * fs / u.dstSize)); p = clamp(p, int2(0), int2(u.srcSize) - int2(1)); return uTex.read(uint2(p));\n}\n");
+    tb_str(&s, "static float4 sampleCpuBilinear(texture2d<float> uTex, constant FilterUniforms& u, float2 d) {\n");
+    tb_str(&s, "  float2 sc = d * u.srcSize / u.dstSize - float2(0.5); int2 p0 = int2(floor(sc)); float2 f = sc - float2(p0);\n");
+    tb_str(&s, "  if (p0.x < 0) { p0.x = 0; f.x = 0.0; } else if (p0.x >= int(u.srcSize.x) - 1) { p0.x = int(u.srcSize.x) - 1; f.x = 0.0; }\n");
+    tb_str(&s, "  if (p0.y < 0) { p0.y = 0; f.y = 0.0; } else if (p0.y >= int(u.srcSize.y) - 1) { p0.y = int(u.srcSize.y) - 1; f.y = 0.0; }\n");
+    tb_str(&s, "  int2 p1 = min(p0 + int2(1), int2(u.srcSize) - int2(1));\n");
+    tb_str(&s, "  float4 c00 = uTex.read(uint2(p0)); float4 c10 = uTex.read(uint2(int2(p1.x, p0.y)));\n");
+    tb_str(&s, "  float4 c01 = uTex.read(uint2(int2(p0.x, p1.y))); float4 c11 = uTex.read(uint2(p1));\n");
+    tb_str(&s, "  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);\n}\n");
+    tb_str(&s, "static float4 sampleDst(texture2d<float> uTex, constant FilterUniforms& u, float2 d) {\n");
+    tb_str(&s, "  if (u.filterMode == 1) return sampleNearest(uTex, u, d);\n");
+    tb_str(&s, "  else if (u.filterMode == 2) return sampleFitSrcToDst(uTex, u, d);\n");
+    tb_str(&s, "  else if (u.filterMode == 3) return sampleFitLogical(uTex, u, d);\n");
+    tb_str(&s, "  return sampleCpuBilinear(uTex, u, d);\n}\n");
+    tb_str(&s, "static float fxLuma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }\n");
+    tb_str(&s, "static float3 fxaa(texture2d<float> uTex, constant FilterUniforms& u, float2 fc, float3 rgbM) {\n");
+    tb_str(&s, "  float lM = fxLuma(rgbM);\n");
+    tb_str(&s, "  float lN = fxLuma(sampleDst(uTex,u,fc+float2(0.0,-1.0)).rgb); float lS = fxLuma(sampleDst(uTex,u,fc+float2(0.0,1.0)).rgb);\n");
+    tb_str(&s, "  float lW = fxLuma(sampleDst(uTex,u,fc+float2(-1.0,0.0)).rgb); float lE = fxLuma(sampleDst(uTex,u,fc+float2(1.0,0.0)).rgb);\n");
+    tb_str(&s, "  float lNW = fxLuma(sampleDst(uTex,u,fc+float2(-1.0,-1.0)).rgb); float lNE = fxLuma(sampleDst(uTex,u,fc+float2(1.0,-1.0)).rgb);\n");
+    tb_str(&s, "  float lSW = fxLuma(sampleDst(uTex,u,fc+float2(-1.0,1.0)).rgb); float lSE = fxLuma(sampleDst(uTex,u,fc+float2(1.0,1.0)).rgb);\n");
+    tb_str(&s, "  float lMin = min(lM, min(min(lN,lS), min(lW,lE))); float lMax = max(lM, max(max(lN,lS), max(lW,lE)));\n");
+    tb_str(&s, "  float range = lMax - lMin; if (range < max(0.0625, lMax * 0.125)) return rgbM;\n");
+    tb_str(&s, "  float2 dir; dir.x = -((lNW + lNE) - (lSW + lSE)); dir.y = ((lNW + lSW) - (lNE + lSE));\n");
+    tb_str(&s, "  float dirReduce = max((lNW+lNE+lSW+lSE) * 0.03125, 0.0078125); float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n");
+    tb_str(&s, "  dir = clamp(dir * rcpDirMin, float2(-8.0), float2(8.0));\n");
+    tb_str(&s, "  float3 rgbA = 0.5 * (sampleDst(uTex,u,fc + dir * (1.0/3.0 - 0.5)).rgb + sampleDst(uTex,u,fc + dir * (2.0/3.0 - 0.5)).rgb);\n");
+    tb_str(&s, "  float3 rgbB = rgbA * 0.5 + 0.25 * (sampleDst(uTex,u,fc + dir * -0.5).rgb + sampleDst(uTex,u,fc + dir * 0.5).rgb);\n");
+    tb_str(&s, "  float lB = fxLuma(rgbB); if (lB < lMin || lB > lMax) return rgbA; return rgbB;\n}\n");
+    tb_str(&s, "static float3 casSharpen(texture2d<float> uTex, constant FilterUniforms& u, float2 fc, float3 rgbC) {\n");
+    tb_str(&s, "  float3 n = sampleDst(uTex,u,fc+float2(0.0,-1.0)).rgb; float3 so = sampleDst(uTex,u,fc+float2(0.0,1.0)).rgb;\n");
+    tb_str(&s, "  float3 w = sampleDst(uTex,u,fc+float2(-1.0,0.0)).rgb; float3 e = sampleDst(uTex,u,fc+float2(1.0,0.0)).rgb;\n");
+    tb_str(&s, "  float3 mn = min(rgbC, min(min(n,so), min(w,e))); float3 mx = max(rgbC, max(max(n,so), max(w,e)));\n");
+    tb_str(&s, "  float3 amp = clamp(min(mn, 1.0 - mx) / max(mx, 0.0001), 0.0, 1.0); amp = sqrt(amp);\n");
+    tb_str(&s, "  float peak = -0.125 - 0.075 * u.sharpen; float3 wgt = amp * peak;\n");
+    tb_str(&s, "  float3 sum = rgbC + (n + so + w + e) * wgt; float3 rcpW = 1.0 / (1.0 + 4.0 * wgt);\n");
+    tb_str(&s, "  float3 outc = clamp(sum * rcpW, mn, mx); return mix(rgbC, outc, clamp(u.sharpen, 0.0, 1.0));\n}\n");
+    /* Main — orientation: sampleDst/fxaa/casSharpen use UNFLIPPED in.position
+     * (scene + drawable are both top-left; self-consistent like GL's bottom-up);
+     * bloom/vignette use the V-flipped vTexCoord; dither/rgb555 reconstruct GL's
+     * bottom-left pixel index (fbH - position.y) for pixel-exact pattern parity. */
+    tb_str(&s, "fragment float4 filterFragment(FVO in [[stage_in]], constant FilterUniforms& u [[buffer(1)]], texture2d<float> uTex [[texture(0)]], sampler colSmp [[sampler(0)]]) {\n");
+    tb_str(&s, "  float4 color = sampleDst(uTex, u, in.position.xy);\n");
+    tb_str(&s, "  if (u.applyPost == 1 && u.fxaa == 1) color.rgb = fxaa(uTex, u, in.position.xy, color.rgb);\n");
+    tb_str(&s, "  if (u.applyPost == 1 && u.bloom == 1) {\n");
+    tb_str(&s, "    float2 texel = 1.0 / u.srcSize; float3 bloom = float3(0.0); float wsum = 0.0; const int R = 3;\n");
+    tb_str(&s, "    for (int y = -R; y <= R; ++y) for (int x = -R; x <= R; ++x) {\n");
+    tb_str(&s, "      float2 o = float2(float(x), float(y)) * texel * 2.0; float3 sp = uTex.sample(colSmp, in.vTexCoord + o).rgb;\n");
+    tb_str(&s, "      float l = dot(sp, float3(0.299, 0.587, 0.114)); float b = max(l - u.bloomThreshold, 0.0) / max(1.0 - u.bloomThreshold, 0.001);\n");
+    tb_str(&s, "      float wv = exp(-float(x*x + y*y) / 6.0); bloom += sp * b * wv; wsum += wv;\n    }\n");
+    tb_str(&s, "    bloom /= max(wsum, 0.001); color.rgb = clamp(color.rgb + bloom * u.bloomIntensity, 0.0, 1.0);\n  }\n");
+    tb_str(&s, "  float3 rgb = clamp(color.rgb * u.colorScale + float3(u.colorBias / 255.0), 0.0, 1.0);\n");
+    tb_str(&s, "  if (u.applyPost == 1) {\n");
+    tb_str(&s, "    rgb += float3(u.brightness); float con = u.contrast * u.levelCon; rgb = (rgb - 0.5) * con + 0.5;\n");
+    tb_str(&s, "    float luma = dot(rgb, float3(0.299, 0.587, 0.114)); float sat = u.saturation * u.levelSat; rgb = mix(float3(luma), rgb, sat);\n");
+    tb_str(&s, "    rgb *= u.colorTint.rgb;\n");
+    tb_str(&s, "    if (u.tonemap == 1) { float3 t = rgb / (rgb * 0.45 + 0.62); t = pow(t, float3(0.90)); rgb = mix(rgb, t, 0.5); }\n");
+    tb_str(&s, "    rgb = clamp(rgb, 0.0, 1.0);\n  }\n");
+    tb_str(&s, "  rgb = pow(rgb, float3(1.0 / max(u.gamma, 0.001)));\n");
+    tb_str(&s, "  if (u.applyPost == 1 && u.vignette > 0.0) { float2 vc = in.vTexCoord - float2(0.5); float dd = dot(vc, vc) * 2.0; float vig = 1.0 - u.vignette * smoothstep(0.3, 1.0, dd); rgb *= vig; }\n");
+    tb_str(&s, "  if (u.applyPost == 1 && u.sharpen > 0.0) rgb = casSharpen(uTex, u, in.position.xy, rgb);\n");
+    tb_str(&s, "  if (u.applyPost == 1 && u.dither == 1) {\n");
+    tb_str(&s, "    int dx = int(floor(in.position.x)) & 3; int dy = int(floor(float(u.fbH) - in.position.y)) & 3;\n");
+    tb_str(&s, "    float t = kBayer4[dy * 4 + dx] - 0.5; rgb += float3(t / 255.0); rgb = clamp(rgb, 0.0, 1.0);\n  }\n");
+    tb_str(&s, "  if (u.rgb555 != 0) {\n");
+    tb_str(&s, "    float threshold = 0.5;\n");
+    tb_str(&s, "    if (u.rgb555 == 2) { int dx = int(floor(in.position.x)) & 3; int dy = int(floor(float(u.fbH) - in.position.y)) & 3; threshold += kBayer4[dy * 4 + dx] - 0.5; }\n");
+    tb_str(&s, "    rgb = floor(clamp(rgb, 0.0, 1.0) * 31.0 + threshold) / 31.0; rgb = clamp(rgb, 0.0, 1.0);\n  }\n");
+    tb_str(&s, "  return float4(rgb, color.a);\n}\n");
+
+    NSError *err = nil;
+    NSString *nssrc = [NSString stringWithUTF8String:s.p];
+    /* Prefer SAFE math so the rgb555/dither quantize boundaries stay bit-stable
+     * vs GL (fast math may fuse/reassociate the floor(x*31+t) quantize). The
+     * fastMathEnabled property is deprecated (macOS 15) — use mathMode where the
+     * SDK supports it; older SDKs/runtimes keep the default (a sub-LSB nicety). */
+    MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
+    if (@available(macOS 15.0, *)) {
+        opts.mathMode = MTLMathModeSafe;
+    }
+#endif
+    s_filter_lib = [s_device newLibraryWithSource:nssrc options:opts error:&err];
+    tb_free(&s);
+    if (s_filter_lib == nil) {
+        fprintf(stderr, "[metal] output-filter MSL compile failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    id<MTLFunction> vfn = [s_filter_lib newFunctionWithName:@"filterVS"];
+    id<MTLFunction> ffn = [s_filter_lib newFunctionWithName:@"filterFragment"];
+    if (vfn == nil || ffn == nil) return false;
+
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vfn;
+    pd.fragmentFunction = ffn;
+    pd.vertexDescriptor = nil;                 /* fullscreen triangle via [[vertex_id]] */
+    pd.rasterSampleCount = 1;
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    pd.colorAttachments[0].blendingEnabled = NO;
+    s_filter_pso = [s_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (s_filter_pso == nil) {
+        fprintf(stderr, "[metal] output-filter PSO build failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    MTLSamplerDescriptor *smp = [[MTLSamplerDescriptor alloc] init];
+    smp.minFilter = MTLSamplerMinMagFilterLinear;
+    smp.magFilter = MTLSamplerMinMagFilterLinear;
+    smp.mipFilter = MTLSamplerMipFilterNotMipmapped;
+    smp.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    smp.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    s_filter_smp = [s_device newSamplerStateWithDescriptor:smp];
+    return s_filter_pso != nil && s_filter_smp != nil;
+}
+
+/* Fill the filter uniforms for a single pass (src == dst == scene, mode 0,
+ * apply_post = 1), mirroring gfx_opengl_draw_output_filter_texture:3176-3241.
+ * SSAO fields are zeroed (Phase 5). */
+static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u) {
+    memset(u, 0, sizeof *u);
+    int gp = g_pcGradePresets ? 1 : 0;
+    u->colorTint[0] = gp ? g_pcGradeLevelTintR : 1.0f;
+    u->colorTint[1] = gp ? g_pcGradeLevelTintG : 1.0f;
+    u->colorTint[2] = gp ? g_pcGradeLevelTintB : 1.0f;
+    u->colorTint[3] = 1.0f;
+    u->srcSize[0] = (float)s_fb_w; u->srcSize[1] = (float)s_fb_h;
+    u->dstSize[0] = (float)s_fb_w; u->dstSize[1] = (float)s_fb_h;
+    u->colorScale = mtl_diag_color_scale();
+    u->colorBias = mtl_diag_color_bias();
+    u->gamma = mtl_clampf(g_pcVideoGamma, 0.5f, 2.5f);
+    u->saturation = mtl_clampf(g_pcVideoSaturation, 0.0f, 2.0f);
+    u->contrast = mtl_clampf(g_pcVideoContrast, 0.5f, 2.0f);
+    u->brightness = mtl_clampf(g_pcVideoBrightness, -0.5f, 0.5f);
+    u->vignette = mtl_clampf(g_pcVignette, 0.0f, 1.0f);
+    u->bloomThreshold = g_pcBloomThreshold;
+    u->bloomIntensity = g_pcBloomIntensity;
+    u->sharpen = mtl_clampf(g_pcSharpen, 0.0f, 1.0f);
+    u->levelSat = gp ? g_pcGradeLevelSat : 1.0f;
+    u->levelCon = gp ? g_pcGradeLevelCon : 1.0f;
+    u->applyPost = g_pcRemasterFX ? 1 : 0;
+    u->dither = g_pcOutputDither ? 1 : 0;
+    u->bloom = g_pcBloom ? 1 : 0;
+    u->ssao = 0;                 /* Phase 5 */
+    u->filterMode = 0;           /* bilinear; src == dst -> identity fetch */
+    u->fxaa = (g_pcRemasterFX && g_pcFxaa) ? 1 : 0;
+    u->tonemap = (g_pcRemasterFX && g_pcTonemap) ? 1 : 0;
+    u->rgb555 = mtl_diag_rgb555_mode();
+    u->fbH = s_fb_h;
+}
+
+/* Run the output filter as a single fullscreen pass into s_final_color (which is
+ * then blitted to the drawable AND used as the readback source, so screenshots
+ * capture the post-filter image like GL). Returns false if the program isn't
+ * available (caller blits the raw scene instead). */
+static bool mtl_run_output_filter(id<MTLCommandBuffer> cmdbuf) {
+    if (!mtl_ensure_filter_program() || s_scene_color == nil || s_final_color == nil) return false;
+    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+    rpd.colorAttachments[0].texture = s_final_color;
+    rpd.colorAttachments[0].loadAction = MTLLoadActionDontCare;  /* triangle covers all */
+    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> enc = [cmdbuf renderCommandEncoderWithDescriptor:rpd];
+    [enc setRenderPipelineState:s_filter_pso];
+    struct MtlFilterUniforms u;
+    mtl_fill_filter_uniforms(&u);
+    [enc setFragmentBytes:&u length:sizeof u atIndex:1];
+    [enc setFragmentTexture:s_scene_color atIndex:0];
+    [enc setFragmentSamplerState:s_filter_smp atIndex:0];
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [enc endEncoding];
+    return true;
+}
+
 static void mtl_end_frame(void) {
   @autoreleasepool {
     if (s_enc != nil) {
@@ -1100,11 +1401,20 @@ static void mtl_end_frame(void) {
     if ((int)s_layer.drawableSize.width != s_fb_w || (int)s_layer.drawableSize.height != s_fb_h) {
         s_layer.drawableSize = CGSizeMake(s_fb_w, s_fb_h);
     }
+    /* Output-VI-filter chain (Phase 4) when any post-FX is active; otherwise the
+     * raw scene — which keeps the faithful/default path byte-identical (and
+     * covers the case where the filter program failed to build). The presented
+     * texture is also the readback source so screenshots match the display. */
+    id<MTLTexture> present_src = s_scene_color;
+    if (mtl_output_filter_active() && mtl_run_output_filter(s_cmdbuf)) {
+        present_src = s_final_color;
+    }
+    s_readback_src = present_src;
     s_drawable = [s_layer nextDrawable];
-    if (s_drawable != nil && s_scene_color != nil &&
+    if (s_drawable != nil && present_src != nil &&
         (int)s_drawable.texture.width == s_fb_w && (int)s_drawable.texture.height == s_fb_h) {
         id<MTLBlitCommandEncoder> b = [s_cmdbuf blitCommandEncoder];
-        [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+        [b copyFromTexture:present_src sourceSlice:0 sourceLevel:0
               sourceOrigin:MTLOriginMake(0, 0, 0)
                 sourceSize:MTLSizeMake(s_fb_w, s_fb_h, 1)
                  toTexture:s_drawable.texture destinationSlice:0 destinationLevel:0
@@ -1455,13 +1765,20 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
     if (rgb_out == NULL || width <= 0 || height <= 0 || s_scene_color == nil || s_device == nil) {
         return false;
     }
-    /* If a frame is in flight (encoder open), flush its draws so the readback
-     * sees THIS frame's content, then resume the frame (Load-preserved). Metal
-     * serializes command buffers by commit order, so without this a mid-frame
-     * readback (GE007_SCREENSHOT, diag pixel probes) would capture the previous
-     * committed frame. The main screenshot/parity path reads between frames
-     * (s_enc == nil, s_cmdbuf already committed) and is unaffected. */
-    if (s_enc != nil && s_cmdbuf != nil) {
+    /* Source selection matches GL: a MID-frame read (GE007_SCREENSHOT / diag
+     * pixel probes, encoder still open) sees the current scene BEFORE the
+     * output filter (GL's probes read the scene FBO mid-render), so read
+     * s_scene_color; a BETWEEN-frame read (main screenshot, encoder closed)
+     * sees the last PRESENTED image (GL reads its post-filter GL_FRONT), so read
+     * s_readback_src (== s_final_color when the filter ran, else s_scene_color). */
+    bool mid_frame = (s_enc != nil && s_cmdbuf != nil);
+    id<MTLTexture> src_tex = mid_frame ? s_scene_color
+                                       : (s_readback_src != nil ? s_readback_src : s_scene_color);
+    if (mid_frame) {
+        /* Flush the in-flight draws so the readback sees THIS frame's content,
+         * then resume the frame (Load-preserved). Metal serializes command
+         * buffers by commit order, so without this the read would capture the
+         * previous committed frame. */
         [s_enc endEncoding];
         s_enc = nil;
         [s_cmdbuf commit];
@@ -1469,6 +1786,7 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
         s_cmdbuf = [s_queue commandBuffer];
         mtl_open_scene_encoder(false);
     }
+    if (src_tex == nil) return false;
     /* Clamp the requested rect to the attachment. */
     if (x < 0) { width += x; x = 0; }
     if (y < 0) { height += y; y = 0; }
@@ -1486,7 +1804,7 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
 
     id<MTLCommandBuffer> cb = [s_queue commandBuffer];
     id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
-    [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+    [b copyFromTexture:src_tex sourceSlice:0 sourceLevel:0
           sourceOrigin:MTLOriginMake(x, src_top, 0)
             sourceSize:MTLSizeMake(width, height, 1)
               toBuffer:buf destinationOffset:0
