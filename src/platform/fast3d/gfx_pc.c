@@ -4634,6 +4634,8 @@ static int g_diag_trace_shards_after_frame = -2; /* GE007_TRACE_SHARDS_AFTER_FRA
 static int g_diag_critical_room_shard_log = -1; /* opt-in minimal shard/cull logging */
 static int g_diag_trace_fog = -1;    /* GE007_TRACE_FOG_TRIANGLES=1: log room-triangle fog inputs */
 static int g_diag_trace_fog_after_frame = -2; /* GE007_TRACE_FOG_AFTER_FRAME=N */
+static int   g_diag_distance_fog = -1;      /* GE007_DISTANCE_FOG=1: conceal far-geometry gaps (default OFF, cosmetic) */
+static float g_distance_fog_start = 0.95f;  /* GE007_DISTANCE_FOG_START: fog_coord where distance fog begins */
 static int g_diag_trace_rejects = -1; /* GE007_TRACE_TRI_REJECTS=1: log rejected room triangles */
 static int g_diag_trace_rejects_after_frame = -2; /* GE007_TRACE_TRI_REJECTS_AFTER_FRAME=N */
 static int g_diag_trace_rejects_room = -2; /* GE007_TRACE_TRI_REJECTS_ROOM=ID */
@@ -16363,6 +16365,26 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         if (rsp.geometry_mode & G_FOG) {
             float fog_depth = 0.0f;
             float fog_coord = gfx_fog_coord_for_vertex(z, w, &fog_depth);
+            /* GE007_DISTANCE_FOG: default-OFF, cosmetic concealment of faithful
+               far-geometry gaps (e.g. Train corridor sky-leaks). Widens the fog
+               ramp so mid/far geometry fades toward the fog color, matching the
+               N64's "distance shadow". Only ever ADDS fog (never reduces), so it
+               cannot brighten anything; touches only d->fog. Does NOT modify
+               viSetZRange / g_ScaledFarFogIntensity / AI sight range. */
+            if (g_diag_distance_fog < 0) {
+                g_diag_distance_fog = (getenv("GE007_DISTANCE_FOG") != NULL) ? 1 : 0;
+                const char *dfs = getenv("GE007_DISTANCE_FOG_START");
+                if (dfs && *dfs) { float v = strtof(dfs, NULL); if (v > 0.0f && v < 1.0f) g_distance_fog_start = v; }
+            }
+            if (g_diag_distance_fog > 0 && rsp.fog_mul != 0) {
+                float fogzero = -(float)rsp.fog_offset / (float)rsp.fog_mul; /* fog_coord where default fog == 0 */
+                float start = g_distance_fog_start;
+                if (fogzero > start && fogzero < 1.0f && fog_coord > start) {
+                    float t = (fog_coord - start) / (1.0f - start);          /* 0 at start, 1 at far plane */
+                    float remapped = fogzero + t * (1.0f - fogzero);         /* start->fogzero, farplane->1 */
+                    if (remapped > fog_coord) fog_coord = remapped;          /* only ADD fog, never reduce */
+                }
+            }
             /* GE007_FOG_DENSITY: cosmetic haze multiplier on the normalized fog coord,
                applied before fog_mul so fog_offset (near-edge bias) is preserved.
                Default 1.0 makes this multiply bit-identical to the original; the
