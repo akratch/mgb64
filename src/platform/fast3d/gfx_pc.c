@@ -4430,8 +4430,18 @@ static void gfx_sync_current_dimensions_from_window(void) {
      * factor preserves aspect_ratio (clamping each axis independently, or
      * clamping inside ensure_scene_target, would distort or crop). */
     {
-        extern int gfx_opengl_max_offscreen_dim(void);
-        int max_dim = gfx_opengl_max_offscreen_dim();
+        int max_dim;
+#ifdef __APPLE__
+        extern bool gfx_backend_use_metal(void);
+        if (gfx_backend_use_metal()) {
+            extern int gfx_metal_max_offscreen_dim(void);
+            max_dim = gfx_metal_max_offscreen_dim();
+        } else
+#endif
+        {
+            extern int gfx_opengl_max_offscreen_dim(void);
+            max_dim = gfx_opengl_max_offscreen_dim();
+        }
         int largest = scaled_w > scaled_h ? scaled_w : scaled_h;
 
         if (max_dim > 0 && largest > max_dim) {
@@ -22839,6 +22849,10 @@ void gfx_process_n64_dl(const uint8_t *data) {
 /* ===== Public API ===== */
 
 extern struct GfxRenderingAPI gfx_opengl_api;
+#ifdef __APPLE__
+extern struct GfxRenderingAPI gfx_metal_api;   /* native Metal backend (opt-in) */
+extern bool gfx_backend_use_metal(void);        /* gfx_backend.c */
+#endif
 
 /* Tables defined in gfx_ptr.h (declared extern there) */
 uintptr_t gfx_segment_table[16];
@@ -22876,8 +22890,22 @@ static void gfx_sp_reset(void) {
 }
 
 void gfx_init(void) {
+#ifdef __APPLE__
+    gfx_rapi = gfx_backend_use_metal() ? &gfx_metal_api : &gfx_opengl_api;
+#else
     gfx_rapi = &gfx_opengl_api;
+#endif
     gfx_rapi->init();
+#ifdef __APPLE__
+    /* g_depth_clamp_enabled is a cross-backend invariance coupling: the CPU
+     * clipper's GFX_CLIP_Z_SCALE (:219/:223) reads it, and OpenGL sets it inside
+     * gfx_opengl_init(). Metal's init does not run GL's init, so set it here or
+     * the near-frustum triangle admission — and thus the sim-state hash —
+     * silently diverges from the GL path. */
+    if (gfx_backend_use_metal()) {
+        g_depth_clamp_enabled = true;
+    }
+#endif
 
     /* Clear state */
     tex_cache_init();
@@ -22898,6 +22926,17 @@ void gfx_init(void) {
     settex_rgba_h = 0;
     color_combiner_pool_size = 0;
     n64_dl_region_count = 0;
+}
+
+/* Backend-routed framebuffer readback for the platform screenshot path (which
+ * lives in a different TU and cannot see the static gfx_rapi). GL reads via
+ * glReadPixels; Metal via a blit-readback. Both return GL-convention RGB
+ * (bottom-left origin). Returns false if no backend/readback is available. */
+bool gfx_backend_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
+    if (gfx_rapi == NULL || gfx_rapi->read_framebuffer_rgb == NULL) {
+        return false;
+    }
+    return gfx_rapi->read_framebuffer_rgb(x, y, width, height, rgb_out);
 }
 
 static void gfx_diag_screenshot_series_capture_if_due(void)
@@ -23159,10 +23198,18 @@ void gfx_run_dl(Gfx *dl) {
         g_vtx_zero_count = g_vtx_max_count = g_vtx_total_count = 0;
         g_vtx_sample_count = 0;
     }
-    /* Set clear color BEFORE start_frame, which does the glClear */
+    /* Set clear color BEFORE start_frame, which does the clear */
     {
-        extern void gfx_opengl_set_clear_color(float r, float g, float b);
-        gfx_opengl_set_clear_color(clear_r, clear_g, clear_b);
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            extern void gfx_metal_set_clear_color(float r, float g, float b);
+            gfx_metal_set_clear_color(clear_r, clear_g, clear_b);
+        } else
+#endif
+        {
+            extern void gfx_opengl_set_clear_color(float r, float g, float b);
+            gfx_opengl_set_clear_color(clear_r, clear_g, clear_b);
+        }
     }
     gfx_rapi->start_frame();
 
@@ -23187,6 +23234,13 @@ void gfx_run_dl(Gfx *dl) {
                 int sh = gfx_current_dimensions.height;
                 uint8_t *pixels = (uint8_t *)malloc(sw * sh * 3);
                 if (pixels) {
+#ifdef __APPLE__
+                    /* Metal has no GL context; route through the backend
+                     * readback. GL path unchanged (byte-identical). */
+                    if (gfx_backend_use_metal() && gfx_rapi && gfx_rapi->read_framebuffer_rgb) {
+                        gfx_rapi->read_framebuffer_rgb(0, 0, sw, sh, pixels);
+                    } else
+#endif
                     glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
                     FILE *sf = fopen(spath, "wb");
                     if (sf) {
@@ -23206,7 +23260,14 @@ void gfx_run_dl(Gfx *dl) {
 
     gfx_rapi->end_frame();
 #ifdef NATIVE_PORT
-    minimap_overlay_draw_queued_frames();
+    /* The minimap overlay renders with DIRECT OpenGL calls (glGetIntegerv,
+     * glDrawArrays, ...) outside the gfx_rapi vtable, so it would crash on the
+     * Metal path (no GL context). Skip it there until it is ported to the
+     * backend vtable (or a Metal overlay). */
+#ifdef __APPLE__
+    if (!gfx_backend_use_metal())
+#endif
+        minimap_overlay_draw_queued_frames();
 #endif
     gfx_trace_glass_shard_coverage_frame_end();
     gfx_native_sky_queue_reset();
@@ -23918,6 +23979,9 @@ unsigned int gfx_get_segment_mask(void) {
 
 void gfx_end_frame(void) {
     extern SDL_Window *g_sdlWindow;
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) return;  /* Metal presents its drawable in gfx_metal end_frame */
+#endif
     SDL_GL_SwapWindow(g_sdlWindow);
 }
 

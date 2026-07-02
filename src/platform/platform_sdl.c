@@ -119,6 +119,10 @@ static void platformClosePadByInstance(SDL_JoystickID id) {
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
 static SDL_GLContext  g_glContext  = NULL;
+#ifdef __APPLE__
+extern bool gfx_backend_use_metal(void);  /* fast3d/gfx_backend.h */
+SDL_MetalView g_metalView = NULL;          /* non-static: gfx_metal reads its CAMetalLayer */
+#endif
 static int g_sdlQuit = 0;
 static int g_forceNoVsync = 0;
 static int g_backgroundWindow = 0;
@@ -597,6 +601,11 @@ void platformSaveScreenshot(void) {
     int native_size_screenshot = getenv("GE007_DIAG_SCREENSHOT_NATIVE_SIZE") != NULL;
 
     if (g_sdlWindow != NULL) {
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            SDL_Metal_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
+        } else
+#endif
         SDL_GL_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
     }
 
@@ -626,15 +635,31 @@ void platformSaveScreenshot(void) {
         return;
     }
 
-    /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
-     * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
-     * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
-     * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
-     * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
-     * last fully-presented frame (deterministic). Restore GL_BACK after. */
-    glReadBuffer(GL_FRONT);
-    glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
-    glReadBuffer(GL_BACK);
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        /* Metal: blit-readback of the last composited scene texture (the
+         * backend returns GL-convention bottom-left RGB, so downstream BMP/VI
+         * handling is unchanged). */
+        extern bool gfx_backend_read_framebuffer_rgb(int, int, int, int, unsigned char *);
+        if (!gfx_backend_read_framebuffer_rgb(0, 0, src_w, src_h, source_pixels)) {
+            fprintf(stderr, "[metal] screenshot readback failed\n");
+            free(source_pixels);
+            free(pixels);
+            return;
+        }
+    } else
+#endif
+    {
+        /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
+         * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
+         * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
+         * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
+         * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
+         * last fully-presented frame (deterministic). Restore GL_BACK after. */
+        glReadBuffer(GL_FRONT);
+        glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+        glReadBuffer(GL_BACK);
+    }
 
     if (src_w == w && src_h == h) {
         memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);
@@ -1921,6 +1946,51 @@ int platformApplyFaithfulPreset(void)
     return applied;
 }
 
+/* `--remaster` preset: the full "immaculate" remaster in one switch — every
+ * post-FX enabled, INCLUDING SSAO, which is off by default because it op-hangs
+ * Apple's GL-over-Metal translator (the whole reason for the native Metal
+ * backend; --remaster selects GE007_RENDERER=metal in main_pc.c so SSAO runs).
+ * These mirror the registered defaults (already remaster) plus Video.Ssao=1, and
+ * are pinned explicitly so the mode holds even if the user's ge007.ini turned
+ * something off. Applied transiently before env/CLI overrides (which still win)
+ * via the same generic preset-override mechanism as --faithful. */
+static const struct {
+    const char *key;
+    const char *value;
+} s_remasterPreset[] = {
+    { "Video.RemasterFX",    "1" },   /* master post-FX switch on               */
+    { "Video.Ssao",          "1" },   /* the key enable — works via Metal now   */
+    { "Video.Bloom",         "1" },
+    { "Video.Fxaa",          "1" },
+    { "Video.Tonemap",       "1" },
+    { "Video.GradePresets",  "1" },
+    { "Video.RenderScale",   "2" },   /* 2x SSAA (fidelity)                     */
+    { "Video.MSAA",          "0" },   /* SSAA instead of MSAA                   */
+    { "Video.Saturation",    "1.15" },
+    { "Video.Contrast",      "1.08" },
+    { "Video.Brightness",    "0.04" },
+    { "Video.Vignette",      "0.15" },
+    { "Video.Sharpen",       "0.15" },
+    { "Video.OutputDither",  "1" },   /* hide RGBA8 banding in skies/fades      */
+    { "Video.Gamma",         "1" },
+    { "Video.SsaoRadius",    "0.5" },
+    { "Video.SsaoIntensity", "1.0" },
+};
+
+int platformApplyRemasterPreset(void)
+{
+    int applied = 0;
+    size_t i;
+
+    for (i = 0; i < sizeof(s_remasterPreset) / sizeof(s_remasterPreset[0]); i++) {
+        if (settingsApplyRemasterValue(s_remasterPreset[i].key, s_remasterPreset[i].value)) {
+            applied++;
+        }
+    }
+
+    return applied;
+}
+
 void platformGetMouseDelta(int *dx, int *dy) {
     extern int g_freezeInput;
 
@@ -2107,6 +2177,11 @@ int platformInitSDL(void) {
         int window_x;
         int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+#ifdef __APPLE__
+        if (gfx_backend_use_metal()) {
+            window_flags = SDL_WINDOW_METAL | SDL_WINDOW_RESIZABLE;
+        }
+#endif
 
         if (enable_highdpi) {
             window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
@@ -2135,12 +2210,25 @@ int platformInitSDL(void) {
 
     platformApplyWindowMode();
 
-    g_glContext = SDL_GL_CreateContext(g_sdlWindow);
-    if (!g_glContext) {
-        fprintf(stderr, "[SDL] GL context creation failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(g_sdlWindow);
-        SDL_Quit();
-        return -1;
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        g_metalView = SDL_Metal_CreateView(g_sdlWindow);
+        if (!g_metalView) {
+            fprintf(stderr, "[SDL] Metal view creation failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(g_sdlWindow);
+            SDL_Quit();
+            return -1;
+        }
+    } else
+#endif
+    {
+        g_glContext = SDL_GL_CreateContext(g_sdlWindow);
+        if (!g_glContext) {
+            fprintf(stderr, "[SDL] GL context creation failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(g_sdlWindow);
+            SDL_Quit();
+            return -1;
+        }
     }
 
     /* Load OpenGL function pointers via glad (not needed on macOS) */
@@ -2162,6 +2250,11 @@ int platformInitSDL(void) {
     }
 
     g_lastFrameTime = SDL_GetTicks();
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        printf("[SDL] Window created (native Metal)\n");
+    } else
+#endif
     printf("[SDL] Window created (OpenGL %s, GLSL %s)\n",
            glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
     if (platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI")) {
@@ -2193,6 +2286,14 @@ int platformInitSDL(void) {
 
     return 0;
 }
+
+#ifdef __APPLE__
+/* Returns the CAMetalLayer* (as void*) backing the SDL Metal view, for the
+ * native Metal backend to render into. NULL when not on the Metal path. */
+void *platformGetMetalLayer(void) {
+    return g_metalView ? SDL_Metal_GetLayer(g_metalView) : NULL;
+}
+#endif
 
 /**
  * Process SDL events and check for quit.

@@ -43,11 +43,19 @@ GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33 \
 ```
 
 ### 3. Full remaster (default — cinematic)
-HD textures + SSAA + FXAA + bloom + color grade + filmic tonemap + the rest.
+HD textures + SSAA + FXAA + bloom + color grade + filmic tonemap + **SSAO** + the rest.
 ```bash
-GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33
-# add --config-override Video.RenderScale=4 for maximum SSAA
+# One switch — the full immaculate remaster, all post-FX incl. SSAO:
+./build/ge007 --level 33 --remaster
+# (add HD textures with GE007_TEXTURE_PACK=... ; --config-override Video.RenderScale=4 for max SSAA)
 ```
+`--remaster` is the mirror of `--faithful`: it pins RemasterFX + SSAO + bloom/FXAA/
+tonemap/grade/vignette/sharpen/dither + 2× SSAA for that launch, and env/
+`--config-override` still win. **On macOS it selects the native Metal renderer
+(`GE007_RENDERER=metal`)** because SSAO op-hangs Apple's deprecated GL-over-Metal
+translator — the native Metal backend is what makes SSAO available on macOS. On
+Linux/Windows the native GL path runs the same effects (SSAO included) directly.
+Manual equivalent: `GE007_RENDERER=metal ./build/ge007 --level 33 --config-override Video.Ssao=1`.
 
 ## Master switches
 
@@ -67,7 +75,8 @@ GE007_TEXTURE_PACK="$HOME/ge007_dam_hd" ./build/ge007 --level 33
 | `Video.Saturation` / `Contrast` / `Brightness` | `1.15` / `1.08` / `0.04` | Output color grade (`1`/`1`/`0` = identity). |
 | `Video.Tonemap` | `1` | Gentle filmic shadow-lift + highlight rolloff. |
 | `Video.Bloom` (+`BloomThreshold`/`Intensity`) | `1` (0.8/0.5) | Light bleed on bright areas. |
-| `Video.Ssao` (+`SsaoRadius`/`SsaoIntensity`) | `0` (0.5/1.0) | Screen-space ambient occlusion: depth-based contact darkening in crevices/corners/under geometry. Opt-in (needs `RemasterFX=1`); forces the internal scene buffer when on. |
+| `Video.Ssao` (+`SsaoRadius`/`SsaoIntensity`) | `0` (0.5/1.0) | Screen-space ambient occlusion: depth-based contact darkening in crevices/corners/under geometry. Needs `RemasterFX=1`. Default-off because it **op-hangs Apple's GL-over-Metal** translator — enable it via `--remaster` / `GE007_RENDERER=metal` on macOS (native Metal samples the depth directly, no hang), or on native Linux/Windows GL. `--remaster` turns it on. |
+| `GE007_RENDERER` | `gl` | `metal` selects the native Metal backend (macOS only; opt-in). Required for SSAO on macOS; `--remaster` sets it automatically. GL stays the default and byte-identical everywhere. |
 | `Video.Vignette` | `0.15` | Soft edge falloff. |
 | `Video.Fxaa` / `Video.Sharpen` | `1` / `0.15` | Edge AA / adaptive sharpen. |
 | `Video.OutputDither` | `1` | Anti-banding ordered dither. |
