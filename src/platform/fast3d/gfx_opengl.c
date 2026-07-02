@@ -3198,7 +3198,11 @@ static void gfx_opengl_draw_output_filter_texture(GLuint texture_id,
     glUniform1f(glGetUniformLocation(g_output_filter_program, "uBloomIntensity"),
                 g_pcBloomIntensity);
     {
-        int ssao_on = (apply_post && g_pcSsao != 0 && g_scene_depth_valid &&
+        /* g_pcRemasterFX gates SSAO (it is a remaster effect — see
+         * gfx_opengl_output_ssao_active): required so SSAO does not apply with the
+         * master remaster switch OFF when RenderScale>1 forces the scene FBO, and
+         * to stay in lockstep with the Metal backend's SSAO gate. */
+        int ssao_on = (apply_post && g_pcRemasterFX && g_pcSsao != 0 && g_scene_depth_valid &&
                        g_pc_ssao_proj_b != 0.0f) ? 1 : 0;
         if (ssao_on) {
             glActiveTexture(GL_TEXTURE1);

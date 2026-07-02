@@ -213,6 +213,7 @@ const char *settingsOverrideSourceName(SettingOverrideSource source)
         case SETTING_OVERRIDE_ENV:      return "env";
         case SETTING_OVERRIDE_CLI:      return "cli";
         case SETTING_OVERRIDE_FAITHFUL: return "faithful";
+        case SETTING_OVERRIDE_REMASTER: return "remaster";
         default:                        return "unknown";
     }
 }
@@ -275,7 +276,8 @@ void settingsMarkCliOverride(const char *key)
     }
 }
 
-s32 settingsApplyFaithfulValue(const char *key, const char *value)
+static s32 settingsApplyPresetValue(const char *key, const char *value,
+                                    SettingOverrideSource source)
 {
     Setting *setting = settingsFindMutable(key);
 
@@ -287,8 +289,18 @@ s32 settingsApplyFaithfulValue(const char *key, const char *value)
         return 0;
     }
 
-    setting->override_source = SETTING_OVERRIDE_FAITHFUL;
+    setting->override_source = source;
     return 1;
+}
+
+s32 settingsApplyFaithfulValue(const char *key, const char *value)
+{
+    return settingsApplyPresetValue(key, value, SETTING_OVERRIDE_FAITHFUL);
+}
+
+s32 settingsApplyRemasterValue(const char *key, const char *value)
+{
+    return settingsApplyPresetValue(key, value, SETTING_OVERRIDE_REMASTER);
 }
 
 void settingsApplyEnvOverrides(void)

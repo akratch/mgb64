@@ -1190,6 +1190,11 @@ static bool mtl_output_filter_active(void) {
            mtl_clampf(g_pcSharpen, 0.0f, 1.0f) > 0.0f ||   /* GL's use_sharpen gate is >0 (:3293) */
            g_pcTonemap != 0 ||
            g_pcBloom != 0 ||
+           /* SSAO alone must trigger the filter chain (mirrors GL's use_ssao,
+            * gfx_opengl.c:3292 — output_ssao_active is RemasterFX && Ssao, and we
+            * are already past the !RemasterFX early-out; proj_b!=0 stands in for
+            * GL's g_scene_depth_valid on the single-sample Metal path). */
+           (g_pcSsao != 0 && g_pc_ssao_proj_b != 0.0f) ||
            (g_pcGradePresets && (g_pcGradeLevelSat != 1.0f || g_pcGradeLevelCon != 1.0f ||
                                  g_pcGradeLevelTintR != 1.0f || g_pcGradeLevelTintG != 1.0f ||
                                  g_pcGradeLevelTintB != 1.0f));

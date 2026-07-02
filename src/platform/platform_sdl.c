@@ -1983,7 +1983,7 @@ int platformApplyRemasterPreset(void)
     size_t i;
 
     for (i = 0; i < sizeof(s_remasterPreset) / sizeof(s_remasterPreset[0]); i++) {
-        if (settingsApplyFaithfulValue(s_remasterPreset[i].key, s_remasterPreset[i].value)) {
+        if (settingsApplyRemasterValue(s_remasterPreset[i].key, s_remasterPreset[i].value)) {
             applied++;
         }
     }

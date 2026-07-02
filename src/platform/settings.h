@@ -21,7 +21,8 @@ typedef enum SettingOverrideSource {
     SETTING_OVERRIDE_NONE,
     SETTING_OVERRIDE_ENV,
     SETTING_OVERRIDE_CLI,
-    SETTING_OVERRIDE_FAITHFUL
+    SETTING_OVERRIDE_FAITHFUL,
+    SETTING_OVERRIDE_REMASTER
 } SettingOverrideSource;
 
 typedef union SettingValue {
@@ -83,6 +84,10 @@ void settingsMarkCliOverride(const char *key);
  * -- a `--faithful` run leaves the user's saved ge007.ini untouched. Returns 1
  * if the value was applied. Used by platformApplyFaithfulPreset(). */
 s32 settingsApplyFaithfulValue(const char *key, const char *value);
+/* Same transient-override mechanism as settingsApplyFaithfulValue, but stamps
+ * SETTING_OVERRIDE_REMASTER so diagnostics label it correctly. Used by
+ * platformApplyRemasterPreset() (the --remaster launch preset). */
+s32 settingsApplyRemasterValue(const char *key, const char *value);
 void settingsApplyEnvOverrides(void);
 void settingsResetAllToDefaults(void);
 void settingsPrintList(FILE *f);

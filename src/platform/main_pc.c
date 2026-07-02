@@ -741,9 +741,15 @@ int main(int argc, char **argv)
          * on macOS). Applied transiently before env/CLI overrides so an explicit
          * --config-override still wins; not persisted to ge007.ini. */
         int n = platformApplyRemasterPreset();
+        /* Read-only session (like --faithful): suppress every save path so the
+         * launch-only preset is NEVER persisted. Critical — without this,
+         * `--remaster --config-set ...` would write Video.Ssao=1 into ge007.ini,
+         * and a later plain (GL) launch on macOS would reload it and re-trigger
+         * the GL-over-Metal SSAO op-hang this whole backend exists to avoid. */
+        configSetSaveSuppressed(1);
         printf("[CONFIG] --remaster: enabled %d remaster setting(s) (RemasterFX + SSAO + "
                "bloom/FXAA/tonemap/grade/vignette/sharpen/dither, 2x SSAA)%s. "
-               "Launch-only preset; env/--config-override still win.\n",
+               "Launch-only preset; env/--config-override still win. ge007.ini not modified.\n",
                n,
 #ifdef __APPLE__
                " on the native Metal backend"
@@ -768,9 +774,10 @@ int main(int argc, char **argv)
         }
     }
     if (resetConfig || configSetCount > 0) {
-        if (faithful) {
-            printf("[CONFIG] --faithful is a read-only session; --config-set/--reset-config "
-                   "was applied to this run only and NOT written to ge007.ini.\n");
+        if (faithful || remaster) {
+            printf("[CONFIG] --%s is a read-only session; --config-set/--reset-config "
+                   "was applied to this run only and NOT written to ge007.ini.\n",
+                   faithful ? "faithful" : "remaster");
         } else if (!configSave()) {
             return 1;
         }
