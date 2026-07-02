@@ -12,9 +12,15 @@
  * (gfx_opengl.c:722-1449) to emit MSL, with LUS p_shader_item_to_str as a 1:1
  * correctness oracle.
  *
- * Phase 1 (bring-up): device/queue/CAMetalLayer + per-frame clear + present.
- * Phase 2 (this file): combiner -> MSL shader translation + MTLLibrary compile.
- * Geometry/textures/blend/readback land in Phase 3.
+ * Implemented (Phases 1-3): device/queue/CAMetalLayer bring-up + clear/present;
+ * combiner -> MSL translation + per-combiner MTLLibrary/MTLRenderPipelineState;
+ * offscreen scene targets (color + Depth32Float); texture upload; blend/depth/
+ * sampler baked into cached PSOs; deferred-state draw flush over a ring vertex
+ * arena; the RDP-memory / coverage-memory XLU framebuffer snapshot-and-resume;
+ * and synchronous CPU readback (screenshots/probes).
+ * The Phase 4/5 SSAO + output-VI-filter hook builds on the offscreen scene
+ * color/depth targets and the snapshot machinery (see mtl_ensure_targets /
+ * mtl_open_scene_encoder below).
  * ARC-managed (CMake sets -fobjc-arc for this TU).
  */
 
@@ -35,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <dispatch/dispatch.h>
 
 /* gfx_cc.c / gfx_rendering_api are C TUs — force C linkage so the mangled
  * references from this ObjC++ TU resolve to the unmangled C symbols. */
@@ -56,7 +63,10 @@ struct TB {
 static void tb_init(TB *b, size_t cap) {
     b->p = (char *)malloc(cap);
     b->len = 0;
-    b->cap = cap;
+    /* cap stays 0 on OOM so tb_str/tb_fmt no-op (their `len+n+1 > cap` guard
+     * rejects everything) rather than dereferencing a NULL buffer; the empty
+     * source then routes into the controlled MSL-compile abort. */
+    b->cap = b->p ? cap : 0;
     if (b->p) b->p[0] = '\0';
 }
 static void tb_free(TB *b) { free(b->p); b->p = NULL; }
@@ -131,19 +141,18 @@ struct MetalShader {
     int numFloats;
     int numInputs;
     bool usedTextures[2];
-    bool usedNoise;
-    bool usedN64Filter;
     bool diagRdpMemory;
     bool diagRdpCvgMemory;
     MtlAttr attrs[32];
     int numAttrs;
 };
 
-/* Heap-allocated, never moved — ARC manages the __strong members. Lives for the
- * process (like GL's shader_program_pool[256]). */
-#define MTL_MAX_SHADERS 1024
-static MetalShader *s_shaders[MTL_MAX_SHADERS];
+/* Heap-allocated, never moved — ARC manages the __strong members. The pointer
+ * array grows on demand (realloc) so lookups always hit and no compiled shader
+ * is ever dropped/recompiled (unlike a fixed cap). Lives for the process. */
+static MetalShader **s_shaders = nullptr;
 static int s_shader_count = 0;
+static int s_shader_cap = 0;
 static MetalShader *s_cur_shader = nullptr;
 
 /* Diagnostic MSL dump (mirrors GL's [SHADER_n] dump at gfx_opengl.c:1290). */
@@ -606,14 +615,8 @@ static struct ShaderProgram *mtl_create_and_load_new_shader(uint64_t id0, uint32
     ms->numInputs = ms->cc.num_inputs;
     ms->usedTextures[0] = ms->cc.used_textures[0];
     ms->usedTextures[1] = ms->cc.used_textures[1];
-    ms->usedN64Filter = ms->cc.n64_filter[0] || ms->cc.n64_filter[1];
     ms->diagRdpMemory = ms->cc.opt_alpha && ms->cc.diag_rdp_memory_blend;
     ms->diagRdpCvgMemory = ms->cc.opt_alpha && ms->cc.diag_rdp_cvg_memory_blend;
-    ms->usedNoise = ms->cc.opt_noise;
-    for (int ci = 0; ci < 2 && !ms->usedNoise; ci++)
-        for (int cj = 0; cj < 2 && !ms->usedNoise; cj++)
-            for (int ck = 0; ck < 4 && !ms->usedNoise; ck++)
-                if (ms->cc.c[ci][cj][ck] == SHADER_NOISE) ms->usedNoise = true;
 
     TB src;
     tb_init(&src, 65536);
@@ -644,10 +647,20 @@ static struct ShaderProgram *mtl_create_and_load_new_shader(uint64_t id0, uint32
     }
     ms->psoCache = [NSMutableDictionary dictionary];
 
-    if (s_shader_count < MTL_MAX_SHADERS) {
+    if (s_shader_count >= s_shader_cap) {
+        int newcap = s_shader_cap ? s_shader_cap * 2 : 256;
+        MetalShader **grown = (MetalShader **)realloc(s_shaders, (size_t)newcap * sizeof(MetalShader *));
+        if (grown != nullptr) {
+            s_shaders = grown;
+            s_shader_cap = newcap;
+        }
+    }
+    if (s_shader_count < s_shader_cap) {
         s_shaders[s_shader_count++] = ms;
     } else {
-        fprintf(stderr, "[metal] WARNING: shader pool full (%d) — leaking new shader\n", MTL_MAX_SHADERS);
+        /* realloc failed (OOM) — the shader still works for this call; it just
+         * won't be cached (may recompile). Prefer that over a crash. */
+        fprintf(stderr, "[metal] WARNING: shader pool grow failed — not caching\n");
     }
     s_cur_shader = ms;
     return (struct ShaderProgram *)ms;
@@ -720,6 +733,21 @@ static int s_sc_x = 0, s_sc_y = 0, s_sc_w = 0, s_sc_h = 0;
 static bool s_sc_set = false;
 static uint32_t s_frame_count_metal = 0;
 
+/* Triple-buffered vertex arena — replaces a per-draw newBufferWithBytes (which
+ * was thousands of driver allocations/frame on foliage/glass scenes). Each real
+ * frame bump-allocates from one of MTL_VBUF_SLOTS StorageModeShared buffers; a
+ * dispatch_semaphore throttles the CPU to <= MTL_VBUF_SLOTS frames ahead so a
+ * slot is only reused after its GPU work completes. Draws that overflow a slot
+ * fall back to a one-off buffer (rare; grows the high-water for next (re)alloc). */
+#define MTL_VBUF_SLOTS 3
+static id<MTLBuffer> s_vbuf[MTL_VBUF_SLOTS];
+static size_t s_vbuf_cap[MTL_VBUF_SLOTS];
+static int s_vbuf_slot = 0;
+static size_t s_vbuf_cursor = 0;
+static size_t s_vbuf_want = (2u << 20);  /* high-water target for slot (re)alloc; 2 MB seed */
+static int s_ring_index = 0;             /* advances per REAL frame (cmdbuf created), not per skip */
+static dispatch_semaphore_t s_frame_sem = nil;
+
 /* Texture registry (id -> MTLTexture) + pipeline/depth/sampler caches. */
 static NSMutableDictionary<NSNumber *, id<MTLTexture>> *s_textures = nil;
 static NSMutableDictionary<NSNumber *, id<MTLDepthStencilState>> *s_depth_cache = nil;
@@ -746,29 +774,54 @@ static MTLSamplerAddressMode mtl_wrap(uint32_t v) {
                                    : MTLSamplerAddressModeRepeat;
 }
 
+extern "C" int gfx_metal_max_offscreen_dim(void);  /* defined below */
+
 static void mtl_ensure_targets(int w, int h) {
     if (w <= 0 || h <= 0) return;
+    int cap = gfx_metal_max_offscreen_dim();
+    if (w > cap) w = cap;
+    if (h > cap) h = cap;
     if (s_scene_color != nil && s_fb_w == w && s_fb_h == h) return;
+    /* Scene color: render target + blit source (present/readback/snapshot). NOT
+     * sampled in a shader — the sampled copy is s_snapshot_tex — so it does NOT
+     * need ShaderRead; omitting it keeps the faster RT-compressed layout. */
     MTLTextureDescriptor *cd =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                            width:w height:h mipmapped:NO];
-    cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    cd.usage = MTLTextureUsageRenderTarget;
     cd.storageMode = MTLStorageModePrivate;
-    s_scene_color = [s_device newTextureWithDescriptor:cd];
+    id<MTLTexture> color = [s_device newTextureWithDescriptor:cd];
+    /* Depth: render target only for now. Phase 5 SSAO samples it — re-add
+     * MTLTextureUsageShaderRead (+ storeAction=Store) there. */
     MTLTextureDescriptor *dd =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                                            width:w height:h mipmapped:NO];
-    dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    dd.usage = MTLTextureUsageRenderTarget;
     dd.storageMode = MTLStorageModePrivate;
-    s_scene_depth = [s_device newTextureWithDescriptor:dd];
-    /* XLU/RDP snapshot target: a copy of the scene color the fragment can sample
+    id<MTLTexture> depth = [s_device newTextureWithDescriptor:dd];
+    /* XLU/RDP snapshot target: a copy of the scene color the fragment samples
      * mid-frame (Phase 3.3). Same format so the blit-copy is exact. */
     MTLTextureDescriptor *sd =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                            width:w height:h mipmapped:NO];
     sd.usage = MTLTextureUsageShaderRead;
     sd.storageMode = MTLStorageModePrivate;
-    s_snapshot_tex = [s_device newTextureWithDescriptor:sd];
+    id<MTLTexture> snap = [s_device newTextureWithDescriptor:sd];
+
+    if (color == nil || depth == nil || snap == nil) {
+        /* Partial allocation failure: bind nothing broken. Leave s_fb_w/h
+         * unchanged so the line-above early-out doesn't latch a bad size and
+         * start_frame's `s_scene_color == nil` guard skips the frame; next frame
+         * retries. */
+        fprintf(stderr, "[metal] WARNING: scene target allocation failed (%dx%d)\n", w, h);
+        s_scene_color = nil;
+        s_scene_depth = nil;
+        s_snapshot_tex = nil;
+        return;
+    }
+    s_scene_color = color;
+    s_scene_depth = depth;
+    s_snapshot_tex = snap;
     s_fb_w = w;
     s_fb_h = h;
     /* Match the drawable to the render resolution so the end_frame blit is
@@ -783,7 +836,9 @@ static void mtl_ensure_white(void) {
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                            width:1 height:1 mipmapped:NO];
     d.usage = MTLTextureUsageShaderRead;
+    d.storageMode = MTLStorageModeShared;
     s_white_tex = [s_device newTextureWithDescriptor:d];
+    if (s_white_tex == nil) return;  /* draw falls back to whatever is bound; no crash */
     uint8_t white[4] = {255, 255, 255, 255};
     [s_white_tex replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:white bytesPerRow:4];
 }
@@ -814,9 +869,15 @@ static id<MTLRenderPipelineState> mtl_pso_for(MetalShader *ms, enum GfxBlendMode
     uint64_t key = (uint64_t)(blend & 0xF) |
                    ((uint64_t)(samples & 0xFF) << 4) |
                    ((uint64_t)(write_alpha ? 1 : 0) << 12);
+    /* Fast path: consecutive draws usually share shader+state — skip the
+     * NSNumber boxing + dictionary lookup (and its autoreleased temporary). */
+    static MetalShader *last_ms = nullptr;
+    static uint64_t last_key = ~0ull;
+    static id<MTLRenderPipelineState> last_pso = nil;
+    if (ms == last_ms && key == last_key && last_pso != nil) return last_pso;
     NSNumber *k = @(key);
     id<MTLRenderPipelineState> pso = ms->psoCache[k];
-    if (pso != nil) return pso;
+    if (pso != nil) { last_ms = ms; last_key = key; last_pso = pso; return pso; }
 
     MTLRenderPipelineDescriptor *d = [[MTLRenderPipelineDescriptor alloc] init];
     d.vertexFunction = ms->vtxFn;
@@ -860,14 +921,18 @@ static id<MTLRenderPipelineState> mtl_pso_for(MetalShader *ms, enum GfxBlendMode
         abort();
     }
     ms->psoCache[k] = pso;
+    last_ms = ms; last_key = key; last_pso = pso;
     return pso;
 }
 
 static id<MTLDepthStencilState> mtl_depth_state_for(bool test, bool update, bool compare, uint16_t zmode) {
     uint64_t key = (test ? 1 : 0) | (update ? 2 : 0) | (compare ? 4 : 0) | ((uint64_t)zmode << 3);
+    static uint64_t last_key = ~0ull;
+    static id<MTLDepthStencilState> last_ds = nil;
+    if (key == last_key && last_ds != nil) return last_ds;
     NSNumber *k = @(key);
     id<MTLDepthStencilState> ds = s_depth_cache[k];
-    if (ds != nil) return ds;
+    if (ds != nil) { last_key = key; last_ds = ds; return ds; }
     MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
     /* GL: test+compare -> LEQUAL (all live zmodes); test+!compare -> ALWAYS
      * (write-only); !test -> disabled (ALWAYS, no write). */
@@ -876,14 +941,18 @@ static id<MTLDepthStencilState> mtl_depth_state_for(bool test, bool update, bool
     dd.depthWriteEnabled = (test && update);
     ds = [s_device newDepthStencilStateWithDescriptor:dd];
     s_depth_cache[k] = ds;
+    last_key = key; last_ds = ds;
     return ds;
 }
 
 static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t cmt) {
     uint64_t key = (linear ? 1 : 0) | ((uint64_t)(cms & 0xFFFF) << 1) | ((uint64_t)(cmt & 0xFFFF) << 17);
+    static uint64_t last_key = ~0ull;
+    static id<MTLSamplerState> last_s = nil;
+    if (key == last_key && last_s != nil) return last_s;
     NSNumber *k = @(key);
     id<MTLSamplerState> s = s_sampler_cache[k];
-    if (s != nil) return s;
+    if (s != nil) { last_key = key; last_s = s; return s; }
     MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
     MTLSamplerMinMagFilter f = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     sd.minFilter = f;
@@ -894,6 +963,7 @@ static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t c
     sd.maxAnisotropy = linear ? 16 : 1;
     s = [s_device newSamplerStateWithDescriptor:sd];
     s_sampler_cache[k] = s;
+    last_key = key; last_s = s;
     return s;
 }
 
@@ -919,10 +989,15 @@ static void mtl_open_scene_encoder(bool clear) {
 static void mtl_init(void) {
     s_device = MTLCreateSystemDefaultDevice();
     if (s_device == nil) {
-        fprintf(stderr, "[metal] FATAL: MTLCreateSystemDefaultDevice returned nil\n");
-        return;
+        /* No usable Metal device. The backend is already selected upstream and
+         * there is no in-process GL fallback, so fail here with a clear cause
+         * rather than aborting later inside newLibraryWithSource with a
+         * misleading "MSL compile failed" message. */
+        fprintf(stderr, "[metal] FATAL: MTLCreateSystemDefaultDevice returned nil — no usable Metal device\n");
+        abort();
     }
     s_queue = [s_device newCommandQueue];
+    s_frame_sem = dispatch_semaphore_create(MTL_VBUF_SLOTS);
     s_layer = (__bridge CAMetalLayer *)platformGetMetalLayer();
     if (s_layer != nil) {
         s_layer.device = s_device;
@@ -954,6 +1029,8 @@ static void mtl_init(void) {
 }
 
 static void mtl_start_frame(void) {
+  @autoreleasepool {  /* drains per-frame autoreleased temporaries — without it,
+                       * the C game loop never drains and RSS/drawable pool grow. */
     if (s_layer == nil || s_queue == nil) return;
     s_frame_count_metal++;
     /* Render at the frontend's resolution (gfx_current_dimensions), which the
@@ -970,6 +1047,22 @@ static void mtl_start_frame(void) {
     mtl_ensure_white();
     if (s_scene_color == nil) return;
 
+    /* Throttle the CPU to <= MTL_VBUF_SLOTS frames ahead so the ring slot we are
+     * about to write is not still being read by the GPU. Placed AFTER the early
+     * returns and immediately before the command buffer is created, so this wait
+     * is exactly paired with the signal in end_frame (which runs iff s_cmdbuf). */
+    if (s_frame_sem != nil) dispatch_semaphore_wait(s_frame_sem, DISPATCH_TIME_FOREVER);
+    s_vbuf_slot = s_ring_index % MTL_VBUF_SLOTS;
+    s_ring_index++;
+    s_vbuf_cursor = 0;
+    if (s_vbuf[s_vbuf_slot] == nil || s_vbuf_cap[s_vbuf_slot] < s_vbuf_want) {
+        /* Safe to (re)allocate: the semaphore guarantees this slot's prior GPU
+         * work completed. Any still-in-flight reference to the old buffer is
+         * retained by its command buffer until the GPU is done. */
+        s_vbuf[s_vbuf_slot] = [s_device newBufferWithLength:s_vbuf_want options:MTLResourceStorageModeShared];
+        s_vbuf_cap[s_vbuf_slot] = (s_vbuf[s_vbuf_slot] != nil) ? s_vbuf_want : 0;
+    }
+
     s_cmdbuf = [s_queue commandBuffer];
     mtl_open_scene_encoder(true);
 
@@ -977,14 +1070,36 @@ static void mtl_start_frame(void) {
         fprintf(stderr, "[metal] first frame: scene %dx%d, geometry encoder open\n", s_fb_w, s_fb_h);
         s_logged_first_frame = true;
     }
+  }
 }
 
 static void mtl_end_frame(void) {
+  @autoreleasepool {
     if (s_enc != nil) {
         [s_enc endEncoding];
         s_enc = nil;
     }
     if (s_cmdbuf == nil) return;
+    /* Signal the frame throttle when THIS command buffer completes, and surface
+     * GPU faults/device loss (otherwise silently swallowed). Balanced with the
+     * start_frame wait (both gated on s_cmdbuf existing). If the readback path
+     * split the frame, this is the final command buffer, and in-order completion
+     * means all of the frame's buffers are done when it fires. */
+    if (s_frame_sem != nil) {
+        [s_cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+            if (cb.status == MTLCommandBufferStatusError) {
+                fprintf(stderr, "[metal] command buffer error: %s\n",
+                        cb.error ? cb.error.localizedDescription.UTF8String : "(unknown)");
+            }
+            dispatch_semaphore_signal(s_frame_sem);
+        }];
+    }
+    /* CAMetalLayer can resize drawableSize async during a window resize or a drag
+     * across displays of differing backing scale. Re-assert the render size so
+     * the equal-size check below doesn't drop the present and freeze the screen. */
+    if ((int)s_layer.drawableSize.width != s_fb_w || (int)s_layer.drawableSize.height != s_fb_h) {
+        s_layer.drawableSize = CGSizeMake(s_fb_w, s_fb_h);
+    }
     s_drawable = [s_layer nextDrawable];
     if (s_drawable != nil && s_scene_color != nil &&
         (int)s_drawable.texture.width == s_fb_w && (int)s_drawable.texture.height == s_fb_h) {
@@ -1000,6 +1115,7 @@ static void mtl_end_frame(void) {
     [s_cmdbuf commit];
     s_drawable = nil;
     s_cmdbuf = nil;
+  }
 }
 
 static void mtl_finish_render(void) {
@@ -1028,6 +1144,7 @@ static bool mtl_z_is_from_0_to_1(void) { return true; }
 
 static uint32_t mtl_new_texture(void) {
     static uint32_t next_id = 1;  /* nonzero, monotonic — 0 reads as "unset" */
+    if (next_id == 0) next_id = 1;  /* skip the reserved 0 on the (2^32) wrap */
     return next_id++;
 }
 
@@ -1043,7 +1160,11 @@ static void mtl_select_texture(int tile, uint32_t texture_id) {
 }
 
 static bool mtl_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
-    if (rgba32_buf == NULL || width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+  @autoreleasepool {
+    /* Reject >4096 to match gfx_opengl_upload_texture's guard: an oversized HD
+     * asset must fall through to the frontend's native-texel fallback on BOTH
+     * backends (gfx_pc.c:21067), or GL and Metal diverge. */
+    if (rgba32_buf == NULL || width <= 0 || height <= 0 || width > 4096 || height > 4096) {
         return false;
     }
     MTLTextureDescriptor *d =
@@ -1059,6 +1180,7 @@ static bool mtl_upload_texture(const uint8_t *rgba32_buf, int width, int height)
         s_textures[@(s_last_selected_id)] = tex;
     }
     return true;
+  }
 }
 
 static void mtl_set_sampler_parameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
@@ -1082,7 +1204,9 @@ static void mtl_set_viewport(int x, int y, int width, int height) {
     s_vp_y = y;
     s_vp_w = width;
     s_vp_h = height;
-    if (getenv("GE007_METAL_DEBUG_VP")) {
+    static int dbg = -1;  /* cache like the other env checks (was a per-call getenv) */
+    if (dbg < 0) dbg = getenv("GE007_METAL_DEBUG_VP") ? 1 : 0;
+    if (dbg) {
         static int n = 0;
         if (n++ < 16)
             fprintf(stderr, "[metal-vp] set_viewport(%d,%d,%d,%d) fb=%dx%d flipY=%d\n",
@@ -1135,26 +1259,109 @@ static void mtl_set_blend_mode(enum GfxBlendMode mode) {
          mode == GFX_BLEND_ALPHA_COVERAGE || mode == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
 }
 
+/* Union of the batch's triangle screen rects in GL (bottom-left) viewport space,
+ * ported from gfx_opengl_compute_batch_snapshot_rect. Only valid for the
+ * coverage-memory path, whose VBO carries the flat diag-tri NDC at floats 4..9
+ * of each triangle's first vertex (stride >= 10). Returns false if unusable. */
+static bool mtl_rdp_batch_rect_cvg(const float *buf_vbo, size_t buf_vbo_len,
+                                   size_t num_tris, int out[4]) {
+    if (buf_vbo == NULL || num_tris == 0) return false;
+    size_t vcount = num_tris * 3;
+    if (vcount == 0 || buf_vbo_len % vcount != 0) return false;
+    size_t stride = buf_vbo_len / vcount;
+    if (stride < 10) return false;
+    const int margin = 3;
+    float min_x = 0, min_y = 0, max_x = 0, max_y = 0;
+    bool any = false;
+    for (size_t tri = 0; tri < num_tris; tri++) {
+        const float *base = &buf_vbo[tri * 3 * stride];
+        for (int i = 0; i < 3; i++) {
+            float ndc_x = base[4 + i * 2 + 0];
+            float ndc_y = base[4 + i * 2 + 1];
+            if (ndc_x != ndc_x || ndc_y != ndc_y ||
+                ndc_x <= -100000.0f || ndc_x >= 100000.0f ||
+                ndc_y <= -100000.0f || ndc_y >= 100000.0f) return false;
+            float px = (float)s_vp_x + (ndc_x * 0.5f + 0.5f) * (float)s_vp_w;
+            float py = (float)s_vp_y + (ndc_y * 0.5f + 0.5f) * (float)s_vp_h;
+            if (!any) { min_x = max_x = px; min_y = max_y = py; any = true; }
+            else {
+                if (px < min_x) min_x = px; if (px > max_x) max_x = px;
+                if (py < min_y) min_y = py; if (py > max_y) max_y = py;
+            }
+        }
+    }
+    if (!any) return false;
+    /* floor(min)/ceil(max) via casts (avoid pulling <math.h> into this TU). */
+    int ix0 = (int)min_x; if (min_x < (float)ix0) ix0--;
+    int iy0 = (int)min_y; if (min_y < (float)iy0) iy0--;
+    int ix1 = (int)max_x; if (max_x > (float)ix1) ix1++;
+    int iy1 = (int)max_y; if (max_y > (float)iy1) iy1++;
+    out[0] = ix0 - margin;
+    out[1] = iy0 - margin;
+    out[2] = ix1 + margin - out[0];
+    out[3] = iy1 + margin - out[1];
+    return out[2] > 0 && out[3] > 0;
+}
+
 static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+  @autoreleasepool {
     if (s_enc == nil || s_cur_shader == nil || buf_vbo_num_tris == 0 || buf_vbo == NULL) return;
     MetalShader *ms = s_cur_shader;
 
+    /* Scissor: GL(bottom-left) -> Metal(top-left) Y-flip + clamp to attachment.
+     * Compute first so a degenerate/off-screen rect (inactive split-screen pane,
+     * fully-clipped HUD element) early-outs — GL keeps GL_SCISSOR_TEST on and
+     * discards every fragment, so skipping the whole draw is equivalent, avoids
+     * leaking the previous draw's scissor on the persistent encoder, and skips
+     * the wasted snapshot + vertex copy. */
+    int sx = s_sc_set ? s_sc_x : 0;
+    int sy = s_sc_set ? s_sc_y : 0;
+    int sw = s_sc_set ? s_sc_w : s_fb_w;
+    int sh = s_sc_set ? s_sc_h : s_fb_h;
+    int myTop = s_fb_h - (sy + sh);
+    if (myTop < 0) { sh += myTop; myTop = 0; }
+    if (sx < 0) { sw += sx; sx = 0; }
+    if (sx + sw > s_fb_w) sw = s_fb_w - sx;
+    if (myTop + sh > s_fb_h) sh = s_fb_h - myTop;
+    if (sw <= 0 || sh <= 0) return;
+
     /* RDP-memory / coverage-memory blend: the fragment samples the framebuffer
      * "memory" color it blends against. Metal can't sample the attachment being
-     * written, so end the encoder, blit-copy the scene color into a sampled
-     * snapshot, and resume with loadAction=Load (§4 risk #1 — no LUS template).
-     * Per-batch (default GL behavior); full-fb copy (correctness-first). */
+     * written, so end the encoder, blit-copy the region the batch samples into
+     * the SAME origin of the sampled snapshot, and resume with loadAction=Load
+     * (§4 risk #1 — no LUS template). Copy only the batch rect (coverage) or the
+     * viewport (plain memory blend) instead of the whole framebuffer. */
     bool rdp_mem = (ms->diagRdpMemory || ms->diagRdpCvgMemory) &&
                    (s_blend == GFX_BLEND_ALPHA_RDP_MEMORY ||
                     s_blend == GFX_BLEND_ALPHA_RDP_CVG_MEMORY);
     if (rdp_mem && s_snapshot_tex != nil) {
+        int rect[4];
+        int rx, ry, rw, rh;
+        if (ms->diagRdpCvgMemory &&
+            mtl_rdp_batch_rect_cvg(buf_vbo, buf_vbo_len, buf_vbo_num_tris, rect)) {
+            rx = rect[0]; ry = rect[1]; rw = rect[2]; rh = rect[3];
+        } else {
+            rx = s_vp_x; ry = s_vp_y; rw = s_vp_w; rh = s_vp_h;
+        }
+        /* clamp to viewport (GL space) */
+        int vx0 = s_vp_x, vy0 = s_vp_y, vx1 = s_vp_x + s_vp_w, vy1 = s_vp_y + s_vp_h;
+        int cx0 = rx < vx0 ? vx0 : rx, cy0 = ry < vy0 ? vy0 : ry;
+        int cx1 = (rx + rw) > vx1 ? vx1 : (rx + rw), cy1 = (ry + rh) > vy1 ? vy1 : (ry + rh);
+        rx = cx0; ry = cy0; rw = cx1 - cx0; rh = cy1 - cy0;
+        int top = s_fb_h - (ry + rh);   /* Y-flip */
+        if (rx < 0) { rw += rx; rx = 0; }
+        if (top < 0) { rh += top; top = 0; }
+        if (rx + rw > s_fb_w) rw = s_fb_w - rx;
+        if (top + rh > s_fb_h) rh = s_fb_h - top;
         [s_enc endEncoding];
-        id<MTLBlitCommandEncoder> b = [s_cmdbuf blitCommandEncoder];
-        [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
-              sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(s_fb_w, s_fb_h, 1)
-                 toTexture:s_snapshot_tex destinationSlice:0 destinationLevel:0
-         destinationOrigin:MTLOriginMake(0, 0, 0)];
-        [b endEncoding];
+        if (rw > 0 && rh > 0) {
+            id<MTLBlitCommandEncoder> b = [s_cmdbuf blitCommandEncoder];
+            [b copyFromTexture:s_scene_color sourceSlice:0 sourceLevel:0
+                  sourceOrigin:MTLOriginMake(rx, top, 0) sourceSize:MTLSizeMake(rw, rh, 1)
+                     toTexture:s_snapshot_tex destinationSlice:0 destinationLevel:0
+             destinationOrigin:MTLOriginMake(rx, top, 0)];
+            [b endEncoding];
+        }
         mtl_open_scene_encoder(false);
     }
 
@@ -1170,36 +1377,40 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
         [s_enc setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
     }
 
-    /* Viewport / scissor with GL(bottom-left) -> Metal(top-left) Y-flip. */
+    /* Viewport: Y-flip + non-negative clamp (0 is legal and reproduces GL's
+     * collapse; a negative extent would abort). Unconditional so a zero-extent
+     * viewport doesn't leak the previous draw's viewport. */
     MTLViewport vp;
     vp.originX = s_vp_x;
     vp.originY = s_fb_h - (s_vp_y + s_vp_h);
-    vp.width = s_vp_w;
-    vp.height = s_vp_h;
+    vp.width = s_vp_w > 0 ? (double)s_vp_w : 0.0;
+    vp.height = s_vp_h > 0 ? (double)s_vp_h : 0.0;
     vp.znear = 0.0;
     vp.zfar = 1.0;
-    if (vp.width > 0 && vp.height > 0) [s_enc setViewport:vp];
+    [s_enc setViewport:vp];
 
-    int sx = s_sc_set ? s_sc_x : 0;
-    int sy = s_sc_set ? s_sc_y : 0;
-    int sw = s_sc_set ? s_sc_w : s_fb_w;
-    int sh = s_sc_set ? s_sc_h : s_fb_h;
-    int myTop = s_fb_h - (sy + sh);         /* flip */
-    if (myTop < 0) { sh += myTop; myTop = 0; }
-    if (sx < 0) { sw += sx; sx = 0; }
-    if (sx + sw > s_fb_w) sw = s_fb_w - sx;
-    if (myTop + sh > s_fb_h) sh = s_fb_h - myTop;
-    if (sw > 0 && sh > 0) {
-        MTLScissorRect sc = {(NSUInteger)sx, (NSUInteger)myTop, (NSUInteger)sw, (NSUInteger)sh};
-        [s_enc setScissorRect:sc];
+    MTLScissorRect sc = {(NSUInteger)sx, (NSUInteger)myTop, (NSUInteger)sw, (NSUInteger)sh};
+    [s_enc setScissorRect:sc];
+
+    /* Vertex data: bump-allocate from the frame's ring slot (StorageModeShared);
+     * fall back to a one-off buffer only if the batch overflows the slot. */
+    size_t need = buf_vbo_len * sizeof(float);
+    id<MTLBuffer> vb;
+    NSUInteger voff;
+    size_t aligned = (s_vbuf_cursor + 255u) & ~(size_t)255u;
+    if (s_vbuf[s_vbuf_slot] != nil && aligned + need <= s_vbuf_cap[s_vbuf_slot]) {
+        vb = s_vbuf[s_vbuf_slot];
+        voff = (NSUInteger)aligned;
+        memcpy((uint8_t *)vb.contents + aligned, buf_vbo, need);
+        s_vbuf_cursor = aligned + need;
+        if (s_vbuf_cursor > s_vbuf_want) s_vbuf_want = s_vbuf_cursor;  /* grow target for next (re)alloc */
+    } else {
+        if (aligned + need > s_vbuf_want) s_vbuf_want = aligned + need;
+        vb = [s_device newBufferWithBytes:buf_vbo length:need options:MTLResourceStorageModeShared];
+        voff = 0;
     }
-
-    /* Per-draw vertex buffer (correctness-first; a ring pool is a later perf
-     * pass — parity, not fps, is the Phase-3 goal). */
-    id<MTLBuffer> vb = [s_device newBufferWithBytes:buf_vbo
-                                             length:buf_vbo_len * sizeof(float)
-                                            options:MTLResourceStorageModeShared];
-    [s_enc setVertexBuffer:vb offset:0 atIndex:0];
+    if (vb == nil) return;  /* transient OOM: drop this batch rather than GPU-fault */
+    [s_enc setVertexBuffer:vb offset:voff atIndex:0];
 
     MtlUniforms u;
     memset(&u, 0, sizeof u);
@@ -1232,6 +1443,7 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
     }
 
     [s_enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 * buf_vbo_num_tris];
+  }
 }
 
 /* ---- readback (3.4): blit offscreen -> shared buffer, wait, RGB out -------
@@ -1239,6 +1451,7 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
  * existing screenshot/probe consumers (calibrated to glReadPixels) are
  * unchanged. Source region is Y-flipped into the top-left scene texture. */
 static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
+  @autoreleasepool {
     if (rgb_out == NULL || width <= 0 || height <= 0 || s_scene_color == nil || s_device == nil) {
         return false;
     }
@@ -1281,6 +1494,13 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
     [b endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
+    if (cb.status != MTLCommandBufferStatusCompleted) {
+        /* A failed blit leaves buf.contents undefined; report failure so the
+         * probe/screenshot consumers match GL's `return err == GL_NO_ERROR`. */
+        fprintf(stderr, "[metal] readback command buffer failed: %s\n",
+                cb.error ? cb.error.localizedDescription.UTF8String : "(unknown)");
+        return false;
+    }
 
     const uint8_t *src = (const uint8_t *)buf.contents;  /* BGRA, top-to-bottom */
     for (int row = 0; row < height; row++) {
@@ -1294,6 +1514,7 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
         }
     }
     return true;
+  }
 }
 
 /* Positional init MUST match the field order in gfx_rendering_api.h. C linkage
