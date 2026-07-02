@@ -1,11 +1,12 @@
 name: CI
 
 on:
+  # Manual-only: the repo enforces a local-CI posture (GitHub Actions hosted
+  # runners are disabled; scripts/ci/check_release_ready.sh forbids automatic
+  # hosted triggers). Contributors run the smoke lanes locally; a maintainer
+  # dispatches this workflow deliberately. Re-add an automatic trigger only
+  # together with a decision to enable hosted Actions (see 08 doc §9 Q2).
   workflow_dispatch:
-  # Run the build / zero-warning / CTest / contamination gates automatically on
-  # every PR. Push is intentionally omitted to respect the local-preflight posture
-  # (contributors run the smoke lanes locally); PR is the shared gate.
-  pull_request:
 
 permissions:
   contents: read
