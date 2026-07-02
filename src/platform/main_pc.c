@@ -402,6 +402,7 @@ extern void configInit(void);
 /* Platform config — defined in platform_sdl.c */
 extern void platformRegisterConfig(void);
 extern int platformApplyFaithfulPreset(void);
+extern int platformApplyRemasterPreset(void);
 
 /* Default ROM path — can be overridden via command line */
 static const char *DEFAULT_ROM_PATHS[] = {
@@ -515,6 +516,7 @@ int main(int argc, char **argv)
     int configSetCount = 0;
     int resetConfig = 0;
     int faithful = 0;
+    int remaster = 0;
     int listSettings = 0;
     int listDisplays = 0;
     int dumpConfig = 0;
@@ -548,6 +550,15 @@ int main(int argc, char **argv)
             resetConfig = 1;
         } else if (strcmp(argv[i], "--faithful") == 0) {
             faithful = 1;
+        } else if (strcmp(argv[i], "--remaster") == 0) {
+            remaster = 1;
+#ifdef __APPLE__
+            /* The full remaster enables SSAO, which op-hangs Apple's GL-over-Metal
+             * translator — so boot the native Metal backend. Set before gfx/SDL
+             * init (gfx_backend_use_metal caches getenv on first use, later). On
+             * non-Apple this is unnecessary (native GL runs SSAO fine). */
+            setenv("GE007_RENDERER", "metal", 1);
+#endif
         } else if (strcmp(argv[i], "--config-override") == 0 && i + 1 < argc) {
             if (configOverrideCount >= PC_MAX_CONFIG_SET_ARGS) {
                 fprintf(stderr, "[CONFIG] Too many --config-override values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
@@ -709,6 +720,10 @@ int main(int argc, char **argv)
      * --config-override still wins and `--faithful --dump-config` reflects the
      * faithful values. Marked SETTING_OVERRIDE_FAITHFUL so configSave never
      * persists it -- the user's saved remaster ge007.ini is left untouched. */
+    if (faithful && remaster) {
+        fprintf(stderr, "[CONFIG] --faithful and --remaster are mutually exclusive.\n");
+        return 2;
+    }
     if (faithful) {
         int n = platformApplyFaithfulPreset();
         /* A faithful session is read-only for config: suppress every save path
@@ -719,6 +734,23 @@ int main(int argc, char **argv)
                "(RemasterFX off, native res, stock textures, classic FOV, no modern "
                "crosshair/hitmarkers, vanilla pad aim, minimap off). Read-only session: ge007.ini is not modified.\n",
                n);
+    }
+    if (remaster) {
+        /* --remaster: the full "immaculate" remaster in one switch — all post-FX
+         * on INCLUDING SSAO (which needs the native Metal backend, selected above
+         * on macOS). Applied transiently before env/CLI overrides so an explicit
+         * --config-override still wins; not persisted to ge007.ini. */
+        int n = platformApplyRemasterPreset();
+        printf("[CONFIG] --remaster: enabled %d remaster setting(s) (RemasterFX + SSAO + "
+               "bloom/FXAA/tonemap/grade/vignette/sharpen/dither, 2x SSAA)%s. "
+               "Launch-only preset; env/--config-override still win.\n",
+               n,
+#ifdef __APPLE__
+               " on the native Metal backend"
+#else
+               ""
+#endif
+               );
     }
 
     settingsApplyEnvOverrides();

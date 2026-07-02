@@ -1946,6 +1946,51 @@ int platformApplyFaithfulPreset(void)
     return applied;
 }
 
+/* `--remaster` preset: the full "immaculate" remaster in one switch — every
+ * post-FX enabled, INCLUDING SSAO, which is off by default because it op-hangs
+ * Apple's GL-over-Metal translator (the whole reason for the native Metal
+ * backend; --remaster selects GE007_RENDERER=metal in main_pc.c so SSAO runs).
+ * These mirror the registered defaults (already remaster) plus Video.Ssao=1, and
+ * are pinned explicitly so the mode holds even if the user's ge007.ini turned
+ * something off. Applied transiently before env/CLI overrides (which still win)
+ * via the same generic preset-override mechanism as --faithful. */
+static const struct {
+    const char *key;
+    const char *value;
+} s_remasterPreset[] = {
+    { "Video.RemasterFX",    "1" },   /* master post-FX switch on               */
+    { "Video.Ssao",          "1" },   /* the key enable — works via Metal now   */
+    { "Video.Bloom",         "1" },
+    { "Video.Fxaa",          "1" },
+    { "Video.Tonemap",       "1" },
+    { "Video.GradePresets",  "1" },
+    { "Video.RenderScale",   "2" },   /* 2x SSAA (fidelity)                     */
+    { "Video.MSAA",          "0" },   /* SSAA instead of MSAA                   */
+    { "Video.Saturation",    "1.15" },
+    { "Video.Contrast",      "1.08" },
+    { "Video.Brightness",    "0.04" },
+    { "Video.Vignette",      "0.15" },
+    { "Video.Sharpen",       "0.15" },
+    { "Video.OutputDither",  "1" },   /* hide RGBA8 banding in skies/fades      */
+    { "Video.Gamma",         "1" },
+    { "Video.SsaoRadius",    "0.5" },
+    { "Video.SsaoIntensity", "1.0" },
+};
+
+int platformApplyRemasterPreset(void)
+{
+    int applied = 0;
+    size_t i;
+
+    for (i = 0; i < sizeof(s_remasterPreset) / sizeof(s_remasterPreset[0]); i++) {
+        if (settingsApplyFaithfulValue(s_remasterPreset[i].key, s_remasterPreset[i].value)) {
+            applied++;
+        }
+    }
+
+    return applied;
+}
+
 void platformGetMouseDelta(int *dx, int *dy) {
     extern int g_freezeInput;
 
