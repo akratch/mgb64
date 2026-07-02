@@ -264,6 +264,9 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
         --repeat 2
     )
     add_port_validation_smoke(port_audio_mute_toggle_smoke audio_mute_toggle_smoke.sh 90)
+    # Per-level frame-time budget gate (docs/PERFORMANCE_PLAN.md M0). Reference-
+    # hardware sensitive; opt-in and serialized like the other runtime lanes.
+    add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
 endif()
 
 # --- Compile definitions ---

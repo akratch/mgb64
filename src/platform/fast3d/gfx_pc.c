@@ -12824,7 +12824,7 @@ static int gfx_parse_room_dl_kind(const char *value) {
     return 0;
 }
 
-static bool gfx_diag_room_cmd_offset(uintptr_t addr,
+static bool gfx_diag_room_cmd_offset_uncached(uintptr_t addr,
                                      int *room_out,
                                      const char **which,
                                      uintptr_t *base_out,
@@ -12864,6 +12864,46 @@ static bool gfx_diag_room_cmd_offset(uintptr_t addr,
     }
 
     return false;
+}
+
+/* gfx_diag_room_cmd_offset() is a pure function of `addr` and the room DL table
+ * (g_BgRoomInfo/g_MaxNumRooms), which is stable within a frame. It is called once
+ * per emitted triangle with `addr` constant across all triangles of a DL command,
+ * so a 1-entry memo keyed on `addr` collapses the O(rooms) scan from per-triangle
+ * to per-command with byte-identical results. The generation counter is bumped
+ * once per frame (gfx_run_dl) to invalidate across level transitions. */
+static uint32_t g_room_cmd_cache_generation = 0;
+static struct {
+    uintptr_t addr;
+    uint32_t gen;
+    bool valid;
+    bool result;
+    int room;
+    const char *which;
+    uintptr_t base;
+    uintptr_t offset;
+} s_room_cmd_cache = {0};
+
+static bool gfx_diag_room_cmd_offset(uintptr_t addr,
+                                     int *room_out,
+                                     const char **which,
+                                     uintptr_t *base_out,
+                                     uintptr_t *offset_out) {
+    if (!(s_room_cmd_cache.valid &&
+          s_room_cmd_cache.addr == addr &&
+          s_room_cmd_cache.gen == g_room_cmd_cache_generation)) {
+        s_room_cmd_cache.result = gfx_diag_room_cmd_offset_uncached(
+            addr, &s_room_cmd_cache.room, &s_room_cmd_cache.which,
+            &s_room_cmd_cache.base, &s_room_cmd_cache.offset);
+        s_room_cmd_cache.addr = addr;
+        s_room_cmd_cache.gen = g_room_cmd_cache_generation;
+        s_room_cmd_cache.valid = true;
+    }
+    if (room_out) *room_out = s_room_cmd_cache.room;
+    if (which) *which = s_room_cmd_cache.which;
+    if (base_out) *base_out = s_room_cmd_cache.base;
+    if (offset_out) *offset_out = s_room_cmd_cache.offset;
+    return s_room_cmd_cache.result;
 }
 
 static bool gfx_diag_focus_matches(uintptr_t addr, int dl_room) {
@@ -15997,6 +16037,14 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
     const float (*mv)[4] = rsp.modelview_matrix_stack[mtx_stack_pos];
     int guard_mtx_slot = gfx_guard_matrix_slot_for_addr(mtx_source_addr);
 
+    /* The glass w-sign flip below is keyed on the current DL command, which is
+     * identical for every vertex in this load. Resolve the effect label once
+     * here instead of per vertex — the per-vertex path did an effect-range
+     * linear scan + strstr for every vertex. Behavior is unchanged. */
+    const char *cmd_effect_label = gfx_effect_label_for_current_command();
+    bool cmd_is_glass_effect = (cmd_effect_label != NULL &&
+                                strstr(cmd_effect_label, "glass") != NULL);
+
     for (size_t i = 0; i < n_vertices; i++, dest_index++) {
         const Vtx_t *v = &vertices[i].v;
         const Vtx_tn *vn = &vertices[i].n;
@@ -16105,22 +16153,16 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
             }
         }
 
-        {
-            const char *effect_label = gfx_effect_label_for_current_command();
-
-            if (effect_label != NULL &&
-                strstr(effect_label, "glass") != NULL &&
-                w < -GFX_NEAR_CLIP_EPSILON) {
-                /* Glass prop model matrices can produce an all-negative
-                 * homogeneous clip vector for visible panes. The projective
-                 * point is unchanged by flipping the sign, but the clipper and
-                 * backend require positive w to avoid treating the pane as
-                 * behind the camera. */
-                x = -x;
-                y = -y;
-                z = -z;
-                w = -w;
-            }
+        if (cmd_is_glass_effect && w < -GFX_NEAR_CLIP_EPSILON) {
+            /* Glass prop model matrices can produce an all-negative
+             * homogeneous clip vector for visible panes. The projective
+             * point is unchanged by flipping the sign, but the clipper and
+             * backend require positive w to avoid treating the pane as
+             * behind the camera. */
+            x = -x;
+            y = -y;
+            z = -z;
+            w = -w;
         }
 
         x = gfx_adjust_x_for_aspect_ratio(x);
@@ -22953,6 +22995,10 @@ static void gfx_diag_screenshot_series_capture_if_due(void)
 
 void gfx_run_dl(Gfx *dl) {
     if (!dl) return;
+
+    /* Invalidate the per-command room-attribution memo (gfx_diag_room_cmd_offset)
+     * so it never serves a stale entry across a level's DL-table change. */
+    g_room_cmd_cache_generation++;
 
     /* Frame-level crash recovery: if ANY SIGSEGV occurs during
      * frame rendering, skip to end_frame and continue.
