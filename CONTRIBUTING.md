@@ -43,8 +43,7 @@ material.
 
 See **[docs/BUILDING.md](docs/BUILDING.md)** for toolchain, dependencies, asset
 extraction (you supply your own ROM), the native port build, and the N64 ROM
-matching target. **[docs/STATUS.md](docs/STATUS.md)** describes the current state
-of the project and lists high-value starting points.
+matching target.
 
 Before you push, run the quick validation lane:
 

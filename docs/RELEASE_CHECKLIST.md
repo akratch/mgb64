@@ -183,7 +183,7 @@ unexpected media resources fail the gate.
   unsigned local source build.
 - Do not add a Homebrew Cask, appcast URL, release-download URL, or package
   SHA placeholder until a real asset-free signed/notarized artifact exists.
-- Keep [../PORT.md](../PORT.md), [STATUS.md](STATUS.md), and
+- Keep [../PORT.md](../PORT.md) and
   [../RELEASE_NOTES.md](../RELEASE_NOTES.md) aligned before posting.
 
 ## GitHub Surface

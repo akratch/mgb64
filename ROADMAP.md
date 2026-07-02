@@ -110,8 +110,7 @@ Desired end state:
 GoldenEye's defining feature is local 2–4 player split-screen. The MP game logic,
 per-player data model, and split-screen renderer are already decompiled and
 running; the work is wiring multi-controller input and a deterministic MP launch
-path on the native port. The full plan, phase tables, and acceptance gates live in
-[docs/MULTIPLAYER_PLAN.md](docs/MULTIPLAYER_PLAN.md).
+path on the native port.
 
 Landed / in progress (2-player focus):
 
@@ -161,8 +160,7 @@ Next:
   selection, window modes, exclusive fullscreen, VSync/frame cap, render
   scale/MSAA/gamma, retro filtering, and FOV are landed through the native
   settings schema. True hor+ widescreen, settings UI, and input rebinding remain
-  open. The execution plan and regression matrix live in
-  [docs/DISPLAY_INPUT_PLAN.md](docs/DISPLAY_INPUT_PLAN.md).
+  open.
 
 ### Music and audio fidelity
 

@@ -56,7 +56,7 @@ on the same N64 decompilation ecosystem as
   animation, fonts, and logos are read from *your* ROM at runtime.
 - 🚧 Rebuilding the original **N64 ROM** (byte-matching), SDK provenance cleanup,
   and renderer/audio parity are the main open areas. See
-  **[docs/STATUS.md](docs/STATUS.md)** and **[ROADMAP.md](ROADMAP.md)** for the
+  **[ROADMAP.md](ROADMAP.md)** for the
   precise state and good first issues.
 - ⚠️ The tree still contains inventoried N64 SDK/libultra compatibility
   material that is **not** MIT-licensed first-party code. See

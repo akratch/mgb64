@@ -103,5 +103,4 @@ Texture dumps, AI-upscaled packs, and `synth_texture.py --match` outputs are
 `scripts/ci/check_no_rom_data.sh` contamination guard hard-fails on tracked images.
 The repo ships first-party tooling, the public-domain `stb_image.h` decoder, and
 only vetted distributable art/presets. The loader reads a user-supplied pack at
-runtime (default empty = stock). See [REMASTER_ROADMAP.md](REMASTER_ROADMAP.md) —
-the single master plan (copyright model in §1b, texture strategy in §3).
+runtime (default empty = stock).

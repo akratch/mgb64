@@ -175,12 +175,29 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/mgb64-public-launch-objects.XXXXXX")"
 bare="$tmp/remote.git"
 archive_info="$tmp/archive-info.tsv"
 git init --bare "$bare" >/dev/null
+
+# Build the public launch tree: HEAD's tree minus every path marked
+# `export-ignore` in .gitattributes -- the same internal planning/working docs
+# that `git archive` omits from the public source archive. This keeps the fresh
+# launch repository in lockstep with the public archive: internal docs never
+# enter the public repository. .gitattributes is the single source of truth.
+launch_index="$tmp/launch-index"
+GIT_INDEX_FILE="$launch_index" git read-tree "HEAD^{tree}"
+launch_ignore_list="$tmp/launch-export-ignore.txt"
+git ls-files | git check-attr --stdin export-ignore \
+  | sed -n 's/: export-ignore: set$//p' > "$launch_ignore_list"
+if [ -s "$launch_ignore_list" ]; then
+  GIT_INDEX_FILE="$launch_index" git rm --cached --quiet --ignore-unmatch \
+    --pathspec-from-file="$launch_ignore_list" >/dev/null
+fi
+launch_tree_filtered="$(GIT_INDEX_FILE="$launch_index" git write-tree)"
+
 launch_commit="$(
   GIT_AUTHOR_NAME="$author_name" \
   GIT_AUTHOR_EMAIL="$author_email" \
   GIT_COMMITTER_NAME="$committer_name" \
   GIT_COMMITTER_EMAIL="$committer_email" \
-  git commit-tree HEAD^{tree} -m "$message"
+  git commit-tree "$launch_tree_filtered" -m "$message"
 )"
 git push --quiet "$bare" "${launch_commit}:refs/heads/main"
 git --git-dir="$bare" symbolic-ref HEAD refs/heads/main
@@ -203,8 +220,14 @@ git clone --quiet "$bare" "$out"
     echo "Launch repository HEAD mismatch: got $launch_head, expected $launch_commit" >&2
     exit 1
   fi
-  if [ "$launch_tree" != "$source_tree" ]; then
-    echo "Launch repository tree mismatch: got $launch_tree, expected $source_tree from $source_head" >&2
+  if [ "$launch_tree" != "$launch_tree_filtered" ]; then
+    echo "Launch repository tree mismatch: got $launch_tree, expected export-ignore-filtered tree $launch_tree_filtered (HEAD $source_head minus export-ignore paths)" >&2
+    exit 1
+  fi
+  leaked_internal="$(git ls-files -- ':(glob)docs/superpowers/**' ':(glob)docs/remaster-aaa/**' ':(glob)docs/*_PLAN.md' ':(glob)docs/*_ROADMAP.md')"
+  if [ -n "$leaked_internal" ]; then
+    echo "Launch repository unexpectedly contains internal (export-ignore) docs:" >&2
+    printf '%s\n' "$leaked_internal" >&2
     exit 1
   fi
   if [ "$commit_count" -ne 1 ]; then
@@ -222,7 +245,8 @@ git clone --quiet "$bare" "$out"
   fi
 
   echo "== Clean launch repository invariants =="
-  echo "  OK -- launch tree matches source HEAD tree ($source_tree)."
+  echo "  OK -- launch tree matches the export-ignore-filtered HEAD tree ($launch_tree_filtered)."
+  echo "  OK -- launch repository contains no internal (export-ignore) documentation."
   echo "  OK -- launch history contains exactly one root commit."
   echo "  OK -- launch checkout is clean."
 

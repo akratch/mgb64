@@ -20,13 +20,28 @@ secret_text='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z_]{36,}|github_pat_[0-9A-Za-z_]+|xo
 sdk_notice_text='(UNPUBLISHED[[:space:]]+PROPRI''ETARY|may not be disclo''sed|without the prior written (permission|cons''ent)|RESTRICTED[[:space:]]+RIG''HTS|subparagraph \(c\)\(1\)\(ii\) of the Rig''hts)'
 pattern="(${private_text}|${secret_text}|${sdk_notice_text})"
 
+# Path scope. The three guard scripts embed the detection patterns themselves, so
+# they are excluded. Internal documentation is excluded too: the public/internal
+# boundary is declared once in .gitattributes via `export-ignore`, and those docs
+# never enter the public source archive (`git archive`) or the fresh launch
+# repository (scripts/create_public_launch_repo.sh). Deriving the same exclusion
+# set here means this guard scans exactly the text that can ever become public.
+pathspecs=(
+  .
+  ':!scripts/ci/check_public_history_text.sh'
+  ':!scripts/ci/check_no_rom_data.sh'
+  ':!scripts/ci/check_release_ready.sh'
+)
+if [ -f .gitattributes ]; then
+  while IFS= read -r pat; do
+    [ -n "$pat" ] && pathspecs+=( ":(glob,exclude)${pat}" )
+  done < <(awk '/^[[:space:]]*#/ { next } /(^|[[:space:]])export-ignore([[:space:]]|$)/ { print $1 }' .gitattributes)
+fi
+
 limit="${GE007_HISTORY_TEXT_HIT_LIMIT:-80}"
 if ! history_output="$(git log --all -G"$pattern" \
   --pretty='format:commit %H %s' --name-only -- \
-  . \
-  ':!scripts/ci/check_public_history_text.sh' \
-  ':!scripts/ci/check_no_rom_data.sh' \
-  ':!scripts/ci/check_release_ready.sh' 2>&1)"; then
+  "${pathspecs[@]}" 2>&1)"; then
   printf '%s\n' "$history_output" >&2
   exit 1
 fi

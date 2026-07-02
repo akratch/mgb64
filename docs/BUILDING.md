@@ -12,9 +12,6 @@ There are two build targets:
 2. **The N64 ROM matching target** — contributor-facing decompilation work that
    is still being wired up for byte-identical rebuilds.
 
-Before you start, read **[STATUS.md](STATUS.md)** — it describes exactly what
-builds today and the one area that is still a work in progress.
-
 ## 1. Get a ROM
 
 You need a ROM you legally own to run the native port, but you do not need ROM
@@ -217,7 +214,6 @@ ctest --test-dir build --output-on-failure
   directly; `python --version` alone is not enough.
 - **CMake prints `ROM-derived asset data not present`** — this is expected and
   harmless. Those bulk tables (animation frames, Rareware logo) are not
-  distributed; the port loads them from *your* ROM at runtime. See
-  [STATUS.md](STATUS.md).
+  distributed; the port loads them from *your* ROM at runtime.
 - **A window opens then closes immediately / no ROM** — make sure your ROM is in
   place (step 1) or pass `--rom /path/to/baserom.u.z64`.

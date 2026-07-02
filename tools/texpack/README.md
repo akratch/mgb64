@@ -5,8 +5,7 @@ textures, using GPU-accelerated AI super-resolution (Real-ESRGAN, Vulkan →
 Metal/MoltenVK on macOS) **and** first-party procedural synthesis
 (`synth_texture.py`) for tiled surfaces.
 
-This is the *content-authoring* half of the texture remaster
-([`docs/REMASTER_ROADMAP.md`](../../docs/REMASTER_ROADMAP.md) §3). The *runtime* half —
+This is the *content-authoring* half of the texture remaster. The *runtime* half —
 the in-engine loader that consumes the pack (Engine B) — is already shipped.
 
 > ⚠️ **Dumps, AI-upscaled packs, and `synth_texture.py --match` outputs are

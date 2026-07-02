@@ -36,3 +36,24 @@ tools/extractor/puff.h linguist-vendored
 tools/gzipsrc/** linguist-vendored
 tools/ido5.3_recomp/** linguist-vendored
 tools/mktex/src/libpdtex/** linguist-vendored
+
+# --- Internal working documentation: the public/internal boundary ------------
+# These are planning docs, roadmaps, reviews, surveys, WIP notes, and agent /
+# session working artifacts. They stay in THIS development repository but are
+# NEVER shipped in the public source archive (`git archive`, honored
+# automatically) or the fresh public launch repository
+# (scripts/create_public_launch_repo.sh, which filters the tree by these same
+# entries). scripts/ci/check_public_history_text.sh also derives its history
+# scan exclusions from these export-ignore entries, so this block is the single
+# source of truth for what documentation is public vs internal. To exclude a new
+# internal doc from the public repo, add an export-ignore line here.
+docs/superpowers/** export-ignore
+docs/remaster-aaa/** export-ignore
+docs/*_PLAN.md export-ignore
+docs/*_ROADMAP.md export-ignore
+docs/*_REVIEW.md export-ignore
+docs/*_SURVEY.md export-ignore
+docs/*_WIP.md export-ignore
+docs/*_STATUS.md export-ignore
+docs/*_GLIDEPATH.md export-ignore
+docs/*_MAP.md export-ignore

@@ -60,8 +60,7 @@ you know what to expect and where help is most valuable.
   dissimilar halves), render-health clean, zero crashes; and 4-player boots and
   renders distinct viewports in the same smoke window. What is **pending**:
   sustained-load frame budget, the higher-risk 3-player asymmetric split, and a
-  full end-of-round scoreboard run are not yet validated. See
-  [../docs/MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md).
+  full end-of-round scoreboard run are not yet validated.
 - **Recent playability fixes are landed and traceable:** Dam's intro truck now
   binds its authored vehicle AI path and target speed, and vehicle geometry uses
   the corrected native vector path so the truck body/wheels render together.
@@ -103,7 +102,6 @@ you know what to expect and where help is most valuable.
   window mode, display selection, fullscreen mode sizing, VSync, frame cap,
   render scale, MSAA, gamma, retro filtering, and gameplay FOV are configurable
   while defaulting back to the original 4:3-style presentation. See
-  [DISPLAY_INPUT_PLAN.md](DISPLAY_INPUT_PLAN.md) and
   [PORTING_AND_EXPANSION.md](PORTING_AND_EXPANSION.md).
 - **ROM-vs-native comparison tooling exists for targeted parity work:**
   `docs/ROM_COMPARISON.md` documents route specs, native traces, optional
