@@ -21,8 +21,8 @@ This workstream turns that prototype into a **production asset factory for all 2
 solo levels plus weapons, characters and HUD**: a dump-side manifest emitted by the
 engine (P1.2), a deterministic **Router** that assigns every texture token to the
 right source per the roadmap §3 decision tree (P2.3), an open-licensed CC0/CC-BY
-ingestion path with provenance and NOTICE generation (P2.4), a **7-preset procedural
-library**, hardened per-class AI upscaling, AI-derived **material sidecars**
+ingestion path with provenance and NOTICE generation (P2.4), an **8-preset procedural
+library** (6 new presets + the 2 shipped), hardened per-class AI upscaling, AI-derived **material sidecars**
 (normal/roughness) ready for W1's per-pixel lighting, and a **per-level QA harness**
 that makes "level N is done" a runnable command, not an opinion. Everything stays
 inside the copyright tiers: Tier-B (ROM-derived) output never leaves the user's
@@ -34,7 +34,7 @@ A1/A2 art.
 | 1 | `texmanifest` C emit — the engine writes `token,w,h,fmt,siz,avgRGB,tileable,draw_class` per static settex token | §6 P1.2 |
 | 2 | Router (`route_pack.py`) — deterministic per-token source plan; hard-refuses Tier B in distributable packs | §6 P2.3 |
 | 3 | Open-licensed ingestion (`cc0_library.py` + `build_pack.py --cc0-library`) with provenance records + NOTICE | §6 P2.4 |
-| 4 | Synth preset library ×7 (gravel, rock, concrete, metal panel, wood, sand, snow, brick) + AI material sidecars | §3 / feeds W1.T2.3 |
+| 4 | Synth preset library ×8 total (6 new: concrete, metal panel, wood, sand, snow, brick — plus existing gravel, rock) + AI material sidecars | §3 / feeds W1.E5 (roadmap T2.3) |
 | 5 | 20-level production process + QA harness (`pack_qa.sh`, `validate_pack.py`) — every level demoable & gated | §6 P2.5 scaled |
 
 ---
@@ -132,7 +132,8 @@ What a player/reviewer observes when this workstream is done:
    that a user can download legally; the **full-fidelity pack** builds locally from
    the user's ROM in under 15 minutes for all 20 levels on an M-series GPU.
 4. Per-token `_n`/`_r` **material sidecars** exist for hero surfaces, ready to light
-   up the moment W1 lands T2.3 (sidecar samplers in the generated shaders).
+   up the moment W1 lands W1.E5 (roadmap T2.3 — sidecar samplers in the generated
+   shaders; doc 01 §4.7).
 5. Reviewer demo: `tools/texpack/pack_qa.sh --level <name>` prints PASS with
    pixel-diff budgets, seam metrics, VRAM budget, and render-health — for any level.
 
@@ -151,7 +152,9 @@ decode completes and before upload (insert around `gfx_pc.c:21045`, where `rgba`
 `w`, `h`, `fmt`, `sz`, `texturenum`, and `g_current_draw_class` are all in scope).
 The settex cache means every token passes through fresh-decode exactly once per
 residency; a `static uint8_t emitted[4096]` guard (same pattern as `dumped[4096]`,
-`gfx_pc.c:12249`) dedupes rows per process.
+`gfx_pc.c:12249`) dedupes rows per process. ⚠ The guard is per-*process* and the
+file opens append: always dump into a **fresh directory** per run (as the §4.7
+recipe does), or a second run duplicates rows.
 
 **File**: `<dir>/ge007.texmanifest.csv`, opened append, header written iff the file
 is freshly created. One row per unique token:
@@ -224,7 +227,7 @@ across runs; committable — contains no ROM data, only token IDs and decisions)
     "tok0107": {"source": "ai_upscale", "mode": "whole_image",
                  "model": "realesrgan-x4plus", "tier": "B"},
     "tok0311": {"source": "cc0_import", "asset": "ambientcg/Metal032", "tier": "A1"},
-    "tok0949": {"source": "stock", "reason": "per-quad UV seams; see W1.T1.3", "tier": "-"}
+    "tok0949": {"source": "stock", "reason": "per-quad UV seams; see W1.E1 (T1.3)", "tier": "-"}
   }
 }
 ```
@@ -255,11 +258,19 @@ the *index* is committable):
 
 ```
 library/
-  index.json                     # committable: id -> record (no pixels)
+  index.json                     # id -> record (no pixels) — the operational index
   assets/<id>/source.png         # local only (even CC0 — keep repo image-free;
                                  #   check_no_rom_data.sh:57 fails ANY tracked image)
   assets/<id>/record.json
 ```
+
+The library dir itself lives **outside the repo** (e.g. `~/mgb64_assets`), so
+"the index is committable" means: E4.T4 copies `index.json` into the repo as
+`tools/texpack/cc0_index.json` (`cp ~/mgb64_assets/index.json
+tools/texpack/cc0_index.json && git add …`) — it is pure text (ids, URLs,
+licenses, hashes; no pixels), so `check_no_rom_data.sh` passes. `route_pack.py
+--library <dir>` reads `<dir>/index.json`; the committed snapshot is the
+review/provenance record.
 
 **Provenance record** (one per asset, required fields — ingestion refuses partial
 records):
@@ -299,7 +310,7 @@ deliberately out-resolve upscales — and the backend cap is 4096,
 transform** with the same edge metric — a non-wrapping import routed onto a tiled
 surface is a build error, not a runtime surprise.
 
-### 4.4 (d) Procedural preset library (7 presets, Tier A1 generic-tone)
+### 4.4 (d) Procedural preset library (8 presets total — 6 new, Tier A1 generic-tone)
 
 All presets compose the existing seamless primitives (`_fft_noise`, `_bandpass`,
 `_worley`, `_highpass` — `synth_texture.py:65-156`); every one is registered in
@@ -359,15 +370,20 @@ the anime model per `docs/` history). Work:
 ### 4.6 (f) AI-generated material sidecars (normal/roughness)
 
 **File contract** (agreed with W1, who owns the loader/shader side —
-`texture_pack_try_load()` stays untouched until W1.T2.3):
+`texture_pack_try_load()` stays untouched until W1.E5; their loader entry point is
+`texture_pack_try_load_sidecars`, doc 01 §4.7):
 
 ```
 <pack>/textures/tok####_n.png   # tangent-space normal, RGB8, +Z out (128,128,255 flat)
 <pack>/textures/tok####_r.png   # roughness, grayscale, 255 = fully rough
 ```
 
-**Tool**: `tools/texpack/make_sidecars.py <diffuse.png> --out-dir <textures/>`
-— pure first-party math (numpy), no AI weights needed for v1:
+**Tool**: `tools/texpack/make_sidecars.py <diffuse.png> --out-dir <textures/>
+[--plan plan.json] [--distributable] [--height <h.png>] [--strength 2.0]`
+— token inferred from the diffuse filename (`tok####.png`); `--plan` supplies the
+routed source for tier refusal; `--height` uses a true height field (E5.T3) instead
+of the luma prior. Pure first-party math (numpy — already in
+`tools/texpack/requirements.txt`), no AI weights needed for v1:
 
 ```python
 def height_from_luma(lum, blur_sigma=1.5):     # luma ≈ height prior for rough
@@ -392,9 +408,17 @@ get a `--emit-height` option so synth surfaces can derive normals from their *tr
 height field (better than luma-guessing).
 
 **Validation before W1 lands**: sidecars render nothing today (no sampler — roadmap
-§3 "material maps" gate). Offline QA = a small `preview_material.py` that fake-lights
+§3 "material maps" gate). Offline QA = a small `preview_material.py <diffuse.png>`
+(finds `tok####_n.png`/`tok####_r.png` beside the diffuse) that fake-lights
 diffuse+normal under a swinging directional light and writes a GIF for eyeballing;
-in-game QA arrives with W1.T2.3.
+in-game QA arrives with W1.E5.T3.
+
+**Single implementation, two entry points** (coordination with doc 01): W1.E5.T5
+adds `build_pack.py --emit-material-maps` (that flag does **not** exist today — it
+is created by W1, not by any W2 task) as the batch driver that emits sidecars
+beside each diffuse during a pack build. It MUST import the normal/roughness
+functions from `make_sidecars.py` (this epic), not reimplement them — the E6.T3
+handshake records that agreement so the two docs don't ship divergent Sobel math.
 
 ### 4.7 (g) The 20-level production process
 
@@ -411,19 +435,30 @@ GE007_DUMP_SETTEX_DIR=/tmp/td_$L \
 python3 tools/texpack/hue_pack.py --manifest /tmp/td_$L/ge007.texmanifest.csv \
     --out /tmp/huepack_$L        # paints every ROOM token a unique hue + prints the map
 GE007_TEXTURE_PACK=/tmp/huepack_$L ./build/ge007 --level $L --deterministic \
-    --screenshot-frame 300 --screenshot-exit    # read hues back from the shot
-python3 tools/texpack/hue_pack.py --identify shot.png --map /tmp/huepack_$L/hue_map.json
+    --screenshot-frame 300 --screenshot-label hue_$L --screenshot-exit
+#   screenshots are written to the CWD as screenshot_<label>.bmp (platform_sdl.c:673)
+python3 tools/texpack/hue_pack.py --identify screenshot_hue_$L.bmp \
+    --map /tmp/huepack_$L/hue_map.json
 # 3. CURATE: write tools/texpack/overrides/$L.json (hero surfaces: preset/stock/cc0)
 # 4. ROUTE:
 python3 tools/texpack/route_pack.py --manifest /tmp/td_$L/ge007.texmanifest.csv \
     --overrides tools/texpack/overrides/$L.json --library ~/mgb64_assets \
-    --out /tmp/plan_$L.json
+    --level $L --out /tmp/plan_$L.json
 # 5. BUILD:
 python3 tools/texpack/build_pack.py --dump /tmp/td_$L --plan /tmp/plan_$L.json \
-    --out ~/ge007_hd     # one shared pack dir; tokens are globally unique per level trace
+    --out ~/ge007_hd     # one shared pack dir; tokens are GLOBAL ids (Rare's
+                         # texture-by-number system), so the same token in two
+                         # levels is the same texture
 # 6. QA GATE:
 tools/texpack/pack_qa.sh --level $L --pack ~/ge007_hd
 ```
+
+⚠ **Shared-token conflicts**: because the pack dir is shared, two levels' overrides
+routing the *same* token differently would silently overwrite each other (last
+build wins). `route_pack.py` must WARN when a plan entry contradicts an entry in a
+previously written plan for the same token (compare against
+`tools/texpack/overrides/*.json` + the other `/tmp/plan_*.json` present); resolving
+the conflict (pick one route, note it in both overrides files) is a curation step.
 
 **`hue_pack.py`** mechanics (mechanizing the validated manual technique): vertex
 shading is a grayscale multiply, so hue survives to screen exactly (roadmap §3
@@ -448,13 +483,17 @@ in `perf_census.sh` order.
 
 ### 4.8 (h) The QA harness
 
-**`tools/texpack/validate_pack.py`** (offline, seconds — structural gate):
+**`tools/texpack/validate_pack.py --pack <dir> --manifest <csv> [--dump <dir>]
+[--budget-mb 256]`** (offline, seconds — structural gate):
 - filename shape `tok\d{4}\.png` (+ `_n`/`_r` sidecars); token < 4096
   (`texture_pack.c:24`); decodable RGBA (stbi will force RGBA at runtime,
   `texture_pack.c:79`); dims ≤ 4096 (**both backends reject above**,
   `gfx_opengl.c:1484`, `gfx_metal.mm:1560`); warn on non-power-of-2 or aspect
-  mismatch vs manifest; alpha presence must match the original's
-  (`alpha_nonzero` from the manifest run) — catches dropped cutouts;
+  mismatch vs manifest; alpha presence must match the original's — NOTE the
+  manifest CSV has **no alpha column** (schema is frozen to the 8 roadmap-P1.2
+  columns), so alpha truth comes from the dump's `.alpha.pgm` files via `--dump`
+  (the §4.7 recipe sets `GE007_DUMP_SETTEX_TEXTURES='*'` alongside the manifest
+  env, so they land in the same dir) — catches dropped cutouts;
   seam self-check: for tokens the manifest marks tileable, run the `is_tileable`
   edge metric on the HD output — a produced tile that no longer wraps is a FAIL;
 - **upload budget**: sum of decoded RGBA bytes vs a per-level budget (default
@@ -465,35 +504,50 @@ in `perf_census.sh` order.
 roadmap §7 canonical harness):
 
 ```bash
-# identity leg (R3): pack OFF == byte-identical baseline
+# NOTE: screenshots are BMP in the CWD — screenshot_<label>.bmp (platform_sdl.c:673).
+# identity leg (R3): pack OFF, run TWICE (labels base/base2) — the two BMPs must be
+# byte-identical (deterministic baseline; also proves "pack unset == stock"):
 env SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 \
     GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
   ./build/ge007 --level $L --deterministic --screenshot-frame 300 \
     --screenshot-label base --screenshot-exit          # Video.TexturePack empty
-# feature leg: same but GE007_TEXTURE_PACK=$P (and once with GE007_RENDERER=metal —
+cmp screenshot_base.bmp screenshot_base2.bmp           # (after the 2nd run)
+# feature leg: same command + GE007_TEXTURE_PACK=$P GE007_TRACE_SETTEX=1, label hd,
+#   plus --trace-state trace_hd.jsonl (that flag is what produces the JSONL that
+#   audit_render_trace.py consumes). Repeat once with GE007_RENDERER=metal —
 #   macOS-only, gfx_backend.h:10; pack_qa.sh SKIPs, not fails, the metal leg elsewhere.
 #   Metal draws scenes today: gfx_metal.mm header "Implemented (Phases 1-3)" incl.
 #   texture upload + draw flush + CPU readback; parity harness pattern =
 #   tools/renderer_parity_capture.sh)
-python3 tools/audit_screenshot_health.py hd.png        # non-black, non-garbage
-python3 tools/compare_screenshots.py base.png hd.png --max-changed-pct 60 \
-    --json-out qa.json     # HD SHOULD differ a lot; the budget is a floor+ceiling:
-                           # changed-pct < 5 => pack didn't load (fail loudly);
-                           # per-channel mean delta > 25 => tone drift (fail)
-python3 tools/audit_render_trace.py trace.jsonl        # render health (bad cmds/NaN)
+python3 tools/audit_screenshot_health.py screenshot_hd.bmp   # non-black, non-garbage
+python3 tools/compare_screenshots.py screenshot_base.bmp screenshot_hd.bmp \
+    --max-changed-pct 60 --json-out qa.json
+# The ceiling (>60% changed => FAIL) is enforced by the tool itself (exit 1).
+# The floor + tone budgets are computed BY pack_qa.sh from qa.json fields:
+#   .changed_pct < 5            => "pack didn't load" (fail loudly)
+#   per-channel |mean_rgb.test - mean_rgb.baseline| > 25 on any channel => tone drift
+# (compare_screenshots.py has no floor/tone flags; mean_rgb is in the JSON payload.)
+python3 tools/audit_render_trace.py trace_hd.jsonl     # render health (bad cmds/NaN)
 # settex-event check: [SETTEX-UPLOAD-FAIL]/[SETTEX-MISS] are STDERR lines gated on
-# GE007_TRACE_SETTEX=1 (gfx_log_settex_event, gfx_pc.c:11431) — pack_qa.sh runs the
-# feature leg with that env and greps its stderr log; audit_render_trace.py does
-# NOT cover them (its gates are bad-cmds/crashes/NaN/DL-counter only).
+# GE007_TRACE_SETTEX=1 (gfx_log_settex_event, gfx_pc.c:11431) — pack_qa.sh greps the
+# feature leg's stderr log for them; audit_render_trace.py does NOT cover them
+# (its gates are bad-cmds/crashes/NaN/DL-counter only).
 ```
+
+Output contract: `pack_qa.sh` prints one `PACK_QA PASS level=<L>` line and exits 0;
+any failed check prints `PACK_QA FAIL level=<L> check=<name>` and exits 1.
 
 Plus the seam A/B: a scripted close-up warp at each hero surface
 (`GE007_AUTO_WARP_PAD` pattern already used by the train investigation) with a
 9-region `--region` grid — tile-repeat borders must not show step deltas.
-Perf check: frame-time via the `perf_census.sh` single-level mode
-(`tools/perf_census.sh $L`) must stay ≥ 90% of the no-pack fps (texture residency
-is cached per token — `texture_pack.c:26-29` miss cache + settex GL cache — so
-steady-state cost is VRAM/bandwidth, not I/O).
+Perf check: frame-time via the `perf_census.sh` single-level mode, run twice —
+`CENSUS_OUT=/tmp/qa_perf_off.csv tools/perf_census.sh $L` (pack unset) and
+`CENSUS_OUT=/tmp/qa_perf_on.csv GE007_TEXTURE_PACK=$P tools/perf_census.sh $L`
+(exported env passes through the script's `env` launcher; `CENSUS_OUT` overrides
+the default `baselines/perf_census_latest.csv` so QA never dirties the repo).
+The pack-on mean work_ms must stay ≤ 111% of pack-off (≥ 90% fps); texture
+residency is cached per token — `texture_pack.c:26-29` miss cache + settex GL
+cache — so steady-state cost is VRAM/bandwidth, not I/O.
 
 **Sim invariance** (R1): texture substitution never touches the sim by construction
 (pixels only, dims preserved — §2.1), but the pack flag rides the standard gate once
@@ -547,7 +601,9 @@ once exported to the pack — all four hashes must be identical (script header:
 | `src/platform/texture_pack.c` | E9.T2 only (hash-key path, if census demands) | E9 |
 
 No shader work in this workstream ⇒ no GLSL/MSL dual-generator changes (that is
-W1's contract; our sidecar *files* feed their samplers).
+W1's contract; our sidecar *files* feed their samplers). Likewise
+`build_pack.py --emit-material-maps` is **W1's** change (W1.E5.T5, doc 01 §4.7 —
+it wraps `make_sidecars.py`, see §4.6); it is deliberately absent from this table.
 
 ---
 
@@ -561,15 +617,15 @@ notes call out the gate. Build command for all C tasks:
 
 | ID | Task | Files | Steps | Acceptance (runnable) | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E1.T1 | Emit CSV from settex decode | `gfx_pc.c` | Add 3 static fns (§4.1); hook after decode ~`:21045`; `emitted[4096]` dedupe; append-with-header-once | `GE007_DUMP_TEXMANIFEST=1 GE007_DUMP_SETTEX_DIR=/tmp/td ./build/ge007 --level dam --deterministic --screenshot-frame 300 --screenshot-exit` → CSV exists; row count == unique `G_SETTEX` tokens in the `--trace-state` trace MINUS tokens that logged `SETTEX-MISS`/`OOM` (failed pool lookup/linearize never reaches decode, `gfx_pc.c:20731,20754,20769`); `tok0022` row says `64,32,...,1,room` | 3 | — | R3: env-gated diag, unset = byte-identical (screenshot sha vs base). R2: CSV local (`.gitignore:106`) |
+| W2.E1.T1 | Emit CSV from settex decode | `gfx_pc.c` | Add 3 static fns (§4.1); hook after decode ~`:21045`; `emitted[4096]` dedupe; append-with-header-once | Fresh dir: `rm -rf /tmp/td && mkdir /tmp/td`, then `GE007_DUMP_TEXMANIFEST=1 GE007_DUMP_SETTEX_TEXTURES='*' GE007_DUMP_SETTEX_DIR=/tmp/td ./build/ge007 --level dam --deterministic --screenshot-frame 300 --screenshot-exit` → (a) `/tmp/td/ge007.texmanifest.csv` exists, first line exactly `token,w,h,fmt,siz,avgRGB,tileable,draw_class`; (b) no duplicate tokens: `tail -n+2 …csv \| cut -d, -f1 \| sort \| uniq -d` empty; (c) every fresh-decode image dump is manifested: each `/tmp/td/ge007_settex_NNNN.rgba.ppm` (exclude `*_cache*` — those are the cache-hit variant, `gfx_pc.c:12484`) has a `tokNNNN` CSV row (both run off the same fresh-decode path, so set-equality is exact; `SETTEX-MISS`/`OOM` tokens never reach decode and appear in neither — `gfx_pc.c:20731,20754,20769`); (d) `grep '^tok0022,64,32,' …csv` hits, with `tileable=1`, `draw_class=room` | 3 | — | R3: env-gated diag, unset = byte-identical (screenshot sha vs base). R2: CSV local (`.gitignore:106`) |
 | W2.E1.T2 | C/Python tileable parity | `gfx_pc.c`, `build_pack.py`, new pytest | Shared fixture: 6 synthetic PNGs (wrapping, non-wrapping, 4px-tiny…) run through both implementations | `python3 -m pytest tools/texpack/tests/test_tileable_parity.py` green; both agree on all fixtures | 2 | E1.T1 | A1 fixtures (generated in-test, never tracked) |
-| W2.E1.T3 | Identity + guards sweep | — | Run identity screenshot A/B; run contamination guard | `scripts/ci/check_no_rom_data.sh` OK; `tools/compare_screenshots.py base.png after.png --max-changed-pct 0` (env unset) | 1 | E1.T1 | R3 proof |
+| W2.E1.T3 | Identity + guards sweep | — | Run identity screenshot A/B; run contamination guard | `scripts/ci/check_no_rom_data.sh` OK; run the §8.1 identity command (envs unset) on the pre-E1.T1 build (`--screenshot-label base`) and the post-E1.T1 build (`--screenshot-label after`), then `tools/compare_screenshots.py screenshot_base.bmp screenshot_after.bmp --max-changed-pct 0` exits 0 | 1 | E1.T1 | R3 proof |
 
 ### E2 — AI upscale hardening (P2.1 + model selection)
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E2.T1 | Alpha integrity through ESRGAN | `build_pack.py` | Fixture grate w/ cutout alpha; verify ncnn alpha survives 3×3-tile+crop; else split-channel path (Lanczos alpha, re-attach) | Pipeline on fixture: output alpha histogram matches source ±2%; in-game grate screenshot shows holes (`pack_qa.sh` region check) | 3 | — | Tier B pack, local |
+| W2.E2.T1 | Alpha integrity through ESRGAN | `build_pack.py` | Fixture: PIL-generate a 64×64 grate (opaque bars, alpha-0 holes) as `.rgba.ppm` + `.alpha.pgm` pair (the dump format, `build_pack.py:74-89`); verify ncnn alpha survives 3×3-tile+crop; else split-channel path (Lanczos alpha, re-attach post-crop) | Pipeline on fixture: output alpha histogram matches source ±2% (fraction of alpha<128 pixels); in-game grate screenshot shows holes — check via `compare_screenshots.py --region grate:X,Y,W,H` vs stock until E7's `pack_qa.sh` lands, then via its region check | 3 | — | Tier B pack, local |
 | W2.E2.T2 | Per-class model bake-off | `build_pack.py` (`CLASS_MODEL`) | 12-token sample/class from a Dam+facility manifest dump; 3 models each; deterministic A/B screenshots; human pick; update table + README | Decision doc lines in README; `CLASS_MODEL` updated; A/B shots archived locally | 4 | E1.T1 | Tier B, local; results (words) committable |
 | W2.E2.T3 | Batch failure isolation + `--plan` input mode | `build_pack.py` | Wrap per-model `subprocess.run`; per-token dispatch off plan JSON | Kill ESRGAN mid-batch → build finishes others, exits 1, names failures; `--plan` builds Dam pack identical (sha per file) to legacy path for ai-routed tokens | 3 | E3.T1 | — |
 
@@ -577,7 +633,7 @@ notes call out the gate. Build command for all C tasks:
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E3.T1 | `route_pack.py` core tree | new | Implement §4.2; stable JSON emit; WARN-not-guess for unrouted small ROOM tiles | Unit tests: 10 synthetic manifests hit every branch; running twice → byte-identical plan; Dam manifest + Dam overrides reproduces the shipped Dam decisions (`tok0022` procedural, `tok0949` stock) | 4 | E1.T1 | Plan JSON committable (no ROM data) |
+| W2.E3.T1 | `route_pack.py` core tree | new: `tools/texpack/route_pack.py`, `tools/texpack/overrides/dam.json` (first curation file — M1 demo needs it), `tools/texpack/tests/test_route_pack.py` | Implement §4.2; stable JSON emit; WARN-not-guess for unrouted small ROOM tiles; cross-plan shared-token conflict WARN (§4.7) | Unit tests (`python3 -m pytest tools/texpack/tests/test_route_pack.py`): 10 synthetic manifests hit every branch; running twice → byte-identical plan; Dam manifest + `overrides/dam.json` reproduces the shipped Dam decisions (`tok0022` procedural, `tok0949` stock) | 4 | E1.T1 | Plan JSON committable (no ROM data) |
 | W2.E3.T2 | Tier-B refusal (distributable) | `route_pack.py`, `build_pack.py` | `--distributable` refusal in BOTH tools (§4.2); actionable error | `route_pack.py --distributable` on a plan w/ one ai_upscale → exit 1 naming token; hand-edit plan to smuggle tier:"A1" on an ai entry → `build_pack.py --distributable` still refuses (source-based, not label-based) | 2 | E3.T1 | **R2 core enforcement** |
 
 ### E4 — Open-licensed ingestion (P2.4)
@@ -587,23 +643,23 @@ notes call out the gate. Build command for all C tasks:
 | W2.E4.T1 | `cc0_library.py` ingest/check | new | Record schema §4.3; license allowlist; sha256; refuse partial/GPL/unknown | `ingest` a real ambientCG CC0 asset → record complete; `ingest --license GPL-2.0` → refused; `check` detects a bit-flipped asset | 4 | — | A1/A2 with provenance; images stay local (`check_no_rom_data.sh:57`) |
 | W2.E4.T2 | NOTICE generation + build gate | `cc0_library.py`, `build_pack.py` | `notice` cmd; distributable build fails on missing attribution | Plan w/ one CC-BY asset → NOTICE contains author/URL/license line; delete record → distributable build exits 1 | 2 | E4.T1, E3.T1 | R2 A2 discipline |
 | W2.E4.T3 | `--cc0-library` build path | `build_pack.py` | Load, transform (recorded ops), resample ×16≤4096, post-transform tileability check, place | Plan-routed cc0 token lands as `tok####.png`; non-wrapping import on tileable token → build error; in-game screenshot shows it | 3 | E4.T1, E3.T1 | A1/A2 |
-| W2.E4.T4 | Seed library: 12 assets | `~/mgb64_assets` + committable `index.json` | Curate CC0 metal/concrete/wood/brick/sand/snow from ambientCG/PolyHaven (both CC0); ingest each | 12 complete records; `check` green; ≥1 asset visually accepted on depot via pack_qa | 4 | E4.T1 | A1 (CC0) |
+| W2.E4.T4 | Seed library: 12 assets | `~/mgb64_assets` (local) + committed snapshot `tools/texpack/cc0_index.json` (§4.3) | Curate CC0 metal/concrete/wood/brick/sand/snow from ambientCG/PolyHaven (both CC0); ingest each; `cp ~/mgb64_assets/index.json tools/texpack/cc0_index.json` and commit | 12 complete records; `check` green; ≥1 asset visually accepted on depot (manual screenshot A/B vs stock; re-gate via `pack_qa.sh` once E7 lands); `check_no_rom_data.sh` green with the index committed | 4 | E4.T1 | A1 (CC0) |
 
 ### E5 — Synth preset library
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E5.T1 | concrete + sand + snow | `synth_texture.py` | §4.4 recipes; register in `GEN`; default tones | Each: fixed seed → stable sha256 twice; self-tileable (edge metric <20); `_highpass` verified (macro-blotch FFT energy < threshold in test) | 4 | — | A1 generic |
+| W2.E5.T1 | concrete + sand + snow | `synth_texture.py` | §4.4 recipes; register in `GEN`; default tones | Each: fixed seed → stable sha256 twice; self-tileable (edge metric <20, the `is_tileable` math); `_highpass` verified: in-test FFT of output luma, sum of `\|F\|` over radial frequencies < 8 cycles/width (DC excluded) must be < 5% of total spectral energy (macro blotches would repeat across a tiled plane) | 4 | — | A1 generic |
 | W2.E5.T2 | metal_panel + wood + brick (structured) | `synth_texture.py` | Periodic grids/rings per §4.4 notes; `--tint` | Same determinism/seam tests + a wrap-shift test (`np.roll` by w/2 then edge metric — catches non-integer periods); visual accept on depot/train hero surface | 6 | E5.T1 | A1 generic (`--tint` doc note per §4.4) |
 | W2.E5.T3 | `--emit-height` for all presets | `synth_texture.py` | Return pre-tone height field; write `tok####_h.png` (local intermediate) | Height PNG exists, seamless, feeds E6 pipeline | 2 | E5.T1, E5.T2 | follows diffuse tier |
 
-### E6 — Material sidecars (feeds W1.T2.3)
+### E6 — Material sidecars (feeds W1.E5, roadmap T2.3)
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W2.E6.T1 | `make_sidecars.py` normal+rough | new | §4.6 math; **wrapped** Sobel/variance; plan-aware tier refusal | Flat input → exact (128,128,255); seamless input → seamless normal (edge metric on n map); unit-length ±1%; Tier-B diffuse + `--distributable` → refused | 4 | E3.T1 | tier follows input (§4.6) |
-| W2.E6.T2 | `preview_material.py` offline QA | new | Lambert+Blinn fake-light GIF over swinging light | GIF renders; gravel normal shows moving shading, flat map doesn't | 2 | E6.T1 | local artifact |
-| W2.E6.T3 | Sidecar contract handshake w/ W1 | doc §4.6 | Freeze filename/encoding contract in this doc + W1's doc; hero-surface sidecars for Dam+facility generated | W1 sign-off recorded; sidecars validate in `validate_pack.py` | 1 | E6.T1; **W1.T2.3 for in-game render** | — |
+| W2.E6.T2 | `preview_material.py` offline QA | new: `tools/texpack/preview_material.py <diffuse.png>` (finds `_n`/`_r` siblings, §4.6) | Lambert+Blinn fake-light GIF over swinging light | GIF renders; gravel normal shows moving shading, flat map doesn't | 2 | E6.T1 | local artifact |
+| W2.E6.T3 | Sidecar contract handshake w/ W1 | doc §4.6 | Freeze filename/encoding contract in this doc + W1's doc §4.7 (incl. roughness polarity 255=rough); record that W1.E5.T5's `build_pack.py --emit-material-maps` wraps `make_sidecars.py` (§4.6 — one implementation); hero-surface sidecars for Dam+facility generated | W1 sign-off recorded; sidecars validate in `validate_pack.py` | 1 | E6.T1; **W1.E5 (T2.3) for in-game render** | — |
 
 ### E7 — QA harness
 
@@ -617,16 +673,16 @@ notes call out the gate. Build command for all C tasks:
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E8.T1 | `hue_pack.py` | new | §4.7: hue assign, flat pack emit, `--identify` clustering by hue angle + coverage rank | On Dam: identifies `tok0022` as top ground token (matches roadmap §3 ground truth) | 3 | E1.T1 | throwaway pack local |
+| W2.E8.T1 | `hue_pack.py` | new: `tools/texpack/hue_pack.py` | §4.7: hue assign, flat pack emit, `--identify` clustering by hue angle + coverage rank (input = the `screenshot_hue_<L>.bmp` from the §4.7 step-2 run) | On Dam: identifies `tok0022` as top ground token (matches roadmap §3 ground truth) | 3 | E1.T1 | throwaway pack local |
 | W2.E8.T2 | Pipeline levels 1–5 (dam, facility, surface1, depot, train) | `overrides/*.json` | §4.7 flow per level; curate top-5 heroes each; QA gate | `pack_qa.sh` PASS ×5; Dam redo matches/exceeds shipped Dam pack in A/B review; train QA run does NOT regress the known sky-leak metrics | 10 | E2,E3,E5,E7,E8.T1 | overrides committable; packs local |
-| W2.E8.T3 | Levels 6–20 | `overrides/*.json` | Same flow ×15; batch script `all_levels.sh` | `for L in …; do pack_qa.sh --level $L; done` all PASS; full 20-level build wall-time < 15 min | 15 | E8.T2 | same |
+| W2.E8.T3 | Levels 6–20 | `overrides/*.json`, new `tools/texpack/all_levels.sh` (loops the §4.7 recipe over `perf_census.sh:30-31`'s list) | Same flow ×15 | `for L in …; do tools/texpack/pack_qa.sh --level $L --pack ~/ge007_hd; done` all PASS; full 20-level build wall-time < 15 min | 15 | E8.T2 | same |
 | W2.E8.T4 | Distributable pack v1 | plans + NOTICE | Route all 20 levels `--distributable` (procedural+cc0+stock only); build; NOTICE | `route_pack.py --distributable` ×20 green; `check_no_rom_data.sh` green on everything committed; pack installs & renders on a machine with no dumps | 4 | E8.T3, E4.* | **R2 flagship artifact** |
 
 ### E9 — Coverage census + (conditional) hash-key loader
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W2.E9.T1 | Weapon/chrprop/HUD coverage census | new script | Compare settex trace vs `GE007_DUMP_LOADED_TEXTURES` trace per class on 5 levels; report replaceable-pixel % | CSV report; go/no-go number for T2 (threshold: <80% weapon-class coverage ⇒ go) | 3 | E1.T1 | local traces |
+| W2.E9.T1 | Weapon/chrprop/HUD coverage census | `gfx_pc.c` (tiny env-gated counter) + new `tools/texpack/coverage_census.py` | Add `GE007_TEXTURE_COVERAGE_CENSUS=1` per-flush tri counters keyed `draw_class × (settex_active ? settex : rdram_hash)` (same pattern as `g_drawclass_tri_counts`, `gfx_pc.c:452`), dumped at exit as `[COVERAGE] class=<c> settex_tris=<n> other_tris=<n>` stderr lines; python reducer runs 5 levels (dam facility surface1 depot train) headless to frame 300 and aggregates | CSV report `level,class,settex_tri_pct` (5 levels × 6 classes); go/no-go number for T2 (threshold: weapon-class mean `settex_tri_pct` < 80 ⇒ go); diag env unset ⇒ screenshot byte-identical (R3 leg) | 3 | E1.T1 | local traces; R3: env-gated diag |
 | W2.E9.T2 | *(conditional)* hash-key loader path | `texture_pack.c`, `gfx_pc.c`, `build_pack.py` | Stable content-hash of source texels; `textures/hash_%016x.png` probe beside token probe; dump emits same key; miss-cache by hash | Fixture round-trip: dump → pack → in-game replacement of one hash-key texture; identity leg byte-identical with pack off; two-invocation sim-invariance gate green (§4.8 recipe — the hash probe touches the hot `gfx_pc.c` path); ASan clean | 8 | E9.T1 says go | R3: same `Video.TexturePack` gate; R2: Tier B local; R1: RAMROM gate in acceptance |
 
 **Total: 100 junior-days base ≈ 20 junior-weeks; 108 (≈ 22 wks) if the census
@@ -639,11 +695,16 @@ E5 12 · E6 7 · E7 11 · E8 32 · E9 3 (+8 conditional).
 
 | M | Deliverable | Contents | Demo script (reviewer runs) | Est (jr-wks) |
 |---|---|---|---|---|
-| M1 | **Manifest + Router live** | E1, E3, E2.T3 | `GE007_DUMP_TEXMANIFEST=1 GE007_DUMP_SETTEX_DIR=/tmp/td ./build/ge007 --level dam --deterministic --screenshot-frame 300 --screenshot-exit && python3 tools/texpack/route_pack.py --manifest /tmp/td/ge007.texmanifest.csv --overrides tools/texpack/overrides/dam.json --out /tmp/plan.json && cat /tmp/plan.json` | 4 |
-| M2 | **All-sources build** (AI hardened + synth ×7 + cc0 + NOTICE) | E2, E4, E5 | `python3 tools/texpack/build_pack.py --dump /tmp/td --plan /tmp/plan.json --cc0-library ~/mgb64_assets --out /tmp/pack && GE007_TEXTURE_PACK=/tmp/pack ./build/ge007 --level dam` | 6 |
-| M3 | **QA harness + 5 flagship levels** | E7, E8.T1-T2, E6 | `tools/texpack/pack_qa.sh --level depot --pack ~/ge007_hd` (prints PASS w/ budgets); `python3 tools/texpack/preview_material.py ~/ge007_hd/textures/tok0022*` | 6 |
+| M1 | **Manifest + Router live** | E1, E3, E2.T3 | `GE007_DUMP_TEXMANIFEST=1 GE007_DUMP_SETTEX_DIR=/tmp/td ./build/ge007 --level dam --deterministic --screenshot-frame 300 --screenshot-exit && python3 tools/texpack/route_pack.py --manifest /tmp/td/ge007.texmanifest.csv --overrides tools/texpack/overrides/dam.json --level dam --out /tmp/plan.json && cat /tmp/plan.json` (`overrides/dam.json` ships with E3.T1) | 4 |
+| M2 | **All-sources build** (AI hardened + synth ×8 + cc0 + NOTICE) | E2, E4, E5 | `python3 tools/texpack/build_pack.py --dump /tmp/td --plan /tmp/plan.json --cc0-library ~/mgb64_assets --out /tmp/pack && GE007_TEXTURE_PACK=/tmp/pack ./build/ge007 --level dam` | 6 |
+| M3 | **QA harness + 5 flagship levels** | E7, E8.T1-T2, E6 | `tools/texpack/pack_qa.sh --level depot --pack ~/ge007_hd` (prints PASS w/ budgets); `python3 tools/texpack/preview_material.py ~/ge007_hd/textures/tok0022.png` (finds the `_n`/`_r` siblings) | 6 |
 | M4 | **All 20 levels, full pack** | E8.T3, E9.T1 | `for L in dam facility runway surface1 bunker1 silo frigate surface2 bunker2 statue archives streets depot train jungle control caverns cradle aztec egypt; do tools/texpack/pack_qa.sh --level $L --pack ~/ge007_hd; done` (the canonical list, `perf_census.sh:30-31`; `ALL_LEVELS` spans two lines, don't sed it) → 20× PASS | 4 |
 | M5 | **Distributable pack v1 + release gates** | E8.T4 (+E9.T2 if go) | `python3 tools/texpack/route_pack.py --distributable …` (green) `&& scripts/ci/check_no_rom_data.sh && tools/sim_invariance_gate.sh dam1 600 2` | 2 (+1.6 cond.) |
+
+*Note: the Est column sums to 22 jr-wks vs §5's 100 jd ≈ 20 jw — milestone weeks
+include ~2 weeks of integration/review slack and deliberately do not sum to the
+task-day total. Schedule from the §5 task estimates; use this column for milestone
+pacing only.*
 
 ---
 
@@ -667,13 +728,18 @@ Per roadmap §7, every commit in this workstream runs:
 
 1. **Identity (R3)** — flags unset ⇒ byte-identical:
    `env SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 ./build/ge007 --level dam --deterministic --trace-state t.jsonl --screenshot-frame 300 --screenshot-label base --screenshot-exit`
-   then `tools/compare_screenshots.py base.png after.png --max-changed-pct 0`
-   (launch pattern per `tools/playability_smoke.sh:318-339`).
+   on the pre-change build, the same with `--screenshot-label after` on the
+   post-change build, then
+   `tools/compare_screenshots.py screenshot_base.bmp screenshot_after.bmp --max-changed-pct 0`
+   (screenshots are `screenshot_<label>.bmp` in the CWD, `platform_sdl.c:673`;
+   launch pattern per `tools/playability_smoke.sh:318-339`).
 2. **Feature A/B** — same command + `GE007_TEXTURE_PACK=<pack>`, once per backend
    (`GE007_RENDERER=metal` leg mandatory — the 4096 caps are mirrored,
    `gfx_metal.mm:1557-1560`, and must stay behaviorally identical); budgets are
-   floor+ceiling (§4.8): `--max-changed-pct 60` ceiling, changed-pct ≥ 5 floor,
-   per-channel mean delta ≤ 25.
+   floor+ceiling (§4.8): `--max-changed-pct 60` ceiling enforced by the tool;
+   changed-pct ≥ 5 floor and per-channel mean delta ≤ 25 computed from the
+   `--json-out` payload (`changed_pct`, `mean_rgb` fields) — the tool has no
+   floor/tone flags.
 3. **Health** — `tools/audit_screenshot_health.py` + `tools/audit_render_trace.py`;
    plus grep the feature-leg stderr (run with `GE007_TRACE_SETTEX=1`) for new
    `[SETTEX-UPLOAD-FAIL]`/`[SETTEX-MISS]` events (§4.8 note — these are stderr

@@ -143,7 +143,10 @@ A reviewer on an M-series MacBook Pro (ProMotion XDR panel) runs
    consumed > 1.0) with no clipping band; SDR displays are untouched.
 5. **Locked smoothness** — with `Video.DynamicResolution=1`, worst-case scenes hold the
    16.6 ms present budget by scaling internal resolution (never below 0.5×), invisible
-   at a glance; the HUD/filter chain stays full-res.
+   at a glance. Honest scope: the scale applies to the **whole scene target, HUD
+   included** (there is no separate UI pass — HUD draws into the same offscreen,
+   §4.7); the final present upscales to native. HUD softening at low rungs is an
+   accepted cost, bounded by the 0.5× floor and the §7 risk-5 kill criterion.
 6. **A settled 120 Hz verdict** — presentation can run unsynced/ProMotion-paced today;
    the doc's spike gives a GO/NO-GO with evidence on true render-time view
    interpolation (sim stays bit-exact 60 Hz either way, RAMROM-verified).
@@ -261,6 +264,23 @@ fragment float4 ssaoFragment(FVO in [[stage_in]],
 }
 ```
 
+`kKernel` is generated ONCE with this snippet and the printed constants pasted into the
+program builder (first-party math, deterministic seed — reviewable, no runtime RNG):
+
+```bash
+python3 - <<'PY'
+import math, random
+random.seed(7)
+for i in range(12):
+    while True:
+        x, y, z = random.uniform(-1, 1), random.uniform(-1, 1), random.uniform(0.05, 1)
+        if x*x + y*y + z*z <= 1.0: break
+    n = math.sqrt(x*x + y*y + z*z)
+    s = 0.1 + 0.9 * (i / 12.0) ** 2          # the mix(0.1, 1.0, (i/12)^2) scale
+    print(f"    float3({x/n*s:.6f}, {y/n*s:.6f}, {z/n*s:.6f}),")
+PY
+```
+
 `u.radius` maps `Video.SsaoRadius` (preset 0.5, `platform_sdl.c:1976`) to view units via
 `kRadiusWorldScale = 6.0` (tuned on Dam/Jungle so 0.5 ≈ crate-scale reach; the v1 UV
 mapping `*0.02` at `gfx_metal.mm:1404` stays untouched for planar mode).
@@ -304,7 +324,7 @@ menu→gameplay transition can pair a stale x/y with a fresh a/b.
   **cannot run on the flagship platform** (the reconstruction math is the documented
   op-hang, `docs/METAL_BACKEND_PLAN.md:39`), so a GLSL twin would ship dead code on
   macOS and untested code elsewhere; (c) a GLSL port for Linux/Windows is scoped as an
-  explicit follow-up task (W3.E2.T7) hard-guarded `#ifndef __APPLE__` at the
+  explicit follow-up task (W3.E2.T6) hard-guarded `#ifndef __APPLE__` at the
   `output_ssao_active` seam (`gfx_opengl.c:2248`), so the generators re-converge once a
   non-Apple GL test box exists. Until then `Video.SsaoMode=hemisphere` on GL logs one
   warning and falls back to planar (explicit, not silent).
@@ -333,13 +353,30 @@ with no object velocity, softening the HD texture packs) are the classic complai
 **Decision: ship SMAA 1x; TAA only if the spike's reprojection test passes AND a
 side-by-side review prefers it.** SMAA fits the existing chain perfectly: three small
 passes (edge-detect → blend-weights → neighborhood-blend), pure spatial, deterministic
-(screenshot-gate friendly), two tiny LUT textures. Structure: new
-`mtl_ensure_smaa_programs()` + two `RG8`/`R8` intermediates in `mtl_ensure_targets`;
-runs scene→scene' *before* `mtl_run_output_filter`; the filter's FXAA branch is forced
-off while `Video.Smaa=1` (mutually exclusive, one-time log). LUTs: the SMAA
-area/search textures are generated **at init from the published algorithm's tables**
-(Jimenez et al., MIT-style license) — **Tier A2**: per-asset review + `NOTICE` entry
-before commit (R2); they are code-generated constants, never ROM-touched.
+(screenshot-gate friendly), two tiny LUT textures.
+
+**Structure (concrete):** new `mtl_ensure_smaa_programs()` beside
+`mtl_ensure_filter_program` (`gfx_metal.mm:1205`), same TB/`newLibraryWithSource`
+pattern. New scene-sized targets in `mtl_ensure_targets` (beside `s_filter_low`,
+`:729`): `s_smaa_edges` (`RG8Unorm`), `s_smaa_blend` (`RGBA8Unorm`), `s_smaa_out`
+(`BGRA8Unorm`), all `RenderTarget|ShaderRead`, private. The three passes run in
+`mtl_end_frame` after the scene encoder closes and **before** `mtl_run_output_filter`;
+while `Video.Smaa=1` the filter chain's pass-1 source swaps from `s_scene_color` to
+`s_smaa_out` (one array entry: `passes_src[0]`, `gfx_metal.mm:1437`) and the filter's
+FXAA branch is forced off (`u.fxaa=0`, mutually exclusive, one-time log).
+
+**LUTs (exact provenance + build):** AreaTex is 160×560 `RG8Unorm`, SearchTex is 64×16
+`R8Unorm` — from the SMAA reference implementation (Jimenez et al.,
+github.com/iryoku/smaa, **MIT license**). Plan: vendor the two generator scripts
+(`Scripts/AreaTex.py`, `Scripts/SearchTex.py`, license headers kept) into
+`tools/smaa/`, add a `tools/smaa/gen_luts.py` wrapper that emits
+`src/platform/fast3d/smaa_area_tex.h` / `smaa_search_tex.h` as `const uint8_t` arrays
+(~175 KB + 1 KB, **committed** — deterministic output, `--check` mode re-generates and
+diffs); init uploads them via `replaceRegion`. One-time network fetch for the two
+scripts; everything afterward is offline. **Tier A2** (R2): add the MIT text +
+attribution to `NOTICE.md`/`THIRD_PARTY.md` and extend
+`tools/check_third_party_notices.py` to cover the vendored files; C headers are not
+tracked images, so `scripts/ci/check_no_rom_data.sh` stays green; never ROM-touched.
 
 ### 4.3 HDR/EDR output (macOS)
 
@@ -347,8 +384,9 @@ before commit (R2); they are code-generated constants, never ROM-touched.
   (`SETTING_SCOPE_RESTART` — layer pixel format is fixed at init). Metal-only; GL path
   logs-and-ignores.
 - **Layer setup** (in `mtl_init`, `gfx_metal.mm:1023-1072`): `s_layer.pixelFormat =
-  MTLPixelFormatRGBA16Float; s_layer.wantsExtendedDynamicRange = YES; s_layer.colorspace
-  = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);`. Per-frame headroom:
+  MTLPixelFormatRGBA16Float; s_layer.wantsExtendedDynamicRangeContent = YES;
+  s_layer.colorspace =
+  CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);`. Per-frame headroom:
   `NSScreen.maximumExtendedDynamicRangeColorComponentValue` of the window's screen
   (bridge via a new `platformGetEdrHeadroom()` in `platform_sdl.c` beside
   `platformGetMetalLayer`, `platform_sdl.c:2291-2295`), clamped by a `Video.HdrPeak`
@@ -361,7 +399,13 @@ before commit (R2); they are code-generated constants, never ROM-touched.
   (u.hdrPeak - 1))` — SDR content maps 1:1, only bloom-classified energy enters the
   EDR headroom (no fake inverse-tonemap of LDR art); (3) dither/rgb555 branches are
   skipped (`u.dither/u.rgb555` forced 0 — they are 8-bit concepts). Present blits
-  `s_final_hdr` → the float drawable (same-format blit, exact).
+  `s_final_hdr` → the float drawable (same-format blit, exact). **Mandatory guard:**
+  with `Video.HdrOutput=1` the filter chain must run **unconditionally**
+  (`mtl_output_filter_active() || hdr` at the `gfx_metal.mm:1492` call site) — the
+  filter pass doubles as the BGRA8→RGBA16Float conversion; a raw
+  `copyFromTexture` blit of BGRA8 `s_scene_color` into the float drawable is illegal
+  (blit encoders require identical pixel formats) and would break the
+  faithful/filter-inactive path.
 - **Readback/screenshots:** `mtl_read_framebuffer_rgb` assumes 4-byte BGRA8
   (`gfx_metal.mm:1906-1915`). In HDR mode, between-frame readback re-runs the final
   pass once into the existing SDR `s_final_color` **on demand** (only when a
@@ -376,7 +420,8 @@ before commit (R2); they are code-generated constants, never ROM-touched.
    With `Video.HiDPI=1` this makes `gfx_current_dimensions` = backing pixels ×
    `RenderScale`; `mtl_ensure_targets` and the drawable follow automatically
    (`gfx_metal.mm:864`).
-2. **Pixel-budget guard** — HiDPI(2×) × RenderScale(2×) = 4× a 1440p window ≈ 5.9K×3.3K
+2. **Pixel-budget guard** — HiDPI(2×) × RenderScale(2×) on the default 1440×810 window
+   (`Video.WindowWidth/Height` defaults, `platform_sdl.c:1490-1497`) ≈ a 5760×3240
    render: legal (< 16384 cap, `gfx_metal.mm:1530-1532`) but slow. Add a one-time
    advisory when `drawable_px * renderScale² > 2.2×(3840×2160)` suggesting
    `Video.RenderScale=1` with HiDPI (they are redundant supersampling paths), and make
@@ -419,7 +464,9 @@ limitation natively:
 - **Phase B (5-day spike, W3.E6.T2 — sim-adjacent, R1 red zone):** render-time view
   interpolation per roadmap §5 needs (1) a pure-draw re-render path that rebuilds DLs
   without ticking sim, and (2) an isolatable camera pose (same unknown as TAA, §4.2 —
-  the spikes share their matrix-capture work). Deliverable is a *verdict document* +
+  the spikes share their matrix-capture work). Deliverable is a *verdict document* at
+  `docs/remaster-aaa/verdicts/W3.E6.T2-view-interpolation.md` (sections: Question /
+  Method / Evidence / Verdict GO-or-KILL, each §7 row-3 kill criterion checked off) +
   prototype behind `GE007_INTERP_SPIKE`, validated by `tools/sim_invariance_gate.sh` +
   `tools/compare_state.py` (RAMROM replay hash must be bit-identical with the spike
   flag on). **Kill criteria** in §7. Full productization is explicitly deferred to its
@@ -452,12 +499,15 @@ limitation natively:
   `GPUStart/EndTime`; scene/post split via `MTLCounterSampleBuffer` timestamp sampling
   at encoder boundaries (`MTLCommonCounterSetTimestamp`, supported on Apple silicon;
   fall back to total-only if `counterSets` lacks it). Wrap passes in `os_signpost`
-  intervals (`OS_SIGNPOST_INTERVAL_BEGIN/END`, subsystem `com.mgb64.metal`) so
-  Instruments' Metal System Trace labels them.
+  intervals (`os_signpost_interval_begin/end`, `<os/signpost.h>`, subsystem
+  `com.mgb64.metal`) so Instruments' Metal System Trace labels them.
 - **Capture:** `GE007_METAL_CAPTURE=<frame>` triggers a programmatic
-  `MTLCaptureManager` capture of that frame to `mgb64_frame<N>.gputrace` (open in
-  Xcode). Document the interactive path too: Xcode → Debug → Capture GPU Workload on
-  the running process.
+  `MTLCaptureManager` capture of that frame to `mgb64_frame<N>.gputrace` in the CWD
+  (open in Xcode). **Gotcha:** outside Xcode the capture layer is disabled —
+  `supportsDestination:MTLCaptureDestinationGPUTraceDocument` returns NO unless the
+  process runs with `METAL_CAPTURE_ENABLED=1` in the environment; check it and
+  log-and-skip with a message naming that variable. Document the interactive path
+  too: Xcode → Debug → Capture GPU Workload on the running process.
 - **Census lane:** `tools/perf_census.sh` gains `RENDERERS="gl metal"` (default `gl`;
   macOS adds `metal`): per renderer it sets `GE007_RENDERER`, adds `GE007_METAL_GPU_
   TRACE=1`, and emits extra CSV columns `metal_ms,metal_fps,metal_gpu_ms`. A new
@@ -471,12 +521,18 @@ limitation natively:
 | File | Changes |
 |---|---|
 | `src/platform/fast3d/gfx_metal.mm` | SSAO v2 pass programs + targets + uniforms (§4.1); `proj_x/y` reset in `mtl_start_frame`; SMAA passes; MSAA targets/resolve + PSO sample wiring + A2C; HDR layer/final-pass/readback; DRS sensor/ladder; GPU timers/signposts/capture; `gfx_metal_set_display_sync` |
-| `src/platform/fast3d/gfx_opengl.c` | `Video.SsaoMode=hemisphere` → warn-and-fallback (one `if` at `:2248`); **no other GL change** (T7 later adds the non-Apple GLSL v2) |
+| `src/platform/fast3d/gfx_opengl.c` | `Video.SsaoMode=hemisphere` → warn-and-fallback (one `if` at `:2248`); **no other GL change** (E2.T6 later adds the non-Apple GLSL v2) |
 | `src/platform/fast3d/gfx_pc.c` | Metal branch in `gfx_sync_current_dimensions_from_window` (`:4417`); `g_pc_dynres_scale` factor in `gfx_scaled_dimension` (`:4404`) |
 | `src/platform/platform_sdl.c` | Register `Video.SsaoMode/Smaa/HdrOutput/HdrPeak/DynamicResolution/DynResMin/DynResTargetMs`; wire `platformApplyVSync` to Metal; `platformGetEdrHeadroom`; `--remaster` preset rows (`:1960`) |
 | `src/platform/main_pc.c` | `--remaster` help text notes SsaoMode/HDR (selection logic unchanged, `:553-560`) |
-| `tools/perf_census.sh`, new `tools/gpu_budget_gate.sh`, `tools/ssao_gate.sh` | §4.8 census lane; GPU budget gate; SSAO wash/far/temporal gate runner (§8) |
+| `tools/perf_census.sh`, new `tools/gpu_budget_gate.sh`, `tools/ssao_gate.sh` | §4.8 census lane; GPU budget gate; SSAO wash/far/temporal gate runner (§8); `sim_invariance_gate.sh` gains `GE007_GATE_EXTRA_ON` (E2.T5) |
+| new `tools/smaa/gen_luts.py` + `src/platform/fast3d/smaa_area_tex.h`/`smaa_search_tex.h`, `NOTICE.md`, `THIRD_PARTY.md` | §4.2 SMAA LUT generator + committed headers + license entries (E4.T1) |
 | `docs/VISUAL_MODES.md` | New flag rows |
+
+Shader-bit registry cross-check: W3 consumes **no** `SHADER_OPT` bits — every W3
+shader is a standalone fullscreen pass compiled in its own program, not a combiner
+variant. No collision with W1's claimed bits 5/6/7/29/30/31
+(`01-lighting-and-materials.md` §4.1).
 
 ---
 
@@ -490,38 +546,41 @@ R1 = render-only unless noted; R2 = tier of any asset; R3 = the flag.
 
 | ID | Task | Files | Steps | Acceptance (runnable) | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W3.E1.T1 | GPU timers + signposts | gfx_metal.mm | Completed-handler `GPUStart/EndTime`; counter-sample encoder split w/ fallback; `os_signpost` per pass | `GE007_METAL_GPU_TRACE=1 GE007_RENDERER=metal build/ge007 --level jungle --deterministic` + auto-exit prints ≥100 `[PERF-GPU]` lines with `scene_ms+post_ms ≤ total_ms+0.2`; Instruments shows named intervals | 4 | — | R3: diag env, off by default; R1: read-only |
-| W3.E1.T2 | Programmatic GPU capture | gfx_metal.mm | `MTLCaptureManager` capture at `GE007_METAL_CAPTURE=<frame>`; doc the Xcode flow in this file's §appendix | Env run emits `mgb64_frame120.gputrace` that opens in Xcode with labeled passes | 2 | E1.T1 | R3: diag env |
+| W3.E1.T1 | GPU timers + signposts | gfx_metal.mm | Add `GPUStart/EndTime` delta in the existing completed-handler (`gfx_metal.mm:1473-1479`); counter-sample encoder split w/ fallback; `os_signpost` per pass | `env GE007_METAL_GPU_TRACE=1 GE007_RENDERER=metal GE007_AUTO_EXIT_FRAME=200 SDL_AUDIODRIVER=dummy GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 build/ge007 --level jungle --deterministic` exits 0 having printed ≥100 `[PERF-GPU]` lines with `scene_ms+post_ms ≤ total_ms+0.2` (`GE007_AUTO_EXIT_FRAME` exists: `stubs.c:5395`); Instruments shows named intervals | 4 | — | R3: diag env, off by default; R1: read-only |
+| W3.E1.T2 | Programmatic GPU capture | gfx_metal.mm | `MTLCaptureManager` capture at `GE007_METAL_CAPTURE=<frame>` (needs `METAL_CAPTURE_ENABLED=1`, §4.8); doc the Xcode flow in this file's §appendix | `env METAL_CAPTURE_ENABLED=1 GE007_METAL_CAPTURE=120 GE007_RENDERER=metal SDL_AUDIODRIVER=dummy GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_AUTO_EXIT_FRAME=200 build/ge007 --level dam --deterministic` emits `./mgb64_frame120.gputrace` that opens in Xcode with labeled passes; without `METAL_CAPTURE_ENABLED` it logs the skip reason and still exits 0 | 2 | E1.T1 | R3: diag env |
 | W3.E1.T3 | Metal census lane + budget gate | perf_census.sh, gpu_budget_gate.sh | `RENDERERS` loop; CSV columns; gate script (on/off delta vs budget) | `RENDERERS="gl metal" tools/perf_census.sh jungle dam` writes both column sets; `tools/gpu_budget_gate.sh --feature Video.Ssao` exits 0 on v1 today | 3 | E1.T1 | R1: measurement only |
 
 ### E2 — SSAO v2 (the unblocked prize)
 
+**Program interlock (master plan §3, load-bearing edge 4): W3.E2 must land before
+W1.M4 (materials review)** — so AO is not re-tuned twice under the new lighting.
+
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W3.E2.T1 | Mode plumbing + resets | platform_sdl.c, gfx_metal.mm, gfx_opengl.c | Register `Video.SsaoMode`+`GE007_SSAO_MODE`; reset `proj_x/y` in `mtl_start_frame` (`:1083`); GL warn-fallback at `gfx_opengl.c:2248`; preset rows | Identity gate green (mode registered, default planar); GL run with `SsaoMode=hemisphere` logs exactly one warn and renders v1 | 3 | — | R3: `Video.SsaoMode` default planar |
-| W3.E2.T2 | PASS A hemisphere AO | gfx_metal.mm | §4.1.3 program builder + `s_ssao_raw`; `GE007_SSAO_DEBUG=1` composites `vec3(ao)` | Debug capture on Dam pad: flat mid-ground AO ≥ 247/255 (≤8 occlusion), crease/under-prop ≤ 215/255 (≥40); far/grazing valley floor ≥ 247/255, no speckle band (gates lifted from `docs/REMASTER_PHASE1_PLAN.md:101-102`); run `tools/ssao_gate.sh dam jungle facility` | 8 | E2.T1 | R3: mode=hemisphere only; R1: output pass only |
-| W3.E2.T3 | PASS B bilateral blur + half-res | gfx_metal.mm | `s_ssao_tmp` ping-pong; separable depth-weighted blur; `g_pcSsaoHalfRes` sizing; wire `SsaoBlur/BlurDepthSharp/HalfRes` (`platform_sdl.c:1642-1655`) | Temporal gate: slow-pan consecutive-frame luma delta ≤2/255 on static ground (`REMASTER_PHASE1_PLAN.md:122` gate); half-res on = no visible edge crawl vs full-res at 1080p at arm's length (reviewer A/B); GPU budget: half+blur ≤ full-res-no-blur | 5 | E2.T2 | R3: `Video.SsaoBlur/SsaoHalfRes` |
+| W3.E2.T1 | Mode plumbing + resets | platform_sdl.c, gfx_metal.mm, gfx_opengl.c | Register `Video.SsaoMode`+`GE007_SSAO_MODE`; reset `proj_x/y` in `mtl_start_frame` (`:1083`); GL warn-fallback at `gfx_opengl.c:2248`; preset rows | Identity gate green (mode registered, default planar); GL fallback test — **do NOT use `--remaster` (it force-sets `GE007_RENDERER=metal` with overwrite, `main_pc.c:560`)**; instead: `build/ge007 --level dam --deterministic --config-override Video.RemasterFX=1 --config-override Video.Ssao=1 --config-override Video.SsaoMode=hemisphere --screenshot-frame 120 --screenshot-exit 2>&1 \| grep -c 'SsaoMode=hemisphere'` prints exactly `1` (one warn) and the frame renders v1 | 3 | — | R3: `Video.SsaoMode` default planar |
+| W3.E2.T2 | PASS A hemisphere AO | gfx_metal.mm | §4.1.3 program builder + `s_ssao_raw`; add `GE007_SSAO_DEBUG=1` (**new env, this task**: final pass returns `float4(float3(aoTex), 1)` instead of the composite) | Capture the AO field per level: `env GE007_RENDERER=metal GE007_SSAO_DEBUG=1 SDL_AUDIODRIVER=dummy GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 build/ge007 --remaster --level dam --deterministic --screenshot-frame 120 --screenshot-label ssao_dam --screenshot-exit` (repeat: jungle, facility) → `screenshot_ssao_<lvl>.bmp` in CWD. Measure ROI means with PIL: `python3 -c "from PIL import Image; im=Image.open('screenshot_ssao_dam.bmp').convert('L'); print(sum(im.crop((X0,Y0,X1,Y1)).getdata())/((X1-X0)*(Y1-Y0)))"`. Gates (AO-visibility convention, 255−occlusion; lifted from `docs/REMASTER_PHASE1_PLAN.md:101-102`): flat mid-ground ≥247/255, crease/under-prop ≤215/255, far/grazing valley floor ≥247/255 with no speckle band. Record chosen ROIs in the commit message — E2.T5 encodes them into `tools/ssao_gate.sh` | 8 | E2.T1 | R3: mode=hemisphere only; R1: output pass only |
+| W3.E2.T3 | PASS B bilateral blur + half-res | gfx_metal.mm | `s_ssao_tmp` ping-pong; separable depth-weighted blur; `g_pcSsaoHalfRes` sizing; wire `SsaoBlur/BlurDepthSharp/HalfRes` (`platform_sdl.c:1642-1655`) | Temporal gate (`REMASTER_PHASE1_PLAN.md:122`): deterministic slow pan via the scripted-input envs `GE007_AUTO_LOOK_RIGHT=60:200 GE007_AUTO_LOOK_STEP=2` (exist: `stubs.c:6077-6090`, window syntax `START:END`); two runs differing only in `--screenshot-frame 150` vs `151` (+ `--screenshot-label t150/t151`), then `python3 tools/compare_screenshots.py screenshot_t150.bmp screenshot_t151.bmp --roi <static-ground X,Y,W,H>` max luma delta ≤2/255. Half-res on = no visible edge crawl vs full-res at 1080p at arm's length (reviewer A/B); GPU budget: half+blur ≤ full-res-no-blur | 5 | E2.T2 | R3: `Video.SsaoBlur/SsaoHalfRes` |
 | W3.E2.T4 | Composite + knob wiring + tuning | gfx_metal.mm | `ssaoMode` in filter uniforms; sample `s_ssao_raw`; wire Bias/Power/Far/Near/SkyCut; tune on dam/jungle/facility/depot | All E2.T2 gates re-pass post-blur; `--remaster` boots hemisphere+blur+halfres; side-by-side v1/v2 captured for review | 6 | E2.T3 | R3 |
-| W3.E2.T5 | Validation battery | tools/ssao_gate.sh | Script the §8 battery incl. 18-level `--remaster` boot loop, ASan, sim gate, budget | All §8 commands exit 0; `tools/gpu_budget_gate.sh --feature ssao_v2` <2ms@1080p / <4ms@4K on jungle+dam | 4 | E2.T4, E1.T3 | R1: sim gate proof |
+| W3.E2.T5 | Validation battery | tools/ssao_gate.sh, tools/sim_invariance_gate.sh | Create `tools/ssao_gate.sh <levels...>` scripting the E2.T2/T3 captures + ROI gates; extend `sim_invariance_gate.sh` with `GE007_GATE_EXTRA_ON="Key=Val ..."` (appends `--config-override` pairs to the ON run only — the ON list is hard-coded at `tools/sim_invariance_gate.sh:54-58` today); run the §8 battery incl. 18-level `--remaster` boot loop, ASan, sim gate, budget | All §8 commands exit 0; `GE007_GATE_EXTRA_ON="Video.SsaoMode=hemisphere Video.SsaoBlur=1 Video.SsaoHalfRes=1" tools/sim_invariance_gate.sh` prints PASS; `tools/gpu_budget_gate.sh --feature ssao_v2` <2ms@1080p / <4ms@4K on jungle+dam | 4 | E2.T4, E1.T3 | R1: sim gate proof |
 | W3.E2.T6 | (follow-up, non-Apple) GLSL v2 port | gfx_opengl.c | Emit §4.1.3 in GLSL behind `#ifndef __APPLE__` runtime guard; reuse gates on a Linux box | Linux CI build green; parity capture GL-v2 vs Metal-v2 within `--max-changed-pct 4.0` | 4 | E2.T4; a Linux GPU box | R3; parity policy re-converges |
 
 ### E3 — Presentation foundations
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W3.E3.T1 | HiDPI sizing fix (Metal) | gfx_pc.c:4417 | Backend branch → `SDL_Metal_GetDrawableSize`; pixel-budget advisory | `Video.HiDPI=1 GE007_RENDERER=metal` on a retina display: `[metal] first frame: scene WxH` equals backing pixels × RenderScale; HiDPI=0 byte-identical | 3 | — | R3: `Video.HiDPI` default 0 |
+| W3.E3.T1 | HiDPI sizing fix (Metal) | gfx_pc.c:4417 | Backend branch → `SDL_Metal_GetDrawableSize`; pixel-budget advisory | On a retina display: `GE007_RENDERER=metal build/ge007 --level dam --deterministic --config-override Video.HiDPI=1 2>&1 \| grep 'first frame'` → `[metal] first frame: scene WxH` (log exists: `gfx_metal.mm:1118`) equals backing pixels × RenderScale (e.g. 1440×810 window @2x, RS=2 → 5760×3240); HiDPI=0 byte-identical | 3 | — | R3: `Video.HiDPI` default 0 |
 | W3.E3.T2 | HiDPI perf validation | baselines/perf_census_latest.csv (results only, no code) | Census at HiDPI 0/1, RenderScale 1/2 | `RENDERERS=metal tools/perf_census.sh jungle dam` @HiDPI=1,RS=1 ≥ 60 fps-equivalent on M3 Max; results recorded in the census CSV | 2 | E3.T1, E1.T3 | — |
-| W3.E3.T3 | Metal MSAA + depth resolve + A2C | gfx_metal.mm | §4.5: MS targets, StoreAndMultisampleResolve, resolve-filter Min, PSO samples + alphaToCoverage | `Video.MSAA=4 Video.Ssao=1 GE007_RENDERER=metal --level dam`: SSAO renders (no GL-style disable); MSAA=0 path byte-identical to pre-task; XLU snapshot scenes (train glass) visually unchanged at MSAA=4 (`--max-changed-pct 4.0` vs MSAA=0) | 8 | — | R3: `Video.MSAA` default 0; divergence-from-GL documented |
+| W3.E3.T3 | Metal MSAA + depth resolve + A2C | gfx_metal.mm | §4.5: MS targets, StoreAndMultisampleResolve, resolve-filter Min, PSO samples + alphaToCoverage | `GE007_RENDERER=metal build/ge007 --remaster --level dam --deterministic --config-override Video.MSAA=4 --screenshot-frame 120 --screenshot-exit`: SSAO renders (no GL-style disable warn); MSAA=0 path byte-identical to pre-task; XLU snapshot scenes (train glass) visually unchanged at MSAA=4 (`tools/compare_screenshots.py ... --max-changed-pct 4.0` vs an MSAA=0 capture) | 8 | — | R3: `Video.MSAA` default 0; divergence-from-GL documented |
 | W3.E3.T4 | Metal vsync/`displaySyncEnabled` | gfx_metal.mm, platform_sdl.c:1447 | `gfx_metal_set_display_sync`; call from `platformApplyVSync` + focus handlers (`:2311-2315`) | `GE007_NO_VSYNC=1 GE007_RENDERER=metal` census run shows present no longer paced to 60/display Hz (interval_ms < 16 sustained when work allows — note loop still ≤60 by `waitForNextFrame`, so assert via `[PERF-GPU]` total < interval instead); default run unchanged | 3 | E1.T1 | R3: existing `Video.VSync` |
 
 ### E4 — AA upgrade
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W3.E4.T1 | SMAA LUT generation + license review | gfx_metal.mm, NOTICE | Init-time area/search texture generation from published tables; NOTICE entry | `check_no_rom_data.sh` green (no tracked images — LUTs are runtime-generated); NOTICE lists SMAA license verbatim | 2 | — | **R2: Tier A2** (open-licensed, reviewed, NOTICE) |
+| W3.E4.T1 | SMAA LUT generation + license review | tools/smaa/gen_luts.py, src/platform/fast3d/smaa_area_tex.h + smaa_search_tex.h, gfx_metal.mm, NOTICE.md, THIRD_PARTY.md | §4.2 LUT plan: vendor the MIT `AreaTex.py`/`SearchTex.py` into `tools/smaa/` (license headers kept; one-time network fetch), `gen_luts.py` emits the two committed headers (160×560 RG8 + 64×16 R8 `const uint8_t` arrays); init-time `replaceRegion` upload; license entries | `python3 tools/smaa/gen_luts.py --check` exits 0 (headers regenerate byte-identical); `scripts/ci/check_no_rom_data.sh` green; `python3 tools/check_third_party_notices.py` green after extending it to cover `tools/smaa/`; `NOTICE.md` lists the SMAA MIT license verbatim | 2 | — | **R2: Tier A2** (open-licensed, reviewed, NOTICE) |
 | W3.E4.T2 | SMAA passes | gfx_metal.mm | 3-pass chain pre-filter; `Video.Smaa` key; FXAA mutual-exclusion log | `Video.Smaa=1` A/B vs FXAA on depot fences: reviewer picks SMAA; `Smaa=0` byte-identical; GPU budget ≤1.0ms@1080p | 8 | E4.T1, E1.T3 | R3: `Video.Smaa` default 0 |
 | W3.E4.T3 | SMAA validation + preset decision | tools | 18-level boot, budget, identity; decide `--remaster` FXAA→SMAA swap with captures | §8 battery green; preset decision recorded here with A/B images (local, uncommitted) | 3 | E4.T2 | R2: captures stay local (Tier B contamination rule) |
-| W3.E4.T4 | TAA spike (time-boxed) | scratch branch | Extract candidate view matrix (room-matrix factoring); reprojection error harness on a scripted pan | **Verdict doc.** GO requires: static-scene reprojection error <1px for >95% px over a 60-frame pan AND no sim-hash delta. Else record KILL and close | 3 (hard box) | E2.T1 (proj plumbing) | R1: spike flag `GE007_TAA_SPIKE`; RAMROM gate mandatory |
+| W3.E4.T4 | TAA spike (time-boxed) | scratch branch | Extract candidate view matrix (room-matrix factoring); reprojection error harness on a scripted pan (`GE007_AUTO_LOOK_RIGHT` envs, as in E2.T3) | **Verdict doc at `docs/remaster-aaa/verdicts/W3.E4.T4-taa-spike.md`** (Question / Method / Evidence — error histograms + capture refs / Verdict). GO requires: static-scene reprojection error <1px for >95% px over a 60-frame pan AND no sim-hash delta (`tools/sim_invariance_gate.sh` PASS with `GE007_TAA_SPIKE=1` exported). Else record KILL and close | 3 (hard box) | E2.T1 (proj plumbing) | R1: spike flag `GE007_TAA_SPIKE`; RAMROM gate mandatory |
 
 ### E5 — HDR/EDR
 
@@ -529,14 +588,14 @@ R1 = render-only unless noted; R2 = tier of any asset; R3 = the flag.
 |---|---|---|---|---|---|---|---|
 | W3.E5.T1 | Flag + float layer + headroom query | platform_sdl.c, gfx_metal.mm | §4.3 layer config; `platformGetEdrHeadroom`; restart-scoped key | `Video.HdrOutput=1` boots with `[metal] EDR: headroom=X.X` log on XDR; =0 byte-identical | 3 | — | R3: `Video.HdrOutput` default 0 |
 | W3.E5.T2 | Float final pass + EDR mapping | gfx_metal.mm | `s_final_hdr`; unclamped bloom; §4.3 transfer; skip dither/rgb555 | On XDR: Dam floodlight/muzzle-flash pixels read >1.0 in a GPU capture; SDR content unchanged side-by-side (external display A/B) | 4 | E5.T1 | R3; R1: output pass only |
-| W3.E5.T3 | SDR readback path + validation | gfx_metal.mm | On-demand SDR re-render for screenshots; battery | `--screenshot-frame` under HDR produces the SDR-identical PNG (hash == HDR-off run at same frame); ASan clean; 18-level boot | 3 | E5.T2 | R3 gates stay SDR-defined |
+| W3.E5.T3 | SDR readback path + validation | gfx_metal.mm | On-demand SDR re-render for screenshots; battery | `--screenshot-frame 120 --screenshot-label hdr` under `Video.HdrOutput=1` produces a `screenshot_hdr.bmp` whose `shasum` equals the HDR-off run's capture at the same frame (screenshots are BMP in CWD, `platform_sdl.c:673-675`); ASan clean; 18-level boot | 3 | E5.T2 | R3 gates stay SDR-defined |
 
 ### E6 — Frame rate & resolution
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W3.E6.T1 | Dynamic resolution scaling | gfx_metal.mm, gfx_pc.c | §4.7 sensor/ladder/hysteresis/target-cache; add a one-line `[metal] target alloc WxH` debug log under `GE007_METAL_GPU_TRACE` (none exists today — only the failure warn at `gfx_metal.mm:844`); harness pins DRS off | Forced-load test (`Video.RenderScale=4` + DRS on, jungle): EMA converges, rung changes alloc-free after warmup (the new alloc log stops after each rung's first visit), present holds target; DRS off byte-identical; sim gate green with DRS oscillating | 8 | E1.T1 | R3: `Video.DynamicResolution` default 0; R1: sim gate run |
-| W3.E6.T2 | View-interpolation spike (verdict) | scratch | §4.6 Phase B; pure-draw re-render prototype; RAMROM invariance | **Verdict doc** + `GE007_INTERP_SPIKE` prototype; `tools/sim_invariance_gate.sh` + `compare_state.py` bit-identical with flag on; GO/NO-GO per §7 kill criteria | 5 (hard box) | E3.T4, E4.T4 (shared matrix work) | **R1 red zone: RAMROM gate is the acceptance** |
+| W3.E6.T1 | Dynamic resolution scaling | gfx_metal.mm, gfx_pc.c | §4.7 sensor/ladder/hysteresis/target-cache; add a one-line `[metal] target alloc WxH` debug log under `GE007_METAL_GPU_TRACE` (none exists today — only the failure warn at `gfx_metal.mm:844`); harness pins DRS off | Forced-load test (`Video.RenderScale=4` + DRS on, jungle): EMA converges, rung changes alloc-free after warmup (the new alloc log stops after each rung's first visit), and **either** present holds `Video.DynResTargetMs` **or** the ladder converges to the 0.5 floor with the steady-state GPU-ms recorded in the task log (on very high-density displays even the floor rung may exceed target — that outcome PASSES; the recorded ceiling feeds the §7 risk-5 review). DRS off byte-identical; sim gate green with DRS oscillating | 8 | E1.T1 | R3: `Video.DynamicResolution` default 0; R1: sim gate run |
+| W3.E6.T2 | View-interpolation spike (verdict) | scratch | §4.6 Phase B; pure-draw re-render prototype; RAMROM invariance | **Verdict doc at `docs/remaster-aaa/verdicts/W3.E6.T2-view-interpolation.md`** (§4.6 template) + `GE007_INTERP_SPIKE` prototype; `tools/sim_invariance_gate.sh` + `compare_state.py` bit-identical with flag on; GO/NO-GO per §7 kill criteria | 5 (hard box) | E3.T4, E4.T4 (shared matrix work) | **R1 red zone: RAMROM gate is the acceptance** |
 
 **Total: 94 junior-days ≈ 18.8 junior-weeks** (90 days ≈ 18 weeks excluding the
 hardware-gated E2.T6; ≈ 7–9 senior-weeks). Sequencing: E1 →
@@ -549,7 +608,7 @@ E2 (flagship) with E3 in parallel by a second junior; E4/E5/E6 follow in any ord
 
 | M | Deliverable (independently demoable) | Demo script (reviewer runs) | Est |
 |---|---|---|---|
-| M1 | **Instrumented Metal** — GPU timers, capture, census lane, budgets enforced on today's chain | `RENDERERS="gl metal" tools/perf_census.sh jungle dam && GE007_METAL_CAPTURE=120 GE007_RENDERER=metal build/ge007 --remaster --level dam` | 1.8 w |
+| M1 | **Instrumented Metal** — GPU timers, capture, census lane, budgets enforced on today's chain | `RENDERERS="gl metal" tools/perf_census.sh jungle dam && METAL_CAPTURE_ENABLED=1 GE007_METAL_CAPTURE=120 GE007_RENDERER=metal build/ge007 --remaster --level dam` | 1.8 w |
 | M2 | **SSAO v2 shipped** — hemisphere+blur+half-res in `--remaster`, all gates green | `build/ge007 --remaster --level jungle` then same with `GE007_SSAO_DEBUG=1` and `--config-override Video.SsaoMode=planar` for the A/B | 5.2 w |
 | M3 | **Presentation correct** — HiDPI native, SSAO+MSAA coexist, Metal vsync real | `GE007_RENDERER=metal build/ge007 --remaster --level dam --config-override Video.HiDPI=1 --config-override Video.MSAA=4` | 3.2 w |
 | M4 | **Modern AA** — SMAA live + TAA verdict on record | `GE007_RENDERER=metal build/ge007 --remaster --level depot --config-override Video.Smaa=1` (A/B vs `Video.Fxaa=1`) | 3.2 w |
@@ -565,7 +624,7 @@ E2 (flagship) with E3 in parallel by a second junior; E4/E5/E6 follow in any ord
 | 2 | **MSAA restructure breaks the XLU/RDP snapshot machinery** (encoder-break path, `gfx_metal.mm:1749-1758` — no upstream template, per METAL_BACKEND_PLAN §4 risk #1) | Resolve-on-every-encoder-close keeps all snapshot/readback consumers on single-sample textures; validate train/glass scenes explicitly | If `StoreAndMultisampleResolve` per encoder-break costs >2ms on jungle → de-scope to "MSAA disables the cvg-memory diag path" (mirroring GL's own SSAO-off compromise), one-time warn |
 | 3 | **TAA/interpolation matrix extraction is infeasible** (no isolated view matrix — §4.2) | Both are hard-boxed spikes sharing the investigation; SMAA and 120Hz-present don't depend on them | Automatic: spike box expires → KILL recorded; SMAA (E4) and Phase-A pacing (E3.T4) are the shipped fallbacks |
 | 4 | **HDR washes the faithful art** (LDR content naively expanded) | Design maps SDR 1:1 and admits only bloom energy into headroom (§4.3); side-by-side SDR review required | If reviewers can tell SDR content shifted with HdrPeak=1.0 → block until transfer is fixed; if EDR win is invisible in a blind test at HdrPeak=2.0 → de-scope to backlog |
-| 5 | **DRS thrash/visibility** (target realloc or obvious res pumping) | Quantized ladder + rung cache + hysteresis (§4.7); HUD/filter always full-res | If rung transitions are visible in normal play on M3 Max → reduce ladder to {1.0, 0.7} and require 120-frame dwell; if still visible → default stays 0 forever (opt-in perf tool) |
+| 5 | **DRS thrash/visibility** (target realloc, obvious res pumping, or HUD softening — the HUD shares the scaled scene target, §3 item 5) | Quantized ladder + rung cache + hysteresis (§4.7); present-time upscale to native; 0.5× floor bounds HUD softening | If rung transitions or HUD softening are visible in normal play on M3 Max → reduce ladder to {1.0, 0.7} and require 120-frame dwell; if still visible → default stays 0 forever (opt-in perf tool) |
 | 6 | **Budget creep** — v2+SMAA+MSAA stack past the 4ms@4K post budget | Every epic lands behind the E1.T3 gate; `--remaster` preset only adopts combos that pass on jungle+dam | Preset never includes a combo that misses budget; users may opt into over-budget stacks manually |
 | 7 | **Cross-backend drift** (Metal grows features GL lacks) | Each divergence is explicit, logged once at runtime, and listed in VISUAL_MODES.md; E2.T6 re-converges SSAO when a Linux box exists | If GL-only platforms become a support burden → freeze new Metal-only visual features until T6-class ports catch up |
 
@@ -580,38 +639,53 @@ Pattern per `docs/REMASTER_ROADMAP.md` §7. All artifacts stay out of git (R2).
 cmake --build build -j
 
 # 1) IDENTITY (R3): flags-off byte-identical, BOTH backends
-for R in "" "GE007_RENDERER=metal"; do
-  env $R SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 \
-    GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 build/ge007 --faithful --level dam \
-    --deterministic --screenshot-frame 120 --screenshot-exit
-done   # hash of each backend's capture must equal its recorded pre-W3 baseline
+#    (--screenshot-label so the two runs don't clobber each other's BMP)
+for R in gl metal; do
+  env GE007_RENDERER=$R SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 \
+    GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+    build/ge007 --faithful --level dam --deterministic \
+    --screenshot-frame 120 --screenshot-label id_$R --screenshot-exit
+done
+shasum screenshot_id_gl.bmp screenshot_id_metal.bmp
+# each hash must equal its own backend's recorded pre-W3 baseline (GL vs Metal differ
+# from EACH OTHER by design — cross-backend parity is ~2-4%, not byte-identical)
 
 # 2) FEATURE A/B (per feature; example SSAO v2)
-env GE007_RENDERER=metal ... build/ge007 --remaster --level jungle --deterministic \
-  --config-override Video.SsaoMode=planar    --screenshot-frame 120 --screenshot-exit
-env GE007_RENDERER=metal ... build/ge007 --remaster --level jungle --deterministic \
-  --config-override Video.SsaoMode=hemisphere --screenshot-frame 120 --screenshot-exit
-python3 tools/compare_screenshots.py a.png b.png --max-changed-pct 12.0   # v2 vs v1 budget
-python3 tools/audit_screenshot_health.py b.png
+env GE007_RENDERER=metal SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 \
+  GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  build/ge007 --remaster --level jungle --deterministic \
+  --config-override Video.SsaoMode=planar \
+  --screenshot-frame 120 --screenshot-label ab_v1 --screenshot-exit
+env GE007_RENDERER=metal SDL_AUDIODRIVER=dummy GE007_DETERMINISTIC_STABLE_COUNT=1 \
+  GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+  build/ge007 --remaster --level jungle --deterministic \
+  --config-override Video.SsaoMode=hemisphere \
+  --screenshot-frame 120 --screenshot-label ab_v2 --screenshot-exit
+python3 tools/compare_screenshots.py screenshot_ab_v1.bmp screenshot_ab_v2.bmp \
+  --max-changed-pct 12.0                     # v2-vs-v1 change budget; exit 0 = pass
+python3 tools/audit_screenshot_health.py screenshot_ab_v2.bmp
 
-# 3) SSAO wash/far/temporal gates (E2 only)
+# 3) SSAO wash/far/temporal gates (E2 only; script created by E2.T5)
 tools/ssao_gate.sh dam jungle facility      # encodes the ≤8/255, ≥40/255, ≤2/255 gates
 
-# 4) SIM INVARIANCE (R1) — every W3 flag toggled on vs off
-tools/sim_invariance_gate.sh                 # RAMROM dam1, identical end-state hash
-python3 tools/compare_state.py baseline.jsonl feature.jsonl
+# 4) SIM INVARIANCE (R1) — every W3 flag toggled on vs off.
+# The gate's ON-run override list is hard-coded (tools/sim_invariance_gate.sh:54-58);
+# E2.T5 adds GE007_GATE_EXTRA_ON, which appends per-feature overrides to the ON run:
+GE007_GATE_EXTRA_ON="Video.SsaoMode=hemisphere Video.SsaoBlur=1" tools/sim_invariance_gate.sh
+python3 tools/compare_state.py baseline.jsonl feature.jsonl   # localize a FAIL (--trace-state runs)
 
 # 5) GPU BUDGET
 tools/gpu_budget_gate.sh --feature <flag> --levels jungle,dam   # <2ms@1080p, <4ms@4K delta
 
 # 6) BREADTH + MEMORY SAFETY
 tools/playability_smoke.sh --all
-tools/asan_smoke.sh                          # ASan/UBSan on the draw path
+tools/asan_smoke.sh --gate                   # ASan/UBSan; --gate makes errors fail the run
 # NB: --level takes level NAMES (or raw LEVELIDs like 33/41), never indices 1-18.
 # This is the 18-solo-level list from tools/perf_census.sh ALL_LEVELS (minus aztec/egypt).
 for L in dam facility runway surface1 bunker1 silo frigate surface2 bunker2 \
          statue archives streets depot train jungle control caverns cradle; do
-  GE007_RENDERER=metal build/ge007 --remaster --level $L \
+  env GE007_RENDERER=metal SDL_AUDIODRIVER=dummy GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
+    build/ge007 --remaster --level $L \
     --deterministic --screenshot-frame 90 --screenshot-exit || exit 1
 done
 

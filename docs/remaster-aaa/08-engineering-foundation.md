@@ -136,20 +136,22 @@ whole does NOT pass — code wins):
 - **Release process**: `docs/RELEASE_CHECKLIST.md` + `scripts/release_preflight.sh` (source
   hygiene, ROM-backed runtime lanes, archive smoke). No `VERSION` file, no `CHANGELOG.md`, no git
   tags; the bundle hardcodes `0.1.0` (`macos/Resources/Info.plist:15-16`).
-- **Branch state** (measured `git rev-list --count` vs `origin/main` = `c3e3eec`):
+- **Branch state** (re-measured 2026-07-02 at metal HEAD `daf711e`; `git rev-list --left-right
+  --count origin/main...BRANCH`, `origin/main` = `c3e3eec`):
 
-| Branch | vs origin/main | Contents / status |
-|---|---|---|
-| `feat/dam-hd-remaster` | 0 ahead / 0 behind | **Already merged** — `origin/main` == its tip `c3e3eec` |
-| `feat/split-screen-multiplayer` | 0 ahead / 51 behind | **Already merged**, stale |
-| `perf/make-it-rip` | 5 ahead | **Ancestor of** `robustness/remaster-hardening` (verified `merge-base --is-ancestor`) |
-| `robustness/remaster-hardening` | 25 ahead | **Ancestor of** `feat/metal-backend` |
-| `feat/metal-backend` | **48 ahead / 0 behind** | Superset: perf ⊂ robustness ⊂ metal. Mergeable without conflicts by construction |
-| `fix/train-distance-fog` | 1 ahead (`3c69924`) | Independent, default-OFF concealment flag |
-| local `main` | 86 behind origin/main | Stale — needs `git pull --ff-only` |
+| Branch | vs origin/main | Pushed? | Contents / status |
+|---|---|---|---|
+| `feat/dam-hd-remaster` | 0 ahead / 0 behind | yes | **Already merged** — `origin/main` == its tip `c3e3eec` (the watch-ammo/portal decomp fixes are in) |
+| `feat/split-screen-multiplayer` | 0 ahead / 51 behind | remote exists but stale (`3dd3c23`, itself ⊂ origin/main) | **Already merged**, stale — delete local **and** remote |
+| `perf/make-it-rip` | 5 ahead (`83fb90f`) | **no — local only** | **Ancestor of** `robustness/remaster-hardening` (verified `merge-base --is-ancestor`) |
+| `robustness/remaster-hardening` | 25 ahead (`9336d49`) | **no — local only** | **Ancestor of** `feat/metal-backend`. All 7 hardening items are committed in-range: item 1 `df2f1de`, items 2–6 `2a22ea2`, item 7 `a873ec4`+`edd1254`, plus monitor-overflow fix `5ef1ec5` |
+| `feat/metal-backend` | **50 ahead / 0 behind** (`daf711e`; drifts as work lands — re-measure) | **no — local only** | Superset: origin/main ⊂ perf ⊂ robustness ⊂ metal. Mergeable without conflicts by construction |
+| `fix/train-distance-fog` | 1 ahead / 0 behind (`3c69924`; +22 lines, `src/platform/fast3d/gfx_pc.c` only) | **no — local only** | Independent, default-OFF concealment flag. `git merge-tree --write-tree feat/metal-backend fix/train-distance-fog` = clean, no conflicts. **Checked out in worktree** `.claude/worktrees/agent-af7d6a1b5553877cd` — see §4.7 step 0 |
+| local `main` | 86 behind origin/main | — | Stale — needs `git pull --ff-only` |
 
 **Consequence**: "five branches to consolidate" is really **one linear merge train (metal tip) +
-one cherry (train-fog) + housekeeping**.
+one cherry (train-fog) + housekeeping** — and since none of the train branches has ever been
+pushed, the train begins with `git push -u origin <branch>` (§4.7 step 0b).
 
 ---
 
@@ -221,7 +223,7 @@ R2):
 
 | Gate | Criterion | Command (see §8 for env preamble) |
 |---|---|---|
-| G1 sim identity | Identical `--sim-state-hash-out` GL vs Metal on ≥3 RAMROM replays × 600 frames | `tools/backend_invariance_gate.sh` (new, §4.1.1) |
+| G1 sim identity | Identical `--sim-state-hash-out` GL vs Metal on ≥3 RAMROM replays (`dam1`, `facility3`, `runway1` — alias table at `src/game/ramromreplay.c:209-215`) × 600 frames | `tools/backend_invariance_gate.sh` (new, §4.1.1) |
 | G2 visual parity | 20-level sweep, faithful config: changed-px ≤ 4.2% per level; documented waivers (statue/depot ≤ 15% w/ side-by-side sign-off) | `tools/metal_parity_sweep.sh` (new) → `compare_screenshots.py --max-changed-pct` |
 | G3 stability soak | 20 levels × 1800 frames × faithful AND `--remaster`, exit 0, zero `[GFX-RECOVER]` lines | soak mode of `tools/metal_parity_sweep.sh` |
 | G4 sanitizer | ASan+UBSan run (`-DSANITIZE=ON`, `CMakeLists.txt:477-481`) on 3 representative levels, Metal | `tools/asan_smoke.sh` with `GE007_RENDERER=metal` |
@@ -257,6 +259,25 @@ A/B axis is `GE007_RENDERER=gl` vs `metal` at **identical** identity config, com
    `.github/workflows/macos-release.yml` with `permissions: contents: write` scoped to that job
    only (the workflow's own NOTE). `xcrun notarytool submit --wait` + `xcrun stapler staple`.
    Hardened runtime entitlements already in `macos/Resources/Entitlements.plist`.
+   Exact local sequence (placeholders ONLY for identity/credentials; **prerequisite: Apple
+   Developer Program membership + a "Developer ID Application" cert in the login keychain — user
+   action, §9 Q1**):
+
+   ```sh
+   export DEVELOPER_ID_APPLICATION="Developer ID Application: <Name> (<TEAMID>)"
+   export APPLE_ID="<apple-id-email>"
+   export APPLE_TEAM_ID="<TEAMID>"                    # 10-character team id
+   export APPLE_APP_PASSWORD="@keychain:<label>"      # app-specific password (or literal)
+   ./macos/Scripts/build_app_bundle.sh --release --build-dir build-macos-app \
+       --output build-macos-app/MGB64.app
+   ./macos/Scripts/sign_and_notarize.sh build-macos-app/MGB64.app \
+       # runs codesign → notarytool submit --wait → stapler staple internally
+   spctl --assess --type execute -vv build-macos-app/MGB64.app
+   # expected: "accepted" + "source=Notarized Developer ID"
+   ```
+
+   The script's usage + required env vars are its documented interface
+   (`sign_and_notarize.sh:7-13`); `--skip-notarize` exists for sign-only iteration.
 2. **Metal-in-bundle verification**: the bundle builds `ge007_lib` from the same `FAST3D_SOURCES`
    list that appends `gfx_metal.mm` on APPLE (`CMakeLists.txt:322-327`), so Metal is compiled in;
    add a bundle smoke that launches the app with `GE007_RENDERER=metal` + `--screenshot-frame` via
@@ -308,7 +329,26 @@ New/changed jobs in `.github/workflows/ci.yml`:
    322-327,500-509`); zero-warning gate via `summarize_build_warnings.py --max-total 0`; ROM-free
    `ctest` (includes `macos_app_asset_free_verifier`, `CMakeLists.txt:178-188`, and
    `sim_state_hash`); universal-lib bundle smoke (`macos/Scripts/build_universal.sh`, reusing the
-   `macos-release.yml` steps). ~12 min.
+   `macos-release.yml` steps). ~12 min. Job skeleton (keep the SHA-pinned checkout style of the
+   existing `ci.yml` jobs):
+
+   ```yaml
+   macos-build:
+     name: CMake build (macOS + Metal TU)
+     runs-on: macos-14
+     timeout-minutes: 30
+     steps:
+       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+       - run: brew install sdl2 cmake pkg-config
+       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+       - run: |
+           set -o pipefail
+           cmake --build build --parallel 4 2>&1 | tee build/mgb64-build.log
+       - run: python3 tools/summarize_build_warnings.py build/mgb64-build.log --max-total 0
+       - run: ctest --test-dir build --output-on-failure
+       - run: ./macos/Scripts/build_universal.sh --release --build-dir build-macos-universal
+       - run: ./macos/Scripts/verify_asset_free.sh build-macos-universal/libge007_lib.a
+   ```
 2. **`msl-combiner-compile` (new ctest inside macos-build)** — the key ROM-free Metal *runtime*
    test. GitHub `macos-14` runners expose a real Metal device (Apple Silicon VM); we do not render
    the game (needs ROM), we compile shaders:
@@ -368,7 +408,9 @@ Ordered to kill 144 errors with one semantic change:
    extend the CSV header to `level,default_ms,default_fps,xluoff_ms,speedup,metal_ms,metal_fps`.
    `perf_budget_check.py` gains `--column metal_ms` (it currently reads fixed columns) so the same
    HARD 16.6 ms / TARGET 8.3 ms budgets apply per backend. Baselines committed:
-   `baselines/perf_census_gl_baseline.csv`, `baselines/perf_census_metal_baseline.csv`.
+   `baselines/perf_census_gl_baseline.csv`, `baselines/perf_census_metal_baseline.csv`
+   (the GL one starts as a copy of the existing committed `baselines/perf_census_baseline.csv` —
+   the only baseline file in the tree today).
 2. **Regression budget**: local pre-merge gate = `perf_budget_check.py latest.csv --baseline
    <backend>_baseline.csv --regress-frac 0.10` fails on >10% per-level regression (the tool
    already supports `--baseline`, but its default threshold is 15% — `--regress-frac` default
@@ -454,42 +496,67 @@ Ordered to kill 144 errors with one semantic change:
 
 ### 4.7 Branch consolidation — the merge train
 
-Because perf ⊂ robustness ⊂ metal (verified §2.5), the train is linear. Order and validation:
+Because origin/main ⊂ perf ⊂ robustness ⊂ metal (re-verified 2026-07-02, §2.5), the train is
+**linear**: every step's merge fast-forwards `main` along one ancestry chain, so **steps 1–3
+cannot produce a merge conflict** unless `main` gains unrelated commits mid-train.
 
-| Step | Action | Validation before advancing |
+**Pre-flight** — run before step 0; every line must exit 0, else STOP and escalate with the output:
+
+```sh
+git fetch origin
+git merge-base --is-ancestor origin/main feat/metal-backend
+git merge-base --is-ancestor perf/make-it-rip robustness/remaster-hardening
+git merge-base --is-ancestor robustness/remaster-hardening feat/metal-backend
+git merge-tree --write-tree feat/metal-backend fix/train-distance-fog   # prints a tree id; any "CONFLICT" line = escalate
+```
+
+| Step | Action (exact commands) | Validation before advancing |
 |---|---|---|
-| 0 | `git checkout main && git pull --ff-only` (local main is 86 behind); delete merged branches `feat/split-screen-multiplayer`, `feat/dam-hd-remaster` (tips == or ⊂ origin/main), and the stale `worktree-agent-*` ref | `git log main -1` == `c3e3eec` |
-| 1 | Merge `perf/make-it-rip` (5 commits) → main | Build ×2; ctest; `perf_census.sh` full run vs `baselines/` (this branch's own harness); GL screenshot identity vs step-0 baseline (`cmp`) |
-| 2 | Merge `robustness/remaster-hardening` tip (20 more commits) → main | Build; ctest; `playability_smoke.sh --all`; review the branch's commit list during PR (memory notes some robustness items were finished later — verify each of the 7 hardening items is actually in the range; anything missing becomes a follow-up issue, not a blocker) |
-| 3 | Merge `feat/metal-backend` tip (23 more commits) → main | The full §8 harness: GL byte-identity (`cmp`), `backend_invariance_gate.sh`, `metal_parity_sweep.sh --all`, ASan both backends, `check_sim_render_separation.sh`, `check_timing_lock.sh` |
-| 4 | Rebase `fix/train-distance-fog` (1 commit, default-OFF) onto new main; merge | Default-off byte-identity; A/B screenshot on Train (`--level 13`) |
-| 5 | Tag `v0.2.0-rc1`; push; delete merged branches | CI green on the push PRs |
+| 0 | `git checkout main && git pull --ff-only origin main` (local main is 86 behind). Housekeeping: `git worktree list`, then `git worktree prune` and `git worktree remove .claude/worktrees/agent-af7d6a1b5553877cd` (that worktree holds `fix/train-distance-fog` checked out, which would block step 4's checkout); then `git branch -d feat/split-screen-multiplayer feat/dam-hd-remaster worktree-agent-af7d6a1b5553877cd` and `git push origin --delete feat/split-screen-multiplayer` (remote tip `3dd3c23` ⊂ origin/main — verified) | `git log main -1 --format=%h` == `c3e3eec` (if newer: main moved — re-run pre-flight before continuing) |
+| 0b | Push the train branches (none has ever been pushed): `git push -u origin perf/make-it-rip robustness/remaster-hardening feat/metal-backend fix/train-distance-fog` | `git for-each-ref --format='%(refname:short) %(upstream:short)' refs/heads/` shows an upstream for all four |
+| 1 | PR `perf/make-it-rip` (5 commits) → main: `gh pr create --base main --head perf/make-it-rip`; merge with a **merge commit** (no squash) | Fresh Release build (`cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j8`); `ctest --test-dir build --output-on-failure`; `tools/perf_census.sh` full run, then `python3 tools/perf_budget_check.py baselines/perf_census_latest.csv --baseline baselines/perf_census_baseline.csv` (the branch ships both tools + the committed baseline); GL screenshot identity vs a step-0 baseline capture (`cmp`, §8) |
+| 2 | PR `robustness/remaster-hardening` (20 more commits) → main; merge (no squash) | Build; ctest; `tools/playability_smoke.sh --all --no-build --rom /path/outside/repo/baserom.u.z64 --binary build/ge007`; all 7 hardening items verified committed in-range (§2.5 hashes) — residual: the two default-off items (shoot-out-lights `a873ec4`/`edd1254`, bullet-spark `df2f1de`) lack an in-game visual pass ⇒ file follow-up issues, not blockers |
+| 3 | PR `feat/metal-backend` tip → main (25 more commits at `daf711e`; re-count with `git rev-list --count robustness/remaster-hardening..feat/metal-backend`); merge (no squash) | GL byte-identity (`cmp`, §8); cross-backend sim-hash A/B — `tools/backend_invariance_gate.sh dam1 600` if W8.E1.T2 has landed, else the manual equivalent: run `env $ENVV GE007_RENDERER=<gl\|metal> build/ge007 --rom <rom> --ramrom dam1 --deterministic --screenshot-frame 600 --screenshot-exit --sim-state-hash-out /tmp/train_<gl\|metal>.json` once per backend, `diff` the two JSONs (must be identical); ASan smoke both backends (§8); `./scripts/ci/check_sim_render_separation.sh`; `./scripts/ci/check_timing_lock.sh`. (`metal_parity_sweep.sh --all` too if W8.E1.T3 has landed — at train time it usually has NOT; the 18-level parity evidence in `docs/METAL_BACKEND_PLAN.md:9` stands in) |
+| 4 | `git checkout fix/train-distance-fog && git rebase main && git push --force-with-lease origin fix/train-distance-fog`; PR → main (merge-tree vs metal tip verified clean, §2.5) | Default-off byte-identity (§8 `cmp`); A/B screenshot on Train (`--level 13`) with the branch's flag on vs off |
+| 5 | `git tag -a v0.2.0-rc1 -m "consolidated main: metal+perf+robustness"; git push origin v0.2.0-rc1`; delete merged branches (`git branch -d` each + `git push origin --delete` each) | CI green on all train PRs; `git tag --list 'v0.2.0-rc1'` prints the tag |
+
+**Conflict-resolution policy** (follow literally):
+- **Steps 1–3**: a conflict is impossible by ancestry. If the PR or `git merge` reports one, `main`
+  moved after step 0 — do **not** resolve by hand: `git merge --abort`, re-run the pre-flight
+  block, and escalate to the senior with both outputs.
+- **Step 4**: the branch touches only `src/platform/fast3d/gfx_pc.c` (+22 lines). On a rebase
+  conflict *inside that hunk*, the branch side wins; anything wider ⇒ escalate to the renderer
+  owner. Stuck >1 day ⇒ risk #6 kill criterion: drop the cherry from v0.2.0-rc1 and file an issue.
+- Never force-push `main`; `--force-with-lease` is allowed only on `fix/train-distance-fog` after
+  its rebase.
 
 Steps 1–3 are PRs (CI runs on PR, `ci.yml:8`), merged without squash to preserve the validated
-history. No force-pushes to main. All merges done by a human after checklist sign-off — W8 designs
-the train; it does not auto-merge.
+history. All merges done by a human after checklist sign-off — W8 designs the train; it does not
+auto-merge.
 
 ---
 
 ## 5. Work breakdown
 
 Estimates in **junior-engineer-days** (jd). IDs: W8.E#.T#.
+**Execution-order note: W8.E6.T2 (the merge train, §4.7) runs FIRST — it is program task #1 in
+00-MASTER-PLAN.md despite its ordinal position here.**
 
 ### E1 — Metal-default-on-macOS (13 jd)
 
 | ID | Task | Files | Steps | Acceptance (runnable) | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W8.E1.T1 | `Video.Renderer` config key + precedence + `gfx_backend_name()` | `src/platform/fast3d/gfx_backend.c`, `gfx_backend.h`, `src/platform/platform_sdl.c` (settings registry — `Video.RemasterFX` pattern at `:1677`) | Implement §4.1 precedence; log `[GFX] backend=<name> source=<env\|config\|auto>` at init; read before `SDL_CreateWindow` | `GE007_RENDERER=gl build/ge007 --level 1 --deterministic --screenshot-frame 60 --screenshot-exit` logs `backend=gl`; same with `--config-override Video.Renderer=metal` (no env) logs `backend=metal source=config`; env beats config (test both set) | 2 | — | R3: default `auto`==gl pre-flip ⇒ byte-identical; A/B = the key itself |
-| W8.E1.T2 | `tools/backend_invariance_gate.sh` (G1) | new tool | Clone `tools/sim_invariance_gate.sh:38-63` structure; axis = `GE007_RENDERER` gl/metal at identity config; 3 replays × 600 frames | `tools/backend_invariance_gate.sh dam1 600` prints `MATCH <hash>` and exits 0; negative test: run the two backends at different frame counts (e.g. 600 vs 599) → hashes differ → exit 1 (NOTE: perturbing a render-only key like RenderScale must NOT trip it — that invariance is exactly what `sim_invariance_gate.sh` proves) | 2 | W8.E1.T1 | R1: proves sim never reads backend state |
+| W8.E1.T2 | `tools/backend_invariance_gate.sh` (G1) | new tool | Clone `tools/sim_invariance_gate.sh:38-63` structure; axis = `GE007_RENDERER` gl/metal at identity config; 3 replays (`dam1`, `facility3`, `runway1`) × 600 frames | `tools/backend_invariance_gate.sh dam1 600` prints `MATCH <hash>` and exits 0; negative test: run the two backends at different frame counts (e.g. 600 vs 599) → hashes differ → exit 1 (NOTE: perturbing a render-only key like RenderScale must NOT trip it — that invariance is exactly what `sim_invariance_gate.sh` proves) | 2 | W8.E1.T1 | R1: proves sim never reads backend state |
 | W8.E1.T3 | `tools/metal_parity_sweep.sh` (G2/G3/G7) + budget table | new tool, `baselines/metal_parity_budgets.csv` | §4.3 item 4; per-level budget CSV (4.2% default; statue/depot 15% waiver rows w/ rationale column); `--soak` mode (1800 frames, both presets); asserts G7 opt-out log line | `tools/metal_parity_sweep.sh --all` exits 0, writes `baselines/metal_parity_latest.csv`; `--soak` exits 0 with `grep -c GFX-RECOVER == 0` on all logs | 4 | W8.E1.T1 | R2: screenshots stay /tmp; CSV text committable |
 | W8.E1.T4 | G4–G6 evidence run: ASan both backends, census compare, fault-injected crash-path check | `tools/asan_smoke.sh` (exists), new `GE007_DIAG_FAULT_INJECT` hook in `gfx_pc.c` DL loop (debug-only, env-gated) | Run gates; archive outputs (text) to `docs/remaster-aaa/evidence/metal-default/` | All G-gate artifacts present; `GE007_DIAG_FAULT_INJECT=120 GE007_RENDERER=metal build/ge007 --level 1` produces exactly one `[GFX-RECOVER]` line and exits 0 | 3 | W8.E1.T2-3, W8.E4.T1 | R3: fault-inject env default-off, debug builds only |
-| W8.E1.T5 | Stage D flip + docs | `gfx_backend.c` (1 line), `docs/VISUAL_MODES.md`, `docs/METAL_BACKEND_PLAN.md` status | Flip `auto`⇒metal on `__APPLE__`; update two-anchor doc language (§4.1); link evidence in commit msg | On macOS, `build/ge007 --level 1 ...` with **no** env logs `backend=metal source=auto`; `GE007_RENDERER=gl` still forces GL; Linux unaffected (CI green) | 2 | G1–G7 all green | R3: two-anchor model documented; opt-out retained |
+| W8.E1.T5 | Stage D flip + docs + decision artifact | `gfx_backend.c` (1 line), `docs/VISUAL_MODES.md`, `docs/METAL_BACKEND_PLAN.md` status, `docs/remaster-aaa/evidence/metal-default/DECISION.md` (new) | Write DECISION.md: gate-by-gate G1–G7 result table with links to each evidence file + explicit go/no-go; then flip `auto`⇒metal on `__APPLE__`; update two-anchor doc language (§4.1); link DECISION.md in the flip commit msg | On macOS, `build/ge007 --level 1 ...` with **no** env logs `backend=metal source=auto`; `GE007_RENDERER=gl` still forces GL; Linux unaffected (CI green); `docs/remaster-aaa/evidence/metal-default/DECISION.md` exists with all 7 gate rows green | 2 | G1–G7 all green | R3: two-anchor model documented; opt-out retained |
 
 ### E2 — Packaging (18 jd)
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W8.E2.T1 | Codesign + notarize end-to-end locally | `macos/Scripts/sign_and_notarize.sh`, credentials in keychain/env | Obtain Developer ID cert (user action, §9 Q1); run script on a `build_app_bundle.sh` output; staple; verify `spctl -a -vv MGB64.app` | `spctl --assess --type execute -vv MGB64.app` prints `accepted` + `Notarized Developer ID`; clean-VM install shows no Gatekeeper block | 3 | user credentials | R2: `verify_asset_free.sh` re-run on final .app |
+| W8.E2.T1 | Codesign + notarize end-to-end locally | `macos/Scripts/sign_and_notarize.sh`, credentials in keychain/env | Obtain Developer ID cert (user action, §9 Q1); export the 4 env vars and run the exact §4.2-item-1 command block (`sign_and_notarize.sh <path-to.app>` — usage + env interface documented at `sign_and_notarize.sh:7-13`; `--skip-notarize` for sign-only iteration) | `spctl --assess --type execute -vv build-macos-app/MGB64.app` prints `accepted` + `Notarized Developer ID`; clean-VM install shows no Gatekeeper block | 3 | user credentials | R2: `verify_asset_free.sh` re-run on final .app |
 | W8.E2.T2 | Enable `package` job in `macos-release.yml` | `.github/workflows/macos-release.yml` | Uncomment job; secrets via repo settings; `permissions: contents: write` on package job only; keep `workflow_dispatch` (release remains a manual act) | Dispatch run produces a signed, notarized DMG artifact; hygiene jobs still pass | 2 | W8.E2.T1 | R2: workflow keeps asset-free verifier step |
 | W8.E2.T3 | ROM-picker UX hardening + legality copy + Metal bundle smoke | `macos/Sources/ROMPickerView.swift`, `OnboardingFlow.swift`, `macos/Tests/` | §4.2 item 3; wrong-ROM error path; bundle-launch smoke with `GE007_RENDERER=metal` | Manual: first launch on account with no config shows picker + legality note; feeding a renamed JPEG shows the validation error, not a crash; `ctest -R macos_app` green | 3 | W8.E1.T1 | R2: legality note text in UI; no ROM bundled |
 | W8.E2.T4 | Version plumb-through to bundle | `macos/Scripts/build_app_bundle.sh`, `macos/Resources/Info.plist` | Template `CFBundleShortVersionString`/`CFBundleVersion` from `VERSION` (§4.6) | Built app's `Info.plist` shows the `VERSION` value; `ctest -R macos_app_asset_free_verifier` green | 1 | W8.E6.T1 | — |
@@ -511,7 +578,7 @@ Estimates in **junior-engineer-days** (jd). IDs: W8.E#.T#.
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W8.E4.T1 | Census `metal_ms` column + baselines | `tools/perf_census.sh`, `tools/perf_budget_check.py`, `baselines/perf_census_{gl,metal}_baseline.csv` | §4.4 items 1–2 | `tools/perf_census.sh dam jungle` CSV has 7 columns on macOS (5 on Linux); `python3 tools/perf_budget_check.py baselines/perf_census_latest.csv --column metal_ms` exits 0; budget: all 20 levels < 16.6 ms both backends | 2 | branch step 1 (perf harness on main) | R2: CSVs are text, committable |
+| W8.E4.T1 | Census `metal_ms` column + baselines | `tools/perf_census.sh`, `tools/perf_budget_check.py`, `baselines/perf_census_{gl,metal}_baseline.csv` | §4.4 items 1–2 | `tools/perf_census.sh dam jungle` CSV has 7 columns on macOS (5 on Linux); `python3 tools/perf_budget_check.py baselines/perf_census_latest.csv --column metal_ms` exits 0; budget: all 20 levels < 16.6 ms both backends | 2 | W8.E6.T2 step 1 if targeting `main` (harness already on the `feat/metal-backend` base branch — can start there immediately) | R2: CSVs are text, committable |
 | W8.E4.T2 | `Video.PerfHud` frame-time HUD (GLSL + MSL) | `src/platform/fast3d/gfx_opengl.c` (output filter FS), `gfx_metal.mm` (mirrored), `platform_sdl.c` (key + ring buffer near `:2510`) | §4.4 item 3; land in BOTH generators in the same commit (program rule) | A/B: `--config-override Video.PerfHud=1` shows bars on GL and Metal (manual screenshot); `Video.PerfHud=0` byte-identical (`cmp` vs baseline); `ctest` green | 4 | W8.E1.T1 | R3: default 0, key + `GE007_PERF_HUD` env; R1: render-only |
 | W8.E4.T3 | Perf gate in release checklist + train | `docs/RELEASE_CHECKLIST.md` | Add §4.6 checklist item 5 wording | Checklist PR merged; dry-run executed once end-to-end | 1 | W8.E4.T1 | — |
 
@@ -527,7 +594,7 @@ Estimates in **junior-engineer-days** (jd). IDs: W8.E#.T#.
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W8.E6.T1 | `VERSION` + version string + CHANGELOG scaffold | `VERSION`, `CMakeLists.txt:2`, `src/platform/main_pc.c` (boot print), `CHANGELOG.md` | §4.6 | Boot log prints `MGB64 0.2.0+g<hash>`; `ctest` green; `check_release_ready.sh` green | 2 | — | — |
-| W8.E6.T2 | Merge train steps 0–5 | git only | §4.7 exactly; each step a PR with its validation block pasted in the description | `git log origin/main -1` == metal tip merge; all 4 validation blocks archived; CI green each PR; `v0.2.0-rc1` tag exists | 4 | CI jobs help but train can start immediately with local gates | R1/R3: step-3 runs the full §8 harness |
+| W8.E6.T2 | Merge train steps 0–5 (**program task #1 — runs before everything else in W8**) | git only | §4.7 exactly: pre-flight ancestry block, step-0 housekeeping (incl. worktree removal), step-0b pushes (the train branches have never been pushed), then steps 1–5; each step a PR with its validation block pasted in the description | `git log origin/main -1` == metal tip merge; all 4 validation blocks archived; CI green each PR; `v0.2.0-rc1` tag exists | 4 | none — §4.7 step-3 fallbacks cover the not-yet-built E1 tools; local gates suffice | R1/R3: step-3 runs the §8 harness (with §4.7 fallbacks) |
 | W8.E6.T3 | Release checklist v2 + first executed release | `docs/RELEASE_CHECKLIST.md`, GitHub release | §4.6 checklist; run it for v0.2.0; publish DMG + AppImage + source archive | Release page has DMG (notarized) + AppImage + checklist evidence summary; `check_public_history_text.sh`/`check_github_*` tools green | 3 | E1–E5 M-gates, W8.E2.T2, W8.E2.T6 | R2: distribution stance restated in release notes |
 
 **Total: 66 junior-days ≈ 13 junior-weeks** (E1 13 + E2 18 + E3 14 + E4 7 + E5 5 + E6 9).
@@ -652,7 +719,8 @@ Artifacts: images/traces stay in `/tmp` (ROM-derived, R2); hashes/CSVs/reports g
 4. **statue/depot parity waivers** — the 11–15% deltas are documented as visually-at-parity
    (`docs/METAL_BACKEND_PLAN.md:9`). Sign-off wanted from the user (one side-by-side viewing) before
    they're enshrined as permanent budget rows in `baselines/metal_parity_budgets.csv`.
-5. **robustness branch residuals** — memory notes two hardening items (bullet-spark UB deep fix,
-   shoot-out-lights) may post-date the branch tip. During train step 2 the merger must confirm
-   which of the 7 items are in `9336d49`'s range; missing ones become issues. Confirm that's
-   acceptable (vs blocking the train on finishing them).
+5. **robustness branch residuals — RESOLVED 2026-07-02 (git-verified)**: all 7 hardening items
+   are committed in `9336d49`'s range — item 1 bullet-spark UB `df2f1de`, items 2–6 bundle
+   `2a22ea2`, item 7 shoot-out-lights `a873ec4`+`edd1254`, plus monitor-overflow `5ef1ec5`.
+   Remaining residual is only that the two default-off items (shoot-out-lights, bullet-spark deep
+   fix) have not had an in-game visual pass — train step 2 files follow-up issues; not a blocker.

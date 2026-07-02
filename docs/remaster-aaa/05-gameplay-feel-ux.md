@@ -73,8 +73,11 @@ the real state: **MVP + rise-to-sights are SHIPPED** behind `Input.AdsEnabled`
   `gun.c:33736`, callsites `:33834/:33851`; `gDPFillRectangle`-only =
   settex-safe + renderer-agnostic).
 - **Authoring harness exists**: `tools/ads_pose_capture.sh` (headless
-  boot→equip→aim→override→screenshot loop) + `GE007_ADS_FORCE_POSE`,
-  `GE007_ADS_POSE_X/Y/Z` hooks (ADS_PLAN §10.2).
+  boot→equip→aim→override→screenshot loop; usage `LABEL ITEM [X Y Z YAWDEG
+  PITCHDEG ROLLDEG]`) + `GE007_ADS_POSE_X/Y/Z` and
+  `GE007_ADS_POSE_{YAW,PITCH,ROLL}_DEG` hooks (ADS_PLAN §10.2). NOTE:
+  `GE007_ADS_FORCE_POSE` is *proposed* in ADS_PLAN §10.3 but does **not** exist
+  in the tree — do not depend on it.
 - **Startup misconfiguration note** already prints
   (`src/platform/main_pc.c:805-820`).
 
@@ -103,14 +106,18 @@ re-confirmation on the active path; optional ease-out.
   detectable**: `configInit()` prints "No config file found, writing defaults"
   (`config_pc.c:560-568`).
 - **No UI**: front-end screens are the original hand-drawn quads
-  (init/update/interface/constructor per screen, dispatched by four switch
-  blocks at `front.c:14360` (update) / `:14399` (init) / `:14428` (interface) /
-  `:14493` (constructor); enum `MENU` at `src/bondconstants.h:1536-1566`, tail =
+  (init/update/interface/constructor per screen, dispatched by four
+  `switch (current_menu)` blocks: update `front.c:14360`, init `:14399`,
+  interface `:14428` — all three inside **`menu_init(void)`**
+  (`front.c:14282`) — and constructor `:14493` inside
+  **`menu_jump_constructor_handler(Gfx *DL)`** (`front.c:14480`); enum `MENU`
+  at `src/bondconstants.h:1537-1567`, tail =
   `MENU_SPECTRUM_EMU` (`:1565`), `MENU_MAX` (`:1566`)). A concrete example: the 007-options screen is
   `init_menu09_007difficultyselect` (`front.c:4935`), `interface_menu09_007options`
   (`front.c:4955` — cursor hit-boxes by raw `cursor_v_pos` Y ranges, sliders from
   `cursor_h_pos`, transitions via `frontChangeMenu(MENU_*, reload)` `front.h:342`),
-  `constructor_menu09_007options` (`front.c:5095`, draws with `textRender`/images).
+  `constructor_menu09_007options` (`front.c:5095`, draws with `frontPrintText`
+  (definition `front.c:1568`) and images — **not** `textRender`).
 
 ### 2c. Input — one hardcoded map, modern pad feel shipped, no gyro
 
@@ -142,17 +149,23 @@ re-confirmation on the active path; optional ease-out.
   `hudmsgTopShow` (`src/game/bondview.c:22059/22290`, 5-slot bottom-left queue).
   So "subtitles" for dialogue is a **non-problem**; the real gap is **captions for
   audio-only events** (alarms, distant gunfire) — cleanly hookable at the SFX
-  dispatch (`sndPlaySfx` definition `src/snd.c:871`; ~220 callsites in
-  `src/game`, e.g. `chrlv.c:3316`).
+  funnel `sndPlaySfxInternal` (`src/snd.c:3170`; see §4.4a for why *not*
+  `sndPlaySfx` at `:871/:881`); ~220 `sndPlaySfx*` callsites in
+  `src/game`, e.g. `chrlv.c:3316`.
 - **Flash**: white pickup/damage flashes run through `currentPlayerDrawFade`
   (`bondview.c:10362`); a native env-only suppressor already exists —
   `portSuppressDamageFlash()` (`bondview.c:129-135`,
   `GE007_SUPPRESS_DAMAGE_FLASH`) zeroes the full-white flash at `bondview.c:10373-10376`.
   Damage red-flash timing comes from `g_DamageTypes[...].flash*Frame`
   (`bondview.c:13007-13036`).
-- **Screen shake**: `explosionScreenShake` (`src/game/explosions.c:1037`) computes
-  a view-offset consumed by `viShake` (callsites `bondview.c:15641/15874`) —
-  presentation-side.
+- **Screen shake**: the live path is *scalar* — `explosionScreenShake`
+  (`src/game/explosions.c:1037`) calls `viShake(intensity)`
+  (`explosions.c:1120`); `viShake` (`src/fr.c:1617`) stores
+  `g_ViShakeIntensity` (`:1629`), consumed as a VI vertical display offset in
+  `src/fr.c:248-258` — presentation-side. The `coord3d` out-param written at
+  the live callsite (`bondview.c:15641`) is **dead** (never read), and the
+  4-arg `viShake(...)` at `bondview.c:15874` sits in a `#ifdef NONMATCHING`
+  reference body (dead code).
 - **Reticle colors**: modern reticle tints green-on-target else red via one
   `gDPSetFillColor(gdl++, fill_main)` (`gun.c:33792`); hit markers keyed by kind
   (`gun.c:33665-33715`). Single obvious palette seam.
@@ -212,8 +225,10 @@ A reviewer running `./build/ge007 --remaster` sees, without touching a text file
    Anything that synthesizes *input* (toggle-aim, gyro) must be inert when
    `get_is_ramrom_flag()` (the `pcNativeLiveLookAllowed()` pattern,
    `lvl.c:93-100`) so replays stay bit-identical.
-3. **Every new key** registered with the full 10-arg `settingsRegister*`
-   (`settings.c:52` — see the ADS block `platform_sdl.c:1769` for the idiom),
+3. **Every new key** registered with the full `settingsRegister*` API
+   (`settings.c:52-167`; 10 args for Int/UInt/Float — Enum takes an options
+   table instead of min/max, String takes capacity+default — see the ADS block
+   `platform_sdl.c:1769` for the Int idiom),
    default = identity, `GE007_*` env + `--config-override` CLI.
 4. **No shader work in W5.** All items are DL/input/UI-side; nothing lands in
    `gfx_opengl.c` GLSL or `gfx_metal.mm` MSL. (If a future item ever needs a
@@ -229,11 +244,13 @@ single source of truth. Finishing = filling `s_ads_authored[]`
 
 ```bash
 # 1. Baseline capture (universal default pose):
-tools/ads_pose_capture.sh klobb_base 9   # ITEM = numeric ITEM_IDS value
-                                         # (enum at src/bondconstants.h:3342)
+tools/ads_pose_capture.sh klobb_base 7   # ITEM = numeric ITEM_IDS value
+                                         # 7=Klobb(SKORPION) 9=ZMG(UZI) 10=D5K —
+                                         # enum src/bondconstants.h:3342; id
+                                         # cheat-sheet in the script header
 # 2. Dial: nudge X (negative = left), Y (up), Z (toward eye) until the sight
 #    line sits under the centered reticle:
-tools/ads_pose_capture.sh klobb_try 9 -4.5 10.0 -2.0
+tools/ads_pose_capture.sh klobb_try 7 -4.5 10.0 -2.0
 # 3. Bake: add a row to s_ads_authored[] with ADS_POSE_FIELDS replaced by the
 #    dialed values (keep ADS_DEFAULT_* timing unless the class table says else).
 # 4. Regression: re-run the capture with NO env overrides; compare:
@@ -249,7 +266,8 @@ scripted buttons/look are assembled inside `osContGetReadData` (`:5918+`). The
 equip is frame-scheduled (`EQUIP_ADD=120; EQUIP_DO=160` in
 `tools/ads_pose_capture.sh`) but
 the inventory add can land before the player has control. Fix = make the equip
-hook retry until `getCurrentPlayerWeaponId(GUNRIGHT) == target` (poll in the
+hook retry until `getCurrentPlayerWeaponId(GUNRIGHT) == target`
+(`getCurrentPlayerWeaponId` definition `gun.c:1781`; poll in the
 scripted-input block, not a one-shot), and emit a `[ADS-HARNESS] equipped item=N`
 trace line the script greps as a hard precondition before capturing.
 
@@ -290,13 +308,30 @@ typedef struct SmEntry {
     f32         step;       /* slider step (e.g. FovY 1.0, Vignette 0.05)      */
     void (*apply)(void);    /* optional live-apply hook, NULL = write-only     */
     const char *note;       /* short caption; NULL = use Setting.help          */
+    u8          future;     /* SM_FUTURE: key registered by a later WS (the W6
+                               audio rows); row hidden until settingsFind()
+                               resolves it, and whitelisted by the model test  */
 } SmEntry;
 
 typedef struct SmPage { const char *title; const SmEntry *entries; s32 count; } SmPage;
 ```
 
-The curation table lists ~55 of the ~85 keys across 7 pages (window-geometry keys
-like `Video.WindowX/Y` stay ini-only). **Scope handling is free**: render
+The curation table lists ~55 of the **81** registered keys across 7 pages
+(window-geometry keys like `Video.WindowX/Y` stay ini-only).
+
+**Missing-key tolerance (required behavior)**: any entry whose `key` makes
+`settingsFind()` (`settings.c:183`) return NULL is *hidden* (one log line, no
+crash). This is what decouples W5 from W6: the **Audio page** curates, today,
+only `Audio.MasterVolume` + `Audio.DeviceSamples` (`audio_pc.c:859/:864`) —
+**`Audio.MasterVolume` is tagged `SM_FUTURE` until W6.E3.T1 lands** (the key is
+registered but does not affect the main synth mix today, doc 06 §2.4; surfacing
+a dead slider is worse than hiding it) — plus
+pre-listed rows for the W6 bus keys — `Audio.MusicVolume`, `Audio.SfxVolume`,
+`Audio.RoomReverb`, `Audio.StereoWidth`, `Audio.OutputFilter` (LIVE) and
+`Audio.OutputRate` (RESTART), key names per `06-audio-remaster.md` §4.1 — which
+stay hidden until W6.E3 registers them (master-plan edge `W6.E3 → W5.E2`;
+W6.E6.T1 is the registry-hygiene handoff that guarantees their labels/help/
+scopes render correctly). **Scope handling is free**: render
 `settingsScopeName()==“restart”` entries with a `⟳` glyph and do NOT call an
 apply hook; live entries take effect immediately because nearly all Video/Input
 globals are read per-frame (e.g. bloom/vignette/FXAA are consumed by the output
@@ -312,7 +347,8 @@ registration site).
 (`joyGetButtonsPressedThisFrame`, stick via `frontUpdateControlStickPosition`
 idiom — see `interface_menu09_007options`, `front.c:4955-5086`) plus direct
 keyboard arrows/enter. NOTE: the arrows→menu-direction mapping in
-`stubs.c:6181-6199` only runs when `pcNativeFrontendInputActive()` (front-end
+`stubs.c:6179-6199` only runs when `pcNativeFrontendInputActive()`
+(definition `stubs.c:5791`) (front-end
 mount); the in-mission overlay must read arrow/enter scancodes itself (in-mission
 those keys map to C-buttons, `stubs.c:6224-6228`). While the in-mission overlay is open, gameplay input is
 swallowed by zeroing the pad the same way `g_freezeInput` does (full-pad swallow
@@ -321,15 +357,19 @@ in `osContGetReadData`, `stubs.c:6109-6116`; the look-delta half is
 overlay refuses to open at all when `g_deterministic` or `get_is_ramrom_flag()`.
 
 **Renderer**: pure DL. Panel = `gDPFillRectangle` quads (same primitives as
-`drawModernAdsReticle`, `gun.c:33736-33800`); text = `textRender` with
-`ptrFontZurichBoldChars/ptrFontZurichBold` (the fonts the in-mission HUD already
-uses, `bondview.c:6531`). In the front-end mount, draw via the constructor hook
-(fonts already loaded there — `frontPrintText`, `front.c:4900`). Verify font
+`drawModernAdsReticle`, `gun.c:33736-33800`); text = `textRender` (definition
+`textrelated.c:1942`) with `ptrFontZurichBoldChars/ptrFontZurichBold` — copy
+the exact in-mission HUD idiom at `bondview.c:20062/:20108`; the hudmsg path
+passes the same fonts (`bondview.c:6528-6531`). In the front-end mount, draw
+via the constructor hook with `frontPrintText` (definition `front.c:1568`; call
+idiom in `constructor_menu09_007options`, `front.c:5125`). Verify font
 availability in-mission on level load (the hudmsg path proves they are resident).
 
 **Mount A — front-end screen**: append `MENU_PC_SETTINGS` before `MENU_MAX`
-(`src/bondconstants.h:1566`); add the four cases to the dispatcher
-(switch blocks at `front.c:14360/14399/14428/14493`) calling into
+(`src/bondconstants.h:1566`); add the four cases to the dispatcher — the
+update/init/interface switches (`front.c:14360/14399/14428`) inside
+`menu_init()` (`front.c:14282`) and the constructor switch (`:14493`) inside
+`menu_jump_constructor_handler()` (`front.c:14480`) — calling into
 `pc_settings_menu.c`; entry point = a new tab on the file-select/mode-select
 screen (`constructor_menu06_modesel`) labeled "SETTINGS", transitioning with
 `frontChangeMenu(MENU_PC_SETTINGS, FALSE)` and returning to `MENU_MODE_SELECT`.
@@ -344,7 +384,10 @@ live". Escape/START closes.
 **Persistence**: on close-with-changes call `configSave()` (`config_pc.c:452`) —
 automatically a no-op in faithful/remaster read-only sessions
 (`config_pc.c:445-449`); the menu shows "session is read-only (--faithful)" by
-checking `configSaveSuppressed` state (add a 3-line getter to `config_pc.c`).
+checking the suppression state — static `s_configSaveSuppressed`
+(`config_pc.c:445`), set via `configSetSaveSuppressed()` (`:447`, called from
+`main_pc.c:732/:749`); **no getter exists today** — add
+`configSaveSuppressedActive()` (3 lines, declared in `config_pc.h`).
 "Reset all" = `settingsResetAllToDefaults()` (`settings.c:329`).
 
 **Gate flag**: the menu itself is behind `Input.SettingsMenu` (int, default **1**
@@ -435,8 +478,16 @@ table (scope creep; open question #4).
 ### 4.4 Accessibility
 
 **(a) Audio-event captions** (`Input.AudioCaptions`, default 0). Hook: a tiny
-shim `portCaptionSfx(s16 sfx_id)` called from **the `sndPlaySfx` definition**
-(`src/snd.c:871`, native body `:881`) — that is the single choke point; there
+shim `portCaptionSfx(s16 sfx_id)` called from **`sndPlaySfxInternal`**
+(`src/snd.c:3170`, forward-declared `:1419`) — in the default build
+(`PORT_SOUNDPLAYER_REAL=ON`, `CMakeLists.txt:402-416` ⇒ `PORT_SND_STUBS`
+undefined, `snd.h:12-14`) that static funnel receives *every* play:
+`sndPlaySfx` (`snd.c:3153`; DEBUG variant `:3126`), `sndPlaySfxTagged`
+(`:3160`), and the deferred-event path (`:1999`). Call the shim only when the
+`soundIndexIsPublic` parameter is nonzero (game callsites pass public ids; the
+`:1999` replay path re-triggers an already-captioned sound). Do **not** hook
+the `sndPlaySfx` at `snd.c:871/:881` — that is the `PORT_SND_STUBS` half,
+compiled out by default. There
 are ~220 callsites across `src/game` (`chrobjhandler.c` 89, `front.c` 63,
 `gun.c` 31, …) so per-callsite hooking is off the table. A static whitelist maps ~15 gameplay-critical ids
 → caption strings (**our original English text = Tier A1**): alarm, glass break,
@@ -467,10 +518,14 @@ tint (`gun.c:33818-33830`). Palette table:
 purely the drawn overlay; `colourscreen*` sim fields are untouched.
 
 **(d) Screen-shake reduction** (`Input.ReduceScreenShake` float 0..1, default 1 =
-full): scale the output offset of `explosionScreenShake` (`explosions.c:1037`,
-before `viShake` consumes it at `bondview.c:15641/15874`). Confirm with the
-sim-invariance gate that the shake offset never feeds back into collision/aim
-(it is a vi/view presentation offset; the gate is the proof, not the claim).
+full): scale `intensity` inside `viShake` (`src/fr.c:1617`) before the
+`g_ViShakeIntensity` store (`:1629`) — the single choke point covering all
+callers (`explosions.c:1120` is the live driver; consumption is the VI
+vertical offset, `src/fr.c:248-258`). Do NOT scale the `coord3d` out-param of
+`explosionScreenShake` — it is dead (§2d), and `bondview.c:15874` is
+`NONMATCHING` reference code. Confirm with the
+sim-invariance gate that the shake intensity never feeds back into collision/aim
+(it is a VI presentation offset; the gate is the proof, not the claim).
 
 **(e) FOV** already shipped (`Video.FovY` 45..105, `platform_sdl.c:1694`) —
 menu-surfaced only.
@@ -479,13 +534,21 @@ menu-surfaced only.
 
 **(a) Quick-restart** (`Input.QuickRestart`, default 1; bound to ACT_QUICK_RESTART,
 default key `F5`, hold-to-confirm 0.5s): solo missions only, ignores RAMROM/
-deterministic/MP. Implementation mirrors the direct-boot path: record the booted
-`(LEVELID, difficulty)` when a stage starts (`pc_apply_level_selection`,
-`initmenus.c:237-257` already receives both), and on trigger run the mission-failed
-exit flow into `frontChangeMenu(MENU_RUN_STAGE, TRUE)` (`front.c:5073` idiom) after
-re-applying the selection. The restart is *player input* — identical in kind to
-choosing Retry on the failed screen (`front.c:8854-8917`), so no sim rail issues;
-the flag only adds a trigger path.
+deterministic/MP. **Record point — must catch front-end boots, not just CLI**:
+`pc_apply_level_selection` (`initmenus.c:237`) runs only for `--level`/`--mission`
+boots (call sites `initmenus.c:357/:393/:573`), so recording there would make
+quick-restart CLI-only. Instead record in `init_menu0B_runstage()` (the
+`MENU_RUN_STAGE` init handler, dispatched at `front.c:14411`) — every mission
+start funnels through `frontChangeMenu(MENU_RUN_STAGE, …)` (`front.c:5073/:5744/
+:8601/:9106`, `ramromreplay.c:1940`), and by then `g_CurrentStageToLoad`
+(`lvl.c:338`, set at `:576`) and `selected_difficulty` (setter
+`set_selected_difficulty`, `file.c:101`) hold the values to snapshot (skip the
+snapshot when the RAMROM path set it — check `ramromreplay` active). On trigger,
+run the mission-failed exit flow into `frontChangeMenu(MENU_RUN_STAGE, TRUE)`
+(`front.c:5073` idiom) after re-applying the recorded pair via
+`pc_apply_level_selection`'s body idiom. The restart is *player input* — identical
+in kind to choosing Retry on the failed screen (`front.c:8854-8917`), so no sim
+rail issues; the flag only adds a trigger path.
 
 **(b) Mission timer overlay** (`Input.MissionTimer`, default 0): render-side DL
 text in the HUD pass: `t = getMissiontimer()` (`bondview.c:26448`), format
@@ -520,9 +583,9 @@ remains untouched for purists.
 | `src/platform/platform_sdl.c` | ~12 new `settingsRegister*` calls; `platformGetPadGyroDelta`; binding parse | E2/E3/E4/E5 |
 | `src/platform/config_pc.c` | `configWasFirstRun()`, `configSaveSuppressedActive()` getters | E2/E5 |
 | `src/game/bondview.c` | flash-reduce in `currentPlayerDrawFade`; timer overlay draw; caption queue reuse | E4/E5 |
-| `src/game/explosions.c` | shake scale at `explosionScreenShake` return | E4 |
-| `src/snd.c` | `portCaptionSfx` hook inside `sndPlaySfx` definition (`:871/:881`) | E4 |
-| `src/game/initmenus.c` | record boot `(level,diff)` for quick-restart | E5 |
+| `src/fr.c` | shake scale inside `viShake` (`:1617-1629`) | E4 |
+| `src/snd.c` | `portCaptionSfx` hook inside `sndPlaySfxInternal` (`:3170`) | E4 |
+| `src/game/front.c` | record `(level,diff)` in `init_menu0B_runstage()` for quick-restart (§4.5(a)) | E5 |
 | `tools/ads_pose_capture.sh` | precondition grep on equip trace; bake-regression mode | E1 |
 | `docs/VISUAL_MODES.md` | new flag rows | all |
 
@@ -539,10 +602,10 @@ all UI/captions are code/original text = Tier A1).
 | ID | Task | Files | Steps | Acceptance (runnable) | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W5.E1.T1 | **Fix the scripted equip/aim harness** | `stubs.c` (equip block `:4840-4930`; scripted buttons `:5918+`), `tools/ads_pose_capture.sh` | Retry-until-equipped loop keyed on `getCurrentPlayerWeaponId(GUNRIGHT)`; emit `[ADS-HARNESS] equipped item=N`; script hard-fails if the line is absent | `for i in 1 2 3; do tools/ads_pose_capture.sh kf7_$i 8; done` → all 3 captures show the KF7 (grep the trace line); flaky rate 0/10 | 3 | — | Debug/env-only hooks (`GE007_AUTO_*`), never in normal play; R3 n/a |
-| W5.E1.T2 | **Author the remaining weapon poses** (DD44, Klobb, ZMG, D5K, Phantom, Spectre, shotguns, Golden Gun, Magnum, knives, launcher/heavy audit → pose 0 where odd) | `ads_profiles.c:108-124` | §4.1 workflow per weapon; heavy/thrown items reviewed for pose-0 | Per weapon: capture with baked row == capture with dialed env (`compare_screenshots.py --max-changed-pct 0.10`); visual sign-off contact sheet | 4 | E1.T1 | `Input.AdsEnabled=0` untouched (table only read under flag, `ads_profiles.c:174`) |
-| W5.E1.T3 | **Run the three ADS-0.3 gates** (build what's missing) | `gun.c:29122`, `src/random.c:270` RNG counter, `tools/` | (1) RNG audit counter + 4-draws/shot assert under `-DGE007_RNG_AUDIT`; (2) RAMROM byte-identity `AdsEnabled=0` vs pre-ADS baseline; (3) split-screen asymmetric-ADS smoke | (1) audit build fires on a seeded 5th draw, green on tree; (2) `tools/sim_invariance_gate.sh` variant OFF-vs-OFF-baseline identical + screenshot sha equal; (3) `tools/mp_smoke.sh` variant with P1 ADS-in shows asymmetric FOV in trace | 4 | — | R1: proves it; R3: `Input.AdsEnabled` |
+| W5.E1.T2 | **Author the remaining weapon poses** (DD44, Klobb, ZMG, D5K, Phantom, Spectre, shotguns, Golden Gun, Magnum, knives, launcher/heavy audit → pose 0 where odd). Scope note: the 5 existing "authored" rows also still use the shared universal pose (`ads_profiles.c:104-108` — only FOV/sens/movement are per-weapon today), so audit those 5 too and dial poses where the sight line is off | `ads_profiles.c:108-124` | §4.1 workflow per weapon; heavy/thrown items reviewed for pose-0 | Per weapon: capture with baked row == capture with dialed env (`compare_screenshots.py --max-changed-pct 0.10`); visual sign-off contact sheet | 4 | E1.T1 | `Input.AdsEnabled=0` untouched (profiles resolved via `adsGetProfile`, `ads_profiles.c:174`, consulted only under `g_pcAdsEnabled` at the call sites) |
+| W5.E1.T3 | **Run the three ADS-0.3 gates** (build what's missing) | `gun.c:29122`, `src/random.c:270` RNG counter, `tools/` | (1) RNG audit counter + 4-draws/shot assert under `-DGE007_RNG_AUDIT`; (2) RAMROM byte-identity `AdsEnabled=0` vs pre-ADS baseline; (3) split-screen asymmetric-ADS smoke | (1) audit build fires on a seeded 5th draw, green on tree; (2) `tools/sim_invariance_gate.sh` variant (copy its `run()` harness, `sim_invariance_gate.sh:42-57`, swapping the toggled `--config-override` set for `Input.AdsEnabled=0` vs pre-ADS baseline) — sim hash identical + screenshot sha equal; (3) `tools/mp_smoke.sh` variant with P1 ADS-in shows asymmetric FOV in trace | 4 | — | R1: proves it; R3: `Input.AdsEnabled` |
 | W5.E1.T4 | **Recoil-site confirmation + optional pose rotation wiring** | `gun.c` (ADS-7.1 sites; `portAdsResolvePose` rotation outputs) | Prove `hands[hand].field_A84/A88` consumption is on the *active* path (the `[VM-ANCHOR]` diagnostic technique from ADS_PLAN §10.1); wire `dyaw/dpitch/droll` into `mtx_d` only if a T2 weapon needs it | With `Input.AdsRecoilReduce=0.5`, recoil visibly halves in a 10-shot capture strip; `=0.0` byte-identical | 2 | E1.T2 | R3: `Input.AdsRecoilReduce` (default 0.0) |
-| W5.E1.T5 | **Class-default table + ease-out** | `ads_profiles.c:129-172`; blend fraction consumer | 4-class default rows; optional smoothstep on `zoomintime/zoomintimemax` behind `Input.AdsEaseOut` (default 0) | Unauthored weapon (e.g. Taser) sits sanely; ease A/B captures at t=25/50/75% | 2 | E1.T2 | R3: `Input.AdsEaseOut` |
+| W5.E1.T5 | **Class-default table + ease-out** | `ads_profiles.c:129-172`; blend fraction consumer | 4-class default rows; optional smoothstep on the profile blend timed by `ads_in_time`/`ads_out_time` (`ads_profiles.h:23-24`) behind `Input.AdsEaseOut` (default 0) | Unauthored weapon (e.g. Taser) sits sanely; ease A/B captures at t=25/50/75% | 2 | E1.T2 | R3: `Input.AdsEaseOut` |
 
 **Epic total: 15 jd.** Exit = ADS_PLAN §6 "Definition of done" fully checked.
 
@@ -550,9 +613,9 @@ all UI/captions are code/original text = Tier A1).
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W5.E2.T1 | **Model + curation table** | new `pc_settings_menu.c` | `SmEntry/SmPage` (§4.2); 7 pages, ~55 keys; derive widget from `Setting.type`; unit-test the table (every key resolves via `settingsFind`, `settings.c:183`) | `ctest -R settings_menu_model` green (new ROM-free test: all keys exist, ranges sane, no LIVE key lacking a per-frame consumer or apply hook) | 2 | — | No behavior change; R3 n/a |
-| W5.E2.T2 | **DL widget renderer** | `pc_settings_menu.c` | Panel/rows/slider/enum/toggle via `gDPFillRectangle`; text via `textRender` (Zurich fonts, `bondview.c:6531` idiom); per-player viewport safe | Headless capture on Dam with overlay forced open (`GE007_SETTINGS_MENU_FORCE=1` debug env) renders all widget types; **Metal parity**: same capture under `GE007_RENDERER=metal` non-blank & identical layout | 4 | E2.T1 | Draw-only; overlay-closed frame byte-identical (screenshot sha) |
-| W5.E2.T3 | **Front-end mount** | `bondconstants.h:1566`, `front.c` switches `:14360/14399/14428/14493` + modesel tab | New `MENU_PC_SETTINGS`; init/update/interface/constructor quad; enter from mode-select, exit restores `MENU_MODE_SELECT` | Boot to menu → SETTINGS tab → navigate all pages with pad AND arrows; `--faithful` shows read-only banner and `ge007.ini` mtime unchanged after a session | 3 | E2.T2 | R3: `Input.SettingsMenu`; faithful read-only proven (`config_pc.c:445`) |
+| W5.E2.T1 | **Model + curation table** | new `pc_settings_menu.c` | `SmEntry/SmPage` (§4.2); 7 pages, ~55 keys; derive widget from `Setting.type`; hide entries where `settingsFind` (`settings.c:183`) returns NULL (§4.2 missing-key rule) | `ctest -R settings_menu_model` green — register `port_settings_menu_model` via `add_test` (idiom: existing guards, `CMakeLists.txt:38-48`) running a new `tools/check_settings_menu_model.py` that regex-extracts every `.key` string from the curation table and every `settingsRegister*("` key from `platform_sdl.c`/`audio_pc.c`, failing on any table key with no registration unless the entry is tagged `SM_FUTURE` (the W6 audio rows) | 2 | — | No behavior change; R3 n/a |
+| W5.E2.T2 | **DL widget renderer** | `pc_settings_menu.c` | Panel/rows/slider/enum/toggle via `gDPFillRectangle`; text via `textRender` (Zurich-font idiom `bondview.c:20062/:20108` — §4.2 Renderer); per-player viewport safe | Headless capture on Dam with overlay forced open (`GE007_SETTINGS_MENU_FORCE=1` — new debug env added by this task) renders all widget types; **Metal parity**: same capture under `GE007_RENDERER=metal` (read `gfx_backend.c:16`) non-blank & identical layout | 4 | E2.T1 | Draw-only; overlay-closed frame byte-identical (screenshot sha) |
+| W5.E2.T3 | **Front-end mount** | `bondconstants.h:1566`, `front.c` switches `:14360/14399/14428` in `menu_init` (`:14282`) + `:14493` in `menu_jump_constructor_handler` (`:14480`) + modesel tab (`constructor_menu06_modesel`, `front.c:4014`) | New `MENU_PC_SETTINGS`; init/update/interface/constructor quad; enter from mode-select, exit restores `MENU_MODE_SELECT` | Boot to menu → SETTINGS tab → navigate all pages with pad AND arrows; `--faithful` shows read-only banner and `ge007.ini` mtime unchanged after a session | 3 | E2.T2 | R3: `Input.SettingsMenu`; faithful read-only proven (`config_pc.c:445`) |
 | W5.E2.T4 | **In-mission overlay mount** | `lvl.c:5786` block, HUD pass seam | F1 toggle (via binding table once E3.T1 lands; raw scancode until then); input swallow (`g_freezeInput` idiom `lvl.c:5813`); refuse under `g_deterministic`/`get_is_ramrom_flag()` | In Dam: F1 opens, gameplay input dead, look dead; close restores; `--deterministic` run: F1 inert, screenshot sha equals baseline | 3 | E2.T2 | R1: overlay never opens under replay; R3: `Input.SettingsMenu` |
 | W5.E2.T5 | **Live-apply audit + hooks** | registration sites `platform_sdl.c:1490-1897`, apply fns | Per-key: verify per-frame consumption or add hook (`platformApplyWindowMode` `:1427`, `platformApplyVSync` `:1447`); demote to `SETTING_SCOPE_RESTART` anything unsafe; render `⟳` tags | Scripted pass: toggle every LIVE key in-menu on Dam → no crash, visible effect or documented no-op; RESTART keys visibly tagged; `tools/asan_smoke.sh` green with menu-thrash input script | 3 | E2.T3/T4 | Scope metadata already in registry (`settings.c:200-207`) |
 | W5.E2.T6 | **Persistence + reset + validation sweep** | `pc_settings_menu.c`, `config_pc.c` getters | Save-on-close via `configSave()`; page/all reset via `settingsResetAllToDefaults()` (`settings.c:329`); first full A/B suite | `tools/config_roundtrip_check.py` green; set 5 keys in-menu → quit → relaunch → `--dump-config` shows them; identity gate: overlay-closed frame sha == pre-branch sha | 2 | E2.T5 | R3 identity screenshot required in PR |
@@ -565,7 +628,7 @@ all UI/captions are code/original text = Tier A1).
 |---|---|---|---|---|---|---|---|
 | W5.E3.T1 | **Binding table + rebinding UI** | `stubs.c:6196-6243, 5865-5910`, `platform_sdl.c`, menu Input page | §4.3(a): `PcAction`/`PcBinding`, string settings `Input.Bind*`, parse with `SDL_GetScancodeFromName`; loop-ify the OR-mask assembly; capture widget | Defaults byte-identical: scripted-input smokes (`tools/scripted_look_smoke.sh`, `tools/playability_smoke.sh --all`) green unchanged; rebind fire→`G` works live; bad string falls back to default with a warning | 5 | E2.T3 (UI) | R3: defaults == today's map; keys are strings in `ge007.ini` |
 | W5.E3.T2 | **Gyro aim** | `platform_sdl.c` (§4.3(b)), `lvl.c:5865` | `platformGetPadGyroDelta` under `SDL_VERSION_ATLEAST(2,0,14)`; inject as mdx/mdy behind `live_look_allowed`; 3 new settings | On a DualSense: physical rotation moves view only when `Input.GyroAim=1` (+ only-while-aiming honored); on sensor-less pad: zero-delta, no log spam; `--deterministic` unaffected (input frozen, `main_pc.c:596`) | 4 | — | R1: inside the live-look gate (`lvl.c:5803-5812`); R3: `Input.GyroAim=0` |
-| W5.E3.T3 | **Toggle-vs-hold aim** | `stubs.c` R_TRIG assembly (`:6221/6242` + pad path) | §4.3(c) latched-R synthesis, per-player side array; inert under ramrom/deterministic | Toggle mode: tap R → aim persists, tap again → drops; hold mode unchanged; **RAMROM gate**: recorded replay hash identical with mode=toggle set (`tools/sim_invariance_gate.sh`) | 3 | — | R1: pad-image synthesis, replay-inert; R3: `Input.AimToggleMode=0` |
+| W5.E3.T3 | **Toggle-vs-hold aim** | `stubs.c` R_TRIG assembly (`:6221/6242` + pad path) | §4.3(c) latched-R synthesis, per-player side array; inert under ramrom/deterministic | Toggle mode: tap R → aim persists, tap again → drops; hold mode unchanged; **RAMROM gate**: recorded replay hash identical with mode=toggle set (`tools/sim_invariance_gate.sh` variant — copy its `run()` harness `:42-57`, toggle `Input.AimToggleMode=0` vs `=2`) | 3 | — | R1: pad-image synthesis, replay-inert; R3: `Input.AimToggleMode=0` |
 | W5.E3.T4 | **High-refresh audit + docs** | `platform_sdl.c` mouse path, VISUAL_MODES.md | Verify relative-mouse raw deltas; document `FrameCap=display`+`VSync=off` recipe; confirm `2a22ea2` reorder still in place post-merges | Manual 120Hz check + a one-para VISUAL_MODES section; no code change expected | 1 | — | n/a (docs/audit) |
 | W5.E3.T5 | **Surface sens knobs in menu** | menu curation table | Add `Input.MouseSensitivity[Aim]`, `Input.AdsSensitivity`, gamepad feel keys to Input page | Slider changes take effect next frame (consumed `lvl.c:5870-5874`) | 1 | E2.T3 | already-shipped keys |
 
@@ -577,8 +640,8 @@ all UI/captions are code/original text = Tier A1).
 |---|---|---|---|---|---|---|---|
 | W5.E4.T1 | **Colorblind reticle/hitmarker palettes** | `gun.c:33686-33830` | Palette table (§4.4b); route the three fill-color sites through it; `Input.ReticlePalette` enum | Captures of all 5 palettes on-target/off-target/hitmarker; `classic` byte-identical to today (sha) | 2 | — | R3: enum default `classic` = identity |
 | W5.E4.T2 | **Flash reduction** | `bondview.c:10362` (`currentPlayerDrawFade`), `:129-135`, `:10373-10376` | Promote env to `env||Input.ReduceFlashes`; scale bright full-screen fades | With flag: pickup flash gone, damage fade ≤40% alpha (capture A/B); flag off byte-identical; `tools/damage_hud_smoke.sh` green | 2 | — | R1: draws only (`colourscreen*` unread-back); R3: default 0 |
-| W5.E4.T3 | **Screen-shake reduction** | `explosions.c:1037` | Scale output offset by `Input.ReduceScreenShake` before `viShake` consumers (`bondview.c:15641/15874`) | Grenade-at-feet capture pair (full vs 0.2 shake); **sim gate**: `tools/sim_invariance_gate.sh` OFF vs ON identical (proves offset never feeds sim) | 2 | — | R1: gate-proven; R3: default 1.0 (full) |
-| W5.E4.T4 | **Audio-event captions** | `src/snd.c:871` (`sndPlaySfx` definition), `bondview.c:22059` reuse | §4.4(a): `portCaptionSfx` + ~15-id whitelist + 2s throttle; `[SFX]`-prefixed via hudmsg queue | Trip Dam alarm with `Input.AudioCaptions=1` → `[SFX] Alarm` bottom-left; off = zero hook cost (guarded call); MP unaffected (per-player queue path `bondview.c:22078-22088`) | 4 | — | R2: caption strings are original text (A1); R3: default 0; R1: hudmsg is existing presentation state |
+| W5.E4.T3 | **Screen-shake reduction** | `src/fr.c:1617-1629` (`viShake`); live caller `explosions.c:1120` | Scale `intensity` in `viShake` by `Input.ReduceScreenShake` before the `g_ViShakeIntensity` store (§4.4d — do NOT touch the dead offset path) | Grenade-at-feet capture pair (full vs 0.2 shake); **sim gate**: `tools/sim_invariance_gate.sh` variant (`run()` harness `:42-57`, toggle `Input.ReduceScreenShake=1.0` vs `=0.2`) — sim hash identical (proves intensity never feeds sim) | 2 | — | R1: gate-proven; R3: default 1.0 (full) |
+| W5.E4.T4 | **Audio-event captions** | `src/snd.c:3170` (`sndPlaySfxInternal` — see §4.4a; NOT the `:871/:881` stub half), `bondview.c:22059` reuse | §4.4(a): `portCaptionSfx` + ~15-id whitelist + 2s throttle; `[SFX]`-prefixed via hudmsg queue | Trip Dam alarm with `Input.AudioCaptions=1` → `[SFX] Alarm` bottom-left; off = zero hook cost (guarded call); MP unaffected (per-player queue path `bondview.c:22078-22088`) | 4 | — | R2: caption strings are original text (A1); R3: default 0; R1: hudmsg is existing presentation state |
 
 **Epic total: 10 jd.**
 
@@ -586,9 +649,9 @@ all UI/captions are code/original text = Tier A1).
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W5.E5.T1 | **Quick-restart** | `initmenus.c:237` record; trigger in `lvl.c` native block; `front.c:5073` idiom | §4.5(a): hold-F5-0.5s → confirm → re-apply `(level,diff)` → `MENU_RUN_STAGE` | Dam: F5-hold restarts to mission start in <3s; inert in MP/ramrom/deterministic; 20-restart soak no leak (`tools/asan_smoke.sh` variant) | 3 | E3.T1 (binding) | R1: player-input path only; R3: `Input.QuickRestart` |
+| W5.E5.T1 | **Quick-restart** | record in `init_menu0B_runstage()` (`front.c:14411` dispatch — §4.5(a); NOT `initmenus.c:237`, which is CLI-only); trigger in `lvl.c` native block; `front.c:5073` idiom | §4.5(a): hold-F5-0.5s → confirm → re-apply `(level,diff)` → `MENU_RUN_STAGE` | Dam booted from the FRONT-END menu (not `--level`): F5-hold restarts to mission start in <3s; same via `--level dam` boot; inert in MP/ramrom/deterministic; 20-restart soak no leak (`tools/asan_smoke.sh` variant) | 3 | E3.T1 (binding) | R1: player-input path only; R3: `Input.QuickRestart` |
 | W5.E5.T2 | **Mission timer overlay** | HUD pass in `bondview.c`; `getMissiontimer` (`bondview.c:26448`) | §4.5(b) MM:SS.ff `textRender` top-right, split-screen offsets | Timer matches mission-complete screen time (`front.c:9224-9227`) on a played run; off = byte-identical; works on Metal (`GE007_RENDERER=metal` capture) | 2 | — | R1: read-only sim access; R3: `Input.MissionTimer=0` |
-| W5.E5.T3 | **First-run onboarding** | `config_pc.c:560-568` getter; title constructor; `main_pc.c:822` | §4.5(c): 15s two-line hint, first run only, suppressed under faithful/deterministic | `rm ~/.../ge007.ini` → boot → hint visible frame 100 capture; second boot → absent; `--faithful` → absent | 2 | — | R3: implicit (first-run only), plus `Input.OnboardingHints` master (default 1) |
+| W5.E5.T3 | **First-run onboarding** | `config_pc.c:560-568` getter; title constructor; `main_pc.c:822` | §4.5(c): 15s two-line hint, first run only, suppressed under faithful/deterministic | `rm ./ge007.ini` (config is CWD-relative, `config_pc.h:20`) → boot → hint visible frame 100 capture; second boot → absent; `--faithful` → absent | 2 | — | R3: implicit (first-run only), plus `Input.OnboardingHints` master (default 1) |
 | W5.E5.T4 | **Pause strip on the overlay** | `pc_settings_menu.c` | Resume / Restart(hold) / Quit-to-menu row atop Mount B | All three actions work in Dam; Quit lands on mode-select without leaking mission state (`tools/playability_smoke.sh` level-cycle green) | 2 | E2.T4, E5.T1 | same flags as menu |
 
 **Epic total: 9 jd.**

@@ -48,7 +48,7 @@ the two that remain (pane/player-count coupling, two-process harness) are scoped
   the solo direct boot uses. Control style forced to 1.1 Honey for determinism (`initmenus.c:283-285`).
 - **Player model**: `g_playerPointers[4]` allocated per player from **MEMPOOL_STAGE**
   (`src/game/player_2.c:154`); `getPlayerCount()` counts live slots (`player_2.c:92-102`) and
-  has **~180 callsites** across `src/` (grep count: 179) — it is simultaneously the match-player
+  has **~180 callsites** across `src/` (grep count: 180) — it is simultaneously the match-player
   count, the viewport count, the gfx budget index, and the tick-loop bound (see 2c).
 - **Pane geometry** (classic N64 layout, all in 320×240 VI space, scaled by the backend):
   widths/heights from `bondviewGetCurrentPlayerViewportWidth/Height/Uly/Ulx`
@@ -133,7 +133,7 @@ adversarial review). The review's verdict: architecture buildable but **8 load-b
 replay refuted (auto-aim latch + 4×`RANDOMFRAC` spread + FOV + implicit firer —
 `bullet_path_from_screen_center`, now `gun.c:29122`, draws at `:29159-29164`; the review's
 table cites the pre-drift `:28756/:28789-28795`); (3) rollback budget understated; (4) LE wire primitive wrong;
-(5) 6 of 8 MP scenarios carry unreplicated scoring state (`mp_watch.c:791-842` dispatch);
+(5) 6 of 8 MP scenarios carry unreplicated scoring state (`mp_watch.c:804-826` scenario dispatch);
 (6) `getPlayerCount()` couples match size to viewports/budget/dividers; (7) lifecycle
 (pause/disconnect/results/names) design-absent; (8) N5 packet memory-safety absent.
 The review's corrected-anchor table (§5 there) remains the authoritative *symbol* map for any
@@ -252,7 +252,9 @@ s32 getNthLocalPlayer(s32 i);      /* pane i -> player number */
 
 - `lvl.c:1581-1592` pane loop: split into (a) a **sim loop over ALL players** running
   `lvl.c:1716-1719`'s four sim calls + reload handling `:1721-1725` exactly once per player
-  per frame in shuffled order (preserving today's call order/counts when local==match), and
+  per frame, iterating players in **today's pane order (P1→Pn)** — only the sim/draw
+  *interleaving* changes; per-player call order and counts must match today's exactly when
+  local==match — and
   (b) a **draw loop over local viewports** doing viewport/FOV/sky/`bgLevelRender`/HUD.
   **Trap for the unwary**: `bgRoomVisibilityRelated()` (`lvl.c:1680`) and the `room_rendered`
   marking it drives are NOT pure presentation — prop/auto-aim visibility reads
@@ -267,6 +269,16 @@ s32 getNthLocalPlayer(s32 i);      /* pane i -> player number */
 **Acceptance is mechanical thanks to P0.2**: run the same deterministic 4P match with
 `GE007_LOCAL_PANES=4` vs `=1` on one machine — `--sim-state-hash-out` must be **identical**.
 That test is impossible to cheat and directly proves the refactor moved zero sim work.
+**Known hazard, plan for it**: the whole-arena hash also covers *render bookkeeping that
+lives inside the arena* — the per-player Gfx/Vtx DL buffers are `MEMPOOL_STAGE` allocations
+(`dyn.c:105-107`) and the draw pass writes the rendered player's viewport struct
+(`fr.c:1716-1721`), so a 1-pane run can legitimately differ from a 4-pane run in those bytes
+even with a perfect sim split — the exact failure mode `tools/sim_invariance_gate.sh`'s
+header documents for RenderScale. If the equality test trips *only* in those regions
+(localize with the `GE007_SIM_HASH_DUMP` arena-dump diff), exclude them from the hash via
+the W7.E3.T2 registry mechanism (named exclusion holes over the Gfx/Vtx buffer ranges +
+viewport struct offsets) and additionally require gameplay-field equality via
+`tools/compare_state.py` — a real sim regression still fails both.
 Default identity: with the env unset, `getLocalViewportCount()==getPlayerCount()` and the
 generated DL is byte-identical (screenshot-hash A/B).
 
@@ -405,8 +417,11 @@ FNV-1a over 8 MB ≈ 3–6 ms — acceptable at 1 Hz; do it on the frame *after*
 **Registry completion (prerequisite, also serves rollback).** Today's registry is pool + 2
 timers (`sim_state_hash_registry.c:24-39`) — incomplete for both divergence detection outside
 the arena and restore. Task: generate the sim `.data`/`.bss` symbol table at build time —
-`nm -m` over the `src/game/*.o` + sim `src/*.o` objects (the same object set
-`check_sim_render_separation.sh` already enumerates), emit a C table
+`nm -m` over the sim objects. Note the object set precisely:
+`scripts/ci/check_sim_render_separation.sh` enumerates **only** the `src/game` objects
+(default `OBJDIR=build/CMakeFiles/ge007.dir/src/game`, script `:19`); the generator must
+**also** sweep the top-level sim TUs at `build/CMakeFiles/ge007.dir/src/*.c.o` (`boss.c`,
+`memp.c`, `random.c`, `fr.c`, …) — that is where `g_randomSeed` lives. Emit a C table
 `{name, &sym, sizeof}` for non-render symbols, with an explicit denylist for legitimately
 varying render bookkeeping (the P0.2 comment `registry.c:20-23` names the criterion). The
 existing `ctest -R sim_state_hash` unit stays green; the invariance gate re-baselines.
@@ -477,10 +492,10 @@ Build/validation command patterns per roadmap §7 (see §8 for full invocations)
 
 | ID | Task | Files | Steps / acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|
-| W7.E1.T1 | 3P/4P smoke matrix | `tools/mp_smoke.sh` | Extend the half-frame dissimilarity assert to quadrant-wise (crop 4 quadrants; assert pairwise ≥2% delta among *active* panes; 3P: assert bottom-right quadrant ≈100% black in classic mode). Run `--players 3` and `--players 4` × {temple, complex, caves} × {GL, `GE007_RENDERER=metal`}. **Accept**: all 12 combos pass `--max-crashes 0` + dissimilarity; `tools/audit_render_trace.py` clean. | 3 | — | Validation-only; no flags; no assets |
-| W7.E1.T2 | End-of-round scoreboard assertion | `tools/mp_smoke.sh`, `src/game/mp_watch.c` (trace hook only) | Add a `port_trace` event when the results screen becomes active (mission state transition consumed by `mp_watch.c`); `--timelimit 60` asserts the event fires and no crash through +300 frames. **Accept**: `tools/mp_smoke.sh --players 2 --timelimit 60` green; solo lanes untouched (`tools/playability_smoke.sh --all`). | 2 | — | Trace emit only (no sim write); default-on tracing is existing pattern |
-| W7.E1.T3 | High-DPI pane scissor validation | none (validation) | On a 2× backing-scale window, screenshot 4P; assert divider/scissor alignment (no pane bleeding) via `compare_screenshots.py` masked ROIs on the divider lines; GL + Metal. **Accept**: 0 bleed px in divider ROIs. | 1 | W7.E1.T1 | Validation-only |
-| W7.E1.T4 | Frontend nav for mixed input (plan 3b) | `src/game/front.c` (menu input routing), `src/platform/stubs.c` | Route char/control-style menu cursors per player pad (menus already per-slot on N64; verify pad k drives cursor k, fix any `data[0]`-only reads in the frontend path). **Accept**: scripted per-pad menu navigation reaches a 4P match from the menu chain (extend mp_smoke with `--menu-drive`); direct-boot path byte-identical. | 4 | — | R3: behavior change only in MP menus with ≥2 pads; solo path untouched (screenshot-hash A/B) |
+| W7.E1.T1 | 3P/4P smoke matrix | `tools/mp_smoke.sh` | Extend the half-frame dissimilarity assert to quadrant-wise (crop 4 quadrants; assert pairwise ≥2% delta among *active* panes; 3P: assert bottom-right quadrant ≈100% black in classic mode). Run `--players 3` and `--players 4` × {temple, complex, caves} × {GL, `GE007_RENDERER=metal`}. **Accept**: all 12 combos exit 0 — that covers mp_smoke's built-in render-health gate (it runs `tools/audit_render_trace.py --max-crashes 0 --max-bad-cmds 0 --max-nan 0` on the `--trace-state` JSONL internally; `--max-crashes` is *not* an mp_smoke flag) plus the new quadrant-dissimilarity asserts. | 3 | — | Validation-only; no flags; no assets |
+| W7.E1.T2 | End-of-round scoreboard assertion | `tools/mp_smoke.sh`, `src/platform/port_trace.c:7940` (the `"mp"` trace object), `src/game/mp_watch.c` (state getter only) | Add a `port_trace` field when the results screen becomes active: extend the existing per-frame MP trace object — `src/platform/port_trace.c:7940` already emits `"mp":{"time_ticks":…,"player_count":…}`, which mp_smoke parses — with a `results_active` 0/1 field driven by the results-menu state that gates `mp_watch.c:651-662` (`mpmenumode==7` / `menu_count==player_count`); `--timelimit 60` asserts the field goes 1 and no crash through +300 frames. **Accept**: `tools/mp_smoke.sh --players 2 --timelimit 60` green; solo lanes untouched (`tools/playability_smoke.sh --all`). | 2 | — | Trace emit only (no sim write); default-on tracing is existing pattern |
+| W7.E1.T3 | High-DPI pane scissor validation | none (validation) | On a 2× backing-scale window (macOS Retina is 2× by default; A/B the 1× case with `GE007_DIAG_DISABLE_HIGHDPI=1`, `platform_sdl.c:2175`; pin window dims with `GE007_WINDOW_SIZE=WxH`, `platform_sdl.c:757`), screenshot 4P; assert divider/scissor alignment (no pane bleeding) via `compare_screenshots.py` masked ROIs (`--region`/`--exclude-region`) on the divider lines; GL + Metal. Scissor compose anchor: `bgScissorCurrentPlayerViewDefault` (`src/game/front.c:5483`, MULTIPLAYER_PLAN item 0d). **Accept**: 0 bleed px in divider ROIs. | 1 | W7.E1.T1 | Validation-only |
+| W7.E1.T4 | Frontend nav for mixed input (plan 3b) | `src/game/front.c` (menu input routing), `src/platform/stubs.c` | Route char/control-style menu cursors per player pad (menus already per-slot on N64; verify pad k drives cursor k, fix any `data[0]`-only reads in the frontend path). Tooling gap this task must close: today's scripted-input harness drives **P1 only** (all `GE007_AUTO_*` merge onto `data[0]`, `stubs.c:6345-6348`) — add per-pad scripted variants (e.g. `GE007_AUTO_P2_A=START:LEN`, same window syntax) filling `data[k]` beside `pcFillPadFromController` (`stubs.c:6353-6358`). **Accept**: scripted per-pad menu navigation reaches a 4P match from the menu chain (extend mp_smoke with `--menu-drive`); direct-boot path byte-identical. | 4 | — | R3: behavior change only in MP menus with ≥2 pads; solo path untouched (screenshot-hash A/B) |
 
 ### W7.E2 — Split-screen AAA polish (20 jd)
 
@@ -489,26 +504,26 @@ Build/validation command patterns per roadmap §7 (see §8 for full invocations)
 | W7.E2.T1 | Per-pane FOV settings | `src/platform/platform_sdl.c`, `src/game/bondview.c:14995` | Implement §4.1. **Accept**: `--config-override Video.FovY.P2=70` visibly widens only P2's pane (screenshot quadrant A/B); all keys unset → byte-identical frame vs baseline. | 2 | — | R3: `Video.FovY.P2..P4`, unset=inherit=identity. R1: same class as shipped Video.FovY (user setting feeding sim targeting, opt-in) |
 | W7.E2.T2 | Output-FX pane semantics | `src/platform/fast3d/gfx_opengl.c` (GLSL gen), `src/platform/fast3d/gfx_metal.mm` (MSL gen) | Implement §4.2 `uPaneGrid` + per-pane vignette; measure divider bleed first, clamp only if visible. **Both generators, structurally parallel.** **Accept**: 4P `--remaster` screenshot shows vignette per pane with `Video.VignettePerPane=1`; flag off → byte-identical; GL↔Metal parity ≤0.5% on the MP frame; `sim_invariance_gate.sh` green. | 4 | — | R3: `Video.VignettePerPane` + `Video.PaneClampFX`, both default off. R1: output pass reads scene color only |
 | W7.E2.T3 | Modern 3P wide-bottom layout | `src/game/bondview.c:14825-14945`, `src/fr.c:1764-1815` | Implement §4.3. **Accept**: `Video.ThreePlayerWideBottom=1 --players 3` screenshot: P3 spans full bottom width, no black quadrant, dividers correct; flag off → byte-identical 3P frame; HUD rects follow the pane (f1b36b8 squeeze verified in the wide pane). | 5 | W7.E1.T1 | R3 flag default off. R1: pane rects are presentation; aspect feeds sim same as any pane change — covered by hash gate run 3P flag-off vs on… **expect hash diff (FOV/aspect are player state)** → acceptance uses gameplay-field `compare_state.py` instead, like RenderScale (`sim_invariance_gate.sh` header note) |
-| W7.E2.T4 | Controller claim UX + pad map | `src/platform/platform_sdl.c:74-96,2039+`, `src/platform/main_pc.c`, frontend overlay | §4.5(b): permutation table + `Input.PadOrder`/`--pad-map`; claim overlay in MP lobby; hot-unplug banner. **Accept**: `--pad-map 1,0` swaps which pad drives P1/P2 (mp_smoke scripted per-pad input proves it); unset → byte-identical; unplug mid-match → no crash (simulated `CONTROLLERDEVICEREMOVED`). | 6 | — | R3: `Input.PadOrder` default identity permutation. R2: n/a |
-| W7.E2.T5 | 4P perf census (Metal+GL) | new `tools/mp_perf_census.sh` | §4.5(a): sweep the 11 concrete MP stages × {2,3,4}P × 2 backends at 4K, log fps + `rooms_drawn`/`tris` from `port_trace`. **Accept**: report table; ≥60 fps at 4P on Metal for all stages or a ranked fix list (XLU-snapshot-per-pane is the prime suspect). | 3 | W7.E1.T1 | Validation-only; artifacts local (ROM-derived captures never committed — R2) |
+| W7.E2.T4 | Controller claim UX + pad map | `src/platform/platform_sdl.c:74-96,2039+`, `src/platform/main_pc.c`, `src/game/front.c` (claim overlay in the MP setup/lobby screens; read claims via the `joyGetButtonsPressedThisFrame` pattern, cf. `mp_watch.c:646`) | §4.5(b): permutation table + `Input.PadOrder`/`--pad-map`; claim overlay in MP lobby; hot-unplug banner. **Accept**: `--pad-map 1,0` swaps which pad drives P1/P2 (mp_smoke scripted per-pad input proves it); unset → byte-identical; unplug mid-match → no crash (simulated `CONTROLLERDEVICEREMOVED`). | 6 | — | R3: `Input.PadOrder` default identity permutation. R2: n/a |
+| W7.E2.T5 | 4P perf census (Metal+GL) | new `tools/mp_perf_census.sh` | §4.5(a): sweep the 11 concrete MP stages × {2,3,4}P × 2 backends at 4K, log fps + `rooms_drawn`/`tris` from `port_trace`. **Accept**: report table; ≥60 fps at 4P on Metal for all stages or a ranked fix list (XLU-snapshot-per-pane is the prime suspect). Cross-workstream: W1 (per-pixel lighting) and W3 (advanced rendering) raise per-pane cost — re-run this census after each lands (master-plan graph: W1/W3 → W7.E2 4-pane budget). | 3 | W7.E1.T1 | Validation-only; artifacts local (ROM-derived captures never committed — R2) |
 
 ### W7.E3 — Shared foundations (21 jd) — *gates both tracks*
 
 | ID | Task | Files | Steps / acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|
-| W7.E3.T1 | `getLocalViewportCount()` + sim/draw pane split | `src/game/player_2.c`, `src/game/lvl.c:1581-1733`, `src/boss.c:626`, `src/fr.c:1779-1806`, `src/game/dyn.c:105-107` + callsite audit | Implement §4.4 two-loop refactor + classify the ~180 callsites (review §4.4 list is the seed); keep `bgRoomVisibilityRelated()`/`room_rendered` marking in the per-player **sim** loop (§4.4 trap — `chr.c:5205` auto-aim visibility reads it). **Accept**: (1) `GE007_LOCAL_PANES` unset → screenshot + sim hash byte-identical to baseline in SP and 2P/4P; (2) the killer test: 4P deterministic match, `GE007_LOCAL_PANES=4` vs `=1`, `--sim-state-hash-out` **identical**; (3) all smokes green. | 10 | — | R3: env `GE007_LOCAL_PANES` (dev) — netplay sets it internally; identity when unset. R1: the hash test *is* the rail |
-| W7.E3.T2 | Sim-hash registry completion | `src/platform/sim_state_hash_registry.c`, new build-time generator script, `CMakeLists.txt` | §4.7: nm-generated `.data`/`.bss` table over the sim object set (reuse `check_sim_render_separation.sh`'s object enumeration), denylist for render bookkeeping, wire into `simHashRegistryBuild` (bump `SIM_HASH_MAX_REGIONS` as needed or emit a dedicated table). **Accept**: `ctest -R sim_state_hash` green; `tools/sim_invariance_gate.sh` green with the extended registry (re-baseline); registry lists ≥ the review §3.3 set (`pos_data_entry`, `g_playerPlayerData`, `g_randomSeed`, chr/prop globals). | 6 | — | R1 rail hardening itself; ROM-free CI unit stays |
+| W7.E3.T1 | `getLocalViewportCount()` + sim/draw pane split | `src/game/player_2.c`, `src/game/lvl.c:1581-1733`, `src/boss.c:626`, `src/fr.c:1779-1806`, `src/game/dyn.c:105-107` + callsite audit | Implement §4.4 two-loop refactor + classify the ~180 callsites (review §4.4 list is the seed); keep `bgRoomVisibilityRelated()`/`room_rendered` marking in the per-player **sim** loop (§4.4 trap — `chr.c:5205` auto-aim visibility reads it). **Accept**: (1) `GE007_LOCAL_PANES` unset → screenshot + sim hash byte-identical to baseline in SP and 2P/4P; (2) the killer test: 4P deterministic match, `GE007_LOCAL_PANES=4` vs `=1`, `--sim-state-hash-out` **identical** (full command in §8; if it trips only on arena-resident render bookkeeping — DL/Gfx buffers, viewport structs — apply the §4.4 hazard remedy: registry exclusion holes + `compare_state.py` gameplay-field equality as the backstop); (3) all smokes green. | 10 | — | R3: env `GE007_LOCAL_PANES` (dev) — netplay sets it internally; identity when unset. R1: the hash test *is* the rail |
+| W7.E3.T2 | Sim-hash registry completion | `src/platform/sim_state_hash_registry.c`, new build-time generator script, `CMakeLists.txt` | §4.7: nm-generated `.data`/`.bss` table over the sim object set — `build/CMakeFiles/ge007.dir/src/game/*.c.o` (the set `check_sim_render_separation.sh` enumerates, script `:19`) **plus** `build/CMakeFiles/ge007.dir/src/*.c.o` (`boss`/`memp`/`random`/`fr` — `g_randomSeed` lives here) — denylist for render bookkeeping (plus exclusion holes for arena-resident render regions per the §4.4 hazard), wire into `simHashRegistryBuild` (bump `SIM_HASH_MAX_REGIONS` as needed or emit a dedicated table). **Accept**: `ctest -R sim_state_hash` green; `tools/sim_invariance_gate.sh` green with the extended registry (re-baseline); registry lists ≥ the review §3.3 set (`pos_data_entry`, `g_playerPlayerData`, `g_randomSeed`, chr/prop globals). | 6 | — | R1 rail hardening itself; ROM-free CI unit stays |
 | W7.E3.T3 | Nondeterminism audit + two-run divergence lane | `src/` audit, new `tools/determinism_soak.sh` | Grep+review sim TUs for wall-clock reads (`osGetCount` outside boss seed), pointer-value-dependent logic (sorts/compares on addresses), uninitialized reads (ASan already covers); lane: run the same deterministic MP match twice in two processes, compare final sim hash + per-60-tick hash traces. **Accept**: 2P and 4P deterministic matches hash-identical across two process runs, 10× repetitions; findings fixed or documented. | 5 | W7.E3.T2 | Validation + surgical fixes; any sim fix needs RAMROM golden validation (roadmap §7 rule 4) |
 
 ### W7.E4 — Lockstep netplay to LAN (29 jd)
 
 | ID | Task | Files | Steps / acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|
-| W7.E4.T1 | Transport + session FSM + build plumbing | new `src/platform/net/*`, `lib/enet/`, `CMakeLists.txt:306+`, `THIRD_PARTY.md`, `tools/check_third_party_notices.py` | Vendor enet (MIT); LE `netbuf`; connect/handshake FSM (version+build-hash+arch+region); add sources to **both** targets explicitly. **Accept**: two processes handshake over 127.0.0.1, mismatched build hash rejected with a clear message; ctest green; notices gate green. | 5 | — | R2: enet MIT + NOTICE entry. R3: all inert without `--host/--connect` |
+| W7.E4.T1 | Transport + session FSM + build plumbing | new `src/platform/net/*`, `lib/enet/`, `CMakeLists.txt:306+`, `THIRD_PARTY.md`, `tools/check_third_party_notices.py` | Vendor enet (MIT); LE `netbuf`; connect/handshake FSM (version+build-hash+arch+region); add sources to **both** targets explicitly. **Accept**: two processes handshake over 127.0.0.1, mismatched build hash rejected with a clear message; new ROM-free codec unit `tests/test_netbuf.c` wired exactly like `tests/test_sim_state_hash.c` (`CMakeLists.txt:191-196` is the pattern) — `ctest -R netbuf` green, full ctest green; notices gate green. | 5 | — | R2: enet MIT + NOTICE entry. R3: all inert without `--host/--connect` |
 | W7.E4.T2 | Input seam + tick agreement | `src/platform/stubs.c:5912+`, `src/game/lvl.c:2068,5786-5955`, `src/boss.c:577/638`, `src/platform/net/netinput.c` | Implement §4.7 seams 1–4 (`NetPlayerInput` record/inject, `pcResolveLookDelta`, `netAgreedClockTicks()` write kept in lvl.c, frame pump + stall). **Accept**: `check_timing_lock.sh` passes; netplay-off build byte-identical (screenshot hash + `cmp` on `--sim-state-hash-out` vs baseline) **and** a RAMROM replay hash matches baseline (roadmap §7 rule 4 — the seam touches the sim input path); loopback single-peer (host alone) plays normally. | 6 | W7.E4.T1 | R1: timing-lock gate explicitly preserved (write stays in lvl.c) + RAMROM golden run. R3: `g_netActive` only via CLI/`Net.*` |
 | W7.E4.T3 | Match config + seed sync + load barrier | `src/platform/net/netmsg.c`, `src/game/initmenus.c:263` | Host broadcasts config; peers call `pc_apply_mp_selection()`; post-load ack barrier; seed message → `randomSetSeed` (`boss.c:399-411` pattern); per-player FOV in config (§4.1/§4.6). **Accept**: two processes load the same stage+scenario+weapon set from one host selection; logged configs identical. | 4 | W7.E4.T1 | R3; config replicates existing public enums only (R2: no ROM data on the wire) |
-| W7.E4.T4 | Two-process `net_smoke.sh` + desync oracle | new `tools/net_smoke.sh`, `src/platform/net/net.c` | Launch host+client processes on 127.0.0.1, per-process scripted local input (`GE007_AUTO_*` drives each box's local player), run 600 ticks; exchange per-60-tick hashes; assert **all hash pairs equal** and both exit clean. On mismatch dump arenas (`GE007_SIM_HASH_DUMP`) and diff offsets. **Accept**: lane green 10× consecutively for 2P deathmatch; seeded fault (skip one input) trips the oracle. | 5 | W7.E4.T2, W7.E4.T3, W7.E3.T2/T3 | The R1-style proof for netplay; ROM needed → local lane + ROM-free unit tests in CI |
-| W7.E4.T5 | LAN 2-box playable + panes | `src/platform/net/*`, uses W7.E3.T1 | Real LAN: input-delay tuning (`Net.InputDelayTicks`, default 2), stall/timeout handling, disconnect→neutral-input substitution + HUD banner, each box renders only local panes (`getLocalViewportCount`). **Accept**: manual 2-box LAN match to scoreboard, `--max-crashes 0` traces on both; net_smoke extended with injected 30 ms delay/jitter (toxiproxy or `Net.SimulateLatencyMs`) stays hash-equal. | 6 | W7.E4.T4, W7.E3.T1 | R3: `Net.*` keys default-off |
+| W7.E4.T4 | Two-process `net_smoke.sh` + desync oracle | new `tools/net_smoke.sh`, `src/platform/net/net.c` | Launch host+client processes on 127.0.0.1, per-process scripted local input (`GE007_AUTO_FORWARD`/`GE007_AUTO_RIGHT`/`GE007_AUTO_FIRE` with `START:LEN` windows, exactly as `tools/mp_smoke.sh` uses them). **Routing prerequisite**: scripted input lands on local pad 0 / `data[0]` only, so seam 1's playernum→local-pad map (§4.7) must route the client box's pad 0 to its *assigned* player slot — without that the client cannot drive its own player. Run 600 ticks; exchange per-60-tick hashes; assert **all hash pairs equal** and both exit clean. On mismatch dump arenas (`GE007_SIM_HASH_DUMP`) and diff offsets. **Accept**: lane green 10× consecutively for 2P deathmatch; the seeded fault `tools/net_smoke.sh --fault drop-input` (skip one input on one peer) trips the oracle — proving the lane *can* fail. | 5 | W7.E4.T2, W7.E4.T3, W7.E3.T2/T3 | The R1-style proof for netplay; ROM needed → local lane + ROM-free unit tests in CI |
+| W7.E4.T5 | LAN 2-box playable + panes | `src/platform/net/*`, uses W7.E3.T1 | Real LAN: input-delay tuning (`Net.InputDelayTicks`, default 2), stall/timeout handling, disconnect→neutral-input substitution + HUD banner, each box renders only local panes (`getLocalViewportCount`). **Accept**: manual 2-box LAN match to scoreboard, both boxes' `--trace-state` JSONLs pass `tools/audit_render_trace.py --max-crashes 0`; net_smoke extended with `--latency 30 --jitter 10` (implement via send-side delay keys `Net.SimulateLatencyMs`/`Net.SimulateJitterMs` — no external proxy dependency) stays hash-equal. | 6 | W7.E4.T4, W7.E3.T1 | R3: `Net.*` keys default-off |
 | W7.E4.T6 | Lifecycle verification (all 8 scenarios) | `tools/net_smoke.sh` matrix | Scenario matrix {normal, ltk, yolt, tld, goldengun, 2v2, 3v1, 2v1} × pause/unpause mid-match × results-screen advance × peer-drop-and-continue. **Accept**: every cell hash-equal to end or clean disconnect-continue; results advance ≤10 s after drop (synthetic ready). | 3 | W7.E4.T5 | Scenario logic untouched — replication by construction; validation-only |
 
 ### W7.E5 — Rollback gate + internet beta (20 jd)
@@ -518,7 +533,7 @@ Build/validation command patterns per roadmap §7 (see §8 for full invocations)
 | W7.E5.T1 | Snapshot/restore prototype | new `src/platform/net/netsave.c`, `src/boss.c:72-73` accessors | §4.8: arena memcpy + registry-driven global save/restore; ring buffer of 8. **Accept**: the snapshot-restore-resim hash gate (deterministic run: hash(straight N+k) == hash(restore@N → resim k)) green on 3 MP stages × 2 scenarios; any miss produces a named-region diff. | 6 | W7.E3.T2 | Dev-only (`GE007_NETSAVE_TEST`); zero effect when off |
 | W7.E5.T2 | Sim-only tick cost instrumentation | uses W7.E3.T1 split, `port_trace` | Measure sim-loop-only tick time (draw loop skipped) across MP stages/4P; measure snapshot+restore time. **Accept**: numbers logged into a report; depth-4 rollback budget verdict computed. | 4 | W7.E5.T1, W7.E3.T1 | Instrumentation only |
 | W7.E5.T3 | Rollback go/no-go decision | report | Apply §4.8 criteria; if GO, write the rollback implementation plan (separate doc); if NO-GO, fix internet delay policy. **Accept**: 1-page decision recorded in this doc's changelog. | 1 | W7.E5.T2 | — |
-| W7.E5.T4 | Internet beta: direct + join-code decision + hardening | `src/platform/net/*` | Direct-IP + UPnP port-map attempt; fuzz lane over `netmsg` decode (libFuzzer target on the deserializer, ROM-free); per-peer rate caps; decide relay: **v1 = direct/ZeroTier documented, no bespoke relay** (ops/cost per review §4.7 — revisit only post-beta demand). **Accept**: two machines on different networks connect via forwarded port; fuzz 1 h clean; handshake rejects wrong arch/build. | 6 | W7.E4.T5 | R2: no third-party service dependency shipped; fuzz gate before exposure |
+| W7.E5.T4 | Internet beta: direct + join-code decision + hardening | `src/platform/net/*` | Direct-IP + UPnP port-map attempt; fuzz lane over `netmsg` decode (new ROM-free libFuzzer target `fuzz_netmsg` — `tests/fuzz_netmsg.c` linking `netmsg.c`+`netbuf.c`, built behind a `PORT_FUZZ` CMake option); per-peer rate caps; decide relay: **v1 = direct/ZeroTier documented, no bespoke relay** (ops/cost per review §4.7 — revisit only post-beta demand). **Accept**: two machines on different networks connect via forwarded port; fuzz 1 h clean; handshake rejects wrong arch/build. | 6 | W7.E4.T5 | R2: no third-party service dependency shipped; fuzz gate before exposure |
 | W7.E5.T5 | Cross-arch determinism measurement | `tools/net_smoke.sh --cross` | Run the deterministic replay + hash-trace on ARM64 vs x86_64 builds (Rosetta or a second machine); compare per-60-tick hashes. **Accept**: a measured answer. Divergence ⇒ document same-arch pools as the standing policy (and keep the puppet+event fallback on file); agreement ⇒ open cross-arch play. | 3 | W7.E3.T3 | Measurement only |
 
 **Totals**: E1 10 + E2 20 + E3 21 + E4 29 + E5 20 = **100 junior-days ≈ 20 junior-weeks**
@@ -534,7 +549,7 @@ gameplay-side item; split-screen polish = 30 jd ≈ 6 jw).
 | M1 | **4-way couch, proven** | W7.E1.*, W7.E2.T5 | `tools/mp_smoke.sh --players 4 --timelimit 120 && tools/mp_smoke.sh --players 3` (GL + `GE007_RENDERER=metal`) |
 | M2 | **AAA couch polish** | W7.E2.T1–T4 | `build/ge007 --remaster --multiplayer --players 3 --config-override Video.ThreePlayerWideBottom=1 --config-override Video.FovY.P2=70` — claim pads, play; then the identity check: same command minus overrides diffs 0 px vs baseline |
 | M3 | **Loopback lockstep proof** | W7.E3.*, W7.E4.T1–T4 | `tools/net_smoke.sh` — two processes, 600 ticks, hash-equal; `tools/net_smoke.sh --fault drop-input` trips the oracle |
-| M4 | **LAN 2-box beta** | W7.E4.T5–T6 | Box A: `build/ge007 --host --multiplayer --players 2 --mp-stage temple`; Box B: `build/ge007 --connect <ipA>` — play to scoreboard; pause syncs; pull B's ethernet → A finishes the match |
+| M4 | **LAN 2-box beta** | W7.E4.T5–T6 | Box A: `build/ge007 --host --multiplayer --players 2 --mp-stage temple`; Box B: `build/ge007 --rom baserom.u.z64 --connect <ipA>` — play to scoreboard; pause syncs; pull B's ethernet → A finishes the match |
 | M5 | **Rollback verdict + internet beta** | W7.E5.* | `tools/net_smoke.sh --netsave-gate` (restore-resim hash green) + two-network `--connect` session; go/no-go report in repo |
 
 Each milestone is independently demoable and landable; M1/M2 ship value even if netplay stalls.
@@ -565,11 +580,16 @@ GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1` + `--deterministic`.
 # Build
 cmake -S . -B build && cmake --build build -j && (cd build && ctest -R sim_state_hash)
 
-# Identity (R3) — every E2/E4 commit: flags off ⇒ byte-identical
-build/ge007 --rom baserom.u.z64 --multiplayer --players 4 --mp-stage temple \
-  --deterministic --screenshot-frame 300 --screenshot-label base --screenshot-exit
-# ... re-run with the feature flag on its identity value; then:
-tools/compare_screenshots.py /tmp/base.png /tmp/candidate.png --max-changed-pct 0.0
+# Identity (R3) — every E2/E4 commit: flags off ⇒ byte-identical.
+# Screenshots land in the process CWD as screenshot_<label>.bmp (platform_sdl.c:673);
+# run each pass in its own scratch dir so ge007.ini state cannot drift between runs.
+REPO="$(pwd)"; mkdir -p /tmp/mp_id/base /tmp/mp_id/cand
+( cd /tmp/mp_id/base && "$REPO/build/ge007" --rom "$REPO/baserom.u.z64" \
+    --multiplayer --players 4 --mp-stage temple --scenario deathmatch \
+    --deterministic --screenshot-frame 300 --screenshot-label base --screenshot-exit )
+# re-run in /tmp/mp_id/cand with the feature flag at its identity value, label cand; then:
+tools/compare_screenshots.py /tmp/mp_id/base/screenshot_base.bmp \
+  /tmp/mp_id/cand/screenshot_cand.bmp --max-changed-pct 0.0
 
 # Split-screen lanes (M1)
 tools/mp_smoke.sh --players 2 && tools/mp_smoke.sh --players 3 && tools/mp_smoke.sh --players 4
@@ -581,10 +601,18 @@ scripts/ci/check_sim_render_separation.sh
 scripts/ci/check_timing_lock.sh                             # E4.T2 must keep this green
 tools/sim_invariance_gate.sh dam1 600 2                     # incl. after E3.T2 re-baseline
 
-# The pane-decoupling proof (E3.T1)
-GE007_LOCAL_PANES=4 build/ge007 ... --multiplayer --players 4 --sim-state-hash-out /tmp/h4.json
-GE007_LOCAL_PANES=1 build/ge007 ... --multiplayer --players 4 --sim-state-hash-out /tmp/h1.json
-cmp <(jq .hash /tmp/h4.json) <(jq .hash /tmp/h1.json)       # MUST be equal
+# The pane-decoupling proof (E3.T1). NOTE: the hash JSON is emitted only on the
+# --screenshot-exit teardown path (platform_sdl.c:1010-1018) — both screenshot flags
+# are mandatory or /tmp/h*.json is never written.
+GE007_LOCAL_PANES=4 build/ge007 --rom baserom.u.z64 --multiplayer --players 4 \
+  --mp-stage temple --scenario deathmatch --deterministic \
+  --screenshot-frame 600 --screenshot-label p4 --screenshot-exit \
+  --sim-state-hash-out /tmp/h4.json
+GE007_LOCAL_PANES=1 build/ge007 --rom baserom.u.z64 --multiplayer --players 4 \
+  --mp-stage temple --scenario deathmatch --deterministic \
+  --screenshot-frame 600 --screenshot-label p1 --screenshot-exit \
+  --sim-state-hash-out /tmp/h1.json
+cmp <(jq .hash /tmp/h4.json) <(jq .hash /tmp/h1.json)       # MUST be equal (see §4.4 hazard)
 
 # Netplay correctness lane (M3+) — two OS processes, the only divergence-capable topology
 tools/net_smoke.sh                        # host+client on 127.0.0.1, 600 ticks, hash-equal
@@ -599,7 +627,8 @@ GE007_NETSAVE_TEST=1 tools/net_smoke.sh --netsave-gate      # restore-resim hash
 tools/compare_state.py /tmp/off.jsonl /tmp/on.jsonl
 
 # Memory safety — hot paths touched (stubs input seam, net decode, pane loop)
-tools/asan_smoke.sh && <libFuzzer netmsg target, 1h>        # fuzz before internet exposure
+tools/asan_smoke.sh
+build/fuzz_netmsg -max_total_time=3600                      # E5.T4 target; before internet exposure
 
 # Contamination guard (R2) — every commit; enet vendoring updates notices
 scripts/ci/check_no_rom_data.sh && tools/check_third_party_notices.py

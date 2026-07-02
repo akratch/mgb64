@@ -161,7 +161,7 @@ light entities, no GI, no deferred pipeline. §8 deferrals stand (see §7 risk R
   `gfx_pc.c:451`; ROOM checks at `:1418`, `:3420`, `:5162`); character features to
   CHRPROP; viewmodel (WEAPON) and HUD are always excluded (viewmodel is unlit baked-color
   — roadmap §8 last bullet; HUD/ortho excluded by the perspective test
-  `rsp.P_matrix[2][3] != 0`, same predicate SSAO uses at `gfx_pc.c:15445`).
+  `fabsf(rsp.P_matrix[2][3]) > 0.5f`, the exact predicate SSAO uses at `gfx_pc.c:15445`).
 
 ### 4.1 New flags, settings, and shader bits (the complete registry)
 
@@ -198,7 +198,8 @@ matrix while the projection is the world perspective (the same
 `is_room_matrix_addr` / `rsp.projection_is_field_10e0` machinery used at
 `gfx_pc.c:15398/16116`), the loaded MV *is* `roomLocal→view`. Rather than inverting a
 composite, capture the camera directly: the game already exposes world→view as
-`camGetWorldToScreenMtxf()` (render-side consumer precedent at `gfx_pc.c:16137`).
+`camGetWorldToScreenMtxf()` (returns `Mtxf *`, extern-declared at `bg.c:7670`; copy into
+a local `float[4][4]` before inverting; render-side consumer precedent at `gfx_pc.c:16137`).
 Once per frame, at the first world-perspective room draw:
 `g_pc_view_inv = inverse4x4(camGetWorldToScreenMtxf())` (standard cofactor inverse,
 new `static void gfx_matrix_inverse(float out[4][4], const float in[4][4])` next to
@@ -212,6 +213,11 @@ still keep it to one audited accessor).
 Rail note: this is render code reading sim state (allowed direction). It adds **zero**
 sim writes; `scripts/ci/check_sim_render_separation.sh` still passes because game TUs
 gain no renderer-backend imports (only the reverse).
+
+Env caveat: `GE007_LEGACY_ROOM_MV_PROJ_ORDER` (`gfx_pc.c:15303-15311`, default off)
+flips the MP composition order and breaks this world-space reconstruction. E2's capture
+code must check the env once and, when set, leave `g_pc_view_inv_valid=false` (all
+world-attr features silently off) — never produce wrong world positions.
 
 ### 4.3 Epic E1 — T1.3 Smooth env normals (CPU relight; ships before any VBO work)
 
@@ -315,8 +321,11 @@ string work, or scans.
 
 Computed in `gfx_sp_vertex` right after the clip transform (`gfx_pc.c:16087`), only when
 any consumer flag is live AND the draw is world-perspective:
-`world = (ob·MV) · g_pc_view_inv` (two 4×3 mat-vecs; MV row-vector convention matches
-`:16084-16087`). Flag-off writes nothing (identity: struct grows, values untouched,
+`world = (ob·MV) · g_pc_view_inv` (two 4×3 mat-vecs). Convention warning: GE stores
+matrices `m[column][row]` (see the comment inside `gfx_matrix_mul`, `gfx_pc.c:15267-15272`);
+copy the exact component indexing of the clip transform at `:16084-16087`
+(`x = ob[0]*M[0][0] + ob[1]*M[1][0] + ob[2]*M[2][0] + M[3][0]`, …) for both the MV apply
+and the `g_pc_view_inv` apply — do not transpose. Flag-off writes nothing (identity: struct grows, values untouched,
 no packing reads them — `buf_vbo` layout unchanged because the pack is feature-keyed).
 
 **cc_options**: at the assembly site add, after `gfx_pc.c:17288`:
@@ -385,6 +394,17 @@ backend renders that buffer with a trivial depth-only pipeline into the shadow m
 Sun is static and the camera-fit lags one frame — invisible in practice and standard
 for capture-based shadow injections. Kill-switch honesty: characters animate, so their
 shadow lags 1 frame (~16 ms); acceptance explicitly screenshots a moving guard.
+
+**Known limitation — frustum-limited casters (accepted, risk R8).** The pack loop
+only sees triangles that survived clip rejection (`clip_rej`, upstream of
+`gfx_pc.c:18390`), so the capture ring misses casters just outside the view frustum
+(a guard a step off-screen, geometry above/behind the camera). Consequence: shadows
+can pop in at screen edges and tall off-screen structures cast nothing. Mitigations
+in order: (1) the camera-centered ortho fit means most missing casters would land
+outside the shadow radius anyway; (2) E3.T4's acceptance must include a pan capture
+past a guard to characterize edge-pop; (3) if M3 review rejects it, the pre-approved
+escalation is capturing at `gfx_sp_tri` pre-rejection for ROOM+CHRPROP when the flag
+is on (more tris in the ring — re-measure the 2 MB budget), not a scene re-render.
 
 - **Light matrix fit (single cascade — decision).** Ortho frustum centered on the
   camera position (from `g_pc_view_inv` row 3), radius `Video.SunShadowRadius`
@@ -581,35 +601,35 @@ Estimates are junior-engineer-days including tests/validation, excluding review 
 
 | ID | Task | Files | Steps | Acceptance (runnable) | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W1.E1.T1 | Room normal cache builder | new `src/platform/fast3d/gfx_room_normals.c/.h`, CMakeLists | Reuse `lightfixture.c:137-179` BE DL decode; per-room walk → area-weighted, **position-merged** normals; lazy build keyed on pool ptr; reset hook at level unload | Unit test (ctest `room_normals`): synthetic 2-quad shared-edge pool yields identical normals at the duplicated positions; Dam build logs `rooms=N built<5ms` under `GE007_ENV_NORMALS_DIAG=1` | 6 | — | R3: builder runs only when `Video.EnvSmoothNormals=1` |
-| W1.E1.T2 | Relight application in `gfx_sp_vertex` | `gfx_pc.c:16306-16310`, `platform_sdl.c` (register `Video.EnvSmoothNormals`, `Video.EnvRelightBlend`) | Luma-replace formula §4.3; skip when `g_pcPerPixelLight` on; one latched flag read | Identity: `tools/renderer_parity_capture.sh` baseline vs flag-off — screenshot SHA identical both backends. A/B: `--level dam --deterministic --screenshot-frame 120` with `GE007_ENV_SMOOTH_NORMALS=1` → `tools/compare_screenshots.py --max-changed-pct 35` vs baseline (rooms change; HUD/viewmodel pixels must not) | 4 | E1.T1 | R1: gate run (see §8); R3: `GE007_ENV_SMOOTH_NORMALS` |
-| W1.E1.T3 | Tuning + seam validation ◆ | tuning only | Sweep `EnvRelightBlend` 0.3/0.6/0.9 on Dam rock (`tok0949` wall) + Surface snow; capture the roadmap-§3 seam repro angle | Reviewer-visible: the per-quad wall seam A/B pair archived locally; `tools/audit_screenshot_health.py` green; perf: `tools/perf_census.sh dam` ≥ 95% of baseline fps | 3 | E1.T2 | R2: screenshots local-only (never committed) |
+| W1.E1.T1 | Room normal cache builder | new `src/platform/fast3d/gfx_room_normals.c/.h`, new `tests/test_room_normals.c`, CMakeLists.txt | Reuse `lightfixture.c:137-179` BE DL decode; per-room walk → area-weighted, **position-merged** normals; lazy build keyed on pool ptr; reset hook at level unload; add diag env `GE007_ENV_NORMALS_DIAG` (**new**, this task; latch-once like `GE007_VERBOSE`, `gfx_pc.c:13035`) logging per-room build stats | **New** ctest target `room_normals`: add `tests/test_room_normals.c` + `add_test(NAME room_normals …)` copying the `sim_state_hash` pattern (`CMakeLists.txt:191-196`); `ctest -R room_normals` passes — synthetic 2-quad shared-edge pool yields identical normals at the duplicated positions. Dam boot logs `rooms=N built<5ms` under `GE007_ENV_NORMALS_DIAG=1` | 6 | — | R3: builder runs only when `Video.EnvSmoothNormals=1` |
+| W1.E1.T2 | Relight application in `gfx_sp_vertex` | `gfx_pc.c:16306-16310`, `platform_sdl.c` (register `Video.EnvSmoothNormals`, `Video.EnvRelightBlend`) | Luma-replace formula §4.3; skip when `g_pcPerPixelLight` on; one latched flag read; register both settings with `settingsRegisterInt`/`Float` + env names (pattern: `Video.Ssao`, `platform_sdl.c:1601`) | Identity: `tools/renderer_parity_capture.sh --no-build` on the feature build, flags off — screenshot SHAs match pre-change baseline on both backends. A/B: run the §8 canonical command twice (labels `e1t2_off`/`e1t2_on`; add `GE007_ENV_SMOOTH_NORMALS=1` to the ON run), then `tools/compare_screenshots.py screenshot_e1t2_off.bmp screenshot_e1t2_on.bmp --max-changed-pct 35` exits 0 (rooms change; HUD/viewmodel pixels must not) | 4 | E1.T1 | R1: gate run (see §8); R3: `GE007_ENV_SMOOTH_NORMALS` |
+| W1.E1.T3 | Tuning + seam validation ◆ | no new files — captures + settings sweep | With `GE007_ENV_SMOOTH_NORMALS=1`, run the §8 canonical command 3× adding `--config-override Video.EnvRelightBlend=0.3` / `0.6` / `0.9` (labels `blend03/06/09`) on `--level dam` (rock wall `tok0949`) and again on `--level surface1` (snow); ALSO one interior sanity capture (`--level bunker1` or `facility`) — `GlobalLight`'s WSW sun direction is meaningless indoors, so verify the relight doesn't fight interior baked mood; frame the roadmap-§3 seam repro angle; pick the default with the reviewer | Reviewer-visible: the per-quad wall seam A/B pair archived locally; `tools/audit_screenshot_health.py screenshot_blend*.bmp` green; perf: `GE007_ENV_SMOOTH_NORMALS=1 tools/perf_census.sh dam` ≥ 95% of the fps from a plain `tools/perf_census.sh dam` baseline (exported env vars propagate into the census runs) | 3 | E1.T2 | R2: screenshots local-only (never committed) |
 
 ### E2 — World-space VBO plumbing (T2.1) — 12d
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W1.E2.T1 | Per-frame camera capture + inverse | `gfx_pc.c` (globals by `:15384`; `gfx_matrix_inverse` by `gfx_matrix_mul`), `bg.c` (`bgGetGlobalLightDir` accessor), both backends' `start_frame` reset | §4.2; reset mirrors `gfx_metal.mm:1083` pattern | Diag print (`GE007_WORLD_DIAG=1`): `world = view·view_inv` round-trip error < 1e-3 on Dam frame 120; `check_sim_render_separation.sh` passes | 3 | — | R1: render-reads-sim only |
-| W1.E2.T2 | LoadedVertex + pack + cc_options bit | `gfx_pc.c:2434` (struct), `:16087+` (compute), `:17288+` (bit), `:18409+` (pack) | §4.4; `SHADER_OPT_WORLD_POS (1u<<5)` in `gfx_cc.h` | With all W1 flags off: full-suite screenshot SHAs unchanged (both backends, `renderer_parity_capture.sh`); `ctest` green | 4 | E2.T1 | R3: bit set only under consumer flags |
-| W1.E2.T3 | GL + Metal generator attribute | `gfx_opengl.c:846+/:1349+`, `gfx_metal.mm:394+` | §4.4 — same ordinal slot in VS walk, attrib bind, `add_attr`; extend Metal `Uniforms` + C mirror (`gfx_metal.mm:289-297`, `:712`) with §4.4 fields + static size assert | Debug shader (`GE007_METAL_DUMP_SHADERS=1` / GL `[SHADER_n]` dump) shows `aWorldPos` at matching location; a temporary `fragColor.rgb=fract(vWorldPos*0.01)` diag build shows stable world-anchored pattern while strafing, identical GL vs Metal | 3 | E2.T2 | R3 |
-| W1.E2.T4 | Identity + parity gates wired | `tools/` (extend `renderer_parity_capture.sh` scene list) | Add a `world_attrs_on` variant scene | Gate: flags-off byte-identical; flags-on GL vs Metal `compare_screenshots.py --max-changed-pct 0.5`; `tools/sim_invariance_gate.sh dam1` identical hashes ON vs OFF | 2 | E2.T3 | R1 (the gate itself) |
+| W1.E2.T1 | Per-frame camera capture + inverse | `gfx_pc.c` (globals by `:15384`; `gfx_matrix_inverse` by `gfx_matrix_mul`), `bg.c` (`bgGetGlobalLightDir` accessor), both backends' `start_frame` reset | §4.2; reset mirrors the `g_pc_ssao_proj_b` per-frame reset at `gfx_metal.mm:1083` | Diag print under `GE007_WORLD_DIAG=1` (**new** diag env, this task): `world = view·view_inv` round-trip error < 1e-3 on Dam frame 120; `scripts/ci/check_sim_render_separation.sh` passes on the built tree | 3 | — | R1: render-reads-sim only |
+| W1.E2.T2 | LoadedVertex + pack + cc_options bit | `gfx_pc.c:2434` (struct), `:16087+` (compute), `:17288+` (bit), `:18409+` (pack) | §4.4; `SHADER_OPT_WORLD_POS (1u<<5)` in `gfx_cc.h`; also add diag env `GE007_FORCE_WORLD_ATTRS` (**new**, render-side latch): makes `gfx_world_attrs_wanted()` return true so the attribute path is testable before any consumer epic lands | With all W1 flags off: full-suite screenshot SHAs unchanged (both backends, `renderer_parity_capture.sh`); `ctest` green | 4 | E2.T1 | R3: bit set only under consumer flags (or the diag force env) |
+| W1.E2.T3 | GL + Metal generator attribute | `gfx_opengl.c:846+/:1349+`, `gfx_metal.mm:394+` | §4.4 — same ordinal slot in VS walk, attrib bind, `add_attr`; extend Metal `Uniforms` + C mirror (`gfx_metal.mm:289-297`, `:712`) with §4.4 fields + static size assert | With `GE007_FORCE_WORLD_ATTRS=1`: Metal MSL dump (`GE007_METAL_DUMP_SHADERS=1`) and GL shader summary (`GE007_VERBOSE=1` prints `[SHADER_n]` for the first 3 shaders, `gfx_opengl.c:1291-1293` — extend to dump full GLSL source under the same gate if needed) show `aWorldPos` at the matching ordinal; a temporary `fragColor.rgb=fract(vWorldPos*0.01)` diag build shows a stable world-anchored pattern while strafing, identical GL vs Metal | 3 | E2.T2 | R3 |
+| W1.E2.T4 | Identity + parity gates wired | `tools/renderer_parity_capture.sh` (current scenes: `facility_scissor`, `surface_sky_fog` — see its `usage()`; copy a `run_capture` block) | Add a `world_attrs` scene (`--scene world_attrs`), off/on variants via `GE007_FORCE_WORLD_ATTRS` as the scene env | Gate: flags-off byte-identical; flags-on GL vs Metal `tools/compare_screenshots.py <gl.bmp> <metal.bmp> --max-changed-pct 0.5`; R1: run `tools/sim_invariance_gate.sh dam1 600 2` twice — plain, then with `GE007_FORCE_WORLD_ATTRS=1` exported (the gate's `env` launch inherits it) — all four printed hashes identical | 2 | E2.T3 | R1 (the gate itself) |
 
 ### E3 — Sun shadow map (T1.4) — 21d
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W1.E3.T1 | Shadow-geometry capture ring | `gfx_pc.c` (append at pack loop `:18390`, ROOM+CHRPROP, flag-on) | 9 floats/tri into a 2 MB ring + tri count; cleared per frame; no capture when flag off | Diag counter matches scene tri count ±0 on Dam frame 120; zero cost flag-off (perf census delta < 1%) | 4 | E2.T2 | R3: `GE007_SUN_SHADOW` |
-| W1.E3.T2 | GL shadow pass | `gfx_opengl.c` (`start_frame`; new FBO beside `:648-666`; light-fit + texel snap in `gfx_pc.c` shared helper `gfx_compute_shadow_mat`) | §4.5: depth-only FBO `Video.SunShadowRes`², ortho fit radius `Video.SunShadowRadius`, `glPolygonOffset(2,4)`, front-face cull | `GE007_DUMP_SHADOW_MAP=1` writes a local PGM: depth silhouette of Dam visible (manual once), non-blank assert in trace; identity-off unchanged | 5 | E3.T1 | R3 |
+| W1.E3.T2 | GL shadow pass | `gfx_opengl.c` (`start_frame`; new FBO beside `:648-666`; light-fit + texel snap in `gfx_pc.c` shared helper `gfx_compute_shadow_mat`) | §4.5: depth-only FBO `Video.SunShadowRes`², ortho fit radius `Video.SunShadowRadius`, `glPolygonOffset(2,4)`, front-face cull | `GE007_DUMP_SHADOW_MAP=1` (**new** diag env, this task) writes a local PGM: depth silhouette of Dam visible (manual once), non-blank assert in trace; identity-off unchanged | 5 | E3.T1 | R3 |
 | W1.E3.T3 | Metal shadow pass | `gfx_metal.mm` (`mtl_start_frame` before `:1115`; static `shadowVertex` MSL; depth-only PSO; comparison sampler variant of `mtl_sampler_for:982`) | §4.5; own encoder, `setDepthBias:4 slopeScale:2` | Same PGM dump path via a blit+readback; GL-vs-Metal shadow-map compare `--max-changed-pct 2` | 4 | E3.T2 | R3 |
 | W1.E3.T4 | Receiver injection, both generators | `gfx_opengl.c` (~after combiner clamp), `gfx_metal.mm:539+`, uniforms per §4.4 | `SHADER_OPT_SUN_SHADOW (1u<<6)`; 3×3 PCF; `uShadowBias` default 0.0015; outside-map=lit | A/B Dam frame 120: guard + Bond shadows visible, direction matches `(77,77,46)` (`bg.c:2740`); acne sweep screenshots at bias 0.0005/0.0015/0.005 archived; GL==Metal `--max-changed-pct 1.0` | 5 | E3.T3, E2.T3 | R3; R1 gate rerun |
-| W1.E3.T5 | Blob retirement + moving-target check | `model.c:10980` gate + renderer query header | `gfx_sun_shadow_active()` render-state query (must live in `gfx_pc.c` under a `gfx_*` name — §4.5); blob returns when flag off | Faithful mode screenshot: blob present, byte-identical; remaster: blob absent; moving-guard capture shows ≤1-frame lag artifact documented; `sim_invariance_gate.sh` identical (query affects DL only) | 3 | E3.T4 | R1 (query audited), R3 |
+| W1.E3.T5 | Blob retirement + moving-target check | `model.c:10980` gate + renderer query header | `gfx_sun_shadow_active()` render-state query (must live in `gfx_pc.c` under a `gfx_*` name — §4.5); blob returns when flag off | Faithful mode screenshot: blob present, byte-identical; remaster: blob absent; moving-guard capture shows ≤1-frame lag artifact documented; R1: `tools/sim_invariance_gate.sh dam1 600 2` twice — plain vs `GE007_SUN_SHADOW=1` exported — all hashes identical (query affects DL only) | 3 | E3.T4 | R1 (query audited), R3 |
 
 ### E4 — Per-pixel directional (T2.2) — 5d
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
 | W1.E4.T1 | dFdx lighting, both generators | `gfx_opengl.c`, `gfx_metal.mm`, `gfx_cc.c` (`shade_input_idx`), `gfx_pc.c:17288+` | §4.6 incl. per-backend dFdy sign + `shade_input_idx` plumbing; CPU relight (E1) auto-defers | Dam wall grazing-light A/B: faceting visible per-face (expected — geometric N); GL==Metal `--max-changed-pct 1.0`; identity-off byte-identical | 3 | E2.T3 | R3: `GE007_PERPIXEL_LIGHT` |
-| W1.E4.T2 | Interaction matrix validation | tests only | All 8 combos of {E1, E4, SSAO} on/off captured; no double-darkening (mean-luma delta of E1+E4 vs E4 alone < 2%) | `compare_screenshots.py` matrix script committed under `tools/` | 2 | E4.T1 | R1 gate |
+| W1.E4.T2 | Interaction matrix validation | new `tools/w1_interaction_matrix.sh` | Script loops the 8 combos of {`GE007_ENV_SMOOTH_NORMALS`, `GE007_PERPIXEL_LIGHT`, `GE007_SSAO`} × {0,1}, runs the §8 canonical command per combo (label = combo bits, e.g. `m110`), then `tools/compare_screenshots.py <all-off.bmp> <combo.bmp> --json-out <combo>.json`; compute mean luma from the JSON `mean_rgb` field; assert no double-darkening: mean-luma delta of E1+E4 vs E4 alone < 2% | `tools/w1_interaction_matrix.sh` committed; running it prints one PASS line per combo and exits 0 (the <2% assertion lives in the script) | 2 | E4.T1 | R1 gate |
 
 ### E5 — Material sidecars + tangent hardening (T2.3+T2.4) — 22d
 
@@ -618,8 +638,8 @@ Estimates are junior-engineer-days including tests/validation, excluding review 
 | W1.E5.T1 | Sidecar loader | `texture_pack.c/.h` (`try_load_sidecars` per §4.7), hook near `gfx_pc.c:21061`, settex cache entry +2 texture ids | Same miss-cache pattern (`texture_pack.c:29`); dims may differ from diffuse (independent UV normalize) | Unit: fixture pack with `tok0022_n.png` loads, `tok0022_r.png` missing → mask=NORMAL_ONLY; bad PNG → stock (no crash, ASan clean) | 3 | — | R2: sidecars from ROM-derived sources are Tier B local-only (guard inherited: `check_no_rom_data.sh`); R3: needs `Video.TexturePack` + `Video.MaterialMaps` |
 | W1.E5.T2 | Sampler units 3/4 both backends | `gfx_opengl.c` (bind uNormMap/uRoughMap units 3/4 at the `:1434-1448` sampler-binding pattern), `gfx_metal.mm:451+` (`[[texture(3)]]/[[texture(4)]]`), `gfx_flush` bind path | Bind only when cc bit set; white/flat 1×1 fallbacks (Metal precedent `mtl_ensure_white:867`) | Diag shader visualizing `texture(uNormMap).xyz` shows the sidecar on Dam ground; combiner draws without maps untouched | 4 | E5.T1, E2.T3 | R3 |
 | W1.E5.T3 | Normal/rough shading injection | both generators; `SHADER_OPT_MATERIAL_MAPS (1u<<29)` | §4.7 cotangent frame + Blinn-Phong-lite spec, shadow-masked; supersedes E4 block when present | Dam pack with `--emit-material-maps` output: gravel relief visible in raking sun; spec sweep rough=0/0.5/1 archived; GL==Metal `--max-changed-pct 1.5`; identity-off byte-identical | 6 | E5.T2, E3.T4 | R2: demo pack local-only; R3 |
-| W1.E5.T4 | T2.4 hardening (mirror/wrap/per-quad) | generators (mirroring sign, `|duv|` clamp→geometric-N fallback §4.7) | Target the known-hostile set: Dam per-quad rock, mirrored settex (`settex_mirror_tex1` path `gfx_pc.c:18419`), wrapped floors | No inverted-lighting quads on the Dam wall orbit capture (12 angles); wrap-seam capture shows fallback not sparkle | 5 | E5.T3 | R3 |
-| W1.E5.T5 | `build_pack.py --emit-material-maps` | `tools/texpack/build_pack.py` | Sobel normal-from-height + flatness roughness; deterministic (fixed seed N/A — pure function); emits beside diffuse | Fixture: synthetic dump → `tok0022_n.png` stable SHA256; README documents Tier B propagation (upscale-derived ⇒ local-only) | 4 | E5.T1 | R2: tooling A1, output inherits input tier |
+| W1.E5.T4 | T2.4 hardening (mirror/wrap/per-quad) | generators (mirroring sign, `\|duv\|` clamp→geometric-N fallback §4.7) | Target the known-hostile set: Dam per-quad rock, mirrored settex (`settex_mirror_tex1` path `gfx_pc.c:18419`), wrapped floors | No inverted-lighting quads on the Dam wall orbit capture (12 angles); wrap-seam capture shows fallback not sparkle | 5 | E5.T3 | R3 |
+| W1.E5.T5 | `build_pack.py --emit-material-maps` | `tools/texpack/build_pack.py` (flag = a thin wrapper), `tools/texpack/make_sidecars.py` (the single implementation — created by W2.E6; if W2.E6 hasn't landed yet, THIS task creates `make_sidecars.py` and W2.E6 adopts it — one Sobel implementation, never two) | Sobel normal-from-height + flatness roughness in `make_sidecars.py`; `--emit-material-maps` calls it per emitted diffuse; deterministic (pure function); emits beside diffuse | Fixture: synthetic dump → `tok0022_n.png` stable SHA256; README documents Tier B propagation (upscale-derived ⇒ local-only) | 4 | E5.T1 | R2: tooling A1, output inherits input tier |
 
 ### E6 — Character normals (T2.5) — 6d
 
@@ -631,15 +651,17 @@ Estimates are junior-engineer-days including tests/validation, excluding review 
 
 | ID | Task | Files | Steps | Acceptance | Est | Deps | Rails |
 |---|---|---|---|---|---|---|---|
-| W1.E7.T1 | Registry + emitters | `gfx_pc.c/.h` (`gfx_register_dynamic_light`, cleared per frame), `gun.c:3397+` (`portBuildFirstPersonFlashMatrix` flash site), `lightfixture.c` destroy path | §4.9; registration only from existing draw/effect sites | `check_sim_render_separation.sh` green (`gfx_register_*` is the documented allowed submission family — checker header + roadmap line 301); `sim_invariance_gate.sh dam1` identical ON vs OFF; diag: firing logs 1 light for flash lifetime; ≤4 enforced (5th dropped by distance) | 4 | — | R1: emitters are draw-path code, gate rerun; R3: `GE007_DYN_LIGHTS` |
-| W1.E7.T2 | Shader add, both generators | generators (`1u<<31`), uniforms §4.4 | §4.9 loop; count uniform; zero-count draws keep bit clear (no shader churn) | Night-ish level (Bunker) muzzle-flash capture: wall lit during flash frames; GL==Metal `--max-changed-pct 1.5`; identity-off byte-identical | 5 | E2.T3, E7.T1 | R3 |
-| W1.E7.T3 | Perf + cap validation | tests | Sustained-fire + lamp-destroy stress on Bunker | `perf_census.sh bunker1` ≥ 90% baseline; shader permutation count growth < 2× (log shader-pool size) | 2 | E7.T2 | — |
+| W1.E7.T1 | Registry + emitters | `gfx_pc.c/.h` (`gfx_register_dynamic_light`, cleared per frame), `gun.c:3397+` (`portBuildFirstPersonFlashMatrix` flash site), `lightfixture.c` destroy path | §4.9; registration only from existing draw/effect sites; NOTE: the lamp-flicker emitter rides the `GE007_SHOOT_OUT_LIGHTS` destroy path (`lightfixture.c:110-124`) — reachable only once W4.E1 (lights-out verified/ON) lands; the muzzle-flash emitter has no such dependency | `scripts/ci/check_sim_render_separation.sh` green (`gfx_register_*` is the documented allowed submission family — checker header + roadmap line 301); R1: `tools/sim_invariance_gate.sh dam1 600 2` twice — plain vs `GE007_DYN_LIGHTS=1` exported — all hashes identical; diag: firing logs 1 light for flash lifetime; ≤4 enforced (5th dropped by distance) | 4 | — | R1: emitters are draw-path code, gate rerun; R3: `GE007_DYN_LIGHTS` |
+| W1.E7.T2 | Shader add, both generators | generators (`1u<<31`), uniforms §4.4 | §4.9 loop; count uniform; zero-count draws keep bit clear (no shader churn) | Muzzle-flash capture: `GE007_RENDERER=metal GE007_DYN_LIGHTS=1 build/ge007 --rom baserom.u.z64 --level bunker1` — hold fire facing a wall; wall visibly lit during flash frames (screenshot pair archived); GL==Metal `--max-changed-pct 1.5`; identity-off byte-identical | 5 | E2.T3, E7.T1 | R3 |
+| W1.E7.T3 | Perf + cap validation | shader-pool log line (GL: `shader_program_pool_size`, near `gfx_opengl.c:1451`; Metal: the shader-pool counter in `gfx_metal.mm`) + captures | Add a shutdown log of shader-pool size under `GE007_VERBOSE=1`; manual stress on `--level bunker1`: 30 s sustained fire + destroy a lamp with `GE007_SHOOT_OUT_LIGHTS=1 GE007_DYN_LIGHTS=1` | `GE007_DYN_LIGHTS=1 tools/perf_census.sh bunker1` ≥ 90% of the fps from a plain `tools/perf_census.sh bunker1` run; logged shader-pool size flag-on < 2× flag-off; no visible hitch during the stress session | 2 | E7.T2 | — |
 
-**Cross-workstream dependencies**: E5 pack-side tasks assume the texture workstream's
-manifest/router (roadmap §6 P1.2/P2.3) for *which* tokens get sidecars — E5 functions
-without it (hand-listed tokens) but production packs want it. The sun-shadow +
-material look feeds any "showcase/trailer" workstream. SSAO tuning (P3.1 polish)
-should land before M4 to avoid re-tuning AO under new lighting.
+**Cross-workstream dependencies** (IDs per 00-MASTER-PLAN.md): **W2.E4** (AI material
+sidecars + manifest/router, roadmap §6 P1.2/P2.3) decides *which* tokens get sidecars —
+W1.E5 functions without it (hand-listed tokens) but production packs want it.
+**W4.E1** (shoot-out-lights verified + ON) gates the reachability of E7.T1's lamp-flicker
+emitter (the muzzle-flash emitter is independent, so E7 does not block on it).
+**W3.E1** (SSAO v2) should land before W1.M4 to avoid re-tuning AO under new lighting.
+The sun-shadow + material look feeds any "showcase/trailer" workstream.
 
 ---
 
@@ -647,10 +669,10 @@ should land before M4 to avoid re-tuning AO under new lighting.
 
 | M | Name | Contents | Demo script (reviewer runs) |
 |---|---|---|---|
-| M1 | **Faceted no more** (T1.3) | E1 complete; Dam wall/ground seam fix | `GE007_RENDERER=metal GE007_ENV_SMOOTH_NORMALS=1 build/ge007 --rom baserom.u.z64 --level dam --deterministic --screenshot-frame 120 --screenshot-exit` then flip the env off and diff |
-| M2 | **World in the shader** (T2.1+T2.2) | E2 + E4; per-pixel sun on rooms, dual-backend parity | `tools/renderer_parity_capture.sh` world-attrs scene; then `GE007_PERPIXEL_LIGHT=1 … --level dam` A/B |
+| M1 | **Faceted no more** (T1.3) | E1 complete; Dam wall/ground seam fix | `GE007_RENDERER=metal GE007_ENV_SMOOTH_NORMALS=1 build/ge007 --rom baserom.u.z64 --level dam --deterministic --screenshot-frame 120 --screenshot-label m1_on --screenshot-exit`; re-run with `GE007_ENV_SMOOTH_NORMALS=0`, label `m1_off`; `tools/compare_screenshots.py screenshot_m1_off.bmp screenshot_m1_on.bmp --heatmap m1_diff.png` |
+| M2 | **World in the shader** (T2.1+T2.2) | E2 + E4; per-pixel sun on rooms, dual-backend parity | `tools/renderer_parity_capture.sh --scene world_attrs`; then `GE007_RENDERER=metal GE007_PERPIXEL_LIGHT=1 build/ge007 --rom baserom.u.z64 --level dam --deterministic --screenshot-frame 120 --screenshot-exit` A/B vs the same command without the flag |
 | M3 | **First real shadows** (T1.4) | E3; blob retired in remaster | `GE007_RENDERER=metal GE007_SUN_SHADOW=1 build/ge007 --rom baserom.u.z64 --level dam --deterministic --screenshot-frame 240 --screenshot-exit` (guard shadow in frame) |
-| M4 | **Materials light up** (T2.3/T2.4) | E5; Dam pack with `_n/_r` sidecars | `tools/texpack/build_pack.py --emit-material-maps …` (local), then `GE007_TEXTURE_PACK=<pack> GE007_MATERIAL_MAPS=1 GE007_SUN_SHADOW=1 … --level dam` |
+| M4 | **Materials light up** (T2.3/T2.4) | E5; Dam pack with `_n/_r` sidecars | `tools/texpack/build_pack.py --emit-material-maps …` (local), then `GE007_RENDERER=metal GE007_TEXTURE_PACK=<pack> GE007_MATERIAL_MAPS=1 GE007_SUN_SHADOW=1 build/ge007 --rom baserom.u.z64 --level dam --deterministic --screenshot-frame 120 --screenshot-exit` |
 | M5 | **Living light** (T2.5 + dyn) | E6 + E7; full `--remaster` flip review ◆ | `build/ge007 --rom baserom.u.z64 --remaster --level bunker1` + sustained fire; then the full §8 gate suite for the default-flip decision |
 
 Each milestone independently shippable; program can stop after any of M1–M4 with a
@@ -669,15 +691,19 @@ payoff on the same day).
 | R4 | **Shader permutation explosion** — 4 new bits × existing options bloat the pool (GL pool linear-scan `gfx_opengl.c:1455`; Metal PSO cache) | Bits are class-gated (ROOM/CHRPROP only) and co-occur in fixed bundles in practice; log pool size in acceptance (E7.T3) | If pool > 2× baseline or level-load hitches appear, collapse `SUN_SHADOW+DFDX_LIGHT+DYN_LIGHTS` into one `LIT` bit with uniform-driven sub-toggles |
 | R5 | **CPU cost of world-pos per vertex** (2 extra mat-vecs in the T&L hot loop) breaches the perf plan | Flag-off is branch-only; flag-on measured by perf census; the M1/M2 perf work bought 40%+ headroom (101–189 fps) | If remaster fps < 90 on any level, move world-pos computation to the pack loop (3 verts/tri, only for batched tris that survive clipping) |
 | R6 | **Dynamic lights scope creep** toward the §8-deferred light system | Hard API cap N=4, two emitters only, no shadows, no persistence | Any request for authored/persistent lights ⇒ new workstream proposal, not an E7 extension; E7 itself is cut (not shipped half-way) if flash lighting reads badly in the M5 review |
-| R7 | **Per-quad UV geometry defeats derivative tangents** (sparkle at seams) | §4.7 fallback: `|duv|` clamp → geometric normal; Dam wall is the acceptance fixture | If > 5% of Dam-wall pixels fall back (diag counter), leave `MATERIAL_MAPS` off for per-quad-UV tokens via a router exclusion list — exactly the §3 decision-tree posture |
+| R7 | **Per-quad UV geometry defeats derivative tangents** (sparkle at seams) | §4.7 fallback: `\|duv\|` clamp → geometric normal; Dam wall is the acceptance fixture | If > 5% of Dam-wall pixels fall back (diag counter), leave `MATERIAL_MAPS` off for per-quad-UV tokens via a router exclusion list — exactly the §3 decision-tree posture |
+| R8 | **Shadow capture misses frustum-rejected casters** (§4.5) — edge pop-in, no shadows from tall off-screen structures | Camera-centered fit bounds the loss; E3.T4 pan-capture characterizes it | If M3 review rejects edge-pop, capture at `gfx_sp_tri` pre-rejection (ROOM+CHRPROP, flag-on) and re-measure the ring budget; scene re-render stays out of scope |
 
 ---
 
 ## 8. Validation strategy (every task; commands verbatim)
 
-Canonical environment (matches `tools/renderer_parity_capture.sh:101-118`):
+Canonical environment (matches `tools/renderer_parity_capture.sh:101-118`; replace
+`<task-id>` with your label — the screenshot lands as `screenshot_<task-id>.bmp` in the
+current working directory):
 
 ```sh
+mkdir -p /tmp/w1
 SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 \
 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 \
 build/ge007 --rom baserom.u.z64 --level dam --deterministic \
@@ -685,20 +711,31 @@ build/ge007 --rom baserom.u.z64 --level dam --deterministic \
   --screenshot-label <task-id> --screenshot-exit
 ```
 
+Valid `--level` slugs are the `kPcStartStages` names (`main_pc.c:71+`), the same list
+`tools/perf_census.sh` uses: `dam facility runway surface1 bunker1 silo frigate surface2
+bunker2 statue archives streets depot train jungle control caverns cradle aztec egypt`.
+
 Per-commit ladder (roadmap §7):
 
-1. **Identity** — baseline (`Video.RemasterFX=0 Video.TexturePack= Video.RenderScale=1
-   Video.MSAA=0` + all W1 flags off) vs feature build with flags off: screenshot SHA
+1. **Identity** — baseline (pin via `--config-override Video.RemasterFX=0
+   --config-override Video.TexturePack= --config-override Video.RenderScale=1
+   --config-override Video.MSAA=0`, all W1 flags off) vs feature build with flags off:
+   screenshot SHA
    equal on **both** backends (`GE007_RENDERER=metal` and default GL) via
    `tools/renderer_parity_capture.sh`. Reminder from the P1.1 shipped notes: use
    `--level`, never `--ramrom`, for screenshots (ramrom renders black headless).
 2. **Feature A/B** — only the target flag flipped;
-   `tools/compare_screenshots.py --max-changed-pct <task threshold>` +
-   `tools/audit_screenshot_health.py` + `tools/audit_render_trace.py`.
+   `tools/compare_screenshots.py <off.bmp> <on.bmp> --max-changed-pct <task threshold>` +
+   `tools/audit_screenshot_health.py <shots…>` +
+   `tools/audit_render_trace.py /tmp/w1/trace.jsonl`.
 3. **Backend parity** — same flags, GL vs Metal, `--max-changed-pct` per task table
    (0.5–1.5). Metal is flagship; GL must not rot (it is the Linux/Windows reference).
-4. **R1 gate** — `tools/sim_invariance_gate.sh dam1 600 2` with the feature ON vs OFF:
-   identical sim hashes; `ctest -R sim_state_hash` in CI;
+4. **R1 gate** — the gate's own OFF/ON legs toggle only the screen-space pipeline
+   (`Video.RemasterFX/Ssao` — see the script header), so for a W1 feature run it
+   **twice**: `tools/sim_invariance_gate.sh dam1 600 2` plain, then again with the
+   feature's env var exported (e.g. `GE007_SUN_SHADOW=1 tools/sim_invariance_gate.sh
+   dam1 600 2` — the script's `env` launch inherits exported vars); all four printed
+   hashes must be identical. `ctest -R sim_state_hash` in CI;
    `scripts/ci/check_sim_render_separation.sh` and `scripts/ci/check_timing_lock.sh`
    green (the E3.T5/E7.T1 game-TU touches are the audit hotspots).
 5. **Sanitizers** — ASan/UBSan build, `tools/asan_smoke.sh` + the feature's demo
