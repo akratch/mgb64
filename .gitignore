@@ -1,0 +1,129 @@
+# ============================================================================
+#  MGB64 .gitignore
+#
+#  GOLDEN RULE: never commit the ROM or anything derived from it. The rules
+#  below block the common cases, but you are the real safeguard. See
+#  CONTRIBUTING.md and DISCLAIMER.md.
+# ============================================================================
+
+# --- ROMs and ROM-adjacent data (NEVER commit) ---
+*.z64
+*.n64
+*.v64
+*.rom
+baserom*
+*.cdata*
+*.eeprom
+ge007_eeprom*
+ge007.ini
+goldeneye-soundpack/
+tools/irix/
+
+# --- Extracted assets (regenerated from YOUR rom at build time) ---
+# Binary / packed asset data, anywhere (textures, models, audio, segments):
+*.bin
+*.rz
+*.ctl
+*.tbl
+*.sbk
+*.seq
+*.aifc
+*.aiff
+*.seg
+*.cdata
+*.cdata.*
+# Extracted obseg / region text data .c (keep headers/.ld/.s glue, drop data):
+assets/obseg/text/*/*.c
+assets/obseg/em/data/*
+# ROM-derived BULK MEDIA (NOT distributed; extracted/loaded from YOUR ROM).
+# Kept in-tree (code-coupled, no pixels/audio): the .h offset/decl headers,
+# GlobalImageTable.c (display lists + symbolic descriptor tables), and the
+# .inc.c model-header/skeleton/stat glue that src/ #includes.
+assets/animationtable_data.c
+assets/animationtable_entries.c
+assets/rarewarelogo.c
+assets/font_chardatae.c
+assets/font_chardataj.c
+assets/font/fontBankGothic.c
+assets/font/fontZurichBold.c
+assets/images/out/
+assets/images/split/png/
+# Extracted obseg level/model data .c (keep headers/.ld/.s glue, drop data):
+assets/obseg/bg/*_all_p.c
+
+# --- Build output ---
+build/
+build-*/
+dist/
+bin/*
+!bin/.gitkeep
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+
+# --- Logs, captures, dumps (often contain ROM-derived imagery) ---
+*.log
+*.jsonl
+*.bmp
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ppm
+*.pgm
+*.pnm
+*.raw
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.aac
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.avi
+*.webm
+san_output*.txt
+frame_trace*
+screenshot_*
+ref_before_*
+diag_*
+# (re-allow project-authored images by exception if ever needed, e.g.:)
+# !docs/img/*.png
+
+# --- HD texture-pack tooling (tools/texpack) ---
+# Fetched-on-demand Real-ESRGAN binary + models (third-party, large) and build
+# staging. HD packs / texture dumps are ROM-derived and already excluded by the
+# *.png / *.ppm rules above; the manifest is dump-derived metadata.
+tools/texpack/.bin/
+tools/texpack/**/.stage/
+*.texmanifest.csv
+
+# --- Tooling intermediates ---
+__pycache__/
+*.pyc
+tools/extractor/extractor
+tools/n64cksum
+tools/armips
+tools/mktex/build/
+tools/gzipsrc/gzip
+tools/report/report
+
+# --- Editor / OS ---
+.DS_Store
+.vscode/
+.vs/
+.idea/
+*~
+*.tmp
+
+# --- Local-only user scripts ---
+/my_*.sh
+scripts/local/
+scripts/make/local/

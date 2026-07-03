@@ -1,0 +1,59 @@
+# Normalize text files across platforms.
+* text=auto eol=lf
+
+# Common ROM/media/build artifacts should stay binary if they ever appear
+# locally; the release guards still forbid committing them.
+*.z64 binary
+*.n64 binary
+*.v64 binary
+*.rom binary
+*.bin binary
+*.bmp binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.raw binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.flac binary
+*.dmg binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.tgz binary
+*.gz binary
+
+# Keep GitHub language statistics focused on MGB64-owned code. These paths are
+# inventoried in THIRD_PARTY.md and retained for build/tooling compatibility.
+lib/glad/** linguist-vendored
+tools/armips.cpp linguist-vendored
+tools/asm-processor/** linguist-vendored
+tools/extractor/puff.c linguist-vendored
+tools/extractor/puff.h linguist-vendored
+tools/gzipsrc/** linguist-vendored
+tools/ido5.3_recomp/** linguist-vendored
+tools/mktex/src/libpdtex/** linguist-vendored
+
+# --- Internal working documentation: the public/internal boundary ------------
+# These are planning docs, roadmaps, reviews, surveys, WIP notes, and agent /
+# session working artifacts. They stay in THIS development repository but are
+# NEVER shipped in the public source archive (`git archive`, honored
+# automatically) or the fresh public launch repository
+# (scripts/create_public_launch_repo.sh, which filters the tree by these same
+# entries). scripts/ci/check_public_history_text.sh also derives its history
+# scan exclusions from these export-ignore entries, so this block is the single
+# source of truth for what documentation is public vs internal. To exclude a new
+# internal doc from the public repo, add an export-ignore line here.
+docs/superpowers/** export-ignore
+docs/remaster-aaa/** export-ignore
+docs/*_PLAN.md export-ignore
+docs/*_ROADMAP.md export-ignore
+docs/*_REVIEW.md export-ignore
+docs/*_SURVEY.md export-ignore
+docs/*_WIP.md export-ignore
+docs/*_STATUS.md export-ignore
+docs/*_GLIDEPATH.md export-ignore
+docs/*_MAP.md export-ignore
