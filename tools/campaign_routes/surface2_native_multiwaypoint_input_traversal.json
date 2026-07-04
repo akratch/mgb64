@@ -1,0 +1,112 @@
+{
+  "schema": "mgb64.campaign_route.v1",
+  "name": "surface2_native_multiwaypoint_input_traversal",
+  "level": 43,
+  "frames": 1250,
+  "route_class": "input_traversal",
+  "description": "Surface II native-only multi-waypoint traversal from the stock spawn. This adds controller-driven Surface II outdoor traversal coverage without warp, force, objective, or stage-state automation.",
+  "env": {
+    "GE007_TRACE_FLOW_ONLY": 1
+  },
+  "input_segments": [
+    {"name": "snowfield_forward_push", "start": 80, "duration": 1100, "inputs": ["forward"]},
+    {"name": "snowfield_left_bias", "start": 200, "duration": 900, "inputs": ["left"]}
+  ],
+  "assertions": {
+    "expect_frame_exit": true,
+    "min_records": 1245,
+    "no_render_failures": true,
+    "no_front_failure": true,
+    "require_input_automation": true,
+    "no_direct_state_automation": true,
+    "min_moving_records": 1050,
+    "min_horizontal_delta": 10500.0,
+    "setup_target_milestones": [
+      {
+        "name": "stock_spawn_near_setup_pad_30",
+        "frame_at_or_after": 36,
+        "target": {"kind": "pad", "pad": 30},
+        "max_horizontal_distance": 5.0,
+        "max_abs_y_delta": 10.0
+      },
+      {
+        "name": "early_surface_near_setup_pad_71",
+        "frame_at_or_after": 199,
+        "target": {"kind": "pad", "pad": 71},
+        "max_horizontal_distance": 220.0,
+        "max_abs_y_delta": 120.0
+      },
+      {
+        "name": "mid_surface_near_setup_pad_70",
+        "frame_at_or_after": 600,
+        "target": {"kind": "pad", "pad": 70},
+        "max_horizontal_distance": 1050.0,
+        "max_abs_y_delta": 320.0
+      },
+      {
+        "name": "mid_surface_near_setup_pad_69",
+        "frame_at_or_after": 736,
+        "target": {"kind": "pad", "pad": 69},
+        "max_horizontal_distance": 850.0,
+        "max_abs_y_delta": 320.0
+      },
+      {
+        "name": "late_surface_near_setup_pad_68",
+        "frame_at_or_after": 830,
+        "target": {"kind": "pad", "pad": 68},
+        "max_horizontal_distance": 180.0,
+        "max_abs_y_delta": 150.0
+      },
+      {
+        "name": "late_surface_broad_reach_near_setup_pad_78",
+        "frame_at_or_after": 1240,
+        "target": {"kind": "pad", "pad": 78},
+        "max_horizontal_distance": 1950.0,
+        "max_abs_y_delta": 80.0
+      }
+    ],
+    "position_milestones": [
+      {
+        "name": "early_spawn_clearance",
+        "frame_at_or_after": 140,
+        "min_horizontal_delta": 400.0,
+        "min_abs_x_delta": 400.0
+      },
+      {
+        "name": "surface_turnout",
+        "frame_at_or_after": 390,
+        "min_horizontal_delta": 2800.0,
+        "min_abs_x_delta": 2500.0,
+        "min_abs_z_delta": 1200.0
+      },
+      {
+        "name": "mid_surface_reach",
+        "frame_at_or_after": 600,
+        "min_horizontal_delta": 4300.0,
+        "min_abs_x_delta": 4000.0,
+        "min_abs_z_delta": 1000.0
+      },
+      {
+        "name": "late_surface_reach",
+        "frame_at_or_after": 830,
+        "min_horizontal_delta": 6500.0,
+        "min_abs_x_delta": 6200.0,
+        "min_abs_z_delta": 1800.0
+      },
+      {
+        "name": "extended_surface_reach",
+        "frame_at_or_after": 1100,
+        "min_horizontal_delta": 10000.0,
+        "min_abs_x_delta": 9000.0,
+        "min_abs_z_delta": 4000.0
+      },
+      {
+        "name": "post_input_surface_rest",
+        "frame_at_or_after": 1240,
+        "min_horizontal_delta": 10500.0,
+        "min_abs_x_delta": 9400.0,
+        "min_abs_z_delta": 4600.0
+      }
+    ]
+  }
+}

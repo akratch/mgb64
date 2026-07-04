@@ -1,0 +1,23 @@
+{
+  "_comment": "Surface (I) per-level curation (W2.E8.T2; the exit-demo level, outdoor snow -- exercises the W2.E5.T1 SNOW preset). Token ids + routing choices only -- no ROM data, committable. Top-5 hue-ID heroes (RemasterFX=0 pin, coverage): tok1267 28.2% (tiled snow ground), tok1263 15.5% (bright snow bank), tok1200 5.2% / tok1201 4.2% / tok1199 2.0% (thin 64x17 dark tree/cliff bands on the hillsides -> ride the automatic whole_image AI-upscale tree; they are dark ~95 luma, NOT snow). The pink/orange sunset sky is a separate skyRender backdrop, not a hero token. tok2228 is pinned seam_safe to match dam's global curation (shared pack, global token ids). See docs/remaster-aaa/02-hd-asset-pipeline.md sec 4.2/4.7.",
+  "tok1267": {
+    "source": "procedural",
+    "preset": "snow",
+    "size": "1024x512",
+    "tone": {"mode": "match"},
+    "_note": "Surface snow ground (hero #1, 64x32 fmt=4 I-format tileable=1 room, avgRGB bcbcbc). The dominant tiled snow floor -> seamless tone-matched SNOW synth (W2.E5.T1) reads cleaner than ESRGAN on a 64x32 tile and is the mandated preset exercise for this level. I-format 'alpha' is intensity; synth_inject re-attaches it. tone=match -> Tier B."
+  },
+  "tok1263": {
+    "source": "procedural",
+    "preset": "snow",
+    "size": "1024x1024",
+    "tone": {"mode": "match"},
+    "_note": "Surface bright snow bank/slope (hero #2, 32x32 fmt=2 CI tileable=0 room, avgRGB dadae0 ~218,218,225 -- bright white snow, not the pink sky). Route to the SNOW preset for a consistent snow look; non-tileable so no wrap needed. tone=match -> Tier B."
+  },
+  "tok2228": {
+    "source": "ai_upscale",
+    "mode": "seam_safe",
+    "model": "realesrgan-x4plus",
+    "_note": "Curation correction, harmonized with dam.json (global token, shared pack). A tileable=1 non-'room' token; the auto tree routes it whole_image, which fails validate_pack's seam self-check. Pin seam_safe so the HD tile still wraps and both levels' builds agree."
+  }
+}

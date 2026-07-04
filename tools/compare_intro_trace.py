@@ -1,0 +1,657 @@
+#!/usr/bin/env python3
+"""Compare level-intro camera paths from native and ROM-oracle JSONL traces."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+
+CAMERA_MODES = {
+    "none": 0,
+    "intro": 1,
+    "fadeswirl": 2,
+    "swirl": 3,
+    "fp": 4,
+    "death_sp": 5,
+    "death_mp": 6,
+    "posend": 7,
+    "fp_noinput": 8,
+    "mp": 9,
+    "fade_to_title": 10,
+}
+
+SKIP_BUTTON_MASK = 0x8000 | 0x4000 | 0x2000 | 0x1000 | 0x0020 | 0x0010
+
+PATH_FIELDS = (
+    ("cam_pos", "vector"),
+    ("cam_target", "vector"),
+    ("cam_up", "direction"),
+    ("cam_floor", "vector"),
+    ("cam_delta", "vector"),
+    ("facing", "direction"),
+)
+
+SCALAR_FIELDS = (
+    ("theta", "scalar"),
+    ("floor", "scalar"),
+    ("stan_h", "scalar"),
+)
+
+STATE_FIELDS = (
+    ("cam", "exact"),
+    ("cam_after", "exact"),
+    ("icam", "exact"),
+    ("p_unk", "exact"),
+    ("intro.frozen", "exact"),
+)
+
+SELECTED_CAMERA_FIELDS = (
+    ("intro.selected_camera.present", "exact"),
+    ("intro.selected_camera.pos", "vector"),
+    ("intro.selected_camera.yaw", "scalar"),
+    ("intro.selected_camera.pitch", "scalar"),
+    ("intro.selected_camera.pad", "exact"),
+)
+
+SETUP_FIELDS = (
+    ("intro.setup.anim_index", "exact"),
+    ("intro.setup.swirl.present", "exact"),
+    ("intro.setup.swirl.count", "exact"),
+    ("intro.setup.swirl.hash", "exact"),
+    ("intro.setup.swirl.current.index", "exact"),
+    ("intro.setup.swirl.current.flags", "exact"),
+    ("intro.setup.swirl.current.pos", "vector"),
+    ("intro.setup.swirl.current.curve", "scalar"),
+    ("intro.setup.swirl.current.duration", "scalar"),
+    ("intro.setup.swirl.current.pad", "exact"),
+)
+
+BOND_ANIM_FIELDS = (
+    ("intro.bond_present", "exact"),
+    ("intro.bond_action", "exact"),
+    ("intro.bond_anim.valid", "exact"),
+    ("intro.bond_anim.frames", "exact"),
+    ("intro.bond_anim.hash", "exact"),
+    ("intro.bond_anim.entry_offset", "exact"),
+    ("intro.bond_anim.bits_offset", "exact"),
+    ("intro.bond_anim.frame", "anim"),
+    ("intro.bond_anim.end", "scalar"),
+    ("intro.bond_anim.speed", "scalar"),
+    ("intro.bond_anim.abs_speed", "scalar"),
+    ("intro.bond_anim.looping", "exact"),
+    ("intro.bond_anim.gunhand", "exact"),
+)
+
+
+def load_jsonl(path: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"FAIL: invalid JSON in {path}:{line_no}: {exc}") from None
+            if isinstance(record, dict):
+                records.append(record)
+    return records
+
+
+def write_json_metrics(path: str | None, metrics: dict[str, Any]) -> None:
+    if not path:
+        return
+    Path(path).write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def get_path(record: dict[str, Any], path: str) -> Any:
+    value: Any = record
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            break
+        value = value.get(part)
+    else:
+        if value is not None:
+            return value
+
+    if path == "intro.frozen":
+        p_unk = parse_int(record.get("p_unk"))
+        if p_unk is not None:
+            return 1 if p_unk == 1 else 0
+    return value
+
+
+def parse_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text, 0)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        result = float(value)
+        return result if math.isfinite(result) else None
+    if isinstance(value, str):
+        try:
+            result = float(value)
+        except ValueError:
+            return None
+        return result if math.isfinite(result) else None
+    return None
+
+
+def parse_vector(value: Any) -> tuple[float, float, float] | None:
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    parsed = [parse_float(item) for item in value]
+    if any(item is None for item in parsed):
+        return None
+    return (parsed[0], parsed[1], parsed[2])  # type: ignore[index]
+
+
+def parse_modes(spec: str) -> set[int]:
+    modes: set[int] = set()
+    for item in spec.split(","):
+        key = item.strip().lower().replace("-", "_")
+        if not key:
+            continue
+        if key in CAMERA_MODES:
+            modes.add(CAMERA_MODES[key])
+            continue
+        try:
+            modes.add(int(key, 0))
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"unknown camera mode {item!r}") from None
+    if not modes:
+        raise argparse.ArgumentTypeError("at least one camera mode is required")
+    return modes
+
+
+def input_buttons(record: dict[str, Any]) -> int | None:
+    oracle = record.get("oracle")
+    if not isinstance(oracle, dict):
+        return None
+    state = oracle.get("input")
+    if not isinstance(state, dict):
+        return None
+    return parse_int(state.get("buttons"))
+
+
+def validate_controls(records: Iterable[dict[str, Any]], label: str, modes: set[int], allow_skip_input: bool) -> list[str]:
+    if allow_skip_input:
+        return []
+    failures: list[str] = []
+    for record in records:
+        cam = parse_int(record.get("cam"))
+        if cam not in modes:
+            continue
+        buttons = input_buttons(record)
+        if buttons is not None and (buttons & SKIP_BUTTON_MASK):
+            failures.append(
+                f"{label}: skip-capable input during intro at frame {record.get('f')} "
+                f"(cam={cam}, buttons=0x{buttons:04x})"
+            )
+    return failures
+
+
+def active_intro_records(
+    records: Iterable[dict[str, Any]],
+    modes: set[int],
+    require_player: bool,
+    require_frozen: bool,
+    start_global: int | None,
+    end_global: int | None,
+    start_intro_timer: float | None,
+    end_intro_timer: float | None,
+) -> list[dict[str, Any]]:
+    active: list[dict[str, Any]] = []
+    for record in records:
+        if require_player and parse_int(record.get("p")) != 1:
+            continue
+        cam = parse_int(record.get("cam"))
+        if cam not in modes:
+            continue
+        if require_frozen and parse_int(record.get("p_unk")) != 1 and parse_int(get_path(record, "intro.frozen")) != 1:
+            continue
+        global_timer = parse_int(get_path(record, "move.global"))
+        if start_global is not None and (global_timer is None or global_timer < start_global):
+            continue
+        if end_global is not None and (global_timer is None or global_timer > end_global):
+            continue
+        intro_timer = parse_float(get_path(record, "intro.timer"))
+        if start_intro_timer is not None and (intro_timer is None or intro_timer < start_intro_timer):
+            continue
+        if end_intro_timer is not None and (intro_timer is None or intro_timer > end_intro_timer):
+            continue
+        active.append(record)
+    return active
+
+
+def align_by_index(
+    baseline: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    start_active_frame: int,
+    sample_step: int,
+    max_aligned: int | None,
+) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+    if start_active_frame < 1:
+        raise ValueError("start_active_frame must be positive")
+    pairs: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    base_index = start_active_frame - 1
+    test_index = start_active_frame - 1
+    active_frame = start_active_frame
+    while base_index < len(baseline) and test_index < len(test):
+        pairs.append((active_frame, baseline[base_index], test[test_index]))
+        if max_aligned is not None and len(pairs) >= max_aligned:
+            break
+        base_index += sample_step
+        test_index += sample_step
+        active_frame += sample_step
+    return pairs
+
+
+def align_by_key(
+    baseline: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    key_path: str,
+    max_aligned: int | None,
+) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+    test_by_key: dict[int, dict[str, Any]] = {}
+    for record in test:
+        key = parse_int(get_path(record, key_path))
+        if key is None:
+            continue
+        test_by_key[key] = record
+
+    baseline_order: list[int] = []
+    baseline_by_key: dict[int, dict[str, Any]] = {}
+    for record in baseline:
+        key = parse_int(get_path(record, key_path))
+        if key is None:
+            continue
+        if key not in baseline_by_key:
+            baseline_order.append(key)
+        baseline_by_key[key] = record
+
+    pairs: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    for key in baseline_order:
+        record = baseline_by_key[key]
+        other = test_by_key.get(key)
+        if other is None:
+            continue
+        pairs.append((key, record, other))
+        if max_aligned is not None and len(pairs) >= max_aligned:
+            break
+    return pairs
+
+
+def field_specs(
+    profile: str,
+    compare_state: bool,
+    compare_selected_camera: bool,
+    compare_setup: bool,
+    compare_bond_anim: bool,
+    exclude_fields: set[str],
+) -> list[tuple[str, str]]:
+    specs: list[tuple[str, str]] = []
+    if profile in ("path", "full"):
+        specs.extend(PATH_FIELDS)
+    if profile in ("scalar", "full"):
+        specs.extend(SCALAR_FIELDS)
+    if profile == "state" or compare_state or profile == "full":
+        specs.extend(STATE_FIELDS)
+    if compare_selected_camera:
+        specs.extend(SELECTED_CAMERA_FIELDS)
+    if compare_setup:
+        specs.extend(SETUP_FIELDS)
+    if compare_bond_anim:
+        specs.extend(BOND_ANIM_FIELDS)
+    if exclude_fields:
+        specs = [(field, kind) for field, kind in specs if field not in exclude_fields]
+    return specs
+
+
+def parse_exclude_fields(spec: str) -> set[str]:
+    fields: set[str] = set()
+    for item in spec.split(","):
+        field = item.strip()
+        if field:
+            fields.add(field)
+    return fields
+
+
+def compare_pairs(
+    pairs: list[tuple[int, dict[str, Any], dict[str, Any]]],
+    specs: list[tuple[str, str]],
+    vector_tolerance: float,
+    direction_tolerance: float,
+    scalar_tolerance: float,
+    anim_tolerance: float,
+    max_divergences: int,
+) -> tuple[list[str], dict[str, float]]:
+    divergences: list[str] = []
+    max_abs: dict[str, float] = {}
+
+    for key, base, test in pairs:
+        for field, kind in specs:
+            if kind in ("vector", "direction"):
+                base_vec = parse_vector(get_path(base, field))
+                test_vec = parse_vector(get_path(test, field))
+                if base_vec is None or test_vec is None:
+                    divergences.append(
+                        f"key {key}: missing vector field {field} "
+                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                    )
+                    continue
+                tolerance = direction_tolerance if kind == "direction" else vector_tolerance
+                for index, (base_value, test_value) in enumerate(zip(base_vec, test_vec, strict=True)):
+                    delta = abs(base_value - test_value)
+                    stat_key = f"{field}[{index}]"
+                    max_abs[stat_key] = max(max_abs.get(stat_key, 0.0), delta)
+                    if delta > tolerance:
+                        divergences.append(
+                            f"key {key}: {stat_key} baseline={base_value:.5f} "
+                            f"test={test_value:.5f} delta={delta:.5f} tolerance={tolerance:.5f}"
+                        )
+            elif kind == "scalar":
+                base_value = parse_float(get_path(base, field))
+                test_value = parse_float(get_path(test, field))
+                if base_value is None or test_value is None:
+                    divergences.append(
+                        f"key {key}: missing scalar field {field} "
+                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                    )
+                    continue
+                delta = abs(base_value - test_value)
+                max_abs[field] = max(max_abs.get(field, 0.0), delta)
+                if delta > scalar_tolerance:
+                    divergences.append(
+                        f"key {key}: {field} baseline={base_value:.5f} "
+                        f"test={test_value:.5f} delta={delta:.5f} tolerance={scalar_tolerance:.5f}"
+                    )
+            elif kind == "anim":
+                base_value = parse_float(get_path(base, field))
+                test_value = parse_float(get_path(test, field))
+                if base_value is None or test_value is None:
+                    divergences.append(
+                        f"key {key}: missing animation field {field} "
+                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                    )
+                    continue
+                delta = abs(base_value - test_value)
+                max_abs[field] = max(max_abs.get(field, 0.0), delta)
+                if delta > anim_tolerance:
+                    divergences.append(
+                        f"key {key}: {field} baseline={base_value:.5f} "
+                        f"test={test_value:.5f} delta={delta:.5f} tolerance={anim_tolerance:.5f}"
+                    )
+            elif kind == "exact":
+                base_value = get_path(base, field)
+                test_value = get_path(test, field)
+                if base_value != test_value:
+                    divergences.append(f"key {key}: {field} baseline={base_value!r} test={test_value!r}")
+            else:
+                raise AssertionError(kind)
+
+            if len(divergences) >= max_divergences:
+                return divergences, max_abs
+
+    return divergences, max_abs
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("baseline", help="baseline JSONL trace, usually ROM/emulator")
+    parser.add_argument("test", help="test JSONL trace, usually native")
+    parser.add_argument("--align", choices=["active-index", "global", "frame", "intro-timer"], default="active-index")
+    parser.add_argument("--profile", choices=["path", "scalar", "state", "full"], default="path")
+    parser.add_argument("--camera-modes", type=parse_modes, default=parse_modes("intro,fadeswirl,swirl"))
+    parser.add_argument("--start-active-frame", type=int, default=1)
+    parser.add_argument("--sample-step", type=int, default=1)
+    parser.add_argument("--max-aligned", type=int)
+    parser.add_argument("--start-global", type=int)
+    parser.add_argument("--end-global", type=int)
+    parser.add_argument("--start-intro-timer", type=float)
+    parser.add_argument("--end-intro-timer", type=float)
+    parser.add_argument("--vector-tolerance", type=float, default=0.05)
+    parser.add_argument("--direction-tolerance", type=float, default=0.005)
+    parser.add_argument("--scalar-tolerance", type=float, default=0.05)
+    parser.add_argument("--anim-tolerance", type=float, default=0.02)
+    parser.add_argument("--compare-state", action="store_true")
+    parser.add_argument("--compare-selected-camera", action="store_true")
+    parser.add_argument("--compare-setup", action="store_true")
+    parser.add_argument("--compare-bond-anim", action="store_true")
+    parser.add_argument("--exclude-fields", default="")
+    parser.add_argument("--no-require-player", action="store_true")
+    parser.add_argument("--require-frozen", action="store_true")
+    parser.add_argument("--allow-skip-input", action="store_true")
+    parser.add_argument("--max-divergences", type=int, default=20)
+    parser.add_argument("--min-aligned", type=int)
+    parser.add_argument("--json-out", help="write comparison metrics as JSON")
+    args = parser.parse_args()
+
+    if args.sample_step < 1:
+        raise SystemExit("FAIL: --sample-step must be positive")
+    if args.max_aligned is not None and args.max_aligned < 1:
+        raise SystemExit("FAIL: --max-aligned must be positive when set")
+    if args.max_divergences < 1:
+        raise SystemExit("FAIL: --max-divergences must be positive")
+    if args.min_aligned is not None and args.min_aligned < 1:
+        raise SystemExit("FAIL: --min-aligned must be positive when set")
+    if args.anim_tolerance < 0.0:
+        raise SystemExit("FAIL: --anim-tolerance must be non-negative")
+
+    baseline_all = load_jsonl(args.baseline)
+    test_all = load_jsonl(args.test)
+    common_metrics: dict[str, Any] = {
+        "baseline": args.baseline,
+        "test": args.test,
+        "align": args.align,
+        "profile": args.profile,
+        "camera_modes": sorted(args.camera_modes),
+        "filters": {
+            "require_player": not args.no_require_player,
+            "require_frozen": args.require_frozen,
+            "start_global": args.start_global,
+            "end_global": args.end_global,
+            "start_intro_timer": args.start_intro_timer,
+            "end_intro_timer": args.end_intro_timer,
+            "start_active_frame": args.start_active_frame,
+            "sample_step": args.sample_step,
+            "max_aligned": args.max_aligned,
+            "min_aligned": args.min_aligned,
+        },
+        "compare": {
+            "compare_state": args.compare_state,
+            "compare_selected_camera": args.compare_selected_camera,
+            "compare_setup": args.compare_setup,
+            "compare_bond_anim": args.compare_bond_anim,
+            "exclude_fields": sorted(parse_exclude_fields(args.exclude_fields)),
+        },
+        "tolerances": {
+            "vector": args.vector_tolerance,
+            "direction": args.direction_tolerance,
+            "scalar": args.scalar_tolerance,
+            "anim": args.anim_tolerance,
+        },
+        "record_counts": {
+            "baseline": len(baseline_all),
+            "test": len(test_all),
+        },
+    }
+
+    control_failures = validate_controls(
+        baseline_all, "baseline", args.camera_modes, args.allow_skip_input
+    ) + validate_controls(test_all, "test", args.camera_modes, args.allow_skip_input)
+    if control_failures:
+        write_json_metrics(
+            args.json_out,
+            {
+                **common_metrics,
+                "status": "fail",
+                "failure_kind": "control",
+                "failures": control_failures,
+            },
+        )
+        print("FAIL: intro capture controls became invalid")
+        for failure in control_failures[: args.max_divergences]:
+            print(f"  {failure}")
+        return 1
+
+    baseline = active_intro_records(
+        baseline_all,
+        args.camera_modes,
+        not args.no_require_player,
+        args.require_frozen,
+        args.start_global,
+        args.end_global,
+        args.start_intro_timer,
+        args.end_intro_timer,
+    )
+    test = active_intro_records(
+        test_all,
+        args.camera_modes,
+        not args.no_require_player,
+        args.require_frozen,
+        args.start_global,
+        args.end_global,
+        args.start_intro_timer,
+        args.end_intro_timer,
+    )
+    if not baseline:
+        write_json_metrics(
+            args.json_out,
+            {
+                **common_metrics,
+                "status": "fail",
+                "failure_kind": "filter",
+                "active_counts": {"baseline": 0, "test": len(test)},
+                "failures": ["no baseline intro records matched the requested filters"],
+            },
+        )
+        raise SystemExit("FAIL: no baseline intro records matched the requested filters")
+    if not test:
+        write_json_metrics(
+            args.json_out,
+            {
+                **common_metrics,
+                "status": "fail",
+                "failure_kind": "filter",
+                "active_counts": {"baseline": len(baseline), "test": 0},
+                "failures": ["no test intro records matched the requested filters"],
+            },
+        )
+        raise SystemExit("FAIL: no test intro records matched the requested filters")
+
+    if args.align == "active-index":
+        pairs = align_by_index(baseline, test, args.start_active_frame, args.sample_step, args.max_aligned)
+    elif args.align == "global":
+        pairs = align_by_key(baseline, test, "move.global", args.max_aligned)
+    elif args.align == "frame":
+        pairs = align_by_key(baseline, test, "f", args.max_aligned)
+    elif args.align == "intro-timer":
+        pairs = align_by_key(baseline, test, "intro.timer", args.max_aligned)
+    else:
+        raise AssertionError(args.align)
+
+    if not pairs:
+        write_json_metrics(
+            args.json_out,
+            {
+                **common_metrics,
+                "status": "fail",
+                "failure_kind": "alignment",
+                "active_counts": {"baseline": len(baseline), "test": len(test)},
+                "aligned_count": 0,
+                "failures": ["no aligned intro records"],
+            },
+        )
+        raise SystemExit("FAIL: no aligned intro records")
+    if args.min_aligned is not None and len(pairs) < args.min_aligned:
+        write_json_metrics(
+            args.json_out,
+            {
+                **common_metrics,
+                "status": "fail",
+                "failure_kind": "alignment",
+                "active_counts": {"baseline": len(baseline), "test": len(test)},
+                "aligned_count": len(pairs),
+                "failures": [f"aligned intro records {len(pairs)} < required {args.min_aligned}"],
+            },
+        )
+        raise SystemExit(
+            f"FAIL: aligned intro records {len(pairs)} < required {args.min_aligned}"
+        )
+
+    specs = field_specs(
+        args.profile,
+        args.compare_state,
+        args.compare_selected_camera,
+        args.compare_setup,
+        args.compare_bond_anim,
+        parse_exclude_fields(args.exclude_fields),
+    )
+    divergences, max_abs = compare_pairs(
+        pairs,
+        specs,
+        args.vector_tolerance,
+        args.direction_tolerance,
+        args.scalar_tolerance,
+        args.anim_tolerance,
+        args.max_divergences,
+    )
+    metrics = {
+        **common_metrics,
+        "status": "fail" if divergences else "pass",
+        "active_counts": {"baseline": len(baseline), "test": len(test)},
+        "aligned_count": len(pairs),
+        "aligned_keys": [key for key, _base, _test in pairs],
+        "field_count": len(specs),
+        "max_abs": max_abs,
+        "divergence_count": len(divergences),
+        "divergences": divergences,
+    }
+    write_json_metrics(args.json_out, metrics)
+
+    if divergences:
+        print(f"FAIL: {len(divergences)} intro divergence(s) found")
+        for line in divergences[: args.max_divergences]:
+            print(f"  {line}")
+        print(
+            f"Compared {len(pairs)} aligned intro record(s) "
+            f"(profile={args.profile}, align={args.align})."
+        )
+        return 1
+
+    print(
+        f"MATCH: {len(pairs)} aligned intro record(s) "
+        f"(profile={args.profile}, align={args.align}, baseline_active={len(baseline)}, test_active={len(test)})"
+    )
+    for key in sorted(max_abs):
+        print(f"  max_abs {key}: {max_abs[key]:.5f}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
