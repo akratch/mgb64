@@ -39,7 +39,7 @@ all three desktop platforms.
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| **macOS** 13+ (Apple&nbsp;Silicon / Intel) | **[MGB64.app — latest release](https://github.com/akratch/mgb64/releases/latest)** | Universal `.app` in a `.zip`. Unsigned, so on first launch **right-click&nbsp;→&nbsp;Open** to pass Gatekeeper. |
+| **macOS** 13+ (Apple&nbsp;Silicon) | **[MGB64.app — latest release](https://github.com/akratch/mgb64/releases/latest)** | `.app` in a `.zip`. Unsigned, so on first launch **right-click&nbsp;→&nbsp;Open** to pass Gatekeeper. Intel Macs: [build from source](#building) (Homebrew SDL2 is single-arch, so no universal prebuilt yet). |
 | **Windows** 10/11 (x64) | _build from source_ — see [below](#building) | Prebuilt portable `.zip` (`ge007.exe`&nbsp;+&nbsp;`SDL2.dll`) is produced by the release CI on tagged releases; until the first CI release lands, build it yourself (MSYS2/MinGW, a few minutes). |
 | **Linux** (x86‑64, glibc&nbsp;2.35+) | _build from source_ — see [below](#building) | Prebuilt `AppImage` (bundles SDL2/GL) is produced by the release CI on tagged releases; until then, build it yourself (SDL2&nbsp;+&nbsp;GL&nbsp;+&nbsp;D‑Bus dev packages). |
 
