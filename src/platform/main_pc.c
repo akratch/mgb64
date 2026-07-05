@@ -35,6 +35,19 @@
 #include "../app/engine_entry.h"  /* MgbBootConfig + mgb64_engine_boot decl */
 #endif
 
+/* POSIX setenv() is absent on Windows/MinGW (which provides only _putenv_s()).
+ * Every setenv() call in this file seeds a GE007_* variable with overwrite=1,
+ * so map it to _putenv_s() there. No effect on macOS/Linux (real setenv). */
+#if defined(_WIN32)
+static int port_setenv(const char *name, const char *value, int overwrite) {
+    if (!overwrite && getenv(name) != NULL) {
+        return 0;
+    }
+    return _putenv_s(name, value);
+}
+#define setenv(name, value, overwrite) port_setenv((name), (value), (overwrite))
+#endif
+
 #ifndef __has_feature
 #define __has_feature(x) 0
 #endif
