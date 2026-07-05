@@ -18,6 +18,7 @@ publish=0
 rolling=0
 repo=""
 skip_macos=0
+universal=0
 
 usage() {
   cat <<'USAGE'
@@ -27,6 +28,10 @@ Usage: scripts/release.sh [options]
   --publish         Create/update the GitHub Release with the assets in dist/
   --rolling-latest  Publish to a rolling 'latest' prerelease instead of a tag
   --skip-macos      Don't build macOS (just publish whatever is in dist/)
+  --universal       Build a universal arm64+x86_64 macOS binary. Default: host
+                    arch only. A universal build needs a universal SDL2; a plain
+                    Homebrew SDL2 is single-arch and will fail the x86_64 link,
+                    so the shipped prebuilt is Apple-Silicon-only (see README).
 USAGE
 }
 while [[ $# -gt 0 ]]; do
@@ -36,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --publish) publish=1; shift ;;
     --rolling-latest) rolling=1; shift ;;
     --skip-macos) skip_macos=1; shift ;;
+    --universal) universal=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -43,13 +49,18 @@ done
 
 dist="dist"; mkdir -p "$dist"
 
-# 1. macOS universal app + .zip (built + validated on this machine).
+# 1. macOS app + .zip (built + validated on this machine).
 if [[ "$skip_macos" -eq 0 ]]; then
   if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "ERROR: macOS build must run on macOS (or pass --skip-macos)." >&2; exit 1
   fi
-  echo "[release] building MGB64.app (universal)..."
-  ./macos/Scripts/build_gl_app.sh --universal --output build-macos-app/MGB64.app
+  if [[ "$universal" -eq 1 ]]; then
+    echo "[release] building MGB64.app (universal arm64+x86_64)..."
+    ./macos/Scripts/build_gl_app.sh --universal --output build-macos-app/MGB64.app
+  else
+    echo "[release] building MGB64.app (host arch: $(uname -m))..."
+    ./macos/Scripts/build_gl_app.sh --output build-macos-app/MGB64.app
+  fi
   ./macos/Scripts/verify_asset_free.sh build-macos-app/MGB64.app
   ( cd build-macos-app && ditto -c -k --sequesterRsrc --keepParent MGB64.app \
       "$OLDPWD/$dist/mgb64-macos-$version.zip" )

@@ -3963,7 +3963,8 @@ static void gfx_opengl_dump_shadow_pgm(void) {
          * rows are already bottom-to-top (GL texture origin). */
         for (int i = 0; i < res * res; i++) {
             int v = (int)(depth[i] * 255.0f + 0.5f);
-            if (v < 0) v = 0; if (v > 255) v = 255;
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
             unsigned char c = (unsigned char)v;
             fwrite(&c, 1, 1, f);
         }
