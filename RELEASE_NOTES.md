@@ -1,6 +1,18 @@
 # Release Notes
 
-## Unreleased — MGB64 is now a real app
+## v0.3.1 — Remote Mine detonator fix
+
+A focused gameplay-correctness patch.
+
+- 💣 **The Remote Mine detonator watch works again.** After throwing Remote
+  Mines, switching to the detonator and pressing fire now detonates your live
+  mines, exactly as on the N64 original. The port's hand-written first-person
+  weapon state machine had dropped the detonator (`ITEM_TRIGGER`) from its firing
+  switches, so the watch was inert; it is now routed precisely as the retail
+  jump tables specify. Bring-your-own-ROM, and the automation/validation path is
+  unchanged (byte-identical with this fix off any other item).
+
+## v0.3.0 — MGB64 is now a real app
 
 MGB64 grows from a CLI into a **desktop app**: a Dear&nbsp;ImGui launcher +
 in-game overlay rendered *in-process* (no second window, no webview), built from

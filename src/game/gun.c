@@ -18084,6 +18084,15 @@ check_state:
         case ITEM_FLAREPISTOL - 1:
         case ITEM_PITONGUN - 1:
         case ITEM_PLASTIQUE - 1:
+        /* Remote-mine detonator watch. Retail routes ITEM_TRIGGER through
+         * Weapon_function_guns here (jpt_80053F24[ITEM_TRIGGER-1] == guns),
+         * i.e. firing-state 2. The original NONMATCHING port dropped this
+         * case, so the detonator fell to the switch's default (state 0):
+         * weapon_firing_status never latched, so chraiCheckUseHeldItem()
+         * never called trigger_remote_mine_detonation() and thrown remote
+         * mines could not be detonated. Paired with the STATE 2
+         * Weapon_shooting_pistol case below (jpt_80054084[ITEM_TRIGGER-2]). */
+        case ITEM_TRIGGER - 1:
             hand_ptr->when_detonating_mines_is_0 = 2;
             hand_ptr->field_890 = 0;
             hand_ptr->field_88C = 0;
@@ -18256,6 +18265,14 @@ check_state:
         case ITEM_FLAREPISTOL - 2:
         case ITEM_PITONGUN - 2:
         case ITEM_PLASTIQUE - 2:
+        /* Remote-mine detonator watch: retail's jpt_80054084[ITEM_TRIGGER-2]
+         * routes ITEM_TRIGGER to Weapon_shooting_pistol, which latches
+         * weapon_firing_status for one frame. chraiCheckUseHeldItem() then
+         * detonates any live remote mines on that frame. (STATE 1 above put
+         * the detonator into state 2; the detonator carries no ammo -
+         * AmmoType == AMMO_NONE - so the state-2 no-ammo guard is skipped,
+         * and WEAPONSTATBITFLAG_CLICKY gets it past the state-1 entry gate.) */
+        case ITEM_TRIGGER - 2:
             if (hand_ptr->field_88C != 0) {
                 hand_ptr->when_detonating_mines_is_0 = 3;
                 hand_ptr->field_890 = 0;
