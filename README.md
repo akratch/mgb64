@@ -40,14 +40,14 @@ all three desktop platforms.
 | Platform | Download | Notes |
 | --- | --- | --- |
 | **macOS** 13+ (Apple&nbsp;Silicon) | **[MGB64.app — latest release](https://github.com/akratch/mgb64/releases/latest)** | `.app` in a `.zip`. Unsigned, so on first launch **right-click&nbsp;→&nbsp;Open** to pass Gatekeeper. Intel Macs: [build from source](#building) (Homebrew SDL2 is single-arch, so no universal prebuilt yet). |
-| **Windows** 10/11 (x64) | _build from source_ — see [below](#building) | Prebuilt portable `.zip` (`ge007.exe`&nbsp;+&nbsp;`SDL2.dll`) is produced by the release CI on tagged releases; until the first CI release lands, build it yourself (MSYS2/MinGW, a few minutes). |
-| **Linux** (x86‑64, glibc&nbsp;2.35+) | _build from source_ — see [below](#building) | Prebuilt `AppImage` (bundles SDL2/GL) is produced by the release CI on tagged releases; until then, build it yourself (SDL2&nbsp;+&nbsp;GL&nbsp;+&nbsp;D‑Bus dev packages). |
+| **Windows** 10/11 (x64) | **[Portable `.zip` — latest release](https://github.com/akratch/mgb64/releases/latest)** | Unzip and run `ge007.exe` (bundles `SDL2.dll`). Or [build from source](#building) (MSYS2/MinGW, a few minutes). |
+| **Linux** (x86‑64, glibc&nbsp;2.35+) | **[AppImage — latest release](https://github.com/akratch/mgb64/releases/latest)** | `chmod +x` and run (bundles SDL2/GL); a `.tar.gz` is also attached. Or [build from source](#building) (SDL2&nbsp;+&nbsp;GL&nbsp;+&nbsp;D‑Bus dev packages). |
 
 > **Platform status.** macOS is built and tested by the maintainers. Windows and
 > Linux use the **same portable codebase** and are wired into the build and
-> release pipeline (`.github/workflows/release.yml`), but are **not yet
-> maintainer‑tested** — their prebuilt binaries appear here automatically once
-> the first CI release runs. Please report platform issues via the app's
+> release pipeline (`.github/workflows/release.yml`); their prebuilt binaries
+> are attached to tagged releases (starting with v0.3.1) but are **not yet
+> maintainer‑tested**. Please report platform issues via the app's
 > **Diagnostics → Export Diagnostics** button or the
 > [bug report template](.github/ISSUE_TEMPLATE/bug_report.md).
 
