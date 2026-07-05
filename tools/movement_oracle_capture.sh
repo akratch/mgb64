@@ -22,6 +22,7 @@ STOCK_TRACE=""
 NATIVE_ONLY=0
 NO_COMPARE=0
 COMPARE_ALIGN=""
+SEED_EEPROM=""
 EXTRA_NATIVE_CONFIG_OVERRIDES=()
 
 usage() {
@@ -37,6 +38,12 @@ Options:
   --no-build            reuse an existing native binary
   --ares-bin PATH       instrumented ares binary for stock-ROM capture
   --stock-trace PATH    compare against an existing stock/emulator JSONL trace
+  --seed-eeprom PATH    copy this EEPROM save image (e.g. one built by
+                       tools/make_unlocked_eeprom.py) into the ares saves
+                       directory before the stock capture boots, so its
+                       frontend menu navigation can reach missions beyond
+                       Dam (a fresh save only unlocks mission 1). No-op
+                       without --ares-bin.
   --native-only         only capture native trace
   --no-compare          capture traces but do not run the route comparator
   --align MODE          comparator alignment (default: route compare_align)
@@ -60,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --no-build) DO_BUILD=0; shift ;;
         --ares-bin) ARES_BIN="$2"; shift 2 ;;
         --stock-trace) STOCK_TRACE="$2"; shift 2 ;;
+        --seed-eeprom) SEED_EEPROM="$2"; shift 2 ;;
         --native-only) NATIVE_ONLY=1; shift ;;
         --no-compare) NO_COMPARE=1; shift ;;
         --align) COMPARE_ALIGN="$2"; shift 2 ;;
@@ -87,6 +95,9 @@ fi
 if [[ -n "$STOCK_TRACE" ]]; then
     validation_require_file "$STOCK_TRACE" "stock trace"
 fi
+if [[ -n "$SEED_EEPROM" ]]; then
+    validation_require_file "$SEED_EEPROM" "seed EEPROM image"
+fi
 
 ROUTE_PATH="$(python3 tools/rom_oracle_route.py resolve "$ROUTE")"
 python3 tools/rom_oracle_route.py validate "$ROUTE_PATH"
@@ -104,6 +115,7 @@ STOCK_SPEEDFRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock
 STOCK_GAMEPLAY_START_GLOBAL="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_gameplay_start_global)"
 STOCK_MENU_CLOSE_ON_PLAYER="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_menu_close_on_player)"
 NATIVE_RENDER_AUDIT="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_render_audit)"
+NATIVE_MENU_BOOT="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_menu_boot)"
 NATIVE_MIN_MOVING_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_min_moving_records)"
 STOCK_MIN_MOVING_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_moving_records)"
 STOCK_MIN_GAMEPLAY_INPUT_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_gameplay_input_records)"
@@ -153,6 +165,8 @@ COMPARE_INTRO_SETUP="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" com
 COMPARE_BOND_ANIM="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_bond_anim)"
 COMPARE_EXCLUDE_FIELDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_exclude_fields)"
 COMPARE_REQUIRE_FROZEN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_frozen)"
+COMPARE_EXPECT_MODE_DURATIONS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_expect_mode_durations)"
+COMPARE_WAIVERS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_waivers)"
 NATIVE_INTRO_AUDIT="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_audit)"
 NATIVE_INTRO_CAMERA_MODES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_camera_modes)"
 NATIVE_INTRO_REQUIRE_FROZEN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_frozen)"
@@ -163,6 +177,7 @@ NATIVE_INTRO_REQUIRE_BOND_MODEL_MTX="$(python3 tools/rom_oracle_route.py field "
 NATIVE_INTRO_REQUIRE_BOND_RENDERED="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_bond_rendered)"
 NATIVE_INTRO_REQUIRE_BOND_ANIM="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_bond_anim)"
 NATIVE_INTRO_REQUIRE_BOND_ANIM_HASH="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_bond_anim_hash)"
+NATIVE_INTRO_REQUIRE_H17_SWIRL_FACING="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_h17_swirl_facing)"
 NATIVE_INTRO_REQUIRE_BOND_RIGHT_ITEM="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_require_bond_right_item)"
 NATIVE_INTRO_MIN_ACTIVE_RECORDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_min_active_records)"
 NATIVE_INTRO_MIN_PRESENT_FRAMES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" native_intro_min_present_frames)"
@@ -275,9 +290,9 @@ if [[ "$COMPARE_KIND" == "movement" ]]; then
     esac
 elif [[ "$COMPARE_KIND" == "intro" ]]; then
     case "$COMPARE_ALIGN" in
-    active-index|global|frame|intro-timer) ;;
+    active-index|global|frame|intro-timer|per-mode) ;;
         *)
-        echo "FAIL: intro --align must be active-index, global, frame, or intro-timer: $COMPARE_ALIGN" >&2
+        echo "FAIL: intro --align must be active-index, global, frame, intro-timer, or per-mode: $COMPARE_ALIGN" >&2
         exit 2
         ;;
 esac
@@ -616,10 +631,20 @@ run_native_capture() {
     if [[ "${#native_config_args[@]}" -gt 0 ]]; then
         env_cmd+=("${native_config_args[@]}")
     fi
+    env_cmd+=(--savedir "$NATIVE_SAVE_DIR" --rom "$ROM")
+    case "$NATIVE_MENU_BOOT" in
+        1|true|True|TRUE|yes|YES|on|ON)
+            # D30 menu-boot lane: omit --level entirely so the native binary
+            # boots to the frontend (g_pcStartLevel stays -1, main_pc.c) and
+            # is driven to the target mission by scripted GE007_AUTO_START/A
+            # frontend input (route native_events), the same way a player
+            # reaches gameplay -- never a direct-boot pin.
+            ;;
+        *)
+            env_cmd+=(--level "$NATIVE_LEVEL")
+            ;;
+    esac
     env_cmd+=(
-        --savedir "$NATIVE_SAVE_DIR"
-        --rom "$ROM"
-        --level "$NATIVE_LEVEL"
         --deterministic
         --trace-state "$NATIVE_TRACE"
         "${native_screenshot_args[@]}"
@@ -631,6 +656,11 @@ run_native_capture() {
     else
         echo "  native: route=${ROUTE_NAME} level=${NATIVE_LEVEL} frames=${NATIVE_FRAMES}"
     fi
+    case "$NATIVE_MENU_BOOT" in
+        1|true|True|TRUE|yes|YES|on|ON)
+            echo "  native: menu-boot (no --level; scripted frontend input drives the boot)"
+            ;;
+    esac
     if ! validation_run_with_timeout "$TIMEOUT_SECONDS" "${env_cmd[@]}" >"$NATIVE_LOG" 2>&1; then
         echo "FAIL: native oracle capture failed" >&2
         tail -40 "$NATIVE_LOG" | sed 's/^/  /' >&2
@@ -655,6 +685,34 @@ run_native_capture() {
     audit_native_effective_config
 }
 
+# ares' Pak::saveLocation() (mia/pak/pak.cpp) resolves an EEPROM save path as
+# `{Paths/Saves setting}{Medium::saveName()}/{Location::prefix(rom_path)}.eeprom`
+# -- note NO separator between the Paths/Saves value and saveName(): for the
+# N64 core, Medium::saveName() is the hardcoded string "Nintendo 64"
+# (mia/medium/nintendo-64.cpp's `name()` override), so with
+# `--setting Paths/Saves=$SAVES_DIR` the literal on-disk directory is
+# "${SAVES_DIR}Nintendo 64" (yes, concatenated, not a sibling of "ares_saves"
+# despite appearances -- confirmed empirically: a stock capture always
+# creates this exact directory name even with an empty save). Location::
+# prefix() strips only the ROM's last extension (baserom.u.z64 -> baserom.u).
+# Seeding this file before ares boots is how an all-unlocked save reaches the
+# stock oracle without any ares source patch.
+stock_eeprom_seed_path() {
+    local rom_basename rom_prefix
+    rom_basename="$(basename "$ROM")"
+    rom_prefix="${rom_basename%.*}"
+    printf '%s\n' "${SAVES_DIR}Nintendo 64/${rom_prefix}.eeprom"
+}
+
+seed_stock_eeprom() {
+    local target
+    [[ -n "$SEED_EEPROM" ]] || return 0
+    target="$(stock_eeprom_seed_path)"
+    mkdir -p "$(dirname "$target")"
+    cp "$SEED_EEPROM" "$target"
+    echo "  seeded EEPROM: $SEED_EEPROM -> $target"
+}
+
 run_stock_capture() {
     local ares_pid=""
     local elapsed=0
@@ -668,6 +726,7 @@ run_stock_capture() {
         stock_env+=("$line")
     done < <(python3 tools/rom_oracle_route.py stock-env "$ROUTE_PATH")
     mkdir -p "$SAVES_DIR"
+    seed_stock_eeprom
     rm -f "$STOCK_OUT_TRACE" "$STOCK_LOG" "$STOCK_SCREENSHOT" "$STOCK_SCREENSHOT_JSON"
 
     if [[ -n "$STOCK_SPEEDFRAMES" ]]; then
@@ -976,6 +1035,11 @@ case "$NATIVE_INTRO_AUDIT" in
         case "$NATIVE_INTRO_REQUIRE_BOND_ANIM_HASH" in
             1|true|True|TRUE|yes|YES|on|ON)
                 intro_audit_args+=(--require-bond-anim-hash)
+                ;;
+        esac
+        case "$NATIVE_INTRO_REQUIRE_H17_SWIRL_FACING" in
+            1|true|True|TRUE|yes|YES|on|ON)
+                intro_audit_args+=(--require-h17-swirl-facing)
                 ;;
         esac
         if [[ -n "$NATIVE_INTRO_REQUIRE_BOND_RIGHT_ITEM" ]]; then
@@ -1382,6 +1446,12 @@ PY
                 compare_args+=(--require-frozen)
                 ;;
         esac
+        if [[ -n "$COMPARE_EXPECT_MODE_DURATIONS" ]]; then
+            compare_args+=(--expect-mode-durations "$COMPARE_EXPECT_MODE_DURATIONS")
+        fi
+        if [[ -n "$COMPARE_WAIVERS" && "$COMPARE_WAIVERS" != "{}" ]]; then
+            compare_args+=(--waivers "$COMPARE_WAIVERS")
+        fi
         compare_args+=(--json-out "$COMPARE_JSON")
         python3 tools/compare_intro_trace.py "${compare_args[@]}" "$STOCK_OUT_TRACE" "$NATIVE_TRACE"
 

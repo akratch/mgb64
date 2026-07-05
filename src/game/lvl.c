@@ -1627,7 +1627,13 @@ Gfx* lvlRender(Gfx* DL)
 
             viSetViewSize(g_CurrentPlayer->viewx, g_CurrentPlayer->viewy);
             viSetViewPosition(g_CurrentPlayer->viewleft, g_CurrentPlayer->viewtop);
+#ifdef NATIVE_PORT
+            /* T16: authored cinematics render at Video.CutsceneFovY (default 60,
+             * N64 framing) without disturbing g_CurrentPlayer->fovy (sim state). */
+            viSetFovY(bondviewResolveCutsceneFovY(g_CurrentPlayer->fovy));
+#else
             viSetFovY(g_CurrentPlayer->fovy);
+#endif
             viSetAspect(g_CurrentPlayer->aspect);
 #ifdef NATIVE_PORT
             if (lvlTraceFovEnabled()) {

@@ -2381,9 +2381,18 @@ extern f32 room_data_float1;
 
 static int bgIsDetachedAuthoredCamera(enum CAMERAMODE camera_mode)
 {
+    /* Every mode whose camera is detached from the player's eye and framed by
+     * an authored position: the intro fly-in AND the outro pose / death cams.
+     * All of them need the D42/T14 camera-room BFS seed (room_pointer resolves
+     * to the camera's own room via portResolveFrozenCameraRoomTile for each)
+     * rather than the player-position portal seeding, which would admit the
+     * wrong rooms when the camera is far from the player. */
     return camera_mode == CAMERAMODE_INTRO
         || camera_mode == CAMERAMODE_FADESWIRL
-        || camera_mode == CAMERAMODE_SWIRL;
+        || camera_mode == CAMERAMODE_SWIRL
+        || camera_mode == CAMERAMODE_POSEND
+        || camera_mode == CAMERAMODE_DEATH_CAM_SP
+        || camera_mode == CAMERAMODE_DEATH_CAM_MP;
 }
 
 static s32 bgCollectPortalSeedRoomsFromPosition(
@@ -16541,6 +16550,26 @@ void sub_GAME_7F0B8A6C(void) {
             for (i = 0; i < portal_seed_count; i++) {
                 bgSetRoomAdmitTraceContext("seed_supplemental_room", g_BgCurrentRoom, -1, 0);
                 sub_GAME_7F0B39BC(portal_seed_rooms[i], 0, player_bbox, 1);
+                bgClearRoomAdmitTraceContext();
+            }
+        } else if (getenv("GE007_NO_CAMERA_SEED_FIX") == NULL) {
+            /* D42/T14: a detached authored camera (INTRO/FADESWIRL/SWIRL) frames a
+             * region that can be far from the player's spawn room, so seeding the
+             * visibility BFS only from g_BgCurrentRoom (the player's room) leaves the
+             * shot near-blank -- Dam's establishing camera (room 53, the dam-wall
+             * vista) rendered only sky+water. Seed the BFS additionally from the
+             * camera's own resolved room (room_pointer, set by
+             * portResolveFrozenCameraRoomTile during the frozen move) so the rooms
+             * visible through the camera's portals are admitted. The BFS itself is
+             * frustum/portal-gated, so this stays far narrower than
+             * GE007_FORCE_ALL_ROOMS and does not reintroduce the D7 over-admission
+             * shards. GE007_NO_CAMERA_SEED_FIX=1 restores the pre-fix skip. */
+            s32 cam_room = (g_CurrentPlayer->room_pointer != NULL)
+                ? g_CurrentPlayer->room_pointer->room
+                : -1;
+            if (cam_room >= 0 && cam_room != g_BgCurrentRoom) {
+                bgSetRoomAdmitTraceContext("seed_camera_room", cam_room, -1, 0);
+                sub_GAME_7F0B39BC(cam_room, 0, player_bbox, 1);
                 bgClearRoomAdmitTraceContext();
             }
         }

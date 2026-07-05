@@ -12,6 +12,20 @@ endif()
 set(CMAKE_C_STANDARD 11)
 include(CTest)
 
+# The portable in-process app shell (Dear ImGui launcher + in-game overlay).
+# Default ON: the shipping `ge007` binary boots the launcher and delegates
+# automation/CLI invocations to the unchanged engine path. -DMGB64_APP=OFF
+# builds the bare engine CLI (useful for minimal/headless builds).
+option(MGB64_APP "Build the in-process ImGui app shell (portable launcher + overlay)" ON)
+if(MGB64_APP)
+    enable_language(CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    if(APPLE)
+        enable_language(OBJC)  # nfd_cocoa.m (native file dialog)
+    endif()
+endif()
+
 # The build uses GCC/Clang-style flags throughout (-Wall, -Wno-*,
 # -fms-extensions); MSVC (cl.exe) rejects them. On Windows, build with
 # MSYS2 MinGW64 as documented in docs/BUILDING.md.
@@ -179,6 +193,22 @@ if(BUILD_TESTING)
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_settings_menu_model.py"
             --repo-root "${CMAKE_SOURCE_DIR}"
     )
+    # T5 (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md): tools/tests/ unit tests —
+    # ROM-free, pure Python, never skips. Closes the "CI only py_compiles the
+    # tools" gap at the ctest layer for the intro/oracle tooling this plan
+    # relies on. Kept in this always-registered block (unlike the intro_*
+    # ROM-gated smokes below, which live in their own always-registered but
+    # runtime-skippable block near add_port_validation_smoke).
+    add_test(
+        NAME intro_tools_unittests
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/tests" -p "test_*.py"
+    )
+    set_tests_properties(
+        intro_tools_unittests
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     set_tests_properties(
         port_native_switch_guard
         port_release_ready_guard
@@ -315,6 +345,102 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # Per-level frame-time budget gate (docs/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
+endif()
+
+# T5 (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md): cheap intro-path regression
+# gates. Unlike add_port_validation_smoke above (opt-in via
+# PORT_VALIDATION_TESTS, and invisible entirely without baserom.u.z64 at
+# CMake-configure time), these three are ALWAYS registered so a ROM-less
+# checkout (CI) still enumerates them and reports a genuine SKIPPED result
+# instead of the test simply not existing. Each entry runs through
+# tools/ctest_require_prereqs.sh, which checks the ROM/binary/ares
+# prerequisite itself and exits SKIP_RETURN_CODE (125) before invoking the
+# real script — the underlying scripts' own missing-prereq paths already
+# exit 2 (see e.g. intro_parse_digest_gate.sh's header comment), but that
+# exit 2 is shared with unrelated argument/validation failures in the same
+# scripts, so it cannot be claimed directly as SKIP_RETURN_CODE without
+# turning real failures into silent skips.
+if(BUILD_TESTING)
+    function(add_intro_gate_smoke)
+        set(oneValueArgs NAME TIMEOUT)
+        set(multiValueArgs REQUIRES COMMAND)
+        cmake_parse_arguments(AIG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+        set(_require_args "")
+        foreach(_req IN LISTS AIG_REQUIRES)
+            list(APPEND _require_args --require "${_req}")
+        endforeach()
+
+        add_test(
+            NAME "${AIG_NAME}"
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/ctest_require_prereqs.sh"
+                ${_require_args}
+                --
+                ${AIG_COMMAND}
+        )
+        set_tests_properties("${AIG_NAME}" PROPERTIES
+            SKIP_RETURN_CODE 125
+            TIMEOUT "${AIG_TIMEOUT}"
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK ge007_runtime
+            PROCESSORS 1
+        )
+    endfunction()
+
+    # T3 parse-digest gate — 3-stage subset for a sub-90s ctest lane. The
+    # full 20-stage sweep stays a manual/release-lane invocation
+    # (tools/intro_parse_digest_gate.sh with no --stages override).
+    add_intro_gate_smoke(
+        NAME intro_parse_digest_smoke
+        TIMEOUT 90
+        REQUIRES
+            "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            "${CMAKE_BINARY_DIR}/ge007"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/intro_parse_digest_gate.sh"
+            --rom "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            --binary "${CMAKE_BINARY_DIR}/ge007"
+            --stages "33 34 22"
+    )
+
+    # T2/T4-hardened Dam intro camera-path oracle route: full native capture
+    # + ares stock capture + comparator run. HEAVYWEIGHT (~4-6 min) — LABELed
+    # "oracle" so `ctest -L oracle` selects it independent of the `intro_`
+    # name filter used for the other two. SKIPs (not fails) when the
+    # instrumented ares binary is absent, via the same prerequisite-wrapper
+    # mechanism as the other two entries.
+    add_intro_gate_smoke(
+        NAME intro_oracle_dam_route
+        TIMEOUT 900
+        REQUIRES
+            "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            "${CMAKE_BINARY_DIR}/ge007"
+            "${CMAKE_SOURCE_DIR}/build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/movement_oracle_capture.sh"
+            --route dam_intro_camera_path
+            --build-dir "${CMAKE_BINARY_DIR}"
+            --rom "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            --no-build
+            --ares-bin "${CMAKE_SOURCE_DIR}/build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares"
+            --timeout 600
+    )
+    set_tests_properties(intro_oracle_dam_route PROPERTIES LABELS oracle)
+
+    # Single-stage (Dam) census smoke, reduced frame count for a sub-60s
+    # ctest lane; tools/intro_census_capture.sh --all (20 stages) is the
+    # manual/release-lane invocation.
+    add_intro_gate_smoke(
+        NAME intro_census_dam_smoke
+        TIMEOUT 60
+        REQUIRES
+            "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            "${CMAKE_BINARY_DIR}/ge007"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/intro_census_capture.sh"
+            --level 33
+            --frames 400
+            --build-dir "${CMAKE_BINARY_DIR}"
+            --rom "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            --no-build
+    )
 endif()
 
 # --- Compile definitions ---
@@ -577,6 +703,106 @@ else()
         # separate libdl on older distros.
         ${CMAKE_DL_LIBS}
     )
+endif()
+
+# ===========================================================================
+# MGB64 App Shell (portable in-process ImGui launcher + overlay)
+# Built as a separate C++/ObjC static library with clean flags (kept free of
+# the C-only decomp flags on the ge007 target), linked into ge007. main() comes
+# from src/app/main_app.cpp; main_pc.c renames its main to mgb64_headless_main.
+# ===========================================================================
+if(MGB64_APP)
+    set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui)
+    set(NFD_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/lib/nfd)
+
+    set(IMGUI_SOURCES
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+
+    if(APPLE)
+        set(NFD_PLATFORM_SOURCE ${NFD_DIR}/src/nfd_cocoa.m)
+    elseif(WIN32)
+        set(NFD_PLATFORM_SOURCE ${NFD_DIR}/src/nfd_win.cpp)
+    else()
+        set(NFD_PLATFORM_SOURCE ${NFD_DIR}/src/nfd_portal.cpp)
+    endif()
+
+    file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/app/*.cpp)
+
+    add_library(mgb64_app STATIC
+        ${IMGUI_SOURCES}
+        ${NFD_PLATFORM_SOURCE}
+        ${APP_SOURCES}
+    )
+    target_compile_features(mgb64_app PRIVATE cxx_std_17)
+    # GL_SILENCE_DEPRECATION: macOS deprecates the GL API but still ships it.
+    # NOTE: do NOT add the engine's `include/` dir here — it contains a `math.h`
+    # shim for the C decomp that shadows the system <math.h> and breaks C++/ObjC
+    # system headers (ImGui stb_truetype `acos`, nfd `double_t`). The app lib
+    # only needs the seam headers under src/platform + src/app.
+    target_compile_definitions(mgb64_app PRIVATE MGB64_APP GL_SILENCE_DEPRECATION)
+    # Keep the engine's broad source dirs OFF the app lib's include path: src/
+    # contains headers (sched.h, byteswap.h) and include/ a math.h shim that
+    # shadow the system angle-includes SDL/pthread/ImGui pull in. App<->engine
+    # seam headers therefore live in the collision-free src/app/ dir.
+    target_include_directories(mgb64_app PRIVATE
+        ${IMGUI_DIR}
+        ${IMGUI_DIR}/backends
+        ${NFD_DIR}/include
+        src/app
+        lib/glad/include
+    )
+    if(SDL2_FOUND)
+        target_link_libraries(mgb64_app PUBLIC SDL2::SDL2)
+    elseif(SDL2_LIBRARIES)
+        target_include_directories(mgb64_app PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(mgb64_app PUBLIC ${SDL2_LIBRARIES})
+    endif()
+    if(APPLE)
+        target_link_libraries(mgb64_app PUBLIC
+            ${OPENGL_LIB}
+            "-framework AppKit"
+            "-framework UniformTypeIdentifiers"
+        )
+    elseif(WIN32)
+        # nfd_win.cpp uses COM + the Shell IFileOpenDialog; MinGW does not
+        # auto-link these, so they must be explicit or the link fails.
+        target_link_libraries(mgb64_app PUBLIC OpenGL::GL ole32 shell32 uuid)
+    else()
+        # Linux: GL + the nfd xdg-desktop-portal backend. D-Bus is REQUIRED --
+        # nfd_portal.cpp hard-includes <dbus/dbus.h>, so fail loudly at configure
+        # (install libdbus-1-dev) rather than with a confusing compile error.
+        target_link_libraries(mgb64_app PUBLIC OpenGL::GL)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(DBUS REQUIRED dbus-1)
+        target_include_directories(mgb64_app PRIVATE ${DBUS_INCLUDE_DIRS})
+        target_link_libraries(mgb64_app PUBLIC ${DBUS_LIBRARIES})
+    endif()
+
+    # ge007's entry point now comes from the app shell.
+    target_compile_definitions(ge007 PRIVATE MGB64_APP)
+    target_link_libraries(ge007 mgb64_app)
+
+    if(BUILD_TESTING)
+        add_executable(test_arg_triage
+            tests/test_arg_triage.cpp
+            src/app/arg_triage.cpp)
+        target_include_directories(test_arg_triage PRIVATE src/app)
+        target_compile_features(test_arg_triage PRIVATE cxx_std_17)
+        add_test(NAME arg_triage COMMAND test_arg_triage)
+
+        add_executable(test_rom_validate
+            tests/test_rom_validate.cpp
+            src/app/rom_validate.cpp)
+        target_include_directories(test_rom_validate PRIVATE src/app)
+        target_compile_features(test_rom_validate PRIVATE cxx_std_17)
+        add_test(NAME rom_validate COMMAND test_rom_validate)
+    endif()
 endif()
 
 # ===========================================================================

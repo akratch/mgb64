@@ -177,6 +177,17 @@ for route in "${ROUTES[@]}"; do
     fi
 
     if [[ "$NATIVE_SMOKE" -eq 1 ]]; then
+        # Intro-oracle routes (compare_kind=intro) have their own dedicated,
+        # heavier native gate (ctest port intro_oracle_dam_route + the intro
+        # census/audit tooling). Running a native capture for every one here as
+        # well would multiply this smoke's wall-clock past its ctest timeout
+        # (there are dozens of per-stage intro routes). Contract/schema
+        # validation above still covers them; skip only their native capture.
+        route_compare_kind="$(python3 tools/rom_oracle_route.py field "$route" compare_kind 2>/dev/null || echo "")"
+        if [[ "$route_compare_kind" == "intro" ]]; then
+            echo "  native_smoke: SKIP (intro route -- covered by intro_oracle gate)"
+            continue
+        fi
         route_name="$(python3 tools/rom_oracle_route.py field "$route" name)"
         route_out="$OUT_DIR/$(safe_name "$route_name")"
         if tools/movement_oracle_capture.sh \

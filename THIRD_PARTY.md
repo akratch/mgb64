@@ -104,6 +104,9 @@ See `ROADMAP.md` for the staged cleanup plan.
 | --- | --- | --- | --- |
 | `lib/glad/` | glad OpenGL loader (generated, v0.1.36) + Khronos `khrplatform.h` | MIT and Khronos notices — see `lib/glad/LICENSE` | https://github.com/Dav1dde/glad |
 | `lib/stb/stb_image.h` | stb_image v2.30 PNG decoder, used by the optional HD texture-pack loader (`src/platform/texture_pack.c`) | Public domain (Unlicense) / MIT dual — full notice in the file trailer | https://github.com/nothings/stb |
+| `lib/imgui/` | Dear ImGui (immediate-mode GUI) + `imgui_impl_sdl2` / `imgui_impl_opengl3` backends, used by the in-process app shell (`src/app/`); pinned @ `776bf2ab` | MIT — see `lib/imgui/LICENSE.txt` | https://github.com/ocornut/imgui |
+| `lib/nfd/` | nativefiledialog-extended (portable native "open file" dialogs) for the app shell's ROM picker; pinned @ `3cd252a8` | zlib — see `lib/nfd/LICENSE` | https://github.com/btzy/nativefiledialog-extended |
+| `src/app/app_font.h` | Embedded UI font for the app shell — Roboto Medium, re-encoded as a compressed-base85 C header. The `.ttf` byte source is **not tracked** (no binary blobs in the repo); fetch it upstream to regenerate. | Apache-2.0 — see `lib/fonts/LICENSE.txt` | https://fonts.google.com/specimen/Roboto |
 | `tools/asm-processor/` | asm-processor (MIPS asm pre/post-processor) | The Unlicense (public domain) — see `tools/asm-processor/LICENSE` | https://github.com/simonlindholm/asm-processor |
 | `tools/ido5.3_recomp/` | Local-only placeholder for an external static recompilation of SGI's IDO 5.3 C compiler | No recompilation source or IDO/IRIX compiler input files are redistributed here; this ignored directory must be populated locally for matching-target work | https://github.com/decompals/ido-static-recomp |
 | `tools/gzipsrc/` | gzip source (DEFLATE compression used by the asset pipeline) | GNU GPL v2 or later — see `tools/gzipsrc/COPYING` and `tools/gzipsrc/README.md` | https://www.gnu.org/software/gzip/ |

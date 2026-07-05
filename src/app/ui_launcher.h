@@ -1,0 +1,64 @@
+// ui_launcher.h — the pre-boot launcher: nav rail + table-driven panel router.
+//
+// Panels are free functions over a shared LauncherState (like Settings_draw),
+// so they compose cleanly and Part 2 can add panels by appending one table row.
+#ifndef MGB64_UI_LAUNCHER_H
+#define MGB64_UI_LAUNCHER_H
+
+#include "engine_entry.h"   // MgbBootConfig
+#include "rom_validate.h"   // RomInfo
+
+class AppHost;
+
+enum class LauncherActionType { None, Play, Quit };
+
+struct LauncherAction {
+    LauncherActionType type = LauncherActionType::None;
+    // Valid when type == Play. Defaults: auto-detect ROM, normal boot.
+    MgbBootConfig boot = {nullptr, nullptr, -1, -1, 0, 0, -1};
+};
+
+// State shared across launcher panels.
+struct LauncherState {
+    char    romPath[1024] = {0};
+    RomInfo romInfo{};
+    bool    romInitialized = false;
+    int     launchLevelIndex = 0;   // 0 = boot to menu; 1.. = level index + 1
+    int     launchDifficulty = 0;   // 0=Agent, 1=Secret Agent, 2=00 Agent
+    bool    launchMultiplayer = false;
+    int     launchPlayers = 2;      // 2..4
+
+    // Modes & Toggles.
+    int     modePreset = 0;         // 0=Custom, 1=faithful, 2=faithful-hd, 3=remaster
+    bool    shootOutLights = true;  // GE007_SHOOT_OUT_LIGHTS (engine default ON)
+    bool    autoAim = true;         // GE007_AUTO_AIM (engine default ON)
+    char    advancedEnv[2048] = {0};
+    bool    modesInitialized = false;
+};
+
+// Panels (implemented in ui_rom.cpp / ui_launch.cpp / ui_launcher.cpp).
+void RomPanel_ensureInit(LauncherState &s);                     // load remembered ROM
+void RomPanel_draw(LauncherState &s, LauncherAction &out);
+void LaunchPanel_draw(LauncherState &s, LauncherAction &out);
+void ModesPanel_draw(LauncherState &s, LauncherAction &out);
+void ModesPanel_ensureInit(LauncherState &s);                   // load persisted mode selections
+void applyModeEnv(const LauncherState &s);                      // setenv hatches + advanced (on Play)
+void DiagPanel_draw(LauncherState &s, LauncherAction &out);     // diagnostics: log + export
+void BindingsPanel_draw(LauncherState &s, LauncherAction &out); // controls: rebind keyboard
+
+// Shared helpers used by both the ROM and Launch panels.
+void PlayButton_draw(LauncherState &s, LauncherAction &out);    // primary Play (or disabled hint)
+void fillBoot(const LauncherState &s, MgbBootConfig &boot);     // apply launch options
+void launchSummary(const LauncherState &s, char *buf, int n);   // "Dam \xE2\x80\xA2 00 Agent"
+
+class Launcher {
+public:
+    LauncherAction draw(AppHost &host);
+
+private:
+    LauncherState state_;
+    int  active_ = 0;               // index into the panel table
+    bool panelEnvChecked_ = false;  // MGB64_APP_PANEL design-review/CI hook
+};
+
+#endif  // MGB64_UI_LAUNCHER_H

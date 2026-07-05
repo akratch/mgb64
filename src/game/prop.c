@@ -2013,6 +2013,32 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
                 break;
             }
 
+            /* --- MultiAmmoCrateRecord / AMMO (N64=180, PC=sizeof) ---
+             * Tail is 13 {u16 modelnum, u16 quantity} pairs. Convert as u16s
+             * to preserve lane order: the retail engine overlays the smaller
+             * unk80/quantities[] view onto these pairs, and the collect path
+             * depends on that exact u16 sequence (the "crate maxes out several
+             * ammo types" retail quirk). A generic u32 word-swap reverses the
+             * lanes within each pair, shifting quantities[] by one slot —
+             * that handed out proximity mines where retail gives remote. */
+            case PROPDEF_AMMO: {
+                MultiAmmoCrateRecord *m = (MultiAmmoCrateRecord *)dst;
+                memset(m, 0, sizeof(MultiAmmoCrateRecord));
+                propdef_convert_objectrecord(src, (ObjectRecord *)m);
+                for (s32 i = 0; i < AMMOTYPE_GLOBAL_MAX; i++) {
+                    m->slots[i].modelnum = be_u16(src + 0x80 + i * 4);
+                    m->slots[i].quantity = be_u16(src + 0x82 + i * 4);
+                }
+                if (ge_dbg_enabled()) {
+                    fprintf(stderr, "[SETUP-PC] AMMO crate pad=%d slots:", m->pad);
+                    for (s32 i = 0; i < AMMOTYPE_GLOBAL_MAX; i++) {
+                        fprintf(stderr, " %04x/%u", m->slots[i].modelnum, m->slots[i].quantity);
+                    }
+                    fprintf(stderr, "\n");
+                }
+                break;
+            }
+
             /* --- KeyRecord (N64=132, PC=sizeof) --- */
             case PROPDEF_KEY: {
                 KeyRecord *k = (KeyRecord *)dst;
@@ -3033,6 +3059,7 @@ void proplvreset2(s32 stageId)
             /* Second pass: copy and byte-swap each record */
             for (rec = 0; rec < n_intro_records; rec++) {
                 s32 n64_type = (s32)bswap32(*(u32 *)n64_ptr);
+                u8 *rec_start = n64_ptr;
 
                 switch (n64_type) {
                     case INTROTYPE_SPAWN: {
@@ -3141,6 +3168,44 @@ void proplvreset2(s32 stageId)
                         break;
                     }
                 }
+
+                /* [INTRO-DIGEST]: machine-readable per-record dump for the
+                 * emulator-free parse-digest gate (tools/intro_parse_digest.py),
+                 * emitted under the SAME trace_intro_parse gate as the
+                 * human-readable [INTRO-PARSE] line above (no new env var;
+                 * zero cost when GE007_TRACE_INTRO_PARSE is unset).
+                 *
+                 * We dump the RAW big-endian N64 SOURCE words for this record
+                 * (converted to host-endian signed ints), not the widened PC
+                 * struct's fields. The PC structs synthesize pointer-typed
+                 * views that do not exist in the N64 stream at all
+                 * (SetupIntroCamera's `prev` is set at runtime to NULL, and
+                 * lang1c/lang20 are unions whose alternate member is a
+                 * char* that is never written by this widening code — only
+                 * the .lang_index views are). Reading straight from the
+                 * source bytes therefore sidesteps pointer contamination
+                 * entirely and needs no per-type struct-layout bookkeeping
+                 * here; it's also stable across PC struct padding changes.
+                 * w[0] is the record's type word (redundant with "type"
+                 * above) — kept so "w" is a literal, mechanical dump of the
+                 * record's N64 words rather than a hand-picked field list.
+                 */
+                if (trace_intro_parse) {
+                    s32 rec_n64_words = n64_intro_sizes[n64_type] / 4;
+                    s32 wi;
+                    fprintf(stderr,
+                            "[INTRO-DIGEST] {\"i\":%d,\"type\":%d,\"n64_off\":%ld,\"w\":[",
+                            rec, n64_type, (long)(rec_start - (u8 *)g_CurrentSetup.intro));
+                    for (wi = 0; wi < rec_n64_words; wi++) {
+                        fprintf(stderr, "%s%d", wi ? "," : "",
+                                (s32)bswap32(*(u32 *)(rec_start + wi * 4)));
+                    }
+                    fprintf(stderr, "]}\n");
+                }
+            }
+
+            if (trace_intro_parse) {
+                fprintf(stderr, "[INTRO-DIGEST-END] {\"count\":%d}\n", n_intro_records);
             }
 
             g_CurrentSetup.intro = (struct SetupIntroEmpty *)pc_buf;
@@ -3363,9 +3428,33 @@ void proplvreset2(s32 stageId)
                 case PROPDEF_AMMO:
                 {
                     struct MultiAmmoCrateRecord *pdef_macr = (struct MultiAmmoCrateRecord *)phead;
-                    if (withobjs && !(pdef_macr->flags2 & flags))
+                    s32 ammoqty = 1;
+                    s32 slot;
+
+                    /* MP: the crate inherits contents from the weapon-set slot
+                     * established by the preceding weapon record (reference
+                     * body parity). lastmpweaponnum guard is PC-defensive. */
+                    if (getPlayerCount() >= 2 && lastmpweaponnum >= 0)
                     {
-                        /* MultiAmmoCrateRecord just has quantities[] — model comes from ObjectRecord.modelnum */
+                        struct s_mp_weapon_set *mpweapon = &getPtrMPWeaponSetData()[lastmpweaponnum];
+
+                        ammoqty = mpweapon->ammoamount;
+                        if (mpweapon->ammotype > 0)
+                        {
+                            pdef_macr->slots[mpweapon->ammotype - 1].quantity = ammoqty;
+                        }
+                    }
+
+                    if ((ammoqty > 0) && withobjs && !(pdef_macr->flags2 & flags))
+                    {
+                        for (slot = 0; slot < AMMOTYPE_GLOBAL_MAX; slot++)
+                        {
+                            if (pdef_macr->slots[slot].quantity > 0 && pdef_macr->slots[slot].modelnum != 0xFFFF)
+                            {
+                                modelLoad(pdef_macr->slots[slot].modelnum);
+                            }
+                        }
+
                         domakedefaultobj(stageId, (struct ObjectRecord *)pdef_macr, pdefIndex);
                     }
                     break;

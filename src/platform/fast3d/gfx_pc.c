@@ -4420,6 +4420,7 @@ extern float g_pcEnvRelightBlend;  /* W1.E1: Video.EnvRelightBlend — relight s
 extern int   g_pcSunShadow;        /* W1.E3: Video.SunShadow — capture-and-replay sun shadow map */
 extern int   g_pcSunShadowRes;     /* W1.E3: Video.SunShadowRes — shadow-map resolution */
 extern float g_pcSunShadowRadius;  /* W1.E3: Video.SunShadowRadius — camera-centered ortho half-extent */
+extern int   g_pcPerPixelLight;    /* W1.E4: Video.PerPixelLight — per-pixel dFdx directional sun */
 
 static float gfx_clamped_render_scale(void) {
     /* NaN (e.g. GE007_RENDER_SCALE=nan) compares false in both branches below,
@@ -15704,9 +15705,12 @@ static int gfx_world_diag_enabled(void) {
 static int gfx_world_attrs_wanted(void) {
     static int force = -1;
     if (force < 0) force = (getenv("GE007_FORCE_WORLD_ATTRS") != NULL);
-    /* W1.E3: the sun-shadow receiver consumes vWorldPos, so it is a WORLD_POS
-     * consumer — turn the attribute on for ROOM draws whenever the feature is live. */
-    return force || (g_pcSunShadow != 0);
+    /* Consumer flags imply the world-position attribute (§4.1 "consumers imply
+     * dependencies"). The sun-shadow receiver (W1.E3) and the per-pixel dFdx sun
+     * (W1.E4) both consume vWorldPos — turn the attribute on for ROOM draws
+     * whenever either feature is live. Read live so a runtime config toggle takes
+     * effect. Future consumers (material-maps/dyn-lights) OR in here too. */
+    return force || (g_pcSunShadow != 0) || g_pcPerPixelLight;
 }
 
 /* W1.E3.T1: append one world-space triangle to the shadow-geometry capture ring.
@@ -16624,10 +16628,12 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
      * (RENDERING_ARCHITECTURE.md §1: no per-primitive scan). Applies to ROOM
      * geometry only; source_room is normally -1 (only the trace path computes it)
      * so when the flag is on we resolve the room from this load's pool address.
-     * (E4/SHADER_OPT_DFDX_LIGHT will additionally defer this when per-pixel
-     * directional lighting is active — that global does not exist yet.) */
+     * E4/SHADER_OPT_DFDX_LIGHT (per-pixel directional) supersedes this CPU relight
+     * for the draw: when g_pcPerPixelLight is on the gate below is skipped so the
+     * per-pixel path owns the relight (avoids double application — §4.6). */
     int env_relight_room = -1;
-    if (g_pcEnvSmoothNormals && g_current_draw_class == DRAWCLASS_ROOM) {
+    if (g_pcEnvSmoothNormals && !g_pcPerPixelLight &&
+        g_current_draw_class == DRAWCLASS_ROOM) {
         if (source_room >= 0) {
             env_relight_room = source_room;
         } else {
@@ -18028,6 +18034,11 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         if (g_pcSunShadow && g_pc_shadow_mat_valid && g_pc_shadow_map_ready) {
             cc_options |= SHADER_OPT_SUN_SHADOW;
         }
+        /* W1.E4: per-pixel geometric-normal directional sun. Setting DFDX forces
+         * WORLD_POS on for this draw (the fragment reconstructs the geometric
+         * normal from dFdx/dFdy of vWorldPos). Mirrors the §4.4 consumer-bit
+         * shape (future MATERIAL_MAPS/DYN_LIGHTS OR in here too). */
+        if (g_pcPerPixelLight) cc_options |= SHADER_OPT_DFDX_LIGHT;
     }
     bool noperspective_all_settex_texcoords =
         settex_active && gfx_diag_noperspective_settex_texcoords_enabled();
@@ -19164,6 +19175,20 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
             buf_vbo[buf_vbo_len++] = v_arr[vi]->wy;
             buf_vbo[buf_vbo_len++] = v_arr[vi]->wz;
         }
+        /* W1.E4: per-vertex baked shade (vertex) colour — the luma-replace
+         * reference for the per-pixel directional relight. A DEDICATED attribute
+         * (not a reused combiner input) because which vInput carries SHADE is NOT
+         * recoverable from the shader key: TEXEL0*SHADE and TEXEL0*PRIM produce an
+         * identical shader_id0 and share one shader program, so baking a
+         * "shade_input_idx" into the generated source would be wrong for the other
+         * combiner. Ordinal: immediately after aWorldPos, before texcoords —
+         * matching the aShade decl in both generators (order == pack order). Only
+         * emitted with DFDX, which forces WORLD_POS on, so it always trails wx/wy/wz. */
+        if (cc_options & SHADER_OPT_DFDX_LIGHT) {
+            buf_vbo[buf_vbo_len++] = v_arr[vi]->color.r / 255.0f;
+            buf_vbo[buf_vbo_len++] = v_arr[vi]->color.g / 255.0f;
+            buf_vbo[buf_vbo_len++] = v_arr[vi]->color.b / 255.0f;
+        }
 
         /* Per-texture UV processing: each used texture gets its own UV pair
          * with per-tile shifts, offsets, and dimensions (PD pattern). */
@@ -19309,7 +19334,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     }
     if (trace_eye_material) {
         size_t stride = 4 + (diag_rdp_cvg_memory ? 6 : 0) +
-                        ((cc_options & SHADER_OPT_WORLD_POS) ? 3 : 0);
+                        ((cc_options & SHADER_OPT_WORLD_POS) ? 3 : 0) +
+                        ((cc_options & SHADER_OPT_DFDX_LIGHT) ? 3 : 0);
         size_t tex_base = stride;
         size_t input_base;
         for (int ti = 0; ti < 2; ti++) {
@@ -24781,9 +24807,13 @@ unsigned int gfx_get_segment_mask(void) {
 
 void gfx_end_frame(void) {
     extern SDL_Window *g_sdlWindow;
+    extern void platformOverlayRender(void);
 #ifdef __APPLE__
     if (gfx_backend_use_metal()) return;  /* Metal presents its drawable in gfx_metal end_frame */
 #endif
+    /* Draw the app shell's in-game overlay over the finished GL frame (no-op
+     * when no overlay hooks are registered, e.g. the automation path). */
+    platformOverlayRender();
     SDL_GL_SwapWindow(g_sdlWindow);
 }
 

@@ -20,6 +20,8 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "host_window.h"
+#include "app_overlay_hooks.h"
 #include "gfx_pc.h"
 #include "settings.h"
 #include "frame_stats.h"
@@ -195,6 +197,7 @@ f32 g_pcVideoGamma = 1.0f;
 f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
 s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
 f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
+f32 g_pcCutsceneFovY = 60.0f;    /* D6/T16: authored cinematics render at the N64's fixed 60deg vertical FOV regardless of gameplay Video.FovY; 0 = follow Video.FovY. */
 f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
 f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
 f32 g_pcVideoBrightness = 0.04f;  /* kept neutral (brightness offset is taste-sensitive) */
@@ -228,6 +231,7 @@ f32 g_pcSunShadowRadius = 500.0f; /* W1.E3: camera-centered ortho half-extent in
                                    * world units" was mis-scaled vs the landed E2 world coords — see T2 notes). */
 f32 g_pcSunShadowBias = 0.0015f;  /* W1.E3.T4: receiver depth-compare bias (peter-panning vs acne dial). */
 f32 g_pcSunShadowUmbra = 0.55f;   /* W1.E3.T4: shadowed-surface darkening (1.0 = no darken, 0 = black). */
+s32 g_pcPerPixelLight = 0;       /* W1.E4: default OFF (identity-first). Per-pixel geometric-normal (dFdx) directional sun on room surfaces; supersedes E1 CPU relight when on. */
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
 s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
@@ -1125,6 +1129,17 @@ f32 g_pcMinimapOpacity   = 0.85f; /* Input.MinimapOpacity    overlay alpha */
 f32 g_pcMinimapSize      = 1.0f;  /* Input.MinimapSize       overlay scale */
 s32 g_pcMinimapSharpOverlay = 1;  /* Input.MinimapSharpOverlay native post-filter overlay */
 
+/* D3/T8: level-intro/outro skip semantics. 0 (default) = stock staged
+ * handlers only -- a NEW press of one of six buttons (A/B/Z/START/L/R)
+ * advances the static shot to the swirl one stage at a time, the swirl only
+ * acts in its late fade window, and the analog stick never skips anything.
+ * 1 = the native any-button/any-stick instant full skip
+ * (bondviewNativeIntroSkipRequested in src/game/bondview.c), preserved as an
+ * opt-in for players who want the old one-press-skips-everything behavior.
+ * Consumer declares this inline as `extern` at both call sites, matching the
+ * g_pcSteadyView / g_deterministic convention. */
+s32 g_pcIntroSkipStyle = 0;      /* Game.IntroSkipStyle     0=stock staged (default), 1=instant any-input */
+
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
 #ifdef MACOS_APP_BUNDLE
@@ -1766,6 +1781,14 @@ void platformRegisterConfig(void)
                           "--config-override Video.SunShadowUmbra=VALUE",
                           "Sun shadow darkness",
                           "How dark shadowed surfaces get (multiplier): 1.0 = no darkening, 0 = black. Default 0.55.");
+    settingsRegisterInt("Video.PerPixelLight", &g_pcPerPixelLight, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_PERPIXEL_LIGHT",
+                        "--config-override Video.PerPixelLight=VALUE",
+                        "Per-pixel directional light",
+                        "Per-pixel geometric-normal (dFdx) directional sun on room surfaces: "
+                        "recomputes Lambert per fragment from the world-position derivative and "
+                        "luma-replaces the baked directional shading (reuses Video.EnvRelightBlend "
+                        "as the strength dial). Supersedes Video.EnvSmoothNormals when on. 0 = off (identity).");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",
@@ -1819,6 +1842,11 @@ void platformRegisterConfig(void)
                           "--config-override Video.ViewmodelFov=VALUE",
                           "Viewmodel FOV",
                           "Vertical FOV used to project the first-person weapon. Fixed reference so the gun does not warp at wide world FOV. 0 follows world FOV (vanilla).");
+    settingsRegisterFloat("Video.CutsceneFovY", &g_pcCutsceneFovY, 60.0f, 0.0f, 105.0f,
+                          SETTING_SCOPE_LIVE, "GE007_CUTSCENE_FOV_Y",
+                          "--config-override Video.CutsceneFovY=VALUE",
+                          "Cutscene vertical FOV",
+                          "Vertical FOV for authored intro/outro/death cinematics. 60 matches the N64's original cinematic framing regardless of the gameplay Video.FovY. 0 = follow Video.FovY.");
     settingsRegisterFloat("Video.FogDensity", &g_pcFogDensity, 1.0f, 0.25f, 4.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOG_DENSITY",
                           "--config-override Video.FogDensity=VALUE",
@@ -2014,6 +2042,14 @@ void platformRegisterConfig(void)
                         "--config-override Input.MinimapSharpOverlay=VALUE",
                         "Minimap sharp overlay",
                         "Draw the minimap after the retro output filter for a crisp modern overlay (0 = disable first-pass renderer).");
+
+    settingsRegisterInt("Game.IntroSkipStyle", &g_pcIntroSkipStyle, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_INTRO_SKIP_STYLE",
+                        "--config-override Game.IntroSkipStyle=VALUE",
+                        "Intro skip style",
+                        "0 = stock staged skip (a new press of A/B/Z/Start/L/R advances the level-intro "
+                        "camera one stage at a time; the stick never skips). 1 = the native any-button/"
+                        "any-stick instant full skip to first-person.");
 }
 
 /* `--faithful` preset: the documented "Faithful original" mode (VISUAL_MODES.md
@@ -2039,6 +2075,7 @@ static const struct {
     { "Video.TexturePack",           "" },       /* stock textures (no HD pack)    */
     { "Video.FovY",                  "60" },     /* classic 4:3 vertical FOV       */
     { "Video.ViewmodelFov",          "60" },
+    { "Video.CutsceneFovY",          "60" },     /* N64 cinematic framing          */
     { "Input.ModernCrosshair",       "0" },
     { "Input.HitMarkers",            "0" },
     { "Input.ReticleTargetFeedback", "0" },
@@ -2134,6 +2171,7 @@ static const struct {
     /* Video.TexturePack intentionally NOT pinned — supply your own HD pack. */
     { "Video.FovY",                  "60" },     /* classic 4:3 vertical FOV       */
     { "Video.ViewmodelFov",          "60" },
+    { "Video.CutsceneFovY",          "60" },     /* N64 cinematic framing          */
     { "Input.ModernCrosshair",       "0" },
     { "Input.HitMarkers",            "0" },
     { "Input.ReticleTargetFeedback", "0" },
@@ -2339,6 +2377,20 @@ int platformInitSDL(void) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
+    if (platformHasHostWindow()) {
+        /* MGB64_APP shell owns the SDL window + GL context; adopt them so the
+         * launcher and the game render into one window. The window/context are
+         * GL (the app shell is GL-only), so the Metal path is skipped here. */
+        g_sdlWindow = (SDL_Window *)platformHostWindow();
+        g_glContext = (SDL_GLContext)platformHostGLContext();
+        if (!g_sdlWindow || !g_glContext) {
+            fprintf(stderr, "[SDL] Host window/context adoption failed\n");
+            return -1;
+        }
+        SDL_GL_MakeCurrent(g_sdlWindow, g_glContext);
+        printf("[SDL] Adopted app-shell window/context (%p / %p)\n",
+               (void *)g_sdlWindow, (void *)g_glContext);
+    } else {
     {
         int diag_disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");
         int enable_highdpi = g_cfgHiDpi != 0 && !diag_disable_highdpi;
@@ -2397,6 +2449,7 @@ int platformInitSDL(void) {
             SDL_Quit();
             return -1;
         }
+    }
     }
 
     /* Load OpenGL function pointers via glad (not needed on macOS) */
@@ -2469,6 +2522,36 @@ void *platformGetMetalLayer(void) {
 void platformPollEvents(void) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        /* Let the app overlay see every event; when it is capturing input,
+         * swallow input events so they don't also drive the game. Capture the
+         * overlay-active state BEFORE dispatch and swallow if it was active
+         * EITHER before or after: the toggle key (F1) flips the state inside
+         * process_event, and we must swallow that same keypress on BOTH the
+         * open and the close transition so it never leaks to the game (e.g.
+         * the engine's own F1 fly-camera toggle). */
+        int overlayActive = platformOverlayWantsInput();
+        platformOverlayProcessEvent(&event);
+        if (overlayActive || platformOverlayWantsInput()) {
+            switch (event.type) {
+                case SDL_KEYDOWN:
+                case SDL_KEYUP:
+                case SDL_MOUSEMOTION:
+                case SDL_MOUSEBUTTONDOWN:
+                case SDL_MOUSEBUTTONUP:
+                case SDL_MOUSEWHEEL:
+                case SDL_TEXTINPUT:
+                case SDL_CONTROLLERBUTTONDOWN:
+                case SDL_CONTROLLERBUTTONUP:
+                case SDL_CONTROLLERAXISMOTION:
+                case SDL_JOYBUTTONDOWN:
+                case SDL_JOYBUTTONUP:
+                case SDL_JOYAXISMOTION:
+                case SDL_JOYHATMOTION:
+                    continue;
+                default:
+                    break;
+            }
+        }
         switch (event.type) {
             case SDL_QUIT:
                 g_sdlQuit = 1;
@@ -2948,6 +3031,12 @@ void platformShutdownSDL(void) {
      * reclaim the GL resources on process exit anyway. */
     extern volatile int g_gfxRecoveryActive;
     extern int g_crashRecoveryCount;
+    /* When the MGB64_APP shell owns the window/context, it is responsible for
+     * tearing them down (and for SDL_Quit) after control returns to it. Leave
+     * them intact here so the launcher survives an engine session. */
+    if (platformHasHostWindow()) {
+        return;
+    }
     if (g_crashRecoveryCount == 0 && g_glContext) {
         SDL_GL_DeleteContext(g_glContext);
     }

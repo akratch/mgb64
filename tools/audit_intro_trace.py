@@ -141,6 +141,67 @@ def record_frame(record: dict[str, Any]) -> int | None:
     return parse_int(record.get("f"))
 
 
+# --- H17: first-swirl-tick applied_view must not still be the degenerate
+# (1,0,0) seed. src/platform/port_trace.c:6495-6522 emits top-level
+# "cam_pos"/"cam_target" arrays; during CAMERAMODE_SWIRL (cam==3) these come
+# from the *live* (non-frozen) branch where cam_target = cam_pos +
+# applied_view, so applied_view is recoverable exactly as
+# cam_target - cam_pos without any new traced field (per the task brief:
+# don't extend port_trace.c for this).
+SWIRL_CAMERA_MODE = CAMERA_MODES["swirl"]
+DEGENERATE_APPLIED_VIEW = (1.0, 0.0, 0.0)
+DEGENERATE_APPLIED_VIEW_TOLERANCE = 1e-4
+
+
+def record_vec3(record: dict[str, Any], field: str) -> tuple[float, float, float] | None:
+    value = record.get(field)
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    parsed = [parse_float(v) for v in value]
+    if any(v is None for v in parsed):
+        return None
+    return (parsed[0], parsed[1], parsed[2])  # type: ignore[return-value]
+
+
+def applied_view_from_record(record: dict[str, Any]) -> tuple[float, float, float] | None:
+    cam_pos = record_vec3(record, "cam_pos")
+    cam_target = record_vec3(record, "cam_target")
+    if cam_pos is None or cam_target is None:
+        return None
+    return (cam_target[0] - cam_pos[0], cam_target[1] - cam_pos[1], cam_target[2] - cam_pos[2])
+
+
+def is_degenerate_applied_view(applied_view: tuple[float, float, float]) -> bool:
+    return all(
+        math.isclose(a, b, rel_tol=0.0, abs_tol=DEGENERATE_APPLIED_VIEW_TOLERANCE)
+        for a, b in zip(applied_view, DEGENERATE_APPLIED_VIEW)
+    )
+
+
+def first_swirl_applied_view(
+    records: list[dict[str, Any]],
+    swirl_mode: int = SWIRL_CAMERA_MODE,
+    require_player: bool = False,
+    require_frozen: bool = False,
+) -> tuple[int | None, tuple[float, float, float] | None]:
+    """Returns (frame, applied_view) for the first record whose `cam` field
+    is the swirl mode AND which passes the same require_player/require_frozen
+    eligibility filtering as every other counted metric (see `is_active`),
+    or (None, None) if no such record has a decodable applied_view.
+    `applied_view` is None (with a frame number) if an eligible swirl record
+    was found but cam_pos/cam_target were missing/malformed.
+
+    Routes that enable H17 (native_intro_require_h17_swirl_facing) also set
+    native_intro_require_player/native_intro_require_frozen, so this must
+    honor the same flags rather than looking at the raw, unfiltered trace."""
+    swirl_modes = {swirl_mode}
+    for record in records:
+        if not is_active(record, swirl_modes, require_player, require_frozen):
+            continue
+        return record_frame(record), applied_view_from_record(record)
+    return None, None
+
+
 def is_active(record: dict[str, Any], modes: set[int], require_player: bool, require_frozen: bool) -> bool:
     cam = parse_int(record.get("cam"))
     if cam not in modes:
@@ -310,6 +371,15 @@ def main() -> int:
     parser.add_argument("--max-first-present-frame", type=int)
     parser.add_argument("--max-first-render-frame", type=int)
     parser.add_argument("--allow-render-count-regression", action="store_true")
+    parser.add_argument(
+        "--require-h17-swirl-facing",
+        action="store_true",
+        help=(
+            "H17 invariant: at the first mode-3 (swirl) record, the "
+            "applied_view derived from cam_target-cam_pos must not still be "
+            "the degenerate (1,0,0) seed."
+        ),
+    )
     parser.add_argument("--json-out", help="write intro actor/render audit metrics as JSON")
     args = parser.parse_args()
 
@@ -380,6 +450,22 @@ def main() -> int:
     if counts.render_count_regressions and not args.allow_render_count_regression:
         errors.append(f"{args.label}: render count regressed {counts.render_count_regressions} time(s)")
 
+    h17_frame: int | None = None
+    h17_applied_view: tuple[float, float, float] | None = None
+    if args.require_h17_swirl_facing:
+        h17_frame, h17_applied_view = first_swirl_applied_view(
+            records, require_player=args.require_player, require_frozen=args.require_frozen
+        )
+        if h17_frame is None:
+            errors.append(f"{args.label}: H17: no swirl-mode (cam==3) record found in trace")
+        elif h17_applied_view is None:
+            errors.append(f"{args.label}: H17: swirl record at frame {h17_frame} has no decodable cam_pos/cam_target")
+        elif is_degenerate_applied_view(h17_applied_view):
+            errors.append(
+                f"{args.label}: H17: first-swirl-tick applied_view at frame {h17_frame} "
+                f"is still the degenerate seed {h17_applied_view} == (1,0,0)"
+            )
+
     print(
         f"audit: {args.label}\n"
         f"  records={len(records)} active_intro_records={counts.active}\n"
@@ -393,6 +479,7 @@ def main() -> int:
         f"hash_frames={counts.anim_hash} unique_hashes={len(counts.anim_hash_values)}\n"
         f"  right_item_match={counts.right_item_match} "
         f"right_item_mismatch={counts.right_item_mismatch}"
+        + (f"\n  h17_swirl_frame={h17_frame} h17_applied_view={h17_applied_view}" if args.require_h17_swirl_facing else "")
     )
 
     metrics = {
@@ -425,6 +512,11 @@ def main() -> int:
             "max_first_present_frame": args.max_first_present_frame,
             "max_first_render_frame": args.max_first_render_frame,
             "allow_render_count_regression": args.allow_render_count_regression,
+            "require_h17_swirl_facing": args.require_h17_swirl_facing,
+        },
+        "h17": {
+            "swirl_frame": h17_frame,
+            "applied_view": list(h17_applied_view) if h17_applied_view is not None else None,
         },
         "failures": errors,
     }

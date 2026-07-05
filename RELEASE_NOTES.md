@@ -1,10 +1,70 @@
 # Release Notes
 
+## Unreleased — MGB64 is now a real app
+
+MGB64 grows from a CLI into a **desktop app**: a Dear&nbsp;ImGui launcher +
+in-game overlay rendered *in-process* (no second window, no webview), built from
+**one portable codebase** for macOS, Windows, and Linux. Still bring-your-own-ROM;
+the automation/validation path is unchanged (byte-identical).
+
+- 🎮 **Insert-ROM launcher.** A native "Choose ROM…" picker validates your dump
+  (region / byte-order / size) before you play, and remembers it next launch.
+- ⚙️ **Everything configurable.** A Settings panel auto-generated from the engine
+  config schema (all Video / Input / Game / Audio keys, correctly-typed widgets,
+  live vs. restart), a **Launch Options** panel to jump straight to any level /
+  difficulty / multiplayer, and a **Controls** panel to rebind keys.
+- 🎛️ **Modes & Toggles.** One-click Faithful / Faithful-HD / Remaster presets,
+  gameplay hatches, and an expert `GE007_*` override box.
+- 🐞 **Diagnostics built in.** A live in-app log, one-click **Export Diagnostics**
+  (log + config + system info, *no ROM data*), and a **Report a Bug** shortcut.
+- ⏸️ **In-game overlay (F1).** Pause into live settings, return to the launcher,
+  or quit — rendered over the running game.
+- 📦 **Prebuilt downloads.** A double-clickable, self-contained **`MGB64.app`** on
+  macOS; Windows (portable `.zip`) and Linux (AppImage) build from the same
+  source and via the release CI. See the README **Download** section and
+  [docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md).
+
+### Rendering
+
+- 💡 **Opt-in per-pixel directional sunlight.** A geometric-normal (screen-space
+  `dFdx`) directional light on both the OpenGL and Metal backends, behind
+  `Video.PerPixelLight` / `GE007_PERPIXEL_LIGHT` (**default off** — the faithful
+  path is byte-identical).
+
 ## Unreleased — pre-ship hardening
 
-A stability/fidelity pass on top of v0.2.0: a rendering-correctness fix, a
-one-time config migration, sim-determinism pins for the faithful presets, and
-a Windows/Linux/MinGW portability batch. No new user-facing features.
+A stability/fidelity pass on top of v0.2.0: a measured faithfulness pass on the
+level intro/outro cinematics (below), a rendering-correctness fix, a one-time
+config migration, sim-determinism pins for the faithful presets, and a
+Windows/Linux/MinGW portability batch.
+
+### Level intro / outro cinematics
+
+A measured faithfulness pass on the animated mission intros and outros,
+validated frame-for-frame against a stock-ROM emulator oracle:
+
+- 🎬 **Establishing shots no longer render blank.** The authored fly-in and
+  outro/death cameras frame areas away from Bond's spawn; the visibility system
+  seeded only from the player's room, so e.g. Dam's iconic dam-wall establishing
+  shot rendered as bare sky and water. The scene now renders correctly for the
+  intro swirl, the outro pose, and the death cameras. (`GE007_NO_CAMERA_SEED_FIX=1`
+  reverts.)
+- 🎥 **Faithful cinematic framing.** New `Video.CutsceneFovY` (default 60)
+  renders intros/outros at the N64's original vertical FOV regardless of the
+  modern gameplay `Video.FovY`, so authored shots are composed as intended.
+- 🕹️ **Intro skip no longer aborts on stick drift.** The default is now the
+  original staged skip (a face/trigger button advances one stage); the previous
+  "any input jumps straight to gameplay" behavior is available via
+  `Game.IntroSkipStyle=1`.
+- 🎯 **Deterministic intro camera selection matches the original mechanism.**
+  Deterministic boots now roll the camera pick like hardware instead of forcing
+  the first camera.
+- ✅ **Faithful establishing-camera claim corrected.** Contrary to prior notes,
+  neither the port nor hardware shows a Bond figure during Dam's early
+  establishing camera — verified with side-by-side pixel captures.
+- 🧪 **First automated coverage of the intro/outro path.** A stock-ROM camera
+  oracle, a parse-digest determinism gate, and render-health smokes now run in
+  `ctest` (ROM-gated; skip cleanly without a ROM).
 
 ### Fixes
 
@@ -131,7 +191,12 @@ data is included ([DISCLAIMER.md](DISCLAIMER.md)).
   decals, room scissoring, sky fallback, a small frontend brightness residual,
   and remaining native music fidelity gaps versus hardware/reference output).
 - Authored level intro cameras still differ from hardware/reference output in
-  some scenes, including Bond being absent from Dam's early establishing camera.
+  some scenes. Dam's early establishing camera does not show Bond on hardware
+  either (measured); the native gap there is that the establishing camera's
+  room admission keys off the unspawned player position instead of the
+  camera's own position, so distant scenery (e.g. the dam wall/reservoir
+  vista) can render as mostly sky. See `docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md`
+  (ledger D4) for details.
 - The repository still contains inventoried N64 SDK/libultra compatibility
   material that is not MIT-licensed first-party code; see
   [THIRD_PARTY.md](THIRD_PARTY.md).

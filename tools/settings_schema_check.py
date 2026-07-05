@@ -33,7 +33,7 @@ EXPECTED_DEFAULTS = {
     "Input.MouseSensitivityAim": "0.05",
     "Input.InvertY": "0",
     "Input.GamepadLookSpeed": "8",
-    "Audio.MasterVolume": "0.7",
+    "Audio.MasterVolume": "1",
     "Audio.DeviceSamples": "512",
 }
 

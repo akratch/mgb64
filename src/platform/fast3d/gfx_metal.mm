@@ -136,6 +136,9 @@ extern "C" {
     extern int   g_pc_shadow_mat_valid;
     extern int   g_pc_shadow_map_ready;       /* §3.5: frontend-visible, set after a non-empty depth-pass replay */
     extern const float *gfx_shadow_get_geometry(size_t *out_tri_count);
+    extern float g_pc_sun_dir_world[3]; /* W1.E2.T1 normalized GlobalLight dir (dir TO light), world space */
+    extern int   g_pcPerPixelLight;    /* W1.E4: Video.PerPixelLight (dFdx directional sun) */
+    extern float g_pcEnvRelightBlend;  /* W1.E1/E4: relight strength dial [0..1] */
 }
 
 /* N64 tile wrap flags (PR/gbi.h) — declared locally to avoid the N64 header. */
@@ -335,6 +338,14 @@ static void mtl_generate_msl(MetalShader *ms, TB *s) {
     tb_str(s, "    float2 shadowTexel;\n");    /* offset 112 -> 120 */
     tb_str(s, "    float shadowBias;\n");      /* offset 120 -> 124 */
     tb_str(s, "    float shadowUmbra;\n");     /* offset 124 -> 128 */
+    /* W1.E4 per-pixel directional sun (always present so MtlUniforms matches for
+     * every shader; read only by DFDX fragments). float4 keeps 16-byte alignment;
+     * offset 128 is already 16-aligned so it packs immediately after shadowUmbra. */
+    tb_str(s, "    float4 sunDirWorld;\n");    /* offset 128 -> 144 (xyz used) */
+    tb_str(s, "    float ambientLuma;\n");     /* offset 144 */
+    tb_str(s, "    float sunLuma;\n");         /* offset 148 */
+    tb_str(s, "    float relightBlend;\n");    /* offset 152 */
+    tb_str(s, "    float _pad2;\n");           /* offset 156 -> size 160 */
     tb_str(s, "};\n");
 
     /* ---- helper functions (file scope, dependency order) ---- */
@@ -448,6 +459,13 @@ static void mtl_generate_msl(MetalShader *ms, TB *s) {
         add_attr("float3", "aWorldPos", 3);
         tb_str(&vout, "    float3 vWorldPos;\n");
         tb_str(&vbody, "    out.vWorldPos = in.aWorldPos;\n");
+    }
+    /* W1.E4: per-vertex baked shade colour, packed right after aWorldPos (DFDX
+     * forces WORLD_POS). The luma-replace reference for the per-pixel relight. */
+    if (cc.opt_dfdx_light) {
+        add_attr("float3", "aShade", 3);
+        tb_str(&vout, "    float3 vShade;\n");
+        tb_str(&vbody, "    out.vShade = in.aShade;\n");
     }
     for (int i = 0; i < 2; i++) {
         if (!cc.used_textures[i]) continue;
@@ -589,9 +607,27 @@ static void mtl_generate_msl(MetalShader *ms, TB *s) {
     }
     tb_str(s, "    texel = clamp(texel, 0.0, 1.0);\n");
 
-    /* W1.E3.T4: sun-shadow receiver — 3x3 PCF, after the combiner clamp and before
-     * the fog mix (fog must win, §4.5). Mirrors the GLSL block; sample_compare +
-     * a 1-suv.y flip for Metal's top-left texture origin. */
+    /* W1.E4: per-pixel geometric-normal directional sun (mirrors the GL block in
+     * gfx_opengl.c). Injected AFTER the combiner clamp and BEFORE the W1.E3 shadow
+     * block and fog — same ordering as GL: the E4 relight (luma-REPLACE divide) must
+     * run BEFORE E3 shadow attenuation so the divide does not brighten shadowed
+     * areas back up. DERIV_SIGN is -1.0 on Metal (compensates the flipped dfdy vs
+     * GL's +1.0) so GL==Metal. Sun sign +u.sunDirWorld matches E1 (gfx_pc.c:16706)
+     * — NOT design §4.6's -uSunDirWorld. */
+    if (cc.opt_dfdx_light) {
+        tb_str(s, "    float3 vShade = in.vShade;\n");
+        tb_str(s, "    float3 gN = normalize(cross(dfdx(in.vWorldPos), dfdy(in.vWorldPos)));\n");
+        tb_str(s, "    gN *= -1.0;\n");
+        tb_str(s, "    float ndl = max(dot(gN, u.sunDirWorld.xyz), 0.0);\n");
+        tb_str(s, "    float lit = u.ambientLuma + u.sunLuma * ndl;\n");
+        tb_str(s, "    float bakedLuma = max(dot(vShade, float3(0.299, 0.587, 0.114)), 0.05);\n");
+        tb_str(s, "    texel.rgb *= mix(float3(1.0), float3(lit) / bakedLuma, u.relightBlend);\n");
+    }
+
+    /* W1.E3.T4: sun-shadow receiver — 3x3 PCF, after the E4 relight (so shadow
+     * attenuation lands on top of the recomputed lighting and shadowed areas stay
+     * dark) and before the fog mix (fog must win, §4.5). Mirrors the GLSL block;
+     * sample_compare + a 1-suv.y flip for Metal's top-left texture origin. */
     if (cc.opt_sun_shadow) {
         tb_str(s, "    {\n");
         tb_str(s, "      float4 sc = u.shadowMat * float4(in.vWorldPos, 1.0);\n");
@@ -780,7 +816,7 @@ static void mtl_unload_shader(struct ShaderProgram *old_prg) {
  * ========================================================================== */
 
 /* Uniform block — byte layout MUST match `struct Uniforms` in the generated MSL
- * (mtl_generate_msl). 16-byte aligned, 48 bytes total. */
+ * (mtl_generate_msl). 16-byte aligned, 80 bytes total. */
 struct MtlUniforms {
     float diagViewport[4];   /* 0  */
     float n64FilterScale[2]; /* 16 */
@@ -794,9 +830,16 @@ struct MtlUniforms {
     float shadowTexel[2];    /* 112 -> 120 */
     float shadowBias;        /* 120 -> 124 */
     float shadowUmbra;       /* 124 -> 128 */
+    /* W1.E4: per-pixel directional sun — MUST mirror the MSL Uniforms struct.
+     * float4 lands at offset 128 (already 16-aligned) so no implicit pad. */
+    float sunDirWorld[4];    /* 128 -> 144 (xyz used) */
+    float ambientLuma;       /* 144 */
+    float sunLuma;           /* 148 */
+    float relightBlend;      /* 152 */
+    float _pad2;             /* 156 -> 160 */
 };
-static_assert(sizeof(struct MtlUniforms) == 128,
-              "MtlUniforms must byte-match the MSL Uniforms struct (48 base + 80 shadow)");
+static_assert(sizeof(struct MtlUniforms) == 160,
+              "MtlUniforms must byte-match the MSL Uniforms struct (48 base + 80 shadow + 32 dFdx)");
 
 /* Offscreen scene targets (color is sampleable + blittable for readback and the
  * RDP snapshot; the drawable is framebufferOnly and cannot serve those). */
@@ -3070,6 +3113,17 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
         u.shadowTexel[0] = t; u.shadowTexel[1] = t;
         u.shadowBias = g_pcSunShadowBias;
         u.shadowUmbra = g_pcSunShadowUmbra;
+    }
+    if (ms->cc.opt_dfdx_light) {
+        /* W1.E4: per-frame-constant lighting uniforms (sun dir captured render-side
+         * in gfx_pc.c; blend is the live config dial). amb/dif = 0.588/0.412 as E1. */
+        u.sunDirWorld[0] = g_pc_sun_dir_world[0];
+        u.sunDirWorld[1] = g_pc_sun_dir_world[1];
+        u.sunDirWorld[2] = g_pc_sun_dir_world[2];
+        u.sunDirWorld[3] = 0.0f;
+        u.ambientLuma = 0.588f;
+        u.sunLuma = 0.412f;
+        u.relightBlend = g_pcEnvRelightBlend;
     }
     [s_enc setFragmentBytes:&u length:sizeof u atIndex:1];
 

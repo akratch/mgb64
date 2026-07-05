@@ -1172,7 +1172,27 @@ void musicTrack1Play(s32 track)
         romAddress = g_musicDataTable->seqArray[g_musicXTrack1CurrentTrackNum].address;
 
         if ((uintptr_t)romAddress < ROM_MUSIC_START_OFFSET) {
-            musicTrack1Play(M_SHORT_SOLO_DEATH);
+            /* D15/T22: an unmapped track address substitutes the short death
+             * sting -- this is the faithful N64 fallback (see the #else stock
+             * path below). On the port it also catches a track whose data
+             * failed to map, which would otherwise be a SILENT wrong-music bug
+             * (e.g. a mission-end/complete track playing the death sting).
+             * Keep the faithful substitution but log it once so it is
+             * diagnosable, and guard the recursion if the death sting itself
+             * is the unmapped track. */
+            static int warned_unmapped_track = 0;
+            if (!warned_unmapped_track) {
+                warned_unmapped_track = 1;
+                fprintf(stderr,
+                        "[MUSIC] track %d has no mapped ROM address "
+                        "(< ROM_MUSIC_START_OFFSET); substituting the death "
+                        "sting. If this is a mission-end/complete track its "
+                        "data did not map.\n",
+                        (int)g_musicXTrack1CurrentTrackNum);
+            }
+            if (g_musicXTrack1CurrentTrackNum != M_SHORT_SOLO_DEATH) {
+                musicTrack1Play(M_SHORT_SOLO_DEATH);
+            }
             return;
         }
 

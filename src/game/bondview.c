@@ -77,6 +77,10 @@ s32 chrTickBeams(PropRecord *prop);
 
 #ifdef NATIVE_PORT
 static int s_nativeLoadingBondIntroChr = 0;
+/* T9/D4: set at SWIRL mode-SET time, consumed on the first per-tick SWIRL
+ * pass (bondviewFrozenCameraTick) -- see bondviewPrepareNativeBondIntroChr's
+ * call sites for the timing rationale. */
+static int s_nativeBondIntroChrPending = FALSE;
 static f32 bondviewGetNativeBaseFovY(void);
 static int bondviewTraceNativeFovEnabled(void);
 extern int g_frame_count_diag;
@@ -2901,6 +2905,13 @@ static ModelFileHeader *portBondBodyHeader(void)
     }
     if (header == NULL) {
         header = (ModelFileHeader *)calloc(1, sizeof(ModelFileHeader));
+        /* D12/T18: on the one-time alloc failure the caller silently falls back
+         * to the aliased GUNRIGHT weapon slot -- i.e. the exact invisible/spiky
+         * Bond-body bug this de-alias fixes. Make that reversion visible. */
+        if (header == NULL) {
+            fprintf(stderr, "[BONDVIEW] portBondBodyHeader calloc failed; "
+                            "Bond viewer body reverts to the aliased weapon slot.\n");
+        }
     }
     return header;
 }
@@ -2924,6 +2935,10 @@ static u8 *portBondBodyBuffer(void)
     }
     if (buf == NULL) {
         buf = (u8 *)calloc(1, getSizeBufferWeaponInHand(GUNRIGHT));
+        if (buf == NULL) {
+            fprintf(stderr, "[BONDVIEW] portBondBodyBuffer calloc failed; "
+                            "Bond viewer body mesh reverts to the aliased weapon slot.\n");
+        }
     }
     return buf;
 }
@@ -3129,6 +3144,24 @@ void solo_char_load(void)
             totalsize = bodyalignedSizeRemainPlus0x5F;
             pHead = p_headHeader;
             p_modelEntry = p_headEntry;
+#ifdef NATIVE_PORT
+            /* D12/T18: the head mesh is packed into the SAME buffer as the body
+             * at offset bodyalignedSizeRemainPlus0x5F, and the remaining size is
+             * bodyBufSize - offset. If the body consumed the whole buffer the
+             * subtraction underflows to a huge size_t and load_object_fill_header
+             * overruns. Guard it: warn once and skip the head load rather than
+             * corrupt the heap. (Not observed on retail bodies -- defensive.) */
+            if (bodyalignedSizeRemainPlus0x5F >= bodyBufSize) {
+                static int warned_head_overrun = 0;
+                if (!warned_head_overrun) {
+                    warned_head_overrun = 1;
+                    fprintf(stderr,
+                            "[BONDVIEW] Bond head sub-buffer offset %d >= body buffer %d; "
+                            "skipping head load to avoid heap overrun.\n",
+                            (int)bodyalignedSizeRemainPlus0x5F, (int)bodyBufSize);
+                }
+            } else
+#endif
             load_object_fill_header(p_headHeader, (const char *)p_headEntry->filename, bodyBuffer + bodyalignedSizeRemainPlus0x5F, bodyBufSize - bodyalignedSizeRemainPlus0x5F, &texPool);
 
 
@@ -5694,10 +5727,30 @@ static void bondviewPrepareNativeBondIntroChr(void)
     end_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_2;
     start_frame = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_1;
     speed = stage_intro_anim_table[g_IntroAnimationIndex].anonymous_3;
-    /* Stock's first traceable swirl frame has already consumed the larger
-     * transition tick that creates the intro chr. Native installs the anim
-     * synchronously, so seed it to the same first visible frame. */
+#ifdef NATIVE_PORT
+    /* D11/T12: stock's real ROM DMA-loads the intro chr over several ticks
+     * before its anim starts advancing; native's load is synchronous, so
+     * without a seed native's first visible frame would read ~4 ticks
+     * earlier than stock's. This was previously a bare `* 3.0f` literal
+     * with an unverified comment. T12 measured both sides' first
+     * bond_anim-valid tick directly (native: temporary chrlvActionTick
+     * stderr trace under an env guard, removed after use; stock: the
+     * dam_intro_swirl_bond_anim oracle trace) and confirmed this exact
+     * seed reproduces stock's captured value bit-for-bit (both read
+     * frame=95.08 at the first post-T9 present tick) -- i.e. it is a
+     * measured tick-count, not a guess, and needed no change.
+     * GE007_INTRO_ANIM_LEGACY_SEED=1 forces the pre-T12 unnamed literal
+     * for A/B parity (same value; documentation-only otherwise). */
+    #define INTRO_CHR_ANIM_SEED_TICKS 3.0f
+    if (getenv("GE007_INTRO_ANIM_LEGACY_SEED") != NULL) {
+        start_frame += speed * 3.0f;
+    } else {
+        start_frame += speed * INTRO_CHR_ANIM_SEED_TICKS;
+    }
+    #undef INTRO_CHR_ANIM_SEED_TICKS
+#else
     start_frame += speed * 3.0f;
+#endif
 
     modelSetAnimation(
         g_CurrentPlayer->ptr_char_objectinstance,
@@ -5893,7 +5946,23 @@ void bondviewSetCameraMode(s32 arg0)
         {
             camera_transition_timer = 0.0f;
             intro_camera_index = CAMERAMODE_INTRO;
-            bondviewPrepareNativeBondIntroChr();
+
+            /* T9/D4: on hardware, this mode-SET tick flips g_CameraMode to
+             * SWIRL but the chr load (real ROM DMA) hasn't completed yet --
+             * measured stock trace: bond_present=0/bond_anim.valid=0 on the
+             * first SWIRL-mode record, becoming present one tick later once
+             * the load resolves. This port's load is synchronous/instant, so
+             * calling it here (the same tick the mode flips) makes Bond
+             * present a full tick earlier than stock. Defer the actual load
+             * to the first per-tick SWIRL pass (bondviewFrozenCameraTick)
+             * instead, so native's presence boundary lands on the same tick
+             * as stock's. GE007_NO_INTRO_CHR_TIMING_FIX=1 restores the old
+             * same-tick load. */
+            if (getenv("GE007_NO_INTRO_CHR_TIMING_FIX") != NULL) {
+                bondviewPrepareNativeBondIntroChr();
+            } else {
+                s_nativeBondIntroChrPending = TRUE;
+            }
         }
         else
         {
@@ -6585,7 +6654,14 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
     if ((g_CameraMode == CAMERAMODE_INTRO) || (g_CameraMode == CAMERAMODE_FADESWIRL))
     {
 #ifdef NATIVE_PORT
-        if (bondviewNativeIntroSkipRequested(buttons, oldbuttons))
+        /* D3/T8: Game.IntroSkipStyle gates the native any-button/any-stick
+         * instant skip. style 0 (default) leaves the stock inline handlers
+         * below (and in the CAMERAMODE_SWIRL branch further down) as the
+         * only skip mechanism -- a staged, buttons-only, one-stage-per-press
+         * skip. style 1 restores the pre-T8 behavior. */
+        extern s32 g_pcIntroSkipStyle;
+
+        if (g_pcIntroSkipStyle == 1 && bondviewNativeIntroSkipRequested(buttons, oldbuttons))
         {
             bondviewNativeSkipIntroToFp(pos, pos2, stan, arg6);
             return;
@@ -6749,16 +6825,45 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
     else if (g_CameraMode == CAMERAMODE_SWIRL)
     {
 #ifdef NATIVE_PORT
-        if (bondviewNativeIntroSkipRequested(buttons, oldbuttons))
+        /* T9/D4: fire the deferred chr load on the first per-tick SWIRL pass
+         * (one tick after the mode-SET call queued it) -- see
+         * bondviewSetCameraMode's CAMERAMODE_SWIRL branch for the rationale.
+         * Idempotent: bondviewPrepareNativeBondIntroChr() no-ops once the chr
+         * is loaded, so this only does work on the tick it fires. */
+        if (s_nativeBondIntroChrPending) {
+            s_nativeBondIntroChrPending = FALSE;
+            bondviewPrepareNativeBondIntroChr();
+        }
+
+        /* D3/T8: see the CAMERAMODE_INTRO/FADESWIRL branch above -- same
+         * Game.IntroSkipStyle gate. style 0 (default) leaves the stock
+         * late-swirl-window button handler further down as the only skip
+         * mechanism. */
+        extern s32 g_pcIntroSkipStyle;
+
+        if (g_pcIntroSkipStyle == 1 && bondviewNativeIntroSkipRequested(buttons, oldbuttons))
         {
             bondviewNativeSkipIntroToFp(pos, pos2, stan, arg6);
             return;
         }
 
-        /* Safety: if swirl data is missing, skip to first-person */
+        /* Safety: if swirl data is missing, skip to first-person. D2: route
+         * through the same helper the explicit skip-intro path above uses
+         * (bondviewNativeSkipIntroToFp) instead of calling
+         * bondviewSetCameraMode(CAMERAMODE_FP) directly -- the raw call skips
+         * portApplyGameplaySpawnFromIntro(), leaving the FP handoff seeded
+         * from stale intro-camera state and pos/pos2/stan/arg6 unfilled for
+         * this tick. GE007_NO_CINEMA_INTRO_FIX=1 restores the old fallback
+         * for A/B (see bondview_r.c's companion D2 gate fix). Untestable
+         * against retail data: every retail stage ships swirl data (T3), so
+         * g_IntroSwirl is never NULL here on real content. */
         if (!g_IntroSwirl) {
-            bondviewSetCameraMode(CAMERAMODE_FP);
-            goto swirl_done;
+            if (getenv("GE007_NO_CINEMA_INTRO_FIX") != NULL) {
+                bondviewSetCameraMode(CAMERAMODE_FP);
+                goto swirl_done;
+            }
+            bondviewNativeSkipIntroToFp(pos, pos2, stan, arg6);
+            return;
         }
 #endif
         camera_transition_timer += g_GlobalTimerDelta;
@@ -15101,6 +15206,59 @@ f32 bondviewGetBaseFovY(void)
 {
     return bondviewGetNativeBaseFovY();
 }
+
+#ifdef NATIVE_PORT
+/* D6/T16: the authored intro/outro/death cinematics were composed for the
+ * N64's fixed 60deg vertical FOV. The modern default gameplay FovY is 50, so
+ * without a dedicated cutscene FOV the establishing/swirl/pose framing renders
+ * tighter than hardware. portCameraModeIsCinematic() identifies the frozen
+ * authored-camera modes that should honour Video.CutsceneFovY. */
+s32 portCameraModeIsCinematic(enum CAMERAMODE mode)
+{
+    return mode == CAMERAMODE_INTRO
+        || mode == CAMERAMODE_FADESWIRL
+        || mode == CAMERAMODE_SWIRL
+        || mode == CAMERAMODE_POSEND
+        || mode == CAMERAMODE_DEATH_CAM_SP
+        || mode == CAMERAMODE_DEATH_CAM_MP;
+}
+
+/* T16: resolve the render FOV-Y for the current camera mode. During a
+ * cinematic camera mode, returns Video.CutsceneFovY (default 60 = FOV_Y_F; 0 =
+ * follow gameplay) so the authored intro/outro/death framing matches the N64.
+ * Otherwise returns gameplay_fovy unchanged.
+ *
+ * Applied only at the authoritative lvlRender viSetFovY(), NOT via
+ * set_cur_player_fovy(), so g_CurrentPlayer->fovy -- the gameplay base FOV that
+ * feeds AI/auto-aim math -- is untouched. The GAMEPLAY simulation (player
+ * position, guard AI, combat) is therefore unaffected: on FP frames this returns
+ * gameplay_fovy and nothing changes at all.
+ *
+ * CAVEAT (per the T16 review): viSetFovY() also recomputes the FOV-derived
+ * camera-scale fields (currentPlayerSetPerspective/CameraScale: c_perspfovy,
+ * c_scalex/y, c_cameratopnorm, ...) onto g_CurrentPlayer, which lives in the
+ * sim-state-hash pool. So on a CINEMATIC frame where CutsceneFovY != FovY, those
+ * render-derived fields differ from the pre-T16 trajectory. This is by design
+ * (the cinematic FOV genuinely changed) and is gameplay-neutral, but it means a
+ * CROSS-BINARY sim-hash diff on an intro/outro/death frame will show a cosmetic
+ * FOV delta. It does NOT affect tools/sim_invariance_gate.sh (that gate is a
+ * same-binary A/B where both sides share this FOV) or any --deterministic route
+ * that doesn't render a cinematic frame. A future death-inclusive deterministic
+ * route should pin Video.CutsceneFovY (already done in main_pc.c) or exclude the
+ * render-derived player sub-fields from its baseline. */
+f32 bondviewResolveCutsceneFovY(f32 gameplay_fovy)
+{
+    extern f32 g_pcCutsceneFovY;
+
+    if (portCameraModeIsCinematic(g_CameraMode) && g_pcCutsceneFovY > 0.0f) {
+        f32 fovy = g_pcCutsceneFovY;
+        if (fovy < 45.0f) fovy = 45.0f;
+        if (fovy > 105.0f) fovy = 105.0f;
+        return fovy;
+    }
+    return gameplay_fovy;
+}
+#endif
 
 static int bondviewTraceNativeFovEnabled(void)
 {

@@ -8,7 +8,9 @@ the two performance case studies that motivated the rule below. -->
 This is the map of how a frame gets drawn in the native port, written for anyone
 touching the renderer. It is deliberately short. The companion docs are
 `docs/PERFORMANCE_PLAN.md` (budgets + the perf harness), `docs/RENDER_PORT_SURVEY.md`
-(correctness), and `docs/VISUAL_MODES.md` (feature flags).
+(correctness), `docs/VISUAL_MODES.md` (feature flags), and
+`docs/FRAME_TIMING_ARCHITECTURE.md` (frame *rate* — the fixed 60 Hz sim timestep,
+why play is 60 while benchmarks report ~120, and why >60 is a sim rewrite).
 
 ## 1. The one rule
 

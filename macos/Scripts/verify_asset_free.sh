@@ -258,17 +258,25 @@ if [[ -z "$DATA_SIZE" || "$DATA_SIZE" == "0" ]]; then
     warn "Could not determine data segment size (non-standard binary format?)."
 else
     DATA_KB=$(( DATA_SIZE / 1024 ))
-    if [[ "${APP_BUNDLE_INPUT}" == true ]]; then
-        # Swift/AppKit executables carry several MB of Swift metadata and
-        # framework glue even when the engine payload is asset-free. Keep this
-        # threshold high enough for the clean app shell but low enough to catch
-        # accidental embedded ROM-scale data.
-        if (( DATA_SIZE > 8388608 )); then
-            fail "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). App threshold: 8 MB. Assets may be compiled in."
-        elif (( DATA_SIZE > 4194304 )); then
-            warn "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Above 4 MB for app bundle -- review for embedded assets."
+    # `size` counts __bss in the __DATA column for a whole Mach-O image. This
+    # engine statically reserves the N64's 8 MB RDRAM (+ framebuffers/audio) as
+    # BSS -- ~10 MB of __DATA that carries no bytes on disk; the GL app adds
+    # ImGui/font data on top (~10-11 MB total). A compiled-in ROM would appear
+    # as ~12 MB of REAL initialized __data, pushing the image past ~22 MB. So
+    # app bundles AND standalone executables/dylibs use a 16 MB BSS-aware
+    # threshold; the tight 500 KB threshold applies only to static libraries
+    # (.a), whose per-object __DATA carries no such reservation.
+    IS_MACHO_IMAGE=false
+    if file "$BINARY" 2>/dev/null | grep -qiE "Mach-O.*(executable|shared library|dylib)"; then
+        IS_MACHO_IMAGE=true
+    fi
+    if [[ "${APP_BUNDLE_INPUT}" == true || "${IS_MACHO_IMAGE}" == true ]]; then
+        if (( DATA_SIZE > 16777216 )); then
+            fail "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Threshold: 16 MB. Assets may be compiled in."
+        elif (( DATA_SIZE > 12582912 )); then
+            warn "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Above 12 MB -- review for embedded assets."
         else
-            pass "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Within app-bundle limits."
+            pass "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Within limits (BSS-aware)."
         fi
     elif (( DATA_SIZE > 512000 )); then
         fail "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Threshold: 500 KB. Assets may be compiled in."

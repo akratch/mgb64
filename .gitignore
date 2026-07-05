@@ -94,6 +94,9 @@ frame_trace*
 screenshot_*
 ref_before_*
 diag_*
+# ...but keep the app's diagnostics source (diag_* is for root-level dump files).
+!src/app/diag_log.h
+!src/app/diag_log.cpp
 # (re-allow project-authored images by exception if ever needed, e.g.:)
 # !docs/img/*.png
 
@@ -133,3 +136,4 @@ scripts/make/local/
 # census run; the tracked baseline is perf_census_baseline.csv (not this).
 .cache/
 baselines/perf_census_latest.csv
+lib/fonts/Roboto-Medium.ttf

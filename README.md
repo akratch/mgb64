@@ -26,6 +26,34 @@ it can be studied, preserved, and run natively on modern machines.
 | [![Runway gameplay example](https://img.youtube.com/vi/Jh3GOirvobI/hqdefault.jpg)](https://youtu.be/Jh3GOirvobI) | [![Cradle gameplay example](https://img.youtube.com/vi/Pob6Itc7rCQ/hqdefault.jpg)](https://youtu.be/Pob6Itc7rCQ) |
 | [Watch on YouTube](https://youtu.be/Jh3GOirvobI) | [Watch on YouTube](https://youtu.be/Pob6Itc7rCQ) |
 
+## Download
+
+> **Bring your own ROM.** Downloads contain **no game data** — you supply your
+> own legally-dumped GoldenEye&nbsp;007 ROM at runtime (see
+> [DISCLAIMER.md](DISCLAIMER.md)).
+
+MGB64 ships as a real app: a Dear&nbsp;ImGui launcher rendered *in-process* —
+insert a ROM, configure everything, jump to any level, and play, with an
+in-game overlay (**F1**) for live settings. One portable codebase builds it on
+all three desktop platforms.
+
+| Platform | Download | Notes |
+| --- | --- | --- |
+| **macOS** 13+ (Apple&nbsp;Silicon / Intel) | **[MGB64.app — latest release](https://github.com/akratch/mgb64/releases/latest)** | Universal `.app` in a `.zip`. Unsigned, so on first launch **right-click&nbsp;→&nbsp;Open** to pass Gatekeeper. |
+| **Windows** 10/11 (x64) | _build from source_ — see [below](#building) | Prebuilt portable `.zip` (`ge007.exe`&nbsp;+&nbsp;`SDL2.dll`) is produced by the release CI on tagged releases; until the first CI release lands, build it yourself (MSYS2/MinGW, a few minutes). |
+| **Linux** (x86‑64, glibc&nbsp;2.35+) | _build from source_ — see [below](#building) | Prebuilt `AppImage` (bundles SDL2/GL) is produced by the release CI on tagged releases; until then, build it yourself (SDL2&nbsp;+&nbsp;GL&nbsp;+&nbsp;D‑Bus dev packages). |
+
+> **Platform status.** macOS is built and tested by the maintainers. Windows and
+> Linux use the **same portable codebase** and are wired into the build and
+> release pipeline (`.github/workflows/release.yml`), but are **not yet
+> maintainer‑tested** — their prebuilt binaries appear here automatically once
+> the first CI release runs. Please report platform issues via the app's
+> **Diagnostics → Export Diagnostics** button or the
+> [bug report template](.github/ISSUE_TEMPLATE/bug_report.md).
+
+How it all works and how each platform is built:
+**[docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md)**.
+
 ## What is this?
 
 MGB64 combines the decompiled game code with a native PC/macOS port. It builds
@@ -76,6 +104,24 @@ on the same N64 decompilation ecosystem as
 
 There are known graphical and gameplay issues and occasional instability. Bug
 reports and PRs are very welcome.
+
+## The app (insert ROM, configure, play)
+
+Beyond the CLI, MGB64 builds an in-process **app** (default `-DMGB64_APP=ON`):
+a Dear ImGui launcher rendered in the same window as the game — **no separate
+process, one portable codebase** for macOS/Windows/Linux. It provides a native
+"insert ROM" picker with validation, an auto-generated settings panel (every
+engine config key), quick launch-to-level / multiplayer, and an in-game overlay
+(F1) with live settings. Automation/diagnostic invocations bypass the launcher
+and run the unchanged engine path, so the validation harness is unaffected.
+
+- Run the launcher: `./build/ge007` (no arguments).
+- macOS bundle: `./macos/Scripts/build_gl_app.sh` → `build-macos-app/MGB64.app`.
+- Architecture + per-OS build/seams: **[docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md)**.
+
+> macOS is validated; Windows/Linux use only portable seams and are wired in the
+> build. A prebuilt "Download" section (rolling latest + tagged releases) is
+> planned — see `docs/superpowers/specs/2026-07-05-prebuilt-app-distribution-design.md`.
 
 ## Building
 
@@ -242,14 +288,18 @@ it before filing parity bugs.
 
 | Path | Contents |
 | --- | --- |
-| `src/` | Decompiled game code (`src/game/`), libultra, and the native port layer (`src/platform/`) |
+| `src/game/` | Decompiled game code |
+| `src/platform/` | Native port layer (SDL2 windowing, OpenGL + opt-in Metal backends, audio, input, config, ROM I/O) + the app↔engine seams (`host_window`, `app_overlay_hooks`, `config_schema`, `input_bindings`) |
+| `src/app/` | The **in-process app shell** (C++17 + Dear ImGui): launcher, panels (ROM / Settings / Launch / Controls / Modes / Diagnostics), in-game overlay, and diagnostics. Compiled into `ge007` as the `mgb64_app` static library. See [`docs/APP_ARCHITECTURE.md`](docs/APP_ARCHITECTURE.md). |
+| `src/libultra/` | N64 SDK compatibility material (see [THIRD_PARTY.md](THIRD_PARTY.md)) |
+| `lib/` | Vendored third-party libs: `glad`, `stb`, `imgui`, `nfd`, `fonts` (all listed in [THIRD_PARTY.md](THIRD_PARTY.md)) |
 | `include/` | Shared headers |
 | `assets/` | Asset **build glue** only (extraction config, linker scripts, `.incbin` wrappers). Extracted ROM data lands here at build time and is git-ignored. |
 | `tools/` | Build/extraction tooling (extractor, texture conversion, checksum, `asm-processor`, …) |
-| `scripts/` | Extraction and build helper scripts |
-| `macos/` | Native macOS app shell sources (Swift/AppKit), local unsigned `.app` packaging, and signing/notarization scripts — see [`macos/README.md`](macos/README.md) |
+| `scripts/` | Extraction, build, and release/launch helper scripts |
+| `macos/` | macOS packaging: the portable-app bundler (`build_gl_app.sh` → `MGB64.app`), the optional legacy Swift app shell, and signing/notarization scripts — see [`macos/README.md`](macos/README.md) |
 | `ld/`, `*.ld` | Linker scripts |
-| `docs/` | Build, status, and design documentation |
+| `docs/` | Build, status, architecture, and design documentation |
 
 ## Contributing
 

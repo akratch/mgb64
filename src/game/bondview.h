@@ -2740,6 +2740,8 @@ void trigger_watch_zoom(f32 final, f32 time);
  * Returns the runtime base FOV-Y (Video.FovY clamped to [45,90]); ADS code
  * computes mild iron-sight zooms against this at query time. */
 f32 bondviewGetBaseFovY(void);
+f32 bondviewResolveCutsceneFovY(f32 gameplay_fovy);
+s32 portCameraModeIsCinematic(enum CAMERAMODE mode);
 #endif
 
 PropRecord* get_curplayer_positiondata(void);

@@ -3371,8 +3371,28 @@ extern struct ChrModelFileRecord c_item_entries[];
     typedef struct MultiAmmoCrateRecord
     {
         inherits ObjectRecord;
-        u16      unk80;
-        u16      quantities[AMMOTYPE_GLOBAL_MAX]; // indexed by ammotype /*0x80*/
+        /* The setup file stores 13 {u16 modelnum, u16 quantity} pairs (52 bytes;
+         * modelnum 0xFFFF = none), where slot i is authored for ammotype i+1.
+         * The N64 engine overlays the smaller unk80/quantities[] view onto that
+         * data, so quantities[] interleaves quantity and modelnum lanes — this
+         * is the source of the retail "multi ammo crates max out several ammo
+         * types" quirk and must be preserved for faithfulness. Both views share
+         * storage; the collect path reads quantities[] (overlay, as retail
+         * matched code does) while the collectability gate reads slots[]
+         * (pair stride, as retail asm 7F0509B8 does). */
+        union
+        {
+            struct
+            {
+                u16 unk80;
+                u16 quantities[AMMOTYPE_GLOBAL_MAX]; // engine overlay view /*0x80*/
+            };
+            struct
+            {
+                u16 modelnum;  // 0xFFFF = none
+                u16 quantity;
+            } slots[AMMOTYPE_GLOBAL_MAX]; // authored setup-file layout
+        };
     } MultiAmmoCrateRecord;
     #define New_MultiAmmoCrateRecord(pad)           \
         {                                           \

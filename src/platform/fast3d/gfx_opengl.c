@@ -62,6 +62,8 @@ extern float g_pcSsaoBlurDepthSharp;/* bilateral depth-weight sharpness */
 extern float g_pc_ssao_proj_a;   /* scene projection A=P[2][2] (depth linearization) */
 extern float g_pc_ssao_proj_b;   /* scene projection B=P[3][2] */
 extern int g_pc_view_inv_valid;  /* W1.E2.T1 view-inverse capture latch (reset per frame) */
+extern float g_pc_sun_dir_world[3]; /* W1.E2.T1 normalized GlobalLight dir, world space (dir TO light) */
+extern float g_pcEnvRelightBlend;   /* W1.E1/E4: relight strength dial [0..1] (shared with dFdx sun) */
 extern float g_pc_ssao_proj_x;   /* scene projection P[0][0] (view-ray x) */
 extern float g_pc_ssao_proj_y;   /* scene projection P[1][1] (view-ray y) */
 /* W1.E3: sun shadow map (capture-and-replay). */
@@ -124,6 +126,12 @@ struct ShaderProgram {
     bool diag_rdp_cvg_memory_blend;
     GLint diag_framebuffer_origin_location;
     GLint diag_viewport_location;
+    /* W1.E4 per-pixel directional sun uniforms (resolved when opt_dfdx_light). */
+    bool opt_dfdx_light;
+    GLint sun_dir_world_location;
+    GLint ambient_luma_location;
+    GLint sun_luma_location;
+    GLint relight_blend_location;
     /* Texture-cutout (alpha-edge) shader: drives GL_SAMPLE_ALPHA_TO_COVERAGE
      * when the multisample scene target is bound (see gfx_opengl_update_a2c_state). */
     bool opt_texture_edge;
@@ -695,6 +703,19 @@ static void gfx_opengl_set_uniforms(struct ShaderProgram *prg) {
         glBindTexture(GL_TEXTURE_2D, g_shadow_depth_tex);
         glActiveTexture((GLenum)prev_active);
     }
+    if (prg->opt_dfdx_light) {
+        /* W1.E4: per-frame-constant lighting uniforms (sun dir captured render-side
+         * in gfx_pc.c; blend is the live config dial). amb/dif = 0.588/0.412 as E1. */
+        if (prg->sun_dir_world_location >= 0)
+            glUniform3f(prg->sun_dir_world_location,
+                        g_pc_sun_dir_world[0], g_pc_sun_dir_world[1], g_pc_sun_dir_world[2]);
+        if (prg->ambient_luma_location >= 0)
+            glUniform1f(prg->ambient_luma_location, 0.588f);
+        if (prg->sun_luma_location >= 0)
+            glUniform1f(prg->sun_luma_location, 0.412f);
+        if (prg->relight_blend_location >= 0)
+            glUniform1f(prg->relight_blend_location, g_pcEnvRelightBlend);
+    }
 }
 
 static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
@@ -934,6 +955,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(vs_buf, &vs_len, "out vec3 vWorldPos;");
         num_floats += 3;
     }
+    /* W1.E4: per-vertex baked shade colour, packed right after aWorldPos (DFDX
+     * implies WORLD_POS). Passed through as the luma-replace reference. */
+    if (cc_features.opt_dfdx_light) {
+        append_line(vs_buf, &vs_len, "in vec3 aShade;");
+        append_line(vs_buf, &vs_len, "out vec3 vShade;");
+        num_floats += 3;
+    }
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "in vec2 aTexCoord%d;\n", i);
@@ -984,6 +1012,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.opt_world_pos) {
         append_line(vs_buf, &vs_len, "vWorldPos = aWorldPos;");
     }
+    if (cc_features.opt_dfdx_light) {
+        append_line(vs_buf, &vs_len, "vShade = aShade;");
+    }
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += ge007_sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
@@ -1030,6 +1061,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
 #endif
     if (cc_features.opt_world_pos) {
         append_line(fs_buf, &fs_len, "in vec3 vWorldPos;");
+    }
+    if (cc_features.opt_dfdx_light) {
+        append_line(fs_buf, &fs_len, "in vec3 vShade;");
+        append_line(fs_buf, &fs_len, "uniform vec3 uSunDirWorld;");
+        append_line(fs_buf, &fs_len, "uniform float uAmbientLuma;");
+        append_line(fs_buf, &fs_len, "uniform float uSunLuma;");
+        append_line(fs_buf, &fs_len, "uniform float uRelightBlend;");
     }
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
@@ -1284,8 +1322,29 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     /* Final clamp after all cycles */
     append_line(fs_buf, &fs_len, "texel = clamp(texel, 0.0, 1.0);");
 
-    /* W1.E3.T4: sun-shadow receiver — 3x3 PCF, injected AFTER the combiner clamp and
-     * BEFORE the fog mix so fog always wins (lighting must not brighten fog, §4.5). */
+    /* W1.E4: per-pixel geometric-normal directional sun (ROOM only). Injected AFTER
+     * the combiner clamp and BEFORE the W1.E3 shadow block and the fog mix. Order
+     * matters: the E4 relight (a luma-REPLACE divide) must run BEFORE E3 shadow
+     * attenuation, otherwise the divide would brighten shadowed areas back up and
+     * undo the shadow. Reconstruct the face normal from the screen-space
+     * derivatives of the interpolated world position; Lambert vs the level sun;
+     * luma-REPLACE the baked directional shading (keeps texture + chroma, matches
+     * the E1 CPU relight math at gfx_pc.c:16706-16723). DERIV_SIGN is +1.0 on GL
+     * (Metal negates to compensate its flipped dFdy). Sun sign is +uSunDirWorld to
+     * match E1's dot(nrm,+g_pc_sun_dir_world) — NOT the design §4.6 -uSunDirWorld. */
+    if (cc_features.opt_dfdx_light) {
+        append_line(fs_buf, &fs_len, "vec3 gN = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));");
+        append_line(fs_buf, &fs_len, "gN *= 1.0;");
+        append_line(fs_buf, &fs_len, "float ndl = max(dot(gN, uSunDirWorld), 0.0);");
+        append_line(fs_buf, &fs_len, "float lit = uAmbientLuma + uSunLuma * ndl;");
+        append_line(fs_buf, &fs_len, "float bakedLuma = max(dot(vShade, vec3(0.299, 0.587, 0.114)), 0.05);");
+        append_line(fs_buf, &fs_len, "texel.rgb *= mix(vec3(1.0), vec3(lit) / bakedLuma, uRelightBlend);");
+    }
+
+    /* W1.E3.T4: sun-shadow receiver — 3x3 PCF, injected AFTER the E4 relight (so
+     * shadow attenuation lands on top of the recomputed lighting and shadowed areas
+     * stay dark) and BEFORE the fog mix so fog always wins (lighting must not
+     * brighten fog, §4.5). */
     if (cc_features.opt_sun_shadow) {
         append_line(fs_buf, &fs_len, "{");
         append_line(fs_buf, &fs_len, "  vec4 sc = uShadowMat * vec4(vWorldPos, 1.0);");
@@ -1515,6 +1574,14 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         prg->attrib_sizes[cnt] = 3;
         ++cnt;
     }
+    if (cc_features.opt_dfdx_light) {
+        /* Same ordinal as the VS decl + VBO pack (after aWorldPos, before
+         * textures). May be -1 if aShade is optimized out; the stride still
+         * advances by attrib_sizes=3 so later attributes stay aligned. */
+        prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aShade");
+        prg->attrib_sizes[cnt] = 3;
+        ++cnt;
+    }
 
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
@@ -1595,6 +1662,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     } else {
         prg->shadow_mat_location = prg->shadow_texel_location =
             prg->shadow_bias_location = prg->shadow_umbra_location = -1;
+    }
+    prg->opt_dfdx_light = cc_features.opt_dfdx_light;
+    if (cc_features.opt_dfdx_light) {
+        prg->sun_dir_world_location = glGetUniformLocation(shader_program, "uSunDirWorld");
+        prg->ambient_luma_location = glGetUniformLocation(shader_program, "uAmbientLuma");
+        prg->sun_luma_location = glGetUniformLocation(shader_program, "uSunLuma");
+        prg->relight_blend_location = glGetUniformLocation(shader_program, "uRelightBlend");
+    } else {
+        prg->sun_dir_world_location = -1;
+        prg->ambient_luma_location = -1;
+        prg->sun_luma_location = -1;
+        prg->relight_blend_location = -1;
     }
 
     gfx_opengl_load_shader(prg);

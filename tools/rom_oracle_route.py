@@ -198,6 +198,10 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("compare_exclude_fields", "")
     if field == "compare_require_frozen":
         return route.get("compare_require_frozen", False)
+    if field == "compare_expect_mode_durations":
+        return route.get("compare_expect_mode_durations", "")
+    if field == "compare_waivers":
+        return json.dumps(route.get("compare_waivers", {}))
     if field == "compare_gameplay_windows":
         return route.get("compare_gameplay_windows", [])
     if field == "compare_normalize_position":
@@ -206,6 +210,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("native_speedframes", "")
     if field == "native_render_audit":
         return route.get("native_render_audit", False)
+    if field == "native_menu_boot":
+        return route.get("native_menu_boot", False)
     if field == "stock_speedframes":
         return route.get("stock_speedframes", route.get("native_speedframes", ""))
     if field == "stock_gameplay_start_global":
@@ -246,6 +252,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("native_intro_require_bond_anim", False)
     if field == "native_intro_require_bond_anim_hash":
         return route.get("native_intro_require_bond_anim_hash", False)
+    if field == "native_intro_require_h17_swirl_facing":
+        return route.get("native_intro_require_h17_swirl_facing", False)
     if field == "native_intro_require_bond_right_item":
         return route.get("native_intro_require_bond_right_item", "")
     if field == "native_intro_min_active_records":
@@ -785,7 +793,7 @@ def validate_route(route: dict[str, Any]) -> None:
         if compare_profile not in ("full", "dynamics", "scalar-speed", "timing"):
             errors.append(f"movement route compare_profile is unsupported: {compare_profile}")
     elif compare_kind == "intro":
-        if compare_align not in ("active-index", "global", "frame", "intro-timer"):
+        if compare_align not in ("active-index", "global", "frame", "intro-timer", "per-mode"):
             errors.append(f"intro route compare_align is unsupported: {compare_align}")
         if compare_profile not in ("path", "scalar", "state", "full"):
             errors.append(f"intro route compare_profile is unsupported: {compare_profile}")
@@ -868,6 +876,7 @@ def validate_route(route: dict[str, Any]) -> None:
             "native_intro_require_bond_rendered",
             "native_intro_require_bond_anim",
             "native_intro_require_bond_anim_hash",
+            "native_intro_require_h17_swirl_facing",
         ):
             route_bool(route, field, bool(route_field(route, field)))
         for field in (
@@ -891,6 +900,7 @@ def validate_route(route: dict[str, Any]) -> None:
     route_bool(route, "compare_intro_setup", False)
     route_bool(route, "compare_bond_anim", False)
     route_bool(route, "native_render_audit", False)
+    route_bool(route, "native_menu_boot", False)
     for env_field in ("native_env", "stock_env", "native_config"):
         direct_env = route.get(env_field, {})
         if direct_env in (None, ""):
@@ -985,9 +995,18 @@ def validate_route(route: dict[str, Any]) -> None:
     route_positive_float(route, "compare_start_intro_timer")
     route_positive_float(route, "compare_end_intro_timer")
 
+    # Native events are assumed to script GAMEPLAY input (mid-level, where
+    # START opens the pause menu) unless the route is a D30 menu-boot lane:
+    # there, native events legitimately drive the pre-level-load FRONTEND
+    # (native_menu_boot routes boot with no --level), so a native event's own
+    # "phase" tag governs instead of the blanket "gameplay" assumption.
+    native_menu_boot = route_bool(route, "native_menu_boot", False)
     for provider in ("native", "stock"):
         for event in events_for(route, provider):
-            phase = event_phase(event) if provider == "stock" else "gameplay"
+            if provider == "stock" or native_menu_boot:
+                phase = event_phase(event)
+            else:
+                phase = "gameplay"
             buttons = set(event_buttons(event))
             if phase in ("gameplay", "global") and "start" in buttons:
                 errors.append(f"{provider} gameplay event injects START: {event!r}")
