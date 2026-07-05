@@ -75,30 +75,46 @@ The README's **Download** table links to `/releases/latest`, so a rolling
 
 ---
 
-## Publishing the public source repository
+## The two repositories
 
-The public repo is a **single-root** (squashed) export of the committed tree,
-not the development history — so development history / provenance concerns never
-reach it. The path is intentionally non-destructive until the final manual push:
+- **`akratch/mgb64`** — the **public** repo. Canonical, developed **in the open**
+  with real, additive history. Its root is a one-time clean snapshot (the private
+  pre-history could not ship — it contained proprietary/SDK-notice text — so the
+  public history begins at the launch snapshot and grows normally from there).
+- **`akratch/mgb64-prepublic-*`** — the **private** staging/archive. Holds the
+  full pre-launch development history (kept private for the reason above). Useful
+  for private experimentation; only clean work is ported to public.
+
+`main` on the public repo is protected: **changes go through a PR** (0 required
+approvals so a solo maintainer can self-merge; admins can merge). No direct
+pushes, no force-pushes.
+
+## Developing in the open (going forward)
+
+This is now a normal open-source project — no more single-root re-squashes.
 
 ```sh
-# 1. Full maintainer gate (clean tree, warning-clean build, ROM-free tests,
-#    asset-free, source-archive packaging, ...):
-scripts/release_preflight.sh
-
-# 2. Non-destructive prep: builds a fresh single-root launch repo locally,
-#    smoke-tests its source archive, and writes a manifest of the exact manual
-#    publish commands (does NOT push, rename, or change visibility):
-scripts/prepare_public_launch_bundle.sh --out /tmp/mgb64-launch
-
-# 3. GitHub-side hygiene (needs gh auth):
-scripts/check_github_launch_ready.sh
-
-# 4. The final publish (force-push the single-root to the public repo) is the
-#    deliberate manual step from the prep manifest.
+git clone git@github.com:akratch/mgb64.git   # work from the public repo
+git checkout -b my-change
+# ...edit, build (MGB64_APP=ON), test...
+git push -u origin my-change
+gh pr create --base main --fill                # open a PR
+gh pr merge --rebase --delete-branch           # merge (self-merge is fine)
 ```
 
-See the launch scripts' `--help` for options.
+Outside contributors PR the same way; you review + merge theirs. Keep the tree
+asset-free — `scripts/ci/check_release_ready.sh` is the guard, and `.gitattributes
+export-ignore` keeps internal dev docs (`docs/superpowers/**`, `*_PLAN`/`*_GUIDE`/
+`*_THEORY`/`*_REVIEW`/`*_WIP`) out of the public tree.
+
+### The one-time launch snapshot (historical, done)
+
+The v0.3.0 launch published a **single clean snapshot** of the sanitized tree as
+one commit on top of the previous public root, via a PR (not a force-push). The
+sanitized tree is produced by `scripts/create_public_launch_repo.sh` (applies the
+`export-ignore` filter and re-runs every release guard); the maintainer gate is
+`scripts/release_preflight.sh`. That path only matters if a future re-baseline is
+ever needed — routine work is just PRs (above).
 
 ---
 
