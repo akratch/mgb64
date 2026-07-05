@@ -18249,8 +18249,6 @@ check_state:
         case ITEM_WPPK - 2: // pistol
         case ITEM_WPPKSIL - 2:
         case ITEM_TT33 - 2:
-        case ITEM_M16 - 2:
-        case ITEM_FNP90 - 2:
         case ITEM_SHOTGUN - 2:
         case ITEM_AUTOSHOT - 2:
         case ITEM_SNIPERRIFLE - 2:
@@ -18293,6 +18291,13 @@ check_state:
             break;
 
         case ITEM_SKORPION - 2: // machinegun
+        /* AR33 (M16) + RC-P90 (FNP90) are full-auto. Retail's
+         * jpt_80054084[weapon-2] routes them to Weapon_shooting_machinegun,
+         * not pistol; the port had them in the pistol group, firing one shot
+         * per recoil cycle (~10 shots / 60 frames) instead of the weapon's
+         * cyclic rate (~30 / 60, like the UZI). Restore full-auto. */
+        case ITEM_M16 - 2:
+        case ITEM_FNP90 - 2:
         case ITEM_AK47 - 2:
         case ITEM_UZI - 2:
         case ITEM_MP5K - 2:
