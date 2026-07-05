@@ -7,7 +7,9 @@ import argparse
 import json
 import math
 import sys
+from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +190,134 @@ def parse_modes(spec: str) -> set[int]:
     return modes
 
 
+@dataclass
+class Divergence:
+    """One evaluated failure: a per-field mismatch on an aligned pair, or a
+    mode-duration assertion miss. `waiver_candidates()` lists the scope keys
+    (most-specific first) that a `compare_waivers` entry may match against."""
+
+    message: str
+    kind: str = "field"  # "field" | "duration"
+    field: str | None = None
+    mode: int | None = None
+    delta: float | None = None
+
+    def waiver_candidates(self) -> list[str]:
+        if self.kind == "duration":
+            return ["mode_durations"]
+        candidates: list[str] = []
+        if self.mode is not None:
+            candidates.append(f"field:{self.field}:mode{self.mode}")
+        candidates.append(f"field:{self.field}")
+        return candidates
+
+
+@dataclass
+class WaivedGroup:
+    scope: str
+    ledger_id: str
+    count: int = 0
+    max_delta: float | None = None
+
+
+def parse_mode_durations(spec: str) -> dict[int, tuple[int, int]]:
+    expectations: dict[int, tuple[int, int]] = {}
+    if not spec:
+        return expectations
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) != 3:
+            raise argparse.ArgumentTypeError(
+                f"invalid --expect-mode-durations entry {item!r} (expected mode:expected:tolerance)"
+            )
+        mode_text, expected_text, tolerance_text = parts
+        try:
+            mode = int(mode_text, 0)
+            expected = int(expected_text, 0)
+            tolerance = int(tolerance_text, 0)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"invalid --expect-mode-durations entry {item!r}"
+            ) from None
+        if tolerance < 0:
+            raise argparse.ArgumentTypeError(
+                f"--expect-mode-durations tolerance must be non-negative: {item!r}"
+            )
+        expectations[mode] = (expected, tolerance)
+    return expectations
+
+
+def mode_duration_divergences(
+    counts: dict[int, int],
+    expectations: dict[int, tuple[int, int]],
+) -> list[Divergence]:
+    findings: list[Divergence] = []
+    for mode in sorted(expectations):
+        expected, tolerance = expectations[mode]
+        actual = counts.get(mode, 0)
+        delta = abs(actual - expected)
+        if delta > tolerance:
+            findings.append(
+                Divergence(
+                    message=(
+                        f"mode_durations: mode {mode} test duration {actual} record(s), "
+                        f"expected {expected} tolerance {tolerance} delta {delta}"
+                    ),
+                    kind="duration",
+                    delta=float(delta),
+                )
+            )
+    return findings
+
+
+def parse_waivers(spec: str) -> dict[str, str]:
+    if not spec:
+        return {}
+    try:
+        data = json.loads(spec)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"invalid --waivers JSON: {exc}") from None
+    if not isinstance(data, dict):
+        raise argparse.ArgumentTypeError("--waivers must be a JSON object")
+    for scope, ledger_id in data.items():
+        if not isinstance(scope, str) or not isinstance(ledger_id, str):
+            raise argparse.ArgumentTypeError("--waivers keys and values must be strings")
+    return data
+
+
+def apply_waivers(
+    divergences: list[Divergence],
+    waivers: dict[str, str],
+) -> tuple[list[Divergence], list[WaivedGroup]]:
+    remaining: list[Divergence] = []
+    groups: dict[tuple[str, str], WaivedGroup] = {}
+    order: list[tuple[str, str]] = []
+    for divergence in divergences:
+        matched_scope = None
+        ledger_id = None
+        for candidate in divergence.waiver_candidates():
+            if candidate in waivers:
+                matched_scope = candidate
+                ledger_id = waivers[candidate]
+                break
+        if matched_scope is None:
+            remaining.append(divergence)
+            continue
+        key = (matched_scope, ledger_id)
+        if key not in groups:
+            groups[key] = WaivedGroup(scope=matched_scope, ledger_id=ledger_id)
+            order.append(key)
+        group = groups[key]
+        group.count += 1
+        if divergence.delta is not None:
+            if group.max_delta is None or divergence.delta > group.max_delta:
+                group.max_delta = divergence.delta
+    return remaining, [groups[key] for key in order]
+
+
 def input_buttons(record: dict[str, Any]) -> int | None:
     oracle = record.get("oracle")
     if not isinstance(oracle, dict):
@@ -306,6 +436,103 @@ def align_by_key(
     return pairs
 
 
+def segment_by_mode(
+    records: list[dict[str, Any]],
+    modes: set[int],
+) -> dict[int, list[dict[str, Any]]]:
+    segments: dict[int, list[dict[str, Any]]] = {mode: [] for mode in modes}
+    for record in records:
+        cam = parse_int(record.get("cam"))
+        if cam in segments:
+            segments[cam].append(record)
+    return segments
+
+
+def align_mode_segment(
+    mode: int,
+    baseline_segment: list[dict[str, Any]],
+    test_segment: list[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """Align one camera-mode segment: key by `intro.timer` (deduped to the first
+    record per timer value per side) when both sides have a usable timer AND
+    that keying actually produces overlap; otherwise fall back to
+    segment-relative index (timer absent entirely, or the two sides' timer
+    domains don't intersect -- e.g. a mode that freezes the timer at a
+    different value per side). Only overlapping keys are paired -- unmatched
+    tail records (mode-duration skew) are not divergences.
+
+    The swirl mode chains multiple authored control points, each with its own
+    `intro.timer` that restarts near 0 (measured: Dam mode 3 resets ~6 times).
+    A raw-timer key would collide across control points and re-pair unrelated
+    spline segments, fabricating divergences of the same kind per-mode
+    alignment exists to eliminate -- so the key also carries
+    `intro.setup.swirl.current.index` (the authored control-point index) when
+    present, disambiguating resets. It is a no-op for modes without a swirl
+    segment (the field is absent, so every record shares the same index)."""
+
+    def timer_key_of(record: dict[str, Any]) -> tuple[int, float] | None:
+        timer = parse_float(get_path(record, "intro.timer"))
+        if timer is None:
+            return None
+        segment = parse_int(get_path(record, "intro.setup.swirl.current.index"))
+        return (segment if segment is not None else 0, timer)
+
+    base_timers_usable = any(timer_key_of(record) is not None for record in baseline_segment)
+    test_timers_usable = any(timer_key_of(record) is not None for record in test_segment)
+
+    if base_timers_usable and test_timers_usable:
+        base_by_timer: dict[tuple[int, float], dict[str, Any]] = {}
+        base_order: list[tuple[int, float]] = []
+        for record in baseline_segment:
+            key = timer_key_of(record)
+            if key is None or key in base_by_timer:
+                continue
+            base_by_timer[key] = record
+            base_order.append(key)
+        test_by_timer: dict[tuple[int, float], dict[str, Any]] = {}
+        for record in test_segment:
+            key = timer_key_of(record)
+            if key is None or key in test_by_timer:
+                continue
+            test_by_timer[key] = record
+        timer_pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        for key in base_order:
+            other = test_by_timer.get(key)
+            if other is not None:
+                segment, timer = key
+                label = f"mode{mode}:s{segment}:t{timer:g}" if segment else f"mode{mode}:t{timer:g}"
+                timer_pairs.append((label, base_by_timer[key], other))
+        if timer_pairs:
+            return timer_pairs
+        # Timer present on both sides but the value domains don't intersect
+        # (e.g. a freeze-frame mode pinned at a different accumulated timer
+        # value per side) -- fall through to index alignment rather than
+        # silently reporting zero coverage for this mode.
+
+    pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for index, (base_record, test_record) in enumerate(zip(baseline_segment, test_segment)):
+        pairs.append((f"mode{mode}:i{index}", base_record, test_record))
+    return pairs
+
+
+def align_per_mode(
+    baseline: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    modes: set[int],
+    max_aligned: int | None,
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    baseline_segments = segment_by_mode(baseline, modes)
+    test_segments = segment_by_mode(test, modes)
+    pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for mode in sorted(modes):
+        pairs.extend(
+            align_mode_segment(mode, baseline_segments.get(mode, []), test_segments.get(mode, []))
+        )
+        if max_aligned is not None and len(pairs) >= max_aligned:
+            return pairs[:max_aligned]
+    return pairs
+
+
 def field_specs(
     profile: str,
     compare_state: bool,
@@ -342,26 +569,35 @@ def parse_exclude_fields(spec: str) -> set[str]:
 
 
 def compare_pairs(
-    pairs: list[tuple[int, dict[str, Any], dict[str, Any]]],
+    pairs: list[tuple[Any, dict[str, Any], dict[str, Any]]],
     specs: list[tuple[str, str]],
     vector_tolerance: float,
     direction_tolerance: float,
     scalar_tolerance: float,
     anim_tolerance: float,
-    max_divergences: int,
-) -> tuple[list[str], dict[str, float]]:
-    divergences: list[str] = []
+) -> tuple[list[Divergence], dict[str, float]]:
+    """Evaluate every aligned pair against every field spec -- full window,
+    no early return. `--max-divergences` is a reporting cap applied by the
+    caller, not an evaluation cap."""
+    divergences: list[Divergence] = []
     max_abs: dict[str, float] = {}
 
     for key, base, test in pairs:
+        mode = parse_int(base.get("cam"))
         for field, kind in specs:
             if kind in ("vector", "direction"):
                 base_vec = parse_vector(get_path(base, field))
                 test_vec = parse_vector(get_path(test, field))
                 if base_vec is None or test_vec is None:
                     divergences.append(
-                        f"key {key}: missing vector field {field} "
-                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                        Divergence(
+                            message=(
+                                f"key {key}: missing vector field {field} "
+                                f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                            ),
+                            field=field,
+                            mode=mode,
+                        )
                     )
                     continue
                 tolerance = direction_tolerance if kind == "direction" else vector_tolerance
@@ -371,51 +607,87 @@ def compare_pairs(
                     max_abs[stat_key] = max(max_abs.get(stat_key, 0.0), delta)
                     if delta > tolerance:
                         divergences.append(
-                            f"key {key}: {stat_key} baseline={base_value:.5f} "
-                            f"test={test_value:.5f} delta={delta:.5f} tolerance={tolerance:.5f}"
+                            Divergence(
+                                message=(
+                                    f"key {key}: {stat_key} baseline={base_value:.5f} "
+                                    f"test={test_value:.5f} delta={delta:.5f} tolerance={tolerance:.5f}"
+                                ),
+                                field=stat_key,
+                                mode=mode,
+                                delta=delta,
+                            )
                         )
             elif kind == "scalar":
                 base_value = parse_float(get_path(base, field))
                 test_value = parse_float(get_path(test, field))
                 if base_value is None or test_value is None:
                     divergences.append(
-                        f"key {key}: missing scalar field {field} "
-                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                        Divergence(
+                            message=(
+                                f"key {key}: missing scalar field {field} "
+                                f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                            ),
+                            field=field,
+                            mode=mode,
+                        )
                     )
                     continue
                 delta = abs(base_value - test_value)
                 max_abs[field] = max(max_abs.get(field, 0.0), delta)
                 if delta > scalar_tolerance:
                     divergences.append(
-                        f"key {key}: {field} baseline={base_value:.5f} "
-                        f"test={test_value:.5f} delta={delta:.5f} tolerance={scalar_tolerance:.5f}"
+                        Divergence(
+                            message=(
+                                f"key {key}: {field} baseline={base_value:.5f} "
+                                f"test={test_value:.5f} delta={delta:.5f} tolerance={scalar_tolerance:.5f}"
+                            ),
+                            field=field,
+                            mode=mode,
+                            delta=delta,
+                        )
                     )
             elif kind == "anim":
                 base_value = parse_float(get_path(base, field))
                 test_value = parse_float(get_path(test, field))
                 if base_value is None or test_value is None:
                     divergences.append(
-                        f"key {key}: missing animation field {field} "
-                        f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                        Divergence(
+                            message=(
+                                f"key {key}: missing animation field {field} "
+                                f"(baseline={get_path(base, field)!r}, test={get_path(test, field)!r})"
+                            ),
+                            field=field,
+                            mode=mode,
+                        )
                     )
                     continue
                 delta = abs(base_value - test_value)
                 max_abs[field] = max(max_abs.get(field, 0.0), delta)
                 if delta > anim_tolerance:
                     divergences.append(
-                        f"key {key}: {field} baseline={base_value:.5f} "
-                        f"test={test_value:.5f} delta={delta:.5f} tolerance={anim_tolerance:.5f}"
+                        Divergence(
+                            message=(
+                                f"key {key}: {field} baseline={base_value:.5f} "
+                                f"test={test_value:.5f} delta={delta:.5f} tolerance={anim_tolerance:.5f}"
+                            ),
+                            field=field,
+                            mode=mode,
+                            delta=delta,
+                        )
                     )
             elif kind == "exact":
                 base_value = get_path(base, field)
                 test_value = get_path(test, field)
                 if base_value != test_value:
-                    divergences.append(f"key {key}: {field} baseline={base_value!r} test={test_value!r}")
+                    divergences.append(
+                        Divergence(
+                            message=f"key {key}: {field} baseline={base_value!r} test={test_value!r}",
+                            field=field,
+                            mode=mode,
+                        )
+                    )
             else:
                 raise AssertionError(kind)
-
-            if len(divergences) >= max_divergences:
-                return divergences, max_abs
 
     return divergences, max_abs
 
@@ -424,7 +696,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", help="baseline JSONL trace, usually ROM/emulator")
     parser.add_argument("test", help="test JSONL trace, usually native")
-    parser.add_argument("--align", choices=["active-index", "global", "frame", "intro-timer"], default="active-index")
+    parser.add_argument(
+        "--align",
+        choices=["active-index", "global", "frame", "intro-timer", "per-mode"],
+        default="active-index",
+    )
     parser.add_argument("--profile", choices=["path", "scalar", "state", "full"], default="path")
     parser.add_argument("--camera-modes", type=parse_modes, default=parse_modes("intro,fadeswirl,swirl"))
     parser.add_argument("--start-active-frame", type=int, default=1)
@@ -446,8 +722,25 @@ def main() -> int:
     parser.add_argument("--no-require-player", action="store_true")
     parser.add_argument("--require-frozen", action="store_true")
     parser.add_argument("--allow-skip-input", action="store_true")
-    parser.add_argument("--max-divergences", type=int, default=20)
+    parser.add_argument(
+        "--max-divergences",
+        type=int,
+        default=20,
+        help="reporting cap only: how many divergence lines to print (evaluation is always full-window)",
+    )
     parser.add_argument("--min-aligned", type=int)
+    parser.add_argument(
+        "--expect-mode-durations",
+        type=parse_mode_durations,
+        default=parse_mode_durations(""),
+        help="mode:expected:tolerance[,mode:expected:tolerance...] asserted against the test trace's per-mode active-record counts",
+    )
+    parser.add_argument(
+        "--waivers",
+        type=parse_waivers,
+        default=parse_waivers(""),
+        help='JSON object mapping waiver scope ("field:<name>", "field:<name>:mode<N>", or "mode_durations") to a ledger ID',
+    )
     parser.add_argument("--json-out", help="write comparison metrics as JSON")
     args = parser.parse_args()
 
@@ -499,7 +792,13 @@ def main() -> int:
             "baseline": len(baseline_all),
             "test": len(test_all),
         },
+        "expect_mode_durations": {
+            str(mode): {"expected": expected, "tolerance": tolerance}
+            for mode, (expected, tolerance) in sorted(args.expect_mode_durations.items())
+        },
+        "waivers": dict(args.waivers),
     }
+    degenerate_metrics = {"verdict": "fail", "per_mode_aligned_counts": {}, "waived": []}
 
     control_failures = validate_controls(
         baseline_all, "baseline", args.camera_modes, args.allow_skip_input
@@ -509,6 +808,7 @@ def main() -> int:
             args.json_out,
             {
                 **common_metrics,
+                **degenerate_metrics,
                 "status": "fail",
                 "failure_kind": "control",
                 "failures": control_failures,
@@ -544,6 +844,7 @@ def main() -> int:
             args.json_out,
             {
                 **common_metrics,
+                **degenerate_metrics,
                 "status": "fail",
                 "failure_kind": "filter",
                 "active_counts": {"baseline": 0, "test": len(test)},
@@ -556,6 +857,7 @@ def main() -> int:
             args.json_out,
             {
                 **common_metrics,
+                **degenerate_metrics,
                 "status": "fail",
                 "failure_kind": "filter",
                 "active_counts": {"baseline": len(baseline), "test": 0},
@@ -572,6 +874,8 @@ def main() -> int:
         pairs = align_by_key(baseline, test, "f", args.max_aligned)
     elif args.align == "intro-timer":
         pairs = align_by_key(baseline, test, "intro.timer", args.max_aligned)
+    elif args.align == "per-mode":
+        pairs = align_per_mode(baseline, test, args.camera_modes, args.max_aligned)
     else:
         raise AssertionError(args.align)
 
@@ -580,6 +884,7 @@ def main() -> int:
             args.json_out,
             {
                 **common_metrics,
+                **degenerate_metrics,
                 "status": "fail",
                 "failure_kind": "alignment",
                 "active_counts": {"baseline": len(baseline), "test": len(test)},
@@ -593,6 +898,7 @@ def main() -> int:
             args.json_out,
             {
                 **common_metrics,
+                **degenerate_metrics,
                 "status": "fail",
                 "failure_kind": "alignment",
                 "active_counts": {"baseline": len(baseline), "test": len(test)},
@@ -619,34 +925,68 @@ def main() -> int:
         args.direction_tolerance,
         args.scalar_tolerance,
         args.anim_tolerance,
-        args.max_divergences,
     )
+
+    test_mode_counts = Counter(parse_int(record.get("cam")) for record in test)
+    divergences.extend(mode_duration_divergences(dict(test_mode_counts), args.expect_mode_durations))
+
+    unwaived, waived_groups = apply_waivers(divergences, args.waivers)
+
+    per_mode_aligned_counts = Counter(parse_int(base.get("cam")) for _key, base, _test in pairs)
+
+    total = len(divergences)
+    waived_total = total - len(unwaived)
+
     metrics = {
         **common_metrics,
-        "status": "fail" if divergences else "pass",
+        "verdict": "fail" if unwaived else "pass",
+        "status": "fail" if unwaived else "pass",
         "active_counts": {"baseline": len(baseline), "test": len(test)},
         "aligned_count": len(pairs),
         "aligned_keys": [key for key, _base, _test in pairs],
+        "per_mode_aligned_counts": {str(mode): count for mode, count in sorted(per_mode_aligned_counts.items())},
+        "per_mode_test_counts": {str(mode): count for mode, count in sorted(test_mode_counts.items())},
         "field_count": len(specs),
         "max_abs": max_abs,
-        "divergence_count": len(divergences),
-        "divergences": divergences,
+        "divergence_count": total,
+        "divergences": [d.message for d in divergences],
+        "unwaived_divergence_count": len(unwaived),
+        "unwaived_divergences": [d.message for d in unwaived],
+        "waived": [
+            {
+                "scope": group.scope,
+                "ledger_id": group.ledger_id,
+                "count": group.count,
+                "max_delta": group.max_delta,
+            }
+            for group in waived_groups
+        ],
     }
     write_json_metrics(args.json_out, metrics)
 
-    if divergences:
-        print(f"FAIL: {len(divergences)} intro divergence(s) found")
-        for line in divergences[: args.max_divergences]:
-            print(f"  {line}")
+    for group in waived_groups:
+        max_delta_text = f"{group.max_delta:.5f}" if group.max_delta is not None else "n/a"
+        print(f"WAIVED ({group.ledger_id}): {group.scope} -- {group.count} divergence(s), max delta={max_delta_text}")
+
+    if unwaived:
+        if waived_total:
+            print(f"FAIL: {len(unwaived)} intro divergence(s) found ({total} total, {waived_total} waived)")
+        else:
+            print(f"FAIL: {total} intro divergence(s) found")
+        for divergence in unwaived[: args.max_divergences]:
+            print(f"  {divergence.message}")
         print(
             f"Compared {len(pairs)} aligned intro record(s) "
             f"(profile={args.profile}, align={args.align})."
         )
+        for key in sorted(max_abs):
+            print(f"  max_abs {key}: {max_abs[key]:.5f}")
         return 1
 
     print(
         f"MATCH: {len(pairs)} aligned intro record(s) "
         f"(profile={args.profile}, align={args.align}, baseline_active={len(baseline)}, test_active={len(test)})"
+        + (f" [{waived_total} divergence(s) waived]" if waived_total else "")
     )
     for key in sorted(max_abs):
         print(f"  max_abs {key}: {max_abs[key]:.5f}")

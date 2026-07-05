@@ -231,16 +231,55 @@ Desired end state:
 ### Level intro and frontend parity
 
 The native port has had several frontend-vs-direct-level differences fixed, but
-intro camera parity is still incomplete. Bond is still absent during Dam's early
-authored establishing camera and appears only during later swirl-style sequences.
+intro camera parity is still incomplete. The previous framing here ("Bond is
+absent during Dam's early establishing camera") does not hold up under
+measurement: an ares stock-ROM trace shows Bond's dedicated intro-chr object is
+equally absent on hardware for the entire static establishing shot and
+fade-into-swirl window, on every one of Dam's authored candidate cameras, not
+just the one the native port happens to render. Follow-up pixel evidence
+supports the same conclusion within its limits: the one establishing camera
+stock's boot recipe actually reaches in our tooling (index 5 -- the RNG pick
+proved unmovable across five menu-timing variants and three forced RNG seeds)
+shows the dam vista with no Bond figure on either engine, and stock pixels for
+the spawn-framing camera (index 0) were not obtainable for that reason. The
+NATIVE camera-0 capture shows the arriving truck's cab with no visible
+driver/passenger figure and no character of any kind in frame. See
+`docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md` ledger item D4 for the full trace/pixel
+evidence.
+
+The camera-5 pixel comparison surfaced the actual, more consequential gap, now
+FIXED: for the specific establishing camera the game normally shows players (a
+distant vista overlooking the dam wall, reservoir, and mountains), the native
+port used to render almost nothing but sky and a flat water plane, because room
+admission during the frozen establishing shot was keyed off the player's
+(unspawned) position rather than the establishing camera's own position -- so
+only the single room around the eventual spawn point got admitted, and the room
+containing the dam-wall geometry the camera was actually looking at never
+rendered. The visibility BFS now seeds from the camera's own resolved room for
+the intro, outro-pose, and death cameras, so the dam wall (and equivalent
+subjects on other stages) render correctly. Residual: distant backdrop rooms
+across open water (the far mountains) are not portal-reachable from the camera's
+room and still do not render; a stock pixel comparison will decide whether a
+wider/backdrop admission is warranted.
+
+Broader intro/outro faithfulness work (measured against a stock-ROM ares
+oracle) is tracked in `docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md`; player-facing
+settings and hatches are documented in `docs/CINEMATICS.md`. Landed: faithful
+60-degree cutscene FOV, original staged intro-skip (no more stick-drift abort),
+stock-shaped deterministic camera selection, menu-boot parity (proven
+bit-exact vs direct boot), and the establishing/outro render fix above. The one
+remaining measured swirl divergence (Bond's intro animation does not advance to
+its final scripted phase mid-swirl, a small late-swirl camera-anchor drift) is
+root-caused and tracked as ledger item D43.
 
 Desired end state:
 
 - start-menu and `--level` entry paths produce the same relevant gameplay state
-  after level start;
+  after level start; [done -- menu-boot parity verified bit-exact]
 - intro camera scripts render the same actors as original hardware/reference
-  captures;
-- validation covers both direct-level and menu-start entry paths.
+  captures; [establishing/outro render fixed; D43 anim phase remaining]
+- validation covers both direct-level and menu-start entry paths. [done -- both
+  lanes wired into the ares oracle + ctest]
 
 ## Build and release infrastructure
 

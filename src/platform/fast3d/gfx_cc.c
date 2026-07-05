@@ -44,6 +44,7 @@ void gfx_cc_get_features(uint64_t shader_id0, uint32_t shader_id1, struct CCFeat
     cc_features->room_water_alpha_suppress = (shader_id1 & SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS) != 0;
     cc_features->opt_world_pos = (shader_id1 & SHADER_OPT_WORLD_POS) != 0;
     cc_features->opt_sun_shadow = (shader_id1 & SHADER_OPT_SUN_SHADOW) != 0;
+    cc_features->opt_dfdx_light = (shader_id1 & SHADER_OPT_DFDX_LIGHT) != 0;
 
     cc_features->used_textures[0] = false;
     cc_features->used_textures[1] = false;

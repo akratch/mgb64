@@ -40206,6 +40206,12 @@ void add_ammo_to_inventory(AMMOTYPE ammotype,int amount,int doplaysound,int dodi
     int curammo;
     int maxammo;
 
+#ifdef NATIVE_PORT
+    interactTracePrintf("add_ammo type=%d amount=%d cur=%d max=%d",
+                        ammotype, amount,
+                        check_cur_player_ammo_amount_in_inventory(ammotype),
+                        get_max_ammo_for_type(ammotype));
+#endif
     if (0 < amount)
     {
         curammo = check_cur_player_ammo_amount_in_inventory(ammotype);
@@ -42038,15 +42044,18 @@ s32 object_collectability_routines(PropRecord *prop)
             return 0;
         }
 
-        /* Check each ammo type for capacity */
+        /* Check each authored slot for capacity. Retail asm (7F0509B8 loop)
+         * walks the 13 {modelnum, quantity} pairs with a 4-byte stride and
+         * maps slot i to ammotype i+1 (slot 1 shares the 9mm pool) — NOT the
+         * interleaved quantities[] overlay the collect path reads. */
         {
             s32 i;
-            for (i = 0; i < 12; i++) {
+            for (i = 0; i < AMMOTYPE_GLOBAL_MAX; i++) {
                 AMMOTYPE ammoType = (AMMOTYPE)(i + 1);
                 if (ammoType == AMMO_9MM_2) {
                     ammoType = AMMO_9MM; /* share 9mm pool */
                 }
-                if (mammo->quantities[i] > 0) {
+                if (mammo->slots[i].quantity > 0) {
                     s32 curAmmo = check_cur_player_ammo_amount_in_inventory(ammoType);
                     if (curAmmo < get_max_ammo_for_type((s32)ammoType)) {
                         allFull = 0;

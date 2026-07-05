@@ -60,3 +60,5 @@ docs/*_WIP.md export-ignore
 docs/*_STATUS.md export-ignore
 docs/*_GLIDEPATH.md export-ignore
 docs/*_MAP.md export-ignore
+docs/*_GUIDE.md export-ignore
+docs/*_THEORY.md export-ignore

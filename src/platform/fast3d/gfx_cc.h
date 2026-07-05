@@ -54,6 +54,7 @@ enum {
 #define SHADER_OPT_2CYC          (1 << 4)
 #define SHADER_OPT_WORLD_POS     (1u << 5)   /* W1.E2: per-vertex world position attribute */
 #define SHADER_OPT_SUN_SHADOW    (1u << 6)   /* W1.E3: sun-shadow-map receiver (3x3 PCF) */
+#define SHADER_OPT_DFDX_LIGHT    (1u << 7)   /* W1.E4: per-pixel geometric-normal directional sun */
 #define SHADER_OPT_TEXEL0_CLAMP_S (1 << 8)
 #define SHADER_OPT_TEXEL0_CLAMP_T (1 << 9)
 #define SHADER_OPT_TEXEL1_CLAMP_S (1 << 10)
@@ -100,6 +101,7 @@ struct CCFeatures {
     bool room_water_alpha_suppress;
     bool opt_world_pos;       /* W1.E2: emit the aWorldPos vertex attribute */
     bool opt_sun_shadow;      /* W1.E3: sun-shadow-map receiver (3x3 PCF) */
+    bool opt_dfdx_light;      /* W1.E4: per-pixel geometric-normal directional sun relight */
     int num_inputs;
     bool do_single[2][2];     /* [cycle][color_or_alpha] */
     bool do_multiply[2][2];

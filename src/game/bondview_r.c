@@ -181,10 +181,27 @@ static s32 portChooseIntroCameraIndex(s32 camera_count) {
                 forced_env);
     }
 
-    if (g_deterministic) {
+    /* §5 D28: stock (non-NATIVE_PORT, bondview_r.c:603-610) always rolls
+     * randomGetNext() % camera_count here -- the RNG seed itself is what's
+     * pinned deterministic (boss.c reseeds to a fixed value), not this call.
+     * Special-casing determinism to index 0 was a port-only mechanism
+     * divergence: it made every deterministic run show a fixed establishing
+     * camera instead of the stock-shaped seeded pick.
+     *
+     * BUT only draw when the authored intro will actually play. On the port,
+     * direct/deterministic boots take the short FP handoff (portIntroEnabled()
+     * false), and the selected camera is then unused -- drawing here would
+     * consume an RNG value that shifts the deterministic stream for the rest of
+     * the level load, perturbing the gameplay sim baseline the deterministic
+     * regression tests rely on. Stock always plays the intro on a menu start,
+     * so rolling only when portIntroEnabled() matches stock exactly where an
+     * intro is shown, while keeping direct-boot sim state byte-identical to the
+     * pre-D28 behavior. GE007_INTRO_CAMERA_INDEX above still overrides for
+     * tooling that pins a camera (e.g. the oracle route, which forces the
+     * intro on). */
+    if (!portIntroEnabled()) {
         return 0;
     }
-
     return (s32)(randomGetNext() % (u32)camera_count);
 }
 
@@ -1182,7 +1199,17 @@ void bondviewLoadSetupIntroSection(void)
     if (getPlayerCount() == 1)
     {
 #ifdef NATIVE_PORT
-        if (portIntroEnabled() && g_IntroSwirl != NULL) {
+        /* D2: stock (the #else below) enters CAMERAMODE_INTRO unconditionally
+         * whenever an intro is requested; this port additionally required
+         * g_IntroSwirl != NULL, so a cinema-only intro (camera data present,
+         * no swirl control points) never played at all and fell straight to
+         * the FP handoff below. GE007_NO_CINEMA_INTRO_FIX=1 restores the old
+         * (swirl-required) gate for A/B. Every retail stage ships swirl data
+         * (T3 coverage), so this branch cannot be exercised against retail
+         * content -- see the SWIRL-side no-data fallback audit in
+         * bondview.c's bondviewFrozenCameraTick for the companion fix. */
+        if (portIntroEnabled() &&
+            (g_IntroSwirl != NULL || getenv("GE007_NO_CINEMA_INTRO_FIX") == NULL)) {
             if (getenv("GE007_VERBOSE")) {
                 fprintf(stderr, "[INTRO] authentic level intro enabled\n");
             }

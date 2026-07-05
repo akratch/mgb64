@@ -30,6 +30,10 @@
 #include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
+#include "../app/input_actions.h"  /* rebindable keyboard registry (not app-gated) */
+#ifdef MGB64_APP
+#include "../app/engine_entry.h"  /* MgbBootConfig + mgb64_engine_boot decl */
+#endif
 
 #ifndef __has_feature
 #define __has_feature(x) 0
@@ -567,9 +571,19 @@ static const char *findRomFile(void) {
 }
 
 /* When building as a macOS app bundle, the Swift AppDelegate owns the entry
- * point and calls game_init()/game_run() via GameBridge.h instead. */
+ * point and calls game_init()/game_run() via GameBridge.h instead.
+ *
+ * When building the portable ImGui app shell (MGB64_APP), the shell's main()
+ * (src/app/main_app.cpp) owns the entry point; this body becomes the reusable
+ * mgb64_headless_main() that the shell delegates to for automation/CLI
+ * invocations, and that mgb64_engine_boot() will be extracted from (Task 5).
+ * The body is unchanged either way, so the automation path stays byte-identical. */
 #ifndef MACOS_APP_BUNDLE
+#ifdef MGB64_APP
+int mgb64_headless_main(int argc, char **argv)
+#else
 int main(int argc, char **argv)
+#endif
 {
     const char *romPath = NULL;
     const char *saveDirOverride = NULL;
@@ -817,6 +831,15 @@ int main(int argc, char **argv)
     portAudioRegisterConfig();
     configInit();
 
+    /* Load user key bindings; automation/deterministic runs force the canonical
+     * defaults so scripted input stays byte-identical regardless of any file. */
+    inputBindingLoad();
+    {
+        extern int g_deterministic;
+        extern int g_freezeInput;
+        if (g_deterministic || g_freezeInput) inputBindingForceDefaults(1);
+    }
+
     /* --faithful: apply the "Faithful original" preset (VISUAL_MODES.md section 1)
      * as a transient baseline BEFORE env/CLI overrides, so any explicit env var or
      * --config-override still wins and `--faithful --dump-config` reflects the
@@ -992,19 +1015,25 @@ int main(int argc, char **argv)
     {
         extern int g_deterministic;
         if (g_deterministic) {
-            const Setting *fovySetting = settingsFind("Video.FovY");
-            if (fovySetting != NULL && fovySetting->ptr != NULL && fovySetting->type == SETTING_TYPE_FLOAT
-                && fovySetting->override_source != SETTING_OVERRIDE_CLI
-                && fovySetting->override_source != SETTING_OVERRIDE_ENV
-                && fovySetting->override_source != SETTING_OVERRIDE_FAITHFUL) {
-                f32 *fovyPtr = (f32 *)fovySetting->ptr;
-                f32 def = fovySetting->def.f32_value;
-                if (*fovyPtr != def) {
-                    fprintf(stderr,
-                            "[CONFIG] --deterministic: Video.FovY=%.3f differs from the default %.3f; "
-                            "pinning to %.3f for this run so the sim-invariance hash is reproducible.\n",
-                            (double)*fovyPtr, (double)def, (double)def);
-                    *fovyPtr = def;
+            /* Video.CutsceneFovY (T16) feeds the player FOV during cinematic
+             * camera modes, same hashed-sim-state path as Video.FovY, so it is
+             * pinned by the identical rule. */
+            const char *pinFovKeys[] = { "Video.FovY", "Video.CutsceneFovY" };
+            for (size_t fk = 0; fk < sizeof(pinFovKeys) / sizeof(pinFovKeys[0]); fk++) {
+                const Setting *fovySetting = settingsFind(pinFovKeys[fk]);
+                if (fovySetting != NULL && fovySetting->ptr != NULL && fovySetting->type == SETTING_TYPE_FLOAT
+                    && fovySetting->override_source != SETTING_OVERRIDE_CLI
+                    && fovySetting->override_source != SETTING_OVERRIDE_ENV
+                    && fovySetting->override_source != SETTING_OVERRIDE_FAITHFUL) {
+                    f32 *fovyPtr = (f32 *)fovySetting->ptr;
+                    f32 def = fovySetting->def.f32_value;
+                    if (*fovyPtr != def) {
+                        fprintf(stderr,
+                                "[CONFIG] --deterministic: %s=%.3f differs from the default %.3f; "
+                                "pinning to %.3f for this run so the sim-invariance hash is reproducible.\n",
+                                pinFovKeys[fk], (double)*fovyPtr, (double)def, (double)def);
+                        *fovyPtr = def;
+                    }
                 }
             }
         }
@@ -1129,3 +1158,70 @@ int main(int argc, char **argv)
     return 0;
 }
 #endif /* MACOS_APP_BUNDLE */
+
+#if defined(MGB64_APP) && !defined(MACOS_APP_BUNDLE)
+/* Boot the engine from the app shell. Rather than duplicate main()'s delicate
+ * preamble (signal handlers, config, ROM resolve, boot), synthesize a CLI
+ * invocation from the config and delegate to mgb64_headless_main() — the exact
+ * same engine boot path. The app must platformSetHostWindow() first so the
+ * engine adopts the shell's window instead of creating its own. */
+int mgb64_engine_boot(const MgbBootConfig *cfg)
+{
+    const char *argv[40];
+    char levelbuf[16], diffbuf[16], playersbuf[16], stagebuf[16];
+    int argc = 0;
+
+    argv[argc++] = "ge007";
+    if (cfg && cfg->rom_path && cfg->rom_path[0]) {
+        argv[argc++] = "--rom";
+        argv[argc++] = cfg->rom_path;
+    }
+    if (cfg && cfg->save_dir && cfg->save_dir[0]) {
+        argv[argc++] = "--savedir";
+        argv[argc++] = cfg->save_dir;
+    }
+    if (cfg && cfg->level_slug && cfg->level_slug[0]) {
+        argv[argc++] = "--level";
+        argv[argc++] = cfg->level_slug;
+    } else if (cfg && cfg->level_id >= 0) {
+        snprintf(levelbuf, sizeof levelbuf, "%d", cfg->level_id);
+        argv[argc++] = "--level";
+        argv[argc++] = levelbuf;
+    }
+    if (cfg && cfg->difficulty >= 0) {
+        snprintf(diffbuf, sizeof diffbuf, "%d", cfg->difficulty);
+        argv[argc++] = "--difficulty";
+        argv[argc++] = diffbuf;
+    }
+    if (cfg) {
+        if (cfg->preset == 1) argv[argc++] = "--faithful";
+        else if (cfg->preset == 2) argv[argc++] = "--faithful-hd";
+        else if (cfg->preset == 3) argv[argc++] = "--remaster";
+    }
+    if (cfg && cfg->multiplayer) {
+        argv[argc++] = "--multiplayer";
+        if (cfg->players >= 2) {
+            snprintf(playersbuf, sizeof playersbuf, "%d", cfg->players);
+            argv[argc++] = "--players";
+            argv[argc++] = playersbuf;
+        }
+        if (cfg->mp_stage_id >= 0) {
+            snprintf(stagebuf, sizeof stagebuf, "%d", cfg->mp_stage_id);
+            argv[argc++] = "--mp-stage";
+            argv[argc++] = stagebuf;
+        }
+    }
+    /* Validation/CI seam: boot, render N frames, screenshot, and exit cleanly
+     * (used to verify the launcher->engine handoff non-interactively). */
+    {
+        const char *shot = getenv("MGB64_BOOT_SCREENSHOT_FRAME");
+        if (shot && shot[0]) {
+            argv[argc++] = "--screenshot-frame";
+            argv[argc++] = shot;
+            argv[argc++] = "--screenshot-exit";
+        }
+    }
+
+    return mgb64_headless_main(argc, (char **)argv);
+}
+#endif /* MGB64_APP && !MACOS_APP_BUNDLE */

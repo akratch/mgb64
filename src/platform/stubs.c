@@ -15,6 +15,7 @@
 #include <SDL.h>
 #include <bondconstants.h>
 #include <boss.h>
+#include "../app/input_actions.h"
 #include "audi.h"
 #include "savedir.h"
 #include "game/bondinv.h"
@@ -6214,15 +6215,19 @@ s32 osContGetReadData(OSContPad *data) {
         if (keys[SDL_SCANCODE_RETURN])  buttons |= A_BUTTON;
         if (keys[SDL_SCANCODE_TAB])     buttons |= START_BUTTON;
 
-        if (keys[SDL_SCANCODE_R] || keys[SDL_SCANCODE_F] || keys[SDL_SCANCODE_BACKSPACE])
+        /* Rebindable actions read the binding registry (defaults == the keys
+         * below); F/Backspace and the Left/Right-arrow lean stay as fixed
+         * alternates. Under --deterministic the registry forces defaults, so
+         * scripted input is unaffected. */
+        if (keys[inputBindingScancode(IB_RELOAD)] || keys[SDL_SCANCODE_F] || keys[SDL_SCANCODE_BACKSPACE])
             buttons |= B_BUTTON;
 
-        if (keys[SDL_SCANCODE_LSHIFT])  buttons |= Z_TRIG;
-        if (keys[SDL_SCANCODE_RSHIFT])  buttons |= R_TRIG;
+        if (keys[inputBindingScancode(IB_FIRE)])  buttons |= Z_TRIG;
+        if (keys[inputBindingScancode(IB_AIM)])   buttons |= R_TRIG;
         if (keys[SDL_SCANCODE_LALT])    buttons |= L_TRIG;
 
-        if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_LEFT])   buttons |= L_CBUTTONS;
-        if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RIGHT])  buttons |= R_CBUTTONS;
+        if (keys[inputBindingScancode(IB_LEAN_L)] || keys[SDL_SCANCODE_LEFT])   buttons |= L_CBUTTONS;
+        if (keys[inputBindingScancode(IB_LEAN_R)] || keys[SDL_SCANCODE_RIGHT])  buttons |= R_CBUTTONS;
         if (keys[SDL_SCANCODE_UP])      buttons |= U_CBUTTONS;
         if (keys[SDL_SCANCODE_DOWN])    buttons |= D_CBUTTONS;
 
@@ -6231,10 +6236,10 @@ s32 osContGetReadData(OSContPad *data) {
         if (keys[SDL_SCANCODE_J])       buttons |= L_JPAD;
         if (keys[SDL_SCANCODE_L])       buttons |= R_JPAD;
 
-        if (keys[SDL_SCANCODE_W]) stick_y += 80;
-        if (keys[SDL_SCANCODE_S]) stick_y -= 80;
-        if (keys[SDL_SCANCODE_A]) stick_x -= 80;
-        if (keys[SDL_SCANCODE_D]) stick_x += 80;
+        if (keys[inputBindingScancode(IB_FORWARD)]) stick_y += 80;
+        if (keys[inputBindingScancode(IB_BACK)])    stick_y -= 80;
+        if (keys[inputBindingScancode(IB_LEFT)])    stick_x -= 80;
+        if (keys[inputBindingScancode(IB_RIGHT)])   stick_x += 80;
 
         if (!g_pcMouseRegrabFrame) {
             Uint32 mouse = SDL_GetMouseState(NULL, NULL);
