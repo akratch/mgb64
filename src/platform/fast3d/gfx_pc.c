@@ -20107,10 +20107,22 @@ static void gfx_sp_moveword(uint8_t index, uint16_t offset, uintptr_t data) {
                    index, offset, (void *)data);
     }
     switch (index) {
-        case G_MW_NUMLIGHT:
-            rsp.current_num_lights = ((uint32_t)data - 0x80000000U) / 32;
+        case G_MW_NUMLIGHT: {
+            /* Clamp the light count to the array capacity before it drives the
+             * gfx_sp_vertex lighting loops. A valid numlights word is 0x80000000 + n*32;
+             * a corrupt/mis-resolved DL (or data < 0x80000000, which underflows the
+             * unsigned subtraction to a huge value) would otherwise land a 0..255 count
+             * that indexes current_lights[MAX_LIGHTS+1] and WRITES current_lights_coeffs
+             * [MAX_LIGHTS] out of bounds (calculate_normal_dir at ~16916), corrupting
+             * neighbouring rsp state. Valid range is [1, MAX_LIGHTS+1] — the same bound the
+             * ambient guard at ~10640 already enforces. Valid GE counts (1-2) pass through. */
+            uint32_t nlights = ((uint32_t)data - 0x80000000U) / 32U;
+            if (nlights < 1U) nlights = 1U;
+            if (nlights > (uint32_t)(MAX_LIGHTS + 1)) nlights = (uint32_t)(MAX_LIGHTS + 1);
+            rsp.current_num_lights = (uint8_t)nlights;
             rsp.lights_changed = 1;
             break;
+        }
         case G_MW_FOG:
             rsp.fog_mul = (int16_t)(((uint32_t)data) >> 16);
             rsp.fog_offset = (int16_t)((uint32_t)data);
