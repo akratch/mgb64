@@ -50,6 +50,7 @@ extern "C" {
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
 #include "gfx_screen_config.h"
+#include "gfx_uniforms.h"   /* render/post-FX uniform state shared with the GL backend */
 /* SMAA (W3.E4) committed reference LUTs (E4.T1): AreaTex 160x560 RG8, SearchTex
  * 64x16 R8 — first-party generated from the MIT SMAA reference (no ROM data). */
 #include "smaa_area_tex.h"
@@ -103,42 +104,8 @@ extern "C" {
     extern struct GfxDimensions gfx_current_dimensions;
     short viGetX(void);
     short viGetY(void);
-    /* Output-VI-filter (Phase 4) config — defined in platform_sdl.c / gfx_pc.c.
-     * Types match the extern declarations in gfx_opengl.c:38-74. */
-    extern int   g_pcRemasterFX, g_pcBloom, g_pcFxaa, g_pcTonemap, g_pcGradePresets, g_pcOutputDither;
-    extern float g_pcVideoGamma, g_pcVideoSaturation, g_pcVideoContrast, g_pcVideoBrightness;
-    extern float g_pcVignette, g_pcBloomThreshold, g_pcBloomIntensity, g_pcSharpen;
-    extern float g_pcGradeLevelSat, g_pcGradeLevelCon, g_pcGradeLevelTintR, g_pcGradeLevelTintG, g_pcGradeLevelTintB;
-    /* SSAO (Phase 5). proj_a/b are the scene-projection coefficients the frontend
-     * (gfx_sp_matrix) raises each scene frame; proj_b == 0 gates SSAO off (menu). */
-    extern int   g_pcSsao;
-    extern float g_pcSsaoRadius, g_pcSsaoIntensity;
-    extern float g_pc_ssao_proj_a, g_pc_ssao_proj_b;
-    /* View-ray reconstruction coefficients P[0][0]/P[1][1] (W3.E2 SSAO v2). Reset
-     * each frame in mtl_start_frame beside proj_b — stale x/y paired with a fresh
-     * a/b (menu->gameplay) would skew the reconstructed view rays. */
-    extern float g_pc_ssao_proj_x, g_pc_ssao_proj_y;
-    /* SSAO v2 knobs (W3.E2). Registered in platform_sdl.c; the hemisphere PASS A
-     * and bilateral PASS B read these. Mode 1=planar v1 (inline), 2=hemisphere v2. */
-    extern int   g_pcSsaoMode, g_pcSsaoHalfRes, g_pcSsaoBlur;
-    extern float g_pcSsaoBias, g_pcSsaoPower, g_pcSsaoFarCutoff, g_pcSsaoNearCut,
-                 g_pcSsaoSkyCut, g_pcSsaoBlurDepthSharp;
-    /* SMAA (W3.E4) — subpixel morphological AA, Metal-only. Default 0. When on it
-     * replaces FXAA on the output pass (mutually exclusive). */
-    extern int   g_pcSmaa;
-    extern int   g_pc_view_inv_valid;  /* W1.E2.T1 view-inverse capture latch (reset per frame) */
-    /* W1.E3: sun shadow map (capture-and-replay). */
-    extern int   g_pcSunShadow;
-    extern int   g_pcSunShadowRes;
-    extern float g_pcSunShadowBias;
-    extern float g_pcSunShadowUmbra;
-    extern float g_pc_shadow_mat[4][4];       /* world->shadow-clip, m[row][col] (§4.5) */
-    extern int   g_pc_shadow_mat_valid;
-    extern int   g_pc_shadow_map_ready;       /* §3.5: frontend-visible, set after a non-empty depth-pass replay */
-    extern const float *gfx_shadow_get_geometry(size_t *out_tri_count);
-    extern float g_pc_sun_dir_world[3]; /* W1.E2.T1 normalized GlobalLight dir (dir TO light), world space */
-    extern int   g_pcPerPixelLight;    /* W1.E4: Video.PerPixelLight (dFdx directional sun) */
-    extern float g_pcEnvRelightBlend;  /* W1.E1/E4: relight strength dial [0..1] */
+    /* Render/post-FX uniform state (g_pc*) is declared once in gfx_uniforms.h,
+     * included above and shared with the GL backend. */
 }
 
 /* N64 tile wrap flags (PR/gbi.h) — declared locally to avoid the N64 header. */
@@ -2116,7 +2083,7 @@ static bool mtl_run_output_filter(id<MTLCommandBuffer> cmdbuf, bool smaa_ran) {
 /* ==========================================================================
  * SSAO v2 (W3.E2) — hemisphere AO with view-space reconstruction (Metal only).
  * The per-pixel viewPos()/viewNormal() reconstruction is the exact op that hangs
- * Apple's GL-over-Metal translator (docs/METAL_BACKEND_PLAN.md:39); it runs clean
+ * Apple's GL-over-Metal translator (docs/design/METAL_BACKEND_PLAN.md:39); it runs clean
  * natively. PASS A integrates a cosine hemisphere above the reconstructed surface;
  * PASS B (T3) blurs it bilaterally; the composite (mtl_ensure_filter_program)
  * samples the result as texture(2). All AO work is inserted in mtl_end_frame

@@ -224,7 +224,7 @@ git clone --quiet "$bare" "$out"
     echo "Launch repository tree mismatch: got $launch_tree, expected export-ignore-filtered tree $launch_tree_filtered (HEAD $source_head minus export-ignore paths)" >&2
     exit 1
   fi
-  leaked_internal="$(git ls-files -- ':(glob)docs/superpowers/**' ':(glob)docs/remaster-aaa/**' ':(glob)docs/*_PLAN.md' ':(glob)docs/*_ROADMAP.md')"
+  leaked_internal="$(git ls-files -- ':(glob)docs/design/**')"
   if [ -n "$leaked_internal" ]; then
     echo "Launch repository unexpectedly contains internal (export-ignore) docs:" >&2
     printf '%s\n' "$leaked_internal" >&2

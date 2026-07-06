@@ -81,6 +81,11 @@ def main() -> int:
         ),
         "tools/smaa/AreaTex.py": ("This texture allows to obtain the area",),
         "tools/smaa/SearchTex.py": ("This texture allows to know how many pixels",),
+        "src/platform/fast3d/PROVENANCE.md": (
+            "Copyright (c) 2020 Emill, MaikelChan",
+            "modified BSD-2-Clause",
+            "binary contains no assets you do not have the right to distribute",
+        ),
     }
 
     for rel_path, needles in required_files.items():
@@ -113,6 +118,8 @@ def main() -> int:
             "No recompilation source or IDO/IRIX compiler input files are redistributed here",
             "tools/smaa/LICENSE",
             "SMAA reference lookup-table generator",
+            "n64-fast3d-engine",
+            "binary redistribution restricted to asset-free binaries",
         ):
             if needle not in third_party_text:
                 problems.append(f"THIRD_PARTY.md is missing expected text: {needle}")

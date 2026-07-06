@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # perf_census.sh — deterministic headless per-level frame-time census for the
-# MGB64 native port. Foundation of the M0 milestone in docs/PERFORMANCE_PLAN.md.
+# MGB64 native port. Foundation of the M0 milestone in docs/design/PERFORMANCE_PLAN.md.
 #
 # For each direct-boot level it boots the port headless + deterministic, runs a
 # fixed number of frames, and records mean per-frame `work_ms` from the built-in

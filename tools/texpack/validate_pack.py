@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validate_pack.py -- offline structural QA gate for an HD texture pack (W2.E7.T1).
 
-The first, ROM-free leg of the pack QA harness (docs/remaster-aaa/02-hd-asset-pipeline.md
+The first, ROM-free leg of the pack QA harness (docs/design/remaster-aaa/02-hd-asset-pipeline.md
 §4.8). Runs in seconds, touches no game binary, and catches the structural defects that
 would otherwise only surface in-game (or, worse, ship):
 

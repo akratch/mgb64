@@ -102,6 +102,7 @@ See `ROADMAP.md` for the staged cleanup plan.
 
 | Path | Component | License | Upstream |
 | --- | --- | --- | --- |
+| `src/platform/fast3d/` | Fast3D display-list interpreter + GL/Metal backends — the core N64-GBI-to-GPU renderer, compiled into every native binary. `gfx_cc.c`'s 2-cycle combiner additionally derives from the Perfect Dark port; the native Metal backend and smooth-normal builder are first-party. Full breakdown and the reproduced license notice are in `src/platform/fast3d/PROVENANCE.md`. | Modified BSD-2-Clause (n64-fast3d-engine; source BSD-style, binary redistribution restricted to asset-free binaries) — see `src/platform/fast3d/PROVENANCE.md` | https://github.com/Emill/n64-fast3d-engine |
 | `lib/glad/` | glad OpenGL loader (generated, v0.1.36) + Khronos `khrplatform.h` | MIT and Khronos notices — see `lib/glad/LICENSE` | https://github.com/Dav1dde/glad |
 | `lib/stb/stb_image.h` | stb_image v2.30 PNG decoder, used by the optional HD texture-pack loader (`src/platform/texture_pack.c`) | Public domain (Unlicense) / MIT dual — full notice in the file trailer | https://github.com/nothings/stb |
 | `lib/imgui/` | Dear ImGui (immediate-mode GUI) + `imgui_impl_sdl2` / `imgui_impl_opengl3` backends, used by the in-process app shell (`src/app/`); pinned @ `776bf2ab` | MIT — see `lib/imgui/LICENSE.txt` | https://github.com/ocornut/imgui |

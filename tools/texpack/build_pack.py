@@ -18,7 +18,7 @@ Pipeline (all local, all from YOUR ROM dump -- nothing here is redistributable):
   4. Point the game at it (the in-game loader ships today):
        GE007_TEXTURE_PACK=/tmp/mypack ./build/ge007 ...
 
-Output layout matches the loader key (docs/REMASTER_ROADMAP.md, Engine B):
+Output layout matches the loader key (docs/design/REMASTER_ROADMAP.md, Engine B):
   <out>/textures/tok####.png   (zero-padded 4-digit settex token; texture_pack.c:45)
 
 Requires Pillow (pip install -r tools/texpack/requirements.txt) only to decode the

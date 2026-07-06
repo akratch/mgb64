@@ -121,6 +121,8 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/select_glass_shard_pixel_targets.py"
             "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
+            "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(
@@ -187,13 +189,21 @@ if(BUILD_TESTING)
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_shell_syntax.py"
             --repo-root "${CMAKE_SOURCE_DIR}"
     )
-    # W5.E2.T1 — settings-menu curation table vs. live settings registry.
+    # Settings-menu curation table vs. live settings registry.
     add_test(
         NAME settings_menu_model
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_settings_menu_model.py"
             --repo-root "${CMAKE_SOURCE_DIR}"
     )
-    # T5 (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md): tools/tests/ unit tests —
+    # Registry honesty: every add_port_validation_smoke(...) below must
+    # reference a script that actually ships in tools/, so the advertised
+    # validation-lane coverage cannot exceed what a fresh checkout can run.
+    add_test(
+        NAME port_validation_smoke_registry
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+    )
+    # T5: tools/tests/ unit tests —
     # ROM-free, pure Python, never skips. Closes the "CI only py_compiles the
     # tools" gap at the ctest layer for the intro/oracle tooling this plan
     # relies on. Kept in this always-registered block (unlike the intro_*
@@ -256,6 +266,26 @@ if(BUILD_TESTING)
         target_link_libraries(test_room_normals m)
     endif()
     add_test(NAME room_normals COMMAND test_room_normals)
+
+    # Registering GE007_* env-flag accessors — ROM-free unit test.
+    add_executable(test_port_env
+        "${CMAKE_SOURCE_DIR}/tests/test_port_env.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/port_env.c"
+    )
+    target_include_directories(test_port_env PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME port_env COMMAND test_port_env)
+
+    # Generated GE007_* flag reference must match the source flag surface, so
+    # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
+    # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
+    add_test(
+        NAME env_reference_current
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+            --check docs/ENV_FLAGS.md
+    )
+    set_tests_properties(env_reference_current PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
 
 if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baserom.u.z64")
@@ -281,50 +311,20 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
         )
     endfunction()
 
-    add_port_validation_smoke(port_frontend_watch_smoke frontend_watch_smoke.sh 120)
-    add_port_validation_smoke(port_gameplay_room_origin_smoke gameplay_room_origin_smoke.sh 120)
-    add_port_validation_smoke(port_room_render_matrix_smoke room_render_matrix_smoke.sh 180)
-    add_port_validation_smoke(port_room_transition_matrix_smoke room_transition_matrix_smoke.sh 180)
-    add_port_validation_smoke(port_route_room_render_matrix_smoke route_room_render_matrix_smoke.sh 600)
+    # Runtime validation smokes. Registered only when PORT_VALIDATION_TESTS is
+    # ON and a baserom is present. Every script referenced here must ship in
+    # tools/ — enforced by the always-on port_validation_smoke_registry guard
+    # above — so this list can never advertise a lane whose script was never
+    # committed. (Historically ~38 registrations pointed at scripts that never
+    # shipped; those silently skipped, inflating apparent coverage. Removed.)
     add_port_validation_smoke(port_rom_oracle_route_contract route_contract_smoke.sh 900
         --native-smoke
         --all
         --timeout 120
     )
-    add_port_validation_smoke(port_weapon_viewmodel_smoke weapon_viewmodel_smoke.sh 180)
-    add_port_validation_smoke(port_startup_weapon_viewmodel_smoke startup_weapon_viewmodel_smoke.sh 120)
-    add_port_validation_smoke(port_visual_parity_smoke visual_parity_smoke.sh 180)
-    add_port_validation_smoke(port_native_ramrom_playback_smoke native_ramrom_playback_smoke.sh 90)
-    add_port_validation_smoke(port_laser_sfx_route_smoke laser_sfx_route_smoke.sh 90)
-    add_port_validation_smoke(port_autogun_pose_smoke autogun_pose_smoke.sh 120)
-    add_port_validation_smoke(port_runway_vehicle_smoke runway_vehicle_smoke.sh 120)
-    add_port_validation_smoke(port_streets_tank_smoke streets_tank_smoke.sh 120)
-    add_port_validation_smoke(port_tank_shell_damage_smoke tank_shell_damage_smoke.sh 180)
-    add_port_validation_smoke(port_monitor_behavior_smoke monitor_behavior_smoke.sh 120)
-    add_port_validation_smoke(port_setup_link_smoke setup_link_smoke.sh 180)
-    add_port_validation_smoke(port_stage_mission_setup_smoke stage_mission_setup_smoke.sh 180)
     add_port_validation_smoke(port_campaign_route_smoke campaign_route_smoke.sh 900)
     add_port_validation_smoke(port_dam_progression_smoke dam_progression_smoke.sh 300)
-    add_port_validation_smoke(port_facility_progression_smoke facility_progression_smoke.sh 240)
-    add_port_validation_smoke(port_runway_progression_smoke runway_progression_smoke.sh 240)
-    add_port_validation_smoke(port_silo_progression_smoke silo_progression_smoke.sh 240)
-    add_port_validation_smoke(port_statue_progression_smoke statue_progression_smoke.sh 240)
-    add_port_validation_smoke(port_frigate_progression_smoke frigate_progression_smoke.sh 240)
-    add_port_validation_smoke(port_surface1_progression_smoke surface1_progression_smoke.sh 180)
-    add_port_validation_smoke(port_surface2_progression_smoke surface2_progression_smoke.sh 240)
     add_port_validation_smoke(port_surface2_final_flow_smoke surface2_final_flow_smoke.sh 180)
-    add_port_validation_smoke(port_archives_progression_smoke archives_progression_smoke.sh 180)
-    add_port_validation_smoke(port_bunker2_progression_smoke bunker2_progression_smoke.sh 240)
-    add_port_validation_smoke(port_depot_progression_smoke depot_progression_smoke.sh 180)
-    add_port_validation_smoke(port_train_progression_smoke train_progression_smoke.sh 180)
-    add_port_validation_smoke(port_jungle_progression_smoke jungle_progression_smoke.sh 180)
-    add_port_validation_smoke(port_control_progression_smoke control_progression_smoke.sh 180)
-    add_port_validation_smoke(port_caverns_progression_smoke caverns_progression_smoke.sh 180)
-    add_port_validation_smoke(port_cradle_progression_smoke cradle_progression_smoke.sh 180)
-    add_port_validation_smoke(port_door_render_smoke door_render_smoke.sh 120)
-    add_port_validation_smoke(port_door_behavior_smoke door_behavior_smoke.sh 120)
-    add_port_validation_smoke(port_door_motion_smoke door_motion_smoke.sh 120)
-    add_port_validation_smoke(port_interaction_smoke interaction_smoke.sh 120)
     add_port_validation_smoke(port_hidden_guard_contract_smoke hidden_guard_contract_smoke.sh 240)
     add_port_validation_smoke(port_knife_impact_smoke knife_impact_smoke.sh 180)
     add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
@@ -336,18 +336,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     )
     add_port_validation_smoke(port_jungle_xlu_cvg_memory_regression jungle_xlu_cvg_memory_regression.sh 360)
     add_port_validation_smoke(port_spawn_health_smoke spawn_health_check.sh 120)
-    add_port_validation_smoke(port_audio_churn_smoke audio_soak_test.sh 90
-        --seconds 3
-        --level "33 34 22 26 36 35"
-        --repeat 2
-    )
-    add_port_validation_smoke(port_audio_mute_toggle_smoke audio_mute_toggle_smoke.sh 90)
-    # Per-level frame-time budget gate (docs/PERFORMANCE_PLAN.md M0). Reference-
+    # Per-level frame-time budget gate (docs/design/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
 endif()
 
-# T5 (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md): cheap intro-path regression
+# T5: cheap intro-path regression
 # gates. Unlike add_port_validation_smoke above (opt-in via
 # PORT_VALIDATION_TESTS, and invisible entirely without baserom.u.z64 at
 # CMake-configure time), these three are ALWAYS registered so a ROM-less
@@ -469,8 +463,6 @@ add_definitions(
 file(GLOB GAME_SOURCES CONFIGURE_DEPENDS src/game/*.c)
 file(GLOB PLATFORM_SOURCES CONFIGURE_DEPENDS src/platform/*.c)
 
-# Exclude the old gfx_pc.c (replaced by fast3d)
-list(FILTER PLATFORM_SOURCES EXCLUDE REGEX "gfx_pc\\.c$")
 # Exclude an intentionally empty legacy audio-ring placeholder. The active
 # native audio backend is audio_pc.c.
 list(FILTER PLATFORM_SOURCES EXCLUDE REGEX "audio_ring\\.c$")
@@ -625,6 +617,16 @@ target_compile_options(ge007 PRIVATE
     # -Wno-return-type  — REMOVED: all return paths verified
     # -Wno-return-mismatch  — REMOVED: all return types verified
     -fms-extensions
+    # Force the SysV/Itanium bit-field layout on EVERY platform. This decomp
+    # port relies on the original N64 struct layouts (see -fno-strict-aliasing
+    # below), but MinGW/GCC on Windows DEFAULTS to -mms-bitfields (MSVC-compatible
+    # bit-field packing), which changes the size and field offsets of the game's
+    # mixed bit-field structs — e.g. `struct {u8 a; unsigned x:8; u16 y:12; u32 addr;}`
+    # goes from 8 bytes / addr@4 to 16 bytes / addr@12. That desyncs every struct
+    # read over ROM/model/setup data from the bytes actually there, which is the
+    # Windows-only immediate-crash-on-load. macOS/Linux already default to this
+    # layout, so the flag is a no-op there and keeps all three targets in sync.
+    -mno-ms-bitfields
     # This is a decomp port: pointer punning between the original N64 struct
     # layouts and PC-native types (ROM_OFFSET in platform_os.h, bg.c/gun.c/
     # chrobjhandler.c/bondview.c reinterpret casts) is pervasive and relied
@@ -878,7 +880,10 @@ if(MACOS_APP_BUNDLE AND APPLE)
         -Wno-empty-body
         -Wno-switch
         -fms-extensions
-        # See the ge007 target above: decomp-port pointer punning needs this.
+        # See the ge007 target above for both of these: N64-matching bit-field
+        # layout on every platform (Windows/MinGW defaults to -mms-bitfields),
+        # and decomp-port pointer punning.
+        -mno-ms-bitfields
         -fno-strict-aliasing
     )
 

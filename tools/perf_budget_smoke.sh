@@ -3,7 +3,7 @@
 # perf_budget_smoke.sh -- CTest-compatible wrapper that runs the per-level
 # frame-time census (tools/perf_census.sh) and enforces budgets
 # (tools/perf_budget_check.py). This is the M0 regression gate described in
-# docs/PERFORMANCE_PLAN.md §6.
+# docs/design/PERFORMANCE_PLAN.md §6.
 #
 # HARD FAIL if any level drops below the 60 fps floor (16.6 ms). Target is
 # 120 fps (8.3 ms), reported as WARN unless --strict.

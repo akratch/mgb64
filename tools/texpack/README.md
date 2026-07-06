@@ -127,5 +127,5 @@ shading is a grayscale multiply, so hue is preserved).
 - **Open-licensed substitution** (the other *distributable* route): replace generic
   surfaces with independent PD/CC0/original art, or attribution/share-alike assets
   only after `NOTICE` and compatibility review. The `--cc0-library`/Router track is
-  not built yet (see `docs/REMASTER_ROADMAP.md` §3 and §6 P2).
+  not built yet (see `docs/design/REMASTER_ROADMAP.md` §3 and §6 P2).
 - **DDS/BCn** output for VRAM/load wins on a full ~3001-token pack (a later iteration).

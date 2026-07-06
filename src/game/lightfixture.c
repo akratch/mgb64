@@ -114,7 +114,7 @@ s32 check_if_imageID_is_light(s32 imageID)
  * everywhere, 0 DIVERGE. GE007_SHOOT_OUT_LIGHTS=0 is the A/B escape hatch: when
  * off, the parent effect fn and the room-load population pass both early-return,
  * so the tables stay empty and the render is byte-identical to the previous
- * stub. See docs/SHOOT_OUT_LIGHTS_PLAN.md. */
+ * stub. See docs/design/SHOOT_OUT_LIGHTS_PLAN.md. */
 static int s_ge007_shoot_lights = -1;
 int ge007_shoot_out_lights_enabled(void)
 {

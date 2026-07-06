@@ -50,15 +50,24 @@ static u32 resolveRomOffset(void *source) {
         return (u32)addr;
     }
 
-    /* Case 3: pointer to a segment variable — read stored ROM offset */
+    /* Case 3: `source` is a pointer to a segment variable holding a stored ROM
+     * offset — dereference it. This is a real in-process pointer from the port's
+     * segment table, not attacker-supplied data, and doRomCopy() re-validates the
+     * resulting offset against g_romSize before any copy. (Further hardening this
+     * dereference against a hypothetical wild pointer is tracked separately and
+     * must not regress the legitimate segment-variable path.) */
     return *(u32 *)source;
 }
 
 void doRomCopy(void *target, void *source, u32 size)
 {
     if (!g_romData || size == 0) return;
-u32 offset = resolveRomOffset(source);
-    if (offset + size <= g_romSize) {
+    u32 offset = resolveRomOffset(source);
+    /* Bounds-check without the addition: offset+size can wrap (both are u32 and
+     * `size` is ROM-derived — e.g. music track / bank sizes read out of the
+     * file), which would let a crafted image slip a copy past the end of the
+     * loaded ROM buffer. */
+    if (size <= g_romSize && offset <= g_romSize - size) {
         memcpy(target, g_romData + offset, size);
     } else {
         fprintf(stderr, "[ROM] doRomCopy: out of bounds offset=0x%08x size=0x%x romSize=0x%x\n",

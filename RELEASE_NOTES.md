@@ -207,8 +207,7 @@ data is included ([DISCLAIMER.md](DISCLAIMER.md)).
   either (measured); the native gap there is that the establishing camera's
   room admission keys off the unspawned player position instead of the
   camera's own position, so distant scenery (e.g. the dam wall/reservoir
-  vista) can render as mostly sky. See `docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md`
-  (ledger D4) for details.
+  vista) can render as mostly sky.
 - The repository still contains inventoried N64 SDK/libultra compatibility
   material that is not MIT-licensed first-party code; see
   [THIRD_PARTY.md](THIRD_PARTY.md).

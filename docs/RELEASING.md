@@ -104,7 +104,7 @@ gh pr merge --rebase --delete-branch           # merge (self-merge is fine)
 
 Outside contributors PR the same way; you review + merge theirs. Keep the tree
 asset-free — `scripts/ci/check_release_ready.sh` is the guard, and `.gitattributes
-export-ignore` keeps internal dev docs (`docs/superpowers/**`, `*_PLAN`/`*_GUIDE`/
+export-ignore` keeps internal dev docs (`*_PLAN`/`*_GUIDE`/
 `*_THEORY`/`*_REVIEW`/`*_WIP`) out of the public tree.
 
 ### The one-time launch snapshot (historical, done)

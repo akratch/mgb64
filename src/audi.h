@@ -23,7 +23,7 @@ u32 portAiGetDroppedBufferCount(void);
 void portAiGetStats(PortAiStats *stats);
 u32 portAudioGetDeviceBufferBytes(void);
 
-/* Audio volume buses (W6.E3.T1, docs/remaster-aaa/06-audio-remaster.md §4.3).
+/* Audio volume buses (W6.E3.T1, docs/design/remaster-aaa/06-audio-remaster.md §4.3).
  * Q15 fixed point: 32768 == unity (callers identity-bypass at >= 32768 so the
  * default mix stays byte-identical). Storage + registration live in audio_pc.c;
  * consumed by portAudioApplyMasterVolume (audi_port.c), musicTrackNApplySeqpVol

@@ -52,9 +52,21 @@ Before you push, run the quick validation lane:
 ```
 
 It runs a static source guard (no ROM needed) and, if you have a build + ROM, a
-boot/spawn smoke. See **[docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md)** for
-the full validation tooling (save/pixel/state/audio lanes, the trace schema, and
-the diagnostic environment variables).
+boot/spawn smoke.
+
+Before opening a PR, run the full ROM-free gate — the same checks the CI
+workflow runs (hygiene, configure, build, warning budget, and the ROM-free
+CTest suite):
+
+```sh
+./scripts/ci/ci_local.sh
+```
+
+MGB64 uses a **local-CI posture**: hosted GitHub Actions are not enabled by
+default, so contributors self-check with `ci_local.sh` rather than relying on PR
+automation. See **[docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md)** for the
+full validation tooling (save/pixel/state/audio lanes, the trace schema, and the
+diagnostic environment variables).
 
 ## Coding style
 
@@ -84,6 +96,32 @@ the diagnostic environment variables).
 - The native port must remain **asset-free**: no game data compiled into the
   binary. If your change touches asset loading, keep data coming from the user's
   ROM at runtime, and keep `macos/Scripts/verify_asset_free.sh` passing.
+- **Adding a `GE007_*` diagnostic/opt-in flag?** Read it through the registering
+  accessors in `src/platform/port_env.h` (`port_env_bool`/`_int`/`_float`, or
+  `ge_env_bool` for game code) rather than a raw `getenv`, and give it a short
+  `help` string. That records its type, default, and description in the
+  generated `docs/ENV_FLAGS.md`. After adding or renaming flags,
+  refresh that reference with `tools/gen_env_reference.py --out docs/ENV_FLAGS.md`
+  (a CTest gate, `env_reference_current`, fails if it drifts). A settled,
+  user-facing option belongs in the typed settings registry (`settings.c` →
+  the in-app UI), not left as an env flag.
+
+## Commit messages
+
+Commit history is part of the project's public face, so keep it legible to
+someone who wasn't in the room:
+
+- Use a short, imperative summary line, ideally
+  [Conventional Commits](https://www.conventionalcommits.org/) style:
+  `type(scope): summary` (e.g. `fix(audio): clamp mixer pole frequency`).
+  Common types: `feat`, `fix`, `docs`, `perf`, `refactor`, `test`, `build`,
+  `chore`.
+- Explain the *why* in the body when it isn't obvious from the diff.
+- **No internal codenames or planning coordinates** in the subject
+  (e.g. `W1.E4`, `PM2`, `D35`, task IDs). They're meaningless to anyone outside
+  a given work session and become permanent noise in the public log.
+- Avoid bare `WIP` / `Checkpoint` / `misc fixes` subjects on merged history;
+  squash or rewrite them before the PR lands.
 
 ## Pull requests
 

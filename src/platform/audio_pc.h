@@ -27,7 +27,7 @@ typedef struct PortSfxMixStats_s {
     u32 peakDeltaMax;
 } PortSfxMixStats;
 
-/* H1 output low-pass (docs/remaster-aaa/06-audio-remaster.md §4.2): the one-pole
+/* H1 output low-pass (docs/design/remaster-aaa/06-audio-remaster.md §4.2): the one-pole
  * DAC-coloration filter in audi_port.c, exposed as two LIVE settings registered by
  * portAudioRegisterConfig(). Defined in audi_port.c (the consumer), registered in
  * audio_pc.c. Default alpha = the W6.E1.T2 sweep's best-fit (mildest) alpha against

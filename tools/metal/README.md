@@ -1,7 +1,7 @@
 # Metal backend — Phase 1 spike artifacts
 
 Reproducible GO/NO-GO de-risking spikes for the native Metal backend
-(see `docs/METAL_BACKEND_PLAN.md`, Phase 1).
+(see `docs/design/METAL_BACKEND_PLAN.md`, Phase 1).
 
 ## Spike A — cross-backend CPU-pipeline invariance ✅ GO
 The CPU display-list interpreter + T&L run identically regardless of backend.

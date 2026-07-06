@@ -1,6 +1,7 @@
 /**
  * gfx_cc.c — Color combiner feature extraction.
- * Based on Emill/n64-fast3d-engine (MIT license).
+ * Based on Emill/n64-fast3d-engine (n64-fast3d-engine license — modified
+ * BSD-2-Clause; see src/platform/fast3d/PROVENANCE.md).
  * Rewritten for 2-cycle support based on fgsfdsfgs/perfect_dark port.
  */
 #include "gfx_cc.h"

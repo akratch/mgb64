@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """perf_budget_check.py -- enforce per-level frame-time budgets for the MGB64
-native port. Part of the M0 milestone in docs/PERFORMANCE_PLAN.md.
+native port. Part of the M0 milestone in docs/design/PERFORMANCE_PLAN.md.
 
 Reads a census CSV (as produced by tools/perf_census.sh) and checks each level's
 mean per-frame work_ms against budgets:

@@ -123,6 +123,7 @@ tools/report/report
 .vscode/
 .vs/
 .idea/
+CppProperties.json
 *~
 *.tmp
 

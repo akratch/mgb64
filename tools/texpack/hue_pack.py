@@ -8,7 +8,7 @@ with a flat, maximally-saturated, uniquely-hued tile, the on-screen hue of each
 surface tells us exactly which token painted it -- and the pixel coverage of each
 hue ranks the tokens by how much of the frame they own. The top ~5 ROOM tokens by
 coverage are the hero-surface candidates a curator should hand-route
-(docs/remaster-aaa/02-hd-asset-pipeline.md §4.7).
+(docs/design/remaster-aaa/02-hd-asset-pipeline.md §4.7).
 
 Two modes:
 

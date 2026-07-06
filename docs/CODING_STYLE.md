@@ -98,7 +98,7 @@ frame on a single thread; that thread is the frame's critical path. See
   is how the two shipped render defects happened).
 - **Framebuffer readback and GL state churn are batch-level, never per-primitive.**
 - **Measure.** Run `tools/perf_census.sh` before/after any renderer change and keep
-  every level within `docs/PERFORMANCE_PLAN.md` §6 (60 fps hard floor, 120 fps
+  every level within `docs/design/PERFORMANCE_PLAN.md` §6 (60 fps hard floor, 120 fps
   target). The opt-in `port_perf_budget_smoke` CTest lane enforces it.
 
 ## Pull Request Expectations

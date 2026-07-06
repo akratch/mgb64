@@ -243,9 +243,7 @@ proved unmovable across five menu-timing variants and three forced RNG seeds)
 shows the dam vista with no Bond figure on either engine, and stock pixels for
 the spawn-framing camera (index 0) were not obtainable for that reason. The
 NATIVE camera-0 capture shows the arriving truck's cab with no visible
-driver/passenger figure and no character of any kind in frame. See
-`docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md` ledger item D4 for the full trace/pixel
-evidence.
+driver/passenger figure and no character of any kind in frame.
 
 The camera-5 pixel comparison surfaced the actual, more consequential gap, now
 FIXED: for the specific establishing camera the game normally shows players (a
@@ -262,9 +260,9 @@ across open water (the far mountains) are not portal-reachable from the camera's
 room and still do not render; a stock pixel comparison will decide whether a
 wider/backdrop admission is warranted.
 
-Broader intro/outro faithfulness work (measured against a stock-ROM ares
-oracle) is tracked in `docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md`; player-facing
-settings and hatches are documented in `docs/CINEMATICS.md`. Landed: faithful
+Broader intro/outro faithfulness work is measured against a stock-ROM ares
+oracle; player-facing settings and hatches are documented in
+`docs/CINEMATICS.md`. Landed: faithful
 60-degree cutscene FOV, original staged intro-skip (no more stick-drift abort),
 stock-shaped deterministic camera selection, menu-boot parity (proven
 bit-exact vs direct boot), and the establishing/outro render fix above. The one

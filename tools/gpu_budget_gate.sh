@@ -4,8 +4,8 @@
 # Asserts a W3 feature's (scene+post) GPU cost, ON-minus-OFF, stays within the
 # W3 budget on jungle+dam: < 2.0 ms @1080p-class, < 4.0 ms @4K-class. Cost is the
 # per-frame (scene_ms+post_ms) from the GE007_METAL_GPU_TRACE lane (== whole-frame
-# GPU time), averaged over post-warmup frames. CPU work_ms is NOT a valid gate
-# (see docs/REMASTER_PHASE1_PLAN.md G-PERF), which is why this measures GPU-ms.
+# GPU time), averaged over post-warmup frames. CPU work_ms is NOT a valid gate,
+# which is why this measures GPU-ms.
 #
 # The feature is toggled via --config-override <flag>=1/0 under --remaster (so the
 # remaster post chain is present in both runs and only the feature branch differs).

@@ -1,5 +1,5 @@
 {
-  "_comment": "Dam per-level curation (W2.E3 first curation file; refreshed W2.E8.T2 as the regression-anchor redo). Token ids + routing choices only -- no ROM data, committable. Top-5 hue-ID heroes (coverage): tok0022 28.8% (ground), tok0949 27.8% (rock), tok1127 2.4% (32x32 non-tileable brown decal), tok0291 1.2% (64x64 tileable gray wall), tok1446 1.2% (32x32 non-tileable dark decal). Heroes tok1127 + tok1446 are tiny non-tileable decals -> ride the automatic whole_image AI-upscale tree (matches the shipped Dam pack). See docs/remaster-aaa/02-hd-asset-pipeline.md sec 4.2/4.7.",
+  "_comment": "Dam per-level curation (W2.E3 first curation file; refreshed W2.E8.T2 as the regression-anchor redo). Token ids + routing choices only -- no ROM data, committable. Top-5 hue-ID heroes (coverage): tok0022 28.8% (ground), tok0949 27.8% (rock), tok1127 2.4% (32x32 non-tileable brown decal), tok0291 1.2% (64x64 tileable gray wall), tok1446 1.2% (32x32 non-tileable dark decal). Heroes tok1127 + tok1446 are tiny non-tileable decals -> ride the automatic whole_image AI-upscale tree (matches the shipped Dam pack). See docs/design/remaster-aaa/02-hd-asset-pipeline.md sec 4.2/4.7.",
   "tok0022": {
     "source": "procedural",
     "preset": "gravel",

@@ -23,6 +23,7 @@
 #include "host_window.h"
 #include "app_overlay_hooks.h"
 #include "gfx_pc.h"
+#include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
 #include "settings.h"
 #include "frame_stats.h"
 #include "game/front.h"

@@ -1,3 +1,13 @@
+# =============================================================================
+#  Makefile — builds the N64 ROM-matching target (contributor / decomp work).
+#
+#  This is NOT the desktop port. To build and run MGB64 on macOS/Linux/Windows,
+#  use the CMake build instead:  cmake -B build && cmake --build build -j
+#  See docs/BUILDING.md for both targets and when to use which.
+#
+#  This Makefile rebuilds the original N64 ROM from your own baserom for
+#  decompilation/matching work (COMPARE checks the output sha1 against ge007.*.sha1).
+# =============================================================================
 # Makefile to build Goldeneye 007
 
 ### Default target ###
