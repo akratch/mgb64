@@ -97,6 +97,16 @@ void texLoadFromTextureNum(s32 texturenum, struct texpool *arg1);
 void texLoadFromModelFileHeader(ModelFileHeader* arg0, struct texpool* arg1);
 
 #ifdef NATIVE_PORT
+/* Grow-on-demand arena backing the main texture pool (see image.c). */
+s32 texArenaInit(void);          /* per-level (re)init; 0 on alloc failure */
+u32 texArenaChunkCount(void);    /* chunks live this level (diagnostics) */
+void *texPoolResolveDataByLow32(uint32_t token); /* chunk-aware fallback resolver */
+extern s32 g_TexPoolOverflowCount;
+extern u32 g_TexPoolHighWater;
+extern s32 texPoolStatsEnabled(void);
+#endif
+
+#ifdef NATIVE_PORT
 /* CI texture palette cache — texInflateZlib stores palettes here,
  * gfx_handle_settex retrieves them for GL texture creation.
  * Texture IDs are 12-bit in struct tex; palette contents remain capped at

@@ -45,6 +45,24 @@ static inline void gfx_ptr_store(const void *ptr) {
     gfx_ptr_vals[base_idx] = full;
 }
 
+/* Drop every mapping whose full pointer falls in [lo, hi). Call before freeing
+ * a heap region that pointers were stored from (e.g. a retired texture-arena
+ * chunk) so a later resolve can never hand back freed memory. Zeroing a slot
+ * mid-probe-chain can only cause a later benign miss (which re-resolves), never
+ * a stale hit -- so it is safe without tombstones. */
+static inline void gfx_ptr_invalidate_range(uintptr_t lo, uintptr_t hi) {
+    uint32_t i;
+    if (hi <= lo) {
+        return;
+    }
+    for (i = 0; i < GFX_PTR_TABLE_SIZE; i++) {
+        if (gfx_ptr_keys[i] != 0 && gfx_ptr_vals[i] >= lo && gfx_ptr_vals[i] < hi) {
+            gfx_ptr_keys[i] = 0;
+            gfx_ptr_vals[i] = 0;
+        }
+    }
+}
+
 static inline void *gfx_ptr_resolve(uint32_t key) {
     if (key == 0) return NULL;
     uint32_t base_idx = ((key >> 2) ^ (key >> 16)) & GFX_PTR_TABLE_MASK;
