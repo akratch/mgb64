@@ -3372,14 +3372,17 @@ extern struct ChrModelFileRecord c_item_entries[];
     {
         inherits ObjectRecord;
         /* The setup file stores 13 {u16 modelnum, u16 quantity} pairs (52 bytes;
-         * modelnum 0xFFFF = none), where slot i is authored for ammotype i+1.
-         * The N64 engine overlays the smaller unk80/quantities[] view onto that
-         * data, so quantities[] interleaves quantity and modelnum lanes — this
-         * is the source of the retail "multi ammo crates max out several ammo
-         * types" quirk and must be preserved for faithfulness. Both views share
-         * storage; the collect path reads quantities[] (overlay, as retail
-         * matched code does) while the collectability gate reads slots[]
-         * (pair stride, as retail asm 7F0509B8 does). */
+         * modelnum 0xFFFF = none), where slot i is authored for ammotype i+1
+         * (slot 1 folds into the shared 9mm pool). Read the authored pairs via
+         * slots[].quantity (4-byte pair stride). BOTH retail loops do this: the
+         * collect path (interact_ammobox_object, asm 7F050338) and the
+         * collectability gate (asm 7F0509B8) each step 4 bytes and read the
+         * quantity lane. The smaller unk80/quantities[] overlay (2-byte stride)
+         * interleaves quantity and modelnum lanes, so reading quantities[i]
+         * lands on a modelnum for odd i (0xFFFF "none" -> ammo maxes out). It is
+         * NOT a faithful quirk — retail never reads the overlay. The overlay
+         * view is retained only to keep the full 52-byte tail representable and
+         * byte-faithful; do not read gameplay quantities through it. */
         union
         {
             struct

@@ -2014,13 +2014,14 @@ static PropDefHeaderRecord *propdef_convert_n64_to_pc(const u8 *n64_data) {
             }
 
             /* --- MultiAmmoCrateRecord / AMMO (N64=180, PC=sizeof) ---
-             * Tail is 13 {u16 modelnum, u16 quantity} pairs. Convert as u16s
-             * to preserve lane order: the retail engine overlays the smaller
-             * unk80/quantities[] view onto these pairs, and the collect path
-             * depends on that exact u16 sequence (the "crate maxes out several
-             * ammo types" retail quirk). A generic u32 word-swap reverses the
-             * lanes within each pair, shifting quantities[] by one slot —
-             * that handed out proximity mines where retail gives remote. */
+             * Tail is 13 {u16 modelnum, u16 quantity} pairs. Convert each lane
+             * as a u16 (modelnum at +0, quantity at +2, 4-byte stride) so the
+             * authored pairs survive intact. A generic u32 word-swap would
+             * reverse the two lanes within each pair, handing out proximity
+             * mines where retail gives remote. Both retail loops (collect path
+             * 7F050338 and collectability gate 7F0509B8) read slots[].quantity
+             * via this 4-byte stride; the quantities[] overlay is never read
+             * for gameplay. */
             case PROPDEF_AMMO: {
                 MultiAmmoCrateRecord *m = (MultiAmmoCrateRecord *)dst;
                 memset(m, 0, sizeof(MultiAmmoCrateRecord));

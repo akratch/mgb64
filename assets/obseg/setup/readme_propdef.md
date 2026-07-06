@@ -49,3 +49,27 @@ Tbg_run_all_p_stanZ.c
     };
 
 Here the Runway ammobox is associated to preset 24, so it will use the coordinates from pad with index 24. The pad has link "p3830a", which refers to tile name 3830, or in hex, 0x0ef6.
+
+# Multi-Ammo Crate Contents (`PROPDEF_AMMO`, type 20)
+
+After the standard object header, an ammo crate carries a 52-byte tail of **13
+`{u16 modelnum, u16 quantity}` pairs** (offset `0x80`, 4 bytes each). `modelnum`
+`0xFFFF` means "no model" (nothing spawns if the crate is shot); `quantity` is
+the ammo dispensed on pickup. Slot `i` is authored for **ammotype `i + 1`**, and
+slot 1 is folded into the shared 9mm pool (so slots 0 and 1 both feed 9mm and
+ammotype 2 / `AMMO_9MM_2` is never targeted):
+
+| slot | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|------|---|---|---|---|---|---|---|---|---|---|----|----|----|
+| ammotype | 9mm | 9mm | rifle | shotgun | grenade | rockets | remote | prox | timed | knife | gren-round | magnum | ggun |
+
+For example, the Runway crates author `quantity = 5` at slot 4 → the player
+receives 5 grenades (times the solo-play ammo multiplier), and nothing else.
+
+The collect loop (`collect_or_interact_object`, `PROPDEF_AMMO` case in
+`chrobjhandler.c`) reads `slots[i].quantity` with this 4-byte pair stride,
+matching retail `interact_ammobox_object` (asm `7F050338`). It must NOT read the
+smaller `unk80/quantities[]` overlay view of the same union: that 2-byte stride
+lands on `modelnum` lanes for odd `i`, where `0xFFFF` reads as a quantity of
+65535 and maxes out ammo on pickup. See the comment on `MultiAmmoCrateRecord`
+in `src/bondtypes.h` and the regression gate `tools/ammo_crate_collect_smoke.sh`.

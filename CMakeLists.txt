@@ -336,6 +336,11 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     )
     add_port_validation_smoke(port_jungle_xlu_cvg_memory_regression jungle_xlu_cvg_memory_regression.sh 360)
     add_port_validation_smoke(port_spawn_health_smoke spawn_health_check.sh 120)
+    # Multi-ammo crate (PROPDEF_AMMO) collect-stride gate: warps Bond onto a
+    # Runway crate and asserts the pickup dispenses only the small authored
+    # quantities (no 0xFFFF modelnum-lane blowout) with the faithful i+1 ammotype
+    # mapping. Guards against the quantities[] overlay regression.
+    add_port_validation_smoke(port_ammo_crate_collect_smoke ammo_crate_collect_smoke.sh 180)
     # Per-level frame-time budget gate (docs/design/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
