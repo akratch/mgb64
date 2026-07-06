@@ -1256,14 +1256,10 @@ static void *gfx_resolve_loaded_texture_pointer_token(uint32_t token,
         }
     }
 
-    for (struct tex *cur = pool->rightpos; cur != NULL && cur < pool->end; cur++) {
-        if (cur->data != NULL && (uint32_t)(uintptr_t)cur->data == token) {
-            if (match != NULL && match != cur->data) {
-                return NULL;
-            }
-            match = cur->data;
-        }
-    }
+    /* Match tex->data by its low-32 bits across every arena chunk (the main
+     * pool is no longer a single contiguous region). Only reached when the
+     * global gfx_ptr table misses -- see gfx_resolve_texture_image_token. */
+    match = texPoolResolveDataByLow32(token);
 
     if (match != NULL && cache_key_out != NULL) {
         *cache_key_out = (uintptr_t)match;

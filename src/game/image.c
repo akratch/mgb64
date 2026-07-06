@@ -6,6 +6,11 @@
 #include <PR/R4300.h>
 #include "ramrom.h"
 #include "decompress.h"
+#ifdef NATIVE_PORT
+#include <stdio.h>
+#include <stdlib.h>
+#include "gfx_ptr.h"   /* gfx_ptr_invalidate_range: drop stale ptrs before free */
+#endif
 
 // bss
 //8008C720
@@ -30,6 +35,208 @@ struct texcacheitem g_TexCacheItems[150];
 s32 g_TexCacheCount;
 //8008D094
 s32 g_TexNumToLoad;
+
+#ifdef NATIVE_PORT
+/* ------------------------------------------------------------------------
+ * Texture decompression-pool diagnostics (NATIVE_PORT only).
+ *
+ * g_MainTexPool is a fixed, fill-once-per-level bump allocator whose size is
+ * inherited from the original N64 per-level RAM budget (the -mtNNN token in
+ * boss.c's memallocstringtable, carved out of the ~8MB stage pool). On PC that
+ * budget is an anachronism: if a level's on-demand texture working set exceeds
+ * it, texLoad's overflow branch points the texture at pool->start (garbage) or
+ * fails to register it (blank) -- the intermittent "scrambled grid" HUD/icon
+ * corruption. Because first-load order is gameplay-dependent, WHICH texture
+ * loses the race varies run to run, which is why identical boots diverge.
+ *
+ * These counters make the failure observable and let us measure the real
+ * decompressed footprint per level. Set GE007_TEX_POOL_STATS=1 for a per-level
+ * high-water report at each level load.
+ * ---------------------------------------------------------------------- */
+s32 g_TexPoolOverflowCount = 0;   /* hard-overflow events this level (should stay 0) */
+u32 g_TexPoolHighWater = 0;       /* total decompressed footprint this level (bytes) */
+
+s32 texPoolStatsEnabled(void) {
+    static s32 checked = 0;
+    static s32 enabled = 0;
+    if (!checked) {
+        const char *e = getenv("GE007_TEX_POOL_STATS");
+        enabled = (e != NULL && e[0] != '\0' && e[0] != '0');
+        checked = 1;
+    }
+    return enabled;
+}
+
+/* ------------------------------------------------------------------------
+ * Grow-on-demand texture arena (NATIVE_PORT, main pool only).
+ *
+ * The N64 shipped a single fixed, fill-once-per-level bump allocator whose
+ * size was the per-level -mtNNN RAM budget; overflowing it corrupted textures
+ * (see texLoad). On PC that budget is meaningless, so the main pool is now a
+ * chain of malloc'd chunks: when the active chunk fills, the next texture
+ * simply starts a fresh chunk. Retired chunks are never moved or freed until
+ * the level ends, so every tex->data pointer already handed to the renderer
+ * stays valid. Result: overflow-to-garbage is structurally impossible, and
+ * there is no size to tune. The head texpool (g_MainTexPool /
+ * ptr_texture_alloc_start) always describes the *current* chunk; texFindInPool
+ * additionally walks the retired chunks. Local menu pools are unaffected
+ * (they are not growable and keep their own fixed buffers).
+ *
+ * 4 MB/chunk comfortably exceeds any single decompressed N64 texture (capped
+ * near TMEM's 4 KB) and a whole level's typical footprint, so in practice a
+ * level uses one chunk and never grows; the grow path is the correctness net.
+ * ---------------------------------------------------------------------- */
+#define TEX_ARENA_CHUNK_BYTES_DEFAULT (4u * 1024u * 1024u)
+
+struct texArenaChunk {
+    struct texpool pool;         /* start/end/leftpos/rightpos of this chunk */
+    struct texArenaChunk *next;  /* older retired chunks, newest first */
+};
+
+static struct texArenaChunk *s_texArenaRetired = NULL;
+static s32 s_texArenaGrowable = 0;   /* set once the arena backs the main pool */
+static u32 s_texArenaChunkCount = 0;
+static u32 s_texArenaChunkBytes = 0; /* per-chunk size; resolved on first init */
+
+/* Per-chunk size. Defaults to 4 MB; GE007_TEX_ARENA_CHUNK_KB overrides it (a
+ * tuning/test knob -- e.g. a small value forces the grow path so the
+ * multi-chunk logic can be exercised). Never smaller than 64 KB so a single
+ * decompressed texture (<=~4 KB) always fits with headroom. */
+static u32 texArenaChunkBytes(void) {
+    if (s_texArenaChunkBytes == 0) {
+        const char *e = getenv("GE007_TEX_ARENA_CHUNK_KB");
+        u32 kb = 0;
+        if (e != NULL && e[0] != '\0') {
+            kb = (u32)strtoul(e, NULL, 10);
+        }
+        s_texArenaChunkBytes = (kb >= 64u) ? (kb * 1024u) : TEX_ARENA_CHUNK_BYTES_DEFAULT;
+    }
+    return s_texArenaChunkBytes;
+}
+
+u32 texArenaChunkCount(void) { return s_texArenaChunkCount; }
+
+/* Fallback resolver for a truncated (low-32-bit) tex->data key, spanning every
+ * arena chunk. The renderer's primary resolver is the global gfx_ptr table
+ * (chunk-agnostic); this only runs when that misses, and matches the renderer's
+ * old single-pool scan but across all chunks. Returns the unique matching data
+ * pointer, or NULL if there is no match or an ambiguous one. */
+static void *texPoolScanChunkForLow32(const struct texpool *p, uint32_t token, void *match, s32 *ambiguous) {
+    struct tex *cur = p->rightpos;
+    struct tex *end = p->end;
+    for (; cur < end; cur++) {
+        if (cur->data != NULL && (uint32_t)(uintptr_t)cur->data == token) {
+            if (match != NULL && match != cur->data) {
+                *ambiguous = 1;
+                return match;
+            }
+            match = cur->data;
+        }
+    }
+    return match;
+}
+
+void *texPoolResolveDataByLow32(uint32_t token) {
+    struct texpool *pool = ptr_texture_alloc_start;
+    struct texArenaChunk *chunk;
+    void *match = NULL;
+    s32 ambiguous = 0;
+
+    if (pool == NULL) {
+        return NULL;
+    }
+    match = texPoolScanChunkForLow32(pool, token, match, &ambiguous);
+    for (chunk = s_texArenaRetired; chunk != NULL && !ambiguous; chunk = chunk->next) {
+        match = texPoolScanChunkForLow32(&chunk->pool, token, match, &ambiguous);
+    }
+    return ambiguous ? NULL : match;
+}
+
+static void texArenaFreeAll(void) {
+    struct texArenaChunk *c = s_texArenaRetired;
+    while (c != NULL) {
+        struct texArenaChunk *next = c->next;
+        /* Drop any renderer pointer-table entries into this chunk BEFORE freeing
+         * it: the global gfx_ptr table caches tex->data pointers for the whole
+         * session and is not cleared per level, so a stale entry resolved after
+         * free() would be a use-after-free. */
+        gfx_ptr_invalidate_range((uintptr_t)c->pool.start, (uintptr_t)c->pool.end);
+        free(c->pool.start);
+        free(c);
+        c = next;
+    }
+    s_texArenaRetired = NULL;
+    if (s_texArenaGrowable && g_MainTexPool.start != NULL) {
+        gfx_ptr_invalidate_range((uintptr_t)g_MainTexPool.start,
+                                 (uintptr_t)g_MainTexPool.end);
+        free(g_MainTexPool.start);
+        g_MainTexPool.start = NULL;
+    }
+    s_texArenaChunkCount = 0;
+}
+
+/* Retire the full current chunk and continue in a fresh one. Existing chunks
+ * (and pointers into them) are preserved. Returns 0 only on allocation failure. */
+static s32 texArenaGrow(void) {
+    struct texArenaChunk *node;
+    u8 *mem;
+
+    node = (struct texArenaChunk *)malloc(sizeof(*node));
+    if (node == NULL) {
+        return 0;
+    }
+    mem = (u8 *)malloc(texArenaChunkBytes());
+    if (mem == NULL) {
+        free(node);
+        return 0;
+    }
+
+    node->pool = g_MainTexPool;          /* snapshot the now-full chunk */
+    node->next = s_texArenaRetired;
+    s_texArenaRetired = node;
+
+    texInitPool(&g_MainTexPool, mem, texArenaChunkBytes());
+    s_texArenaChunkCount++;
+    return 1;
+}
+
+/* Footprint readout for the final level, printed at process exit so
+ * single-level (auto-exit) runs still report; mid-run levels are reported at
+ * each transition in set_mt_tex_alloc. Both are gated on GE007_TEX_POOL_STATS. */
+static void texArenaReportAtExit(void) {
+    if (texPoolStatsEnabled() && g_TexPoolHighWater != 0) {
+        fprintf(stderr,
+            "[TEXPOOL] final level: footprint=%u bytes across %u chunk(s), hard-overflow events=%d\n",
+            g_TexPoolHighWater, s_texArenaChunkCount, g_TexPoolOverflowCount);
+        fflush(stderr);
+    }
+}
+
+/* Per-level (re)init: release the previous level's chunks and allocate a fresh
+ * first chunk. Replaces the old fixed mempAllocBytesInBank pool for the main
+ * texture pool. Returns 0 on allocation failure (caller keeps the old pool). */
+s32 texArenaInit(void) {
+    static s32 atexit_registered = 0;
+    u8 *mem;
+
+    if (!atexit_registered) {
+        atexit(texArenaReportAtExit);
+        atexit_registered = 1;
+    }
+
+    texArenaFreeAll();
+
+    mem = (u8 *)malloc(texArenaChunkBytes());
+    if (mem == NULL) {
+        s_texArenaGrowable = 0;
+        return 0;
+    }
+    texInitPool(&g_MainTexPool, mem, texArenaChunkBytes());
+    s_texArenaGrowable = 1;
+    s_texArenaChunkCount = 1;
+    return 1;
+}
+#endif
 
 // data
 //D:80049170
@@ -2988,6 +3195,30 @@ struct tex *texFindInPool(s32 texturenum, struct texpool *arg1)
         cur++;
     }
 
+#ifdef NATIVE_PORT
+    /* The main pool spans multiple arena chunks; the loop above only searched
+     * the current one. Walk the retired chunks so textures decompressed before
+     * the last grow are still found (their memory is retained until level end). */
+    if (arg1 == ptr_texture_alloc_start)
+    {
+        struct texArenaChunk *chunk = s_texArenaRetired;
+        while (chunk != NULL)
+        {
+            cur = chunk->pool.rightpos;
+            end = chunk->pool.end;
+            while (cur < end)
+            {
+                if (cur->texturenum == texturenum)
+                {
+                    return cur;
+                }
+                cur++;
+            }
+            chunk = chunk->next;
+        }
+    }
+#endif
+
     return NULL;
 }
 
@@ -3150,8 +3381,29 @@ void texLoad(u32 *updateword, struct texpool *pool)
             // only other option is a crash. GBI commands contain texture IDs
             // instead of pointers, and they must be replaced with pointers.
             if ((!iszlib && (texFreeBytesInBuffer(pool) < 0x10CC)) || (iszlib && texFreeBytesInBuffer(pool) < 0xA28)) {
+#ifdef NATIVE_PORT
+                /* Main pool: grow into a fresh chunk instead of corrupting. This
+                 * is the whole point of the arena -- the branch below (garbage
+                 * fallback) then only remains reachable for non-growable local
+                 * menu pools or a true out-of-memory condition. */
+                if (pool == ptr_texture_alloc_start && s_texArenaGrowable && texArenaGrow()) {
+                    pool = ptr_texture_alloc_start; /* head now describes the new chunk */
+                } else {
+                    g_TexPoolOverflowCount++;
+                    if (g_TexPoolOverflowCount <= 20) {
+                        fprintf(stderr,
+                            "[TEXPOOL] hard overflow: texturenum=%d iszlib=%d free=%d "
+                            "(grow failed or non-growable local pool) -> blank texture\n",
+                            g_TexNumToLoad, iszlib, texFreeBytesInBuffer(pool));
+                        fflush(stderr);
+                    }
+                    *updateword = osVirtualToPhysical(pool->start);
+                    return;
+                }
+#else
                 *updateword = osVirtualToPhysical(pool->start);
                 return;
+#endif
             }
 
             // Write the texturenum into the allocation
@@ -3173,6 +3425,24 @@ void texLoad(u32 *updateword, struct texpool *pool)
             }
 
             pool->leftpos += bytesout;
+
+#ifdef NATIVE_PORT
+            /* Accumulate the level's true decompressed footprint (8-byte texnum
+             * header + pixels per texture). Because the pool is fill-once, this
+             * running total is the peak; it survives arena chunk boundaries,
+             * unlike a single leftpos delta. Reported by GE007_TEX_POOL_STATS --
+             * progressively (every 256 KB) so the number is visible even if the
+             * process is killed rather than exiting cleanly. */
+            if (pool == ptr_texture_alloc_start) {
+                u32 prev = g_TexPoolHighWater;
+                g_TexPoolHighWater += (u32)(bytesout + 8);
+                if (texPoolStatsEnabled() && (g_TexPoolHighWater >> 18) != (prev >> 18)) {
+                    fprintf(stderr, "[TEXPOOL] footprint=%u KB, chunks=%u (old N64 budget was ~%u KB)\n",
+                            g_TexPoolHighWater >> 10, s_texArenaChunkCount, bytes >> 10);
+                    fflush(stderr);
+                }
+            }
+#endif
         }
 
         texFreeBytesInBuffer(pool);
