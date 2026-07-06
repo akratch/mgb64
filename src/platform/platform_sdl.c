@@ -1545,9 +1545,17 @@ static double platformFrameCapPeriodMs(void)
         case PLATFORM_FRAME_CAP_30:
             return 1000.0 / 30.0;
         case PLATFORM_FRAME_CAP_DISPLAY:
-            if (!g_forceNoVsync && g_vsyncMode != PLATFORM_VSYNC_OFF) {
-                return 0.0;
-            }
+            /* The sim is a fixed 60 Hz integer-tick model with no render interpolation, and
+             * waitForNextFrame()'s round-to-nearest tick counter (N64-faithful: the +387937
+             * bias is half a frame, so nextFrameTime = round(elapsed/frame)) treats any
+             * frame >= ~1/120 s as one full tick — a floor the N64 RSP/RDP guaranteed in
+             * hardware. With the pacer disabled here (the old `return 0.0` when vsync was
+             * on), a >60 Hz panel (75/90/120 Hz monitors, 90 Hz Steam Deck OLED) let the
+             * loop run every ~1/120 s and advanced the sim 1.25x-2x too fast — movement,
+             * enemies, timers and audio all sped up. Pace to the 1/60 s floor so the sim can
+             * never outrun 60 Hz; vsync (if on) still aligns the present to a vblank. Until
+             * render interpolation lands, "display" behaves like "60" — correct speed beats
+             * frame-duplicated over-speed. */
             return 1000.0 / 60.0;
         case PLATFORM_FRAME_CAP_60:
         default:
