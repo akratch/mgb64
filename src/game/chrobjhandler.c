@@ -40604,7 +40604,11 @@ INV_ITEM_TYPE collect_or_interact_object(PropRecord *prop, bool showstring) //#5
         case PROPDEF_MAGAZINE:
         {
             AmmoCrateRecord *mag = (AmmoCrateRecord *)propobj;
-            add_ammo_to_inventory(mag->type, get_ammo_in_magazine(mag), 1, showstring);
+            /* Grant the clip's real ammo type (AmmoCrateRecord.ammoType @0x80), not the
+             * PropDef header type @0x3 which is always PROPDEF_MAGAZINE (7 == AMMO_REMOTEMINE)
+             * in this case. Matches retail interact_magazine_object: `lw $a0, 0x80($s0)`
+             * and the collectability gate below, which already reads ammoType. */
+            add_ammo_to_inventory(mag->ammoType, get_ammo_in_magazine(mag), 1, showstring);
             collectType = INV_ITEM_WEAPON;
             break;
         }
