@@ -37844,7 +37844,11 @@ void maybe_detonate_object(ObjectRecord* self, f32 damage,  coord3d* pos, bool f
             do
             {
                 MultiAmmoCrateRecord *ammo = self;
-                ammoAmmount = ammo->quantities[randAmmoType];
+                /* Pair stride: read the authored quantity lane, not the
+                 * quantities[] overlay (odd indices there are modelnum lanes).
+                 * The spawned magazine's ammotype is randAmmoType + 1 (2 -> 1),
+                 * as the commented unk80 assignment below intends. */
+                ammoAmmount = ammo->slots[randAmmoType].quantity;
 
                 if (ammoAmmount > 0 && (ammoAmmount != -1) )
                 {
@@ -40608,16 +40612,30 @@ INV_ITEM_TYPE collect_or_interact_object(PropRecord *prop, bool showstring) //#5
         {
             MultiAmmoCrateRecord *ammo = (MultiAmmoCrateRecord *)propobj;
             s32                   i, ammoquantity;
+            /* Retail interact_ammobox_object (asm 7F050338) walks the 13
+             * {u16 modelnum, u16 quantity} pairs with a 4-byte stride, reading
+             * the quantity lane (slots[i].quantity), and maps slot i to
+             * ammotype i+1 with slot 1 folded into the shared 9mm pool. Reading
+             * the smaller quantities[] overlay instead (2-byte stride) lands on
+             * the modelnum lanes for odd i — where "no ammo" slots hold 0xFFFF —
+             * which maxes out ammo on collect. Mirror the retail loop and the
+             * collectability gate (see is_prop_collectable / asm 7F0509B8). */
             for (i = 0; i < AMMOTYPE_GLOBAL_MAX; i++)
             {
-                ammoquantity = ammo->quantities[i];
+                AMMOTYPE ammotype = (AMMOTYPE)(i + 1); /* slot i -> ammotype i+1 */
+                if (ammotype == AMMO_9MM_2)
+                {
+                    ammotype = AMMO_9MM; /* retail i==1 special case: shared 9mm pool */
+                }
+
+                ammoquantity = ammo->slots[i].quantity; /* pair stride, byte 0x82+4i */
 
                 if (getPlayerCount() == 1)
                 {
                     ammoquantity = ammoquantity * g_SoloAmmoMultiplier;
                 }
 
-                add_ammo_to_inventory(i, ammoquantity, 0, showstring);
+                add_ammo_to_inventory(ammotype, ammoquantity, 0, showstring);
             }
             sndPlaySfx(g_musicSfxBufferPtr, 0xEA, 0);
             collectType = INV_ITEM_WEAPON;
