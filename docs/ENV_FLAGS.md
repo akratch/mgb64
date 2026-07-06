@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**870 flags** found across the source.
+**873 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -218,6 +218,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
 | `GE007_BULLET_SPARKS` | ? |  | 1 |  |
 | `GE007_BYPASS_PORTAL_BACKFACE` | ? |  | 1 |  |
+| `GE007_CC_POOL_INITIAL` | ? |  | 1 |  |
 | `GE007_CHRBEAMS_FRUSTUM` | bool | 0 | 1 |  |
 | `GE007_CHR_SPAWN_TRACE` | ? |  | 1 |  |
 | `GE007_CHR_SPAWN_TRACE_BODY` | ? |  | 1 |  |
@@ -621,7 +622,9 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TANK_AIM_TRACE` | ? |  | 1 |  |
 | `GE007_TEXT_AUDIT` | ? |  | 1 |  |
 | `GE007_TEXT_GLYPH_AUDIT` | ? |  | 1 |  |
+| `GE007_TEX_ARENA_CHUNK_KB` | ? |  | 1 |  |
 | `GE007_TEX_ONLY` | ? |  | 1 |  |
+| `GE007_TEX_POOL_STATS` | ? |  | 1 |  |
 | `GE007_TILESIZE_CLAMP_SUBLOAD` | ? |  | 1 |  |
 | `GE007_TINTED_GLASS_MIN_OPACITY` | ? |  | 1 |  |
 | `GE007_TINT_RAW_MODE` | ? |  | 1 |  |
