@@ -88,7 +88,11 @@ tar -tzf "$tmparchive" > "$listfile"
 
 echo
 echo "== Validating archive listing =="
-forbidden="$(grep -E '\.(z64|n64|v64|rom|bin|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|ctl|tbl|aifc|aiff|sbk|seq|cdata|dmg|zip|7z|tar|tgz|gz)$|(^|/)baserom|(^|/)[^/]+\.app(/|$)|ge007_eeprom|ge007\.ini|(^|/)screenshot_[^/]*\.(bmp|png|jpe?g|gif|webp|ppm|raw|jsonl|mp4|mov|m4v|webm)$' "$listfile" || true)"
+# branding/appicon-source.png + branding/appicon-windows.ico are hand-authored
+# project branding (not ROM-derived) — the same tracked exception as
+# .gitignore / scripts/ci/check_no_rom_data.sh.
+forbidden="$(grep -E '\.(z64|n64|v64|rom|bin|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|ctl|tbl|aifc|aiff|sbk|seq|cdata|dmg|zip|7z|tar|tgz|gz)$|(^|/)baserom|(^|/)[^/]+\.app(/|$)|ge007_eeprom|ge007\.ini|(^|/)screenshot_[^/]*\.(bmp|png|jpe?g|gif|webp|ppm|raw|jsonl|mp4|mov|m4v|webm)$' "$listfile" \
+  | grep -v -E '/branding/appicon-(source\.png|windows\.ico)$' || true)"
 if [ -n "$forbidden" ]; then
   echo "Archive contains forbidden ROM/media/build-artifact path(s):" >&2
   printf '%s\n' "$forbidden" >&2

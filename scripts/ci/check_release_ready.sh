@@ -86,6 +86,12 @@ fi
 binary_hits=$(
   while IFS= read -r f; do
     [ -s "$f" ] || continue
+    # Exception: hand-authored branding art (not ROM-derived), the single
+    # source every platform icon is generated/wrapped from. See the matching
+    # exception in .gitignore and scripts/ci/check_no_rom_data.sh.
+    case "$f" in
+      branding/appicon-source.png|branding/appicon-windows.ico) continue ;;
+    esac
     if ! grep -Iq . "$f" 2>/dev/null; then
       printf '%s\n' "$f"
     fi

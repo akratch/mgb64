@@ -49,6 +49,10 @@ grep_public_files() {
 }
 
 # 1) Forbidden file types (ROMs, extracted asset binaries, build/vendor binaries)
+#    Exception: branding/appicon-source.png + branding/appicon-windows.ico are
+#    hand-authored project branding art (not ROM-derived) — the single tracked
+#    source every platform icon is generated/wrapped from at build/package
+#    time. See the .gitignore comment above this same exception.
 if [ "$HAVE_GIT" -eq 1 ]; then
   forbidden=$(git ls-files \
     '*.z64' '*.n64' '*.v64' '*.rom' '*.bin' '*.rz' '*.eeprom' '*.cdata*' \
@@ -57,10 +61,12 @@ if [ "$HAVE_GIT" -eq 1 ]; then
     '*.bmp' '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp' '*.ico' '*.icns' '*.ppm' '*.pgm' '*.pnm' \
     '*.raw' '*.wav' '*.mp3' '*.ogg' '*.flac' '*.m4a' '*.aac' \
     '*.mp4' '*.mov' '*.m4v' '*.mkv' '*.avi' '*.webm' '*.jsonl' \
-    '*.dmg' '*.zip' '*.7z' '*.tar' '*.tgz' '*.gz' 2>/dev/null || true)
+    '*.dmg' '*.zip' '*.7z' '*.tar' '*.tgz' '*.gz' \
+    ':!branding/appicon-source.png' ':!branding/appicon-windows.ico' 2>/dev/null || true)
 else
   forbidden=$(public_file_list \
     | grep -E '(^|/)baserom|\.((z64|n64|v64|bin|rz|eeprom|ctl|tbl|sbk|seq|aifc|aiff|seg|o|a|so|dll|dylib|exe|bmp|png|jpe?g|gif|webp|ico|icns|ppm|pgm|pnm|raw|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|dmg|zip|7z|tar|tgz|gz))$|\.cdata($|\.)' \
+    | grep -v -E '^branding/appicon-(source\.png|windows\.ico)$' \
     || true)
 fi
 if [ -n "$forbidden" ]; then

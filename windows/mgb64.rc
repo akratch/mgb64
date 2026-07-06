@@ -1,0 +1,4 @@
+// MGB64 Windows executable icon. The .ico is a single-entry, PNG-compressed
+// (Vista+) icon wrapping branding/appicon-source.png byte-for-byte --
+// see scripts/wrap_png_as_ico.sh.
+IDI_ICON1 ICON "../branding/appicon-windows.ico"
