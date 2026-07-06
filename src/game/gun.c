@@ -18073,12 +18073,12 @@ check_state:
         case ITEM_FNP90 - 1:
         case ITEM_SHOTGUN - 1:
         case ITEM_AUTOSHOT - 1:
-        case ITEM_RUGER - 1:
+        case ITEM_SNIPERRIFLE - 1:
         case ITEM_GOLDENGUN - 1:
         case ITEM_SILVERWPPK - 1:
         case ITEM_GOLDWPPK - 1:
         case ITEM_LASER - 1:
-        case ITEM_GRENADELAUNCH - 1:
+        case ITEM_WATCHLASER - 1:
         case ITEM_REMOTEMINE - 1:
         case ITEM_TANKSHELLS - 1:
         case ITEM_FLAREPISTOL - 1:
@@ -18099,8 +18099,11 @@ check_state:
             hand_ptr->field_92C = 0;
             break;
 
-        case ITEM_SNIPERRIFLE - 1: // magnum (sniper + watchlaser)
-        case ITEM_WATCHLASER - 1:
+        /* magnum: Cougar Magnum (RUGER) + Grenade Launcher — retail jpt_80053F24[17]/[23]
+         * == Weapon_function_magnum. The ~6-tick field_890 floor caps their fire cadence.
+         * (Sniper Rifle + Watch Laser are jpt_80053F24[16]/[22] == guns, moved above.) */
+        case ITEM_RUGER - 1:
+        case ITEM_GRENADELAUNCH - 1:
             if (hand_ptr->field_890 < 6) {
                 hand_ptr->field_92C = 0;
                 break;
