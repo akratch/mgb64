@@ -3386,8 +3386,17 @@ static bool gfx_cc_id_rgb_uses_lod_fraction(uint64_t cc_id, uint32_t cc_options)
     return gfx_cc_id_raw_features(cc_id, cc_options).rgb_uses_lod_fraction;
 }
 
-static struct ColorCombiner color_combiner_pool[256];
-static uint16_t color_combiner_pool_size;
+/* Grow-on-demand color-combiner cache. Was a fixed [256] array that, when full,
+ * wrapped its size back to 0 -- correctness-safe (entries are regenerable and
+ * the [0,size) scan window only ever holds current-cycle entries) but a
+ * performance cliff: >256 distinct combiners cycling would re-generate combiners
+ * every frame. It now grows like the backend shader-program pool
+ * (gfx_opengl.c). The only retained pointer into it is prev_combiner (a 1-entry
+ * lookup cache), reset whenever realloc moves the array. */
+static struct ColorCombiner *color_combiner_pool;
+static int color_combiner_pool_size;
+static int color_combiner_pool_cap;
+static struct ColorCombiner *gfx_color_combiner_prev; /* reset on realloc-move */
 
 static struct RSP {
     float modelview_matrix_stack[11][4][4];
@@ -14480,22 +14489,49 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint64_t cc_id, uint32_t
 }
 
 static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint64_t cc_id, uint32_t cc_options) {
-    static struct ColorCombiner *prev_combiner;
+    struct ColorCombiner *prev_combiner = gfx_color_combiner_prev;
     if (prev_combiner != NULL && prev_combiner->cc_id == cc_id && prev_combiner->cc_options == cc_options) {
         return prev_combiner;
     }
-    for (size_t i = 0; i < color_combiner_pool_size; i++) {
+    for (int i = 0; i < color_combiner_pool_size; i++) {
         if (color_combiner_pool[i].cc_id == cc_id && color_combiner_pool[i].cc_options == cc_options) {
-            return prev_combiner = &color_combiner_pool[i];
+            return gfx_color_combiner_prev = &color_combiner_pool[i];
         }
     }
     gfx_flush();
-    if (color_combiner_pool_size >= sizeof(color_combiner_pool) / sizeof(color_combiner_pool[0])) {
-        color_combiner_pool_size = 0;
+    if (color_combiner_pool_size >= color_combiner_pool_cap) {
+        /* Initial capacity is 256 (the old fixed size); GE007_CC_POOL_INITIAL
+         * lowers it to force the grow path for testing. Cached once. */
+        static int initial_cap = 0;
+        if (initial_cap == 0) {
+            const char *e = getenv("GE007_CC_POOL_INITIAL");
+            long v = (e != NULL && e[0] != '\0') ? strtol(e, NULL, 10) : 0;
+            initial_cap = (v >= 1 && v <= 256) ? (int)v : 256;
+        }
+        int new_cap = color_combiner_pool_cap ? color_combiner_pool_cap * 2 : initial_cap;
+        struct ColorCombiner *grown =
+            (struct ColorCombiner *)realloc(color_combiner_pool,
+                                            (size_t)new_cap * sizeof(struct ColorCombiner));
+        if (grown != NULL) {
+            /* realloc may relocate the array; prev is the only retained pointer
+             * into it, so drop the 1-entry cache when the base moves. */
+            if (grown != color_combiner_pool) {
+                gfx_color_combiner_prev = NULL;
+            }
+            color_combiner_pool = grown;
+            color_combiner_pool_cap = new_cap;
+        } else if (color_combiner_pool_size > 0) {
+            /* Out of memory: fall back to the legacy behaviour (reuse slot 0).
+             * Regenerable cache, so this is correct, just cache-thrashing. */
+            color_combiner_pool_size = 0;
+            gfx_color_combiner_prev = NULL;
+        } else {
+            return NULL; /* cannot even allocate the first block */
+        }
     }
     struct ColorCombiner *comb = &color_combiner_pool[color_combiner_pool_size++];
     gfx_generate_cc(comb, cc_id, cc_options);
-    return prev_combiner = comb;
+    return gfx_color_combiner_prev = comb;
 }
 
 /* ===== Texture cache lookup with LRU eviction ===== */
@@ -18527,6 +18563,12 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
 #endif
 
     struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(effective_cc_id, cc_options);
+    if (comb == NULL) {
+        /* Combiner cache allocation failed (host OOM). Keep the current shader
+         * bound and skip this draw's combiner setup rather than dereferencing
+         * NULL -- degrades gracefully instead of crashing. */
+        return;
+    }
     struct ShaderProgram *prg = comb->prg;
     if (prg != rendering_state.shader_program) {
         gfx_flush();
@@ -23741,7 +23783,10 @@ void gfx_init(void) {
     settex_rgba_pixels = NULL;
     settex_rgba_w = 0;
     settex_rgba_h = 0;
+    /* Reset the (persistent, growable) combiner cache. The backing block is
+     * reused across the session; just drop the entries and the 1-entry cache. */
     color_combiner_pool_size = 0;
+    gfx_color_combiner_prev = NULL;
     n64_dl_region_count = 0;
 }
 
