@@ -51,6 +51,44 @@ Every packager and the bundler run `verify_asset_free.sh` on the binary.
 
 ---
 
+## Code signing + notarization (macOS)
+
+Requires an active [Apple Developer Program](https://developer.apple.com/programs)
+enrollment ($99/yr; Individual is fine for a solo maintainer). Signing runs
+**locally**, alongside the rest of the macOS build — it is deliberately not
+wired into hosted CI, so the Developer ID private key and Apple credentials
+never need to leave this machine (see "The model" above).
+
+One-time setup:
+
+1. In Xcode → Settings → Accounts (or the [Certificates page](https://developer.apple.com/account/resources/certificates/list)),
+   create a **Developer ID Application** certificate (not "Apple Distribution" —
+   that one's for the App Store). This installs the cert + private key into
+   your login keychain.
+2. Note your **Team ID** (Membership page) and identity string, e.g.
+   `Developer ID Application: Jane Doe (ABCDE12345)`.
+3. Generate an app-specific password at
+   [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security →
+   App-Specific Passwords, for `notarytool` to authenticate with.
+
+Export these before running a signed release:
+
+```sh
+export DEVELOPER_ID_APPLICATION="Developer ID Application: Jane Doe (ABCDE12345)"
+export APPLE_ID="you@example.com"
+export APPLE_TEAM_ID="ABCDE12345"
+export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"   # or @keychain:label
+```
+
+Then pass `--sign` to `scripts/release.sh` (see below). Under the hood this
+calls `macos/Scripts/sign_and_notarize.sh`, which signs the app bundle,
+submits it to Apple's notary service, waits for approval, and staples the
+ticket — all before the `.zip` is created, so the staple travels with it.
+Without `--sign`, the app ships ad-hoc signed and Gatekeeper will warn
+end users on first launch.
+
+---
+
 ## Cut a release
 
 1. **Windows + Linux (CI):** a maintainer dispatches the release workflow
@@ -62,13 +100,16 @@ Every packager and the bundler run `verify_asset_free.sh` on the binary.
    ```sh
    # build + validate macOS, stage all dist/ assets, and publish the release:
    scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --publish
+   # signed + notarized (credentials exported per "Code signing" above):
+   scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --sign --publish
    # or a rolling 'latest' prerelease refreshed from main:
    scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --rolling-latest --publish
    ```
    Without `--publish` it only builds/stages `dist/` assets and prints the next
    command. `--publish` requires `gh` auth and creates/updates the GitHub
    Release, attaching every `dist/mgb64-*-<version>.*` present (macOS locally +
-   Windows/Linux from CI).
+   Windows/Linux from CI). Without `--sign`, the macOS asset ships ad-hoc
+   signed and Gatekeeper will warn end users on first launch.
 
 The README's **Download** table links to `/releases/latest`, so a rolling
 `latest` prerelease keeps the download current between tagged majors.
