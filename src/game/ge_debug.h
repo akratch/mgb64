@@ -16,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "platform/port_env.h"
 
 static inline int ge_dbg_enabled(void) {
     static int cached = -1;
@@ -40,14 +41,13 @@ static inline int ge_dbg_assert_on_fail(void) {
  *   "0"           -> off
  *   anything else -> on
  * This avoids the "=0 silently enables" footgun: GE007_FOO=0 always means off,
- * regardless of whether the gate defaults on or off. Callers cache the result
- * in a static so getenv runs once. */
+ * regardless of whether the gate defaults on or off.
+ *
+ * Forwards to the registering port_env_bool so the flag is enumerable (it lands
+ * in the generated docs/ENV_FLAGS.md); the semantics above are identical, and
+ * the environment is read once and cached. */
 static inline int ge_env_bool(const char *name, int default_on) {
-    const char *e = getenv(name);
-    if (e == NULL || e[0] == '\0') {
-        return default_on;
-    }
-    return (e[0] == '0') ? 0 : 1;
+    return port_env_bool(name, default_on, NULL);
 }
 
 #define GEDBG(fmt, ...) do { \

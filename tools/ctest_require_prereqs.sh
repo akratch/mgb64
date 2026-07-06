@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ctest_require_prereqs.sh -- thin CTest prerequisite gate for ROM-gated
-# intro-path smokes (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md T5).
+# intro-path smokes (T5).
 #
 # The intro_* ctest entries registered in CMakeLists.txt need genuine CTest
 # SKIPPED status when the ROM and/or instrumented ares binary are absent --

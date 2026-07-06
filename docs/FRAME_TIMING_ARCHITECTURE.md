@@ -3,7 +3,7 @@ native port — the two independent 60Hz gates, why the benchmark reports ~120 w
 play shows 60, and why "just uncap it" is a sim rewrite, not a config flag. Written
 after a trace prompted by "why is play capped at 60 when benchmarks show 120?" and
 the follow-up "are there hard blockers to 120fps?". Companion docs:
-docs/PERFORMANCE_PLAN.md (budgets + harness), docs/RENDERING_ARCHITECTURE.md. -->
+docs/design/PERFORMANCE_PLAN.md (budgets + harness), docs/RENDERING_ARCHITECTURE.md. -->
 
 # MGB64 Frame Timing & Frame-Rate Architecture (native port)
 
@@ -34,7 +34,7 @@ The census reports **render/sim cost**, not presented frames. `work_ms` is measu
 *before* the pacing sleep and excludes it (`platform_sdl.c:2802-2803`, with
 `g_lastFrameTime` reset *after* the wait at `:2832`), then inverted by
 `fps() = 1000/work_ms` (`tools/perf_census.sh:121`). So "120" means "each frame's
-work took ~8.3 ms" — i.e. **headroom**, exactly as `docs/PERFORMANCE_PLAN.md §6`
+work took ~8.3 ms" — i.e. **headroom**, exactly as `docs/design/PERFORMANCE_PLAN.md §6`
 intends ("target = 120 fps / 8.3 ms — headroom over 60 for combat/effects/min-spec").
 It was never a plan to *present* 120 frames.
 
@@ -108,7 +108,7 @@ measure 8.3 ms work ("120") while the sim semantics stay exactly 60 Hz.
 
 **Render cost.** The `perf/make-it-rip` pass is on main (merge `1b29b7a`); post-fix
 all 20 levels do ~100–189 fps of render *work* on an M3 Max (jungle 18→131,
-dam 50→137, see `docs/PERFORMANCE_PLAN.md`). There is comfortable headroom to
+dam 50→137, see `docs/design/PERFORMANCE_PLAN.md`). There is comfortable headroom to
 *draw* frames faster than 60. The wall is purely the sim timestep, not the GPU.
 (Min-spec HW and the Metal first-sight shader-compile hitch are separate, softer
 concerns — not the categorical blocker.)

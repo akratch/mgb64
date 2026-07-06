@@ -1,6 +1,6 @@
 """T4 -- unit tests for the H17 audit invariant in tools/audit_intro_trace.py.
 
-H17 (docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md theory register): at the first
+H17 (theory register): at the first
 mode-3 (swirl) trace record, the applied_view-derived look/facing vector
 must not still be the degenerate (1,0,0) seed. src/platform/port_trace.c
 emits top-level "cam_pos"/"cam_target" arrays; during CAMERAMODE_SWIRL these

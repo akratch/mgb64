@@ -40,21 +40,35 @@ tools/ido5.3_recomp/** linguist-vendored
 tools/mktex/src/libpdtex/** linguist-vendored
 
 # --- Internal working documentation: the public/internal boundary ------------
-# These are planning docs, roadmaps, reviews, surveys, WIP notes, and agent /
-# session working artifacts. They stay in THIS development repository but are
-# NEVER shipped in the public source archive (`git archive`, honored
-# automatically) or the fresh public launch repository
-# (scripts/create_public_launch_repo.sh, which filters the tree by these same
-# entries). scripts/ci/check_public_history_text.sh also derives its history
-# scan exclusions from these export-ignore entries, so this block is the single
-# source of truth for what documentation is public vs internal. To exclude a new
-# internal doc from the public repo, add an export-ignore line here.
+# The documentation boundary is now STRUCTURAL, not suffix-guessed:
+#
+#   docs/*.md        -> PUBLIC curated reference (see docs/README.md).
+#   docs/design/**   -> INTERNAL design notes, roadmaps, and forward-looking
+#                       plans. Kept in THIS development repository for maintainers
+#                       and contributors with access, but NEVER shipped in the
+#                       public source archive (`git archive`, honored
+#                       automatically) or the fresh public launch repository
+#                       (scripts/create_public_launch_repo.sh filters the tree by
+#                       these entries).
+#
+# This block is the single source of truth for what documentation is public vs
+# internal. For any new internal doc, put it under docs/design/ (do not add
+# ad-hoc top-level exclusions — top-level docs/ is the public reference surface).
+docs/design/** export-ignore
+#
+# LEGACY paths, retained on purpose. Internal docs previously lived at these
+# paths (before consolidation under docs/design/). They match nothing in the
+# current tree, but scripts/ci/check_public_history_text.sh derives its
+# git-HISTORY scan exclusions from this list — so these entries keep that guard
+# from scanning (and flagging) historical internal content that is now gone from
+# HEAD. Do not remove them without also updating that guard.
 docs/superpowers/** export-ignore
 docs/remaster-aaa/** export-ignore
 docs/*_PLAN.md export-ignore
 docs/*_ROADMAP.md export-ignore
 docs/*_REVIEW.md export-ignore
 docs/PRE_SHIP_REVIEW_*.md export-ignore
+docs/*_AUDIT_*.md export-ignore
 docs/*_SURVEY.md export-ignore
 docs/*_WIP.md export-ignore
 docs/*_STATUS.md export-ignore

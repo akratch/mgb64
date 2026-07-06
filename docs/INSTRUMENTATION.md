@@ -1825,7 +1825,7 @@ for compact evidence files instead of scraping human-readable audit output.
 
 ### Performance census & budgets
 
-The performance regression harness (`docs/PERFORMANCE_PLAN.md`) measures per-level
+The performance regression harness (`docs/design/PERFORMANCE_PLAN.md`) measures per-level
 frame time deterministically and enforces budgets.
 
 ```sh
@@ -2209,7 +2209,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_SFX_TRACE_JSONL=path.jsonl` | trace SFX submits, voice starts/stops, volume/pan updates, owner-slot clears, stale post ignores, and native caller/line tags |
 | `GE007_TRACE_CHRNUM=N` | add one native guard's AI/action/render/patrol state to `--trace-state` |
 | `GE007_PERF_TRACE=1` / `GE007_PERF_TRACE_AFTER_FRAME=N` / `GE007_PERF_TRACE_BUDGET=N` | log per-frame wall-clock pacing (`interval_ms`, render/work time before cap delay, sleep delay, and sync overhead) for local performance triage |
-| `GE007_XLU_SNAPSHOT_MODE=perbatch\|pertri` | translucent RDP-memory blend framebuffer-snapshot granularity (`docs/PERFORMANCE_PLAN.md` M1). Default `perbatch` (one framebuffer copy per draw batch); `pertri` restores the legacy per-triangle copy for exact-parity A/B |
+| `GE007_XLU_SNAPSHOT_MODE=perbatch\|pertri` | translucent RDP-memory blend framebuffer-snapshot granularity (`docs/design/PERFORMANCE_PLAN.md` M1). Default `perbatch` (one framebuffer copy per draw batch); `pertri` restores the legacy per-triangle copy for exact-parity A/B |
 | `GE007_DISABLE_ROOM_XLU_CVG_MEMORY=1` | disable the room XLU coverage-memory blend path entirely (kills the per-triangle framebuffer copy; the `xluoff` column in `tools/perf_census.sh`) |
 | `MGB64_ARES_TRACE_CHRNUM=N` | add comparable stock-oracle guard tracking to route traces |
 | `GE007_TRACE_MAGIC_TRAVEL=1` / `GE007_TRACE_MAGIC_TRAVEL_BUDGET=N` | log native `WAYMODE_MAGIC` patrol/gopos exit predicates for the `GE007_TRACE_CHRNUM` guard |

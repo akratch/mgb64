@@ -121,7 +121,7 @@ and run the unchanged engine path, so the validation harness is unaffected.
 
 > macOS is validated; Windows/Linux use only portable seams and are wired in the
 > build. A prebuilt "Download" section (rolling latest + tagged releases) is
-> planned — see `docs/superpowers/specs/2026-07-05-prebuilt-app-distribution-design.md`.
+> planned.
 
 ## Building
 

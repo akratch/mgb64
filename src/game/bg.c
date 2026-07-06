@@ -301,7 +301,7 @@ static s16 bgFindTextureForTriangleCommand(u8 *dl_base, u8 *cmd)
 /* ---- Shoot-out-the-lights: native room-load population of light_fixture_table ----
  * The N64 loader populated this table inside texLoadFromGdl, which the native
  * bg-room loader skips; without a native population pass the feature is a silent
- * no-op (docs/SHOOT_OUT_LIGHTS_PLAN.md, blocker D1). Walk the raw room DL and, for
+ * no-op (docs/design/SHOOT_OUT_LIGHTS_PLAN.md, blocker D1). Walk the raw room DL and, for
  * each contiguous run of same-light-texture triangles, record its [start,end) span
  * as pointers into the SAME raw DL the hit test and renderer use
  * (g_BgRoomInfo[room].ptr_expanded_mapping_info), so the hit-test range check

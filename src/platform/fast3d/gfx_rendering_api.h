@@ -1,6 +1,7 @@
 /**
  * gfx_rendering_api.h — Rendering backend vtable.
- * From Emill/n64-fast3d-engine (MIT license), unmodified.
+ * From Emill/n64-fast3d-engine (n64-fast3d-engine license — modified
+ * BSD-2-Clause; see src/platform/fast3d/PROVENANCE.md), unmodified.
  */
 #ifndef GFX_RENDERING_API_H
 #define GFX_RENDERING_API_H

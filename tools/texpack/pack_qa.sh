@@ -3,7 +3,7 @@
 # pack_qa.sh — in-game per-level QA gate for an HD texture pack (W2.E7.T2).
 #
 # The second (in-game) half of the pack QA harness described in
-# docs/remaster-aaa/02-hd-asset-pipeline.md §4.8. validate_pack.py (W2.E7.T1) is the
+# docs/design/remaster-aaa/02-hd-asset-pipeline.md §4.8. validate_pack.py (W2.E7.T1) is the
 # offline structural gate; this script boots the port headless + deterministic and
 # proves, per level, that the pack:
 #

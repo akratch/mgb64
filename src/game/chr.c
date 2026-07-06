@@ -5210,7 +5210,7 @@ s32 chrTickBeams(PropRecord *prop) {
      * otherwise keep the room-rendered bypass (byte-identical to prior behavior).
      * NOTE: in split-screen the frustum uses the CURRENT player's camera, so this
      * gate is intended for single-player until the per-player union (M1b) lands —
-     * see docs/COMBAT_DEFERRED_PLAN.md. */
+     * see docs/design/COMBAT_DEFERRED_PLAN.md. */
     {
         static int s_frustum_gate = -1;
         if (s_frustum_gate < 0) {

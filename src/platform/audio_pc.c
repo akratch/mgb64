@@ -1004,7 +1004,7 @@ void portAudioRegisterConfig(void)
                         "--config-override Audio.DeviceSamples=VALUE",
                         "Audio device samples",
                         "SDL audio device buffer size in samples.");
-    /* H1 output low-pass (docs/remaster-aaa/06-audio-remaster.md §4.2). Backing
+    /* H1 output low-pass (docs/design/remaster-aaa/06-audio-remaster.md §4.2). Backing
      * storage lives in audi_port.c (the frame-pump consumer); registered here with
      * the rest of the Audio.* surface. Both LIVE (re-read each audio frame).
      * Default OFF + byte-identical at defaults (W6.E1.T2 ACC-ID gate). */

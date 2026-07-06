@@ -182,7 +182,7 @@ static int g_ShotBgTraceEnabled = -1;
 static int g_ShotBgTraceBudget = -1;
 static int g_AutogunBeamTickEnabled = -1;
 
-/* Audit §6.3 (PORT_CODE_AUDIT_2026-07-03.md): default ON, faithful restore of
+/* Audit §6.3: default ON, faithful restore of
  * the US/JP ASM's unconditional autogun beam tick (mirrors the shoot-out-the-
  * lights precedent). GE007_AUTOGUN_BEAM_TICK=0 is the escape hatch -- the tick
  * consumes sim RNG (randomGetNext() once g_ClockTimer >= 3) so it is sim-RNG-

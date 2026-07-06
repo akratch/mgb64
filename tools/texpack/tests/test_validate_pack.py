@@ -5,7 +5,7 @@ synthetic packs built entirely IN-TEST: fake manifests, fake PNGs, fake `.alpha.
 dumps. Nothing here is tracked and nothing is ROM-derived (R2) -- the same posture as
 the sibling test_tileable_parity.py / test_route_pack.py.
 
-Acceptance (docs/remaster-aaa/02-hd-asset-pipeline.md §5, W2.E7.T1 row): each seeded
+Acceptance (docs/design/remaster-aaa/02-hd-asset-pipeline.md §5, W2.E7.T1 row): each seeded
 BAD pack produces a specific NAMED FAIL, and a valid Dam-shaped pack PASSES.
   * 5000px asset          -> FAIL check=dims-oversize
   * tok22.png             -> FAIL check=bad-filename

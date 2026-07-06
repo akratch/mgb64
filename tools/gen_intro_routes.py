@@ -5,7 +5,7 @@ hand-maintained/canonical) stay consistent and regenerable.
 
 Emits into tools/rom_oracle_routes/<slug>_intro_camera_path.json and
 <slug>_intro_swirl_bond_anim.json. Dam is NEVER (re)written by this tool --
-docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md's T2 hardened dam_intro_camera_path.json
+the T2 pass hardened dam_intro_camera_path.json
 and dam_intro_swirl_bond_anim.json by hand and they remain the canonical
 template; this generator explicitly skips "dam" with a note.
 

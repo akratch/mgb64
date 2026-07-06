@@ -1,7 +1,8 @@
 /**
  * gfx_opengl.c — OpenGL 3.3 rendering backend with GLSL shader generation.
  *
- * Adapted from Emill/n64-fast3d-engine (MIT license).
+ * Adapted from Emill/n64-fast3d-engine (n64-fast3d-engine license — modified
+ * BSD-2-Clause; see src/platform/fast3d/PROVENANCE.md).
  * Changes: uses glad instead of GLEW/SDL2_opengles2, removed ENABLE_OPENGL guard.
  */
 #include <stdint.h>
@@ -35,56 +36,8 @@
 
 /* Verbose diagnostic flag from gfx_pc.c */
 extern int g_diag_verbose;
-extern float g_pcVideoGamma;
-extern float g_pcRenderScale;
-extern int g_pcMsaaSamples;
-extern int g_pcRetroFilterMode;
-extern float g_pcVideoSaturation;
-extern float g_pcVideoContrast;
-extern float g_pcVideoBrightness;
-extern int g_pcOutputDither;
-extern float g_pcVignette;
-extern int g_pcBloom;
-extern float g_pcBloomThreshold;
-extern float g_pcBloomIntensity;
-extern int g_pcSsao;
-extern int g_pcSsaoMode;            /* 1=planar v1, 2=hemisphere v2 (Metal-only) */
-extern float g_pcSsaoRadius;
-extern float g_pcSsaoIntensity;
-extern float g_pcSsaoBias;          /* horizon elevation bias (self-occlusion reject) */
-extern float g_pcSsaoPower;         /* AO contrast exponent */
-extern float g_pcSsaoFarCutoff;     /* world-Z beyond which AO fades to 0 */
-extern float g_pcSsaoNearCut;       /* depth <= this = viewmodel/near, no AO */
-extern float g_pcSsaoSkyCut;        /* depth >= this = sky, no AO */
-extern int   g_pcSsaoHalfRes;       /* render AO at half scene res (P1a-perf) */
-extern int   g_pcSsaoBlur;          /* separable bilateral blur pass (P1a-perf) */
-extern float g_pcSsaoBlurDepthSharp;/* bilateral depth-weight sharpness */
-extern float g_pc_ssao_proj_a;   /* scene projection A=P[2][2] (depth linearization) */
-extern float g_pc_ssao_proj_b;   /* scene projection B=P[3][2] */
-extern int g_pc_view_inv_valid;  /* W1.E2.T1 view-inverse capture latch (reset per frame) */
-extern float g_pc_sun_dir_world[3]; /* W1.E2.T1 normalized GlobalLight dir, world space (dir TO light) */
-extern float g_pcEnvRelightBlend;   /* W1.E1/E4: relight strength dial [0..1] (shared with dFdx sun) */
-extern float g_pc_ssao_proj_x;   /* scene projection P[0][0] (view-ray x) */
-extern float g_pc_ssao_proj_y;   /* scene projection P[1][1] (view-ray y) */
-/* W1.E3: sun shadow map (capture-and-replay). */
-extern int   g_pcSunShadow;
-extern int   g_pcSunShadowRes;
-extern float g_pcSunShadowBias;
-extern float g_pcSunShadowUmbra;
-extern float g_pc_shadow_mat[4][4];       /* world->shadow-clip, m[row][col] (§4.5) */
-extern int   g_pc_shadow_mat_valid;
-extern int   g_pc_shadow_map_ready;       /* §3.5: frontend-visible, set after a non-empty depth-pass replay */
-extern const float *gfx_shadow_get_geometry(size_t *out_tri_count);
-extern int g_pcFxaa;
-extern float g_pcSharpen;
-extern int g_pcGradePresets;
-extern int g_pcTonemap;
-extern int g_pcRemasterFX;
-extern float g_pcGradeLevelSat;
-extern float g_pcGradeLevelCon;
-extern float g_pcGradeLevelTintR;
-extern float g_pcGradeLevelTintG;
-extern float g_pcGradeLevelTintB;
+/* Render/post-FX uniform state shared with the other backend (see header). */
+#include "gfx_uniforms.h"
 
 #define PC_RETRO_FILTER_AUTO 0
 #define PC_RETRO_FILTER_OFF  1
@@ -2224,7 +2177,7 @@ enum GfxXluSnapshotMode {
 };
 
 /* Granularity of the RDP-memory-blend framebuffer snapshot. Default per-batch
- * removes the per-triangle GPU pipeline stall (docs/PERFORMANCE_PLAN.md M1);
+ * removes the per-triangle GPU pipeline stall (docs/design/PERFORMANCE_PLAN.md M1);
  * GE007_XLU_SNAPSHOT_MODE=pertri restores the legacy path for A/B. */
 static enum GfxXluSnapshotMode gfx_opengl_xlu_snapshot_mode(void) {
     static int mode = -1;
@@ -2318,7 +2271,7 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
              * except for triangles that overlap *within this one same-material
              * batch* (glass panes and foliage cards, which are coplanar /
              * non-overlapping). Removes the per-triangle stall. See
-             * docs/PERFORMANCE_PLAN.md M1. */
+             * docs/design/PERFORMANCE_PLAN.md M1. */
             GLint batch_rect[4];
             const GLint *requested_rect = NULL;
             if (g_blend_alpha_rdp_cvg_memory &&
@@ -2507,7 +2460,7 @@ static bool gfx_opengl_output_ssao_active(void) {
         return false;
     }
     /* SSAO v2 (hemisphere) is Metal-only: the per-pixel view-space reconstruction
-     * math op-hangs Apple's GL-over-Metal translator (docs/METAL_BACKEND_PLAN.md:39)
+     * math op-hangs Apple's GL-over-Metal translator (docs/design/METAL_BACKEND_PLAN.md:39)
      * and no non-Apple GL test box exists yet to validate a GLSL port (W3.E2.T6).
      * On GL, hemisphere mode logs ONCE and renders the planar v1 shader unchanged —
      * an explicit, not silent, fallback. No GL shader lines change. */

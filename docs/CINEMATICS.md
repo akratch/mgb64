@@ -4,9 +4,8 @@ Reference for the animated mission-intro (the camera fly-in / swirl) and the
 outro / death cameras: what plays, the settings that shape it, the A/B escape
 hatches, and how to validate faithfulness against a stock ROM.
 
-Companion documents: `docs/INTRO_OUTRO_FAITHFULNESS_PLAN.md` (the full defect
-ledger + remaining work), `docs/ROM_COMPARISON.md` (the stock-ROM oracle
-workflow), `docs/VISUAL_MODES.md` (the post-FX / remaster look, which is
+Companion documents: `docs/ROM_COMPARISON.md` (the stock-ROM oracle
+workflow) and `docs/VISUAL_MODES.md` (the post-FX / remaster look, which is
 separate from these cutscene cameras).
 
 ## What plays

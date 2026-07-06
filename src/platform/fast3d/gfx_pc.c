@@ -1,7 +1,8 @@
 /**
  * gfx_pc.c — Fast3D display list interpreter for GoldenEye 007 PC port.
  *
- * Based on Emill/n64-fast3d-engine (MIT license).
+ * Based on Emill/n64-fast3d-engine (n64-fast3d-engine license — modified
+ * BSD-2-Clause; see src/platform/fast3d/PROVENANCE.md).
  * Adapted for:
  *   - Base GBI opcode table (not F3DEX2)
  *   - Rare's G_TRI4 (0xB1) and G_SETTEX (0xC0) extensions
@@ -34,6 +35,7 @@
 #include "gfx_pc.h"
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
 #include "gfx_screen_config.h"
 #include "gfx_room_normals.h"
 #include "texture_pack.h"
@@ -4413,14 +4415,12 @@ static void gfx_invalidate_evicted_texture_node(struct TextureHashmapNode *victi
 }
 
 struct GfxDimensions gfx_current_dimensions;
-extern float g_pcRenderScale;
+/* g_pcRenderScale, g_pcEnvRelightBlend, g_pcSunShadow, g_pcSunShadowRes, and
+ * g_pcPerPixelLight are declared in gfx_uniforms.h (included above). Only the
+ * uniforms not yet in that shared header are declared locally here. */
 extern float g_pcFogDensity; /* GE007_FOG_DENSITY: cosmetic haze multiplier (1.0 = identity, AI-neutral) */
-extern int   g_pcEnvSmoothNormals; /* W1.E1: Video.EnvSmoothNormals — smooth-normal room relight */
-extern float g_pcEnvRelightBlend;  /* W1.E1: Video.EnvRelightBlend — relight strength [0..1] */
-extern int   g_pcSunShadow;        /* W1.E3: Video.SunShadow — capture-and-replay sun shadow map */
-extern int   g_pcSunShadowRes;     /* W1.E3: Video.SunShadowRes — shadow-map resolution */
-extern float g_pcSunShadowRadius;  /* W1.E3: Video.SunShadowRadius — camera-centered ortho half-extent */
-extern int   g_pcPerPixelLight;    /* W1.E4: Video.PerPixelLight — per-pixel dFdx directional sun */
+extern int   g_pcEnvSmoothNormals; /* Video.EnvSmoothNormals — smooth-normal room relight */
+extern float g_pcSunShadowRadius;  /* Video.SunShadowRadius — camera-centered ortho half-extent */
 
 static float gfx_clamped_render_scale(void) {
     /* NaN (e.g. GE007_RENDER_SCALE=nan) compares false in both branches below,

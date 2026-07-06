@@ -1,4 +1,4 @@
-<!-- Authored 2026-07-01 alongside docs/PERFORMANCE_PLAN.md (the "Make It Rip"
+<!-- Authored 2026-07-01 alongside docs/design/PERFORMANCE_PLAN.md (the "Make It Rip"
 performance pass). Purpose: give future contributors the mental model of the
 Fast3D render path, mark where the per-primitive hot-path boundary is, and record
 the two performance case studies that motivated the rule below. -->
@@ -7,8 +7,8 @@ the two performance case studies that motivated the rule below. -->
 
 This is the map of how a frame gets drawn in the native port, written for anyone
 touching the renderer. It is deliberately short. The companion docs are
-`docs/PERFORMANCE_PLAN.md` (budgets + the perf harness), `docs/RENDER_PORT_SURVEY.md`
-(correctness), `docs/VISUAL_MODES.md` (feature flags), and
+`docs/design/PERFORMANCE_PLAN.md` (budgets + the perf harness),
+`docs/VISUAL_MODES.md` (feature flags), and
 `docs/FRAME_TIMING_ARCHITECTURE.md` (frame *rate* — the fixed 60 Hz sim timestep,
 why play is 60 while benchmarks report ~120, and why >60 is a sim rewrite).
 
@@ -115,7 +115,7 @@ running in the per-primitive hot path. Both are fixed; they are here as warnings
 Every feature that adds per-frame or (especially) per-primitive work must ship with:
 1. **A scope** — which levels/materials it applies to. A one-level feature must not
    tax the other nineteen (default-on-global is how both §4 defects happened).
-2. **A budget** — it must keep every level within `docs/PERFORMANCE_PLAN.md` §6.
+2. **A budget** — it must keep every level within `docs/design/PERFORMANCE_PLAN.md` §6.
    Run `tools/perf_census.sh` before/after.
 3. **An A/B escape hatch** — a `GE007_*` env knob (and, for visual features, a
    screenshot-oracle parity check), so any regression is one variable away from

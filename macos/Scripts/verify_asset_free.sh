@@ -16,6 +16,16 @@ set -euo pipefail
 #   - Locally before tagging a release.
 #   - Any time the asset pipeline changes and you want a quick sanity check.
 #
+# Scope
+# -----
+# This verifier requires a BUILT binary/app-bundle argument (a Mach-O to
+# inspect); run with no argument it prints usage and exits 1 by design -- it is
+# not a source-tree scanner. The source-tree asset-free gate is
+# scripts/ci/check_no_rom_data.sh (run inside scripts/ci/check_release_ready.sh),
+# which is what gates a source-only checkout. Point this script at the built
+# .app/binary (ideally freshly built from the tagged commit) as the
+# complementary post-build check.
+#
 # Exit codes
 #   0  All checks passed (WARNs are tolerated).
 #   1  One or more checks FAILed -- binary is NOT asset-free.
