@@ -2191,8 +2191,16 @@ static bool mtl_ensure_ssao_program(void) {
     tb_str(&s, "  float occ = 0.0;\n");
     tb_str(&s, "  for (int i = 0; i < 12; ++i) {\n");
     tb_str(&s, "    float3 sp = P + (TBN * kKernel[i]) * u.radius;\n");
+    /* Guard the perspective divide: a hemisphere sample can land at/behind the camera
+     * plane (sp.z <= 0) for geometry close to the near cut, where sp.z/proj blows up and
+     * the sign flip reprojects it to the opposite screen edge — sampling garbage depth
+     * that produces flickering AO speckle on near surfaces. Reject samples behind the
+     * camera or off-screen (standard hemisphere-SSAO practice); a rejected sample counts
+     * as unoccluded, which is correct for something outside the reconstructable frame. */
+    tb_str(&s, "    if (sp.z <= 0.0) continue;\n");
     tb_str(&s, "    float2 suv = float2(sp.x * u.projX / sp.z, sp.y * u.projY / sp.z);\n");
     tb_str(&s, "    suv = float2(suv.x * 0.5 + 0.5, 0.5 - suv.y * 0.5);\n");
+    tb_str(&s, "    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;\n");
     tb_str(&s, "    float3 S = viewPos(suv, dep.sample(ds, suv), u);\n");
     tb_str(&s, "    float3 v = S - P; float len = max(length(v), 1e-4);\n");
     tb_str(&s, "    float ndl = dot(N, v / len);\n");
