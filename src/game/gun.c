@@ -18266,6 +18266,10 @@ check_state:
         case ITEM_FLAREPISTOL - 2:
         case ITEM_PITONGUN - 2:
         case ITEM_PLASTIQUE - 2:
+        /* Tank cannon: retail jpt_80054084[TANKSHELLS-2 = 30] == Weapon_shooting_pistol —
+         * one shell latched per trigger press (transitions to state 3), not the cyclic
+         * full-auto of the machinegun case. */
+        case ITEM_TANKSHELLS - 2:
         /* Remote-mine detonator watch: retail's jpt_80054084[ITEM_TRIGGER-2]
          * routes ITEM_TRIGGER to Weapon_shooting_pistol, which latches
          * weapon_firing_status for one frame. chraiCheckUseHeldItem() then
@@ -18306,8 +18310,9 @@ check_state:
         case ITEM_MP5K - 2:
         case ITEM_MP5KSIL - 2:
         case ITEM_SPECTRE - 2:
-        case ITEM_TANKSHELLS - 2:
-        case ITEM_BOMBCASE - 2:
+            /* TANKSHELLS (jpt_80054084[30]) and BOMBCASE (jpt_80054084[31]) are NOT
+             * machinegun in retail — TANKSHELLS is single-shot pistol (moved to the pistol
+             * case above) and BOMBCASE is throwable (falls to the default case below). */
             fire_rate = bondwalkItemGetAutomaticFiringRate(weapon_id);
             if (hand_ptr->field_88C != 0 && hand_ptr->weapon_hold_time == 0) {
                 if (bondwalkItemCheckBitflags(weapon_id, 4)) {
