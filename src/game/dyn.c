@@ -128,6 +128,22 @@ s32 dynGetFreeGfx2(Gfx *gdl) {
 
 void/*Vtx?*/ *dynAllocate7F0BD6C4(s32 count) {
     void *ptr = g_GfxMemPos;
+#ifdef NATIVE_PORT
+	/* Same overflow guard as dynAllocate/dynAllocateMatrix (below): every effect
+	 * billboard (explosion/smoke/spark quad) and model reserves its Vtx array here,
+	 * and a heavy frame can push g_GfxMemPos past the VTX buffer end. Unguarded, the
+	 * caller writes count*0x10 bytes of Vtx data out of bounds AND g_GfxMemPos marches
+	 * further past the end on every subsequent alloc until it faults (SEGV). Don't
+	 * advance past the end so the runaway is prevented. */
+	if (g_GfxMemPos + count * 0x10 > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
+		static s32 overflow_count = 0;
+		if (++overflow_count <= 5) {
+			printf("[DYN] Vtx overflow: need %d, have %ld bytes\n", count * 0x10,
+				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
+		}
+		return ptr;
+	}
+#endif
 	g_GfxMemPos += count * 0x10/*sizeof(Vtx)?*/;
 	return ptr;
 }
@@ -159,6 +175,19 @@ Mtx *dynAllocateMatrix(void)
 
 void/*Light?*/ *dynAllocate7F0BD6F8(s32 count) {
     void *ptr = g_GfxMemPos;
+#ifdef NATIVE_PORT
+	/* Same overflow guard as dynAllocate (below): a LookAt/Light reservation on a
+	 * VTX-pool-exhausted frame must not write out of bounds or march g_GfxMemPos past
+	 * the buffer end. Don't advance past the end. */
+	if (g_GfxMemPos + count * 0x10 > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
+		static s32 overflow_count = 0;
+		if (++overflow_count <= 5) {
+			printf("[DYN] Light overflow: need %d, have %ld bytes\n", count * 0x10,
+				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
+		}
+		return ptr;
+	}
+#endif
 	g_GfxMemPos += count * 0x10/*sizeof(Light)?*/;
 	return ptr;
 }
