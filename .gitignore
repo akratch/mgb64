@@ -99,6 +99,11 @@ diag_*
 !src/app/diag_log.cpp
 # (re-allow project-authored images by exception if ever needed, e.g.:)
 # !docs/img/*.png
+# App icon source: hand-authored branding art (not ROM-derived), the single
+# tracked exception. Every platform icon (.icns/.ico/AppImage png) is derived
+# from this at build/package time — see scripts/ci/check_no_rom_data.sh.
+!branding/appicon-source.png
+!branding/appicon-windows.ico
 
 # --- HD texture-pack tooling (tools/texpack) ---
 # Fetched-on-demand Real-ESRGAN binary + models (third-party, large) and build

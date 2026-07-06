@@ -9,6 +9,11 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD 17)
 endif()
 
+# Windows executable icon (windows/mgb64.rc -> branding/appicon-windows.ico).
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 include(CTest)
 
@@ -568,6 +573,10 @@ add_executable(ge007
     ${LIBULTRA_AUDIO_SOURCES}
     ${LIBULTRARE_AUDIO_SOURCES}
 )
+
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/branding/appicon-windows.ico")
+    target_sources(ge007 PRIVATE ${CMAKE_SOURCE_DIR}/windows/mgb64.rc)
+endif()
 
 if(PORT_SOUNDPLAYER_REAL)
     target_compile_definitions(ge007 PRIVATE PORT_SOUNDPLAYER_REAL)

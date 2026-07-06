@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the project-owned macOS app icon at build time.
+"""Generate the macOS app icon at build time.
 
-The release guard intentionally rejects tracked PNG/ICNS files because those
-formats are also common ROM-derived asset leaks. This script keeps the app icon
-source as auditable code and produces the binary icon only inside build output.
+With --source, resizes the tracked branding/appicon-source.png (a narrow,
+audited exception to the release guard's tracked-binary ban -- see
+scripts/ci/check_no_rom_data.sh) into an .iconset via `sips`. Without --source,
+falls back to the original procedurally-rendered placeholder (used by the
+asset-free-verifier test harness, which just needs *an* icon, not the real one).
 """
 
 from __future__ import annotations
@@ -180,13 +182,29 @@ def generate_iconset(iconset: Path) -> None:
         write_png(iconset / filename, base_size * scale)
 
 
+def generate_iconset_from_source(source: Path, iconset: Path) -> None:
+    if iconset.exists():
+        shutil.rmtree(iconset)
+    iconset.mkdir(parents=True)
+    for base_size, scale, filename in ICON_SPECS:
+        px = base_size * scale
+        subprocess.run(
+            ["sips", "-z", str(px), str(px), str(source), "--out", str(iconset / filename)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iconset", required=True, type=Path, help="Output .iconset directory")
     parser.add_argument("--icns", type=Path, help="Optional output .icns path")
+    parser.add_argument("--source", type=Path, help="Real branding PNG to resize instead of the procedural placeholder")
     args = parser.parse_args()
 
-    generate_iconset(args.iconset)
+    if args.source is not None:
+        generate_iconset_from_source(args.source, args.iconset)
+    else:
+        generate_iconset(args.iconset)
 
     if args.icns is not None:
         args.icns.parent.mkdir(parents=True, exist_ok=True)

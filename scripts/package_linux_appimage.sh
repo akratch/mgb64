@@ -58,10 +58,15 @@ Type=Application
 Categories=Game;
 Comment=The Man with the Golden Build
 EOF
-# 1x1 charcoal PNG placeholder (base64) — replace with a real icon later.
-base64 -d > "$appdir/mgb64.png" <<'EOF'
+icon_source="branding/appicon-source.png"
+if [[ -f "$icon_source" ]]; then
+  cp "$icon_source" "$appdir/mgb64.png"
+else
+  # 1x1 charcoal PNG placeholder (base64) — used if branding art is missing.
+  base64 -d > "$appdir/mgb64.png" <<'EOF'
 iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==
 EOF
+fi
 
 cp LICENSE README.md "$appdir/" 2>/dev/null || true
 
