@@ -43,10 +43,13 @@ scripts/ci/check_no_rom_data.sh
 echo
 echo "== Git history filename audit =="
 if [ "$HAVE_GIT" -eq 1 ]; then
+  # branding/appicon-source.png + branding/appicon-windows.ico: same tracked
+  # exception as check_no_rom_data.sh (hand-authored branding, not ROM-derived).
   history_hits=$(git log --all --name-only --pretty=format: \
     | awk 'NF' \
     | sort -u \
     | grep -E '\.(z64|n64|v64|rom|bin|bmp|png|jpe?g|gif|webp|ico|icns|ppm|raw|wav|mp3|ogg|flac|m4a|aac|mp4|mov|m4v|mkv|avi|webm|jsonl|ctl|tbl|aifc|aiff|sbk|seq|cdata|dmg|zip|7z|tar|tgz|gz)$|(^|/)baserom|(^|/)[^/]+\.app(/|$)|ge007_eeprom|ge007\.ini|(^|/)screenshot_[^/]*\.(bmp|png|jpe?g|gif|webp|ppm|raw|jsonl|mp4|mov|m4v|webm)$' \
+    | grep -v -E '^branding/appicon-(source\.png|windows\.ico)$' \
     || true)
   if [ -n "$history_hits" ]; then
     while IFS= read -r f; do note "ROM/media/build artifact path found in git history: $f"; done <<< "$history_hits"
