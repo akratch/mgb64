@@ -1668,6 +1668,16 @@ static void mtl_start_frame(void) {
     }
 
     s_cmdbuf = [s_queue commandBuffer];
+    if (s_cmdbuf == nil) {
+        /* GPU reset / device-lost / VRAM exhaustion: the queue handed back no command
+         * buffer. end_frame bails on a nil s_cmdbuf before its addCompletedHandler runs,
+         * so the frame-throttle permit taken by the dispatch_semaphore_wait above would
+         * never be returned — after MTL_VBUF_SLOTS such frames the next wait blocks
+         * forever and the game hard-freezes. Return the permit and skip this frame so the
+         * backend can recover once the GPU is back. */
+        if (s_frame_sem != nil) dispatch_semaphore_signal(s_frame_sem);
+        return;
+    }
     /* W1.E3.T3: replay the prior frame's captured casters into the sun-shadow depth
      * map before the scene encoder opens (capture-and-replay, §4.5). The ring is
      * reset in gfx_pc.c after start_frame, preserving the one-frame latency. */
