@@ -2897,21 +2897,38 @@ static int portBondBodyFixEnabled(void)
     return enabled;
 }
 
+/* R1 dev hook: force a dedicated-allocation "failure" so the fail-closed path
+ * can be exercised without real OOM. GE007_BOND_BODY_ALLOC_FAIL=header|buffer
+ * fails just that allocation; =both (or =1) fails both. Off unless set. */
+static int portBondBodyForceAllocFail(const char *which)
+{
+    const char *v = getenv("GE007_BOND_BODY_ALLOC_FAIL");
+    if (v == NULL) {
+        return 0;
+    }
+    if (strcmp(v, "1") == 0 || strcmp(v, "both") == 0) {
+        return 1;
+    }
+    return strcmp(v, which) == 0;
+}
+
 static ModelFileHeader *portBondBodyHeader(void)
 {
     static ModelFileHeader *header = NULL;
     if (!portBondBodyFixEnabled()) {
+        /* Fix intentionally disabled (GE007_NO_BOND_BODY_FIX): the caller takes
+         * the original aliased GUNRIGHT path as a dev A/B knob. */
+        return NULL;
+    }
+    if (portBondBodyForceAllocFail("header")) {
         return NULL;
     }
     if (header == NULL) {
         header = (ModelFileHeader *)calloc(1, sizeof(ModelFileHeader));
-        /* D12/T18: on the one-time alloc failure the caller silently falls back
-         * to the aliased GUNRIGHT weapon slot -- i.e. the exact invisible/spiky
-         * Bond-body bug this de-alias fixes. Make that reversion visible. */
-        if (header == NULL) {
-            fprintf(stderr, "[BONDVIEW] portBondBodyHeader calloc failed; "
-                            "Bond viewer body reverts to the aliased weapon slot.\n");
-        }
+        /* D12/T18: on the one-time OOM the caller now FAILS CLOSED (skips the
+         * viewer body); it does NOT revert to the aliased GUNRIGHT slot, which
+         * would reintroduce the invisible/spiky/red-shard Bond-body bug this
+         * de-alias fixes. See portBondBodyReportFailClosed. */
     }
     return header;
 }
@@ -2933,14 +2950,59 @@ static u8 *portBondBodyBuffer(void)
     if (!portBondBodyFixEnabled()) {
         return NULL;
     }
+    if (portBondBodyForceAllocFail("buffer")) {
+        return NULL;
+    }
     if (buf == NULL) {
         buf = (u8 *)calloc(1, getSizeBufferWeaponInHand(GUNRIGHT));
-        if (buf == NULL) {
-            fprintf(stderr, "[BONDVIEW] portBondBodyBuffer calloc failed; "
-                            "Bond viewer body mesh reverts to the aliased weapon slot.\n");
-        }
+        /* On the one-time OOM the caller now FAILS CLOSED (skips the viewer body)
+         * rather than aliasing the GUNRIGHT weapon buffer. See
+         * portBondBodyReportFailClosed. */
     }
     return buf;
+}
+
+/* R1: report the fail-closed decision once. When the body de-alias fix is
+ * enabled but a dedicated allocation is unavailable, solo_char_load skips the
+ * 1P viewer body entirely instead of assembling it into the GUNRIGHT weapon
+ * slot. Aliasing that slot is the exact source of the intro red-shard /
+ * spiky-Bond corruption (the FP weapon loader overwrites the slot a frame
+ * later), so an absent body is the correct, non-corrupting degradation. */
+static void portBondBodyReportFailClosed(const ModelFileHeader *hdr, const u8 *buf)
+{
+    static int warned = 0;
+    if (!warned) {
+        warned = 1;
+        fprintf(stderr,
+                "[BONDVIEW][RENDER-HEALTH] 1P Bond viewer body dedicated %s "
+                "unavailable; failing closed (body skipped, NOT aliased onto the "
+                "GUNRIGHT weapon slot) to avoid intro red-shard corruption.\n",
+                (hdr == NULL && buf == NULL) ? "header+buffer"
+                    : (hdr == NULL) ? "header" : "buffer");
+    }
+}
+
+/* R1 invariant guard: the dedicated body header/buffer must never coincide with
+ * the GUNRIGHT weapon header/buffer. If they do, the de-alias is defeated and
+ * the shard bug returns; surface it once rather than render corruption silently. */
+static void portBondBodyAssertDistinct(const ModelFileHeader *bodyHdr, const u8 *bodyBuf)
+{
+    const void *wpnHdr = (const void *)get_ptr_itemheader_in_hand(GUNRIGHT);
+    const void *wpnBuf = (const void *)getPlayerWeaponBufferForHand(GUNRIGHT);
+    const void *bHdr = (const void *)bodyHdr;
+    const void *bBuf = (const void *)bodyBuf;
+
+    if (bHdr == wpnHdr || bHdr == wpnBuf || bBuf == wpnHdr || bBuf == wpnBuf) {
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            fprintf(stderr,
+                    "[BONDVIEW][RENDER-HEALTH] Bond viewer body allocation aliases "
+                    "the GUNRIGHT weapon slot (bodyHdr=%p bodyBuf=%p wpnHdr=%p "
+                    "wpnBuf=%p); intro body would corrupt.\n",
+                    bHdr, bBuf, wpnHdr, wpnBuf);
+        }
+    }
 }
 
 static f32 portGetWatchPauseAdjust(struct player *player)
@@ -3010,13 +3072,21 @@ void solo_char_load(void)
         bodyBufSize = getSizeBufferWeaponInHand(GUNRIGHT);
         headBufSize = getSizeBufferWeaponInHand(GUNLEFT);
 #ifdef NATIVE_PORT
-        /* Load the 1P viewer body+head MESH into a dedicated data buffer instead
-         * of the GUNRIGHT weapon buffer, so the FP weapon loader cannot overwrite
-         * the body vertices a frame later (see portBondBodyBuffer). Same de-alias
-         * as the header (portBondBodyHeader); both are needed. Falls back to the
-         * weapon buffer if disabled or the one-time alloc failed. */
+        /* R1: resolve the 1P viewer body's DEDICATED data buffer + header up
+         * front. The body+head MESH and its header must live in their OWN
+         * allocations, never the GUNRIGHT weapon slot: the FP weapon loader
+         * overwrites that slot one frame later, and the aliased body is the intro
+         * red-shard / spiky-Bond corruption. If the de-alias fix is enabled but
+         * either dedicated allocation failed, we FAIL CLOSED at the header site
+         * below (skip the body) instead of reverting to the aliased slot. The
+         * aliased slot is used only with GE007_NO_BOND_BODY_FIX (dev A/B knob). */
+        int bond_fix_wanted = 0;
+        u8 *bond_body_buf = NULL;
+        ModelFileHeader *bond_body_hdr = NULL;
         if (getPlayerCount() == 1) {
-            u8 *bond_body_buf = portBondBodyBuffer();
+            bond_fix_wanted = portBondBodyFixEnabled();
+            bond_body_buf = portBondBodyBuffer();
+            bond_body_hdr = portBondBodyHeader();
             if (bond_body_buf != NULL) {
                 bodyBuffer = bond_body_buf;
             }
@@ -3109,13 +3179,27 @@ void solo_char_load(void)
             remove_item_in_hand(GUNRIGHT);
             texInitPool(&texPool, headBuffer, headBufSize);
 #ifdef NATIVE_PORT
-            /* Assemble the body into its OWN persistent header, not the GUNRIGHT
-             * weapon slot, so model->obj is never clobbered by the FP weapon
-             * loader (see portBondBodyHeader). Fall back to the slot only if the
-             * one-time allocation failed. */
-            p_bodyHeader = portBondBodyHeader();
+            /* Assemble the body into its OWN persistent header, never the
+             * GUNRIGHT weapon slot, so model->obj is never clobbered by the FP
+             * weapon loader (see portBondBodyHeader / R1). */
+            if (bond_fix_wanted && (bond_body_hdr == NULL || bond_body_buf == NULL)) {
+                /* Fix enabled but a dedicated allocation failed: FAIL CLOSED.
+                 * Skip viewer-body construction so Bond is absent (clean) rather
+                 * than aliased+corrupt. Clear the hand locks so the normal FP
+                 * weapon loader still arms the player, and leave
+                 * ptr_char_objectinstance NULL -- every caller guards on it. */
+                portBondBodyReportFailClosed(bond_body_hdr, bond_body_buf);
+                g_CurrentPlayer->lock_hand_model[GUNRIGHT] = 0;
+                g_CurrentPlayer->lock_hand_model[GUNLEFT] = 0;
+                return;
+            }
+            p_bodyHeader = bond_body_hdr;
             if (p_bodyHeader == NULL) {
+                /* Reached only with the fix disabled (GE007_NO_BOND_BODY_FIX):
+                 * the original aliased path, kept as a dev A/B knob. */
                 p_bodyHeader = get_ptr_itemheader_in_hand(GUNRIGHT);
+            } else {
+                portBondBodyAssertDistinct(p_bodyHeader, bodyBuffer);
             }
 #else
             p_bodyHeader = get_ptr_itemheader_in_hand(GUNRIGHT);
@@ -3170,8 +3254,19 @@ void solo_char_load(void)
             model = (Model *)calloc(1, sizeof(Model));
 #else
             model = (Model *)(bodyBuffer + bufferSizeRemain);
-            totalsize = ALIGN64_V3(bufferSizeRemain + 0xFB);
 #endif
+            /* Advance totalsize PAST the head mesh before the rhand-weapon load
+             * below packs the weapon model into bodyBuffer+totalsize.
+             * bufferSizeRemain is the aligned head-mesh end. Retail did this in
+             * the weapon-buffer (#else) path via this same expression; the native
+             * path calloc's the model separately and previously SKIPPED it,
+             * leaving totalsize at head_start+rwdata. The weapon then loaded
+             * INSIDE the head mesh (measured on Dam: weapon_offset 28480 <
+             * head_end 35200, bodyBufSize 84000) and overwrote ~90% of Bond's
+             * head, so the head rendered as degenerate red shards during the
+             * intro swirl and outro pose. The shared buffer is large enough; only
+             * the offset was wrong. GE007_TRACE_BOND_BUF prints the layout. */
+            totalsize = ALIGN64_V3(bufferSizeRemain + 0xFB);
 
             modelCalculateRwDataLen(pBody);
             modelCalculateRwDataLen(pHead);
@@ -3196,8 +3291,12 @@ void solo_char_load(void)
         if (c_item_entries[body].header->RootNode == NULL && getPlayerCount() == 1)
         {
             /* Source the converted body tree from the body's dedicated header
-             * (where it was assembled above), not the GUNRIGHT weapon slot. */
-            ModelFileHeader *pcopy = portBondBodyHeader();
+             * (where it was assembled above), not the GUNRIGHT weapon slot. With
+             * the fix enabled we cannot reach here after a failed allocation
+             * (solo_char_load already failed closed and returned), so
+             * bond_body_hdr is non-NULL; it is NULL only with the fix disabled
+             * (dev A/B), where the aliased slot is the intended source. */
+            ModelFileHeader *pcopy = bond_body_hdr;
             if (pcopy == NULL) {
                 pcopy = get_ptr_itemheader_in_hand(GUNRIGHT);
             }
@@ -3250,6 +3349,16 @@ void solo_char_load(void)
                 p_rhandItemHeader = PitemZ_entries[rhandPropID].header;
                 p_leftHeader = p_lhandItemHeader;
                 copyModelFileHeaderFields(p_lhandItemHeader, p_rhandItemHeader);
+#ifdef NATIVE_PORT
+                if (getenv("GE007_TRACE_BOND_BUF") != NULL) {
+                    fprintf(stderr,
+                            "[BOND-BUF] head_start=%d head_end=%d weapon_offset(totalsize)=%d "
+                            "bodyBufSize=%d OVERLAP=%d(weapon_offset<head_end)\n",
+                            (int)bodyalignedSizeRemainPlus0x5F, (int)bufferSizeRemain,
+                            (int)totalsize, (int)bodyBufSize,
+                            (int)(totalsize < bufferSizeRemain));
+                }
+#endif
                 load_object_fill_header(p_lhandItemHeader, (const char *)PitemZ_entries[rhandPropID].filename, bodyBuffer + totalsize, bodyBufSize - totalsize, &texPool);
                 get_pc_buffer_remaining_value((const char *)PitemZ_entries[rhandPropID].filename);
                 modelCalculateRwDataLen(p_leftHeader);

@@ -54,12 +54,23 @@ for bisecting a regression or comparing looks. Set the variable to `1`.
 | `GE007_NO_CINEMA_INTRO_FIX` | Pre-fix gate that skipped a stage's intro when it had cinema cameras but no swirl data. |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | Pre-fix Bond intro-chr spawn timing at swirl entry (one record early vs stock). |
 | `GE007_NO_BOND_BODY_FIX` | Pre-fix aliased viewer body (invisible / spiky Bond in the swirl and outro pose). |
+| `GE007_BOND_BODY_ALLOC_FAIL=header\|buffer\|both` | Fault-injection: force the dedicated viewer-body header/buffer allocation to "fail" so the fail-closed path can be exercised without real OOM. With the body fix enabled, `solo_char_load` then **skips** the 1P viewer body (Bond absent, one `[BONDVIEW][RENDER-HEALTH]` log) instead of reverting to the shard-producing aliased `GUNRIGHT` slot. |
 | `GE007_INTRO_ANIM_LEGACY_SEED` | The pre-T12 hand-tuned intro anim seed constant (value-identical; documentation A/B). |
 | `Video.CutsceneFovY=0` (via `--config-override`) | Cinematics follow the gameplay FOV instead of the faithful 60. |
 
 Diagnostic traces (no behavior change): `GE007_TRACE_INTRO_PARSE`,
 `GE007_SETUP_DIAG`, `GE007_VERBOSE` (spawn/room/camera dumps),
-`GE007_TRACE_FOV`, `GE007_TRACE_CAMERA`.
+`GE007_TRACE_FOV`, `GE007_TRACE_CAMERA`, `GE007_TRACE_BOND_BUF` (1P viewer
+body/head/weapon offsets inside the shared load buffer, with an OVERLAP flag).
+
+Red-shard note: the intro Bond body, head, and right-hand weapon are packed into
+one shared load buffer in `solo_char_load`. The native path previously failed to
+advance the weapon offset past the head mesh, so the weapon model overwrote most
+of Bond's head and the head rendered as dark-red degenerate shards during the
+swirl/outro (only visible once the body de-alias keeps the render count at ~21;
+with `GE007_NO_BOND_BODY_FIX` the body collapses and hides it). Fixed by running
+retail's `totalsize` advancement in the native path; verify with
+`GE007_TRACE_BOND_BUF=1` (expect `OVERLAP=0`).
 
 ## Validating against a stock ROM
 
