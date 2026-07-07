@@ -19,6 +19,8 @@ rolling=0
 repo=""
 skip_macos=0
 universal=0
+sign=0
+skip_notarize=0
 
 usage() {
   cat <<'USAGE'
@@ -32,6 +34,12 @@ Usage: scripts/release.sh [options]
                     arch only. A universal build needs a universal SDL2; a plain
                     Homebrew SDL2 is single-arch and will fail the x86_64 link,
                     so the shipped prebuilt is Apple-Silicon-only (see README).
+  --sign            Code-sign + notarize MGB64.app with a Developer ID cert
+                    before zipping. Requires DEVELOPER_ID_APPLICATION,
+                    APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD in the
+                    environment (see docs/RELEASING.md).
+  --skip-notarize   With --sign, sign only (skip the notarization submission).
+                    Useful for a quick local check of the signing identity.
 USAGE
 }
 while [[ $# -gt 0 ]]; do
@@ -42,10 +50,22 @@ while [[ $# -gt 0 ]]; do
     --rolling-latest) rolling=1; shift ;;
     --skip-macos) skip_macos=1; shift ;;
     --universal) universal=1; shift ;;
+    --sign) sign=1; shift ;;
+    --skip-notarize) skip_notarize=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+# Fail fast on missing signing credentials, before the (slow) build below.
+if [[ "$sign" -eq 1 ]]; then
+  : "${DEVELOPER_ID_APPLICATION:?--sign requires DEVELOPER_ID_APPLICATION (e.g. 'Developer ID Application: Name (TEAMID)')}"
+  if [[ "$skip_notarize" -eq 0 ]]; then
+    : "${APPLE_ID:?--sign requires APPLE_ID, or pass --skip-notarize}"
+    : "${APPLE_TEAM_ID:?--sign requires APPLE_TEAM_ID, or pass --skip-notarize}"
+    : "${APPLE_APP_PASSWORD:?--sign requires APPLE_APP_PASSWORD, or pass --skip-notarize}"
+  fi
+fi
 
 dist="dist"; mkdir -p "$dist"
 
@@ -62,6 +82,14 @@ if [[ "$skip_macos" -eq 0 ]]; then
     ./macos/Scripts/build_gl_app.sh --output build-macos-app/MGB64.app
   fi
   ./macos/Scripts/verify_asset_free.sh build-macos-app/MGB64.app
+  if [[ "$sign" -eq 1 ]]; then
+    echo "[release] signing MGB64.app (Developer ID)..."
+    sign_args=(build-macos-app/MGB64.app)
+    [[ "$skip_notarize" -eq 1 ]] && sign_args+=(--skip-notarize)
+    ./macos/Scripts/sign_and_notarize.sh "${sign_args[@]}"
+  else
+    echo "[release] --sign not passed: MGB64.app will ship ad-hoc signed (Gatekeeper will warn)."
+  fi
   ( cd build-macos-app && ditto -c -k --sequesterRsrc --keepParent MGB64.app \
       "$OLDPWD/$dist/mgb64-macos-$version.zip" )
   echo "[release] macOS asset: dist/mgb64-macos-$version.zip"

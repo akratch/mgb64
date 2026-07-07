@@ -286,10 +286,18 @@ done
 
 ICONSET_DIR="${BUILD_DIR}/AppIcon.iconset"
 APP_ICON="${OUTPUT_APP}/Contents/Resources/AppIcon.icns"
+ICON_SOURCE="${PROJECT_ROOT}/branding/appicon-source.png"
+ICON_SOURCE_ARGS=()
+if [[ -f "${ICON_SOURCE}" ]]; then
+    ICON_SOURCE_ARGS=(--source "${ICON_SOURCE}")
+else
+    warn "branding/appicon-source.png not found; using the placeholder procedural icon."
+fi
 info "Generating app icon..."
 python3 "${PROJECT_ROOT}/macos/Scripts/generate_app_icon.py" \
     --iconset "${ICONSET_DIR}" \
     --icns "${APP_ICON}" \
+    "${ICON_SOURCE_ARGS[@]}" \
     || die "App icon generation failed."
 [[ -s "${APP_ICON}" ]] || die "Generated app icon is missing: ${APP_ICON}"
 

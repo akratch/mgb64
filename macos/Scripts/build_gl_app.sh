@@ -68,12 +68,20 @@ cp "${PROJECT_ROOT}/macos/Resources/Info.plist" "${INFO_PLIST}"
 # Ensure a high-DPI-capable, non-transparent GL window is declared sane.
 /usr/libexec/PlistBuddy -c "Set :CFBundleName MGB64" "${INFO_PLIST}" 2>/dev/null || true
 
-# --- 4. App icon (generated from auditable Python, no binary asset tracked) ---
+# --- 4. App icon (generated from branding/appicon-source.png via sips) ---
+ICON_SOURCE="${PROJECT_ROOT}/branding/appicon-source.png"
+ICON_SOURCE_ARGS=()
+if [[ -f "${ICON_SOURCE}" ]]; then
+    ICON_SOURCE_ARGS=(--source "${ICON_SOURCE}")
+else
+    info "branding/appicon-source.png not found; using the placeholder procedural icon."
+fi
 info "Generating app icon..."
 ICONSET_DIR="$(mktemp -d)/AppIcon.iconset"
 python3 "${PROJECT_ROOT}/macos/Scripts/generate_app_icon.py" \
     --iconset "${ICONSET_DIR}" \
     --icns "${OUTPUT_APP}/Contents/Resources/AppIcon.icns" \
+    "${ICON_SOURCE_ARGS[@]}" \
     || die "App icon generation failed."
 
 # --- 5. Bundle the linked SDL2 dylib ---
