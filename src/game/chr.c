@@ -5091,6 +5091,13 @@ static s32 chrBeamsFrustumVisibleUnion(PropRecord *prop, coord3d *pos, f32 inst_
 
         for (p = 0; p < pcount; p++) {
             set_cur_player(p);
+            /* A player whose camera hasn't been established this session yet has
+             * a NULL world-to-screen matrix (field_10D4); sub_GAME_7F0785DC and
+             * camIsPosInScreen both dereference it, so skip that viewport rather
+             * than fault. Its frustum simply doesn't contribute to the union. */
+            if (g_CurrentPlayer == NULL || g_CurrentPlayer->field_10D4 == NULL) {
+                continue;
+            }
             sub_GAME_7F0785DC();
             if (sub_GAME_7F054D6C(prop, pos, inst_size, 1) != 0) {
                 visible = 1;
@@ -5099,7 +5106,9 @@ static s32 chrBeamsFrustumVisibleUnion(PropRecord *prop, coord3d *pos, f32 inst_
         }
 
         set_cur_player(saved);
-        sub_GAME_7F0785DC();
+        if (g_CurrentPlayer != NULL && g_CurrentPlayer->field_10D4 != NULL) {
+            sub_GAME_7F0785DC();
+        }
         return visible;
     }
 }
