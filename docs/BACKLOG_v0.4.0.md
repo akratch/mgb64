@@ -261,26 +261,72 @@ can still appear anywhere under memory pressure.
       stress route degrades cleanly; ASan lane clean.
 
 ### M1.3 — R2: one authority for the intro body transform
-**P0 · L (F4)**
-**Files:** `src/game/bondview.c:24437+` (post-`chrTickBeams` snap),
-`src/game/bondview.c:15629/15647` (frozen-camera render origin), `src/game/chr.c:5115-5369`.
-**Bug:** in frozen intro modes the current-player prop is corrected (snapped to
-`field_488.collision_position`) *after* `chrTickBeams` has already advanced animation,
-allocated render positions, and built matrices — so the visible body can be built from
-stale or animation-shifted state while diagnostics see corrected state (floating/
-ungrounded Bond).
-- [ ] Add `bondviewAlignCurrentPlayerIntroPropBeforeChrTick(struct player *)`: copy
-      `field_488.collision_position` → `prop->pos`, `field_488.current_tile_ptr` →
-      `prop->stan`, call `setsuboffset` on `ptr_char_objectinstance`. Call it before
-      `chrTickBeams` only when `playerHasFrozenIntroCamera(player)`.
-- [ ] Demote the existing post-call snap to a consistency check: log if it moves any
-      coordinate by more than epsilon (it should now be a no-op).
-- [ ] Fold the M0.3 root-motion experiment into this single authority (this is where
-      `GE007_INTRO_ROOTMOTION` either becomes the default or dies).
-- [ ] Trace record before/after `chrTickBeams`: intro pad, prop pos, collision pos, model
-      suboffset, anim frame, root joint pos, room, camera render origin.
-- [ ] Validate: Dam intro root/pelvis height stable relative to the selected pad;
-      M1.4's grounding check passes; first-person hand/body path unchanged in normal play.
+**✅ RE-SCOPED + LANDED 2026-07-08** (`73afbfb`) — decision-gate option (b) per charter
+rule 10. **P0 · L (F4)**
+**Files:** `src/game/bondview.c:24558+` (post-`chrTickBeams` block in `playerTickBeams`).
+
+**Original bug (as written):** in frozen intro modes the current-player prop was
+corrected (snapped to `field_488.collision_position`) *after* `chrTickBeams` had already
+advanced animation, allocated render positions, and built matrices — so the visible body
+could be built from stale/animation-shifted state (floating/ungrounded Bond).
+
+**Reassessment (charter rule 10 — the backlog text predates D43/D31).** This item was
+written when intro Bond floated. Since then D43 (`9acba24`, scripted phase-3 anim + root
+motion) and D31 (`510e181`, grounding across all intro phases) landed and are
+oracle-validated (Y delta vs stock 0.00 through the whole swirl). That work restructured
+the post-tick block: on **animated** frozen-intro frames the animation root motion drives
+`prop->pos` and the block copies `prop->pos` **outward** to the collision anchor and
+returns — it no longer snaps the anchor **into** the rendered prop. So the two-authority
+structure R2 flagged no longer moves the rendered body during the swirl.
+
+**Instrumented measurement** (`GE007_TRACE_INTRO_AUTHORITY`, Dam intro, 557 current-player
+intro ticks): **zero** health warnings. On animated frames the outward branch runs (the
+anchor delta tracks the animation's up-to-73u/tick settle and is propagated, not snapped
+away); every frozen-intro **inward-snap** frame is a measured no-op. The animation inside
+`chrTickBeams` is already the single authority for the swirl body.
+
+**Decision:** the prescribed pre-`chrTickBeams` alignment refactor is **not** justified —
+it has zero visual upside on an already-stock-correct scene and would fight the freshly
+landed D31/D43 "animation drives prop" design (charter rules 2, 9). Instead the post-tick
+block is demoted to a **logged consistency check**:
+- [x] `GE007_TRACE_INTRO_AUTHORITY` diagnostic: per-tick prop pos before/after
+      `chrTickBeams`, collision anchor, animation delta, anchor-snap delta.
+- [x] One-shot `[BONDVIEW][RENDER-HEALTH]` warning if the inward snap ever moves the
+      already-rendered viewer body by >0.01u in the frozen intro (non-FP) — i.e. if a
+      second transform authority re-emerges. FP/FP_NOINPUT snap every tick by design and
+      are excluded.
+- [x] `GE007_INTRO_ROOTMOTION` gating settled by D43/D31 (default-on `GE007_NO_*` opt-out);
+      not folded further here.
+- [~] Pre-tick alignment refactor **deliberately not done** (see decision above; retire
+      condition: if a future intro change makes the outward branch move the rendered body,
+      the health warning fires and this item reopens as a true single-authority refactor).
+- [x] Validate: log-only; `sim_state_hash` + `port_renderer_parity_smoke` green; Dam intro
+      oracle-facing counters byte-identical to pre-change; M1.4 grounding check passes.
+
+### M1.4 — R8: pixel-level intro validator (prove it, keep it proved)
+**✅ LANDED 2026-07-08** (`dd36bad` trace/instrumentation, `3161b7a` validator + lane).
+**P1 · M (F2)**
+**Files:** `src/platform/port_trace.c` (`intro.bond_body`), `tools/audit_intro_trace.py`,
+`tools/analyze_intro_body.py`, `tools/intro_visual_regression.sh`.
+**Gap (closed):** actor-state checks (`bond_rendered=1`, anim hash) pass on a shredded or
+floating Bond.
+- [x] Extended the intro trace with the `intro.bond_body` record: world root, floor Y
+      beneath Bond, model height, joint render-position count, and the body's projected
+      screen bbox / root+head screen points. Grounding (`world_root.y` vs `floor_y`) is
+      projection-independent.
+- [x] Dam-intro screenshot analyzer (`analyze_intro_body.py`) with three checks:
+      (1) presence = warm skin/tan silhouette coverage in the Bond region; (2) grounding =
+      median `world_root.y - floor_y` within a bounded offset (fail on persistent float);
+      (3) shard score = dark saturated-red outlier pixels → must be 0. **Note:** the port's
+      frozen-intro camera does not project actor world positions to screen reliably, so the
+      Bond region is an empirically-measured Dam-route fixture, not an engine projection
+      (documented in the tool + INSTRUMENTATION.md).
+- [x] Negative controls wired into `intro_visual_regression.sh`: `GE007_NO_BOND_BODY_FIX=1`
+      FAILs presence (+ render_pos_count 6<18); `GE007_INTRO_BODY_Y_OFFSET=300` FAILs
+      grounding (median 409.6>250); a dark-red injection self-test FAILs shards.
+      `GE007_NO_INTRO_PHASE3=1` and `GE007_NO_INTRO_ROOTMOTION=1` both PASS (older-but-not-
+      broken). `audit_intro_trace.py` also gained optional trace-only
+      `--min-body-render-pos-count` / `--max-grounding-offset` gates.
 
 ### M1.4 — R8: pixel-level intro validator (prove it, keep it proved)
 **P1 · M (F2)**

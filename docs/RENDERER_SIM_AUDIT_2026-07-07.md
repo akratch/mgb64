@@ -565,6 +565,23 @@ Validation:
 2. Dam intro must show stable root/pelvis height relative to the selected pad.
 3. Screenshot validation should fail if Bond's projected body center drifts far from the authored intro location.
 
+Status (2026-07-08, `73afbfb`): re-scoped after D43 (`9acba24`) and D31
+(`510e181`) landed and were oracle-validated (Bond Y matches stock, median delta
+0.00 through the whole swirl). Those fixes restructured the post-`chrTickBeams`
+block so that on animated frozen-intro frames the animation root motion drives
+`prop->pos` and the block copies it **outward** to the collision anchor and
+returns — it no longer snaps the anchor **into** the rendered prop. Measured with
+the new `GE007_TRACE_INTRO_AUTHORITY` diagnostic (Dam intro, 557 current-player
+intro ticks): the animation inside `chrTickBeams` is already the single authority
+for the swirl body, and every inward-snap frame is a no-op (zero health
+warnings). Per charter rule 10 the prescribed pre-`chrTickBeams` alignment
+refactor was **not** forced onto an already-stock-correct scene (zero visual
+upside, would fight D31/D43); instead the post-tick block is demoted to a logged
+consistency check — a one-shot `[BONDVIEW][RENDER-HEALTH]` warning fires if the
+inward snap ever moves the already-rendered body by >0.01u in the frozen intro.
+Log-only: `sim_state_hash` / renderer parity green, oracle-facing counters
+byte-identical. Backlog M1.3 carries the full decision.
+
 ### R3 - Dynamic allocator aliasing on overflow
 
 Impact/feasibility: P0/F4.
@@ -734,6 +751,21 @@ Validation:
 1. Normal run should pass.
 2. `GE007_NO_BOND_BODY_FIX=1` should fail shard/silhouette checks.
 3. A deliberately offset intro prop should fail grounding checks.
+
+Status (2026-07-08, `dd36bad` + `3161b7a`): done. The trace gained an
+`intro.bond_body` record (world root, floor Y beneath Bond, model height, joint
+render-position count, projected screen bbox / root+head points). A new Dam-intro
+screenshot analyzer (`tools/analyze_intro_body.py`) runs presence (warm
+skin/tan silhouette coverage), grounding (median `world_root.y - floor_y`, from
+the trace, projection-independent), and a dark-red shard-outlier score, wired
+into `tools/intro_visual_regression.sh` with the negative controls baked in:
+`GE007_NO_BOND_BODY_FIX=1` fails presence (and render_pos_count 6<18);
+`GE007_INTRO_BODY_Y_OFFSET=300` fails grounding (median 409.6>250); a dark-red
+injection self-test fails shards; `GE007_NO_INTRO_PHASE3`/`_ROOTMOTION` both pass.
+Caveat: the port's frozen-intro camera does not project actor world positions to
+screen reliably, so the Bond region is an empirically-measured Dam-route fixture
+rather than an engine joint projection (point 3 above adjusted accordingly);
+grounding stays exact via world-space trace values.
 
 ### R9 - Bond intro weapon sub-buffer guard
 
