@@ -276,9 +276,18 @@ stock, collapses the D35 camera-anchor drift (`cam_target[0]` 39.4 -> 1.0), and
 drops total intro divergences 2546 -> 1116; the `dam_intro_swirl_bond_anim`
 oracle route passes with the D36 bond_anim waivers removed. Validated safe
 (no crash, deterministic, phase-3 fires + Bond moves) across all 20 intro
-stages; only Dam is per-frame oracle-verified (residual: D41 anim seed offset,
-D31 ~57u vertical settle, and per-stage phase-3 scripts not yet individually
-oracle-checked). Disable via `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
+stages; only Dam is per-frame oracle-verified. Then (D31, 2026-07-08) the
+vertical settle: the root-motion unpin was extended from phase-3-only to ALL
+intro animation phases, because the intro Bond previously stayed pinned at the
+raw spawn anchor (~60u) through phases 1-2 -- he hovered ~57u above the ground
+and then visibly dropped when phase 3 took over. Unpinning every phase makes Bond
+follow the animation and settle onto the floor like stock (Y delta vs stock 0.00
+across all phases; D31 vertical divergences 133 -> 42; total 1116 -> 1003), with
+the only residual a one-frame spawn transient hidden by the swirl-entry fade.
+Re-validated no-regression across all 20 stages (no crash, sane position,
+deterministic, FP unaffected, opt-out clean). Residual/separate: D41 anim seed
+offset, and per-stage phase-3 scripts not yet individually oracle-checked.
+Disable via `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
 
 Desired end state:
 

@@ -24451,11 +24451,27 @@ s32 playerTickBeams(PropRecord *prop) {
                 if (rootmotion < 0) {
                     rootmotion = (getenv("GE007_NO_INTRO_ROOTMOTION") == NULL);
                 }
+                /* The intro Bond animation is a 3-phase sequence with matching
+                 * actiontypes on stock and native: phase 1 = ACT_BONDINTRO,
+                 * phase 2 = ACT_STAND (idle), phase 3 = ACT_ANIM. Stock lets each
+                 * phase's animation root motion place Bond -- notably phase 1
+                 * settles him from the spawn height down onto the floor (~-42 ->
+                 * 2.5 on Dam). The native pin held Bond at the raw spawn anchor
+                 * (~60) through phases 1-2, so he HOVERED ~57u above the floor and
+                 * then visibly DROPPED when phase 3's anim took over (ledger D31).
+                 * Unpin for every intro-anim phase (not just phase 3), guarded by
+                 * a live anim, so Bond follows the animation and settles like
+                 * stock across the whole swirl (measured Y delta vs stock 0.00). */
+                s32 introact = (prop->chr != NULL) ? prop->chr->actiontype : -1;
+                s32 introAnimState =
+                    (introact == ACT_ANIM || introact == ACT_BONDINTRO || introact == ACT_STAND)
+                    && prop->chr != NULL && prop->chr->model != NULL
+                    && prop->chr->model->anim != NULL;
                 if (rootmotion
                     && playerHasFrozenIntroCamera(player)
                     && g_CameraMode != CAMERAMODE_FP
                     && g_CameraMode != CAMERAMODE_FP_NOINPUT
-                    && prop->chr != NULL && prop->chr->actiontype == ACT_ANIM) {
+                    && prop->chr != NULL && introAnimState) {
                     player->field_488.collision_position.x = player->prop->pos.x;
                     player->field_488.collision_position.y = player->prop->pos.y;
                     player->field_488.collision_position.z = player->prop->pos.z;

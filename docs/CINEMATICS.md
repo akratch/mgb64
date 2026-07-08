@@ -84,15 +84,27 @@ held the phase-2 idle and stood **static**, and — because the current-player
 intro prop is pinned to its static spawn anchor every tick — did not move.
 Fixed by (a) transitioning the intro chr to the measured phase-3 animation
 (`ANIM_aim_one_handed_weapon_left_right`, index 99, hash `0x79F92FB064997857`,
-end 96, speed 0.5) at swirl segment 4, and (b) letting that animation's root
-motion drive `prop->pos` during the frozen swirl instead of snapping it. Against
-the ares oracle on the Dam intro this makes every `bond_anim` field except
-`frame` (a <=1-frame seed offset, D41) match stock, collapses the D35
-camera-anchor drift (`cam_target[0]` 39.4 -> 1.0), and drops total intro
-divergences from 2546 to 1116. The parameters are oracle-validated on the Dam
-intro and applied as a faithful default to all stages (the Bond-cinema intro is
-shared game behavior); per-stage phase-3 scripts are not yet individually
-oracle-verified. Disable with `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
+end 96, speed 0.5) at swirl segment 4, and (b) letting the intro animation's root
+motion drive `prop->pos` during the frozen swirl instead of snapping it to the
+static spawn anchor. Against the ares oracle on the Dam intro this makes every
+`bond_anim` field except `frame` (a <=1-frame seed offset, D41) match stock,
+collapses the D35 camera-anchor drift (`cam_target[0]` 39.4 -> 1.0), and drops
+total intro divergences from 2546 to 1116.
+
+Vertical settle (ledger D31): the root-motion unpin above must apply to ALL intro
+animation phases (phase 1 `ACT_BONDINTRO`, phase 2 `ACT_STAND` idle, phase 3
+`ACT_ANIM`), not just phase 3. The intro Bond's phase-1 animation settles him from
+the spawn height down onto the floor (~-42 -> 2.5 on Dam); the earlier
+phase-3-only unpin left him pinned at the raw spawn anchor (~60) through phases
+1-2, so he **hovered ~57u above the ground and then visibly dropped** when phase 3
+took over. Unpinning every phase makes Bond follow the animation and settle like
+stock across the whole swirl (measured Y delta vs stock 0.00 in all phases); the
+only residual is a one-frame spawn transient that is hidden by the swirl-entry
+fade. Validated no-regression (no crash, sane position, deterministic) across all
+20 intro stages. The parameters are oracle-validated on the Dam intro and applied
+as a faithful default to all stages (the Bond-cinema intro is shared game
+behavior); per-stage phase-3 scripts are not yet individually oracle-verified.
+Disable with `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
 
 ## Validating against a stock ROM
 
