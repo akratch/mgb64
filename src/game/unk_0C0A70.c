@@ -150,6 +150,26 @@ void updateFrameCounters(s32 deltaFrames)
     currentFrameCounter = (s32) (currentFrameCounter + deltaFrames);
     speedgraphframes = deltaFrames;
 
+#ifdef NATIVE_PORT
+    /* HUD/watch timers (bondview.c, watch.c) read speedgraphframes directly,
+     * so a stall (alt-tab, asset-load spike) must not make them jump ahead
+     * just because the sim's own g_ClockTimer (lvl.c) is capped and this
+     * isn't. Mirror that cap policy exactly, including the RAMROM playback
+     * exemption, so recorded/replayed demo timing doesn't diverge. */
+    {
+        extern s32 D_80048380;
+        extern s32 get_is_ramrom_flag(void);
+
+        if (get_is_ramrom_flag() != 0) {
+            /* preserve raw timing for RAMROM playback fidelity */
+        } else if (D_80048380 == 0 && speedgraphframes > 1) {
+            speedgraphframes = 1;
+        } else if (speedgraphframes > 4) {
+            speedgraphframes = 4;
+        }
+    }
+#endif
+
     #ifdef BUGFIX_R1
     jpD_800484CC = (f32) deltaFrames;
     #ifdef REFRESH_PAL
