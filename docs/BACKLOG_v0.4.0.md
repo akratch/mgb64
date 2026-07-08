@@ -468,18 +468,28 @@ any guard), root cause chain: fog zeroing alpha → `PROPFLAG_ONSCREEN` never se
       reaction anims (non-looping) still play exactly once.
 
 ### M2.6 — R6: ammo HUD fallback icon + image validation
-**P1 · M (F2)**
+**✅ LANDED 2026-07-08** on `fix/m2.6-ammo-hud`. **P1 · M (F2)**
 **Files:** `src/game/gun.c:31752-31830` (`portGetAmmoImage`, `portDrawHandAmmo`),
 `src/game/gun.c:31142-31165` (dimension trust), `src/game/image_bank.c:270-290`,
 `src/game/bondwalk2.c:34-136` (`draw_textured_rectangle` clamping).
-- [ ] Add `portValidateImageEntry(const struct sImageTableEntry *img, const char *label)`:
-      non-null, positive w/h, sane max, texture index < NUM_TEXTURES.
-- [ ] On invalid/missing icon draw a visible fallback (simple bordered rect glyph) instead
-      of silently drawing digits only; count HUD-health errors.
-- [ ] Clamp texture-rect right/bottom against the screen in `draw_textured_rectangle` (or
-      document why backend clipping suffices).
-- [ ] Validate: a scripted inventory cycle across every ammo type, screenshots under GL
-      and Metal, assert icon pixels + digit pixels for each.
+- [x] Add `portValidateImageEntry(const struct sImageTableEntry *img, const char *label)`:
+      non-null, positive w/h, sane max (160 = 128 compiled-table max + 25% headroom),
+      texture index bounded by the COMPILED `g_Textures` table via
+      `texGetCompiledTableCount()` (the 340d892 idiom), **not** NUM_TEXTURES.
+- [x] On invalid/missing icon draw a visible fallback (bordered rect glyph via the
+      drawHitMarker FILL-rect texture-state-safe path) instead of silently drawing digits
+      only, in both `portGetAmmoImage` consumers (hand HUD + `sub_GAME_7F06A334` watch
+      readout); `g_hud_image_fault_count` HUD-health counter exported as
+      `dl.hud_image_fault` and asserted zero by `audit_render_trace.py`.
+      Fault hooks `GE007_AMMO_ICON_FAULT[_INVALID]=<ammotype>` = negative controls.
+- [x] Clamp texture-rect right/bottom — resolved as **document, not clamp**: the PC path
+      renders TEXRECTs as NDC triangles (GPU viewport clip, correct UV interpolation), and
+      a coordinate clamp without S/T compensation would rescale instead of clip (cf.
+      `gSPScisTextureRectangle`); mechanism documented in bondwalk2.c.
+- [x] Validate: `tools/ammo_hud_smoke.sh` (ctest `port_ammo_hud_smoke`) equips all 13
+      ammo-icon types on Dam, asserts icon pixels (equipped-vs-fault diff, digits cancel)
+      + digit pixels (two ammo values, icon cancels) per type, GL and Metal both green;
+      negative controls: digits-under-fault, invalid-entry validator path.
 
 ### M2.7 — Parity audits that need an oracle pass (schedule, don't rush)
 **P2 · M each**

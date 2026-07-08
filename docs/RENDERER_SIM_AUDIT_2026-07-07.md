@@ -697,6 +697,25 @@ Validation:
 2. Take screenshots under OpenGL and Metal.
 3. Check for both icon pixels and digit pixels, not just the presence of text.
 
+Status (2026-07-08, backlog M2.6): done on `fix/m2.6-ammo-hud`.
+`portValidateImageEntry` (image_bank.c) validates non-NULL, positive dims,
+HUD max 160 (128 established compiled-table max + 25% headroom), and texture
+index bounded by the compiled `g_Textures` table (`texGetCompiledTableCount`,
+the 340d892 idiom — not NUM_TEXTURES). Both live consumers of
+`portGetAmmoImage` (`portDrawHandAmmo` hand HUD, `sub_GAME_7F06A334` watch
+readout) draw a bordered-rectangle placeholder glyph on a missing/invalid
+icon (FILL-cycle rects, the drawHitMarker texture-state-safe path) and count
+`g_hud_image_fault_count` (exported as `dl.hud_image_fault` in the state
+trace, asserted zero by `audit_render_trace.py`). The
+`microcode_generation_ammo_related` funnel fail-closes instead of trusting
+`img->width/height`. Fault hooks `GE007_AMMO_ICON_FAULT[_INVALID]=<ammotype>`
+are the negative controls. `draw_textured_rectangle` right/bottom: verified
+already safe (PC path renders TEXRECTs as NDC triangles, GPU-clipped with
+correct UV interpolation; a coordinate clamp without S/T compensation would
+rescale, not clip) — documented in bondwalk2.c, no clamp added. Route:
+`tools/ammo_hud_smoke.sh` (ctest `port_ammo_hud_smoke`) covers all 13
+ammo-icon types with icon+digit pixel assertions on GL and Metal, all green.
+
 ### R7 - Metal minimap overlay skipped
 
 Impact/feasibility: P1/F3.

@@ -57,6 +57,7 @@ The public validation surface is organized into these lanes:
 | Playability | Deterministic gameplay input, movement records, actual player displacement, render-health counters | `playability_smoke.sh` |
 | Scripted look | Deterministic input-freeze isolation while preserving authored `GE007_AUTO_LOOK_*` probes | `scripted_look_smoke.sh` |
 | Damage HUD | Deterministic Bond damage, active health/damage timers, visible health/armor rings, optional HUD-class triangle check | `damage_hud_smoke.sh` |
+| Ammo HUD | Per-ammo-type icon + digit pixel assertions on GL and Metal, icon-fault negative controls, `hud_image_fault` render-health counter | `ammo_hud_smoke.sh` |
 | Combat | Active guard fire, hidden-guard no-phantom-fire/no-damage gates, thrown-knife impact and flight-SFX crash regressions | `hidden_guard_contract_smoke.sh`, `knife_impact_smoke.sh`, `knife_throw_sfx_smoke.sh` |
 | Soak | Long headless deterministic stability run; hard-fails on any crash/recovery/bad-cmd/NaN/DL-resolve failure | `soak_stability.sh` |
 | Sanitizer | Short `-DSANITIZE=ON` ASan/UBSan pass over a few stages (report-only unless `--gate`) | `asan_smoke.sh` |
@@ -789,6 +790,34 @@ is `0.2`, plus Facility as the normal-scale control.
 The output directory defaults to `/tmp/mgb64_damage_hud_smoke_*` and contains
 per-level screenshots, logs, JSONL traces, render audit JSON, damage-HUD audit
 JSON, and a `summary.tsv`. Keep these ROM-derived artifacts local.
+
+### Ammo HUD smoke
+
+```sh
+./tools/ammo_hud_smoke.sh                   # GL (+ Metal on macOS), all 13 icon types
+./tools/ammo_hud_smoke.sh --backends gl     # single backend
+./tools/ammo_hud_smoke.sh --no-build        # reuse an existing build
+```
+
+Validates the ammo HUD for every distinct ammo-icon type (backlog M2.6 /
+audit R6): 9mm, rifle, shotgun, grenade, rocket, remote/proximity/timed mine,
+throwing knife, grenade round, magnum, golden gun, and tank shell
+(`AMMO_9MM_2` has no icon by design). Per type it runs three deterministic
+Dam captures that differ in exactly one variable and asserts pixel diffs that
+isolate one HUD element each: icon presence via equipped-vs-icon-fault
+(digits cancel), digit presence via two ammo values (icon cancels) — see
+`tools/audit_ammo_hud_capture.py` for the isolation argument. Normal runs
+must report zero `hud_image_fault` (strict `audit_render_trace.py`); the
+fault runs must render the bordered-rectangle placeholder, log
+`[HUD][RENDER-HEALTH]`, and move the counter. Negative controls: digits
+still render under an icon fault, and `GE007_AMMO_ICON_FAULT_INVALID`
+exercises the `portValidateImageEntry` poisoned-entry path. On macOS the
+whole suite runs under both GL and Metal (`GE007_RENDERER=metal`).
+
+The output directory defaults to `/tmp/mgb64_ammo_hud_smoke_*` and contains
+per-run screenshots, logs, JSONL traces, audit JSON, and a `summary.tsv`
+with per-type icon/digit diff pixel counts per backend. Keep these
+ROM-derived artifacts local.
 
 ### Combat guard and knife smokes
 
@@ -2259,6 +2288,7 @@ corrupt lines (from DL crash-recovery longjmp) are skipped with a warning.
 | `GE007_AUTO_SELECT_LEVEL=name` / `GE007_AUTO_SELECT_DELAY=N` | frontend selector route for full/no-arg boot probes; prefer named levels such as `bunker1` when a numeric value could be a menu index |
 | `GE007_AUTO_ADD_ITEM_FRAME=N` / `GE007_AUTO_ADD_ITEM=ID` | deterministic inventory injection hook; used by equipment crash repros such as Bunker datathief item `55` |
 | `GE007_AUTO_EQUIP_ITEM_FRAME=N` / `GE007_AUTO_EQUIP_ITEM=ID` | deterministic equipment hook; pair with inventory injection for viewmodel/watch-item repros |
+| `GE007_AMMO_ICON_FAULT=AMMOTYPE` / `GE007_AMMO_ICON_FAULT_INVALID=AMMOTYPE` | ammo HUD fault injection (M2.6): map one ammo type's icon to NULL, or to a poisoned entry (zero width, out-of-table index) that `portValidateImageEntry` must reject; the HUD must draw the placeholder glyph and count `hud_image_fault` |
 | `GE007_AUTO_DEBUG_DUMP_FRAME=N` | request one live debug dump once the diagnostic frame counter reaches `N` |
 | `GE007_DEBUG_DUMP_BONES=1` | opt in to live bone-matrix rows in debug dumps after dyn-vtx range validation; default dumps metadata only |
 | `GE007_DEBUG_DUMP_RWDATA=1` | opt in to raw root rwdata byte sampling in debug dumps |
