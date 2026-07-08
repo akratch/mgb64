@@ -148,6 +148,17 @@ void dynInitMemory(void) {
          * distinct matrix (instead of the dynAllocateMatrix overflow scratch)
          * and covers worst-case 2-player shared-pool pressure. */
         s32 vtxSize = 512 * 1024;
+        /* GE007_DYN_STRESS_LIMIT=<bytes> clamps the per-buffer VTX arena at init
+         * so the fail-closed overflow path is reachable deterministically on a
+         * heavy scene (negative-control route). Diagnostic only; unset = no clamp. */
+        {
+            s32 stress = port_env_int("GE007_DYN_STRESS_LIMIT", 0,
+                "clamp per-buffer dyn VTX arena to this many bytes at init so allocator overflow is reachable for testing (0 = no clamp)");
+            if (stress > 0 && stress < vtxSize) {
+                vtxSize = stress;
+                printf("[DYN] GE007_DYN_STRESS_LIMIT: VTX arena clamped to %dB/buffer\n", vtxSize);
+            }
+        }
         g_GfxBuffers[0] = (u8 *)malloc(gfxSize * 2);
         g_GfxBuffers[1] = (g_GfxBuffers[0] + gfxSize);
         g_GfxBuffers[2] = (g_GfxBuffers[1] + gfxSize);
