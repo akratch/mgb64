@@ -21,6 +21,7 @@ DL_COUNTERS = (
     "non_dl_skip_n64",
     "unregistered_skip",
     "dyn_overflow",
+    "hud_image_fault",
 )
 
 

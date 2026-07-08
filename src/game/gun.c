@@ -31173,8 +31173,13 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
     struct sImageTableEntry *img = (struct sImageTableEntry *)arg1;
 
     /* Fail closed on a NULL/garbage image entry: the dimensions below feed
-     * texSelect and display_image_at_position untranslated (audit R6). */
-    if (!portValidateImageEntry(img, "ammo image draw")) return (void *)gdl;
+     * texSelect and display_image_at_position untranslated (audit R6). The
+     * HUD callers pre-validate and draw a placeholder instead, so a fault
+     * counted here means some other caller lost an image silently. */
+    if (!portValidateImageEntry(img, "ammo image draw")) {
+        g_hud_image_fault_count++;
+        return (void *)gdl;
+    }
 
     f32 xypos[2];
     f32 halfedxy[2];
@@ -31779,6 +31784,14 @@ Gfx *gunDrawHudInteger(Gfx *gdl, s32 value, s32 x, s32 halign, s32 y, s32 valign
     return gunDrawHudString(gdl, (s8 *)buffer, x, halign, y, valign, glow);
 }
 
+#ifdef NATIVE_PORT
+/* HUD-health counter (M2.6), following the g_dyn_overflow_count render-health
+ * pattern: cumulative count of missing/invalid HUD ammo images. Exported per
+ * frame in the state trace ("hud_image_fault") and asserted zero by
+ * audit_render_trace.py on normal routes. */
+s32 g_hud_image_fault_count = 0;
+#endif
+
 #ifdef NONMATCHING
 #if defined(NATIVE_PORT)
 
@@ -31787,6 +31800,32 @@ Gfx *gunDrawHudInteger(Gfx *gdl, s32 value, s32 x, s32 halign, s32 y, s32 valign
  * global image bank. On PC, the images are loaded at startup into
  * named globals. This table provides the direct mapping. */
 static struct sImageTableEntry *portGetAmmoImage(s32 ammo_type) {
+    /* Fault injection (diagnostics, M2.6): GE007_AMMO_ICON_FAULT=<ammotype>
+     * simulates a missing icon global (NULL); GE007_AMMO_ICON_FAULT_INVALID=
+     * <ammotype> returns a poisoned entry (zero width, out-of-table index)
+     * to exercise portValidateImageEntry. Negative controls for the ammo HUD
+     * smoke — the placeholder must render and the HUD-health counter must
+     * move. */
+    static s32 s_faultInit = 0;
+    static s32 s_faultNullType = -1;
+    static s32 s_faultInvalidType = -1;
+    static struct sImageTableEntry s_faultInvalidEntry = {
+        0xFFFFu, 0, 200, 0, 0, 0, 0, 0, 0
+    };
+
+    if (!s_faultInit) {
+        const char *e;
+        s_faultInit = 1;
+        if ((e = getenv("GE007_AMMO_ICON_FAULT")) != NULL && *e != '\0') {
+            s_faultNullType = (s32)strtol(e, NULL, 10);
+        }
+        if ((e = getenv("GE007_AMMO_ICON_FAULT_INVALID")) != NULL && *e != '\0') {
+            s_faultInvalidType = (s32)strtol(e, NULL, 10);
+        }
+    }
+    if (ammo_type == s_faultNullType) return NULL;
+    if (ammo_type == s_faultInvalidType) return &s_faultInvalidEntry;
+
     switch (ammo_type) {
         case AMMO_9MM:         return ammo9mmimage;
         case AMMO_9MM_2:       return NULL; /* no icon */
@@ -31804,6 +31843,60 @@ static struct sImageTableEntry *portGetAmmoImage(s32 ammo_type) {
         case AMMO_TANK:        return tankammoimage;
         default:               return NULL;
     }
+}
+
+/* True for ammo types whose HUD icon exists by design. AMMO_9MM_2
+ * deliberately has none (digits only), so its NULL is not a fault; every
+ * other drawable type maps to a compiled image global, and a NULL or
+ * invalid entry there is a render-health fault. */
+static bool portAmmoIconExpected(s32 ammo_type) {
+    switch (ammo_type) {
+        case AMMO_9MM:
+        case AMMO_RIFLE:
+        case AMMO_SHOTGUN:
+        case AMMO_GRENADE:
+        case AMMO_ROCKETS:
+        case AMMO_REMOTEMINE:
+        case AMMO_PROXMINE:
+        case AMMO_TIMEDMINE:
+        case AMMO_KNIFE:
+        case AMMO_GRENADEROUND:
+        case AMMO_MAGNUM:
+        case AMMO_GGUN:
+        case AMMO_TANK:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* Visible fallback for a missing/invalid ammo icon (M2.6): a bordered
+ * rectangle glyph with a mid bar, sized like a small ammo icon. FILL-cycle
+ * rects only (no settex), so it cannot corrupt texture state — the same
+ * safe path as drawHitMarker/drawDamageOverlay. */
+#define PORT_AMMO_PLACEHOLDER_W 10
+#define PORT_AMMO_PLACEHOLDER_H 16
+
+static Gfx *portDrawAmmoIconPlaceholder(Gfx *gdl, s32 center_x, s32 center_y)
+{
+    u16 col = (u16)((0x1F << 11) | (0x1F << 6) | (0x1F << 1) | 1); /* white */
+    u32 fill = ((u32)col << 16) | col;
+    s32 l = center_x - PORT_AMMO_PLACEHOLDER_W / 2;
+    s32 r = center_x + PORT_AMMO_PLACEHOLDER_W / 2;
+    s32 t = center_y - PORT_AMMO_PLACEHOLDER_H / 2;
+    s32 b = center_y + PORT_AMMO_PLACEHOLDER_H / 2;
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_FILL);
+    gDPSetFillColor(gdl++, fill);
+    gDPFillRectangle(gdl++, l, t, r, t + 1);                 /* top edge */
+    gDPFillRectangle(gdl++, l, b - 1, r, b);                 /* bottom edge */
+    gDPFillRectangle(gdl++, l, t, l + 1, b);                 /* left edge */
+    gDPFillRectangle(gdl++, r - 1, t, r, b);                 /* right edge */
+    gDPFillRectangle(gdl++, l, center_y, r, center_y + 1);   /* mid bar */
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+    return gdl;
 }
 
 static f32 portGetAmmoIconYOffset(const AmmoStats *stats)
@@ -31841,7 +31934,16 @@ static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
 
     AmmoStats *stats = &ammo_related[ammo_type];
     struct sImageTableEntry *image = portGetAmmoImage(ammo_type);
-    s32 icon_width = image ? (s32)image->width : 5;
+    bool icon_faulted = false;
+    if (portAmmoIconExpected(ammo_type) &&
+        !portValidateImageEntry(image, "hand ammo icon")) {
+        /* Missing/invalid icon for a type that must have one: draw the
+         * visible placeholder instead of silently rendering digits only. */
+        image = NULL;
+        icon_faulted = true;
+    }
+    s32 icon_width = image ? (s32)image->width
+                           : (icon_faulted ? PORT_AMMO_PLACEHOLDER_W : 5);
     bool no_clip_reloads = (bondwalkItemCheckBitflags(weapon, WEAPONSTATBITFLAG_NO_CLIP_RELOADS) != 0);
     s32 clip = no_clip_reloads ? 0 : g_CurrentPlayer->hands[hand].weapon_ammo_in_magazine;
     s32 reserve = get_ammo_count_for_weapon(weapon);
@@ -31870,6 +31972,12 @@ static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
             is_left_hand ? 1 : 0,
             portGetAmmoIconYOffset(stats),
             1);
+    } else if (icon_faulted) {
+        /* Same anchor math as the icon draw: y = y_pos + y_off - h/2. */
+        s32 center_y = y_pos + (s32)portGetAmmoIconYOffset(stats)
+            - PORT_AMMO_PLACEHOLDER_H / 2;
+        gdl = portDrawAmmoIconPlaceholder(gdl, icon_x, center_y);
+        g_hud_image_fault_count++;
     }
 
     gdl = microcode_constructor(gdl);
@@ -33103,18 +33211,31 @@ Gfx *sub_GAME_7F06A334(Gfx *gdl) {
 
     stats = &ammo_related[ammoType];
     image = portGetAmmoImage(ammoType);
-    iconWidth = image != NULL ? (s32)image->width : 5;
+    {
+        bool icon_faulted = false;
+        if (portAmmoIconExpected(ammoType) &&
+            !portValidateImageEntry(image, "watch ammo icon")) {
+            image = NULL;
+            icon_faulted = true;
+        }
+        iconWidth = image != NULL ? (s32)image->width
+                                  : (icon_faulted ? PORT_AMMO_PLACEHOLDER_W : 5);
 
-    if (image != NULL) {
-        gdl = (Gfx *)set_rgba_redirect_generate_microcode(
-            gdl,
-            image,
-            200.0f,
-            180.0f,
-            (f32)(viGetViewTop() + viGetViewHeight() - 20),
-            0,
-            portGetAmmoIconYOffset(stats),
-            1);
+        if (image != NULL) {
+            gdl = (Gfx *)set_rgba_redirect_generate_microcode(
+                gdl,
+                image,
+                200.0f,
+                180.0f,
+                (f32)(viGetViewTop() + viGetViewHeight() - 20),
+                0,
+                portGetAmmoIconYOffset(stats),
+                1);
+        } else if (icon_faulted) {
+            /* Icon anchor here is (200, 180) — the y >= 0 branch centers on y. */
+            gdl = portDrawAmmoIconPlaceholder(gdl, 200, 180);
+            g_hud_image_fault_count++;
+        }
     }
 
     gdl = microcode_constructor(gdl);
