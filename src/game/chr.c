@@ -44,6 +44,11 @@ extern f32 sub_GAME_7F06C768(Model *model);
 extern void update_color_shading(rgba_u8 *dest, rgba_u8 *src);
 extern void modelSetDistanceScale(f32 scale);
 extern s32 sub_GAME_7F054D6C(PropRecord *prop, coord3d *pos, f32 size, s32 arg3);
+/* M2.3: per-player frustum-union visibility. sub_GAME_7F0785DC recomputes the
+ * per-player frustum planes (bondview.c bss) from the current player's camera;
+ * get_cur_playernum saves/restores which player is active while we sweep them. */
+extern void sub_GAME_7F0785DC(void);
+extern s32 get_cur_playernum(void);
 extern void sub_GAME_7F0523F8(PropRecord *prop, s32 hand, void **dl_out);
 extern void portTraceBondIntroRendered(const ChrRecord *chr, s32 withalpha);
 #endif
@@ -5054,6 +5059,50 @@ void chrDropPendingHeldItems(ChrRecord *chr)
                 (unsigned int)chr->hidden);
     }
 }
+
+/* M2.3 (M1b) per-player frustum-visibility union.
+ *
+ * The retail frustum test sub_GAME_7F054D6C evaluates against g_CurrentPlayer's
+ * camera: it reads bondviewGetCurrentPlayersPosition() and camIsPosInScreen(),
+ * which use g_CurrentPlayer plus the per-player frustum-plane bss globals that
+ * sub_GAME_7F0785DC recomputes from field_10D4. In split-screen,
+ * determing_type_of_object_and_detection (hence chrTickBeams) runs once per
+ * viewport with g_CurrentPlayer set to that viewport, so a raw single-player
+ * test makes a guard's visibility depend on which pass is executing -- not
+ * MP-safe. The retail contract is "visible if inside ANY active viewport's
+ * frustum," so union the test across all players, restoring the caller's active
+ * player and frustum planes before returning.
+ *
+ * In single-player (getPlayerCount()==1) this is exactly the single frustum test
+ * with no player switch, so it is byte-identical to evaluating sub_GAME_7F054D6C
+ * directly. */
+static s32 chrBeamsFrustumVisibleUnion(PropRecord *prop, coord3d *pos, f32 inst_size)
+{
+    s32 pcount = getPlayerCount();
+
+    if (pcount <= 1) {
+        return sub_GAME_7F054D6C(prop, pos, inst_size, 1) != 0;
+    }
+
+    {
+        s32 saved = get_cur_playernum();
+        s32 visible = 0;
+        s32 p;
+
+        for (p = 0; p < pcount; p++) {
+            set_cur_player(p);
+            sub_GAME_7F0785DC();
+            if (sub_GAME_7F054D6C(prop, pos, inst_size, 1) != 0) {
+                visible = 1;
+                break;
+            }
+        }
+
+        set_cur_player(saved);
+        sub_GAME_7F0785DC();
+        return visible;
+    }
+}
 #endif
 /*
 * Address: 
@@ -5208,9 +5257,10 @@ s32 chrTickBeams(PropRecord *prop) {
      * culls only out-of-view-volume guards and never keeps what the room-rendered
      * bypass culls. When GE007_CHRBEAMS_FRUSTUM is set, use the real test;
      * otherwise keep the room-rendered bypass (byte-identical to prior behavior).
-     * NOTE: in split-screen the frustum uses the CURRENT player's camera, so this
-     * gate is intended for single-player until the per-player union (M1b) lands —
-     * see docs/design/COMBAT_DEFERRED_PLAN.md. */
+     * The frustum path is the per-player UNION (chrBeamsFrustumVisibleUnion):
+     * visible if inside ANY active viewport's frustum, so it is MP-safe. In 1P
+     * the union is exactly the single frustum test — see M2.3 /
+     * docs/design/COMBAT_DEFERRED_PLAN.md (M1b). */
     {
         static int s_frustum_gate = -1;
         if (s_frustum_gate < 0) {
@@ -5221,7 +5271,7 @@ s32 chrTickBeams(PropRecord *prop) {
         }
         if (s_frustum_gate) {
             f32 inst_size = getinstsize(model);
-            visible = sub_GAME_7F054D6C(prop, &prop->pos, inst_size, 1);
+            visible = chrBeamsFrustumVisibleUnion(prop, &prop->pos, inst_size);
         } else {
             visible = 0;
             {
@@ -5238,17 +5288,21 @@ s32 chrTickBeams(PropRecord *prop) {
         }
     }
 
-    /* --- PHASE-1 frustum-accuracy probe (GE007_TRACE_VISIBILITY) ---
-     * H4/H7 decision gate. BEHAVIOR-NEUTRAL: this only ADDITIONALLY computes the
-     * real frustum visibility test (sub_GAME_7F054D6C — the same canonical test
-     * already trusted by the native object handler at
-     * chrobjhandler.c:10895) and logs it against the room-rendered bypass that
-     * actually drives `visible`. It does NOT change `visible`, and runs only when
-     * GE007_TRACE_VISIBILITY is set (off by default). Used to decide whether
-     * camIsPosInScreen is accurate enough on PC to restore the original
-     * visibility-gated actiontype dispatch (H4) and drop the bypass (H7): the
-     * failure signal is (room_rendered=1 && frustum=0) for a guard that is
-     * genuinely on-screen (cross-checked against the run's screenshot). */
+    /* --- Frustum-union disagreement probe (GE007_TRACE_VISIBILITY) ---
+     * M2.3 Phase-A decision gate. BEHAVIOR-NEUTRAL: this ADDITIONALLY computes the
+     * per-player frustum UNION (chrBeamsFrustumVisibleUnion — the M1b MP-safe form
+     * of the canonical test already trusted by the native object handler at
+     * chrobjhandler.c:10895) and characterizes it against the room-rendered bypass
+     * held in `visible`. It does NOT change `visible`, and runs only when
+     * GE007_TRACE_VISIBILITY is set (off by default). Decides whether the union is
+     * safe to make default (Phase C): the population that matters is
+     *   dir=over  : room_rendered=1, frustum=0 -> bypass keeps a guard the frustum
+     *               would cull (targetable/rendered through walls today);
+     *   dir=under : room_rendered=0, frustum=1 -> bypass drops a guard the frustum
+     *               would keep (a guard that would GAIN targetability under Phase C).
+     * The viewer body (PROP_TYPE_VIEWER) must never disagree (its intro bypass is
+     * separate); viewer_disagree>0 is a hard stop. Per-frame [VIS_PROBE_AGG] rolls
+     * the totals so the population can be characterized across a full route. */
     {
         static int s_vis_probe = -1;
         if (s_vis_probe < 0) {
@@ -5256,20 +5310,49 @@ s32 chrTickBeams(PropRecord *prop) {
         }
         if (s_vis_probe) {
             static int vis_probe_log = 0;
+            static long vis_total = 0;
+            static long vis_over = 0;    /* bypass keeps, frustum culls */
+            static long vis_under = 0;   /* bypass drops, frustum keeps */
+            static long vis_viewer_disagree = 0;
+            f32 probe_inst = getinstsize(model);
+            s32 probe_frustum = chrBeamsFrustumVisibleUnion(prop, &prop->pos, probe_inst);
+            s32 room_vis = (visible != 0);
+            s32 is_viewer = (prop->type == PROP_TYPE_VIEWER);
+            s32 disagree = (room_vis != (probe_frustum != 0));
+
+            vis_total++;
+            if (disagree) {
+                if (room_vis) {
+                    vis_over++;
+                } else {
+                    vis_under++;
+                }
+                if (is_viewer) {
+                    vis_viewer_disagree++;
+                }
+            }
+
             if (vis_probe_log < 600) {
-                f32 probe_inst = getinstsize(model);
-                s32 probe_frustum = sub_GAME_7F054D6C(prop, &prop->pos, probe_inst, 1);
                 s32 probe_rooms[8];
                 chraiGetPropRoomIds(prop, probe_rooms);
                 vis_probe_log++;
                 fprintf(stderr,
-                        "[VIS_PROBE] chr=%d room0=%d room_rendered=%d frustum=%d "
-                        "disagree=%d pos=(%.1f,%.1f,%.1f) inst=%.1f\n",
-                        chr->chrnum, probe_rooms[0], visible, probe_frustum,
-                        ((visible != 0) != (probe_frustum != 0)),
+                        "[VIS_PROBE] chr=%d type=%d viewer=%d room0=%d room_rendered=%d "
+                        "frustum_union=%d disagree=%d dir=%s pos=(%.1f,%.1f,%.1f) inst=%.1f\n",
+                        chr->chrnum, prop->type, is_viewer, probe_rooms[0], room_vis,
+                        probe_frustum, disagree,
+                        disagree ? (room_vis ? "over" : "under") : "-",
                         prop->pos.x, prop->pos.y, prop->pos.z, probe_inst);
-                fflush(stderr);
             }
+
+            if ((vis_total % 256) == 0) {
+                fprintf(stderr,
+                        "[VIS_PROBE_AGG] samples=%ld disagree=%ld over=%ld under=%ld "
+                        "viewer_disagree=%ld players=%d\n",
+                        vis_total, vis_over + vis_under, vis_over, vis_under,
+                        vis_viewer_disagree, getPlayerCount());
+            }
+            fflush(stderr);
         }
     }
 
