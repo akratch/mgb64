@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,9 @@ class Counts:
     max_render_count: int = 0
     last_render_count: int = 0
     render_count_regressions: int = 0
+    bond_body_frames: int = 0
+    min_render_pos_count: int | None = None
+    grounding_offsets: list[float] = field(default_factory=list)
 
 
 def parse_int(value: Any) -> int | None:
@@ -269,6 +273,24 @@ def audit(
         counts.last_render_count = render_count
         counts.max_render_count = max(counts.max_render_count, render_count)
 
+        # M1.4/R8: projected viewer-body geometry (emitted as intro.bond_body).
+        body = intro_nested(record, "bond_body")
+        if isinstance(body, dict) and parse_int(body.get("projected")) == 1:
+            counts.bond_body_frames += 1
+            rpc = parse_int(body.get("render_pos_count"))
+            if rpc is not None:
+                counts.min_render_pos_count = (
+                    rpc if counts.min_render_pos_count is None
+                    else min(counts.min_render_pos_count, rpc)
+                )
+            world_root = body.get("world_root")
+            floor_y = parse_float(body.get("floor_y"))
+            if (parse_int(body.get("floor_valid")) == 1 and floor_y is not None
+                    and isinstance(world_root, list) and len(world_root) == 3):
+                root_y = parse_float(world_root[1])
+                if root_y is not None:
+                    counts.grounding_offsets.append(root_y - floor_y)
+
     return counts
 
 
@@ -371,6 +393,10 @@ def main() -> int:
     parser.add_argument("--max-first-present-frame", type=int)
     parser.add_argument("--max-first-render-frame", type=int)
     parser.add_argument("--allow-render-count-regression", action="store_true")
+    parser.add_argument("--min-body-render-pos-count", type=int,
+                        help="min intro.bond_body.render_pos_count across projected frames")
+    parser.add_argument("--max-grounding-offset", type=float,
+                        help="max |median(root_y - floor_y)| from intro.bond_body")
     parser.add_argument(
         "--require-h17-swirl-facing",
         action="store_true",
@@ -449,6 +475,23 @@ def main() -> int:
 
     if counts.render_count_regressions and not args.allow_render_count_regression:
         errors.append(f"{args.label}: render count regressed {counts.render_count_regressions} time(s)")
+
+    if args.min_body_render_pos_count is not None:
+        if counts.bond_body_frames == 0:
+            errors.append(f"{args.label}: no projected intro.bond_body frames")
+        elif counts.min_render_pos_count is not None and counts.min_render_pos_count < args.min_body_render_pos_count:
+            errors.append(
+                f"{args.label}: body render_pos_count {counts.min_render_pos_count} "
+                f"< required {args.min_body_render_pos_count}")
+    if args.max_grounding_offset is not None:
+        if not counts.grounding_offsets:
+            errors.append(f"{args.label}: no floor-valid intro.bond_body frames for grounding")
+        else:
+            ground_med = statistics.median(counts.grounding_offsets)
+            if abs(ground_med) > args.max_grounding_offset:
+                errors.append(
+                    f"{args.label}: grounding offset median {ground_med:.1f} "
+                    f"> {args.max_grounding_offset:.1f} (Bond floating)")
 
     h17_frame: int | None = None
     h17_applied_view: tuple[float, float, float] | None = None

@@ -5952,6 +5952,176 @@ static void traceFormatViewmodelMtxJson(char *out,
     }
 }
 
+/* M1.4/R8: projected viewer-body geometry for the pixel-level intro validator.
+ * Emits, for the current-player intro chr, the world root (feet) position, the
+ * floor Y beneath it (grounding reference), the model height, and the body's
+ * screen-space bbox -- projected with the same world->screen recipe the renderer
+ * uses (world - current_model_pos, then the field_10E0 view/projection matrix;
+ * see traceProjectRoomLocalQuad). The bbox is an axis-aligned world box around
+ * the standing body projected corner-by-corner: it is a coverage/outlier gate
+ * for the screenshot analyzer, not an exact joint hull. render_pos_count carries
+ * the joint count so the analyzer can also gate on the de-alias render-position
+ * count. */
+static void traceBuildIntroBondBodyJson(char *out, size_t out_size, ChrRecord *intro_chr) {
+    extern f32 sub_GAME_7F06C768(Model *objinst);
+    float projection[4][4];
+    int projection_valid = 0;
+    int projection_is_float = 0;
+    float vp_l = 0.0f, vp_t = 0.0f, vp_w = 320.0f, vp_h = 240.0f;
+    float min_x = FLT_MAX, min_y = FLT_MAX, max_x = -FLT_MAX, max_y = -FLT_MAX;
+    float root_x, root_y, root_z;
+    float root_y_report;
+    float floor_y = 0.0f;
+    int floor_valid = 0;
+    float height = 0.0f;
+    int render_pos_count = 0;
+    int behind = 0;
+    int onscreen = 0;
+    int corner;
+    /* projected root (feet) and head points for the grounding readout */
+    float root_sx = 0.0f, root_sy = 0.0f, head_sx = 0.0f, head_sy = 0.0f;
+    int root_screen_valid = 0, head_screen_valid = 0;
+
+    if (out_size == 0) {
+        return;
+    }
+    if (intro_chr == NULL || intro_chr->prop == NULL || intro_chr->model == NULL
+        || g_CurrentPlayer == NULL) {
+        snprintf(out, out_size, "{\"present\":0}");
+        return;
+    }
+
+    /* Grounding fault hook (M1.4 negative control): GE007_INTRO_BODY_Y_OFFSET
+     * adds a fixed Y to the REPORTED world_root only -- not to the projected
+     * bbox -- so the validator's grounding check (world_root.y vs floor_y) can be
+     * driven to fail on demand while presence/shard (which read the bbox) still
+     * pass, proving the three checks are independent. Default 0 = no effect. */
+    static int intro_body_yoff_init = 0;
+    static float intro_body_yoff = 0.0f;
+    if (!intro_body_yoff_init) {
+        const char *yoff_env = getenv("GE007_INTRO_BODY_Y_OFFSET");
+        intro_body_yoff = (yoff_env != NULL) ? (float)atof(yoff_env) : 0.0f;
+        intro_body_yoff_init = 1;
+    }
+
+    root_x = intro_chr->prop->pos.x;
+    root_y = intro_chr->prop->pos.y;
+    root_z = intro_chr->prop->pos.z;
+    root_y_report = root_y + intro_body_yoff;
+    render_pos_count = modelGetRenderPosCount(intro_chr->model);
+    height = sub_GAME_7F06C768(intro_chr->model);
+    if (!__builtin_isfinite(height) || height <= 0.0f) {
+        height = 180.0f;
+    }
+
+    if (intro_chr->prop->stan != NULL) {
+        floor_y = stanGetPositionYValue(intro_chr->prop->stan, root_x, root_z);
+        floor_valid = __builtin_isfinite(floor_y);
+    }
+
+    vp_l = g_CurrentPlayer->c_screenleft;
+    vp_t = g_CurrentPlayer->c_screentop;
+    vp_w = g_CurrentPlayer->c_screenwidth;
+    vp_h = g_CurrentPlayer->c_screenheight;
+
+    traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
+    if (!projection_valid) {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"projected\":0,\"render_pos_count\":%d,"
+                 "\"world_root\":[%.2f,%.2f,%.2f],\"floor_y\":%.2f,\"floor_valid\":%d,"
+                 "\"height\":%.2f}",
+                 render_pos_count, root_x, root_y_report, root_z, floor_y, floor_valid, height);
+        return;
+    }
+
+    /* Screen bbox from the actual per-joint render matrices. subcalcmatrices
+     * builds render_pos in the same render-origin space field_10E0 projects from
+     * (verified: joint 0 lands on the prop-projected feet), so each joint's
+     * translation column projects directly -- no camera subtraction and no
+     * model-height guess. Root(feet) and head-top are additionally projected from
+     * the world prop position for the grounding/head readout. */
+    {
+        RenderPosView *rp = intro_chr->model->render_pos;
+        int ji;
+        int jcount = (render_pos_count > 64) ? 64 : render_pos_count;
+        for (ji = 0; rp != NULL && ji < jcount; ji++) {
+            float clip[4], ndc_x, ndc_y, sx, sy;
+            traceTransform4x4(projection, rp[ji].pos.m[3][0], rp[ji].pos.m[3][1],
+                              rp[ji].pos.m[3][2], 1.0f, clip);
+            if (!__builtin_isfinite(clip[0]) || !__builtin_isfinite(clip[1])
+                || !__builtin_isfinite(clip[3]) || fabsf(clip[3]) < 0.000001f) {
+                continue;
+            }
+            if (clip[3] <= 0.0f) {
+                behind = 1;
+            }
+            ndc_x = clip[0] / clip[3];
+            ndc_y = clip[1] / clip[3];
+            sx = vp_l + (ndc_x * 0.5f + 0.5f) * vp_w;
+            sy = vp_t + (0.5f - ndc_y * 0.5f) * vp_h;
+            if (!__builtin_isfinite(sx) || !__builtin_isfinite(sy)) {
+                continue;
+            }
+            if (sx < min_x) min_x = sx;
+            if (sy < min_y) min_y = sy;
+            if (sx > max_x) max_x = sx;
+            if (sy > max_y) max_y = sy;
+        }
+    }
+
+    for (corner = 8; corner < 10; corner++) {
+        float wy = (corner == 8) ? root_y : (root_y + height);
+        float mx = root_x - g_CurrentPlayer->current_model_pos.f[0];
+        float my = wy - g_CurrentPlayer->current_model_pos.f[1];
+        float mz = root_z - g_CurrentPlayer->current_model_pos.f[2];
+        float clip[4], ndc_x, ndc_y, sx, sy;
+        traceTransform4x4(projection, mx, my, mz, 1.0f, clip);
+        if (!__builtin_isfinite(clip[0]) || !__builtin_isfinite(clip[1])
+            || !__builtin_isfinite(clip[3]) || fabsf(clip[3]) < 0.000001f) {
+            continue;
+        }
+        ndc_x = clip[0] / clip[3];
+        ndc_y = clip[1] / clip[3];
+        sx = vp_l + (ndc_x * 0.5f + 0.5f) * vp_w;
+        sy = vp_t + (0.5f - ndc_y * 0.5f) * vp_h;
+        if (!__builtin_isfinite(sx) || !__builtin_isfinite(sy)) {
+            continue;
+        }
+        if (corner == 8) {
+            root_sx = sx; root_sy = sy; root_screen_valid = 1;
+        } else {
+            head_sx = sx; head_sy = sy; head_screen_valid = 1;
+        }
+    }
+
+    if (min_x == FLT_MAX || max_x == -FLT_MAX) {
+        snprintf(out, out_size,
+                 "{\"present\":1,\"projected\":0,\"behind\":%d,\"render_pos_count\":%d,"
+                 "\"world_root\":[%.2f,%.2f,%.2f],\"floor_y\":%.2f,\"floor_valid\":%d,"
+                 "\"height\":%.2f}",
+                 behind, render_pos_count, root_x, root_y_report, root_z, floor_y, floor_valid, height);
+        return;
+    }
+
+    onscreen = (max_x >= vp_l && max_y >= vp_t
+                && min_x <= vp_l + vp_w && min_y <= vp_t + vp_h);
+
+    snprintf(out, out_size,
+             "{\"present\":1,\"projected\":1,\"behind\":%d,\"onscreen\":%d,"
+             "\"render_pos_count\":%d,\"world_root\":[%.2f,%.2f,%.2f],"
+             "\"floor_y\":%.2f,\"floor_valid\":%d,\"height\":%.2f,"
+             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+             "\"root_screen\":[%.2f,%.2f],\"root_screen_valid\":%d,"
+             "\"head_screen\":[%.2f,%.2f],\"head_screen_valid\":%d,"
+             "\"vp\":[%.2f,%.2f,%.2f,%.2f]}",
+             behind, onscreen, render_pos_count, root_x, root_y_report, root_z,
+             floor_y, floor_valid, height,
+             min_x, min_y, max_x, max_y,
+             root_sx, root_sy, root_screen_valid,
+             head_sx, head_sy, head_screen_valid,
+             vp_l, vp_t, vp_w, vp_h);
+}
+
 void portTraceFrame(void) {
     /* Fast bail: if tracing was never requested, do absolutely nothing.
      * This avoids touching any state that could be corrupted by DL overruns. */
@@ -7312,6 +7482,7 @@ void portTraceFrame(void) {
     float intro_selected_camera_pad_z = 0.0f;
     TraceHeldPropSnapshot intro_bond_held_right;
     TraceHeldPropSnapshot intro_bond_held_left;
+    char intro_bond_body_json[512];
     pc_ramrom_trace_state ramrom_trace;
 
     memset(&intro_bond_held_right, 0, sizeof(intro_bond_held_right));
@@ -7320,6 +7491,7 @@ void portTraceFrame(void) {
     intro_bond_held_right.item = -1;
     intro_bond_held_left.obj = -1;
     intro_bond_held_left.item = -1;
+    snprintf(intro_bond_body_json, sizeof(intro_bond_body_json), "{\"present\":0}");
 
     if (trace_live_stage_globals && g_IntroSwirl != NULL) {
         int i;
@@ -7601,6 +7773,8 @@ void portTraceFrame(void) {
 
         traceHeldPropSnapshot(intro_chr->weapons_held[GUNRIGHT], &intro_bond_held_right);
         traceHeldPropSnapshot(intro_chr->weapons_held[GUNLEFT], &intro_bond_held_left);
+
+        traceBuildIntroBondBodyJson(intro_bond_body_json, sizeof(intro_bond_body_json), intro_chr);
     }
 
     memset(&weapon_left, 0, sizeof(weapon_left));
@@ -7862,6 +8036,7 @@ void portTraceFrame(void) {
             "\"abs_speed\":%.4f,\"looping\":%d,\"gunhand\":%d},"
             "\"bond_held\":{\"right\":{\"present\":%d,\"item\":%d,\"obj\":%d,\"has_mtx\":%d},"
             "\"left\":{\"present\":%d,\"item\":%d,\"obj\":%d,\"has_mtx\":%d}},"
+            "\"bond_body\":%s,"
             "\"selected_camera\":{\"present\":%d,\"index\":%d,\"count\":%d,"
             "\"pos\":[%.2f,%.2f,%.2f],\"yaw\":%.6f,\"pitch\":%.6f,"
             "\"pad\":%d,\"pad_room\":%d,\"pad_pos\":[%.2f,%.2f,%.2f]}},"
@@ -8078,6 +8253,7 @@ void portTraceFrame(void) {
             intro_bond_held_right.obj, intro_bond_held_right.has_mtx,
             intro_bond_held_left.present, intro_bond_held_left.item,
             intro_bond_held_left.obj, intro_bond_held_left.has_mtx,
+            intro_bond_body_json,
             intro_selected_camera_present, intro_selected_camera_index,
             intro_selected_camera_count,
             intro_selected_camera_x, intro_selected_camera_y, intro_selected_camera_z,
