@@ -319,6 +319,7 @@ Gfx *sub_GAME_7F007F30(Gfx *gdl, s32 arg1, Mtxf *arg2) {
          * would reuse previous-frame recycled arena pointers) and skip. */
         chrModelInstance->render_pos = NULL;
         gunModelInstance->render_pos = NULL;
+        modelSetDistanceDisabled(0);
         return gdl;
     }
 #endif
@@ -329,6 +330,7 @@ Gfx *sub_GAME_7F007F30(Gfx *gdl, s32 arg1, Mtxf *arg2) {
 #ifdef NATIVE_PORT
     if (renderData.mtxlist == NULL) {
         gunModelInstance->render_pos = NULL;
+        modelSetDistanceDisabled(0);
         return gdl;
     }
 #endif

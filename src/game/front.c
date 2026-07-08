@@ -11652,6 +11652,7 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
             sp1A8.mtxlist = (Mtxf *)modelAllocRenderPos(cast_model);
             if (sp1A8.mtxlist == NULL) {
                 cast_model->render_pos = NULL; /* dyn overflow: skip the cast draw */
+                modelSetDistanceDisabled(0);
                 return DL;
             }
             sp1A8.unk_matrix = &sp1E8;
@@ -11706,6 +11707,7 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
 #ifdef NATIVE_PORT
     if (sp1A8.mtxlist == NULL) {
         cast_model->render_pos = NULL; /* dyn overflow: skip the cast draw */
+        modelSetDistanceDisabled(0);
         return DL;
     }
 #endif
@@ -11865,6 +11867,7 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
         if (cast_model_weapon != NULL) {
             cast_model_weapon->render_pos = NULL;
         }
+        modelSetDistanceDisabled(0);
         return DL;
     }
 #endif
@@ -11890,6 +11893,7 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
 #ifdef NATIVE_PORT
         if (sp1A8.mtxlist == NULL) {
             cast_model_weapon->render_pos = NULL; /* dyn overflow: skip the cast draw */
+            modelSetDistanceDisabled(0);
             return DL;
         }
 #endif
