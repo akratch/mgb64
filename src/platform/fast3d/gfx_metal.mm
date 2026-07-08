@@ -92,6 +92,7 @@ static void tb_fmt(TB *b, const char *fmt, ...) {
 }
 
 extern "C" void *platformGetMetalLayer(void);  /* platform_sdl.c */
+extern "C" void minimap_overlay_draw_queued_frames_metal(int fb_width, int fb_height);
 
 /* Set once by whichever backend inits; the CPU clipper + shader gen read it.
  * Metal init forces it true (native depth-clamp), so the z*=0.3 hack is dropped
@@ -851,6 +852,8 @@ static id<MTLTexture> s_white_tex = nil;   /* 1x1 white for unbound tiles */
  * read (post-filter when the filter ran, else the raw scene). GL reads its
  * post-filter default framebuffer; this keeps Metal screenshots consistent. */
 static id<MTLTexture> s_readback_src = nil;
+static id<MTLRenderPipelineState> s_minimap_overlay_pso = nil;
+static id<MTLTexture> s_minimap_overlay_target = nil;
 
 /* Deferred render state (set by the vtable setters, resolved in draw_triangles). */
 static enum GfxBlendMode s_blend = GFX_BLEND_DISABLED;
@@ -1140,6 +1143,173 @@ static id<MTLDepthStencilState> mtl_depth_state_for(bool test, bool update, bool
     s_depth_cache[k] = ds;
     last_key = key; last_ds = ds;
     return ds;
+}
+
+static bool mtl_ensure_minimap_overlay_pso(void) {
+    if (s_minimap_overlay_pso != nil) return true;
+    if (s_device == nil) return false;
+
+    static const char *src =
+        "#include <metal_stdlib>\n"
+        "using namespace metal;\n"
+        "struct OverlayVertex {\n"
+        "  float2 position [[attribute(0)]];\n"
+        "  float4 color [[attribute(1)]];\n"
+        "};\n"
+        "struct OverlayUniforms { float2 screen; };\n"
+        "struct OverlayOut {\n"
+        "  float4 position [[position]];\n"
+        "  float4 color;\n"
+        "};\n"
+        "vertex OverlayOut minimapOverlayVertex(OverlayVertex in [[stage_in]],\n"
+        "                                      constant OverlayUniforms& u [[buffer(1)]]) {\n"
+        "  float2 ndc = float2((in.position.x / u.screen.x) * 2.0 - 1.0,\n"
+        "                       1.0 - (in.position.y / u.screen.y) * 2.0);\n"
+        "  OverlayOut out;\n"
+        "  out.position = float4(ndc, 0.0, 1.0);\n"
+        "  out.color = in.color;\n"
+        "  return out;\n"
+        "}\n"
+        "fragment float4 minimapOverlayFragment(OverlayOut in [[stage_in]]) {\n"
+        "  return in.color;\n"
+        "}\n";
+
+    NSError *err = nil;
+    NSString *nssrc = [NSString stringWithUTF8String:src];
+    id<MTLLibrary> lib = [s_device newLibraryWithSource:nssrc options:nil error:&err];
+    if (lib == nil) {
+        fprintf(stderr,
+                "[metal] minimap overlay MSL compile failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+
+    id<MTLFunction> vfn = [lib newFunctionWithName:@"minimapOverlayVertex"];
+    id<MTLFunction> ffn = [lib newFunctionWithName:@"minimapOverlayFragment"];
+    if (vfn == nil || ffn == nil) {
+        fprintf(stderr, "[metal] minimap overlay MSL missing entry point\n");
+        return false;
+    }
+
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    vd.attributes[0].format = MTLVertexFormatFloat2;
+    vd.attributes[0].offset = 0;
+    vd.attributes[0].bufferIndex = 0;
+    vd.attributes[1].format = MTLVertexFormatFloat4;
+    vd.attributes[1].offset = 2 * sizeof(float);
+    vd.attributes[1].bufferIndex = 0;
+    vd.layouts[0].stride = 6 * sizeof(float);
+    vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    vd.layouts[0].stepRate = 1;
+
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vfn;
+    pd.fragmentFunction = ffn;
+    pd.vertexDescriptor = vd;
+    pd.rasterSampleCount = 1;
+    MTLRenderPipelineColorAttachmentDescriptor *ca = pd.colorAttachments[0];
+    ca.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    ca.blendingEnabled = YES;
+    ca.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+    ca.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    ca.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+    ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    ca.rgbBlendOperation = MTLBlendOperationAdd;
+    ca.alphaBlendOperation = MTLBlendOperationAdd;
+
+    s_minimap_overlay_pso = [s_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (s_minimap_overlay_pso == nil) {
+        fprintf(stderr,
+                "[metal] minimap overlay PSO build failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+
+    return true;
+}
+
+extern "C" int gfx_metal_draw_minimap_overlay(const void *vertices,
+                                              size_t vertex_count,
+                                              int fb_width,
+                                              int fb_height,
+                                              int scissor_enabled,
+                                              int scissor_x,
+                                              int scissor_y,
+                                              int scissor_w,
+                                              int scissor_h) {
+    @autoreleasepool {
+        if (vertices == NULL || vertex_count == 0) return 1;
+        if (s_cmdbuf == nil || s_minimap_overlay_target == nil) return 0;
+        if (!mtl_ensure_minimap_overlay_pso()) return 0;
+
+        const size_t vertex_stride = 6 * sizeof(float);
+        if (vertex_count > ((size_t)-1) / vertex_stride) return 0;
+        int target_w = (int)s_minimap_overlay_target.width;
+        int target_h = (int)s_minimap_overlay_target.height;
+        if (target_w <= 0 || target_h <= 0) return 0;
+        if (fb_width <= 0) fb_width = target_w;
+        if (fb_height <= 0) fb_height = target_h;
+
+        int sx = 0;
+        int sy = 0;
+        int sw = target_w;
+        int sh = target_h;
+        if (scissor_enabled) {
+            sx = scissor_x;
+            sy = fb_height - (scissor_y + scissor_h);
+            sw = scissor_w;
+            sh = scissor_h;
+            if (sx < 0) { sw += sx; sx = 0; }
+            if (sy < 0) { sh += sy; sy = 0; }
+            if (sx > target_w) sx = target_w;
+            if (sy > target_h) sy = target_h;
+            if (sx + sw > target_w) sw = target_w - sx;
+            if (sy + sh > target_h) sh = target_h - sy;
+            if (sw <= 0 || sh <= 0) return 1;
+        }
+
+        size_t need = vertex_count * vertex_stride;
+        id<MTLBuffer> vbuf;
+        NSUInteger voff;
+        size_t aligned = (s_vbuf_cursor + 255u) & ~(size_t)255u;
+        if (s_vbuf[s_vbuf_slot] != nil && aligned + need <= s_vbuf_cap[s_vbuf_slot]) {
+            vbuf = s_vbuf[s_vbuf_slot];
+            voff = (NSUInteger)aligned;
+            memcpy((uint8_t *)vbuf.contents + aligned, vertices, need);
+            s_vbuf_cursor = aligned + need;
+            if (s_vbuf_cursor > s_vbuf_want) s_vbuf_want = s_vbuf_cursor;
+        } else {
+            if (aligned + need > s_vbuf_want) s_vbuf_want = aligned + need;
+            vbuf = [s_device newBufferWithBytes:vertices
+                                         length:need
+                                        options:MTLResourceStorageModeShared];
+            voff = 0;
+        }
+        if (vbuf == nil) return 0;
+
+        MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+        rpd.colorAttachments[0].texture = s_minimap_overlay_target;
+        rpd.colorAttachments[0].loadAction = MTLLoadActionLoad;
+        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> enc = [s_cmdbuf renderCommandEncoderWithDescriptor:rpd];
+        if (enc == nil) return 0;
+
+        struct {
+            float screen[2];
+        } uniforms = {{ (float)fb_width, (float)fb_height }};
+
+        [enc setRenderPipelineState:s_minimap_overlay_pso];
+        [enc setViewport:(MTLViewport){0.0, 0.0, (double)target_w, (double)target_h, 0.0, 1.0}];
+        [enc setScissorRect:(MTLScissorRect){(NSUInteger)sx,
+                                             (NSUInteger)sy,
+                                             (NSUInteger)sw,
+                                             (NSUInteger)sh}];
+        [enc setVertexBuffer:vbuf offset:voff atIndex:0];
+        [enc setVertexBytes:&uniforms length:sizeof uniforms atIndex:1];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:(NSUInteger)vertex_count];
+        [enc endEncoding];
+        return 1;
+    }
 }
 
 static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t cmt) {
@@ -2708,6 +2878,11 @@ static void mtl_end_frame(void) {
     id<MTLTexture> present_src = s_scene_color;
     if (mtl_output_filter_active() && mtl_run_output_filter(s_cmdbuf, smaa_ran)) {
         present_src = s_final_color;
+    }
+    if (present_src != nil) {
+        s_minimap_overlay_target = present_src;
+        minimap_overlay_draw_queued_frames_metal(s_fb_w, s_fb_h);
+        s_minimap_overlay_target = nil;
     }
     s_readback_src = present_src;
     s_drawable = [s_layer nextDrawable];

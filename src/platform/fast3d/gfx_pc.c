@@ -24182,10 +24182,9 @@ void gfx_run_dl(Gfx *dl) {
 
     gfx_rapi->end_frame();
 #ifdef NATIVE_PORT
-    /* The minimap overlay renders with DIRECT OpenGL calls (glGetIntegerv,
-     * glDrawArrays, ...) outside the gfx_rapi vtable, so it would crash on the
-     * Metal path (no GL context). Skip it there until it is ported to the
-     * backend vtable (or a Metal overlay). */
+    /* GL draws the minimap here. Metal draws the same queued overlay triangles in
+     * mtl_end_frame before the final present blit, so screenshots/readback include
+     * it without touching a GL context. */
 #ifdef __APPLE__
     if (!gfx_backend_use_metal())
 #endif
