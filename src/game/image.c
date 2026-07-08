@@ -3331,14 +3331,20 @@ void texLoad(u32 *updateword, struct texpool *pool)
 
     g_TexNumToLoad = *updateword & 0xffff;
 #ifdef NATIVE_PORT
-    if (g_TexNumToLoad >= MAX_TEXTURES)
+    /* Bound by the ACTUAL compiled g_Textures[] table (2698 IMAGE entries + 1
+     * terminator = 2699), NOT MAX_TEXTURES (=3001). texLoad reads both
+     * g_Textures[id] AND g_Textures[id+1], so id+1 must stay <= count-1
+     * (the terminator index); reject id >= count-1. See backlog M0.1. */
+    {
+    const s32 tex_table_count = ARRAYCOUNT(g_Textures);
+    if (g_TexNumToLoad >= tex_table_count - 1)
     {
         static s32 invalid_tex_log_count = 0;
         if (invalid_tex_log_count++ < 20) {
             fprintf(stderr,
                     "[TEXLOAD][RENDER-HEALTH] invalid texturenum=%d (max valid=%d); "
                     "using blank pool texture.\n",
-                    g_TexNumToLoad, MAX_TEXTURES - 1);
+                    g_TexNumToLoad, tex_table_count - 2);
             fflush(stderr);
         }
         if (pool != NULL && pool->start != NULL) {
@@ -3347,6 +3353,7 @@ void texLoad(u32 *updateword, struct texpool *pool)
             *updateword = 0;
         }
         return;
+    }
     }
 #endif
     tex = texFindInPool(g_TexNumToLoad, pool);
