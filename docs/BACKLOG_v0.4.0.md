@@ -103,6 +103,16 @@ P2 = narrower visual/behavioral issue · P3 = hygiene/robustness/future-proofing
 
 ---
 
+## Execution status
+
+**2026-07-08 — Week-1 batch LANDED** (`510e181..2a30542` + follow-ups, all on main,
+whole-branch review verdict READY-WITH-MINOR-FOLLOWUPS, 0 Critical):
+M0.1 ✅ M0.2 ✅ M0.3 ✅ (`9acba24`/`510e181`) M0.4 ✅ M8.1 ✅ (premise corrected:
+gap was the prop pool, chr/player were pool-covered) M1.1 ✅ M2.1 ✅ M2.2 ✅ M2.4 ✅
+M6.3 ✅. Open from review: MinGW cross-build validation (no local toolchain — needs a
+staging push + CI dispatch), and the M8.3 manual-QA list grew (see M8.3). Details in
+`.superpowers/sdd/progress.md`.
+
 ## Milestone map
 
 | # | Milestone | Theme | Ships as |
@@ -429,6 +439,8 @@ backend.
 - [ ] Thread sample count into the PSO cache key + descriptor; set
       `alphaToCoverageEnabled=YES` for the coverage-blend modes GL uses A2C for.
 - [ ] Mind the snapshot path: `s_snapshot_tex` blits must read the resolved texture.
+- [ ] The R7 minimap overlay PSO hardcodes BGRA8 + sample-count 1 — thread the same
+      sample count through it (final-review note, 2026-07-08).
 - [ ] Validate: GL-vs-Metal screenshot compare at MSAA 4x on Dam fences/foliage; perf
       check on the jungle route (MSAA is the most expensive knob — keep default as-is).
 
@@ -466,6 +478,9 @@ backend.
 - [ ] **G_SETBLENDCOLOR no-op** (`gfx_pc.c:22684, :23721`): store blend color as RDP
       state and add a diagnostic when a combiner references it, so we learn whether any
       live material needs it before implementing.
+- [ ] **`texSelect` table bounds** (`src/game/othermodemicrocode.c:94/104/119/596`):
+      the `< NUM_TEXTURES` (3001) checks share the 2698-entry compiled-table mismatch
+      the R4 follow-up (`340d892`) fixed in texLoad — bound by the actual table.
 
 ### M3.4 — Train windows: fix the portal BFS, retire the heuristics
 **P1 · M-L**
@@ -870,6 +885,11 @@ waivers; objective/report/exit contracts are scripted, not organic.
 
 ### M8.3 — Release QA sweep + ship
 **P1 · M**
+- [ ] Week-1 manual-QA carryover (2026-07-08 review): controller-in-hand feel check of
+      the radial movement deadzone (M2.1); real-mouse multi-notch wheel scroll (M2.2,
+      no runtime validator exists — 3 notches must give 3 switches); full 20-level
+      Metal minimap sweep (M0.2 validated 3 levels); MinGW/Windows CI build of the
+      week-1 batch if not already dispatched.
 - [ ] Run the manual priority list from `RENDERING_REGRESSION_NOTES.md` (Dam glass/decals/
       truck, Surface snow + sky-fog boundary, Cradle bridge/fog/faces, Silo/Depot/Train/
       Caverns corridors) on GL and Metal, plus the M4 UI screens at 16:9/21:9/4:3.
