@@ -3330,6 +3330,25 @@ void texLoad(u32 *updateword, struct texpool *pool)
     }
 
     g_TexNumToLoad = *updateword & 0xffff;
+#ifdef NATIVE_PORT
+    if (g_TexNumToLoad >= MAX_TEXTURES)
+    {
+        static s32 invalid_tex_log_count = 0;
+        if (invalid_tex_log_count++ < 20) {
+            fprintf(stderr,
+                    "[TEXLOAD][RENDER-HEALTH] invalid texturenum=%d (max valid=%d); "
+                    "using blank pool texture.\n",
+                    g_TexNumToLoad, MAX_TEXTURES - 1);
+            fflush(stderr);
+        }
+        if (pool != NULL && pool->start != NULL) {
+            *updateword = osVirtualToPhysical(pool->start);
+        } else {
+            *updateword = 0;
+        }
+        return;
+    }
+#endif
     tex = texFindInPool(g_TexNumToLoad, pool);
 
     if (tex == NULL)
