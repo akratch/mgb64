@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**873 flags** found across the source.
+**884 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -213,6 +213,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_BLEND_AUDIT` | ? |  | 1 |  |
 | `GE007_BLEND_AUDIT_INTERVAL` | ? |  | 1 |  |
 | `GE007_BONDHEAD_GAIT_CLAMP` | ? |  | 1 |  |
+| `GE007_BOND_BODY_ALLOC_FAIL` | ? |  | 1 |  |
+| `GE007_BOND_WEAPON_BUF_FAIL` | ? |  | 1 |  |
 | `GE007_BRIGHT_FOG` | ? |  | 1 |  |
 | `GE007_BULLET_IMPACT_INV_VIS_SCALE` | ? |  | 2 |  |
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
@@ -342,6 +344,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_DOOR_TRACE_OBJS` | ? |  | 1 |  |
 | `GE007_DRAW_NEIGHBOR_ROOMS` | ? |  | 1 |  |
 | `GE007_DROP_SHADOWS` | ? |  | 1 |  |
+| `GE007_DUMP_ANIM_HASHES` | ? |  | 1 |  |
 | `GE007_DUMP_CROSSHAIR_TEXTURE` | ? |  | 1 |  |
 | `GE007_DUMP_CROSSHAIR_TEXTURE_PATH` | ? |  | 1 |  |
 | `GE007_DUMP_EYE_BUFFER` | ? |  | 1 |  |
@@ -460,6 +463,11 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_INTRO_CAMERA_INDEX` | ? |  | 3 |  |
 | `GE007_INTRO_FRUSTUM_ALL` | ? |  | 1 |  |
 | `GE007_INTRO_FULLSCREEN_BBOX` | ? |  | 1 |  |
+| `GE007_INTRO_PHASE3_ANIM` | ? |  | 1 |  |
+| `GE007_INTRO_PHASE3_END` | ? |  | 1 |  |
+| `GE007_INTRO_PHASE3_ONSET` | ? |  | 1 |  |
+| `GE007_INTRO_PHASE3_SEGMENT` | ? |  | 1 |  |
+| `GE007_INTRO_PHASE3_START` | ? |  | 1 |  |
 | `GE007_INTRO_SWAP_PROJ_VIEW` | ? |  | 1 |  |
 | `GE007_KEEP_TEXTURE_GEN_FOG` | ? |  | 1 |  |
 | `GE007_LEGACY_ROOM_MV_PROJ_ORDER` | ? |  | 2 |  |
@@ -497,6 +505,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | ? |  | 1 |  |
+| `GE007_NO_INTRO_PHASE3` | ? |  | 1 |  |
+| `GE007_NO_INTRO_ROOTMOTION` | ? |  | 1 |  |
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | ? |  | 1 |  |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
@@ -648,6 +658,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_BLEND_FALLBACK` | ? |  | 1 |  |
 | `GE007_TRACE_BLOCKED` | ? |  | 2 |  |
 | `GE007_TRACE_BLOOD_ANIM` | ? |  | 1 |  |
+| `GE007_TRACE_BOND_BUF` | ? |  | 1 |  |
 | `GE007_TRACE_BULLET_IMPACTS` | ? |  | 1 |  |
 | `GE007_TRACE_BULLET_IMPACT_MATERIALS` | ? |  | 1 |  |
 | `GE007_TRACE_BULLET_IMPACT_MATERIALS_AFTER_FRAME` | ? |  | 1 |  |

@@ -2912,6 +2912,55 @@ static int portBondBodyForceAllocFail(const char *which)
     return strcmp(v, which) == 0;
 }
 
+/* R9 dev hook: force the intro rhand-weapon guard below to treat the shared body
+ * buffer as exhausted, so the fail-closed (weapon-skipped) path is testable
+ * without real exhaustion. Mirrors GE007_BOND_BODY_ALLOC_FAIL. Off unless set. */
+static int portBondWeaponBufForceFail(void)
+{
+    const char *v = getenv("GE007_BOND_WEAPON_BUF_FAIL");
+    return (v != NULL && strcmp(v, "0") != 0);
+}
+
+/* R9: the intro body, head, and rhand weapon share one load buffer. The head
+ * load is bounds-guarded, but totalsize is advanced past the head three more
+ * times (head_end, +0xFB, numRecords) before the weapon packs at
+ * bodyBuffer+weapon_offset with size bodyBufSize-weapon_offset. Return nonzero
+ * when that weapon load would overrun: weapon_offset out of [0, bodyBufSize) (a
+ * negative/exhausted offset underflows the size argument), or it lands inside
+ * the head mesh (weapon_offset < head_end -- the GE007_TRACE_BOND_BUF OVERLAP
+ * condition, the exact red-shard mechanism). head_end is the trace's
+ * bufferSizeRemain. */
+static int portBondIntroWeaponBufExhausted(s32 weapon_offset, s32 head_end, s32 bodyBufSize)
+{
+    if (portBondWeaponBufForceFail()) {
+        return 1;
+    }
+    if (weapon_offset < 0 || weapon_offset >= bodyBufSize) {
+        return 1;
+    }
+    if (weapon_offset < head_end) {
+        return 1;
+    }
+    return 0;
+}
+
+/* R9: report the weapon-skip decision once. Bond renders unarmed -- the same
+ * weaponless viewer body the rhandPropID<0 (no held item) path already produces,
+ * which every downstream consumer tolerates -- rather than overrun the shared
+ * body buffer, the intro red-shard corruption class. */
+static void portBondIntroWeaponReportSkipped(s32 weapon_offset, s32 head_end, s32 bodyBufSize)
+{
+    static int warned = 0;
+    if (!warned) {
+        warned = 1;
+        fprintf(stderr,
+                "[BONDVIEW][RENDER-HEALTH] intro weapon skipped: body buffer "
+                "exhausted (weapon_offset=%d head_end=%d bodyBufSize=%d); Bond "
+                "renders unarmed.\n",
+                (int)weapon_offset, (int)head_end, (int)bodyBufSize);
+    }
+}
+
 static ModelFileHeader *portBondBodyHeader(void)
 {
     static ModelFileHeader *header = NULL;
@@ -3337,6 +3386,9 @@ void solo_char_load(void)
         rhandPropID = getPropForHeldItem(rhandweapID);
         if (rhandPropID >= 0)
         {
+#ifdef NATIVE_PORT
+            int skip_weapon = 0;
+#endif
             if (getPlayerCount() == 1)
             {
 #ifdef NATIVE_PORT
@@ -3358,16 +3410,38 @@ void solo_char_load(void)
                             (int)totalsize, (int)bodyBufSize,
                             (int)(totalsize < bufferSizeRemain));
                 }
+                /* R9: the head load above is bounds-guarded, but totalsize is
+                 * advanced past the head mesh three more times before this weapon
+                 * load packs at bodyBuffer+totalsize with size bodyBufSize-
+                 * totalsize. If totalsize has reached/passed bodyBufSize the size
+                 * underflows to a huge value and the load overruns the shared body
+                 * buffer; if it merely sits below head_end the weapon overwrites
+                 * the head mesh -- both are the intro red-shard corruption class.
+                 * Reuse the GE007_TRACE_BOND_BUF overlap math (weapon_offset <
+                 * head_end == bufferSizeRemain) plus an absolute in-bounds check.
+                 * On failure skip weapon attachment entirely: Bond renders unarmed,
+                 * exactly the weaponless viewer body the rhandPropID<0 path already
+                 * produces, rather than corrupt. */
+                if (portBondIntroWeaponBufExhausted(totalsize, bufferSizeRemain, bodyBufSize)) {
+                    portBondIntroWeaponReportSkipped(totalsize, bufferSizeRemain, bodyBufSize);
+                    skip_weapon = 1;
+                }
+                if (!skip_weapon)
 #endif
-                load_object_fill_header(p_lhandItemHeader, (const char *)PitemZ_entries[rhandPropID].filename, bodyBuffer + totalsize, bodyBufSize - totalsize, &texPool);
-                get_pc_buffer_remaining_value((const char *)PitemZ_entries[rhandPropID].filename);
-                modelCalculateRwDataLen(p_leftHeader);
+                {
+                    load_object_fill_header(p_lhandItemHeader, (const char *)PitemZ_entries[rhandPropID].filename, bodyBuffer + totalsize, bodyBufSize - totalsize, &texPool);
+                    get_pc_buffer_remaining_value((const char *)PitemZ_entries[rhandPropID].filename);
+                    modelCalculateRwDataLen(p_leftHeader);
+                }
             }
             else
             {
                 p_rightHeader = NULL;
                 p_leftHeader = NULL;
             }
+#ifdef NATIVE_PORT
+            if (!skip_weapon)
+#endif
             something_with_generating_object(g_CurrentPlayer->prop->chr, rhandPropID, rhandweapID, 0, p_rightHeader, p_leftHeader);
         }
         chrlvIdleAnimationRelated7F023A94(g_CurrentPlayer->prop->chr, 0.0f);
