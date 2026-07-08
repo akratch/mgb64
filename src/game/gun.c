@@ -31172,7 +31172,9 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
     Gfx *gdl = (Gfx *)arg0;
     struct sImageTableEntry *img = (struct sImageTableEntry *)arg1;
 
-    if (!img) return (void *)gdl;
+    /* Fail closed on a NULL/garbage image entry: the dimensions below feed
+     * texSelect and display_image_at_position untranslated (audit R6). */
+    if (!portValidateImageEntry(img, "ammo image draw")) return (void *)gdl;
 
     f32 xypos[2];
     f32 halfedxy[2];

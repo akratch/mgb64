@@ -4,6 +4,7 @@
 #include "image.h"
 #include "image_bank.h"
 #ifdef NATIVE_PORT
+#include <stdio.h>
 #include "gfx_pc.h"
 #endif
 
@@ -233,6 +234,57 @@ static void texPreloadGlobalDisplayLists(void)
 
 #undef GLOBAL_DL_PTR
 }
+
+#ifdef NATIVE_PORT
+/* HUD image-entry validation (backlog M2.6 / audit R6). HUD draw paths
+ * (ammo icons, watch readouts) historically trusted compiled sImageTableEntry
+ * metadata: a NULL global or a garbage entry drew nothing, or fed bogus
+ * dimensions into texSelect/display_image_at_position. Applies to NATIVE
+ * table entries only, where index is a plain texture number (< the compiled
+ * table); N64-style entries carrying ROM addresses in index must not be
+ * passed here.
+ *
+ * Max dimension: the largest entry in the compiled global image table is
+ * 128 px (0x80 — folder/backdrop plates; ammo icons are <= 14x28). 160 allows
+ * 25% headroom for future legitimate HUD art while still rejecting most
+ * garbage in the u8 width/height fields. */
+#define PORT_HUD_IMAGE_MAX_DIM 160
+
+s32 portValidateImageEntry(const struct sImageTableEntry *img, const char *label)
+{
+    static s32 s_invalidImageLogCount = 0;
+    const char *reason = NULL;
+
+    if (img == NULL) {
+        reason = "NULL entry";
+    } else if (img->width == 0 || img->height == 0) {
+        reason = "nonpositive dimensions";
+    } else if (img->width > PORT_HUD_IMAGE_MAX_DIM || img->height > PORT_HUD_IMAGE_MAX_DIM) {
+        reason = "dimensions exceed HUD max";
+    } else if (img->index >= (u32)(texGetCompiledTableCount() - 1)) {
+        /* texLoad reads g_Textures[index] and g_Textures[index + 1] */
+        reason = "texture index outside compiled table";
+    }
+
+    if (reason == NULL) {
+        return 1;
+    }
+
+    if (s_invalidImageLogCount++ < 16) {
+        fprintf(stderr,
+                "[HUD][RENDER-HEALTH] image entry invalid (%s): %s"
+                " (entry=%p index=%u w=%u h=%u)\n",
+                label != NULL ? label : "-", reason,
+                (const void *)img,
+                img != NULL ? img->index : 0,
+                img != NULL ? img->width : 0,
+                img != NULL ? img->height : 0);
+        fflush(stderr);
+    }
+
+    return 0;
+}
+#endif
 
 static void texPreloadRuntimeImageEntries(void)
 {

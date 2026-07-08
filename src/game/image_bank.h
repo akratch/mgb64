@@ -37,6 +37,9 @@ extern s32 *pGlobalimagetable;
 void texReset(void);
 u32 texReadBits(s32 bitCount);
 #ifdef NATIVE_PORT
+s32 portValidateImageEntry(const struct sImageTableEntry *img, const char *label);
+#endif
+#ifdef NATIVE_PORT
 void texSetBitstring(u8 *pos);
 #else
 void texSetBitstring(s32 pos);

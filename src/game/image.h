@@ -75,6 +75,10 @@ extern struct image_entry g_Textures[];
 extern s32 g_TexCacheCount;
 extern u32 bytes;
 
+#ifdef NATIVE_PORT
+s32 texGetCompiledTableCount(void);
+#endif
+
 void image_entries_load(void);
 void nullsub_41(s32 arg0);
 

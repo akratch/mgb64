@@ -322,6 +322,18 @@ struct image_entry g_Textures[] = {
 #undef IMAGE
 
 #ifdef NATIVE_PORT
+/* The compiled g_Textures[] bound (2698 IMAGE entries + 1 terminator = 2699).
+ * ARRAYCOUNT only works in this translation unit (the extern in image.h is an
+ * incomplete array), so validators in other files must come through here.
+ * texLoad reads g_Textures[id] AND g_Textures[id+1]; valid IDs satisfy
+ * id < count - 1. See the texLoad guard below and backlog M0.1. */
+s32 texGetCompiledTableCount(void)
+{
+    return ARRAYCOUNT(g_Textures);
+}
+#endif
+
+#ifdef NATIVE_PORT
 /* CI texture palette cache */
 struct tex_palette_entry g_TexPaletteCache[TEX_PALETTE_CACHE_SIZE];
 s32 g_TexPaletteCacheCount = 0;
