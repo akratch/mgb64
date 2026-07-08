@@ -6,6 +6,8 @@
 #include <macro.h>
 
 #ifdef NATIVE_PORT
+#include <stddef.h>
+#include "ge_debug.h" /* port_env_bool/int for the fail-closed hatch + stress clamp */
 extern void debTryAdd(void *data, const char *name);
 extern s32 getPlayerCount(void);
 #endif
@@ -52,6 +54,76 @@ s32 g_VtxSizesByPlayerCount[] = {0x10000, 0x18000, 0x20000, 0x28000};
 char membars_string1[] = ">>>>>>>>>>>>>>>>>>>>>>>>>";
 char membars_string2[] = "=========================";
 char membars_string3[] = "-------------------------";
+
+#ifdef NATIVE_PORT
+/* Fail-closed dyn-allocator contract (M1.2 / audit R3 remaining half).
+ *
+ * 9b9c4e2 stopped the out-of-bounds *writes* on arena exhaustion, but the
+ * allocators still handed back the current (un-advanced) pointer — so two
+ * overflowing users in one frame aliased each other's vertices/matrices,
+ * producing warped limbs, bad billboards, and stray "shard" geometry under
+ * memory pressure. This contract makes overflow fail closed: the byte
+ * allocators return NULL (the caller skips its draw) and the matrix allocator
+ * returns a distinguishable shared scratch matrix (never NULL, so no caller
+ * NULL-derefs) that willing callers detect via dynIsOverflowMatrix() and skip.
+ *
+ * Normal play never overflows (the playability smokes prove g_dyn_overflow_count
+ * stays 0 at defaults); this only changes behavior in the already-broken
+ * exhaustion regime. GE007_DYN_LEGACY_ALIAS=1 restores the old aliasing as the
+ * A/B hatch, and GE007_DYN_STRESS_LIMIT clamps the arena so overflow is
+ * reachable deterministically for the negative-control route. */
+
+/* Per-frame render-health counter, reset in dynGetMasterDisplayList (the single
+ * per-frame DL-build entry, before any dynAllocate* call) so the state trace
+ * reads exactly this frame's exhaustion. Nonzero fails the render-health audit. */
+s32 g_dyn_overflow_count = 0;
+
+/* Shared scratch handed out by dynAllocateMatrix on overflow. Distinguishable by
+ * address via dynIsOverflowMatrix(); overflowed matrix producers alias this one
+ * transform (better than the OOB write, still detectably degenerate). */
+static Mtx s_dynOverflowMatrix;
+
+static int dynLegacyAlias(void) {
+    return port_env_bool("GE007_DYN_LEGACY_ALIAS", 0,
+        "restore legacy dyn-allocator aliasing on overflow (return current pointer / shared scratch matrix instead of failing closed)");
+}
+
+static void dynNoteOverflow(const char *what, size_t need, ptrdiff_t have) {
+    static int logged = 0;
+    g_dyn_overflow_count++;
+    if (!logged) {
+        logged = 1; /* once per route */
+        printf("[DYN][RENDER-HEALTH] %s arena overflow: fail-closed (need %lu, have %ld "
+               "bytes); GE007_DYN_LEGACY_ALIAS=1 restores aliasing\n",
+               what, (unsigned long)need, (long)have);
+    }
+}
+
+/* Overflow test that cannot itself overflow: compares the requested element
+ * count / byte size against the available bytes without ever computing
+ * count*stride in a width that could wrap. A negative count/size fails closed. */
+static int dynByteOverflow(u8 *pos, u8 *end, size_t bytes) {
+    if (pos > end) {
+        return 1;
+    }
+    return bytes > (size_t)(end - pos);
+}
+
+static int dynCountOverflow(u8 *pos, u8 *end, s32 count, size_t stride) {
+    if (count < 0) {
+        return 1;
+    }
+    if (pos > end) {
+        return 1;
+    }
+    /* checked: divide the available bytes instead of multiplying count*stride */
+    return (size_t)count > (size_t)(end - pos) / stride;
+}
+
+int dynIsOverflowMatrix(const void *m) {
+    return m == (const void *)&s_dynOverflowMatrix;
+}
+#endif
 
 void dynInit(void) {
     debTryAdd(&D_800482E0, "dyn_c_debug");
@@ -118,7 +190,9 @@ void dynInitMemory(void) {
 
 Gfx *dynGetMasterDisplayList(void) {
     g_GfxRequestedDisplayList = TRUE;
-
+#ifdef NATIVE_PORT
+    g_dyn_overflow_count = 0; /* per-frame render-health reset (see contract above) */
+#endif
     return (Gfx*)g_GfxBuffers[g_GfxActiveBufferIndex];
 }
 
@@ -129,19 +203,15 @@ s32 dynGetFreeGfx2(Gfx *gdl) {
 void/*Vtx?*/ *dynAllocate7F0BD6C4(s32 count) {
     void *ptr = g_GfxMemPos;
 #ifdef NATIVE_PORT
-	/* Same overflow guard as dynAllocate/dynAllocateMatrix (below): every effect
-	 * billboard (explosion/smoke/spark quad) and model reserves its Vtx array here,
-	 * and a heavy frame can push g_GfxMemPos past the VTX buffer end. Unguarded, the
-	 * caller writes count*0x10 bytes of Vtx data out of bounds AND g_GfxMemPos marches
-	 * further past the end on every subsequent alloc until it faults (SEGV). Don't
-	 * advance past the end so the runaway is prevented. */
-	if (g_GfxMemPos + count * 0x10 > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
-		static s32 overflow_count = 0;
-		if (++overflow_count <= 5) {
-			printf("[DYN] Vtx overflow: need %d, have %ld bytes\n", count * 0x10,
-				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
-		}
-		return ptr;
+	/* Every effect billboard (explosion/smoke/spark quad) and model reserves its
+	 * Vtx array here; a heavy frame can push g_GfxMemPos past the VTX buffer end.
+	 * Fail closed (return NULL — the caller skips its draw) instead of aliasing
+	 * the current pointer into another user's Vtx data. */
+	u8 *end = g_VtxBuffers[g_GfxActiveBufferIndex + 1];
+	if (dynCountOverflow(g_GfxMemPos, end, count, 0x10)) {
+		dynNoteOverflow("Vtx", (size_t)(count < 0 ? 0 : count) * 0x10,
+						end - g_GfxMemPos);
+		return dynLegacyAlias() ? ptr : NULL;
 	}
 #endif
 	g_GfxMemPos += count * 0x10/*sizeof(Vtx)?*/;
@@ -151,19 +221,15 @@ void/*Vtx?*/ *dynAllocate7F0BD6C4(s32 count) {
 Mtx *dynAllocateMatrix(void)
 {
 #ifdef NATIVE_PORT
-	/* Unbounded bump allocator: a heavy frame -- e.g. a window shattering into
-	 * many glass shards, each allocating a matrix late in lvlRender -- can push
-	 * g_GfxMemPos past the VTX buffer end. Hand out a reusable scratch matrix on
-	 * overflow instead of an out-of-bounds pointer that the caller then writes
-	 * 64 bytes into (the sub_GAME_7F0A2C44 SEGV). */
-	static Mtx s_overflowScratch;
+	/* A heavy frame -- e.g. a window shattering into many glass shards, each
+	 * allocating a matrix late in lvlRender -- can push g_GfxMemPos past the VTX
+	 * buffer end. Return the shared overflow-scratch matrix (never NULL, so no
+	 * caller NULL-derefs) instead of an out-of-bounds pointer; willing callers
+	 * detect it via dynIsOverflowMatrix() and skip their draw. */
 	if (g_GfxMemPos + sizeof(Mtx) > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
-		static s32 overflow_count = 0;
-		if (++overflow_count <= 5) {
-			printf("[DYN] MTX overflow (count=%d): VTX free=%ld bytes\n", overflow_count,
-				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
-		}
-		return &s_overflowScratch;
+		dynNoteOverflow("Mtx", sizeof(Mtx),
+						g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos);
+		return &s_dynOverflowMatrix;
 	}
 #endif
 	{
@@ -176,16 +242,13 @@ Mtx *dynAllocateMatrix(void)
 void/*Light?*/ *dynAllocate7F0BD6F8(s32 count) {
     void *ptr = g_GfxMemPos;
 #ifdef NATIVE_PORT
-	/* Same overflow guard as dynAllocate (below): a LookAt/Light reservation on a
-	 * VTX-pool-exhausted frame must not write out of bounds or march g_GfxMemPos past
-	 * the buffer end. Don't advance past the end. */
-	if (g_GfxMemPos + count * 0x10 > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
-		static s32 overflow_count = 0;
-		if (++overflow_count <= 5) {
-			printf("[DYN] Light overflow: need %d, have %ld bytes\n", count * 0x10,
-				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
-		}
-		return ptr;
+	/* A LookAt/Light reservation on a VTX-pool-exhausted frame must not alias
+	 * another user's data. Fail closed (return NULL — the caller skips). */
+	u8 *end = g_VtxBuffers[g_GfxActiveBufferIndex + 1];
+	if (dynCountOverflow(g_GfxMemPos, end, count, 0x10)) {
+		dynNoteOverflow("Light", (size_t)(count < 0 ? 0 : count) * 0x10,
+						end - g_GfxMemPos);
+		return dynLegacyAlias() ? ptr : NULL;
 	}
 #endif
 	g_GfxMemPos += count * 0x10/*sizeof(Light)?*/;
@@ -196,13 +259,12 @@ void *dynAllocate(s32 size) {
     void *ptr = g_GfxMemPos;
 	size = ALIGN16_a(size);
 #ifdef NATIVE_PORT
-	if (g_GfxMemPos + size > g_VtxBuffers[g_GfxActiveBufferIndex + 1]) {
-		static s32 overflow_count = 0;
-		if (++overflow_count <= 5) {
-			printf("[DYN] VTX overflow: need %d, have %ld\n", size,
-				   (long)(g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos));
+	{
+		u8 *end = g_VtxBuffers[g_GfxActiveBufferIndex + 1];
+		if (size < 0 || dynByteOverflow(g_GfxMemPos, end, (size_t)size)) {
+			dynNoteOverflow("VTX", (size_t)(size < 0 ? 0 : size), end - g_GfxMemPos);
+			return dynLegacyAlias() ? ptr : NULL;
 		}
-		return ptr; /* return current pos but don't advance past end */
 	}
 #endif
 	g_GfxMemPos += size;

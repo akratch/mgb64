@@ -75,6 +75,7 @@ extern s32 g_StageNum;
 
 /* Crash recovery count (from main_pc.c) */
 extern int g_crashRecoveryCount;
+extern s32 g_dyn_overflow_count; /* dyn.c: per-frame fail-closed overflow counter */
 
 /* Per-frame room draw count (from bg.c) */
 extern s32 g_BgNumberOfRoomsDrawn;
@@ -7507,7 +7508,7 @@ void portTraceFrame(void) {
             "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
-            "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
+            "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d,\"dyn_overflow\":%d},"
             "\"rooms\":{\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
             "\"inv\":{\"count\":%d,\"keyflags\":\"0x%08X\",\"ge_key\":%d,\"ge_copied\":%d},"
             "%s"
@@ -7531,7 +7532,7 @@ void portTraceFrame(void) {
             tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
-            dl_non_dl_skip_n64, dl_unregistered_skip,
+            dl_non_dl_skip_n64, dl_unregistered_skip, g_dyn_overflow_count,
             room_render_fallback_active, room_render_fallback_rooms, room_render_fallback_total,
             inv_item_count, inv_keyflags, inv_has_ge_key, inv_copied_ge_key,
             objective_field_json,
@@ -7789,7 +7790,7 @@ void portTraceFrame(void) {
             "\"tris\":%d,\"rooms_drawn\":%d,\"crashes\":%d,\"bad_cmds\":%d,"
             "\"dl\":{\"mtx_fail\":%d,\"vtx_fail\":%d,\"dl_fail\":%d,\"movemem_fail\":%d,"
             "\"texture_fail\":%d,\"settimg_fail\":%d,\"non_dl_skip_pc\":%d,"
-            "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d},"
+            "\"non_dl_skip_n64\":%d,\"unregistered_skip\":%d,\"dyn_overflow\":%d},"
             "\"fog\":[%d,%d,%d],\"fog_mul\":%d,\"fog_off\":%d,"
             "\"geom\":\"0x%08X\","
             "\"segs\":\"0x%04X\","
@@ -7979,7 +7980,7 @@ void portTraceFrame(void) {
             tris, rooms_drawn, g_crashRecoveryCount, bad_cmds,
             dl_mtx_fail, dl_vtx_fail, dl_fail, dl_movemem_fail,
             dl_texture_fail, dl_settimg_fail, dl_non_dl_skip_pc,
-            dl_non_dl_skip_n64, dl_unregistered_skip,
+            dl_non_dl_skip_n64, dl_unregistered_skip, g_dyn_overflow_count,
             fog_r, fog_g, fog_b, fog_mul, fog_off,
             geom_mode,
             seg_mask,

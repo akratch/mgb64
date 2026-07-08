@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**884 flags** found across the source.
+**885 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -367,6 +367,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_DUMP_TEXMANIFEST` | ? |  | 1 |  |
 | `GE007_DUMP_TEXT_GLYPHS` | ? |  | 1 |  |
 | `GE007_DUMP_TEXT_GLYPH_CHARS` | ? |  | 1 |  |
+| `GE007_DYN_LEGACY_ALIAS` | bool | 0 | 1 | restore legacy dyn-allocator aliasing on overflow (return current pointer / shared scratch matrix instead of failing closed) |
 | `GE007_EFFECT_CMD_TRACE` | ? |  | 1 |  |
 | `GE007_EFFECT_CMD_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_EFFECT_RANGE_TRACE` | ? |  | 1 |  |

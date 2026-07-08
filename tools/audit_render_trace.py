@@ -20,6 +20,7 @@ DL_COUNTERS = (
     "non_dl_skip_pc",
     "non_dl_skip_n64",
     "unregistered_skip",
+    "dyn_overflow",
 )
 
 
