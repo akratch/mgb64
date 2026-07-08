@@ -63,6 +63,7 @@ The public validation surface is organized into these lanes:
 | Multiplayer | Split-screen deathmatch boot; asserts the two framebuffer halves are measurably dissimilar | `mp_smoke.sh` |
 | Route contract | ROM-oracle route spec/adapters, optional native route captures | `route_contract_smoke.sh` |
 | Dam visual suite | Focused Dam gates for camera tilt, tunnel visibility, effect textures, palette colors, glass material, actor-masked active shards, and impact-aligned glass | `dam_visual_regression_suite.sh` |
+| Intro visual | Pixel-level Bond intro body: presence (silhouette), grounding (root vs floor), red-shard outliers, with baked-in negative controls | `intro_visual_regression.sh` |
 | Surface projection | Surface 1 sky-dominance regression from unscaled `field_10E0`; includes negative-control capture | `surface_projection_regression.sh` |
 | Bunker brightness | Bunker 1 faithful brightness health with a bright remaster A/B sensitivity check | `bunker_brightness_regression.sh` |
 | Visual oracle | Clean stock/native Dam static-glass screenshot fixture and pre-pixel guards | `glass_visual_oracle_regression.sh` |
@@ -1822,6 +1823,41 @@ strict vector/path parity on a specific aligned route window.
 `tools/audit_oracle_trace.py --json-out PATH` writes the same movement/control
 metrics that it prints, including failure counts. Validation wrappers use this
 for compact evidence files instead of scraping human-readable audit output.
+
+### Intro visual regression (pixel-level Bond body)
+
+The census/oracle layers above check intro *actor state* (present, rendered,
+animation hash). A shredded or floating Bond still passes those. The pixel
+validator adds the three checks actor state cannot see:
+
+```sh
+./tools/intro_visual_regression.sh --no-build
+```
+
+It captures the Dam intro swirl at a deterministic screenshot frame under several
+env configs and asserts each one's expected verdict from
+`tools/analyze_intro_body.py`, which runs three checks over the screenshot plus
+the `intro.bond_body` trace record:
+
+1. **presence** — Bond's warm skin/tan silhouette covers the expected screen
+   region (the de-aliased body is visible, not absent/collapsed).
+2. **grounding** — the median `world_root.y - floor_y` from `intro.bond_body`
+   stays within a bounded offset (projection-independent); fails on a large
+   persistent vertical offset (floating Bond).
+3. **shards** — no dark saturated-red outlier pixels (the degenerate red-shard
+   signature) anywhere in the rendered frame.
+
+The regression bakes in the negative controls (charter rule 3): `normal`,
+`GE007_NO_INTRO_PHASE3=1`, and `GE007_NO_INTRO_ROOTMOTION=1` PASS;
+`GE007_NO_BOND_BODY_FIX=1` FAILs presence (and the trace render-position count);
+`GE007_INTRO_BODY_Y_OFFSET=300` FAILs grounding; and a self-test that injects the
+dark-red shard signature into the good frame FAILs shards. Defaults are a Dam
+route fixture — the port's frozen-intro camera does not project actor world
+positions to screen reliably, so the Bond region is empirically measured, not
+engine-projected. `audit_intro_trace.py` also gained optional
+`--min-body-render-pos-count` / `--max-grounding-offset` gates over the same
+`intro.bond_body` record for trace-only (screenshot-free) coverage. Screenshots,
+traces, logs, and saves are ROM-derived local artifacts — do not commit them.
 
 ### Performance census & budgets
 
