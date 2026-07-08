@@ -225,7 +225,38 @@ static s32 setFromString(const char *key, const char *val)
                 }
             }
             if (!found) {
-                *(s32 *)e->ptr = (s32)strtol(val, NULL, 0);
+                /* Not a known token. Some enum settings are also historically
+                 * written as their raw backing number (e.g. "SSAO.Mode=2"), so
+                 * accept a numeric value IF it equals one of the option's actual
+                 * `.value`s. Enum backing values are NOT contiguous indices
+                 * (Video.MSAA is 0/2/4/8, Video.FrameCap is 0/30/60,
+                 * Video.SsaoMode is 1/2) -- clamping an out-of-range number into
+                 * [0, enum_count-1] would silently select a different (but
+                 * "in range"-looking) option than anything requested, which is
+                 * worse than doing nothing. That differs from the CFG_S32/U32
+                 * cases above, where the domain really is a contiguous range and
+                 * "nearest valid value" is a sane clamp target; for an enum
+                 * there is no sane "nearest", so an unmatched value is rejected
+                 * outright and the previous value is kept, matching the CFG_F32
+                 * NaN-rejection philosophy just above. */
+                char *end = NULL;
+                long numeric = strtol(val, &end, 0);
+                s32 matched = 0;
+                if (end != val) { /* strtol actually consumed a number */
+                    for (s32 i = 0; i < e->enum_count; i++) {
+                        if (e->enum_options[i].value == (s32)numeric) {
+                            *(s32 *)e->ptr = (s32)numeric;
+                            matched = 1;
+                            break;
+                        }
+                    }
+                }
+                if (!matched) {
+                    fprintf(stderr,
+                            "[config] WARNING: '%s=%s' is not a recognized option; "
+                            "keeping previous value.\n",
+                            key, val);
+                }
             }
         } break;
         case CFG_STRING: {

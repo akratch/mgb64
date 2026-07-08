@@ -21,6 +21,7 @@ typedef struct {
     Kind kind;
     int  parsed;   /* value has been read from the environment */
     int  was_set;  /* the environment variable was present */
+    int  kind_mismatch_warned; /* a kind-mismatched lookup has already been logged */
     union { int b; int i; float f; } def;
     union { int b; int i; float f; } cur;
 } Entry;
@@ -38,9 +39,43 @@ static Entry *find_entry(const char *name) {
     return NULL;
 }
 
+static const char *kind_name(Kind kind) {
+    switch (kind) {
+        case K_BOOL:  return "bool";
+        case K_INT:   return "int";
+        case K_FLOAT: return "float";
+        default:      return "?";
+    }
+}
+
 static Entry *get_or_create(const char *name, Kind kind, const char *help) {
     Entry *e = find_entry(name);
     if (e != NULL) {
+        if (e->kind != kind) {
+            /* Same flag name registered under two different accessors (e.g. a
+             * flag first read via port_env_bool() and later via port_env_int()).
+             * The union member layouts differ per kind (K_FLOAT stores raw float
+             * bits in `cur.f`), so handing back the cached entry would let the
+             * new accessor reinterpret those bits under its own kind's rules --
+             * a silent type-pun, not merely a "wrong but plausible" number. There
+             * is no correct converted value to return (the entry was parsed once,
+             * under the *other* kind's rules, and that parse cannot be
+             * retroactively redone as this kind), so treat this exactly like the
+             * "registry full" case just below: log once per name (loud, not
+             * silent), return NULL, and let the caller's own existing fallback
+             * path do an uncached getenv() read parsed under the kind and
+             * default *it* actually asked for. */
+            if (!e->kind_mismatch_warned) {
+                fprintf(stderr,
+                        "[port_env] WARNING: '%s' was registered as %s but is now "
+                        "requested as %s; ignoring the cached entry and reading the "
+                        "environment directly for this call instead of returning a "
+                        "type-punned value.\n",
+                        name, kind_name(e->kind), kind_name(kind));
+                e->kind_mismatch_warned = 1;
+            }
+            return NULL;
+        }
         return e;
     }
     if (s_count >= PORT_ENV_MAX) {
