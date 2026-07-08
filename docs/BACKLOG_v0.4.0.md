@@ -383,19 +383,57 @@ auto-aim targetability and movement-AI mode key off that render-derived visibili
 render fallbacks change *combat behavior*; (3) when the portal walk yields zero rooms, the
 fallback marks all loaded rooms rendered — for that frame every guard is targetable and
 "visible" through walls.
-- [ ] Implement the per-player frustum **union** (evaluate `sub_GAME_7F054D6C` against all
-      active viewports) so the accurate test is MP-safe; flip `GE007_CHRBEAMS_FRUSTUM`
-      default ON after A/B.
-- [ ] Narrow the `lvl.c:1737` fallback: mark only the player's current room + direct
-      portal neighbors, and increment a render-health counter when it fires.
-- [ ] Decouple auto-aim/AI-mode from `getROOMID_isRendered`: they should consume the sim
-      frustum result, never the render set. Keep the viewer-body intro bypass explicit.
-- [ ] Then restore the retail visibility-gated actiontype dispatch (off-screen guards
-      shouldn't full-tick every frame) and delete the bypass.
-- [ ] Validate: `GE007_TRACE_VISIBILITY` disagreement records = 0 on
-      `tools/playability_smoke.sh --all`; combat gates (guard fire, hidden-guard
-      no-phantom-fire) pass; split-screen `mp_smoke.sh` green; auto-aim no longer acquires
-      guards behind walls on the Dam guard-pressure route.
+- [x] **Phase A (LANDED, `3a031c6`):** per-player frustum **union**
+      (`chrBeamsFrustumVisibleUnion`, chr.c) evaluates `sub_GAME_7F054D6C` against every
+      active viewport (set_cur_player + `sub_GAME_7F0785DC` recompute the per-player frustum
+      planes), restoring the caller's player/planes; in 1P it is byte-identical to the single
+      test. Default `GE007_CHRBEAMS_FRUSTUM` stays OFF. `GE007_TRACE_VISIBILITY` extended to
+      characterize bypass-vs-union disagreements (over/under, viewer, `[VIS_PROBE_AGG]`).
+- [x] **Phase B (LANDED, `f3a10c9`):** the `lvl.c` zero-rooms fallback now marks only the
+      player's current room + direct portal neighbors (`bgMarkRoomAndPortalNeighborsRendered`,
+      bg.c) with the marked count in the `g_portRoomRenderFallback*` render-health counters.
+      Counter evidence: the fallback fires on none of the 20 playability levels (degenerate
+      path only).
+- [~] **Phase C (BLOCKED — NOT landed):** flipping `GE007_CHRBEAMS_FRUSTUM` default ON was
+      A/B-tested but is **blocked**. Phase-A evidence is clean and supportive: across all 20
+      playability levels every bypass-vs-union disagreement is "over" (frustum union ⊆
+      room-rendered bypass), `under=0`, `viewer_disagree=0`. On-screen combat is unaffected
+      by the flip: `hidden_guard_contract_smoke`, `dam_guard_pressure_contract`, and
+      `dam_player_fire_guard_contract` pass **identically** flag-ON vs flag-OFF. **But** the
+      flip deterministically shifts two calibrated campaign-route baselines — Bond position
+      milestones, not combat: `dam_native_multiwaypoint_input_traversal` (post-input rest
+      dz 2092 < 2200) and `bunker1_spawn_two_door_collect_contract` (post-second-door hdelta
+      467 < 560). These are 1P routes (the union takes the no-switch path), so the sole cause
+      is guards evolving under the retail frustum test instead of the room-rendered bypass —
+      i.e. the *expected* faithful sim shift. Justifying the new baselines as faithful (per
+      charter rule 3/4) requires the **Phase-5 combat-field ROM oracle** (COMBAT_DEFERRED_PLAN
+      §2.1, "the single biggest blocker, XL") to confirm the frustum-culled guards match
+      stock; that oracle is not built, so the shift cannot be evidenced as faithful and the
+      default flip is deferred until it is. The union stays available and MP-safe behind
+      `GE007_CHRBEAMS_FRUSTUM=1`; `=0`/default is the byte-identical bypass.
+- [ ] **Decouple auto-aim/AI-mode from `getROOMID_isRendered`** — analysis done, largely a
+      no-op: guard auto-aim targetability is set *solely* by `chrTickBeams` `visible` →
+      `PROPFLAG_ONSCREEN` (object/door targetability already uses `sub_GAME_7F054D6C` at
+      `chrobjhandler.c:11045`), so the flag flip *is* the auto-aim decouple. The remaining
+      `getROOMID_isRendered` reads are **not** the coupling to sever: `chrprop.c:905/958` is
+      render-pass draw dispatch (correctly render-set-driven); `AI_IFMyRoomIsOnScreen`
+      (`chrai.c:2741`) and `AI_IFRoomWithPadIsOnScreen` (`chrlv.c:11739`, `aicommands.def`)
+      are retail AI opcodes whose *defined* semantics are "is my room rendered" (distinct
+      from `IF_GUARD_IS_ON_SCREEN`, which uses `PROPFLAG_ONSCREEN`); `chrIsPosOffScreen`
+      (`chrlv.c:12726`) is already a room+fog+screen-box test. The one render-derived AI-mode
+      read is `chrlvPropHasRenderedRoom` (`chrlv.c:11257`), which is the **M2.5** fog/
+      WAYMODE_MAGIC bridge — a separate task (below). Reopens with Phase C.
+- [ ] **Phase D — restore visibility-gated actiontype dispatch (retail H4):** deferred.
+      Phase-A evidence bears on its risk: the frustum union is a strict subset of the current
+      tick set with a large "over" population (e.g. L32 47%, L33 27% of samples), so H4 would
+      stop full-ticking that many guards per frame — a real behavior change that (a) inherits
+      the same Phase-C oracle-justification blocker and (b) would compound the same
+      traversal-baseline shifts seen above. Do **not** implement until Phase C flips.
+- [ ] Validate (for the eventual Phase C flip): `GE007_TRACE_VISIBILITY` under= and viewer=0
+      on `tools/playability_smoke.sh --all` (**met**); combat gates pass (**met**);
+      split-screen `mp_smoke.sh` green; auto-aim no longer acquires guards behind walls on
+      the Dam guard-pressure route; Phase-5 oracle confirms frustum-culled guards match stock
+      (**blocker**).
 
 ### M2.4 — HUD/watch timers jump on frame spikes (`speedgraphframes` unclamped)
 **P2 · S**
@@ -415,6 +453,15 @@ any guard), root cause chain: fog zeroing alpha → `PROPFLAG_ONSCREEN` never se
 `WAYMODE_MAGIC` path stalls.
 - [ ] Fix the ONSCREEN determination for fogged-but-visible guards (ties into M2.3's
       frustum result — a guard in-frustum should be ONSCREEN regardless of fog alpha).
+      **M2.3-Phase-A risk note:** the render-derived AI-mode read this task owns is
+      `chrlvPropHasRenderedRoom` (`chrlv.c:11257`), which suppresses `WAYMODE_MAGIC` entry
+      when a guard's room is rendered. It reads `getROOMID_isRendered` **directly**, not
+      `PROPFLAG_ONSCREEN`, so it is unaffected by M2.3's frustum flip — but that also means
+      M2.3's flip makes `PROPFLAG_ONSCREEN` *stricter* (adds the frustum's fog + screen-box
+      test), so `lastvisible60` stops updating for fogged in-room guards behind Bond. The
+      correct M2.5 fix (ONSCREEN = in-frustum regardless of fog alpha) must therefore land
+      **with or before** the M2.3 Phase-C flip, or fogged patrol guards lean harder on the
+      `chrlvPropHasRenderedRoom` bridge. Sequence M2.5 into the Phase-C landing.
 - [ ] Remove the per-tick `modelSetAnimLooping` enforcement; keep it one release behind a
       `GE007_PATROL_FORCELOOP` compat flag in case a level regresses.
 - [ ] Validate: guard patrol routes on Dam/Surface (walk cycles don't freeze); death/hit
