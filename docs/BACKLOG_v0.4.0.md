@@ -109,9 +109,16 @@ P2 = narrower visual/behavioral issue · P3 = hygiene/robustness/future-proofing
 whole-branch review verdict READY-WITH-MINOR-FOLLOWUPS, 0 Critical):
 M0.1 ✅ M0.2 ✅ M0.3 ✅ (`9acba24`/`510e181`) M0.4 ✅ M8.1 ✅ (premise corrected:
 gap was the prop pool, chr/player were pool-covered) M1.1 ✅ M2.1 ✅ M2.2 ✅ M2.4 ✅
-M6.3 ✅. Open from review: MinGW cross-build validation (no local toolchain — needs a
-staging push + CI dispatch), and the M8.3 manual-QA list grew (see M8.3). Details in
-`.superpowers/sdd/progress.md`.
+M6.3 ✅. Windows/Linux validation waived by owner (stipulated-untested platforms;
+best-practices bar stays). Details in `.superpowers/sdd/progress.md`.
+
+**M1.2 ✅ LANDED** (`a9f7348..5bbb18d`, 2026-07-08): fail-closed allocator contract,
+30 direct + 25 wrapper-family call sites guarded, `g_dyn_overflow_count` health counter,
+`GE007_DYN_STRESS_LIMIT` + `GE007_DYN_LEGACY_ALIAS` hatches. Two-round Fable review;
+sustained-overflow stress (109 presented frames) crash-free, ASan/UBSan clean, defaults
+byte-identical. Residual (overflow-regime only): `modelSetDistanceDisabled` leak on
+early-returns (T9b, in flight). Lesson ledgered: caller sweeps must enumerate wrapper
+families, not just direct allocator greps.
 
 ## Milestone map
 
