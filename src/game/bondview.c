@@ -24555,6 +24555,12 @@ s32 playerTickBeams(PropRecord *prop) {
                 }
             }
 
+            /* R2/M1.3 transform-authority consistency: snapshot the viewer-body
+             * prop position before chrTickBeams advances the animation and builds
+             * render matrices, so the post-tick block can measure whether its
+             * correction MOVES the rendered body (a second authority) or merely
+             * re-syncs the outward collision anchor (a no-op for the render). */
+            coord3d introAuthPrePos = prop->pos;
             player->field_AC = 0;
             tickop = chrTickBeams(prop);
             player = g_playerPointers[playerIndex];
@@ -24573,6 +24579,46 @@ s32 playerTickBeams(PropRecord *prop) {
                 && portIsFiniteF32(player->field_488.collision_position.x)
                 && portIsFiniteF32(player->field_488.collision_position.y)
                 && portIsFiniteF32(player->field_488.collision_position.z)) {
+                /* Transform-authority measurement (R2/M1.3). anchorDelta is how
+                 * far the inward "snap" (prop->pos <- field_488) would move the
+                 * body that chrTickBeams already built matrices for; animDelta is
+                 * how far the animation root motion moved it this tick. In the
+                 * frozen intro swirl the outward branch below runs and anchorDelta
+                 * stays ~0, so the post-tick block is NOT a second authority for
+                 * the rendered body -- the animation inside chrTickBeams is. */
+                f32 introAuthAnchorDx = fabsf(player->field_488.collision_position.x - prop->pos.x);
+                f32 introAuthAnchorDy = fabsf(player->field_488.collision_position.y - prop->pos.y);
+                f32 introAuthAnchorDz = fabsf(player->field_488.collision_position.z - prop->pos.z);
+                f32 introAuthAnchorDelta = introAuthAnchorDx;
+                f32 introAuthAnimDelta;
+                static int introAuthTrace = -1;
+                static int introAuthTickSeq = 0;
+                if (introAuthAnchorDy > introAuthAnchorDelta) introAuthAnchorDelta = introAuthAnchorDy;
+                if (introAuthAnchorDz > introAuthAnchorDelta) introAuthAnchorDelta = introAuthAnchorDz;
+                introAuthAnimDelta = fabsf(prop->pos.x - introAuthPrePos.x);
+                if (fabsf(prop->pos.y - introAuthPrePos.y) > introAuthAnimDelta) introAuthAnimDelta = fabsf(prop->pos.y - introAuthPrePos.y);
+                if (fabsf(prop->pos.z - introAuthPrePos.z) > introAuthAnimDelta) introAuthAnimDelta = fabsf(prop->pos.z - introAuthPrePos.z);
+                if (introAuthTrace < 0) {
+                    introAuthTrace = (getenv("GE007_TRACE_INTRO_AUTHORITY") != NULL);
+                }
+                introAuthTickSeq++;
+                if (introAuthTrace) {
+                    fprintf(stderr,
+                        "[INTRO-AUTHORITY] seq=%d cam=%d frozen=%d act=%d anim=%d "
+                        "prePos=(%.2f,%.2f,%.2f) postPos=(%.2f,%.2f,%.2f) "
+                        "anchor=(%.2f,%.2f,%.2f) animDelta=%.4f anchorDelta=%.4f\n",
+                        introAuthTickSeq, (int)g_CameraMode,
+                        (int)playerHasFrozenIntroCamera(player),
+                        (prop->chr != NULL) ? (int)prop->chr->actiontype : -1,
+                        (prop->chr != NULL && prop->chr->model != NULL
+                            && prop->chr->model->anim != NULL) ? 1 : 0,
+                        introAuthPrePos.x, introAuthPrePos.y, introAuthPrePos.z,
+                        prop->pos.x, prop->pos.y, prop->pos.z,
+                        player->field_488.collision_position.x,
+                        player->field_488.collision_position.y,
+                        player->field_488.collision_position.z,
+                        introAuthAnimDelta, introAuthAnchorDelta);
+                }
                 /* D43 experiment (opt-in GE007_INTRO_ROOTMOTION): during the
                  * frozen intro swirl, stock's Bond physically shifts/settles as
                  * his scripted phase-3 animation plays (measured: 123 distinct
@@ -24614,6 +24660,30 @@ s32 playerTickBeams(PropRecord *prop) {
                     player->field_488.current_tile_ptr = player->prop->stan;
                     setsuboffset(player->ptr_char_objectinstance, &player->prop->pos);
                     return tickop;
+                }
+                /* Consistency check (R2/M1.3): in the frozen intro swirl (not FP)
+                 * this inward snap only runs on frames with no live animation
+                 * (the outward branch above owns the animated frames), where the
+                 * prop already sits on its anchor -- so it must be a no-op. If it
+                 * ever moves the body chrTickBeams already rendered by more than
+                 * epsilon, a second transform authority has re-emerged; surface it
+                 * once as a render-health warning instead of silently drawing a
+                 * displaced body. FP/FP_NOINPUT legitimately snap every tick and
+                 * are excluded. */
+                if (playerHasFrozenIntroCamera(player)
+                    && g_CameraMode != CAMERAMODE_FP
+                    && g_CameraMode != CAMERAMODE_FP_NOINPUT
+                    && introAuthAnchorDelta > 0.01f) {
+                    static int introAuthWarned = 0;
+                    if (!introAuthWarned) {
+                        introAuthWarned = 1;
+                        fprintf(stderr,
+                            "[BONDVIEW][RENDER-HEALTH] intro post-tick snap moved viewer body "
+                            "%.3f units (act=%d animDelta=%.3f); transform authority split\n",
+                            introAuthAnchorDelta,
+                            (prop->chr != NULL) ? (int)prop->chr->actiontype : -1,
+                            introAuthAnimDelta);
+                    }
                 }
                 player->prop->pos.x = player->field_488.collision_position.x;
                 player->prop->pos.y = player->field_488.collision_position.y;

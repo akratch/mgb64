@@ -64,7 +64,22 @@ for bisecting a regression or comparing looks. Set the variable to `1`.
 Diagnostic traces (no behavior change): `GE007_TRACE_INTRO_PARSE`,
 `GE007_SETUP_DIAG`, `GE007_VERBOSE` (spawn/room/camera dumps),
 `GE007_TRACE_FOV`, `GE007_TRACE_CAMERA`, `GE007_TRACE_BOND_BUF` (1P viewer
-body/head/weapon offsets inside the shared load buffer, with an OVERLAP flag).
+body/head/weapon offsets inside the shared load buffer, with an OVERLAP flag),
+`GE007_TRACE_INTRO_AUTHORITY` (per-tick current-player viewer-body transform
+authority: prop pos before/after `chrTickBeams`, the collision anchor, the
+animation root-motion delta, and the anchor-snap delta — see the note below).
+
+Transform authority (ledger R2/M1.3): in the frozen intro swirl the viewer
+body's single transform authority is the animation advanced inside
+`chrTickBeams`; the post-tick block in `playerTickBeams` only re-syncs the
+outward collision/camera anchor and never applies an inward snap on animated
+frames (the D31/D43 root-motion branch runs and returns first). On the few
+non-animated frozen-intro frames the inward snap does run, but it is a measured
+no-op (the prop already sits on its anchor). A permanent `[BONDVIEW]
+[RENDER-HEALTH]` warning fires once if that snap ever moves the already-rendered
+body by more than 0.01 units, i.e. if a second authority re-emerges;
+`GE007_TRACE_INTRO_AUTHORITY` dumps the per-tick deltas that warning is built
+on. FP / FP_NOINPUT legitimately snap the body every tick and are excluded.
 
 Red-shard note: the intro Bond body, head, and right-hand weapon are packed into
 one shared load buffer in `solo_char_load`. The native path previously failed to
