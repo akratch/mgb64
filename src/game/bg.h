@@ -192,6 +192,9 @@ Gfx* bgScissorCurrentPlayerViewF(Gfx* arg0, f32 arg1, f32 arg2, f32 arg3, f32 ar
 f32 get_room_data_float1(void);
 u8 getROOMID_isRendered(int roomID);
 u8 getROOMID_isNeighborToRendered(s32 roomID);
+#ifdef NATIVE_PORT
+s32 bgMarkRoomAndPortalNeighborsRendered(s32 room);
+#endif
 s32 bgGet2dBboxByRoomId(s32 room_id, struct bbox2d *result);
 f32 bgGetLevelVisibilityScale(void);
 void sub_GAME_7F0B5CC0(struct bbox2d *a, struct bbox2d *b);

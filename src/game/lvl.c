@@ -1736,20 +1736,22 @@ Gfx* lvlRender(Gfx* DL)
 
                 if (rendered_rooms == 0 && pc_num_loaded_rooms > 0) {
                     static int logged_room_fallback = 0;
-
-                    for (ri = 0; ri < pc_num_loaded_rooms; ri++) {
-                        int rm = pc_room_allocs[ri].roomID;
-                        g_BgRoomInfo[rm].room_rendered = 1;
-                    }
+                    /* M2.3 Phase B: narrow the emergency render-set to the
+                     * player's current room + direct portal neighbors, instead
+                     * of marking every loaded room rendered (which made every
+                     * guard in the level targetable through walls for the frame).
+                     * g_CurrentPlayer is valid here (inside the per-player pass). */
+                    s32 cur_room = (s32)bondviewGetCurrentPlayersRoom();
+                    s32 marked = bgMarkRoomAndPortalNeighborsRendered(cur_room);
 
                     g_portRoomRenderFallbackFrame = g_frame_count_diag;
-                    g_portRoomRenderFallbackRooms = pc_num_loaded_rooms;
+                    g_portRoomRenderFallbackRooms = marked;
                     g_portRoomRenderFallbackTotal++;
 
                     if (logged_room_fallback < 8) {
                         fprintf(stderr,
-                                "[ROOM_RENDER_FALLBACK] frame=%d marked %d loaded rooms rendered\n",
-                                g_frame_count_diag, pc_num_loaded_rooms);
+                                "[ROOM_RENDER_FALLBACK] frame=%d room=%d marked %d rooms rendered (current+portal-neighbors)\n",
+                                g_frame_count_diag, cur_room, marked);
                         fflush(stderr);
                         logged_room_fallback++;
                     }

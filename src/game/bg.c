@@ -9042,6 +9042,53 @@ u8 getROOMID_isRendered(s32 roomID)
     return g_BgRoomInfo[roomID].room_rendered;
 }
 
+#ifdef NATIVE_PORT
+/* M2.3 Phase B: minimal render-set for the degenerate zero-rooms frame.
+ *
+ * When the portal walk yields no rendered rooms for a frame, lvl.c must still
+ * mark something rendered so props/guards tick and the frustum test has a room
+ * set. The old fallback marked EVERY loaded room rendered -- for that frame,
+ * every guard in the level was room-rendered, hence targetable "through walls."
+ * Restrict the emergency set to the player's current room plus its direct portal
+ * neighbors (one hop), which is the smallest set that keeps the local area live.
+ * Returns the number of rooms newly marked. */
+s32 bgMarkRoomAndPortalNeighborsRendered(s32 room)
+{
+    s32 marked = 0;
+    bg_portal_data_entry *cur;
+
+    if (room < 0 || room >= g_MaxNumRooms) {
+        return 0;
+    }
+
+    if (!g_BgRoomInfo[room].room_rendered) {
+        g_BgRoomInfo[room].room_rendered = 1;
+        marked++;
+    }
+
+    cur = g_BgPortals;
+    if (cur != NULL) {
+        for (; cur->offset_portal != 0; cur++) {
+            s32 other = -1;
+
+            if ((s32)cur->connectedRoom1 == room) {
+                other = cur->connectedRoom2;
+            } else if ((s32)cur->connectedRoom2 == room) {
+                other = cur->connectedRoom1;
+            }
+
+            if (other > 0 && other < g_MaxNumRooms
+                && !g_BgRoomInfo[other].room_rendered) {
+                g_BgRoomInfo[other].room_rendered = 1;
+                marked++;
+            }
+        }
+    }
+
+    return marked;
+}
+#endif
+
 /*
  * Return butflags1 (confirmed u8)
  */
