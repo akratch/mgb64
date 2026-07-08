@@ -6744,6 +6744,175 @@ glabel sub_GAME_7F07B2A0
 
 
 
+#ifdef NATIVE_PORT
+/* D43 (opt-in MVP): drive the intro Bond's scripted phase-3 animation during the
+ * swirl. The intro anim is a 3-phase sequence: phase 1 (extending_left_hand) and
+ * phase 2 (idle loop) are driven procedurally and reproduce faithfully, but stock
+ * plays phase 3 (a dynamic pose) via a level Bond-cinema AI-list PlayAnimation
+ * targeting CHR_BOND_CINEMA (which resolves to this very chr, chrlv.c:11768). The
+ * port never runs that script in frozen-camera modes, so Bond holds the phase-2
+ * idle and looks static; the missing phase-3 root motion is also what drives the
+ * late-swirl camera-anchor drift (ledger D35/D36). This transitions the intro chr
+ * to a dynamic anim directly (ACT_ANIM, sticky), so the swirl animates.
+ *
+ * Opt-in via GE007_INTRO_PHASE3 until validated against the ares oracle: the
+ * default (oracle-gated) behaviour is unchanged. GE007_INTRO_PHASE3_ANIM sets the
+ * ANIM_* index (default draw_one_handed_weapon_and_look_around); _ONSET sets the
+ * camera_transition_timer onset (default 30). Fires once per intro chr. */
+/* D43 diagnostic: dump every ANIM_ index's trace-hash so the exact stock
+ * phase-3 anim (full 64-bit hash 0x79F92FB064997857, D36) can be identified by
+ * index. Replicates traceModelAnimationHeaderHash (port_trace.c) byte-for-byte
+ * over the ModelAnimation header. One-shot, gated by GE007_DUMP_ANIM_HASHES. */
+static void bondviewDumpAnimHashesOnce(void)
+{
+    static int done = 0;
+    s32 i;
+
+    if (done || getenv("GE007_DUMP_ANIM_HASHES") == NULL) {
+        return;
+    }
+    if (animation_table_ptrs1[0] == 0) {
+        return; /* table not expanded yet; try again next tick */
+    }
+    done = 1;
+
+    if (ptr_animation_table == NULL) {
+        return;
+    }
+
+    /* animation_table_ptrs1[] has 183 entries (initanitable.c). Some enum slots
+     * (ANIM_null50/51) are invalid and expand to wild pointers, so bound the
+     * scan and validate each pointer lies inside the anim-data blob before
+     * dereferencing. */
+    for (i = 0; i < 183; i++) {
+        /* NATIVE_PORT: animation_table_ptrs1[] entries are ALREADY absolute
+         * pointers after expand_ani_table_entries -- use directly, do NOT
+         * ANIM_FROM_OFFSET (which double-adds the base). Matches chrlv.c. */
+        const u8 *a = (const u8 *)animation_table_ptrs1[i];
+        u64 hash = 1469598103934665603ULL;
+        u16 h04, h0c, h0e;
+        u32 h08, h10;
+        long off;
+
+        if (a == NULL) {
+            continue;
+        }
+        off = (long)((uintptr_t)a - (uintptr_t)ptr_animation_table);
+        if (off < 0 || off > 0x100000) {
+            continue; /* invalid/null slot -> wild pointer; skip */
+        }
+        memcpy(&h04, a + 0x04, 2);
+        memcpy(&h08, a + 0x08, 4);
+        memcpy(&h0c, a + 0x0c, 2);
+        memcpy(&h0e, a + 0x0e, 2);
+        memcpy(&h10, a + 0x10, 4);
+        hash = (hash ^ (u64)h04) * 1099511628211ULL;
+        hash = (hash ^ (u64)a[0x06]) * 1099511628211ULL;
+        hash = (hash ^ (u64)a[0x07]) * 1099511628211ULL;
+        hash = (hash ^ (u64)h08) * 1099511628211ULL;
+        hash = (hash ^ (u64)h0c) * 1099511628211ULL;
+        hash = (hash ^ (u64)h0e) * 1099511628211ULL;
+        hash = (hash ^ (u64)h10) * 1099511628211ULL;
+        fprintf(stderr, "[ANIM-HASH] index=%d offset=%ld entry_offset=%u hash=0x%016llX\n",
+                (int)i, off, (unsigned)h08, (unsigned long long)hash);
+    }
+    fflush(stderr);
+}
+
+/* D43: the intro Bond animation is a 3-phase sequence. Phases 1
+ * (ANIM_extending_left_hand, hash 0xD5C42DBF) and 2 (idle loop, hash
+ * 0x06028BC2) are driven procedurally and reproduce faithfully, but stock plays
+ * phase 3 via a level Bond-cinema AI-list PlayAnimation targeting
+ * CHR_BOND_CINEMA (which chrResolveId maps to this very chr, chrlv.c:11768). The
+ * port never runs that script in frozen-camera modes, so Bond holds the phase-2
+ * idle and looks static; the missing phase-3 root motion is also what drives the
+ * late-swirl camera-anchor drift (ledger D35).
+ *
+ * Ground truth measured against the ares stock-ROM oracle (dam intro swirl):
+ *   phase 3 = ANIM_aim_one_handed_weapon_left_right (index 99),
+ *   full anim hash 0x79F92FB064997857, entry_offset 31420,
+ *   start frame 0, end 96, speed 0.5, non-loop (holds last frame),
+ *   onset: swirl segment intro_camera_index==4 at camera_transition_timer≈41.05.
+ * We reproduce it by transitioning the intro chr to that anim directly (ACT_ANIM,
+ * sticky) at the measured onset.
+ *
+ * Default ON; GE007_NO_INTRO_PHASE3 disables it (restores the pre-fix static
+ * Bond) for A/B. GE007_INTRO_PHASE3_ANIM / _SEGMENT / _ONSET / _END override the
+ * anim index / swirl segment / per-segment timer onset / end frame for tuning. */
+static void bondviewMaybeDriveIntroPhase3(void)
+{
+    static int disabled = -1;
+    static ChrRecord *fired_for = NULL;
+    ChrRecord *chr;
+    f32 onset;
+    s32 anim, seg, endframe;
+    const char *env;
+
+    bondviewDumpAnimHashesOnce();
+
+    if (disabled < 0) {
+        disabled = (getenv("GE007_NO_INTRO_PHASE3") != NULL);
+    }
+    if (disabled || g_CurrentPlayer == NULL || g_CurrentPlayer->prop == NULL) {
+        return;
+    }
+
+    chr = g_CurrentPlayer->prop->chr;
+    if (chr == NULL || chr->model == NULL || chr == fired_for) {
+        return;
+    }
+
+    seg = 4;
+    env = getenv("GE007_INTRO_PHASE3_SEGMENT");
+    if (env != NULL) {
+        seg = (s32)atoi(env);
+    }
+    /* Stock's phase-3 onset is icam==4, camera_transition_timer≈41.05, but
+     * native's swirl timer is quantised to 4.0-unit steps (…36.05, 40.05,
+     * 44.05…), so 40.05 is the nearest fire point; the residual 1-frame lead is
+     * absorbed by startframe below. Net effect: native's phase-3 frame tracks
+     * stock's exactly at aligned timers (measured p3 frame delta = 0.00). */
+    onset = 40.0f;
+    env = getenv("GE007_INTRO_PHASE3_ONSET");
+    if (env != NULL) {
+        onset = (f32)atof(env);
+    }
+    /* Fire at the measured swirl coordinate: segment `seg` once its per-segment
+     * timer reaches `onset`, or any later segment (in case a frame skipped it). */
+    if (!(intro_camera_index > seg
+          || (intro_camera_index == seg && camera_transition_timer >= onset))) {
+        return;
+    }
+
+    anim = ANIM_aim_one_handed_weapon_left_right; /* index 99, hash 0x79F92FB0 */
+    env = getenv("GE007_INTRO_PHASE3_ANIM");
+    if (env != NULL) {
+        anim = (s32)atoi(env);
+    }
+    endframe = 96;
+    env = getenv("GE007_INTRO_PHASE3_END");
+    if (env != NULL) {
+        endframe = (s32)atoi(env);
+    }
+    s32 startframe = 1; /* compensates native's 4-unit swirl-timer quantisation
+                         * so the phase-3 frame tracks stock at aligned timers
+                         * (measured: p3 frame delta 0.00 at onset 40 / start 1). */
+    env = getenv("GE007_INTRO_PHASE3_START");
+    if (env != NULL) {
+        startframe = (s32)atoi(env);
+    }
+
+    /* start, end 96, hold last frame (0x04 == ANIM_LOOP_HOLD_LAST_FRAME),
+     * interp 0x10 (ANIM_DEFAULT_INTERPOLATION). Speed 0.5 is applied by
+     * chrlvPerformAnimationForActor. */
+    check_if_able_to_then_perform_animation(chr, anim, startframe, endframe, 0x04, 0x10);
+    fired_for = chr;
+    fprintf(stderr,
+            "[BONDVIEW] intro phase-3: anim=%d end=%d fired at swirl seg=%d timer=%.2f\n",
+            (int)anim, (int)endframe, (int)intro_camera_index, camera_transition_timer);
+}
+#endif
+
 /**
  * US address 7F07B56C.
  * JP address 7F07BB8C.
@@ -6943,6 +7112,11 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
             s_nativeBondIntroChrPending = FALSE;
             bondviewPrepareNativeBondIntroChr();
         }
+
+        /* D43 (opt-in): once the intro chr exists, transition it to the scripted
+         * phase-3 animation stock plays mid-swirl (no-op unless GE007_INTRO_PHASE3
+         * is set). See bondviewMaybeDriveIntroPhase3. */
+        bondviewMaybeDriveIntroPhase3();
 
         /* D3/T8: see the CAMERAMODE_INTRO/FADESWIRL branch above -- same
          * Game.IntroSkipStyle gate. style 0 (default) leaves the stock
@@ -24263,6 +24437,32 @@ s32 playerTickBeams(PropRecord *prop) {
                 && portIsFiniteF32(player->field_488.collision_position.x)
                 && portIsFiniteF32(player->field_488.collision_position.y)
                 && portIsFiniteF32(player->field_488.collision_position.z)) {
+                /* D43 experiment (opt-in GE007_INTRO_ROOTMOTION): during the
+                 * frozen intro swirl, stock's Bond physically shifts/settles as
+                 * his scripted phase-3 animation plays (measured: 123 distinct
+                 * positions vs native's 1). The snap below pins prop->pos to the
+                 * static spawn anchor every tick, discarding that root motion.
+                 * When the experiment is on and we are in the frozen intro (NOT
+                 * FP) running the scripted anim, let the anim's root translation
+                 * drive prop->pos instead, and feed the moved position back into
+                 * the collision/camera anchor. FP/FP_NOINPUT always snap.
+                 * Default ON; GE007_NO_INTRO_ROOTMOTION restores the static pin. */
+                static int rootmotion = -1;
+                if (rootmotion < 0) {
+                    rootmotion = (getenv("GE007_NO_INTRO_ROOTMOTION") == NULL);
+                }
+                if (rootmotion
+                    && playerHasFrozenIntroCamera(player)
+                    && g_CameraMode != CAMERAMODE_FP
+                    && g_CameraMode != CAMERAMODE_FP_NOINPUT
+                    && prop->chr != NULL && prop->chr->actiontype == ACT_ANIM) {
+                    player->field_488.collision_position.x = player->prop->pos.x;
+                    player->field_488.collision_position.y = player->prop->pos.y;
+                    player->field_488.collision_position.z = player->prop->pos.z;
+                    player->field_488.current_tile_ptr = player->prop->stan;
+                    setsuboffset(player->ptr_char_objectinstance, &player->prop->pos);
+                    return tickop;
+                }
                 player->prop->pos.x = player->field_488.collision_position.x;
                 player->prop->pos.y = player->field_488.collision_position.y;
                 player->prop->pos.z = player->field_488.collision_position.z;

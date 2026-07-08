@@ -265,17 +265,27 @@ oracle; player-facing settings and hatches are documented in
 `docs/CINEMATICS.md`. Landed: faithful
 60-degree cutscene FOV, original staged intro-skip (no more stick-drift abort),
 stock-shaped deterministic camera selection, menu-boot parity (proven
-bit-exact vs direct boot), and the establishing/outro render fix above. The one
-remaining measured swirl divergence (Bond's intro animation does not advance to
-its final scripted phase mid-swirl, a small late-swirl camera-anchor drift) is
-root-caused and tracked as ledger item D43.
+bit-exact vs direct boot), the establishing/outro render fix above, and (D43,
+2026-07-08) the intro Bond phase-3 animation + root motion. Bond previously stood
+static in the swirl because the port never fired his scripted phase-3
+`PlayAnimation` and pinned his prop to a static anchor; the fix plays the
+oracle-measured phase-3 anim (`ANIM_aim_one_handed_weapon_left_right`, index 99)
+at swirl segment 4 and lets its root motion move the prop. On the Dam intro this
+makes every `bond_anim` field except `frame` (<=1-frame seed offset, D41) match
+stock, collapses the D35 camera-anchor drift (`cam_target[0]` 39.4 -> 1.0), and
+drops total intro divergences 2546 -> 1116; the `dam_intro_swirl_bond_anim`
+oracle route passes with the D36 bond_anim waivers removed. Validated safe
+(no crash, deterministic, phase-3 fires + Bond moves) across all 20 intro
+stages; only Dam is per-frame oracle-verified (residual: D41 anim seed offset,
+D31 ~57u vertical settle, and per-stage phase-3 scripts not yet individually
+oracle-checked). Disable via `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
 
 Desired end state:
 
 - start-menu and `--level` entry paths produce the same relevant gameplay state
   after level start; [done -- menu-boot parity verified bit-exact]
 - intro camera scripts render the same actors as original hardware/reference
-  captures; [establishing/outro render fixed; D43 anim phase remaining]
+  captures; [establishing/outro render fixed; D43 anim phase + root motion landed]
 - validation covers both direct-level and menu-start entry paths. [done -- both
   lanes wired into the ares oracle + ctest]
 

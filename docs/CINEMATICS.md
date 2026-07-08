@@ -53,6 +53,9 @@ for bisecting a regression or comparing looks. Set the variable to `1`.
 | `GE007_NO_CAMERA_SEED_FIX` | Pre-fix room admission — the establishing/outro shot renders only the player's spawn room (near-blank when the camera is elsewhere). |
 | `GE007_NO_CINEMA_INTRO_FIX` | Pre-fix gate that skipped a stage's intro when it had cinema cameras but no swirl data. |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | Pre-fix Bond intro-chr spawn timing at swirl entry (one record early vs stock). |
+| `GE007_NO_INTRO_PHASE3` | Pre-fix static Bond: skip the scripted phase-3 intro animation (Bond holds the phase-2 idle instead of drawing/aiming his weapon). See the phase-3 note below. |
+| `GE007_NO_INTRO_ROOTMOTION` | Pre-fix pinned Bond: keep the intro viewer body pinned to its static spawn anchor instead of letting the phase-3 animation's root motion move it (stock's Bond shifts/settles as he draws). |
+| `GE007_INTRO_PHASE3_ANIM=N` / `GE007_INTRO_PHASE3_SEGMENT=N` / `GE007_INTRO_PHASE3_ONSET=F` / `GE007_INTRO_PHASE3_START=N` / `GE007_INTRO_PHASE3_END=N` | Tuning overrides for the phase-3 anim index (default 99), swirl segment (4), per-segment timer onset (40.0), start frame (1), and end frame (96). Defaults are oracle-measured against stock on the Dam intro. |
 | `GE007_NO_BOND_BODY_FIX` | Pre-fix aliased viewer body (invisible / spiky Bond in the swirl and outro pose). |
 | `GE007_BOND_BODY_ALLOC_FAIL=header\|buffer\|both` | Fault-injection: force the dedicated viewer-body header/buffer allocation to "fail" so the fail-closed path can be exercised without real OOM. With the body fix enabled, `solo_char_load` then **skips** the 1P viewer body (Bond absent, one `[BONDVIEW][RENDER-HEALTH]` log) instead of reverting to the shard-producing aliased `GUNRIGHT` slot. |
 | `GE007_INTRO_ANIM_LEGACY_SEED` | The pre-T12 hand-tuned intro anim seed constant (value-identical; documentation A/B). |
@@ -71,6 +74,25 @@ swirl/outro (only visible once the body de-alias keeps the render count at ~21;
 with `GE007_NO_BOND_BODY_FIX` the body collapses and hides it). Fixed by running
 retail's `totalsize` advancement in the native path; verify with
 `GE007_TRACE_BOND_BUF=1` (expect `OVERLAP=0`).
+
+Phase-3 animation + root motion (ledger D43): the intro Bond animation is a
+3-phase sequence. Phases 1 (`extending_left_hand`) and 2 (idle loop) are driven
+procedurally; phase 3 is a scripted `PlayAnimation` that stock issues from the
+level's Bond-cinema AI-list (`CHR_BOND_CINEMA`, which resolves to the intro chr
+itself). The native port never ran that script in frozen-camera modes, so Bond
+held the phase-2 idle and stood **static**, and — because the current-player
+intro prop is pinned to its static spawn anchor every tick — did not move.
+Fixed by (a) transitioning the intro chr to the measured phase-3 animation
+(`ANIM_aim_one_handed_weapon_left_right`, index 99, hash `0x79F92FB064997857`,
+end 96, speed 0.5) at swirl segment 4, and (b) letting that animation's root
+motion drive `prop->pos` during the frozen swirl instead of snapping it. Against
+the ares oracle on the Dam intro this makes every `bond_anim` field except
+`frame` (a <=1-frame seed offset, D41) match stock, collapses the D35
+camera-anchor drift (`cam_target[0]` 39.4 -> 1.0), and drops total intro
+divergences from 2546 to 1116. The parameters are oracle-validated on the Dam
+intro and applied as a faithful default to all stages (the Bond-cinema intro is
+shared game behavior); per-stage phase-3 scripts are not yet individually
+oracle-verified. Disable with `GE007_NO_INTRO_PHASE3` / `GE007_NO_INTRO_ROOTMOTION`.
 
 ## Validating against a stock ROM
 
