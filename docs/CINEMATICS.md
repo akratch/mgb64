@@ -131,7 +131,8 @@ tools/intro_census_capture.sh --all
 
 The comparator (`tools/compare_intro_trace.py`) aligns per camera mode and
 reports divergences by field, with a ledger-tagged waiver mechanism for
-characterized, not-yet-fixed differences (see the plan doc's defect ledger).
+characterized, not-yet-fixed differences (see
+`docs/design/INTRO_OUTRO_LEDGER.md` for the defect ledger).
 
 ## Regression gates (`ctest`, ROM-gated — skip cleanly without a ROM)
 

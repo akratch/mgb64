@@ -106,10 +106,14 @@ measure 8.3 ms work ("120") while the sim semantics stay exactly 60 Hz.
 
 ## 4. What is *not* the blocker
 
-**Render cost.** The `perf/make-it-rip` pass is on main (merge `1b29b7a`); post-fix
-all 20 levels do ~100–189 fps of render *work* on an M3 Max (jungle 18→131,
-dam 50→137, see `docs/design/PERFORMANCE_PLAN.md`). There is comfortable headroom to
-*draw* frames faster than 60. The wall is purely the sim timestep, not the GPU.
+**Render cost.** The `perf/make-it-rip` pass is present in this tree by content —
+see `gfx_opengl_compute_batch_snapshot_rect` (`src/platform/fast3d/gfx_opengl.c`)
+and `g_room_cmd_cache_generation` (`src/platform/fast3d/gfx_pc.c`); the merge hash
+once cited here was private-lineage and does not exist on this repo's lineage.
+Post-fix, all 20 levels do ~100–189 fps of render *work* on an M3 Max (jungle
+18→131, dam 50→137, see `docs/design/PERFORMANCE_PLAN.md`). There is comfortable
+headroom to *draw* frames faster than 60. The wall is purely the sim timestep,
+not the GPU.
 (Min-spec HW and the Metal first-sight shader-compile hitch are separate, softer
 concerns — not the categorical blocker.)
 
