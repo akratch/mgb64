@@ -3435,6 +3435,29 @@ static bool gfx_current_draw_suppresses_room_fog(void) {
         return true;
     }
 
+    /* BUG-2: the first-person viewmodel (gun + muzzle flash) is drawn in view
+     * space and must never receive FORCED world/room fog. gfx_sync_other_mode_l_
+     * effective() force-overrides the blender cycle-1 P selector to G_BL_CLR_FOG
+     * whenever G_FOG geometry mode is set (a room-DL-LUT workaround). The KF7
+     * muzzle-flash sprite carries G_FOG in its authored geometry mode but uses a
+     * non-fog CLD blender, so on levels with tight fog (Bunker) the forced fog
+     * tints/solidifies the flash with the scene fog colour (cyan/pink) instead of
+     * its yellow RGBA texture. On N64 G_FOG only enables fog *generation*; the
+     * blender stays as authored (CLD => no fog), so the flash is never fogged.
+     * Suppress the forced-fog override for the whole weapon class — the viewmodel
+     * is view-space, and any *authored* fog blender (raw mode) is still honoured.
+     * A/B: GE007_LEGACY_WEAPON_FORCED_FOG=1 restores the old (buggy) behaviour. */
+    if (g_current_draw_class == DRAWCLASS_WEAPON) {
+        static int legacy_weapon_forced_fog = -1;
+        if (legacy_weapon_forced_fog < 0) {
+            const char *env = getenv("GE007_LEGACY_WEAPON_FORCED_FOG");
+            legacy_weapon_forced_fog = (env != NULL && env[0] == '1') ? 1 : 0;
+        }
+        if (!legacy_weapon_forced_fog) {
+            return true;
+        }
+    }
+
     if (g_FogSkyIsEnabled != 0) {
         return false;
     }
