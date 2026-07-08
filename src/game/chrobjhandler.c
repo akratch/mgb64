@@ -28253,6 +28253,9 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
 #ifdef NATIVE_PORT
         vertices = native_vertices;
         packed_vertices = dynAllocate7F0BD6C4(4);
+        if (packed_vertices == NULL) {
+            return gdl; /* dyn overflow: skip this DL-collision billboard */
+        }
 #else
         vertices = dynAllocate7F0BD6C4(4);
 #endif
@@ -28501,6 +28504,11 @@ void *process_monitor_animation_microcode(Model *arg0, ModelNode *arg1, MonitorR
     {
         temp_t8 = arg3;
         temp_s2 = dynAllocate7F0BD6C4(4);
+#ifdef NATIVE_PORT
+        if (temp_s2 == NULL) {
+            return arg3; /* dyn overflow: skip this monitor-screen node */
+        }
+#endif
         arg3    = temp_t8 + 8;
         spA8    = temp_t8;
         spA4    = arg1->Data;

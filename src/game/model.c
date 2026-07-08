@@ -674,6 +674,9 @@ void modelWriteVertexToGBI(const Vertex *src, Vtx *dst)
 
 static Vtx *portPackVerticesForGBI(Vertex *src, int count) {
     Vtx *vtx = (Vtx *)dynAllocate(count * (s32)sizeof(Vtx));
+    if (vtx == NULL) {
+        return NULL; /* dyn overflow: caller skips the draw */
+    }
     for (int i = 0; i < count; i++) {
         modelWriteVertexToGBI(&src[i], &vtx[i]);
     }
@@ -736,6 +739,9 @@ void modelWriteN64Vertex(const Vertex *v, void *raw_base, int index) {
  */
 static void *portPackVerticesForN64DL(Vertex *src, int count) {
     void *buf = dynAllocate(count * 16);
+    if (buf == NULL) {
+        return NULL; /* dyn overflow: caller skips the draw */
+    }
     for (int i = 0; i < count; i++) {
         modelWriteN64Vertex(&src[i], buf, i);
     }
@@ -2262,6 +2268,14 @@ Mtxf *modelFindNodeMtx(struct Model *model, struct ModelNode *node, s32 arg2) {
     s32 index = modelFindNodeMtxIndex(node, arg2);
 
     if (index >= 0) {
+#ifdef NATIVE_PORT
+        /* dyn overflow: render_pos alloc failed. Without this, &render_pos[index]
+         * yields a bogus near-null offset that passes the caller's non-NULL check
+         * and faults. Return NULL so callers take their no-matrix path. */
+        if (model->render_pos == NULL) {
+            return NULL;
+        }
+#endif
         return &model->render_pos[index].pos;
     }
 
@@ -3594,6 +3608,11 @@ void process_01_group_heading(ModelRenderData* renderdata, Model* model, ModelNo
     pos = &rwdata->Header.pos.x;
     unk14 = rwdata->Header.unk14;
     modeltype = (s16)rodata->Header.ModelType;
+#ifdef NATIVE_PORT
+    if (model->render_pos == NULL) {
+        return; /* dyn overflow: no render-pos matrices to position */
+    }
+#endif
     renderpos = &model->render_pos[modeltype];
 
     if (node->Parent != NULL)
@@ -5432,6 +5451,12 @@ void process_15_subposition(ModelRenderData* arg0, Model *model, ModelNode *node
     s32 mtxindex = rodata->GroupSimple.Group1;
     RenderPosView *matrices = model->render_pos;
 
+#ifdef NATIVE_PORT
+    if (matrices == NULL) {
+        return; /* dyn overflow: no render-pos matrices to write */
+    }
+#endif
+
     if (node->Parent)
     {
         sp68 = modelFindNodeMtx(model, node->Parent, 0);
@@ -5890,6 +5915,9 @@ void modelUpdateMatrices(ModelRenderData *arg0, Model *model)
     if (model->obj == NULL || model->obj->RootNode == NULL) {
         return;
     }
+    if (model->render_pos == NULL) {
+        return; /* dyn overflow: render-pos alloc failed; skip matrix update (model won't draw) */
+    }
 #endif
     ModelNode *node = model->obj->RootNode;
 
@@ -5968,6 +5996,9 @@ void modelUpdateMatricesFromNode(ModelRenderData *arg0, Model *model, ModelNode 
     }
     if (model->obj == NULL) {
         return;
+    }
+    if (model->render_pos == NULL) {
+        return; /* dyn overflow: render-pos alloc failed; skip matrix update (model won't draw) */
     }
 #endif
 
@@ -6059,7 +6090,12 @@ void instcalcmatrices(ModelRenderData* arg0, Model* arg1)
         osSyncPrintf("instcalcmatrices: no mtxlist!\n");
         return_null();
     }
-#elif defined(NATIVE_PORT)
+#endif
+#ifdef NATIVE_PORT
+    /* Hard guard, independent of LEFTOVERDEBUG: the LEFTOVERDEBUG branch above
+     * only prints (return_null() returns from itself, not this function), so
+     * under dyn overflow a NULL mtxlist would fall through to the pointer math
+     * below. Fail closed here. */
     if (arg1 == NULL || arg0->unk_matrix == NULL || arg0->mtxlist == NULL) {
         return;
     }
@@ -10187,6 +10223,11 @@ void dorottex(ModelRenderData *renderdata, ModelNode *node)
             void *dst_raw = dynAllocate(total_vtx * 16);
             s32 src_idx = 0;
 
+            if (dst_raw == NULL)
+            {
+                return; /* dyn overflow: skip this rotating-texture node entirely */
+            }
+
             gSPSegment(renderdata->gdl++, SPSEGMENT_MODEL_VTX, osVirtualToPhysical(dst_raw));
             gSPSegment(renderdata->gdl++, SPSEGMENT_MODEL_COL1, osVirtualToPhysical(rodata->BaseAddr));
 
@@ -10387,6 +10428,11 @@ void dotube(ModelRenderData* renderdata, Model* model, ModelNode* node)
     if (renderdata->flags & 1)
     {
         renderpos_index2 = modelFindNodeMtxIndex(node, 0);
+#ifdef NATIVE_PORT
+        if (model->render_pos == NULL) {
+            return; /* dyn overflow: no render-pos matrices */
+        }
+#endif
         render_pos2 = &model->render_pos[renderpos_index2];
         rw_index = rwdata->index;
         rw_index2 = rwdata2->index;
@@ -10588,16 +10634,20 @@ void dotube(ModelRenderData* renderdata, Model* model, ModelNode* node)
                             Vtx *packed_remain = NULL;
                             if (remain > 0) {
                                 Vertex *remain_verts = (Vertex *)dynAllocate(remain * (s32)sizeof(Vertex));
-                                for (s32 rv = 0; rv < remain; rv++) {
-                                    modelReadN64Vertex((const void *)rodata->Vertices,
-                                                      port_vi + 2 + rv,
-                                                      &remain_verts[rv]);
+                                if (remain_verts != NULL) { /* else dyn overflow: skip remainder */
+                                    for (s32 rv = 0; rv < remain; rv++) {
+                                        modelReadN64Vertex((const void *)rodata->Vertices,
+                                                          port_vi + 2 + rv,
+                                                          &remain_verts[rv]);
+                                    }
+                                    packed_remain = portPackVerticesForGBI(remain_verts, remain);
                                 }
-                                packed_remain = portPackVerticesForGBI(remain_verts, remain);
                             }
 
                             gSPMatrix(renderdata->gdl++, osVirtualToPhysical(render_pos), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW | G_MTX_FLOAT_PORT);
-                            gSPVertex(renderdata->gdl++, osVirtualToPhysical(packed_pair), 2, 0);
+                            if (packed_pair) { /* skip on dyn overflow rather than alias */
+                                gSPVertex(renderdata->gdl++, osVirtualToPhysical(packed_pair), 2, 0);
+                            }
                             gSPMatrix(renderdata->gdl++, osVirtualToPhysical(render_pos2), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW | G_MTX_FLOAT_PORT);
                             if (packed_remain) {
                                 gSPVertex(renderdata->gdl++, osVirtualToPhysical(packed_remain), (u32)remain, 2);
@@ -10811,6 +10861,11 @@ void dogfnegx(ModelRenderData *renderdata, Model *model, ModelNode *node)
     if ((renderdata->flags & 2) && rwdata->Gunfire.visible)
     {
         s32 index = modelFindNodeMtxIndex(node, 0);
+#ifdef NATIVE_PORT
+        if (model->render_pos == NULL) {
+            return; /* dyn overflow: no render-pos matrices */
+        }
+#endif
         mtx = &model->render_pos[index].pos;
 
         spe0.x = -(rodata->Offset.f[0] * mtx->m[0][0] + rodata->Offset.f[1] * mtx->m[1][0] + rodata->Offset.f[2] * mtx->m[2][0] + mtx->m[3][0]);
@@ -10877,6 +10932,11 @@ void dogfnegx(ModelRenderData *renderdata, Model *model, ModelNode *node)
 #endif
 
         vertices = vtxallocator(4);
+#ifdef NATIVE_PORT
+        if (vertices == NULL) {
+            return; /* dyn overflow: skip this billboard rather than deref NULL */
+        }
+#endif
 
         vertices[0] = vtxtemplate;
         vertices[1] = vtxtemplate;
@@ -10936,12 +10996,19 @@ void dogfnegx(ModelRenderData *renderdata, Model *model, ModelNode *node)
         gSPMatrix(renderdata->gdl++, osVirtualToPhysical(mtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
 #endif
 #ifdef NATIVE_PORT
-        gSPVertex(renderdata->gdl++, osVirtualToPhysical(portPackVerticesForGBI(vertices, 4)), 4, 0);
+        {
+            Vtx *packed = portPackVerticesForGBI(vertices, 4);
+            if (packed != NULL) {
+                gSPVertex(renderdata->gdl++, osVirtualToPhysical(packed), 4, 0);
+                gDPTri2(renderdata->gdl++, 0, 1, 2, 2, 3, 0);
+            }
+            /* else dyn overflow: skip this quad rather than alias vertex data */
+        }
 #else
         gSPVertex(renderdata->gdl++, osVirtualToPhysical(vertices), 4, 0);
-#endif
         if (1);
         gDPTri2(renderdata->gdl++, 0, 1, 2, 2, 3, 0);
+#endif
     }
 }
 
@@ -11024,6 +11091,11 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
         vtxtemplate.a = (u8)D_800363F0;
     }
 
+#ifdef NATIVE_PORT
+    if (model->render_pos == NULL) {
+        return; /* dyn overflow: no render-pos matrices; skip the shadow */
+    }
+#endif
     index = modelFindNodeMtxIndex(node, 0);
     mtx = (Mtxf *)(model->render_pos + index);
 
@@ -11053,6 +11125,11 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
 #endif
 
     vertices = vtxallocator(4);
+#ifdef NATIVE_PORT
+    if (vertices == NULL) {
+        return; /* dyn overflow: skip shadow rather than deref NULL */
+    }
+#endif
 
     vertices[0] = vtxtemplate;
     vertices[1] = vtxtemplate;
@@ -11098,11 +11175,18 @@ void doshadow(ModelRenderData *data, Model *model, ModelNode *node) {
     gSPMatrix(data->gdl++, osVirtualToPhysical(mtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
 #endif
 #ifdef NATIVE_PORT
-    gSPVertex(data->gdl++, osVirtualToPhysical(portPackVerticesForGBI(vertices, 4)), 4, 0);
+    {
+        Vtx *packed = portPackVerticesForGBI(vertices, 4);
+        if (packed != NULL) {
+            gSPVertex(data->gdl++, osVirtualToPhysical(packed), 4, 0);
+            gDPTri2(data->gdl++, 0, 1, 2, 2, 3, 0);
+        }
+        /* else dyn overflow: skip this quad rather than alias vertex data */
+    }
 #else
     gSPVertex(data->gdl++, osVirtualToPhysical(vertices), 4, 0);
-#endif
     gDPTri2(data->gdl++, 0, 1, 2, 2, 3, 0);
+#endif
 }
 #else
 #ifndef VERSION_EU

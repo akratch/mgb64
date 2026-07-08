@@ -1963,6 +1963,12 @@ static Gfx *explosionRenderPartNativeFallback(struct ExplosionPart *arg0,
     }
 
     vertices = dynAllocate7F0BD6C4(9);
+#ifdef NATIVE_PORT
+    if (vertices == NULL)
+    {
+        return gdl; /* dyn overflow: skip this explosion part */
+    }
+#endif
 
     explosionNativeSetVertex(&vertices[0], center_x, center_y, center_z, coord,
                              center_red, center_green, center_blue, center_alpha);
@@ -2115,6 +2121,12 @@ Gfx *explosionRenderPart(struct ExplosionPart *arg0, Gfx *gdl, struct coord3d *c
 #endif
 
     vertices = dynAllocate7F0BD6C4(4);
+#ifdef NATIVE_PORT
+    if (vertices == NULL)
+    {
+        return gdl; /* dyn overflow: skip this explosion part */
+    }
+#endif
 
     vertices[0] = spA0;
     vertices[1] = spA0;
@@ -2242,6 +2254,12 @@ Gfx *explosionSmokeRenderPart(struct Smoke *smoke, struct SmokePart *smoke_part,
     }
 
     vertices = dynAllocate7F0BD6C4(4);
+#ifdef NATIVE_PORT
+    if (vertices == NULL)
+    {
+        return gdl; /* dyn overflow: skip this smoke part */
+    }
+#endif
 
     vertices[0] = spC0;
     vertices[1] = spC0;
@@ -2925,6 +2943,12 @@ Gfx *explosionRenderFlyingParticles(Gfx *gdl)
                 && (sp80.m[3][2] > -20000.0f))
             {
                 temp_v0_2 = dynAllocateMatrix();
+#ifdef NATIVE_PORT
+                if (dynIsOverflowMatrix(temp_v0_2))
+                {
+                    continue; /* dyn overflow: skip this particle, don't alias its matrix */
+                }
+#endif
                 matrix_4x4_f32_to_s32(sp80.m, temp_v0_2->m);
 
                 gSPMatrix(gdl++, osVirtualToPhysical((void*)temp_v0_2), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);

@@ -307,6 +307,10 @@ static Vtx *frontPackVerticesForGBI(Vertex *src, s32 count)
 {
     Vtx *vtx = dynAllocate(count * (s32)sizeof(Vtx));
 
+    if (vtx == NULL)
+    {
+        return NULL; /* dyn overflow: caller emits no vertices */
+    }
     for (s32 i = 0; i < count; i++)
     {
         vtx[i].v.ob[0] = src[i].coord.x;
@@ -2750,6 +2754,9 @@ Gfx *constructor_menu04_goldeneyelogo(Gfx *DL)
     DL = viFillScreen(DL);
 
     temp_v0 = (LookAt *)dynAllocate7F0BD6F8(2);
+#ifdef NATIVE_PORT
+    if (temp_v0 != NULL) /* dyn overflow: skip reflect-LookAt rather than write NULL */
+#endif
     guLookAtReflect(&spB0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 
     // Lights macro? These need to be on one line.
@@ -2758,6 +2765,9 @@ Gfx *constructor_menu04_goldeneyelogo(Gfx *DL)
     gSPLight(DL++, &gelogolight, 2);
 
     // gSPLookAt macro expands to gSPLookAtX + gSPLookAtY
+#ifdef NATIVE_PORT
+    if (temp_v0 != NULL)
+#endif
     gSPLookAt(DL++, temp_v0);
 
     matrix_4x4_7F059694(&spF8, 0.0f, 0.0f, 3000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
@@ -3298,6 +3308,9 @@ s32 interface_menu05_fileselect(void)
         }
 
         walletinst[i1]->render_pos = dynAllocate(modelGetRenderPosBytes(walletinst[i1]));
+        if (walletinst[i1]->render_pos == NULL) {
+            continue; /* dyn overflow: skip this wallet model */
+        }
         for (rp_index = 0; rp_index < modelGetRenderPosCount(walletinst[i1]); rp_index++) {
             matrix_4x4_copy(&sp88, &walletinst[i1]->render_pos[rp_index].pos);
         }
@@ -4409,6 +4422,7 @@ void interface_menu07_missionsel(void)
 
             modelGetDlColRuntimePointers(walletinst[0], mnode, NULL, &mission_gdl);
             mission_vertices = dynAllocate7F0BD6C4(temp_s4->numVertices);
+            if (mission_vertices != NULL) { /* else dyn overflow: skip mission-select verts */
             modelSetDlColRuntimePointers(walletinst[0], mnode, (Vertex *)mission_vertices, mission_gdl);
 
             for (i = 0; i < temp_s4->numVertices; i++)
@@ -4419,6 +4433,7 @@ void interface_menu07_missionsel(void)
                 frontApplyMissionSelectVertexColor(&mission_vertex, temp_a0);
 
                 modelWriteVertexToGBI(&mission_vertex, &mission_vertices[i]);
+            }
             }
         }
 #else
@@ -6300,6 +6315,11 @@ Gfx *frontRenderCharacterPortrait(Gfx *DL, s32 arg1, s32 arg2, s32 arg3, s32 arg
     spD4 = dynAllocateMatrix();
     spD0 = dynAllocateMatrix();
     spCC = dynAllocate7F0BD6C4(16);
+#ifdef NATIVE_PORT
+    if (spCC == NULL) {
+        return DL; /* dyn overflow: skip this character portrait */
+    }
+#endif
     DL = microcode_constructor(DL);
 
     guOrtho(spD4, 0.0f, 440.0f, 0.0f, 330.0f, 1.0f, 10.0f, 1.0f);
@@ -11556,13 +11576,21 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
     sp238.f[2] += -sinf(flt_CODE_bss_800695AC) * 0.2f * flt_CODE_bss_800695A0;
 
     temp_v0 = (LookAt *)dynAllocate7F0BD6F8(2);
+#ifdef NATIVE_PORT
+    if (temp_v0 != NULL) /* dyn overflow: skip reflect-LookAt rather than write NULL */
+#endif
     guLookAtReflect(&spE0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 
     gSPNumLights(DL++, 1);
     gSPLight(DL++, &gelogolight.l[0], 1);
     gSPLight(DL++, &gelogolight.a, 2);
-    gSPLookAtX(DL++, &temp_v0->l[0]);
-    gSPLookAtY(DL++, &temp_v0->l[1]);
+#ifdef NATIVE_PORT
+    if (temp_v0 != NULL)
+#endif
+    {
+        gSPLookAtX(DL++, &temp_v0->l[0]);
+        gSPLookAtY(DL++, &temp_v0->l[1]);
+    }
 
     portTraceDisplayCastModel("constructor",
                               intro_character_index,

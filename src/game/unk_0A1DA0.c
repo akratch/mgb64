@@ -1319,6 +1319,12 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
 #ifdef NATIVE_PORT
             if (use_float_mtx) {
                 Mtxf *mtxf_dyn = (Mtxf *)dynAllocate(sizeof(Mtxf));
+                if (mtxf_dyn == NULL) {
+                    /* MG.3: dyn arena exhausted -- skip this shard entirely rather
+                     * than alias one matrix onto every overflowed piece. */
+                    piece_offset += 0x68;
+                    continue;
+                }
                 memcpy(mtxf_dyn, &mtxf, sizeof(Mtxf));
 
                 gdl->words.w0 = 0x01020040 | (G_MTX_FLOAT_PORT << 16);
@@ -1328,6 +1334,13 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
 #endif
             {
                 mtx = dynAllocateMatrix();
+#ifdef NATIVE_PORT
+                if (dynIsOverflowMatrix(mtx)) {
+                    /* MG.3: overflow scratch -- skip this shard (see above). */
+                    piece_offset += 0x68;
+                    continue;
+                }
+#endif
                 matrix_4x4_f32_to_s32(&mtxf, (Mtxf *)mtx);
 
                 gdl->words.w0 = 0x01020040;
@@ -4155,6 +4168,11 @@ void sub_GAME_7F0A3F04(bondstruct_unk_8007A170 *arg0, Gfx **gdl_ptr, s32 arg2) {
     gdl = (Gfx *)*gdl_ptr;
 
     vertices = dynAllocate7F0BD6C4(4);
+#ifdef NATIVE_PORT
+    if (vertices == NULL) {
+        return; /* dyn overflow: skip this spark billboard, leave *gdl_ptr unadvanced */
+    }
+#endif
 
     roomIndex = arg0->unk06;
     roomPos = getRoomPositionByIndex(roomIndex);

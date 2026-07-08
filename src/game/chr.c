@@ -10645,6 +10645,11 @@ s32 sub_GAME_7F023194(PropRecord *arg0, struct coord3d *arg1, struct coord2d *ar
             RenderPosView *model_render_pos_2;
 
             model = temp_v1->model;
+#ifdef NATIVE_PORT
+            if (model == NULL || model->render_pos == NULL) {
+                return 0; /* dyn overflow: no render matrices this frame; not auto-aimable */
+            }
+#endif
             model_render_pos_1 = &model->render_pos[0];
             model_render_pos_2 = &model->render_pos[1];
 

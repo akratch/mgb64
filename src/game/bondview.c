@@ -16051,6 +16051,9 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
         scaledpos.x, scaledpos.y, scaledpos.z,
         cam_look->x, cam_look->y, cam_look->z,
         cam_up->x, cam_up->y, cam_up->z);
+#ifdef NATIVE_PORT
+    if (lookat != NULL) /* dyn overflow: skip reflect-LookAt setup rather than write NULL */
+#endif
     guLookAtReflect(&sp108, lookat,
         scaledpos.x, scaledpos.y, scaledpos.z,
         clpos.x, clpos.y, clpos.z,
@@ -16165,6 +16168,15 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
             set_BONDdata_field_10E0((intptr_t) temp_s0);
         } else {
             Mtxf *temp_s0f = (Mtxf *)dynAllocate(sizeof(Mtxf));
+#ifdef NATIVE_PORT
+            if (temp_s0f == NULL) {
+                /* field_10E0 (proj*view) is read by nearly every draw this frame
+                 * and cannot be skipped. dyn overflow: fall back to a persistent
+                 * static rather than memcpy into NULL (checked-but-alias). */
+                static Mtxf s_field10E0_overflow __attribute__((aligned(16)));
+                temp_s0f = &s_field10E0_overflow;
+            }
+#endif
             memcpy(temp_s0f, &sp60, sizeof(Mtxf));
             set_BONDdata_field_10E0((intptr_t) temp_s0f);
         }
@@ -16219,6 +16231,9 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
     currentPlayerSetMatrix10C4((Mtx* ) g_CurrentPlayer->field_60);
     currentPlayerSetMatrix10CC((Mtxf* ) g_CurrentPlayer->field_64);
     currentPlayerSetMatrix10D4((Mtxf* ) g_CurrentPlayer->field_68);
+#ifdef NATIVE_PORT
+    if (lookat != NULL) /* dyn overflow: skip LookAt bind rather than pass NULL */
+#endif
     sub_GAME_7F078464((intptr_t) lookat);
     sub_GAME_7F0785DC();
     store_BONDdata_curpos_to_previous();
@@ -17626,6 +17641,9 @@ Gfx *sub_GAME_7F087E74(Gfx *gdl) {
 
 #ifdef NATIVE_PORT
     fixedMtx = (Mtx *)dynAllocate(sizeof(Mtxf));
+    if (fixedMtx == NULL) {
+        goto lbl_end; /* dyn overflow: skip the watch-page overlay */
+    }
 #else
     fixedMtx = dynAllocateMatrix();
 #endif
@@ -19280,6 +19298,11 @@ Gfx *sub_GAME_7F088618(Gfx *gdl) {
 
     modelview = dynAllocate(sizeof(Mtxf));
     projection = dynAllocate(sizeof(Mtxf));
+#ifdef NATIVE_PORT
+    if (modelview == NULL || projection == NULL) {
+        return gdl; /* dyn overflow: skip the HUD health-bar overlay */
+    }
+#endif
 
     /* Native HUD bar vertices are screen-space overlay geometry. Do not apply
      * room visibility scale here, or Dam/Surface (0.2 scale) clip the bars. */

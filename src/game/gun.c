@@ -12725,6 +12725,12 @@ Gfx *sub_GAME_7F061E18(Gfx *gdl, ChrRecord_f180 *data, s32 mode) {
 
     fixedMtx = dynAllocateMatrix();
 
+#ifdef NATIVE_PORT
+    if (vertices == NULL || dynIsOverflowMatrix(fixedMtx)) {
+        return gdl; /* dyn overflow: skip this muzzle-flash billboard */
+    }
+#endif
+
     matrix_4x4_set_identity_and_position(&position, &mtxf);
     matrix_scalar_multiply(0.1f, (f32 *)&mtxf);
     matrix_4x4_multiply_homogeneous_in_place(worldToScreenMtx, &mtxf);

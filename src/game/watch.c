@@ -2705,6 +2705,10 @@ Gfx *draw_background_health_and_armor(Gfx *gdl, Mtx *arg1, s32 zoom_squish)
     sp3C = dynAllocate(29 * sizeof(Gfx));
     barMtx = dynAllocate(sizeof(Mtxf));
     pageMtx = dynAllocate(sizeof(Mtxf));
+    if (sp48 == NULL || sp44 == NULL || sp40 == NULL || sp3C == NULL ||
+        barMtx == NULL || pageMtx == NULL) {
+        return gdl; /* dyn overflow: skip the watch background/health-bar pass */
+    }
 #else
     sp40 = dynAllocate(0xF8);
     sp3C = dynAllocate(0xF8);
@@ -5793,6 +5797,11 @@ Gfx *sub_GAME_7F0A8FEC(Gfx *gdl) {
     Gfx *_g;
 
     vtx = dynAllocate7F0BD6C4(12);
+#ifdef NATIVE_PORT
+    if (vtx == NULL) {
+        return gdl; /* dyn overflow: skip this watch volume-bar draw */
+    }
+#endif
     vol = sndGetSfxSlotFirstNaturalVolume();
 
     if (watch_item_is_actively_selected != 0 && game_options_index == 1) {

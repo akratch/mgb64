@@ -407,6 +407,14 @@ s32 die_blood_image_routine(s32 arg0) {
    g_CurrentPlayer->bloodImgIdx = (1 - g_CurrentPlayer->bloodImgIdx);
    g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx] = dynAllocate(BLOOD_IMAGE_BYTES);
    temp_v0_2 = dynAllocate(BLOOD_IMAGE_BYTES);
+#ifdef NATIVE_PORT
+   if (g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx] == NULL || temp_v0_2 == NULL) {
+      /* dyn overflow: skip this blood-frame decode rather than write into an
+       * aliased/NULL buffer. Leave the buffer NULL so the overlay draw skips. */
+      g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx] = NULL;
+      return FALSE;
+   }
+#endif
    g_CurrentPlayer->bloodImgNxt = decrypt_bleeding_animation_data(g_CurrentPlayer->bloodImgCur, 0x50, 0x60, temp_v0_2, &sp37);
    sub_GAME_7F01D16C(temp_v0_2, 0x50, 0x60, g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx]);
    sub_GAME_7F01D02C(g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx], 0x50, g_CurrentPlayer->bloodImgBufPtrArray[g_CurrentPlayer->bloodImgIdx]);
