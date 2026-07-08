@@ -22747,6 +22747,18 @@ void gfx_process_n64_dl(const uint8_t *data) {
     uintptr_t parent_addr = (entry_depth > 0 && entry_depth - 1 < (int)(sizeof(g_n64_dl_stack) / sizeof(g_n64_dl_stack[0])))
         ? g_n64_dl_stack[entry_depth - 1]
         : 0;
+    if (entry_depth >= 32) {
+        static int n64_depth_cap_log = 0;
+        g_effect_pending_child_label = NULL;
+        if (n64_depth_cap_log++ < 8) {
+            fprintf(stderr,
+                    "[N64_DL_DEPTH_CAP] frame=%d seq=%u index=%d depth=%d dl=%p parent=%p\n",
+                    g_frame_count_diag, exec_seq, frame_dl_index, entry_depth,
+                    (const void *)data, (void *)parent_addr);
+            fflush(stderr);
+        }
+        return;
+    }
     bool trace_n64_dl = gfx_trace_n64_dl_enabled() &&
                         g_frame_count_diag >= gfx_trace_n64_dl_after_frame();
     bool trace_target_dl = gfx_trace_n64_dl_addr_active(data);
