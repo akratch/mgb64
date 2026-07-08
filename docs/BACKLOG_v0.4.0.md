@@ -328,20 +328,6 @@ floating Bond.
       broken). `audit_intro_trace.py` also gained optional trace-only
       `--min-body-render-pos-count` / `--max-grounding-offset` gates.
 
-### M1.4 — R8: pixel-level intro validator (prove it, keep it proved)
-**P1 · M (F2)**
-**Files:** `tools/audit_intro_trace.py`, new screenshot analyzer under `tools/`.
-**Gap:** current checks are actor-state (`bond_rendered=1`, anim hash) — a shredded or
-floating Bond still passes.
-- [ ] Extend the intro trace with projected root/pelvis/feet coordinates and render-pos
-      count per frame.
-- [ ] Add a Dam-intro screenshot analyzer with three checks: (1) body present (silhouette
-      coverage in the projected joint bbox), (2) body grounded (root/feet Y vs pad floor,
-      fail on persistent offset), (3) shard score = red/warm outlier pixels far outside
-      the body bbox → must be 0.
-- [ ] Negative controls: `GE007_NO_BOND_BODY_FIX=1` must fail the silhouette check;
-      a deliberately offset prop must fail grounding. Wire into the regression suite.
-
 ### M1.5 — Close out the remaining intro D-ledger items
 **P2 · M each — schedule after M1.3/M1.4 give measurement**
 - [ ] **D37/D39:** static establishing-shot `cam_floor`/`cam_delta` divergence (Statue

@@ -88,7 +88,9 @@ fi
 validation_require_binary "$BINARY"
 
 mkdir -p "$OUT_DIR"
-trap 'rm -rf "$OUT_DIR"' EXIT
+# The game drops screenshot_introviz.bmp in the CWD (repo root); make sure a run
+# that dies between capture and conversion doesn't leave it behind.
+trap 'rm -rf "$OUT_DIR"; rm -f screenshot_introviz.bmp' EXIT
 
 # capture <name> [extra env assignments...]
 capture() {
@@ -128,15 +130,32 @@ analyze() {
 }
 
 expect() {
-    # expect <PASS|FAIL> <name> [analyzer args...]
-    local want="$1"; local name="$2"; shift 2
+    # expect PASS <name> | expect FAIL <axis> <name>   (axis = presence|grounding|shards|structure)
+    # A FAIL expectation asserts the failure fired on the intended AXIS, not just
+    # any failure -- e.g. a drifted presence fixture must not let the grounding
+    # control "pass" its expectation for the wrong reason.
+    local want="$1"; shift
+    local axis=""
+    if [[ "$want" == "FAIL" ]]; then
+        axis="$1"; shift
+    fi
+    local name="$1"; shift
     local rc=0
-    analyze "$name" "$@" || rc=$?
+    local output
+    output="$(analyze "$name" "$@")" || rc=$?
+    printf '%s\n' "$output"
     if [[ "$want" == "PASS" && "$rc" -ne 0 ]]; then
         echo "FAIL: $name expected PASS but validator failed"; return 1
     fi
-    if [[ "$want" == "FAIL" && "$rc" -eq 0 ]]; then
-        echo "FAIL: $name expected a validator FAILURE but it passed"; return 1
+    if [[ "$want" == "FAIL" ]]; then
+        if [[ "$rc" -eq 0 ]]; then
+            echo "FAIL: $name expected a $axis failure but validator passed"; return 1
+        fi
+        if ! printf '%s\n' "$output" | grep -q "^  - ${axis}:"; then
+            echo "FAIL: $name failed, but not on the expected $axis axis"; return 1
+        fi
+        echo "OK: $name -> FAIL on $axis (as expected)"
+        return 0
     fi
     echo "OK: $name -> $want (as expected)"
     return 0
@@ -151,11 +170,11 @@ capture nophase3     GE007_NO_INTRO_PHASE3=1
 capture norootmotion GE007_NO_INTRO_ROOTMOTION=1
 
 rc=0
-expect PASS normal        || rc=1
-expect FAIL nobody        || rc=1   # presence: aliased/absent viewer body
-expect FAIL offset        || rc=1   # grounding: floated root
-expect PASS nophase3      || rc=1
-expect PASS norootmotion  || rc=1
+expect PASS normal                 || rc=1
+expect FAIL presence  nobody       || rc=1   # aliased/absent viewer body
+expect FAIL grounding offset       || rc=1   # floated root
+expect PASS nophase3               || rc=1
+expect PASS norootmotion           || rc=1
 
 # Shard-detector self-test: the intro shard bug is fixed at the source and has no
 # A/B hatch, so inject the dark-red shard signature into the good frame and prove
@@ -172,12 +191,15 @@ for i in range(400):
 im.save(sys.argv[2])
 PY
 shard_rc=0
-python3 tools/analyze_intro_body.py --screenshot "$OUT_DIR/normal/shards.png" \
-    --trace "$OUT_DIR/normal/trace.jsonl" --label "shard-selftest" || shard_rc=$?
+shard_out="$(python3 tools/analyze_intro_body.py --screenshot "$OUT_DIR/normal/shards.png" \
+    --trace "$OUT_DIR/normal/trace.jsonl" --label "shard-selftest")" || shard_rc=$?
+printf '%s\n' "$shard_out"
 if [[ "$shard_rc" -eq 0 ]]; then
     echo "FAIL: shard self-test: injected red shards were not detected"; rc=1
+elif ! printf '%s\n' "$shard_out" | grep -q "^  - shards:"; then
+    echo "FAIL: shard self-test failed, but not on the shards axis"; rc=1
 else
-    echo "OK: shard-selftest -> FAIL (as expected)"
+    echo "OK: shard-selftest -> FAIL on shards (as expected)"
 fi
 
 if [[ "$rc" -ne 0 ]]; then

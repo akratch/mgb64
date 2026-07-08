@@ -121,16 +121,36 @@ def main(argv):
     p.add_argument("--screenshot", required=True)
     p.add_argument("--trace", required=True)
     p.add_argument("--label", default="dam intro body")
-    # presence region + threshold (Dam swirl, deterministic screenshot frame)
+    # FIXTURE DEFINITION (Dam swirl, GE007_INTRO_CAMERA_INDEX=5, deterministic
+    # screenshot frame 900, 640x480 default backbuffer). Region and size were
+    # measured from a known-good capture. Re-measurement procedure: on presence
+    # failure the tool scans the WHOLE frame for warm pixels and prints that
+    # count + bbox -- re-center --region on the reported in-frame bbox after a
+    # legitimate intro-camera / render-scale / resolution change.
     p.add_argument("--region", default="340,235,460,335",
                    help="Bond search box x0,y0,x1,y1 (default Dam frame 900)")
+    p.add_argument("--expect-size", default="640x480",
+                   help="expected screenshot WxH; the region fixture is only "
+                        "valid at this size (empty string disables the guard)")
+    # presence threshold: healthy Dam capture measures warm=326 in-region;
+    # GE007_NO_BOND_BODY_FIX (body absent) measures 0. 60 sits >5x from both.
     p.add_argument("--min-warm", type=int, default=60,
                    help="min warm body pixels in region (default 60)")
     # grounding
     p.add_argument("--first-frame", type=int, default=544,
                    help="first swirl frame Bond is present (default 544)")
+    # Threshold derivation (deterministic route; medians are byte-identical
+    # across captures, so the <2x margins carry no noise risk): the stan floor
+    # sampled under Bond sits a systematic ~109.6u below his settled root on Dam
+    # (healthy median = 109.6); the sanctioned GE007_NO_INTRO_ROOTMOTION legacy
+    # pin (pre-D31 ~57.7u hover) must still PASS at 167.3; the offset fault
+    # control (+300) must FAIL at 409.6. 250 splits 167.3/409.6 with headroom
+    # both ways. This is R8's "fail on LARGE persistent offset" -- sub-10u
+    # faithfulness stays with the oracle routes.
     p.add_argument("--max-grounding-offset", type=float, default=250.0,
                    help="max |root_y - floor_y| median before floating (default 250)")
+    # structure: the healthy de-aliased body allocates 21 joint render
+    # positions; the aliased GUNRIGHT path collapses to 6. Discrete count.
     p.add_argument("--min-render-pos-count", type=int, default=18,
                    help="min body joint render-position count (default 18)")
     # shards
@@ -145,6 +165,21 @@ def main(argv):
         raise SystemExit("FAIL: --region must be x0,y0,x1,y1")
 
     size, px = load_image(args.screenshot)
+
+    if args.expect_size:
+        parts = args.expect_size.lower().split("x")
+        if len(parts) != 2:
+            raise SystemExit("FAIL: --expect-size must be WxH")
+        expect = (int(parts[0]), int(parts[1]))
+        if size != expect:
+            print("=== %s ===" % args.label)
+            print("FAIL: %s: fixture resolution mismatch: screenshot is %dx%d, "
+                  "the region fixture was measured at %dx%d. Re-measure --region "
+                  "(see the fixture-definition comment in this tool / "
+                  "docs/INSTRUMENTATION.md) or pass --expect-size."
+                  % (args.label, size[0], size[1], expect[0], expect[1]))
+            return 1
+
     warm, warm_bbox = count_warm_body(px, size, region)
     red = count_red_shards(px, size, args.content_top, args.content_bottom)
     offs, counts = grounding_offsets(args.trace, args.first_frame)
@@ -153,10 +188,21 @@ def main(argv):
     rpc_min = min(counts) if counts else 0
 
     failures = []
+    frame_warm = None
+    frame_bbox = None
     if warm < args.min_warm:
+        # Whole-frame rescan: this is the fixture re-measurement procedure. If
+        # Bond IS in the frame but outside the region, the reported bbox is the
+        # new region to adopt; if the frame has no warm pixels either, Bond is
+        # genuinely absent/collapsed.
+        frame_warm, frame_bbox = count_warm_body(px, size, (0, 0, size[0], size[1]))
         failures.append(
-            "presence: warm body pixels %d < %d (Bond absent/collapsed)"
-            % (warm, args.min_warm))
+            "presence: warm body pixels %d < %d in region %s (Bond absent/collapsed"
+            " -- or the fixture moved: whole-frame warm=%d bbox=%s; region is an"
+            " empirically-measured Dam-route fixture, re-measure it if the intro"
+            " camera, render scale, or default resolution changed -- see the"
+            " fixture-definition comment in this tool / docs/INSTRUMENTATION.md)"
+            % (warm, args.min_warm, list(region), frame_warm, frame_bbox))
     if ground_med is None:
         failures.append("grounding: no projected+floor-valid bond_body frames in trace")
     elif abs(ground_med) > args.max_grounding_offset:
@@ -165,7 +211,7 @@ def main(argv):
             % (ground_med, args.max_grounding_offset))
     if counts and rpc_min < args.min_render_pos_count:
         failures.append(
-            "grounding: min render_pos_count %d < %d (body de-alias regressed)"
+            "structure: min render_pos_count %d < %d (body de-alias regressed)"
             % (rpc_min, args.min_render_pos_count))
     if red > args.max_red_shards:
         failures.append(
@@ -189,7 +235,8 @@ def main(argv):
                 "label": args.label,
                 "status": status.lower(),
                 "presence": {"warm": warm, "bbox": warm_bbox, "region": list(region),
-                             "min_warm": args.min_warm},
+                             "min_warm": args.min_warm,
+                             "frame_warm": frame_warm, "frame_bbox": frame_bbox},
                 "grounding": {"median": ground_med, "max": ground_max,
                               "render_pos_min": rpc_min, "frames": len(offs),
                               "max_offset": args.max_grounding_offset,

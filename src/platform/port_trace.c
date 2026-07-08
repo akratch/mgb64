@@ -6026,20 +6026,26 @@ static void traceBuildIntroBondBodyJson(char *out, size_t out_size, ChrRecord *i
 
     traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
     if (!projection_valid) {
-        snprintf(out, out_size,
+        int wrote = snprintf(out, out_size,
                  "{\"present\":1,\"projected\":0,\"render_pos_count\":%d,"
                  "\"world_root\":[%.2f,%.2f,%.2f],\"floor_y\":%.2f,\"floor_valid\":%d,"
                  "\"height\":%.2f}",
                  render_pos_count, root_x, root_y_report, root_z, floor_y, floor_valid, height);
+        if (wrote < 0 || (size_t)wrote >= out_size) {
+            snprintf(out, out_size, "{\"present\":1,\"overflow\":1}");
+        }
         return;
     }
 
-    /* Screen bbox from the actual per-joint render matrices. subcalcmatrices
-     * builds render_pos in the same render-origin space field_10E0 projects from
-     * (verified: joint 0 lands on the prop-projected feet), so each joint's
-     * translation column projects directly -- no camera subtraction and no
-     * model-height guess. Root(feet) and head-top are additionally projected from
-     * the world prop position for the grounding/head readout. */
+    /* Diagnostic-only screen bbox from the per-joint render_pos translations.
+     * Measured on the Dam frozen-intro camera these matrices sit in a space that
+     * does NOT match field_10E0 (the bbox projects off-screen while the world
+     * prop root projects near Bond), so screen_bbox is approximate/unreliable
+     * there and the validator does not consume it -- presence uses an
+     * empirically-measured route fixture and grounding uses the world-space
+     * root/floor values below. Kept because the joint spread is still a useful
+     * shred/collapse signal relative to itself frame-over-frame. Root(feet) and
+     * head-top screen points come from the world prop position instead. */
     {
         RenderPosView *rp = intro_chr->model->render_pos;
         int ji;
@@ -6095,31 +6101,43 @@ static void traceBuildIntroBondBodyJson(char *out, size_t out_size, ChrRecord *i
     }
 
     if (min_x == FLT_MAX || max_x == -FLT_MAX) {
-        snprintf(out, out_size,
+        int wrote = snprintf(out, out_size,
                  "{\"present\":1,\"projected\":0,\"behind\":%d,\"render_pos_count\":%d,"
                  "\"world_root\":[%.2f,%.2f,%.2f],\"floor_y\":%.2f,\"floor_valid\":%d,"
                  "\"height\":%.2f}",
                  behind, render_pos_count, root_x, root_y_report, root_z, floor_y, floor_valid, height);
+        if (wrote < 0 || (size_t)wrote >= out_size) {
+            snprintf(out, out_size, "{\"present\":1,\"overflow\":1}");
+        }
         return;
     }
 
     onscreen = (max_x >= vp_l && max_y >= vp_t
                 && min_x <= vp_l + vp_w && min_y <= vp_t + vp_h);
 
-    snprintf(out, out_size,
-             "{\"present\":1,\"projected\":1,\"behind\":%d,\"onscreen\":%d,"
-             "\"render_pos_count\":%d,\"world_root\":[%.2f,%.2f,%.2f],"
-             "\"floor_y\":%.2f,\"floor_valid\":%d,\"height\":%.2f,"
-             "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
-             "\"root_screen\":[%.2f,%.2f],\"root_screen_valid\":%d,"
-             "\"head_screen\":[%.2f,%.2f],\"head_screen_valid\":%d,"
-             "\"vp\":[%.2f,%.2f,%.2f,%.2f]}",
-             behind, onscreen, render_pos_count, root_x, root_y_report, root_z,
-             floor_y, floor_valid, height,
-             min_x, min_y, max_x, max_y,
-             root_sx, root_sy, root_screen_valid,
-             head_sx, head_sy, head_screen_valid,
-             vp_l, vp_t, vp_w, vp_h);
+    /* Truncation guard (house pattern, see traceFormatViewmodelMtxJson): this
+     * fragment is spliced into the trace line via %s, so a truncated payload
+     * would embed unbalanced JSON and corrupt the whole record for every trace
+     * consumer. Off-screen joint projections can produce very wide %.2f values. */
+    {
+        int wrote = snprintf(out, out_size,
+                 "{\"present\":1,\"projected\":1,\"behind\":%d,\"onscreen\":%d,"
+                 "\"render_pos_count\":%d,\"world_root\":[%.2f,%.2f,%.2f],"
+                 "\"floor_y\":%.2f,\"floor_valid\":%d,\"height\":%.2f,"
+                 "\"screen_bbox\":[%.2f,%.2f,%.2f,%.2f],"
+                 "\"root_screen\":[%.2f,%.2f],\"root_screen_valid\":%d,"
+                 "\"head_screen\":[%.2f,%.2f],\"head_screen_valid\":%d,"
+                 "\"vp\":[%.2f,%.2f,%.2f,%.2f]}",
+                 behind, onscreen, render_pos_count, root_x, root_y_report, root_z,
+                 floor_y, floor_valid, height,
+                 min_x, min_y, max_x, max_y,
+                 root_sx, root_sy, root_screen_valid,
+                 head_sx, head_sy, head_screen_valid,
+                 vp_l, vp_t, vp_w, vp_h);
+        if (wrote < 0 || (size_t)wrote >= out_size) {
+            snprintf(out, out_size, "{\"present\":1,\"overflow\":1}");
+        }
+    }
 }
 
 void portTraceFrame(void) {
