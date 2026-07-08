@@ -36,7 +36,26 @@ void draw_textured_rectangle(Gfx **gdlptr, f32 *position, f32 *size, s32 width, 
         xh = (position[0] + size[0]) * 4.0f;
         yh = (position[1] + size[1]) * 4.0f;
 
-        // Proceed if the rectangle is within screen bounds
+        /* Right/bottom overflow is deliberately NOT clamped here (M2.6/R6).
+         * Only negative left/top needs software handling because the TEXRECT
+         * coordinate fields are unsigned: gSPTextureRectangle packs each
+         * coordinate into 12 bits, so a negative value cannot be encoded and
+         * must be clipped in software with the matching S/T advance below.
+         * Right/bottom overflow is clipped by hardware on both targets:
+         *  - N64: the RDP scissor clips the primitive.
+         *  - PC:  gfx_pc.c decodes G_TEXRECT (C0(12,12), unsigned) and
+         *    gfx_dp_texture_rectangle -> gfx_draw_rectangle converts the rect
+         *    to two NDC triangles; the GPU clips them to the viewport with
+         *    correct UV interpolation. No software rasterizer or size-derived
+         *    allocation exists in that path, so there is no memory hazard.
+         * A coordinate clamp here WITHOUT an S/T compensation would rescale
+         * the texture across the smaller rect instead of clipping it (see
+         * gSPScisTextureRectangle, which must adjust s/t when it clamps).
+         * The residual limit is the 12-bit encode itself: coordinates above
+         * 1023.75px (4095 quarter-px) would wrap to a misplaced-but-bounded
+         * rect. HUD callers cannot reach it — image dims are bounded by
+         * portValidateImageEntry (<=160, so size[] <= 80) and positions come
+         * from view geometry well under 1023. */
         if (xh >= 0 && yh >= 0)
         {
             // Handle X coordinate adjustment
