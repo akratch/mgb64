@@ -5843,6 +5843,34 @@ static void pcApplyScriptedFrontendDirection(u16 *buttons, int *stick_x,
                                      "GE007_AUTO_FRONTEND_RIGHT", input_frame));
 }
 
+/* Map the movement (left) stick to the N64 analog range (-80..80). Shares the
+ * aim stick's radial deadzone + rescale-from-edge via platformApplyRadialDeadzone()
+ * so slow-walk and diagonal creep are smooth instead of per-axis notchy (M2.1).
+ * lx/ly are raw SDL axes (-32767..32767); ly is SDL-oriented (down = +) so we
+ * invert for N64 (forward = +y). When Input.GamepadRadialDeadzone is 0 the legacy
+ * per-axis square deadzone is used as an escape hatch (pre-M2.1 feel). */
+static void pcMapMovementStick(int lx, int ly, int *out_x, int *out_y) {
+    extern void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled);
+    extern float g_pcGamepadDeadzone;
+    extern int g_pcGamepadRadialDeadzone;
+    int mx = 0, my = 0;
+
+    if (g_pcGamepadRadialDeadzone) {
+        float nx = (float)lx / 32767.0f;
+        float ny = (float)(-ly) / 32767.0f;   /* SDL Y inverted vs N64 */
+        platformApplyRadialDeadzone(&nx, &ny, g_pcGamepadDeadzone, 1);
+        mx = (int)(nx * 80.0f);
+        my = (int)(ny * 80.0f);
+    } else {
+        if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) mx = (lx * 80) / 32767;
+        if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) my = (-ly * 80) / 32767;
+    }
+    if (mx > 80) mx = 80; else if (mx < -80) mx = -80;
+    if (my > 80) my = 80; else if (my < -80) my = -80;
+    *out_x = mx;
+    *out_y = my;
+}
+
 /* Map a single opened pad (slot k) to an N64 OSContPad. Used for players 2..4;
  * player 1 (slot 0) takes the richer inline path below that also merges
  * keyboard/mouse and the P1-only edge-triggered weapon/crouch state.
@@ -5884,19 +5912,14 @@ static void pcFillPadFromController(OSContPad *pad, int k) {
     if (lt > GAMEPAD_DEADZONE) buttons |= R_TRIG; /* LT = aim mode */
     if (rt > GAMEPAD_DEADZONE) buttons |= Z_TRIG; /* RT = fire */
 
-    /* Left stick → N64 analog stick (movement). */
+    /* Left stick → N64 analog stick (movement). Radial deadzone + rescale
+     * shared with the aim stick (M2.1). */
     platformGetPadLeftStick(k, &lx, &ly);
-    if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) {
-        int mapped = (lx * 80) / 32767;
-        if (mapped > 80) mapped = 80;
-        if (mapped < -80) mapped = -80;
-        stick_x += mapped;
-    }
-    if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) {
-        int mapped = (-ly * 80) / 32767; /* SDL Y is inverted vs N64 */
-        if (mapped > 80) mapped = 80;
-        if (mapped < -80) mapped = -80;
-        stick_y += mapped;
+    {
+        int mvx, mvy;
+        pcMapMovementStick(lx, ly, &mvx, &mvy);
+        stick_x += mvx;
+        stick_y += mvy;
     }
 
     if (stick_x > 80) stick_x = 80;
@@ -6319,22 +6342,15 @@ s32 osContGetReadData(OSContPad *data) {
         if (SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > GAMEPAD_DEADZONE)
             buttons |= Z_TRIG;   /* RT = fire */
 
-        /* Left stick → N64 analog stick (movement) */
+        /* Left stick → N64 analog stick (movement). Radial deadzone + rescale
+         * shared with the aim stick (M2.1). */
         {
             int lx = SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_LEFTX);
             int ly = SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_LEFTY);
-            if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) {
-                int mapped = (lx * 80) / 32767;
-                if (mapped > 80) mapped = 80;
-                if (mapped < -80) mapped = -80;
-                stick_x += mapped;
-            }
-            if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) {
-                int mapped = (-ly * 80) / 32767;  /* SDL Y is inverted vs N64 */
-                if (mapped > 80) mapped = 80;
-                if (mapped < -80) mapped = -80;
-                stick_y += mapped;
-            }
+            int mvx, mvy;
+            pcMapMovementStick(lx, ly, &mvx, &mvy);
+            stick_x += mvx;
+            stick_y += mvy;
         }
 
         /* Right stick → direct angle injection in lvl.c (not C-buttons).

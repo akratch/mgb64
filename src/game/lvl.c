@@ -5833,6 +5833,7 @@ void lvlViewMoveTick(void)
         extern int g_pcDebugFlyCamera;
         extern void platformGetMouseDelta(int *dx, int *dy);
         extern void platformGetPadRightStick(int k, int *rx, int *ry);
+        extern void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled);
         extern int g_freezeInput;
 
         /* Inject mouse look and gamepad right-stick directly into player
@@ -5878,21 +5879,10 @@ void lvlViewMoveTick(void)
                 f32 ny = (f32)gry / 32767.0f;
                 /* (1) Radial deadzone + rescale-from-edge (opt-in). The platform
                  * relaxes its square pre-clip to a noise floor when this flag is
-                 * on, so nx/ny carry true diagonal magnitude here. */
-                if (g_pcGamepadRadialDeadzone) {
-                    f32 mag = sqrtf(nx * nx + ny * ny);
-                    f32 dz = g_pcGamepadDeadzone;
-                    if (mag <= dz || mag <= 0.0f) {
-                        nx = 0.0f;
-                        ny = 0.0f;
-                    } else {
-                        f32 rescaled = (mag - dz) / (1.0f - dz);
-                        if (rescaled > 1.0f) rescaled = 1.0f;
-                        f32 inv = rescaled / mag;
-                        nx *= inv;
-                        ny *= inv;
-                    }
-                }
+                 * on, so nx/ny carry true diagonal magnitude here. Shared with the
+                 * movement stick via platformApplyRadialDeadzone(). */
+                platformApplyRadialDeadzone(&nx, &ny, g_pcGamepadDeadzone,
+                                            g_pcGamepadRadialDeadzone);
                 /* (2) Response curve: magnitude-preserving exponent (opt-in). */
                 if (g_pcGamepadLookCurve != 1.0f) {
                     f32 mag = sqrtf(nx * nx + ny * ny);

@@ -631,6 +631,15 @@ void platformGetPadLeftStick(int k, int *lx_out, int *ly_out);
 void platformGetPadRightStick(int k, int *rx_out, int *ry_out);
 void platformGetPadTriggers(int k, int *leftTrig, int *rightTrig);
 
+/* Shared radial (circular) deadzone + rescale-from-edge for an analog stick.
+ * Operates in place on a normalized stick vector (*nx,*ny in [-1,1]); direction
+ * is preserved. deadzone is the inner dead fraction of full deflection. When
+ * radial_enabled is 0 this is a no-op (the caller keeps its legacy square map).
+ * Below the deadzone -> (0,0); above -> magnitude rescaled so output is
+ * continuous from 0 at the edge. Used by both the aim stick (game/lvl.c) and
+ * the movement stick (platform/stubs.c) so they share one behavior. */
+void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled);
+
 /* Rumble Pak */
 s32 osMotorInit(OSMesgQueue *mq, OSPfs *pfs, s32 channel);
 s32 osMotorStart(OSPfs *pfs);
