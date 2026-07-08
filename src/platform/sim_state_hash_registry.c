@@ -6,8 +6,9 @@
  * only into the game executable (globbed from src/platform), never the test.
  */
 #include "sim_state_hash.h"
-#include "boss.h"        /* bossGetPcPoolBase / bossGetPcPoolSize */
-#include "game/lvl.h"    /* g_ClockTimer, g_GlobalTimer          */
+#include "boss.h"          /* bossGetPcPoolBase / bossGetPcPoolSize          */
+#include "game/lvl.h"      /* g_ClockTimer, g_GlobalTimer                    */
+#include "game/chrai.h"    /* pos_data_entry, POS_DATA_ENTRY_LEN, PropRecord  */
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -35,6 +36,27 @@ void simHashRegistryBuild(SimHashRegion *out, int *n) {
     out[i].base = &g_GlobalTimer;
     out[i].size = sizeof g_GlobalTimer;
     i++;
+
+    /*
+     * Prop record pool (M8.1). Guard/door/object/pickup positions, collision
+     * tile, room membership, regen timers, and the parent/child/prev/next links
+     * live here — a static BSS array (pos_data_entry), NOT inside s_pcPool, so
+     * movement and collision drift escaped the pool region entirely. Chr and
+     * player records are pool-allocated (mempAllocBytesInBank, MEMPOOL_STAGE)
+     * and already covered by [0]; this is the missing half. The free/active
+     * prop lists are threaded through these records' link fields, so the list
+     * topology is hashed here too — the standalone list-head globals add no
+     * state this region doesn't already carry. Embedded pointers are safe: the
+     * intra-array links canonicalize to the prop-pool region token, chr/obj
+     * links to the pool token, and model/anim links to the neutral
+     * pointer-window constant — all ASLR- and render-flag-invariant. Size is
+     * element-count * element-size (not sizeof of a decayed array pointer).
+     */
+    out[i].name = "prop_pool";
+    out[i].base = pos_data_entry;
+    out[i].size = (size_t)POS_DATA_ENTRY_LEN * sizeof(PropRecord);
+    i++;
+
     *n = i;
 }
 
