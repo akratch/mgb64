@@ -635,9 +635,32 @@ extern int platformGetMouseWheel(void);
 /* Threshold for right stick → C-button conversion */
 #define CSTICK_THRESHOLD 16000
 
-/* PC input state consumed by bondview.c NATIVE_PORT block */
+/* PC input state consumed by bondview.c NATIVE_PORT block.
+ * g_pcWeaponCycleForward/Back are queued step counts, not booleans: each
+ * mouse-wheel notch (or edge-triggered key/pad press) adds one pending
+ * step, and bondviewApplyNativeWeaponCycle() drains one step per tick so
+ * a fast multi-notch scroll produces one switch per notch instead of
+ * collapsing into a single switch (M2.2). */
 int g_pcWeaponCycleForward = 0;
 int g_pcWeaponCycleBack = 0;
+
+/* Cap on queued weapon-cycle steps per direction so a pathological wheel
+ * event (or a stuck/misbehaving device reporting a huge delta) can't
+ * queue up a long run of inventory switches. */
+#define PC_WEAPON_CYCLE_MAX_QUEUED_STEPS 5
+
+/* Add `delta` pending weapon-cycle steps to *counter, clamped to
+ * [0, PC_WEAPON_CYCLE_MAX_QUEUED_STEPS]. */
+static void pcQueueWeaponCycleSteps(int *counter, int delta)
+{
+    if (delta <= 0) {
+        return;
+    }
+    *counter += delta;
+    if (*counter > PC_WEAPON_CYCLE_MAX_QUEUED_STEPS) {
+        *counter = PC_WEAPON_CYCLE_MAX_QUEUED_STEPS;
+    }
+}
 int g_pcCrouchRequest = 0;  /* 1 = toggle requested this frame */
 int g_pcScriptedMouseDeltaX = 0;
 int g_pcScriptedMouseDeltaY = 0;
@@ -6115,11 +6138,11 @@ s32 osContGetReadData(OSContPad *data) {
     }
     if (pcScriptedInputPatternActive(&s_autoWeaponNextPattern,
                                      "GE007_AUTO_WEAPON_NEXT", input_frame)) {
-        g_pcWeaponCycleForward = 1;
+        pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
     }
     if (pcScriptedInputPatternActive(&s_autoWeaponPrevPattern,
                                      "GE007_AUTO_WEAPON_PREV", input_frame)) {
-        g_pcWeaponCycleBack = 1;
+        pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
     }
 
     g_pcScriptedMouseDeltaX = scripted_mouse_dx;
@@ -6182,9 +6205,9 @@ s32 osContGetReadData(OSContPad *data) {
             g_pcScriptedMouseDeltaX += (int)bridge_input.mouse_dx;
             g_pcScriptedMouseDeltaY += (int)bridge_input.mouse_dy;
             if (bridge_input.mouse_wheel > 0) {
-                g_pcWeaponCycleForward = 1;
+                pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, (int)bridge_input.mouse_wheel);
             } else if (bridge_input.mouse_wheel < 0) {
-                g_pcWeaponCycleBack = 1;
+                pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, (int)-bridge_input.mouse_wheel);
             }
         }
         g_pcBridgeRightStickX = frontend_input ? 0 : (int)(bridge_input.right_stick_x * 32767.0f);
@@ -6288,8 +6311,8 @@ s32 osContGetReadData(OSContPad *data) {
         g_pcCrouchToggle = 0;
     } else {
         int wheel = platformGetMouseWheel();
-        if (wheel > 0) g_pcWeaponCycleForward = 1;
-        else if (wheel < 0) g_pcWeaponCycleBack = 1;
+        if (wheel > 0) pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, wheel);
+        else if (wheel < 0) pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, -wheel);
     }
 
     if (!frontend_input && g_pcCrouchToggle) {
@@ -6320,8 +6343,8 @@ s32 osContGetReadData(OSContPad *data) {
             Uint8 cur_y    = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_Y);
             Uint8 cur_back = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_BACK);
             Uint8 cur_l3   = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_LEFTSTICK);
-            if (cur_y && !prev_y)       g_pcWeaponCycleForward = 1;
-            if (cur_back && !prev_back) g_pcWeaponCycleBack = 1;
+            if (cur_y && !prev_y)       pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
+            if (cur_back && !prev_back) pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
             if (cur_l3 && !prev_l3)     g_pcCrouchRequest = 1;
             prev_y = cur_y; prev_back = cur_back; prev_l3 = cur_l3;
         }

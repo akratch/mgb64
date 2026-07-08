@@ -11869,6 +11869,11 @@ static void bondviewApplyNativeMoveIntent(struct MoveData *moveData, s8 stick_x,
     moveData->analogTurn = 0;
 }
 
+/* g_pcWeaponCycleForward/Back are queued step counts (one per mouse-wheel
+ * notch or edge-triggered key/pad press, clamped in stubs.c). Drain at
+ * most one step per call so a multi-notch scroll produces one weapon
+ * switch per tick instead of collapsing into a single switch (M2.2),
+ * matching the game's one-switch-per-tick cadence for keyboard/gamepad. */
 static void bondviewApplyNativeWeaponCycle(struct MoveData *moveData)
 {
     extern int g_pcWeaponCycleForward;
@@ -11880,14 +11885,14 @@ static void bondviewApplyNativeWeaponCycle(struct MoveData *moveData)
         return;
     }
 
-    if (g_pcWeaponCycleForward) {
+    if (g_pcWeaponCycleForward > 0) {
         moveData->weaponForwardOffset = 1;
-        g_pcWeaponCycleForward = 0;
+        g_pcWeaponCycleForward--;
     }
 
-    if (g_pcWeaponCycleBack) {
+    if (g_pcWeaponCycleBack > 0) {
         moveData->weaponBackOffset = 1;
-        g_pcWeaponCycleBack = 0;
+        g_pcWeaponCycleBack--;
     }
 }
 
