@@ -21570,14 +21570,43 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     int h = tex->height;
     uint32_t fmt = tex->gbiformat;
     uint32_t sz  = tex->depth;
+    size_t texel_count_size;
+    size_t rgba_bytes;
 
     gfx_settex_configure_tiles(w0, w1, texturenum, (uint32_t)w, (uint32_t)h,
                                (uint8_t)fmt, (uint8_t)sz,
                                tex->maxlod, tex->unk0c_02 != 0);
 
     /* Decode texture to RGBA32 */
-    int texel_count = w * h;
-    uint8_t *rgba = (uint8_t *)malloc(texel_count * 4);
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096 ||
+        (size_t)w > SIZE_MAX / (size_t)h) {
+        char reason[96];
+        snprintf(reason, sizeof(reason), "invalid dims %dx%d", w, h);
+        settex_active = false;
+        settex_texturenum = -1;
+        settex_rgba_pixels = NULL;
+        settex_rgba_w = 0;
+        settex_rgba_h = 0;
+        gfx_settex_clear_tile_state();
+        gfx_log_settex_event("BAD-DIMS", reason);
+        return;
+    }
+    texel_count_size = (size_t)w * (size_t)h;
+    if (texel_count_size > SIZE_MAX / 4u || texel_count_size > (size_t)INT_MAX) {
+        char reason[96];
+        snprintf(reason, sizeof(reason), "decode size overflow %dx%d", w, h);
+        settex_active = false;
+        settex_texturenum = -1;
+        settex_rgba_pixels = NULL;
+        settex_rgba_w = 0;
+        settex_rgba_h = 0;
+        gfx_settex_clear_tile_state();
+        gfx_log_settex_event("BAD-DIMS", reason);
+        return;
+    }
+    rgba_bytes = texel_count_size * 4u;
+    int texel_count = (int)texel_count_size;
+    uint8_t *rgba = (uint8_t *)malloc(rgba_bytes);
     if (!rgba) {
         settex_active = false;
         settex_texturenum = -1;
@@ -21937,13 +21966,13 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     extern bool gfx_backend_use_metal(void); /* gfx_backend.c */
     if ((texturenum == 1988) && getenv("GE007_VERIFY_GPU") && hd_rgba == NULL &&
         !gfx_backend_use_metal()) {
-        uint8_t *readback = (uint8_t *)malloc(w * h * 4);
+        uint8_t *readback = (uint8_t *)malloc(rgba_bytes);
         if (readback) {
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, readback);
             int mismatches = 0;
-            for (int pi = 0; pi < w * h * 4 && mismatches < 5; pi++) {
+            for (size_t pi = 0; pi < rgba_bytes && mismatches < 5; pi++) {
                 if (readback[pi] != rgba[pi]) {
-                    printf("[GPU_MISMATCH] pixel %d: cpu=%d gpu=%d\n", pi, rgba[pi], readback[pi]);
+                    printf("[GPU_MISMATCH] pixel %zu: cpu=%d gpu=%d\n", pi, rgba[pi], readback[pi]);
                     mismatches++;
                 }
             }
