@@ -2173,14 +2173,21 @@ Gfx *constructor_menu00_legalscreen(Gfx *DL)
     matrix_4x4_7F059694(&spA0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
     spE4.unk_matrix = &spA0;
     spE4.mtxlist = (Mtxf *)modelAllocRenderPos(logoinst);
-    matrix_4x4_copy(&spA0, spE4.mtxlist);
-    logoinst->render_pos = (RenderPosView *)spE4.mtxlist;
-    sub_GAME_7F06EFC4(logoinst);
-    spE4.flags = 3;
-    spE4.zbufferenabled = 0;
-    spE4.gdl = DL;
-    subdraw(&spE4, logoinst);
-    DL = spE4.gdl;
+#ifdef NATIVE_PORT
+    if (spE4.mtxlist == NULL) {
+        logoinst->render_pos = NULL; /* dyn overflow: skip the logo draw */
+    } else
+#endif
+    {
+        matrix_4x4_copy(&spA0, spE4.mtxlist);
+        logoinst->render_pos = (RenderPosView *)spE4.mtxlist;
+        sub_GAME_7F06EFC4(logoinst);
+        spE4.flags = 3;
+        spE4.zbufferenabled = 0;
+        spE4.gdl = DL;
+        subdraw(&spE4, logoinst);
+        DL = spE4.gdl;
+    }
 #ifdef NATIVE_PORT
     gfx_register_draw_class_dl_range(DRAWCLASS_FRONTEND, frontend_model_start, DL);
 #endif
@@ -2543,20 +2550,26 @@ Gfx *constructor_menu01_nintendo(Gfx *DL)
     sp128.unk_matrix = &spE0;
 
     sp128.mtxlist = (Mtxf *)modelAllocRenderPos(logoinst);
+#ifdef NATIVE_PORT
+    if (sp128.mtxlist == NULL) {
+        logoinst->render_pos = NULL; /* dyn overflow: skip the logo draw */
+    } else
+#endif
+    {
+        matrix_4x4_copy(&spE0, sp128.mtxlist);
 
-    matrix_4x4_copy(&spE0, sp128.mtxlist);
+        logoinst->render_pos = (RenderPosView *)sp128.mtxlist;
 
-    logoinst->render_pos = (RenderPosView *)sp128.mtxlist;
+        sub_GAME_7F06EFC4(logoinst);
 
-    sub_GAME_7F06EFC4(logoinst);
+        sp128.flags = 3;
+        sp128.zbufferenabled = FALSE;
+        sp128.gdl = DL;
 
-    sp128.flags = 3;
-    sp128.zbufferenabled = FALSE;
-    sp128.gdl = DL;
+        subdraw(&sp128, logoinst);
 
-    subdraw(&sp128, logoinst);
-
-    DL = sp128.gdl;
+        DL = sp128.gdl;
+    }
 
 #ifndef NATIVE_PORT
     for (i = 0; i < modelGetRenderPosCount(logoinst); i++)
@@ -2757,7 +2770,9 @@ Gfx *constructor_menu04_goldeneyelogo(Gfx *DL)
 #ifdef NATIVE_PORT
     if (temp_v0 != NULL) /* dyn overflow: skip reflect-LookAt rather than write NULL */
 #endif
-    guLookAtReflect(&spB0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    {
+        guLookAtReflect(&spB0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    }
 
     // Lights macro? These need to be on one line.
     gSPNumLights(DL++, 1); \
@@ -2768,41 +2783,49 @@ Gfx *constructor_menu04_goldeneyelogo(Gfx *DL)
 #ifdef NATIVE_PORT
     if (temp_v0 != NULL)
 #endif
-    gSPLookAt(DL++, temp_v0);
+    {
+        gSPLookAt(DL++, temp_v0);
+    }
 
     matrix_4x4_7F059694(&spF8, 0.0f, 0.0f, 3000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
     sp140.unk_matrix = &spF8;
     sp140.mtxlist = (Mtxf *)modelAllocRenderPos(logoinst);
+#ifdef NATIVE_PORT
+    if (sp140.mtxlist == NULL) {
+        logoinst->render_pos = NULL; /* dyn overflow: skip the logo draw */
+    } else
+#endif
+    {
+        matrix_scalar_multiply(1.2f, spF8.m[0]);
+        matrix_4x4_copy(&spF8, sp140.mtxlist);
+        logoinst->render_pos = (RenderPosView *)sp140.mtxlist;
 
-    matrix_scalar_multiply(1.2f, spF8.m[0]);
-    matrix_4x4_copy(&spF8, sp140.mtxlist);
-    logoinst->render_pos = (RenderPosView *)sp140.mtxlist;
+        sub_GAME_7F06EFC4(logoinst);
 
-    sub_GAME_7F06EFC4(logoinst);
+        sp140.flags = 3;
+        sp140.zbufferenabled = FALSE;
+        sp140.gdl = DL;
 
-    sp140.flags = 3;
-    sp140.zbufferenabled = FALSE;
-    sp140.gdl = DL;
+        portTraceGoldenEyeLogoRender("pre-subdraw",
+                                     g_MenuTimer,
+                                     &spF8,
+                                     &gelogolight,
+                                     temp_v0,
+                                     &sp140,
+                                     logoinst);
 
-    portTraceGoldenEyeLogoRender("pre-subdraw",
-                                 g_MenuTimer,
-                                 &spF8,
-                                 &gelogolight,
-                                 temp_v0,
-                                 &sp140,
-                                 logoinst);
+        subdraw(&sp140, logoinst);
 
-    subdraw(&sp140, logoinst);
+        DL = sp140.gdl;
 
-    DL = sp140.gdl;
-
-    portTraceGoldenEyeLogoRender("post-subdraw",
-                                 g_MenuTimer,
-                                 &spF8,
-                                 &gelogolight,
-                                 temp_v0,
-                                 &sp140,
-                                 logoinst);
+        portTraceGoldenEyeLogoRender("post-subdraw",
+                                     g_MenuTimer,
+                                     &spF8,
+                                     &gelogolight,
+                                     temp_v0,
+                                     &sp140,
+                                     logoinst);
+    }
 
 #ifndef NATIVE_PORT
     for (i = 0; i < modelGetRenderPosCount(logoinst); i++)
@@ -3585,6 +3608,11 @@ Gfx *constructor_menu05_fileselect(Gfx *DL)
         matrix_4x4_multiply_in_place(&spC8, &sp88);
 
         walletinst[j]->render_pos = modelAllocRenderPos(walletinst[j]);
+#ifdef NATIVE_PORT
+        if (walletinst[j]->render_pos == NULL) {
+            continue; /* dyn overflow: skip this wallet model */
+        }
+#endif
         for (i = 0; i < modelGetRenderPosCount(walletinst[j]); i++) {
             matrix_4x4_copy(&sp88, &walletinst[j]->render_pos[i].pos);
         }
@@ -3986,19 +4014,26 @@ Gfx *frontSetupMenuBackground(Gfx *DL)
     sp10C.unk_matrix = &sp88;
 
     sp10C.mtxlist = (Mtxf *)modelAllocRenderPos(walletinst[0]);
-    for (i = 0; i < modelGetRenderPosCount(walletinst[0]); i++) {
-        matrix_4x4_copy(&sp88, &((RenderPosView *)sp10C.mtxlist)[i].pos);
+#ifdef NATIVE_PORT
+    if (sp10C.mtxlist == NULL) {
+        walletinst[0]->render_pos = NULL; /* dyn overflow: skip the wallet draw */
+    } else
+#endif
+    {
+        for (i = 0; i < modelGetRenderPosCount(walletinst[0]); i++) {
+            matrix_4x4_copy(&sp88, &((RenderPosView *)sp10C.mtxlist)[i].pos);
+        }
+
+        walletinst[0]->render_pos = (RenderPosView *)sp10C.mtxlist;
+
+        sp10C.flags = 3;
+        sp10C.zbufferenabled = FALSE;
+        sp10C.gdl = DL;
+
+        subdraw(&sp10C, walletinst[0]);
+
+        DL = sp10C.gdl;
     }
-
-    walletinst[0]->render_pos = (RenderPosView *)sp10C.mtxlist;
-
-    sp10C.flags = 3;
-    sp10C.zbufferenabled = FALSE;
-    sp10C.gdl = DL;
-
-    subdraw(&sp10C, walletinst[0]);
-
-    DL = sp10C.gdl;
 
 #ifndef NATIVE_PORT
     for (i = 0; i < modelGetRenderPosCount(walletinst[0]); i++)
@@ -11579,7 +11614,9 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
 #ifdef NATIVE_PORT
     if (temp_v0 != NULL) /* dyn overflow: skip reflect-LookAt rather than write NULL */
 #endif
-    guLookAtReflect(&spE0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    {
+        guLookAtReflect(&spE0, temp_v0, 0.0f, 0.0f, 4000.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    }
 
     gSPNumLights(DL++, 1);
     gSPLight(DL++, &gelogolight.l[0], 1);
@@ -11613,6 +11650,10 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
             subcalcpos(cast_model);
 
             sp1A8.mtxlist = (Mtxf *)modelAllocRenderPos(cast_model);
+            if (sp1A8.mtxlist == NULL) {
+                cast_model->render_pos = NULL; /* dyn overflow: skip the cast draw */
+                return DL;
+            }
             sp1A8.unk_matrix = &sp1E8;
             matrix_4x4_set_identity(&sp1E8);
             subcalcmatrices(&sp1A8, cast_model);
@@ -11662,6 +11703,12 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
     }
 
     sp1A8.mtxlist = (Mtxf *)modelAllocRenderPos(cast_model);
+#ifdef NATIVE_PORT
+    if (sp1A8.mtxlist == NULL) {
+        cast_model->render_pos = NULL; /* dyn overflow: skip the cast draw */
+        return DL;
+    }
+#endif
     sp1A8.unk_matrix = &sp1E8;
     matrix_4x4_set_identity(&sp1E8);
     subcalcmatrices(&sp1A8, cast_model);
@@ -11812,6 +11859,15 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
 
     sp1A8.unk_matrix = &sp1E8;
     sp1A8.mtxlist = (Mtxf *)modelAllocRenderPos(cast_model);
+#ifdef NATIVE_PORT
+    if (sp1A8.mtxlist == NULL) {
+        cast_model->render_pos = NULL; /* dyn overflow: skip the cast draw */
+        if (cast_model_weapon != NULL) {
+            cast_model_weapon->render_pos = NULL;
+        }
+        return DL;
+    }
+#endif
     subcalcmatrices((ModelRenderData *) &sp1A8, cast_model);
     portTraceDisplayCastMatrix("root",
                                intro_character_index,
@@ -11822,7 +11878,8 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
     {
         sp1A8.unk_matrix = modelFindNodeMtx(cast_model, cast_model_weapon->attachedto_objinst, 0);
 
-        if (cast_model_weapon->attachedto_objinst == modelGetSwitchNodeSafe(cast_model->obj, 5))
+        if (sp1A8.unk_matrix != NULL /* NULL on dyn overflow */
+            && cast_model_weapon->attachedto_objinst == modelGetSwitchNodeSafe(cast_model->obj, 5))
         {
             matrix_4x4_set_rotation_around_z(3.1415927f, &sp160);
             matrix_4x4_multiply_in_place(sp1A8.unk_matrix, &sp160);
@@ -11830,6 +11887,12 @@ Gfx * constructor_menu18_displaycast(Gfx *DL)
         }
 
         sp1A8.mtxlist = (Mtxf *)modelAllocRenderPos(cast_model_weapon);
+#ifdef NATIVE_PORT
+        if (sp1A8.mtxlist == NULL) {
+            cast_model_weapon->render_pos = NULL; /* dyn overflow: skip the cast draw */
+            return DL;
+        }
+#endif
         instcalcmatrices((ModelRenderData *) &sp1A8, cast_model_weapon);
     }
 

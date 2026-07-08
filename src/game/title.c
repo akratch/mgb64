@@ -313,10 +313,25 @@ Gfx *sub_GAME_7F007F30(Gfx *gdl, s32 arg1, Mtxf *arg2) {
 
     renderData.unk_matrix = arg2;
     renderData.mtxlist = (Mtxf *)modelAllocRenderPos(chrModelInstance);
+#ifdef NATIVE_PORT
+    if (renderData.mtxlist == NULL) {
+        /* dyn overflow: invalidate both models' render_pos (else the joint draw
+         * would reuse previous-frame recycled arena pointers) and skip. */
+        chrModelInstance->render_pos = NULL;
+        gunModelInstance->render_pos = NULL;
+        return gdl;
+    }
+#endif
     subcalcmatrices(&renderData, chrModelInstance);
 
     renderData.unk_matrix = modelFindNodeMtx(chrModelInstance, gunModelInstance->attachedto_objinst, 0);
     renderData.mtxlist = (Mtxf *)modelAllocRenderPos(gunModelInstance);
+#ifdef NATIVE_PORT
+    if (renderData.mtxlist == NULL) {
+        gunModelInstance->render_pos = NULL;
+        return gdl;
+    }
+#endif
     instcalcmatrices(&renderData, gunModelInstance);
 
     jointlist = sub_GAME_7F06B120(NULL, chrModelInstance);

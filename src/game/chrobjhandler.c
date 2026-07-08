@@ -4686,6 +4686,11 @@ bool sub_GAME_7F041BB8(ChrRecord *chr, coord3d *arg1, coord3d *arg2, f32 arg3, c
 
     mtx = modelFindNodeMtx((Model *)local_model, (ModelNode *)local_node, 0);
 
+#ifdef NATIVE_PORT
+    if (mtx == NULL) {
+        return FALSE; /* dyn overflow: no matrices this frame; not hittable */
+    }
+#endif
     dx = mtx->m[3][0] - arg4->x;
     dy = mtx->m[3][1] - arg4->y;
     dz = mtx->m[3][2] - arg4->z;
@@ -45456,6 +45461,15 @@ void sub_GAME_7F0523F8(PropRecord *prop, s32 arg1, void **arg2) {
 
         if (model->obj == NULL || matrix_count <= 0) return;
         renderdata.mtxlist = (Mtxf *)modelAllocRenderPos(model);
+#ifdef NATIVE_PORT
+        if (renderdata.mtxlist == NULL) {
+            /* dyn overflow: invalidate render_pos (the draw below would otherwise
+             * reuse the previous frame's recycled arena pointer) and skip. */
+            model->render_pos = NULL;
+            weaponprop->flags &= ~2;
+            return;
+        }
+#endif
     }
     instcalcmatrices(&renderdata, model);
 

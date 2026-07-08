@@ -5098,6 +5098,11 @@ void sub_GAME_7F05F928(s32 arg0) {
     chrobjCollisionRelated(obj);
 
     model->render_pos = modelAllocRenderPos(model);
+#ifdef NATIVE_PORT
+    if (model->render_pos == NULL) {
+        return; /* dyn overflow: leave render_pos NULL so the prop draw skips */
+    }
+#endif
 
     matrix_4x4_copy(&obj->mtx, &local_mtx);
     matrix_4x4_set_position(&obj->runtime_pos, &local_mtx);
@@ -15622,6 +15627,11 @@ Gfx *set_enviro_fog_for_items_in_solo_watch_menu(Gfx *gdl, s32 weaponnum, Mtxf *
         s32 matrix_count = modelGetRenderPosCountForObject(itemheader);
 
         mtxlist = (Mtxf *)modelAllocRenderPosForObject(itemheader);
+#ifdef NATIVE_PORT
+        if (mtxlist == NULL) {
+            goto done; /* dyn overflow: skip the watch item screen */
+        }
+#endif
 
         for (i = 0; i < matrix_count; i++) {
             matrix_4x4_set_identity(&mtxlist[i]);
@@ -16262,6 +16272,11 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
 #endif
 
     mtxlist = (Mtxf *)modelAllocRenderPosForObject(itemheader);
+#ifdef NATIVE_PORT
+    if (mtxlist == NULL) {
+        goto done; /* dyn overflow: skip the watch item screen */
+    }
+#endif
 
     modelCalculateRwDataLen(itemheader);
     modelInit(&model, itemheader, rwdata);
@@ -16341,6 +16356,11 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
         }
 
         mtxlist = (Mtxf *)modelAllocRenderPosForObject(itemheader);
+#ifdef NATIVE_PORT
+        if (mtxlist == NULL) {
+            goto done; /* dyn overflow: skip the watch item screen */
+        }
+#endif
 
         neg_pi_over_3 = -1.0471976f;
         neg_ten = -10.0f;
@@ -30662,6 +30682,11 @@ void sub_GAME_7F068EC4(CasingRecord *entry, Gfx **gdl) {
     saved_gdl = *gdl;
     header = entry->header;
     alloc = modelAllocRenderPosForObject(header);
+#ifdef NATIVE_PORT
+    if (alloc == NULL) {
+        return; /* dyn overflow: skip this shell casing */
+    }
+#endif
 
 #ifdef NATIVE_PORT
     /* D_80035EB0 is u32[15] (60 bytes) but sizeof(ModelRenderData)=80 on 64-bit.

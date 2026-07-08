@@ -16019,6 +16019,31 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
     g_CurrentPlayer->field_64 = (intptr_t)dynAllocateMatrix();
     g_CurrentPlayer->field_68 = (intptr_t)dynAllocateMatrix();
 
+#ifdef NATIVE_PORT
+    /* dyn overflow: the four view matrices (bound below as this frame's
+     * 10C8/10C4/10CC/10D4) must be DISTINCT — on the shared overflow scratch,
+     * sub_GAME_7F059334(field_5C, field_60) computes with src==dst and every
+     * draw consumes garbage transforms. Give each slot its own persistent
+     * static instead (fully rewritten with real data below, so contents stay
+     * valid; same pattern as s_field10E0_overflow). */
+    {
+        static Mtx s_viewMtxOverflow[4] __attribute__((aligned(16)));
+
+        if (dynIsOverflowMatrix((void *)g_CurrentPlayer->field_5C)) {
+            g_CurrentPlayer->field_5C = (intptr_t)&s_viewMtxOverflow[0];
+        }
+        if (dynIsOverflowMatrix((void *)g_CurrentPlayer->field_60)) {
+            g_CurrentPlayer->field_60 = (intptr_t)&s_viewMtxOverflow[1];
+        }
+        if (dynIsOverflowMatrix((void *)g_CurrentPlayer->field_64)) {
+            g_CurrentPlayer->field_64 = (intptr_t)&s_viewMtxOverflow[2];
+        }
+        if (dynIsOverflowMatrix((void *)g_CurrentPlayer->field_68)) {
+            g_CurrentPlayer->field_68 = (intptr_t)&s_viewMtxOverflow[3];
+        }
+    }
+#endif
+
     lookat = dynAllocate7F0BD6F8(2);
 
     scale = D_800364CC;
@@ -16054,10 +16079,12 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
 #ifdef NATIVE_PORT
     if (lookat != NULL) /* dyn overflow: skip reflect-LookAt setup rather than write NULL */
 #endif
-    guLookAtReflect(&sp108, lookat,
-        scaledpos.x, scaledpos.y, scaledpos.z,
-        clpos.x, clpos.y, clpos.z,
-        cam_up->x, cam_up->y, cam_up->z);
+    {
+        guLookAtReflect(&sp108, lookat,
+            scaledpos.x, scaledpos.y, scaledpos.z,
+            clpos.x, clpos.y, clpos.z,
+            cam_up->x, cam_up->y, cam_up->z);
+    }
 
 #ifdef NATIVE_PORT
     {
@@ -16234,7 +16261,9 @@ void sub_GAME_7F0876C4(coord3d* cam_pos, coord3d* cam_look, coord3d* cam_up)
 #ifdef NATIVE_PORT
     if (lookat != NULL) /* dyn overflow: skip LookAt bind rather than pass NULL */
 #endif
-    sub_GAME_7F078464((intptr_t) lookat);
+    {
+        sub_GAME_7F078464((intptr_t) lookat);
+    }
     sub_GAME_7F0785DC();
     store_BONDdata_curpos_to_previous();
 }
@@ -17404,6 +17433,11 @@ Gfx *sub_GAME_7F087E74(Gfx *gdl) {
     matrix_4x4_multiply_homogeneous_in_place(camGetWorldToScreenMtxf(), &viewMtx);
 
     dynBuf = modelAllocRenderPos(PLAYER_WATCH_MODEL(g_CurrentPlayer));
+#ifdef NATIVE_PORT
+    if (dynBuf == NULL) {
+        goto lbl_end; /* dyn overflow: skip the watch render entirely */
+    }
+#endif
 
     seems_to_load_cuff_microcode(
         PLAYER_WATCH_MODEL(g_CurrentPlayer),

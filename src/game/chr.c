@@ -5359,6 +5359,26 @@ s32 chrTickBeams(PropRecord *prop) {
 
         if (num_matrices > 0) {
             renderdata.mtxlist = (Mtxf *)modelAllocRenderPos(model);
+#ifdef NATIVE_PORT
+            if (renderdata.mtxlist == NULL) {
+                /* dyn overflow: invalidate render_pos (else the draw below reuses
+                 * the PREVIOUS frame's arena pointer -- recycled by other users =
+                 * the R3 aliasing) and take the same off-screen path as a culled
+                 * guard so hit processing / auto-aim can't read NULL matrices. */
+                model->render_pos = NULL;
+                if (chr->weapons_held[GUNRIGHT] != NULL) {
+                    chr->weapons_held[GUNRIGHT]->flags &= ~PROPFLAG_ONSCREEN;
+                }
+                if (chr->weapons_held[GUNLEFT] != NULL) {
+                    chr->weapons_held[GUNLEFT]->flags &= ~PROPFLAG_ONSCREEN;
+                }
+                if (chr->handle_positiondata_hat != NULL) {
+                    chr->handle_positiondata_hat->flags &= ~PROPFLAG_ONSCREEN;
+                }
+                prop->flags &= ~PROPFLAG_ONSCREEN;
+                return 0;
+            }
+#endif
         }
     }
 
@@ -9583,6 +9603,9 @@ void sub_GAME_7F022648(PropRecord *prop, struct ShotData *shotdata) {
 
         nodemtx = modelFindNodeMtx((Model *)local_model, (ModelNode *)local_node, 0);
 
+#ifdef NATIVE_PORT
+        if (nodemtx != NULL) { /* NULL on dyn overflow: no matrices, no hit */
+#endif
         delta.x = nodemtx->m[3][0] - shot_pos->x;
         delta.y = nodemtx->m[3][1] - shot_pos->y;
         delta.z = nodemtx->m[3][2] - shot_pos->z;
@@ -9593,6 +9616,9 @@ void sub_GAME_7F022648(PropRecord *prop, struct ShotData *shotdata) {
         if (neg_z < shotdata->unk34) {
             sub_GAME_7F03B9C0(shotdata, prop, neg_z, hit_result, (ModelNode *)local_node, &hitthing, mtx_index, surface_node, (Model *)local_model, 1, 0);
         }
+#ifdef NATIVE_PORT
+        }
+#endif
     }
 
     if (hit_in_range != 0) {
@@ -10037,6 +10063,11 @@ void sub_GAME_7F022980(struct ShotData *shotdata, ShotHitRecord *hit) {
     } else {
         nodemtx = modelFindNodeMtx(hit->model, hit->node, 0);
 
+#ifdef NATIVE_PORT
+        if (nodemtx == NULL) {
+            return; /* dyn overflow: no matrices this frame; skip the blood decal */
+        }
+#endif
         localpos.x = pos.x + (pos.x - nodemtx->m[3][0]) * 0.5f;
         localpos.y = pos.y + (pos.y - nodemtx->m[3][1]) * 0.5f;
         localpos.z = pos.z + (pos.z - nodemtx->m[3][2]) * 0.5f;

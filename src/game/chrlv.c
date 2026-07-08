@@ -7605,7 +7605,11 @@ s32 chrlvUpdateAimendsideback(ChrRecord *self, struct weapon_firing_animation_ta
                 {
                     temp_a0 = modelFindNodeMtx(weapon_prop_model, weapon_switch0, 0);
                     spB8 = (f32 *)modelGetSwitchDataSafe(weapon_prop_model->obj, 0, sizeof(f32) * 3);
-                    if (spB8 != NULL)
+                    if (spB8 != NULL
+#ifdef NATIVE_PORT
+                        && temp_a0 != NULL /* NULL on dyn overflow */
+#endif
+                        )
                     {
                         sub_GAME_7F058E78(temp_a0, &spBC);
 
@@ -7627,13 +7631,18 @@ s32 chrlvUpdateAimendsideback(ChrRecord *self, struct weapon_firing_animation_ta
                 else if (weapon_switch1 != NULL)
                 {
                     temp_a0 = modelFindNodeMtx(weapon_prop_model, weapon_switch1, 0);
-                    sub_GAME_7F058E78(temp_a0, &sp68);
-                    matrix_4x4_multiply_homogeneous_in_place(currentPlayerGetMatrix10EC(), &sp68);
-                    sp104.f[0] = sp68.m[3][0];
-                    sp104.f[1] = sp68.m[3][1];
-                    sp104.f[2] = sp68.m[3][2];
+#ifdef NATIVE_PORT
+                    if (temp_a0 != NULL) /* NULL on dyn overflow */
+#endif
+                    {
+                        sub_GAME_7F058E78(temp_a0, &sp68);
+                        matrix_4x4_multiply_homogeneous_in_place(currentPlayerGetMatrix10EC(), &sp68);
+                        sp104.f[0] = sp68.m[3][0];
+                        sp104.f[1] = sp68.m[3][1];
+                        sp104.f[2] = sp68.m[3][2];
 
-                    intersect_flag = 1;
+                        intersect_flag = 1;
+                    }
                 }
 
                 if (intersect_flag != 0)
@@ -8172,6 +8181,12 @@ s32 sub_GAME_7F02D630(ChrRecord *self, GUNHAND hand, coord3d *arg2)
                 {
                     return ret;
                 }
+#ifdef NATIVE_PORT
+                if (temp_a0 == NULL)
+                {
+                    return ret; /* NULL on dyn overflow */
+                }
+#endif
 
                 arg2->f[0] = spB8[0];
                 arg2->f[1] = spB8[1];
@@ -8185,6 +8200,12 @@ s32 sub_GAME_7F02D630(ChrRecord *self, GUNHAND hand, coord3d *arg2)
             else if (weapon_switch1 != NULL)
             {
                 temp_a0_2 = modelFindNodeMtx(weapon_prop_model, weapon_switch1, 0);
+#ifdef NATIVE_PORT
+                if (temp_a0_2 == NULL)
+                {
+                    return ret; /* NULL on dyn overflow */
+                }
+#endif
                 matrix_4x4_multiply_homogeneous(currentPlayerGetMatrix10D4(), temp_a0_2, &sp68);
 
                 arg2->f[0] = sp68.m[3][0];

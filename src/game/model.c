@@ -5490,6 +5490,15 @@ void modelUpdateDistanceRelations(Model* model, ModelNode* node)
     Mtxf *mtx = modelFindNodeMtx(model, node, 0);
     f32 distance;
 
+#ifdef NATIVE_PORT
+    if (mtx == NULL) {
+        /* dyn overflow: no matrices; treat the LOD as out of range */
+        rwdata->LOD.visible = FALSE;
+        node->Child = NULL;
+        return;
+    }
+#endif
+
     if (g_ModelDistanceDisabled)
     {
         distance = 0;
@@ -5701,6 +5710,12 @@ void modelUpdateReorderRelations(Model *model, ModelNode *node)
     coord3d sp2c;
     f32 tmp;
 
+#ifdef NATIVE_PORT
+    if (mtx == NULL) {
+        return; /* dyn overflow: no matrices; keep last frame's BSP order */
+    }
+#endif
+
     if (rodata->BSP.reserved == 0)
     {
         sp38.x = rodata->BSP.Vector.f[0];
@@ -5760,6 +5775,12 @@ void process_07_unknown(Model *model, ModelNode *node)
     f32 theta;
     s32 index2;
     s32 index3;
+
+#ifdef NATIVE_PORT
+    if (mtx == NULL) {
+        return; /* dyn overflow: no matrices; skip the op07 update */
+    }
+#endif
 
     sub_GAME_7F06C550(model, &coord);
 
@@ -12898,6 +12919,12 @@ s32 sub_GAME_7F074CAC(Model *model, ModelNode *node, f32 *arg2, f32 *arg3) {
     rodata = &node->Data->Op17;
     mtx = modelFindNodeMtx(model, node, 0);
 
+#ifdef NATIVE_PORT
+    if (mtx == NULL) {
+        return 0; /* dyn overflow: no matrices this frame; no hit */
+    }
+#endif
+
     diff.x = D_80036408;
     diff.y = *(f32 *)&D_8003640C;
     diff.z = *(f32 *)&D_80036410;
@@ -12920,9 +12947,15 @@ s32 sub_GAME_7F074CAC(Model *model, ModelNode *node, f32 *arg2, f32 *arg3) {
     } else if (opcode & 0x200) {
         ModelNode *childNode = rodata->RelatedNode;
 
-        if (childNode != NULL) {
+        if (childNode != NULL
+#ifdef NATIVE_PORT
+            && (mtx2 = modelFindNodeMtx(model, childNode, 0)) != NULL /* NULL on dyn overflow */
+#endif
+            ) {
             f32 *mf2;
+#ifndef NATIVE_PORT
             mtx2 = modelFindNodeMtx(model, childNode, 0);
+#endif
             mf2 = (f32 *)mtx2;
             half = 0.5f;
             diff.x = (mf[12] + mf2[12]) * half - arg2[0];
