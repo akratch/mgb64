@@ -55,6 +55,11 @@ typedef struct {
 } AppOverlayHooks;
 void platformSetOverlayHooks(const AppOverlayHooks *hooks);
 
+// Joystick instance id of the player-1 pad (engine slot 0), or -1 when absent.
+// The overlay filters its gamepad toggle to P1 so P2-4 presses in split-screen
+// reach their own N64 pad instead of freezing everyone into the overlay.
+int platformGetPad0InstanceId(void);
+
 #ifdef __cplusplus
 }
 #endif

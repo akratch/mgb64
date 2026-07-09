@@ -71,6 +71,11 @@ void onProcessEvent(const void *ev) {
         return;
     }
     if (e->type == SDL_CONTROLLERBUTTONDOWN) {
+        // P1-only: in split-screen, P2-4 Start/Back must reach their own N64
+        // pad (pcFillPadFromController), not drive the shared overlay — the
+        // input gate would freeze every player. (-1 = no pad in slot 0, and no
+        // pad means no controller events, so requiring a match is safe.)
+        if ((int)e->cbutton.which != platformGetPad0InstanceId()) return;
         if ((int)e->cbutton.button == Overlay_gamepadToggleButton()) {
             setOpen(!g_open);
         } else if (g_open && e->cbutton.button == SDL_CONTROLLER_BUTTON_B) {

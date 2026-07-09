@@ -2266,6 +2266,14 @@ int platformGetPadCount(void) {
     return count;
 }
 
+/* Joystick instance id of the P1 pad (slot 0), or -1 when absent. Used by the
+ * app overlay to filter its gamepad toggle to player 1: in split-screen, P2-4
+ * Start/Back presses must reach their own N64 pad, not open the shared overlay
+ * (whose input gate would freeze every player). */
+int platformGetPad0InstanceId(void) {
+    return g_pads[0].handle ? (int)g_pads[0].instance_id : -1;
+}
+
 /* Raw SDL button state for pad k (0 if absent). Mapping to N64 buttons is done
  * by the caller (stubs.c) so all players share one mapping. */
 unsigned int platformGetPadButtons(int k) {
