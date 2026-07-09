@@ -2058,6 +2058,16 @@ void platformRegisterConfig(void)
                         "--config-override Input.SteadyView=VALUE",
                         "Steady view",
                         "Keep the world camera upright during movement; head motion still drives position and weapon sway.");
+    settingsRegisterInt("Input.Rumble", &g_pcRumble, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_RUMBLE",
+                        "--config-override Input.Rumble=VALUE",
+                        "Rumble",
+                        "Controller vibration on the game's faithful Rumble Pak events (weapon fire, taking damage). Needs a physical pad; no effect on keyboard/mouse.");
+    settingsRegisterInt("Input.RumbleIntensity", &g_pcRumbleIntensity, 100, 0, 100,
+                        SETTING_SCOPE_LIVE, "GE007_RUMBLE_INTENSITY",
+                        "--config-override Input.RumbleIntensity=VALUE",
+                        "Rumble intensity",
+                        "Vibration strength as a percentage (0-100). 0 is the same as Rumble off.");
 
     /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
      * when 0 every ADS branch is bypassed and behavior is byte-identical. */

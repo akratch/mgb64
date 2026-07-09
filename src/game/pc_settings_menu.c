@@ -101,6 +101,8 @@ static const SmEntry s_pageInput[] = {
     { "Input.GamepadLookCurve",    SMW_SLIDER, 0.1f,   NULL, "Gamepad response curve",        0 },
     { "Input.GamepadDeadzone",     SMW_SLIDER, 0.05f,  NULL, "Gamepad stick deadzone",        0 },
     { "Input.SteadyView",          SMW_TOGGLE, 0.0f,   NULL, "Steady-view stabilisation",     0 },
+    { "Input.Rumble",              SMW_TOGGLE, 0.0f,   NULL, "Controller rumble",             0 },
+    { "Input.RumbleIntensity",     SMW_SLIDER, 1.0f,   NULL, "Rumble intensity",              0 },
 };
 
 /* ---- Page 6: HUD & Aim ------------------------------------------------------ */
@@ -142,7 +144,7 @@ const SmPage g_smPages[] = {
     { "Image",     s_pageImage,    7 },
     { "Post-FX",   s_pagePostFx,   8 },
     { "Lighting",  s_pageLighting, 10 },
-    { "Input",     s_pageInput,    7 },
+    { "Input",     s_pageInput,    9 },
     { "HUD & Aim", s_pageHud,      12 },
     { "Audio",     s_pageAudio,    8 },
 };
@@ -155,7 +157,7 @@ _Static_assert(SM_ARRAY_COUNT(s_pageDisplay)  == 8,  "Display page count");
 _Static_assert(SM_ARRAY_COUNT(s_pageImage)    == 7,  "Image page count");
 _Static_assert(SM_ARRAY_COUNT(s_pagePostFx)   == 8,  "Post-FX page count");
 _Static_assert(SM_ARRAY_COUNT(s_pageLighting) == 10, "Lighting page count");
-_Static_assert(SM_ARRAY_COUNT(s_pageInput)    == 7,  "Input page count");
+_Static_assert(SM_ARRAY_COUNT(s_pageInput)    == 9,  "Input page count");
 _Static_assert(SM_ARRAY_COUNT(s_pageHud)      == 12, "HUD page count");
 _Static_assert(SM_ARRAY_COUNT(s_pageAudio)    == 8,  "Audio page count");
 _Static_assert(SM_ARRAY_COUNT(g_smPages)      == 7,  "settings menu curates 7 pages");
