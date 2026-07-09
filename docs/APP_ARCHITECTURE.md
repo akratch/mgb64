@@ -157,3 +157,43 @@ macOS build) is documented in **[RELEASING.md](RELEASING.md)**.
 2. **The engine stays C.** It references overlay/host/config seams only through
    the `extern "C"` headers in `src/platform/`; no ImGui or C++ symbols leak in.
 3. **Asset-free always.** Every artifact passes `macos/Scripts/verify_asset_free.sh`.
+
+---
+
+## 7. Controller support (handheld / gamepad)
+
+The shell is fully operable with a standard XInput pad (SDL2 GameController) and
+no keyboard/mouse — the target being handhelds like the ROG Ally. Only the
+generic GameController path is used; there is no device-specific code.
+
+**ImGui navigation (MC.1).** `ImGuiConfigFlags_NavEnableGamepad` is set in
+`AppHost::init`; the bundled ImGui SDL2 backend (`AutoFirst` mode) opens the
+first controller and feeds nav inputs. The launcher's nav rail and every panel
+(ROM, Settings tabs, Launch, Controls, Modes, Diagnostics) are standard
+focusable widgets, so they navigate out of the box; the active tab gets initial
+focus. In-game the F1 overlay reuses the same ImGui context, so it navigates
+identically. Overlay controls: **Start** toggles it (F1 still works), **A**
+selects, **B** backs out one level (cancel → hide settings → close), yielding to
+ImGui's own combo/popup cancel first. The overlay engine also has no controller
+knowledge — it drives ImGui through the same `app_overlay_hooks` seam.
+
+The engine and ImGui each `SDL_GameControllerOpen` controller 0; this is safe
+because SDL2 refcounts controller handles, so neither closing (device
+remove / shutdown) dangles the other's pointer.
+
+**Input gate.** When the overlay is open it owns input: `osContGetReadData`
+returns neutral pads while `platformOverlayWantsInput()` is true — the
+polled-input analogue of the event-swallow in `platformPollEvents`, so pad nav
+never leaks into gameplay. It is a no-op on the automation path (no overlay
+hooks registered), so byte-identity is preserved.
+
+**Gamepad rebinding (MC.3).** 14 player-1 actions are rebindable in the Controls
+panel's Gamepad tab, mirroring the keyboard registry: each binds to a
+`SDL_GameControllerButton` or a trigger axis (LT/RT), persisted to
+`ge007_gp_bindings.ini`, with reset-to-default. `stubs.c` reads them through
+`gamepadBindingActive()`. The sticks stay fixed (movement + look, preserving the
+radial-deadzone/aim mapping). Because the pad **Start** button drives the app
+overlay, the in-game N64 Start (pause/watch) defaults to the **Right-Stick
+click**. Player 2–4 pads use fixed defaults — multiplayer rebinding is out of
+scope. Under `--deterministic` / freeze-input the bindings force defaults so
+scripted runs stay byte-identical.
