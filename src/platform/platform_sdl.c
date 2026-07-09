@@ -20,6 +20,7 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "savedir.h"
 #include "host_window.h"
 #include "app_overlay_hooks.h"
 #include "gfx_pc.h"
@@ -118,6 +119,56 @@ static void platformClosePadByInstance(SDL_JoystickID id) {
         }
     }
     platformSyncPad0Alias();
+}
+
+/* ===== Community controller mappings (MC.2) =====
+ * SDL ships built-in mappings for common pads, but the community
+ * SDL_GameControllerDB (lib/sdl_gamecontrollerdb/gamecontrollerdb.txt) covers
+ * thousands more — exotic/hybrid/handheld devices SDL misses. Load it BEFORE
+ * opening any controller so the bundled mappings apply. Missing file is not an
+ * error: SDL's built-ins still work, so a stripped install degrades to those.
+ *
+ * Resolution order (later files override earlier for the same GUID, matching
+ * SDL_GameControllerAddMappingsFromFile's last-write-wins semantics):
+ *   1. next to the executable / in the app bundle (SDL_GetBasePath) — the
+ *      shipped copy that packaging drops beside the binary,
+ *   2. the current directory — dev/portable runs from the source tree,
+ *   3. the savedir — a user-dropped copy that refreshes/overrides the bundle.
+ * Each candidate is loaded independently; a hit in one does not skip the
+ * others, so the savedir override composes on top of the bundled base. */
+static int platformAddMappingsFrom(const char *path, const char *label) {
+    int n;
+    if (!path || !path[0]) {
+        return 0;
+    }
+    n = SDL_GameControllerAddMappingsFromFile(path);
+    if (n <= 0) {
+        /* n < 0: not present/unreadable (expected for absent candidates).
+         * n == 0: present but no mapping matched this platform. Either way it
+         * contributes nothing, so stay quiet and let the caller's total decide. */
+        return 0;
+    }
+    printf("[SDL] Loaded %d controller mapping(s) from %s (%s)\n", n, path, label);
+    return n;
+}
+
+static void platformLoadControllerMappings(void) {
+    int total = 0;
+    char *base = SDL_GetBasePath(); /* SDL-malloc'd; NULL if unsupported */
+    if (base) {
+        char bundled[1100];
+        int w = snprintf(bundled, sizeof(bundled), "%sgamecontrollerdb.txt", base);
+        if (w > 0 && (size_t)w < sizeof(bundled)) {
+            total += platformAddMappingsFrom(bundled, "bundle/exe dir");
+        }
+        SDL_free(base);
+    }
+    total += platformAddMappingsFrom("gamecontrollerdb.txt", "cwd");
+    total += platformAddMappingsFrom(savedirPath("gamecontrollerdb.txt"), "savedir override");
+
+    if (total == 0) {
+        printf("[SDL] No gamecontrollerdb.txt found; using SDL built-in mappings\n");
+    }
 }
 
 /* ===== Rumble (MC.4) =====
@@ -2802,6 +2853,10 @@ int platformInitSDL(void) {
     if (g_disableInputGrab) {
         printf("[SDL] Input grab disabled (GE007_NO_INPUT_GRAB)\n");
     }
+
+    /* Apply the community controller-mapping database before opening any pad so
+     * exotic/hybrid devices map correctly (MC.2). Missing file is non-fatal. */
+    platformLoadControllerMappings();
 
     /* Open every available game controller into its own player slot. The first
      * opened pad lands in slot 0 (player 1) and shares that slot with the
