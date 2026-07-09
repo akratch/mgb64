@@ -2528,8 +2528,6 @@ int platformInitSDL(void) {
         return -1;
     }
 
-    platformApplyWindowMode();
-
 #ifdef __APPLE__
     if (gfx_backend_use_metal()) {
         g_metalView = SDL_Metal_CreateView(g_sdlWindow);
@@ -2550,6 +2548,21 @@ int platformInitSDL(void) {
             return -1;
         }
     }
+    }
+
+    /* RX.3 Fix A: apply the configured Video.WindowMode on BOTH the adopted
+     * app-shell window (the Windows/macOS release path, which owns g_sdlWindow +
+     * g_glContext) AND the engine-owned window, now that the window and its GL
+     * context / Metal view are valid. Previously this ran only inside the
+     * engine-owned branch, so borderless/exclusive was loaded into g_windowMode
+     * but never pushed to SDL on the shell path — the window stayed windowed and
+     * "true fullscreen" was a no-op on Windows.
+     *
+     * Guard: skip the hidden/background window (GE007_BACKGROUND drives the
+     * SDL_WINDOW_HIDDEN flag above) so CI / screenshot harnesses are never forced
+     * fullscreen. */
+    if (!g_backgroundWindow) {
+        platformApplyWindowMode();
     }
 
     /* Load OpenGL function pointers via glad (not needed on macOS) */
