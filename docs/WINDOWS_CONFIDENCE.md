@@ -128,8 +128,10 @@ are not comparable across the two lanes; the *classes* are what's attested here.
   (WASAPI under SDL); controllers via the SDL_GameController API only — XInput
   (ROG Ally's mode) is SDL's best-supported Windows backend, no raw joystick or
   platform-specific input code. `SDL_MAIN_HANDLED` + `SDL_SetMainReady()` +
-  console-subsystem `main()` is the documented SDL entry pattern (console window on
-  double-click is a known, accepted trade for visible logs this cycle).
+  a plain `int main()` is the documented SDL entry pattern. **Updated:** as of
+  the subsystem flip (§6) the Release build links the **GUI subsystem**
+  (`-mwindows`, no console window on launch); `mgb64.log` is the log sink and
+  `-DMGB64_WIN_CONSOLE=ON` restores the console subsystem for debugging.
 
 ## 4. Verified by execution
 
@@ -163,3 +165,63 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 Windows-pitfall class has been swept with 6 concrete fixes landed (M6.1, M6.2,
 watchdog, LLP64 formats, PATH_MAX truncation, math-shim gap); what remains untested
 is runtime-only and is exactly what MW.3–MW.5 exist to execute.
+
+---
+
+## 6. Subsystem flip: console → GUI (`-mwindows`), with the fd re-analysis MW.1 required
+
+MW.1 kept the console subsystem but flagged that any flip must **re-run the fd
+analysis**, because under the GUI subsystem "pre-install printf output would be
+lost and install order becomes load-bearing." That analysis, and the decision:
+
+**Decision — FLIP to the GUI subsystem by default.** Release Windows builds now
+link `-mwindows` (PE subsystem = Windows GUI), so no empty console window appears
+when the exe is launched from Explorer or a game library. A console build stays
+one CMake flag away: `-DMGB64_WIN_CONSOLE=ON` restores the console subsystem for
+debugging. Both variants were cross-linked once in the MW.2 lane to prove each
+links (GUI = default, CUI = option ON). MinGW keeps `mainCRTStartup → int main()`
+under `-mwindows` (no `WinMain` needed; `SDL_MAIN_HANDLED` means SDL injects no
+`WinMain`), verified against the toolchain.
+
+**The fd re-analysis (the crux MW.1 named).** With no console, fds 0–2 are invalid
+at CRT startup. `DiagLog_install()` (src/app/diag_log.cpp) was written to *create*
+its fds, not duplicate invalid ones, so it holds:
+
+- `g_realErr = _dup(2)` → fd 2 invalid ⇒ returns **-1**. The console write-through
+  is guarded `if (g_realErr >= 0)`, so it degrades to a no-op; the published
+  crash-mirror fd `g_diagLogRealErrFd` is likewise -1, and the SEH/crash writer
+  simply skips the (absent) console and still writes `g_diagLogFileFd` (mgb64.log).
+- `_pipe(pfd, …)` returns **two fresh valid fds** regardless of console state.
+- `_dup2(pfd[1], 1)` / `_dup2(pfd[1], 2)` — `_dup2` does **not** require the target
+  fd to be currently open; it *assigns* it. So this **creates** valid fds 1 and 2
+  pointing at the pipe. After it, `printf`/`fprintf(stderr)` (bound to fds 1/2)
+  flow into the pipe → reader thread → `mgb64.log`. This is exactly the "create
+  rather than duplicate invalid fds" property MW.1 asked to verify.
+
+Net: under `-mwindows`, `mgb64.log` capture is preserved by construction; only the
+*live console mirror* (a bonus) drops out, gracefully.
+
+**Install order (now load-bearing).** `DiagLog_install()` was moved to run **before**
+`host.init()` in `src/app/main_app.cpp`. The only code that could emit before the
+tee is now `mgb_is_automation_invocation()` (which prints nothing) and the tee
+itself; the previously-exposed window — `host.init()`'s fatal
+`[app] SDL_Init/CreateWindow/GL/ImGui failed` diagnostics — is now captured in
+`mgb64.log` instead of being lost to the absent console. `DiagLog_install` depends
+only on `SDL_GetPrefPath` + a pipe (no `SDL_Init`), so running it first is safe on
+all platforms (macOS/Linux gain the same early-capture).
+
+**Automation path under `-mwindows` (accepted).** Automation/CLI invocations
+(`mgb64_headless_main`) return before the tee is installed and deliberately stay
+byte-identical (no redirection). Under the GUI subsystem their stdout/stderr reach
+inherited handles: **valid** when spawned by a shell/CI with a pipe or `>`
+redirect (so `ctest`, the byte-identity harness, and MW.3 all still capture
+output), **absent** only when an automation flag is run by double-click — a
+non-real case. A developer wanting live automation logs uses `-DMGB64_WIN_CONSOLE=ON`
+or shell redirection. Documented, not a regression for any shipping path.
+
+**What is *still* runtime-untested (unchanged from §5, but now higher-stakes).**
+The tee itself has never executed on a real Windows kernel (§5, MW.4/MW.5). Under
+`-mwindows` the tee is the *sole* log path (no console fallback), so a first
+hardware run should confirm `mgb64.log` receives engine output and that a forced
+fault's `[CRASH]` block lands there. The fd mechanics above are sound by
+construction; only their runtime behavior on a real kernel remains to be observed.

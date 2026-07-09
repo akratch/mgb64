@@ -23,14 +23,19 @@ int main(int argc, char **argv) {
         return mgb64_headless_main(argc, argv);
     }
 
+    // Tee stdout/stderr to the in-app console + mgb64.log BEFORE host.init, so
+    // its fatal init diagnostics ([app] SDL_Init/CreateWindow/... failed) are
+    // captured even under the GUI subsystem (-mwindows), where there is no
+    // console to catch them. This is interactive-path only — the automation
+    // path returned above, so it is never redirected — and the only code before
+    // this point (mgb_is_automation_invocation) emits nothing. DiagLog_install
+    // uses only SDL_GetPrefPath + a pipe, so it is safe before SDL_Init.
+    DiagLog_install();
+
     AppHost host;
     if (!host.init("MGB64", 1280, 800)) {
         return 1;
     }
-
-    // Tee engine output to the in-app console + mgb64.log (interactive path
-    // only; the automation path returned above, so it is never redirected).
-    DiagLog_install();
 
     // Register + load the engine config so the launcher's settings panel can
     // enumerate + edit it before a game boots. Idempotent with the engine boot.

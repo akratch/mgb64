@@ -42,6 +42,17 @@ if(WIN32)
     list(GET _mgb_parts 0 1 2 3 _mgb_csv4)
     string(REPLACE ";" "," MGB64_VER_CSV "${_mgb_csv4}")
     message(STATUS "MGB64: Windows VERSIONINFO ${MGB64_VER_STR} (${MGB64_VER_CSV})")
+
+    # Subsystem: game launchers (and Explorer double-click) start the exe with
+    # no inherited console, so a console-subsystem build pops an empty console
+    # window on every launch — poor presentation for a windowed game. Default to
+    # the GUI subsystem (-mwindows) for a clean launch; MGB64_WIN_CONSOLE=ON
+    # restores the console subsystem for debugging (live stdout without shell
+    # redirection). Log capture is unaffected either way: DiagLog's CRT-fd tee
+    # (src/app/diag_log.cpp) redirects stdout/stderr into mgb64.log in both
+    # modes — under -mwindows it *creates* fds 1/2 via _dup2(pipe) rather than
+    # duplicating the (invalid) console fds. See docs/WINDOWS_CONFIDENCE.md §6.
+    option(MGB64_WIN_CONSOLE "Windows: link the console subsystem (default: GUI, -mwindows)" OFF)
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -769,6 +780,12 @@ elseif(WIN32)
         # x86_64-w64-mingw32-gcc-win32/-posix). Harmless on posix-threads.
         winpthread
     )
+    # GUI subsystem by default (clean launch, no console window). MinGW keeps
+    # mainCRTStartup -> our int main() under -mwindows (SDL_MAIN_HANDLED, no
+    # WinMain needed), so this only flips the PE subsystem + GUI import libs.
+    if(NOT MGB64_WIN_CONSOLE)
+        target_link_options(ge007 PRIVATE -mwindows)
+    endif()
 else()
     target_link_libraries(ge007
         OpenGL::GL
