@@ -824,6 +824,13 @@ static id<MTLDepthStencilState> s_shadow_ds = nil;
  * (mtl_shadow_encode) may still be reading a slot's buffer while the CPU
  * wants to memcpy new geometry into it (§3.4 fix). */
 static id<MTLSamplerState> s_shadow_cmp_sampler = nil;  /* T4 receiver: LessEqual compare */
+/* M3.2 fix 2: 1x1 Depth32Float, cleared to far (1.0) once and reused as the
+ * shadow-map fragment binding whenever s_shadow_depth isn't ready. It must
+ * NEVER be s_scene_depth: that texture is the scene encoder's live depth
+ * ATTACHMENT for the very draw doing the sampling, and binding a render
+ * target as a shader resource on the same encoder is a read-while-write
+ * hazard (undefined per the Metal spec, flagged by the validation layer). */
+static id<MTLTexture> s_shadow_dummy_depth = nil;
 static id<MTLTexture> s_snapshot_tex = nil;  /* XLU/RDP framebuffer snapshot (3.3) */
 static id<MTLTexture> s_final_color = nil;   /* Phase 4 output-filter result (present + readback source) */
 static id<MTLTexture> s_filter_low = nil;    /* Phase 4 output-filter 8-bit intermediate (GL's pre-pass low_tex) */
@@ -1623,6 +1630,35 @@ static void mtl_ensure_shadow_resources(int res) {
         s_shadow_depth = [s_device newTextureWithDescriptor:dd];
         s_shadow_res = (s_shadow_depth != nil) ? res : 0;
     }
+}
+
+/* M3.2 fix 2: lazily build the 1x1 dummy shadow-map fallback and clear it to
+ * far (1.0) exactly once. GL's receiver treats "no valid shadow data" as fully
+ * lit (gfx_opengl.c:1310, "outside the shadow frustum -> sh=1.0"); a depth of
+ * 1.0 makes the receiver's `suv.z - bias <= storedDepth` compare pass for
+ * every on-screen fragment, so every PCF tap (all sampling the same clamped
+ * texel) reads lit, matching that rule instead of shadowing or reading
+ * garbage. */
+static void mtl_ensure_shadow_dummy(void) {
+    if (s_shadow_dummy_depth != nil) return;
+    MTLTextureDescriptor *dd =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                           width:1 height:1 mipmapped:NO];
+    dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    dd.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> tex = [s_device newTextureWithDescriptor:dd];
+    if (tex == nil) return;
+    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+    rpd.depthAttachment.texture = tex;
+    rpd.depthAttachment.loadAction = MTLLoadActionClear;
+    rpd.depthAttachment.clearDepth = 1.0;
+    rpd.depthAttachment.storeAction = MTLStoreActionStore;
+    id<MTLCommandBuffer> cb = [s_queue commandBuffer];
+    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    s_shadow_dummy_depth = tex;
 }
 
 /* Encode the depth-only shadow draw into `enc` (front-face cull, slope bias),
@@ -3308,10 +3344,24 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
         /* The shader declares texture(5)/sampler(5), so they must always be bound or
          * Metal faults. Ensure the resources exist (start_frame's shadow pass builds
          * them, but on the very first flagged frame the bit can be set mid-frame
-         * before that ran); fall back to s_scene_depth (also Depth32Float) if the
-         * shadow target is somehow still nil (1-frame wrong shadow, transient). */
+         * before that ran); fall back to the cleared 1x1 dummy (never s_scene_depth
+         * — that's this encoder's live depth ATTACHMENT, and binding it as a
+         * fragment texture here too is a read-while-write hazard) if the shadow
+         * target is somehow still nil (1-frame "fully lit", transient — in the
+         * gated invariant this branch is defensive-only, see mtl_ensure_shadow_dummy). */
         mtl_ensure_shadow_resources(g_pcSunShadowRes);
-        id<MTLTexture> smap = (s_shadow_depth != nil) ? s_shadow_depth : s_scene_depth;
+        id<MTLTexture> smap = s_shadow_depth;
+        if (smap == nil) {
+            static int s_shadow_dummy_fallback_logged = 0;
+            if (!s_shadow_dummy_fallback_logged) {
+                s_shadow_dummy_fallback_logged = 1;
+                fprintf(stderr, "[metal][RENDER-HEALTH] shadow receiver active with no "
+                                "shadow-map resource this frame; using cleared dummy "
+                                "(fully-lit) fallback\n");
+            }
+            mtl_ensure_shadow_dummy();
+            smap = s_shadow_dummy_depth;
+        }
         if (smap != nil && s_shadow_cmp_sampler != nil) {
             [s_enc setFragmentTexture:smap atIndex:5];                /* §4.4: unit 5 */
             [s_enc setFragmentSamplerState:s_shadow_cmp_sampler atIndex:5];
