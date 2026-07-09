@@ -2704,6 +2704,28 @@ u32 missingeubytes[4];
 s_bound_info dword_CODE_bss_8007FFA0[204];
 #endif
 
+#ifdef NATIVE_PORT
+/* T13b: DRAW-ONLY room admission set. Parallel to s_room_info.room_rendered but
+ * visible ONLY to rendering, never to the sim. The room draw loop emits geometry and
+ * props from the draw list (dword_CODE_bss_8007FFA0), NOT from room_rendered, so a
+ * room in the draw list draws regardless of its room_rendered bit. getROOMID_isRendered()
+ * and every other room_rendered consumer stay blind to draw-only rooms, so the
+ * deterministic intro RNG stream (room_rendered -> PROPFLAG_ONSCREEN -> actor tick ->
+ * pcRandom) is byte-identical to before.
+ *
+ * Set by the camera-seed walk in sub_GAME_7F0B8A6C, which snapshots the default sim
+ * state, runs the STOCK camera-room portal walk + the same additive passes the default
+ * pipeline uses (edge-rescue / frustum-fallback / visibility-supplement) so it reaches
+ * exactly the T13 rooms, marks every room the walk added beyond the snapshot draw-only,
+ * then RESTORES room_rendered and room_neighbor_to_rendered to the snapshot. The restore
+ * makes the sim-visible state provably equal to the pre-T13b default regardless of the
+ * walk's reach; the widened rooms stay in the draw list (drawn). g_BgRoomDrawOnlyCount
+ * MUST be 0 in normal gameplay (only a detached authored camera seeds the walk); it is
+ * asserted so and exposed for a gameplay-route perf check. */
+u8  g_BgRoomDrawOnly[MAXROOMCOUNT];
+s32 g_BgRoomDrawOnlyCount = 0;
+#endif
+
 // 7ca30??
 
 s32 dword_CODE_bss_800815f0;
@@ -16397,6 +16419,11 @@ void sub_GAME_7F0B8A6C(void) {
     s32 tmp;
     s32 use_portal_bfs;
     f32 screen_bbox[4];
+#ifdef NATIVE_PORT
+    /* T13b: the detached authored camera's resolved room, or -1. Hoisted to function
+     * scope so the camera-seed walk can run as the final admission step. */
+    s32 camera_seed_room = -1;
+#endif
 
     bgUpdateCurrentPlayerScreenMinMax();
 
@@ -16416,10 +16443,15 @@ void sub_GAME_7F0B8A6C(void) {
 #ifdef NATIVE_PORT
     {
         s32 room_clear_idx;
+        /* T13b: clear the draw-only set on exactly room_rendered's per-frame lifecycle. */
+        g_BgRoomDrawOnlyCount = 0;
         for (room_clear_idx = 0; room_clear_idx < g_MaxNumRooms && room_clear_idx < 200; room_clear_idx++) {
             roomptr[room_clear_idx].room_rendered = 0;
             roomptr[room_clear_idx].room_neighbor_to_rendered = 0;
             roomptr[room_clear_idx].room_loaded_mask = 0;
+            if (room_clear_idx < MAXROOMCOUNT) {
+                g_BgRoomDrawOnly[room_clear_idx] = 0;
+            }
         }
     }
 #else
@@ -16577,7 +16609,6 @@ void sub_GAME_7F0B8A6C(void) {
         void *player_bbox = (void *)&g_CurrentPlayer->screenxminf;
         s32 portal_seed_rooms[4];
         s32 portal_seed_count = 0;
-        s32 camera_seed_room = -1;
         enum CAMERAMODE camera_mode = bondviewGetCameraMode();
 #else
         void *player_bbox = (void *)((u8 *)g_CurrentPlayer + 0x1118);
@@ -16663,36 +16694,9 @@ void sub_GAME_7F0B8A6C(void) {
         for (i = 0; i < portal_seed_count; i++) {
             bgQueueConnectedRoomPortals(portal_seed_rooms[i], screen_bbox);
         }
-        /* T13 (opt-in, default OFF -- see blocker below): propagate the portal walk
-         * from the detached camera's own room, not just admit it. The camera-seed fix
-         * (above) marks the camera room rendered via sub_GAME_7F0B39BC but -- unlike
-         * g_BgCurrentRoom and the position seeds -- never enqueued its portals, so the
-         * BFS stops at the camera room and only the visibility supplement's one-hop
-         * neighbors are admitted. Rooms one hop past those (Silo 69->70 and the shaft
-         * the establishing camera looks down) are never walked and render as the
-         * sky/clear color (the Silo-intro blank-blue defect). Queuing the camera
-         * room's portals fills them: Silo intro blue-clear pixels 3639->124, Dam 4050->46.
-         *
-         * BLOCKER (why this is NOT default-on): room admission is coupled to the sim.
-         * getROOMID_isRendered() reads room_rendered, which gates PROPFLAG_ONSCREEN and
-         * thus which actors tick/consume the deterministic RNG (pcRandom). Walking the
-         * camera room admits more rooms -> more onscreen actors (Silo intro 2->5) ->
-         * a different intro RNG stream. On swirl intros that shifts the deterministic
-         * camera-index pick: intro_oracle_dam_route diverges from the ares/stock
-         * capture by ~10000u of cam_pos with this ON, and matches stock with it OFF.
-         * i.e. stock does NOT admit these rooms during the intro. Making this
-         * default-on requires decoupling visual room admission from the room_rendered
-         * sim flag (backlog M2.3) or a stock combat-field oracle confirming the fuller
-         * set is faithful. Until then this is opt-in: GE007_CAMERA_SEED_WALK=1. */
-        if (camera_seed_room >= 0) {
-            static int camera_seed_walk = -1;
-            if (camera_seed_walk < 0) {
-                camera_seed_walk = (getenv("GE007_CAMERA_SEED_WALK") != NULL);
-            }
-            if (camera_seed_walk) {
-                bgQueueConnectedRoomPortals(camera_seed_room, screen_bbox);
-            }
-        }
+        /* T13b: the detached camera's portal walk is NOT enqueued here. It runs as the
+         * final admission step (block at the end of this function) so it can fill the
+         * camera's sightline without perturbing the room_rendered set the sim reads. */
 #endif
 
         /* Process queued portal traversals (BFS) */
@@ -16842,6 +16846,97 @@ void sub_GAME_7F0B8A6C(void) {
         bgForceAdmitRoomsForDiagnostics(player_bbox);
         if (g_PortForceAdmitRoomCount > 0) {
             bgTraceRoomProjectIfRequested("post_force", player_bbox);
+        }
+
+        /* T13b: camera-seed portal walk, DECOUPLED from the sim (this commit ships it
+         * OPT-IN behind GE007_CAMERA_SEED_WALK; the next commit flips it default-on with
+         * a GE007_NO_CAMERA_SEED_WALK opt-out). The D42 camera-seed fix admits the detached
+         * camera's own room into room_rendered but never walked its portals, so the BFS
+         * stopped one hop short and the camera's sightline rendered as flat sky/clear
+         * color (the Silo-intro blank-blue defect: 3639 clear px). The T13 opt-in walked
+         * it (Silo 3639->124, Dam 4050->46) but into room_rendered, which makes more
+         * actors onscreen (PROPFLAG_ONSCREEN) and shifts the deterministic intro RNG so
+         * intro_oracle_dam_route diverges from stock -- the blocker that kept it opt-in.
+         *
+         * Decouple by reproduce-then-restore. The default visibility pipeline above has
+         * fully settled room_rendered to the default set D and room_neighbor_to_rendered
+         * to N. Snapshot both. Then run the STOCK camera-room walk and the SAME additive
+         * passes the default pipeline runs (edge-rescue, frustum-fallback, visibility-
+         * supplement) so room_rendered widens to exactly the T13 set T (identical code ->
+         * identical rooms, including the ones only edge-rescue/fallback reach past the
+         * pure BFS, e.g. Dam room 125). Mark every room in T\D draw-only, then RESTORE
+         * room_rendered=D and room_neighbor_to_rendered=N. The restore makes the sim-
+         * visible state provably equal to the pre-T13b default regardless of the walk's
+         * reach (no sim code runs between here and the restore -- this is pure visibility
+         * computation), while the widened rooms stay in the draw list and draw. The BFS
+         * scratch (portals_to_room_count >=9 throttle, portal-depth bytes) is reset first
+         * so the walk propagates as freshly as the T13 combined pass did; both are pure
+         * per-frame scratch with no consumer after visibility. */
+        if (camera_seed_room >= 0) {
+            static int camera_seed_walk = -1;
+            if (camera_seed_walk < 0) {
+                camera_seed_walk = (getenv("GE007_CAMERA_SEED_WALK") != NULL);
+            }
+            if (camera_seed_walk) {
+                u8 snap_rendered[MAXROOMCOUNT];
+                u8 snap_neighbor[MAXROOMCOUNT];
+                s32 walk_tmp = 0;
+                s32 idx;
+
+                for (idx = 0; idx < MAXROOMCOUNT; idx++) {
+                    snap_rendered[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_rendered : 0;
+                    snap_neighbor[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_neighbor_to_rendered : 0;
+                    g_BgRoomInfo[idx].portals_to_room_count = 0;
+                }
+                memset(D_800442FC, 0, 200);
+
+                /* Stock camera-room walk (transiently widens room_rendered + draw list). */
+                bgQueueConnectedRoomPortals(camera_seed_room, screen_bbox);
+                while (sub_GAME_7F0B7EE4(&walk_tmp)) {
+                }
+
+                /* Re-run the additive passes on the widened set, exactly as the default
+                 * pipeline did, so rescue/fallback/supplement reach the same extra rooms. */
+                bgMarkPortalNeighborsToRendered(g_BgPortals);
+                bgPromotePortalEdgeRescueCandidates(player_bbox);
+                bgApplyPortalProjectFrustumFallback(player_bbox);
+                {
+                    u8 walk_neighbor_snapshot[MAXROOMCOUNT] = {0};
+                    bgComputePortalNeighborSnapshotLocal(g_BgPortals, walk_neighbor_snapshot);
+                    bgApplyVisibilitySupplement(player_bbox, walk_neighbor_snapshot);
+                }
+
+                /* Mark rooms the walk added beyond the default snapshot draw-only, then
+                 * restore the sim-visible state (room_rendered + room_neighbor) to default. */
+                for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+                    if (g_BgRoomInfo[idx].room_rendered && !snap_rendered[idx]) {
+                        g_BgRoomDrawOnly[idx] = 1;
+                        g_BgRoomDrawOnlyCount++;
+                    }
+                    g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
+                    g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
+                }
+            }
+        }
+
+        /* T13b invariant + perf probe: draw-only rooms exist ONLY when a detached
+         * authored camera is active. During normal gameplay (camera_seed_room < 0)
+         * the walk above never runs and the set stays empty, so both sim and render
+         * are exactly as before -- the decoupling has zero cost off-intro.
+         * GE007_TRACE_DRAW_ONLY logs the per-frame count. */
+        assert(g_BgRoomDrawOnlyCount == 0 || camera_seed_room >= 0);
+        {
+            static int trace_draw_only = -1;
+            if (trace_draw_only < 0) {
+                trace_draw_only = (getenv("GE007_TRACE_DRAW_ONLY") != NULL);
+            }
+            if (trace_draw_only) {
+                fprintf(stderr,
+                        "[DRAW-ONLY] frame=%d camera_seed_room=%d draw_only_rooms=%d\n",
+                        g_frame_count_diag, camera_seed_room, g_BgRoomDrawOnlyCount);
+            }
         }
     }
 
