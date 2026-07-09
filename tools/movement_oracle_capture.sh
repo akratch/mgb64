@@ -729,6 +729,9 @@ run_stock_capture() {
     local stock_env=()
     local stock_timing_env=()
     local stock_cmd=()
+    local shot_prev=-1
+    local shot_cur=0
+    local shot_waited=0
 
     python3 tools/rom_oracle_route.py ares-input "$ROUTE_PATH" >"$ARES_INPUT"
     while IFS= read -r line; do
@@ -799,6 +802,30 @@ run_stock_capture() {
         sleep 1
         elapsed=$((elapsed + 1))
     done
+
+    # The wait loop above breaks as soon as the trace reaches STOCK_FRAMES, but
+    # the screenshot (often scheduled at that very frame) can still be mid-flush
+    # -- killing ares immediately truncates the .ppm and fails the screenshot
+    # health audit (observed intermittently: "image file is truncated"). Give
+    # the file a bounded window to exist and reach a stable non-zero size
+    # before terminating.
+    if kill -0 "$ares_pid" 2>/dev/null; then
+        while [[ "$shot_waited" -lt 15 ]]; do
+            if [[ -f "$STOCK_SCREENSHOT" ]]; then
+                shot_cur="$(wc -c < "$STOCK_SCREENSHOT" 2>/dev/null | tr -d '[:space:]')"
+                [[ "$shot_cur" =~ ^[0-9]+$ ]] || shot_cur=0
+                if [[ "$shot_cur" -gt 0 && "$shot_cur" -eq "$shot_prev" ]]; then
+                    break
+                fi
+                shot_prev="$shot_cur"
+            fi
+            if ! kill -0 "$ares_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+            shot_waited=$((shot_waited + 1))
+        done
+    fi
 
     if kill -0 "$ares_pid" 2>/dev/null; then
         kill "$ares_pid" 2>/dev/null || true
