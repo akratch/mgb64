@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**891 flags** found across the source.
+**894 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -516,6 +516,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | ? |  | 1 |  |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
+| `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_OBJ` | ? |  | 1 |  |
@@ -892,6 +893,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_VIS_SUPPLEMENT_MAX_AABB_GAP` | ? |  | 1 |  |
 | `GE007_VIS_SUPPLEMENT_MAX_EXTRA` | ? |  | 1 |  |
 | `GE007_VIS_SUPPLEMENT_MAX_UNPROJECTED_AABB_GAP` | ? |  | 1 |  |
+| `GE007_WATCHDOG_STALL_SECS` | int | 5 | 1 | seconds without a sim heartbeat before the stall watchdog dumps (default 5) |
+| `GE007_WATCHDOG_TEST` | bool | 0 | 1 | negative control: synthetically stall the sim thread at frame ~600 to prove the watchdog capture path |
 | `GE007_WEAPON_DIAG` | ? |  | 4 |  |
 | `GE007_WEAPON_DIAG_DL` | ? |  | 1 |  |
 | `GE007_WEAPON_DIAG_ITEM` | ? |  | 1 |  |
