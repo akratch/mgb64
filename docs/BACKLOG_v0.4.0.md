@@ -337,9 +337,18 @@ floating Bond.
       find stock's duration source (likely per-setup or load-driven), replicate.
 - [ ] **D41:** ~3-tick anim-phase shift between menu-boot and direct-boot — trace where
       the tick offset enters (menu exit timing) and align.
-- [ ] **D42 residual:** distant reservoir mountains not portal-reachable from Dam room 53
-      absent in far establishing shots — needs stock pixel comparison; consider a
-      camera-seed room supplement for establishing shots only.
+- [x] **D42 residual — camera-seed WALK (T13, `ea7d41a`, 2026-07-09):** the headline
+      "large map areas render as flat sky-blue" on establishing/intro cameras (Silo
+      especially, also Dam) was root-caused to the camera-seed fix admitting the camera
+      room but never enqueuing its portals for the BFS walk, so the walk stopped one hop
+      out. Fixed by walking the BFS from the camera room (`GE007_NO_CAMERA_SEED_WALK`
+      A/B). Silo intro blue-clear 3639→124 px, Dam 4050→46 px; `playability_smoke --all`
+      20/20 render_health PASS, renderer_parity + sim_state_hash + intro_visual_regression
+      + hidden_guard_contract green; byte-identical in gameplay (gated to detached
+      cameras). **Remaining residual → M3.4:** rooms directly visible across open space
+      but many winding-portal-hops away (Silo 28/44 past a supplement-admitted room; a
+      screen-edge sliver) are still aperture-dropped. Diagnostic left in tree:
+      `GE007_TRACE_ROOM_CLASSIFY` (`496370b`) classifies unrendered rooms dropped-vs-far.
 - [ ] Re-test D31/D32/D35/D36 waivers after M0.3+M1.3; delete every waiver the fixes
       obsolete (that is the ledger's exit criterion).
 
@@ -595,6 +604,20 @@ room-51 windows still show sky, and the over-broad variant can admit far terrain
       heuristic ≠ connectivity) behind a compat flag for one release.
 - [ ] Validate: Train regression lane; `GE007_PORTAL_EDGE_RESCUE=0` as negative control;
       Dam room-14 far-terrain guard stays green.
+- **T13 note (2026-07-09):** the D42/Silo establishing-camera blank-blue work
+  (`ea7d41a`) landed the *seed/walk* half of this class (walk the BFS from the camera
+  room). What remains here is exactly the aperture half: rooms that are directly visible
+  across open space but reachable only through a long chain of grazing portals — Silo
+  intro rooms 28/44 (one hop past a supplement-admitted room, so the walk never continues
+  through them) and a screen-edge sliver. `GE007_TRACE_ROOM_CLASSIFY` (`496370b`) is the
+  diagnostic: it labels each unrendered frustum-visible room `dropped` (portal-adjacent to
+  a rendered room — this task's target) vs `far` (multi-hop). On Silo the residual set is
+  small (`dropped`: 16,18,28,44,45); the supplement admits leaf rooms without continuing
+  the walk through them, so the real fix is either (a) propagate the walk one bounded hop
+  from supplement-admitted rooms, or (b) the clamped-min-aperture change already scoped
+  above. The `train_window_backdrop_regression.sh` lane currently FAILs on its own
+  `PORTAL_EDGE_RESCUE` controls (rescue delta 0.000% on Train) independent of T13 — that
+  control gap is part of this task's cleanup.
 
 ### M3.5 — Promotion decisions for parked default-off fixes
 **P2 · S-M each — each is "validate, then flip or close"**

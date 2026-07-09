@@ -16577,6 +16577,7 @@ void sub_GAME_7F0B8A6C(void) {
         void *player_bbox = (void *)&g_CurrentPlayer->screenxminf;
         s32 portal_seed_rooms[4];
         s32 portal_seed_count = 0;
+        s32 camera_seed_room = -1;
         enum CAMERAMODE camera_mode = bondviewGetCameraMode();
 #else
         void *player_bbox = (void *)((u8 *)g_CurrentPlayer + 0x1118);
@@ -16618,6 +16619,7 @@ void sub_GAME_7F0B8A6C(void) {
                 bgSetRoomAdmitTraceContext("seed_camera_room", cam_room, -1, 0);
                 sub_GAME_7F0B39BC(cam_room, 0, player_bbox, 1);
                 bgClearRoomAdmitTraceContext();
+                camera_seed_room = cam_room;
             }
         }
 #endif
@@ -16660,6 +16662,36 @@ void sub_GAME_7F0B8A6C(void) {
 #ifdef NATIVE_PORT
         for (i = 0; i < portal_seed_count; i++) {
             bgQueueConnectedRoomPortals(portal_seed_rooms[i], screen_bbox);
+        }
+        /* T13 (opt-in, default OFF -- see blocker below): propagate the portal walk
+         * from the detached camera's own room, not just admit it. The camera-seed fix
+         * (above) marks the camera room rendered via sub_GAME_7F0B39BC but -- unlike
+         * g_BgCurrentRoom and the position seeds -- never enqueued its portals, so the
+         * BFS stops at the camera room and only the visibility supplement's one-hop
+         * neighbors are admitted. Rooms one hop past those (Silo 69->70 and the shaft
+         * the establishing camera looks down) are never walked and render as the
+         * sky/clear color (the Silo-intro blank-blue defect). Queuing the camera
+         * room's portals fills them: Silo intro blue-clear pixels 3639->124, Dam 4050->46.
+         *
+         * BLOCKER (why this is NOT default-on): room admission is coupled to the sim.
+         * getROOMID_isRendered() reads room_rendered, which gates PROPFLAG_ONSCREEN and
+         * thus which actors tick/consume the deterministic RNG (pcRandom). Walking the
+         * camera room admits more rooms -> more onscreen actors (Silo intro 2->5) ->
+         * a different intro RNG stream. On swirl intros that shifts the deterministic
+         * camera-index pick: intro_oracle_dam_route diverges from the ares/stock
+         * capture by ~10000u of cam_pos with this ON, and matches stock with it OFF.
+         * i.e. stock does NOT admit these rooms during the intro. Making this
+         * default-on requires decoupling visual room admission from the room_rendered
+         * sim flag (backlog M2.3) or a stock combat-field oracle confirming the fuller
+         * set is faithful. Until then this is opt-in: GE007_CAMERA_SEED_WALK=1. */
+        if (camera_seed_room >= 0) {
+            static int camera_seed_walk = -1;
+            if (camera_seed_walk < 0) {
+                camera_seed_walk = (getenv("GE007_CAMERA_SEED_WALK") != NULL);
+            }
+            if (camera_seed_walk) {
+                bgQueueConnectedRoomPortals(camera_seed_room, screen_bbox);
+            }
         }
 #endif
 
