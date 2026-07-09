@@ -1597,7 +1597,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_RESTART, "GE007_HIDPI",
                         "--config-override Video.HiDPI=0|1",
                         "HiDPI",
-                        "Allow Retina/high-DPI drawable sizes. Off keeps rendering at the configured window size for steadier performance.");
+                        "Render at your display's full Retina/high-DPI resolution (sharper, more GPU cost). Off renders at the window size for steadier performance.");
     settingsRegisterInt("Video.FullscreenWidth", &g_cfgFullscreenW, 0, 0, 7680,
                         SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_WIDTH",
                         "--config-override Video.FullscreenWidth=VALUE",
@@ -1638,10 +1638,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_FPS_OVERLAY",
                         "--config-override Video.FpsOverlay=VALUE",
                         "FPS overlay",
-                        "Small top-right HUD overlay: current FPS, frame time (ms), and 1%-low FPS. "
-                        "0 = off. Always suppressed (zero display-list bytes) under --deterministic, "
-                        "GE007_BACKGROUND, and --screenshot-frame sessions regardless of this setting, "
-                        "so byte-identity/parity harnesses are unaffected.");
+                        "Small top-right overlay showing the current FPS, frame time (ms), and 1%-low "
+                        "FPS. 0 = off. (Automatically hidden during benchmark and screenshot runs.)");
     settingsRegisterFloat("Video.Gamma", &g_pcVideoGamma, 1.0f, 0.5f, 2.5f,
                           SETTING_SCOPE_LIVE, "GE007_GAMMA",
                           "--config-override Video.Gamma=VALUE",
@@ -1666,7 +1664,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_OUTPUT_DITHER",
                         "--config-override Video.OutputDither=VALUE",
                         "Output dither",
-                        "4x4 ordered Bayer dither to hide RGBA8 banding in skies/fades.");
+                        "Adds a subtle dither pattern that smooths out color banding in skies and fades. 0 = off.");
     settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIGNETTE",
                           "--config-override Video.Vignette=VALUE",
@@ -1808,8 +1806,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_SMAA",
                         "--config-override Video.Smaa=VALUE",
                         "SMAA",
-                        "Subpixel morphological anti-aliasing (Metal only): a sharper edge AA than "
-                        "FXAA. When on it replaces FXAA on the output pass. 0 = off.");
+                        "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. "
+                        "(Metal builds only -- no effect on this OpenGL build.)");
     settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_SHARPEN",
                           "--config-override Video.Sharpen=VALUE",
@@ -1819,12 +1817,12 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_GRADE_PRESETS",
                         "--config-override Video.GradePresets=VALUE",
                         "Per-level grade",
-                        "Subtle per-level mood color grade composed atop the global grade. 0 = off (identity).");
+                        "Subtle per-level color grading for mood, layered on top of the global color settings. 0 = off.");
     settingsRegisterInt("Video.Tonemap", &g_pcTonemap, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_TONEMAP",
                         "--config-override Video.Tonemap=VALUE",
                         "Filmic tonemap",
-                        "Gentle filmic highlight rolloff for a cinematic look. 0 = off (linear).");
+                        "Softens bright highlights for a more cinematic image. 0 = off (raw output).");
     settingsRegisterInt("Video.RemasterFX", &g_pcRemasterFX, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_REMASTER_FX",
                         "--config-override Video.RemasterFX=VALUE",
@@ -1873,7 +1871,7 @@ void platformRegisterConfig(void)
                          SETTING_SCOPE_LIVE, "GE007_RETRO_FILTER",
                          "--config-override Video.RetroFilter=VALUE",
                          "Retro filter",
-                         "Output VI soft-filter mode: auto, off, or on.");
+                         "N64-style output smoothing filter that softens hard pixel edges: auto, off, or on.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
@@ -2026,7 +2024,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_OBJECTIVES",
                         "--config-override Input.MinimapObjectives=VALUE",
                         "Minimap objectives",
-                        "Enable objective pins once the objective layer is implemented (0 = off).");
+                        "Reserved for objective pins on the minimap. Not yet implemented -- no effect currently.");
     settingsRegisterInt("Input.MinimapEnemyFireReveal", &g_pcMinimapEnemyFireReveal, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_ENEMY_FIRE_REVEAL",
                         "--config-override Input.MinimapEnemyFireReveal=VALUE",
