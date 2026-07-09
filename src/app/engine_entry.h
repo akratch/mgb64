@@ -60,6 +60,11 @@ void platformSetOverlayHooks(const AppOverlayHooks *hooks);
 // reach their own N64 pad instead of freezing everyone into the overlay.
 int platformGetPad0InstanceId(void);
 
+// Active player count (1 in the frontend/boot). The overlay uses this to show
+// the honest per-mode footer: single-player pauses the sim when open, MP does
+// not (you cannot freeze the other players' clocks). Defined in platform_sdl.c.
+int platformGetPlayerCount(void);
+
 #ifdef __cplusplus
 }
 #endif

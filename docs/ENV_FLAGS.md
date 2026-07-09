@@ -845,6 +845,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_SKY_PREP_PIXEL_ROOM` | ? |  | 1 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_X` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_Y` | ? |  | 2 |  |
+| `GE007_TRACE_SOLO_PAUSE` | ? |  | 1 |  |
 | `GE007_TRACE_SPARKS` | ? |  | 1 |  |
 | `GE007_TRACE_TEX` | ? |  | 1 |  |
 | `GE007_TRACE_TEXGEN_MATERIALS` | ? |  | 2 |  |

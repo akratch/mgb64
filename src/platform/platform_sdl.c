@@ -2483,6 +2483,16 @@ int platformGetPad0InstanceId(void) {
     return g_pads[0].handle ? (int)g_pads[0].instance_id : -1;
 }
 
+/* MC.7: active player count, for the app overlay to choose its per-mode footer
+ * (single-player = "Paused", multiplayer = "game keeps running"). Returns 1 when
+ * the engine has no live players yet (frontend/boot) so the overlay text stays
+ * in the single-player wording there. */
+int platformGetPlayerCount(void) {
+    extern s32 getPlayerCount(void);
+    s32 n = getPlayerCount();
+    return (n >= 1) ? (int)n : 1;
+}
+
 /* Raw SDL button state for pad k (0 if absent). Mapping to N64 buttons is done
  * by the caller (stubs.c) so all players share one mapping. */
 unsigned int platformGetPadButtons(int k) {

@@ -2071,6 +2071,36 @@ void lvlSetMultipliersForDifficulty(void)
 
 #ifdef NONMATCHING
 #ifdef PORT_FIXME_STUBS
+#ifdef NATIVE_PORT
+/* MC.7 solo-pause: freeze the world sim for one frame while the app settings
+ * overlay (F1 / gamepad View) is open in SINGLE-PLAYER. This routes through
+ * GoldenEye's own watch-pause semantics — it zeroes g_ClockTimer, so movement/
+ * gravity/AI integration halts while lvlRender keeps drawing the frozen frame
+ * (the overlay composites on top). Semantics deliberately match the
+ * checkGamePaused() branch below.
+ *
+ * Fail-closed for determinism: the gate returns 0 under --deterministic and
+ * RAMROM playback, so automation — which never registers overlay hooks anyway —
+ * can never engage it and sim_state_hash stays byte-identical. Multiplayer is
+ * never paused (you cannot freeze the other players' clocks), so MP keeps the
+ * sim running with the overlay open. */
+static s32 portOverlaySoloPauseActive(void)
+{
+    extern int g_deterministic;
+    extern int platformOverlayWantsInput(void);
+
+    if (g_deterministic) {
+        return 0;  /* automation / replay: a real-time pause must not exist here */
+    }
+    if (get_is_ramrom_flag() != 0) {
+        return 0;  /* demo record/playback timing is fixed */
+    }
+    if (getPlayerCount() != 1) {
+        return 0;  /* MP: cannot freeze other players — keep the sim running */
+    }
+    return platformOverlayWantsInput() ? 1 : 0;
+}
+#endif
 /* Full N64 lvlManageMpGame converged for PC port.
  * PC additions: timer capping (NATIVE_PORT), YOLT gated (GE007_MP_YOLT).
  * See decomp.me/scratch/YWqVR for N64 matching status. */
@@ -2102,6 +2132,36 @@ void lvlManageMpGame(void)
     /* Section A: Timer update with PC-safe capping */
     tlbmanageResetCurrentEntriesCount();
 
+#ifdef NATIVE_PORT
+    /* MC.7: single-player app-overlay pause. Evaluate the gate once per frame and
+     * (idempotently) tell the stall watchdog whether we are paused — a frozen sim
+     * would otherwise look like a wedge on the breadcrumb ring. Setting it here,
+     * unconditionally before the branch, guarantees we always un-suppress on the
+     * frame the overlay closes even if the game is simultaneously in a
+     * controls-locked / watch-paused state. */
+    s32 overlaySoloPaused = portOverlaySoloPauseActive();
+    {
+        extern void portWatchdogSetPaused(int paused);
+        portWatchdogSetPaused(overlaySoloPaused);
+    }
+    {
+        /* Edge-logged proof marker (GE007_TRACE_SOLO_PAUSE): prints g_GlobalTimer
+         * at each pause/resume. A headless overlay-open smoke asserts the two
+         * timers are EQUAL (the sim clock never advanced while paused) and that
+         * it climbs again after resume. Off by default → zero cost. */
+        static s32 s_traceSoloPause = -1;
+        static s32 s_prevSoloPaused = 0;
+        if (s_traceSoloPause < 0) {
+            s_traceSoloPause = (getenv("GE007_TRACE_SOLO_PAUSE") != NULL) ? 1 : 0;
+        }
+        if (s_traceSoloPause && overlaySoloPaused != s_prevSoloPaused) {
+            fprintf(stderr, "[MC7] solo-pause %s g_GlobalTimer=%d\n",
+                    overlaySoloPaused ? "ENGAGED" : "RELEASED", (s32)g_GlobalTimer);
+            s_prevSoloPaused = overlaySoloPaused;
+        }
+    }
+#endif
+
     if (g_ControlsLockedFlag != 0)
     {
         g_ClockTimer = 0;
@@ -2110,6 +2170,14 @@ void lvlManageMpGame(void)
     {
         g_ClockTimer = 0;
     }
+#ifdef NATIVE_PORT
+    /* Freeze the sim tick exactly like the watch pause above; render keeps
+     * running so the frozen frame + overlay still draw. */
+    else if (overlaySoloPaused)
+    {
+        g_ClockTimer = 0;
+    }
+#endif
     else
     {
         g_ClockTimer = speedgraphframes;
