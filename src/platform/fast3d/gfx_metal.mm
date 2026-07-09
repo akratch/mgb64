@@ -713,6 +713,9 @@ static struct ShaderProgram *mtl_create_and_load_new_shader(uint64_t id0, uint32
                 (unsigned long long)id0, id1, src.p);
     }
 
+  @autoreleasepool {  /* MSL compile (newLibraryWithSource) allocates a stack of
+                       * Objective-C temporaries in the toolchain frontend; without
+                       * a pool they live until this thread's next drain (M3.2). */
     NSError *err = nil;
     NSString *nssrc = [NSString stringWithUTF8String:src.p];
     id<MTLLibrary> lib = [s_device newLibraryWithSource:nssrc options:nil error:&err];
@@ -722,7 +725,6 @@ static struct ShaderProgram *mtl_create_and_load_new_shader(uint64_t id0, uint32
                 err ? err.localizedDescription.UTF8String : "(no error)", src.p);
         abort();
     }
-    tb_free(&src);
     ms->library = lib;
     ms->vtxFn = [lib newFunctionWithName:@"vertexMain"];
     ms->fragFn = [lib newFunctionWithName:@"fragmentMain"];
@@ -732,6 +734,8 @@ static struct ShaderProgram *mtl_create_and_load_new_shader(uint64_t id0, uint32
         abort();
     }
     ms->psoCache = [NSMutableDictionary dictionary];
+  }
+    tb_free(&src);
 
     if (s_shader_count >= s_shader_cap) {
         int newcap = s_shader_cap ? s_shader_cap * 2 : 256;
@@ -1156,6 +1160,7 @@ static bool mtl_ensure_minimap_overlay_pso(void) {
     if (s_minimap_overlay_pso != nil) return true;
     if (s_device == nil) return false;
 
+  @autoreleasepool {  /* MSL compile transients (M3.2) */
     static const char *src =
         "#include <metal_stdlib>\n"
         "using namespace metal;\n"
@@ -1233,6 +1238,7 @@ static bool mtl_ensure_minimap_overlay_pso(void) {
     }
 
     return true;
+  }
 }
 
 extern "C" int gfx_metal_draw_minimap_overlay(const void *vertices,
@@ -1565,6 +1571,7 @@ static void mtl_gpu_capture_end(id<MTLCommandBuffer> cmdbuf) {
 static void mtl_ensure_shadow_resources(int res) {
     if (res < 256) res = 2048;
     if (s_shadow_pso == nil) {
+      @autoreleasepool {  /* MSL compile transients (M3.2) */
         static const char *src =
             "#include <metal_stdlib>\n"
             "using namespace metal;\n"
@@ -1609,6 +1616,7 @@ static void mtl_ensure_shadow_resources(int res) {
         dsd.depthCompareFunction = MTLCompareFunctionLess;
         dsd.depthWriteEnabled = YES;
         s_shadow_ds = [s_device newDepthStencilStateWithDescriptor:dsd];
+      }
     }
     if (s_shadow_cmp_sampler == nil) {
         /* T4 receiver: PCF comparison sampler — LessEqual + linear for hardware 2x2
@@ -2143,6 +2151,7 @@ static bool mtl_ensure_filter_program(void) {
     tb_str(&s, "    rgb = floor(clamp(rgb, 0.0, 1.0) * 31.0 + threshold) / 31.0; rgb = clamp(rgb, 0.0, 1.0);\n  }\n");
     tb_str(&s, "  return float4(rgb, color.a);\n}\n");
 
+  @autoreleasepool {  /* MSL compile transients (M3.2) */
     NSError *err = nil;
     NSString *nssrc = [NSString stringWithUTF8String:s.p];
     /* Prefer SAFE math so the rgb555/dither quantize boundaries stay bit-stable
@@ -2187,6 +2196,7 @@ static bool mtl_ensure_filter_program(void) {
     smp.tAddressMode = MTLSamplerAddressModeClampToEdge;
     s_filter_smp = [s_device newSamplerStateWithDescriptor:smp];
     return s_filter_pso != nil && s_filter_smp != nil;
+  }
 }
 
 /* Fill the filter uniforms for one pass, mirroring the per-pass values in
@@ -2450,6 +2460,7 @@ static bool mtl_ensure_ssao_program(void) {
     tb_str(&s, "    }\n  }\n");
     tb_str(&s, "  return float4(sum / max(wsum, 1e-4));\n}\n");
 
+  @autoreleasepool {  /* MSL compile transients (M3.2) */
     NSError *err = nil;
     NSString *nssrc = [NSString stringWithUTF8String:s.p];
     MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
@@ -2493,6 +2504,7 @@ static bool mtl_ensure_ssao_program(void) {
         }
     }
     return true;
+  }
 }
 
 static void mtl_fill_ssao_uniforms(struct MtlSsaoUniforms *u) {
@@ -2774,6 +2786,7 @@ static bool mtl_ensure_smaa_programs(void) {
     tb_str(&s, "  color += bW.y * colorTex.sample(lin, bc.zw, level(0));\n");
     tb_str(&s, "  return color;\n}\n");
 
+  @autoreleasepool {  /* MSL compile transients (M3.2) */
     NSError *err = nil;
     NSString *nssrc = [NSString stringWithUTF8String:s.p];
     MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
@@ -2825,6 +2838,7 @@ static bool mtl_ensure_smaa_programs(void) {
     s_smaa_point_smp = [s_device newSamplerStateWithDescriptor:ps];
     return s_smaa_edge_pso != nil && s_smaa_blend_pso != nil && s_smaa_neighbor_pso != nil &&
            s_smaa_linear_smp != nil && s_smaa_point_smp != nil;
+  }
 }
 
 /* Run the 3-pass SMAA chain on s_scene_color into s_smaa_out. Automatic Metal
