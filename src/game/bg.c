@@ -1777,9 +1777,20 @@ static void bgApplyPortalProjectFrustumFallback(bbox2d *player_bbox)
     }
 
     camera_mode = bondviewGetCameraMode();
+    /* Detached authored cameras now have proper camera-room BFS admission
+     * (bgIsDetachedAuthoredCamera / D42/T14 seed), so this player-bbox frustum
+     * heuristic is superfluous there and, worse, harmful inside the T13b walk
+     * re-run: current_rooms is walk-inflated, so the size-refusal below can pass
+     * where the default pass refused and bgRebuildFrustumAllVisibility would
+     * zero/rebuild the draw list (one-frame frustum-all over-admission, D7 shard
+     * class). Skip on POSEND/DEATH_CAM_* too, matching bgIsDetachedAuthoredCamera
+     * (review F3b). */
     if (camera_mode == CAMERAMODE_INTRO
         || camera_mode == CAMERAMODE_FADESWIRL
-        || camera_mode == CAMERAMODE_SWIRL) {
+        || camera_mode == CAMERAMODE_SWIRL
+        || camera_mode == CAMERAMODE_POSEND
+        || camera_mode == CAMERAMODE_DEATH_CAM_SP
+        || camera_mode == CAMERAMODE_DEATH_CAM_MP) {
         return;
     }
 
