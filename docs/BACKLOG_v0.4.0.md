@@ -1142,6 +1142,21 @@ The keyboard rebinding UI exists (src/app/ui_bindings.cpp); gamepad is fixed-lay
       watchdog/diag-log behavior on real Windows (M6.1/M6.2 must be landed first).
 - [ ] Feed results into docs/WINDOWS_CONFIDENCE.md as the real-hardware section.
 
+### MC.7 — Real solo-pause for the F1/View overlay
+**P2 · M — RC follow-up (review F2)**
+- [ ] The overlay currently only swallows input (`onWantsInput`) — the sim keeps
+      ticking while it is open, so opening settings mid-combat leaves Bond defenseless.
+      The alpha.2 RC ships with the honest footer wording ("game keeps running") as the
+      stopgap; this item adds the actual suspension.
+- [ ] Suspend the solo sim while the overlay is open (route through the watch-pause
+      path, or gate the sim tick on `platformOverlayWantsInput()`), keeping MP unpaused
+      (or lockstep-safe). Faithful pause semantics: mirror GoldenEye's watch pause, not
+      a hard freeze, where that matters.
+- [ ] Determinism gate: `sim_state_hash` invariance must hold with the overlay never
+      opened (automation has no overlay hooks, so this is a no-op there — assert it).
+- [ ] On landing, drop the "game keeps running" footer back to a "Paused" wording and
+      remove the F2 known-issue from the RC notes.
+
 **Sequencing:** MC.1 + MC.3 are the pre-Ally software work (any pad validates them);
 MC.2/MC.4 ride along cheaply; MC.6 becomes the capstone of BOTH this sprint and MW
 once the hardware arrives. Ally note: its pad is active in Armoury Crate "Gamepad"

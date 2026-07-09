@@ -118,7 +118,10 @@ void onRender() {
     ImGui::TextUnformatted("MGB64");
     ImGui::PopStyleColor();
     ImGui::PopFont();
-    ui::TextSubtle("Paused overlay  \xE2\x80\xA2  F1 / View to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
+    // NOTE: the overlay does NOT pause the sim — enemies keep acting while it is
+    // open (a real solo-pause is backlogged; see MC follow-up in the RC notes).
+    // The footer must not claim "Paused" or a player will trust it as a safe menu.
+    ui::TextSubtle("Overlay open \xE2\x80\x94 game keeps running  \xE2\x80\xA2  F1 / View to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
     ui::Gap(ui::kGapS);
     ImGui::Separator();
     ui::Gap(ui::kGapM);
