@@ -16848,9 +16848,8 @@ void sub_GAME_7F0B8A6C(void) {
             bgTraceRoomProjectIfRequested("post_force", player_bbox);
         }
 
-        /* T13b: camera-seed portal walk, DECOUPLED from the sim (this commit ships it
-         * OPT-IN behind GE007_CAMERA_SEED_WALK; the next commit flips it default-on with
-         * a GE007_NO_CAMERA_SEED_WALK opt-out). The D42 camera-seed fix admits the detached
+        /* T13b: camera-seed portal walk, DECOUPLED from the sim (default ON; opt out
+         * with GE007_NO_CAMERA_SEED_WALK). The D42 camera-seed fix admits the detached
          * camera's own room into room_rendered but never walked its portals, so the BFS
          * stopped one hop short and the camera's sightline rendered as flat sky/clear
          * color (the Silo-intro blank-blue defect: 3639 clear px). The T13 opt-in walked
@@ -16871,13 +16870,14 @@ void sub_GAME_7F0B8A6C(void) {
          * computation), while the widened rooms stay in the draw list and draw. The BFS
          * scratch (portals_to_room_count >=9 throttle, portal-depth bytes) is reset first
          * so the walk propagates as freshly as the T13 combined pass did; both are pure
-         * per-frame scratch with no consumer after visibility. */
+         * per-frame scratch with no consumer after visibility. GE007_CAMERA_SEED_WALK
+         * (the retired T13 opt-in) is still accepted for script compat but is now a no-op. */
         if (camera_seed_room >= 0) {
-            static int camera_seed_walk = -1;
-            if (camera_seed_walk < 0) {
-                camera_seed_walk = (getenv("GE007_CAMERA_SEED_WALK") != NULL);
+            static int no_camera_seed_walk = -1;
+            if (no_camera_seed_walk < 0) {
+                no_camera_seed_walk = (getenv("GE007_NO_CAMERA_SEED_WALK") != NULL);
             }
-            if (camera_seed_walk) {
+            if (!no_camera_seed_walk) {
                 u8 snap_rendered[MAXROOMCOUNT];
                 u8 snap_neighbor[MAXROOMCOUNT];
                 s32 walk_tmp = 0;
