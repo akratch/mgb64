@@ -195,8 +195,8 @@ void BindingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
             ui::Gap(ui::kGapM);
             ui::TextSubtle("Sticks are fixed: left stick = move, right stick = look/aim. "
                            "X is a fixed alternate for Reload.");
-            ui::TextSubtle("The pad Start button opens the in-game overlay (with F1); N64 "
-                           "Start (pause/watch) defaults to the Right-Stick click.");
+            ui::TextSubtle("The Back/View button opens the in-game overlay (with F1) and "
+                           "cannot be rebound; Previous Weapon moved to the Right-Stick click.");
             ui::TextSubtle("Player 2\xE2\x80\x93" "4 pads use fixed defaults (multiplayer rebinding "
                            "is out of scope).");
             ImGui::EndTabItem();

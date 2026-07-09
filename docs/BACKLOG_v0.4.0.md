@@ -1093,7 +1093,12 @@ The ImGui shell is currently mouse-driven. ImGui ships gamepad navigation:
 - [ ] Enable gamepad nav in the app shell (src/app/), verify every panel is reachable:
       launch flow (ROM select → Play), settings tabs, bindings page, diagnostics.
 - [ ] Ensure focus-visible styling so nav state is visible on a 7" screen; map B =
-      back/close, Start = toggle overlay (alongside F1).
+      back/close, Back/View = toggle overlay (alongside F1). *(r10 correction per the
+      MC.1+MC.3 review, F2 — this bullet originally said "Start = toggle overlay",
+      written before the displacement cost was weighed: Start = watch is GoldenEye's
+      core system interaction, and Back's only prior duty was the port-invented
+      weapon-prev binding, so pad Start stays the N64 Start and weapon-prev moved to
+      the R-stick click.)*
 - [ ] Acceptance: complete a boot → settings change → play → overlay toggle → quit
       session using ONLY a controller (validate with any pad; re-validate on the Ally
       at MC.6).

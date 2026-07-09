@@ -6338,8 +6338,9 @@ s32 osContGetReadData(OSContPad *data) {
      * P1 discrete buttons/triggers route through the rebindable gamepad table
      * (MC.3). Sticks stay hardcoded: movement keeps the shared radial-deadzone
      * mapping (pcMapMovementStick, M2.1), look stays the lvl.c right-stick
-     * injection. Defaults reproduce the previous fixed map, except the pad
-     * Start button (now the app overlay, MC.1) — N64 Start moved to GB_PAUSE. */
+     * injection. Defaults reproduce the previous fixed map, except weapon-prev:
+     * its old Back button is now the app-overlay toggle (MC.1), so it moved to
+     * the R-stick click. Start stays N64 Start (watch). */
     if (g_gameController) {
         void *gc = g_gameController;
 

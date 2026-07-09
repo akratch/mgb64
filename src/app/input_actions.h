@@ -38,8 +38,9 @@ void inputBindingForceDefaults(int on);      // automation/deterministic: ignore
 // ---- Rebindable gamepad actions (player 1 only) -----------------------------
 // Each action binds to an SDL_GameControllerButton OR a trigger axis (LT/RT);
 // the on/off encoding is internal to input_bindings.c. Player 2..4 pads keep
-// fixed defaults (MP rebinding is out of scope). The pad's Start button is
-// reserved by the app overlay (MC.1), so N64 pause/watch defaults to R-stick.
+// fixed defaults (MP rebinding is out of scope). The pad's Back/View button is
+// reserved by the app overlay toggle (MC.1); Start stays the N64 Start (watch),
+// so the port-invented weapon-prev binding moved off Back to R-stick click.
 typedef enum {
     GB_FIRE,        // default: Right Trigger
     GB_AIM,         // default: Left Trigger
@@ -47,9 +48,9 @@ typedef enum {
     GB_LOOK,        // default: Left Bumper  (N64 L)
     GB_JUMP,        // default: A            (N64 A)
     GB_RELOAD,      // default: B            (N64 B; X stays a fixed alternate)
-    GB_PAUSE,       // default: Right Stick click (N64 Start)
+    GB_PAUSE,       // default: Start        (N64 Start)
     GB_WEAPON_NEXT, // default: Y
-    GB_WEAPON_PREV, // default: Back
+    GB_WEAPON_PREV, // default: Right Stick click
     GB_CROUCH,      // default: Left Stick click
     GB_LOOK_UP,     // default: D-Pad Up
     GB_LOOK_DOWN,   // default: D-Pad Down

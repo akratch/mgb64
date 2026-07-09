@@ -29,7 +29,7 @@ void AboutPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
     ui::Gap(ui::kGapM);
     ui::TextSubtle("Renderer: OpenGL   \xE2\x80\xA2   License: MIT (first-party)");
     ui::Gap(ui::kGapXS);
-    ui::TextSubtle("Overlay: press F1 or the gamepad Start button in-game for live settings and quit.");
+    ui::TextSubtle("Overlay: press F1 or the gamepad Back/View button in-game for live settings and quit.");
     ui::Gap(ui::kGapXS);
     ui::TextSubtle("Fully controller-navigable: D-pad/stick to move, A to select, B to go back.");
 }

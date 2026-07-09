@@ -109,9 +109,9 @@ static const int kGpDefault[GB_COUNT] = {
     SDL_CONTROLLER_BUTTON_LEFTSHOULDER,              /* GB_LOOK        */
     SDL_CONTROLLER_BUTTON_A,                         /* GB_JUMP        */
     SDL_CONTROLLER_BUTTON_B,                         /* GB_RELOAD      */
-    SDL_CONTROLLER_BUTTON_RIGHTSTICK,                /* GB_PAUSE       */
+    SDL_CONTROLLER_BUTTON_START,                     /* GB_PAUSE       */
     SDL_CONTROLLER_BUTTON_Y,                         /* GB_WEAPON_NEXT */
-    SDL_CONTROLLER_BUTTON_BACK,                      /* GB_WEAPON_PREV */
+    SDL_CONTROLLER_BUTTON_RIGHTSTICK,                /* GB_WEAPON_PREV */
     SDL_CONTROLLER_BUTTON_LEFTSTICK,                 /* GB_CROUCH      */
     SDL_CONTROLLER_BUTTON_DPAD_UP,                   /* GB_LOOK_UP     */
     SDL_CONTROLLER_BUTTON_DPAD_DOWN,                 /* GB_LOOK_DOWN   */

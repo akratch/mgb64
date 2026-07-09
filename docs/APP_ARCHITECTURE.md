@@ -172,10 +172,16 @@ first controller and feeds nav inputs. The launcher's nav rail and every panel
 (ROM, Settings tabs, Launch, Controls, Modes, Diagnostics) are standard
 focusable widgets, so they navigate out of the box; the active tab gets initial
 focus. In-game the F1 overlay reuses the same ImGui context, so it navigates
-identically. Overlay controls: **Start** toggles it (F1 still works), **A**
+identically. Overlay controls: **Back/View** toggles it (F1 still works), **A**
 selects, **B** backs out one level (cancel → hide settings → close), yielding to
-ImGui's own combo/popup cancel first. The overlay engine also has no controller
-knowledge — it drives ImGui through the same `app_overlay_hooks` seam.
+ImGui's own combo/popup cancel first. Back was chosen over Start (the MC.1 brief
+predated weighing the displacement cost): Start = watch is GoldenEye's core
+system interaction, while Back's only prior duty was the port-invented
+weapon-prev binding — so Start stays the N64 Start. The toggle button is a named
+constant (`Overlay_gamepadToggleButton()`, `ui_overlay.h`) and is excluded from
+the rebind capture so no game action can collide with it. The overlay engine
+also has no controller knowledge — it drives ImGui through the same
+`app_overlay_hooks` seam.
 
 The engine and ImGui each `SDL_GameControllerOpen` controller 0; this is safe
 because SDL2 refcounts controller handles, so neither closing (device
@@ -192,8 +198,8 @@ panel's Gamepad tab, mirroring the keyboard registry: each binds to a
 `SDL_GameControllerButton` or a trigger axis (LT/RT), persisted to
 `ge007_gp_bindings.ini`, with reset-to-default. `stubs.c` reads them through
 `gamepadBindingActive()`. The sticks stay fixed (movement + look, preserving the
-radial-deadzone/aim mapping). Because the pad **Start** button drives the app
-overlay, the in-game N64 Start (pause/watch) defaults to the **Right-Stick
-click**. Player 2–4 pads use fixed defaults — multiplayer rebinding is out of
-scope. Under `--deterministic` / freeze-input the bindings force defaults so
-scripted runs stay byte-identical.
+radial-deadzone/aim mapping). Pad **Start** is the N64 Start (watch); because
+**Back/View** drives the app overlay, the previous-weapon default moved to the
+**Right-Stick click**. Player 2–4 pads use fixed defaults — multiplayer
+rebinding is out of scope. Under `--deterministic` / freeze-input the bindings
+force defaults so scripted runs stay byte-identical.

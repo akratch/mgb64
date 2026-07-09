@@ -62,15 +62,16 @@ void onProcessEvent(const void *ev) {
     const SDL_Event *e = (const SDL_Event *)ev;
     ImGui_ImplSDL2_ProcessEvent(e);
 
-    // Toggle keys/buttons: F1 (keyboard) and Start (gamepad) open/close the
-    // overlay. Start is intercepted for the app overlay, so the in-game "Start"
-    // (N64 pause/watch) lives on a rebindable pad button instead — see MC.3.
+    // Toggle keys/buttons: F1 (keyboard) and Back/View (gamepad) open/close the
+    // overlay. Back is the conventional system-UI button and its old default
+    // (weapon-prev) is a port invention, so pad Start stays the N64 Start —
+    // GoldenEye's watch is the game's core system menu (review F2 adjudication).
     if (e->type == SDL_KEYDOWN && !e->key.repeat && e->key.keysym.sym == SDLK_F1) {
         setOpen(!g_open);
         return;
     }
     if (e->type == SDL_CONTROLLERBUTTONDOWN) {
-        if (e->cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+        if ((int)e->cbutton.button == Overlay_gamepadToggleButton()) {
             setOpen(!g_open);
         } else if (g_open && e->cbutton.button == SDL_CONTROLLER_BUTTON_B) {
             // B = back one level (cancel confirm -> hide settings -> close). Skip
@@ -112,7 +113,7 @@ void onRender() {
     ImGui::TextUnformatted("MGB64");
     ImGui::PopStyleColor();
     ImGui::PopFont();
-    ui::TextSubtle("Paused overlay  \xE2\x80\xA2  F1 / Start to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
+    ui::TextSubtle("Paused overlay  \xE2\x80\xA2  F1 / View to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
     ui::Gap(ui::kGapS);
     ImGui::Separator();
     ui::Gap(ui::kGapM);
@@ -161,6 +162,8 @@ void onRender() {
 }
 
 }  // namespace
+
+int Overlay_gamepadToggleButton() { return SDL_CONTROLLER_BUTTON_BACK; }
 
 void Overlay_install(SDL_Window *window, const char *argv0) {
     g_window = window;
