@@ -1019,6 +1019,14 @@ void portAudioRegisterConfig(void)
                         "--config-override Audio.OutputFilterAlpha=VALUE",
                         "Output filter alpha",
                         "Q15 one-pole coefficient for Audio.OutputFilter (higher = brighter/less filtering).");
+
+    /* RX.1 settings curation: dev/diagnostic audio knobs hidden behind the
+     * launcher's "Advanced (expert)" disclosure (env/CLI overrides unaffected).
+     * DeviceSamples = latency-vs-glitch buffer tuning; OutputFilterAlpha = the
+     * internal Q15 coefficient for the OutputFilter toggle (which stays
+     * player-facing). Volumes stay player-facing. */
+    settingsMarkAdvanced("Audio.DeviceSamples");
+    settingsMarkAdvanced("Audio.OutputFilterAlpha");
 }
 
 int portAudioShouldStartMuted(void)

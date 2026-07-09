@@ -2067,6 +2067,58 @@ void platformRegisterConfig(void)
                         "At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a "
                         "dismissible banner if one exists (0 = never check). A single plain HTTPS GET via "
                         "the system curl; no telemetry. Never runs under automation/--deterministic.");
+
+    /* RX.1 settings curation: tag dev/diagnostic knobs as advanced so the
+     * launcher hides them behind the per-tab "Advanced (expert)" disclosure.
+     * These stay fully overridable via env/CLI/ge007.ini (hidden != removed);
+     * only the player-facing UI list is trimmed. Kept player-facing on purpose:
+     * the master toggles (Ssao/SunShadow/Bloom/Fxaa/Smaa/Tonemap/GradePresets),
+     * every color/FOV/fog dial, RenderScale/MSAA, and the ADS master +
+     * AdsSensitivity + AdsModernReticle. Advanced = the deep tuning under them. */
+    /* SSAO tuning (11) -- the Ssao master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.SsaoMode");
+    settingsMarkAdvanced("Video.SsaoRadius");
+    settingsMarkAdvanced("Video.SsaoIntensity");
+    settingsMarkAdvanced("Video.SsaoBias");
+    settingsMarkAdvanced("Video.SsaoPower");
+    settingsMarkAdvanced("Video.SsaoFarCutoff");
+    settingsMarkAdvanced("Video.SsaoNearCut");
+    settingsMarkAdvanced("Video.SsaoSkyCut");
+    settingsMarkAdvanced("Video.SsaoHalfRes");
+    settingsMarkAdvanced("Video.SsaoBlur");
+    settingsMarkAdvanced("Video.SsaoBlurDepthSharp");
+    /* Sun-shadow tuning (4) -- the SunShadow master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.SunShadowRes");
+    settingsMarkAdvanced("Video.SunShadowRadius");
+    settingsMarkAdvanced("Video.SunShadowBias");
+    settingsMarkAdvanced("Video.SunShadowUmbra");
+    /* Directional-relight internals. */
+    settingsMarkAdvanced("Video.PerPixelLight");
+    settingsMarkAdvanced("Video.EnvSmoothNormals");
+    settingsMarkAdvanced("Video.EnvRelightBlend");
+    /* Bloom tuning -- the Bloom master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.BloomThreshold");
+    settingsMarkAdvanced("Video.BloomIntensity");
+    /* Window placement (managed automatically; expert-only). */
+    settingsMarkAdvanced("Video.WindowX");
+    settingsMarkAdvanced("Video.WindowY");
+    /* Minimap dev/accessibility + renderer internals. */
+    settingsMarkAdvanced("Input.MinimapObjectives");    /* unimplemented layer */
+    settingsMarkAdvanced("Input.MinimapShowAllEnemies");
+    settingsMarkAdvanced("Input.MinimapSharpOverlay");
+    /* ADS deep tuning (11). Player-facing: Input.AdsEnabled (master),
+     * Input.AdsSensitivity, Input.AdsModernReticle. */
+    settingsMarkAdvanced("Input.AdsFovCoupleSens");
+    settingsMarkAdvanced("Input.AdsCenterCrosshair");
+    settingsMarkAdvanced("Input.AdsSpreadEnabled");
+    settingsMarkAdvanced("Input.AdsMovePenalty");
+    settingsMarkAdvanced("Input.AdsMoveScale");
+    settingsMarkAdvanced("Input.AdsStrafeScale");
+    settingsMarkAdvanced("Input.AdsFaithfulZoom");
+    settingsMarkAdvanced("Input.AdsModelPose");
+    settingsMarkAdvanced("Input.AdsRecoilReduce");
+    settingsMarkAdvanced("Input.AdsSteadyView");
+    settingsMarkAdvanced("Input.AdsBobFloor");
 }
 
 /* `--faithful` preset: the documented "Faithful original" mode (VISUAL_MODES.md
