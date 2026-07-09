@@ -7295,8 +7295,8 @@ void modelSetAnimFrame(Model* model, f32 frame)
     {
         uintptr_t animaddr = (uintptr_t)model->anim;
         if (animaddr < 0x1000 || (animaddr & 0x3)) {
-            fprintf(stderr, "[ANIM_DBG] bad anim ptr %p (align=%lu) for model %p\n",
-                    (void *)model->anim, animaddr & 0x3, (void *)model);
+            fprintf(stderr, "[ANIM_DBG] bad anim ptr %p (align=%u) for model %p\n",
+                    (void *)model->anim, (unsigned)(animaddr & 0x3), (void *)model);
             return;
         }
         /* Also guard modelConstrainOrWrapAnimFrame accesses */

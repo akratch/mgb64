@@ -16740,7 +16740,7 @@ void sub_GAME_7F0B8A6C(void) {
             fprintf(stderr, "[BG-VIS] → g_BgNumberOfRoomsDrawn=%d\n", g_BgNumberOfRoomsDrawn);
             for (i = 0; i < g_BgNumberOfRoomsDrawn && i < 8; i++) {
                 fprintf(stderr,
-                        "[BG-VIS]     draw[%d] room=%d depth=%d bbox=(%.0f,%.0f,%.0f,%.0f) next=0x%lx\n",
+                        "[BG-VIS]     draw[%d] room=%d depth=%d bbox=(%.0f,%.0f,%.0f,%.0f) next=0x%llx\n",
                         i,
                         dword_CODE_bss_8007FFA0[i].roomid,
                         dword_CODE_bss_8007FFA0[i].unk1,
@@ -16748,7 +16748,7 @@ void sub_GAME_7F0B8A6C(void) {
                         dword_CODE_bss_8007FFA0[i].bbox.min.y,
                         dword_CODE_bss_8007FFA0[i].bbox.max.x,
                         dword_CODE_bss_8007FFA0[i].bbox.max.y,
-                        (unsigned long)(uintptr_t)dword_CODE_bss_8007FFA0[i].next);
+                        (unsigned long long)(uintptr_t)dword_CODE_bss_8007FFA0[i].next);
             }
             post_vis_frame++;
         }

@@ -1209,10 +1209,10 @@ void initializeGunBarrelIntro(u8 *gfxBuffer, s32 bufferSize)
 
         for (gunbarrelCmdIndex = 0; gunbarrelCmdIndex < gunbarrelCmdLimit; gunbarrelCmdIndex++) {
             fprintf(stderr,
-                    "  [GUNBARREL-CMD %02zu] w0=0x%016lX w1=0x%016lX\n",
+                    "  [GUNBARREL-CMD %02zu] w0=0x%016llX w1=0x%016llX\n",
                     gunbarrelCmdIndex,
-                    (unsigned long)gunbarrelgfxListPointer[gunbarrelCmdIndex].words.w0,
-                    (unsigned long)gunbarrelgfxListPointer[gunbarrelCmdIndex].words.w1);
+                    (unsigned long long)gunbarrelgfxListPointer[gunbarrelCmdIndex].words.w0,
+                    (unsigned long long)gunbarrelgfxListPointer[gunbarrelCmdIndex].words.w1);
         }
 
         fflush(stderr);

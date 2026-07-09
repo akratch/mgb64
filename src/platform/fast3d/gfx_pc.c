@@ -22725,8 +22725,8 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                 static uint8_t pc_seen_opcodes[256] = {0};
                 if (!pc_seen_opcodes[opcode]) {
                     pc_seen_opcodes[opcode] = 1;
-                    printf("[PC_UNKNOWN_OP] 0x%02X w0=0x%016lX w1=0x%016lX (cmd=%p)\n",
-                           opcode, (unsigned long)cmd->words.w0, (unsigned long)cmd->words.w1, (void*)cmd);
+                    printf("[PC_UNKNOWN_OP] 0x%02X w0=0x%016llX w1=0x%016llX (cmd=%p)\n",
+                           opcode, (unsigned long long)cmd->words.w0, (unsigned long long)cmd->words.w1, (void*)cmd);
                     fflush(stdout);
                 }
                 /* Only abort on opcodes that are clearly garbage pointers */
