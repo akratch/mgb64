@@ -1463,18 +1463,40 @@ static int platformFindConfiguredFullscreenMode(SDL_DisplayMode *out_mode)
     return 0;
 }
 
-static void platformApplyFullscreenDisplayMode(void)
+/* Selects the SDL display mode used by exclusive fullscreen (SDL_WINDOW_FULLSCREEN).
+ * Returns 0 on success, -1 if an exclusive mode-set was requested but could not be
+ * satisfied (the caller then falls back to borderless desktop fullscreen). For
+ * non-exclusive modes the display mode is reset to NULL and 0 is returned. */
+static int platformApplyFullscreenDisplayMode(void)
 {
     SDL_DisplayMode mode;
+    int display_index;
 
     if (!g_sdlWindow) {
-        return;
+        return 0;
     }
 
-    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE ||
-        !platformFindConfiguredFullscreenMode(&mode)) {
+    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE) {
+        /* Windowed / borderless-desktop: SDL manages the mode (desktop resolution). */
         SDL_SetWindowDisplayMode(g_sdlWindow, NULL);
-        return;
+        return 0;
+    }
+
+    if (!platformFindConfiguredFullscreenMode(&mode)) {
+        /* RX.3 Fix C: no explicit Video.FullscreenWidth/Height configured (or the
+         * requested mode is unavailable). Passing NULL to SDL_SetWindowDisplayMode
+         * makes exclusive fullscreen adopt the small *window* size instead of the
+         * display's native resolution. Default to the chosen display's desktop mode
+         * so exclusive comes up at native res; explicit width/height/refresh
+         * overrides still take precedence via platformFindConfiguredFullscreenMode. */
+        display_index = platformConfiguredDisplayIndex();
+        if (SDL_GetDesktopDisplayMode(display_index, &mode) != 0) {
+            fprintf(stderr,
+                    "[SDL] Could not query desktop display mode for display %d: %s\n",
+                    display_index,
+                    SDL_GetError());
+            return -1;
+        }
     }
 
     if (SDL_SetWindowDisplayMode(g_sdlWindow, &mode) < 0) {
@@ -1484,7 +1506,10 @@ static void platformApplyFullscreenDisplayMode(void)
                 mode.h,
                 mode.refresh_rate,
                 SDL_GetError());
+        return -1;
     }
+
+    return 0;
 }
 
 static void platformApplyWindowMode(void)
@@ -1497,11 +1522,34 @@ static void platformApplyWindowMode(void)
 
     fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
     platformMoveWindowToConfiguredDisplay();
-    platformApplyFullscreenDisplayMode();
-    if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
-        fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
-                g_windowMode, SDL_GetError());
-        return;
+
+    if (g_windowMode == PLATFORM_WINDOW_MODE_EXCLUSIVE) {
+        /* RX.3 Fix C robustness: true exclusive fullscreen is best-effort. The
+         * mode-set and/or SDL_WINDOW_FULLSCREEN can fail (Wayland can't
+         * arbitrary-mode-set, the mode may be unavailable, or the driver refuses).
+         * On any failure fall back to borderless desktop fullscreen rather than
+         * leaving the window in a broken/black exclusive state. */
+        if (platformApplyFullscreenDisplayMode() != 0 ||
+            SDL_SetWindowFullscreen(g_sdlWindow, SDL_WINDOW_FULLSCREEN) < 0) {
+            fprintf(stderr,
+                    "[SDL] Exclusive fullscreen unavailable (%s); falling back to "
+                    "borderless desktop fullscreen.\n",
+                    SDL_GetError());
+            if (SDL_SetWindowFullscreen(g_sdlWindow,
+                                        SDL_WINDOW_FULLSCREEN_DESKTOP) < 0) {
+                fprintf(stderr, "[SDL] Borderless fallback also failed: %s\n",
+                        SDL_GetError());
+            }
+        }
+    } else {
+        /* Windowed (flag 0) or borderless desktop fullscreen — the safe
+         * cross-platform default. */
+        platformApplyFullscreenDisplayMode();
+        if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
+            fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
+                    g_windowMode, SDL_GetError());
+            return;
+        }
     }
 
     platformSyncWindowSizeForRenderer();
