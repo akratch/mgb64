@@ -175,6 +175,14 @@ static int gpValid(int v) {
     if (v >= GB_AXIS_BASE)
         return (v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERLEFT ||
                 v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    /* Reject the reserved buttons from a hand-edited ini, matching the capture-
+     * scan exclusion (ui_bindings.cpp:132): BACK == the overlay toggle
+     * (Overlay_gamepadToggleButton, single source of truth in ui_overlay.h) —
+     * binding a game action to it reproduces the overlay/fire double-role the
+     * F4 commit prevented in the UI — and GUIDE is the OS/Steam overlay button
+     * (review F5). */
+    if (v == SDL_CONTROLLER_BUTTON_BACK || v == SDL_CONTROLLER_BUTTON_GUIDE)
+        return 0;
     return (v >= 0 && v < SDL_CONTROLLER_BUTTON_MAX);
 }
 
