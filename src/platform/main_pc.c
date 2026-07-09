@@ -40,6 +40,7 @@
 #include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
+#include "input_tape.h"           /* --record-tape / --play-tape (FID-0034) */
 #include "../app/input_actions.h"  /* rebindable keyboard registry (not app-gated) */
 #ifdef MGB64_APP
 #include "../app/engine_entry.h"  /* MgbBootConfig + mgb64_engine_boot decl */
@@ -804,6 +805,22 @@ int main(int argc, char **argv)
             pcSetTraceStatePath(argv[++i]);
         } else if (strcmp(argv[i], "--sim-state-hash-out") == 0 && i + 1 < argc) {
             g_simStateHashOut = argv[++i];
+        } else if (strcmp(argv[i], "--record-tape") == 0 && i + 1 < argc) {
+            /* Byte-exact input capture (FID-0034). Forces the determinism
+             * envelope so the recorded seed/clock are the fixed ones a replay
+             * will reproduce. Requires --level and refuses --ramrom (validated
+             * post-parse). */
+            extern int g_deterministic;
+            extern int g_freezeInput;
+            inputTapeConfigureRecord(argv[++i]);
+            g_deterministic = 1;
+            g_freezeInput = 1;
+        } else if (strcmp(argv[i], "--play-tape") == 0 && i + 1 < argc) {
+            extern int g_deterministic;
+            extern int g_freezeInput;
+            inputTapeConfigurePlayback(argv[++i]);
+            g_deterministic = 1;
+            g_freezeInput = 1;
         } else if (strcmp(argv[i], "--mission") == 0 && i + 1 < argc) {
             int mission = 0;
             const PcStartStage *stage;
@@ -899,6 +916,25 @@ int main(int argc, char **argv)
         } else if (argv[i][0] != '-') {
             romPath = argv[i];
         }
+    }
+
+    /* Input-tape semantics (FID-0034): record and playback are mutually
+     * exclusive, require a direct --level boot, and refuse --ramrom (the tape
+     * IS the input stream — a demo would double-drive the seam). */
+    if (inputTapeIsRecordingRequested() && inputTapeIsPlaybackRequested()) {
+        fprintf(stderr, "[GE007-PC] --record-tape and --play-tape are mutually exclusive.\n");
+        return 2;
+    }
+    if (inputTapeIsRecordingRequested() || inputTapeIsPlaybackRequested()) {
+        if (g_pcStartRamrom != NULL) {
+            fprintf(stderr, "[GE007-PC] input tape and --ramrom cannot be combined.\n");
+            return 2;
+        }
+        if (g_pcStartLevel < 0) {
+            fprintf(stderr, "[GE007-PC] --record-tape/--play-tape require --level (direct boot).\n");
+            return 2;
+        }
+        inputTapeSetSessionParams(g_pcStartLevel, g_pcStartDifficulty);
     }
 
     if ((g_autoScreenshotExit || g_traceStatePath != NULL)

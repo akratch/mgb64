@@ -26,6 +26,8 @@ static const char *const kAutomationFlags[] = {
     "--reset-config",
     "--config-override",
     "--config-set",
+    "--record-tape",   // FID-0034 input tape: always headless (forces --deterministic)
+    "--play-tape",
 };
 
 extern "C" int mgb_is_automation_invocation(int argc, char **argv) {

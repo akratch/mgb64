@@ -4,6 +4,7 @@
 #include <PR/os.h>
 #ifdef NATIVE_PORT
 #include "game/ramromreplay.h"
+#include "platform/input_tape.h"  /* --record-tape / --play-tape hooks (FID-0034) */
 #endif
 
 #define JOY_CLAMP_MIN          0
@@ -415,6 +416,11 @@ void joyConsumeSamples(struct contdata *contdata)
 void joyConsumeSamplesWrapper(void)
 {
 #ifdef NATIVE_PORT
+    /* (Re)install the input-tape record/playback hooks. Idempotent, and re-arms
+     * the g_Cont*Func pointers if joyInit cleared them; no-op unless a tape was
+     * requested. Sets the same g_ContRecordFunc/g_ContPlaybackFunc seam the
+     * RAMROM path uses. */
+    inputTapeInstallHooks();
     pcRamromTraceLoopPhase("joy_wrapper_enter");
 #endif
 

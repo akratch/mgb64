@@ -1,0 +1,10 @@
+{
+  "tape": "dam_forward_30s.ge7tape",
+  "level": "dam",
+  "level_id": 33,
+  "difficulty": 0,
+  "tick_count": 1802,
+  "controller_count": 1,
+  "sim_state_hash": "17d978581466799f",
+  "note": "30s scripted forward+strafe walk on the Dam under the determinism envelope (GE007_AUTO_FORWARD/RIGHT baked into the captured OSContPad stream). Byte-exact replay: record==replay1==replay2. Regenerate the tape only via tools/fidelity/tape_regression.sh --record; the hash is the regression guard."
+}

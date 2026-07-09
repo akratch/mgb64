@@ -301,6 +301,18 @@ if(BUILD_TESTING)
     target_include_directories(test_sim_state_hash PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME sim_state_hash COMMAND test_sim_state_hash)
 
+    # PC input tape .ge7tape reader/writer — ROM-free unit test (FID-0034,
+    # S-Tier Task 0.6). Compiles only the pure serialisation half of
+    # input_tape.c: the record/playback hooks are behind NATIVE_PORT, which the
+    # test target does not define, so no joy.h / game headers are pulled in.
+    add_executable(test_input_tape
+        "${CMAKE_SOURCE_DIR}/tests/test_input_tape.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/input_tape.c"
+    )
+    target_compile_definitions(test_input_tape PRIVATE INPUT_TAPE_UNIT_TEST)
+    target_include_directories(test_input_tape PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME input_tape COMMAND test_input_tape)
+
     # Smooth env-normals builder — ROM-free unit test (remaster W1.E1.T1).
     # Compiles only the pure builder core (game-facing wrapper excluded via the
     # GFX_ROOM_NORMALS_UNIT_TEST guard, so no g_BgRoomInfo dependency).

@@ -40,6 +40,12 @@ int main() {
     check("list-settings", invoke({"--list-settings"}), 1);
     check("sim-state-hash-out", invoke({"--sim-state-hash-out", "h.txt"}), 1);
     check("config-set", invoke({"--config-set", "Video.VSync=on"}), 1);
+    // FID-0034 input tape: record/playback always bypass the launcher (they
+    // force --deterministic, so must reach the headless engine path).
+    check("record-tape", invoke({"--rom", "x.z64", "--level", "dam",
+                                 "--record-tape", "t.ge7tape"}), 1);
+    check("play-tape", invoke({"--rom", "x.z64", "--level", "dam",
+                               "--play-tape", "t.ge7tape"}), 1);
     // Realistic harness combo.
     check("harness combo",
           invoke({"--rom", "baserom.u.z64", "--level", "dam", "--deterministic",

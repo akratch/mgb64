@@ -1,6 +1,14 @@
-# S-Tier verify manifest — ordered gate invocations (cheap -> expensive).
-# Append-only: adding a gate = appending a line. Deletions require a waiver
-# entry (charter rule 4). Concurrent agents also append; merge by keeping both.
-#
-# tier 1 — static + unit (ROM-free)
-ctest --test-dir build --output-on-failure -R struct_layout
+# tier 1 — static + unit (ROM-free, ~2 min)
+ctest --test-dir build --output-on-failure -E "port_"        # all ROM-free lanes incl. fidelity_ledger_valid
+scripts/ci/check_sim_render_separation.sh
+scripts/ci/check_timing_lock.sh
+# tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)
+ctest --test-dir build --output-on-failure -R "port_"        # validation smokes incl. oracle route contract
+tools/sim_invariance_gate.sh
+# tier 3 — regression + endurance (ROM-gated, ~45 min)
+tools/regression_test.sh
+tools/renderer_parity_capture.sh --scene all
+tools/fidelity/tape_regression.sh                            # (Task 0.6) input-tape replay hash regression
+# appended by later tasks:
+# tools/uncap_purity_gate.sh                                  (Task 0.5)
+# tools/fidelity/sense_trace_sweep.sh --gate                  (Task 2.1, gate mode = known-good routes only)
