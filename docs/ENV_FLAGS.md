@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**894 flags** found across the source.
+**897 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -786,6 +786,9 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_ROOM_ADMIT_SRC` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_ALPHA` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_BBOX` | ? |  | 1 |  |
+| `GE007_TRACE_ROOM_CLASSIFY` | ? |  | 1 |  |
+| `GE007_TRACE_ROOM_CLASSIFY_AFTER_FRAME` | ? |  | 1 |  |
+| `GE007_TRACE_ROOM_CLASSIFY_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_DL` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_PROJECT` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_PROJECT_AFTER_FRAME` | ? |  | 1 |  |

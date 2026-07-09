@@ -16747,6 +16747,66 @@ void sub_GAME_7F0B8A6C(void) {
             bgApplyVisibilitySupplement(player_bbox, local_neighbor_snapshot);
         }
         bgTraceRoomProjectIfRequested("post_visibility", player_bbox);
+        /* T13 room-visibility classifier: for the frame's final default room
+         * admission set, categorize every loaded-but-unrendered room as
+         *   frustum-visible + portal-adjacent to a rendered room  -> "dropped"
+         *     (reachable through a portal but the BFS rejected it: the M3.4
+         *      degenerate-aperture class)
+         *   frustum-visible + NOT portal-adjacent to any rendered  -> "far"
+         *     (multi-hop away; only reachable through a chain of portals)
+         *   not frustum-visible                                    -> ignored
+         * Dumps the portal graph once so the reachability chain can be walked
+         * offline. Diagnostic only; gated by GE007_TRACE_ROOM_CLASSIFY. */
+        {
+            static int classify = -1;
+            static int classify_after = 0;
+            static int classify_budget = 0;
+            static int graph_dumped = 0;
+            if (classify < 0) {
+                classify = (getenv("GE007_TRACE_ROOM_CLASSIFY") != NULL);
+                const char *af = getenv("GE007_TRACE_ROOM_CLASSIFY_AFTER_FRAME");
+                classify_after = af ? atoi(af) : 0;
+                const char *bd = getenv("GE007_TRACE_ROOM_CLASSIFY_BUDGET");
+                classify_budget = bd ? atoi(bd) : 3;
+            }
+            if (classify && g_frame_count_diag >= classify_after && classify_budget > 0) {
+                if (!graph_dumped) {
+                    graph_dumped = 1;
+                    fprintf(stderr, "[ROOM-CLASSIFY] portal graph (src<->dst cb1 cb2):\n");
+                    for (s32 pi = 0; g_BgPortals[pi].offset_portal != 0; pi++) {
+                        fprintf(stderr, "[ROOM-CLASSIFY]   p%d %d<->%d 0x%02X 0x%02X\n",
+                                pi, g_BgPortals[pi].connectedRoom1,
+                                g_BgPortals[pi].connectedRoom2,
+                                g_BgPortals[pi].controlbytes1,
+                                g_BgPortals[pi].controlbytes2);
+                    }
+                }
+                classify_budget--;
+                s32 r;
+                for (r = 1; r < g_MaxNumRooms; r++) {
+                    if (!g_BgRoomInfo[r].model_bin_loaded) continue;
+                    if (g_BgRoomInfo[r].room_rendered) continue;
+                    if (!sub_GAME_7F0B5208(r, player_bbox)) continue; /* frustum-cull */
+                    s32 adjacent_rendered = -1;
+                    for (s32 pi = 0; g_BgPortals[pi].offset_portal != 0; pi++) {
+                        s32 a = g_BgPortals[pi].connectedRoom1;
+                        s32 b = g_BgPortals[pi].connectedRoom2;
+                        s32 other = (r == a) ? b : (r == b) ? a : -1;
+                        if (other < 0) continue;
+                        if (other > 0 && other < g_MaxNumRooms
+                            && g_BgRoomInfo[other].room_rendered) {
+                            adjacent_rendered = other;
+                            break;
+                        }
+                    }
+                    fprintf(stderr,
+                            "[ROOM-CLASSIFY] frame=%d room=%d cur=%d class=%s adj_rendered=%d\n",
+                            g_frame_count_diag, r, g_BgCurrentRoom,
+                            adjacent_rendered >= 0 ? "dropped" : "far",
+                            adjacent_rendered);
+                }
+            }
+        }
         bgForceAdmitRoomsForDiagnostics(player_bbox);
         if (g_PortForceAdmitRoomCount > 0) {
             bgTraceRoomProjectIfRequested("post_force", player_bbox);
