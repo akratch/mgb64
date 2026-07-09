@@ -3,10 +3,14 @@
 #include "ui_launcher.h"
 #include "app_host.h"
 #include "app_theme.h"
+#include "app_version.h"
 #include "ui_common.h"
 #include "ui_settings.h"
+#include "update_check.h"
 
 #include "imgui.h"
+
+#include <SDL.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -103,10 +107,45 @@ void drawNavRail(int &active) {
     float vh = ImGui::GetFrameHeight();
     if (avail > vh) ui::Gap(avail - vh);
     ImGui::PushFont(AppTheme::fonts().small);
-    ui::TextSubtle("v0.3.0-dev \xE2\x80\xA2 GL");
+    ui::TextSubtle("v%s \xE2\x80\xA2 GL", AppVersion());
     ImGui::PopFont();
 
     ImGui::EndChild();
+}
+
+// The releases page a player lands on from the "update available" banner.
+const char *kReleasesUrl = "https://github.com/akratch/mgb64/releases";
+
+// Quiet, dismissible "a newer MGB64 is available" row. Drawn full-width above the
+// nav/content split only when the background check found a strictly-newer,
+// not-previously-dismissed release. Non-modal: it never steals focus or blocks.
+void drawUpdateBanner() {
+    char tag[128];
+    if (!UpdateCheck_bannerTag(tag, sizeof(tag))) return;
+
+    ImVec4 p = AppTheme::primary();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(p.x, p.y, p.z, 0.16f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 7.0f);
+    ImGui::BeginChild("##updatebanner", ImVec2(0, 44), true, ImGuiWindowFlags_NoScrollbar);
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::accent());
+    ImGui::Text("MGB64 %s is available", tag);
+    ImGui::PopStyleColor();
+
+    const float bwOpen = 168.0f, bwDismiss = 90.0f;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float rightX = ImGui::GetWindowContentRegionMax().x - bwOpen - bwDismiss - spacing;
+    ImGui::SameLine();
+    if (rightX > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(rightX);
+    if (ImGui::Button("Open releases page", ImVec2(bwOpen, 0))) SDL_OpenURL(kReleasesUrl);
+    ImGui::SameLine();
+    if (ImGui::Button("Dismiss", ImVec2(bwDismiss, 0))) UpdateCheck_dismiss(tag);
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ui::Gap(ui::kGapS);
 }
 
 }  // namespace
@@ -133,6 +172,8 @@ LauncherAction Launcher::draw(AppHost & /*host*/) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ui::kGapM, ui::kGapM));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::Begin("##launcher", nullptr, flags);
+
+    drawUpdateBanner();
 
     drawNavRail(active_);
 

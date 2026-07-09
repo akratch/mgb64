@@ -1140,6 +1140,7 @@ s32 g_pcMinimapSharpOverlay = 1;  /* Input.MinimapSharpOverlay native post-filte
  * Consumer declares this inline as `extern` at both call sites, matching the
  * g_pcSteadyView / g_deterministic convention. */
 s32 g_pcIntroSkipStyle = 0;      /* Game.IntroSkipStyle     0=stock staged (default), 1=instant any-input */
+s32 g_pcCheckForUpdates = 1;     /* Game.CheckForUpdates    1=check GitHub Releases at launcher start (default) */
 
 extern int g_pcScriptedMouseDeltaX;
 extern int g_pcScriptedMouseDeltaY;
@@ -2059,6 +2060,13 @@ void platformRegisterConfig(void)
                         "0 = stock staged skip (a new press of A/B/Z/Start/L/R advances the level-intro "
                         "camera one stage at a time; the stick never skips). 1 = the native any-button/"
                         "any-stick instant full skip to first-person.");
+    settingsRegisterInt("Game.CheckForUpdates", &g_pcCheckForUpdates, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_UPDATE_CHECK",
+                        "--config-override Game.CheckForUpdates=VALUE",
+                        "Check for updates",
+                        "At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a "
+                        "dismissible banner if one exists (0 = never check). A single plain HTTPS GET via "
+                        "the system curl; no telemetry. Never runs under automation/--deterministic.");
 }
 
 /* `--faithful` preset: the documented "Faithful original" mode (VISUAL_MODES.md

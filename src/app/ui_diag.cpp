@@ -1,6 +1,7 @@
 // ui_diag.cpp — Diagnostics: live log console, export bundle, report-a-bug.
 #include "ui_launcher.h"
 #include "app_theme.h"
+#include "app_version.h"
 #include "diag_log.h"
 #include "ui_common.h"
 
@@ -44,7 +45,7 @@ void writeSysinfo(const std::string &path, const LauncherState &s) {
     std::ofstream f(path);
     if (!f) return;
     f << "MGB64 diagnostics\n";
-    f << "app: v0.3.0-dev (GL)\n";
+    f << "app: v" << AppVersion() << " (GL)\n";
     f << "platform: " << SDL_GetPlatform() << "\n";
     f << "cpu-count: " << SDL_GetCPUCount() << "\n";
     f << "ram-mb: " << SDL_GetSystemRAM() << "\n";
