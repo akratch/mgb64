@@ -1,0 +1,29 @@
+{
+  "id": "FID-0014",
+  "title": "Patrol force-loop workaround masks stalled WAYMODE_MAGIC (M2.5)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "chrlv.c:11216-11218",
+    "chrlv.c:11257"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

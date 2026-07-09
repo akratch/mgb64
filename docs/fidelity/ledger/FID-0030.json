@@ -1,0 +1,28 @@
+{
+  "id": "FID-0030",
+  "title": "Sim-hash blind spot: stan/collision scratch + unaudited mutable game BSS (M8.1 residual)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "root-caused",
+  "suspect": [
+    "sim_state_hash_registry.c:25-61"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M8.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M8.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

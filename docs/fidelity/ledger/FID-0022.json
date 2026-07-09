@@ -1,0 +1,30 @@
+{
+  "id": "FID-0022",
+  "title": "G_ZS_PRIM depth-source claimed but unimplemented in both backends (R19)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "gfx_metal.mm:2854",
+    "gfx_opengl.c:1757",
+    "gfx_opengl.c:1763"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

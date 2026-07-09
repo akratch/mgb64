@@ -1,0 +1,28 @@
+{
+  "id": "FID-0027",
+  "title": "Audio: DMA-window exhaustion / voice starvation hypotheses unmeasured (H4/H5)",
+  "class": "instrumentation-gap",
+  "surface": "audio",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "audi_port.c:198-202"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

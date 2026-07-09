@@ -1,0 +1,29 @@
+{
+  "id": "FID-0015",
+  "title": "Movement-stick square deadzone (aim stick already radial) (M2.1)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "stubs.c:6322-6337",
+    "stubs.c:5887-5900"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

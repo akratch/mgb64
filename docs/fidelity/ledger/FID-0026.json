@@ -1,0 +1,28 @@
+{
+  "id": "FID-0026",
+  "title": "Audio: per-instrument bank loop/tuning deltas never measured (H3/M5.2, Surface 2)",
+  "class": "parity-divergence",
+  "surface": "audio",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "audio_compat.c:99-341"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M5.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M5.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

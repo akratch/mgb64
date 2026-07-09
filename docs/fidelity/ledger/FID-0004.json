@@ -1,0 +1,29 @@
+{
+  "id": "FID-0004",
+  "title": "Shatter-trigger hit-count / tinted-glass 16/255 min-opacity / crack-fade parity unvalidated (MG.4)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "chrobjhandler.c:2560-2600",
+    "chrobjhandler.c:572-628"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#MG.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/BACKLOG_v0.4.0.md#MG.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

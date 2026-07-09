@@ -1,0 +1,29 @@
+{
+  "id": "FID-0045",
+  "title": "n64-quirk registry: known preserved retail bugs (e.g. chraidata.c:715 guard shuffle) not centrally documented",
+  "class": "coverage-gap",
+  "surface": "infra",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "chraidata.c:715",
+    "\u00a74.6"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#4.6",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#4.6",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

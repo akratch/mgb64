@@ -1,0 +1,33 @@
+{
+  "id": "FID-0013",
+  "title": "stan.c stacked-floor seam selection not frame-exact-verified vs ares (F2 landed, unverified)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "stan.c:731 (GE007_STAN_ONEDGE)",
+    "stan.c:737",
+    "routes on Facility/Bunker stairwells"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "blocked_on": [
+    "FID-0032"
+  ]
+}

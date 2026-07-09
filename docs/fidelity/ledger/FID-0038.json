@@ -1,0 +1,28 @@
+{
+  "id": "FID-0038",
+  "title": "ramromreplay.c:1766 PAL timing question unresolved",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/ramromreplay.c:1766"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

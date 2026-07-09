@@ -337,6 +337,16 @@ if(BUILD_TESTING)
     set_tests_properties(env_reference_current PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+    # Fidelity findings ledger must stay schema-valid with consistent transition
+    # history (S-tier program Phase 0, Task 0.2). ROM-free python guard — the
+    # loop's persistent memory can never silently corrupt.
+    add_test(
+        NAME fidelity_ledger_valid
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" validate
+    )
+    set_tests_properties(fidelity_ledger_valid PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
     # Local MinGW cross-compile lane (backlog MW.2): proves ge007.exe compiles
     # and links for Windows from this host instead of waiting for the release
     # CI. Opt-in (needs `brew install mingw-w64` + network for the vendored

@@ -1,0 +1,28 @@
+{
+  "id": "FID-0041",
+  "title": "Room XLU depth-sort is intentional non-faithful default (audit #8)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "documented",
+  "suspect": [
+    "GE007_DISABLE_ROOM_XLU_SORT"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "documented",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

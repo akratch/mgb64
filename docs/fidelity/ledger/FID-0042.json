@@ -1,0 +1,28 @@
+{
+  "id": "FID-0042",
+  "title": "ASM audit coverage: 388 GLOBAL_ASM reference bodies, no systematic reviewed/verdict tracking",
+  "class": "coverage-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "\u00a75 Task 2.4"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

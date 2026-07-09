@@ -1,0 +1,28 @@
+{
+  "id": "FID-0024",
+  "title": "Z_UPD-without-Z_CMP handled by one global rule; per-material correctness unverified (R15)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "gfx_pc.c:17562-17583"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

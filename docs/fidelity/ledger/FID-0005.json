@@ -1,0 +1,28 @@
+{
+  "id": "FID-0005",
+  "title": "Glass tooling debt: ~49 glass_* scripts, ~11 wired (MG.5)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "charter rule 8"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#MG.5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#MG.5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

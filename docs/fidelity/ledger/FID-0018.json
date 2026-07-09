@@ -1,0 +1,33 @@
+{
+  "id": "FID-0018",
+  "title": "Metal MSAA silently ignored, no A2C (M3.1)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "gfx_metal.mm:1209",
+    "gfx_metal.mm:2131",
+    "gfx_metal.mm:2430",
+    "gfx_metal.mm:2444",
+    "gfx_metal.mm:2760",
+    "gfx_metal.mm:3206"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

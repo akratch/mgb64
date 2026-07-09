@@ -1,0 +1,29 @@
+{
+  "id": "FID-0019",
+  "title": "Metal shadow depth-clip clamp / depth read-write hazard / MSL autorelease leaks (M3.2)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "gfx_metal.mm:1631-1649",
+    "gfx_metal.mm:3308-3311"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M3.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M3.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

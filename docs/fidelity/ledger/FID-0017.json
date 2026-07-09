@@ -1,0 +1,29 @@
+{
+  "id": "FID-0017",
+  "title": "speedgraphframes unclamped -> HUD/watch timers jump on frame spikes (M2.4)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "unk_0C0A70.c:151",
+    "ref clamp lvl.c:2113-2126"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

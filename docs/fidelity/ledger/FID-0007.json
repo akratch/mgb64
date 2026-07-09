@@ -1,0 +1,32 @@
+{
+  "id": "FID-0007",
+  "title": "Dyn-allocator residuals: modelSetDistanceDisabled early-return leak (T9b); glass float-mtx path lacks fail-closed contract",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "fix-in-progress",
+  "suspect": [
+    "src/game/dyn.c:129",
+    "src/game/dyn.c:151",
+    "src/game/dyn.c:176",
+    "src/game/dyn.c:195",
+    "GE007_DYN_STRESS_LIMIT"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "fix-in-progress",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

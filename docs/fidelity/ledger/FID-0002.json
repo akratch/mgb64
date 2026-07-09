@@ -1,0 +1,29 @@
+{
+  "id": "FID-0002",
+  "title": "Overlapping coplanar glass panes read stale FB snapshot; Metal ignores GE007_XLU_SNAPSHOT_MODE=pertri (MG.2)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "gfx_opengl.c:2140-2279",
+    "gfx_metal.mm:3099"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#MG.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#MG.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

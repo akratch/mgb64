@@ -1,0 +1,28 @@
+{
+  "id": "FID-0032",
+  "title": "Combat/floor-field oracle absent: ares reader extracts no guard/combat/stan state (COMBAT_DEFERRED \u00a72.1, \"single biggest blocker, XL\")",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "triaged",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/COMBAT_DEFERRED_PLAN.md#2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/COMBAT_DEFERRED_PLAN.md#2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

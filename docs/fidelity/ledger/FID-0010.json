@@ -1,0 +1,28 @@
+{
+  "id": "FID-0010",
+  "title": "bg.c:7441 frustum-culling stub marks all rooms visible",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "src/game/bg.c:7441"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

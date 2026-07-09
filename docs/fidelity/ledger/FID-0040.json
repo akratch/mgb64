@@ -1,0 +1,28 @@
+{
+  "id": "FID-0040",
+  "title": "g_ClockTimer clamp asymmetry: free play clamps 1/4, RAMROM replay unclamped",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "documented",
+  "suspect": [
+    "lvl.c:2115-2137"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "documented",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

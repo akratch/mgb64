@@ -1,0 +1,28 @@
+{
+  "id": "FID-0009",
+  "title": "Silo aperture residual: rooms 28/44 + screen-edge sliver dropped via multi-hop grazing portals",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "reuse T13b draw-only walk (g_BgRoomDrawOnly)"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

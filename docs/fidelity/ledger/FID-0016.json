@@ -1,0 +1,30 @@
+{
+  "id": "FID-0016",
+  "title": "Mouse-wheel weapon cycling collapses N notches to 1 (M2.2)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "root-caused",
+  "suspect": [
+    "stubs.c:6267-6269",
+    "bondview.c:11526",
+    "bondview.c:13085"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

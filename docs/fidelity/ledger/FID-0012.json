@@ -1,0 +1,33 @@
+{
+  "id": "FID-0012",
+  "title": "Guard visibility->sim coupling Phase C default-flip blocked on combat-field oracle (M2.3)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "chr.c:5220-5238",
+    "lvl.c:1737-1743",
+    "GE007_CHRBEAMS_FRUSTUM"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "blocked_on": [
+    "FID-0032"
+  ]
+}

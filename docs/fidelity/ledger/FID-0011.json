@@ -1,0 +1,36 @@
+{
+  "id": "FID-0011",
+  "title": "chrTickBeams minimal reimpl: H4 actiontype dispatch collapsed (HIGH), H5 BACKGROUND_AI bit, H6 held-weapon obj leak, H7 visibility coarsening",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "chr.c:5122",
+    "chr.c:5204",
+    "retail chr.c:5566",
+    "retail chr.c:6418",
+    "retail chr.c:7344",
+    "docs/design/COMBAT_GLIDEPATH.md \u00a73.1"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/COMBAT_GLIDEPATH.md#3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/COMBAT_GLIDEPATH.md#3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "blocked_on": [
+    "FID-0032"
+  ]
+}

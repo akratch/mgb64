@@ -1,0 +1,29 @@
+{
+  "id": "FID-0035",
+  "title": "Zero struct-layout static asserts for N64-layout ROM structs (StandTile, PROPDEF records); protection is compiler flags only",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "src/bondtypes.h:387-449",
+    "CMakeLists.txt:708-723"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

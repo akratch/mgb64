@@ -1,0 +1,29 @@
+{
+  "id": "FID-0003",
+  "title": "Glass shard geometry scale unverified \u2014 six competing A/B flags, none signed off (MG.3)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "src/game/unk_0A1DA0.c:1266-1336",
+    "tools/compare_glass_shard_pixel_oracle.py"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#MG.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#MG.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

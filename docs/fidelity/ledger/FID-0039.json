@@ -1,0 +1,28 @@
+{
+  "id": "FID-0039",
+  "title": "model_convert.c:881 OP11 rendering unimplemented (field width note)",
+  "class": "port-defect",
+  "surface": "converter",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/model_convert.c:881"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}
