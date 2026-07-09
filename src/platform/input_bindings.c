@@ -1,9 +1,11 @@
 // input_bindings.c — rebindable keyboard registry. Defaults are byte-identical
 // to the previously-hardcoded map in stubs.c. See input_actions.h.
 #include "../app/input_actions.h"
+#include "savedir.h"
 
 #include <SDL.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -65,8 +67,15 @@ void inputBindingForceDefaults(int on) { g_force = on; }
 
 void inputBindingSave(void) {
     ensureInit();
-    FILE *f = fopen("ge007_bindings.ini", "w");
-    if (!f) return;
+    /* Route through savedirPath() like ge007.ini (config_pc.c): a double-clicked
+     * .app has CWD=/, so a CWD-relative file silently fails to persist (review
+     * F3). Warn loudly on failure instead of returning silently. */
+    const char *path = savedirPath("ge007_bindings.ini");
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        fprintf(stderr, "[INPUT] Failed to save keyboard bindings to %s: %s\n", path, strerror(errno));
+        return;
+    }
     fprintf(f, "# MGB64 input bindings (action=SDL_scancode)\n");
     for (int i = 0; i < IB_COUNT; i++) fprintf(f, "%s=%d\n", kName[i], g_binding[i]);
     fclose(f);
@@ -74,7 +83,12 @@ void inputBindingSave(void) {
 
 void inputBindingLoad(void) {
     ensureInit();
-    FILE *f = fopen("ge007_bindings.ini", "r");
+    FILE *f = fopen(savedirPath("ge007_bindings.ini"), "r");
+    /* One-time migration: pre-F3 builds wrote this file CWD-relative. If the
+     * savedir copy is absent, read a legacy CWD file so an existing rebind
+     * survives the first launch after the fix (the next save rewrites it to
+     * the savedir). */
+    if (!f) f = fopen("ge007_bindings.ini", "r");
     if (!f) return;
     char line[128];
     while (fgets(line, sizeof(line), f)) {
@@ -221,9 +235,16 @@ int gamepadBindingActive(void *handle, GamepadAction a) {
 
 void gamepadBindingSave(void) {
     gpEnsureInit();
-    FILE *f = fopen("ge007_gp_bindings.ini", "w");
+    /* Route through savedirPath() like ge007.ini so rebinds persist for the
+     * packaged-app audience MC.3 targets (review F3: a .app has CWD=/, so the
+     * old CWD-relative file was silently lost on relaunch). */
+    const char *path = savedirPath("ge007_gp_bindings.ini");
+    FILE *f = fopen(path, "w");
     int i;
-    if (!f) return;
+    if (!f) {
+        fprintf(stderr, "[INPUT] Failed to save gamepad bindings to %s: %s\n", path, strerror(errno));
+        return;
+    }
     fprintf(f, "# MGB64 gamepad bindings (action=encoded: button index, or %d+axis for LT/RT, %d=none)\n",
             GB_AXIS_BASE, GB_NONE);
     for (i = 0; i < GB_COUNT; i++) fprintf(f, "%s=%d\n", kGpName[i], g_gpBind[i]);
@@ -232,7 +253,8 @@ void gamepadBindingSave(void) {
 
 void gamepadBindingLoad(void) {
     gpEnsureInit();
-    FILE *f = fopen("ge007_gp_bindings.ini", "r");
+    /* Gamepad file is new (no pre-F3 CWD file to migrate). */
+    FILE *f = fopen(savedirPath("ge007_gp_bindings.ini"), "r");
     char line[128];
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
