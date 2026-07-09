@@ -1642,6 +1642,12 @@ static void mtl_shadow_encode(id<MTLRenderCommandEncoder> enc, id<MTLBuffer> vbu
     [enc setFrontFacingWinding:MTLWindingCounterClockwise];
     [enc setCullMode:MTLCullModeFront];
     [enc setDepthBias:4.0f slopeScale:2.0f clamp:0.0f];
+    /* GL_DEPTH_CLAMP (gfx_opengl.c:3734) is process-global GL state, so it is
+     * already in effect during GL's shadow pass too. Metal's depth-clip mode is
+     * per-encoder (default Clip), so without this call boundary casters get
+     * near/far-clipped here where GL clamps them — mirror the scene encoder
+     * (mtl_open_scene_encoder, :1184). */
+    [enc setDepthClipMode:MTLDepthClipModeClamp];
     [enc setVertexBuffer:vbuf offset:0 atIndex:0];
     [enc setVertexBytes:sm16 length:16 * sizeof(float) atIndex:1];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
