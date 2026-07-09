@@ -24,6 +24,7 @@ namespace {
 bool        g_open = false;
 bool        g_showSettings = false;
 int         g_confirm = 0;   // 0 none, 1 return-to-launcher, 2 quit
+bool        g_justOpened = false;  // request initial nav focus on the next render
 SDL_Window *g_window = nullptr;
 char        g_argv0[1024] = {0};
 bool        g_prevRelMouse = false;
@@ -33,6 +34,7 @@ void setOpen(bool open) {
     g_open = open;
     g_confirm = 0;
     if (g_open) {
+        g_justOpened = true;  // focus the first control so a pad has an anchor
         g_prevRelMouse = (SDL_GetRelativeMouseMode() == SDL_TRUE);
         SDL_SetRelativeMouseMode(SDL_FALSE);  // free the cursor for the overlay
     } else {
@@ -59,8 +61,27 @@ void returnToLauncher() {
 void onProcessEvent(const void *ev) {
     const SDL_Event *e = (const SDL_Event *)ev;
     ImGui_ImplSDL2_ProcessEvent(e);
+
+    // Toggle keys/buttons: F1 (keyboard) and Start (gamepad) open/close the
+    // overlay. Start is intercepted for the app overlay, so the in-game "Start"
+    // (N64 pause/watch) lives on a rebindable pad button instead — see MC.3.
     if (e->type == SDL_KEYDOWN && !e->key.repeat && e->key.keysym.sym == SDLK_F1) {
         setOpen(!g_open);
+        return;
+    }
+    if (e->type == SDL_CONTROLLERBUTTONDOWN) {
+        if (e->cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+            setOpen(!g_open);
+        } else if (g_open && e->cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+            // B = back one level (cancel confirm -> hide settings -> close). Skip
+            // when ImGui itself is consuming B (an open combo/popup), so its own
+            // nav-cancel closes that first rather than the whole overlay.
+            if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
+                if (g_confirm) g_confirm = 0;
+                else if (g_showSettings) g_showSettings = false;
+                else setOpen(false);
+            }
+        }
     }
 }
 
@@ -91,10 +112,18 @@ void onRender() {
     ImGui::TextUnformatted("MGB64");
     ImGui::PopStyleColor();
     ImGui::PopFont();
-    ui::TextSubtle("Paused overlay  \xE2\x80\xA2  press F1 to resume");
+    ui::TextSubtle("Paused overlay  \xE2\x80\xA2  F1 / Start to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
     ui::Gap(ui::kGapS);
     ImGui::Separator();
     ui::Gap(ui::kGapM);
+
+    // Give a freshly-opened overlay an initial nav focus so a gamepad/keyboard
+    // has an anchor without first hunting with the stick. Focuses the next
+    // widget drawn (Resume, or the confirm's primary action).
+    if (g_justOpened) {
+        ImGui::SetKeyboardFocusHere();
+        g_justOpened = false;
+    }
 
     if (g_confirm) {
         ui::TextSubtle(g_confirm == 1 ? "Return to the launcher? This ends the current game."

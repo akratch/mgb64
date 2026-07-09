@@ -6169,6 +6169,20 @@ s32 osContGetReadData(OSContPad *data) {
         return 0;
     }
 
+    /* In-game overlay gate (MC.1): when the F1/Start overlay is open it owns the
+     * pad + keyboard for ImGui nav. Feed the game neutral input so nav does not
+     * also drive gameplay — the polled-input analogue of the event-swallow in
+     * platformPollEvents(). No-op in automation (no overlay hooks registered ->
+     * wants_input == 0), so byte-identity and scripted input are unaffected;
+     * scripted side-effects above have already run. All pads were zeroed by the
+     * memset at function entry. */
+    {
+        extern int platformOverlayWantsInput(void);
+        if (platformOverlayWantsInput()) {
+            return 0;
+        }
+    }
+
 #ifdef MACOS_APP_BUNDLE
     /* When running as a macOS app bundle, input arrives from the Swift app
      * shell via game_set_input() → gameBridgeConsumeInput(). The bridge

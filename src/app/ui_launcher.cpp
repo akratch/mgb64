@@ -91,6 +91,10 @@ void drawNavRail(int &active) {
 
     for (int i = 0; i < kNumPanels; ++i) {
         if (navButton(kPanels[i].label, active == i)) active = i;
+        // Seed initial nav focus on the active tab (once, on window appear) so a
+        // gamepad/keyboard has an anchor. Does not force a visible highlight
+        // until nav is actually engaged, so mouse/keyboard UX is unchanged.
+        if (active == i) ImGui::SetItemDefaultFocus();
     }
 
     float avail = ImGui::GetContentRegionAvail().y;
