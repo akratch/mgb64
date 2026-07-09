@@ -15,6 +15,12 @@ extern "C" {
 // quoted value decoding the common JSON escapes (\" \\ \/ \n \t \uXXXX-as-'?').
 // `len` bounds the scan (the caller hard-caps the HTTP read at 64KB). Writes a
 // NUL-terminated tag into out[cap]. Returns 1 if a non-empty tag was found.
+//
+// SECURITY: the DECODED tag is restricted to the release-tag charset
+// [A-Za-z0-9._+-]; any other decoded byte (control chars, '/', '"', spaces,
+// ...) rejects the WHOLE tag (returns 0, out=""). The tag is persisted into the
+// newline-delimited app ini on Dismiss, so a decoded '\n' would otherwise be a
+// config-key injection primitive; real release tags always fit the set.
 int mgb_update_extract_tag(const char *json, size_t len, char *out, size_t cap);
 
 // True if `version` should be treated as a dev/unparseable build — i.e. one that

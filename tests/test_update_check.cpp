@@ -29,9 +29,23 @@ int main(void) {
     // Field order independence: tag_name after other fields.
     CHECK(tagEquals("{\"url\":\"x\",\"id\":42,\"tag_name\":\"v9.9.9\",\"name\":\"y\"}", "v9.9.9"),
           "tag after other fields");
-    // Escaped characters in the value.
-    CHECK(tagEquals("{\"tag_name\":\"v1.0.0\\/beta\"}", "v1.0.0/beta"), "escaped slash");
-    CHECK(tagEquals("{\"tag_name\":\"a\\\"b\"}", "a\"b"), "escaped quote");
+    // Escape decoding happens BEFORE the charset allow-list, so an escaped byte
+    // outside [A-Za-z0-9._+-] ('/' or '"') rejects the tag rather than smuggling
+    // through — the decoded value is what gets checked.
+    {
+        char out[128];
+        CHECK(mgb_update_extract_tag("{\"tag_name\":\"v1.0.0\\/beta\"}",
+                                     std::strlen("{\"tag_name\":\"v1.0.0\\/beta\"}"),
+                                     out, sizeof(out)) == 0,
+              "decoded '/' outside allow-list -> reject");
+        CHECK(mgb_update_extract_tag("{\"tag_name\":\"a\\\"b\"}",
+                                     std::strlen("{\"tag_name\":\"a\\\"b\"}"),
+                                     out, sizeof(out)) == 0,
+              "decoded '\"' outside allow-list -> reject");
+    }
+    // Allowed-charset tags with suffix punctuation still pass whole.
+    CHECK(tagEquals("{\"tag_name\":\"v1.0.0-rc.1+build_7\"}", "v1.0.0-rc.1+build_7"),
+          "full allow-list charset accepted");
     // A "tag_name" substring appearing earlier as a value must not fool the scan
     // enough to matter; the first key match wins and yields a real value.
     {
@@ -59,6 +73,71 @@ int main(void) {
                                         std::strlen("{\"tag_name\":\"v1.2.3-longsuffix\"}"),
                                         out, sizeof(out));
         CHECK(ok && std::strlen(out) == 3, "truncated to cap-1");
+    }
+
+    // ---- hostile inputs (H1 review findings) ----
+    {
+        char out[128];
+        // THE H1 vector: a decoded newline followed by an ini key=value pair.
+        // Persisting this tag verbatim on Dismiss would inject config keys into
+        // the newline-delimited app ini (advanced_env -> arbitrary GE007_*
+        // setenv on next launch). Must be rejected outright.
+        const char *inj =
+            "{\"tag_name\":\"v9.9.9\\nadvanced_env=GE007_EVIL=1\\nlast_rom=/tmp/evil\"}";
+        std::memset(out, 'X', sizeof(out));
+        CHECK(mgb_update_extract_tag(inj, std::strlen(inj), out, sizeof(out)) == 0,
+              "ini-injection tag (decoded \\n) -> rejected");
+        CHECK(out[0] == '\0', "rejected tag leaves out empty");
+
+        // Other decoded control chars / disallowed bytes: all rejected.
+        const char *tab = "{\"tag_name\":\"v1.2.3\\tX\"}";
+        CHECK(mgb_update_extract_tag(tab, std::strlen(tab), out, sizeof(out)) == 0,
+              "decoded \\t -> rejected");
+        const char *cr = "{\"tag_name\":\"v1.2.3\\rX\"}";
+        CHECK(mgb_update_extract_tag(cr, std::strlen(cr), out, sizeof(out)) == 0,
+              "decoded \\r -> rejected");
+        const char *sp = "{\"tag_name\":\"v1.2.3 evil\"}";
+        CHECK(mgb_update_extract_tag(sp, std::strlen(sp), out, sizeof(out)) == 0,
+              "space -> rejected");
+        // Raw (unescaped) control byte inside the value.
+        const char rawnl[] = "{\"tag_name\":\"v9.9.9\nk=v\"}";
+        CHECK(mgb_update_extract_tag(rawnl, sizeof(rawnl) - 1, out, sizeof(out)) == 0,
+              "raw newline byte -> rejected");
+        // \uXXXX decodes to '?' (disallowed) -> rejected.
+        const char *uni = "{\"tag_name\":\"v1.0.0\\u000A\"}";
+        CHECK(mgb_update_extract_tag(uni, std::strlen(uni), out, sizeof(out)) == 0,
+              "\\uXXXX escape -> rejected");
+        // \u cut off at the very end of the buffer: bounded, no over-read, rejected.
+        const char *ucut = "{\"tag_name\":\"a\\u";
+        CHECK(mgb_update_extract_tag(ucut, std::strlen(ucut), out, sizeof(out)) == 0,
+              "\\u at buffer end -> bounded reject");
+    }
+    {
+        // 64KB-truncated body: "tag_name" straddling the cap must not be found
+        // (key cut mid-way), and a value cut at the cap yields only the safe
+        // prefix — both bounded by `len`, never reading past it.
+        static char big[64 * 1024];
+        std::memset(big, ' ', sizeof(big));
+        const char *key = "\"tag_name\":\"v1.2.3\"";
+        // (a) key straddles the cap: only the first half is inside `len`.
+        std::memcpy(big + sizeof(big) - 6, key, 6);  // "\"tag_n" then cut
+        char out[128];
+        CHECK(mgb_update_extract_tag(big, sizeof(big), out, sizeof(out)) == 0,
+              "key straddling 64KB cap -> not found");
+        // (b) value straddles the cap: closing quote beyond `len`; the safe
+        // prefix inside the window is returned, in-bounds.
+        std::memset(big, ' ', sizeof(big));
+        std::memcpy(big + sizeof(big) - 17, key, 17);  // cuts after "v1.2."
+        CHECK(mgb_update_extract_tag(big, sizeof(big), out, sizeof(out)) == 1 &&
+                  std::strcmp(out, "v1.2.") == 0,
+              "value straddling 64KB cap -> bounded safe prefix");
+
+        // Embedded NUL before the key: length-bounded scan still finds the tag
+        // (no reliance on NUL termination anywhere in the body).
+        static const char nulbody[] = "{\"x\":\"a\0b\",\"tag_name\":\"v2.0.0\"}";
+        CHECK(mgb_update_extract_tag(nulbody, sizeof(nulbody) - 1, out, sizeof(out)) == 1 &&
+                  std::strcmp(out, "v2.0.0") == 0,
+              "embedded NUL body -> still parsed");
     }
 
     // ---- dev-version detection ----

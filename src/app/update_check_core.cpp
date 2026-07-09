@@ -59,6 +59,17 @@ int cmpCore(const SemVer &x, const SemVer &y) {
     return 0;
 }
 
+// H1 hardening: the release-tag charset allow-list. Applied to the DECODED tag
+// (after JSON escape decoding), so "v9.9.9\nadvanced_env=..." — a config-key
+// injection against the newline-delimited app ini via Dismiss — is rejected no
+// matter how the hostile bytes were encoded. Real tags (v0.3.3, 1.0.0-rc1)
+// always fit; anything else is not a version worth banner-ing about.
+int tagCharOk(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') ||
+           c == '.' || c == '_' || c == '+' || c == '-';
+}
+
 }  // namespace
 
 int mgb_update_version_is_dev(const char *version) {
@@ -128,6 +139,10 @@ int mgb_update_extract_tag(const char *json, size_t len, char *out, size_t cap) 
                     break;
                 default:  ch = *p; break;   // \" \\ \/ and anything else: literal
             }
+        }
+        if (!tagCharOk(ch)) {   // hostile/odd byte => reject the whole tag (H1)
+            out[0] = '\0';
+            return 0;
         }
         if (o + 1 < cap) out[o++] = ch;
         ++p;

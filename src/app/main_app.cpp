@@ -151,6 +151,7 @@ int main(int argc, char **argv) {
             running = false;    // Task 9 adds return-to-launcher (re-exec)
         }
     }
+    UpdateCheck_quiesce();  // a check still in flight must not log past teardown
     host.shutdown();
     return 0;
 }

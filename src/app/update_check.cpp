@@ -29,7 +29,15 @@ const size_t kMaxResponse = 64 * 1024;
 SDL_atomic_t s_started;    // 1 once the worker has been (or was declined to be) launched
 SDL_atomic_t s_done;       // 1 when the worker has finished
 SDL_atomic_t s_hasUpdate;  // 1 when s_tag holds a strictly-newer release tag
+SDL_atomic_t s_quiesced;   // 1 once the app is shutting down: worker stops logging
 char         s_tag[128];   // written by the worker before publishing s_hasUpdate
+
+// M1: the worker is detached, so if the user quits within curl's 3s window it
+// can outlive host.shutdown()/DiagLog teardown. Its data targets are all
+// process-lifetime statics (safe), but a late fprintf(stderr) would race the
+// closing DiagLog pipe — so the worker's log lines are gated on s_quiesced
+// (set by UpdateCheck_quiesce before shutdown).
+bool logOk() { return SDL_AtomicGet(&s_quiesced) == 0; }
 
 const char *resolveUrl() {
     const char *env = std::getenv("GE007_UPDATE_CHECK_URL");
@@ -51,12 +59,13 @@ int worker(void * /*arg*/) {
             mgb_update_remote_is_newer(tag, AppVersion())) {
             std::snprintf(s_tag, sizeof(s_tag), "%s", tag);
             SDL_AtomicSet(&s_hasUpdate, 1);
-            std::fprintf(stderr, "[update] newer release available: %s (current %s)\n",
-                         tag, AppVersion());
-        } else {
+            if (logOk())
+                std::fprintf(stderr, "[update] newer release available: %s (current %s)\n",
+                             tag, AppVersion());
+        } else if (logOk()) {
             std::fprintf(stderr, "[update] up to date (current %s)\n", AppVersion());
         }
-    } else {
+    } else if (logOk()) {
         std::fprintf(stderr, "[update] no response (offline / curl unavailable); no banner\n");
     }
     SDL_AtomicSet(&s_done, 1);
@@ -128,8 +137,10 @@ namespace {
 size_t runCurl(const char *url, char *buf, size_t cap) {
     if (!url || !url[0] || cap == 0) return 0;
     // The command line is quoted with '"'; reject a URL that carries one so it
-    // can't break the argument (posix_spawnp needs no such guard).
-    if (std::strchr(url, '"')) return 0;
+    // can't break the argument (posix_spawnp needs no such guard). A trailing
+    // '\' would escape our closing quote under CommandLineToArgv rules — reject
+    // that too (L1; no legit URL ends in a backslash).
+    if (std::strchr(url, '"') || url[std::strlen(url) - 1] == '\\') return 0;
 
     SECURITY_ATTRIBUTES sa;
     sa.nLength = sizeof(sa);
@@ -245,8 +256,19 @@ int UpdateCheck_bannerTag(char *out, size_t cap) {
 
 int UpdateCheck_isDone(void) { return SDL_AtomicGet(&s_done); }
 
+void UpdateCheck_quiesce(void) { SDL_AtomicSet(&s_quiesced, 1); }
+
 void UpdateCheck_dismiss(const char *tag) {
     if (!tag) return;
-    AppConfig::set("update.dismissed_tag", tag);
+    // Belt-and-suspenders vs H1: the tag already passed the parse-side charset
+    // allow-list, but the ini is newline-delimited key=value, so strip any
+    // control byte here too in case another tag source ever feeds this path.
+    char clean[128];
+    size_t o = 0;
+    for (const char *p = tag; *p && o + 1 < sizeof(clean); ++p) {
+        if ((unsigned char)*p >= 0x20) clean[o++] = *p;
+    }
+    clean[o] = '\0';
+    AppConfig::set("update.dismissed_tag", clean);
     AppConfig::save();
 }

@@ -25,6 +25,10 @@ int UpdateCheck_bannerTag(char *out, size_t cap);
 // Used by the headless self-test harness (MGB64_UPDATE_CHECK_SELFTEST).
 int UpdateCheck_isDone(void);
 
+// Call just before app shutdown: silences the (detached) worker's log lines so
+// a check still in flight can't fprintf into DiagLog's closing stderr pipe.
+void UpdateCheck_quiesce(void);
+
 // Persist `tag` as dismissed (app config) so its banner never returns.
 void UpdateCheck_dismiss(const char *tag);
 
