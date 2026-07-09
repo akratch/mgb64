@@ -2,6 +2,7 @@
 #include "ui_launcher.h"
 #include "input_actions.h"
 #include "ui_common.h"
+#include "ui_overlay.h"  // Overlay_gamepadToggleButton: reserved, not capturable
 
 #include "imgui.h"
 #include <SDL.h>
@@ -124,6 +125,12 @@ void drawGamepadTable() {
                 gamepadBindingSave(); capturing = -1; committedThisFrame = true;
             } else {
                 for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
+                    // Reserved buttons are not capturable: the overlay toggle
+                    // (binding Fire = toggle would soft-lock into overlay
+                    // ping-pong via the input gate) and Guide (OS/Steam/Xbox
+                    // overlay button). Presses are simply ignored mid-capture.
+                    if (b == Overlay_gamepadToggleButton() || b == SDL_CONTROLLER_BUTTON_GUIDE)
+                        continue;
                     if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) {
                         gamepadBindingSetButton((GamepadAction)capturing, b);
                         gamepadBindingSave(); capturing = -1; committedThisFrame = true;
@@ -195,8 +202,9 @@ void BindingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
             ui::Gap(ui::kGapM);
             ui::TextSubtle("Sticks are fixed: left stick = move, right stick = look/aim. "
                            "X is a fixed alternate for Reload.");
-            ui::TextSubtle("The Back/View button opens the in-game overlay (with F1) and "
-                           "cannot be rebound; Previous Weapon moved to the Right-Stick click.");
+            ui::TextSubtle("The Back/View button opens the in-game overlay (with F1); it and "
+                           "the Guide button cannot be bound to game actions. Previous Weapon "
+                           "moved to the Right-Stick click.");
             ui::TextSubtle("Player 2\xE2\x80\x93" "4 pads use fixed defaults (multiplayer rebinding "
                            "is out of scope).");
             ImGui::EndTabItem();
