@@ -48,9 +48,12 @@ void draw_textured_rectangle(Gfx **gdlptr, f32 *position, f32 *size, s32 width, 
          *    to two NDC triangles; the GPU clips them to the viewport with
          *    correct UV interpolation. No software rasterizer or size-derived
          *    allocation exists in that path, so there is no memory hazard.
-         * A coordinate clamp here WITHOUT an S/T compensation would rescale
-         * the texture across the smaller rect instead of clipping it (see
-         * gSPScisTextureRectangle, which must adjust s/t when it clamps).
+         * A clamp here would be redundant, not wrong: dsdx/dtdy derive from
+         * size[] (texels-per-pixel), not from the xl..xh span, so a clamped
+         * edge would clip correctly anyway -- exactly what the GPU/RDP
+         * already does for free. Note gSPScisTextureRectangle only ever
+         * clamps against 0 and adjusts s/t for the left/top case, which the
+         * software clip below already handles.
          * The residual limit is the 12-bit encode itself: coordinates above
          * 1023.75px (4095 quarter-px) would wrap to a misplaced-but-bounded
          * rect. HUD callers cannot reach it — image dims are bounded by
