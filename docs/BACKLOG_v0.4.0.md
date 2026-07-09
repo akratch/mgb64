@@ -1353,16 +1353,24 @@ deserves the full matrix.
 
 ## M8 — Validation rails & release
 
-### M8.1 — sim-hash must cover the prop/chr BSS
-**P2 · S-M**
-**Files:** `src/platform/sim_state_hash_registry.c:24-38` — only `s_pcPool`,
-`g_ClockTimer`, `g_GlobalTimer` are hashed; movement/collision drift in BSS-resident
-chr/prop/stan state is invisible to the invariance gate that everything else in this
-backlog leans on.
-- [ ] Register the guard/prop record arrays and stan/collision scratch as additional
-      `SimHashRegion`s (BSS base/size); re-baseline the invariance lane.
-- [ ] Do this EARLY in the cycle (ideally alongside M1) so M2.3/M2.5 sim changes are
-      guarded by a hash that can actually see them.
+### M8.1 — sim-hash must cover the prop/chr BSS ✅ (FID-0030 verified)
+**P2 · S-M — DONE (S-Tier Task 0.4)**
+Sim-hash coverage is now a **checked property**, not tribal knowledge.
+- [x] Prop-record pool (`pos_data_entry`) registered earlier (M8.1 premise fix).
+- [x] Stan collision navmesh/saved-collision-cache/BFS scratch registered
+      (`stanBuildHashRegions`, `src/game/stan.c`); RNG seed (`g_randomSeed`) and
+      the `g_BgRoomInfo` room-visibility read-back (FID-0012 rule — a
+      render-written field consumed by sim is NOT waivable) registered too.
+- [x] `tools/fidelity/hash_coverage_audit.py` cross-references **every** writable
+      (`.data`/`.bss`) decomp symbol against the live region table
+      (`ge007 --print-sim-hash-regions`, ROM-free) and dispositions each as
+      hashed / waived (`docs/fidelity/hash_waivers.txt`, categorical reasons) /
+      UNCOVERED. Exit 1 on any UNCOVERED. Registered as ctest
+      `fidelity_hash_coverage` (verify manifest tier 1). Current audit: 0
+      UNCOVERED (3316 writable symbols; 26 hashed, 3285 waived-with-reason).
+- [x] Re-baselined: `sim_invariance_gate` green (OFF==ON with the new regions),
+      Dam screenshot + state-trace byte-identical vs the pre-change build (only
+      the internal hash *value* shifted, as expected once).
 
 ### M8.2 — Route/validation expansion (the honesty gap)
 **P2 · ongoing**

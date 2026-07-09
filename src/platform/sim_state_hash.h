@@ -14,8 +14,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Upper bound on registered state regions (pool + curated globals). */
-#define SIM_HASH_MAX_REGIONS 32
+/* Upper bound on registered state regions (pool + curated globals + the stan
+ * collision-navmesh region set appended by stanBuildHashRegions). */
+#define SIM_HASH_MAX_REGIONS 64
 
 typedef struct {
     const char *name;   /* stable identity; hashed so region-set changes are caught */
@@ -40,6 +41,15 @@ int sim_state_hash_emit_json(const char *path, uint64_t hash,
 /* Fill `out` with the state region set: [0] = pool, [1..] = curated globals.
  * `*n` returns the count. Defined in sim_state_hash_registry.c (game build only). */
 void simHashRegistryBuild(SimHashRegion *out, int *n);
+
+/* Append the stan collision-navmesh region set starting at index *n (advances
+ * *n). Defined in src/game/stan.c where the collision globals' types are visible
+ * (M8.1/FID-0030). Game build only. */
+void stanBuildHashRegions(SimHashRegion *out, int *n);
+
+/* Append the g_BgRoomInfo region (room_rendered render->sim read-back, FID-0012)
+ * at index *n (advances *n). Defined in src/game/bg.c. Game build only. */
+void bgBuildHashRegions(SimHashRegion *out, int *n);
 
 /* If g_simStateHashOut is set, build the registry, hash it, and emit the JSON.
  * Called at deterministic screenshot-exit, before teardown. Game build only. */

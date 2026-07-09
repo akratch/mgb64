@@ -20,6 +20,7 @@ static const char *const kAutomationFlags[] = {
     "--sim-state-hash-out",
     "--trace-state",
     "--freeze-input",
+    "--print-sim-hash-regions",
     "--dump-config",
     "--list-settings",
     "--list-displays",

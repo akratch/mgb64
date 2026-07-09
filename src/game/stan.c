@@ -7039,3 +7039,101 @@ void sub_GAME_7F0B31A4(s32 arg0, StandTile *arg1, f32 arg2, f32 arg3, f32 arg4, 
     (void)arg0;
     stanTestVolume(&arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
+
+#ifdef NATIVE_PORT
+#include "sim_state_hash.h"
+/*
+ * Stan (collision navmesh) hashed-region set — the M8.1/FID-0030 blind spot.
+ *
+ * The stan navmesh state lives in file-scope BSS/data here, NOT in s_pcPool, so
+ * collision/LOS drift escaped the sim-invariance hash entirely (only the loaded
+ * navmesh *bytes* — reached through stan_prefix.stanfile — are pool-resident and
+ * already hashed). These globals are written by the collision/pathfinding tick
+ * (setLevelScale at load, per-query saved-collision cache, BFS tile stack), never
+ * by the renderer, so they stay identical render-OFF vs render-ON; registering
+ * them turns any render->collision leak into a caught hash divergence.
+ *
+ * Embedded pointers (firststaninroom[], standTileStart, stanSavedColl_tile/posData,
+ * bfsTileStack[], stan_prefix.*) are ASLR-safe: they either point into a hashed
+ * region (canonicalized to its (region,offset) token) or into the pool/loaded
+ * navmesh buffer (neutralized to the pointer-window constant), never hashed as a
+ * raw address. Sizes are sizeof of the real typed objects, not decayed pointers.
+ *
+ * Transient per-call scratch and debug logs (stanlinelog_flag, the function-static
+ * log/count buffers, the LEFTOVERDEBUG D_8004xx blocks) are deliberately NOT here
+ * and are waived in docs/fidelity/hash_waivers.txt — they carry no cross-tick
+ * simulation state.
+ */
+extern s32 dword_CODE_bss_8007B9DC;
+extern s32 dword_CODE_bss_8007B9E0;
+extern s32 dword_CODE_bss_8007BA08;
+extern StandTile *dword_CODE_bss_8007BA0C;
+
+/*
+ * Guard the ARRAY-typed symbols against a future edit silently decaying one to a
+ * pointer: sizeof must be the full array extent (many KB), never 8. This is the
+ * exact failure mode that bit the M8.1 prop-pool region (sizeof of a decayed
+ * array pointer). If one of these fires, the region would under-cover and the
+ * collision scratch would go effectively UNHASHED.
+ */
+_Static_assert(sizeof(firststaninroom) == sizeof(StandTile *) * STAN_MAX_ROOMS,
+               "firststaninroom region must be the whole array, not a pointer");
+_Static_assert(sizeof(stan_room_bbox) == sizeof(s16) * STAN_MAX_ROOMS * 6,
+               "stan_room_bbox region must be the whole array, not a pointer");
+_Static_assert(sizeof(bfsTileStack) == sizeof(StandTile *) * 352,
+               "bfsTileStack region must be the whole array, not a pointer");
+
+void stanBuildHashRegions(SimHashRegion *out, int *n) {
+    int i = *n;
+#define STAN_REG(sym)                                    \
+    do {                                                 \
+        out[i].name = "stan:" #sym;                      \
+        out[i].base = &(sym);                            \
+        out[i].size = sizeof(sym);                       \
+        i++;                                             \
+    } while (0)
+
+    /*
+     * NOLINTBEGIN(bugprone-sizeof-expression) — several stan symbols below are
+     * single POINTER VARIABLES (standTileStart, D_80040F60, stanSavedColl_tile,
+     * stanSavedColl_posData, dword_CODE_bss_8007BA0C). Taking sizeof of the
+     * pointer VARIABLE (8) is intentional and correct here: we register the
+     * variable's own storage, and the hash canonicalizes its VALUE (a set
+     * navmesh/pool pointer -> neutral pointer-window token; NULL -> literal 0),
+     * so "navmesh loaded vs not / which cached tile" is captured ASLR-safely
+     * without ever hashing a raw address. The ARRAY symbols above are asserted to
+     * carry their full extent, so this is never the decayed-array-pointer bug.
+     */
+
+    /* Navmesh topology (set at level load). */
+    STAN_REG(stan_prefix);
+    STAN_REG(firststaninroom);
+    STAN_REG(stan_room_bbox);
+    STAN_REG(dword_CODE_bss_8007B9DC);   /* room count */
+    STAN_REG(dword_CODE_bss_8007B9E0);
+    STAN_REG(standTileStart);
+    STAN_REG(ptr_firstroom_0);
+    STAN_REG(D_80040F60);
+    STAN_REG(m_stanRegion);
+    STAN_REG(level_scale);
+    STAN_REG(inv_level_scale);
+
+    /* Per-query saved-collision cache (read back by later queries). */
+    STAN_REG(stanSavedColl_tile);
+    STAN_REG(stanSavedColl_pointI);
+    STAN_REG(stanSavedColl_unknown);
+    STAN_REG(stanSavedColl_pntA);
+    STAN_REG(stanSavedColl_pntB);
+    STAN_REG(stanSavedColl_someMin);
+    STAN_REG(stanSavedColl_posData);
+    STAN_REG(dword_CODE_bss_8007BA08);
+    STAN_REG(dword_CODE_bss_8007BA0C);
+
+    /* BFS tile-walk stack (collision path search scratch). */
+    STAN_REG(bfsTileStack);
+    /* NOLINTEND(bugprone-sizeof-expression) */
+
+#undef STAN_REG
+    *n = i;
+}
+#endif /* NATIVE_PORT */

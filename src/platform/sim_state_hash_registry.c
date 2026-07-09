@@ -57,6 +57,41 @@ void simHashRegistryBuild(SimHashRegion *out, int *n) {
     out[i].size = (size_t)POS_DATA_ENTRY_LEN * sizeof(PropRecord);
     i++;
 
+    /*
+     * RNG state (FID-0030). The Lehmer/LCG seed `g_randomSeed` (src/random.c) is
+     * the master pseudo-random stream for the whole sim — spread, AI jitter,
+     * spawn selection all draw from it. It is a plain global, NOT pool-resident,
+     * so it escaped the invariance hash. It is advanced only by sim `random()`
+     * draws, never by the renderer, so it stays identical render-OFF vs ON;
+     * hashing it makes a render->RNG divergence a caught failure. The port's RNG
+     * trace instrumentation (the s_pcRandomTrace / CallSeedEvent globals) is
+     * debug-only and waived, not hashed.
+     */
+    {
+        extern u64 g_randomSeed;
+        out[i].name = "g_randomSeed";
+        out[i].base = &g_randomSeed;
+        out[i].size = sizeof g_randomSeed;
+        i++;
+    }
+
+    /*
+     * Stan collision-navmesh region set (M8.1/FID-0030 named blind spot). The
+     * navmesh topology, per-query saved-collision cache, and BFS tile stack live
+     * in file-scope BSS/data in src/game/stan.c (not s_pcPool). Appended by an
+     * accessor there so the sizeof's see the real typed objects. See the block
+     * comment on stanBuildHashRegions() for the pointer-safety argument.
+     */
+    stanBuildHashRegions(out, &i);
+
+    /*
+     * Room-visibility read-back (FID-0012). g_BgRoomInfo.room_rendered is written
+     * by the renderer's portal/frustum pass and read back by the sim tick's
+     * auto-aim visibility (chr.c/chrprop.c); a render-written field consumed by
+     * sim is NOT waivable, so the array is hashed here. See bgBuildHashRegions.
+     */
+    bgBuildHashRegions(out, &i);
+
     *n = i;
 }
 

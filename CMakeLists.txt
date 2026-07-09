@@ -393,6 +393,31 @@ if(BUILD_TESTING)
     set_tests_properties(fidelity_ledger_valid PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+    # Sim-hash coverage audit (S-tier Task 0.4, FID-0030): make "what the
+    # sim-state invariance hash covers" a checked property. Every writable
+    # (.data/.bss) symbol in the decomp TUs (src/game/* + top-level src/*) must
+    # be either hashed by a SimHashRegion or waived in docs/fidelity/
+    # hash_waivers.txt with a reason, else this fails. ROM-free: nm over the
+    # built ge007 objects + the region table from `ge007 --print-sim-hash-regions`.
+    # Needs the built ge007 binary + its objects; SKIPs (not fails) via the
+    # prereq wrapper when ge007 has not been built (e.g. a test-only checkout),
+    # the same convention as the intro_* smokes. The ge007 target is defined
+    # later in this file, so the binary is referenced by path, not $<TARGET_FILE>.
+    add_test(
+        NAME fidelity_hash_coverage
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/ctest_require_prereqs.sh"
+            --require "${CMAKE_BINARY_DIR}/ge007"
+            --
+            python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/hash_coverage_audit.py"
+                --binary "${CMAKE_BINARY_DIR}/ge007"
+                --objroot "${CMAKE_BINARY_DIR}/CMakeFiles/ge007.dir"
+                --waivers "${CMAKE_SOURCE_DIR}/docs/fidelity/hash_waivers.txt"
+                --report "${CMAKE_BINARY_DIR}/hash_coverage_report.json"
+    )
+    set_tests_properties(fidelity_hash_coverage PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        SKIP_RETURN_CODE 125)
+
     # Local MinGW cross-compile lane (backlog MW.2): proves ge007.exe compiles
     # and links for Windows from this host instead of waiting for the release
     # CI. Opt-in (needs `brew install mingw-w64` + network for the vendored

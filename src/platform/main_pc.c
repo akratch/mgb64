@@ -41,6 +41,7 @@
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
 #include "input_tape.h"           /* --record-tape / --play-tape (FID-0034) */
+#include "sim_state_hash.h"        /* simHashRegistryBuild for --print-sim-hash-regions */
 #include "../app/input_actions.h"  /* rebindable keyboard registry (not app-gated) */
 #ifdef MGB64_APP
 #include "../app/engine_entry.h"  /* MgbBootConfig + mgb64_engine_boot decl */
@@ -821,6 +822,20 @@ int main(int argc, char **argv)
             inputTapeConfigurePlayback(argv[++i]);
             g_deterministic = 1;
             g_freezeInput = 1;
+        } else if (strcmp(argv[i], "--print-sim-hash-regions") == 0) {
+            /* Emit the sim-state-hash region table (`name base size`, one per
+             * line) and exit. ROM-free: simHashRegistryBuild() only reads the
+             * static region bases (g_ClockTimer/g_GlobalTimer/pos_data_entry)
+             * plus the not-yet-allocated pool base (0x0/0 pre-init). Consumed by
+             * tools/fidelity/hash_coverage_audit.py to cross-reference every
+             * writable decomp symbol against the hashed regions (FID-0030). */
+            SimHashRegion regs[SIM_HASH_MAX_REGIONS];
+            int nregs = 0;
+            simHashRegistryBuild(regs, &nregs);
+            for (int r = 0; r < nregs; r++) {
+                printf("%s %p %zu\n", regs[r].name, regs[r].base, regs[r].size);
+            }
+            return 0;
         } else if (strcmp(argv[i], "--mission") == 0 && i + 1 < argc) {
             int mission = 0;
             const PcStartStage *stage;
