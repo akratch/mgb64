@@ -5837,6 +5837,7 @@ void lvlViewMoveTick(void)
         extern void platformGetPadRightStick(int k, int *rx, int *ry);
         extern void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled);
         extern int g_freezeInput;
+        extern int platformOverlayWantsInput(void);
 
         /* Inject mouse look and gamepad right-stick directly into player
          * angles (bypasses C-button acceleration for smooth feel).
@@ -5853,7 +5854,13 @@ void lvlViewMoveTick(void)
                 platformGetMouseDelta(&mdx, &mdy);
             }
             platformGetPadRightStick(local_player_number, &grx, &gry);
-            if (!live_look_allowed) {
+            /* Overlay gate (MC.1/F1): this poll bypasses osContGetReadData, so
+             * it needs its own gate — otherwise a thumb resting on the right
+             * stick rotates the camera behind the open overlay. (Mouse look is
+             * already covered: platformPollEvents swallows the motion events.)
+             * Automation-safe: with no overlay hooks registered the call
+             * returns 0 unconditionally. */
+            if (!live_look_allowed || platformOverlayWantsInput()) {
                 mdx = 0;
                 mdy = 0;
                 grx = 0;

@@ -189,9 +189,11 @@ remove / shutdown) dangles the other's pointer.
 
 **Input gate.** When the overlay is open it owns input: `osContGetReadData`
 returns neutral pads while `platformOverlayWantsInput()` is true — the
-polled-input analogue of the event-swallow in `platformPollEvents`, so pad nav
-never leaks into gameplay. It is a no-op on the automation path (no overlay
-hooks registered), so byte-identity is preserved.
+polled-input analogue of the event-swallow in `platformPollEvents` — and the
+right-stick look injection in `lvl.c` (which bypasses `osContGetReadData`)
+zeroes under the same condition, so pad nav never leaks into gameplay. Both
+gates are no-ops on the automation path (no overlay hooks registered), so
+byte-identity is preserved.
 
 **Gamepad rebinding (MC.3).** 14 player-1 actions are rebindable in the Controls
 panel's Gamepad tab, mirroring the keyboard registry: each binds to a
