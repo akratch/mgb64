@@ -131,12 +131,18 @@ static const char *kGpLabel[GB_COUNT] = {
     "Look Up", "Look Down", "Look Left", "Look Right",
 };
 
-/* Pretty names for the standard XInput/SDL button indices. */
+/* Pretty names for EVERY SDL button index (SDL_CONTROLLER_BUTTON_MAX == 21 in
+ * SDL 2.32): the capture scan and gpValid() accept 15..20 (Share/paddles/
+ * touchpad — Elite/Ally-class hardware), so a NULL here would feed
+ * snprintf("%s", NULL) — UB. Keep this table exhaustive. */
 static const char *kGpButtonName[SDL_CONTROLLER_BUTTON_MAX] = {
     "A", "B", "X", "Y", "Back", "Guide", "Start",
     "Left Stick Click", "Right Stick Click",
     "Left Bumper", "Right Bumper",
     "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right",
+    "Share",                                        /* MISC1 */
+    "Paddle 1", "Paddle 2", "Paddle 3", "Paddle 4", /* Elite paddles */
+    "Touchpad",
 };
 
 static int g_gpBind[GB_COUNT];
@@ -168,7 +174,8 @@ static const char *gpEncodedName(int v) {
     if (v == GB_NONE) return "None";
     if (v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERLEFT)  return "Left Trigger";
     if (v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERRIGHT) return "Right Trigger";
-    if (v >= 0 && v < SDL_CONTROLLER_BUTTON_MAX) return kGpButtonName[v];
+    if (v >= 0 && v < SDL_CONTROLLER_BUTTON_MAX && kGpButtonName[v])
+        return kGpButtonName[v];  /* NULL guard: an SDL enum bump must not yield UB */
     return "?";
 }
 
