@@ -4,6 +4,7 @@
 // delegate to the unchanged engine path. Task 3 replaces the crude "any args"
 // check with a precise automation-flag allow-list (mgb_is_automation_invocation)
 // so that non-automation flags (e.g. --rom) route into the launcher instead.
+#include "app_config.h"
 #include "app_host.h"
 #include "arg_triage.h"
 #include "config_schema.h"
@@ -11,12 +12,42 @@
 #include "engine_entry.h"
 #include "ui_launcher.h"
 #include "ui_overlay.h"
+#include "update_check.h"
+
+#include <SDL.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+// Headless validation harness for the update check: runs the real gated check
+// (curl subprocess + tag parse + semver compare) once and prints the outcome,
+// then exits — no window. Drives the mock via GE007_UPDATE_CHECK_URL and the
+// negative controls (GE007_UPDATE_CHECK=0, empty PATH, automation flags). Mirrors
+// the MGB64_APP_DUMP_SCHEMA self-check pattern below.
+static int updateCheckSelfTest(int argc, char **argv) {
+    mgb_config_init();  // registers Game.CheckForUpdates so the toggle gate reads it
+    AppConfig::load();  // so a previously dismissed tag suppresses the banner
+    UpdateCheck_start(argc, argv);
+    for (int i = 0; i < 120 && !UpdateCheck_isDone(); ++i) {
+        SDL_Delay(50);  // curl --max-time is 3s; wait a little past it
+    }
+    char tag[128];
+    if (UpdateCheck_bannerTag(tag, sizeof(tag))) {
+        std::printf("[selftest] banner: %s\n", tag);
+    } else {
+        std::printf("[selftest] no banner\n");
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    // Headless update-check validation (before the automation gate so it can be
+    // exercised alongside automation flags to prove the internal gate).
+    if (std::getenv("MGB64_UPDATE_CHECK_SELFTEST")) {
+        return updateCheckSelfTest(argc, argv);
+    }
+
     // Automation/diagnostic invocations bypass the launcher and run the
     // unchanged engine path (byte-identical). Everything else opens the app.
     if (mgb_is_automation_invocation(argc, argv)) {
@@ -100,6 +131,12 @@ int main(int argc, char **argv) {
         host.shutdown();
         return 0;
     }
+
+    // Quiet, once-per-session check for a newer GitHub release on a background
+    // thread (never blocks launch). Interactive path only — the automation/smoke/
+    // autoplay/schema paths all returned above, so no test lane spawns curl. Also
+    // internally gated on the automation flags + Game.CheckForUpdates + env.
+    UpdateCheck_start(argc, argv);
 
     bool running = true;
     while (running) {

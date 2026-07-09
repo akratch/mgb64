@@ -94,6 +94,17 @@ int mgb_config_get(int index, MgbCfgEntry *out) {
     return 1;
 }
 
+int mgb_config_get_int(const char *key, int fallback) {
+    const Setting *s = settingsFind(key);
+    if (!s || !s->ptr) return fallback;
+    switch (s->type) {
+        case SETTING_TYPE_INT:
+        case SETTING_TYPE_ENUM: return (int)*(s32 *)s->ptr;
+        case SETTING_TYPE_UINT: return (int)*(u32 *)s->ptr;
+        default:                return fallback;
+    }
+}
+
 const char *mgb_config_enum_token(const char *key, int optIndex) {
     const Setting *s = settingsFind(key);
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return "";

@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**900 flags** found across the source.
+**902 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -890,6 +890,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_WEAPON_AUDIO` | ? |  | 4 |  |
 | `GE007_TRACE_Y` | ? |  | 1 |  |
 | `GE007_UNMUTE` | ? |  | 1 |  |
+| `GE007_UPDATE_CHECK` | ? |  | 1 |  |
+| `GE007_UPDATE_CHECK_URL` | ? |  | 1 |  |
 | `GE007_VERBOSE` | ? |  | 54 |  |
 | `GE007_VERIFY_GPU` | ? |  | 1 |  |
 | `GE007_VIEWMODEL_TWEAK` | ? |  | 1 |  |

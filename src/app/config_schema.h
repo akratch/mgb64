@@ -45,6 +45,11 @@ int  mgb_config_count(void);
 int  mgb_config_get(int index, MgbCfgEntry *out);  // 1 on success
 const char *mgb_config_enum_token(const char *key, int optIndex);
 
+// Current INT/UINT/ENUM value for a key, or `fallback` if the key is absent or
+// not an integer-typed setting. Lightweight lookup for app code that needs one
+// value (e.g. the launcher's Game.CheckForUpdates gate) without enumerating.
+int  mgb_config_get_int(const char *key, int fallback);
+
 // Mutation (validated/clamped by the engine).
 void mgb_config_set_int(const char *key, int value);
 void mgb_config_set_float(const char *key, float value);
