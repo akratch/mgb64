@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include "nfd.h"
 
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -131,6 +132,48 @@ bool sectionHasAdvanced(const char *sec) {
     return false;
 }
 
+// Restore every setting in one section (both player + advanced tiers) to its
+// registered default. Validated/clamped by the engine; does NOT auto-save (the
+// "Save Settings" button persists, matching the rest of this panel).
+void resetSectionToDefaults(const char *sec) {
+    const int n = mgb_config_count();
+    for (int i = 0; i < n; ++i) {
+        MgbCfgEntry e;
+        if (!mgb_config_get(i, &e)) continue;
+        if (std::strcmp(e.section, sec) != 0) continue;
+        mgb_config_reset_default(e.key);
+    }
+}
+
+// Per-tab "Reset to defaults" footer with a confirm popup — high value for pad
+// users who can't retype a value they nudged off. One-click reset would be too
+// easy to trigger by accident on a controller, so it confirms first.
+void drawResetFooter(const char *sec) {
+    ui::Gap(ui::kGapM);
+    ImGui::Separator();
+    ui::Gap(ui::kGapS);
+
+    char popupId[80];
+    std::snprintf(popupId, sizeof(popupId), "Reset %s settings?##reset_%s", sec, sec);
+    if (ImGui::Button("Reset to defaults")) ImGui::OpenPopup(popupId);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Restore this tab's settings to their defaults");
+
+    if (ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Reset all %s settings to their defaults?", sec);
+        ui::TextSubtle("Affects only the %s tab. Use \"Save Settings\" to keep it.", sec);
+        ui::Gap(ui::kGapS);
+        if (ui::PrimaryButton("Reset", ImVec2(120, 0))) {
+            resetSectionToDefaults(sec);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::SetItemDefaultFocus();  // B/Esc-friendly: focus Cancel by default
+        ImGui::EndPopup();
+    }
+}
+
 }  // namespace
 
 void Settings_draw() {
@@ -161,6 +204,8 @@ void Settings_draw() {
                         drawSection(sec, true);
                     }
                 }
+
+                drawResetFooter(sec);
 
                 ImGui::EndChild();
                 ImGui::EndTabItem();
