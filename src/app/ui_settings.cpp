@@ -4,10 +4,38 @@
 #include "ui_common.h"
 
 #include "imgui.h"
+#include "nfd.h"
 
 #include <cstring>
 
 namespace {
+
+// String settings (e.g. Video.TexturePack): show the current path read-only
+// plus a native folder picker and a Clear (= stock). Fixes the old "(unsupported
+// type)" fall-through — string settings are now first-class + editable.
+void drawStringEntry(const MgbCfgEntry &e, const char *label) {
+    char buf[512];
+    if (!mgb_config_get_string(e.key, buf, (int)sizeof(buf))) buf[0] = '\0';
+
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(ui::kControlWidth);
+    ImGui::InputText("##path", buf, sizeof(buf), ImGuiInputTextFlags_ReadOnly);
+    ImGui::SameLine();
+    if (ImGui::Button("Browse…")) {
+        if (NFD_Init() == NFD_OKAY) {
+            nfdu8char_t *out = nullptr;
+            if (NFD_PickFolderU8(&out, buf[0] ? buf : nullptr) == NFD_OKAY && out) {
+                mgb_config_set_string(e.key, out);
+                NFD_FreePathU8(out);
+            }
+            NFD_Quit();
+        }
+    }
+    if (buf[0]) {
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) mgb_config_set_string(e.key, "");
+    }
+}
 
 void drawEntry(const MgbCfgEntry &e) {
     ImGui::PushID(e.key);
@@ -47,6 +75,9 @@ void drawEntry(const MgbCfgEntry &e) {
             }
             break;
         }
+        case MGB_CFG_STRING:
+            drawStringEntry(e, label);
+            break;
         default:
             ImGui::TextDisabled("%s (unsupported type)", label);
             break;

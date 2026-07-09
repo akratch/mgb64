@@ -51,10 +51,17 @@ const char *mgb_config_enum_token(const char *key, int optIndex);
 // value (e.g. the launcher's Game.CheckForUpdates gate) without enumerating.
 int  mgb_config_get_int(const char *key, int fallback);
 
+// Current STRING value for a key. Copies into out (always NUL-terminated when
+// out_size > 0). Returns 1 if the key exists and is a string setting, else 0
+// (and out is set to ""). Lightweight lookup for the settings UI, which needs
+// the string value without growing MgbCfgEntry.
+int  mgb_config_get_string(const char *key, char *out, int out_size);
+
 // Mutation (validated/clamped by the engine).
 void mgb_config_set_int(const char *key, int value);
 void mgb_config_set_float(const char *key, float value);
 void mgb_config_set_enum(const char *key, int optIndex);
+void mgb_config_set_string(const char *key, const char *value);
 void mgb_config_reset_default(const char *key);
 
 #ifdef __cplusplus

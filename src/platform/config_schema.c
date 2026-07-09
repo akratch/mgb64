@@ -106,6 +106,15 @@ int mgb_config_get_int(const char *key, int fallback) {
     }
 }
 
+int mgb_config_get_string(const char *key, char *out, int out_size) {
+    if (!out || out_size <= 0) return 0;
+    out[0] = '\0';
+    const Setting *s = settingsFind(key);
+    if (!s || s->type != SETTING_TYPE_STRING || !s->ptr) return 0;
+    snprintf(out, (size_t)out_size, "%s", (const char *)s->ptr);
+    return 1;
+}
+
 const char *mgb_config_enum_token(const char *key, int optIndex) {
     const Setting *s = settingsFind(key);
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return "";
@@ -129,6 +138,10 @@ void mgb_config_set_enum(const char *key, int optIndex) {
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return;
     const char *token = s->enum_options[optIndex].token;
     if (token) configSetValue(key, token);
+}
+
+void mgb_config_set_string(const char *key, const char *value) {
+    configSetValue(key, value ? value : "");
 }
 
 void mgb_config_reset_default(const char *key) {
