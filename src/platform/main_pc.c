@@ -24,6 +24,15 @@
 #endif
 #include <unistd.h>
 #include <dirent.h>
+#ifdef _WIN32
+/* SetUnhandledExceptionFilter for the SEH crash path (see crashSehFilter).
+ * Undo the min/max/near/far macro pollution windows.h drags in. */
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#undef near
+#undef far
+#endif
 #include "rom_io.h"
 #include "savedir.h"
 #include "config_pc.h"
@@ -350,13 +359,38 @@ sigjmp_buf g_gfxRecoveryJmp;
 volatile int g_gfxRecoveryActive = 0;
 int g_crashRecoveryCount = 0;  /* non-static: used by platformShutdownSDL */
 
+/* The fatal [CRASH-DL]/[CRASH-TEX] state dump, shared between the POSIX
+ * signal handler and the Windows SEH filter. Avoids fprintf/printf (stdio
+ * locks can deadlock if the fault interrupted stdio); snprintf() to a stack
+ * buffer + write() is not strictly async-signal-safe per POSIX but is safe
+ * in practice on macOS/glibc (no heap allocation or locks). */
+static void crashWriteDlTexDiag(void) {
+    extern volatile uintptr_t g_lastDlCmd;
+    extern volatile uint32_t g_lastDlOpcode, g_lastDlW0;
+    extern volatile uintptr_t g_lastDlW1;
+    extern volatile uintptr_t g_diag_current_cmd_addr;
+    extern int g_frame_count_diag;
+    extern volatile uintptr_t g_diag_tex_addr;
+    extern volatile uint32_t g_diag_tex_size_bytes, g_diag_tex_needed;
+    extern volatile uint8_t g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile;
+    char diag[768];
+    int dlen = snprintf(diag, sizeof(diag),
+        "[CRASH-DL] frame=%d op=0x%02X w0=0x%08X w1=0x%llX cmd=%p diag_cmd=%p\n"
+        "[CRASH-TEX] addr=%p size_bytes=%u needed=%u fmt=%u siz=%u slot=%u tile=%u\n",
+        g_frame_count_diag,
+        g_lastDlOpcode, g_lastDlW0, (unsigned long long)g_lastDlW1,
+        (void*)g_lastDlCmd, (void*)g_diag_current_cmd_addr,
+        (void*)g_diag_tex_addr, g_diag_tex_size_bytes, g_diag_tex_needed,
+        g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile);
+    pc_diag_write_stderr(diag, dlen);
+}
+
 static void crashHandler(int sig) {
+#ifndef _WIN32
     /* If we're in DL processing and recovery is available, skip this frame.
-     * NOTE: this handler avoids fprintf/printf (which use locks that can
-     * deadlock if the signal interrupted stdio). We use write() for output
-     * and snprintf() for formatting. snprintf() is not strictly
-     * async-signal-safe per POSIX, but is safe in practice on macOS/glibc
-     * when writing to a stack buffer (no heap allocation or locks). */
+     * POSIX-only: longjmp'ing out of a Windows signal handler unwinds across
+     * the CRT's SEH dispatch frame, which is undefined behavior there (the
+     * recovery gate in gfx_run_dl() is likewise forced off on _WIN32). */
     /* In debug/investigation builds, allow many recoveries to gather data.
      * In release, cap low — a build that needs recovery is not green.
      * CMake defines NDEBUG in Release builds; its absence means debug. */
@@ -375,10 +409,10 @@ static void crashHandler(int sig) {
         extern volatile uint8_t g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile;
         char msg[512];
         int n = snprintf(msg, sizeof(msg),
-            "[GFX-RECOVER] sig=%d #%d op=0x%02X w0=0x%08X w1=0x%lX cmd=%p"
+            "[GFX-RECOVER] sig=%d #%d op=0x%02X w0=0x%08X w1=0x%llX cmd=%p"
             " tex_addr=%p tex_sz=%u tex_need=%u tex_fmt=%u tex_siz=%u tex_slot=%u tex_tile=%u\n",
             sig, g_crashRecoveryCount,
-            g_lastDlOpcode, g_lastDlW0, (unsigned long)g_lastDlW1,
+            g_lastDlOpcode, g_lastDlW0, (unsigned long long)g_lastDlW1,
             (void*)g_lastDlCmd,
             (void*)g_diag_tex_addr, g_diag_tex_size_bytes, g_diag_tex_needed,
             g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile);
@@ -386,26 +420,13 @@ static void crashHandler(int sig) {
         g_gfxRecoveryActive = 0;
         siglongjmp(g_gfxRecoveryJmp, 1);
     }
+#endif /* !_WIN32 */
     {
-        extern volatile uintptr_t g_lastDlCmd;
-        extern volatile uint32_t g_lastDlOpcode, g_lastDlW0;
-        extern volatile uintptr_t g_lastDlW1;
-        extern volatile uintptr_t g_diag_current_cmd_addr;
-        extern int g_frame_count_diag;
-        extern volatile uintptr_t g_diag_tex_addr;
-        extern volatile uint32_t g_diag_tex_size_bytes, g_diag_tex_needed;
-        extern volatile uint8_t g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile;
-        char diag[768];
-        int dlen = snprintf(diag, sizeof(diag),
-            "\n[CRASH] Signal %d (unrecoverable)\n"
-            "[CRASH-DL] frame=%d op=0x%02X w0=0x%08X w1=0x%lX cmd=%p diag_cmd=%p\n"
-            "[CRASH-TEX] addr=%p size_bytes=%u needed=%u fmt=%u siz=%u slot=%u tile=%u\n",
-            sig, g_frame_count_diag,
-            g_lastDlOpcode, g_lastDlW0, (unsigned long)g_lastDlW1,
-            (void*)g_lastDlCmd, (void*)g_diag_current_cmd_addr,
-            (void*)g_diag_tex_addr, g_diag_tex_size_bytes, g_diag_tex_needed,
-            g_diag_tex_fmt, g_diag_tex_siz, g_diag_tex_slot, g_diag_tex_tile);
-        pc_diag_write_stderr(diag, dlen);
+        char head[64];
+        int hlen = snprintf(head, sizeof(head),
+            "\n[CRASH] Signal %d (unrecoverable)\n", sig);
+        pc_diag_write_stderr(head, hlen);
+        crashWriteDlTexDiag();
     }
 #ifdef PORT_HAVE_BACKTRACE
     void *bt[32];
@@ -414,6 +435,25 @@ static void crashHandler(int sig) {
 #endif
     _exit(1);
 }
+
+#ifdef _WIN32
+/* Hardware faults (access violation, illegal instruction, ...) on Windows
+ * arrive as SEH exceptions, not signals; msvcrt/UCRT signal(SIGSEGV) is a
+ * thin translation over the same mechanism with sharp UB edges (longjmp out
+ * of it unwinds across the SEH dispatch frame). Take them at the SEH layer
+ * instead: write the same [CRASH] diagnostics and terminate. */
+static LONG WINAPI crashSehFilter(EXCEPTION_POINTERS *info) {
+    char head[128];
+    int hlen = snprintf(head, sizeof(head),
+        "\n[CRASH] Unhandled exception 0x%08lX at %p (unrecoverable)\n",
+        (unsigned long)info->ExceptionRecord->ExceptionCode,
+        (void *)info->ExceptionRecord->ExceptionAddress);
+    pc_diag_write_stderr(head, hlen);
+    crashWriteDlTexDiag();
+    _exit(1);
+    return EXCEPTION_EXECUTE_HANDLER; /* unreachable */
+}
+#endif /* _WIN32 */
 
 #ifndef _WIN32
 /* Alternate signal stack: without sigaltstack()+SA_ONSTACK, a SIGSEGV caused
@@ -656,7 +696,10 @@ int main(int argc, char **argv)
 #endif
         installCrashSignalHandler(SIGABRT);
 #else
-        signal(SIGSEGV, crashHandler);
+        /* Hardware faults go through the SEH filter (see crashSehFilter);
+         * abort() never raises an SEH exception, so keep a signal handler
+         * for SIGABRT (assert failures, CRT aborts). */
+        SetUnhandledExceptionFilter(crashSehFilter);
         signal(SIGABRT, crashHandler);
 #endif
     }

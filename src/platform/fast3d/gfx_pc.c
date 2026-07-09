@@ -24018,7 +24018,18 @@ void gfx_run_dl(Gfx *dl) {
     {
         static int recovery_enabled = -1;
         if (recovery_enabled < 0) {
+#ifdef _WIN32
+            /* Recovery siglongjmps out of a crash handler; on Windows that
+             * unwinds across the CRT/SEH dispatch frame (undefined behavior),
+             * so the gate is forced shut. Fatal crashes still get [CRASH]
+             * diagnostics via the SEH filter in main_pc.c. */
+            recovery_enabled = 0;
+            if (getenv("GE007_ENABLE_RECOVERY") != NULL) {
+                fprintf(stderr, "[GFX] GE007_ENABLE_RECOVERY is unsupported on Windows (SEH longjmp UB); ignoring\n");
+            }
+#else
             recovery_enabled = (getenv("GE007_ENABLE_RECOVERY") != NULL) ? 1 : 0;
+#endif
         }
         if (recovery_enabled) {
             extern sigjmp_buf g_gfxRecoveryJmp;

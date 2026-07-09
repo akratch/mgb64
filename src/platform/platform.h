@@ -30,11 +30,13 @@
 
 /* mingw-w64's <setjmp.h> has no sigjmp_buf/sigsetjmp/siglongjmp (that trio is
  * a BSD/glibc extension); main_pc.c and gfx_pc.c use it for frame-render
- * crash recovery (GE007_ENABLE_RECOVERY). Windows signal() can't restore
- * signal masks either way, so a plain setjmp/longjmp fallback is
- * semantically equivalent there. Defined once here since both TUs pull in
- * this header transitively (via ultra64.h). Non-Windows path is untouched --
- * the system <setjmp.h> already provides the real sigsetjmp/siglongjmp. */
+ * crash recovery (GE007_ENABLE_RECOVERY). This mapping exists so those TUs
+ * still compile on Windows, but the recovery path itself is forced OFF there
+ * (gfx_run_dl gate + crashHandler guard): longjmp out of a Windows signal
+ * handler unwinds across the CRT's SEH dispatch frame, which is undefined
+ * behavior. Fatal crashes are handled by the SEH unhandled-exception filter
+ * in main_pc.c instead. Non-Windows path is untouched -- the system
+ * <setjmp.h> already provides the real sigsetjmp/siglongjmp. */
 #ifdef _WIN32
 #include <setjmp.h>
 #define sigjmp_buf jmp_buf
