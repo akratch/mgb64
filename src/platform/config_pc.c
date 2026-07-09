@@ -19,10 +19,6 @@
 #include <windows.h>
 #endif
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 /* ===== Types ===== */
 
 typedef enum {
@@ -540,8 +536,12 @@ void configSetSaveSuppressed(s32 suppressed)
 
 s32 configSave(void)
 {
-    char path[PATH_MAX];
-    char tmp_path[PATH_MAX];
+    /* Sized to the savedir contract (SAVEDIR_MAX_PATH = 1024), not PATH_MAX:
+     * Windows <limits.h> defines PATH_MAX as 260, which would truncate a long
+     * --savedir path and silently save the config under a clipped name
+     * (mirrors the EEPROM writer in stubs.c). */
+    char path[1024];
+    char tmp_path[1024 + 8];
 
     if (s_configSaveSuppressed) {
         return 1; /* faithful session: ge007.ini intentionally left untouched */
