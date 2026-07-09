@@ -218,6 +218,9 @@ bool AppHost::pumpAndShouldQuit() {
         ImGui_ImplSDL2_ProcessEvent(&e);
         if (e.type == SDL_QUIT) {
             quit = true;
+        } else if (e.type == SDL_DROPFILE && e.drop.file) {
+            droppedFile_ = e.drop.file;  // consumed by takeDroppedFile()
+            SDL_free(e.drop.file);
         } else if (e.type == SDL_WINDOWEVENT &&
                    e.window.event == SDL_WINDOWEVENT_CLOSE &&
                    e.window.windowID == SDL_GetWindowID(window_)) {
@@ -237,6 +240,12 @@ int AppHost::drawableHeight() const {
     int w = 0, h = 0;
     if (window_) SDL_GL_GetDrawableSize(window_, &w, &h);
     return h;
+}
+
+std::string AppHost::takeDroppedFile() {
+    std::string s;
+    s.swap(droppedFile_);
+    return s;
 }
 
 void AppHost::shutdown() {

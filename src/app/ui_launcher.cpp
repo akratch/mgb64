@@ -14,6 +14,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -150,8 +151,15 @@ void drawUpdateBanner() {
 
 }  // namespace
 
-LauncherAction Launcher::draw(AppHost & /*host*/) {
+LauncherAction Launcher::draw(AppHost &host) {
     LauncherAction action;
+
+    // RX.4: a file dragged onto the window sets the ROM and jumps to the ROM tab.
+    std::string dropped = host.takeDroppedFile();
+    if (!dropped.empty()) {
+        RomPanel_setRom(state_, dropped.c_str());
+        active_ = 0;  // Game ROM panel
+    }
 
     if (!panelEnvChecked_) {
         panelEnvChecked_ = true;

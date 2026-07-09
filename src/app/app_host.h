@@ -11,6 +11,8 @@
 
 #include <SDL.h>
 
+#include <string>
+
 class AppHost {
 public:
     // Create the window + GL context + ImGui. Returns false on failure.
@@ -39,6 +41,11 @@ public:
     // (window close / Cmd-Q).
     bool pumpAndShouldQuit();
 
+    // RX.4: the path of a file the user dragged onto the window since the last
+    // call (SDL_DROPFILE), or "" if none. Returns + clears it, so each drop is
+    // consumed once. The launcher routes it into the ROM panel.
+    std::string takeDroppedFile();
+
     // Tear down ImGui + GL + SDL.
     void shutdown();
 
@@ -52,6 +59,7 @@ private:
     SDL_GLContext gl_     = nullptr;
     bool imguiReady_      = false;
     bool sdlOwned_        = false;  // did we SDL_Init (vs. reuse an existing init)?
+    std::string droppedFile_;      // last SDL_DROPFILE path, consumed by takeDroppedFile()
 };
 
 #endif  // MGB64_APP_HOST_H

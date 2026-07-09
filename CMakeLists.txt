@@ -917,6 +917,15 @@ if(MGB64_APP)
         target_compile_features(test_rom_validate PRIVATE cxx_std_17)
         add_test(NAME rom_validate COMMAND test_rom_validate)
 
+        # Keyboard-free ROM discovery (auto-scan + directory browser). rom_scan.cpp
+        # is SDL-/ImGui-free precisely so this links tiny.
+        add_executable(test_rom_scan
+            tests/test_rom_scan.cpp
+            src/app/rom_scan.cpp)
+        target_include_directories(test_rom_scan PRIVATE src/app)
+        target_compile_features(test_rom_scan PRIVATE cxx_std_17)
+        add_test(NAME rom_scan COMMAND test_rom_scan)
+
         # Pure tag-parse + semver-compare logic for the update check (no SDL, no
         # network): update_check_core.cpp is SDL-free precisely so this links tiny.
         add_executable(test_update_check
