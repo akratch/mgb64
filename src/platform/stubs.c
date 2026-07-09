@@ -5956,6 +5956,39 @@ static void pcFillPadFromController(OSContPad *pad, int k) {
     pad->errnum  = 0;
 }
 
+/* ===== Overlay open/close latch-discharge (review F1+F4) =====
+ * While the F1/Back overlay is open osContGetReadData returns neutral pads, so
+ * the sim's previous-button state is 0. The physical A/B that closes the overlay
+ * is still held on the next poll, and gamepadBindingActive reads live state, so
+ * it would fire as a fresh gameplay edge (reload/interact/weapon-switch). Mirror
+ * the ui_bindings.cpp:90 waitRelease pattern: on the open/close transition
+ * discharge the same-batch Esc/crouch/wheel latches and the P1 weapon/crouch edge
+ * trackers, and on close hold neutral input until every close-capable button is
+ * released. No-op in automation (no overlay hooks -> wants_input == 0 always, so
+ * the transition never fires) and byte-identity is preserved. */
+static int g_pcPrevWeaponNext = 0;
+static int g_pcPrevWeaponPrev = 0;
+static int g_pcPrevCrouch = 0;
+
+static int pcAnyOverlayCloseButtonHeld(void) {
+    const Uint8 *ks = SDL_GetKeyboardState(NULL);
+    /* Keyboard analogues of A (Resume) / B (back). F1 toggles the overlay but is
+     * not a gameplay button, so it does not need to gate the release latch. */
+    if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_SPACE] || ks[SDL_SCANCODE_BACKSPACE])
+        return 1;
+    if (g_gameController) {
+        int b;
+        for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
+            if (SDL_GameControllerGetButton(g_gameController, (SDL_GameControllerButton)b))
+                return 1;
+        if (SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 8000)
+            return 1;
+        if (SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 8000)
+            return 1;
+    }
+    return 0;
+}
+
 s32 osContGetReadData(OSContPad *data) {
     extern int g_frame_count_diag;
     int input_frame;
@@ -6178,8 +6211,35 @@ s32 osContGetReadData(OSContPad *data) {
      * memset at function entry. */
     {
         extern int platformOverlayWantsInput(void);
-        if (platformOverlayWantsInput()) {
+        static int s_overlayWasOpen = 0;
+        static int s_overlayReleaseLatch = 0;
+        int overlay_now = platformOverlayWantsInput();
+
+        if (overlay_now != s_overlayWasOpen) {
+            /* Overlay open/close transition (F4): discharge any latch armed by an
+             * event in the same SDL batch as the toggle press so it can't leak as
+             * a gameplay edge on the first post-close poll. */
+            g_pcEscapePressed = 0;
+            g_pcCrouchToggle = 0;
+            (void)platformGetMouseWheel();  /* drain same-batch wheel accumulator */
+            g_pcPrevWeaponNext = g_pcPrevWeaponPrev = g_pcPrevCrouch = 0;
+            if (!overlay_now) {
+                s_overlayReleaseLatch = 1;  /* just closed: arm wait-for-release */
+            }
+            s_overlayWasOpen = overlay_now;
+        }
+
+        if (overlay_now) {
             return 0;
+        }
+
+        if (s_overlayReleaseLatch) {
+            /* F1: hold neutral input until the closing button(s) are all released,
+             * so the held A/B never reaches the sim as a fresh edge. */
+            if (pcAnyOverlayCloseButtonHeld()) {
+                return 0;
+            }
+            s_overlayReleaseLatch = 0;
         }
     }
 
@@ -6362,16 +6422,18 @@ s32 osContGetReadData(OSContPad *data) {
         if (gamepadBindingActive(gc, GB_LOOK_RIGHT)) buttons |= R_JPAD;
 
         if (!frontend_input) {
-            static int prev_next = 0, prev_prev = 0, prev_crouch = 0;
+            /* Edge trackers live at file scope so the overlay open/close
+             * transition can reset them (F4): a button held across an overlay
+             * close must not synthesize a spurious weapon/crouch edge. */
             int cur_next   = gamepadBindingActive(gc, GB_WEAPON_NEXT);
             int cur_prev   = gamepadBindingActive(gc, GB_WEAPON_PREV);
             int cur_crouch = gamepadBindingActive(gc, GB_CROUCH);
             /* Weapon cycling queues steps (T6) so pad edges share the wheel's
              * clamped multi-step queue instead of clobbering it. */
-            if (cur_next && !prev_next)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
-            if (cur_prev && !prev_prev)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
-            if (cur_crouch && !prev_crouch) g_pcCrouchRequest = 1;
-            prev_next = cur_next; prev_prev = cur_prev; prev_crouch = cur_crouch;
+            if (cur_next && !g_pcPrevWeaponNext)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
+            if (cur_prev && !g_pcPrevWeaponPrev)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
+            if (cur_crouch && !g_pcPrevCrouch) g_pcCrouchRequest = 1;
+            g_pcPrevWeaponNext = cur_next; g_pcPrevWeaponPrev = cur_prev; g_pcPrevCrouch = cur_crouch;
         }
 
         /* Left stick → N64 analog stick (movement). Radial deadzone + rescale
