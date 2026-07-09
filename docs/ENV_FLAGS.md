@@ -384,7 +384,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_ENABLE_AUDIO` | ? |  | 1 |  |
 | `GE007_ENABLE_LEVEL_INTRO` | ? |  | 1 |  |
 | `GE007_ENABLE_LIBAUDIO_LOWPASS` | ? |  | 1 |  |
-| `GE007_ENABLE_RECOVERY` | ? |  | 1 |  |
+| `GE007_ENABLE_RECOVERY` | ? |  | 2 |  |
 | `GE007_ENV_NORMALS_DIAG` | ? |  | 1 |  |
 | `GE007_EXACT_ROOM_SCISSOR` | ? |  | 1 |  |
 | `GE007_EXPLOSION_DAMAGE_TRACE` | ? |  | 1 |  |
