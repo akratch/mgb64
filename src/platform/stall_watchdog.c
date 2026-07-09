@@ -32,30 +32,23 @@
 #include <stdarg.h> /* va_list: do not rely on SDL_stdinc pulling it in */
 
 /* AI-VM breadcrumb targets (written by chrai.c on the sim thread, one store
- * per interpreted AI command; read racily here). Defined unconditionally so
- * the chrai.c stores link on every platform, including the _WIN32 no-op. */
+ * per interpreted AI command; read racily here). */
 volatile int g_portWatchdogAiChrnum = -1;
 volatile int g_portWatchdogAiOpcode = -1;
 /* VTX-arena watermark of the frame just ended (stored by dynSwapBuffers). */
 volatile int g_portWatchdogDynVtxUsed = 0;
 
-#if defined(_WIN32)
-
-/* Windows: clean no-op. The watchdog's capture path depends on the diag-log
- * tee and crash diagnostics, both currently stubbed on Windows (backlog M6.1
- * diag-log tee, M6.2 crash-handler rework); the Windows watchdog lands with
- * that lane. */
-void portWatchdogInit(void) {}
-void portWatchdogLoadBegin(void) {}
-void portWatchdogLoadEnd(void) {}
-void portWatchdogFrameTick(void) {}
-
-#else /* POSIX */
-
 #include <SDL.h>
-#include <unistd.h>
 #include <fcntl.h>
+#if defined(_WIN32)
+/* CRT fd IO (same shape as POSIX); the thread-sampler stays Apple-only and
+ * Windows gets the breadcrumb ring + stall block, like Linux. */
+#include <io.h>
+#include <sys/stat.h> /* _S_IREAD/_S_IWRITE for _open() */
+#else
+#include <unistd.h>
 #include <sys/wait.h>
+#endif
 #if defined(__APPLE__)
 #include <spawn.h>
 extern char **environ;
@@ -184,21 +177,36 @@ static void dumpf(const char *fmt, ...) {
 }
 
 static void dumpFlush(void) {
-    ssize_t w;
     int fd;
 
     if (s_dumpLen <= 0) {
         return;
     }
-    w = write(STDERR_FILENO, s_dumpBuf, (size_t)s_dumpLen);
-    (void)w;
-
-    fd = open(s_stallLogPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd >= 0) {
-        w = write(fd, s_dumpBuf, (size_t)s_dumpLen);
+#if defined(_WIN32)
+    {
+        int w = _write(2, s_dumpBuf, (unsigned)s_dumpLen);
         (void)w;
-        close(fd);
     }
+    fd = _open(s_stallLogPath, _O_WRONLY | _O_CREAT | _O_APPEND | _O_BINARY,
+               _S_IREAD | _S_IWRITE);
+    if (fd >= 0) {
+        int w = _write(fd, s_dumpBuf, (unsigned)s_dumpLen);
+        (void)w;
+        _close(fd);
+    }
+#else
+    {
+        ssize_t w = write(STDERR_FILENO, s_dumpBuf, (size_t)s_dumpLen);
+        (void)w;
+
+        fd = open(s_stallLogPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd >= 0) {
+            w = write(fd, s_dumpBuf, (size_t)s_dumpLen);
+            (void)w;
+            close(fd);
+        }
+    }
+#endif
 }
 
 /* One post-mortem integrity pass over the active prop list with a visited
@@ -422,5 +430,3 @@ void portWatchdogFrameTick(void) {
         fprintf(stderr, "[WATCHDOG-TEST] synthetic stall over; sim resumes\n");
     }
 }
-
-#endif /* _WIN32 */
