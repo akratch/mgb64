@@ -9,6 +9,19 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD 17)
 endif()
 
+# Product version, single-sourced for all platforms. Release CI passes
+# -DMGB64_VERSION=vX.Y.Z (see .github/workflows/release.yml); dev builds default
+# to 0.0.0-dev, which the in-app update check treats as "never newer" so dev
+# builds never show the update banner. The derived MGB64_VER_STR is compiled into
+# the app shell (MGB64_APP_VERSION_STR — used for the version display + the GitHub
+# release comparison) and, on Windows, into the VERSIONINFO resource below.
+set(MGB64_VERSION "0.0.0-dev" CACHE STRING
+    "Product version (e.g. 0.3.3 or v0.3.3); release CI threads it through -DMGB64_VERSION")
+string(REGEX REPLACE "^[vV]" "" MGB64_VER_STR "${MGB64_VERSION}")
+if(MGB64_VER_STR STREQUAL "" OR MGB64_VER_STR STREQUAL "dev")
+    set(MGB64_VER_STR "0.0.0-dev")
+endif()
+
 # Windows executable icon + version info (windows/mgb64.rc). The .rc embeds the
 # app icon (branding/appicon-windows.ico) and a VERSIONINFO block; the latter is
 # what Explorer's Properties>Details and Windows game launchers read for the
@@ -16,17 +29,8 @@ endif()
 if(WIN32)
     enable_language(RC)
 
-    # Version flows only as a label into the packaging scripts today (there is no
-    # compiled-in version), so accept it as a configurable define with a dev
-    # default. The release CI threads github.event.inputs.version through here as
-    # -DMGB64_VERSION=... (see .github/workflows/release.yml).
-    set(MGB64_VERSION "0.0.0-dev" CACHE STRING
-        "Product version embedded in the Windows VERSIONINFO resource (e.g. 0.3.3 or v0.3.3)")
-
-    string(REGEX REPLACE "^[vV]" "" MGB64_VER_STR "${MGB64_VERSION}")
-    if(MGB64_VER_STR STREQUAL "" OR MGB64_VER_STR STREQUAL "dev")
-        set(MGB64_VER_STR "0.0.0-dev")
-    endif()
+    # MGB64_VER_STR is derived above (all-platform). Here it feeds the Windows
+    # VERSIONINFO resource: the numeric core drives the 4-part FILEVERSION.
     # Numeric core = leading dotted digits before any pre-release suffix, padded
     # to the 4-part FILEVERSION/PRODUCTVERSION shape (major,minor,patch,build).
     string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" _mgb_num "${MGB64_VER_STR}")
@@ -848,7 +852,8 @@ if(MGB64_APP)
     # shim for the C decomp that shadows the system <math.h> and breaks C++/ObjC
     # system headers (ImGui stb_truetype `acos`, nfd `double_t`). The app lib
     # only needs the seam headers under src/platform + src/app.
-    target_compile_definitions(mgb64_app PRIVATE MGB64_APP GL_SILENCE_DEPRECATION)
+    target_compile_definitions(mgb64_app PRIVATE MGB64_APP GL_SILENCE_DEPRECATION
+        MGB64_APP_VERSION_STR="${MGB64_VER_STR}")
     # Keep the engine's broad source dirs OFF the app lib's include path: src/
     # contains headers (sched.h, byteswap.h) and include/ a math.h shim that
     # shadow the system angle-includes SDL/pthread/ImGui pull in. App<->engine
@@ -905,6 +910,15 @@ if(MGB64_APP)
         target_include_directories(test_rom_validate PRIVATE src/app)
         target_compile_features(test_rom_validate PRIVATE cxx_std_17)
         add_test(NAME rom_validate COMMAND test_rom_validate)
+
+        # Pure tag-parse + semver-compare logic for the update check (no SDL, no
+        # network): update_check_core.cpp is SDL-free precisely so this links tiny.
+        add_executable(test_update_check
+            tests/test_update_check.cpp
+            src/app/update_check_core.cpp)
+        target_include_directories(test_update_check PRIVATE src/app)
+        target_compile_features(test_update_check PRIVATE cxx_std_17)
+        add_test(NAME update_check COMMAND test_update_check)
     endif()
 endif()
 
