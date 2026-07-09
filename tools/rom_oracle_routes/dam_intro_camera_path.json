@@ -65,6 +65,7 @@
   "native_intro_max_first_present_frame": 700,
   "native_intro_max_first_render_frame": 700,
   "stock_max_suppressed_menu_records": 0,
+  "stock_require_native_selected_camera": true,
   "events": [],
   "stock_events": [
     {

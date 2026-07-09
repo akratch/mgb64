@@ -124,6 +124,7 @@ STOCK_MIN_MENU_TO_GAMEPLAY_GAP="$(python3 tools/rom_oracle_route.py field "$ROUT
 STOCK_MIN_FORCE_PLAYER_APPLIES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_force_player_applies)"
 STOCK_MIN_FORCE_PLAYER_STAN_APPLIES="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_min_force_player_stan_applies)"
 STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_require_first_gameplay_global)"
+STOCK_REQUIRE_NATIVE_SELECTED_CAMERA="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" stock_require_native_selected_camera)"
 if [[ -z "$COMPARE_ALIGN" ]]; then
     COMPARE_ALIGN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_align)"
 fi
@@ -263,6 +264,14 @@ case "$STOCK_MENU_CLOSE_ON_PLAYER" in
     0|false|False|FALSE|no|NO|off|OFF) STOCK_MENU_CLOSE_ON_PLAYER=0 ;;
     *)
         echo "FAIL: route stock_menu_close_on_player must be boolean: $STOCK_MENU_CLOSE_ON_PLAYER" >&2
+        exit 2
+        ;;
+esac
+case "$STOCK_REQUIRE_NATIVE_SELECTED_CAMERA" in
+    1|true|True|TRUE|yes|YES|on|ON) STOCK_REQUIRE_NATIVE_SELECTED_CAMERA=1 ;;
+    ""|0|false|False|FALSE|no|NO|off|OFF) STOCK_REQUIRE_NATIVE_SELECTED_CAMERA=0 ;;
+    *)
+        echo "FAIL: route stock_require_native_selected_camera must be boolean: $STOCK_REQUIRE_NATIVE_SELECTED_CAMERA" >&2
         exit 2
         ;;
 esac
@@ -869,6 +878,52 @@ with handle:
 PY
 }
 
+# Print the first resolved intro camera pad (intro.selected_camera.pad, ignoring
+# the sentinel -1 "not yet picked" value) in a JSONL oracle trace. Used to gate
+# the stock capture on landing the same authored intro camera the native side
+# pinned via GE007_INTRO_CAMERA_INDEX -- GoldenEye's level-intro camera is
+# RNG-picked at boot (faithful N64 behaviour), so an unpinned stock capture can
+# land on a different camera than the pinned native one, which then diverges the
+# whole authored camera path (BUG-3 run-to-run oracle variance).
+selected_camera_pad_of() {
+    python3 - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    handle = path.open("r", encoding="utf-8", errors="replace")
+except OSError:
+    sys.exit(0)
+
+with handle:
+    for line in handle:
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        intro = record.get("intro")
+        if not isinstance(intro, dict):
+            continue
+        selected = intro.get("selected_camera")
+        if not isinstance(selected, dict):
+            continue
+        pad = selected.get("pad")
+        try:
+            pad = int(pad)
+        except (TypeError, ValueError):
+            continue
+        if pad < 0:
+            continue
+        print(pad)
+        break
+PY
+}
+
 preserve_stock_attempt() {
     local attempt="$1"
     local suffix=".attempt${attempt}"
@@ -883,12 +938,25 @@ run_stock_capture_with_route_control_retries() {
     local max_attempts=1
     local attempt=1
     local first_global=""
+    local native_pad=""
+    local stock_pad=""
+    local reason=""
 
-    if [[ -n "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+    if [[ -n "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" || "$STOCK_REQUIRE_NATIVE_SELECTED_CAMERA" -eq 1 ]]; then
         max_attempts="${MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES:-4}"
         if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
             echo "FAIL: MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES must be a positive integer: $max_attempts" >&2
             exit 2
+        fi
+    fi
+
+    # The camera-match gate compares against the pinned native pick, so the
+    # native capture must have already produced its trace.
+    if [[ "$STOCK_REQUIRE_NATIVE_SELECTED_CAMERA" -eq 1 ]]; then
+        native_pad="$(selected_camera_pad_of "$NATIVE_TRACE" | tr -d '[:space:]')"
+        if [[ ! "$native_pad" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: stock_require_native_selected_camera set but native trace has no resolved intro camera pad" >&2
+            exit 1
         fi
     fi
 
@@ -898,21 +966,30 @@ run_stock_capture_with_route_control_retries() {
         fi
         run_stock_capture
 
-        if [[ -z "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+        reason=""
+        if [[ -n "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+            first_global="$(stock_first_gameplay_global | tr -d '[:space:]')"
+            if [[ "$first_global" != "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
+                reason="first gameplay global ${first_global:-missing}, expected ${STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL}"
+            fi
+        fi
+        if [[ -z "$reason" && "$STOCK_REQUIRE_NATIVE_SELECTED_CAMERA" -eq 1 ]]; then
+            stock_pad="$(selected_camera_pad_of "$STOCK_OUT_TRACE" | tr -d '[:space:]')"
+            if [[ "$stock_pad" != "$native_pad" ]]; then
+                reason="stock intro camera pad ${stock_pad:-missing}, expected native-pinned ${native_pad} (RNG intro-camera pick)"
+            fi
+        fi
+
+        if [[ -z "$reason" ]]; then
             return 0
         fi
 
-        first_global="$(stock_first_gameplay_global | tr -d '[:space:]')"
-        if [[ "$first_global" == "$STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL" ]]; then
-            return 0
-        fi
-
-        echo "  stock attempt ${attempt}/${max_attempts}: first gameplay global ${first_global:-missing}, expected ${STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL}" >&2
+        echo "  stock attempt ${attempt}/${max_attempts}: ${reason}" >&2
         preserve_stock_attempt "$attempt"
         attempt=$((attempt + 1))
     done
 
-    echo "FAIL: stock route control did not reach first gameplay global ${STOCK_REQUIRE_FIRST_GAMEPLAY_GLOBAL} after ${max_attempts} attempt(s)" >&2
+    echo "FAIL: stock route control did not converge after ${max_attempts} attempt(s): ${reason}" >&2
     exit 1
 }
 
