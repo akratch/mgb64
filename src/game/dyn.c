@@ -283,6 +283,14 @@ void *dynAllocate(s32 size) {
 }
 
 void dynSwapBuffers(void) {
+#ifdef NATIVE_PORT
+    /* Stall-watchdog breadcrumb: g_GfxMemPos resets on swap, so the finished
+     * frame's VTX-arena watermark must be captured here (one store/frame). */
+    {
+        extern volatile int g_portWatchdogDynVtxUsed;
+        g_portWatchdogDynVtxUsed = (int)(g_GfxMemPos - g_VtxBuffers[g_GfxActiveBufferIndex]);
+    }
+#endif
     g_GfxActiveBufferIndex = (g_GfxActiveBufferIndex ^ 1);
     g_GfxRequestedDisplayList = FALSE;
     g_GfxMemPos = g_VtxBuffers[g_GfxActiveBufferIndex];

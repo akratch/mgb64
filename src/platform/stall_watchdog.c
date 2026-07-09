@@ -30,6 +30,14 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* AI-VM breadcrumb targets (written by chrai.c on the sim thread, one store
+ * per interpreted AI command; read racily here). Defined unconditionally so
+ * the chrai.c stores link on every platform, including the _WIN32 no-op. */
+volatile int g_portWatchdogAiChrnum = -1;
+volatile int g_portWatchdogAiOpcode = -1;
+/* VTX-arena watermark of the frame just ended (stored by dynSwapBuffers). */
+volatile int g_portWatchdogDynVtxUsed = 0;
+
 #if defined(_WIN32)
 
 /* Windows: clean no-op. The watchdog's capture path depends on the diag-log
@@ -52,12 +60,37 @@ void portWatchdogFrameTick(void) {}
 extern char **environ;
 #endif
 
+#include "../bondtypes.h"
+#include "../bondconstants.h"
+#include "../game/chrai.h"
 #include "port_env.h"
 #include "savedir.h"
 
-/* Sim-loop diagnostics the stall block reports (all read-only here). */
+/* Sim-loop diagnostics the breadcrumb snapshots (all read-only here). */
 extern int g_frame_count_diag;   /* render frame ordinal (gfx_pc.c) */
-extern int g_StageNum;           /* current stage (boss.c) */
+extern s32 g_StageNum;           /* current stage (boss.c) */
+extern s32 g_ClockTimer;         /* capped sim tick count (lvl.c) */
+extern s32 g_NumChrSlots;        /* chr slot table size (chr.c) */
+extern ChrRecord *g_ChrSlots;
+extern s32 g_dyn_overflow_count; /* per-frame dyn render-health (dyn.c) */
+
+#define WATCHDOG_RING_LEN 120
+
+typedef struct WatchdogCrumb {
+    Uint32 heartbeat;   /* sim frame ordinal this crumb belongs to */
+    int frame;          /* g_frame_count_diag */
+    int stage;          /* g_StageNum */
+    int clock_timer;    /* g_ClockTimer */
+    int props;          /* bounded active prop-list count */
+    int prop_walk;      /* 0 ok, 1 cap hit (cycle?), 2 invalid pointer */
+    int chrs;           /* chr slots with a live prop */
+    int ai_chrnum;      /* last AI command's chrnum */
+    int ai_opcode;      /* last AI command's opcode */
+    int dyn_vtx_used;   /* VTX arena bytes used by the finished frame */
+    int dyn_overflows;  /* g_dyn_overflow_count for the finished frame */
+} WatchdogCrumb;
+
+static WatchdogCrumb s_ring[WATCHDOG_RING_LEN];
 
 static SDL_atomic_t s_heartbeat;      /* published once per frame */
 static SDL_atomic_t s_running;        /* 1 = frame loop, 0 = load/init */
@@ -67,6 +100,59 @@ static int  s_stallSecs = 5;
 static int  s_testStall = 0;
 static char s_stallLogPath[1024];
 static char s_samplePath[2][1024];
+
+/* Bounded, validity-checked active prop-list walk (read-only, racy by
+ * design). The list is the #2 freeze hypothesis (cyclic `prop->prev`), so
+ * the walk caps at pool size and validates every pointer: a count pinned at
+ * POS_DATA_ENTRY_LEN with walk=1 in the crumbs IS the cycle diagnosis. */
+static int watchdogPropPtrValid(const PropRecord *prop) {
+    uintptr_t ptr = (uintptr_t)prop;
+    uintptr_t first = (uintptr_t)&pos_data_entry[0];
+    uintptr_t last = (uintptr_t)&pos_data_entry[POS_DATA_ENTRY_LEN];
+
+    return ptr >= first &&
+           ptr < last &&
+           ((ptr - first) % sizeof(pos_data_entry[0])) == 0;
+}
+
+static int watchdogCountActiveProps(int *walk_flag) {
+    const PropRecord *prop = ptr_obj_pos_list_current_entry;
+    int count = 0;
+
+    *walk_flag = 0;
+    while (prop != NULL) {
+        if (!watchdogPropPtrValid(prop)) {
+            *walk_flag = 2;
+            break;
+        }
+        count++;
+        if (count >= POS_DATA_ENTRY_LEN) {
+            *walk_flag = 1;
+            break;
+        }
+        prop = prop->prev;
+    }
+    return count;
+}
+
+static int watchdogCountLiveChrs(void) {
+    int count = 0;
+    s32 i;
+    s32 n = g_NumChrSlots;
+
+    if (g_ChrSlots == NULL || n <= 0) {
+        return 0;
+    }
+    if (n > POS_DATA_ENTRY_LEN) {
+        n = POS_DATA_ENTRY_LEN;
+    }
+    for (i = 0; i < n; i++) {
+        if (g_ChrSlots[i].prop != NULL) {
+            count++;
+        }
+    }
+    return count;
+}
 
 /* ---- dump path (watchdog thread only) ---------------------------------- */
 
@@ -114,6 +200,62 @@ static void dumpFlush(void) {
     }
 }
 
+/* One post-mortem integrity pass over the active prop list with a visited
+ * bitmap: directly confirms/denies the cyclic-list hypothesis and names the
+ * first revisited pool slot. Bounded, read-only, validity-checked. */
+static void dumpActiveListIntegrity(void) {
+    unsigned char visited[POS_DATA_ENTRY_LEN];
+    const PropRecord *prop = ptr_obj_pos_list_current_entry;
+    int steps = 0;
+
+    memset(visited, 0, sizeof(visited));
+    while (prop != NULL && steps <= POS_DATA_ENTRY_LEN) {
+        size_t slot;
+
+        if (!watchdogPropPtrValid(prop)) {
+            dumpf("[WATCHDOG] active-list integrity: INVALID pointer %p after %d node(s)\n",
+                  (const void *)prop, steps);
+            return;
+        }
+        slot = (size_t)(prop - &pos_data_entry[0]);
+        if (visited[slot]) {
+            dumpf("[WATCHDOG] active-list integrity: CYCLE — slot %d revisited after %d node(s)\n",
+                  (int)slot, steps);
+            return;
+        }
+        visited[slot] = 1;
+        steps++;
+        prop = prop->prev;
+    }
+    if (prop != NULL) {
+        dumpf("[WATCHDOG] active-list integrity: walk exceeded pool size (%d) without NULL — corrupt\n",
+              POS_DATA_ENTRY_LEN);
+    } else {
+        dumpf("[WATCHDOG] active-list integrity: OK (%d node(s), no cycle)\n", steps);
+    }
+}
+
+static void dumpBreadcrumbRing(Uint32 hb_now) {
+    Uint32 first = (hb_now > WATCHDOG_RING_LEN) ? (hb_now - WATCHDOG_RING_LEN) : 0;
+    Uint32 hb;
+
+    dumpf("[WATCHDOG] breadcrumb ring (oldest -> newest, %u..%u):\n",
+          (unsigned)first, (unsigned)(hb_now ? hb_now - 1 : 0));
+    for (hb = first; hb < hb_now; hb++) {
+        const WatchdogCrumb *c = &s_ring[hb % WATCHDOG_RING_LEN];
+
+        if (c->heartbeat != hb) {
+            continue; /* slot not yet written / already overwritten (racy read) */
+        }
+        dumpf("[WATCHDOG]   hb=%u frame=%d stage=%d clk=%d props=%d walk=%d chrs=%d "
+              "ai_chr=%d ai_op=0x%02X dynvtx=%d dynovf=%d\n",
+              (unsigned)c->heartbeat, c->frame, c->stage, c->clock_timer,
+              c->props, c->prop_walk, c->chrs,
+              c->ai_chrnum, (unsigned)(c->ai_opcode & 0xFF),
+              c->dyn_vtx_used, c->dyn_overflows);
+    }
+}
+
 static void dumpSpawnSample(int dump_no) {
 #if defined(__APPLE__)
     char pidbuf[16];
@@ -137,7 +279,7 @@ static void dumpSpawnSample(int dump_no) {
 #else
     (void)dump_no;
     dumpf("[WATCHDOG] thread sampling unavailable on this platform "
-          "(stall block only)\n");
+          "(breadcrumbs + stall block only)\n");
 #endif
 }
 
@@ -146,6 +288,8 @@ static void watchdogDumpStall(Uint32 hb_now, int stalled_secs, int dump_no) {
     dumpf("\n[WATCHDOG] SIM STALL: heartbeat frozen for ~%ds "
           "(hb=%u frame=%d stage=%d, dump %d/2)\n",
           stalled_secs, (unsigned)hb_now, g_frame_count_diag, g_StageNum, dump_no);
+    dumpActiveListIntegrity();
+    dumpBreadcrumbRing(hb_now);
     dumpSpawnSample(dump_no);
     dumpf("[WATCHDOG] end of stall dump %d/2 (process left running for capture)\n\n",
           dump_no);
@@ -201,7 +345,7 @@ void portWatchdogInit(void) {
     SDL_Thread *thread;
 
     if (port_env_bool("GE007_NO_WATCHDOG", 0,
-            "disable the sim stall watchdog (heartbeat monitor + stall dump)")) {
+            "disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring)")) {
         return;
     }
     s_stallSecs = port_env_int("GE007_WATCHDOG_STALL_SECS", 5,
@@ -248,12 +392,25 @@ void portWatchdogLoadEnd(void) {
 
 void portWatchdogFrameTick(void) {
     Uint32 hb;
+    WatchdogCrumb *c;
 
     if (!s_armed) {
         return;
     }
 
     hb = (Uint32)SDL_AtomicGet(&s_heartbeat);
+    c = &s_ring[hb % WATCHDOG_RING_LEN];
+    c->frame = g_frame_count_diag;
+    c->stage = (int)g_StageNum;
+    c->clock_timer = (int)g_ClockTimer;
+    c->props = watchdogCountActiveProps(&c->prop_walk);
+    c->chrs = watchdogCountLiveChrs();
+    c->ai_chrnum = g_portWatchdogAiChrnum;
+    c->ai_opcode = g_portWatchdogAiOpcode;
+    c->dyn_vtx_used = g_portWatchdogDynVtxUsed;
+    c->dyn_overflows = (int)g_dyn_overflow_count;
+    c->heartbeat = hb; /* marks the slot valid; written last before publish */
+
     SDL_AtomicSet(&s_heartbeat, (int)(hb + 1));
 
     if (s_testStall && hb == 600) {

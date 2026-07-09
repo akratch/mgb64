@@ -1655,6 +1655,17 @@ void ai(PropDefHeaderRecord *Entityp, PROP_TYPE EntityType)
              * for TRUE/FALSE if(funcpointer[ai]) break;
              */
 #ifdef NATIVE_PORT
+            {
+                /* Stall-watchdog breadcrumb: the AI VM is an unbounded
+                 * interpreter (a GotoNext/GotoFirst label cycle with no Yield
+                 * loops forever in one frame), so the last command it touched
+                 * must be recoverable post-mortem. Two plain stores per
+                 * command; read racily by stall_watchdog.c. */
+                extern volatile int g_portWatchdogAiChrnum;
+                extern volatile int g_portWatchdogAiOpcode;
+                g_portWatchdogAiChrnum = (ChrEntityp != NULL) ? ChrEntityp->chrnum : -1;
+                g_portWatchdogAiOpcode = (AiListp + Offset)->cmd;
+            }
             chraiTraceCommand(ChrEntityp, AiListp, Offset);
 #endif
             switch ((AiListp + Offset)->cmd)
