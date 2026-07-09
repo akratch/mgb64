@@ -2,6 +2,7 @@
 #include "ui_settings.h"
 #include "config_schema.h"
 #include "ui_common.h"
+#include "app_theme.h"
 
 #include "imgui.h"
 #include "nfd.h"
@@ -83,9 +84,18 @@ void drawEntry(const MgbCfgEntry &e) {
             break;
     }
 
-    if (e.help[0] && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", e.help);
     if (!e.is_live) ui::RestartBadge();
+    // Visible help: an inline muted caption under the control, in the small font.
+    // Hover tooltips are invisible to controller/touch users (the handheld
+    // audience), so the description is always shown, compact.
+    if (e.help[0]) {
+        ImGui::PushFont(AppTheme::fonts().small);
+        ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::subtle());
+        ImGui::TextWrapped("%s", e.help);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ui::Gap(ui::kGapXS);
+    }
     ImGui::PopID();
 }
 
