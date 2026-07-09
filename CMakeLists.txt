@@ -778,7 +778,10 @@ elseif(WIN32)
         # win32-threads variant needs it explicit on the link line or it's
         # an undefined reference (probe-verified both ways under Docker +
         # x86_64-w64-mingw32-gcc-win32/-posix). Harmless on posix-threads.
-        winpthread
+        # Bracketed -Bstatic/-Bdynamic so ld takes the STATIC winpthread archive
+        # here (the first mention wins symbol resolution) — otherwise the exe
+        # imports libwinpthread-1.dll, absent on stock Windows.
+        "-Wl,-Bstatic" winpthread "-Wl,-Bdynamic"
     )
     # GUI subsystem by default (clean launch, no console window). MinGW keeps
     # mainCRTStartup -> our int main() under -mwindows (SDL_MAIN_HANDLED, no
@@ -786,6 +789,14 @@ elseif(WIN32)
     if(NOT MGB64_WIN_CONSOLE)
         target_link_options(ge007 PRIVATE -mwindows)
     endif()
+    # Static-link the GCC runtimes: a MinGW-built exe otherwise imports
+    # libgcc_s_seh-1.dll / libstdc++-6.dll / libwinpthread-1.dll, which exist on
+    # the BUILD machine's toolchain but not on stock Windows ("The code
+    # execution cannot proceed because libgcc_s_seh-1.dll was not found").
+    # SDL2.dll stays dynamic (shipped beside the exe); winpthread must be
+    # bracketed -Bstatic/-Bdynamic at the END of the link line so the import
+    # lib above is overridden by the static archive.
+    target_link_options(ge007 PRIVATE -static-libgcc -static-libstdc++)
 else()
     target_link_libraries(ge007
         OpenGL::GL
