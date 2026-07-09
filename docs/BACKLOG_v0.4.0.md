@@ -103,6 +103,137 @@ P2 = narrower visual/behavioral issue · P3 = hygiene/robustness/future-proofing
 
 ---
 
+## RX — Road to non-alpha v0.4.0: Release Readiness & UX
+
+Added 2026-07-09 after shipping v0.4.0-alpha.2. The alpha→final gap is
+**execution-and-polish, not more sim/renderer work** — M1 is complete and the hard
+combat-parity items are walled behind a combat-field ROM oracle that does not exist
+(structurally 0.5 material). Owner priorities for final: launcher/settings UX that is
+controller- and touch-navigable, every setting explained with no dev/junk knobs shown,
+and true fullscreen on Windows. Recon: three read-only surveys (2026-07-09) —
+launcher/settings census, Windows-fullscreen root-cause, backlog reprioritization.
+
+### Definition of done — what MUST be true to drop `-alpha`
+1. Windows is **executed**, not just attested (MW.3 CI smoke green + one real-kernel run
+   via MW.5 VM or MC.6 on-device).
+2. Windows **true fullscreen** works (RX.3).
+3. Launcher/settings UX is **player-grade** (RX.1 + RX.2): dev settings hidden, help
+   visible without hover, controller/keyboard-free ROM load, handheld fullscreen+scale.
+4. Controller-first is **complete for a handheld**: MC.2 (controllerdb+hotplug),
+   MC.4 (rumble), MC.7 (real solo-pause).
+5. macOS **signed + notarized**, OR an explicit documented owner decision to ship unsigned.
+6. **M8.3 QA executed** — manual carryover run on hardware, 20-level Metal sweep, campaign
+   34/34, MP/ASan/release-guard stack, STATUS/README refreshed.
+7. Determinism rails green throughout (charter r4).
+
+### RX.1 — Settings curation (the "no junk shown to players" mandate)
+**P0 · M**
+Census (survey 2026-07-09): 99 settings, **no player/advanced tier** — everything shows.
+- [ ] **Add an `advanced` (dev/diagnostic) tier** to the `Setting` struct (`settings.h:34-51`)
+      + thread through `MgbCfgEntry` (`config_schema.h`); tag the ~30 dev knobs at their
+      `settingsRegister*` sites (11 SSAO tuning: `SsaoMode/Radius/Intensity/Bias/Power/
+      FarCutoff/NearCut/SkyCut/HalfRes/Blur/BlurDepthSharp`; 4 SunShadow tuning; `PerPixel
+      Light`, `EnvSmoothNormals`, `EnvRelightBlend`; `BloomThreshold/Intensity`; ~8 ADS
+      tuning sub-knobs; `WindowX/Y`; `MinimapShowAllEnemies`, `MinimapSharpOverlay`;
+      `OutputFilterAlpha`; `DeviceSamples`). Gate them behind a collapsing "Advanced
+      (expert)" disclosure per tab (`ui_settings.cpp:78-83`). Player tabs show only
+      player-facing settings.
+- [ ] **Fix the STRING-setting bug** (`ui_settings.cpp:16-53`): `MGB_CFG_STRING` falls to
+      `default:` → `Video.TexturePack` renders "(unsupported type)", uneditable. Add a
+      read-only display + folder-picker, or hide string entries from the auto-list.
+- [ ] **Visible help, not hover-only** (`ui_settings.cpp:55-56`): render each setting's
+      `help` as an inline caption (or a nav-focusable "?") — hover tooltips are invisible
+      to controller/touch users, i.e. the whole handheld audience.
+- [ ] **Relabel/gate leaky entries:** `MinimapObjectives` ("once … implemented" =
+      unimplemented feature exposed), `Smaa`/`SsaoMode` "Metal only" on a GL build,
+      `FpsOverlay` help leaking `--deterministic`/`GE007_BACKGROUND`. Plain-language the
+      jargon (`OutputDither`, `RetroFilter`, `HiDPI`, `Tonemap`, grade presets).
+- [ ] **Group the ADS family** (`platform_sdl.c:1925-1994`): 13 sub-knobs render even when
+      `AdsEnabled=0` — nest under `AdsEnabled` with `BeginDisabled`, tuning ones → Advanced.
+- [ ] Validation: schema round-trip + `settings_menu_model` ctest; a headless dump proving
+      player tabs exclude the advanced-tagged set; env/CLI overrides for advanced settings
+      still work (hidden ≠ removed).
+
+### RX.2 — Launcher/handheld UX pass
+**P0 · M**
+- [ ] **Fullscreen-fill on launch** for handhelds: `main_app.cpp:67` opens windowed
+      1280×800; borderless-fill the display (compose with RX.3's window-mode logic; a
+      first-run/`--handheld`-style default or auto-detect small-high-DPI displays).
+- [ ] **UI scale for a 7-inch panel:** bump `FontGlobalScale`/style metrics (13px small
+      font + 40–42px targets are too small); a `UI.Scale` setting (S/M/L or numeric).
+- [ ] **Reset-to-default affordance:** `mgb_config_reset_default` exists
+      (`config_schema.c:133`) but no UI calls it — add per-tab (min) reset, high-value for
+      pad users who can't retype values.
+- [ ] **Touch pass** (if RX.5 lands): larger hit targets, L1/R1 shoulder tab-switching with
+      on-screen hints, touch-scroll of the settings/log children.
+- [ ] Validation: panel render smokes; pad-nav reachability unchanged; no macOS regression.
+
+### RX.3 — Windows true fullscreen
+**P0 · S-M · IN FLIGHT (2026-07-09)**
+Root cause (survey): `platformApplyWindowMode()` (`platform_sdl.c:1490`) is called only in
+the engine-owned `else` branch (`:2481`); the **adopted app-shell path** (Windows/macOS
+release, `:2430-2442`) never calls it → `Video.WindowMode` is loaded but never pushed to
+SDL. Fix A: call apply-mode on both paths (guard headless). Fix C: exclusive with
+`FullscreenWidth/Height==0` passes NULL → wrong res; default to desktop mode + fall back to
+borderless on mode-set failure. Fix B: Alt+Enter reaches the configured mode. Borderless
+stays the safe cross-platform default; exclusive is opt-in/best-effort (Wayland can't
+mode-set). macOS `.app` uses the same adopted path → blind-provable there. Hardware-only:
+Windows exclusive native-res, HiDPI on 1920×1200, alt-tab.
+
+### RX.4 — Controller/keyboard-free ROM selection
+**P0 · M**
+`ui_rom.cpp:31-41` uses a native NFD dialog — not controller-navigable (first-run hard stop
+on a handheld). Add an in-app ImGui file browser AND/OR auto-scan of common dirs (Downloads/
+Documents/Desktop/cwd, mirroring the CLI auto-detect) AND/OR `SDL_DROPFILE` drag-and-drop.
+Keep NFD as the mouse/desktop convenience. Validation: pad-only reachability to a selected+
+validated ROM; the existing validation card path unchanged.
+
+### RX.5 — Touch input wiring
+**P1 · M**
+No app-code touch wiring today (only SDL synth-mouse, so taps = clicks but no touch-scroll).
+Wire `SDL_FINGER*` → ImGui touch (the vendored 1.92.9 backend supports
+`AddMouseSourceEvent`); touch-scroll momentum for the settings/log children; verify taps
+still hit the larger RX.2 targets. Not a hard blocker (synth-mouse works), but it's the
+"touchscreen like the Ally" ask.
+
+### RX.6 — Controller-first completion (from MC sprint, pulled to final)
+- [ ] **MC.2** — bundle `gamecontrollerdb.txt` + `SDL_GameControllerAddMappingsFromFile`;
+      hotplug re-acquire without shifting P1's pad. **P1 · S.**
+- [ ] **MC.4** — Rumble Pak → `SDL_GameControllerRumble` (faithful; output-only, sim-safe;
+      `Input.Rumble` default ON + intensity). **P2 · S-M.**
+- [ ] **MC.7** — real solo-pause: the overlay currently ships "game keeps running" (mid-
+      combat death trap). Add a true solo pause when the overlay/settings open in single
+      player. **P1 · M.**
+
+### RX.7 — Windows execution lanes (credibility gate)
+- [ ] **MW.3** — `.github/workflows/windows-validate.yml` (dispatch): MSYS2 build → headless
+      smoke (dummy drivers, ROM-free ctest surface + boot-to-menu) → asset-free verify →
+      upload .exe. The definitive "Windows runs" gate. **P0 · S-M.**
+- [ ] **MW.5** — UTM + Win11-ARM eval VM: run the shipping x64 exe on a real Windows kernel
+      (SEH/scheduler/fs). One real-kernel run satisfies the DoD without waiting on hardware.
+      **P1 · M-L.** (MC.6 on-device is the ideal capstone but hardware-gated → validate the
+      first 0.4.x, don't block final on a shipping date.)
+
+### RX.8 — macOS signing + notarization
+**P0-unless-waived · S (mechanics) + owner creds**
+Signing wiring landed (`8a21ba1`) but inert without Apple Developer creds. A "final" that
+Gatekeeper blocks on first launch isn't polished. **Owner decision:** provide creds to sign/
+notarize, or explicitly accept shipping unsigned (documented in release notes + README).
+
+### RX.9 — Final QA sweep + ship (executes M8.3)
+**P0 · M**
+Run the deferred manual carryover on hardware (rebind persistence, overlay-close gesture,
+pad-nav feel, real-mouse wheel, radial-deadzone feel), the 20-level Metal minimap sweep,
+campaign 34/34, MP/ASan/release-guard stack; recapture the perf baseline warm (kill the
+thermal-flake gate); decide the FPS-overlay default-ON for final; enable the BUG-3 oracle
+gate on the 19 sibling intro routes; refresh STATUS.md/README; cut v0.4.0.
+
+### Deferred to 0.4.x / 0.5 (explicitly NOT blocking final)
+Everything oracle-gated (M2.3 Phase C/D, M2.5, M2.7 — needs the XL combat-field oracle);
+the MG glass sprint (pixel-accuracy; correctness already ships); M4.2 HD glyphs, M4.4
+languages; M3.1 Metal MSAA (real gap but macOS-only, L); M3.3/M3.4/M3.5/M3.6; M5.x audio;
+M7.1 3/4-player (label beta); MW.4 Wine, MW.6 Docker; M6.5/M6.6.
+
 ## Execution status
 
 **2026-07-08 — Week-1 batch LANDED** (`510e181..2a30542` + follow-ups, all on main,
