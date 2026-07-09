@@ -39,12 +39,16 @@ done
 [[ -f "$stage/SDL2.dll" ]] || { [[ -f "$mingw_prefix/bin/SDL2.dll" ]] && cp "$mingw_prefix/bin/SDL2.dll" "$stage/"; }
 
 cp LICENSE README.md "$stage/" 2>/dev/null || true
+# Windows install + setup guide (writable install dir, ROM placement, adding to a
+# game library, save/log locations). Staged into the zip so it ships with the exe.
+cp docs/WINDOWS_SETUP.md "$stage/" 2>/dev/null || true
 cat > "$stage/RUN_ME.txt" <<'EOF'
 MGB64 (Windows portable build)
 
-1. Double-click ge007.exe to open the launcher.
-2. Click "Choose ROM..." and pick your own legally-dumped GoldenEye 007 ROM.
-3. This app ships NO game data. See README.md / DISCLAIMER.md.
+1. Unzip to a writable folder you own (e.g. C:\Games\MGB64), NOT Program Files.
+2. Double-click ge007.exe to open the launcher.
+3. Click "Choose ROM..." and pick your own legally-dumped GoldenEye 007 ROM.
+4. This app ships NO game data. See WINDOWS_SETUP.md, README.md / DISCLAIMER.md.
 EOF
 
 ( cd "$(dirname "$stage")" && zip -r -q "$OLDPWD/$dist/mgb64-windows-$version.zip" MGB64 )
