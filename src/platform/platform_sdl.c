@@ -253,6 +253,11 @@ typedef enum PlatformWindowMode {
 } PlatformWindowMode;
 
 static s32 g_windowMode = PLATFORM_WINDOW_MODE_WINDOWED;
+/* RX.3 Fix B: the fullscreen mode the Alt+Enter runtime toggle returns to. Tracks
+ * the last non-windowed mode actually applied (borderless or exclusive from
+ * Video.WindowMode), so an exclusive user toggles back into exclusive rather than
+ * being forced to borderless. Defaults to borderless when the game boots windowed. */
+static s32 g_preferredFullscreenMode = PLATFORM_WINDOW_MODE_BORDERLESS;
 static const ConfigEnumOption k_windowModeOptions[] = {
     { "windowed", PLATFORM_WINDOW_MODE_WINDOWED },
     { "borderless", PLATFORM_WINDOW_MODE_BORDERLESS },
@@ -1520,6 +1525,12 @@ static void platformApplyWindowMode(void)
         return;
     }
 
+    /* Remember the last non-windowed mode applied so the Alt+Enter toggle can
+     * return to it (RX.3 Fix B). Seeds from Video.WindowMode at first apply. */
+    if (g_windowMode != PLATFORM_WINDOW_MODE_WINDOWED) {
+        g_preferredFullscreenMode = g_windowMode;
+    }
+
     fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
     platformMoveWindowToConfiguredDisplay();
 
@@ -2734,8 +2745,11 @@ void platformPollEvents(void) {
             case SDL_KEYDOWN:
                 if (event.key.keysym.sym == SDLK_RETURN &&
                     (event.key.keysym.mod & KMOD_ALT)) {
+                    /* RX.3 Fix B: toggle windowed <-> the user's configured
+                     * non-windowed mode (borderless or exclusive) rather than a
+                     * hardcoded borderless, so exclusive users return to exclusive. */
                     g_windowMode = (g_windowMode == PLATFORM_WINDOW_MODE_WINDOWED)
-                        ? PLATFORM_WINDOW_MODE_BORDERLESS
+                        ? g_preferredFullscreenMode
                         : PLATFORM_WINDOW_MODE_WINDOWED;
                     platformApplyWindowMode();
                 } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
