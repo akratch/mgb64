@@ -206,9 +206,14 @@ still hit the larger RX.2 targets. Not a hard blocker (synth-mouse works), but i
       player. **P1 · M.**
 
 ### RX.7 — Windows execution lanes (credibility gate)
-- [ ] **MW.3** — `.github/workflows/windows-validate.yml` (dispatch): MSYS2 build → headless
-      smoke (dummy drivers, ROM-free ctest surface + boot-to-menu) → asset-free verify →
-      upload .exe. The definitive "Windows runs" gate. **P0 · S-M.**
+- [x] **MW.3** — `.github/workflows/windows-validate.yml` DELIVERED (dispatch): MSYS2 build
+      (mirrors release.yml exactly) → import-table guard on real Windows → headless execution
+      smoke (dummy drivers: config-schema self-check + `--dump-config` + update-check self-test,
+      exit-code + stdout asserts) → ROM-free ctest subset (6 compiled C/C++ unit tests) →
+      asset-free verify → upload .exe. The definitive "Windows runs" gate. actionlint-clean;
+      every ROM-free smoke command + the ctest subset proven ROM-free locally before wiring.
+      **Remaining: must be DISPATCHED + GREEN before the final release cut** (see RX.9 / M8.3;
+      cannot self-run — dispatch needs the workflow on origin). **P0 · S-M.**
 - [ ] **MW.5** — UTM + Win11-ARM eval VM: run the shipping x64 exe on a real Windows kernel
       (SEH/scheduler/fs). One real-kernel run satisfies the DoD without waiting on hardware.
       **P1 · M-L.** (MC.6 on-device is the ideal capstone but hardware-gated → validate the
@@ -227,6 +232,11 @@ pad-nav feel, real-mouse wheel, radial-deadzone feel), the 20-level Metal minima
 campaign 34/34, MP/ASan/release-guard stack; recapture the perf baseline warm (kill the
 thermal-flake gate); decide the FPS-overlay default-ON for final; enable the BUG-3 oracle
 gate on the 19 sibling intro routes; refresh STATUS.md/README; cut v0.4.0.
+
+**Release gate (MW.3):** the `Windows validate (execution)` workflow must be manually
+dispatched on origin and finish GREEN on this release commit before the cut — it is the
+"Windows executed" evidence (build + import-table guard + headless smoke + ROM-free ctest
+on a real windows-latest kernel). See docs/WINDOWS_CONFIDENCE.md §4.
 
 ### Deferred to 0.4.x / 0.5 (explicitly NOT blocking final)
 Everything oracle-gated (M2.3 Phase C/D, M2.5, M2.7 — needs the XL combat-field oracle);
@@ -1161,15 +1171,17 @@ gaps are enumerated there and belong to MW.3-MW.5.
 **P1 · S-M · the definitive gate — public-repo runners cost nothing**
 `origin` is the public repo (akratch/mgb64): GitHub-hosted `windows-latest` runners are
 free for public repositories. This is real Windows hardware without buying anything.
-- [ ] Add `.github/workflows/windows-validate.yml` (workflow_dispatch, per the repo's
-      no-auto-trigger posture): MSYS2 build → headless smoke (`--no-ui`, SDL dummy
-      audio/video drivers, deterministic route, render-health + exit-code assertions;
-      no ROM in CI → use the ROM-free ctest surface + a synthetic boot-to-menu smoke,
-      and document exactly what CAN'T run without a ROM) → asset-free verify → upload
-      the .exe artifact.
-- [ ] Document the loop in WINDOWS_CONFIDENCE.md: push validation branch → dispatch →
-      read results/download artifact. Run it before every release cut (M8.3 gains this
-      as a gate).
+- [x] Added `.github/workflows/windows-validate.yml` (workflow_dispatch, per the repo's
+      no-auto-trigger posture): MSYS2 build (mirrors release.yml exactly) → import-table
+      guard on real Windows objdump → headless execution smoke (SDL dummy audio/video
+      drivers; ROM-free surfaces: `MGB64_APP_DUMP_SCHEMA` config-schema self-check,
+      `--dump-config`/`--list-settings` automation path, `MGB64_UPDATE_CHECK_SELFTEST`
+      negative control — exit-code + stdout asserts) → ROM-free ctest subset (6 compiled
+      C/C++ unit tests) → asset-free verify → upload the .exe artifact. Render-path smoke
+      is deliberately EXCLUDED (needs a GPU/display the headless runner lacks — that is
+      MW.5's job); documented in WINDOWS_CONFIDENCE.md §4. actionlint-clean.
+- [x] Documented the loop in WINDOWS_CONFIDENCE.md §4: dispatch → read results / download
+      artifact. Wired as a release-cut gate in RX.9 + M8.3.
 - [ ] Stretch: a community-tester path — the uploaded artifact + a 5-minute test script
       for any Windows-owning contributor.
 
@@ -1353,6 +1365,9 @@ waivers; objective/report/exit contracts are scripted, not organic.
       MP lanes, save persistence, ASan lane, release guards.
 - [ ] Update STATUS.md (it currently undersells the port), README known-issues, ENV_FLAGS
       regen; `scripts/release.sh` for all three platforms per RELEASE_CHECKLIST.md.
+- [ ] **Dispatch `.github/workflows/windows-validate.yml` (MW.3) on the release commit and
+      confirm GREEN** — the Windows-executed gate (build + import-table guard + headless
+      smoke + ROM-free ctest on windows-latest). Blocks the cut. See WINDOWS_CONFIDENCE.md §4.
 
 ---
 
