@@ -42,6 +42,13 @@ void drawEntry(const MgbCfgEntry &e) {
     ImGui::PushID(e.key);
     const char *label = e.label[0] ? e.label : e.name;
 
+    // ADS sub-knobs grey out when the ADS master toggle is off, so they read as
+    // "child of Input.AdsEnabled" rather than orphaned always-on rows.
+    const bool adsSub = std::strncmp(e.key, "Input.Ads", 9) == 0 &&
+                        std::strcmp(e.key, "Input.AdsEnabled") != 0;
+    const bool disabled = adsSub && mgb_config_get_int("Input.AdsEnabled", 0) == 0;
+    if (disabled) ImGui::BeginDisabled();
+
     switch (e.kind) {
         case MGB_CFG_INT:
         case MGB_CFG_UINT:
@@ -96,7 +103,32 @@ void drawEntry(const MgbCfgEntry &e) {
         ImGui::PopFont();
         ui::Gap(ui::kGapXS);
     }
+
+    if (disabled) ImGui::EndDisabled();
     ImGui::PopID();
+}
+
+// Draw every entry of one section belonging to the given tier (advanced or not),
+// in registry order.
+void drawSection(const char *sec, bool advanced) {
+    const int n = mgb_config_count();
+    for (int i = 0; i < n; ++i) {
+        MgbCfgEntry e;
+        if (!mgb_config_get(i, &e)) continue;
+        if (std::strcmp(e.section, sec) != 0) continue;
+        if ((e.advanced != 0) != advanced) continue;
+        drawEntry(e);
+    }
+}
+
+bool sectionHasAdvanced(const char *sec) {
+    const int n = mgb_config_count();
+    for (int i = 0; i < n; ++i) {
+        MgbCfgEntry e;
+        if (!mgb_config_get(i, &e)) continue;
+        if (std::strcmp(e.section, sec) == 0 && e.advanced) return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -110,18 +142,26 @@ void Settings_draw() {
     ui::TextSubtle("Live settings apply instantly; \"restart\" settings apply next launch.");
     ui::Gap(ui::kGapS);
 
-    const int n = mgb_config_count();
     if (ImGui::BeginTabBar("##settingsTabs")) {
         for (const char *sec : kSections) {
             if (ImGui::BeginTabItem(sec)) {
                 ui::Gap(ui::kGapXS);
                 ImGui::BeginChild("##sec", ImVec2(0, 0), false);
-                for (int i = 0; i < n; ++i) {
-                    MgbCfgEntry e;
-                    if (!mgb_config_get(i, &e)) continue;
-                    if (std::strcmp(e.section, sec) != 0) continue;
-                    drawEntry(e);
+
+                // Player-facing settings first.
+                drawSection(sec, false);
+
+                // Dev/diagnostic knobs behind a collapsed "Advanced (expert)"
+                // disclosure (collapsed by default: no DefaultOpen flag).
+                if (sectionHasAdvanced(sec)) {
+                    ui::Gap(ui::kGapM);
+                    if (ImGui::CollapsingHeader("Advanced (expert)")) {
+                        ui::TextSubtle("Dev/diagnostic tuning — the defaults are recommended.");
+                        ui::Gap(ui::kGapS);
+                        drawSection(sec, true);
+                    }
                 }
+
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
