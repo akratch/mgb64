@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**898 flags** found across the source.
+**899 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -222,7 +222,6 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
 | `GE007_BULLET_SPARKS` | ? |  | 1 |  |
 | `GE007_BYPASS_PORTAL_BACKFACE` | ? |  | 1 |  |
-| `GE007_CAMERA_SEED_WALK` | ? |  | 1 |  |
 | `GE007_CC_POOL_INITIAL` | ? |  | 1 |  |
 | `GE007_CHRBEAMS_FRUSTUM` | bool | 0 | 1 |  |
 | `GE007_CHR_SPAWN_TRACE` | ? |  | 1 |  |
@@ -503,6 +502,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_A2C` | ? |  | 1 |  |
 | `GE007_NO_BOND_BODY_FIX` | ? |  | 1 |  |
 | `GE007_NO_CAMERA_SEED_FIX` | ? |  | 1 |  |
+| `GE007_NO_CAMERA_SEED_WALK` | ? |  | 1 |  |
 | `GE007_NO_CINEMA_INTRO_FIX` | ? |  | 2 |  |
 | `GE007_NO_CRASH_HANDLER` | ? |  | 1 |  |
 | `GE007_NO_CRITICAL_ROOM_SHARD_LOG` | ? |  | 1 |  |
@@ -689,6 +689,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_DRAWCLASS_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_DRAWCLASS_BBOX` | ? |  | 1 |  |
 | `GE007_TRACE_DRAWCLASS_TRIS` | ? |  | 1 |  |
+| `GE007_TRACE_DRAW_ONLY` | ? |  | 1 |  |
 | `GE007_TRACE_DROP_FRESH` | ? |  | 1 |  |
 | `GE007_TRACE_DROP_HELD` | ? |  | 1 |  |
 | `GE007_TRACE_EYE_BIND` | ? |  | 1 |  |

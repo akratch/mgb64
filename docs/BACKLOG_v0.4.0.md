@@ -337,29 +337,32 @@ floating Bond.
       find stock's duration source (likely per-setup or load-driven), replicate.
 - [ ] **D41:** ~3-tick anim-phase shift between menu-boot and direct-boot — trace where
       the tick offset enters (menu exit timing) and align.
-- [~] **D42 residual — camera-seed WALK root-caused, opt-in, BLOCKED default-on (T13,
-      2026-07-09):** the headline "large map areas render as flat sky-blue" on
-      establishing/intro cameras (Silo especially, also Dam) is root-caused: the D42
-      camera-seed fix *admits* the camera's resolved room (`sub_GAME_7F0B39BC`) but —
-      unlike `g_BgCurrentRoom` and the position seeds — never calls
-      `bgQueueConnectedRoomPortals` on it, so the BFS never walks from the actual
-      viewpoint and stops at the camera room + its one-hop supplement neighbors.
-      Everything one hop further down the sightline (Silo 69→70→71→17) renders as the
-      framebuffer clear color. Walking the camera room fills it: Silo intro blue-clear
-      3639→124 px, Dam 4050→46 px (opt-in `GE007_CAMERA_SEED_WALK=1`, default OFF).
-      **BLOCKER — do not flip default without M2.3:** `room_rendered` is read by the sim
-      (`getROOMID_isRendered`→`PROPFLAG_ONSCREEN`), so admitting more rooms makes more
-      actors onscreen (Silo intro 2→5) and consumes a different `pcRandom` stream, which
-      shifts the deterministic intro camera-index pick — `intro_oracle_dam_route` diverges
-      from the ares/stock capture with the walk ON and matches stock with it OFF (i.e.
-      stock does **not** admit these rooms during the intro). This is the M2.3 render→sim
-      coupling; default-on needs that decoupling (visual admission separate from the
-      `room_rendered` sim flag) or the Phase-5 combat-field oracle confirming the fuller
-      intro set is faithful. Owner: renderer/visibility. Promote-or-reap: reap
-      `GE007_CAMERA_SEED_WALK` if M2.3 lands a proper decoupled visual-admission path;
-      promote to default-on only with oracle sign-off. Diagnostic left in tree:
-      `GE007_TRACE_ROOM_CLASSIFY` classifies each unrendered frustum-visible room
-      dropped-vs-far. Aperture residual (Silo 28/44, screen-edge sliver) → M3.4.
+- [x] **D42 residual — camera-seed WALK, DECOUPLED + DEFAULT ON (T13b, 2026-07-09):**
+      the headline "large map areas render as flat sky-blue" on establishing/intro
+      cameras (Silo especially, also Dam) is FIXED default-on. Root cause (T13): the D42
+      camera-seed fix *admits* the camera's resolved room but never walks its portals, so
+      the BFS stops at the camera room + its one-hop supplement neighbors and everything
+      further down the sightline (Silo 69→70→71→17; Dam 132→…→125) renders as the clear
+      color. Walking the camera room fills it (Silo 3681→132 px, Dam ~4074→54 px). T13
+      shipped this OPT-IN because walking into `room_rendered` is sim-coupled
+      (`getROOMID_isRendered`→`PROPFLAG_ONSCREEN`→actor tick→`pcRandom`): the walk made
+      more actors onscreen and shifted the deterministic intro camera pick, diverging
+      `intro_oracle_dam_route`. **T13b decouples it:** the walk runs as the final admission
+      step — snapshot the settled default `room_rendered`+`room_neighbor_to_rendered`, run
+      the stock camera-room walk + the same edge-rescue/frustum-fallback/visibility-
+      supplement passes (so it reaches EXACTLY the T13 rooms, including the ones only
+      rescue/fallback reach past the pure BFS, e.g. Dam room 125), mark rooms added beyond
+      the snapshot **draw-only** (in the draw list → geometry+props draw; invisible to every
+      `room_rendered` sim consumer), then RESTORE the two sim-visible fields to the
+      snapshot. Sim provably unchanged: 0 sim-critical trace diffs (RNG, onscreen, actors,
+      vis.rendered/neighbor) vs walk-off across 599 frames on Silo+Dam; `intro_oracle_dam_
+      route` unchanged; `sim_state_hash`/`renderer_parity`/`playability --all`/`minimap`/
+      `hidden_guard` green; `GE007_NO_CAMERA_SEED_WALK=1` byte-identical (BMP+trace) to
+      pre-T13b. Perf: draw-only set provably empty in gameplay (`camera_seed_room=-1`
+      off-intro; `GE007_TRACE_DRAW_ONLY` probe = 0). Diagnostic left in tree:
+      `GE007_TRACE_ROOM_CLASSIFY` (dropped-vs-far). Aperture residual (Silo 28/44,
+      screen-edge sliver — rooms many winding-portal-hops away that even the T13 walk
+      doesn't reach) → **M3.4**.
 - [ ] Re-test D31/D32/D35/D36 waivers after M0.3+M1.3; delete every waiver the fixes
       obsolete (that is the ledger's exit criterion).
 
@@ -615,20 +618,22 @@ room-51 windows still show sky, and the over-broad variant can admit far terrain
       heuristic ≠ connectivity) behind a compat flag for one release.
 - [ ] Validate: Train regression lane; `GE007_PORTAL_EDGE_RESCUE=0` as negative control;
       Dam room-14 far-terrain guard stays green.
-- **T13 note (2026-07-09):** the D42/Silo establishing-camera blank-blue work root-caused
-  the *seed/walk* half of this class (the BFS admits the camera room but never walks its
-  portals — opt-in `GE007_CAMERA_SEED_WALK`, blocked from default-on by the M2.3
-  render→sim RNG coupling; see the M1.5 D42-residual entry). What remains squarely here is
-  the aperture half: rooms directly visible across open space but reachable only through a
-  long chain of grazing portals — Silo intro rooms 28/44 (one hop past a supplement-
-  admitted room, so even walking the camera room never continues through them) and a
-  screen-edge sliver. `GE007_TRACE_ROOM_CLASSIFY` (`496370b`) is the diagnostic: it labels
-  each unrendered frustum-visible room `dropped` (portal-adjacent to a rendered room —
-  this task's target) vs `far` (multi-hop). The supplement admits leaf rooms without
-  continuing the walk through them, so the real fix is either (a) propagate the walk one
-  bounded hop from supplement-admitted rooms, or (b) the clamped-min-aperture change
-  already scoped above — and both must respect the same M2.3 sim-coupling constraint
-  (extra `room_rendered` shifts `PROPFLAG_ONSCREEN`/RNG). The
+- **T13 / T13b note (2026-07-09):** the D42/Silo establishing-camera blank-blue work
+  landed the *seed/walk* half of this class DEFAULT-ON (the BFS now walks the camera room
+  + the same rescue/fallback/supplement passes, DECOUPLED from the sim via a draw-only
+  admission set — see the M1.5 D42-residual entry, now `[x]`). The M2.3 render→sim RNG
+  coupling that blocked default-on is **resolved for this path**: draw-only rooms draw but
+  are invisible to `room_rendered`/`PROPFLAG_ONSCREEN`, so extra visual admission no longer
+  shifts the RNG. What remains squarely here is the aperture half: rooms directly visible
+  across open space but reachable only through a long chain of grazing portals — Silo intro
+  rooms 28/44 and a screen-edge sliver — which even the T13b walk (camera room + rescue +
+  fallback + supplement) does not reach. `GE007_TRACE_ROOM_CLASSIFY` (`496370b`) is the
+  diagnostic: it labels each unrendered frustum-visible room `dropped` (portal-adjacent to
+  a rendered room — this task's target) vs `far` (multi-hop). The real fix is either (a)
+  propagate the walk one bounded hop from supplement-admitted rooms, or (b) the clamped-min-
+  aperture change already scoped above. **These can now reuse T13b's draw-only mechanism**
+  (`g_BgRoomDrawOnly` + the snapshot/restore in `sub_GAME_7F0B8A6C`) to stay sim-invariant,
+  rather than being blocked on M2.3. The
   `train_window_backdrop_regression.sh` lane currently FAILs on its own
   `PORTAL_EDGE_RESCUE` controls (rescue delta 0.000% on Train) independent of T13 — that
   control gap is part of this task's cleanup.
