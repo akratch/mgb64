@@ -9,9 +9,39 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD 17)
 endif()
 
-# Windows executable icon (windows/mgb64.rc -> branding/appicon-windows.ico).
+# Windows executable icon + version info (windows/mgb64.rc). The .rc embeds the
+# app icon (branding/appicon-windows.ico) and a VERSIONINFO block; the latter is
+# what Explorer's Properties>Details and Windows game launchers read for the
+# product name + version when the exe is added to a library.
 if(WIN32)
     enable_language(RC)
+
+    # Version flows only as a label into the packaging scripts today (there is no
+    # compiled-in version), so accept it as a configurable define with a dev
+    # default. The release CI threads github.event.inputs.version through here as
+    # -DMGB64_VERSION=... (see .github/workflows/release.yml).
+    set(MGB64_VERSION "0.0.0-dev" CACHE STRING
+        "Product version embedded in the Windows VERSIONINFO resource (e.g. 0.3.3 or v0.3.3)")
+
+    string(REGEX REPLACE "^[vV]" "" MGB64_VER_STR "${MGB64_VERSION}")
+    if(MGB64_VER_STR STREQUAL "" OR MGB64_VER_STR STREQUAL "dev")
+        set(MGB64_VER_STR "0.0.0-dev")
+    endif()
+    # Numeric core = leading dotted digits before any pre-release suffix, padded
+    # to the 4-part FILEVERSION/PRODUCTVERSION shape (major,minor,patch,build).
+    string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" _mgb_num "${MGB64_VER_STR}")
+    if(_mgb_num STREQUAL "")
+        set(_mgb_num "0")
+    endif()
+    string(REPLACE "." ";" _mgb_parts "${_mgb_num}")
+    list(LENGTH _mgb_parts _mgb_n)
+    while(_mgb_n LESS 4)
+        list(APPEND _mgb_parts 0)
+        list(LENGTH _mgb_parts _mgb_n)
+    endwhile()
+    list(GET _mgb_parts 0 1 2 3 _mgb_csv4)
+    string(REPLACE ";" "," MGB64_VER_CSV "${_mgb_csv4}")
+    message(STATUS "MGB64: Windows VERSIONINFO ${MGB64_VER_STR} (${MGB64_VER_CSV})")
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -605,6 +635,11 @@ add_executable(ge007
 
 if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/branding/appicon-windows.ico")
     target_sources(ge007 PRIVATE ${CMAKE_SOURCE_DIR}/windows/mgb64.rc)
+    # Feed the derived version into windres (no embedded quotes: mgb64.rc
+    # stringizes MGB64_VER_STR itself). Scoped to the .rc so the version defines
+    # never reach the C/C++ compile of the engine.
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/windows/mgb64.rc PROPERTIES
+        COMPILE_DEFINITIONS "MGB64_VER_CSV=${MGB64_VER_CSV};MGB64_VER_STR=${MGB64_VER_STR}")
 endif()
 
 if(PORT_SOUNDPLAYER_REAL)

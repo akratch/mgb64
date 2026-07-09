@@ -72,7 +72,8 @@ jobs:
             mingw-w64-x86_64-pkg-config mingw-w64-x86_64-ninja zip
       - name: Build the app (MGB64_APP=ON, Release)
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMGB64_APP=ON -DPORT_VALIDATION_TESTS=OFF
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMGB64_APP=ON -DPORT_VALIDATION_TESTS=OFF \
+            -DMGB64_VERSION="${{ github.event.inputs.version }}"
           cmake --build build --target ge007 -j
       - name: Package portable .zip (ge007.exe + SDL2.dll)
         run: ./scripts/package_windows_zip.sh --binary build/ge007.exe --version "${{ github.event.inputs.version }}"
