@@ -286,6 +286,23 @@ if(BUILD_TESTING)
     )
     set_tests_properties(env_reference_current PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # Local MinGW cross-compile lane (backlog MW.2): proves ge007.exe compiles
+    # and links for Windows from this host instead of waiting for the release
+    # CI. Opt-in (needs `brew install mingw-w64` + network for the vendored
+    # SDL2 on first run):
+    #   cmake -B build -DPORT_MINGW_CROSS_CHECK=ON && ctest -R mingw_cross_check
+    option(PORT_MINGW_CROSS_CHECK
+        "Register the MinGW Windows cross-compile check (tools/mingw_cross_check.sh) with CTest" OFF)
+    if(PORT_MINGW_CROSS_CHECK)
+        add_test(
+            NAME mingw_cross_check
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/mingw_cross_check.sh"
+        )
+        set_tests_properties(mingw_cross_check PROPERTIES
+            LABELS mingw_cross
+            TIMEOUT 1800)
+    endif()
 endif()
 
 if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baserom.u.z64")

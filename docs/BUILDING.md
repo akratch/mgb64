@@ -60,6 +60,11 @@ validation or build issue with exact text logs if it does not. If you use MSYS2
 UCRT64 instead of MINGW64, use the matching `mingw-w64-ucrt-x86_64-*` package
 prefix and mention that in your report.
 
+From macOS/Linux, `tools/mingw_cross_check.sh` cross-compiles the Windows
+`ge007.exe` locally (`brew install mingw-w64`; vendors the pinned MSYS2 SDL2
+into `build-mingw-deps/`) — also available as an opt-in CTest lane via
+`-DPORT_MINGW_CROSS_CHECK=ON` (`ctest -R mingw_cross_check`).
+
 **Build:**
 
 ```sh
