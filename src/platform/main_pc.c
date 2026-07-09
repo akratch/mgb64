@@ -30,6 +30,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <io.h> /* _write for the crash-write mirror in pc_diag_write_stderr */
 #undef near
 #undef far
 #endif
@@ -99,9 +100,36 @@ int g_pcStartMpTimeLimitSecs = 0;
 
 #define PC_MAX_CONFIG_SET_ARGS 32
 
+/* Fatal-crash write mirror: filled in by DiagLog_install() when the app
+ * shell's stdout/stderr tee is active (see ../app/engine_entry.h). Defined
+ * unconditionally so headless builds (no app shell) still link. */
+int g_diagLogRealErrFd = -1;
+int g_diagLogFileFd = -1;
+
 static inline void pc_diag_write_stderr(const char *msg, int len)
 {
-    if (len > 0) {
+    if (len <= 0) {
+        return;
+    }
+#ifdef _WIN32
+    /* Every Windows caller of this function is on a fatal path (the recovery
+     * path is compiled out there). Under the app-shell tee, fd 2 is a pipe
+     * whose reader thread dies with the process: a crash-time write there is
+     * a scheduler race at best and blocks forever if the pipe is full. Write
+     * the saved console fd and mgb64.log's raw fd directly instead. */
+    if (g_diagLogRealErrFd >= 0 || g_diagLogFileFd >= 0) {
+        if (g_diagLogRealErrFd >= 0) {
+            int w = _write(g_diagLogRealErrFd, msg, (unsigned)len);
+            (void)w;
+        }
+        if (g_diagLogFileFd >= 0) {
+            int w = _write(g_diagLogFileFd, msg, (unsigned)len);
+            (void)w;
+        }
+        return;
+    }
+#endif
+    {
         ssize_t written = write(STDERR_FILENO, msg, (size_t)len);
         (void)written;
     }
@@ -450,7 +478,11 @@ static LONG WINAPI crashSehFilter(EXCEPTION_POINTERS *info) {
         (void *)info->ExceptionRecord->ExceptionAddress);
     pc_diag_write_stderr(head, hlen);
     crashWriteDlTexDiag();
-    _exit(1);
+    /* Not _exit(): the CRT routes that through ExitProcess, which takes the
+     * loader lock and runs DLL_PROCESS_DETACH callbacks — machinery that may
+     * be exactly what's corrupt/held in a crashed process. TerminateProcess
+     * skips all of it. */
+    TerminateProcess(GetCurrentProcess(), 1);
     return EXCEPTION_EXECUTE_HANDLER; /* unreachable */
 }
 #endif /* _WIN32 */
@@ -462,7 +494,9 @@ static LONG WINAPI crashSehFilter(EXCEPTION_POINTERS *info) {
  * crashHandler()'s [CRASH] diagnostics. 64KB comfortably covers
  * crashHandler()'s largest locals (a couple of ~512-768 byte stack buffers).
  * POSIX-only (sigaltstack/sigaction/siginfo_t don't exist on native
- * Windows) -- Windows keeps the plain signal() path below. */
+ * Windows) -- Windows uses the SEH filter above plus signal(SIGABRT), and
+ * has no altstack analog: a stack-overflow fault there dies without
+ * diagnostics (recorded in docs/WINDOWS_CONFIDENCE.md). */
 #define PORT_ALTSTACK_SIZE (64 * 1024)
 static unsigned char s_crashAltStack[PORT_ALTSTACK_SIZE];
 

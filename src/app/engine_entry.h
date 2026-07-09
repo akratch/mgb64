@@ -38,6 +38,14 @@ typedef struct {
 // exact engine boot path.
 int mgb64_engine_boot(const MgbBootConfig *cfg);
 
+// Fatal-crash write mirror (Windows): DiagLog_install() saves the pre-tee
+// console fd and mgb64.log's raw fd here, so the engine's crash writers can
+// bypass the tee pipe — its reader thread dies with the process, making a
+// crash-time pipe write a scheduler race (or a hang if the pipe is full).
+// -1 = tee not installed. Defined in src/platform/main_pc.c.
+extern int g_diagLogRealErrFd;
+extern int g_diagLogFileFd;
+
 // In-game overlay hooks (mirrors src/platform/app_overlay_hooks.h). The app
 // registers these before boot; the engine's event pump + frame-end call them.
 typedef struct {

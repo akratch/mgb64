@@ -36,6 +36,8 @@ std::string prefsDir() {
 #include <fcntl.h>
 #include <io.h>
 
+#include "engine_entry.h"  // g_diagLogRealErrFd/g_diagLogFileFd crash-write mirror
+
 namespace {
 int g_realErr = -1;
 
@@ -78,6 +80,11 @@ void DiagLog_install() {
     // buffer fills (or the process exits).
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    // Publish the crash-write mirror fds only once the tee is live (on the
+    // failure return above, fd 2 still points at the real console, where the
+    // engine's default crash write already lands).
+    g_diagLogRealErrFd = g_realErr;
+    g_diagLogFileFd = g_logFile ? _fileno(g_logFile) : -1;
     std::thread(readerLoop, pfd[0]).detach();
 }
 
