@@ -134,6 +134,7 @@ families, not just direct allocator greps.
 | M6 | Platform & Windows hardening | Crash logs, rebinding, CI, config safety | 0.4.0-rc.1 |
 | M7 | Split-screen multiplayer | 3/4-player + scoreboard validation | 0.4.0-rc.1 |
 | MW | Windows/Linux confidence | Fable scrutiny + free real-Windows execution lanes | 0.4.0-rc.1 |
+| MC | Controller-first & handheld | Pad-navigable UI, rebinding, rumble, ROG Ally rig | 0.4.0-rc.1 |
 | M8 | Validation rails & release | Pixel validators, sim-hash coverage, QA sweep | 0.4.0 |
 
 Deferred past 0.4.0 (tracked, deliberately not in scope): 120 Hz render interpolation
@@ -1066,6 +1067,74 @@ free for public repositories. This is real Windows hardware without buying anyth
 (one workflow file), MW.4/MW.6 as runtime confidence, MW.5 once before the next public
 release. M6.1/M6.2 (Windows diag log + crash handler) are prerequisites of the MW.1
 attestation — a platform whose diagnostics are a no-op cannot be called supported.
+
+## MC — Controller-first & handheld sprint
+
+Added 2026-07-09 at owner request: the owner is acquiring an ASUS ROG Ally (Windows
+gaming handheld). Its controls present as a standard XInput/Xbox-layout gamepad, which
+SDL2's GameController API abstracts identically on Windows, macOS, and Linux — so the
+correct architecture is generic SDL2 controller support, no per-device or per-platform
+code. The handheld constraint that actually bites is **no keyboard or mouse**: every
+surface a player must touch (launcher, settings, F1 overlay, rebinding) has to be
+fully controller-navigable. The Ally doubles as the MW sprint's real-Windows test
+hardware once it arrives (MC.6).
+
+### MC.1 — Controller navigation for the app shell (launcher/settings/F1 overlay)
+**P1 · S-M — the handheld blocker; ImGui does most of the work**
+The ImGui shell is currently mouse-driven. ImGui ships gamepad navigation:
+`ImGuiConfigFlags_NavEnableGamepad` + feeding SDL controller state into the ImGui IO
+(SDL2 backend does this when enabled).
+- [ ] Enable gamepad nav in the app shell (src/app/), verify every panel is reachable:
+      launch flow (ROM select → Play), settings tabs, bindings page, diagnostics.
+- [ ] Ensure focus-visible styling so nav state is visible on a 7" screen; map B =
+      back/close, Start = toggle overlay (alongside F1).
+- [ ] Acceptance: complete a boot → settings change → play → overlay toggle → quit
+      session using ONLY a controller (validate with any pad; re-validate on the Ally
+      at MC.6).
+
+### MC.2 — Controller database + hotplug robustness
+**P2 · S**
+- [ ] Bundle/refresh the community `gamecontrollerdb.txt` (SDL_GameControllerDB, free)
+      and load it at init (`SDL_GameControllerAddMappingsFromFile`) so exotic/hybrid
+      devices map correctly on all platforms; keep SDL's built-ins as fallback.
+- [ ] Verify hotplug: connect/disconnect mid-game re-acquires cleanly (the MP per-pad
+      slots at stubs.c must not shift P1's pad); document behavior.
+
+### MC.3 — Gamepad button rebinding (absorbs M6.4)
+**P1 · M**
+The keyboard rebinding UI exists (src/app/ui_bindings.cpp); gamepad is fixed-layout.
+- [ ] Parallel gamepad binding table + capture flow (`SDL_CONTROLLERBUTTONDOWN`), schema
+      persistence, reset-to-default; triggers as axes with threshold.
+- [ ] Optional while in there: `Input.LookCurveExponent` response-curve slider.
+
+### MC.4 — Rumble (faithful: GoldenEye is a Rumble Pak title)
+**P2 · S-M**
+- [ ] Wire the game's existing Rumble Pak signal path (find the motor on/off calls in
+      the N64 layer — os motor/pfs calls, likely stubbed in stubs.c) to
+      `SDL_GameControllerRumble` (works on Xbox/DualShock/Ally alike). Setting
+      `Input.Rumble` default ON with intensity scale; deterministic-run safe (output
+      only, no sim state).
+- [ ] A/B: rumble on Klobb pickup / damage per stock behavior; zero sim-hash impact.
+
+### MC.5 — Handheld ergonomics profile
+**P3 · S**
+- [ ] Verify 1920x1200 (16:10) presents correctly (aspect system is pane-based — spot
+      check HUD/menus); document a recommended handheld config (FrameCap for battery,
+      HiDPI off, text scale once M4.1/M4.2 land).
+- [ ] No code unless the 16:10 spot-check finds a defect.
+
+### MC.6 — Ally validation session (when the device arrives)
+**P1 · S — also serves MW attestation**
+- [ ] Run the MW.3 CI-built (or MW.2 cross-built) `ge007.exe` on the Ally: install,
+      ROM setup, full controller-only session (MC.1 acceptance repeated on-device),
+      Rumble check, performance notes (Z1 Extreme is far above spec), and the
+      watchdog/diag-log behavior on real Windows (M6.1/M6.2 must be landed first).
+- [ ] Feed results into docs/WINDOWS_CONFIDENCE.md as the real-hardware section.
+
+**Sequencing:** MC.1 + MC.3 are the pre-Ally software work (any pad validates them);
+MC.2/MC.4 ride along cheaply; MC.6 becomes the capstone of BOTH this sprint and MW
+once the hardware arrives. Ally note: its pad is active in Armoury Crate "Gamepad"
+mode — a setup step for the user, not a code concern.
 
 ## M7 — Split-screen multiplayer
 
