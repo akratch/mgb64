@@ -280,6 +280,16 @@ Provider-specific fields are optional:
   expected `move.global` value. Ares-backed captures retry this precondition up
   to `MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES` times (default `4`) and preserve
   failed attempts with `.attemptN` suffixes in the artifact directory.
+- `stock_require_native_selected_camera` (bool, default `false`) is the intro
+  analogue of the above for level-intro camera-path routes. The native capture
+  pins the intro camera (`GE007_INTRO_CAMERA_INDEX`), but the stock ROM RNG-picks
+  it at boot (faithful N64 behaviour), so an unpinned stock capture can land on a
+  different authored camera and diverge the whole path — the source of BUG-3's
+  run-to-run `0 vs 4767` variance. When set, the harness reads the native trace's
+  resolved `intro.selected_camera.pad` and retries the stock capture (same
+  `MGB64_ARES_STOCK_ROUTE_CONTROL_RETRIES` budget) until stock lands the same pad,
+  so both sides compare the same camera. Self-configuring from the route's own
+  pinned native camera; no per-route pad literal.
 - `stock_menu_close_on_player` defaults to `true`. It closes stock `phase:
   "menu"` automation as soon as the target-stage player exists, before the later
   movement timeline starts. Keep this enabled for movement parity routes: a
