@@ -54,6 +54,35 @@ int main(int argc, char **argv) {
         return mgb64_headless_main(argc, argv);
     }
 
+    // Non-interactive schema self-check (validates config_schema enumeration +
+    // the RX.1 player/advanced curation tiers). Runs BEFORE DiagLog_install (so
+    // output reaches stdout, not the tee'd log) and BEFORE opening a window (so
+    // it works fully headless -- CI, no display; the config registry needs no
+    // GL context). Registers the config itself, then exits.
+    if (std::getenv("MGB64_APP_DUMP_SCHEMA")) {
+        mgb_config_init();
+        int n = mgb_config_count();
+        int player = 0, advanced = 0;
+        std::printf("[app] config schema: %d settings\n", n);
+        for (int i = 0; i < n; ++i) {
+            MgbCfgEntry e;
+            if (!mgb_config_get(i, &e)) continue;
+            if (e.advanced) {
+                ++advanced;
+                std::printf("[app] advanced: %s\n", e.key);
+            } else {
+                ++player;
+            }
+            if (std::strcmp(e.key, "Video.VSync") == 0) {
+                std::printf("[app] Video.VSync kind=%d live=%d enum_count=%d cur_idx=%d cur_token=%s\n",
+                            (int)e.kind, e.is_live, e.enum_count, e.cur_enum_index,
+                            mgb_config_enum_token(e.key, e.cur_enum_index));
+            }
+        }
+        std::printf("[app] tiers: player=%d advanced=%d\n", player, advanced);
+        return 0;
+    }
+
     // Tee stdout/stderr to the in-app console + mgb64.log BEFORE host.init, so
     // its fatal init diagnostics ([app] SDL_Init/CreateWindow/... failed) are
     // captured even under the GUI subsystem (-mwindows), where there is no
@@ -71,22 +100,6 @@ int main(int argc, char **argv) {
     // Register + load the engine config so the launcher's settings panel can
     // enumerate + edit it before a game boots. Idempotent with the engine boot.
     mgb_config_init();
-
-    // Non-interactive schema self-check (validates config_schema enumeration).
-    if (std::getenv("MGB64_APP_DUMP_SCHEMA")) {
-        int n = mgb_config_count();
-        std::printf("[app] config schema: %d settings\n", n);
-        for (int i = 0; i < n; ++i) {
-            MgbCfgEntry e;
-            if (mgb_config_get(i, &e) && std::strcmp(e.key, "Video.VSync") == 0) {
-                std::printf("[app] Video.VSync kind=%d live=%d enum_count=%d cur_idx=%d cur_token=%s\n",
-                            (int)e.kind, e.is_live, e.enum_count, e.cur_enum_index,
-                            mgb_config_enum_token(e.key, e.cur_enum_index));
-            }
-        }
-        host.shutdown();
-        return 0;
-    }
 
     Launcher launcher;
 

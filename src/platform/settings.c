@@ -276,6 +276,15 @@ void settingsMarkCliOverride(const char *key)
     }
 }
 
+void settingsMarkAdvanced(const char *key)
+{
+    Setting *setting = settingsFindMutable(key);
+
+    if (setting != NULL) {
+        setting->advanced = 1;
+    }
+}
+
 static s32 settingsApplyPresetValue(const char *key, const char *value,
                                     SettingOverrideSource source)
 {

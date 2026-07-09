@@ -33,6 +33,7 @@ typedef struct {
     float cur_float;    // current value for FLOAT
     int   enum_count;   // options for ENUM
     int   cur_enum_index;
+    int   advanced;     // 1 = dev/diagnostic (hide behind "Advanced" disclosure)
 } MgbCfgEntry;
 
 // Lifecycle. Safe to call once at app startup; the engine boot re-registers

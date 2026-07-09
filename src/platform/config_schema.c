@@ -57,6 +57,7 @@ int mgb_config_get(int index, MgbCfgEntry *out) {
     out->kind = kindOf(s->type);
     out->is_live = (s->scope == SETTING_SCOPE_LIVE) ? 1 : 0;
     out->enum_count = (int)s->enum_count;
+    out->advanced = s->advanced ? 1 : 0;
 
     switch (s->type) {
         case SETTING_TYPE_INT:
