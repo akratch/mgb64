@@ -110,7 +110,18 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 - **Crash/diag/watchdog stubs (M6.1/M6.2/watchdog):** all three implemented this pass
   (see §1). Windows now has: mgb64.log + F1 diagnostics + bug-report snapshot, SEH
   `[CRASH]` diagnostics from any thread, and the sim-stall breadcrumb dump with the
-  `GE007_WATCHDOG_TEST` negative control available.
+  `GE007_WATCHDOG_TEST` negative control available. Tee×crash interaction (review
+  F2): a fatal write into the tee *pipe* would race the reader thread's death at
+  process exit (and block on a full pipe), so on Windows the fatal writers bypass
+  the pipe entirely — `DiagLog_install` publishes the saved real-console fd and
+  mgb64.log's raw fd (`g_diagLogRealErrFd`/`g_diagLogFileFd`), and
+  `pc_diag_write_stderr` raw-`_write`s those directly; the SEH filter then ends in
+  `TerminateProcess` (no ExitProcess/loader-lock machinery in a crashed process).
+  Watchdog *stall* dumps (process alive, reader alive) flow through the tee normally.
+  Accepted tee degradations, for the record: if another process holds
+  `mgb64.prev.log` open, rotation loses the previous log (current log still opens);
+  two concurrent instances share `mgb64.log` (CRT `_SH_DENYNO`) and interleave;
+  console QuickEdit select can pause console writes (any console app).
 - **SDL2 specifics:** GL 3.3 core over WGL via plain `SDL_CreateWindow(OPENGL)` +
   glad loader (the standard SDL Windows path); Metal correctly `__APPLE__`-gated
   incl. the `gfx_metal_set_vsync` guard; audio via `SDL_OpenAudioDevice(NULL, …)`
@@ -140,6 +151,8 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 | Gap | Why we believe it holds | Retirement lane |
 |---|---|---|
 | M6.1 tee / M6.2 SEH filter / watchdog **firing at runtime** | Mechanical CRT/Win32 idioms (`_pipe`+`_dup2`, `SetUnhandledExceptionFilter`, `_open/_write`); code compiles against real headers; POSIX twins are field-proven | MW.4 (Wine: tee+watchdog; **not** SEH — Wine's SEH isn't the Windows kernel's), MW.5 (real kernel), or first Windows contributor run |
+| **Crash dump delivery under the tee** — the direct-fd mirror (§3) is the mechanism that makes `[CRASH]` reach mgb64.log/console; it is unexercised on a real kernel | Raw `_write` to already-open fds is the narrowest possible crash-time IO; no pipe, no reader thread, no stdio, no allocation | MW.4/MW.5 must test the **teed** crash path specifically (interactive shell + forced fault), not just the headless one. On POSIX the pre-existing pipe race remains (out of MW scope — POSIX diag backlog) |
+| **Windows stack-overflow faults die silently** — the SEH filter runs on the faulting thread's exhausted stack (`head[128]`+`diag[768]`+snprintf frames will usually double-fault on `STATUS_STACK_OVERFLOW`); POSIX covers this exact case with `sigaltstack` | Every *other* fault class still gets diagnostics; stack overflow is rare in a fixed-arena engine; fix (`SetThreadStackGuarantee`) is known and cheap if MW.5 shows it matters | Attested asymmetry, not scheduled this cycle |
 | WGL driver behavior (GL 3.3 core shaders, vsync, fullscreen-desktop) | SDL's most-traveled Windows path; shaders are GLSL 330 core with no vendor extensions; prior v0.3.x field runs rendered | MW.3 (headless smoke on windows-latest), MW.5 (visual) |
 | WASAPI audio timing under the 22050 Hz pull model | SDL converts/paces internally; same callback code runs CoreAudio today | MW.5 / field |
 | XInput on ROG Ally specifically | SDL GameController abstracts it; Ally presents a standard XInput pad | MC sprint hardware pass |
