@@ -419,7 +419,12 @@ void bossMainloop(void)
         pendingGfx = 0;
 #ifdef NATIVE_PORT
         extern void portClearAllHeads(void);
+        extern void portWatchdogLoadBegin(void);
         portClearAllHeads();
+        /* Stage (re)load ahead: lvlStageLoad below legitimately blocks the
+         * main loop for seconds — suppress the stall watchdog until the
+         * frame loop is re-entered. */
+        portWatchdogLoadBegin();
 #endif
 
         test_if_recording_demos_this_stage_load(g_StageNum, lvlGetSelectedDifficulty());
@@ -526,9 +531,12 @@ void bossMainloop(void)
 #ifdef NATIVE_PORT
         /* Drain any SDL events that queued during long init (macOS sends SDL_QUIT) */
         extern void platformDrainEvents(void);
+        extern void portWatchdogLoadEnd(void);
         platformDrainEvents();
         /* Reset frame timer so title screen doesn't immediately timeout to demo */
         store_osgetcount();
+        /* Frame loop starts below: arm the stall watchdog. */
+        portWatchdogLoadEnd();
 #endif
         while (g_MainStageNum < 0 || pendingGfx != 0)
         {
@@ -732,6 +740,17 @@ void bossMainloop(void)
 
                             speedgraphMarkerHandler(0x10000);
                             if(1);
+#ifdef NATIVE_PORT
+                            {
+                                /* End of a full sim+render frame (after the DL
+                                 * was processed/presented in rspGfxTaskStart):
+                                 * publish the stall-watchdog heartbeat. A wedge
+                                 * anywhere in the frame — sim spin or GL/driver
+                                 * present — stops it advancing. */
+                                extern void portWatchdogFrameTick(void);
+                                portWatchdogFrameTick();
+                            }
+#endif
                         }
                     }
                 }

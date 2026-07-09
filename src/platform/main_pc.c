@@ -1157,6 +1157,14 @@ int main(int argc, char **argv)
     printf("[GE007-PC] Entering game loop...\n");
     printf("[GE007-PC] Controls: WASD=move Mouse=look LClick=fire RClick=aim Scroll=weapon R=reload F=interact C=crouch Q/E=lean Esc=pause  [H for full list]\n");
 
+    /* BUG-1 stall watchdog: converts a silent freeze (sim spin or GL present
+     * wedge — force-quit-only in the field) into a stall dump + all-thread
+     * sample the first time it happens. GE007_NO_WATCHDOG=1 disables. */
+    {
+        extern void portWatchdogInit(void);
+        portWatchdogInit();
+    }
+
     /* On N64: init() → mainproc() → schedulerInitThread() → bossEntry()
      * bossEntry() calls bossInitMainthreadData() then loops on bossMainloop().
      * bossMainloop() blocks on osRecvMesg(&gfxFrameMsgQ, ..., OS_MESG_BLOCK)
