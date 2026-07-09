@@ -2657,7 +2657,8 @@ void platformPollEvents(void) {
                         "M           Mute audio\n"
                         "H           Show this help\n"
                         "\n"
-                        "GAMEPAD: LT=Aim RT=Fire Y=Next weapon Back=Prev weapon L3=Crouch\n"
+                        "GAMEPAD: LT=Aim RT=Fire Y=Next weapon R3=Prev weapon L3=Crouch\n"
+                        "         Back/View=Overlay (settings)  Start=Watch\n"
                         "================\n");
                 } else if (event.key.keysym.sym == SDLK_m && !event.key.repeat) {
                     /* M key: toggle audio mute on the unified queue device. */
