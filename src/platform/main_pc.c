@@ -924,10 +924,14 @@ int main(int argc, char **argv)
     /* Load user key bindings; automation/deterministic runs force the canonical
      * defaults so scripted input stays byte-identical regardless of any file. */
     inputBindingLoad();
+    gamepadBindingLoad();
     {
         extern int g_deterministic;
         extern int g_freezeInput;
-        if (g_deterministic || g_freezeInput) inputBindingForceDefaults(1);
+        if (g_deterministic || g_freezeInput) {
+            inputBindingForceDefaults(1);
+            gamepadBindingForceDefaults(1);
+        }
     }
 
     /* --faithful: apply the "Faithful original" preset (VISUAL_MODES.md section 1)

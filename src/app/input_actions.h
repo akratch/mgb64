@@ -35,6 +35,43 @@ void inputBindingLoad(void);                 // from ge007_bindings.ini (no-op i
 void inputBindingSave(void);
 void inputBindingForceDefaults(int on);      // automation/deterministic: ignore the user file
 
+// ---- Rebindable gamepad actions (player 1 only) -----------------------------
+// Each action binds to an SDL_GameControllerButton OR a trigger axis (LT/RT);
+// the on/off encoding is internal to input_bindings.c. Player 2..4 pads keep
+// fixed defaults (MP rebinding is out of scope). The pad's Start button is
+// reserved by the app overlay (MC.1), so N64 pause/watch defaults to R-stick.
+typedef enum {
+    GB_FIRE,        // default: Right Trigger
+    GB_AIM,         // default: Left Trigger
+    GB_ALT_FIRE,    // default: Right Bumper
+    GB_LOOK,        // default: Left Bumper  (N64 L)
+    GB_JUMP,        // default: A            (N64 A)
+    GB_RELOAD,      // default: B            (N64 B; X stays a fixed alternate)
+    GB_PAUSE,       // default: Right Stick click (N64 Start)
+    GB_WEAPON_NEXT, // default: Y
+    GB_WEAPON_PREV, // default: Back
+    GB_CROUCH,      // default: Left Stick click
+    GB_LOOK_UP,     // default: D-Pad Up
+    GB_LOOK_DOWN,   // default: D-Pad Down
+    GB_LOOK_LEFT,   // default: D-Pad Left
+    GB_LOOK_RIGHT,  // default: D-Pad Right
+    GB_COUNT
+} GamepadAction;
+
+int         gamepadBindingCount(void);               // == GB_COUNT
+const char *gamepadActionLabel(GamepadAction a);
+const char *gamepadBindingName(GamepadAction a);     // human name of current binding
+void        gamepadBindingSetButton(GamepadAction a, int sdl_button);  // capture: a button
+void        gamepadBindingSetTrigger(GamepadAction a, int sdl_axis);   // capture: LT/RT
+void        gamepadBindingResetDefaults(void);
+void        gamepadBindingLoad(void);                // from ge007_gp_bindings.ini
+void        gamepadBindingSave(void);
+void        gamepadBindingForceDefaults(int on);     // automation/deterministic
+// Consumer: is action a currently active on controller gc (opaque
+// SDL_GameController*)? Button pressed, or trigger past the deadzone. Returns 0
+// for a NULL/absent controller. Implemented where SDL is available.
+int         gamepadBindingActive(void *sdl_gamecontroller, GamepadAction a);
+
 #ifdef __cplusplus
 }
 #endif

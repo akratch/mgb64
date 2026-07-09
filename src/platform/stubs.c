@@ -6334,50 +6334,44 @@ s32 osContGetReadData(OSContPad *data) {
         g_pcCrouchToggle = 0;
     }
 
-    /* ===== Gamepad input (OR'd with keyboard/mouse) ===== */
+    /* ===== Gamepad input (OR'd with keyboard/mouse) =====
+     * P1 discrete buttons/triggers route through the rebindable gamepad table
+     * (MC.3). Sticks stay hardcoded: movement keeps the shared radial-deadzone
+     * mapping (pcMapMovementStick, M2.1), look stays the lvl.c right-stick
+     * injection. Defaults reproduce the previous fixed map, except the pad
+     * Start button (now the app overlay, MC.1) — N64 Start moved to GB_PAUSE. */
     if (g_gameController) {
-        /* Face buttons */
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_A))
-            buttons |= A_BUTTON;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_B))
-            buttons |= B_BUTTON;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_X))
-            buttons |= B_BUTTON;  /* X = reload (B in GE) */
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_START))
-            buttons |= START_BUTTON;
+        void *gc = g_gameController;
 
-        /* Bumpers */
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-            buttons |= L_TRIG;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
-            buttons |= Z_TRIG;  /* RB = alt fire */
+        if (gamepadBindingActive(gc, GB_JUMP))     buttons |= A_BUTTON;
+        if (gamepadBindingActive(gc, GB_RELOAD))   buttons |= B_BUTTON;
+        /* X stays a fixed alternate for reload (mirrors keyboard F/Backspace). */
+        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_X))
+            buttons |= B_BUTTON;
+        if (gamepadBindingActive(gc, GB_PAUSE))    buttons |= START_BUTTON;
+
+        if (gamepadBindingActive(gc, GB_LOOK))     buttons |= L_TRIG;
+        if (gamepadBindingActive(gc, GB_ALT_FIRE)) buttons |= Z_TRIG;
+        if (gamepadBindingActive(gc, GB_AIM))      buttons |= R_TRIG;
+        if (gamepadBindingActive(gc, GB_FIRE))     buttons |= Z_TRIG;
+
+        if (gamepadBindingActive(gc, GB_LOOK_UP))    buttons |= U_JPAD;
+        if (gamepadBindingActive(gc, GB_LOOK_DOWN))  buttons |= D_JPAD;
+        if (gamepadBindingActive(gc, GB_LOOK_LEFT))  buttons |= L_JPAD;
+        if (gamepadBindingActive(gc, GB_LOOK_RIGHT)) buttons |= R_JPAD;
 
         if (!frontend_input) {
-            static Uint8 prev_y = 0, prev_back = 0, prev_l3 = 0;
-            Uint8 cur_y    = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_Y);
-            Uint8 cur_back = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_BACK);
-            Uint8 cur_l3   = SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_LEFTSTICK);
-            if (cur_y && !prev_y)       pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
-            if (cur_back && !prev_back) pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
-            if (cur_l3 && !prev_l3)     g_pcCrouchRequest = 1;
-            prev_y = cur_y; prev_back = cur_back; prev_l3 = cur_l3;
+            static int prev_next = 0, prev_prev = 0, prev_crouch = 0;
+            int cur_next   = gamepadBindingActive(gc, GB_WEAPON_NEXT);
+            int cur_prev   = gamepadBindingActive(gc, GB_WEAPON_PREV);
+            int cur_crouch = gamepadBindingActive(gc, GB_CROUCH);
+            /* Weapon cycling queues steps (T6) so pad edges share the wheel's
+             * clamped multi-step queue instead of clobbering it. */
+            if (cur_next && !prev_next)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleForward, 1);
+            if (cur_prev && !prev_prev)     pcQueueWeaponCycleSteps(&g_pcWeaponCycleBack, 1);
+            if (cur_crouch && !prev_crouch) g_pcCrouchRequest = 1;
+            prev_next = cur_next; prev_prev = cur_prev; prev_crouch = cur_crouch;
         }
-
-        /* D-pad */
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_DPAD_UP))
-            buttons |= U_JPAD;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
-            buttons |= D_JPAD;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
-            buttons |= L_JPAD;
-        if (SDL_GameControllerGetButton(g_gameController, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
-            buttons |= R_JPAD;
-
-        /* Analog triggers → Z_TRIG (fire) and R_TRIG (aim) */
-        if (SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > GAMEPAD_DEADZONE)
-            buttons |= R_TRIG;   /* LT = aim mode */
-        if (SDL_GameControllerGetAxis(g_gameController, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > GAMEPAD_DEADZONE)
-            buttons |= Z_TRIG;   /* RT = fire */
 
         /* Left stick → N64 analog stick (movement). Radial deadzone + rescale
          * shared with the aim stick (M2.1). */
