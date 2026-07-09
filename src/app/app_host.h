@@ -16,6 +16,14 @@ public:
     // Create the window + GL context + ImGui. Returns false on failure.
     bool init(const char *title, int width, int height);
 
+    // RX.2: size the launcher window per UI.LauncherFullscreen. `mode` is the raw
+    // enum value (0=auto, 1=on, 2=off). Auto fills the screen on small/high-DPI
+    // handheld panels (the launcher would otherwise "float" on a 1920x1200 7-inch
+    // display) and leaves a resizable window on desktop monitors so the dev
+    // workflow is unchanged. Safe to call once after init() + config load.
+    // Returns true if the window was switched to borderless fullscreen-desktop.
+    bool applyLauncherFullscreen(int mode);
+
     // Begin an ImGui frame and clear the framebuffer.
     void beginFrame();
 

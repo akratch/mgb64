@@ -92,6 +92,51 @@ bool AppHost::init(const char *title, int width, int height) {
     return true;
 }
 
+// Auto heuristic for UI.LauncherFullscreen=auto: fill the display when it looks
+// like a handheld panel — physically small (high reported DPI) or low-resolution
+// — and stay windowed on a desktop monitor. Best-effort: SDL_GetDisplayDPI is
+// unreliable on some platforms (returns 0 / a 96 default), so a panel whose DPI
+// isn't reported and whose short edge is > 800 stays windowed; those users can
+// force UI.LauncherFullscreen=on. Never over-triggers on a real desktop monitor,
+// which is the invariant that keeps the desktop dev workflow windowed.
+static bool autoWantsFullscreen(SDL_Window *w) {
+    if (!w) return false;
+    int disp = SDL_GetWindowDisplayIndex(w);
+    if (disp < 0) disp = 0;
+    SDL_Rect b;
+    if (SDL_GetDisplayBounds(disp, &b) != 0) return false;
+    const int shortEdge = (b.w < b.h) ? b.w : b.h;
+
+    float ddpi = 0.0f, hdpi = 0.0f, vdpi = 0.0f;
+    const bool haveDpi = (SDL_GetDisplayDPI(disp, &ddpi, &hdpi, &vdpi) == 0) && ddpi > 1.0f;
+
+    // ~7" 1080p+ handheld panels report ~180+ DPI; 24"+ desktop monitors ~90-110.
+    if (haveDpi && ddpi >= 180.0f) return true;
+    // Small / low-resolution panel (e.g. 1280x720/800), regardless of DPI query.
+    if (shortEdge > 0 && shortEdge <= 800) return true;
+    return false;
+}
+
+bool AppHost::applyLauncherFullscreen(int mode) {
+    if (!window_) return false;
+    bool wantFs;
+    if (mode == 1) {          // on
+        wantFs = true;
+    } else if (mode == 2) {   // off
+        wantFs = false;
+    } else {                  // auto
+        wantFs = autoWantsFullscreen(window_);
+    }
+    if (!wantFs) return false;
+
+    if (SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+        std::fprintf(stderr, "[app] launcher fullscreen failed: %s\n", SDL_GetError());
+        return false;
+    }
+    std::fprintf(stderr, "[app] launcher: borderless fullscreen (mode=%d)\n", mode);
+    return true;
+}
+
 void AppHost::beginFrame() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();

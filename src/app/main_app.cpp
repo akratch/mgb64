@@ -151,6 +151,14 @@ int main(int argc, char **argv) {
     // internally gated on the automation flags + Game.CheckForUpdates + env.
     UpdateCheck_start(argc, argv);
 
+    // RX.2: fill the display on handhelds so the launcher doesn't "float" in a
+    // small centered window on a 1920x1200 7-inch panel. UI.LauncherFullscreen
+    // (auto/on/off) gates it; auto detects a small/high-DPI panel and otherwise
+    // leaves the desktop dev window resizable. Interactive path only — the
+    // smoke/autoplay/schema paths all returned above, so CI is never forced
+    // fullscreen.
+    host.applyLauncherFullscreen(mgb_config_get_int("UI.LauncherFullscreen", 0));
+
     bool running = true;
     while (running) {
         if (host.pumpAndShouldQuit()) break;

@@ -337,6 +337,25 @@ static const ConfigEnumOption k_windowModeOptions[] = {
     { "exclusive", PLATFORM_WINDOW_MODE_EXCLUSIVE },
 };
 
+/* ===== App-shell (launcher) UI settings (RX.2) =====
+ * Consumed by the in-process ImGui app shell (src/app), NOT the engine renderer.
+ * UI.LauncherFullscreen decides whether the pre-boot launcher window fills the
+ * display (handhelds) or floats in a resizable window (desktop dev). Registered
+ * here in the shared registry so they persist to ge007.ini, appear in the
+ * settings menu, and dump like every other setting; the engine binary just
+ * ignores them. Storage is trivially small and the defaults are identity. */
+typedef enum PlatformLauncherFullscreen {
+    PLATFORM_LAUNCHER_FS_AUTO = 0,  /* fill on small/high-DPI panels, float on desktop */
+    PLATFORM_LAUNCHER_FS_ON = 1,    /* always fill */
+    PLATFORM_LAUNCHER_FS_OFF = 2    /* always windowed/resizable */
+} PlatformLauncherFullscreen;
+static s32 g_uiLauncherFullscreen = PLATFORM_LAUNCHER_FS_AUTO;
+static const ConfigEnumOption k_launcherFullscreenOptions[] = {
+    { "auto", PLATFORM_LAUNCHER_FS_AUTO },
+    { "on", PLATFORM_LAUNCHER_FS_ON },
+    { "off", PLATFORM_LAUNCHER_FS_OFF },
+};
+
 typedef enum PlatformVSyncMode {
     PLATFORM_VSYNC_OFF = 0,
     PLATFORM_VSYNC_ON = 1,
@@ -2216,6 +2235,17 @@ void platformRegisterConfig(void)
                         "At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a "
                         "dismissible banner if one exists (0 = never check). A single plain HTTPS GET via "
                         "the system curl; no telemetry. Never runs under automation/--deterministic.");
+    settingsRegisterEnum("UI.LauncherFullscreen", &g_uiLauncherFullscreen, PLATFORM_LAUNCHER_FS_AUTO,
+                         k_launcherFullscreenOptions,
+                         (s32)(sizeof(k_launcherFullscreenOptions) / sizeof(k_launcherFullscreenOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_LAUNCHER_FULLSCREEN",
+                         "--config-override UI.LauncherFullscreen=VALUE",
+                         "Launcher fullscreen",
+                         "How the launcher window is sized. auto fills the screen on small/high-DPI "
+                         "handheld panels and floats in a resizable window on desktops; on always "
+                         "fills the display; off always uses a resizable window (desktop dev). "
+                         "This affects only the pre-game launcher \xe2\x80\x94 the in-game window "
+                         "follows Video.WindowMode.");
 
     /* RX.1 settings curation: tag dev/diagnostic knobs as advanced so the
      * launcher hides them behind the per-tab "Advanced (expert)" disclosure.

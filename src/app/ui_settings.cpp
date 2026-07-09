@@ -134,7 +134,7 @@ bool sectionHasAdvanced(const char *sec) {
 }  // namespace
 
 void Settings_draw() {
-    static const char *kSections[] = {"Video", "Input", "Game", "Audio"};
+    static const char *kSections[] = {"Video", "Input", "Game", "Audio", "UI"};
 
     if (ui::PrimaryButton("Save Settings", ImVec2(150, 36))) mgb_config_save();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Persist to ge007.ini");
