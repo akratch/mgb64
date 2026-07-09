@@ -120,6 +120,79 @@ static void platformClosePadByInstance(SDL_JoystickID id) {
     platformSyncPad0Alias();
 }
 
+/* ===== Rumble (MC.4) =====
+ * The game's Rumble Pak signal (joy.c joyRumblePakStart/Stop, raised on stock
+ * events: weapon fire gun.c, Bond damage bondview.c) is routed here and mapped
+ * to SDL_GameControllerRumble on the addressed player's pad. Works on any
+ * XInput/DualShock/handheld pad. OUTPUT ONLY: reads no sim state, mutates no
+ * game/RNG state, and is a hard no-op under --deterministic so the sim-state
+ * hash is byte-identical with rumble on or off. */
+extern int g_deterministic; /* platform_sdl.c global: --deterministic run */
+extern s32 g_pcRumble;
+extern s32 g_pcRumbleIntensity;
+
+/* GE007_TRACE_RUMBLE=1: log each rumble request (player, duration, mapped
+ * strength/ms) to stderr for call-path validation. Logging is output-only and
+ * runs even under --deterministic (before the actuation gate) so the game
+ * event -> SDL path can be proven muted/headless where there is no pad. */
+static int platformRumbleTraceEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("GE007_TRACE_RUMBLE");
+        cached = (env != NULL && atoi(env) != 0) ? 1 : 0;
+    }
+    return cached;
+}
+
+void platformRumblePlayer(s32 player, f32 durationSecs) {
+    if (durationSecs < 0.0f) durationSecs = 0.0f;
+
+    /* N64 rumble is essentially binary on/off; the game supplies the duration.
+     * Map on -> a single strength (scaled by intensity) held for the duration. */
+    Uint16 strength;
+    Uint32 ms;
+    if (g_pcRumbleIntensity < 0)   g_pcRumbleIntensity = 0;
+    if (g_pcRumbleIntensity > 100) g_pcRumbleIntensity = 100;
+    strength = (Uint16)((65535.0f * (float)g_pcRumbleIntensity) / 100.0f + 0.5f);
+    ms = (Uint32)(durationSecs * 1000.0f + 0.5f);
+    if (ms == 0) ms = 1;
+
+    if (platformRumbleTraceEnabled()) {
+        fprintf(stderr,
+                "[RUMBLE] player=%d duration=%.3fs strength=%u ms=%u "
+                "(rumble=%d intensity=%d det=%d pad=%s)\n",
+                (int)player, (double)durationSecs, (unsigned)strength, (unsigned)ms,
+                (int)g_pcRumble, (int)g_pcRumbleIntensity, g_deterministic,
+                (player >= 0 && player < PLATFORM_MAX_PADS && g_pads[player].handle)
+                    ? "yes" : "none");
+    }
+
+    /* Actuation gates (never reached in deterministic/automation runs). */
+    if (g_deterministic) return;         /* output-only: no haptics under determinism */
+    if (!g_pcRumble) return;             /* Input.Rumble off */
+    if (g_pcRumbleIntensity <= 0) return;
+    if (player < 0 || player >= PLATFORM_MAX_PADS) return;
+    if (!g_pads[player].handle) return;  /* no pad in that player slot (e.g. dual-control 2nd id) */
+
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    SDL_GameControllerRumble(g_pads[player].handle, strength, strength, ms);
+#endif
+}
+
+void platformRumbleStopAll(void) {
+    int i;
+    if (g_deterministic) return;
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    for (i = 0; i < PLATFORM_MAX_PADS; i++) {
+        if (g_pads[i].handle) {
+            SDL_GameControllerRumble(g_pads[i].handle, 0, 0, 0);
+        }
+    }
+#else
+    (void)i;
+#endif
+}
+
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
 static SDL_GLContext  g_glContext  = NULL;
@@ -1104,6 +1177,15 @@ float g_pcGamepadDeadzone = 0.15f;  /* remaster default: tighter modern deadzone
 int g_pcGamepadRadialDeadzone = 1;  /* remaster default: true radial rescale-from-edge */
 int g_pcGamepadFpsScale = 1;        /* remaster default: frame-rate-independent look (no-op at 60fps) */
 s32 g_pcSteadyView = 1;             /* Input.SteadyView       keep world camera upright while moving */
+
+/* Rumble (MC.4). GoldenEye is a Rumble Pak title: the game raises its motor
+ * signal via joyRumblePakStart()/joyRumblePakStop() on faithful events (weapon
+ * fire, Bond damage). joy.c calls platformRumblePlayer()/platformRumbleStopAll()
+ * (below) to actuate the host pad. Output-only: never reads/writes sim state,
+ * consumes no RNG, and is force-suppressed under --deterministic so the
+ * sim-state hash is identical rumble-on vs rumble-off. */
+s32 g_pcRumble = 1;                  /* Input.Rumble           controller vibration master, ON */
+s32 g_pcRumbleIntensity = 100;      /* Input.RumbleIntensity  strength 0-100 (%) */
 
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
