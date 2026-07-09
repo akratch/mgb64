@@ -133,6 +133,7 @@ families, not just direct allocator greps.
 | M5 | Audio polish | Resolve the last faithfulness questions + modern output | 0.4.0-beta.2 |
 | M6 | Platform & Windows hardening | Crash logs, rebinding, CI, config safety | 0.4.0-rc.1 |
 | M7 | Split-screen multiplayer | 3/4-player + scoreboard validation | 0.4.0-rc.1 |
+| MW | Windows/Linux confidence | Fable scrutiny + free real-Windows execution lanes | 0.4.0-rc.1 |
 | M8 | Validation rails & release | Pixel validators, sim-hash coverage, QA sweep | 0.4.0 |
 
 Deferred past 0.4.0 (tracked, deliberately not in scope): 120 Hz render interpolation
@@ -932,6 +933,97 @@ has no smoke-launch and no asset-free verify; Linux does both at `:45-51`).
       choice; fine for beta, revisit for 0.4.0 final).
 
 ---
+
+## MW — Windows/Linux confidence sprint (zero-cost)
+
+Added 2026-07-09 at owner request. Goal: **to the best of our knowledge, the Windows
+build WILL compile, run, and play correctly** — established through intense scrutiny
+plus real execution on free infrastructure, with no Windows hardware purchase. This is
+a legitimacy requirement for the port, distinct from the per-batch validation waiver
+(which stands for day-to-day development). Linux gets the same treatment at lower cost
+since Docker is already proven here.
+
+### MW.1 — Fable deep-scrutiny review of the entire Windows surface
+**P1 · M-L · the "intense scrutiny phase" — run on the most capable model**
+Enumerate and audit EVERY `_WIN32`/`__MINGW32__` branch and every platform-divergent
+assumption in the tree. The known-pitfall checklist to sweep exhaustively:
+- [ ] Struct layout: `-mno-ms-bitfields` coverage on every target (the v0.3.2 crash
+      class); any NEW bitfield structs since; packing/alignment assumptions.
+- [ ] printf/scanf format portability under MinGW (`%zu`, `%lld`, `PRIu64`,
+      `__USE_MINGW_ANSI_STDIO` posture) — the watchdog/trace code added many format
+      strings recently.
+- [ ] File IO: text-vs-binary `fopen` modes (`"rb"`/`"wb"` everywhere ROM/save/trace
+      files are touched), path separators, `MAX_PATH`, case-sensitivity assumptions.
+- [ ] POSIX-only calls outside guards: `posix_spawn` (watchdog — currently no-op'd),
+      `sigaction`, `siglongjmp` (M6.2), `usleep`/`nanosleep`, `pthread` vs SDL threads.
+- [ ] The Windows no-op stubs that MUST become real for a credible Windows build:
+      diag log (M6.1), crash handler (M6.2), watchdog Windows branch.
+- [ ] Env/locale: `setenv` shim coverage, `getenv` at thread start, CRLF handling in
+      config parsing.
+- [ ] SDL2 Windows specifics: window creation flags, GL context on WGL, audio device
+      names, controller backends.
+Deliverable: findings fixed (each per charter), plus `docs/WINDOWS_CONFIDENCE.md` — the
+attestation: what is verified by construction, what by execution (MW.2-MW.5), what
+remains untested and why we believe it holds anyway.
+
+### MW.2 — Local MinGW cross-build lane (compile/link truth on macOS)
+**P1 · M**
+- [ ] `brew install mingw-w64`; obtain SDL2 for the cross target (fetch the MSYS2
+      `mingw-w64-x86_64-SDL2` package archive or build SDL2 from source with the cross
+      toolchain — document which, pin the version to what release CI uses).
+- [ ] CMake toolchain file (`cmake/mingw-w64-x86_64.cmake`) + `tools/mingw_cross_check.sh`
+      that configures, builds `ge007.exe`, and fails on any warning the MSYS2 CI build
+      would reject. Wire as an optional ctest lane (off by default, on for release).
+- [ ] Acceptance: cross-build green locally reproduces the release CI compiler surface
+      closely enough that "it compiles in CI" stops being a push-and-pray event.
+
+### MW.3 — Real Windows execution, free: GitHub Actions validation lane
+**P1 · S-M · the definitive gate — public-repo runners cost nothing**
+`origin` is the public repo (akratch/mgb64): GitHub-hosted `windows-latest` runners are
+free for public repositories. This is real Windows hardware without buying anything.
+- [ ] Add `.github/workflows/windows-validate.yml` (workflow_dispatch, per the repo's
+      no-auto-trigger posture): MSYS2 build → headless smoke (`--no-ui`, SDL dummy
+      audio/video drivers, deterministic route, render-health + exit-code assertions;
+      no ROM in CI → use the ROM-free ctest surface + a synthetic boot-to-menu smoke,
+      and document exactly what CAN'T run without a ROM) → asset-free verify → upload
+      the .exe artifact.
+- [ ] Document the loop in WINDOWS_CONFIDENCE.md: push validation branch → dispatch →
+      read results/download artifact. Run it before every release cut (M8.3 gains this
+      as a gate).
+- [ ] Stretch: a community-tester path — the uploaded artifact + a 5-minute test script
+      for any Windows-owning contributor.
+
+### MW.4 — Wine runtime smoke on macOS (free)
+**P2 · M**
+- [ ] `brew install --cask wine-stable` (free; runs x86_64 PE via Rosetta). Run the
+      MW.2-built `ge007.exe` headless with SDL dummy drivers against a local ROM —
+      validates PE loading, CRT behavior, SDL2 Windows code paths, and (critically)
+      runtime struct-layout behavior that static review can't prove.
+- [ ] Wire as `tools/wine_smoke.sh` (muted, headless). Document the limits honestly in
+      WINDOWS_CONFIDENCE.md: Wine is not the Windows kernel — SEH, scheduler, and GPU
+      driver behavior differ; it raises confidence, it does not conclude it.
+
+### MW.5 — Real Windows kernel without hardware: UTM/QEMU VM (free, heavier)
+**P2 · M-L · optional but closes the "real kernel" gap**
+- [ ] UTM (free) + Windows 11 ARM evaluation media, unactivated (Microsoft permits
+      unactivated use; watermark only). Windows 11 ARM's built-in x64 emulation runs
+      the shipping x86_64 `ge007.exe` on a REAL Windows kernel — SEH, real scheduler,
+      real filesystem semantics — on this Mac.
+- [ ] One-time setup documented; keep the VM as the release-QA rig: run the game with
+      a ROM, play 10 minutes, run the headless smoke suite. This plus MW.3 makes the
+      attestation strong enough to publish.
+
+### MW.6 — Linux lane revival (Docker already installed)
+**P2 · S-M**
+- [ ] `tools/linux_docker_check.sh`: dockerized Ubuntu build + ROM-free ctest + headless
+      boot smoke (x86_64 image; the historical Docker verification proved this works —
+      revive and pin it). AppImage launch smoke inside the container.
+- [ ] Wire into the M8.3 release checklist beside MW.3.
+
+**Sequencing:** MW.1 + MW.2 first (pure local, no new tools beyond brew), MW.3 next
+(one workflow file), MW.4/MW.6 as runtime confidence, MW.5 once before the next public
+release. M6.1/M6.2 (Windows diag log + crash handler) are prerequisites of the MW.1
+attestation — a platform whose diagnostics are a no-op cannot be called supported.
 
 ## M7 — Split-screen multiplayer
 
