@@ -119,7 +119,9 @@ std::vector<std::string> scanDirsForRoms(const std::vector<std::string> &dirs, s
         while ((e = readdir(d)) != nullptr) {
             if (e->d_name[0] == '.') continue;
             if (!hasRomExtension(e->d_name)) continue;
-            here.push_back(joinPath(dir, e->d_name));
+            std::string full = joinPath(dir, e->d_name);
+            if (pathIsDir(full)) continue;  // a dir named "foo.z64" is not a ROM
+            here.push_back(std::move(full));
         }
         closedir(d);
         std::sort(here.begin(), here.end(), caseLess);

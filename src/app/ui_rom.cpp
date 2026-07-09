@@ -54,8 +54,12 @@ void setRom(LauncherState &st, const char *path) {
     if (!path) return;
     std::snprintf(st.romPath, sizeof(st.romPath), "%s", path);
     st.romInfo = mgb_validate_rom(st.romPath);
-    AppConfig::set("last_rom", st.romPath);
-    AppConfig::save();
+    // Only remember a ROM that validated — never persist a garbage path from a
+    // dropped/browsed file that failed the header check.
+    if (st.romInfo.valid) {
+        AppConfig::set("last_rom", st.romPath);
+        AppConfig::save();
+    }
 }
 
 void pickRom(LauncherState &st) {

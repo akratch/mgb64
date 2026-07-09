@@ -15,6 +15,16 @@ void save();
 std::string get(const std::string &key, const std::string &fallback = "");
 void set(const std::string &key, const std::string &value);
 
+// Escape a value to a single injection-safe ini line: backslash-escapes '\',
+// '\n' and '\r' so a value can never introduce a new line (and thus never inject
+// a forged key=value on reload). unescapeValue is the exact inverse. Applied by
+// save()/load() to every value. advanced_env legitimately holds multi-line text
+// (KEY=VALUE per line); escaping preserves that intent across the round-trip
+// while neutralizing the ini-injection the raw flatten-on-save used to allow.
+// Exposed (SDL-free, in app_config_escape.cpp) for direct unit testing.
+std::string escapeValue(const std::string &value);
+std::string unescapeValue(const std::string &value);
+
 }  // namespace AppConfig
 
 #endif  // MGB64_APP_CONFIG_H

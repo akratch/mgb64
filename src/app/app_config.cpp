@@ -25,9 +25,11 @@ void load() {
     std::string line;
     while (std::getline(f, line)) {
         if (line.empty() || line[0] == '#') continue;
+        // A stray '\r' from a CRLF file would otherwise become part of the value.
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
-        g_kv[line.substr(0, eq)] = line.substr(eq + 1);
+        g_kv[line.substr(0, eq)] = unescapeValue(line.substr(eq + 1));
     }
 }
 
@@ -35,7 +37,9 @@ void save() {
     std::ofstream f(prefsFilePath());
     if (!f) return;
     f << "# MGB64 app preferences\n";
-    for (const auto &kv : g_kv) f << kv.first << "=" << kv.second << "\n";
+    // Values are escaped so no value (e.g. a filename with an embedded newline)
+    // can inject an extra ini line. Keys are code-controlled literals.
+    for (const auto &kv : g_kv) f << kv.first << "=" << escapeValue(kv.second) << "\n";
 }
 
 std::string get(const std::string &key, const std::string &fallback) {

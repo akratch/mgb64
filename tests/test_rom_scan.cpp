@@ -58,12 +58,15 @@ int main() {
     touch(scan + "/a.z64");
     touch(scan + "/notes.txt");     // ignored (not a ROM)
     touch(sub + "/deep.n64");       // not found by a shallow scan of `scan`
+    std::string romNamedDir = scan + "/bundle.z64";  // a DIRECTORY named like a ROM
+    mkdir(romNamedDir.c_str(), 0777);
 
     // --- scanDirsForRoms finds the fake .z64 by extension, ignores non-ROMs ---
     std::vector<std::string> found = romscan::scanDirsForRoms({scan});
     expect("scan finds a.z64", vecHasSuffix(found, "a.z64"));
     expect("scan ignores notes.txt", !vecHasSuffix(found, "notes.txt"));
     expect("scan is shallow (no sub/deep.n64)", !vecHasSuffix(found, "deep.n64"));
+    expect("scan skips a directory named bundle.z64", !vecHasSuffix(found, "bundle.z64"));
     expect("scan of empty dir list is empty", romscan::scanDirsForRoms({}).empty());
 
     // --- listDir: dirs first, then ROM files; parent (..) prepended ---
@@ -106,6 +109,7 @@ int main() {
     std::remove((scan + "/notes.txt").c_str());
     std::remove((sub + "/deep.n64").c_str());
     std::remove((dl + "/ge.z64").c_str());
+    rmdir(romNamedDir.c_str());
     rmdir(sub.c_str()); rmdir(scan.c_str()); rmdir(dl.c_str()); rmdir(root.c_str());
 
     if (fails == 0) { std::printf("PASS: all rom_scan cases\n"); return 0; }
