@@ -397,6 +397,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
+    # MC.7 solo-pause: boots a solo level via the app shell, scripts the F1/View
+    # settings overlay open for ~11s (> the 5s watchdog threshold) then closed,
+    # and asserts (a) the sim clock g_GlobalTimer is FROZEN across the whole pause
+    # and resumes after, and (b) the stall watchdog stayed silent (suppression
+    # holds). Real-time run — the pause can't engage under --deterministic.
+    add_port_validation_smoke(port_overlay_solo_pause_smoke overlay_solo_pause_smoke.sh 180)
     # Post-intro movement gate: boots each level with the intro enabled, lets it
     # play to the FP handoff, then holds forward and asserts the player actually
     # moves -- guards the Silo "look works, WASD dead" regression. Includes a
