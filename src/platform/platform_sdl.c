@@ -355,6 +355,8 @@ static const ConfigEnumOption k_launcherFullscreenOptions[] = {
     { "on", PLATFORM_LAUNCHER_FS_ON },
     { "off", PLATFORM_LAUNCHER_FS_OFF },
 };
+/* UI.Scale: app-shell font/metric scale (1.0 = default; handhelds ~1.25-1.5). */
+static f32 g_uiScale = 1.0f;
 
 typedef enum PlatformVSyncMode {
     PLATFORM_VSYNC_OFF = 0,
@@ -2246,6 +2248,13 @@ void platformRegisterConfig(void)
                          "fills the display; off always uses a resizable window (desktop dev). "
                          "This affects only the pre-game launcher \xe2\x80\x94 the in-game window "
                          "follows Video.WindowMode.");
+    settingsRegisterFloat("UI.Scale", &g_uiScale, 1.0f, 0.75f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_UI_SCALE",
+                          "--config-override UI.Scale=VALUE",
+                          "UI scale",
+                          "Scales the launcher and in-game overlay text, padding and buttons. "
+                          "1.0 = default; handhelds usually want ~1.25-1.5 for a readable 7-inch "
+                          "panel. Applies live.");
 
     /* RX.1 settings curation: tag dev/diagnostic knobs as advanced so the
      * launcher hides them behind the per-tab "Advanced (expert)" disclosure.

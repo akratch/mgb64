@@ -82,7 +82,7 @@ bool navButton(const char *label, bool selected) {
 }
 
 void drawNavRail(int &active) {
-    ImGui::BeginChild("##nav", ImVec2(ui::kNavWidth, 0), true);
+    ImGui::BeginChild("##nav", ImVec2(ui::kNavWidth(), 0), true);
 
     ui::Gap(ui::kGapXS);
     ImGui::PushFont(AppTheme::fonts().title);

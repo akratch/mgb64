@@ -6,6 +6,7 @@
 // so that non-automation flags (e.g. --rom) route into the launcher instead.
 #include "app_config.h"
 #include "app_host.h"
+#include "app_theme.h"
 #include "arg_triage.h"
 #include "config_schema.h"
 #include "diag_log.h"
@@ -162,6 +163,9 @@ int main(int argc, char **argv) {
     bool running = true;
     while (running) {
         if (host.pumpAndShouldQuit()) break;
+        // RX.2: apply the live UI.Scale before drawing (idempotent no-op when
+        // unchanged) so moving the slider resizes text/metrics immediately.
+        AppTheme::setUiScale(mgb_config_get_float("UI.Scale", 1.0f));
         host.beginFrame();
         LauncherAction action = launcher.draw(host);
         host.endFrame();

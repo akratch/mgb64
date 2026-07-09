@@ -106,6 +106,12 @@ int mgb_config_get_int(const char *key, int fallback) {
     }
 }
 
+float mgb_config_get_float(const char *key, float fallback) {
+    const Setting *s = settingsFind(key);
+    if (!s || !s->ptr || s->type != SETTING_TYPE_FLOAT) return fallback;
+    return *(f32 *)s->ptr;
+}
+
 int mgb_config_get_string(const char *key, char *out, int out_size) {
     if (!out || out_size <= 0) return 0;
     out[0] = '\0';

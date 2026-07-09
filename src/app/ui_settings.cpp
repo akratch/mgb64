@@ -19,7 +19,7 @@ void drawStringEntry(const MgbCfgEntry &e, const char *label) {
     if (!mgb_config_get_string(e.key, buf, (int)sizeof(buf))) buf[0] = '\0';
 
     ImGui::TextUnformatted(label);
-    ImGui::SetNextItemWidth(ui::kControlWidth);
+    ImGui::SetNextItemWidth(ui::kControlWidth());
     ImGui::InputText("##path", buf, sizeof(buf), ImGuiInputTextFlags_ReadOnly);
     ImGui::SameLine();
     if (ImGui::Button("Browse…")) {
@@ -57,21 +57,21 @@ void drawEntry(const MgbCfgEntry &e) {
                 if (ImGui::Checkbox(label, &b)) mgb_config_set_int(e.key, b ? 1 : 0);
             } else {
                 int v = e.cur_int;
-                ImGui::SetNextItemWidth(ui::kControlWidth);
+                ImGui::SetNextItemWidth(ui::kControlWidth());
                 if (ImGui::SliderInt(label, &v, (int)e.min_val, (int)e.max_val))
                     mgb_config_set_int(e.key, v);
             }
             break;
         case MGB_CFG_FLOAT: {
             float v = e.cur_float;
-            ImGui::SetNextItemWidth(ui::kControlWidth);
+            ImGui::SetNextItemWidth(ui::kControlWidth());
             if (ImGui::SliderFloat(label, &v, e.min_val, e.max_val, "%.2f"))
                 mgb_config_set_float(e.key, v);
             break;
         }
         case MGB_CFG_ENUM: {
             const char *cur = mgb_config_enum_token(e.key, e.cur_enum_index);
-            ImGui::SetNextItemWidth(ui::kControlWidth);
+            ImGui::SetNextItemWidth(ui::kControlWidth());
             if (ImGui::BeginCombo(label, cur)) {
                 for (int i = 0; i < e.enum_count; ++i) {
                     const char *t = mgb_config_enum_token(e.key, i);

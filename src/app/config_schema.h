@@ -51,6 +51,11 @@ const char *mgb_config_enum_token(const char *key, int optIndex);
 // value (e.g. the launcher's Game.CheckForUpdates gate) without enumerating.
 int  mgb_config_get_int(const char *key, int fallback);
 
+// Current FLOAT value for a key, or `fallback` if the key is absent or not a
+// float setting. Lightweight lookup for app code that needs one value (e.g. the
+// app shell reading UI.Scale) without enumerating.
+float mgb_config_get_float(const char *key, float fallback);
+
 // Current STRING value for a key. Copies into out (always NUL-terminated when
 // out_size > 0). Returns 1 if the key exists and is a string setting, else 0
 // (and out is set to ""). Lightweight lookup for the settings UI, which needs

@@ -54,7 +54,7 @@ void RomPanel_draw(LauncherState &st, LauncherAction &out) {
     ui::SectionHeader("Game ROM",
                       "Provide your own legally-dumped GoldenEye 007 cartridge (.z64 / .n64 / .v64).");
 
-    if (ImGui::Button(st.romPath[0] ? "Change ROM..." : "Choose ROM...", ui::kBtnSecondary)) {
+    if (ImGui::Button(st.romPath[0] ? "Change ROM..." : "Choose ROM...", ui::kBtnSecondary())) {
         pickRom(st);
     }
     ui::Gap(ui::kGapS);

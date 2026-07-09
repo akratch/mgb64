@@ -49,7 +49,7 @@ void PlayButton_draw(LauncherState &s, LauncherAction &out) {
     launchSummary(s, summary, sizeof(summary));
 
     if (s.romInfo.valid != 0) {
-        if (ui::PrimaryButton("Play", ui::kBtnPrimary)) {
+        if (ui::PrimaryButton("Play", ui::kBtnPrimary())) {
             out.type = LauncherActionType::Play;
             out.boot.rom_path = s.romPath;  // stable: member of the Launcher's state
             fillBoot(s, out.boot);
@@ -58,7 +58,7 @@ void PlayButton_draw(LauncherState &s, LauncherAction &out) {
         ui::TextSubtle("Will boot: %s", summary);
     } else {
         ImGui::BeginDisabled(true);
-        ImGui::Button("Play", ui::kBtnPrimary);
+        ImGui::Button("Play", ui::kBtnPrimary());
         ImGui::EndDisabled();
         ui::Gap(ui::kGapXS);
         ui::TextSubtle("Select a valid ROM on the Game ROM tab first.");
@@ -73,11 +73,11 @@ void LaunchPanel_draw(LauncherState &s, LauncherAction &out) {
     ui::Gap(ui::kGapS);
 
     if (s.launchMultiplayer) {
-        ImGui::SetNextItemWidth(ui::kControlWidth);
+        ImGui::SetNextItemWidth(ui::kControlWidth());
         ImGui::SliderInt("Players", &s.launchPlayers, 2, 4);
         ui::TextSubtle("Split-screen deathmatch on the default stage.");
     } else {
-        ImGui::SetNextItemWidth(ui::kControlWidth);
+        ImGui::SetNextItemWidth(ui::kControlWidth());
         const char *cur = s.launchLevelIndex == 0 ? "Boot to menu"
                                                   : kLevels[s.launchLevelIndex - 1].name;
         if (ImGui::BeginCombo("Start at", cur)) {
@@ -90,7 +90,7 @@ void LaunchPanel_draw(LauncherState &s, LauncherAction &out) {
             ImGui::EndCombo();
         }
         if (s.launchLevelIndex > 0) {
-            ImGui::SetNextItemWidth(ui::kControlWidth);
+            ImGui::SetNextItemWidth(ui::kControlWidth());
             ImGui::Combo("Difficulty", &s.launchDifficulty, kDifficulties, IM_ARRAYSIZE(kDifficulties));
         }
     }
