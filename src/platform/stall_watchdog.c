@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h> /* va_list: do not rely on SDL_stdinc pulling it in */
 
 /* AI-VM breadcrumb targets (written by chrai.c on the sim thread, one store
  * per interpreted AI command; read racily here). Defined unconditionally so
