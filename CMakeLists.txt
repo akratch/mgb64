@@ -347,6 +347,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
+    # Post-intro movement gate: boots each level with the intro enabled, lets it
+    # play to the FP handoff, then holds forward and asserts the player actually
+    # moves -- guards the Silo "look works, WASD dead" regression. Includes a
+    # negative control (GE007_NO_POSTINTRO_SPAWN_FIX=1) that must reproduce the
+    # frozen state, proving the detector fires.
+    add_port_validation_smoke(port_intro_movement_regression intro_movement_regression.sh 600)
     add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
     add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360
         --msaa-values 0
