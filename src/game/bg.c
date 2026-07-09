@@ -2706,16 +2706,20 @@ s_bound_info dword_CODE_bss_8007FFA0[204];
 
 #ifdef NATIVE_PORT
 /* T13b: DRAW-ONLY room admission set. Parallel to s_room_info.room_rendered but
- * visible ONLY to rendering, never to the sim. The room draw loop emits geometry and
- * props from the draw list (dword_CODE_bss_8007FFA0), NOT from room_rendered, so a
- * room in the draw list draws regardless of its room_rendered bit. getROOMID_isRendered()
+ * visible ONLY to rendering, never to the sim. The room draw loop emits GEOMETRY from
+ * the draw list (dword_CODE_bss_8007FFA0), NOT from room_rendered, so a room in the
+ * draw list draws regardless of its room_rendered bit. Props/actors do NOT ride along:
+ * chrpropsRenderPass iterates draw-list rooms but gates every prop on the RESTORED
+ * getROOMID_isRendered + g_OnScreenPropList, so draw-only rooms ship geometry only --
+ * matching stock, which draws no actors in these rooms during intros. getROOMID_isRendered()
  * and every other room_rendered consumer stay blind to draw-only rooms, so the
  * deterministic intro RNG stream (room_rendered -> PROPFLAG_ONSCREEN -> actor tick ->
  * pcRandom) is byte-identical to before.
  *
  * Set by the camera-seed walk in sub_GAME_7F0B8A6C, which snapshots the default sim
  * state, runs the STOCK camera-room portal walk + the same additive passes the default
- * pipeline uses (edge-rescue / frustum-fallback / visibility-supplement) so it reaches
+ * pipeline uses (edge-rescue / visibility-supplement; the frustum-fallback early-returns
+ * during INTRO/FADESWIRL/SWIRL so it contributes nothing here) so it reaches
  * exactly the T13 rooms, marks every room the walk added beyond the snapshot draw-only,
  * then RESTORES room_rendered and room_neighbor_to_rendered to the snapshot. The restore
  * makes the sim-visible state provably equal to the pre-T13b default regardless of the
