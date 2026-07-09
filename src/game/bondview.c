@@ -6432,6 +6432,32 @@ void sub_GAME_7F07B1A4(void)
     }
     else if (mode == CAMERAMODE_SWIRL)
     {
+#ifdef NATIVE_PORT
+        /* Silo post-intro movement fix: seed the FP gameplay anchor from the
+         * authored gameplay spawn (g_Startpad[0]), exactly like the skip path
+         * (bondviewNativeSkipIntroToFp), the swirl-missing fallback, and the
+         * direct-boot handoff (bondview_r.c) already do. Without this, the
+         * normal swirl-completion handoff below leaves bondviewSetCameraMode
+         * (CAMERAMODE_FP) -> bondviewSeedFpHandoffFromCurrentProp() seeding
+         * field_488.pos/current_tile_ptr from wherever the D31/D43 intro
+         * root-motion drift left prop->pos/prop->stan. On a swirl intro (Dam)
+         * that drifted anchor happens to land on a walkable floor tile; on a
+         * static-establishing intro (Silo, ptr_random06cam_entry != NULL) it
+         * lands on a non-walkable spot, so MoveBond's collision rejects every
+         * stick input after the intro while mouse-look (independent of the
+         * stan) still works -- "look works, WASD dead". Applying the authored
+         * spawn here makes the intro root-motion purely visual, as intended,
+         * without corrupting the gameplay collision seed. The D31/D43
+         * root-motion behaviour and its GE007_NO_INTRO_ROOTMOTION opt-out are
+         * untouched. portApplyGameplaySpawnFromIntro() no-ops for MP / no
+         * authored startpad, so this only affects the single-player intro.
+         * GE007_NO_POSTINTRO_SPAWN_FIX=1 restores the old drifted-anchor
+         * handoff for A/B (reproduces the frozen-movement bug; used as the
+         * negative control in tools/intro_movement_regression.sh). */
+        if (getenv("GE007_NO_POSTINTRO_SPAWN_FIX") == NULL) {
+            portApplyGameplaySpawnFromIntro();
+        }
+#endif
         maybe_solo_intro_camera_handler();
         currentPlayerStartChrFade(0.0f, 1.0f);
         bondviewSetCameraMode(CAMERAMODE_FP);
