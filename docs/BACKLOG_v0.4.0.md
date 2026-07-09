@@ -134,7 +134,7 @@ families, not just direct allocator greps.
 | M6 | Platform & Windows hardening | Crash logs, rebinding, CI, config safety | 0.4.0-rc.1 |
 | M7 | Split-screen multiplayer | 3/4-player + scoreboard validation | 0.4.0-rc.1 |
 | MW | Windows/Linux confidence | Fable scrutiny + free real-Windows execution lanes | 0.4.0-rc.1 |
-| MC | Controller-first & handheld | Pad-navigable UI, rebinding, rumble, ROG Ally rig | 0.4.0-rc.1 |
+| MC | Controller-first & handheld | Pad-navigable UI, rebinding, rumble, Windows handheld rig | 0.4.0-rc.1 |
 | M8 | Validation rails & release | Pixel validators, sim-hash coverage, QA sweep | 0.4.0 |
 
 Deferred past 0.4.0 (tracked, deliberately not in scope): 120 Hz render interpolation
@@ -1009,7 +1009,7 @@ assumption in the tree. The known-pitfall checklist to sweep exhaustively:
       no setlocale → stable C-locale float parsing.
 - [x] SDL2 Windows specifics: GL 3.3 core/WGL via stock SDL path + glad; Metal
       Apple-gated; WASAPI via SDL default device; controllers = SDL_GameController
-      only (XInput-ready for the ROG Ally).
+      only (XInput-ready for the Windows handheld).
 Deliverable shipped: 6 fixes (M6.1, M6.2, watchdog, LLP64 diag formats, PATH_MAX
 truncation, math-shim `lround`), 61-warning census triaged (3 real → fixed; 58
 remaining attested benign), `docs/WINDOWS_CONFIDENCE.md` attestation. Runtime-only
@@ -1076,7 +1076,7 @@ attestation — a platform whose diagnostics are a no-op cannot be called suppor
 
 ## MC — Controller-first & handheld sprint
 
-Added 2026-07-09 at owner request: the owner is acquiring an ASUS ROG Ally (Windows
+Added 2026-07-09 at owner request: the owner is acquiring an ASUS Windows handheld (Windows
 gaming handheld). Its controls present as a standard XInput/Xbox-layout gamepad, which
 SDL2's GameController API abstracts identically on Windows, macOS, and Linux — so the
 correct architecture is generic SDL2 controller support, no per-device or per-platform
@@ -1100,7 +1100,7 @@ The ImGui shell is currently mouse-driven. ImGui ships gamepad navigation:
       weapon-prev binding, so pad Start stays the N64 Start and weapon-prev moved to
       the R-stick click.)*
 - [ ] Acceptance: complete a boot → settings change → play → overlay toggle → quit
-      session using ONLY a controller (validate with any pad; re-validate on the Ally
+      session using ONLY a controller (validate with any pad; re-validate on the handheld
       at MC.6).
 
 ### MC.2 — Controller database + hotplug robustness
@@ -1136,7 +1136,7 @@ The keyboard rebinding UI exists (src/app/ui_bindings.cpp); gamepad is fixed-lay
 
 ### MC.6 — Ally validation session (when the device arrives)
 **P1 · S — also serves MW attestation**
-- [ ] Run the MW.3 CI-built (or MW.2 cross-built) `ge007.exe` on the Ally: install,
+- [ ] Run the MW.3 CI-built (or MW.2 cross-built) `ge007.exe` on the handheld: install,
       ROM setup, full controller-only session (MC.1 acceptance repeated on-device),
       Rumble check, performance notes (Z1 Extreme is far above spec), and the
       watchdog/diag-log behavior on real Windows (M6.1/M6.2 must be landed first).
@@ -1159,7 +1159,7 @@ The keyboard rebinding UI exists (src/app/ui_bindings.cpp); gamepad is fixed-lay
 
 **Sequencing:** MC.1 + MC.3 are the pre-Ally software work (any pad validates them);
 MC.2/MC.4 ride along cheaply; MC.6 becomes the capstone of BOTH this sprint and MW
-once the hardware arrives. Ally note: its pad is active in Armoury Crate "Gamepad"
+once the hardware arrives. Ally note: its pad is active in the device launcher "Gamepad"
 mode — a setup step for the user, not a code concern.
 
 ## M7 — Split-screen multiplayer

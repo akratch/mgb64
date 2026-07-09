@@ -126,7 +126,7 @@ are not comparable across the two lanes; the *classes* are what's attested here.
   glad loader (the standard SDL Windows path); Metal correctly `__APPLE__`-gated
   incl. the `gfx_metal_set_vsync` guard; audio via `SDL_OpenAudioDevice(NULL, …)`
   (WASAPI under SDL); controllers via the SDL_GameController API only — XInput
-  (ROG Ally's mode) is SDL's best-supported Windows backend, no raw joystick or
+  (the mode XInput-class handhelds present) is SDL's best-supported Windows backend, no raw joystick or
   platform-specific input code. `SDL_MAIN_HANDLED` + `SDL_SetMainReady()` +
   a plain `int main()` is the documented SDL entry pattern. **Updated:** as of
   the subsystem flip (§6) the Release build links the **GUI subsystem**
@@ -157,7 +157,7 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 | **Windows stack-overflow faults die silently** — the SEH filter runs on the faulting thread's exhausted stack (`head[128]`+`diag[768]`+snprintf frames will usually double-fault on `STATUS_STACK_OVERFLOW`); POSIX covers this exact case with `sigaltstack` | Every *other* fault class still gets diagnostics; stack overflow is rare in a fixed-arena engine; fix (`SetThreadStackGuarantee`) is known and cheap if MW.5 shows it matters | Attested asymmetry, not scheduled this cycle |
 | WGL driver behavior (GL 3.3 core shaders, vsync, fullscreen-desktop) | SDL's most-traveled Windows path; shaders are GLSL 330 core with no vendor extensions; prior v0.3.x field runs rendered | MW.3 (headless smoke on windows-latest), MW.5 (visual) |
 | WASAPI audio timing under the 22050 Hz pull model | SDL converts/paces internally; same callback code runs CoreAudio today | MW.5 / field |
-| XInput on ROG Ally specifically | SDL GameController abstracts it; Ally presents a standard XInput pad | MC sprint hardware pass |
+| XInput handheld controls specifically | SDL GameController abstracts them; such devices present a standard XInput pad | MC sprint hardware pass |
 | msvcrt-vs-UCRT runtime differences (CI artifact links msvcrt) | §3 format-posture analysis; no other CRT-divergent API in use (fsync→`_commit`, rename→`MoveFileExA` already explicit) | Consider migrating CI to MSYS2 `UCRT64` to match the locally-tested runtime |
 | `-Wmaybe-uninitialized` decomp sites being genuine sim bugs | Identical on all platforms — not a *Windows* risk by definition | Sim-correctness backlog (not MW) |
 

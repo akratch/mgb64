@@ -163,7 +163,7 @@ macOS build) is documented in **[RELEASING.md](RELEASING.md)**.
 ## 7. Controller support (handheld / gamepad)
 
 The shell is fully operable with a standard XInput pad (SDL2 GameController) and
-no keyboard/mouse — the target being handhelds like the ROG Ally. Only the
+no keyboard/mouse — the target being gaming handhelds (XInput-class controls, no keyboard). Only the
 generic GameController path is used; there is no device-specific code.
 
 **ImGui navigation (MC.1).** `ImGuiConfigFlags_NavEnableGamepad` is set in
