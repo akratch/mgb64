@@ -10,8 +10,8 @@ the original ROM**, backed by the orchestration and instrumentation passes that
 have already been executed. It is written so any contributor can reproduce the
 evidence and continue the remaining phases.
 
-It is the combat-specific counterpart to [ROM_COMPARISON.md](ROM_COMPARISON.md)
-(the oracle mechanism) and [INSTRUMENTATION.md](INSTRUMENTATION.md) (the trace
+It is the combat-specific counterpart to [ROM_COMPARISON.md](../ROM_COMPARISON.md)
+(the oracle mechanism) and [INSTRUMENTATION.md](../INSTRUMENTATION.md) (the trace
 contract and env knobs). Read those first.
 
 > **Definition of "done" for combat:** every lifecycle stage runs the genuine N64
