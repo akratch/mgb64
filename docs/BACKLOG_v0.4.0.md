@@ -197,8 +197,10 @@ still hit the larger RX.2 targets. Not a hard blocker (synth-mouse works), but i
 "touchscreen like the Ally" ask.
 
 ### RX.6 — Controller-first completion (from MC sprint, pulled to final)
-- [ ] **MC.2** — bundle `gamecontrollerdb.txt` + `SDL_GameControllerAddMappingsFromFile`;
-      hotplug re-acquire without shifting P1's pad. **P1 · S.**
+- [x] **MC.2** — bundle `gamecontrollerdb.txt` + `SDL_GameControllerAddMappingsFromFile`;
+      hotplug re-acquire without shifting P1's pad. **P1 · S.** *(LANDED — see MC.2
+      section below. Loader lands mappings before any pad opens; hotplug was already
+      instance-id-stable, verified not changed.)*
 - [ ] **MC.4** — Rumble Pak → `SDL_GameControllerRumble` (faithful; output-only, sim-safe;
       `Input.Rumble` default ON + intensity). **P2 · S-M.**
 - [ ] **MC.7** — real solo-pause: the overlay currently ships "game keeps running" (mid-
@@ -1247,12 +1249,37 @@ The ImGui shell is currently mouse-driven. ImGui ships gamepad navigation:
       at MC.6).
 
 ### MC.2 — Controller database + hotplug robustness
-**P2 · S**
-- [ ] Bundle/refresh the community `gamecontrollerdb.txt` (SDL_GameControllerDB, free)
+**P2 · S — LANDED**
+- [x] Bundle/refresh the community `gamecontrollerdb.txt` (SDL_GameControllerDB, free)
       and load it at init (`SDL_GameControllerAddMappingsFromFile`) so exotic/hybrid
       devices map correctly on all platforms; keep SDL's built-ins as fallback.
-- [ ] Verify hotplug: connect/disconnect mid-game re-acquires cleanly (the MP per-pad
-      slots at stubs.c must not shift P1's pad); document behavior.
+      Done: `lib/sdl_gamecontrollerdb/gamecontrollerdb.txt` (zlib-licensed community
+      DB, full upstream copy — passes the provenance guards as plain-text mapping data,
+      not a ROM asset), loaded by `platformLoadControllerMappings()` in
+      `src/platform/platform_sdl.c` **before** the pad-open loop in `platformInitSDL`.
+      Resolution order (last-write-wins per SDL semantics): `SDL_GetBasePath()` (bundle/
+      exe dir, where packaging drops the file) → CWD → savedir override. Missing file is
+      non-fatal — logs "using SDL built-in mappings" and boots. Proven headless/muted:
+      loads 183 macOS-platform mappings from the bundled file (SDL counts only the host
+      platform's entries; the other ~2000 are Windows/Linux/Android/iOS and are skipped);
+      negative control (db removed) logs the built-ins fallback and boots. Packaging wired
+      into all three lanes (`macos/Scripts/build_gl_app.sh` → `.app/Contents/Resources/`,
+      `scripts/package_windows_zip.sh` next to `ge007.exe`,
+      `scripts/package_linux_appimage.sh` → `usr/bin/`). Provenance in `THIRD_PARTY.md`.
+- [x] Verify hotplug: connect/disconnect mid-game re-acquires cleanly (the MP per-pad
+      slots must not shift P1's pad); document behavior. **Already robust — verified, not
+      changed.** `g_pads[PLATFORM_MAX_PADS]` uses fixed player slots keyed by
+      `SDL_JoystickID`: `SDL_CONTROLLERDEVICEADDED` opens into the first *free* slot and
+      rejects duplicates (`platformOpenPad`); `SDL_CONTROLLERDEVICEREMOVED` frees only the
+      slot matching the removed instance id (`platformClosePadByInstance`) — no cascade,
+      no promotion of P3→P2, P1 (slot 0) untouched unless P1's own pad is removed. A
+      reconnect takes the first free slot (usually its own, since other slots are
+      undisturbed); note SDL assigns a *new* instance id on replug, so there is no
+      persistent identity across unplug — if a different pad grabs the freed slot first,
+      the returning pad lands in the next free slot (standard free-pool behavior, P1 still
+      stable). MC.4 rumble indexes `g_pads[player].handle` by the same slot, so slot
+      stability keeps rumble addressed to the right player; a disconnected slot's NULL
+      handle no-ops safely. Full unplug/replug proof is hardware-gated → MC.6 / M8.3.
 
 ### MC.3 — Gamepad button rebinding (absorbs M6.4)
 **P1 · M**

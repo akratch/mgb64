@@ -39,6 +39,9 @@ done
 [[ -f "$stage/SDL2.dll" ]] || { [[ -f "$mingw_prefix/bin/SDL2.dll" ]] && cp "$mingw_prefix/bin/SDL2.dll" "$stage/"; }
 
 cp LICENSE README.md "$stage/" 2>/dev/null || true
+# Community controller-mapping DB (MC.2), next to the exe where SDL_GetBasePath()
+# resolves it at controller init.
+cp lib/sdl_gamecontrollerdb/gamecontrollerdb.txt "$stage/" 2>/dev/null || true
 # Windows install + setup guide (writable install dir, ROM placement, adding to a
 # game library, save/log locations). Staged into the zip so it ships with the exe.
 cp docs/WINDOWS_SETUP.md "$stage/" 2>/dev/null || true
