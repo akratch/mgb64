@@ -923,24 +923,25 @@ The "cheap instruments, Surface 2 worst" report was never converted to measured 
 ## M6 — Platform & Windows hardening
 
 ### M6.1 — Windows diagnostics are a no-op (players can't report bugs)
-**P1 · M**
-**Files:** `src/app/diag_log.cpp:34-38` — the entire `_WIN32` branch is stubbed
-(`DiagLog_install() {}`, empty snapshot, empty path); POSIX (`:64-101`) tees to
+**✅ LANDED 2026-07-09 with MW.1 (`fix/mw1-windows-scrutiny`)**
+**Files:** `src/app/diag_log.cpp` — the `_WIN32` branch was stubbed; POSIX tees to
 `mgb64.log` with rotation and feeds the F1 diagnostics view.
-- [ ] Implement the Windows tee: `freopen`-to-file + `SetStdHandle` (or CreatePipe +
-      reader thread) into `SDL_GetPrefPath("MGB64","MGB64")\mgb64.log`, same
-      prev-rotation, same ring buffer for `DiagLog_snapshot`.
+- [x] Implemented the Windows tee: `_pipe` + `_dup2(1/2)` + reader thread into
+      `SDL_GetPrefPath("MGB64","MGB64")\mgb64.log`, same prev-rotation (with
+      delete-before-rename — Windows `rename()` won't replace), same ring buffer;
+      `_IONBF` because the Windows CRT treats `_IOLBF` as full buffering.
 - [ ] Validate on a real Windows machine or Wine: log file appears, F1 diagnostics
-      populate, crash diagnostics from M6.2 land in it.
+      populate, crash diagnostics from M6.2 land in it (MW.4/MW.5 lane).
 
 ### M6.2 — Windows crash handler: remove the SEH-UB `longjmp` path
-**P2 · S-M (latent — only reachable with `GE007_ENABLE_RECOVERY`)**
-**Files:** `src/platform/main_pc.c:659-660` (plain `signal()` on `_WIN32`), `:387`
-(`siglongjmp` from handler), `src/platform/platform.h:39-42` (`siglongjmp`→`longjmp` on
-Windows); POSIX correctly uses `sigaction`+`SA_ONSTACK` (`:447-455`).
-- [ ] On Windows, replace with `SetUnhandledExceptionFilter` (or a vectored handler) that
-      writes the same `[CRASH]` diagnostics and terminates; compile out the recovery
-      `longjmp` and force `recovery_enabled=0` on `_WIN32`.
+**✅ LANDED 2026-07-09 with MW.1 (`fix/mw1-windows-scrutiny`)**
+**Files:** `src/platform/main_pc.c`, `src/platform/fast3d/gfx_pc.c`,
+`src/platform/platform.h`; POSIX path (`sigaction`+`SA_ONSTACK`) untouched.
+- [x] On Windows: `SetUnhandledExceptionFilter` writes `[CRASH] Unhandled exception
+      <code> at <addr>` + the shared `[CRASH-DL]/[CRASH-TEX]` dump and terminates;
+      `signal()` kept only for SIGABRT; the recovery `longjmp` is compiled out and
+      `recovery_enabled` forced 0 on `_WIN32` (a set `GE007_ENABLE_RECOVERY` logs
+      "unsupported on Windows").
 
 ### M6.3 — Config-parsing safety
 **P3 · S**
@@ -987,27 +988,32 @@ a legitimacy requirement for the port, distinct from the per-batch validation wa
 since Docker is already proven here.
 
 ### MW.1 — Fable deep-scrutiny review of the entire Windows surface
-**P1 · M-L · the "intense scrutiny phase" — run on the most capable model**
+**✅ DONE 2026-07-09 (`fix/mw1-windows-scrutiny`) — attestation: `docs/WINDOWS_CONFIDENCE.md`**
 Enumerate and audit EVERY `_WIN32`/`__MINGW32__` branch and every platform-divergent
 assumption in the tree. The known-pitfall checklist to sweep exhaustively:
-- [ ] Struct layout: `-mno-ms-bitfields` coverage on every target (the v0.3.2 crash
-      class); any NEW bitfield structs since; packing/alignment assumptions.
-- [ ] printf/scanf format portability under MinGW (`%zu`, `%lld`, `PRIu64`,
-      `__USE_MINGW_ANSI_STDIO` posture) — the watchdog/trace code added many format
-      strings recently.
-- [ ] File IO: text-vs-binary `fopen` modes (`"rb"`/`"wb"` everywhere ROM/save/trace
-      files are touched), path separators, `MAX_PATH`, case-sensitivity assumptions.
-- [ ] POSIX-only calls outside guards: `posix_spawn` (watchdog — currently no-op'd),
-      `sigaction`, `siglongjmp` (M6.2), `usleep`/`nanosleep`, `pthread` vs SDL threads.
-- [ ] The Windows no-op stubs that MUST become real for a credible Windows build:
-      diag log (M6.1), crash handler (M6.2), watchdog Windows branch.
-- [ ] Env/locale: `setenv` shim coverage, `getenv` at thread start, CRLF handling in
-      config parsing.
-- [ ] SDL2 Windows specifics: window creation flags, GL context on WGL, audio device
-      names, controller backends.
-Deliverable: findings fixed (each per charter), plus `docs/WINDOWS_CONFIDENCE.md` — the
-attestation: what is verified by construction, what by execution (MW.2-MW.5), what
-remains untested and why we believe it holds anyway.
+- [x] Struct layout: `-mno-ms-bitfields` on ge007/ge007_lib; mgb64_app carries no
+      N64-layout structs and its engine seam has no bit-fields (layout-safe by
+      construction). No new bit-field seam structs since v0.3.2.
+- [x] printf/scanf format portability: `-Wformat` live tree-wide in the MinGW lane
+      (1 hit, fixed); UCRT (local lane) native C99 formats; msvcrt (release CI)
+      auto-enables `__USE_MINGW_ANSI_STDIO=1` for C11/C++17 — header-verified.
+- [x] File IO: all ROM/save/trace writers use explicit binary modes + `MoveFileExA`
+      atomic replace; text-mode fopen = logs/ini only. Fixed: config path buffers
+      were `PATH_MAX` (260 on Windows) vs the 1024-byte savedir contract.
+- [x] POSIX-only calls outside guards: none (compile/link truth + hand sweep of the
+      semantics-divergent class: clock_gettime/dirent/write all winpthreads/CRT-safe).
+- [x] The Windows no-op stubs — ALL THREE LANDED: diag log (M6.1, CRT-fd tee),
+      crash handler (M6.2, SEH filter + recovery-longjmp compiled out), watchdog
+      (full breadcrumb rig now compiles on Windows).
+- [x] Env/locale: setenv shims cover both call sites; parser trims `\r` via isspace;
+      no setlocale → stable C-locale float parsing.
+- [x] SDL2 Windows specifics: GL 3.3 core/WGL via stock SDL path + glad; Metal
+      Apple-gated; WASAPI via SDL default device; controllers = SDL_GameController
+      only (XInput-ready for the ROG Ally).
+Deliverable shipped: 6 fixes (M6.1, M6.2, watchdog, LLP64 diag formats, PATH_MAX
+truncation, math-shim `lround`), 61-warning census triaged (3 real → fixed; 58
+remaining attested benign), `docs/WINDOWS_CONFIDENCE.md` attestation. Runtime-only
+gaps are enumerated there and belong to MW.3-MW.5.
 
 ### MW.2 — Local MinGW cross-build lane (compile/link truth on macOS)
 **P1 · M**
