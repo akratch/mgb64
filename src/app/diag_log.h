@@ -3,7 +3,8 @@
 // Installed by the app shell on the interactive path only (never the automation
 // path), so it tees engine output for the in-app console + bug-report export
 // without changing the headless/console behavior the validation harness relies
-// on. POSIX (dup2/pipe/reader thread); a Windows implementation lands in Part 3.
+// on. POSIX: dup2/pipe/reader thread; Windows: the same tee over the CRT fds
+// (_pipe/_dup2), which covers everything this codebase prints (printf/fprintf).
 #ifndef MGB64_DIAG_LOG_H
 #define MGB64_DIAG_LOG_H
 

@@ -33,9 +33,53 @@ std::string prefsDir() {
 
 #if defined(_WIN32)
 
-void DiagLog_install() { /* Windows tee wired in Part 3 */ }
-int DiagLog_snapshot(char *buf, int cap) { if (buf && cap) buf[0] = '\0'; return 0; }
-const char *DiagLog_path() { return ""; }
+#include <fcntl.h>
+#include <io.h>
+
+namespace {
+int g_realErr = -1;
+
+void readerLoop(int rfd) {
+    char buf[4096];
+    int n;
+    while ((n = _read(rfd, buf, sizeof(buf))) > 0) {
+        appendRing(buf, (size_t)n);
+        if (g_logFile) {
+            std::fwrite(buf, 1, (size_t)n, g_logFile);
+            std::fflush(g_logFile);
+        }
+        if (g_realErr >= 0) {
+            int w = _write(g_realErr, buf, (unsigned)n);  // write through to console
+            (void)w;
+        }
+    }
+}
+}  // namespace
+
+void DiagLog_install() {
+    if (g_installed) return;
+    g_installed = true;
+
+    std::string dir = prefsDir();
+    g_logPath = dir + "mgb64.log";
+    std::string prev = dir + "mgb64.prev.log";
+    std::remove(prev.c_str());                     // Windows rename() won't replace an
+    std::rename(g_logPath.c_str(), prev.c_str());  // existing file, so clear it first
+    g_logFile = std::fopen(g_logPath.c_str(), "w");
+
+    g_realErr = _dup(2);  // keep the real console for write-through
+    int pfd[2];
+    if (_pipe(pfd, 64 * 1024, _O_BINARY | _O_NOINHERIT) != 0) return;
+    _dup2(pfd[1], 1);  // stdout -> pipe (CRT-level; covers printf/fprintf)
+    _dup2(pfd[1], 2);  // stderr -> pipe
+    _close(pfd[1]);
+    // Unbuffered, not line-buffered: the Windows CRT treats _IOLBF as full
+    // buffering, which would hold diagnostics back from the pipe until the
+    // buffer fills (or the process exits).
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    std::thread(readerLoop, pfd[0]).detach();
+}
 
 #else
 
@@ -84,6 +128,8 @@ void DiagLog_install() {
     std::thread(readerLoop, pfd[0]).detach();
 }
 
+#endif  // _WIN32
+
 int DiagLog_snapshot(char *buf, int cap) {
     if (!buf || cap <= 0) return 0;
     std::lock_guard<std::mutex> lk(g_mtx);
@@ -99,5 +145,3 @@ int DiagLog_snapshot(char *buf, int cap) {
 }
 
 const char *DiagLog_path() { return g_logPath.c_str(); }
-
-#endif  // _WIN32
