@@ -115,6 +115,29 @@ if [ "$RC" != "0" ]; then
 fi
 [ -f "$ARTIFACT" ] || fail "build reported success but $ARTIFACT is missing"
 
+# --- 4b. Struct-layout lock (S-tier Task 0.7, FID-0035/0036) -------------------
+# This lane IS the drift scenario the layout asserts guard: MinGW defaults to
+# -mms-bitfields, which repacked StandTile and crashed v0.3.2 on Windows. The
+# main build above runs with BUILD_TESTING=OFF, so the struct_layout ctest is
+# not built; compile-check it directly here (same layout-critical flags as the
+# ge007 target) so any Windows-side layout drift fails this lane at compile time.
+STRUCT_TEST="$REPO_ROOT/tests/test_struct_layout.c"
+if [ -f "$STRUCT_TEST" ]; then
+    echo "struct-layout lock (-fsyntax-only, MinGW) ..."
+    "${CROSS_PREFIX:-x86_64-w64-mingw32}"-gcc -fsyntax-only \
+        -DNONMATCHING -DNATIVE_PORT -DPORT_FIXME_STUBS -D_LANGUAGE_C \
+        -DVERSION_US -DLANG_US -DREFRESH_NTSC -DLEFTOVERDEBUG \
+        -DLEFTOVERSPECTRUM -DBUGFIX_R0 -DBYTEMATCH -DSDL_MAIN_HANDLED \
+        -w -fms-extensions -mno-ms-bitfields \
+        -I"$REPO_ROOT/include" -I"$REPO_ROOT/include/PR" -I"$REPO_ROOT/src" \
+        -I"$REPO_ROOT/src/game" -I"$REPO_ROOT/src/platform" \
+        -I"$REPO_ROOT/src/platform/fast3d" -I"$REPO_ROOT/src/libultra/audio" \
+        -I"$REPO_ROOT/assets" -I"$REPO_ROOT/lib/glad/include" \
+        -I"$REPO_ROOT/lib/stb" -I"$REPO_ROOT" \
+        "$STRUCT_TEST" || fail "struct-layout asserts drifted under MinGW (see tests/test_struct_layout.c)"
+    echo "struct-layout lock: PASS"
+fi
+
 # --- 5. Report -----------------------------------------------------------------
 echo ""
 echo "warnings: ${WARN_COUNT:-0} (non-fatal, matching CI posture; full log: $BUILD_LOG)"

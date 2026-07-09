@@ -1,0 +1,6 @@
+# S-Tier verify manifest — ordered gate invocations (cheap -> expensive).
+# Append-only: adding a gate = appending a line. Deletions require a waiver
+# entry (charter rule 4). Concurrent agents also append; merge by keeping both.
+#
+# tier 1 — static + unit (ROM-free)
+ctest --test-dir build --output-on-failure -R struct_layout

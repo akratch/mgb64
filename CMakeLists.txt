@@ -317,6 +317,40 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME room_normals COMMAND test_room_normals)
 
+    # N64 struct-layout lock — ROM-free compile-time guard (S-tier Task 0.7,
+    # FID-0035 + FID-0036 first half). The _Static_asserts in the TU fire at
+    # COMPILE time if any asserted sizeof/offsetof of a StandTile navmesh or
+    # PROPDEF record struct drifts, failing the build instead of corrupting
+    # memory at runtime — the exact v0.3.2 Windows-crash class (MinGW's default
+    # -mms-bitfields repacked StandTile and OOB'd the stan navmesh). Built with
+    # the SAME layout-critical flags (-fms-extensions to parse the `inherits`
+    # idiom; -mno-ms-bitfields to force SysV bit-field packing) + defines +
+    # include dirs as the ge007 target so it locks the real game layout. The
+    # global add_definitions() (CMakeLists:536) runs after this block, so the
+    # game defines are applied explicitly here.
+    add_executable(test_struct_layout
+        "${CMAKE_SOURCE_DIR}/tests/test_struct_layout.c"
+    )
+    target_compile_definitions(test_struct_layout PRIVATE
+        NONMATCHING NATIVE_PORT PORT_FIXME_STUBS _LANGUAGE_C
+        VERSION_US LANG_US REFRESH_NTSC LEFTOVERDEBUG
+        LEFTOVERSPECTRUM BUGFIX_R0 BYTEMATCH SDL_MAIN_HANDLED)
+    target_compile_options(test_struct_layout PRIVATE
+        -w -fms-extensions -mno-ms-bitfields)
+    target_include_directories(test_struct_layout PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/include/PR"
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/game"
+        "${CMAKE_SOURCE_DIR}/src/platform"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d"
+        "${CMAKE_SOURCE_DIR}/src/libultra/audio"
+        "${CMAKE_SOURCE_DIR}/assets"
+        "${CMAKE_SOURCE_DIR}/lib/glad/include"
+        "${CMAKE_SOURCE_DIR}/lib/stb"
+        "${CMAKE_SOURCE_DIR}")
+    add_test(NAME struct_layout COMMAND test_struct_layout)
+
     # Registering GE007_* env-flag accessors — ROM-free unit test.
     add_executable(test_port_env
         "${CMAKE_SOURCE_DIR}/tests/test_port_env.c"

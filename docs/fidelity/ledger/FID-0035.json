@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "root-caused",
+  "status": "verified",
   "suspect": [
     "src/bondtypes.h:387-449",
     "CMakeLists.txt:708-723"
@@ -15,6 +15,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/struct_layout_verify.log"
     }
   ],
   "history": [
@@ -24,6 +28,13 @@
       "to": "root-caused",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-09T21:20:39Z",
+      "from": "root-caused",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/struct_layout_verify.log",
+      "note": "struct_layout ctest PASS (macOS clang) + MinGW cross-compile PASS; 45 _Static_asserts (34 sizeof + 11 offsetof) lock the -mno-ms-bitfields N64 layout; negative control confirms non-vacuous. Closes FID-0035; first half of FID-0036 (converter risk-case union/pair-stride offsets locked)."
     }
   ]
 }
