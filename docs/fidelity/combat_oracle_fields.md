@@ -233,7 +233,7 @@ ON — the trace fields did not enter the sim hash. `combat_oracle_contract` cte
 | guards.pos[0/1/2] | 1379/1295/1378 | FID-0054 (~10/36 guards, stable — not drift) |
 | guards.actiontype / room | 293 / 217 | FID-0054 (AI-state) |
 | guards.health / target_visible | 115 / 104 | FID-0054 |
-| combat.rng_seed | 138 | documented-expected (§5; ares reads ~0) |
+| combat.rng_seed | 138 | documented-expected (§5; ares reads ~0). ⚠ Artifact caveat (§3, FID-0063): this capture predates the ares low-word fix — `combat.rng_seed` was the HIGH word of `g_randomSeed` (0/1 after one step), so its 138/138 per-frame hit count was true BY CONSTRUCTION and carries no call-count information. The underlying phase desync is real but is established by the seed-locked differential (FID-0063 derivation §6), not by this row. |
 | floor.stan_id / stan_flags | 138 / 60 | FID-0053 (encoding non-comparable; room+height agree) |
 
 `projectiles`, `shots_fired_total`, `hits_landed_total` = 0/0 both sides
@@ -469,7 +469,12 @@ guard-AI counter error:
   frame therefore shifts iff the **RNG stream desyncs** (call-count parity) or the
   probability inputs (Bond/guard position, facing) drift upstream.
 - **RNG call-count parity is a known systemic port gap** (§5/§8: `combat.rng_seed`
-  diverges every frame; the extensive ramrom deferral machinery in
+  diverges every frame — ⚠ but note the §3/FID-0063 artifact caveat: those
+  comparator hit-counts predate the ares low-word fix (the field compared the
+  HIGH word, 0/1 after one step, so "every frame" was constructional). The
+  systemic desync itself is REAL and is proven seed-locked (FID-0063 derivation
+  §6: +2 draws/frame retail excess from an identical locked seed); the
+  extensive ramrom deferral machinery in
   `chrlv.c:824-897` exists precisely to re-phase the port's PRNG schedule against
   N64). A guard's probabilistic perception draw succeeding a few ticks earlier/later
   is the expected downstream symptom of that whole-engine schedule difference — plus
@@ -562,7 +567,10 @@ relative sim-ticks past shared onset):
 So **both sides' guard 6 perceive Bond and enter ACT_ATTACK**; the STOCK guard perceives
 ~32 ticks **earlier** (native is *later*, not earlier). The §9 "native over-perceives / N64
 stays unaware" reading was the index-skew artifact. Residual under clean alignment =
-systemic **PRNG call-count phase** (`combat.rng_seed` 116 field-hits, every aligned frame)
+systemic **PRNG call-count phase** (`combat.rng_seed` 116 field-hits, every aligned frame
+— ⚠ §3/FID-0063 artifact caveat: this capture predates the ares low-word fix, so the
+per-frame `rng_seed` hit-count was constructional; the phase desync conclusion stands
+via the seed-locked differential, FID-0063 derivation §6)
 + small guard-position drift (`guards.pos` ~1.2–1.3k), i.e. the deferred RNG-parity item
 (§11.3) — **not** a bounded guard-AI bug.
 
