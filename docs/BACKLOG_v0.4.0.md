@@ -1455,3 +1455,34 @@ The single highest-leverage items if forced to choose six: **M1.2** (kills the c
 class), **M2.3** (combat correctness), **M2.1** (game feel in 2 hours of work), **MG.1**
 (the hardest visual problem — glass compositing), **M3.1** (Metal stops ignoring MSAA),
 **M4.2** (crisp text — the thing every screenshot shows).
+
+---
+
+## Remaster texture track — recomp survey imports (2026-07-10)
+
+From `docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md` (F7, F15, F16); RT64's
+field-proven texture-pack model. Folds into the Phase-2 HD-pack track
+(`tools/texpack/`, `src/platform/texture_pack.c`):
+
+- **MG-tex.1 (policy, adopt now — F7):** `tools/texpack/build_pack.py` grows a
+  **BC7-DDS** emit path (via `texconv`/`bc7enc`, ~¼ the VRAM of RGBA32 PNG) plus a
+  `--low-mip-cache` output (all lowest mips in one file, loaded at start as instant
+  placeholders → kills pop-in). PNG stays dev-only. **Platform gotcha:** macOS
+  OpenGL 4.1 lacks BPTC/BC7; Metal on Apple silicon supports BCn natively — another
+  reason Metal is the forward path (GL keeps PNG fallback).
+- **MG-tex.2 (loader, Tier 2 — F15):** successor to the synchronous PNG-on-first-use
+  loader — async **stream** mode (default) with low-mip placeholder on miss, **LRU
+  eviction** sized to VRAM budget, `.zip`/zstd pack mounting alongside the directory
+  layout, multiple stacked packs. Keep the `G_SETTEX`-decode hook. ImGui pack-select
+  UI deferred (Z64R merged the framework with no menu — infra first, launcher later,
+  no coupling).
+- **MG-tex.3 (keying, Tier 2 — F16):** replace the collision-prone 12-bit
+  `tok####` token key with a **content hash over staged TMEM bytes** (RT64's XXH3-
+  over-TMEM model; check RT64 license before lifting `rt64_tmem_hasher.h`, else
+  reimplement from their documented algorithm). Fallback order content-hash → token;
+  teach `build_pack.py`/`validate_pack.py` a manifest. Bonus: hashes double as
+  texture-identity assertions for fidelity lanes.
+- **F17 (texture-decode sense lane):** exercise RGBA32 half-TMEM split, TLUT masking,
+  odd-row word swap against hardware-verified expectations (Wiseguy ROMs if public —
+  open question O3 — else n64-systemtest-class suites under ares as proxy). Divergences
+  become normal FID cycles. Hardens exactly the paths the HD-pack hook rides on.

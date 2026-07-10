@@ -2326,3 +2326,37 @@ CSV, the QA matrix with results, and links to the green gate runs.
 - Multi-tick catch-up frames (`n ≥ 2` after stalls) lerp across the last captured pair
   — brief half-speed appearance during recovery, consistent with today's clamp.
 - Cutscene cameras render at 60 Hz steps (deliberate: authored cuts must not smear).
+
+---
+
+## Recomp survey imports (2026-07-10) — amend the interpolators before executing F5
+
+From `docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md` (F14, F18). sm64ex's 60fps
+patch interpolates at the same hook this plan chose (matrix submission); three
+correctness patterns transfer directly and MUST be folded into the interpolators
+here before this plan is executed:
+
+1. **Timestamp validity gating** — every interpolated state stamps `prevTick`;
+   blend only when `curTick == prevTick + 1`, else snap-and-restamp. Apply to the
+   CHRPROP matrix lerp at `gfx_sp_matrix` (`gfx_pc.c:15914`, keyed by the existing
+   `gfx_set_prop_context` identity) as a per-prop stamp. Self-heals teleports,
+   spawns, level loads (~10 sites in the sm64ex patch).
+2. **Explicit hard-cut suppression** — a `skip_interpolation` stamp API called
+   from warp, intro camera cuts, death, and level transitions (add to the eye lerp).
+3. **Per-frame alpha, never t=0.5** — interpolators take `alpha = elapsed/16.667ms`
+   (sm64coopdx's `patch_interpolations(delta)` generalization), not a constant midpoint.
+
+**Field evidence (both directions):** Zelda64Recomp *ships exactly this plan's
+Path A* (fixed-rate sim + interpolated render at any framerate) with zero reported
+gameplay divergence — only visual edge cases (uninterpolated HUD/reticle, >120fps
+pacing jitter); import that edge-case list as F5 QA items. GoldenRecomp's
+interpolation attempt *failed and was rolled back* (RT64's heuristic draw-call
+matching can't handle GE's CPU-built matrices) — interpolation is a race a source
+port wins by construction. Also: extend the 0-tick purity fuzz (FID-0033) to assert
+widescreen/cull state purity on render-only frames (ties FID-0058 / survey F3).
+
+**F18 fire-rate remediation** is tracked as **FID-0056** (survey F1) — contingent
+on that oracle lane's adjudication; if N64-practical cadence is ruled truth, scale
+the per-frame gun counters by `g_ClockTimer` behind `Input.FireRateAuthentic`,
+A/B-verified against ares. The demo-cadence gate (FID-0057 / F2) is prior art for
+"replay paths must honor recorded frame costs."
