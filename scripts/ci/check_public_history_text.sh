@@ -6,6 +6,33 @@
 # private paths, handoff notes, credentials, or proprietary notice text. Public
 # launch exposes branch history, so this guard checks every reachable commit.
 #
+# Scope is intentionally diff/blob CONTENT only (via `git log -G<pattern>`),
+# never commit MESSAGES. That matters because this repo's actual publish path
+# is docs/WORKFLOW.md's single-lineage model: ordinary commits reach the
+# public remote by a plain `git push` of a merged PR branch, not by rewriting
+# or regenerating history. Under that model, ~86+ published commits carry
+# `Co-Authored-By: Claude*` / `Claude-Session:` trailers in their messages.
+# D1 (2026-07-10 fidelity review, docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md)
+# decided those trailers are accepted-published, not a defect to remediate --
+# no history rewrite is planned or wanted to strip them. Do not "improve" this
+# guard to grep commit messages/trailers: that would flag every one of those
+# already-public commits and manufacture pressure for a history rewrite that
+# was explicitly ruled out. This guard's job is narrower and stays that way:
+# catch the private-path / secret / proprietary-notice classes below, in the
+# text that actually entered a tracked file's content.
+#
+# Also note what this guard is NOT a substitute for: export-ignore (and the
+# filtering scripts/create_public_launch_repo.sh performs) only ever applies
+# to `git archive`/GitHub "Download ZIP" and to a fresh create_public_launch_repo.sh
+# / prepare_public_launch_bundle.sh re-launch. It does nothing for the
+# WORKFLOW.md day-to-day path (`git push origin/main` of a merged branch) --
+# so the only real control for internal-only content (docs/design/**,
+# docs/fidelity/**, tools/fidelity/**, baselines/tapes/**) is discipline: never
+# land it on a branch that merges to main. export-ignore, this guard, and the
+# release-ready guard (scripts/ci/check_release_ready.sh) are backstops for the
+# archive/re-launch path and a text scan of history, not a replacement for that
+# discipline.
+#
 set -euo pipefail
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

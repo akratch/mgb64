@@ -39,6 +39,18 @@ second lineage.
 5. **Keep `main` releasable.** Merge only branches that build and pass the smoke/ctest
    gates. Land focused PRs; don't stack unrelated work on one branch (the local `main`
    briefly accumulated eight unrelated fixes before this cleanup — that's the anti-pattern).
+6. **`export-ignore` filters archives, not this repo.** `.gitattributes` marks
+   `docs/design/**`, `docs/fidelity/**`, `tools/fidelity/**`, and `baselines/tapes/**`
+   (plus a few named path-gap docs) `export-ignore` because they're internal-only
+   working material. That attribute keeps those paths out of `git archive`, GitHub's
+   "Download ZIP", and a from-scratch `scripts/create_public_launch_repo.sh` /
+   `scripts/prepare_public_launch_bundle.sh` re-launch tree — it does **not** hide them
+   from a normal `git clone`/browse of `akratch/mgb64`, because under rule 1 that repo
+   *is* the source of truth and every merged commit's full tree is visible there.
+   `export-ignore` is a backstop for the archive/re-launch path, not a way to keep a
+   path off `main` while still merging it there. If something must never be visible
+   in a clone of this repo, it cannot go through the normal branch → PR → merge flow
+   at all — that's a call for the maintainer, not something this workflow enforces.
 
 ## Day-to-day
 
