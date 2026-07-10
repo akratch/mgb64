@@ -17,9 +17,10 @@
  * (GE007_DETERMINISTIC_SPEEDFRAMES=3) — a 2.95x overspeed. GoldenRecomp's
  * README confirms this empirically (unfixed in their tree).
  *
- * REMEDIATION (survey #F18): behind Input.FireRateAuthentic (opt-in, default
- * OFF — this changes core combat feel, so faithful-cadence-as-default is an
- * OWNER policy call, not a port-defect auto-fix). When ON, (a) the fire counter
+ * REMEDIATION (survey #F18): behind Input.FireRateAuthentic, DEFAULT ON (owner
+ * decision 2026-07-10 — gameplay accuracy is the goal; this is a canonical
+ * fidelity defect, so the faithful cadence ships as the default; set the flag to
+ * 0 to opt OUT and restore the legacy ~3x-faster fire). When ON, (a) the fire counter
  * advances by g_ClockTimer (mirrors field_890, tick-scaled, no tick remainder
  * dropped) and (b) the automatic fire-rate divisor is multiplied by the assumed
  * N64 rendered-frame cost so the `field_88C % rate` gate fires once per

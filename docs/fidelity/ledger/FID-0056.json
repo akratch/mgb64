@@ -17,6 +17,10 @@
     {
       "kind": "counter-log",
       "path": "docs/fidelity/combat_oracle_fields.md#10"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/platform_sdl.c:1275"
     }
   ],
   "history": [
@@ -40,6 +44,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/combat_oracle_fields.md#10",
       "note": "Fixed behind Input.FireRateAuthentic (opt-in, default OFF; core-combat-feel owner policy). fireRateCounterAdvance tick-scales field_88C by g_ClockTimer; fireRateEffectiveAutoRate multiplies the automatic divisor by Input.FireRateN64FrameCost (default 3). A/B at locked 60Hz: OFF 33.3, ON 11.0 shots/100 ticks (matches N64-truth 11.3). Byte-identical under default (Release combat smoke hash 3c8939968e0eb50e; AK47 scenario d06b1c7a on fixed-OFF==main). ctest fire_rate_authentic PASS + proven fail-on-revert (8 assertions red, ratio 1.00x). Not verified: needs full ares A/B in verify_all."
+    },
+    {
+      "ts": "2026-07-10T08:45:31Z",
+      "from": "landed",
+      "to": "landed",
+      "evidence": "src/platform/platform_sdl.c:1275",
+      "note": "OWNER DECISION 2026-07-10: default flipped ON (Input.FireRateAuthentic=1). Gameplay accuracy is the goal; the ~3x automatic overspeed is a canonical fidelity defect, so faithful cadence ships as the default (charter-correct parity-fix polarity: default-ON + opt-out). Opt out via Input.FireRateAuthentic=0 / GE007_FIRE_RATE_AUTHENTIC=0. FrameCost default 3 (oracle-matched Dam ~20fps combat). Grep-verified no preset/config resets the flag. dam_combat_guard6 tape unaffected (PP7 loadout, no automatic path) so combat_route baseline 3c89 unchanged; end-to-end AK47 default-ON tape = coverage follow-up."
     }
   ]
 }
