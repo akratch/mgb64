@@ -1,0 +1,38 @@
+{
+  "id": "FID-0066",
+  "title": "NPC full-auto cadence unscaled \u2014 guards fire ~3x player under FireRateAuthentic (FID-0056 port-half)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "src/game/chrlv.c"
+  ],
+  "repro": "chrlvFireWeaponRelated (0x7F02D734) gates guard full-auto on self->firecount[hand]++ (once per AI tick) % bondwalkItemGetAutomaticFiringRate(item); FID-0056 tick-scaled the player's identical field_88C%%rate gate behind Input.FireRateAuthentic (default ON) but left the guard gate unscaled, so guards fire ~3x the player's authentic cadence at locked 60Hz. Repro: sustain a guard machinegun on Dam, count gate-fires per N ticks fix-ON vs fix-OFF.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrlv.c:8297"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/derivations/FID-0066-npc-fire-rate.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T20:15:19Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrlv.c:8297",
+      "note": "P1a/D2 from docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md. Port-half of the FID-0056 parity skew: retail gated BOTH player and guard on the same per-rendered-frame counter (~15-30fps); the port's locked-60Hz loop advances both 3x too fast. FID-0056 fixed only the player, introducing a player-vs-guard balance skew. D2 (locked): fix symmetrically behind the SAME flag. chrlvFireWeaponRelated is a matched decomp C body (no #else stub); firecount is u8 firecount[2] @ bondtypes.h:2380; g_ClockTimer available in chrlv.c."
+    },
+    {
+      "ts": "2026-07-10T20:33:30Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0066-npc-fire-rate.md",
+      "note": "Root-caused vs matched decomp body chrlvFireWeaponRelated (0x7F02D734): guard firecount%%auto_rate gate = same per-rendered-frame model FID-0056 fixed for the player; port 60Hz advances it ~3x too fast. Measured on dam_forward_30s (guard chr=6 KF7 rate=3): within-burst inter-shot interval OFF=3 frames -> ON=9 frames = exactly 3.0x. Divergence + divisor-only-mirror rationale in derivation."
+    }
+  ]
+}
