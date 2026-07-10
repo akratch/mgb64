@@ -143,3 +143,7 @@ scripts/make/local/
 .cache/
 baselines/perf_census_latest.csv
 lib/fonts/Roboto-Medium.ttf
+
+# pixel-oracle calibration fixtures are generated in-memory by the unittest;
+# `gen_pixel_calibration.py --write` output here is for local inspection only.
+tools/fidelity/tests/data/

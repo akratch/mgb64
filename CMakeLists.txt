@@ -179,6 +179,10 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
             "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_normalize.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_diff.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/gen_pixel_calibration.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(
@@ -271,6 +275,18 @@ if(BUILD_TESTING)
     )
     set_tests_properties(
         intro_tools_unittests
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
+    # Task 1.3 pixel-oracle calibration (ROM-free): known-good synthetic pair
+    # reports 0 unexplained clusters, deliberately-broken pair reports >= 1.
+    add_test(
+        NAME pixel_diff_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_*.py"
+    )
+    set_tests_properties(
+        pixel_diff_unittest
         PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
