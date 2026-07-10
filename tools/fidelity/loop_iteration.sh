@@ -28,12 +28,15 @@ STATUS_JSON="${REPORTS_DIR}/loop_status.json"
 LEDGER_PY="python3 ${FID_DIR}/ledger.py"
 
 # Lane registry: S<N> -> lane script (relative to repo root).
-# Scripts not yet landed (built by sibling Phase-1 tasks) are handled
-# gracefully by `sense` (it notes the missing dependency and no-ops).
+# P1g (Lane C, 2026-07-10 review): a missing lane script now fails the lane
+# loudly (charter rule 9, "no silent caps") instead of no-op'ing -- Phase 0
+# substrate landed S1/S2/S4/S5/S6 already; S3 is the one still-missing script.
 lane_script() {
     case "$1" in
         S1|trace)    echo "tools/fidelity/sense_trace_sweep.sh" ;;
         S2|pixel)    echo "tools/fidelity/sense_pixel_sweep.sh" ;;
+        # Phase B lands sense_rdp_sweep.sh (FID-0043 RDP sense lane); do not
+        # stub it here -- `sense` fails loud until it exists (see cmd_sense).
         S3|rdp)      echo "tools/fidelity/sense_rdp_sweep.sh" ;;
         S4|soak)     echo "tools/fidelity/sense_soak.sh" ;;
         S5|asm)      echo "tools/fidelity/asm_audit.py" ;;
@@ -235,18 +238,43 @@ cmd_sense() {
     token="$(lane_report_token "$lid")"
 
     if [[ ! -f "$script" ]]; then
-        echo "sense[$lid]: lane script '$script' not present yet " \
-             "(built by a sibling Phase-1 task) — dependency noted, no-op." >&2
-        _bump_lane "$lid"
-        return 0
+        # P1g: this used to no-op (return 0) so the lane silently reported as
+        # "ran" while doing nothing -- exactly the false-green artifact class
+        # charter rule 9 exists to forbid. A missing lane script is a hard
+        # stop: fail loud with a clear message instead of a quiet no-op.
+        echo "sense[$lid]: FAILED -- lane script '$script' does not exist." >&2
+        echo "sense[$lid]: (S3/rdp is expected to be missing until Phase B lands" \
+             "sense_rdp_sweep.sh / FID-0043; any other lane missing its script" \
+             "is a real regression.)" >&2
+        return 1
     fi
 
     echo "sense[$lid]: running $script ..." >&2
-    # Lanes self-skip cleanly (exit 0) when a prerequisite (ROM/ares) is absent.
+    # P1g: a sense tool's nonzero exit is a LANE FAILURE, not an empty
+    # harvest -- `|| true` used to swallow it (e.g. asm_audit.py's argparse
+    # usage-error exit 2 when invoked with no subcommand), so the lane
+    # reported as having run cleanly while it had actually done nothing.
+    # Lanes are still expected to self-skip cleanly (exit 0) when a
+    # prerequisite such as ROM/ares is absent; only a genuinely nonzero exit
+    # trips this.
+    local rc=0
     if [[ "$script" == *.py ]]; then
-        python3 "$script" || true
+        if [[ "$lid" == "S5" ]]; then
+            # asm_audit.py is subcommand-based (argparse required=True
+            # subparsers); `stats` is the real, game-free, read-only
+            # subcommand -- reports reviewed/total on the queue built by
+            # `asm_audit.py build` (S-tier exit criterion 4 / FID-0042).
+            python3 "$script" stats || rc=$?
+        else
+            python3 "$script" || rc=$?
+        fi
     else
-        bash "$script" || true
+        bash "$script" || rc=$?
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+        echo "sense[$lid]: FAILED ($script exited $rc) -- not treating this as an" \
+             "empty harvest (charter rule 9: fail loud, never a silent cap)." >&2
+        return 1
     fi
 
     # Newest report for this lane.

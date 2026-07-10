@@ -314,9 +314,19 @@ def cmd_dedupe_check(args):
     for fid in sorted(entries):
         o = entries[fid]
         title_ratio = difflib.SequenceMatcher(None, args.title.lower(), o["title"].lower()).ratio()
+        title_match = title_ratio >= 0.6
         same_file = bool(want_file) and any(
             s.split(":")[0] == want_file for s in o.get("suspect", []))
-        if title_ratio >= 0.6 or same_file:
+        # P1g (Lane C, 2026-07-10 review): this used to be `title_match or
+        # same_file` -- sharing a suspect FILE alone was enough to flag a
+        # match, so a second, genuinely distinct bug in an already-ledgered
+        # file (different symptom, unrelated title) got swallowed as a
+        # "duplicate" of the first finding and never filed. When a suspect
+        # file is given, require BOTH the file and the title/signature to
+        # match. With no suspect given at all there is no file to combine
+        # with, so it falls back to title-only (unchanged from before).
+        is_dup = (title_match and same_file) if want_file else title_match
+        if is_dup:
             cands.append((fid, round(title_ratio, 2), same_file))
     for fid, ratio, same_file in cands:
         print(f"{fid}  title_ratio={ratio}  same_suspect_file={same_file}")

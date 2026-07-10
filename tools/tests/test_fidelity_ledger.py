@@ -117,7 +117,42 @@ class LedgerTest(unittest.TestCase):
                                           "Center glass blend not accurate",
                                           "--suspect", "gfx_pc.c:200"])
         self.assertEqual(code, 0, err)
-        self.assertIn("FID-0001", out)  # matched by title ratio and/or same suspect file
+        self.assertIn("FID-0001", out)  # matched by BOTH title ratio and same suspect file
+
+    def test_dedupe_check_same_file_alone_is_not_a_match(self) -> None:
+        """P1g (Lane C): a SECOND, genuinely distinct bug in an already-
+        ledgered file must NOT be swallowed as a duplicate just because it
+        shares the suspect file. Pre-fix this matched on `title_ratio>=0.6 OR
+        same_file`, so any new finding anywhere in gun.c (say) got flagged as
+        a dupe of FID-0001 regardless of how unrelated its title was."""
+        self._new(title="Center-glass blend not accurate", suspect="gfx_pc.c:100")
+        code, out, err = run(self.base + ["dedupe-check", "--title",
+                                          "Weapon-switch jump table drops SNIPER",
+                                          "--suspect", "gfx_pc.c:900"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("(no candidate duplicates)", out)
+        self.assertNotIn("FID-0001", out)
+
+    def test_dedupe_check_similar_title_alone_in_a_different_file_is_not_a_match(self) -> None:
+        """The other half of the AND: a similar title in an UNRELATED suspect
+        file (no file overlap) must not match either once a suspect is given
+        -- P1g requires both signals together, not either alone."""
+        self._new(title="Center-glass blend not accurate", suspect="gfx_pc.c:100")
+        code, out, err = run(self.base + ["dedupe-check", "--title",
+                                          "Center glass blend not accurate",
+                                          "--suspect", "chr.c:900"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("(no candidate duplicates)", out)
+
+    def test_dedupe_check_title_only_fallback_with_no_suspect(self) -> None:
+        """With no --suspect at all there is no file to AND against, so
+        dedupe-check falls back to title-only matching (unchanged behavior --
+        same_file was already unconditionally False in this case pre-fix)."""
+        self._new(title="Center-glass blend not accurate", suspect="gfx_pc.c:100")
+        code, out, err = run(self.base + ["dedupe-check", "--title",
+                                          "Center glass blend not accurate"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("FID-0001", out)
 
     def test_actionable_respects_blocked_on(self):
         # blocker in triaged (not verified) -> dependent not actionable
