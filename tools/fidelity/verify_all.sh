@@ -128,13 +128,15 @@ gate_skip_reason() {
     # ctest-based gates (the bulk of tier 1) need a configured build/ tree --
     # ctest's own test list is generated at `cmake -B build` time, so a fresh,
     # build-less checkout would otherwise make every one of these report the same
-    # generic FAIL for the same root cause. Likewise check_sim_render_separation.sh
-    # nm's the built game objects (it already exits non-zero with "build the
-    # native port first" for the same reason -- this just lets verify_all record
-    # that as SKIP instead of a generic FAIL). Keyed on the exact substrings the
-    # manifest actually uses, so this can't accidentally swallow an unrelated
-    # command that merely mentions "build".
-    if [[ "$cmd" == *"--test-dir build"* || "$cmd" == *check_sim_render_separation.sh* ]]; then
+    # generic FAIL for the same root cause. Likewise the D7 Release-config assert
+    # (tools/fidelity/check_release_build.sh) reads build/CMakeCache.txt directly,
+    # and check_sim_render_separation.sh nm's the built game objects (it already
+    # exits non-zero with "build the native port first" for the same reason --
+    # this just lets verify_all record that as SKIP instead of a generic FAIL).
+    # Keyed on the exact substrings the manifest actually uses, so this can't
+    # accidentally swallow an unrelated command that merely mentions "build".
+    if [[ "$cmd" == *"--test-dir build"* || "$cmd" == *check_release_build.sh* \
+          || "$cmd" == *check_sim_render_separation.sh* ]]; then
         if [[ ! -f build/CMakeCache.txt ]]; then
             printf 'missing-build: build/ not configured (run: cmake -B build -DCMAKE_BUILD_TYPE=Release)\n'
             return

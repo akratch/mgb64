@@ -1,4 +1,5 @@
 # tier 1 — static + unit (ROM-free, ~2 min)
+tools/fidelity/check_release_build.sh                        # D7: assert Release build BEFORE any sim-hash lane runs (else a Debug/stale binary false-reds them)
 ctest --test-dir build --output-on-failure -E "port_"        # all ROM-free lanes incl. fidelity_ledger_valid
 ctest --test-dir build --output-on-failure -R fidelity_hash_coverage
 tools/combat_route_contract_smoke.sh --gate                  # Task 1.1: combat/floor oracle schema+comparator contract (FID-0032)
