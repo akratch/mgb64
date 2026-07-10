@@ -17,6 +17,10 @@
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/combat_oracle_fields.md#8"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#9"
     }
   ],
   "history": [
@@ -33,6 +37,13 @@
       "to": "triaged",
       "evidence": "docs/fidelity/combat_oracle_fields.md#8",
       "note": "FID-0032 verify capture (dam_forward_stop) did NOT exercise projectiles: 0 projectiles both sides all 138 frames (no thrown ordnance on this route) so the gap did not surface as a divergence. Ares-side close requires: (1) the US VRAM address of the prop position-list head global ptr_obj_pos_list_current_entry (src/game/chrprop.c:493-495 -> get_ptr_obj_pos_list_current_entry @ chrprop.c:613) added to the MGB64_ARES symbol layout table; NO US symbol map is committed in-tree (ares base addrs are externally-derived constants), so the address is not derivable from this repo alone. (2) the prev-linked traversal implemented in formatCombatOracleJson. (3) an ares rebuild. (4) a projectile-bearing route (mine/grenade throw) to validate. Deferred: derivable in principle but needs the US map + patch + rebuild + new route (more work). Left open."
+    },
+    {
+      "ts": "2026-07-10T07:33:44Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#9",
+      "note": "Now EXERCISED by combat route dam_combat_guard6: projectiles.count diverges 40 field-hits (native populates airborne ordnance, ares emits empty) \u2014 confirms the divergence-by-construction disposition. Still not closable from this repo (US prop-position-list head address absent from in-tree ares symbol layout). Left triaged."
     }
   ]
 }

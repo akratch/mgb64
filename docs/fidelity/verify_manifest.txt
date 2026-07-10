@@ -17,6 +17,7 @@ tools/regression_test.sh
 tools/renderer_parity_capture.sh --scene all
 tools/uncap_purity_gate.sh                                   # Task 0.5: 0-tick purity, full 20-level matrix
 tools/fidelity/tape_regression.sh                            # (Task 0.6) input-tape replay hash regression
+tools/fidelity/combat_route_capture_smoke.sh                 # FID-0054 combat-route determinism guard (also ctest port_combat_route_capture_smoke)
 tools/fidelity/sense_trace_sweep.sh --gate                   # Task 2.1 S1 trace ratchet (gate:true routes; SKIPs cleanly w/o ROM+ares)
 tools/fidelity/sense_pixel_sweep.sh --gate                   # Task 2.2 S2 pixel ratchet (gate:true checkpoints; SKIPs cleanly w/o ROM+ares)
 # appended by later tasks:

@@ -615,6 +615,13 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # pieces (zero screen-spanning triangles, only dyn_overflow moves) with a
     # GE007_DYN_LEGACY_ALIAS=1 A/B negative control that restores the old aliasing.
     add_port_validation_smoke(port_dyn_glass_stress_smoke dyn_glass_stress_smoke.sh 400)
+    # FID-0054: combat-route determinism guard. Replays the committed Dam combat
+    # input tape (baselines/tapes/dam_combat_guard6.ge7tape) — which FIRES the PP7,
+    # spawns projectiles and provokes guard-AI reactions — and asserts the whole-sim
+    # state hash matches the recorded baseline. Fail-on-divergence proves combat
+    # stays deterministic under the seed envelope (the precondition for frame-locking
+    # the guard-AI parity divergence against the ares oracle). ares-free / ROM-gated.
+    add_port_validation_smoke(port_combat_route_capture_smoke fidelity/combat_route_capture_smoke.sh 180)
 endif()
 
 # T5: cheap intro-path regression

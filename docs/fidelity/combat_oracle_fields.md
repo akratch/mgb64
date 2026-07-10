@@ -240,3 +240,82 @@ ON — the trace fields did not enter the sim hash. `combat_oracle_contract` cte
 (dam_forward_stop is a no-combat route) ⇒ FID-0047/0048 unexercised here (triaged with
 disposition; hits_landed_total is a native-only counter with no retail accumulator).
 This verify auto-unblocks FID-0011/0012/0013 (`blocked_on: FID-0032`).
+
+## 9. Combat route — FID-0054 frame-lock (root-caused, 2026-07-10)
+
+Durable evidence anchor for the `discovered → root-caused` transition of FID-0054.
+Per-run ROM traces + the raw diff JSON are ROM-derived (`/tmp`, charter rule 7); this
+section records the recipe, the alignment result, and the frame-locked divergence only.
+
+**Route:** `tools/rom_oracle_routes/dam_combat_guard6.json` — Dam spawn, walk forward
+toward guard 6 (nearest of the 36-roster; becomes onscreen/target_visible) while firing
+the PP7 (`GE007_AUTO_FORWARD=80:120` + `GE007_AUTO_FIRE=100:160`). Unlike dam_forward_stop
+this is a **combat** route: shots + projectiles are non-zero, so the guard-AI divergence
+is frame-locked to a live weapon discharge.
+
+**Recipe** (determinism envelope, charter rule 6):
+
+```
+tools/movement_oracle_capture.sh --route dam_combat_guard6 \
+  --native-full-trace --no-compare \
+  --binary <release-ge007> --ares-bin <ares-movement-oracle>/.../ares \
+  --rom baserom.u.z64 --out-dir /tmp/cap-combat --timeout 400
+tools/compare_combat_trace.py \
+  --baseline /tmp/cap-combat/stock_dam_combat_guard6.jsonl \
+  --test    /tmp/cap-combat/native_dam_combat_guard6.jsonl \
+  --align move --json-out /tmp/cap-combat/combat_diff.json
+```
+
+**Result:** alignment SUCCEEDED — **218 aligned frames** (stock motion-onset idx 2531,
+native idx 81). Native side exercises the combat counters: **shots_fired_total 7,
+projectiles up to 2** (first shot at aligned frame 20). Stock/ares side reports
+shots 0 / projectiles 0 (ares placeholders, §5).
+
+**FID-0047 / FID-0048 now exercised** (were 0/0 on dam_forward_stop): the combat route
+surfaces them as divergences-by-construction — `combat.shots_fired_total` 198 field-hits
+(native counts, ares emits 0) and `projectiles.count` 40 field-hits (native populates,
+ares empty). This confirms both triaged dispositions (instrumentation gaps, not sim
+defects); neither is closable from this repo alone (no in-tree US shot-register / prop-
+list addresses). Left triaged.
+
+**FID-0054 frame-lock — two components:**
+
+1. **Combat-triggered (the clean anchor).** Guard **chrnum 6** tracks *identically* on
+   both sides (actiontype 1/1, target_visible 0/0, room 135/135) for aligned frames
+   0..35, then at **aligned frame 36** — ~16 frames after Bond's first shot (frame 20) —
+   diverges: **`target_visible` stock=0 → native=1** co-incident with **`actiontype`
+   stock=1 → native=8**. The native port has guard 6 *acquire Bond as a visible target*
+   and dispatch into the combat/alert action (actiontype 8), while the N64 stock guard 6
+   stays unaware (target_visible 0, actiontype 1) over the whole window. Guard-6 health
+   stays 4.0 both sides (Bond's fire missed — the divergence is *perception/dispatch*,
+   not damage).
+   - First field to diverge = **`target_visible`** (tied with actiontype at the same
+     frame). `target_visible` is a pure read of `ChrRecord.lastseetarget60` (§1): the
+     native guard's see-target update sets `lastseetarget60` (→ recent-perception true)
+     ~16 frames into the firefight; stock never does in-window.
+   - **Hypothesis + cited path:** the divergence source is the native guard **see-target
+     / alertness update cadence and its actiontype-8 dispatch** in the guard AI tick —
+     `src/game/chr.c` guard tick (the path that stamps `lastseetarget60` when the guard
+     perceives the target) and the actiontype dispatch it feeds, plus the stan
+     line-of-sight test that gates perception (`src/game/stan.c` LOS) — versus the N64,
+     where the ASM guard never registers Bond as seen in this window. Native is
+     *over-/earlier-perceiving* relative to stock: a **port-defect candidate** in the
+     see-target / alertness scheduling (FID-0054 suspect list `chr.c chrTickBeams`,
+     `chrai.c`), not an N64 quirk. The ACT fix follow-on must reconcile the native
+     `lastseetarget60`/alertness update against the ASM see-target cadence.
+
+2. **Pre-existing baseline gap (context).** The *absolute* first divergence is at aligned
+   frame **0**, on **background** guards (chrnum 2, 3 …) — before any shot: guard 3
+   actiontype 1/3 + health 6.0/4.0, guard 2 room 122/113 + pos (Y 98.4/-0.5,
+   Z 7203/8697). This is the stable ~10/36-guard subset already noted at `discovered`
+   (background-AI / off-engagement position parity), independent of combat. FID-0054
+   therefore has two lanes: (a) this baseline background-AI/position gap (frame 0), and
+   (b) the combat-triggered perception/dispatch divergence on the engaged guard 6
+   (frame 36) isolated here.
+
+**Determinism finding:** combat introduced **no** nondeterminism under the seed envelope
+— the committed input tape `baselines/tapes/dam_combat_guard6.ge7tape` replays to a
+byte-exact sim-state hash `3c8939968e0eb50e` across 3 runs (record == replay×3). The
+permanent guard is `tools/fidelity/combat_route_capture_smoke.sh` (ctest
+`port_combat_route_capture_smoke`); the both-sides ares comparison stays a manual oracle
+step (ares not in CI).
