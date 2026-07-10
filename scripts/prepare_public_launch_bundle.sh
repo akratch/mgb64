@@ -257,9 +257,20 @@ if [ -z "$author_name" ] || [ -z "$author_email" ] || [ -z "$committer_name" ] |
   echo "Launch author/committer names and emails must be non-empty." >&2
   exit 2
 fi
-case "${author_email} ${committer_email}" in
-  *kratch.adam@gmail.com*)
-    echo "Refusing to create public launch commit with personal Gmail address; use a GitHub noreply or placeholder email." >&2
+# Allowlist, not a denylist of specific personal addresses: the root launch
+# commit's author/committer identity must be a GitHub noreply address or the
+# placeholder domain, never a real personal inbox of any kind.
+case "$author_email" in
+  *@users.noreply.github.com|*@example.invalid) ;;
+  *)
+    echo "Refusing to create a public launch commit with a personal email address (${author_email}); use a GitHub noreply address (e.g. akratch@users.noreply.github.com) or the mgb64-launch@example.invalid placeholder." >&2
+    exit 1
+    ;;
+esac
+case "$committer_email" in
+  *@users.noreply.github.com|*@example.invalid) ;;
+  *)
+    echo "Refusing to create a public launch commit with a personal email address (${committer_email}); use a GitHub noreply address (e.g. akratch@users.noreply.github.com) or the mgb64-launch@example.invalid placeholder." >&2
     exit 1
     ;;
 esac
