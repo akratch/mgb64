@@ -1078,6 +1078,12 @@ extern s32 levelentry_index;
 #define BG_PORTAL_RESCUE_REASON_EMPTY_BBOX 1
 #define BG_PORTAL_RESCUE_REASON_PROJECT_FAIL 2
 
+/* FID-0009: hop cap for the draw-only camera-seed walk's multi-hop grazing reach.
+ * Each iteration advances the admitted set one grazing-portal hop; the loop breaks
+ * early on the first no-growth iteration, so this only bounds pathological chains.
+ * 16 matches the portal-BFS depth ceiling (sub_GAME_7F0B7F84 depth >= 16 reject). */
+#define BG_CAMERA_SEED_WALK_MAX_HOPS 16
+
 typedef struct BgPortalEdgeRescueCandidate {
     s32 source_room;
     s32 dest_room;
@@ -16438,6 +16444,13 @@ void sub_GAME_7F0B8A6C(void) {
     /* T13b: the detached authored camera's resolved room, or -1. Hoisted to function
      * scope so the camera-seed walk can run as the final admission step. */
     s32 camera_seed_room = -1;
+    /* FID-0009: the room the DRAW-ONLY camera-seed walk seeds from during ANY detached
+     * authored-camera frame -- set even when it equals g_BgCurrentRoom (the intro SWIRL
+     * orbits inside Bond's own room, so camera_seed_room stays -1 there to leave the
+     * sim-visible D42 seed untouched, and the T13b walk never ran). Decoupled so the
+     * multi-hop grazing reach can fill the Silo swirl far-wall (rooms 28/44 + the
+     * screen-edge sliver) that otherwise drops to the sky-blue clear color. */
+    s32 camera_walk_seed_room = -1;
 #endif
 
     bgUpdateCurrentPlayerScreenMinMax();
@@ -16667,6 +16680,15 @@ void sub_GAME_7F0B8A6C(void) {
                 bgClearRoomAdmitTraceContext();
                 camera_seed_room = cam_room;
             }
+            /* FID-0009: seed the DRAW-ONLY multi-hop walk from the camera's room for EVERY
+             * detached authored-camera frame -- including the SWIRL case where the camera
+             * resolves into Bond's own room (cam_room == g_BgCurrentRoom) and the block
+             * above therefore leaves camera_seed_room == -1 and the T13b walk dormant.
+             * This only feeds the draw-only walk below (restored before the sim reads
+             * room_rendered), never the sim-visible D42 seed above. */
+            if (cam_room >= 0) {
+                camera_walk_seed_room = cam_room;
+            }
         }
 #endif
 
@@ -16887,12 +16909,23 @@ void sub_GAME_7F0B8A6C(void) {
          * so the walk propagates as freshly as the T13 combined pass did; both are pure
          * per-frame scratch with no consumer after visibility. GE007_CAMERA_SEED_WALK
          * (the retired T13 opt-in) is still accepted for script compat but is now a no-op. */
-        if (camera_seed_room >= 0) {
+        {
             static int no_camera_seed_walk = -1;
+            static int no_multihop = -1;
+            s32 walk_seed;
             if (no_camera_seed_walk < 0) {
                 no_camera_seed_walk = (getenv("GE007_NO_CAMERA_SEED_WALK") != NULL);
             }
-            if (!no_camera_seed_walk) {
+            if (no_multihop < 0) {
+                /* FID-0009 opt-out: recover the T13b single-hop behavior (walk only when
+                 * the camera resolves to a room != Bond's, and no multi-hop iteration). */
+                no_multihop = (getenv("GE007_NO_CAMERA_SEED_MULTIHOP") != NULL);
+            }
+            /* Single-hop (T13b) seeded only when camera_seed_room >= 0 (cam_room != cur);
+             * the multi-hop extension (FID-0009) also runs for the same-room swirl. */
+            walk_seed = no_multihop ? camera_seed_room : camera_walk_seed_room;
+
+            if (!no_camera_seed_walk && walk_seed >= 0) {
                 u8 snap_rendered[MAXROOMCOUNT];
                 u8 snap_neighbor[MAXROOMCOUNT];
                 s32 walk_tmp = 0;
@@ -16908,7 +16941,7 @@ void sub_GAME_7F0B8A6C(void) {
                 memset(D_800442FC, 0, 200);
 
                 /* Stock camera-room walk (transiently widens room_rendered + draw list). */
-                bgQueueConnectedRoomPortals(camera_seed_room, screen_bbox);
+                bgQueueConnectedRoomPortals(walk_seed, screen_bbox);
                 while (sub_GAME_7F0B7EE4(&walk_tmp)) {
                 }
 
@@ -16921,6 +16954,78 @@ void sub_GAME_7F0B8A6C(void) {
                     u8 walk_neighbor_snapshot[MAXROOMCOUNT] = {0};
                     bgComputePortalNeighborSnapshotLocal(g_BgPortals, walk_neighbor_snapshot);
                     bgApplyVisibilitySupplement(player_bbox, walk_neighbor_snapshot);
+                }
+
+                /* FID-0009 multi-hop grazing reach. The single additive pass above lands
+                 * exactly ONE frontier hop past the BFS -- enough for the intro/fadeswirl
+                 * (camera up the shaft) but not for the SWIRL, where the camera orbits
+                 * inside Bond's room and the far silo wall (rooms 28/44 + the screen-edge
+                 * sliver) is several grazing portals away. Iterate the SAME frustum- and
+                 * portal-gated passes: each iteration re-seeds the BFS from the current
+                 * rendered frontier and re-runs edge-rescue + visibility-supplement, so the
+                 * admitted set advances one grazing hop per iteration. Every hop stays gated
+                 * by the portal projection / room-frustum test (sub_GAME_7F0B5208) and the
+                 * supplement's AABB-gap + adjacency gates, so it cannot admit rooms outside
+                 * the authored camera's frustum (no FORCE_ALL_ROOMS-style over-admission).
+                 * Terminates on the first no-growth iteration or the hop cap, and remains
+                 * pure visibility scratch -- room_rendered is restored below regardless. */
+                if (!no_multihop) {
+                    /* Default 0: the same-room walk's single additive pass (above) already
+                     * lands the dropped grazing room during the Silo swirl -- verified to
+                     * fully close the leak with ~zero over-admit. The extra frontier hops
+                     * are an OPT-IN deeper-reach knob (GE007_CAMERA_SEED_WALK_HOPS=N), left
+                     * off by default because each hop the visibility-supplement cascades
+                     * further through a wide-open frustum (the intro shaft view balloons to
+                     * ~the whole level at high hop counts). Every hop is still sim-pure
+                     * (room_rendered restored below), so this only trades draw-list size. */
+                    static int max_hops = -1;
+                    s32 hop;
+                    if (max_hops < 0) {
+                        const char *env = getenv("GE007_CAMERA_SEED_WALK_HOPS");
+                        max_hops = env ? atoi(env) : 0;
+                        if (max_hops < 0) max_hops = 0;
+                        if (max_hops > BG_CAMERA_SEED_WALK_MAX_HOPS) {
+                            max_hops = BG_CAMERA_SEED_WALK_MAX_HOPS;
+                        }
+                    }
+                    for (hop = 0; hop < max_hops; hop++) {
+                        s32 rendered_before = 0;
+                        s32 rendered_after = 0;
+                        s32 r;
+
+                        for (r = 1; r < g_MaxNumRooms; r++) {
+                            if (g_BgRoomInfo[r].room_rendered) {
+                                rendered_before++;
+                            }
+                        }
+
+                        /* Advance the admitted frontier by ONE grazing hop using only the
+                         * visibility-supplement -- the "portal-BFS false-negative patch".
+                         * It re-admits a room only when it is (a) portal-adjacent to the
+                         * current rendered set (fresh local neighbor snapshot, recomputed
+                         * each hop so it sees the previous hop's additions), (b) inside the
+                         * authored camera's frustum (sub_GAME_7F0B5208), and (c) within the
+                         * bounded AABB gap of a rendered room. Deliberately NOT re-seeding
+                         * the raw portal BFS from every rendered room with the full-screen
+                         * bbox: that walks the entire frustum-connected graph and balloons
+                         * the intro-mode shaft view to ~the whole level (the FORCE_ALL_ROOMS
+                         * over-admit class). The supplement's triple gate keeps each hop to
+                         * the genuinely-visible grazing continuation. */
+                        {
+                            u8 hop_neighbor_snapshot[MAXROOMCOUNT] = {0};
+                            bgComputePortalNeighborSnapshotLocal(g_BgPortals, hop_neighbor_snapshot);
+                            bgApplyVisibilitySupplement(player_bbox, hop_neighbor_snapshot);
+                        }
+
+                        for (r = 1; r < g_MaxNumRooms; r++) {
+                            if (g_BgRoomInfo[r].room_rendered) {
+                                rendered_after++;
+                            }
+                        }
+                        if (rendered_after == rendered_before) {
+                            break;
+                        }
+                    }
                 }
 
                 /* Mark rooms the walk added beyond the default snapshot draw-only, then
@@ -16936,12 +17041,12 @@ void sub_GAME_7F0B8A6C(void) {
             }
         }
 
-        /* T13b invariant + perf probe: draw-only rooms exist ONLY when a detached
-         * authored camera is active. During normal gameplay (camera_seed_room < 0)
+        /* T13b/FID-0009 invariant + perf probe: draw-only rooms exist ONLY when a detached
+         * authored camera is active. During normal gameplay (camera_walk_seed_room < 0)
          * the walk above never runs and the set stays empty, so both sim and render
          * are exactly as before -- the decoupling has zero cost off-intro.
          * GE007_TRACE_DRAW_ONLY logs the per-frame count. */
-        assert(g_BgRoomDrawOnlyCount == 0 || camera_seed_room >= 0);
+        assert(g_BgRoomDrawOnlyCount == 0 || camera_walk_seed_room >= 0);
         {
             static int trace_draw_only = -1;
             if (trace_draw_only < 0) {
@@ -16949,8 +17054,9 @@ void sub_GAME_7F0B8A6C(void) {
             }
             if (trace_draw_only) {
                 fprintf(stderr,
-                        "[DRAW-ONLY] frame=%d camera_seed_room=%d draw_only_rooms=%d\n",
-                        g_frame_count_diag, camera_seed_room, g_BgRoomDrawOnlyCount);
+                        "[DRAW-ONLY] frame=%d camera_seed_room=%d walk_seed=%d draw_only_rooms=%d\n",
+                        g_frame_count_diag, camera_seed_room, camera_walk_seed_room,
+                        g_BgRoomDrawOnlyCount);
             }
         }
     }

@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "reuse T13b draw-only walk (g_BgRoomDrawOnly)"
   ],
@@ -18,6 +18,10 @@
     {
       "kind": "doc-anchor",
       "path": "src/game/bg.c:2737 (g_BgRoomDrawOnly)"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/bg.c camera-seed walk (camera_walk_seed_room); tools/silo_intro_aperture_regression.sh"
     }
   ],
   "history": [
@@ -34,6 +38,13 @@
       "to": "root-caused",
       "evidence": "src/game/bg.c:2737 (g_BgRoomDrawOnly)",
       "note": "T13b landed the draw-only room-admission mechanism this can reuse: camera-seed portal walk adds grazing-portal rooms to the draw list without sim coupling (g_BgRoomDrawOnly/g_BgRoomDrawOnlyCount, bg.c:2737-2741,16930; default-on via GE007_NO_CAMERA_SEED_WALK opt-out, commits f6ad61a/7a918a7/f312ef7). T13b closed the Silo/Dam BLUE-SKY part, but the aperture residual \u2014 rooms 28/44 screen-edge sliver dropped via multi-hop grazing portals \u2014 REMAINS. Stays root-caused (not fixed); fix path = extend the T13b draw-only walk to the multi-hop grazing case."
+    },
+    {
+      "ts": "2026-07-10T11:31:08Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "src/game/bg.c camera-seed walk (camera_walk_seed_room); tools/silo_intro_aperture_regression.sh",
+      "note": "Root cause was NOT a hop/threshold limit: during the Silo intro SWIRL the detached camera orbits INSIDE Bond's own room (room_pointer resolves to g_BgCurrentRoom==26), so the T13b camera-seed walk's camera_seed_room stayed -1 and the draw-only walk was DORMANT for the whole swirl -- the grazing far-wall room (27 at frame 730; the sightline sliver) dropped to the sky-blue clear color (0,24,93). Fix (bg.c): seed the DRAW-ONLY walk from the camera's resolved room for EVERY detached authored-camera frame via a new camera_walk_seed_room (set even when ==g_BgCurrentRoom), leaving the sim-visible D42 seed untouched. The existing single additive visibility pass then admits the grazing room DRAW-ONLY (never room_rendered). Verified: leak closes (Silo swirl blue-sky px 35261->0 at f730, 1177->0 at f690, 995->0 at f705; residual small counts are genuine silo-top sky, confirmed by GE007_FORCE_ALL_ROOMS leaving the same px). Sim purity: room_rendered read-back + RNG call-count + onscreen actors byte-identical fix vs opt-out across 729 intro frames (0 diffs); baseline(main)-default sim-state-hash == fix-default on Silo (16cd4d1f20824692) and Dam (7973f959e096b53a). Over-admit: +1 draw room in swirl (extra mean 0.09), intro-mode unchanged. Opt-out GE007_NO_CAMERA_SEED_MULTIHOP=1 = today's dormant-during-swirl behavior (leak returns; fail-on-revert proven against baseline binary, ctest exit=1). Optional deeper reach GE007_CAMERA_SEED_WALK_HOPS=N (default 0). Lane: port_silo_intro_aperture_regression."
     }
   ]
 }

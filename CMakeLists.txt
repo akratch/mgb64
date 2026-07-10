@@ -807,6 +807,15 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # stays deterministic under the seed envelope (the precondition for frame-locking
     # the guard-AI parity divergence against the ares oracle). ares-free / ROM-gated.
     add_port_validation_smoke(port_combat_route_capture_smoke fidelity/combat_route_capture_smoke.sh 180)
+    # FID-0009: Silo intro-swirl aperture leak. During the SWIRL camera the detached
+    # camera orbits inside Bond's own room, so the T13b draw-only camera-seed walk was
+    # dormant and the grazing far-wall room dropped to the sky-blue clear color. Boots
+    # the Silo intro to the offending swirl pose and asserts (a) the fix admits the
+    # grazing room DRAW-ONLY so the aperture renders geometry (blue-sky px collapse),
+    # (b) every sim-consumed field is byte-identical fix vs the GE007_NO_CAMERA_SEED_MULTIHOP
+    # opt-out (draw-only never enters the sim), and (c) the opt-out reproduces the leak
+    # (fail-on-revert control).
+    add_port_validation_smoke(port_silo_intro_aperture_regression silo_intro_aperture_regression.sh 300)
 endif()
 
 # T5: cheap intro-path regression
