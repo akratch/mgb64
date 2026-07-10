@@ -257,25 +257,57 @@ class OneSidedRosterAlignment(unittest.TestCase):
         self.assertIn("guards.present", metrics["divergences_by_field"])
         self.assertGreater(metrics["divergences_by_field"]["guards.present"], 0)
 
-    def test_one_sided_full_vs_missing_record_is_a_divergence(self) -> None:
+    def test_one_sided_full_vs_missing_record_is_excluded_and_reported(self) -> None:
         """(a) variant: the gap tick has NO record at all on the test side
-        (not even an empty-roster sample) -- must be treated the same as the
-        empty-roster case above, not as a coverage gap that's silently
-        ignored."""
+        (not even an empty-roster sample). Unlike the genuine full-vs-empty
+        case above, "no observation" is NOT evidence of "0 guards" -- it's a
+        sampling-cadence gap (the two emitters simply have different tick
+        lattices; on the real dam_combat_guard6 captures this class was
+        289 one-sided ticks x 36 guards = 10404 phantom guards.present
+        divergences, 0 of which were genuine). C1 fix (2026-07-11 review):
+        this must be EXCLUDED from the aligned pairs (no divergence
+        fabricated) and loudly reported via ``excluded_missing_record``
+        (charter rule 9), not silently dropped either.
+
+        FAIL-ON-REVERT: pre-fix, this tick was treated identically to the
+        genuine full-vs-empty case above and synthesized into a pairing,
+        fabricating a phantom guards[].present divergence. This assertion
+        reddens against the pre-fix comparator."""
         n, gap_rel = 10, 3 * 4
         baseline = native_stream(1000, n)
         test = self._gap_stream(1000, n, gap_rel, drop=True)
 
         aligned = cct.align_records(baseline, test, "tick")
         keys = [k for k, _, _ in aligned]
-        self.assertIn(gap_rel, keys,
-                      "one-sided full-vs-missing tick must not be dropped pre-intersection")
+        self.assertNotIn(gap_rel, keys,
+                         "missing-record tick must be EXCLUDED (never synthesized into "
+                         "a phantom divergence) -- there is no 'other side' observation "
+                         "to compare against")
 
-        _, brec, trec = next(item for item in aligned if item[0] == gap_rel)
-        divs: list[cct.Divergence] = []
-        cct.compare_guards(gap_rel, brec["combat_oracle"], trec["combat_oracle"],
-                            {"health": 1.0, "position": 0.5}, divs)
-        self.assertTrue(divs, "expected a guards[].present divergence on the missing-record tick")
+        _, info = cct.align_tick(baseline, test)
+        # "baseline" here names the side HOLDING the one-sided canonical record
+        # (baseline/native_stream has tick 12; test dropped it entirely).
+        self.assertEqual(info["excluded_missing_record"]["baseline"]["count"], 1,
+                          "the missing-record tick must be counted, not dropped silently")
+        self.assertEqual(info["excluded_missing_record"]["baseline"]["range"], [gap_rel, gap_rel])
+        self.assertEqual(info["synthetic_pairs"], 0)
+
+        # End-to-end: zero divergences (nothing to compare), and the CLI's JSON
+        # report must surface the exclusion (rule 9 -- never silent).
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            b_path, t_path = d / "b.jsonl", d / "t.jsonl"
+            write_jsonl(b_path, baseline)
+            write_jsonl(t_path, test)
+            with tempfile.NamedTemporaryFile("r", suffix=".json") as out:
+                subprocess.run(
+                    [sys.executable, str(SCRIPT), "--baseline", str(b_path),
+                     "--test", str(t_path), "--align", "tick", "--json-out", out.name],
+                    capture_output=True, text=True, check=True,
+                )
+                metrics = json.loads(Path(out.name).read_text())
+        self.assertEqual(metrics["divergences_total"], 0)
+        self.assertEqual(metrics["excluded_missing_record"]["baseline"]["count"], 1)
 
     def test_both_sides_empty_tick_is_not_a_divergence(self) -> None:
         """(b) Both sides have ONLY an empty-roster sample at the same tick
@@ -337,6 +369,88 @@ class OneSidedRosterAlignment(unittest.TestCase):
                          "ticks beyond test's own coverage window must not be "
                          "surfaced as one-sided divergences (trace-length "
                          "mismatch, not a mid-stream roster divergence)")
+
+
+class DisjointLatticeRegression(unittest.TestCase):
+    """C1 fix regression (2026-07-11 review): the actual real-capture failure
+    mode. Each side samples a DIFFERENT sim-tick residue class (a genuine
+    disjoint sampling lattice, e.g. native's fixed 3-stride vs ares/stock's
+    variable ~2-stride on dam_combat_guard6) -- neither side ever produces a
+    genuine empty-roster observation, every record either side DOES produce
+    is full-roster, and at whatever ticks the two lattices happen to land on
+    the same value the rosters are identical. On the real captures this
+    pattern (289 one-sided ticks x 36 guards) was misread by the pre-fix
+    comparator as 10404 whole-roster divergences; 0/289 were a genuine
+    present-vs-empty observation on the other side.
+
+    FAIL-ON-REVERT: pre-fix, ``align_records``'s tick branch synthesized an
+    empty-roster pairing for EVERY one-sided tick regardless of whether the
+    other side had ever observed it, so this construction reddens (nonzero
+    divergences) against the pre-fix comparator. Reproduced via ``git
+    stash`` in the task report.
+    """
+
+    @staticmethod
+    def _lattice_stream(onset: int, ticks: list[int]) -> list[dict]:
+        """A record stream sampling EXACTLY the given relative ticks (a
+        disjoint-lattice fixture) -- always full-roster, never empty."""
+        return [record(onset + rel, rel) for rel in ticks]
+
+    def test_disjoint_lattices_zero_divergences_nonzero_excluded(self) -> None:
+        onset = 5000
+        a_ticks = list(range(0, 31, 3))   # 0,3,6,...,30  (native-like 3-stride)
+        b_ticks = list(range(0, 31, 2))   # 0,2,4,...,30  (ares/stock-like 2-stride)
+        co_sampled = sorted(set(a_ticks) & set(b_ticks))   # multiples of 6
+        one_sided = sorted(set(a_ticks) ^ set(b_ticks))
+        self.assertTrue(co_sampled, "fixture must share at least one sim-tick")
+        self.assertTrue(one_sided, "fixture must have at least one lattice-mismatch tick")
+
+        side_a = self._lattice_stream(onset, a_ticks)
+        side_b = self._lattice_stream(onset, b_ticks)
+
+        aligned, info = cct.align_tick(side_a, side_b)
+        keys = {k for k, _, _ in aligned}
+        self.assertEqual(keys, set(co_sampled),
+                         "only co-sampled ticks may pair; every lattice-mismatch tick "
+                         "must be excluded, not synthesized into a phantom divergence")
+        self.assertEqual(info["synthetic_pairs"], 0,
+                         "neither side ever observes an empty roster here -- there is "
+                         "no genuine present-vs-empty class in this fixture, only "
+                         "sampling-lattice gaps")
+        excluded_total = (info["excluded_missing_record"]["baseline"]["count"]
+                          + info["excluded_missing_record"]["test"]["count"])
+        self.assertEqual(excluded_total, len(one_sided),
+                         "every lattice-mismatch tick must be excluded AND counted "
+                         "(charter rule 9 -- never silently dropped)")
+        self.assertGreater(excluded_total, 0)
+
+        divs: list[cct.Divergence] = []
+        for k, brec, trec in aligned:
+            cct.compare_guards(k, brec["combat_oracle"], trec["combat_oracle"],
+                                {"health": 1.0, "position": 0.5}, divs)
+        self.assertEqual(divs, [],
+                         f"co-sampled ticks carry identical rosters and must show zero "
+                         f"divergences: {[d.as_dict() for d in divs]}")
+
+        # End-to-end CLI: zero divergences, nonzero excluded-missing-record count
+        # surfaced in the JSON report (never silent per charter rule 9).
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            b_path, t_path = d / "b.jsonl", d / "t.jsonl"
+            write_jsonl(b_path, side_a)
+            write_jsonl(t_path, side_b)
+            with tempfile.NamedTemporaryFile("r", suffix=".json") as out:
+                subprocess.run(
+                    [sys.executable, str(SCRIPT), "--baseline", str(b_path),
+                     "--test", str(t_path), "--align", "tick", "--json-out", out.name],
+                    capture_output=True, text=True, check=True,
+                )
+                metrics = json.loads(Path(out.name).read_text())
+        self.assertEqual(metrics["divergences_total"], 0)
+        self.assertEqual(metrics["aligned_synthetic_pairs"], 0)
+        cli_excluded_total = (metrics["excluded_missing_record"]["baseline"]["count"]
+                              + metrics["excluded_missing_record"]["test"]["count"])
+        self.assertGreater(cli_excluded_total, 0)
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:

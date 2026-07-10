@@ -153,6 +153,34 @@ def canonical_by_tick(
     return {rel: rec for rel, (n, rec) in buckets.items()}
 
 
+def observed_ticks(records: list[dict[str, Any]], start: int, onset_global: Any) -> set[int]:
+    """Every relative sim-tick where ``records[start:]`` has AT LEAST ONE record
+    with a parseable ``move.global`` stamp -- regardless of roster size.
+
+    This is the "did this side ever look at tick k" set. It is a superset of
+    ``canonical_by_tick``'s keys (which additionally require a non-empty
+    roster): a tick present here but absent from ``canonical_by_tick`` is a
+    genuine "0 guards observed" sample (an empty-roster record actually
+    emitted for that tick), as opposed to a tick this side never sampled at
+    all -- a sampling-cadence gap. P1f's C1 fix (Lane C, 2026-07-11) uses this
+    distinction to tell a real present-but-empty roster (synthesize a
+    pairing) from a coverage gap (exclude + report, never fabricate).
+    """
+    onset = parse_int(onset_global)
+    if onset is None:
+        return set()
+    out: set[int] = set()
+    for record in records[start:]:
+        move = record.get("move", {})
+        if not isinstance(move, dict):
+            continue
+        g = parse_int(move.get("global"))
+        if g is None:
+            continue
+        out.add(g - onset)
+    return out
+
+
 def _empty_roster_record(source: dict[str, Any]) -> dict[str, Any]:
     """A stand-in record for "this side never produced a full roster this
     tick" (P1f), shaped like ``source`` but with its ``combat_oracle.guards``
@@ -193,6 +221,141 @@ def first_moving_index(records: list[dict[str, Any]], threshold: float) -> int:
     return 0
 
 
+def align_tick(
+    baseline: list[dict[str, Any]],
+    test: list[dict[str, Any]],
+    motion_threshold: float = 0.01,
+) -> tuple[list[tuple[Any, dict[str, Any], dict[str, Any]]], dict[str, Any]]:
+    """Sim-tick alignment for the combat comparator (FID-0062, P1f Lane C fix
+    2026-07-11 -- see C1/I1/I2/I3 in the 2026-07-10 review).
+
+    Pairs by SIM-TICK (move.global relative to shared motion onset), collapsing
+    the ares full/empty-roster interleave to one canonical record per tick (see
+    ``canonical_by_tick``). This is the trustworthy combat-route alignment:
+    ``--align move`` pairs by record index and skews the timelines ~2x because
+    native emits 1 rec/game-frame while ares emits ~2 rec/advancing-tick,
+    inflating+misattributing divergences.
+
+    ``canonical_by_tick`` drops EMPTY-roster records so the WITHIN-a-side ares
+    interleave collapses to one canonical record per tick -- that collapse is
+    correct. But a tick where side A has a full roster and side B never
+    produced a CANONICAL (roster-bearing) record this tick isn't a key in one
+    of the two canonical dicts, so a plain intersection would silently drop
+    it. Whether that drop is legitimate depends on why side B has no canonical
+    record:
+
+      * Side B genuinely OBSERVED the tick with an empty roster (a real
+        "0 guards" sample exists in its raw stream, see ``observed_ticks``) --
+        this is a genuine present-vs-empty divergence and MUST be paired
+        against a synthetic empty-roster stand-in (``_empty_roster_record``)
+        so the comparison surfaces exactly the ``guards[...].present``
+        divergence.
+      * Side B has NO record at all at that tick (its sampling lattice never
+        landed there -- native samples every ``g_ClockTimer`` tick, ares/stock
+        on a different, coarser and phase-shifted cadence: this is routine,
+        not a bug). "No observation" is not evidence of "0 guards"; pairing it
+        would fabricate a divergence out of a sampling-cadence gap (the C1
+        bug -- 10404/10404 phantom ``guards.present`` hits on the reference
+        dam_combat_guard6 capture were exactly this class). These ticks are
+        EXCLUDED, never paired -- but per charter rule 9 ("no silent caps"),
+        they are counted and range-reported in ``info`` below, not dropped
+        without a trace.
+
+    Bounded to the MUTUALLY-OBSERVED tick range (I3: computed from OBSERVED
+    ticks -- ``observed_ticks``, i.e. any record, not just roster-bearing ones
+    -- so a side that genuinely despawns its whole roster to empty mid-capture
+    doesn't shrink the window and reclassify a real divergence as a coverage
+    gap). Real captures routinely cover very different absolute sim-tick spans
+    (one side's capture simply runs far longer); a tick outside the OTHER
+    side's ever-observed range is a trace-length/coverage-window mismatch
+    (instrumentation gap), not a mid-stream roster divergence, and surfacing
+    it would flood real findings with noise proportional to the length
+    mismatch. These out-of-window ticks are also excluded-and-reported (I1),
+    distinctly from the in-window missing-record exclusions above.
+
+    Returns ``(pairs, info)``. ``pairs`` is shaped like ``align_records``'s
+    return value. ``info`` (charter rule 9 report, never silent):
+      * ``real_pairs`` -- ticks where BOTH sides produced a canonical
+        (roster-bearing) record: a genuine mutual observation. This is what
+        ``--min-aligned`` should gate on (I2) -- synthetic pairs below are
+        real divergence evidence but are not proof the two captures actually
+        overlapped in sim-tick space.
+      * ``synthetic_pairs`` -- one-sided ticks paired against a genuine
+        present-but-empty observation on the other side.
+      * ``excluded_missing_record`` -- per side: count + tick range of
+        one-sided ticks excluded because the OTHER side never sampled that
+        tick at all (sampling-cadence gap, C1).
+      * ``excluded_out_of_window`` -- per side: count + tick range of
+        one-sided ticks excluded because they fall outside the mutually
+        observed coverage window (I1).
+      * ``coverage_window`` -- per-side observed tick range and the overlap
+        window the two exclusion classes above are computed against.
+    """
+    baseline_start = first_moving_index(baseline, motion_threshold)
+    test_start = first_moving_index(test, motion_threshold)
+    onset_b = baseline[baseline_start].get("move", {}).get("global") \
+        if baseline_start < len(baseline) else None
+    onset_t = test[test_start].get("move", {}).get("global") \
+        if test_start < len(test) else None
+
+    b_tick = canonical_by_tick(baseline, baseline_start, onset_b)
+    t_tick = canonical_by_tick(test, test_start, onset_t)
+    b_observed = observed_ticks(baseline, baseline_start, onset_b)
+    t_observed = observed_ticks(test, test_start, onset_t)
+
+    both = set(b_tick) & set(t_tick)
+    pairs = [(k, b_tick[k], t_tick[k]) for k in both]
+
+    coverage_window: dict[str, Any] = {
+        "baseline_observed_range": [min(b_observed), max(b_observed)] if b_observed else None,
+        "test_observed_range": [min(t_observed), max(t_observed)] if t_observed else None,
+    }
+    if b_observed and t_observed:
+        overlap_lo = max(min(b_observed), min(t_observed))
+        overlap_hi = min(max(b_observed), max(t_observed))
+    else:
+        overlap_lo = overlap_hi = None
+    coverage_window["overlap"] = [overlap_lo, overlap_hi] if overlap_lo is not None else None
+
+    excluded_missing_record: dict[str, list[int]] = {"baseline": [], "test": []}
+    excluded_out_of_window: dict[str, list[int]] = {"baseline": [], "test": []}
+    synthetic_ticks: list[int] = []
+
+    for k in sorted(set(b_tick) ^ set(t_tick)):
+        b_has = k in b_tick
+        side = "baseline" if b_has else "test"  # the side HOLDING the one-sided canonical record
+        in_window = overlap_lo is not None and overlap_lo <= k <= overlap_hi
+        if not in_window:
+            excluded_out_of_window[side].append(k)
+            continue
+        if b_has:
+            if k in t_observed:
+                pairs.append((k, b_tick[k], _empty_roster_record(b_tick[k])))
+                synthetic_ticks.append(k)
+            else:
+                excluded_missing_record[side].append(k)
+        else:
+            if k in b_observed:
+                pairs.append((k, _empty_roster_record(t_tick[k]), t_tick[k]))
+                synthetic_ticks.append(k)
+            else:
+                excluded_missing_record[side].append(k)
+
+    pairs.sort(key=lambda item: item[0])
+
+    def _report(ticks: list[int]) -> dict[str, Any]:
+        return {"count": len(ticks), "range": [min(ticks), max(ticks)] if ticks else None}
+
+    info = {
+        "coverage_window": coverage_window,
+        "real_pairs": len(both),
+        "synthetic_pairs": len(synthetic_ticks),
+        "excluded_missing_record": {side: _report(ticks) for side, ticks in excluded_missing_record.items()},
+        "excluded_out_of_window": {side: _report(ticks) for side, ticks in excluded_out_of_window.items()},
+    }
+    return pairs, info
+
+
 def align_records(
     baseline: list[dict[str, Any]],
     test: list[dict[str, Any]],
@@ -211,64 +374,8 @@ def align_records(
             for i in range(max(0, count))
         ]
     if mode == "tick":
-        # FID-0062: pair by SIM-TICK (move.global relative to shared motion
-        # onset), collapsing the ares full/empty-roster interleave to one
-        # canonical record per tick (see canonical_by_tick). This is the
-        # trustworthy combat-route alignment: --align move pairs by record index
-        # and skews the timelines ~2x because native emits 1 rec/game-frame while
-        # ares emits ~2 rec/advancing-tick, inflating+misattributing divergences.
-        baseline_start = first_moving_index(baseline, motion_threshold)
-        test_start = first_moving_index(test, motion_threshold)
-        onset_b = baseline[baseline_start].get("move", {}).get("global") \
-            if baseline_start < len(baseline) else None
-        onset_t = test[test_start].get("move", {}).get("global") \
-            if test_start < len(test) else None
-        b_tick = canonical_by_tick(baseline, baseline_start, onset_b)
-        t_tick = canonical_by_tick(test, test_start, onset_t)
-        both = set(b_tick) & set(t_tick)
-        pairs = [(k, b_tick[k], t_tick[k]) for k in both]
-
-        # P1f (FID-0062 follow-up, Lane C): canonical_by_tick drops EMPTY-roster
-        # records so the WITHIN-a-side ares interleave collapses to one
-        # canonical record per tick (see its docstring) -- that collapse is
-        # correct. But it also means a tick where side A has a full roster and
-        # side B never produced one this tick (side B's records were all
-        # empty-roster, or side B has no record at all here) simply isn't a key
-        # in one of `b_tick`/`t_tick`, so the plain intersection above silently
-        # drops it -- hiding a whole-roster guards[].present divergence, the
-        # exact artifact class this alignment mode exists to surface. That is
-        # NOT the legitimate collapse; it's cross-SIDE one-sidedness, so it
-        # must be paired, not dropped. Pair it against a synthetic record that
-        # borrows the roster-bearing side's own combat/floor/projectiles
-        # context with guards zeroed, so the comparison surfaces exactly the
-        # guards[].present divergence rather than inventing unrelated noise
-        # from a side we have no real data for. A tick where BOTH sides only
-        # ever produced an empty (or absent) roster is correctly left out
-        # entirely: there is nothing to compare (0 guards vs 0 guards).
-        #
-        # Bounded to the MUTUALLY-OBSERVED tick range (the overlap of
-        # [min(b_tick), max(b_tick)] and [min(t_tick), max(t_tick)]):
-        # real dam_combat_guard6 both-sides captures re-validated this fix and
-        # showed the two traces routinely cover very different absolute
-        # sim-tick spans (one side's capture simply runs far longer than the
-        # other's) -- a tick outside the OTHER side's ever-observed range is a
-        # trace-length/coverage-window mismatch (instrumentation-gap), not a
-        # mid-stream roster divergence, and surfacing it would flood real
-        # findings with noise proportional to the length mismatch rather than
-        # to any actual guard-roster behavior.
-        if b_tick and t_tick:
-            overlap_lo = max(min(b_tick), min(t_tick))
-            overlap_hi = min(max(b_tick), max(t_tick))
-            for k in sorted(set(b_tick) ^ set(t_tick)):
-                if not (overlap_lo <= k <= overlap_hi):
-                    continue
-                brec = b_tick.get(k)
-                trec = t_tick.get(k)
-                if brec is not None:
-                    pairs.append((k, brec, _empty_roster_record(brec)))
-                else:
-                    pairs.append((k, _empty_roster_record(trec), trec))
-        return sorted(pairs, key=lambda item: item[0])
+        pairs, _info = align_tick(baseline, test, motion_threshold)
+        return pairs
 
     def by_key(records: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
         out: dict[Any, dict[str, Any]] = {}
@@ -404,7 +511,19 @@ def compare(args: argparse.Namespace) -> int:
         "health": args.health_tolerance,
     }
 
-    aligned = align_records(baseline, test, args.align, args.motion_threshold)
+    if args.align == "tick":
+        aligned, align_info = align_tick(baseline, test, args.motion_threshold)
+    else:
+        aligned = align_records(baseline, test, args.align, args.motion_threshold)
+        # I2: only --align tick can produce synthetic (one-sided) pairs; every
+        # other mode's pairs are all real mutual observations by construction.
+        align_info = {
+            "coverage_window": None,
+            "real_pairs": len(aligned),
+            "synthetic_pairs": 0,
+            "excluded_missing_record": None,
+            "excluded_out_of_window": None,
+        }
 
     divergences: list[Divergence] = []
     field_counts: dict[str, int] = {}
@@ -433,6 +552,11 @@ def compare(args: argparse.Namespace) -> int:
             "test_combat": len(test),
         },
         "aligned_frames": len(aligned),
+        "aligned_real_pairs": align_info["real_pairs"],
+        "aligned_synthetic_pairs": align_info["synthetic_pairs"],
+        "coverage_window": align_info["coverage_window"],
+        "excluded_missing_record": align_info["excluded_missing_record"],
+        "excluded_out_of_window": align_info["excluded_out_of_window"],
         "divergences_total": len(divergences),
         "divergences_by_field": dict(sorted(field_counts.items(), key=lambda kv: -kv[1])),
         "sample_divergences": [d.as_dict() for d in divergences[: args.max_report]],
@@ -444,17 +568,40 @@ def compare(args: argparse.Namespace) -> int:
 
     print(json.dumps(metrics["divergences_by_field"], indent=2))
     print(f"aligned_frames={len(aligned)} divergences_total={len(divergences)}")
+    print(f"aligned_real_pairs={align_info['real_pairs']} "
+          f"aligned_synthetic_pairs={align_info['synthetic_pairs']}")
 
-    if len(aligned) < args.min_aligned:
-        print(f"FAIL: only {len(aligned)} aligned frames (< --min-aligned {args.min_aligned}); "
-              f"alignment did not succeed", file=sys.stderr)
+    # Charter rule 9 ("no silent caps"): --align tick bounds coverage (the
+    # mutually-observed tick window, C1/I1) -- print what it excluded, never
+    # just drop it.
+    if args.align == "tick":
+        emr = align_info["excluded_missing_record"]
+        eow = align_info["excluded_out_of_window"]
+        print(f"coverage_window={align_info['coverage_window']}")
+        print(f"excluded_missing_record: baseline={emr['baseline']['count']} "
+              f"(range {emr['baseline']['range']}) "
+              f"test={emr['test']['count']} (range {emr['test']['range']})")
+        print(f"excluded_out_of_window: baseline={eow['baseline']['count']} "
+              f"(range {eow['baseline']['range']}) "
+              f"test={eow['test']['count']} (range {eow['test']['range']})")
+
+    # I2: gate success on REAL (mutually-observed) pairs only. Synthetic pairs
+    # are legitimate divergence evidence but two captures with fully disjoint
+    # tick lattices could otherwise report a healthy aligned_frames count with
+    # zero mutually-observed ticks -- false confidence in the tool's own pass
+    # criterion.
+    if align_info["real_pairs"] < args.min_aligned:
+        print(f"FAIL: only {align_info['real_pairs']} real aligned pairs "
+              f"(< --min-aligned {args.min_aligned}); alignment did not succeed",
+              file=sys.stderr)
         return 2
 
     if args.strict and divergences:
         print(f"FAIL(strict): {len(divergences)} field divergence(s)", file=sys.stderr)
         return 1
 
-    print(f"OK: alignment succeeded ({len(aligned)} frames); "
+    print(f"OK: alignment succeeded ({align_info['real_pairs']} real pairs, "
+          f"{align_info['synthetic_pairs']} synthetic, {len(aligned)} total); "
           f"{len(divergences)} divergence(s) reported as findings")
     return 0
 
