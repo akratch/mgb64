@@ -26,6 +26,7 @@
 #include "gfx_pc.h"
 #include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
 #include "settings.h"
+#include "fire_rate_authentic.h"
 #include "frame_stats.h"
 #include "game/front.h"
 #include "game/initmenus.h"
@@ -1263,6 +1264,14 @@ s32 g_pcRumbleIntensity = 100;      /* Input.RumbleIntensity  strength 0-100 (%)
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
  * Consumers declare these inline as `extern` at their use sites. */
 s32 g_pcAdsEnabled       = 0;     /* Input.AdsEnabled        master, OFF by default */
+/* Full-auto fire-rate authenticity (FID-0056). g_pcFireRateAuthentic ships OFF
+ * so the fire cadence stays byte-identical to the current locked-60Hz port; ON
+ * scales the automatic fire gate to the N64 per-rendered-frame cadence. This is
+ * a CORE COMBAT FEEL change -> owner-policy opt-in, not a port-defect auto-fix.
+ * g_pcFireRateN64FrameCost = assumed N64 sim-ticks per rendered frame (3 = the
+ * measured Dam ~20fps combat rate; 2 = 30fps nominal; 4 = ~15fps heavy). */
+s32 g_pcFireRateAuthentic   = 0;  /* Input.FireRateAuthentic   OFF by default        */
+s32 g_pcFireRateN64FrameCost = FIRE_RATE_N64_FRAME_COST_DEFAULT; /* Input.FireRateN64FrameCost */
 f32 g_pcAdsSensitivity   = 1.0f;  /* Input.AdsSensitivity    flat aimed look mult   */
 s32 g_pcAdsFovCoupleSens = 1;     /* Input.AdsFovCoupleSens  FOV-coupled slow-look   */
 s32 g_pcAdsCenterCrosshair = 1;   /* Input.AdsCenterCrosshair stick center-pull      */
@@ -2140,6 +2149,23 @@ void platformRegisterConfig(void)
                         "--config-override Input.RumbleIntensity=VALUE",
                         "Rumble intensity",
                         "Vibration strength as a percentage (0-100). 0 is the same as Rumble off.");
+
+    /* Full-auto fire-rate authenticity (FID-0056). OFF = current locked-60Hz
+     * cadence (byte-identical). ON = automatics fire at the N64 per-frame
+     * cadence (~1/FrameCost as fast). OWNER DECISION: to make faithful cadence
+     * the default, change the 5th arg (default) on the next line from 0 to 1. */
+    settingsRegisterInt("Input.FireRateAuthentic", &g_pcFireRateAuthentic, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_FIRE_RATE_AUTHENTIC",
+                        "--config-override Input.FireRateAuthentic=VALUE",
+                        "Authentic full-auto fire rate",
+                        "Scale full-auto cadence to the N64 per-frame rate (opt-in). 0 = vanilla 60Hz cadence.");
+    settingsRegisterInt("Input.FireRateN64FrameCost", &g_pcFireRateN64FrameCost,
+                        FIRE_RATE_N64_FRAME_COST_DEFAULT,
+                        FIRE_RATE_N64_FRAME_COST_MIN, FIRE_RATE_N64_FRAME_COST_MAX,
+                        SETTING_SCOPE_LIVE, "GE007_FIRE_RATE_N64_FRAME_COST",
+                        "--config-override Input.FireRateN64FrameCost=VALUE",
+                        "N64 frame cost (fire rate)",
+                        "Assumed N64 sim-ticks per rendered frame for authentic fire cadence (2=30fps, 3=20fps combat, 4=15fps). Only used when Input.FireRateAuthentic=1.");
 
     /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
      * when 0 every ADS branch is bypassed and behavior is byte-identical. */

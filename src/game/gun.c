@@ -36,8 +36,13 @@
 #include "platform/model_convert.h"
 #include "platform/audio_pc.h"
 #include "platform/weapon_bullet_type.h"
+#include "platform/fire_rate_authentic.h"
 
 extern VideoSettings *g_ViBackData;
+/* FID-0056 full-auto fire-cadence authenticity flags (platform_sdl.c). OFF by
+ * default -> byte-identical locked-60Hz cadence. See fire_rate_authentic.h. */
+extern s32 g_pcFireRateAuthentic;
+extern s32 g_pcFireRateN64FrameCost;
 extern u16 viGetPerspNorm(void);
 
 static int portSkipFpWeaponRender(void)
@@ -17933,7 +17938,11 @@ void handle_weapon_id_values_possibly_1st_person_animation(s32 hand, s32 flag) {
 
     if (g_ClockTimer > 0) {
         hand_ptr->field_890 += g_ClockTimer;
-        hand_ptr->field_88C++;
+        /* FID-0056: legacy advances the full-auto counter once per rendered
+         * frame (unscaled); authentic mode advances it by g_ClockTimer so it is
+         * tick-scaled like field_890 above (no tick remainder dropped). At
+         * locked 60Hz g_ClockTimer==1 so OFF is byte-identical to `field_88C++`. */
+        hand_ptr->field_88C += fireRateCounterAdvance(g_ClockTimer, g_pcFireRateAuthentic);
     }
 
     hand_ptr->field_92C = 0;
@@ -18348,6 +18357,15 @@ check_state:
              * machinegun in retail — TANKSHELLS is single-shot pistol (moved to the pistol
              * case above) and BOMBCASE is throwable (falls to the default case below). */
             fire_rate = bondwalkItemGetAutomaticFiringRate(weapon_id);
+            /* FID-0056: the full-auto gate fires every `fire_rate` counter steps.
+             * The counter (field_88C) advances once per rendered frame; at locked
+             * 60Hz that is 2-3x faster than the N64's ~15-30fps, so automatics fire
+             * 2-3x too fast (measured 2.95x for the AK47 on Dam). Authentic mode
+             * multiplies the divisor by the assumed N64 frame cost so the gate
+             * fires once per (fire_rate * frame_cost) ticks -> the N64 cadence.
+             * OFF (default) returns fire_rate unchanged -> byte-identical. */
+            fire_rate = fireRateEffectiveAutoRate(fire_rate, g_pcFireRateAuthentic,
+                                                  g_pcFireRateN64FrameCost);
             if (hand_ptr->field_88C != 0 && hand_ptr->weapon_hold_time == 0) {
                 if (bondwalkItemCheckBitflags(weapon_id, 4)) {
                     if (!get_BONDdata_is_aiming()) {

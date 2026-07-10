@@ -319,3 +319,63 @@ byte-exact sim-state hash `3c8939968e0eb50e` across 3 runs (record == replay×3)
 permanent guard is `tools/fidelity/combat_route_capture_smoke.sh` (ctest
 `port_combat_route_capture_smoke`); the both-sides ares comparison stays a manual oracle
 step (ares not in CI).
+
+## 10. Full-auto fire cadence — FID-0056 (root-caused → landed, 2026-07-10)
+
+Durable evidence anchor for the `discovered → root-caused → landed` transitions
+of FID-0056 (full-auto fire rate coupled to the per-rendered-frame counter
+`field_88C`, unscaled). Per-run traces are ROM-derived (`/tmp`, charter rule 7);
+this section records the mechanism, the quantified cadence ratio, and the fix.
+
+**Mechanism (ASM-confirmed in source).** `src/game/gun.c` advances the fire
+counter once per rendered frame — `hand_ptr->field_88C += 1` (was `field_88C++`,
+`gun.c:~17936`) — while the adjacent `field_890 += g_ClockTimer` IS tick-scaled.
+Full-auto fire is gated on `field_88C % fire_rate` (`gun.c:~18377`) plus a burst
+catch-up `((field_88C - 1) / fire_rate) + 1`. On N64 a rendered frame cost
+`g_ClockTimer` = 2–4 sim ticks (Dam combat ~20fps ⇒ 3), so the counter advanced
+at 15–30Hz; the port runs a locked 60Hz loop with `g_ClockTimer == 1`, so the
+counter advances at 60Hz and the gate fires 2–4× too often.
+
+**Quantified cadence (native, Dam, AK47 = ITEM_AK47, determinism envelope).**
+Sustained full-auto held for a fixed sim-tick window, measuring
+`combat_oracle.combat.shots_fired_total` per 100 ticks of `move.global`:
+
+| run | field_88C advance | shots / 100 ticks | rounds/s |
+|---|---|---|---|
+| `GE007_DETERMINISTIC_SPEEDFRAMES=1` (mgb64 locked 60Hz) | 60Hz (1/tick) | **33.3** | ~20 |
+| `GE007_DETERMINISTIC_SPEEDFRAMES=3` (N64 ~20fps frame cost) | 20Hz (1/3 ticks) | **11.3** | ~6.7 |
+
+**Ratio ≈ 2.95× (≈3×)** overspeed at locked 60Hz. The sf=3 run is a faithful
+N64-truth: it makes `field_88C` advance once per 3 ticks, exactly reproducing
+the N64 per-frame-at-20fps advance (the same `stock_speedframes: 3` the ares
+Dam gameplay oracle uses). Consistent with the 2–4× prediction (2× at the 30fps
+nominal design, 3× at 20fps combat, 4× at 15fps heavy) and with GoldenRecomp's
+README known-issue (unfixed in their tree).
+
+**Fix (`Input.FireRateAuthentic`, opt-in, default OFF — owner policy, core
+combat feel).** Behind the flag: (a) the counter advances by `g_ClockTimer`
+(mirrors `field_890`, tick-scaled, no tick remainder dropped —
+`fireRateCounterAdvance`); (b) the automatic divisor is multiplied by
+`Input.FireRateN64FrameCost` (default 3, the measured Dam value; range 2–4) so
+the gate fires once per `fire_rate * frame_cost` ticks
+(`fireRateEffectiveAutoRate`). At locked 60Hz `g_ClockTimer == 1`, so the
+counter advance is byte-identical to `++`; only the divisor scaling changes
+cadence.
+
+**A/B (native, locked 60Hz).** Flag OFF: 33.3 shots/100 ticks (today's rate).
+Flag ON: **11.0 shots/100 ticks**, matching the N64-truth 11.3 within
+reload-edge phase noise (3.03× correction). Determinism holds in both states
+(sim-state hash repeats byte-exact across runs, both flag values).
+
+**Byte-identity under default (flag OFF).** The AK47 sustained-fire scenario
+sim-state hash is identical between the fixed binary (flag OFF) and the pre-fix
+main binary (`d06b1c7a4e504fd1`, same build config); the committed
+`dam_combat_guard6.ge7tape` replays to the identical hash on both. In the
+canonical Release build the fixed tree (flag OFF) passes
+`combat_route_capture_smoke` with the recorded baseline hash `3c8939968e0eb50e`.
+
+**Regression lane.** `tests/test_fire_rate_authentic.c` (ctest
+`fire_rate_authentic`) — ROM-free guard on the counter-advance + divisor-scaling
+helpers and the simulated sustained-fire cadence. Proven fail-on-revert:
+reverting the divisor scaling collapses the ON/OFF cadence ratio to 1.00× and
+reddens 8 assertions.

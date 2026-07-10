@@ -454,6 +454,16 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_bullet_type PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_bullet_type COMMAND test_weapon_bullet_type)
 
+    # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
+    # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
+    # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
+    add_executable(test_fire_rate_authentic
+        "${CMAKE_SOURCE_DIR}/tests/test_fire_rate_authentic.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fire_rate_authentic.c"
+    )
+    target_include_directories(test_fire_rate_authentic PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME fire_rate_authentic COMMAND test_fire_rate_authentic)
+
     # speedgraphframes frame-spike clamp — ROM-free unit test (FID-0017 / M2.4).
     add_executable(test_speedgraph_clamp
         "${CMAKE_SOURCE_DIR}/tests/test_speedgraph_clamp.c"
