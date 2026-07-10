@@ -71,20 +71,7 @@ The public validation surface is organized into these lanes:
 | Active visual isolation | First-active Dam regular-glass visual fixture with exact shard-state pre-pixel guards | `glass_active_visual_isolation_regression.sh` |
 | Impact visual isolation | Impact-aligned Dam regular-glass visual fixture for pane/crack/decal work | `glass_impact_visual_isolation_regression.sh` |
 | Pad10092 impact seed | Actor-light Dam pad-10092 impact/decal route seed with strict impact geometry, report-only pixels | `glass_pad10092_impact_visual_regression.sh` |
-| Pad10092 room draw isolation | Native-only room-124 ownership probe for the pad-10092 impact route | `glass_pad10092_room_draw_isolation.sh` |
-| Pad10092 actor ownership isolation | Native-only chr7/chr44 draw-skip ownership probe for the pad-10092 impact route | `glass_pad10092_actor_ownership_isolation.sh` |
-| Pad10092 presentation alignment | Read-only crop/presentation scorer for the pad-10092 impact route | `glass_pad10092_presentation_alignment_probe.sh` |
-| Pad10092 pixel semantics | Native-only material/triangle summary for the localized pad-10092 world-impact pixels | `glass_pad10092_pixel_semantics_probe.sh` |
 | Effect footprint visual | Stock/native pixel metrics inside and outside localized effect bboxes from a pixel-semantics summary | `compare_effect_footprint_visual.py` |
-| Pad10092 texgen ROI materials | Native-only aligned-crop texgen material ROI ownership plus shard-off pixel-control audit | `glass_pad10092_texgen_roi_material_probe.sh` |
-| Pad10092 room-glass visibility | Native-only room-glass material A/Bs with stock-direction ROI deltas and control-footprint coverage | `glass_pad10092_room_glass_visibility_probe.sh` |
-| Pad10092 ROI pixel semantics | Read-only stock/native ROI color/luma semantics for the clean pad-10092 impact fixture | `glass_pad10092_roi_pixel_semantics_probe.sh` |
-| Pad10092 texgen/pixel correlation | Read-only aligned-crop join from texgen material bboxes to stock/native ROI pixel semantics | `glass_pad10092_texgen_roi_pixel_correlation_probe.sh` |
-| Pad10092 room-glass pixel oracle | Read-only stock/native pixel split inside/outside the selected room-glass TEXGEN bbox mask | `glass_pad10092_room_glass_pixel_oracle_probe.sh` |
-| Pad10092 room-glass settex sample | Read-only room-glass `G_SETTEX` material-state/sample trace filtered to the route ROI | `glass_pad10092_room_glass_settex_sample_probe.sh` |
-| Pad10092 room-glass scalar oracle | Read-only stock/default/skip-underlay scalar composition test for texnum-654 room glass | `glass_pad10092_room_glass_scalar_oracle_probe.sh` |
-| Pad10092 room-glass required source | Read-only fixed-alpha inversion of stock/native texnum-654 source colors from the skip-underlay framebuffer | `glass_pad10092_room_glass_required_source_probe.sh` |
-| Pad10092 room-glass source recon | Read-only native trace + tex654 dump reconstruction plus same-frame pre/post framebuffer capture for per-pixel room-glass output | `glass_pad10092_room_glass_source_recon_probe.sh` |
 | Stock RDP command stream | Dev-only ares RDP command sidecar for actual stock draw-state evidence | `analyze_stock_rdp_command_stream.py` |
 | Stock RDP pixel probe | Dev-only ares Parallel-RDP post-draw framebuffer samples for exact stock per-pixel output | `analyze_stock_rdp_pixel_probe.py` |
 | Glass center handoff | Read-only join from stock center-pixel output to stock command-region and native settex evidence | `analyze_glass_center_handoff.py` |
@@ -92,7 +79,6 @@ The public validation surface is organized into these lanes:
 | Glass handoff run compare | Baseline-vs-candidate classification for handoff point summaries; reports per-point wins, regressions, and neutral deltas | `compare_glass_handoff_runs.py` |
 | Native TRI pixel chain | Read-only reducer for native `[TRI-PIXEL]` owner chains at a selected target/frame | `summarize_native_tri_pixel_probe.py` |
 | Bullet impact sequence | Sampled stock/native bullet-impact sequence parity at selected frames; catches later-impact drift hidden by first-impact gates | `compare_bullet_impact_sequence.py` |
-| Glass contributor isolation | Native-only A/B ownership sweep for Dam active, impact, and pad-10092 impact glass fixtures | `glass_contributor_isolation_regression.sh` |
 | Save | Cross-process EEPROM persistence smoke | `save_persistence_check.sh` |
 | Screenshot | Missing, wrong-size, blank, or nearly monochrome frame captures | `audit_screenshot_health.py` |
 | Pixel | Renderer regressions (fog, texture, geometry) | `compare_screenshots.py` |
@@ -1049,14 +1035,6 @@ bbox for that provider. Dam uses stock `active` and native `full`: stock ares
 screenshots include emulator VI/overscan presentation in their active bbox,
 while native 640x480 captures map the original 320x240 VI directly and preserve
 the 320x220 gameplay viewport as black top/bottom guard bands.
-
-Use `tools/score_glass_projected_pixels.py` after a projected visual compare
-when the shard projection is matched but the pixels are still wrong. It reuses
-the traced glass projection ROI and logical-viewport mapping, then classifies
-stock/native pixels into coarse color/luma buckets, bucket transitions, and
-strongest local error cells. This scorer is descriptive rather than pass/fail;
-use it to separate color/coverage/blender failure modes before adding another
-rendering diagnostic.
 
 Native ROM-oracle captures run with `--savedir <out-dir>/native_savedir`, so
 route-level `native_config` overrides are saved only in the local artifact bundle
@@ -2626,52 +2604,18 @@ center target was finally owned by an opaque/clamp room draw rather than
 targets such as `149,209`, `201,207`, and `132,212` for bounded stock RDP pixel
 probes. Use those selected targets before making shard-pixel ownership claims.
 
-`tools/compare_glass_shard_draw_trace.py` is the next forensic step after the
-pixel oracle. It joins the oracle's top offending piece indices to native
-`[EFFECT-TRI]` rows and matching `[TEXGEN-MATERIAL]` rows, then emits a compact
-JSON summary of material mode, texture keys, filter state, shade, depth, blend,
-coverage flags, and per-piece draw order evidence:
-
-```sh
-GE007_TRACE_GLASS_PROJECTION_ALL=1 \
-GE007_EFFECT_TRI_TRACE=1 \
-GE007_EFFECT_TRI_TRACE_LABEL=glass_shards \
-GE007_EFFECT_TRI_TRACE_AFTER_FRAME=100 \
-GE007_EFFECT_TRI_TRACE_BUDGET=500 \
-GE007_EFFECT_TRI_TRACE_DRAWCLASS=effect \
-GE007_EFFECT_TRI_TRACE_EMITS_ONLY=1 \
-GE007_TRACE_TEXGEN_MATERIALS=1 \
-GE007_TRACE_TEXGEN_MATERIALS_EFFECT=glass_shards \
-GE007_TRACE_TEXGEN_MATERIALS_AFTER_FRAME=100 \
-GE007_TRACE_TEXGEN_MATERIALS_BUDGET=300 \
-tools/movement_oracle_capture.sh \
-  --route dam_regular_glass_shatter_rng_visual_probe \
-  --native-only --no-compare --no-build \
-  --out-dir /tmp/mgb64_shard_draw_join_trace \
-  --rom baserom.u.z64 --binary build/ge007
-
-tools/compare_glass_shard_draw_trace.py \
-  --oracle-json /tmp/mgb64_shard_draw_join_active_gate/active_rng_visual/projected_shard_pixel_oracle_dam_regular_glass_shatter_rng_visual_probe.json \
-  --native-log /tmp/mgb64_shard_draw_join_trace/native_dam_regular_glass_shatter_rng_visual_probe.log \
-  --require-materials \
-  --require-rdp-formula-parity \
-  --json-out /tmp/mgb64_shard_draw_join_trace/shard_draw_trace_join.json
-```
-
-Current proof: `/tmp/mgb64_shard_draw_join_trace/shard_draw_trace_join.json`
-passes with `172` effect rows, `172` material rows, and all rows joined across
-`83` seen shard pieces. The top pixel-oracle offenders are normal
-`glass_shards` material draws: `cvg=wrap`, `clr_on_cvg=1`, raw mode
-`0x0C1849D8`, combiner `0x00F38E4F020A2D12`, the expected `56x54`/`32x27`
-texture tiles, no CPU clipping, and a final-cycle formula that matches
-ares/Parallel-RDP's decoded blend path. The stricter diagnostic proof
-`/tmp/mgb64_shard_rdp_cvg_formula_trace/shard_draw_trace_join_formula.json`
-adds `--require-rdp-cvg-api-blend` and passes with the coverage-memory shader
-active. The paired visual A/B in `/tmp/mgb64_shard_rdp_cvg_active_gate` changes
-only `82/307200` pixels versus default native and leaves the stock/native
-shard-mask delta at `89.980%`, so do not keep chasing GL-side active-shard
-coverage-memory approximations until a control proves the shard pass is visibly
-contributing.
+(P2 hygiene reap, FID-0005: `tools/compare_glass_shard_draw_trace.py`, the
+forensic join from the pixel oracle's top offending shard pieces to native
+`[EFFECT-TRI]`/`[TEXGEN-MATERIAL]` rows, was a one-off script and has been
+removed. Preserved finding: the join proved the top pixel-oracle offenders are
+normal `glass_shards` material draws — `cvg=wrap`, `clr_on_cvg=1`, raw mode
+`0x0C1849D8`, combiner `0x00F38E4F020A2D12`, expected `56x54`/`32x27` texture
+tiles, no CPU clipping, and a final-cycle formula matching ares/Parallel-RDP's
+decoded blend path — and that a GL-side active-shard coverage-memory
+approximation changes only `82/307200` pixels versus default native while
+leaving the stock/native shard-mask delta at `89.980%`. Treat GL-side
+active-shard coverage-memory approximation as a checked negative; do not
+re-derive it without first proving the shard pass is visibly contributing.)
 
 `GE007_SFX_TRACE_JSONL` uses public SFX ids for `public_sound` and one-based
 `bank_public_sound`; `bank_sound` is the zero-based decoded-bank index. Owner
@@ -3052,819 +2996,47 @@ Dam palette/alarm-red, glass material, and actor-masked glass gates.
 
 ### Glass contributor isolation probe
 
-`tools/glass_contributor_isolation_regression.sh` is the ownership sweep to run
-before another glass renderer experiment. By default it runs the stock-backed
-`glass_active_visual_isolation_regression.sh` baseline with full shard projection
-samples, then reuses that default native screenshot against native-only A/B
-captures for contributor toggles. It also compares every variant screenshot back
-to the guarded stock screenshot and records `stock.changed_delta_pct` plus
-per-region stock deltas, because a variant can own pixels while moving farther
-from stock. Use `--fixture impact` to run the same sweep against
-`glass_impact_visual_isolation_regression.sh`, which is the better fixture for
-pane break, crack/decal, bullet-impact, and presentation-order work. Use
-`--fixture pad10092-impact` with a known-good base case when the question depends
-on the actor-light pad-`10092` impact route:
-
-```sh
-tools/glass_contributor_isolation_regression.sh --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_contributor_isolation.XXXXXX)"
-
-tools/glass_contributor_isolation_regression.sh --fixture impact --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_impact_contributors.XXXXXX)"
-
-tools/glass_contributor_isolation_regression.sh --fixture pad10092-impact --no-build \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_contributors.XXXXXX)"
-```
-
-The default variant set is `shards_off`, `bullet_impacts_off`,
-`weapon_render_off`, `no_fog`, and `flat_bullet_impacts`. The summary artifact is
-`glass_contributor_isolation_summary.json`; each variant also writes
-`default_vs_<variant>_visual.json` and `stock_vs_<variant>_visual.json`, and
-`shards_off` additionally writes `default_vs_shards_off_shard_pixel_oracle.json`.
-Optional presentation variants include `zmode_dec_less`, `zmode_dec_no_offset`,
-`alpha_blend_premult`, `alpha_blend_add`, `alpha_blend_inv`,
-`alpha_blend_copy`, `bullet_impact_inv_vis_scale_off`, `fixed_room_mtx`,
-`world_impact_loaded_tile_2tex_filter`, `world_impact_alpha_from_intensity`,
-`world_impact_alpha_from_intensity_mix50`, `world_impact_xlu_coverage_wrap_thin`,
-`world_impact_xlu_coverage_stencil`, `world_impact_rdp_memory`, and
-`world_impact_rdp_cvg_memory`. The world-impact variants use a fixture-specific
-combiner id by default and record it as `world_impact_cc` in the summary; use
-`--world-impact-cc` only for a deliberate override. Keep these variants as
-diagnostics unless stock-delta evidence and the broader regression suite justify
-a real default.
-`prop_impacts_off` is an optional lifecycle/RNG diagnostic for the native-only
-glass-prop impact that can precede the selected world impact.
-
-Latest first-active proof: `/tmp/mgb64_glass_contributor_isolation_current`
-passed. The baseline active visual gate passed after the normal stock startup
-retry, then the native-only ownership ranking was:
-
-- `no_fog`: `22.757%` logical-viewport change, mostly `hud_viewmodel=75.492%`;
-  `glass_burst=1.243%`.
-- `bullet_impacts_off`: `8.517%` logical-viewport change, `glass_burst=8.903%`,
-  `hud_viewmodel=35.815%`; `glass_burst` bright pixels move `484 -> 574`, so
-  suppression is not an improvement.
-- `weapon_render_off`: `2.311%` logical-viewport change, `hud_viewmodel=10.492%`,
-  `glass_burst=0.000%`.
-- `flat_bullet_impacts`: `0.051%` logical-viewport change, only
-  `glass_burst=1.000%`.
-- `shards_off`: `0.000%` logical-viewport change and `0.000%` shard-mask change
-  across `90` common projected pieces and `82` rasterized masks.
-
-Interpretation: current first-active glass pixels are not owned by the visible
-falling-shard pass. Bullet impacts and weapon/fog presentation move real pixels,
-but the tested suppression toggles do not improve the glass burst. Use this
-harness to prove ownership before changing pane/decal, HUD/viewmodel, or
-presentation-order code.
-
-Latest impact proof: `/tmp/mgb64_glass_impact_contributors_crosshair_parity`
-passed. It uses the impact-aligned pad-`10004` fixture, so the selected world
-impact has exact center and stored-quad parity, while the full impact buffer is
-not identical (`occupied 1 -> 2`) because native also creates a nonvisible
-glass-prop impact on pad `10004`. The shard timer remains `6 -> 6`. The
-native-only ranking was:
-
-- `no_fog`: `23.260%` logical-viewport change, mostly
-  `hud_viewmodel=75.513%`; `glass_burst=1.160%`.
-- `bullet_impacts_off`: `8.818%` logical-viewport change,
-  `glass_burst=14.688%`, `hud_viewmodel=27.107%`; `glass_burst` bright pixels
-  move `1204 -> 742`, so this owns a major over-bright burst component but is a
-  diagnostic suppression, not a fix.
-- `world_impact_alpha_from_intensity`: `3.413%` logical-viewport change and
-  `glass_burst=27.326%`, but it worsens stock parity.
-- `weapon_render_off`: `2.321%` logical-viewport change,
-  `hud_viewmodel=10.542%`, `glass_burst=0.000%`.
-- `flat_bullet_impacts`: `0.038%` logical-viewport change, only
-  `glass_burst=0.750%`.
-- `zmode_dec_no_offset`: tiny stock-direction movement
-  (`stock_delta=-0.005`, `stock_glass_delta=-0.090`) but not enough to promote.
-- `shards_off`: `0.000%` logical-viewport change and `0.000%` shard-mask change
-  across `90` common projected pieces and `82` rasterized masks.
-
-Interpretation: even in the cleaner impact fixture, the falling-shard pass still
-has no visible framebuffer ownership at the checkpoint. The bullet-impact path
-owns pixels, but none of the tested suppressions/blend/depth toggles is a
-stock-directed fix.
-
-Latest pad-`10092` impact proof: the corrected contributor harness now records
-which world-impact combiner id it targets and uses fixture-specific defaults.
-For `pad10092-impact` that is `0x00f38e4f020a2d12`; the older active/impact
-fixtures keep `0x00f39e4f1f39e4f1`. This matters because the first pad-`10092`
-contributor note mixed the cleaned route with stale `world_impact_*` combiner
-ids, so only the broad ownership conclusions from
-`/tmp/mgb64_glass_pad10092_contributors` should be kept.
-
-The corrected proof `/tmp/mgb64_glass_pad10092_contributors_refined_cc` passed
-against the already-gated base case
-`/tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact`, and
-the summary-argument smoke proof
-`/tmp/mgb64_glass_pad10092_contributor_summary_smoke` records
-`world_impact_cc=0x00f38e4f020a2d12`. The refined native-only ranking is:
-
-- `fixed_room_mtx`: `0.079%` logical-viewport change and tiny stock-direction
-  movement (`stock_delta=-0.004`, `tower_pane=-0.010`), but
-  `projected_impact=0.000%`.
-- `bullet_impact_inv_vis_scale_off`: `0.011%` logical-viewport change,
-  `stock_delta=+0.000`, `projected_impact=0.000%`.
-- `world_impact_xlu_coverage_stencil`, `world_impact_rdp_memory`, and
-  `world_impact_rdp_cvg_memory`: `0.001%` viewport change,
-  `projected_impact=0.000%`.
-- `world_impact_alpha_from_intensity`,
-  `world_impact_alpha_from_intensity_mix50`,
-  `world_impact_loaded_tile_2tex_filter`,
-  `world_impact_xlu_coverage_wrap_thin`, and `zmode_dec_no_offset`:
-  `0.000%` viewport change.
-
-Interpretation: the refined instrumentation is answering the right questions,
-but it gives a negative renderer result. The targeted env toggles do activate in
-logs, yet none moves the localized projected-impact ROI or provides a promotable
-stock-directed fix. Continue with stock/native presentation/output semantics or
-an exact localized ares/Parallel-RDP pixel oracle before changing renderer
-defaults.
-
-To check whether the pad-`10092` mismatch is mostly a post-present crop/viewport
-alignment problem before changing renderer code, run the read-only presentation
-scorer against an existing impact base case:
-
-```sh
-tools/glass_pad10092_presentation_alignment_probe.sh \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_presentation_alignment.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_presentation_alignment_probe` passes.
-It enumerates `10428` crop/frame candidates each for `tower_pane`,
-`projected_impact`, and `impact_side`, using the same actor/HUD exclusions as
-the pad-`10092` visual harness. The source presentation boxes differ
-(`stock active_bbox=[8,2,625,474]`, native `[0,19,640,442]`), but best alignment
-does not collapse the broad mismatch: `tower_pane` only improves
-`97.325% -> 94.067%`, and `impact_side` improves `95.533% -> 90.233%`. The tiny
-`projected_impact` ROI is alignment-sensitive (`100.000% -> 76.250%`) but remains
-heavily mismatched. Treat presentation/crop mapping as a measured secondary
-factor, not the primary blocker; the next implementation target should be exact
-localized pixel-output semantics for the pane/decal path.
-
-The localized pixel-output semantics probe captures that next question without
-changing renderer behavior:
-
-```sh
-tools/glass_pad10092_pixel_semantics_probe.sh --no-build \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_pixel_semantics.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_pixel_semantics_sequence_clean` passes.
-It keeps the earlier trace blind-spot fix by using
-`GE007_EFFECT_TRI_TRACE_DRAWCLASS=room` for `bullet_impact_world`; the
-pad-`10092` world-impact rows are labelled as room-class triangles, not
-effect-class triangles. The summary records `28` material rows, `28` emitted
-`EFFECT-TRI` rows, `56` effect-range registrations, and `8` bullet-impact create
-events. The route has now been retimed from native fire start `70`/frame `126` to
-fire start `68`/frame `124` with native crosshair `159.00:122.50`. That keeps the
-selected impact geometry gate intact (`impact_delta=4.785`,
-`projection_delta=0.949px`) and fixes the full sampled world-impact sequence:
-stock frame `2541` and native frame `124` both report `[1,1,1,1]`.
-
-The clean sequence removes the earlier native-only type-`7` pollution. The
-localized material summary now has one world-impact signature,
-`0x00f38e4f020a2d12`, with dual textures `(64,32)/(32,16)`, and that signature
-overlaps the `projected_impact` region. The base projected-impact stock/native
-mismatch still remains `90.713%`, so this is not a rendering fix; it is the
-cleaner fixture needed before renderer/material work can be interpreted.
-
-Follow-up proof `/tmp/mgb64_glass_pad10092_pixel_semantics_effect_footprint`
-extends the same probe with `tools/compare_effect_footprint_visual.py`. It uses
-the emitted `EFFECT-TRI` logical bbox from the pixel-semantics summary and
-compares stock/native pixels inside that footprint, then compares the rest of
-the projected-impact ROI with that footprint excluded. The unpadded
-`bullet_impact_world` footprint covers only `3.001%` of `projected_impact` and
-has `63.492%` changed pixels; the whole projected-impact ROI remains
-`90.461%` changed. Excluding the unpadded footprint leaves the surrounding
-projected-impact ROI at `91.627%` changed, and excluding a 2-logical-pixel
-padded footprint still leaves `93.123%` changed. This proves the broad
-pad-`10092` mismatch is not explained by the tiny emitted world-impact decal
-footprint alone; continue toward pane/background presentation/output semantics
-or an exact localized stock/ares pixel oracle rather than another isolated
-world-impact shader toggle.
-
-The next read-only material-ownership pass is
-`tools/glass_pad10092_texgen_roi_material_probe.sh`:
-
-```sh
-tools/glass_pad10092_texgen_roi_material_probe.sh --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_texgen_roi_material.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_texgen_roi_material_probe` passes and
-is the key sanity check for this milestone. The summarizer now maps
-`TEXGEN-MATERIAL` NDC bboxes into the aligned screenshot crop before comparing
-them to visual ROIs; the older logical-viewport comparison was too small and
-misclassified the pad-`10092` ownership. With corrected coordinates, default
-emits `14` primary `projected_impact` texgen rows, all room `glass`, and
-`GE007_GLASS_SHARDS=0` leaves the same `14` room-glass rows. Default versus
-shard-off still changes `0.000%` of the full frame, `0.000%` of
-`projected_impact`, and `0.000%` across `5062` rasterized full-sample shard-mask
-pixels. This keeps the falling-shard pass ruled out, but for the corrected
-reason: the primary ROI is not falling-shard owned at this checkpoint. The same
-proof records `tower_pane` as `46` texgen rows (`38` room `glass`, `8`
-`glass_shards`) and `impact_side` as `22` room `glass` rows.
-
-Room-glass material A/Bs are captured by
-`tools/glass_pad10092_room_glass_visibility_probe.sh`:
-
-```sh
-tools/glass_pad10092_room_glass_visibility_probe.sh --no-build \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_room_glass_visibility.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_room_glass_visibility` passes. It reuses
-the clean stock-backed pad-`10092` base case and runs native-only room alpha,
-room XLU, and room filtering controls. Room-glass controls are pixel-visible in
-`tower_pane`, but not stock-directed enough to promote: the only improvement is
-`GE007_DIAG_ROOM_ALPHA_ENV_SCALE=0.5`, moving `tower_pane` by just `-0.222`
-percentage points versus stock. `GE007_DIAG_ROOM_ALPHA_ENV_SCALE=1.5` and
-`GE007_ROOM_ALPHA_AS_TEXEDGE=1` are default-equivalent, while
-`GE007_ROOM_XLU_AS_OPAQUE=1`, `GE007_FORCE_ROOM_POINT_FILTER=1`, and
-`GE007_DISABLE_N64_FILTER=1` are broad side-effect or negative controls. Combine
-this with the corrected texgen ROI result above: room glass is the real localized
-material lead, but these simple room-alpha/filter controls are not a promotable
-fix.
-
-The same run includes `tools/compare_control_footprint_visual.py`, which scores
-how much of the stock/native mismatch is inside each native-only control-change
-mask. This is the guardrail that answers the right question for this milestone:
-not "did a draw call overlap the ROI," but "did a candidate control move the
-same pixels that are wrong versus stock?" The answer rules out the simple
-room-glass/filter lane. `GE007_DISABLE_N64_FILTER=1` covers the largest
-`tower_pane` mismatch footprint (`44.802%`) but worsens stock parity by `+0.080`
-percentage points, so it is a negative control. The only stock-directed
-room-alpha variant covers just `16.517%` of `tower_pane`, `0.000%` of
-`projected_impact`, and moves `tower_pane` by only `-0.222` points.
-`GE007_ROOM_XLU_AS_OPAQUE=1` covers `30.555%` of `tower_pane` but worsens it by
-`+0.677` points. `GE007_FORCE_ROOM_POINT_FILTER=1` is the only tested broad
-filter control that touches `projected_impact` (`8.750%` coverage), but it is
-still tiny, mixed-direction, and not material-localized. The refined approach is
-therefore working better: it is now separating visible pixel ownership from
-material bbox overlap and preventing renderer-wide room/shard toggles from being
-promoted without a localized stock/ares pixel-output oracle.
-
-Follow-up proof
-`/tmp/mgb64_glass_pad10092_room_glass_output_sweep` expands that same harness to
-fog, global alpha blend factors, noperspective settex interpolation, targeted
-settex filter policy, and small color-scale perturbations for the room-glass
-combiner `0x00738e4f020a2d12`. It passes and finds no promotable control.
-`GE007_DIAG_ALPHA_BLEND=copy` has the largest `tower_pane` control-footprint
-coverage (`31.047%`) but worsens `tower_pane` by `+0.783` points and
-`projected_impact` by `+1.579`; `premult` worsens the primary ROI by `+3.158`.
-Fog, settex filter policy, and color-scale perturbations are no-ops or tiny
-mixed movements. A second run,
-`/tmp/mgb64_glass_pad10092_room_glass_rdp_memory_sweep`, fixes the old
-diagnostic blind spot where the RDP memory-blend API mode could activate for
-`G_SETTEX` while the shader-side memory option was still gated off. With the
-diagnostic repaired, both `GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC=0x00738e4f020a2d12`
-and `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC=0x00738e4f020a2d12` are healthy
-negative controls: they move native pixels (`projected_impact` native A/B
-`3.158%`) but worsen stock parity by `+0.789` points and cover `0.000%` of the
-stock/native mismatch footprint. The focused K4/K5 follow-up
-`/tmp/mgb64_glass_pad10092_room_glass_k4k5_sweep` is also a hard negative:
-`GE007_DIAG_CONVERT_K4K5=1` changes essentially the whole target frame
-(`projected_impact`, `tower_pane`, and `impact_side` all reach `100.000%`
-default-vs-variant movement) while worsening stock parity. `projected_impact`
-goes from `94.474%` changed to `100.000%`, and mean luma error jumps from
-`+4.231` to `+94.803`. Existing toggle space is therefore exhausted for this
-room-glass checkpoint; the next renderer work needs an exact stock/ares
-pixel-output oracle or a more faithful RDP/translucent ordering model, not
-another broad GL blend/filter/combiner-constant tweak.
-
-`/tmp/mgb64_glass_pad10092_room_glass_skip_tex654` adds the framebuffer-underlay
-negative control using the same harness with `GE007_SKIP_TEX=654`
-(`skip_room_glass_tex654`). It passes and proves that simply exposing the native
-background behind the target `G_SETTEX` room glass is not stock-like. The
-variant is strongly pixel-visible (`projected_impact` default-vs-skip changes
-`64.737%`, `tower_pane` `14.908%`, `impact_side` `31.904%`), but it worsens
-stock parity: `projected_impact` changes from `94.474%` to `95.526%` and mean
-luma error rises from `+4.231` to `+12.389`; `tower_pane` and `impact_side`
-also worsen slightly (`+0.109` and `+0.123` percentage points). The next target
-therefore remains exact composition of the texnum `654` room-glass draw, not
-the pre-glass framebuffer alone.
-
-`tools/glass_pad10092_room_glass_scalar_oracle_probe.sh` consumes that skip
-artifact and writes `/tmp/mgb64_glass_pad10092_room_glass_scalar_oracle_probe`.
-It models each ROI pixel as `underlay + t * (default - underlay)`, asking whether
-any scalar amount of the actual native texnum-`654` contribution can explain
-stock. The result is a weak, non-promotable opacity clue. Unmasked
-`projected_impact` prefers a stronger contribution (`t=1.490`) and improves
-mean absolute RGB only from `12.689` to `11.979`, with changed pixels unchanged
-at `94.474%`; the route-masked slice prefers a weaker contribution (`t=0.750`)
-but improves mean absolute RGB only from `9.700` to `9.500`, with changed pixels
-still `100.000%`. The broad ROIs disagree as well (`tower_pane` unmasked
-prefers `t=1.870`, route-masked prefers the scan floor `t=-0.500`). This rules
-out a simple global opacity/coverage scalar as the robust fix and keeps the next
-target on per-pixel source color, ordering, or exact RDP translucent
-composition.
-
-`tools/glass_pad10092_room_glass_required_source_probe.sh` consumes the same
-stock/default/skip-underlay fixture and writes
-`/tmp/mgb64_glass_pad10092_room_glass_required_source_probe`. It inverts
-`output = source * alpha + underlay * (1 - alpha)` with alpha `102/255`, using
-the corrected `shaderL_frag` alpha from the settex sample trace. This is the
-current composition sanity check. Unmasked `projected_impact` says native
-requires source luma `19.58`, while stock would require darker source luma
-`9.63`; however, only `67.105%` of those stock-required source pixels are
-in-gamut, `32.895%` need a negative channel, and only `40.526%` sit inside the
-measured `shaderL_frag` luma band (`0..23`, tolerance `2`). The route-masked
-slice excludes `300/380` pixels because the lower-actor mask overlaps the tiny
-ROI, so use the unmasked projected-impact result as the primary room-glass
-evidence. This confirms the refined approach is answering useful questions:
-stock is not asking for a simple brighter/stronger room-glass pass under the
-current underlay. The next target is exact ordering/coverage/framebuffer
-semantics or a per-pixel source/raster oracle, not another global alpha tweak.
-
-`tools/glass_pad10092_room_glass_source_recon_probe.sh` is that per-pixel
-source/raster oracle. It captures the native pad-10092 route with
-`GE007_DUMP_SETTEX_TEXTURES=654`, dumps the decoded 54x54 tex654 RGBA/alpha
-payload, traces the target room-glass material, reconstructs the
-`projected_impact` pixels in native viewport space, and captures same-frame
-pre/post framebuffer PPMs for matching room-glass draws with
-`GE007_TRACE_SETTEX_FB_CAPTURE`. The wrapper still captures a fresh same-run
-`GE007_SKIP_TEX=654` underlay by default instead of relying on a stale external
-skip artifact. Current proof
-`/tmp/mgb64_glass_room_glass_source_recon_oracle_fix_verify` passes:
-`projected_impact` is covered by tex654 rows for `380/380` pixels, and the
-center self-check exactly reproduces the trace (`uv` max delta `0.000004`,
-`uv1` max delta `0.000002`, and `t0l/t0p/t1l/t1p/shaderL/shaderP` max delta
-`0`). The analyzer now reconstructs both `G_SETTEX` texture units and evaluates
-the decoded two-cycle combiner; the ROM-free guard is
-`python3 tools/check_room_glass_source_reconstruction_regression.py`. The
-reconstructed source still does not explain the rendered default image or stock
-under a simple source-over skip-underlay model: best synthetic-vs-default is
-linear with `mean_abs_rgb=4.066`, `64.211%` changed; best synthetic-vs-stock is
-nearest with `mean_abs_rgb=11.983`, `94.211%` changed; actual reconstructed
-linear source is darker than stock-required by luma mean `-12.216` with source
-mean-abs RGB `30.499`.
-The stock-required source number is directionally useful but weaker than the
-same-run native proof because the stock frame is cropped/resized into native
-space. Two same-frame captures overlap the target ROI on frame `123`
-(`mean_abs_rgb` mean `2.739`, changed mean `19.213%`). The analyzer joins the
-first capture's `pre` and last capture's `post` PPMs back to the route ROI, but
-that join crosses pre-output-filter PPMs with post-presentation screenshots:
-first-pre versus skip-underlay is `mean_abs_rgb=5.636`, and last-post versus
-native-final is `mean_abs_rgb=3.658`. Treat those as presentation-normalization
-evidence, not as byte-exact screenshot parity. The texture payload, UV
-transform, center shader sample, target-pixel coverage, and same-frame native
-destination capture are no longer the blind spots. The remaining problem is
-exact translucent framebuffer/order/coverage semantics or a localized stock
-pixel oracle for the same draw.
-
-The multihit extension in that same proof rules out a simple same-texture
-self-overlap/order mistake for this tiny ROI. Every `projected_impact` pixel has
-exactly one target-row hit (`hit_count_counts={"1":380}`), with row ownership
-`tri 788 -> 371` pixels and `tri 789 -> 9` pixels. Ordered-all and reverse-all
-composition are identical to the old single-last model; best composition remains
-`linear/single_last` for both default (`mean_abs_rgb=5.190`) and stock
-(`mean_abs_rgb=12.332`). Do not spend the next pass on target-triangle
-self-overlap.
-
-The 2026-06-28 stock-side ares material pass adds that next diagnostic, but it
-also disproves the earlier stock-`G_SETTEX` assumption. Proof
-`/tmp/mgb64_glass_pad10092_stock_rdp_tex_probe_full_heap` runs
-`glass_pad10092_impact_visual_regression.sh` with
-`MGB64_ARES_TRACE_SETTEX_TEXNUM=654`,
-`MGB64_ARES_TRACE_RDP_TEX_SAMPLES=1`,
-`MGB64_ARES_TRACE_RDP_TEX_SAMPLES_AFTER_FRAME=2541`, and
-`MGB64_ARES_TRACE_RDP_TEX_SAMPLES_BEFORE_FRAME=2541`. At stock frame `2541`
-(`global=1394`, rendered rooms `[132,136]`), rooms `132` and `136` have
-`settex=0` and `target_settex=0` on every primary/secondary room list. The same
-checkpoint now has complete, non-truncated ordinary RDP texture-state samples:
-room `132` primary `135` samples / `12` `G_SETTIMG`, room `132` secondary `67` /
-`4`, room `136` primary `77` / `7`, and room `136` secondary `17` / `1`; total
-ops are `24` `settimg`, `137` `settile`, `24` `loadblock`, `11` `loadtlut`, and
-`100` `settilesize`, with `rdp_tex_sample_truncated=0` throughout. Native
-texnum `654` is therefore a port-side `G_SETTEX` abstraction over stock's
-ordinary `G_SETTIMG`/tile sequence, not something stock issues as `G_SETTEX`.
-The next stock oracle step is mapping native texnum `654` back to these stock
-image/tile candidates and then comparing exact shaded/blended output.
-
-The follow-up
-`/tmp/mgb64_glass_pad10092_stock_rdp_tex_dump_probe` adds per-`G_SETTIMG`
-payload dumps and makes that mapping attempt reproducible through
-`tools/analyze_stock_rdp_texture_candidates.py`:
-
-```sh
-tools/analyze_stock_rdp_texture_candidates.py \
-  --stock-trace /tmp/mgb64_glass_pad10092_stock_rdp_tex_dump_probe/pad10092_impact/stock_dam_regular_glass_shatter_pad10092_impact_visual_probe.jsonl \
-  --dump-dir /tmp/mgb64_glass_pad10092_stock_rdp_tex_dump_probe/rdp_tex_dump \
-  --native-source-bin /tmp/mgb64_glass_pad10092_room_glass_source_recon_sameframe_fb_final/texture_dump/ge007_settex_0654.source.bin \
-  --native-source-chain-bin /tmp/mgb64_glass_pad10092_room_glass_source_recon_sameframe_fb_final/texture_dump/ge007_settex_0654.source_chain.bin \
-  --frame 2541 --rooms 132,136 \
-  --out /tmp/mgb64_glass_pad10092_stock_rdp_tex_dump_probe/stock_rdp_texture_candidate_summary.json \
-  --preview-dir /tmp/mgb64_glass_pad10092_stock_rdp_tex_dump_probe/stock_rdp_texture_candidate_preview
-```
-
-That proof captured `24/24` stock `G_SETTIMG` dumps and found `0` exact native
-source/source-chain hash matches for texnum `654`. The deliberately limited
-decoder preview also stays weak: the best naive score is a CI-index placeholder
-from room `136` primary index `41` (`image=0x80137a88`, `MAD=25.035`,
-`corr=0.118`), while the plausible IA candidates do not visually resemble the
-native `54x54` IA8 tex654 artifact. This means the refined instrumentation is
-working, but it has answered the question by rejecting a direct payload remap.
-The next stock-side oracle should trace current RDP draw state, owning
-triangles/coverage, TMEM/tile interpretation, and same-draw framebuffer output
-for the target pane pixels instead of continuing broad texture-identity guesses.
-
-The 2026-06-28 draw-state follow-up
-`/tmp/mgb64_glass_pad10092_stock_draw_state_probe` adds
-`MGB64_ARES_TRACE_RDP_DRAW_STATES=1` to the same checkpoint. The standard
-draw-aware analyzer result is:
-
-```text
-captured 24/24 stock G_SETTIMG dumps
-draw-associated texture groups: 0/24
-exact native source/hash matches: 0
-best naive score: room=136 primary idx=41 image=0x80137a88 decoder=ci_index_placeholder mad=25.035 corr=0.118
-```
-
-This is another useful negative: the room `primary`/`secondary` streams contain
-the ordinary RDP texture setup but no `G_TRI1`/`G_TRI2` draw commands
-(`tri1=0`, `tri2=0`, `rdptri=0` for rooms `132/136`). The geometry/pixel owner
-for the stock pane is therefore not discoverable by associating triangles inside
-these texture streams. An explicit experimental point-data scan was also tried
-in `/tmp/mgb64_glass_pad10092_stock_point_draw_state_probe`; it produced invalid
-texture-looking values such as `image=0x9e9e9eff` and `image=0x434343ff`, so
-room `point` data should not be treated as a display list. Keep
-`MGB64_ARES_TRACE_ROOM_POINT_DL=1` opt-in only for this negative control. The
-next faithful stock oracle must instrument closer to actual RSP/RDP execution
-or framebuffer output, not the room-info texture streams alone.
-
-The focused alpha follow-up
-`/tmp/mgb64_glass_pad10092_room_glass_alpha_scale_probe` adds targeted
-`settex_alpha_scale_081` and `settex_alpha_scale_125` variants for room-glass
-combiner `0x00738e4f020a2d12`, texsize `54x54`, texnum `654`. Both variants
-are visible and pass render-health checks, but neither is a fix candidate:
-`settex_alpha_scale_081` worsens `projected_impact` stock parity by `+2.368`
-percentage points, while `settex_alpha_scale_125` improves it by only `-0.526`
-points and covers just `0.043%` of the tower-pane stock/native mismatch. Treat
-target alpha scaling as a checked negative, not the next implementation path.
-
-The follow-up order check
-`/tmp/mgb64_glass_pad10092_room_glass_order_probe` re-runs the existing
-`xlu_rdp_memory_blend` and `xlu_rdp_cvg_memory_blend` variants after the source
-oracle. They remain negative controls: both move room-glass pixels, but
-`projected_impact` stock parity worsens by `+0.789` percentage points with
-luma delta `+4.223`, and tower-pane stock-mismatch footprint coverage remains
-`0.000%`. Do not promote those toggles as-is.
-
-The room-glass mask pixel oracle is
-`tools/glass_pad10092_room_glass_pixel_oracle_probe.sh`:
-
-```sh
-tools/glass_pad10092_room_glass_pixel_oracle_probe.sh \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --log /tmp/mgb64_glass_pad10092_texgen_roi_material_probe/default/native_dam_regular_glass_shatter_pad10092_impact_visual_probe.log \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_room_glass_pixel_oracle.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_room_glass_pixel_oracle_current_v2`
-passes. It builds a raster mask from latest-frame `TEXGEN-MATERIAL` bboxes
-matching `class=room`, `effect=glass`, `settex=1`, and
-`effcc=0x00738e4f020a2d12`, then splits stock/native ROI pixels inside and
-outside that mask. This is the sharper ownership result the previous
-correlation could not provide. `projected_impact` is fully material-localized:
-the room-glass mask covers `100.000%` of the ROI and `100.000%` of changed
-pixels, with `94.474%` changed density and mean luma delta `+4.231`. By
-contrast, `tower_pane` is mostly not inside that mask: the mask covers
-`21.186%` of the ROI and only `20.209%` of changed pixels; in-mask changed
-density is `91.322%` with luma `+9.992`, while outside-mask changed density is
-`96.921%` with luma `+17.876`. `impact_side` is also split: room glass covers
-`39.965%` of the ROI and `38.776%` of changed pixels, with most wrong pixels
-outside the selected material mask. The practical backlog split is now: fix
-exact output semantics for the tiny `projected_impact` room-glass material, and
-treat the broader pane/side mismatch as background, post-composite, or other
-non-texgen contribution work.
-
-The follow-up room-glass `G_SETTEX` sample oracle is
-`tools/glass_pad10092_room_glass_settex_sample_probe.sh`:
-
-```sh
-tools/glass_pad10092_room_glass_settex_sample_probe.sh \
-  --log /tmp/mgb64_glass_pad10092_room_glass_settex_sample_trace/native_dam_regular_glass_shatter_pad10092_impact_visual_probe.log \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_room_glass_settex_sample.XXXXXX)"
-```
-
-It consumes a native trace captured with
-`GE007_TRACE_SETTEX_MATERIAL_CC=0x00738e4f020a2d12`,
-`GE007_TRACE_SETTEX_MATERIAL_CC_AFTER_FRAME=120`,
-`GE007_TRACE_SETTEX_MATERIAL_CC_BUDGET=120`,
-`GE007_TRACE_SETTEX_MATERIAL_CC_SAMPLES=1`, and
-`GE007_TRACE_SETTEX_MATERIAL_CC_VERTS=1`. Current corrected proof
-`/tmp/mgb64_glass_pad10092_room_glass_settex_sample_current_v2` passes. The parser
-finds `120` `[SETTEX-MATERIAL-CC]` rows, filters to `30` true room-glass rows
-with `class=room`, `texnum=654`, `wh=54x54`, `blend=alpha`, `alpha=1`,
-`fog=1`, `effcc=0x00738e4f020a2d12`, `opts=0x00043C13`, and
-`oml_raw=0xC41049D8`, then selects target frame `122` from frames
-`120..122`. Four filtered alpha-glass rows cover `100.000%` of
-`projected_impact`; their center samples use alpha `102` from both texture
-levels. The old `combL_float` helper is now explicitly legacy: it logs matching
-RGB luma `0.0/12.75/30.0` but reports alpha `255` because it never evaluated the
-two-cycle alpha combiner. The new shader-mirrored fields show the actual sampled
-output: `shaderL_comb` alpha is `102` for all four rows, and `shaderL_frag`
-remains alpha `102` after fog while RGB luma becomes `0.0/11.0/23.0`. Both
-`fogrgba` and center `fogc` alpha counts are `{0: 2, 60: 2}`. This confirms the
-next renderer fix target is exact room-glass blend/coverage/memory composition
-or stock reference comparison for texnum `654`, not another broad room filter,
-shard, global blend toggle, or blind opacity clamp.
-
-The aligned trace-to-pixel join is
-`tools/glass_pad10092_texgen_roi_pixel_correlation_probe.sh`:
-
-```sh
-tools/glass_pad10092_texgen_roi_pixel_correlation_probe.sh \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_texgen_roi_pixel_correlation.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_texgen_roi_pixel_correlation_current`
-passes and uses latest traced native frame `123`. It makes the remaining target
-more precise. `projected_impact` is `94.474%` changed and `100.000%` covered by
-two room `glass` bbox rows, so the tiny primary ROI is now a room-glass output
-problem, not a shard problem. `tower_pane` is `95.734%` changed, but texgen
-bboxes cover only `21.896%` of the ROI (`21.186%` room `glass`, `0.710%`
-`glass_shards`); shard-off still moves `0.000%` of the shard mask. `impact_side`
-is `93.702%` changed with `39.965%` room-glass bbox coverage. The broader pane
-and side mismatches therefore still require background, post-composite, or other
-non-texgen contributors in addition to exact room-glass output semantics.
-
-The next stock/native pixel-output pass is
-`tools/glass_pad10092_roi_pixel_semantics_probe.sh`:
-
-```sh
-tools/glass_pad10092_roi_pixel_semantics_probe.sh \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_roi_pixel_semantics.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_roi_pixel_semantics_current` passes and
-is the first direct answer to "what are the wrong pixels doing?" It reports both
-unmasked ROI semantics and route-masked semantics; the distinction matters
-because the tiny `projected_impact` ROI overlaps the broader
-`lower_actor_cluster` exclusion, so the route-masked view samples only `80` of
-`380` pixels there. Use the unmasked ROI numbers for localized material-output
-diagnostics, and the route-masked numbers only for aggregate visual-gate context.
-
-The unmasked semantics rule out a blue-sky leak as the pad-`10092` glass
-candidate cause. `tower_pane` is `95.734%` changed with mean luma delta `+16.28`;
-`55.033%` of changed pixels are native-brighter, `29.280%` are native-darker, but
-only `1.099%` are native-bluer. `impact_side` is similarly gray/luma-driven:
-`93.702%` changed, mean luma delta `+17.29`, `57.751%` native-brighter, and only
-`1.666%` native-bluer. `projected_impact` is also not blue: `94.474%` changed,
-mean luma delta `+4.23`, `0.000%` native-bluer, with stock classified as `100%`
-gray and native split across gray/dark/black. The next code investigation should
-therefore target pane/background coverage, blend/memory-color, fog/lighting, or
-post-composite output semantics, not sky visibility, shard suppression, or a
-single blue texture/material swap.
-
-The same run rechecked presentation alignment against the current clean base
-case in `/tmp/mgb64_glass_pad10092_presentation_alignment_current`. Stock ares
-and native still present different source boxes (`[8,2,625,474]` versus
-`[0,19,640,442]`), but the crop search does not collapse the mismatch:
-`tower_pane` improves only `97.325% -> 94.067%`, `impact_side` improves
-`95.533% -> 90.233%`, and `projected_impact` improves `100.000% -> 76.250%`.
-Presentation is therefore a measured secondary factor, not the primary blocker.
-
-Focused material A/B output in `/tmp/mgb64_glass_pad10092_semantics_ab` confirms
-why the route cleanup mattered. Loaded-tile filtering, no-perspective
-interpolation, combiner quantization, LOD fraction overrides, and shade scaling
-either no-op the projected impact or improve one small ROI while worsening the
-broader pane. A fire-window scout in `/tmp/mgb64_pad10092_fire_window_scout`
-also shows that short fire holds (`3`, `6`, `10`, `20`, `40` frames) do not reach
-the glass lifecycle. The route cleanup path is now encoded by
-`tools/glass_pad10092_impact_sequence_scout.sh`; its focused proof
-`/tmp/mgb64_glass_pad10092_impact_sequence_scout_s68_aim` found the promoted
-`x159_y122p5_s68_l170_f127` candidate, the only tested strict sequence candidate
-that also satisfied the existing selected-impact geometry gate.
-
-Follow-up proof, 2026-06-27: the refined approach is answering the right next
-questions, but it exposed one instrumentation defect before the next renderer
-change. `GE007_EFFECT_RANGE_TRACE=1` showed that broad `glass` display-list
-ranges can overlap the smaller `bullet_impact_prop_textured` range. The trace
-lookup now chooses the narrowest matching range, and
-`/tmp/mgb64_prop_crack_material_probe_after_specificity` proves the prop crack
-now emits filtered `BULLET-IMPACT-MATERIAL` / `EFFECT-TRI` rows: two textured
-alpha room triangles per frame, `raw=0x0C1849D8`, `eff=0xCC1849D8`,
-`cc=0x00F38E4F020A2D12`, dual IA textures `48x48` and `24x24`, fog enabled,
-and stable NDC bboxes. The stock-backed impact guard still passes in
-`/tmp/mgb64_glass_impact_visual_after_label_specificity`. A focused
-`GE007_FLAT_PROP_BULLET_IMPACTS=1` ownership check at
-`/tmp/mgb64_glass_impact_flat_prop_after_label_specificity` changes `0.000%` of
-the checkpoint viewport, so the prop-attached crack is traceable and useful for
-break-lifecycle work but is not the visible owner of the current screenshot
-burst. Continue on world bullet-impact/presentation and broader composition
-before touching shard suppression.
-
-Follow-up prop-impact creation proof, 2026-06-27:
-`/tmp/mgb64_glass_impact_prop_creation_skip_crosshair_parity` adds
-`GE007_DISABLE_PROP_BULLET_IMPACTS=1` to answer whether the native-only
-glass-prop impact is perturbing the world impact through RNG/state. The variant
-drops native impact occupancy from `2` to `1` and leaves the selected world
-impact exact, but worsens stock parity (`stock_delta=+0.188`) and does not
-improve `stock_glass_delta` (`+0.000`). Treat prop-impact creation as useful
-trace context, not as the current visual fix.
-
-Actor-composition guard proof, 2026-06-28: the impact fixture is a good geometry
-and ownership oracle, but the broad screenshot delta is not yet a faithful glass
-pixel oracle. `/tmp/mgb64_glass_impact_checkpoint_search_focused`
-records `visual_oracle.status=dirty`, stock visible actors `[10,12]`, native
-visible actors `[10,12,45]`, chr `10` `onscreen` mismatch, chr `12`
-`hidden_bits`/`action` mismatches, and chr `12` position delta `46.926`. The
-stock screenshot contains a guard body/head occluding the burst area while
-native does not, so whole-frame and broad ROI changed-percent metrics are
-composition-polluted. The localized impact pixel oracle records the same stop
-condition: `impact_pixel_oracle.status=masked_dirty`, focus exclusion
-`59.099%`, focus masked changed `82.972%`, and unoccluded-left changed
-`91.170%` with bright pixels `270 -> 73`. Do not promote a production renderer
-change from this screenshot alone; first build a cleaner actor-free/masked
-impact visual checkpoint. The projected world-impact oracle is now present and
-strict for geometry (`0.055px <= 1.0px`) but still intentionally report-only for
-pixels. The same focused proof scanned `744` active impact checkpoint pairs and
-found `0` strict clean candidates, so the current trace cannot be salvaged by
-simply choosing a different stock/native frame pair.
-
-Presentation-sweep proof, 2026-06-27:
-`/tmp/mgb64_impact_presentation_sweep_all` passed the impact fixture with stock
-direction metrics enabled. Broad alpha-blend modes are negative controls:
-`alpha_blend_copy`, `alpha_blend_premult`, and `alpha_blend_inv` worsen overall
-stock diff by `+6.251`, `+6.547`, and `+5.693` percentage points respectively
-and worsen `glass_burst` by `+12.868`, `+13.271`, and `+8.632`. The
-world-impact alpha-from-intensity diagnostic owns real impact pixels
-(`3.413%` native delta, `glass_burst=27.326%`) but also worsens stock
-(`stock_delta=+0.070`, `stock_glass_delta=+0.271`). The RDP memory and
-coverage-memory approximations are effectively no-ops for the glass burst
-(`glass_burst=0.000%`, `stock_glass_delta=+0.000`). `zmode_dec_less` is a
-no-op. `zmode_dec_no_offset` is the only stock-direction improvement, but it is
-too small to promote by itself (`stock_delta=-0.001`,
-`stock_glass_delta=-0.014`). This rules out a broad blend-factor or existing
-coverage approximation as the current Dam impact fix; keep investigating exact
-decal footprint/order, stock-presented viewport mapping, and localized DEC depth
-behavior.
-
-For full actor-composition scouting, use
-`tools/score_actor_composition_checkpoints.py`. It scores every stock/native
-checkpoint pair, optionally restricted to active glass, using the visible actor
-set, required chr samples, key actor fields, position deltas, health/HUD phase,
-shard timer, and active-shard count:
-
-```sh
-python3 tools/score_actor_composition_checkpoints.py \
-  --require-active \
-  --actor-chrnum 10 --actor-chrnum 12 \
-  stock.jsonl native.jsonl
-```
-
-For impact-aligned pane/decal scouting, use
-`tools/score_impact_checkpoint_candidates.py`. It keeps the actor/health/shard
-checks from the actor-composition scorer, but also requires selected world-impact
-identity and projected decal-center parity:
-
-```sh
-python3 tools/score_impact_checkpoint_candidates.py \
-  --require-active \
-  --actor-chrnum 10 --actor-chrnum 12 \
-  --json-out /tmp/impact_checkpoint_candidates.json \
-  stock.jsonl native.jsonl
-```
-
-The current pad-`10004` focused proof searched `744` active impact pairs and
-found `0` strict clean candidates, so selecting a different frame from the same
-trace is not a good next move for pixel parity.
-
-For pad-`10001` active-shard fixture scouting, use
-`tools/glass_actor_clean_candidate_scout.sh` with a known stock active trace.
-The script generates temporary native route variants from a base route, captures
-them native-only, and writes per-candidate composition scores plus
-`actor_clean_scout_summary.json`. By default it uses the pad-`10001` pose and
-actors chr `10`/`12`, but `--target-pad`, `--pose`, and `--actor-chrnums` can
-retarget the same timing matrix to another candidate such as pad `10092`:
-
-```sh
-tools/glass_actor_clean_candidate_scout.sh \
-  --stock-trace /tmp/.../stock_dam_regular_glass_shatter_pad10001_visual_probe.jsonl \
-  --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_actor_clean_scout.XXXXXX)"
-```
-
-The current milestone-5 scout `/tmp/mgb64_m5_actor_clean_scout_1782557026`
-is a scoped negative: all six late-warp candidates reached active pad-`10001`
-glass with clean native render health, but `best_strict` was empty for every
-candidate. The best organic case, `latewarp1385_fire1398`, aligned health,
-HUD, visible actor set, active count, and shard timer, but still had chr `10`
-action/position drift and a chr `12` onscreen-flag mismatch.
-
-For broader native-only discovery before spending stock-oracle time, use
-`tools/glass_native_fixture_scout.sh`. It consumes a stage pad dump and stage chr
-dump, ranks regular-glass panes by guard proximity, generates aimed forced-pose
-routes across yaw/distance combinations, captures native-only traces, and scores
-them with `tools/score_native_glass_fixture.py`:
-
-```sh
-tools/glass_native_fixture_scout.sh \
-  --stage-pads /tmp/.../stage_pads.jsonl \
-  --stage-chrs /tmp/.../stage_chrs.jsonl \
-  --top-panes 8 \
-  --max-candidates 16 \
-  --angles 315,90 \
-  --distances 650 \
-  --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_native_fixture.XXXXXX)"
-```
-
-The scorer can also be run directly on any route trace:
-
-```sh
-python3 tools/score_native_glass_fixture.py \
-  --target-pad 10092 \
-  --json-out /tmp/native_fixture_score.json \
-  native_trace.jsonl
-```
-
-The current broad native-only run
-`/tmp/mgb64_dam_impact_native_fixture_scout` uses fresh setup dumps from
-`/tmp/mgb64_dam_impact_fixture_scout_inputs` and still finds pad `10092`, yaw
-`315`, distance `650` as the best target-destroyed actor-light native candidate
-among `20` pane/yaw cases (`score=5609.623`, `active=88`, visible/onscreen
-actors `2`). The permanent pad-`10092` actor-masked stock/native route remains
-an active-shard fixture, not a drop-in impact oracle: the impact-aware scorer
-finds `0` strict candidates there, with best impact center delta `21.400` and
-projected center delta `2.656px`. Treat pad `10092` as the next stock-backed
-impact route seed, but retime/remask it for world-impact/decal parity before
-using it for pixel thresholds.
-
-That seed is now checked in as
-`tools/rom_oracle_routes/dam_regular_glass_shatter_pad10092_impact_visual_probe.json`
-and guarded by `tools/glass_pad10092_impact_visual_regression.sh`:
-
-```sh
-tools/glass_pad10092_impact_visual_regression.sh --no-build \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_impact.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_impact_visual_sequence_clean` passes native
-render health, stock route control, screenshot health, health/HUD parity,
-visual-framing parity, pad `10092` glass state, active-shard projection, and
-selected impact/decal geometry. The route uses stock crosshair `160:120`, native
-fire start `68`, native trace frame `124`, and native crosshair `159.00:122.50`;
-the selected impact center delta is `4.785` world units under the `5.0` gate, and
-the projected decal center delta is `0.949px` under the `1.0px` gate. The full
-sampled world-impact type sequence also matches (`[1,1,1,1] -> [1,1,1,1]`), so
-the old native-only type-`7` checkpoint pollution is gone. The framing gate is written to
-`visual_framing_compare_<route>.json`; it currently proves camera/view/room-basis
-alignment (`cam_pos_delta=0.134`, `cam_target_delta=0.136`, `view_delta=0`,
-`room_basis_delta=0`) while reporting, but not gating, the room draw-set delta
-(`stock=[132,136]`, `native=[124,132,136]`). The wrapper requires stock
-first-gameplay global `1147` and defaults to `8` route-control attempts; the
-current proof preserved a rejected `1149` attempt before passing on attempt
-`2/8`. It is still actor-composition dirty (`strict=0`, chr `7` onscreen and
-chr `44` room/position drift), and the projected-impact pixel ROI is report-only
-(`90.713%` changed; masked visual `projected_impact` is fully
-composition-polluted after exclusions). Use this route to continue impact/decal
-geometry and mask work, not to promote broad screenshot thresholds.
-
-To isolate the reported native-only extra room `124`, run:
-
-```sh
-tools/glass_pad10092_room_draw_isolation.sh --no-build \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_room_draw.XXXXXX)"
-```
-
-Current proof `/tmp/mgb64_glass_pad10092_room_draw_isolation` passes both
-native-only room-124 diagnostics. `GE007_FORCE_UNRENDERED_ROOMS=124` changes the
-metadata sample from `[124,132,136]` to `[132,136]`, and `GE007_SKIP_BG_ROOM=124`
-requests the lower-level room display-list skip; both variants leave the native
-screenshot byte-identical to default (`0.000%` changed) while preserving the
-health/glass, projection, and framing gates. Treat room `124` as trace-visible
-but pixel-neutral for this checkpoint. It is not the current pad-`10092`
-pixel-parity blocker.
-
-To isolate the remaining chr `7`/`44` actor lead without changing gameplay
-state, use the native-only draw-skip diagnostic:
-
-```sh
-tools/glass_pad10092_actor_ownership_isolation.sh --no-build \
-  --base-case-dir /tmp/mgb64_glass_pad10092_impact_visual_sequence_clean/pad10092_impact \
-  --out-dir "$(mktemp -d /tmp/mgb64_glass_pad10092_actor_owner.XXXXXX)"
-```
-
-The helper uses default-off `GE007_SKIP_RENDER_CHRNUMS` in `chrRenderProp`.
-Current proof `/tmp/mgb64_glass_pad10092_actor_ownership_isolation` passes the
-same health/glass, projection, and framing gates for `skip_chr7`, `skip_chr44`,
-and `skip_chr7_44`. The probe has real signal (`skip_chr44` changes native
-pixels by `0.309%`, mostly in the lower actor cluster), but stock-vs-native
-actor-masked mismatch and projected-impact mismatch both move by `0.000%` for
-all variants. Treat chr `7`/`44` draw ownership as ruled out for the current
-pad-`10092` pixel blocker; continue with material/presentation or stock/native
-blend/output differences before spending more time on those actors.
-
+(P2 hygiene reap, FID-0005: `tools/glass_contributor_isolation_regression.sh`
+and the ~18 one-off pad-10092/pad-10001/pad-10004 scout and probe scripts built
+alongside it for this investigation — `glass_pad10092_room_draw_isolation.sh`,
+`glass_pad10092_actor_ownership_isolation.sh`,
+`glass_pad10092_presentation_alignment_probe.sh`,
+`glass_pad10092_pixel_semantics_probe.sh`,
+`glass_pad10092_texgen_roi_material_probe.sh`,
+`glass_pad10092_room_glass_visibility_probe.sh`,
+`glass_pad10092_room_glass_scalar_oracle_probe.sh`,
+`glass_pad10092_room_glass_required_source_probe.sh`,
+`glass_pad10092_room_glass_source_recon_probe.sh`,
+`glass_pad10092_room_glass_pixel_oracle_probe.sh`,
+`glass_pad10092_room_glass_settex_sample_probe.sh`,
+`glass_pad10092_texgen_roi_pixel_correlation_probe.sh`,
+`glass_pad10092_roi_pixel_semantics_probe.sh`,
+`glass_pad10092_impact_sequence_scout.sh`, `glass_actor_clean_candidate_scout.sh`,
+`glass_native_fixture_scout.sh`, `score_native_glass_fixture.py`, and
+`analyze_room_glass_contribution_scalar.py` — have been removed as spent
+one-off tooling (docs/BACKLOG_v0.4.0.md MG.5). The ~800 lines of exploratory
+forensic narrative that previously lived in this section are preserved in git
+history (see the repo log for this file around the reap commit) for anyone who
+needs the full transcript.
+
+Net finding, preserved here because it drove a landed fix: an extensive
+native-only ownership sweep across the Dam active, impact, and pad-`10092`
+impact fixtures — shard suppression, bullet-impact suppression,
+weapon-render/fog toggles, blend/depth/alpha-scale variants, RDP
+memory/coverage-memory approximations, and a per-pixel source/opacity
+reconstruction of texnum `654` — ruled out every simple global toggle as a
+pad-`10092` pixel-parity fix and localized the remaining mismatch to exact
+room-glass `G_SETTEX` output composition. That investigation directly produced
+the landed fix recorded in `docs/RENDERING_REGRESSION_NOTES.md` item 13 (room
+`G_SETTEX` LOD endpoints are draw semantics, not matrix semantics;
+`GE007_DISABLE_SETTEX_FOOTPRINT_LOD=1` is the focused A/B), which remains
+guarded by the still-wired ctest
+`python3 tools/check_room_glass_source_reconstruction_regression.py`. Full
+pixel parity on the pad-`10092` tower-pane/impact-side ROIs remains open and is
+tracked as presentation-parity work in
+`docs/design/remaster-aaa/04-content-geometry-effects.md` (W4.E2), which keeps
+the two still-live probes below current: `glass_active_visual_isolation_regression.sh`
+and `glass_pad10092_impact_visual_regression.sh`.
 For that branch, use `tools/glass_actor_masked_visual_regression.sh`. It runs
 the permanent first-active route
 `dam_regular_glass_shatter_pad10092_actor_masked_visual_probe` with
@@ -4127,33 +3299,20 @@ not another GL coverage approximation. First prove framebuffer ownership with th
 native default-vs-`GE007_GLASS_SHARDS=0` control, then isolate pane break,
 impact/crack decal, HUD/viewmodel, and presentation-order contributors.
 
-`tools/score_glass_projected_pixels.py` is the M21 projected-pixel classifier
-for this same matched projection ROI. It confirms that the default renderer and
-the M19/M20 diagnostics fail in different ways, not just by a single coverage
-knob. The current default capture
-`/tmp/mgb64_m21_default_pixel_score_compare/projected_pixel_score.json` has
-`luma_delta_mean=5.899`, `sat_delta_mean=-0.151`,
-`abs_rgb_delta_mean=62.577`, and shifts stock buckets
-`bright=220`, `near_white=190`, `gray=112536` to native `bright=6`,
-`near_white=0`, `gray=136708`. The RDP memory-color and coverage-plus-memory
-diagnostics remain projection-matched but move into a brighter/desaturated
-cluster: `/tmp/mgb64_m19_manual_rdp_memory_compare/projected_pixel_score.json`
-and `/tmp/mgb64_m20_manual_rdp_cvg_memory_compare/projected_pixel_score.json`
-both report about `luma_delta_mean=11.90`, `sat_delta_mean=-0.144`,
-`abs_rgb_delta_mean=70.3`, `bright=267`, `near_white=656`, and
-`gray=124458`. This was useful negative evidence, but the current
-default-vs-shards-off control shows the falling-shard pass is not visible in the
-default checkpoint at all. Use this classifier only after framebuffer ownership
-is proven; otherwise pursue pane/decal/presentation separation before direct
-ares/Parallel-RDP shard-pixel work.
-
-`tools/score_glass_projection_win.py` compares projection comparison JSON files
-when a candidate is meant to improve shard containment rather than pixel color.
-Use it with a current-default projection JSON and a candidate projection JSON; it
-reports max-area, union-area, and onscreen errors separately. The historical
-`sqrt_basis` proof improved containment over `no_basis`; the current
-`inv_vis_full` default is stricter and passes the active route's stock/native
-projection gate.
+(P2 hygiene reap, FID-0005: `tools/score_glass_projected_pixels.py`, the M21
+projected-pixel classifier for this matched projection ROI, and
+`tools/score_glass_projection_win.py`, the projection-containment comparator,
+were one-off scripts and have been removed. Preserved finding: the M21 pass
+confirmed the default renderer and the M19/M20 RDP memory-color diagnostics
+fail in different ways, not just by a single coverage knob — the default
+capture shifted stock luma/saturation/RGB buckets in one direction while the
+RDP memory-color diagnostics moved into a brighter/desaturated cluster in
+another — but the default-vs-shards-off control showed the falling-shard pass
+is not visible in the default checkpoint at all, so framebuffer ownership must
+be proven before pursuing pixel-color work. Separately, the historical
+`sqrt_basis` shard-projection scale hypothesis improved containment over
+`no_basis`, but the current `inv_vis_full` default (FID-0003) is stricter and
+is the one guarded by the still-wired ctest `port_glass_shard_scale_guard`.)
 
 For the Dam regular-glass full-screen shatter regression, run
 `GE007_TRACE_SHARDS=1 GE007_EFFECT_TRI_TRACE=1

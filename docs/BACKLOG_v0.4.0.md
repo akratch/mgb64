@@ -943,10 +943,19 @@ recorded in `RENDERING_REGRESSION_NOTES.md` #13.
       `glass_material_regression.sh`, `glass_visual_oracle_regression.sh`,
       `glass_pad10092_impact_visual_regression.sh`; document it in INSTRUMENTATION.md and
       run it in the M8.3 release sweep.
-- [ ] Delete the ~34 one-off scouts (the other `glass_pad10092_*` probes, `glass_actor_*`,
+- [x] Delete the ~34 one-off scouts (the other `glass_pad10092_*` probes, `glass_actor_*`,
       the isolation/scout variants, and `analyze_*`/`score_*`/`compare_glass_projection_*`
       helpers not referenced by a wired guard). Their findings live in the regression
       notes; the scripts are spent. One commit, listed by name, revertable.
+      (Done `c0efdec`: 25 scripts reaped by proven-zero-reference closure, not 34 —
+      `glass_actor_masked_visual_regression.sh`/`glass_impact_visual_isolation_regression.sh`
+      had since become semi-wired via `dam_visual_regression_suite.sh` run_gate lines, and
+      `glass_active_visual_isolation_regression.sh`/`glass_pad10092_impact_visual_regression.sh`
+      are held pending remaster coordination per
+      `docs/design/remaster-aaa/04-content-geometry-effects.md`. The four
+      load-bearing-unwired scripts named in item 1 above, and their
+      `compare_glass_*`/`analyze_room_glass_required_source.py` dependencies, were kept
+      untouched.)
 - [ ] Keep the six ctest glass/XLU guards untouched.
 
 **Definition of done for the sprint:** the glass lane + shard-coverage regression pass on
