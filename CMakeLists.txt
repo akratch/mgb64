@@ -205,6 +205,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_rdp_render_mode_trace_summary_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/select_glass_shard_pixel_targets.py"
             "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_scale_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
             "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
@@ -266,6 +267,14 @@ if(BUILD_TESTING)
     add_test(
         NAME port_glass_shard_pixel_target_selection_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
+    )
+    # FID-0003: shard geometry scale = 1/visibility, coupled to field_10E0
+    # (retail-ASM-faithful net transform). Source invariant; ROM-free.
+    # Fail-on-revert: re-adding any retired shard A/B scale flag reddens this.
+    add_test(
+        NAME port_glass_shard_scale_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_scale_regression.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
     )
     add_test(
         NAME port_native_sdk_surface_guard

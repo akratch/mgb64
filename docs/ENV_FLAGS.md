@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**909 flags** found across the source.
+**904 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -395,7 +395,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_EXPLOSION_PART_FADE` | ? |  | 1 |  |
 | `GE007_EXPLOSION_TRACE` | ? |  | 1 |  |
 | `GE007_FIELD_10E0_FIXED` | ? |  | 1 |  |
-| `GE007_FIELD_10E0_SCALED` | ? |  | 1 |  |
+| `GE007_FIELD_10E0_SCALED` | ? |  | 3 |  |
 | `GE007_FIXED_ROOM_MTX` | ? |  | 1 |  |
 | `GE007_FLAT_BULLET_IMPACTS` | ? |  | 1 |  |
 | `GE007_FLAT_PROP_BULLET_IMPACTS` | ? |  | 1 |  |
@@ -448,12 +448,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_FULL_FRUSTUM_CLIP` | ? |  | 1 |  |
 | `GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
 | `GE007_GLASS_SHARDS` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_BASIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_COMPRESS` | ? |  | 2 |  |
 | `GE007_GLASS_SHARD_FIXED_MTX` | ? |  | 1 |  |
-| `GE007_GLASS_SHARD_INV_VIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_NO_BASIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_SQRT_BASIS` | ? |  | 2 |  |
 | `GE007_GLASS_SHOT_DEPTH_TOLERANCE` | ? |  | 1 |  |
 | `GE007_GUARD_ORACLE_TRACE` | ? |  | 2 |  |
 | `GE007_GUARD_PRE_XFORM_10D4` | ? |  | 1 |  |

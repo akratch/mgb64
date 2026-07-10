@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P1",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [
     "src/game/unk_0A1DA0.c:1266-1336",
     "tools/compare_glass_shard_pixel_oracle.py"
@@ -15,6 +15,14 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#MG.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/unk_0A1DA0.c:1475-1536 (glabel sub_GAME_7F0A2C44 loop .L7F0A2DB0): shard matrix emitted with NO per-piece scalar multiply; faithful only when field_10E0 is unscaled"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "unk_0A1DA0.c: 6 scale flags collapsed to 1 coupling keyed on GE007_FIELD_10E0_SCALED; default bit-identical; regression lane port_glass_shard_scale_guard PASS + fail-on-revert"
     }
   ],
   "history": [
@@ -24,6 +32,20 @@
       "to": "triaged",
       "evidence": "docs/BACKLOG_v0.4.0.md#MG.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T10:59:45Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/unk_0A1DA0.c:1475-1536 (glabel sub_GAME_7F0A2C44 loop .L7F0A2DB0): shard matrix emitted with NO per-piece scalar multiply; faithful only when field_10E0 is unscaled",
+      "note": "Retail ASM applies no shard basis scale. Port ships field_10E0 scaled by visibility (bondview.c:16188, default on); Dam/Surface visibility=0.2. Correct shard scale = 1/visibility to net retail. Only flag #5 (INV_VIS_SCALE) inverts it; it is the current default. See docs/fidelity/derivations/FID-0003-glass-shard-scale.md"
+    },
+    {
+      "ts": "2026-07-10T10:59:45Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "unk_0A1DA0.c: 6 scale flags collapsed to 1 coupling keyed on GE007_FIELD_10E0_SCALED; default bit-identical; regression lane port_glass_shard_scale_guard PASS + fail-on-revert",
+      "note": "Collapsed COMPRESS/BASIS_SCALE/NO_BASIS_SCALE/SQRT_BASIS/INV_VIS_SCALE to field_10E0-coupled 1/visibility. ENV_FLAGS regen. sim_state_hash + all glass ctests pass."
     }
   ]
 }

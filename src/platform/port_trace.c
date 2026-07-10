@@ -288,34 +288,17 @@ static int traceGlassShardEmitEnabled(void) {
     return !(value != NULL && value[0] == '0');
 }
 
-static int traceGlassShardCompressFullMatrix(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_COMPRESS");
+/* FID-0003: the shard scale is no longer a six-way A/B. It is coupled to the
+ * field_10E0 (proj*view) visibility scaling: when field_10E0 carries the level
+ * visibility (GE007_FIELD_10E0_SCALED, default on) the emitter applies the
+ * inverse-visibility compensation; when field_10E0 is unscaled the shard is
+ * drawn unscaled (== retail ASM). This mirror keeps the trace's reported
+ * scale_mode truthful. The per-candidate summaries below are retained purely as
+ * offline diagnostics for the pixel oracle. */
+static int traceGlassShardField10E0Scaled(void) {
+    const char *value = getenv("GE007_FIELD_10E0_SCALED");
 
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardBasisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_BASIS_SCALE");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardNoBasisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_NO_BASIS_SCALE");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardSqrtBasis(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_SQRT_BASIS");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardInvVisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_INV_VIS_SCALE");
-
-    return !(value != NULL && value[0] != '\0' && value[0] == '0');
+    return !(value != NULL && value[0] == '0');
 }
 
 static float traceMtxFixedElement(const Mtx *matrix, int row, int col) {
@@ -793,11 +776,7 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
     int projection_valid = 0;
     int projection_is_float = 0;
     int emit_enabled = traceGlassShardEmitEnabled();
-    int compress_full = traceGlassShardCompressFullMatrix();
-    int basis_scale = traceGlassShardBasisScale();
-    int no_basis_scale = traceGlassShardNoBasisScale();
-    int sqrt_basis = traceGlassShardSqrtBasis();
-    int inv_vis_scale = traceGlassShardInvVisScale();
+    int field10e0_scaled = traceGlassShardField10E0Scaled();
     int sample_all = traceGlassProjectionAllSamples();
     int sample_limit = sample_all ? TRACE_GLASS_PROJECTION_SAMPLE_ALL_MAX : TRACE_GLASS_PROJECTION_SAMPLE_DEFAULT_MAX;
     int selected_mode = TRACE_GLASS_SCALE_INV_VIS_FULL;
@@ -837,15 +816,11 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
 
     traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
 
-    if (compress_full) {
-        selected_mode = TRACE_GLASS_SCALE_FULL_MATRIX;
-    } else if (basis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_BASIS;
-    } else if (no_basis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_NO_BASIS;
-    } else if (sqrt_basis || !inv_vis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_SQRT_BASIS;
-    }
+    /* Coupled to field_10E0: scaled -> inverse-visibility compensation;
+     * unscaled -> shard drawn as-is (the retail-ASM path). */
+    selected_mode = field10e0_scaled
+                        ? TRACE_GLASS_SCALE_INV_VIS_FULL
+                        : TRACE_GLASS_SCALE_NO_BASIS;
     for (int mode = 0; mode < TRACE_GLASS_SCALE_COUNT; mode++) {
         traceGlassProjectionSummaryInit(&summaries[mode], mode == selected_mode, sample_limit);
     }
@@ -962,11 +937,11 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
              projection[1][3],
              projection[2][3],
              projection[3][3],
-             compress_full,
-             basis_scale,
-             no_basis_scale,
-             sqrt_basis,
-             inv_vis_scale,
+             0,                  /* compress_full_matrix: retired A/B (FID-0003) */
+             0,                  /* basis_scale: retired A/B (FID-0003) */
+             !field10e0_scaled,  /* no_basis_scale: live when field_10E0 unscaled */
+             0,                  /* sqrt_basis: retired A/B (FID-0003) */
+             field10e0_scaled,   /* inv_vis_scale: live default (coupled) */
              room_scale,
              vis_scale,
              traceGlassProjectionScaleModeName(selected_mode),
