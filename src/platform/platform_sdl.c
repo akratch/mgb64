@@ -197,7 +197,11 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
+#ifdef MGB64_PORTMASTER_GLES
+f32 g_pcRenderScale = 1.0f;   /* R36S: native res — 2x SSAA renders at 1280x960 on a Mali-G31 */
+#else
 f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
+#endif
 s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
 f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
 f32 g_pcCutsceneFovY = 60.0f;    /* D6/T16: authored cinematics render at the N64's fixed 60deg vertical FOV regardless of gameplay Video.FovY; 0 = follow Video.FovY. */
@@ -206,7 +210,11 @@ f32 g_pcVideoContrast = 1.08f;   /* remaster default: gentle contrast pop */
 f32 g_pcVideoBrightness = 0.04f;  /* kept neutral (brightness offset is taste-sensitive) */
 s32 g_pcOutputDither = 1;        /* remaster default: on (anti-banding under the grade) */
 f32 g_pcVignette = 0.15f;        /* remaster default: soft edge falloff for depth */
+#ifdef MGB64_PORTMASTER_GLES
+s32 g_pcBloom = 0;
+#else
 s32 g_pcBloom = 1;               /* remaster default: on (light bleed on emitters/sky) */
+#endif
 f32 g_pcBloomThreshold = 0.8f;
 f32 g_pcBloomIntensity = 0.5f;
 s32 g_pcSsao = 0;                /* default OFF (identity-first landing; flip on at the review checkpoint) */
@@ -221,7 +229,11 @@ f32 g_pcSsaoSkyCut = 0.9999f;    /* window-depth >= this = sky: no AO */
 s32 g_pcSsaoHalfRes = 0;         /* render AO at half scene res (P1a-perf) */
 s32 g_pcSsaoBlur = 0;            /* separable bilateral blur pass (P1a-perf) */
 f32 g_pcSsaoBlurDepthSharp = 8.0f; /* bilateral blur depth-weight sharpness */
+#ifdef MGB64_PORTMASTER_GLES
+s32 g_pcFxaa = 0;
+#else
 s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge cleanup atop SSAA) */
+#endif
 s32 g_pcSmaa = 0;                /* W3.E4: subpixel morphological AA (Metal-only); default OFF. When on, replaces FXAA on the output pass (mutually exclusive). --remaster keeps FXAA until the ◆ preset decision (E4.T3). */
 f32 g_pcSharpen = 0.15f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
@@ -237,8 +249,13 @@ f32 g_pcSunShadowUmbra = 0.55f;   /* W1.E3.T4: shadowed-surface darkening (1.0 =
 s32 g_pcPerPixelLight = 0;       /* W1.E4: default OFF (identity-first). Per-pixel geometric-normal (dFdx) directional sun on room surfaces; supersedes E1 CPU relight when on. */
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
+#ifdef MGB64_PORTMASTER_GLES
+s32 g_pcTonemap = 0;
+s32 g_pcRemasterFX = 0;
+#else
 s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
 s32 g_pcRemasterFX = 1;          /* MASTER faithful switch: 0 = bypass ALL remaster post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA) for the original look. HD textures + SSAA (fidelity, not look) stay via their own settings. */
+#endif
 s32 g_pcFpsOverlay = 1;          /* T11: app-level FPS/frame-time/1%-low overlay. Deliberately NOT in the --faithful/--faithful-hd preset tables (a HUD debug widget, not part of the original LOOK), so neither preset touches it. Force-suppressed (zero DL bytes) under --deterministic / GE007_BACKGROUND / --screenshot-frame sessions regardless of this setting — see src/game/pc_fps_overlay.c. */
 char g_pcTexturePack[1024] = ""; /* Video.TexturePack: dir of an HD texture pack (textures/tok####.png). Empty = off (stock, byte-identical). */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
