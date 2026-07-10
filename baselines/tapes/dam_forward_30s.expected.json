@@ -1,0 +1,10 @@
+{
+  "tape": "dam_forward_30s.ge7tape",
+  "level": "dam",
+  "level_id": 33,
+  "difficulty": 0,
+  "tick_count": 1802,
+  "controller_count": 1,
+  "sim_state_hash": "95944e2282a48178",
+  "note": "30s scripted forward+strafe walk on the Dam under the determinism envelope (GE007_AUTO_FORWARD/RIGHT baked into the captured OSContPad stream). Byte-exact replay: record==replay1==replay2. Regenerate the tape only via tools/fidelity/tape_regression.sh --record; the hash is the regression guard. Re-baselined 2026-07-09 (17d978581466799f\u219295944e2282a48178): FID-0030 hash-region expansion (stan/collision scratch, g_BgRoomInfo, g_randomSeed) changed the hash COMPUTATION; sim behavior byte-identical (trace/screenshot unchanged, sim_invariance OFF==ON). Not a regression."
+}

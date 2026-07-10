@@ -1,0 +1,30 @@
+{
+  "id": "FID-0021",
+  "title": "Metal degraded-target drops whole frame; mid-frame readback stalls (R16-R18/M3.6)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "gfx_metal.mm:1005",
+    "gfx_metal.mm:3148+",
+    "gfx_metal.mm:2823"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M3.6",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M3.6",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

@@ -31,6 +31,13 @@ void portWatchdogLoadBegin(void);
 /* Frame loop (re)entered — arm stall detection. */
 void portWatchdogLoadEnd(void);
 
+/* MC.7 solo-pause: a legitimate single-player pause (settings overlay open)
+ * intentionally freezes the sim tick (g_ClockTimer=0) while rendering keeps
+ * running. Suppress stall detection while paused so the frozen sim state can't
+ * be misread as a wedge. Idempotent; called every frame from the sim loop with
+ * the current pause state (1 = paused, 0 = running). */
+void portWatchdogSetPaused(int paused);
+
 /* Sim/main thread, once per completed main-loop frame: records the
  * breadcrumb for this frame and publishes the heartbeat. */
 void portWatchdogFrameTick(void);

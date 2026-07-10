@@ -1,0 +1,49 @@
+{
+  "id": "FID-0048",
+  "title": "Combat oracle shots_fired_total/hits_landed_total have no retail-equivalent accumulator read ares-side",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "tools/compare_combat_trace.py (combat.shots_fired_total / combat.hits_landed_total divergence)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#3"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#9"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T00:55:04Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#3",
+      "note": "Native reads shot regs + a player-hit counter; ares emits 0. Locate/read the retail equivalents to close."
+    },
+    {
+      "ts": "2026-07-10T06:56:34Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "FID-0032 verify capture (dam_forward_stop): shots_fired_total and hits_landed_total both 0/0 on both sides all 138 frames (no shooting on this route) so no divergence surfaced. Disposition: hits_landed_total has NO retail-equivalent accumulator \u2014 it is the native trace-only running counter s_traceGuardHitEventCount (port_trace.c:1725 region), so there is nothing to read ares-side; structurally NOT closable by address mapping (dossier combat_oracle_fields.md \u00a73/\u00a75 documents this as divergence-by-construction). shots_fired_total COULD be derived ares-side by summing the per-weapon N64 shot registers (native shots.total), but those addresses are not in the in-tree symbol set and validation needs a shooting route. Both need a combat/shooting route + (for shots) US shot-reg addrs. Left open; hits_landed_total may warrant reclassification to documented (no retail equivalent) rather than instrumentation-gap."
+    },
+    {
+      "ts": "2026-07-10T07:33:44Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#9",
+      "note": "Now EXERCISED by combat route dam_combat_guard6: combat.shots_fired_total diverges 198 field-hits (native counts 7 shots, ares emits 0). Confirms disposition: shots_fired_total needs US per-weapon shot-register addrs (not in-tree); hits_landed_total remains a native-only counter with no retail accumulator (documented gap, not closable by address mapping). Left triaged."
+    }
+  ]
+}

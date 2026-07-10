@@ -1,0 +1,28 @@
+{
+  "id": "FID-0055",
+  "title": "Combat oracle guard anim_hash (4968) + flags_onscreen (1568) divergence native-vs-stock on Dam \u2014 animation-phase / onscreen visibility",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chr.c (modelTickAnimQuarterSpeed cadence)",
+    "src/platform/port_trace.c:traceModelAnimationHeaderHash / onscreen flag"
+  ],
+  "repro": "tools/movement_oracle_capture.sh --route dam_forward_stop --native-full-trace --ares-bin <ares> --no-compare --out-dir /tmp/cap; tools/compare_combat_trace.py --baseline /tmp/cap/stock_dam_forward_stop.jsonl --test /tmp/cap/native_dam_forward_stop.jsonl --align move",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T06:55:25Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "Both-sides Dam capture (FID-0032 verify), 138 frames. Two dominant guard sub-divergences with distinct root causes from the FID-0054 AI-state cluster: (1) anim_hash diverges on 4968 field-hits \u2014 the per-guard animation header state differs, i.e. animation frame/phase cadence is not lock-step native-vs-stock (H3 freeze-timer / H4 ACT_ANIM sub-frame cadence territory). (2) flags_onscreen diverges on 1568 hits \u2014 the PROPFLAG_ONSCREEN visibility bit differs because the native renderer and ares Parallel-RDP compute guard on-screen visibility differently (render-dependent; likely parity-divergence, ties to FID-0012 guard-visibility->sim coupling). Both need frame-locked capture + classification. Lower priority than FID-0054 (AI-state) since anim-phase drift is largely cosmetic and onscreen is render-derived."
+    }
+  ]
+}

@@ -135,6 +135,34 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 
 ## 4. Verified by execution
 
+- **MW.3 Windows EXECUTION lane (`.github/workflows/windows-validate.yml`):** the
+  credibility gate that proves the Windows build *runs*, on a real `windows-latest`
+  kernel. `workflow_dispatch` (matching the repo's no-auto-trigger posture). It:
+  (1) **builds** `ge007.exe` via MSYS2 MINGW64, mirroring the release.yml Windows job
+  *exactly* (same packages, same `-DMGB64_APP=ON -DPORT_VALIDATION_TESTS=OFF`
+  `-DMGB64_VERSION=…`, same GUI-subsystem/static-GCC-runtime binary), so the build
+  half is known-good by construction; (2) runs the **import-table guard** from
+  `tools/mingw_cross_check.sh` on the built exe with the real toolchain's `objdump` —
+  the `libgcc_s_seh-1`/`libstdc++-6`/`libwinpthread-1` regression class (the
+  "DLL not found" crash on a stock Windows box) fails *in CI on real Windows*, not on
+  a player's machine; (3) drives the **ROM-free execution surfaces** with SDL dummy
+  drivers — `MGB64_APP_DUMP_SCHEMA` (config-registry enumeration + tiers),
+  `--dump-config`/`--list-settings` (the automation-flag allow-list → headless engine
+  path), and `MGB64_UPDATE_CHECK_SELFTEST` with `GE007_UPDATE_CHECK=0` (the gated
+  update state machine, no network) — asserting exit 0 + expected stdout, exercising
+  real process startup, the static CRT, config load, and the schema/diag logic on a
+  real kernel; (4) runs the **ROM-free CTest subset** (`arg_triage`, `rom_validate`,
+  `update_check`, `port_env`, `sim_state_hash`, `room_normals`) as native Windows exes,
+  proving the binary's non-rendering logic executes on a real kernel; (5) **asset-free
+  verify** + uploads the `.exe` artifact. The GPU/render path is deliberately *out of
+  scope* here — the headless runner has no display, so shader/vsync/window behavior
+  stays MW.5's job (§5). **Status: lane wired + actionlint-clean; every ROM-free smoke
+  command and the ctest subset were proven ROM-free locally (macOS native build, SDL
+  dummy drivers) before wiring, so the CI steps are known-good commands, not guesses.
+  The lane is GREEN-able and must be DISPATCHED + green on the release commit before
+  the cut (RX.9/M8.3) — it cannot self-run (dispatch needs it merged to origin).**
+  This is the headline "Windows executed" evidence; MW.5 (VM real-GPU render) and
+  MC.6 (on-device handheld + haptics) remain.
 - **MW.2 cross lane (compile/link truth):** `tools/mingw_cross_check.sh` — PASS,
   zero errors, on the exact CMake config the release CI ships. Re-run in this
   worktree before (61 warnings, reproducing MW.2's census exactly) and after
@@ -155,7 +183,7 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 | M6.1 tee / M6.2 SEH filter / watchdog **firing at runtime** | Mechanical CRT/Win32 idioms (`_pipe`+`_dup2`, `SetUnhandledExceptionFilter`, `_open/_write`); code compiles against real headers; POSIX twins are field-proven | MW.4 (Wine: tee+watchdog; **not** SEH — Wine's SEH isn't the Windows kernel's), MW.5 (real kernel), or first Windows contributor run |
 | **Crash dump delivery under the tee** — the direct-fd mirror (§3) is the mechanism that makes `[CRASH]` reach mgb64.log/console; it is unexercised on a real kernel | Raw `_write` to already-open fds is the narrowest possible crash-time IO; no pipe, no reader thread, no stdio, no allocation | MW.4/MW.5 must test the **teed** crash path specifically (interactive shell + forced fault), not just the headless one. On POSIX the pre-existing pipe race remains (out of MW scope — POSIX diag backlog) |
 | **Windows stack-overflow faults die silently** — the SEH filter runs on the faulting thread's exhausted stack (`head[128]`+`diag[768]`+snprintf frames will usually double-fault on `STATUS_STACK_OVERFLOW`); POSIX covers this exact case with `sigaltstack` | Every *other* fault class still gets diagnostics; stack overflow is rare in a fixed-arena engine; fix (`SetThreadStackGuarantee`) is known and cheap if MW.5 shows it matters | Attested asymmetry, not scheduled this cycle |
-| WGL driver behavior (GL 3.3 core shaders, vsync, fullscreen-desktop) | SDL's most-traveled Windows path; shaders are GLSL 330 core with no vendor extensions; prior v0.3.x field runs rendered | MW.3 (headless smoke on windows-latest), MW.5 (visual) |
+| WGL driver behavior (GL 3.3 core shaders, vsync, fullscreen-desktop) | SDL's most-traveled Windows path; shaders are GLSL 330 core with no vendor extensions; prior v0.3.x field runs rendered | MW.3 executes the exe headlessly (startup/config/logic — **not** GPU render, which the headless runner can't drive); **MW.5 (visual/real-GPU) still owns the render path** |
 | WASAPI audio timing under the 22050 Hz pull model | SDL converts/paces internally; same callback code runs CoreAudio today | MW.5 / field |
 | XInput handheld controls specifically | SDL GameController abstracts them; such devices present a standard XInput pad | MC sprint hardware pass |
 | msvcrt-vs-UCRT runtime differences (CI artifact links msvcrt) | §3 format-posture analysis; no other CRT-divergent API in use (fsync→`_commit`, rename→`MoveFileExA` already explicit) | Consider migrating CI to MSYS2 `UCRT64` to match the locally-tested runtime |
@@ -163,8 +191,11 @@ are not comparable across the two lanes; the *classes* are what's attested here.
 
 **Bottom line:** compile/link is a fact (MW.2, reproduced here); every known
 Windows-pitfall class has been swept with 6 concrete fixes landed (M6.1, M6.2,
-watchdog, LLP64 formats, PATH_MAX truncation, math-shim gap); what remains untested
-is runtime-only and is exactly what MW.3–MW.5 exist to execute.
+watchdog, LLP64 formats, PATH_MAX truncation, math-shim gap); the MW.3 lane now
+executes the binary on a real Windows kernel (build + import-table guard + ROM-free
+smoke + ctest — GREEN-able, pending its first dispatch on origin). What remains
+untested is the GPU render path and crash/tee/watchdog *firing* on a real kernel —
+exactly what MW.5 exists to execute.
 
 ---
 

@@ -1,0 +1,83 @@
+{
+  "id": "FID-0042",
+  "title": "ASM audit coverage: 388 GLOBAL_ASM reference bodies, no systematic reviewed/verdict tracking",
+  "class": "coverage-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "verified",
+  "suspect": [
+    "\u00a75 Task 2.4"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/asm_audit_queue.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/asm_audit_queue.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/asm_audit_queue.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/asm_audit_queue.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/asm_audit_queue.json"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#5",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T06:43:14Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/asm_audit_queue.json",
+      "note": "queue tooling built"
+    },
+    {
+      "ts": "2026-07-10T06:43:14Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/asm_audit_queue.json",
+      "note": "coverage-gap = no verdict tracking; queue is the tracker"
+    },
+    {
+      "ts": "2026-07-10T06:43:14Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "docs/fidelity/asm_audit_queue.json",
+      "note": "queue built + CLI + ctest"
+    },
+    {
+      "ts": "2026-07-10T06:43:14Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "docs/fidelity/asm_audit_queue.json",
+      "note": "tools/fidelity/asm_audit.py + fidelity_asm_audit_valid ctest"
+    },
+    {
+      "ts": "2026-07-10T06:43:14Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/asm_audit_queue.json",
+      "note": "queue built, 388 entries, 5 piloted"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "FID-0061",
+  "title": "Sim-state hash is build-config (FP-optimization) sensitive \u2014 deterministic baselines are Release-locked; bare cmake build reddens tape/combat lanes",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "CMakeLists.txt:2"
+  ],
+  "repro": "cmake -B build (no -DCMAKE_BUILD_TYPE) \u2192 empty type \u2192 sim-state hash differs from Release baseline \u2192 combat_route_capture_smoke + tape_regression FAIL 'sim diverged'. FP contraction/reordering differs at -O0 vs -O2.",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/combat_route_capture_smoke.sh:171"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T08:30:38Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "tools/fidelity/combat_route_capture_smoke.sh:171",
+      "note": "Both FID-0054 and FID-0058 agents hit this on fresh /tmp builds. MITIGATED (this FID): CMakeLists now defaults CMAKE_BUILD_TYPE=Release when unset (single-config generators) so bare cmake -B build reproduces canonical hashes. DEEPER (open): the sim is not bit-reproducible ACROSS optimization levels \u2014 determinism holds WITHIN a config only. Full cross-config reproducibility would need strict-FP flags (-ffp-contract=off etc.) on the sim TUs; scoped but not done (risk: perf + may shift the canonical hash \u2192 rebaseline). Lanes also print a 'not the canonical Release build' hint. Netplay/replay/oracle baselines are config-locked until strict-FP lands."
+    }
+  ]
+}

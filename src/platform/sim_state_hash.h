@@ -14,8 +14,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Upper bound on registered state regions (pool + curated globals). */
-#define SIM_HASH_MAX_REGIONS 32
+/* Upper bound on registered state regions (pool + curated globals + the stan
+ * collision-navmesh region set appended by stanBuildHashRegions). */
+#define SIM_HASH_MAX_REGIONS 64
 
 typedef struct {
     const char *name;   /* stable identity; hashed so region-set changes are caught */
@@ -32,6 +33,15 @@ typedef struct {
  */
 uint64_t sim_state_hash_compute(const SimHashRegion *regions, int n);
 
+/*
+ * Hash the contribution of a single region `k` in isolation, using the full
+ * region set `regions` for cross-region pointer canonicalization (so links stay
+ * ASLR-invariant). Diagnostic only: lets an A/B attribute a full-hash divergence
+ * to the specific region whose bytes changed (e.g. render->sim room_rendered vs
+ * downstream guard/pool state). Returns FNV64_OFFSET-seeded hash of region k.
+ */
+uint64_t sim_state_hash_compute_region(const SimHashRegion *regions, int n, int k);
+
 /* Write the gate result as JSON (hash, frame, replay, region names+sizes). */
 int sim_state_hash_emit_json(const char *path, uint64_t hash,
                              const SimHashRegion *regions, int n,
@@ -41,8 +51,21 @@ int sim_state_hash_emit_json(const char *path, uint64_t hash,
  * `*n` returns the count. Defined in sim_state_hash_registry.c (game build only). */
 void simHashRegistryBuild(SimHashRegion *out, int *n);
 
+/* Append the stan collision-navmesh region set starting at index *n (advances
+ * *n). Defined in src/game/stan.c where the collision globals' types are visible
+ * (M8.1/FID-0030). Game build only. */
+void stanBuildHashRegions(SimHashRegion *out, int *n);
+
+/* Append the g_BgRoomInfo region (room_rendered render->sim read-back, FID-0012)
+ * at index *n (advances *n). Defined in src/game/bg.c. Game build only. */
+void bgBuildHashRegions(SimHashRegion *out, int *n);
+
 /* If g_simStateHashOut is set, build the registry, hash it, and emit the JSON.
  * Called at deterministic screenshot-exit, before teardown. Game build only. */
 void simStateHashEmitIfRequested(int frame, const char *replay);
+
+/* Per-frame region-hash trace for frame-locking A/B divergences (FID-0058).
+ * No-op unless GE007_SIM_HASH_EVERY_FRAME is set. Game build only. */
+void simStateHashPerFrameTrace(int global_timer);
 
 #endif /* SIM_STATE_HASH_H */

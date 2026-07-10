@@ -51,6 +51,7 @@ extern "C" {
 #include "gfx_rendering_api.h"
 #include "gfx_screen_config.h"
 #include "gfx_uniforms.h"   /* render/post-FX uniform state shared with the GL backend */
+#include "gfx_msaa_util.h"  /* FID-0018: MSAA sample-count resolution (pure, unit-tested) */
 /* SMAA (W3.E4) committed reference LUTs (E4.T1): AreaTex 160x560 RG8, SearchTex
  * 64x16 R8 — first-party generated from the MIT SMAA reference (no ROM data). */
 #include "smaa_area_tex.h"
@@ -817,6 +818,23 @@ static_assert(sizeof(struct MtlUniforms) == 160,
  * RDP snapshot; the drawable is framebufferOnly and cannot serve those). */
 static id<MTLTexture> s_scene_color = nil;
 static id<MTLTexture> s_scene_depth = nil;
+/* FID-0018: multisample scene attachments, allocated only when Video.MSAA
+ * resolves to >1 (else nil, and the scene pass binds the single-sample targets
+ * above unchanged = byte-identical to pre-fix). The scene pass renders into
+ * these and StoreAndMultisampleResolve's the color into s_scene_color (which the
+ * snapshot copy, output filter, present blit and readback all read as before);
+ * the MS depth is kept (Store) so a mid-frame snapshot reopen can Load it, and is
+ * never sampled (SSAO is disabled under MSAA, matching the GL contract).
+ * s_msaa_samples is the effective, device-clamped rasterSampleCount (1 = off). */
+static id<MTLTexture> s_scene_color_ms = nil;
+static id<MTLTexture> s_scene_depth_ms = nil;
+static int s_msaa_samples = 1;
+/* FID-0018: the MSAA sample count whose MS-texture allocation last failed at the
+ * current framebuffer size (0 = none). Under sustained VRAM pressure this stops
+ * mtl_ensure_targets from re-attempting the same doomed allocation — and respamming
+ * the warning + reallocating every target — on every frame; it retries only when
+ * the requested count or the size changes. */
+static int s_msaa_failed_req = 0;
 /* W1.E3.T3: sun shadow depth-only pass state (mirrors gfx_opengl.c). */
 static id<MTLTexture> s_shadow_depth = nil;      /* Depth32Float, res x res */
 static int s_shadow_res = 0;
@@ -971,12 +989,91 @@ static MTLSamplerAddressMode mtl_wrap(uint32_t v) {
 
 extern "C" int gfx_metal_max_offscreen_dim(void);  /* defined below */
 
+/* FID-0018: alpha-to-coverage master switch, mirroring the GL negative control
+ * (gfx_opengl.c gfx_opengl_a2c_enabled / GE007_NO_A2C=1). A2C only ever engages
+ * when MSAA is active AND the material is an alpha-tested cutout, so this gates
+ * that; it is a no-op when MSAA is off. */
+static bool mtl_a2c_enabled(void) {
+    static int force = -1;
+    if (force < 0) {
+        const char *e = getenv("GE007_NO_A2C");
+        force = (e && e[0] && strcmp(e, "0") != 0) ? 0 : 1;
+    }
+    return force != 0;
+}
+
+/* FID-0018 negative control: GE007_NO_METAL_MSAA=1 forces the Metal backend back
+ * to its pre-fix single-sample behavior regardless of Video.MSAA (the A/B opt-out
+ * for the whole fix — with it set, edges alias exactly as before; unset, the
+ * setting is honored). Byte-identical to pre-fix when set. */
+static bool mtl_msaa_force_off(void) {
+    static int force = -1;
+    if (force < 0) {
+        const char *e = getenv("GE007_NO_METAL_MSAA");
+        force = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return force != 0;
+}
+
+/* Effective, device-clamped scene-pass sample count for Video.MSAA (1 = off).
+ * Reads the live setting each call (Video.MSAA is SETTING_SCOPE_LIVE) so a
+ * runtime toggle re-sizes the targets next frame. The device-support mask is
+ * probed once. Logs a one-shot line whenever the resolved count changes, so the
+ * "setting took effect" evidence is visible in the backend's own output. */
+static int mtl_effective_msaa_samples(void) {
+    if (mtl_msaa_force_off() || s_device == nil) return 1;
+
+    static unsigned sup_mask = 0;
+    static bool probed = false;
+    if (!probed) {
+        probed = true;
+        if ([s_device supportsTextureSampleCount:2]) sup_mask |= GFX_MSAA_SUP_2;
+        if ([s_device supportsTextureSampleCount:4]) sup_mask |= GFX_MSAA_SUP_4;
+        if ([s_device supportsTextureSampleCount:8]) sup_mask |= GFX_MSAA_SUP_8;
+    }
+
+    int requested = g_pcMsaaSamples;
+    int effective = gfxMsaaResolveSampleCount(requested, sup_mask);
+
+    static int last_req = -0x7fffffff, last_eff = -0x7fffffff;
+    if (requested != last_req || effective != last_eff) {
+        if (requested >= 2 && effective != requested) {
+            fprintf(stderr, "[metal] Video.MSAA=%d clamped to %dx (device support mask 0x%x)\n",
+                    requested, effective, sup_mask);
+        } else {
+            fprintf(stderr, "[metal] MSAA: Video.MSAA=%d -> rasterSampleCount %d%s\n",
+                    requested, effective, effective > 1 ? "x" : " (off)");
+        }
+        fflush(stderr);
+        last_req = requested;
+        last_eff = effective;
+    }
+    return effective;
+}
+
+/* True while the scene pass is rendering multisampled (this frame's resolved
+ * count > 1). Used to disable SSAO under MSAA (GL contract) and to gate A2C. */
+static inline bool mtl_msaa_active(void) { return s_msaa_samples > 1; }
+
 static void mtl_ensure_targets(int w, int h) {
     if (w <= 0 || h <= 0) return;
     int cap = gfx_metal_max_offscreen_dim();
     if (w > cap) w = cap;
     if (h > cap) h = cap;
-    if (s_scene_color != nil && s_fb_w == w && s_fb_h == h) return;
+    /* FID-0018: re-resolve the effective sample count (Video.MSAA is live) and
+     * re-allocate when it changes, so a runtime MSAA toggle takes effect. When
+     * off (want_samples == 1) the MS attachments are freed and the pass reverts
+     * to the single-sample path = byte-identical. */
+    int want_samples = mtl_effective_msaa_samples();
+    /* Don't re-attempt an MS allocation that already failed at this exact size
+     * (VRAM pressure) — that would thrash every target + respam the warning each
+     * frame. Fall back to single-sample until the request or the size changes. */
+    if (want_samples > 1 && want_samples == s_msaa_failed_req &&
+        s_fb_w == w && s_fb_h == h) {
+        want_samples = 1;
+    }
+    if (s_scene_color != nil && s_fb_w == w && s_fb_h == h &&
+        s_msaa_samples == want_samples) return;
     /* Scene color: render target + blit source (present/readback/snapshot) AND
      * the Phase-4 output-filter source (sampled/read in the filter fragment), so
      * it needs ShaderRead. */
@@ -1021,14 +1118,57 @@ static void mtl_ensure_targets(int w, int h) {
         fprintf(stderr, "[metal] WARNING: scene target allocation failed (%dx%d)\n", w, h);
         s_scene_color = nil;
         s_scene_depth = nil;
+        s_scene_color_ms = nil;
+        s_scene_depth_ms = nil;
+        s_msaa_samples = 1;
         s_snapshot_tex = nil;
         s_final_color = nil;
         s_filter_low = nil;
         s_readback_src = nil;
         return;
     }
+    /* FID-0018: multisample scene attachments. Only the color needs a resolve
+     * target (StoreAndMultisampleResolve -> s_scene_color); neither is ever
+     * sampled, so ShaderRead is not requested. Allocation failure downgrades to
+     * single-sample (want_samples := 1) rather than dropping the frame — the
+     * scene still renders, just without MSAA. */
+    id<MTLTexture> color_ms = nil, depth_ms = nil;
+    if (want_samples > 1) {
+        MTLTextureDescriptor *cmd =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                               width:w height:h mipmapped:NO];
+        cmd.textureType = MTLTextureType2DMultisample;
+        cmd.sampleCount = (NSUInteger)want_samples;
+        cmd.usage = MTLTextureUsageRenderTarget;
+        cmd.storageMode = MTLStorageModePrivate;
+        color_ms = [s_device newTextureWithDescriptor:cmd];
+
+        MTLTextureDescriptor *dmd =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                               width:w height:h mipmapped:NO];
+        dmd.textureType = MTLTextureType2DMultisample;
+        dmd.sampleCount = (NSUInteger)want_samples;
+        dmd.usage = MTLTextureUsageRenderTarget;
+        dmd.storageMode = MTLStorageModePrivate;
+        depth_ms = [s_device newTextureWithDescriptor:dmd];
+
+        if (color_ms == nil || depth_ms == nil) {
+            fprintf(stderr, "[metal] WARNING: %dx MSAA target alloc failed (%dx%d) — MSAA off this frame\n",
+                    want_samples, w, h);
+            color_ms = nil;
+            depth_ms = nil;
+            s_msaa_failed_req = want_samples;  /* latch: don't retry this combo */
+            want_samples = 1;
+        } else {
+            s_msaa_failed_req = 0;  /* succeeded — clear any prior failure latch */
+        }
+    }
+
     s_scene_color = color;
     s_scene_depth = depth;
+    s_scene_color_ms = color_ms;   /* nil when MSAA off (frees the prior MS texture via ARC) */
+    s_scene_depth_ms = depth_ms;
+    s_msaa_samples = want_samples;
     s_snapshot_tex = snap;
     s_final_color = finalc;
     s_filter_low = low;
@@ -1076,10 +1216,12 @@ static void mtl_build_vertex_descriptor(MetalShader *ms) {
 /* Metal bakes blend/format/samples/writeMask into the PSO, so the GL immediate
  * setters collapse to this lazily-cached lookup keyed on the dynamic state. */
 static id<MTLRenderPipelineState> mtl_pso_for(MetalShader *ms, enum GfxBlendMode blend,
-                                              int samples, bool write_alpha) {
+                                              int samples, bool alpha_to_coverage,
+                                              bool write_alpha) {
     uint64_t key = (uint64_t)(blend & 0xF) |
                    ((uint64_t)(samples & 0xFF) << 4) |
-                   ((uint64_t)(write_alpha ? 1 : 0) << 12);
+                   ((uint64_t)(write_alpha ? 1 : 0) << 12) |
+                   ((uint64_t)(alpha_to_coverage ? 1 : 0) << 13);
     /* Fast path: consecutive draws usually share shader+state — skip the
      * NSNumber boxing + dictionary lookup (and its autoreleased temporary). */
     static MetalShader *last_ms = nullptr;
@@ -1095,6 +1237,11 @@ static id<MTLRenderPipelineState> mtl_pso_for(MetalShader *ms, enum GfxBlendMode
     d.fragmentFunction = ms->fragFn;
     d.vertexDescriptor = ms->vtxDesc;
     d.rasterSampleCount = samples;
+    /* FID-0018: alpha-to-coverage for alpha-tested cutout materials under MSAA
+     * (mirrors GL's GL_SAMPLE_ALPHA_TO_COVERAGE — gfx_opengl_update_a2c_state).
+     * The caller only sets this when samples > 1 and the material qualifies, so
+     * it is a no-op on the single-sample path (Metal ignores it at 1 sample). */
+    d.alphaToCoverageEnabled = alpha_to_coverage;
     d.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 
     MTLRenderPipelineColorAttachmentDescriptor *ca = d.colorAttachments[0];
@@ -1352,6 +1499,27 @@ static id<MTLSamplerState> mtl_sampler_for(bool linear, uint32_t cms, uint32_t c
  * snapshot forces an encoder break. */
 static void mtl_open_scene_encoder(bool clear) {
     MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+    /* FID-0018: when MSAA is active the pass renders into the multisample color
+     * attachment and resolves into the single-sample s_scene_color at every
+     * endEncoding (StoreAndMultisampleResolve), so the mid-frame snapshot copy,
+     * the output filter, the present blit and readback all read the resolved
+     * scene exactly as in the single-sample path. StoreAndMultisampleResolve also
+     * keeps the MS samples, so a mid-frame snapshot reopen (loadAction=Load)
+     * restores them. When MSAA is off both branches bind s_scene_color/-depth
+     * with storeAction=Store = byte-identical to pre-fix. */
+    if (mtl_msaa_active() && s_scene_color_ms != nil && s_scene_depth_ms != nil) {
+        rpd.colorAttachments[0].texture = s_scene_color_ms;
+        rpd.colorAttachments[0].resolveTexture = s_scene_color;
+        rpd.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+        rpd.colorAttachments[0].storeAction = MTLStoreActionStoreAndMultisampleResolve;
+        if (clear) rpd.colorAttachments[0].clearColor = MTLClearColorMake(s_clear_r, s_clear_g, s_clear_b, 1.0);
+        /* MS depth is kept (Store) so a snapshot reopen can Load it; it is never
+         * sampled (SSAO is disabled under MSAA, mirroring the GL contract). */
+        rpd.depthAttachment.texture = s_scene_depth_ms;
+        rpd.depthAttachment.loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+        rpd.depthAttachment.storeAction = MTLStoreActionStore;
+        if (clear) rpd.depthAttachment.clearDepth = 1.0;
+    } else {
     rpd.colorAttachments[0].texture = s_scene_color;
     rpd.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
     rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -1360,6 +1528,7 @@ static void mtl_open_scene_encoder(bool clear) {
     rpd.depthAttachment.loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
     rpd.depthAttachment.storeAction = MTLStoreActionStore;
     if (clear) rpd.depthAttachment.clearDepth = 1.0;
+    }
     /* W3.E1: timestamp the whole GPU frame's START on the first (clearing) scene
      * pass, so the post span can be self-calibrated against total_ms. */
     if (clear && mtl_gpu_trace_on()) mtl_gpu_ts_attach_frame_start(rpd);
@@ -2235,7 +2404,13 @@ static void mtl_fill_filter_uniforms(struct MtlFilterUniforms *u, int apply_post
      *   mode 1 (planar/v1): inline ssaoAO() as before (u->ssao=1).
      *   mode 2 (hemisphere/v2): AO precomputed in s_ssao_raw; composite samples it
      *     (u->ssaoMode=2), or return the raw field under GE007_SSAO_DEBUG (=3). */
-    int ssaoActive = (apply_post && g_pcRemasterFX && g_pcSsao != 0 && g_pc_ssao_proj_b != 0.0f);
+    /* FID-0018: SSAO is disabled under MSAA (GL contract — GL's "SSAO off under
+     * MSAA" limit). The scene pass writes depth into the multisample attachment,
+     * so the single-sample s_scene_depth this pass samples is stale; rather than
+     * add a depth resolve, mirror GL and skip AO while MSAA is on. No effect on
+     * the default (MSAA off) path. */
+    int ssaoActive = (apply_post && g_pcRemasterFX && g_pcSsao != 0 &&
+                      g_pc_ssao_proj_b != 0.0f && !mtl_msaa_active());
     u->ssao = (ssaoActive && g_pcSsaoMode != 2) ? 1 : 0;
     u->ssaoMode = (ssaoActive && g_pcSsaoMode == 2) ? (mtl_ssao_debug() ? 3 : 2) : 0;
     u->ssaoRadius = g_pcSsaoRadius * 0.02f;  /* radius key -> UV offset scale (load-bearing) */
@@ -2915,7 +3090,8 @@ static void mtl_end_frame(void) {
     /* SSAO v2 (W3.E2): PASS A/B into s_ssao_raw, between the scene-encoder close
      * and the output filter that samples it. Gated exactly like the composite
      * (RemasterFX && Ssao && hemisphere && proj_b captured this frame). */
-    if (g_pcRemasterFX && g_pcSsao != 0 && g_pcSsaoMode == 2 && g_pc_ssao_proj_b != 0.0f) {
+    if (g_pcRemasterFX && g_pcSsao != 0 && g_pcSsaoMode == 2 && g_pc_ssao_proj_b != 0.0f &&
+        !mtl_msaa_active()) {   /* FID-0018: no AO under MSAA (stale MS depth) — GL contract */
         mtl_run_ssao(s_cmdbuf);
     }
     /* SMAA (W3.E4): the 3-pass chain runs between the scene-encoder close and the
@@ -3259,7 +3435,22 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
 
     mtl_build_vertex_descriptor(ms);
 
-    id<MTLRenderPipelineState> pso = mtl_pso_for(ms, s_blend, 1, !s_preserve_cov_alpha);
+    /* FID-0018: this is the ONLY pipeline that renders into the scene pass, so it
+     * carries the pass's rasterSampleCount (s_msaa_samples); the shadow/SSAO/
+     * post/minimap pipelines render into their own single-sample passes and stay
+     * at 1. Alpha-to-coverage engages under MSAA for alpha-tested cutout surfaces
+     * (blend-disabled texture-edge, mirroring GL's cutout_a2c) and the XLU
+     * coverage diagnostic blend (GFX_BLEND_ALPHA_COVERAGE == GL's
+     * g_blend_alpha_coverage), gated by the GE007_NO_A2C negative control.
+     * Cutout A2C engages only on the opaque (blend-DISABLED) path, matching GL's
+     * `g_blend_disabled` gate exactly — `!blend_on` would also fire on the
+     * RDP-memory coverage diagnostic blends, which GL never treats as cutout. */
+    bool cutout_a2c = (s_blend == GFX_BLEND_DISABLED) &&
+                      ms->cc.opt_texture_edge && ms->cc.opt_alpha;
+    bool a2c = mtl_msaa_active() && mtl_a2c_enabled() &&
+               (cutout_a2c || s_blend == GFX_BLEND_ALPHA_COVERAGE);
+    id<MTLRenderPipelineState> pso = mtl_pso_for(ms, s_blend, s_msaa_samples, a2c,
+                                                 !s_preserve_cov_alpha);
     [s_enc setRenderPipelineState:pso];
     [s_enc setDepthStencilState:mtl_depth_state_for(s_depth_test, s_depth_update, s_depth_compare, s_zmode)];
     /* ZMODE_DEC decal polygon offset (gfx_opengl.c:1582-1595, factor/units -2). */
@@ -3467,6 +3658,248 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
 
 /* Positional init MUST match the field order in gfx_rendering_api.h. C linkage
  * so gfx_pc.c's `extern struct GfxRenderingAPI gfx_metal_api;` resolves. */
+/* ------------------------------------------------------------------------
+ * Modern-mesh draw path (W9 scene decoration, G_MODERNMESH).
+ *
+ * Draws a full-fidelity mesh (float32 verts, u32 indices, mipmapped RGBA8
+ * texture of arbitrary size) directly into the live scene encoder, at the
+ * exact DL position the interpreter reached — same color/depth attachments,
+ * same (persisting) viewport/scissor as the surrounding N64 draws. The GPU
+ * transforms with the interpreter's MP matrix; the vertex shader replicates
+ * the N64 per-vertex fog curve and Metal's 0..1 depth remap
+ * (mtl_z_is_from_0_to_1 == true, so clip.z = (z+w)/2 like the CPU T&L).
+ * PSOs are cached per (cutout, sample count) — the scene pass carries
+ * s_msaa_samples, and a mismatched rasterSampleCount GPU-faults (FID-0018).
+ * GPU resources per mesh upload once (private-ish shared buffers + a one-off
+ * blit command buffer for mipmap generation, which cannot run on s_cmdbuf
+ * while the scene encoder is open) and cache in s_modern_cache.
+ * ---------------------------------------------------------------------- */
+
+struct MtlModernUniforms {
+    float mvp[16];       /* row-major MP; memcpy into MSL float4x4 gives
+                            columns == MP rows, so u.mvp * v == the CPU
+                            row-vector T&L exactly */
+    float fog[4];        /* rgb + pad */
+    float fogMul, fogOffset, fogOn, pad;
+};
+static_assert(sizeof(MtlModernUniforms) == 96, "MSL DecorUniforms layout");
+
+static NSMutableDictionary<NSNumber *, NSArray *> *s_modern_cache = nil;
+static id<MTLRenderPipelineState> s_modern_pso[2][2] = {};  /* [cutout][msaa>1] */
+static int s_modern_pso_samples[2][2] = {};
+static id<MTLSamplerState> s_modern_sampler = nil;
+
+static const char *kModernMeshMSL =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct DecorVertex {\n"
+    "  float3 pos [[attribute(0)]];\n"
+    "  float3 nrm [[attribute(1)]];\n"
+    "  float2 uv  [[attribute(2)]];\n"
+    "  float4 col [[attribute(3)]];\n"
+    "};\n"
+    "struct DecorUniforms { float4x4 mvp; float4 fog; float fogMul; float fogOffset; float fogOn; float pad; };\n"
+    "struct DecorOut { float4 position [[position]]; float2 uv; float4 col; float fogA; };\n"
+    "vertex DecorOut decorVertex(DecorVertex in [[stage_in]],\n"
+    "                            constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 clip = u.mvp * float4(in.pos, 1.0);\n"
+    "  float fogA = 0.0;\n"
+    "  if (u.fogOn > 0.5) {\n"    /* N64 fog curve: gfx_fog_coord_from_clip */
+    "    float ww = clip.w;\n"
+    "    if (fabs(ww) < 0.001) ww = 0.001;\n"
+    "    float winv = 1.0 / ww;\n"
+    "    float coord = (winv < 0.0) ? clip.z * 32767.0 : clip.z * winv;\n"
+    "    fogA = clamp(coord * u.fogMul + u.fogOffset, 0.0, 255.0) / 255.0;\n"
+    "  }\n"
+    "  DecorOut o;\n"
+    "  clip.z = (clip.z + clip.w) * 0.5;\n"   /* Metal 0..1 depth remap */
+    "  o.position = clip; o.uv = in.uv; o.col = in.col; o.fogA = fogA;\n"
+    "  return o;\n"
+    "}\n"
+    /* COLOR_0.rgb = baked light; COLOR_0.a = baked SNOW COVER (0 = none),
+     * painted toward a cool snow white before fog. Cutout discard keys on
+     * the TEXTURE alpha alone -- vertex alpha is snow, not opacity. */
+    "static float4 decorShade(DecorOut in, float4 t, constant DecorUniforms& u) {\n"
+    "  float3 c = t.rgb * in.col.rgb;\n"
+    "  c = mix(c, float3(0.88, 0.91, 0.96), in.col.a);\n"
+    "  c = mix(c, u.fog.rgb, in.fogA);\n"
+    "  return float4(c, t.a);\n"
+    "}\n"
+    "fragment float4 decorFragmentOpaque(DecorOut in [[stage_in]],\n"
+    "    texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],\n"
+    "    constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 c = decorShade(in, tex.sample(smp, in.uv), u);\n"
+    "  return float4(c.rgb, 1.0);\n"
+    "}\n"
+    "fragment float4 decorFragmentCutout(DecorOut in [[stage_in]],\n"
+    "    texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],\n"
+    "    constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 t = tex.sample(smp, in.uv);\n"
+    "  if (t.a < 0.45) discard_fragment();\n"
+    "  float4 c = decorShade(in, t, u);\n"
+    "  return float4(c.rgb, 1.0);\n"
+    "}\n";
+
+static bool mtl_ensure_modern_pso(int cutout, int samples) {
+    int msaa = samples > 1 ? 1 : 0;
+    if (s_modern_pso[cutout][msaa] != nil &&
+        s_modern_pso_samples[cutout][msaa] == samples) {
+        return true;
+    }
+    if (s_device == nil) return false;
+
+  @autoreleasepool {
+    NSError *err = nil;
+    NSString *nssrc = [NSString stringWithUTF8String:kModernMeshMSL];
+    id<MTLLibrary> lib = [s_device newLibraryWithSource:nssrc options:nil error:&err];
+    if (lib == nil) {
+        fprintf(stderr, "[metal] modern-mesh MSL compile failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    id<MTLFunction> vfn = [lib newFunctionWithName:@"decorVertex"];
+    id<MTLFunction> ffn = [lib newFunctionWithName:cutout ? @"decorFragmentCutout"
+                                                          : @"decorFragmentOpaque"];
+    if (vfn == nil || ffn == nil) return false;
+
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    vd.attributes[0].format = MTLVertexFormatFloat3;
+    vd.attributes[0].offset = 0;
+    vd.attributes[0].bufferIndex = 0;
+    vd.attributes[1].format = MTLVertexFormatFloat3;
+    vd.attributes[1].offset = 12;
+    vd.attributes[1].bufferIndex = 0;
+    vd.attributes[2].format = MTLVertexFormatFloat2;
+    vd.attributes[2].offset = 24;
+    vd.attributes[2].bufferIndex = 0;
+    vd.attributes[3].format = MTLVertexFormatUChar4Normalized;
+    vd.attributes[3].offset = 32;
+    vd.attributes[3].bufferIndex = 0;
+    vd.layouts[0].stride = 36;
+    vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    vd.layouts[0].stepRate = 1;
+
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vfn;
+    pd.fragmentFunction = ffn;
+    pd.vertexDescriptor = vd;
+    pd.rasterSampleCount = samples;   /* MUST match the scene pass (FID-0018) */
+    pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    pd.colorAttachments[0].blendingEnabled = NO;
+    if (cutout && samples > 1) {
+        pd.alphaToCoverageEnabled = YES;  /* soften cutout edges under MSAA */
+    }
+    s_modern_pso[cutout][msaa] =
+        [s_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (s_modern_pso[cutout][msaa] == nil) {
+        fprintf(stderr, "[metal] modern-mesh PSO build failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    s_modern_pso_samples[cutout][msaa] = samples;
+    return true;
+  }
+}
+
+static NSArray *mtl_modern_mesh_resources(struct GfxModernMesh *mesh) {
+    if (s_modern_cache == nil) {
+        s_modern_cache = [NSMutableDictionary new];
+    }
+    NSNumber *key = @(mesh->mesh_id);
+    NSArray *res = s_modern_cache[key];
+    if (res != nil) return res;
+    if (s_modern_cache.count > 64) {
+        /* level churn eviction: ids are never reused, so dropping the whole
+           cache is safe -- live meshes re-upload once on next draw */
+        [s_modern_cache removeAllObjects];
+    }
+
+    id<MTLBuffer> vb = [s_device newBufferWithBytes:mesh->vtx
+                                             length:(NSUInteger)mesh->vtx_count * 36
+                                            options:MTLResourceStorageModeShared];
+    id<MTLBuffer> ib = [s_device newBufferWithBytes:mesh->idx
+                                             length:(NSUInteger)mesh->idx_count * 4
+                                            options:MTLResourceStorageModeShared];
+    MTLTextureDescriptor *td = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                     width:(NSUInteger)mesh->tex_w
+                                    height:(NSUInteger)mesh->tex_h
+                                 mipmapped:YES];
+    td.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> tex = [s_device newTextureWithDescriptor:td];
+    if (vb == nil || ib == nil || tex == nil) return nil;
+    [tex replaceRegion:MTLRegionMake2D(0, 0, mesh->tex_w, mesh->tex_h)
+           mipmapLevel:0
+             withBytes:mesh->tex_rgba
+           bytesPerRow:(NSUInteger)mesh->tex_w * 4];
+    /* Mip generation on a ONE-OFF command buffer: a blit encoder cannot run
+     * on s_cmdbuf while the scene render encoder is open. Happens once per
+     * mesh at first draw. */
+    id<MTLCommandBuffer> cb = [s_queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit generateMipmapsForTexture:tex];
+    [blit endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    res = @[ vb, ib, tex ];
+    s_modern_cache[key] = res;
+    return res;
+}
+
+static void mtl_draw_modern_mesh(struct GfxModernMesh *mesh,
+                                 const float mvp[4][4],
+                                 const float fog_color[3], float fog_mul,
+                                 float fog_offset, int fog_enabled) {
+    if (s_enc == nil || s_device == nil || mesh == NULL ||
+        mesh->vtx == NULL || mesh->idx == NULL || mesh->tex_rgba == NULL) {
+        return;
+    }
+    int cutout = mesh->cutout ? 1 : 0;
+    if (!mtl_ensure_modern_pso(cutout, s_msaa_samples)) {
+        return;
+    }
+    NSArray *res = mtl_modern_mesh_resources(mesh);
+    if (res == nil) return;
+    if (s_modern_sampler == nil) {
+        MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
+        sd.minFilter = MTLSamplerMinMagFilterLinear;
+        sd.magFilter = MTLSamplerMinMagFilterLinear;
+        sd.mipFilter = MTLSamplerMipFilterLinear;
+        sd.maxAnisotropy = 16;
+        sd.sAddressMode = MTLSamplerAddressModeRepeat;
+        sd.tAddressMode = MTLSamplerAddressModeRepeat;
+        s_modern_sampler = [s_device newSamplerStateWithDescriptor:sd];
+    }
+
+    MtlModernUniforms u;
+    memset(&u, 0, sizeof u);
+    memcpy(u.mvp, mvp, sizeof u.mvp);
+    u.fog[0] = fog_color[0];
+    u.fog[1] = fog_color[1];
+    u.fog[2] = fog_color[2];
+    u.fogMul = fog_mul;
+    u.fogOffset = fog_offset;
+    u.fogOn = fog_enabled ? 1.0f : 0.0f;
+
+    int msaa = s_msaa_samples > 1 ? 1 : 0;
+    [s_enc setRenderPipelineState:s_modern_pso[cutout][msaa]];
+    [s_enc setDepthStencilState:mtl_depth_state_for(true, true, true, 0)];
+    [s_enc setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    [s_enc setCullMode:MTLCullModeNone];  /* cutout cards are two-sided */
+    [s_enc setVertexBuffer:(id<MTLBuffer>)res[0] offset:0 atIndex:0];
+    [s_enc setVertexBytes:&u length:sizeof u atIndex:1];
+    [s_enc setFragmentBytes:&u length:sizeof u atIndex:1];
+    [s_enc setFragmentTexture:(id<MTLTexture>)res[2] atIndex:0];
+    [s_enc setFragmentSamplerState:s_modern_sampler atIndex:0];
+    [s_enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                      indexCount:mesh->idx_count
+                       indexType:MTLIndexTypeUInt32
+                     indexBuffer:(id<MTLBuffer>)res[1]
+               indexBufferOffset:0];
+}
+
 extern "C" struct GfxRenderingAPI gfx_metal_api = {
     mtl_z_is_from_0_to_1,
     mtl_unload_shader,
@@ -3490,4 +3923,5 @@ extern "C" struct GfxRenderingAPI gfx_metal_api = {
     mtl_start_frame,
     mtl_end_frame,
     mtl_finish_render,
+    mtl_draw_modern_mesh,
 };

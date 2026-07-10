@@ -7,6 +7,13 @@
 
 namespace ui {
 
+// Scaled sizing: base desktop dimensions times the player's UI.Scale.
+ImVec2 kBtnPrimary()   { float s = AppTheme::uiScale(); return ImVec2(190 * s, 46 * s); }
+ImVec2 kBtnSecondary() { float s = AppTheme::uiScale(); return ImVec2(190 * s, 40 * s); }
+ImVec2 kBtnWide()      { float s = AppTheme::uiScale(); return ImVec2(210 * s, 40 * s); }
+float  kControlWidth() { return 340.0f * AppTheme::uiScale(); }
+float  kNavWidth()     { return 244.0f * AppTheme::uiScale(); }
+
 void Gap(float y) { ImGui::Dummy(ImVec2(0.0f, y)); }
 
 void TextSubtle(const char *fmt, ...) {
@@ -60,7 +67,9 @@ void PopPrimaryButtonColors() { ImGui::PopStyleColor(4); }
 
 bool PrimaryButton(const char *label, const ImVec2 &size) {
     PushPrimaryButtonColors();
-    bool clicked = ImGui::Button(label, size);
+    // A zero size means "use the scaled default primary button".
+    ImVec2 sz = (size.x == 0.0f && size.y == 0.0f) ? kBtnPrimary() : size;
+    bool clicked = ImGui::Button(label, sz);
     PopPrimaryButtonColors();
     return clicked;
 }

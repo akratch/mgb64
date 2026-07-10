@@ -20353,3 +20353,29 @@ glabel sub_GAME_7F0BA2D4
 /* 0EF0EC 7F0BA5BC 27BD00B8 */   addiu $sp, $sp, 0xb8
 )
 #endif
+
+#ifdef NATIVE_PORT
+#include "sim_state_hash.h"
+/*
+ * Room-info hashed region (FID-0012 read-back / FID-0030). g_BgRoomInfo is a
+ * global s_room_info[MAXROOMCOUNT] array (NOT pool-resident). Its
+ * room_rendered / room_neighbor_to_rendered visibility bytes are written by the
+ * renderer's portal/frustum pass but READ BACK by the sim tick (auto-aim
+ * visibility in chr.c:~5308, chrprop.c:1038) — so per the read-back rule
+ * (a render-written field consumed by sim is NOT waivable) it must be hashed.
+ * Safe for the sim-invariance gate: that gate toggles only the screen-space
+ * post-FX/SSAO pass with RenderScale fixed, and neither culling, DL expansion,
+ * matrix-id assignment, nor streaming state (the other s_room_info fields)
+ * depends on the post-FX pass, so the whole array is byte-identical render-OFF
+ * vs render-ON. Embedded DL/vtx pointers reference loaded room buffers outside
+ * any region and canonicalize to the neutral pointer-window token (ASLR-safe).
+ */
+void bgBuildHashRegions(SimHashRegion *out, int *n) {
+    int i = *n;
+    out[i].name = "g_BgRoomInfo";
+    out[i].base = g_BgRoomInfo;
+    out[i].size = sizeof g_BgRoomInfo;
+    i++;
+    *n = i;
+}
+#endif /* NATIVE_PORT */

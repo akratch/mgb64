@@ -91,6 +91,11 @@ binary_hits=$(
     # exception in .gitignore and scripts/ci/check_no_rom_data.sh.
     case "$f" in
       branding/appicon-source.png|branding/appicon-windows.ico) continue ;;
+      # Fidelity determinism baselines: byte-exact controller input tapes
+      # (record/replay, FID-0034). Input-events only — no ROM/game data (the
+      # contamination guard verifies this) — but intentionally tracked binaries
+      # that back the tape_regression / combat-oracle lanes.
+      baselines/tapes/*.ge7tape) continue ;;
     esac
     if ! grep -Iq . "$f" 2>/dev/null; then
       printf '%s\n' "$f"

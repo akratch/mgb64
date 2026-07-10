@@ -1,0 +1,29 @@
+{
+  "id": "FID-0001",
+  "title": "Center-glass RDP framebuffer-memory blend not stock-accurate (MG.1, Dam pad10092)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "gfx_pc.c ROOM_GLASS_CC=0x00738e4f020a2d12",
+    "route dam_regular_glass_shatter_pad10092_impact_visual_probe"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#MG.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#MG.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

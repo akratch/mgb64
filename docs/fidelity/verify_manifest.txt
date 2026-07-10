@@ -1,0 +1,25 @@
+# tier 1 — static + unit (ROM-free, ~2 min)
+ctest --test-dir build --output-on-failure -E "port_"        # all ROM-free lanes incl. fidelity_ledger_valid
+ctest --test-dir build --output-on-failure -R fidelity_hash_coverage
+tools/combat_route_contract_smoke.sh --gate                  # Task 1.1: combat/floor oracle schema+comparator contract (FID-0032)
+scripts/ci/check_sim_render_separation.sh
+scripts/ci/check_timing_lock.sh
+ctest --test-dir build --output-on-failure -R radial_deadzone      # FID-0015 movement-stick radial deadzone lane
+ctest --test-dir build --output-on-failure -R weapon_cycle_queue    # FID-0016 mouse-wheel notch queue/drain lane
+ctest --test-dir build --output-on-failure -R speedgraph_clamp      # FID-0017 speedgraphframes spike-clamp lane
+ctest --test-dir build --output-on-failure -R fidelity_asm_audit_valid  # Task 2.4 (FID-0042) ASM-audit queue schema+verdict integrity
+# tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)
+ctest --test-dir build --output-on-failure -R "port_"        # validation smokes incl. oracle route contract
+tools/sim_invariance_gate.sh
+tools/uncap_purity_gate.sh --quick                           # Task 0.5: 0-tick purity, 3-level smoke
+# tier 3 — regression + endurance (ROM-gated, ~45 min)
+tools/regression_test.sh
+tools/renderer_parity_capture.sh --scene all
+tools/uncap_purity_gate.sh                                   # Task 0.5: 0-tick purity, full 20-level matrix
+tools/fidelity/tape_regression.sh                            # (Task 0.6) input-tape replay hash regression
+tools/fidelity/combat_route_capture_smoke.sh                 # FID-0054 combat-route determinism guard (also ctest port_combat_route_capture_smoke)
+tools/fidelity/aspect_cull_coupling_smoke.sh                 # FID-0058 aspect->sim cull coupling: widen-OFF aspect-invariant + widen-ON divergence characterization
+tools/fidelity/sense_trace_sweep.sh --gate                   # Task 2.1 S1 trace ratchet (gate:true routes; SKIPs cleanly w/o ROM+ares)
+tools/fidelity/sense_pixel_sweep.sh --gate                   # Task 2.2 S2 pixel ratchet (gate:true checkpoints; SKIPs cleanly w/o ROM+ares)
+# appended by later tasks:
+# tools/uncap_purity_gate.sh                                  (Task 0.5)

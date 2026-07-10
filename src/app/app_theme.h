@@ -22,6 +22,16 @@ namespace AppTheme {
 // logical ratio (2.0 on Retina) so glyphs are rasterized crisp.
 void setup(float fbScale);
 
+// RX.2: apply the player's UI.Scale (0.75-2.0). Rescales the style metrics
+// (padding, spacing, min sizes) from the captured base and sets FontGlobalScale
+// so text grows too. Cheap + idempotent (early-outs when unchanged), so the
+// app can call it every frame from the live config value. Call after setup().
+void setUiScale(float uiScale);
+
+// Current UI.Scale multiplier (1.0 until setUiScale is called). Panels use it to
+// scale their explicit button/control sizes in step with the style metrics.
+float uiScale();
+
 const AppFonts &fonts();
 
 // Brand colors for direct use in panels (ImGui-normalized RGBA).

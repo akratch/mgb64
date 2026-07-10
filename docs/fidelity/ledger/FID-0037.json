@@ -1,0 +1,28 @@
+{
+  "id": "FID-0037",
+  "title": "prop.c:2538 setup padnames never byte-swapped (nulled)",
+  "class": "port-defect",
+  "surface": "converter",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/prop.c:2538"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

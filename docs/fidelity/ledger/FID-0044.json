@@ -1,0 +1,29 @@
+{
+  "id": "FID-0044",
+  "title": "Pixel-oracle sweep absent: no systematic per-stage native-vs-ares screenshot lane (only per-fix ROI probes)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "compare_screenshots.py",
+    "ares PPM"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

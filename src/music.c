@@ -1234,6 +1234,12 @@ void musicTrack1Play(s32 track)
     return;
 #endif
 
+    /* N64-path busy-wait: UNREACHED in NATIVE_PORT — the synth block above returns
+     * before here (music.c ~1234). If that early-return is ever removed, this
+     * unbounded spin would run on our synchronous main thread (portAudioFrame is
+     * per-frame, not a separate audio thread) and could stall; bound it like the
+     * retail-side loop at music.c:291 (for attempts < 8) before re-exposing it.
+     * Audited: FID-0059 (survey F4). Siblings: musicTrack2Play ~1510, 3Play ~1780. */
     while (alCSPGetState(g_musicXTrack1SeqPlayer))
         ;
 

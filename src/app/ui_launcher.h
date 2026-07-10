@@ -39,6 +39,7 @@ struct LauncherState {
 // Panels (implemented in ui_rom.cpp / ui_launch.cpp / ui_launcher.cpp).
 void RomPanel_ensureInit(LauncherState &s);                     // load remembered ROM
 void RomPanel_draw(LauncherState &s, LauncherAction &out);
+void RomPanel_setRom(LauncherState &s, const char *path);       // drag-and-drop entry (validates)
 void LaunchPanel_draw(LauncherState &s, LauncherAction &out);
 void ModesPanel_draw(LauncherState &s, LauncherAction &out);
 void ModesPanel_ensureInit(LauncherState &s);                   // load persisted mode selections

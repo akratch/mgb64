@@ -1,0 +1,47 @@
+{
+  "id": "FID-0011",
+  "title": "chrTickBeams minimal reimpl: H4 actiontype dispatch collapsed (HIGH), H5 BACKGROUND_AI bit, H6 held-weapon obj leak, H7 visibility coarsening",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "chr.c:5122",
+    "chr.c:5204",
+    "retail chr.c:5566",
+    "retail chr.c:6418",
+    "retail chr.c:7344",
+    "docs/design/COMBAT_GLIDEPATH.md \u00a73.1"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/COMBAT_GLIDEPATH.md#3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#12"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/COMBAT_GLIDEPATH.md#3.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T09:35:52Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#12",
+      "note": "RE-VALIDATION REQUIRED before ACT (FID-0062): this finding was seeded from compare_combat_trace --align move, which has a ~2x sim-tick skew (record-index vs sim-tick). RE-CAPTURE dam route both-sides under --align tick (now the trustworthy combat mode, combat_oracle_fields.md#12) before root-causing. Much of the reported guard divergence is likely alignment artifact + the systemic RNG call-count phase (FID-0063), NOT a chr.c/stan.c logic bug."
+    }
+  ],
+  "blocked_on": [
+    "FID-0032"
+  ]
+}

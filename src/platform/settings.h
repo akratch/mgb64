@@ -48,6 +48,12 @@ typedef struct Setting {
     const char *label;
     const char *help;
     SettingOverrideSource override_source;
+    /* Curation tier. 0 = player-facing (shown in the launcher UI by default);
+     * 1 = advanced/dev-diagnostic (hidden behind the per-tab "Advanced (expert)"
+     * disclosure). Opt-in: everything defaults to player-facing so nothing is
+     * hidden by accident. Hidden in the UI only -- env/CLI overrides are
+     * unaffected (the setting stays in the registry). */
+    s32 advanced;
 } Setting;
 
 void settingsRegisterInt(const char *key, s32 *var, s32 def, s32 min, s32 max,
@@ -78,6 +84,10 @@ const char *settingsOverrideSourceName(SettingOverrideSource source);
 const char *settingsEnumTokenForValue(const Setting *setting, s32 value);
 void settingsFormatEnumOptions(const Setting *setting, char *out, size_t out_size);
 void settingsMarkCliOverride(const char *key);
+/* Tag an already-registered setting as advanced (dev/diagnostic). Called right
+ * after the settingsRegister* site. Hidden from the launcher's player tabs;
+ * env/CLI overrides still apply. No-op if the key is unknown. */
+void settingsMarkAdvanced(const char *key);
 /* Force one setting to its faithful (pre-remaster) value for this launch only.
  * Applies via configSetValue (validated/clamped) and marks the setting as a
  * transient SETTING_OVERRIDE_FAITHFUL override so configSave never persists it

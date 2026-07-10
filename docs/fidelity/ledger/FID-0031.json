@@ -1,0 +1,28 @@
+{
+  "id": "FID-0031",
+  "title": "Oracle route coverage Dam-only; ~12 placeholder intro routes, no organic completion routes (M8.2)",
+  "class": "coverage-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "triaged",
+  "suspect": [
+    "tools/rom_oracle_routes/"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M8.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M8.2",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

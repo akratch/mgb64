@@ -22,11 +22,13 @@
 #include <glad/glad.h>
 #endif
 #include "config_pc.h"
+#include "savedir.h"
 #include "host_window.h"
 #include "app_overlay_hooks.h"
 #include "gfx_pc.h"
 #include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
 #include "settings.h"
+#include "fire_rate_authentic.h"
 #include "frame_stats.h"
 #include "game/front.h"
 #include "game/initmenus.h"
@@ -120,6 +122,129 @@ static void platformClosePadByInstance(SDL_JoystickID id) {
         }
     }
     platformSyncPad0Alias();
+}
+
+/* ===== Community controller mappings (MC.2) =====
+ * SDL ships built-in mappings for common pads, but the community
+ * SDL_GameControllerDB (lib/sdl_gamecontrollerdb/gamecontrollerdb.txt) covers
+ * thousands more — exotic/hybrid/handheld devices SDL misses. Load it BEFORE
+ * opening any controller so the bundled mappings apply. Missing file is not an
+ * error: SDL's built-ins still work, so a stripped install degrades to those.
+ *
+ * Resolution order (later files override earlier for the same GUID, matching
+ * SDL_GameControllerAddMappingsFromFile's last-write-wins semantics):
+ *   1. next to the executable / in the app bundle (SDL_GetBasePath) — the
+ *      shipped copy that packaging drops beside the binary,
+ *   2. the current directory — dev/portable runs from the source tree,
+ *   3. the savedir — a user-dropped copy that refreshes/overrides the bundle.
+ * Each candidate is loaded independently; a hit in one does not skip the
+ * others, so the savedir override composes on top of the bundled base. */
+static int platformAddMappingsFrom(const char *path, const char *label) {
+    int n;
+    if (!path || !path[0]) {
+        return 0;
+    }
+    n = SDL_GameControllerAddMappingsFromFile(path);
+    if (n <= 0) {
+        /* n < 0: not present/unreadable (expected for absent candidates).
+         * n == 0: present but no mapping matched this platform. Either way it
+         * contributes nothing, so stay quiet and let the caller's total decide. */
+        return 0;
+    }
+    printf("[SDL] Loaded %d controller mapping(s) from %s (%s)\n", n, path, label);
+    return n;
+}
+
+static void platformLoadControllerMappings(void) {
+    int total = 0;
+    char *base = SDL_GetBasePath(); /* SDL-malloc'd; NULL if unsupported */
+    if (base) {
+        char bundled[1100];
+        int w = snprintf(bundled, sizeof(bundled), "%sgamecontrollerdb.txt", base);
+        if (w > 0 && (size_t)w < sizeof(bundled)) {
+            total += platformAddMappingsFrom(bundled, "bundle/exe dir");
+        }
+        SDL_free(base);
+    }
+    total += platformAddMappingsFrom("gamecontrollerdb.txt", "cwd");
+    total += platformAddMappingsFrom(savedirPath("gamecontrollerdb.txt"), "savedir override");
+
+    if (total == 0) {
+        printf("[SDL] No gamecontrollerdb.txt found; using SDL built-in mappings\n");
+    }
+}
+
+/* ===== Rumble (MC.4) =====
+ * The game's Rumble Pak signal (joy.c joyRumblePakStart/Stop, raised on stock
+ * events: weapon fire gun.c, Bond damage bondview.c) is routed here and mapped
+ * to SDL_GameControllerRumble on the addressed player's pad. Works on any
+ * XInput/DualShock/handheld pad. OUTPUT ONLY: reads no sim state, mutates no
+ * game/RNG state, and is a hard no-op under --deterministic so the sim-state
+ * hash is byte-identical with rumble on or off. */
+extern int g_deterministic; /* platform_sdl.c global: --deterministic run */
+extern s32 g_pcRumble;
+extern s32 g_pcRumbleIntensity;
+
+/* GE007_TRACE_RUMBLE=1: log each rumble request (player, duration, mapped
+ * strength/ms) to stderr for call-path validation. Logging is output-only and
+ * runs even under --deterministic (before the actuation gate) so the game
+ * event -> SDL path can be proven muted/headless where there is no pad. */
+static int platformRumbleTraceEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("GE007_TRACE_RUMBLE");
+        cached = (env != NULL && atoi(env) != 0) ? 1 : 0;
+    }
+    return cached;
+}
+
+void platformRumblePlayer(s32 player, f32 durationSecs) {
+    if (durationSecs < 0.0f) durationSecs = 0.0f;
+
+    /* N64 rumble is essentially binary on/off; the game supplies the duration.
+     * Map on -> a single strength (scaled by intensity) held for the duration. */
+    Uint16 strength;
+    Uint32 ms;
+    if (g_pcRumbleIntensity < 0)   g_pcRumbleIntensity = 0;
+    if (g_pcRumbleIntensity > 100) g_pcRumbleIntensity = 100;
+    strength = (Uint16)((65535.0f * (float)g_pcRumbleIntensity) / 100.0f + 0.5f);
+    ms = (Uint32)(durationSecs * 1000.0f + 0.5f);
+    if (ms == 0) ms = 1;
+
+    if (platformRumbleTraceEnabled()) {
+        fprintf(stderr,
+                "[RUMBLE] player=%d duration=%.3fs strength=%u ms=%u "
+                "(rumble=%d intensity=%d det=%d pad=%s)\n",
+                (int)player, (double)durationSecs, (unsigned)strength, (unsigned)ms,
+                (int)g_pcRumble, (int)g_pcRumbleIntensity, g_deterministic,
+                (player >= 0 && player < PLATFORM_MAX_PADS && g_pads[player].handle)
+                    ? "yes" : "none");
+    }
+
+    /* Actuation gates (never reached in deterministic/automation runs). */
+    if (g_deterministic) return;         /* output-only: no haptics under determinism */
+    if (!g_pcRumble) return;             /* Input.Rumble off */
+    if (g_pcRumbleIntensity <= 0) return;
+    if (player < 0 || player >= PLATFORM_MAX_PADS) return;
+    if (!g_pads[player].handle) return;  /* no pad in that player slot (e.g. dual-control 2nd id) */
+
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    SDL_GameControllerRumble(g_pads[player].handle, strength, strength, ms);
+#endif
+}
+
+void platformRumbleStopAll(void) {
+    int i;
+    if (g_deterministic) return;
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    for (i = 0; i < PLATFORM_MAX_PADS; i++) {
+        if (g_pads[i].handle) {
+            SDL_GameControllerRumble(g_pads[i].handle, 0, 0, 0);
+        }
+    }
+#else
+    (void)i;
+#endif
 }
 
 /* ===== Window state ===== */
@@ -247,6 +372,8 @@ f32 g_pcSunShadowRadius = 500.0f; /* W1.E3: camera-centered ortho half-extent in
 f32 g_pcSunShadowBias = 0.0015f;  /* W1.E3.T4: receiver depth-compare bias (peter-panning vs acne dial). */
 f32 g_pcSunShadowUmbra = 0.55f;   /* W1.E3.T4: shadowed-surface darkening (1.0 = no darken, 0 = black). */
 s32 g_pcPerPixelLight = 0;       /* W1.E4: default OFF (identity-first). Per-pixel geometric-normal (dFdx) directional sun on room surfaces; supersedes E1 CPU relight when on. */
+s32 g_pcSceneDecor = 0;          /* W9: default OFF (identity-first). Render-only imported 3D models over the untouched sim (decor_native.c). */
+char g_pcSceneDecorDir[1024] = "assets/decor"; /* Video.SceneDecorDir: per-level <slug>.decor.txt manifests + glTF models. */
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
 #ifdef MGB64_PORTMASTER_GLES
@@ -272,11 +399,37 @@ typedef enum PlatformWindowMode {
 } PlatformWindowMode;
 
 static s32 g_windowMode = PLATFORM_WINDOW_MODE_WINDOWED;
+/* RX.3 Fix B: the fullscreen mode the Alt+Enter runtime toggle returns to. Tracks
+ * the last non-windowed mode actually applied (borderless or exclusive from
+ * Video.WindowMode), so an exclusive user toggles back into exclusive rather than
+ * being forced to borderless. Defaults to borderless when the game boots windowed. */
+static s32 g_preferredFullscreenMode = PLATFORM_WINDOW_MODE_BORDERLESS;
 static const ConfigEnumOption k_windowModeOptions[] = {
     { "windowed", PLATFORM_WINDOW_MODE_WINDOWED },
     { "borderless", PLATFORM_WINDOW_MODE_BORDERLESS },
     { "exclusive", PLATFORM_WINDOW_MODE_EXCLUSIVE },
 };
+
+/* ===== App-shell (launcher) UI settings (RX.2) =====
+ * Consumed by the in-process ImGui app shell (src/app), NOT the engine renderer.
+ * UI.LauncherFullscreen decides whether the pre-boot launcher window fills the
+ * display (handhelds) or floats in a resizable window (desktop dev). Registered
+ * here in the shared registry so they persist to ge007.ini, appear in the
+ * settings menu, and dump like every other setting; the engine binary just
+ * ignores them. Storage is trivially small and the defaults are identity. */
+typedef enum PlatformLauncherFullscreen {
+    PLATFORM_LAUNCHER_FS_AUTO = 0,  /* fill on small/high-DPI panels, float on desktop */
+    PLATFORM_LAUNCHER_FS_ON = 1,    /* always fill */
+    PLATFORM_LAUNCHER_FS_OFF = 2    /* always windowed/resizable */
+} PlatformLauncherFullscreen;
+static s32 g_uiLauncherFullscreen = PLATFORM_LAUNCHER_FS_AUTO;
+static const ConfigEnumOption k_launcherFullscreenOptions[] = {
+    { "auto", PLATFORM_LAUNCHER_FS_AUTO },
+    { "on", PLATFORM_LAUNCHER_FS_ON },
+    { "off", PLATFORM_LAUNCHER_FS_OFF },
+};
+/* UI.Scale: app-shell font/metric scale (1.0 = default; handhelds ~1.25-1.5). */
+static f32 g_uiScale = 1.0f;
 
 typedef enum PlatformVSyncMode {
     PLATFORM_VSYNC_OFF = 0,
@@ -1124,10 +1277,29 @@ int g_pcGamepadRadialDeadzone = 1;  /* remaster default: true radial rescale-fro
 int g_pcGamepadFpsScale = 1;        /* remaster default: frame-rate-independent look (no-op at 60fps) */
 s32 g_pcSteadyView = 1;             /* Input.SteadyView       keep world camera upright while moving */
 
+/* Rumble (MC.4). GoldenEye is a Rumble Pak title: the game raises its motor
+ * signal via joyRumblePakStart()/joyRumblePakStop() on faithful events (weapon
+ * fire, Bond damage). joy.c calls platformRumblePlayer()/platformRumbleStopAll()
+ * (below) to actuate the host pad. Output-only: never reads/writes sim state,
+ * consumes no RNG, and is force-suppressed under --deterministic so the
+ * sim-state hash is identical rumble-on vs rumble-off. */
+s32 g_pcRumble = 1;                  /* Input.Rumble           controller vibration master, ON */
+s32 g_pcRumbleIntensity = 100;      /* Input.RumbleIntensity  strength 0-100 (%) */
+
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
  * Consumers declare these inline as `extern` at their use sites. */
 s32 g_pcAdsEnabled       = 0;     /* Input.AdsEnabled        master, OFF by default */
+/* Full-auto fire-rate authenticity (FID-0056). g_pcFireRateAuthentic ships ON
+ * (owner decision 2026-07-10: gameplay accuracy is the goal; the ~3x automatic
+ * overspeed is a canonical fidelity defect, so the faithful cadence is the
+ * default). ON scales the automatic fire gate to the N64 per-rendered-frame
+ * cadence; set Input.FireRateAuthentic=0 (GE007_FIRE_RATE_AUTHENTIC=0) to opt
+ * OUT and restore the legacy locked-60Hz fast fire. g_pcFireRateN64FrameCost =
+ * assumed N64 sim-ticks per rendered frame (3 = the measured Dam ~20fps combat
+ * rate; 2 = 30fps nominal; 4 = ~15fps heavy). */
+s32 g_pcFireRateAuthentic   = 1;  /* Input.FireRateAuthentic   ON (faithful) by default */
+s32 g_pcFireRateN64FrameCost = FIRE_RATE_N64_FRAME_COST_DEFAULT; /* Input.FireRateN64FrameCost */
 f32 g_pcAdsSensitivity   = 1.0f;  /* Input.AdsSensitivity    flat aimed look mult   */
 s32 g_pcAdsFovCoupleSens = 1;     /* Input.AdsFovCoupleSens  FOV-coupled slow-look   */
 s32 g_pcAdsCenterCrosshair = 1;   /* Input.AdsCenterCrosshair stick center-pull      */
@@ -1487,18 +1659,40 @@ static int platformFindConfiguredFullscreenMode(SDL_DisplayMode *out_mode)
     return 0;
 }
 
-static void platformApplyFullscreenDisplayMode(void)
+/* Selects the SDL display mode used by exclusive fullscreen (SDL_WINDOW_FULLSCREEN).
+ * Returns 0 on success, -1 if an exclusive mode-set was requested but could not be
+ * satisfied (the caller then falls back to borderless desktop fullscreen). For
+ * non-exclusive modes the display mode is reset to NULL and 0 is returned. */
+static int platformApplyFullscreenDisplayMode(void)
 {
     SDL_DisplayMode mode;
+    int display_index;
 
     if (!g_sdlWindow) {
-        return;
+        return 0;
     }
 
-    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE ||
-        !platformFindConfiguredFullscreenMode(&mode)) {
+    if (g_windowMode != PLATFORM_WINDOW_MODE_EXCLUSIVE) {
+        /* Windowed / borderless-desktop: SDL manages the mode (desktop resolution). */
         SDL_SetWindowDisplayMode(g_sdlWindow, NULL);
-        return;
+        return 0;
+    }
+
+    if (!platformFindConfiguredFullscreenMode(&mode)) {
+        /* RX.3 Fix C: no explicit Video.FullscreenWidth/Height configured (or the
+         * requested mode is unavailable). Passing NULL to SDL_SetWindowDisplayMode
+         * makes exclusive fullscreen adopt the small *window* size instead of the
+         * display's native resolution. Default to the chosen display's desktop mode
+         * so exclusive comes up at native res; explicit width/height/refresh
+         * overrides still take precedence via platformFindConfiguredFullscreenMode. */
+        display_index = platformConfiguredDisplayIndex();
+        if (SDL_GetDesktopDisplayMode(display_index, &mode) != 0) {
+            fprintf(stderr,
+                    "[SDL] Could not query desktop display mode for display %d: %s\n",
+                    display_index,
+                    SDL_GetError());
+            return -1;
+        }
     }
 
     if (SDL_SetWindowDisplayMode(g_sdlWindow, &mode) < 0) {
@@ -1508,7 +1702,10 @@ static void platformApplyFullscreenDisplayMode(void)
                 mode.h,
                 mode.refresh_rate,
                 SDL_GetError());
+        return -1;
     }
+
+    return 0;
 }
 
 static void platformApplyWindowMode(void)
@@ -1519,13 +1716,42 @@ static void platformApplyWindowMode(void)
         return;
     }
 
+    /* Remember the last non-windowed mode applied so the Alt+Enter toggle can
+     * return to it (RX.3 Fix B). Seeds from Video.WindowMode at first apply. */
+    if (g_windowMode != PLATFORM_WINDOW_MODE_WINDOWED) {
+        g_preferredFullscreenMode = g_windowMode;
+    }
+
     fullscreen_flag = platformFullscreenFlagForWindowMode(g_windowMode);
     platformMoveWindowToConfiguredDisplay();
-    platformApplyFullscreenDisplayMode();
-    if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
-        fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
-                g_windowMode, SDL_GetError());
-        return;
+
+    if (g_windowMode == PLATFORM_WINDOW_MODE_EXCLUSIVE) {
+        /* RX.3 Fix C robustness: true exclusive fullscreen is best-effort. The
+         * mode-set and/or SDL_WINDOW_FULLSCREEN can fail (Wayland can't
+         * arbitrary-mode-set, the mode may be unavailable, or the driver refuses).
+         * On any failure fall back to borderless desktop fullscreen rather than
+         * leaving the window in a broken/black exclusive state. */
+        if (platformApplyFullscreenDisplayMode() != 0 ||
+            SDL_SetWindowFullscreen(g_sdlWindow, SDL_WINDOW_FULLSCREEN) < 0) {
+            fprintf(stderr,
+                    "[SDL] Exclusive fullscreen unavailable (%s); falling back to "
+                    "borderless desktop fullscreen.\n",
+                    SDL_GetError());
+            if (SDL_SetWindowFullscreen(g_sdlWindow,
+                                        SDL_WINDOW_FULLSCREEN_DESKTOP) < 0) {
+                fprintf(stderr, "[SDL] Borderless fallback also failed: %s\n",
+                        SDL_GetError());
+            }
+        }
+    } else {
+        /* Windowed (flag 0) or borderless desktop fullscreen — the safe
+         * cross-platform default. */
+        platformApplyFullscreenDisplayMode();
+        if (SDL_SetWindowFullscreen(g_sdlWindow, fullscreen_flag) < 0) {
+            fprintf(stderr, "[SDL] Failed to apply window mode %d: %s\n",
+                    g_windowMode, SDL_GetError());
+            return;
+        }
     }
 
     platformSyncWindowSizeForRenderer();
@@ -1621,7 +1847,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_RESTART, "GE007_HIDPI",
                         "--config-override Video.HiDPI=0|1",
                         "HiDPI",
-                        "Allow Retina/high-DPI drawable sizes. Off keeps rendering at the configured window size for steadier performance.");
+                        "Render at your display's full Retina/high-DPI resolution (sharper, more GPU cost). Off renders at the window size for steadier performance.");
     settingsRegisterInt("Video.FullscreenWidth", &g_cfgFullscreenW, 0, 0, 7680,
                         SETTING_SCOPE_RESTART, "GE007_FULLSCREEN_WIDTH",
                         "--config-override Video.FullscreenWidth=VALUE",
@@ -1662,10 +1888,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_FPS_OVERLAY",
                         "--config-override Video.FpsOverlay=VALUE",
                         "FPS overlay",
-                        "Small top-right HUD overlay: current FPS, frame time (ms), and 1%-low FPS. "
-                        "0 = off. Always suppressed (zero display-list bytes) under --deterministic, "
-                        "GE007_BACKGROUND, and --screenshot-frame sessions regardless of this setting, "
-                        "so byte-identity/parity harnesses are unaffected.");
+                        "Small top-right overlay showing the current FPS, frame time (ms), and 1%-low "
+                        "FPS. 0 = off. (Automatically hidden during benchmark and screenshot runs.)");
     settingsRegisterFloat("Video.Gamma", &g_pcVideoGamma, 1.0f, 0.5f, 2.5f,
                           SETTING_SCOPE_LIVE, "GE007_GAMMA",
                           "--config-override Video.Gamma=VALUE",
@@ -1690,7 +1914,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_OUTPUT_DITHER",
                         "--config-override Video.OutputDither=VALUE",
                         "Output dither",
-                        "4x4 ordered Bayer dither to hide RGBA8 banding in skies/fades.");
+                        "Adds a subtle dither pattern that smooths out color banding in skies and fades. 0 = off.");
     settingsRegisterFloat("Video.Vignette", &g_pcVignette, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_VIGNETTE",
                           "--config-override Video.Vignette=VALUE",
@@ -1823,6 +2047,19 @@ void platformRegisterConfig(void)
                         "recomputes Lambert per fragment from the world-position derivative and "
                         "luma-replaces the baked directional shading (reuses Video.EnvRelightBlend "
                         "as the strength dial). Supersedes Video.EnvSmoothNormals when on. 0 = off (identity).");
+    settingsRegisterInt("Video.SceneDecor", &g_pcSceneDecor, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR",
+                        "--config-override Video.SceneDecor=VALUE",
+                        "3D scene decoration",
+                        "Render-only imported 3D models (glTF) drawn over the untouched simulation "
+                        "from per-level manifests in Video.SceneDecorDir (e.g. real trees on Surface). "
+                        "Zero gameplay effect by construction. 0 = off (identity).");
+    settingsRegisterString("Video.SceneDecorDir", g_pcSceneDecorDir, sizeof(g_pcSceneDecorDir),
+                           "assets/decor",
+                           SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR_DIR",
+                           "--config-override Video.SceneDecorDir=PATH",
+                           "Scene decoration dir",
+                           "Directory holding <level>.decor.txt manifests and their glTF models.");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",
@@ -1832,8 +2069,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_SMAA",
                         "--config-override Video.Smaa=VALUE",
                         "SMAA",
-                        "Subpixel morphological anti-aliasing (Metal only): a sharper edge AA than "
-                        "FXAA. When on it replaces FXAA on the output pass. 0 = off.");
+                        "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. "
+                        "(Metal builds only -- no effect on this OpenGL build.)");
     settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_SHARPEN",
                           "--config-override Video.Sharpen=VALUE",
@@ -1843,12 +2080,12 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_GRADE_PRESETS",
                         "--config-override Video.GradePresets=VALUE",
                         "Per-level grade",
-                        "Subtle per-level mood color grade composed atop the global grade. 0 = off (identity).");
+                        "Subtle per-level color grading for mood, layered on top of the global color settings. 0 = off.");
     settingsRegisterInt("Video.Tonemap", &g_pcTonemap, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_TONEMAP",
                         "--config-override Video.Tonemap=VALUE",
                         "Filmic tonemap",
-                        "Gentle filmic highlight rolloff for a cinematic look. 0 = off (linear).");
+                        "Softens bright highlights for a more cinematic image. 0 = off (raw output).");
     settingsRegisterInt("Video.RemasterFX", &g_pcRemasterFX, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_REMASTER_FX",
                         "--config-override Video.RemasterFX=VALUE",
@@ -1897,7 +2134,7 @@ void platformRegisterConfig(void)
                          SETTING_SCOPE_LIVE, "GE007_RETRO_FILTER",
                          "--config-override Video.RetroFilter=VALUE",
                          "Retro filter",
-                         "Output VI soft-filter mode: auto, off, or on.");
+                         "N64-style output smoothing filter that softens hard pixel edges: auto, off, or on.");
     settingsRegisterFloat("Input.MouseSensitivity", &g_pcMouseSensitivity, 0.15f, 0.01f, 2.0f,
                           SETTING_SCOPE_LIVE, "GE007_MOUSE_SENSITIVITY",
                           "--config-override Input.MouseSensitivity=VALUE",
@@ -1943,6 +2180,35 @@ void platformRegisterConfig(void)
                         "--config-override Input.SteadyView=VALUE",
                         "Steady view",
                         "Keep the world camera upright during movement; head motion still drives position and weapon sway.");
+    settingsRegisterInt("Input.Rumble", &g_pcRumble, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_RUMBLE",
+                        "--config-override Input.Rumble=VALUE",
+                        "Rumble",
+                        "Controller vibration on the game's faithful Rumble Pak events (weapon fire, taking damage). Needs a physical pad; no effect on keyboard/mouse.");
+    settingsRegisterInt("Input.RumbleIntensity", &g_pcRumbleIntensity, 100, 0, 100,
+                        SETTING_SCOPE_LIVE, "GE007_RUMBLE_INTENSITY",
+                        "--config-override Input.RumbleIntensity=VALUE",
+                        "Rumble intensity",
+                        "Vibration strength as a percentage (0-100). 0 is the same as Rumble off.");
+
+    /* Full-auto fire-rate authenticity (FID-0056). ON (default, owner decision
+     * 2026-07-10) = automatics fire at the faithful N64 per-frame cadence
+     * (~1/FrameCost as fast). 0 = opt out, restoring the legacy locked-60Hz fast
+     * fire (the ~3x-overspeed port behavior). Default is the 3rd positional arg
+     * below (the `1` immediately after &g_pcFireRateAuthentic); the trailing
+     * `0, 1` are min/max. */
+    settingsRegisterInt("Input.FireRateAuthentic", &g_pcFireRateAuthentic, 1, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_FIRE_RATE_AUTHENTIC",
+                        "--config-override Input.FireRateAuthentic=VALUE",
+                        "Authentic full-auto fire rate",
+                        "Scale full-auto cadence to the faithful N64 per-frame rate (default ON). 0 = legacy vanilla 60Hz (~3x faster) cadence.");
+    settingsRegisterInt("Input.FireRateN64FrameCost", &g_pcFireRateN64FrameCost,
+                        FIRE_RATE_N64_FRAME_COST_DEFAULT,
+                        FIRE_RATE_N64_FRAME_COST_MIN, FIRE_RATE_N64_FRAME_COST_MAX,
+                        SETTING_SCOPE_LIVE, "GE007_FIRE_RATE_N64_FRAME_COST",
+                        "--config-override Input.FireRateN64FrameCost=VALUE",
+                        "N64 frame cost (fire rate)",
+                        "Assumed N64 sim-ticks per rendered frame for authentic fire cadence (2=30fps, 3=20fps combat, 4=15fps). Only used when Input.FireRateAuthentic=1.");
 
     /* ADS (aim-down-sights) — opt-in modern aiming. Master flag ships OFF;
      * when 0 every ADS branch is bypassed and behavior is byte-identical. */
@@ -2050,7 +2316,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_OBJECTIVES",
                         "--config-override Input.MinimapObjectives=VALUE",
                         "Minimap objectives",
-                        "Enable objective pins once the objective layer is implemented (0 = off).");
+                        "Reserved for objective pins on the minimap. Not yet implemented -- no effect currently.");
     settingsRegisterInt("Input.MinimapEnemyFireReveal", &g_pcMinimapEnemyFireReveal, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_ENEMY_FIRE_REVEAL",
                         "--config-override Input.MinimapEnemyFireReveal=VALUE",
@@ -2091,6 +2357,76 @@ void platformRegisterConfig(void)
                         "At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a "
                         "dismissible banner if one exists (0 = never check). A single plain HTTPS GET via "
                         "the system curl; no telemetry. Never runs under automation/--deterministic.");
+    settingsRegisterEnum("UI.LauncherFullscreen", &g_uiLauncherFullscreen, PLATFORM_LAUNCHER_FS_AUTO,
+                         k_launcherFullscreenOptions,
+                         (s32)(sizeof(k_launcherFullscreenOptions) / sizeof(k_launcherFullscreenOptions[0])),
+                         SETTING_SCOPE_LIVE, "GE007_LAUNCHER_FULLSCREEN",
+                         "--config-override UI.LauncherFullscreen=VALUE",
+                         "Launcher fullscreen",
+                         "How the launcher window is sized. auto fills the screen on small/high-DPI "
+                         "handheld panels and floats in a resizable window on desktops; on always "
+                         "fills the display; off always uses a resizable window (desktop dev). "
+                         "This affects only the pre-game launcher \xe2\x80\x94 the in-game window "
+                         "follows Video.WindowMode.");
+    settingsRegisterFloat("UI.Scale", &g_uiScale, 1.0f, 0.75f, 2.0f,
+                          SETTING_SCOPE_LIVE, "GE007_UI_SCALE",
+                          "--config-override UI.Scale=VALUE",
+                          "UI scale",
+                          "Scales the launcher and in-game overlay text, padding and buttons. "
+                          "1.0 = default; handhelds usually want ~1.25-1.5 for a readable 7-inch "
+                          "panel. Applies live.");
+
+    /* RX.1 settings curation: tag dev/diagnostic knobs as advanced so the
+     * launcher hides them behind the per-tab "Advanced (expert)" disclosure.
+     * These stay fully overridable via env/CLI/ge007.ini (hidden != removed);
+     * only the player-facing UI list is trimmed. Kept player-facing on purpose:
+     * the master toggles (Ssao/SunShadow/Bloom/Fxaa/Smaa/Tonemap/GradePresets),
+     * every color/FOV/fog dial, RenderScale/MSAA, and the ADS master +
+     * AdsSensitivity + AdsModernReticle. Advanced = the deep tuning under them. */
+    /* SSAO tuning (11) -- the Ssao master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.SsaoMode");
+    settingsMarkAdvanced("Video.SsaoRadius");
+    settingsMarkAdvanced("Video.SsaoIntensity");
+    settingsMarkAdvanced("Video.SsaoBias");
+    settingsMarkAdvanced("Video.SsaoPower");
+    settingsMarkAdvanced("Video.SsaoFarCutoff");
+    settingsMarkAdvanced("Video.SsaoNearCut");
+    settingsMarkAdvanced("Video.SsaoSkyCut");
+    settingsMarkAdvanced("Video.SsaoHalfRes");
+    settingsMarkAdvanced("Video.SsaoBlur");
+    settingsMarkAdvanced("Video.SsaoBlurDepthSharp");
+    /* Sun-shadow tuning (4) -- the SunShadow master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.SunShadowRes");
+    settingsMarkAdvanced("Video.SunShadowRadius");
+    settingsMarkAdvanced("Video.SunShadowBias");
+    settingsMarkAdvanced("Video.SunShadowUmbra");
+    /* Directional-relight internals. */
+    settingsMarkAdvanced("Video.PerPixelLight");
+    settingsMarkAdvanced("Video.EnvSmoothNormals");
+    settingsMarkAdvanced("Video.EnvRelightBlend");
+    /* Bloom tuning -- the Bloom master toggle stays player-facing. */
+    settingsMarkAdvanced("Video.BloomThreshold");
+    settingsMarkAdvanced("Video.BloomIntensity");
+    /* Window placement (managed automatically; expert-only). */
+    settingsMarkAdvanced("Video.WindowX");
+    settingsMarkAdvanced("Video.WindowY");
+    /* Minimap dev/accessibility + renderer internals. */
+    settingsMarkAdvanced("Input.MinimapObjectives");    /* unimplemented layer */
+    settingsMarkAdvanced("Input.MinimapShowAllEnemies");
+    settingsMarkAdvanced("Input.MinimapSharpOverlay");
+    /* ADS deep tuning (11). Player-facing: Input.AdsEnabled (master),
+     * Input.AdsSensitivity, Input.AdsModernReticle. */
+    settingsMarkAdvanced("Input.AdsFovCoupleSens");
+    settingsMarkAdvanced("Input.AdsCenterCrosshair");
+    settingsMarkAdvanced("Input.AdsSpreadEnabled");
+    settingsMarkAdvanced("Input.AdsMovePenalty");
+    settingsMarkAdvanced("Input.AdsMoveScale");
+    settingsMarkAdvanced("Input.AdsStrafeScale");
+    settingsMarkAdvanced("Input.AdsFaithfulZoom");
+    settingsMarkAdvanced("Input.AdsModelPose");
+    settingsMarkAdvanced("Input.AdsRecoilReduce");
+    settingsMarkAdvanced("Input.AdsSteadyView");
+    settingsMarkAdvanced("Input.AdsBobFloor");
 }
 
 /* `--faithful` preset: the documented "Faithful original" mode (VISUAL_MODES.md
@@ -2306,6 +2642,16 @@ int platformGetPad0InstanceId(void) {
     return g_pads[0].handle ? (int)g_pads[0].instance_id : -1;
 }
 
+/* MC.7: active player count, for the app overlay to choose its per-mode footer
+ * (single-player = "Paused", multiplayer = "game keeps running"). Returns 1 when
+ * the engine has no live players yet (frontend/boot) so the overlay text stays
+ * in the single-player wording there. */
+int platformGetPlayerCount(void) {
+    extern s32 getPlayerCount(void);
+    s32 n = getPlayerCount();
+    return (n >= 1) ? (int)n : 1;
+}
+
 /* Raw SDL button state for pad k (0 if absent). Mapping to N64 buttons is done
  * by the caller (stubs.c) so all players share one mapping. */
 unsigned int platformGetPadButtons(int k) {
@@ -2328,30 +2674,9 @@ unsigned int platformGetPadButtons(int k) {
     return mask;
 }
 
-/* Radial deadzone + rescale-from-edge on a normalized stick vector. Factored
- * out of the aim-stick path so the movement stick can share the exact same map
- * (see platform_os.h). radial_enabled == 0 -> no-op (legacy square map stays
- * with the caller). */
-void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled) {
-    float x, y, mag;
-    if (!nx || !ny || !radial_enabled) {
-        return;
-    }
-    x = *nx;
-    y = *ny;
-    mag = sqrtf(x * x + y * y);
-    if (mag <= deadzone || mag <= 0.0f) {
-        *nx = 0.0f;
-        *ny = 0.0f;
-    } else {
-        float rescaled = (mag - deadzone) / (1.0f - deadzone);
-        float inv;
-        if (rescaled > 1.0f) rescaled = 1.0f;
-        inv = rescaled / mag;
-        *nx = x * inv;
-        *ny = y * inv;
-    }
-}
+/* platformApplyRadialDeadzone() now lives in the pure src/platform/radial_deadzone.c
+ * TU so the aim stick, movement stick, and the ROM-free unit test share one
+ * implementation (FID-0015 / M2.1). Declared in platform_os.h + radial_deadzone.h. */
 
 /* Raw left-stick axes for pad k (range -32768..32767, 0 if absent). */
 void platformGetPadLeftStick(int k, int *lx_out, int *ly_out) {
@@ -2512,8 +2837,6 @@ int platformInitSDL(void) {
         return -1;
     }
 
-    platformApplyWindowMode();
-
 #ifdef __APPLE__
     if (gfx_backend_use_metal()) {
         g_metalView = SDL_Metal_CreateView(g_sdlWindow);
@@ -2534,6 +2857,21 @@ int platformInitSDL(void) {
             return -1;
         }
     }
+    }
+
+    /* RX.3 Fix A: apply the configured Video.WindowMode on BOTH the adopted
+     * app-shell window (the Windows/macOS release path, which owns g_sdlWindow +
+     * g_glContext) AND the engine-owned window, now that the window and its GL
+     * context / Metal view are valid. Previously this ran only inside the
+     * engine-owned branch, so borderless/exclusive was loaded into g_windowMode
+     * but never pushed to SDL on the shell path — the window stayed windowed and
+     * "true fullscreen" was a no-op on Windows.
+     *
+     * Guard: skip the hidden/background window (GE007_BACKGROUND drives the
+     * SDL_WINDOW_HIDDEN flag above) so CI / screenshot harnesses are never forced
+     * fullscreen. */
+    if (!g_backgroundWindow) {
+        platformApplyWindowMode();
     }
 
     /* Load OpenGL function pointers via glad (desktop only; GLES resolves via SDL) */
@@ -2573,6 +2911,10 @@ int platformInitSDL(void) {
     if (g_disableInputGrab) {
         printf("[SDL] Input grab disabled (GE007_NO_INPUT_GRAB)\n");
     }
+
+    /* Apply the community controller-mapping database before opening any pad so
+     * exotic/hybrid devices map correctly (MC.2). Missing file is non-fatal. */
+    platformLoadControllerMappings();
 
     /* Open every available game controller into its own player slot. The first
      * opened pad lands in slot 0 (player 1) and shares that slot with the
@@ -2657,8 +2999,11 @@ void platformPollEvents(void) {
             case SDL_KEYDOWN:
                 if (event.key.keysym.sym == SDLK_RETURN &&
                     (event.key.keysym.mod & KMOD_ALT)) {
+                    /* RX.3 Fix B: toggle windowed <-> the user's configured
+                     * non-windowed mode (borderless or exclusive) rather than a
+                     * hardcoded borderless, so exclusive users return to exclusive. */
                     g_windowMode = (g_windowMode == PLATFORM_WINDOW_MODE_WINDOWED)
-                        ? PLATFORM_WINDOW_MODE_BORDERLESS
+                        ? g_preferredFullscreenMode
                         : PLATFORM_WINDOW_MODE_WINDOWED;
                     platformApplyWindowMode();
                 } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
@@ -3065,6 +3410,13 @@ void platformFrameSync(void) {
     if (platformTraceRequested()) {
         extern void portTraceFrame(void);
         portTraceFrame();
+    }
+    /* Per-frame sim-hash trace (GE007_SIM_HASH_EVERY_FRAME): behavior-neutral
+     * frame-lock diagnostic for aspect/cull A/B (FID-0058). No-op otherwise. */
+    {
+        extern void simStateHashPerFrameTrace(int global_timer);
+        extern s32 g_GlobalTimer;
+        simStateHashPerFrameTrace((int)g_GlobalTimer);
     }
 
     /* Send retrace message to all registered scheduler clients */

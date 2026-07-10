@@ -1,0 +1,36 @@
+{
+  "id": "FID-0020",
+  "title": "Interpreter sharp edges: footprint-reject eviction, L7 moveMem OOB, mtx-stack depth-11 clobber, prim-color cache-key miss, texgen s16 overflow, G_SETBLENDCOLOR no-op, texSelect 3001-vs-2698 (M3.3)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "gfx_pc.c:15276",
+    "gfx_pc.c:20065",
+    "gfx_pc.c:16005",
+    "gfx_pc.c:15161",
+    "gfx_pc.c:16901",
+    "othermodemicrocode.c:94",
+    "othermodemicrocode.c:104",
+    "othermodemicrocode.c:119",
+    "othermodemicrocode.c:596"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M3.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M3.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

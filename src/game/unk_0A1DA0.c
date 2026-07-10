@@ -1264,55 +1264,53 @@ Gfx * sub_GAME_7F0A2C44(Gfx *gdl) {
             mtxf.m[3][2] -= g_CurrentPlayer->current_model_pos.z;
 
 #ifdef NATIVE_PORT
-	            /* Native field_10E0 carries the large-room visibility scale. The
-	             * falling-shard pass is an isolated projection*view effect path, so
-	             * scale the full shard model by inverse visibility scale to cancel
-	             * that native-only view compression without changing global room
-	             * rendering. The older sqrt-basis path remains an A/B control. */
+	            /* FID-0003 -- shard geometry scale, signed off against retail ASM.
+	             *
+	             * GROUND TRUTH: the retail disassembly of this very function
+	             * (glabel sub_GAME_7F0A2C44, kept below this reimpl) builds each
+	             * shard matrix with matrix_4x4_set_position_and_rotation_around_xyz,
+	             * subtracts the player position from the translation row, and emits
+	             * it with NO per-piece scalar multiply (the loop .L7F0A2DB0 goes
+	             * straight from the sub.s translation fixups into matrix_4x4_f32_to_s32).
+	             * So on the ROM the shard model matrix is used UNSCALED.
+	             *
+	             * That is only faithful when the projection it draws through
+	             * (field_10E0 = proj*view) is also unscaled -- which is what the
+	             * retail bondview path does (bondview.c, non-NATIVE branch: field_10E0
+	             * is built before the visibility scale is applied to spC4).
+	             *
+	             * This port ships field_10E0 SCALED by the level visibility (Dam and
+	             * both Surfaces use 0.2; every other level is 1.0) as its large-room
+	             * rendering strategy -- bondview.c GE007_FIELD_10E0_SCALED, default on.
+	             * Drawing an unscaled shard matrix through a vis-scaled field_10E0 would
+	             * compress every shard by `visibility` (5x too small on Dam). To
+	             * reproduce the retail NET transform we invert that here: scaling the
+	             * shard model by 1/visibility cancels the 0.2 the view basis carries,
+	             * so `(1/vis) * vis == 1` == the ROM's unscaled shard. The two configs
+	             * are the only retail-faithful pairings:
+	             *   field_10E0 scaled  (default)  -> shard *= 1/visibility   (this path)
+	             *   field_10E0 unscaled (=0)      -> shard unscaled          (== retail ASM)
+	             * The scale is therefore COUPLED to the field_10E0 decision, not an
+	             * independent knob -- read the same env var so the two never desync.
+	             * (Collapsed the old six A/B flags: COMPRESS/BASIS_SCALE/NO_BASIS_SCALE/
+	             * SQRT_BASIS all used get_room_data_float1 and never inverted the
+	             * visibility scale, so they diverge from the ROM on any vis!=1 level.) */
 		            {
-		                static int s_compress = -1;
-		                static int s_basis_scale = -1;
-		                static int s_no_basis_scale = -1;
-		                static int s_sqrt_basis = -1;
-		                static int s_inv_vis_scale = -1;
-		                if (s_compress < 0) {
-		                    const char *e = getenv("GE007_GLASS_SHARD_COMPRESS");
-		                    s_compress = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		                static int s_field10e0_scaled = -1;
+		                if (s_field10e0_scaled < 0) {
+		                    /* Mirror bondview.c GE007_FIELD_10E0_SCALED: default on;
+		                     * only "0" opts out to the stock-style unscaled path. */
+		                    const char *e = getenv("GE007_FIELD_10E0_SCALED");
+		                    s_field10e0_scaled = (e != NULL && e[0] == '0') ? 0 : 1;
 		                }
-		                if (s_basis_scale < 0) {
-		                    const char *e = getenv("GE007_GLASS_SHARD_BASIS_SCALE");
-		                    s_basis_scale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
-		                }
-		                if (s_no_basis_scale < 0) {
-		                    const char *e = getenv("GE007_GLASS_SHARD_NO_BASIS_SCALE");
-		                    s_no_basis_scale = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
-		                }
-		                if (s_sqrt_basis < 0) {
-		                    const char *e = getenv("GE007_GLASS_SHARD_SQRT_BASIS");
-		                    s_sqrt_basis = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
-		                }
-		                if (s_inv_vis_scale < 0) {
-		                    const char *e = getenv("GE007_GLASS_SHARD_INV_VIS_SCALE");
-		                    s_inv_vis_scale = (e != NULL && e[0] != '\0' && e[0] == '0') ? 0 : 1;
-		                }
-		                if (s_compress) {
-		                    matrix_scalar_multiply_3(get_room_data_float1(), &mtxf.m[0][0]);
-		                } else if (s_basis_scale) {
-		                    matrix_scalar_multiply_2(get_room_data_float1(), &mtxf.m[0][0]);
-		                } else if (s_no_basis_scale) {
-		                    /* Explicit negative control: old unscaled local basis with
-		                     * the native scaled field_10E0 projection. */
-		                } else if (s_sqrt_basis || !s_inv_vis_scale) {
-		                    f32 room_scale = get_room_data_float1();
-		                    if (room_scale > 0.0f) {
-		                        matrix_scalar_multiply_2(sqrtf(room_scale), &mtxf.m[0][0]);
-		                    }
-		                } else {
+		                if (s_field10e0_scaled) {
 		                    f32 vis_scale = bgGetLevelVisibilityScale();
 		                    if (vis_scale > 0.0f) {
 		                        matrix_scalar_multiply_3(1.0f / vis_scale, &mtxf.m[0][0]);
 		                    }
 		                }
+		                /* else: field_10E0 unscaled -> shard matrix used as-is, which is
+		                 * byte-for-byte what the retail ASM does. */
 		            }
 #endif
 

@@ -300,12 +300,16 @@ def format_refusal(violations):
 
 # ----------------------------------------------------------- cross-plan conflict
 
-_SIG_KEYS = ("source", "preset", "asset", "mode", "reason")
+_SIG_KEYS = ("source", "preset", "asset", "mode", "reason", "args", "license")
 
 
 def _route_sig(d):
     """Normalized routing signature (source + meaningful args) for conflict
-    comparison. Ignores derived fields (tier) and size/model cosmetics."""
+    comparison. Ignores derived fields (tier) and size/model cosmetics.
+    `args`/`license` (cc0_import tone + provenance) ARE meaningful: two levels
+    sharing a global token with different tone args would silently clobber
+    each other's build in the shared pack dir. Signatures are only ever
+    compared with ==/!=, so a dict-valued key is fine here."""
     return tuple(d.get(k) for k in _SIG_KEYS)
 
 

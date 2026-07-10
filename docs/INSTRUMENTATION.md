@@ -2459,9 +2459,6 @@ color scale (see [PORT.md](../PORT.md)):
 | `GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET=N` | tune the default glass-crack decal lift (default `2.0`) |
 | `GE007_GLASS_SHARD_FIXED_MTX=1` | A/B the old fixed-point matrix emission path for falling glass shards |
 | `GE007_FIELD_10E0_SCALED=0` | A/B the stock-style unscaled `field_10E0` negative control; default native stores visibility-scaled `field_10E0`, which Surface/Dam large-room rendering depends on |
-| `GE007_GLASS_SHARD_COMPRESS=1` | A/B full-matrix room-scale compression for falling glass shards |
-| `GE007_GLASS_SHARD_BASIS_SCALE=1` | A/B the older undersized native shard basis; default uses `sqrt(get_room_data_float1())` local basis compensation |
-| `GE007_GLASS_SHARD_NO_BASIS_SCALE=1` | A/B the too-large unscaled shard basis regression while keeping visibility-scaled `field_10E0` |
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET=N` | force a global decal lift for diagnostics |
 | `GE007_TINTED_GLASS_MIN_OPACITY=N` | override the native tinted-glass render alpha floor (default `16`; old cloudy floor was `96`; `0` is raw N64-style distance opacity) |
 | `GE007_FLAT_PROP_BULLET_IMPACTS=1` | force shade-only (legacy flat) prop-attached bullet impacts; textured bullet-hole decals are now the N64-faithful default for **all** props (crates/barrels/screens/glass), so this is the A/B escape hatch |

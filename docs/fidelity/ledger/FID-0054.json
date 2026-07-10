@@ -1,0 +1,50 @@
+{
+  "id": "FID-0054",
+  "title": "Combat oracle guard AI-state divergence native-vs-stock on Dam (pos/actiontype/room/health/target_visible); roster matches 36/36",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "src/game/chr.c chrTickBeams",
+    "src/game/chrai.c"
+  ],
+  "repro": "tools/movement_oracle_capture.sh --route dam_forward_stop --native-full-trace --ares-bin <ares> --no-compare --out-dir /tmp/cap; tools/compare_combat_trace.py --baseline /tmp/cap/stock_dam_forward_stop.jsonl --test /tmp/cap/native_dam_forward_stop.jsonl --align move",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#9"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#11"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T06:55:13Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "Both-sides Dam capture (FID-0032 verify), 138 motion-anchored frames. Guard ROSTER matches perfectly: 36 guards common on both sides every frame. Divergences are a stable subset (NOT alignment drift - counts flat across frames 0..130): guard pos ~10/36 differ consistently (guards.pos 0/1/2 = 1379/1295/1378 field-hits), actiontype ~1-3/36 (293), room (217), health (115), target_visible (104). This is the core combat/AI parity signal seeding FID-0011 (H4 actiontype dispatch/H5 background-AI) and FID-0013 (F2). ACT follow-up needs a frame-LOCKED capture (identical input timeline both sides, not motion-anchored) to isolate each guard's genuine divergence and classify port-defect vs n64-quirk per guard. dam_forward_stop is a no-combat route so shots/hits/projectiles stayed 0/0 (FID-0047/0048 unexercised here)."
+    },
+    {
+      "ts": "2026-07-10T07:33:44Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#9",
+      "note": "Combat route dam_combat_guard6 (shots 7, projectiles 2). Both-sides Dam capture, 218 aligned frames (--align move). FIRST combat-triggered divergence: guard chrnum=6 identical both sides frames 0..35 then aligned frame 36 (~16f after first shot at f20): target_visible stock=0->native=1 co-incident with actiontype stock=1->native=8. Native guard 6 acquires Bond as visible target + dispatches actiontype 8; N64 stock guard stays unaware (tvis 0/act 1). First field = target_visible (read of ChrRecord.lastseetarget60). Hypothesis: native see-target/alertness update cadence + actiontype-8 dispatch in chr.c guard tick (feeding lastseetarget60) + stan.c LOS gate over-/earlier-perceives vs ASM -> port-defect candidate, not n64 quirk. Absolute-first divergence is frame 0 on BACKGROUND guards (chr 2,3 actiontype/room/health/pos) = pre-existing stable ~10/36 subset, combat-independent. Fix deferred to ACT iteration."
+    },
+    {
+      "ts": "2026-07-10T09:14:40Z",
+      "from": "root-caused",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#11",
+      "note": "ACT root-cause CORRECTED (\u00a711). \u00a79 'native perceives / N64 unaware @frame36' was largely a trace-cadence alignment artifact: compare_combat_trace --align move pairs by RECORD INDEX, but ares/stock emits ~2 records/advancing-global-tick (intra-frame AI evolution + 2789/6500 empty-roster samples) while native emits 1/game-frame, skewing the timelines ~2x in sim-tick space. Re-analysed by true sim-tick (move.global rel to shared motion onset): BOTH sides' guard6 perceive Bond and enter ACT_ATTACK; stock also engages guards 7&44; stock guard6 tv=1 at +76 ticks vs native +108 (native LATER, not earlier). Tick-align cuts guards.actiontype 666->249 (-63%), total 18657->9327. Residual is genuine but systemic: AI cadence faithful (chrlvActionTick sleep-=g_ClockTimer, run at clock=3), perception logic faithful (chrCheckTargetInSight 0x7F029D70 -> chrCanSeeBond -> chrlvSetTargetToPlayer; probabilistic randomGetNext()%distance==0 chrlv.c:5749; PRNG bit-faithful random.c:279), so the perception-tick shift is driven by the DOCUMENTED systemic PRNG call-count desync (rng_seed \u00a75/\u00a78) + tiny guard-pos drift, NOT a bounded guard-AI counter bug. Classified: instrumentation-gap (comparator) + deferred RNG-parity. NO guard-AI change landed (would chase artifact+RNG phase, risk faithful path); sim byte-identical, combat_oracle_contract + port_combat_route_capture_smoke PASS (Release, hash 3c8939968e0eb50e). Proposal in \u00a711.4: --align tick comparator mode (needs roster-completeness design) + track residual against RNG-call-count parity."
+    }
+  ]
+}

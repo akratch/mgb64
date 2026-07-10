@@ -1,0 +1,10 @@
+{
+  "tape": "dam_combat_guard6.ge7tape",
+  "level": "dam",
+  "level_id": 33,
+  "difficulty": 0,
+  "tick_count": 302,
+  "controller_count": 1,
+  "sim_state_hash": "3c8939968e0eb50e",
+  "note": "~5s Dam combat route: walk forward toward guard 6 (nearest, becomes onscreen/target_visible) while firing the PP7 (GE007_AUTO_FORWARD=80:120 + GE007_AUTO_FIRE=100:160 baked into the captured OSContPad stream). Exercises the combat oracle: 7 shots fired, 3 projectiles spawned, guards react. Deterministic under the determinism envelope: record==replay1==replay2==replay3 (sim_state_hash byte-exact). Regenerate only via tools/fidelity/tape_regression.sh --record dam_combat_guard6 dam \"GE007_AUTO_FORWARD=80:120 GE007_AUTO_FIRE=100:160\" 300; the hash is the regression guard (FID-0054 combat-route determinism lane)."
+}

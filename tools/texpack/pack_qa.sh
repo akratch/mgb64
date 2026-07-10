@@ -40,6 +40,12 @@
 # Env knobs (all optional):
 #   PACK_QA_RENDERER=metal   force the PRIMARY captures onto Metal (G1: dodge GL hangs while
 #                            iterating; the identity/floor results are byte-identical either way).
+#   PACK_QA_DIFF_CEILING=60  max changed_pct for leg (c). The ceiling catches garbage frames
+#                            (black screen, exploded geometry); a curated FULL-coverage pack
+#                            (e.g. the Surface showcase: ground+banks+treelines+creek own
+#                            ~70% of the spawn frame) legitimately exceeds the default —
+#                            raise it deliberately, with the health/tone/trace legs as the
+#                            real garbage guards.
 #   PACK_QA_FRAME=300        screenshot frame (spec default 300).
 #   PACK_QA_TIMEOUT=120      per-capture wall cap, seconds.
 #   PACK_QA_WARP_PAD=N       hero-surface pad for the seam leg (default 0; empty => skip seam).
@@ -67,6 +73,7 @@ BIN="${GE007_BIN:-$REPO/build/ge007}"
 ROM="${GE007_ROM:-$REPO/baserom.u.z64}"
 FRAME="${PACK_QA_FRAME:-300}"
 TIMEOUT_S="${PACK_QA_TIMEOUT:-120}"
+DIFF_CEILING="${PACK_QA_DIFF_CEILING:-60}"
 WARP_PAD="${PACK_QA_WARP_PAD-0}"          # default 0; set empty to skip seam
 
 err()  { echo "PACK_QA ERROR level=${LEVEL:-?} $*"; exit 2; }
@@ -165,7 +172,7 @@ python3 "$REPO/tools/audit_screenshot_health.py" "$WORK/screenshot_hd.bmp" >/dev
   || fail screenshot_health
 python3 "$REPO/tools/compare_screenshots.py" \
   "$WORK/screenshot_base.bmp" "$WORK/screenshot_hd.bmp" \
-  --max-changed-pct 60 --json-out "$WORK/qa.json" >"$WORK/compare.log" 2>&1
+  --max-changed-pct "$DIFF_CEILING" --json-out "$WORK/qa.json" >"$WORK/compare.log" 2>&1
 cmp_exit=$?
 [ -f "$WORK/qa.json" ] || err "compare produced no qa.json ($(tail -1 "$WORK/compare.log"))"
 [ "$cmp_exit" -eq 1 ] && fail diff_ceiling            # tool enforces >60% => exit 1
@@ -173,7 +180,7 @@ cmp_exit=$?
 
 # ------------------------------------------------------------- (d) floor + tone
 changed_pct="$(jget "$WORK/qa.json" "['changed_pct']")"
-echo "   changed_pct=$changed_pct (ceiling 60)"
+echo "   changed_pct=$changed_pct (ceiling $DIFF_CEILING)"
 below="$(python3 -c "print(1 if $changed_pct < 5 else 0)")"
 if [ "$below" = "1" ]; then
   echo "   floor: pack didn't load — changed_pct=$changed_pct < 5"

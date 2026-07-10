@@ -21,6 +21,7 @@ ARES_BIN=""
 STOCK_TRACE=""
 NATIVE_ONLY=0
 NO_COMPARE=0
+NATIVE_FULL_TRACE=0
 COMPARE_ALIGN=""
 SEED_EEPROM=""
 EXTRA_NATIVE_CONFIG_OVERRIDES=()
@@ -46,6 +47,10 @@ Options:
                        without --ares-bin.
   --native-only         only capture native trace
   --no-compare          capture traces but do not run the route comparator
+  --native-full-trace   emit the full native --trace-state record (incl. the
+                       combat_oracle namespace) instead of the slim flow-only
+                       movement trace; required for combat/floor oracle capture
+                       (FID-0032). The ares tracer always emits combat_oracle.
   --align MODE          comparator alignment (default: route compare_align)
   --native-config-override KEY=VALUE
                        append a native --config-override after route config;
@@ -70,6 +75,7 @@ while [[ $# -gt 0 ]]; do
         --seed-eeprom) SEED_EEPROM="$2"; shift 2 ;;
         --native-only) NATIVE_ONLY=1; shift ;;
         --no-compare) NO_COMPARE=1; shift ;;
+        --native-full-trace) NATIVE_FULL_TRACE=1; shift ;;
         --align) COMPARE_ALIGN="$2"; shift 2 ;;
         --native-config-override) EXTRA_NATIVE_CONFIG_OVERRIDES+=("$2"); shift 2 ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
@@ -621,7 +627,7 @@ run_native_capture() {
         GE007_NO_VSYNC=1
         GE007_BACKGROUND=1
         GE007_NO_INPUT_GRAB=1)
-    if [[ "$COMPARE_KIND" == "movement" ]]; then
+    if [[ "$COMPARE_KIND" == "movement" && "$NATIVE_FULL_TRACE" != "1" ]]; then
         env_cmd+=(GE007_TRACE_FLOW_ONLY=1)
     fi
     if [[ "${#native_timing_env[@]}" -gt 0 ]]; then

@@ -36,6 +36,89 @@ static int pc_deterministic_speedframes_override = -1;
 static int pc_frame_timing_trace_enabled = -1;
 static int pc_frame_timing_trace_budget = 0;
 
+/*
+ * FID-0033 — 0-tick purity fuzz (docs/design/UNCAPPED_FPS_PLAN.md Task 4).
+ *
+ * Proves the sim is decoupled from render RATE: under GE007_UNCAP_FUZZ=<seed>
+ * + --deterministic a seeded xorshift schedule turns ~75% of loop iterations
+ * into RENDER-ONLY frames — extra loop iterations that inject ZERO sim ticks.
+ * This is the choke point that ELECTS such a frame and forces deltaFrames to 0
+ * (so g_ClockTimer, derived from speedgraphframes in lvl.c, stays 0 and the
+ * frame counters here don't advance). src/boss.c then skips both the sim tick
+ * AND the state-mutating render for the elected frame: the N64 engine runs
+ * sim+render 1:1 and both advance per-frame game-pool state that is not clock-
+ * delta-gated, so a genuine 0-tick frame must run neither. tools/uncap_purity_
+ * gate.sh asserts the final sim-state hash is identical with and without the
+ * injection — anything the loop/timing machinery leaks into hashed sim state
+ * on these frames trips it. Full render-path decoupling under a variable frame
+ * rate is the separate scope of the F5 uncapped-FPS project (Tasks 5-8).
+ *
+ * Reachable ONLY under the harness: armed exclusively when --deterministic is
+ * set AND GE007_UNCAP_FUZZ names a seed. In normal play the state stays 0 and
+ * this is a no-op — the faithful path is byte-identical.
+ */
+s32 g_pcUncapRenderOnlyFrame = 0;
+
+static u32 pc_uncap_fuzz_state = 0;    /* xorshift32 state; 0 = disarmed */
+static int pc_uncap_fuzz_checked = 0;
+static s32 pc_uncap_fuzz_run_len = 0;  /* consecutive render-only frames */
+
+static int pcUncapFuzzRenderOnlyThisFrame(void)
+{
+    extern int g_deterministic;
+    extern s32 get_is_ramrom_flag(void);
+    u32 x;
+
+    if (!pc_uncap_fuzz_checked)
+    {
+        pc_uncap_fuzz_checked = 1;
+        if (g_deterministic)
+        {
+            const char *env = getenv("GE007_UNCAP_FUZZ");
+            if (env != NULL && env[0] != '\0')
+            {
+                u32 seed = (u32) strtoul(env, NULL, 0);
+                if (seed == 0)
+                {
+                    seed = 0x9E3779B9u; /* xorshift fixed point is 0; avoid it */
+                }
+                pc_uncap_fuzz_state = seed;
+            }
+        }
+    }
+
+    if (pc_uncap_fuzz_state == 0)
+    {
+        return 0; /* disarmed → byte-identical faithful path */
+    }
+    if (get_is_ramrom_flag() != 0)
+    {
+        return 0; /* never perturb demo record/playback timing */
+    }
+
+    /* Advance xorshift32; ~75% of iterations render-only. A run-length cap
+     * guarantees the sim clock always makes forward progress toward the exit
+     * timer even on an unlucky seed (still fully deterministic given seed). */
+    x = pc_uncap_fuzz_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    pc_uncap_fuzz_state = x;
+
+    if (pc_uncap_fuzz_run_len >= 7)
+    {
+        pc_uncap_fuzz_run_len = 0;
+        return 0; /* force a tick frame */
+    }
+    if ((x & 3u) != 0u)
+    {
+        pc_uncap_fuzz_run_len++;
+        return 1; /* render-only: 0 sim ticks */
+    }
+    pc_uncap_fuzz_run_len = 0;
+    return 0;
+}
+
 static s32 pcGetDeterministicSpeedframesOverride(void)
 {
     extern int g_deterministic;
@@ -142,6 +225,20 @@ void updateFrameCounters(s32 deltaFrames)
 {
 #ifdef NATIVE_PORT
     u32 previous_count = copy_of_osgetcount_value_1;
+
+    /* FID-0033 purity fuzz: this is the single choke point deciding how many
+     * sim ticks the upcoming frame gets. When the seeded schedule elects a
+     * render-only frame, drop deltaFrames to 0 (0 ticks) and publish the flag
+     * so sim code that would otherwise advance per-frame can stand down. */
+    if (pcUncapFuzzRenderOnlyThisFrame())
+    {
+        deltaFrames = 0;
+        g_pcUncapRenderOnlyFrame = 1;
+    }
+    else
+    {
+        g_pcUncapRenderOnlyFrame = 0;
+    }
 #endif
     copy_of_osgetcount_value_0 = (s32) copy_of_osgetcount_value_1;
     copy_of_osgetcount_value_1 = osGetCount();
@@ -159,14 +256,13 @@ void updateFrameCounters(s32 deltaFrames)
     {
         extern s32 D_80048380;
         extern s32 get_is_ramrom_flag(void);
+        /* Shared clamp so the runtime path and the ROM-free unit test agree —
+         * see src/platform/frame_clamp.c (FID-0017 / M2.4). */
+        extern int clampSpeedgraphFrames(int deltaFrames, int is_ramrom, int is_first_tick);
 
-        if (get_is_ramrom_flag() != 0) {
-            /* preserve raw timing for RAMROM playback fidelity */
-        } else if (D_80048380 == 0 && speedgraphframes > 1) {
-            speedgraphframes = 1;
-        } else if (speedgraphframes > 4) {
-            speedgraphframes = 4;
-        }
+        speedgraphframes = (s32) clampSpeedgraphFrames((int) speedgraphframes,
+                                                       get_is_ramrom_flag() != 0,
+                                                       D_80048380 == 0);
     }
 #endif
 

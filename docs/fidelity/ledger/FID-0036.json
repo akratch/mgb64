@@ -1,0 +1,31 @@
+{
+  "id": "FID-0036",
+  "title": "PROPDEF converter risk cases untested: TANK rect4f union, KEY id/flags union, MULTI_MONITOR, VEHICLE/AIRCRAFT/AUTOGUN ptr-reuse; hand-maintained size tables unguarded",
+  "class": "port-defect",
+  "surface": "converter",
+  "priority": "P1",
+  "status": "triaged",
+  "suspect": [
+    "prop.c:1910-2380",
+    "prop.c:2321-2324",
+    "prop.c:2048-2049",
+    "loadobjectmodel.c:56-104"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

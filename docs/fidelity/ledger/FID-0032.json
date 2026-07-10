@@ -1,0 +1,50 @@
+{
+  "id": "FID-0032",
+  "title": "Combat/floor-field oracle absent: ares reader extracts no guard/combat/stan state (COMBAT_DEFERRED \u00a72.1, \"single biggest blocker, XL\")",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "verified",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/COMBAT_DEFERRED_PLAN.md#2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/COMBAT_DEFERRED_PLAN.md#2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:55:16Z",
+      "from": "triaged",
+      "to": "landed",
+      "evidence": "docs/fidelity/combat_oracle_fields.md",
+      "note": "Combat/floor oracle extension landed: dossier docs/fidelity/combat_oracle_fields.md; native emitter traceBuildCombatOracleJson in port_trace.c (compiles clean, -fsyntax-only); ares patch formatCombatOracleJson in prepare_ares_movement_oracle_build.sh (bash -n clean); comparator tools/compare_combat_trace.py; ROM-free contract lane tools/combat_route_contract_smoke.sh (ctest combat_oracle_contract, green) + verify_manifest tier1. NOT verified: both-sides live capture blocked by parallel-agent build contention (FID-0049). Emits combat_oracle{guards,floor,combat,projectiles} with schema parity. Sub-findings FID-0047 (ares projectiles), FID-0048 (ares shots/hits counters). VERIFY RETEST: capture one native + one ares Dam route, run compare_combat_trace.py; on success -> verified, which auto-unblocks FID-0011/0012/0013 (0025 is blocked_on FID-0031, not this)."
+    },
+    {
+      "ts": "2026-07-10T06:57:37Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "Live both-sides Dam capture (dam_forward_stop) completed. Rebuilt instrumented ares with the committed combat-oracle patch (build/ares-movement-oracle, combat_oracle strings present); native built clean in /tmp. compare_combat_trace.py --align move aligned 138 frames; anchor validated (floor.height 138/138 exact, floor.stan_room 138/138, guard roster 36/36 every frame). combat_oracle emission is sim-hash-neutral: whole-sim hash byte-identical (27ce75d02a10abcc) flow-only vs full-trace. combat_oracle_contract ctest PASS. 3 divergence findings filed as the product: FID-0053 (floor.stan_id encoding non-comparable), FID-0054 (guard AI-state pos/actiontype/room/health/target_visible), FID-0055 (guard anim_hash+flags_onscreen). Sub-findings FID-0047 (projectiles) / FID-0048 (shots/hits) unexercised on this no-combat route -> triaged with disposition. Required infra --native-full-trace + --align move landed (460b80e/49df4c8). This auto-unblocks FID-0011/0012/0013 (blocked_on FID-0032)."
+    }
+  ]
+}

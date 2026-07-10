@@ -288,34 +288,17 @@ static int traceGlassShardEmitEnabled(void) {
     return !(value != NULL && value[0] == '0');
 }
 
-static int traceGlassShardCompressFullMatrix(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_COMPRESS");
+/* FID-0003: the shard scale is no longer a six-way A/B. It is coupled to the
+ * field_10E0 (proj*view) visibility scaling: when field_10E0 carries the level
+ * visibility (GE007_FIELD_10E0_SCALED, default on) the emitter applies the
+ * inverse-visibility compensation; when field_10E0 is unscaled the shard is
+ * drawn unscaled (== retail ASM). This mirror keeps the trace's reported
+ * scale_mode truthful. The per-candidate summaries below are retained purely as
+ * offline diagnostics for the pixel oracle. */
+static int traceGlassShardField10E0Scaled(void) {
+    const char *value = getenv("GE007_FIELD_10E0_SCALED");
 
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardBasisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_BASIS_SCALE");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardNoBasisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_NO_BASIS_SCALE");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardSqrtBasis(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_SQRT_BASIS");
-
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
-static int traceGlassShardInvVisScale(void) {
-    const char *value = getenv("GE007_GLASS_SHARD_INV_VIS_SCALE");
-
-    return !(value != NULL && value[0] != '\0' && value[0] == '0');
+    return !(value != NULL && value[0] == '0');
 }
 
 static float traceMtxFixedElement(const Mtx *matrix, int row, int col) {
@@ -793,11 +776,7 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
     int projection_valid = 0;
     int projection_is_float = 0;
     int emit_enabled = traceGlassShardEmitEnabled();
-    int compress_full = traceGlassShardCompressFullMatrix();
-    int basis_scale = traceGlassShardBasisScale();
-    int no_basis_scale = traceGlassShardNoBasisScale();
-    int sqrt_basis = traceGlassShardSqrtBasis();
-    int inv_vis_scale = traceGlassShardInvVisScale();
+    int field10e0_scaled = traceGlassShardField10E0Scaled();
     int sample_all = traceGlassProjectionAllSamples();
     int sample_limit = sample_all ? TRACE_GLASS_PROJECTION_SAMPLE_ALL_MAX : TRACE_GLASS_PROJECTION_SAMPLE_DEFAULT_MAX;
     int selected_mode = TRACE_GLASS_SCALE_INV_VIS_FULL;
@@ -837,15 +816,11 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
 
     traceLoadCurrentField10E0(projection, &projection_valid, &projection_is_float);
 
-    if (compress_full) {
-        selected_mode = TRACE_GLASS_SCALE_FULL_MATRIX;
-    } else if (basis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_BASIS;
-    } else if (no_basis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_NO_BASIS;
-    } else if (sqrt_basis || !inv_vis_scale) {
-        selected_mode = TRACE_GLASS_SCALE_SQRT_BASIS;
-    }
+    /* Coupled to field_10E0: scaled -> inverse-visibility compensation;
+     * unscaled -> shard drawn as-is (the retail-ASM path). */
+    selected_mode = field10e0_scaled
+                        ? TRACE_GLASS_SCALE_INV_VIS_FULL
+                        : TRACE_GLASS_SCALE_NO_BASIS;
     for (int mode = 0; mode < TRACE_GLASS_SCALE_COUNT; mode++) {
         traceGlassProjectionSummaryInit(&summaries[mode], mode == selected_mode, sample_limit);
     }
@@ -962,11 +937,11 @@ static void traceBuildGlassProjectionJson(char *out, size_t out_size) {
              projection[1][3],
              projection[2][3],
              projection[3][3],
-             compress_full,
-             basis_scale,
-             no_basis_scale,
-             sqrt_basis,
-             inv_vis_scale,
+             0,                  /* compress_full_matrix: retired A/B (FID-0003) */
+             0,                  /* basis_scale: retired A/B (FID-0003) */
+             !field10e0_scaled,  /* no_basis_scale: live when field_10E0 unscaled */
+             0,                  /* sqrt_basis: retired A/B (FID-0003) */
+             field10e0_scaled,   /* inv_vis_scale: live default (coupled) */
              room_scale,
              vis_scale,
              traceGlassProjectionScaleModeName(selected_mode),
@@ -1721,6 +1696,11 @@ static TraceGuardHitEvent s_traceGuardHitEvents[TRACE_GUARD_HIT_EVENTS_MAX];
 static int s_traceGuardHitEventCount = 0;
 static int s_traceGuardHitOverflow = 0;
 
+/* Running total of accepted player-inflicted guard hits, for the combat/floor
+ * oracle (FID-0032) "combat_oracle.combat.hits_landed_total" field. Trace-only:
+ * never read by sim code, never registered in the sim-state hash. */
+static s32 s_combatOracleHitsTotal = 0;
+
 #define TRACE_FORCED_GUARD_HIT_EVENTS_MAX 8
 
 typedef struct TraceForcedGuardHitEvent {
@@ -2437,6 +2417,9 @@ void portTraceGuardHitApply(const ChrRecord *chr,
                             s32 preargh,
                             f32 angle)
 {
+    if (is_player != 0 && accepted != 0) {
+        s_combatOracleHitsTotal++;
+    }
     traceGuardHitEvent("apply",
                        chr,
                        initial_hitpart,
@@ -4179,6 +4162,237 @@ static void traceInsertActorSample(TraceActorSample *samples,
     }
 
     samples[slot] = *sample;
+}
+
+/*
+ * Combat / floor-field oracle (FID-0032). Emits the "combat_oracle" namespace:
+ *   guards[]      active-chr AI/combat state (schema parity with the ares tracer)
+ *   floor{}       the player's current stan tile
+ *   combat{}      scalar player combat summary
+ *   projectiles[] live thrown/airborne ordnance
+ * See docs/fidelity/combat_oracle_fields.md for the field/offset dossier. This is a
+ * pure read of existing sim state; it mutates nothing and is not in the sim-state hash.
+ */
+#define TRACE_COMBAT_ORACLE_MAX_GUARDS 64
+#define TRACE_COMBAT_ORACLE_MAX_PROJECTILES 32
+
+static void traceBuildCombatOracleJson(char *out,
+                                       size_t out_size,
+                                       int has_player,
+                                       int shots_fired_total)
+{
+    extern PropRecord *get_ptr_obj_pos_list_current_entry(void);
+    size_t used = 0;
+    int wrote;
+    int i;
+    int emitted;
+    int overflow;
+
+    if (out_size == 0) {
+        return;
+    }
+
+    /* guards[] */
+    wrote = snprintf(out + used, out_size - used, "\"combat_oracle\":{\"guards\":[");
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        snprintf(out, out_size,
+                 "\"combat_oracle\":{\"guards\":[],\"guards_overflow\":1,"
+                 "\"floor\":{\"stan_id\":-1,\"stan_room\":-1,\"stan_flags\":-1,\"height\":0.00},"
+                 "\"combat\":{\"player_health\":0.0000,\"player_armor\":0.0000,"
+                 "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x00000000\"},"
+                 "\"projectiles\":[],\"projectiles_overflow\":1},");
+        return;
+    }
+    used += (size_t)wrote;
+
+    emitted = 0;
+    overflow = 0;
+    if (g_ChrSlots != NULL && g_NumChrSlots > 0 && g_NumChrSlots < 256) {
+        for (i = 0; i < g_NumChrSlots; i++) {
+            ChrRecord *chr = &g_ChrSlots[i];
+            PropRecord *prop;
+            u64 anim_hash = 0;
+            int room = -1;
+            int flags_onscreen = 0;
+            int target_visible = 0;
+            float health;
+
+            if (chr == NULL || chr->model == NULL || chr->chrnum < 0 || chr->chrnum >= 1000) {
+                continue;
+            }
+            prop = chr->prop;
+            if (prop == NULL || prop->type != PROP_TYPE_CHR) {
+                continue;
+            }
+            if (emitted >= TRACE_COMBAT_ORACLE_MAX_GUARDS) {
+                overflow = 1;
+                break;
+            }
+
+            if (chr->model->anim != NULL) {
+                anim_hash = traceModelAnimationHeaderHash(chr->model->anim);
+            }
+            if (prop->stan != NULL) {
+                room = prop->stan->room;
+            }
+            flags_onscreen = (prop->flags & PROPFLAG_ONSCREEN) != 0 ? 1 : 0;
+            if (chr->lastseetarget60 > 0 &&
+                (g_GlobalTimer - chr->lastseetarget60) < CHRLV_10_SEC_TIMER) {
+                target_visible = 1;
+            }
+            health = chr->maxdamage - chr->damage;
+
+            wrote = snprintf(out + used, out_size - used,
+                             "%s{\"chrnum\":%d,\"pos\":[%.2f,%.2f,%.2f],"
+                             "\"actiontype\":%d,\"aimode\":%d,\"health\":%.4f,"
+                             "\"shotbondsum\":%.4f,\"flags_onscreen\":%d,"
+                             "\"target_visible\":%d,\"anim_hash\":\"0x%016llX\",\"room\":%d}",
+                             emitted == 0 ? "" : ",",
+                             chr->chrnum,
+                             prop->pos.x, prop->pos.y, prop->pos.z,
+                             chr->actiontype,
+                             chr->alertness,
+                             health,
+                             chr->shotbondsum,
+                             flags_onscreen,
+                             target_visible,
+                             (unsigned long long)anim_hash,
+                             room);
+            if (wrote < 0 || (size_t)wrote >= out_size - used) {
+                overflow = 1;
+                break;
+            }
+            used += (size_t)wrote;
+            emitted++;
+        }
+    }
+
+    wrote = snprintf(out + used, out_size - used, "],\"guards_overflow\":%d,", overflow);
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        strncpy(out, "\"combat_oracle\":{\"guards\":[],\"guards_overflow\":1,"
+                     "\"floor\":{\"stan_id\":-1,\"stan_room\":-1,\"stan_flags\":-1,\"height\":0.00},"
+                     "\"combat\":{\"player_health\":0.0000,\"player_armor\":0.0000,"
+                     "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x00000000\"},"
+                     "\"projectiles\":[],\"projectiles_overflow\":1},",
+                out_size - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+    used += (size_t)wrote;
+
+    /* floor{} — the player's current stan tile */
+    {
+        int stan_id = -1;
+        int stan_room = -1;
+        int stan_flags = -1;
+        float height = 0.0f;
+        if (has_player && g_CurrentPlayer != NULL) {
+            StandTile *tile = g_CurrentPlayer->field_488.current_tile_ptr;
+            if (tile != NULL) {
+                stan_id = (int)(tile->id & 0x00FFFFFF);
+                stan_room = (int)tile->room;
+                stan_flags = (int)tile->mid.half;
+            }
+            height = g_CurrentPlayer->stanHeight;
+        }
+        wrote = snprintf(out + used, out_size - used,
+                         "\"floor\":{\"stan_id\":%d,\"stan_room\":%d,\"stan_flags\":%d,\"height\":%.2f},",
+                         stan_id, stan_room, stan_flags, height);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            strncpy(out + used, "\"floor\":{},\"combat\":{},\"projectiles\":[]},",
+                    out_size - used - 1);
+            out[out_size - 1] = '\0';
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    /* combat{} — scalar player combat summary */
+    {
+        float player_health = 0.0f;
+        float player_armor = 0.0f;
+        unsigned int rng_seed_low = (unsigned int)(g_randomSeed & 0xFFFFFFFFULL);
+        if (has_player && g_CurrentPlayer != NULL) {
+            player_health = g_CurrentPlayer->bondhealth;
+            player_armor = g_CurrentPlayer->bondarmour;
+        }
+        wrote = snprintf(out + used, out_size - used,
+                         "\"combat\":{\"player_health\":%.4f,\"player_armor\":%.4f,"
+                         "\"shots_fired_total\":%d,\"hits_landed_total\":%d,"
+                         "\"rng_seed\":\"0x%08X\"},",
+                         player_health, player_armor,
+                         shots_fired_total, s_combatOracleHitsTotal,
+                         rng_seed_low);
+        if (wrote < 0 || (size_t)wrote >= out_size - used) {
+            strncpy(out + used, "\"combat\":{},\"projectiles\":[]},", out_size - used - 1);
+            out[out_size - 1] = '\0';
+            return;
+        }
+        used += (size_t)wrote;
+    }
+
+    /* projectiles[] — live thrown/airborne ordnance (mines/grenades/rockets/explosions) */
+    wrote = snprintf(out + used, out_size - used, "\"projectiles\":[");
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        strncpy(out + used, "\"projectiles\":[]},", out_size - used - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+    used += (size_t)wrote;
+
+    emitted = 0;
+    overflow = 0;
+    if (has_player) {
+        PropRecord *prop;
+        int guard_iter = 0;
+        for (prop = get_ptr_obj_pos_list_current_entry();
+             prop != NULL && guard_iter < 4096;
+             prop = prop->prev, guard_iter++) {
+            int kind;
+            int owner_chrnum = -1;
+
+            if (prop->type == PROP_TYPE_WEAPON) {
+                ObjectRecord *obj = prop->obj;
+                if (obj == NULL || obj->projectile == NULL) {
+                    continue;
+                }
+                kind = (int)obj->projectile->droptype;
+                if (obj->projectile->ownerprop != NULL &&
+                    obj->projectile->ownerprop->type == PROP_TYPE_CHR &&
+                    obj->projectile->ownerprop->chr != NULL) {
+                    owner_chrnum = obj->projectile->ownerprop->chr->chrnum;
+                }
+            } else if (prop->type == PROP_TYPE_EXPLOSION) {
+                kind = -1;
+            } else {
+                continue;
+            }
+
+            if (emitted >= TRACE_COMBAT_ORACLE_MAX_PROJECTILES) {
+                overflow = 1;
+                break;
+            }
+
+            wrote = snprintf(out + used, out_size - used,
+                             "%s{\"kind\":%d,\"pos\":[%.2f,%.2f,%.2f],\"owner_chrnum\":%d}",
+                             emitted == 0 ? "" : ",",
+                             kind,
+                             prop->pos.x, prop->pos.y, prop->pos.z,
+                             owner_chrnum);
+            if (wrote < 0 || (size_t)wrote >= out_size - used) {
+                overflow = 1;
+                break;
+            }
+            used += (size_t)wrote;
+            emitted++;
+        }
+    }
+
+    wrote = snprintf(out + used, out_size - used, "],\"projectiles_overflow\":%d},", overflow);
+    if (wrote < 0 || (size_t)wrote >= out_size - used) {
+        strncpy(out + used, "],\"projectiles_overflow\":1},", out_size - used - 1);
+        out[out_size - 1] = '\0';
+    }
 }
 
 static void traceBuildActorSummaryJson(char *out,
@@ -6405,6 +6619,7 @@ void portTraceFrame(void) {
     char objective_field_json[256];
     char tracked_chr_field_json[6144];
     char actor_summary_json[4096];
+    char combat_oracle_json[16384];
     char glass_state_json[4096];
     char glass_projection_json[65536];
     char alarm_field_json[64];
@@ -6439,6 +6654,12 @@ void portTraceFrame(void) {
     tracked_chr_field_json[0] = '\0';
     snprintf(actor_summary_json, sizeof(actor_summary_json),
              "{\"slots\":0,\"live\":0,\"alive\":0,\"hidden\":0,\"onscreen\":0,\"rendered\":0,\"sample\":[]}");
+    snprintf(combat_oracle_json, sizeof(combat_oracle_json),
+             "\"combat_oracle\":{\"guards\":[],\"guards_overflow\":0,"
+             "\"floor\":{\"stan_id\":-1,\"stan_room\":-1,\"stan_flags\":-1,\"height\":0.00},"
+             "\"combat\":{\"player_health\":0.0000,\"player_armor\":0.0000,"
+             "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x00000000\"},"
+             "\"projectiles\":[],\"projectiles_overflow\":0},");
     glass_state_json[0] = '\0';
     glass_projection_json[0] = '\0';
     alarm_field_json[0] = '\0';
@@ -7881,6 +8102,7 @@ void portTraceFrame(void) {
         traceBuildForcedGuardHitJson(forced_hit_field_json, sizeof(forced_hit_field_json));
         traceBuildGuardDropJson(drop_field_json, sizeof(drop_field_json));
         traceBuildActorSummaryJson(actor_summary_json, sizeof(actor_summary_json), has_player, px, py, pz);
+        traceBuildCombatOracleJson(combat_oracle_json, sizeof(combat_oracle_json), has_player, shot_count_total);
         traceBuildGlassStateJson(glass_state_json, sizeof(glass_state_json));
         traceBuildGlassProjectionJson(glass_projection_json, sizeof(glass_projection_json));
         traceBuildGlassPropsJson(glass_props_json, sizeof(glass_props_json), has_player, px, py, pz);
@@ -7977,6 +8199,7 @@ void portTraceFrame(void) {
             "\"vis\":{\"rendered\":%d,\"neighbor\":%d,\"loaded\":%d,\"sample\":%s,\"draw_sample\":%s},"
             "\"fallback\":{\"active\":%d,\"rooms\":%d,\"total\":%d}},"
             "\"actors\":%s,"
+            "%s"
             "\"glass\":%s,"
             "\"glass_projection\":%s,"
             "\"glass_props\":%s,"
@@ -8168,6 +8391,7 @@ void portTraceFrame(void) {
             rendered_rooms_count, neighbor_rooms_count, loaded_rooms_count, rendered_rooms_buf, draw_rooms_buf,
             room_render_fallback_active, room_render_fallback_rooms, room_render_fallback_total,
             actor_summary_json,
+            combat_oracle_json,
             glass_state_json[0] ? glass_state_json : "{\"present\":0,\"buffer_len\":0,\"next\":0,\"active\":0,\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x0000000000000000\"}",
             glass_projection_json[0] ? glass_projection_json : "{\"present\":0,\"emit_enabled\":0,\"projection_valid\":0,\"active\":0,\"projected\":0,\"onscreen\":0,\"behind\":0,\"sample\":[]}",
             glass_props_json[0] ? glass_props_json : "{\"present\":0,\"count\":0,\"live\":0,\"with_prop\":0,\"with_model\":0,\"destroyed\":0,\"remove\":0,\"truncated\":0,\"nearest\":{\"index\":-1},\"first_removed\":{\"index\":-1},\"first_destroyed\":{\"index\":-1},\"sample\":[],\"sample_truncated\":0,\"hash\":\"0x0000000000000000\"}",

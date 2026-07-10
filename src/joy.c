@@ -4,6 +4,7 @@
 #include <PR/os.h>
 #ifdef NATIVE_PORT
 #include "game/ramromreplay.h"
+#include "platform/input_tape.h"  /* --record-tape / --play-tape hooks (FID-0034) */
 #endif
 
 #define JOY_CLAMP_MIN          0
@@ -415,6 +416,11 @@ void joyConsumeSamples(struct contdata *contdata)
 void joyConsumeSamplesWrapper(void)
 {
 #ifdef NATIVE_PORT
+    /* (Re)install the input-tape record/playback hooks. Idempotent, and re-arms
+     * the g_Cont*Func pointers if joyInit cleared them; no-op unless a tape was
+     * requested. Sets the same g_ContRecordFunc/g_ContPlaybackFunc seam the
+     * RAMROM path uses. */
+    inputTapeInstallHooks();
     pcRamromTraceLoopPhase("joy_wrapper_enter");
 #endif
 
@@ -1114,9 +1120,24 @@ s32 joyGamePakLongWrite(u8 address, u8 *buffer, s32 nbytes)
     return ret;
 }
 
+/* Port (MC.4): route the game's Rumble Pak signal to the host controller.
+ * The N64 pak state machine below (osMotorStart/Stop via g_ContPfs) is inert in
+ * the port -- osPfsInit returns PFS_ERR_NOPACK so init never reaches READY --
+ * so the on/off is driven straight from this call site instead. Output-only and
+ * gated off under --deterministic inside the platform layer; see platform_sdl.c.
+ * Suppressed during demo playback (g_ContPlaybackFunc) to match stock, which
+ * only rumbles live input. */
+extern void platformRumblePlayer(s32 controller, f32 duration);
+extern void platformRumbleStopAll(void);
+
 void joyRumblePakStart(s32 controller, f32 duration)
 {
     s32 duration60 = (duration * 60.0f);
+
+    if (g_ContPlaybackFunc == NULL)
+    {
+        platformRumblePlayer(controller, duration);
+    }
 
     if ((g_ContPlaybackFunc == NULL) && (g_ContRumblePakInitState[controller] > RUMBLEPAKINITSTATE_NOT_READY))
     {
@@ -1134,6 +1155,8 @@ void joyRumblePakStart(s32 controller, f32 duration)
 void joyRumblePakStop(void)
 {
     s32 i;
+
+    platformRumbleStopAll(); /* MC.4: silence host pad haptics (output-only) */
 
     for (i = 0; i < MAXCONTROLLERS; i++)
     {

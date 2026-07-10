@@ -1,0 +1,27 @@
+{
+  "id": "FID-0064",
+  "title": "generate_ammo_total_microcode omits retail mpmenuon early-out: ammo HUD drawn over MP watch/pause menu",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:32056"
+  ],
+  "repro": "audit: asm_audit.py entry generate_ammo_total_microcode; MP getPlayerCount>=2, open watch/pause menu (mpmenuon=TRUE), ammo icon+clip+reserve digits still render over the darkening overlay",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:32355"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T09:47:44Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:32355",
+      "note": "Retail ASM prologue (glabel generate_ammo_total_microcode, gun.c:32343) has TWO independent !=0 early-outs: lw 0x1064(g_CurrentPlayer)=gunammooff bnezl return (gun.c:32351-32353) AND lw 0x29c4=mpmenuon bnezl return (gun.c:32354-32356). Offsets confirmed: gunammooff bondview.h:1043@0x1064, mpmenuon bondview.h:2272@0x29c4. Live C (gun.c:32053, NATIVE_PORT) checks ONLY gunammooff (gun.c:32056); no mpmenuon guard in generate_ammo_total_microcode nor its delegate portDrawHandAmmo (gun.c:31959). REACHABILITY CONFIRMED: caller bondview.c:21384 invokes it unconditionally; the caller's own mpmenuon block (bondview.c:21242-21251) only appends the menu-darkening overlay (microcode_constructor + microcode_constructor_related_to_menus) and does NOT early-return, so the internal guard is the sole gate. mpmenuon set TRUE by mp_watch.c:353,642,708 (MP watch/pause menu). Effect: in MP with watch menu open, retail suppresses the entire ammo HUD for that pane; port still draws ammo icon+clip+reserve for both hands over/behind the overlay. This mpmenuon HUD-suppress pattern IS honored elsewhere in the port (radar.c:63, minimap.c:828, bondview.c:22840/22884) but missed here. Visual-only, no sim/determinism impact. Found by S-tier Task 2.4 ASM-audit batch-2. DO NOT fix from this note; re-derive from ASM. Fix polarity if actioned: default-ON GE007_NO_AMMO_HUD_MPMENU_FIX."
+    }
+  ]
+}

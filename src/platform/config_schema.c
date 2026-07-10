@@ -57,6 +57,7 @@ int mgb_config_get(int index, MgbCfgEntry *out) {
     out->kind = kindOf(s->type);
     out->is_live = (s->scope == SETTING_SCOPE_LIVE) ? 1 : 0;
     out->enum_count = (int)s->enum_count;
+    out->advanced = s->advanced ? 1 : 0;
 
     switch (s->type) {
         case SETTING_TYPE_INT:
@@ -105,6 +106,21 @@ int mgb_config_get_int(const char *key, int fallback) {
     }
 }
 
+float mgb_config_get_float(const char *key, float fallback) {
+    const Setting *s = settingsFind(key);
+    if (!s || !s->ptr || s->type != SETTING_TYPE_FLOAT) return fallback;
+    return *(f32 *)s->ptr;
+}
+
+int mgb_config_get_string(const char *key, char *out, int out_size) {
+    if (!out || out_size <= 0) return 0;
+    out[0] = '\0';
+    const Setting *s = settingsFind(key);
+    if (!s || s->type != SETTING_TYPE_STRING || !s->ptr) return 0;
+    snprintf(out, (size_t)out_size, "%s", (const char *)s->ptr);
+    return 1;
+}
+
 const char *mgb_config_enum_token(const char *key, int optIndex) {
     const Setting *s = settingsFind(key);
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return "";
@@ -128,6 +144,10 @@ void mgb_config_set_enum(const char *key, int optIndex) {
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return;
     const char *token = s->enum_options[optIndex].token;
     if (token) configSetValue(key, token);
+}
+
+void mgb_config_set_string(const char *key, const char *value) {
+    configSetValue(key, value ? value : "");
 }
 
 void mgb_config_reset_default(const char *key) {

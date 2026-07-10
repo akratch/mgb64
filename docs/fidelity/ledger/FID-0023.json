@@ -1,0 +1,31 @@
+{
+  "id": "FID-0023",
+  "title": "gfx_ptr low-32 registry: 4-slot probe, silent slot-0 eviction (R12)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "src/platform/gfx_ptr.h:29",
+    "src/platform/gfx_ptr.h:43",
+    "src/platform/gfx_ptr.h:53",
+    "src/platform/gfx_ptr.h:66"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

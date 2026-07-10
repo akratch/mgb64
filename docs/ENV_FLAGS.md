@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**902 flags** found across the source.
+**907 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -236,6 +236,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_DEBUG_DL_ROOM` | ? |  | 1 |  |
 | `GE007_DEBUG_ROOM_CMD_RANGE` | ? |  | 1 |  |
 | `GE007_DEBUG_ROOM_MODE` | ? |  | 1 |  |
+| `GE007_DECOR_ONLY_PRIM` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_SPEEDFRAMES` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_STABLE_COUNT` | ? |  | 1 |  |
 | `GE007_DIAG_ALPHA_BLEND` | ? |  | 1 |  |
@@ -395,7 +396,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_EXPLOSION_PART_FADE` | ? |  | 1 |  |
 | `GE007_EXPLOSION_TRACE` | ? |  | 1 |  |
 | `GE007_FIELD_10E0_FIXED` | ? |  | 1 |  |
-| `GE007_FIELD_10E0_SCALED` | ? |  | 1 |  |
+| `GE007_FIELD_10E0_SCALED` | ? |  | 3 |  |
 | `GE007_FIXED_ROOM_MTX` | ? |  | 1 |  |
 | `GE007_FLAT_BULLET_IMPACTS` | ? |  | 1 |  |
 | `GE007_FLAT_PROP_BULLET_IMPACTS` | ? |  | 1 |  |
@@ -448,12 +449,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_FULL_FRUSTUM_CLIP` | ? |  | 1 |  |
 | `GE007_GLASS_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
 | `GE007_GLASS_SHARDS` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_BASIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_COMPRESS` | ? |  | 2 |  |
 | `GE007_GLASS_SHARD_FIXED_MTX` | ? |  | 1 |  |
-| `GE007_GLASS_SHARD_INV_VIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_NO_BASIS_SCALE` | ? |  | 2 |  |
-| `GE007_GLASS_SHARD_SQRT_BASIS` | ? |  | 2 |  |
 | `GE007_GLASS_SHOT_DEPTH_TOLERANCE` | ? |  | 1 |  |
 | `GE007_GUARD_ORACLE_TRACE` | ? |  | 2 |  |
 | `GE007_GUARD_PRE_XFORM_10D4` | ? |  | 1 |  |
@@ -499,7 +495,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_MUTE` | ? |  | 1 |  |
 | `GE007_NATIVE_EXPLOSION_FALLBACK` | ? |  | 1 |  |
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
-| `GE007_NO_A2C` | ? |  | 1 |  |
+| `GE007_NO_A2C` | ? |  | 2 |  |
+| `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | ? |  | 1 |  |
 | `GE007_NO_BOND_BODY_FIX` | ? |  | 1 |  |
 | `GE007_NO_CAMERA_SEED_FIX` | ? |  | 1 |  |
 | `GE007_NO_CAMERA_SEED_WALK` | ? |  | 1 |  |
@@ -514,7 +511,9 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | ? |  | 1 |  |
 | `GE007_NO_INTRO_PHASE3` | ? |  | 1 |  |
 | `GE007_NO_INTRO_ROOTMOTION` | ? |  | 1 |  |
+| `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | ? |  | 1 |  |
+| `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | ? |  | 1 |  |
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | ? |  | 1 |  |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
@@ -598,6 +597,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_SHOOT_OUT_LIGHTS` | ? |  | 1 |  |
 | `GE007_SHOW_AUTOMATION_WINDOW` | ? |  | 1 |  |
 | `GE007_SIM_HASH_DUMP` | ? |  | 1 |  |
+| `GE007_SIM_HASH_EVERY_FRAME` | ? |  | 1 |  |
+| `GE007_SIM_HASH_PER_REGION` | ? |  | 1 |  |
 | `GE007_SKIP_ALPHA_TRIANGLES` | ? |  | 1 |  |
 | `GE007_SKIP_BG_ALLOW_CURRENT` | ? |  | 1 |  |
 | `GE007_SKIP_BG_ROOM` | ? |  | 2 |  |
@@ -682,6 +683,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_CHR_AUDIO` | ? |  | 4 |  |
 | `GE007_TRACE_COLLISION` | ? |  | 8 |  |
 | `GE007_TRACE_COMBAT_SCAN` | ? |  | 1 |  |
+| `GE007_TRACE_DECOR` | ? |  | 3 |  |
 | `GE007_TRACE_DISPLAYCAST` | ? |  | 1 |  |
 | `GE007_TRACE_DISPLAYCAST_MATERIALS` | ? |  | 2 |  |
 | `GE007_TRACE_DISPLAYCAST_MATERIALS_AFTER_FRAME` | ? |  | 2 |  |
@@ -812,6 +814,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_ROOM_XLU_DEFER_PIXEL_Y` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_XLU_SORT` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_XLU_SORT_AFTER_FRAME` | ? |  | 2 |  |
+| `GE007_TRACE_RUMBLE` | ? |  | 1 |  |
 | `GE007_TRACE_SCRIPTED_AMMO` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_AFTER_FRAME` | ? |  | 1 |  |
@@ -844,6 +847,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_SKY_PREP_PIXEL_ROOM` | ? |  | 1 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_X` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_Y` | ? |  | 2 |  |
+| `GE007_TRACE_SOLO_PAUSE` | ? |  | 1 |  |
 | `GE007_TRACE_SPARKS` | ? |  | 1 |  |
 | `GE007_TRACE_TEX` | ? |  | 1 |  |
 | `GE007_TRACE_TEXGEN_MATERIALS` | ? |  | 2 |  |
@@ -889,6 +893,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_WATCH_PAGE_MTX` | ? |  | 1 |  |
 | `GE007_TRACE_WEAPON_AUDIO` | ? |  | 4 |  |
 | `GE007_TRACE_Y` | ? |  | 1 |  |
+| `GE007_UNCAP_FUZZ` | ? |  | 1 |  |
 | `GE007_UNMUTE` | ? |  | 1 |  |
 | `GE007_UPDATE_CHECK` | ? |  | 1 |  |
 | `GE007_UPDATE_CHECK_URL` | ? |  | 1 |  |

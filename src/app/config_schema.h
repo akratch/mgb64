@@ -33,6 +33,7 @@ typedef struct {
     float cur_float;    // current value for FLOAT
     int   enum_count;   // options for ENUM
     int   cur_enum_index;
+    int   advanced;     // 1 = dev/diagnostic (hide behind "Advanced" disclosure)
 } MgbCfgEntry;
 
 // Lifecycle. Safe to call once at app startup; the engine boot re-registers
@@ -50,10 +51,22 @@ const char *mgb_config_enum_token(const char *key, int optIndex);
 // value (e.g. the launcher's Game.CheckForUpdates gate) without enumerating.
 int  mgb_config_get_int(const char *key, int fallback);
 
+// Current FLOAT value for a key, or `fallback` if the key is absent or not a
+// float setting. Lightweight lookup for app code that needs one value (e.g. the
+// app shell reading UI.Scale) without enumerating.
+float mgb_config_get_float(const char *key, float fallback);
+
+// Current STRING value for a key. Copies into out (always NUL-terminated when
+// out_size > 0). Returns 1 if the key exists and is a string setting, else 0
+// (and out is set to ""). Lightweight lookup for the settings UI, which needs
+// the string value without growing MgbCfgEntry.
+int  mgb_config_get_string(const char *key, char *out, int out_size);
+
 // Mutation (validated/clamped by the engine).
 void mgb_config_set_int(const char *key, int value);
 void mgb_config_set_float(const char *key, float value);
 void mgb_config_set_enum(const char *key, int optIndex);
+void mgb_config_set_string(const char *key, const char *value);
 void mgb_config_reset_default(const char *key);
 
 #ifdef __cplusplus

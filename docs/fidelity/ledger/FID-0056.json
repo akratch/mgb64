@@ -1,0 +1,56 @@
+{
+  "id": "FID-0056",
+  "title": "Full-auto fire rate gated on per-rendered-frame counter (field_88C), unscaled \u2014 automatics likely fire 2-4x too fast at locked 60Hz vs N64 15-30Hz",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "landed",
+  "suspect": [
+    "src/game/gun.c:17927"
+  ],
+  "repro": "input tape holds fire; count shots per wall-second in ares oracle (real N64 frame costs) vs native (g_ClockTimer==1 at 60Hz); field_88C++ unscaled while adjacent field_890 += g_ClockTimer is tick-scaled; gate is field_88C % fire_rate",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F1"
+    },
+    {
+      "kind": "counter-log",
+      "path": "docs/fidelity/combat_oracle_fields.md#10"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/platform_sdl.c:1275"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F1",
+      "note": "Survey F1. GoldenRecomp README confirms empirically (unfixed). Mechanism confirmed in our source. Needs ares cadence A/B to quantify, then fidelity-policy call (retail-code-at-60Hz vs retail-experience-at-15-30Hz); remediation design in survey F18 (scale per-frame counters by g_ClockTimer behind Input.FireRateAuthentic). Oracle lane buildable now that combat oracle FID-0032 is verified."
+    },
+    {
+      "ts": "2026-07-10T08:16:45Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#10",
+      "note": "Quantified: AK47 sustained full-auto on Dam fires 33.3 shots/100 ticks at locked 60Hz (SPEEDFRAMES=1) vs 11.3 at the N64 ~20fps frame cost (SPEEDFRAMES=3) = 2.95x overspeed. Mechanism confirmed: gun.c field_88C advances per-frame (60Hz), gate field_88C%fire_rate; N64 frame cost g_ClockTimer=2-4."
+    },
+    {
+      "ts": "2026-07-10T08:16:45Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#10",
+      "note": "Fixed behind Input.FireRateAuthentic (opt-in, default OFF; core-combat-feel owner policy). fireRateCounterAdvance tick-scales field_88C by g_ClockTimer; fireRateEffectiveAutoRate multiplies the automatic divisor by Input.FireRateN64FrameCost (default 3). A/B at locked 60Hz: OFF 33.3, ON 11.0 shots/100 ticks (matches N64-truth 11.3). Byte-identical under default (Release combat smoke hash 3c8939968e0eb50e; AK47 scenario d06b1c7a on fixed-OFF==main). ctest fire_rate_authentic PASS + proven fail-on-revert (8 assertions red, ratio 1.00x). Not verified: needs full ares A/B in verify_all."
+    },
+    {
+      "ts": "2026-07-10T08:45:31Z",
+      "from": "landed",
+      "to": "landed",
+      "evidence": "src/platform/platform_sdl.c:1275",
+      "note": "OWNER DECISION 2026-07-10: default flipped ON (Input.FireRateAuthentic=1). Gameplay accuracy is the goal; the ~3x automatic overspeed is a canonical fidelity defect, so faithful cadence ships as the default (charter-correct parity-fix polarity: default-ON + opt-out). Opt out via Input.FireRateAuthentic=0 / GE007_FIRE_RATE_AUTHENTIC=0. FrameCost default 3 (oracle-matched Dam ~20fps combat). Grep-verified no preset/config resets the flag. dam_combat_guard6 tape unaffected (PP7 loadout, no automatic path) so combat_route baseline 3c89 unchanged; end-to-end AK47 default-ON tape = coverage follow-up."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "id": "FID-0006",
+  "title": "Intro weapon sub-buffer overlap is a print, not a guard (R9/M1.1)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "landed",
+  "suspect": [
+    "bondview.c:3353 (print)",
+    "bondview.c:3362 (unguarded size)"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M1.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_renderer_parity_smoke"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M1.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:26:32Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "ctest:port_renderer_parity_smoke",
+      "note": "Landed 25acc40 (fix(bondview): R9 bounds-guard intro weapon load): weapon load bounds-guarded, skips attachment on overlap; GE007_BOND_WEAPON_BUF_FAIL forced-fail hatch added (bondview.c:2920). NOT verified: no registered lane drives the fail path \u2014 intro_visual_regression.sh is not ctest-wired and does not exercise the weapon buffer overlap; port_renderer_parity_smoke was green at landing but does not guard this finding. Needs a forced-fail weapon-buf smoke."
+    }
+  ]
+}

@@ -35,8 +35,14 @@
 #include <math.h>
 #include "platform/model_convert.h"
 #include "platform/audio_pc.h"
+#include "platform/weapon_bullet_type.h"
+#include "platform/fire_rate_authentic.h"
 
 extern VideoSettings *g_ViBackData;
+/* FID-0056 full-auto fire-cadence authenticity flags (platform_sdl.c). OFF by
+ * default -> byte-identical locked-60Hz cadence. See fire_rate_authentic.h. */
+extern s32 g_pcFireRateAuthentic;
+extern s32 g_pcFireRateN64FrameCost;
 extern u16 viGetPerspNorm(void);
 
 static int portSkipFpWeaponRender(void)
@@ -6957,34 +6963,41 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         sub_GAME_7F06EFC4(gunmodel);
 #endif
 
+        /* The ROM-free classifier (src/platform/weapon_bullet_type.c) re-declares
+         * these ITEM ordinals as local literals so its TU stays decomp-header-free.
+         * Pin them here, where bondconstants.h is in scope, so future enum drift
+         * can't silently desync the classifier's table from this dispatch [FID-0052]. */
+        _Static_assert(ITEM_WPPK == 4 && ITEM_SHOTGUN == 15 && ITEM_AUTOSHOT == 16 &&
+                           ITEM_WATCHLASER == 23,
+                       "weapon_bullet_type.c local ITEM ordinals out of sync with bondconstants.h");
+
         if (hp->weapon_firing_status != 0 && item >= ITEM_WPPK && item <= ITEM_WATCHLASER) {
-            switch (item) {
-            case ITEM_WPPK:
-            case ITEM_WPPKSIL:
-            case ITEM_TT33:
-            case ITEM_SKORPION:
-            case ITEM_AK47:
-            case ITEM_UZI:
-            case ITEM_MP5K:
-            case ITEM_MP5KSIL:
-            case ITEM_SPECTRE:
-            case ITEM_M16:
-            case ITEM_FNP90:
-            case ITEM_AUTOSHOT:
-            case ITEM_RUGER:
-            case ITEM_SNIPERRIFLE:
-            case ITEM_GOLDENGUN:
-            case ITEM_SILVERWPPK:
-            case ITEM_GOLDWPPK:
+            /* Retail dispatches jpt_weapon_bullet_type[item-4] (gun.c:7076):
+             * SHOTGUN and AUTOSHOT both route to weapon_bullet_type_shotgun_mine
+             * (no pre-tail action); LASER/WATCHLASER to weapon_bullet_type_none
+             * (sub_GAME_7F061BF4 only); every other in-range item to
+             * weapon_bullet_type_pistol (sub_GAME_7F061BF4 + field_8A0++). The
+             * NONMATCHING port left the Automatic Shotgun (AUTOSHOT) in the
+             * pistol group, so it applied pistol recoil and the shot counter
+             * that retail — which maps AUTOSHOT to shotgun_mine like the pump
+             * SHOTGUN — does not [FID-0052]. Route it via the factored classifier;
+             * GE007_NO_AUTOSHOT_BULLETTYPE_FIX restores the legacy (buggy) pistol
+             * grouping for A/B (byte-identical to the pre-fix port). */
+            static int s_legacyAutoshotBulletType = -1;
+            if (s_legacyAutoshotBulletType < 0) {
+                s_legacyAutoshotBulletType =
+                    (getenv("GE007_NO_AUTOSHOT_BULLETTYPE_FIX") != NULL) ? 1 : 0;
+            }
+            switch (weaponBulletTypeClassify(item, s_legacyAutoshotBulletType)) {
+            case WEAPON_BULLET_TYPE_PISTOL:
                 sub_GAME_7F061BF4(hand);
                 hp->field_8A0++;
                 break;
-            case ITEM_WATCHLASER:
-            case ITEM_LASER:
+            case WEAPON_BULLET_TYPE_NONE:
                 sub_GAME_7F061BF4(hand);
                 break;
-            case ITEM_SHOTGUN:
-            case ITEM_GRENADELAUNCH:
+            case WEAPON_BULLET_TYPE_SHOTGUN_MINE:
+            case WEAPON_BULLET_TYPE_OTHER:
                 break;
             }
         }
@@ -17925,7 +17938,11 @@ void handle_weapon_id_values_possibly_1st_person_animation(s32 hand, s32 flag) {
 
     if (g_ClockTimer > 0) {
         hand_ptr->field_890 += g_ClockTimer;
-        hand_ptr->field_88C++;
+        /* FID-0056: legacy advances the full-auto counter once per rendered
+         * frame (unscaled); authentic mode advances it by g_ClockTimer so it is
+         * tick-scaled like field_890 above (no tick remainder dropped). At
+         * locked 60Hz g_ClockTimer==1 so OFF is byte-identical to `field_88C++`. */
+        hand_ptr->field_88C += fireRateCounterAdvance(g_ClockTimer, g_pcFireRateAuthentic);
     }
 
     hand_ptr->field_92C = 0;
@@ -18340,6 +18357,15 @@ check_state:
              * machinegun in retail — TANKSHELLS is single-shot pistol (moved to the pistol
              * case above) and BOMBCASE is throwable (falls to the default case below). */
             fire_rate = bondwalkItemGetAutomaticFiringRate(weapon_id);
+            /* FID-0056: the full-auto gate fires every `fire_rate` counter steps.
+             * The counter (field_88C) advances once per rendered frame; at locked
+             * 60Hz that is 2-3x faster than the N64's ~15-30fps, so automatics fire
+             * 2-3x too fast (measured 2.95x for the AK47 on Dam). Authentic mode
+             * multiplies the divisor by the assumed N64 frame cost so the gate
+             * fires once per (fire_rate * frame_cost) ticks -> the N64 cadence.
+             * OFF (default) returns fire_rate unchanged -> byte-identical. */
+            fire_rate = fireRateEffectiveAutoRate(fire_rate, g_pcFireRateAuthentic,
+                                                  g_pcFireRateN64FrameCost);
             if (hand_ptr->field_88C != 0 && hand_ptr->weapon_hold_time == 0) {
                 if (bondwalkItemCheckBitflags(weapon_id, 4)) {
                     if (!get_BONDdata_is_aiming()) {
@@ -18357,6 +18383,13 @@ check_state:
             }
 
 machinegun_fire:
+            /* FID-0056 note: this exact-modulo gate assumes field_88C advances by 1
+             * per tick — true at the locked 60Hz loop (g_ClockTimer==1). In authentic
+             * mode the counter still steps by g_ClockTimer, so if tick deltas ever
+             * vary (>1, e.g. GE007_DETERMINISTIC_SPEEDFRAMES or an uncapped-FPS path)
+             * a jump that doesn't divide the scaled `fire_rate` could skip a gate step
+             * and halve cadence; switch to a `>=` accumulator (subtract fire_rate on
+             * fire) before relying on authentic mode under a variable clock. */
             if (hand_ptr->field_88C % fire_rate != 0) {
                 break;
             }

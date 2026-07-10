@@ -1,0 +1,28 @@
+{
+  "id": "FID-0053",
+  "title": "Combat oracle floor.stan_id/stan_flags not cross-comparable native-vs-ares (tile id encoding differs; room+height agree)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/port_trace.c:traceBuildCombatOracleJson (StandTile.id read)",
+    "tools/prepare_ares_movement_oracle_build.sh:stanId()"
+  ],
+  "repro": "tools/movement_oracle_capture.sh --route dam_forward_stop --native-full-trace --ares-bin build/ares-movement-oracle/.../ares --no-compare --out-dir /tmp/cap; tools/compare_combat_trace.py --baseline /tmp/cap/stock_dam_forward_stop.jsonl --test /tmp/cap/native_dam_forward_stop.jsonl --align move ; floor.stan_id agrees 0/138 while stan_room+height agree 138/138",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T06:55:01Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "Both-sides Dam dam_forward_stop capture (FID-0032 verify). Over 138 motion-anchored frames the player floor tile agrees on stan_room (138/138) and height (138/138) but stan_id NEVER agrees (0/138): ares 405895 vs native 3211270 at anchor. Physical tile identical => this is a StandTile.id READ/encoding divergence, not tile-selection drift. NATIVE_PORT widens StandTile (pointer inflation) so the native C .id field is not the N64 24-bit packed id the ares side masks (0x00FFFFFF). stan_flags diverges on 60 frames from the same read path. Blocks F2 (FID-0013) frame-exact tile-selection verification: the field must be reconciled to a common encoding before stan_id divergences can be trusted as tile-selection findings."
+    }
+  ]
+}

@@ -257,7 +257,15 @@ static s32 setFromString(const char *key, const char *val)
         } break;
         case CFG_STRING: {
             if (e->ptr && e->string_capacity > 0) {
-                snprintf((char *)e->ptr, e->string_capacity, "%s", val);
+                char *dst = (char *)e->ptr;
+                snprintf(dst, e->string_capacity, "%s", val);
+                /* ge007.ini is newline-delimited KEY=VALUE; a string value
+                 * (e.g. a folder path from the OS picker) containing CR/LF would
+                 * inject spurious lines on save. Strip them at the single choke
+                 * point every set path funnels through (RX.1 review L1). */
+                for (char *p = dst; *p; p++) {
+                    if (*p == '\n' || *p == '\r') *p = ' ';
+                }
             }
         } break;
         default: break;

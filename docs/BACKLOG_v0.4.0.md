@@ -103,6 +103,149 @@ P2 = narrower visual/behavioral issue · P3 = hygiene/robustness/future-proofing
 
 ---
 
+## RX — Road to non-alpha v0.4.0: Release Readiness & UX
+
+Added 2026-07-09 after shipping v0.4.0-alpha.2. The alpha→final gap is
+**execution-and-polish, not more sim/renderer work** — M1 is complete and the hard
+combat-parity items are walled behind a combat-field ROM oracle that does not exist
+(structurally 0.5 material). Owner priorities for final: launcher/settings UX that is
+controller- and touch-navigable, every setting explained with no dev/junk knobs shown,
+and true fullscreen on Windows. Recon: three read-only surveys (2026-07-09) —
+launcher/settings census, Windows-fullscreen root-cause, backlog reprioritization.
+
+### Definition of done — what MUST be true to drop `-alpha`
+1. Windows is **executed**, not just attested (MW.3 CI smoke green + one real-kernel run
+   via MW.5 VM or MC.6 on-device).
+2. Windows **true fullscreen** works (RX.3).
+3. Launcher/settings UX is **player-grade** (RX.1 + RX.2): dev settings hidden, help
+   visible without hover, controller/keyboard-free ROM load, handheld fullscreen+scale.
+4. Controller-first is **complete for a handheld**: MC.2 (controllerdb+hotplug),
+   MC.4 (rumble), MC.7 (real solo-pause).
+5. macOS **signed + notarized**, OR an explicit documented owner decision to ship unsigned.
+6. **M8.3 QA executed** — manual carryover run on hardware, 20-level Metal sweep, campaign
+   34/34, MP/ASan/release-guard stack, STATUS/README refreshed.
+7. Determinism rails green throughout (charter r4).
+
+### RX.1 — Settings curation (the "no junk shown to players" mandate)
+**P0 · M**
+Census (survey 2026-07-09): 99 settings, **no player/advanced tier** — everything shows.
+- [ ] **Add an `advanced` (dev/diagnostic) tier** to the `Setting` struct (`settings.h:34-51`)
+      + thread through `MgbCfgEntry` (`config_schema.h`); tag the ~30 dev knobs at their
+      `settingsRegister*` sites (11 SSAO tuning: `SsaoMode/Radius/Intensity/Bias/Power/
+      FarCutoff/NearCut/SkyCut/HalfRes/Blur/BlurDepthSharp`; 4 SunShadow tuning; `PerPixel
+      Light`, `EnvSmoothNormals`, `EnvRelightBlend`; `BloomThreshold/Intensity`; ~8 ADS
+      tuning sub-knobs; `WindowX/Y`; `MinimapShowAllEnemies`, `MinimapSharpOverlay`;
+      `OutputFilterAlpha`; `DeviceSamples`). Gate them behind a collapsing "Advanced
+      (expert)" disclosure per tab (`ui_settings.cpp:78-83`). Player tabs show only
+      player-facing settings.
+- [ ] **Fix the STRING-setting bug** (`ui_settings.cpp:16-53`): `MGB_CFG_STRING` falls to
+      `default:` → `Video.TexturePack` renders "(unsupported type)", uneditable. Add a
+      read-only display + folder-picker, or hide string entries from the auto-list.
+- [ ] **Visible help, not hover-only** (`ui_settings.cpp:55-56`): render each setting's
+      `help` as an inline caption (or a nav-focusable "?") — hover tooltips are invisible
+      to controller/touch users, i.e. the whole handheld audience.
+- [ ] **Relabel/gate leaky entries:** `MinimapObjectives` ("once … implemented" =
+      unimplemented feature exposed), `Smaa`/`SsaoMode` "Metal only" on a GL build,
+      `FpsOverlay` help leaking `--deterministic`/`GE007_BACKGROUND`. Plain-language the
+      jargon (`OutputDither`, `RetroFilter`, `HiDPI`, `Tonemap`, grade presets).
+- [ ] **Group the ADS family** (`platform_sdl.c:1925-1994`): 13 sub-knobs render even when
+      `AdsEnabled=0` — nest under `AdsEnabled` with `BeginDisabled`, tuning ones → Advanced.
+- [ ] Validation: schema round-trip + `settings_menu_model` ctest; a headless dump proving
+      player tabs exclude the advanced-tagged set; env/CLI overrides for advanced settings
+      still work (hidden ≠ removed).
+
+### RX.2 — Launcher/handheld UX pass
+**P0 · M**
+- [ ] **Fullscreen-fill on launch** for handhelds: `main_app.cpp:67` opens windowed
+      1280×800; borderless-fill the display (compose with RX.3's window-mode logic; a
+      first-run/`--handheld`-style default or auto-detect small-high-DPI displays).
+- [ ] **UI scale for a 7-inch panel:** bump `FontGlobalScale`/style metrics (13px small
+      font + 40–42px targets are too small); a `UI.Scale` setting (S/M/L or numeric).
+- [ ] **Reset-to-default affordance:** `mgb_config_reset_default` exists
+      (`config_schema.c:133`) but no UI calls it — add per-tab (min) reset, high-value for
+      pad users who can't retype values.
+- [ ] **Touch pass** (if RX.5 lands): larger hit targets, L1/R1 shoulder tab-switching with
+      on-screen hints, touch-scroll of the settings/log children.
+- [ ] Validation: panel render smokes; pad-nav reachability unchanged; no macOS regression.
+
+### RX.3 — Windows true fullscreen
+**P0 · S-M · IN FLIGHT (2026-07-09)**
+Root cause (survey): `platformApplyWindowMode()` (`platform_sdl.c:1490`) is called only in
+the engine-owned `else` branch (`:2481`); the **adopted app-shell path** (Windows/macOS
+release, `:2430-2442`) never calls it → `Video.WindowMode` is loaded but never pushed to
+SDL. Fix A: call apply-mode on both paths (guard headless). Fix C: exclusive with
+`FullscreenWidth/Height==0` passes NULL → wrong res; default to desktop mode + fall back to
+borderless on mode-set failure. Fix B: Alt+Enter reaches the configured mode. Borderless
+stays the safe cross-platform default; exclusive is opt-in/best-effort (Wayland can't
+mode-set). macOS `.app` uses the same adopted path → blind-provable there. Hardware-only:
+Windows exclusive native-res, HiDPI on 1920×1200, alt-tab.
+
+### RX.4 — Controller/keyboard-free ROM selection
+**P0 · M**
+`ui_rom.cpp:31-41` uses a native NFD dialog — not controller-navigable (first-run hard stop
+on a handheld). Add an in-app ImGui file browser AND/OR auto-scan of common dirs (Downloads/
+Documents/Desktop/cwd, mirroring the CLI auto-detect) AND/OR `SDL_DROPFILE` drag-and-drop.
+Keep NFD as the mouse/desktop convenience. Validation: pad-only reachability to a selected+
+validated ROM; the existing validation card path unchanged.
+
+### RX.5 — Touch input wiring
+**P1 · M**
+No app-code touch wiring today (only SDL synth-mouse, so taps = clicks but no touch-scroll).
+Wire `SDL_FINGER*` → ImGui touch (the vendored 1.92.9 backend supports
+`AddMouseSourceEvent`); touch-scroll momentum for the settings/log children; verify taps
+still hit the larger RX.2 targets. Not a hard blocker (synth-mouse works), but it's the
+"touchscreen like the Ally" ask.
+
+### RX.6 — Controller-first completion (from MC sprint, pulled to final)
+- [x] **MC.2** — bundle `gamecontrollerdb.txt` + `SDL_GameControllerAddMappingsFromFile`;
+      hotplug re-acquire without shifting P1's pad. **P1 · S.** *(LANDED — see MC.2
+      section below. Loader lands mappings before any pad opens; hotplug was already
+      instance-id-stable, verified not changed.)*
+- [ ] **MC.4** — Rumble Pak → `SDL_GameControllerRumble` (faithful; output-only, sim-safe;
+      `Input.Rumble` default ON + intensity). **P2 · S-M.**
+- [ ] **MC.7** — real solo-pause: the overlay currently ships "game keeps running" (mid-
+      combat death trap). Add a true solo pause when the overlay/settings open in single
+      player. **P1 · M.**
+
+### RX.7 — Windows execution lanes (credibility gate)
+- [x] **MW.3** — `.github/workflows/windows-validate.yml` DELIVERED (dispatch): MSYS2 build
+      (mirrors release.yml exactly) → import-table guard on real Windows → headless execution
+      smoke (dummy drivers: config-schema self-check + `--dump-config` + update-check self-test,
+      exit-code + stdout asserts) → ROM-free ctest subset (6 compiled C/C++ unit tests) →
+      asset-free verify → upload .exe. The definitive "Windows runs" gate. actionlint-clean;
+      every ROM-free smoke command + the ctest subset proven ROM-free locally before wiring.
+      **Remaining: must be DISPATCHED + GREEN before the final release cut** (see RX.9 / M8.3;
+      cannot self-run — dispatch needs the workflow on origin). **P0 · S-M.**
+- [ ] **MW.5** — UTM + Win11-ARM eval VM: run the shipping x64 exe on a real Windows kernel
+      (SEH/scheduler/fs). One real-kernel run satisfies the DoD without waiting on hardware.
+      **P1 · M-L.** (MC.6 on-device is the ideal capstone but hardware-gated → validate the
+      first 0.4.x, don't block final on a shipping date.)
+
+### RX.8 — macOS signing + notarization
+**P0-unless-waived · S (mechanics) + owner creds**
+Signing wiring landed (`8a21ba1`) but inert without Apple Developer creds. A "final" that
+Gatekeeper blocks on first launch isn't polished. **Owner decision:** provide creds to sign/
+notarize, or explicitly accept shipping unsigned (documented in release notes + README).
+
+### RX.9 — Final QA sweep + ship (executes M8.3)
+**P0 · M**
+Run the deferred manual carryover on hardware (rebind persistence, overlay-close gesture,
+pad-nav feel, real-mouse wheel, radial-deadzone feel), the 20-level Metal minimap sweep,
+campaign 34/34, MP/ASan/release-guard stack; recapture the perf baseline warm (kill the
+thermal-flake gate); decide the FPS-overlay default-ON for final; enable the BUG-3 oracle
+gate on the 19 sibling intro routes; refresh STATUS.md/README; cut v0.4.0.
+
+**Release gate (MW.3):** the `Windows validate (execution)` workflow must be manually
+dispatched on origin and finish GREEN on this release commit before the cut — it is the
+"Windows executed" evidence (build + import-table guard + headless smoke + ROM-free ctest
+on a real windows-latest kernel). See docs/WINDOWS_CONFIDENCE.md §4.
+
+### Deferred to 0.4.x / 0.5 (explicitly NOT blocking final)
+Everything oracle-gated (M2.3 Phase C/D, M2.5, M2.7 — needs the XL combat-field oracle);
+the MG glass sprint (pixel-accuracy; correctness already ships); M4.2 HD glyphs, M4.4
+languages; M3.1 Metal MSAA (real gap but macOS-only, L); M3.3/M3.4/M3.5/M3.6; M5.x audio;
+M7.1 3/4-player (label beta); MW.4 Wine, MW.6 Docker; M6.5/M6.6.
+
 ## Execution status
 
 **2026-07-08 — Week-1 batch LANDED** (`510e181..2a30542` + follow-ups, all on main,
@@ -742,7 +885,13 @@ and it lands squarely on glass.
 `1/bgGetLevelVisibilityScale()` at `:1311-1313`), coverage diag
 `gfx_pc.c:5776` (`GE007_TRACE_GLASS_SHARD_COVERAGE`), scorer
 `tools/compare_glass_shard_pixel_oracle.py`.
-**Bug:** the native projection compresses shard triangles differently from N64, so the
+**Bug (RESOLVED — FID-0003, 2026-07-10):** the six competing A/B scale hypotheses were
+collapsed to the one retail-ASM-faithful answer. The ROM (`sub_GAME_7F0A2C44`) draws
+each shard unscaled; the port scales `field_10E0` by level visibility (0.2 on Dam/
+Surface), so the shard must apply ×1/visibility to net to the ROM transform — the only
+correct hypothesis (already the default), now coupled to `GE007_FIELD_10E0_SCALED` and
+guarded by `port_glass_shard_scale_guard`. Original text below for history:
+the native projection compresses shard triangles differently from N64, so the
 tree carries **six** competing A/B scale hypotheses (`GE007_GLASS_SHARD_COMPRESS`,
 `_BASIS_SCALE`, `_NO_BASIS_SCALE`, `_SQRT_BASIS`, `_INV_VIS_SCALE`, `_FIXED_MTX`) with an
 empirical default that has never been signed off against stock. Shard on-screen
@@ -1030,15 +1179,17 @@ gaps are enumerated there and belong to MW.3-MW.5.
 **P1 · S-M · the definitive gate — public-repo runners cost nothing**
 `origin` is the public repo (akratch/mgb64): GitHub-hosted `windows-latest` runners are
 free for public repositories. This is real Windows hardware without buying anything.
-- [ ] Add `.github/workflows/windows-validate.yml` (workflow_dispatch, per the repo's
-      no-auto-trigger posture): MSYS2 build → headless smoke (`--no-ui`, SDL dummy
-      audio/video drivers, deterministic route, render-health + exit-code assertions;
-      no ROM in CI → use the ROM-free ctest surface + a synthetic boot-to-menu smoke,
-      and document exactly what CAN'T run without a ROM) → asset-free verify → upload
-      the .exe artifact.
-- [ ] Document the loop in WINDOWS_CONFIDENCE.md: push validation branch → dispatch →
-      read results/download artifact. Run it before every release cut (M8.3 gains this
-      as a gate).
+- [x] Added `.github/workflows/windows-validate.yml` (workflow_dispatch, per the repo's
+      no-auto-trigger posture): MSYS2 build (mirrors release.yml exactly) → import-table
+      guard on real Windows objdump → headless execution smoke (SDL dummy audio/video
+      drivers; ROM-free surfaces: `MGB64_APP_DUMP_SCHEMA` config-schema self-check,
+      `--dump-config`/`--list-settings` automation path, `MGB64_UPDATE_CHECK_SELFTEST`
+      negative control — exit-code + stdout asserts) → ROM-free ctest subset (6 compiled
+      C/C++ unit tests) → asset-free verify → upload the .exe artifact. Render-path smoke
+      is deliberately EXCLUDED (needs a GPU/display the headless runner lacks — that is
+      MW.5's job); documented in WINDOWS_CONFIDENCE.md §4. actionlint-clean.
+- [x] Documented the loop in WINDOWS_CONFIDENCE.md §4: dispatch → read results / download
+      artifact. Wired as a release-cut gate in RX.9 + M8.3.
 - [ ] Stretch: a community-tester path — the uploaded artifact + a 5-minute test script
       for any Windows-owning contributor.
 
@@ -1104,12 +1255,37 @@ The ImGui shell is currently mouse-driven. ImGui ships gamepad navigation:
       at MC.6).
 
 ### MC.2 — Controller database + hotplug robustness
-**P2 · S**
-- [ ] Bundle/refresh the community `gamecontrollerdb.txt` (SDL_GameControllerDB, free)
+**P2 · S — LANDED**
+- [x] Bundle/refresh the community `gamecontrollerdb.txt` (SDL_GameControllerDB, free)
       and load it at init (`SDL_GameControllerAddMappingsFromFile`) so exotic/hybrid
       devices map correctly on all platforms; keep SDL's built-ins as fallback.
-- [ ] Verify hotplug: connect/disconnect mid-game re-acquires cleanly (the MP per-pad
-      slots at stubs.c must not shift P1's pad); document behavior.
+      Done: `lib/sdl_gamecontrollerdb/gamecontrollerdb.txt` (zlib-licensed community
+      DB, full upstream copy — passes the provenance guards as plain-text mapping data,
+      not a ROM asset), loaded by `platformLoadControllerMappings()` in
+      `src/platform/platform_sdl.c` **before** the pad-open loop in `platformInitSDL`.
+      Resolution order (last-write-wins per SDL semantics): `SDL_GetBasePath()` (bundle/
+      exe dir, where packaging drops the file) → CWD → savedir override. Missing file is
+      non-fatal — logs "using SDL built-in mappings" and boots. Proven headless/muted:
+      loads 183 macOS-platform mappings from the bundled file (SDL counts only the host
+      platform's entries; the other ~2000 are Windows/Linux/Android/iOS and are skipped);
+      negative control (db removed) logs the built-ins fallback and boots. Packaging wired
+      into all three lanes (`macos/Scripts/build_gl_app.sh` → `.app/Contents/Resources/`,
+      `scripts/package_windows_zip.sh` next to `ge007.exe`,
+      `scripts/package_linux_appimage.sh` → `usr/bin/`). Provenance in `THIRD_PARTY.md`.
+- [x] Verify hotplug: connect/disconnect mid-game re-acquires cleanly (the MP per-pad
+      slots must not shift P1's pad); document behavior. **Already robust — verified, not
+      changed.** `g_pads[PLATFORM_MAX_PADS]` uses fixed player slots keyed by
+      `SDL_JoystickID`: `SDL_CONTROLLERDEVICEADDED` opens into the first *free* slot and
+      rejects duplicates (`platformOpenPad`); `SDL_CONTROLLERDEVICEREMOVED` frees only the
+      slot matching the removed instance id (`platformClosePadByInstance`) — no cascade,
+      no promotion of P3→P2, P1 (slot 0) untouched unless P1's own pad is removed. A
+      reconnect takes the first free slot (usually its own, since other slots are
+      undisturbed); note SDL assigns a *new* instance id on replug, so there is no
+      persistent identity across unplug — if a different pad grabs the freed slot first,
+      the returning pad lands in the next free slot (standard free-pool behavior, P1 still
+      stable). MC.4 rumble indexes `g_pads[player].handle` by the same slot, so slot
+      stability keeps rumble addressed to the right player; a disconnected slot's NULL
+      handle no-ops safely. Full unplug/replug proof is hardware-gated → MC.6 / M8.3.
 
 ### MC.3 — Gamepad button rebinding (absorbs M6.4)
 **P1 · M**
@@ -1183,16 +1359,24 @@ deserves the full matrix.
 
 ## M8 — Validation rails & release
 
-### M8.1 — sim-hash must cover the prop/chr BSS
-**P2 · S-M**
-**Files:** `src/platform/sim_state_hash_registry.c:24-38` — only `s_pcPool`,
-`g_ClockTimer`, `g_GlobalTimer` are hashed; movement/collision drift in BSS-resident
-chr/prop/stan state is invisible to the invariance gate that everything else in this
-backlog leans on.
-- [ ] Register the guard/prop record arrays and stan/collision scratch as additional
-      `SimHashRegion`s (BSS base/size); re-baseline the invariance lane.
-- [ ] Do this EARLY in the cycle (ideally alongside M1) so M2.3/M2.5 sim changes are
-      guarded by a hash that can actually see them.
+### M8.1 — sim-hash must cover the prop/chr BSS ✅ (FID-0030 verified)
+**P2 · S-M — DONE (S-Tier Task 0.4)**
+Sim-hash coverage is now a **checked property**, not tribal knowledge.
+- [x] Prop-record pool (`pos_data_entry`) registered earlier (M8.1 premise fix).
+- [x] Stan collision navmesh/saved-collision-cache/BFS scratch registered
+      (`stanBuildHashRegions`, `src/game/stan.c`); RNG seed (`g_randomSeed`) and
+      the `g_BgRoomInfo` room-visibility read-back (FID-0012 rule — a
+      render-written field consumed by sim is NOT waivable) registered too.
+- [x] `tools/fidelity/hash_coverage_audit.py` cross-references **every** writable
+      (`.data`/`.bss`) decomp symbol against the live region table
+      (`ge007 --print-sim-hash-regions`, ROM-free) and dispositions each as
+      hashed / waived (`docs/fidelity/hash_waivers.txt`, categorical reasons) /
+      UNCOVERED. Exit 1 on any UNCOVERED. Registered as ctest
+      `fidelity_hash_coverage` (verify manifest tier 1). Current audit: 0
+      UNCOVERED (3316 writable symbols; 26 hashed, 3285 waived-with-reason).
+- [x] Re-baselined: `sim_invariance_gate` green (OFF==ON with the new regions),
+      Dam screenshot + state-trace byte-identical vs the pre-change build (only
+      the internal hash *value* shifted, as expected once).
 
 ### M8.2 — Route/validation expansion (the honesty gap)
 **P2 · ongoing**
@@ -1222,6 +1406,9 @@ waivers; objective/report/exit contracts are scripted, not organic.
       MP lanes, save persistence, ASan lane, release guards.
 - [ ] Update STATUS.md (it currently undersells the port), README known-issues, ENV_FLAGS
       regen; `scripts/release.sh` for all three platforms per RELEASE_CHECKLIST.md.
+- [ ] **Dispatch `.github/workflows/windows-validate.yml` (MW.3) on the release commit and
+      confirm GREEN** — the Windows-executed gate (build + import-table guard + headless
+      smoke + ROM-free ctest on windows-latest). Blocks the cut. See WINDOWS_CONFIDENCE.md §4.
 
 ---
 
@@ -1274,3 +1461,34 @@ The single highest-leverage items if forced to choose six: **M1.2** (kills the c
 class), **M2.3** (combat correctness), **M2.1** (game feel in 2 hours of work), **MG.1**
 (the hardest visual problem — glass compositing), **M3.1** (Metal stops ignoring MSAA),
 **M4.2** (crisp text — the thing every screenshot shows).
+
+---
+
+## Remaster texture track — recomp survey imports (2026-07-10)
+
+From `docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md` (F7, F15, F16); RT64's
+field-proven texture-pack model. Folds into the Phase-2 HD-pack track
+(`tools/texpack/`, `src/platform/texture_pack.c`):
+
+- **MG-tex.1 (policy, adopt now — F7):** `tools/texpack/build_pack.py` grows a
+  **BC7-DDS** emit path (via `texconv`/`bc7enc`, ~¼ the VRAM of RGBA32 PNG) plus a
+  `--low-mip-cache` output (all lowest mips in one file, loaded at start as instant
+  placeholders → kills pop-in). PNG stays dev-only. **Platform gotcha:** macOS
+  OpenGL 4.1 lacks BPTC/BC7; Metal on Apple silicon supports BCn natively — another
+  reason Metal is the forward path (GL keeps PNG fallback).
+- **MG-tex.2 (loader, Tier 2 — F15):** successor to the synchronous PNG-on-first-use
+  loader — async **stream** mode (default) with low-mip placeholder on miss, **LRU
+  eviction** sized to VRAM budget, `.zip`/zstd pack mounting alongside the directory
+  layout, multiple stacked packs. Keep the `G_SETTEX`-decode hook. ImGui pack-select
+  UI deferred (Z64R merged the framework with no menu — infra first, launcher later,
+  no coupling).
+- **MG-tex.3 (keying, Tier 2 — F16):** replace the collision-prone 12-bit
+  `tok####` token key with a **content hash over staged TMEM bytes** (RT64's XXH3-
+  over-TMEM model; check RT64 license before lifting `rt64_tmem_hasher.h`, else
+  reimplement from their documented algorithm). Fallback order content-hash → token;
+  teach `build_pack.py`/`validate_pack.py` a manifest. Bonus: hashes double as
+  texture-identity assertions for fidelity lanes.
+- **F17 (texture-decode sense lane):** exercise RGBA32 half-TMEM split, TLUT masking,
+  odd-row word swap against hardware-verified expectations (Wiseguy ROMs if public —
+  open question O3 — else n64-systemtest-class suites under ares as proxy). Divergences
+  become normal FID cycles. Hardens exactly the paths the HD-pack hook rides on.

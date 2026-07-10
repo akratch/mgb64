@@ -23,4 +23,12 @@ void store_osgetcount(void);
 void waitForNextFrame(void);
 void updateFrameCounters(s32 deltaFrames);
 
+#ifdef NATIVE_PORT
+/* FID-0033 0-tick purity fuzz (see docs/design/UNCAPPED_FPS_PLAN.md Task 4).
+ * Set to 1 for the current frame when GE007_UNCAP_FUZZ armed it as a
+ * render-only (0 sim-tick) frame; 0 otherwise (and always 0 in normal play).
+ * Read by sim code that must not advance on render-only frames. */
+extern s32 g_pcUncapRenderOnlyFrame;
+#endif
+
 #endif

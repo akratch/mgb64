@@ -1,0 +1,31 @@
+{
+  "id": "FID-0008",
+  "title": "Train room-51 windows show sky through grazing apertures; edge-rescue delta 0% on its own control (M3.4)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "root-caused",
+  "suspect": [
+    "bg.c:2094",
+    "bg.c:2160+",
+    "bg.c:2200",
+    "tools/train_window_backdrop_regression.sh"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M3.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M3.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

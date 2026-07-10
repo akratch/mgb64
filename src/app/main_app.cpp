@@ -6,6 +6,7 @@
 // so that non-automation flags (e.g. --rom) route into the launcher instead.
 #include "app_config.h"
 #include "app_host.h"
+#include "app_theme.h"
 #include "arg_triage.h"
 #include "config_schema.h"
 #include "diag_log.h"
@@ -54,6 +55,35 @@ int main(int argc, char **argv) {
         return mgb64_headless_main(argc, argv);
     }
 
+    // Non-interactive schema self-check (validates config_schema enumeration +
+    // the RX.1 player/advanced curation tiers). Runs BEFORE DiagLog_install (so
+    // output reaches stdout, not the tee'd log) and BEFORE opening a window (so
+    // it works fully headless -- CI, no display; the config registry needs no
+    // GL context). Registers the config itself, then exits.
+    if (std::getenv("MGB64_APP_DUMP_SCHEMA")) {
+        mgb_config_init();
+        int n = mgb_config_count();
+        int player = 0, advanced = 0;
+        std::printf("[app] config schema: %d settings\n", n);
+        for (int i = 0; i < n; ++i) {
+            MgbCfgEntry e;
+            if (!mgb_config_get(i, &e)) continue;
+            if (e.advanced) {
+                ++advanced;
+                std::printf("[app] advanced: %s\n", e.key);
+            } else {
+                ++player;
+            }
+            if (std::strcmp(e.key, "Video.VSync") == 0) {
+                std::printf("[app] Video.VSync kind=%d live=%d enum_count=%d cur_idx=%d cur_token=%s\n",
+                            (int)e.kind, e.is_live, e.enum_count, e.cur_enum_index,
+                            mgb_config_enum_token(e.key, e.cur_enum_index));
+            }
+        }
+        std::printf("[app] tiers: player=%d advanced=%d\n", player, advanced);
+        return 0;
+    }
+
     // Tee stdout/stderr to the in-app console + mgb64.log BEFORE host.init, so
     // its fatal init diagnostics ([app] SDL_Init/CreateWindow/... failed) are
     // captured even under the GUI subsystem (-mwindows), where there is no
@@ -71,22 +101,6 @@ int main(int argc, char **argv) {
     // Register + load the engine config so the launcher's settings panel can
     // enumerate + edit it before a game boots. Idempotent with the engine boot.
     mgb_config_init();
-
-    // Non-interactive schema self-check (validates config_schema enumeration).
-    if (std::getenv("MGB64_APP_DUMP_SCHEMA")) {
-        int n = mgb_config_count();
-        std::printf("[app] config schema: %d settings\n", n);
-        for (int i = 0; i < n; ++i) {
-            MgbCfgEntry e;
-            if (mgb_config_get(i, &e) && std::strcmp(e.key, "Video.VSync") == 0) {
-                std::printf("[app] Video.VSync kind=%d live=%d enum_count=%d cur_idx=%d cur_token=%s\n",
-                            (int)e.kind, e.is_live, e.enum_count, e.cur_enum_index,
-                            mgb_config_enum_token(e.key, e.cur_enum_index));
-            }
-        }
-        host.shutdown();
-        return 0;
-    }
 
     Launcher launcher;
 
@@ -149,9 +163,20 @@ int main(int argc, char **argv) {
     // internally gated on the automation flags + Game.CheckForUpdates + env.
     UpdateCheck_start(argc, argv);
 
+    // RX.2: fill the display on handhelds so the launcher doesn't "float" in a
+    // small centered window on a 1920x1200 7-inch panel. UI.LauncherFullscreen
+    // (auto/on/off) gates it; auto detects a small/high-DPI panel and otherwise
+    // leaves the desktop dev window resizable. Interactive path only — the
+    // smoke/autoplay/schema paths all returned above, so CI is never forced
+    // fullscreen.
+    host.applyLauncherFullscreen(mgb_config_get_int("UI.LauncherFullscreen", 0));
+
     bool running = true;
     while (running) {
         if (host.pumpAndShouldQuit()) break;
+        // RX.2: apply the live UI.Scale before drawing (idempotent no-op when
+        // unchanged) so moving the slider resizes text/metrics immediately.
+        AppTheme::setUiScale(mgb_config_get_float("UI.Scale", 1.0f));
         host.beginFrame();
         LauncherAction action = launcher.draw(host);
         host.endFrame();

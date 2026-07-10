@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "title", "class", "surface", "priority", "status", "evidence", "repro", "history"],
+  "properties": {
+    "id":       {"type": "string", "pattern": "^FID-[0-9]{4}$"},
+    "title":    {"type": "string", "maxLength": 200},
+    "class":    {"enum": ["port-defect", "parity-divergence", "n64-quirk", "instrumentation-gap", "coverage-gap"]},
+    "surface":  {"enum": ["sim", "renderer", "audio", "converter", "infra"]},
+    "priority": {"enum": ["P0", "P1", "P2", "P3"]},
+    "status":   {"enum": ["discovered", "triaged", "root-caused", "fix-in-progress", "landed",
+                           "verified", "documented", "waived", "refuted"]},
+    "blocked_on": {"type": "array", "items": {"type": "string", "pattern": "^FID-[0-9]{4}$"}},
+    "suspect":  {"type": "array", "items": {"type": "string"}},
+    "repro":    {"type": "string"},
+    "evidence": {"type": "array", "minItems": 1, "items": {
+      "type": "object", "required": ["kind", "path"],
+      "properties": {
+        "kind": {"enum": ["trace-diff", "pixel-diff", "rdp-diff", "asm-citation", "gate-log",
+                           "doc-anchor", "counter-log", "audio-diff"]},
+        "path": {"type": "string"}, "route": {"type": "string"}, "note": {"type": "string"}}}},
+    "gates":    {"type": "array", "items": {"type": "string"}},
+    "waiver":   {"type": ["object", "null"], "required": ["reason", "retest"],
+                 "properties": {"reason": {"type": "string"}, "retest": {"type": "string"}}},
+    "history":  {"type": "array", "items": {
+      "type": "object", "required": ["ts", "from", "to"],
+      "properties": {"ts": {"type": "string"}, "from": {"type": "string"}, "to": {"type": "string"},
+                      "evidence": {"type": "string"}, "note": {"type": "string"}}}}
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "FID-0029",
+  "title": "Intro D-ledger waiver retests pending post-D43: D32, D35 pose drift, D37/D39 static-shot camera seed, D38 duration, D41 menu-boot anim phase (M1.5)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "fix-in-progress",
+  "suspect": [
+    "docs/design/INTRO_OUTRO_LEDGER.md"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/INTRO_OUTRO_LEDGER.md",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "fix-in-progress",
+      "evidence": "docs/design/INTRO_OUTRO_LEDGER.md",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

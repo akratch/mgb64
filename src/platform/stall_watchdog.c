@@ -88,6 +88,7 @@ static WatchdogCrumb s_ring[WATCHDOG_RING_LEN];
 
 static SDL_atomic_t s_heartbeat;      /* published once per frame */
 static SDL_atomic_t s_running;        /* 1 = frame loop, 0 = load/init */
+static SDL_atomic_t s_paused;         /* 1 = legit solo-pause (sim frozen on purpose) */
 
 static int  s_armed = 0;              /* watchdog enabled + thread started */
 static int  s_stallSecs = 5;
@@ -327,6 +328,18 @@ static int watchdogThreadMain(void *arg) {
             continue;
         }
 
+        if (SDL_AtomicGet(&s_paused)) {
+            /* MC.7: single-player settings-overlay pause deliberately freezes
+             * the sim. Rendering keeps publishing the heartbeat, so this is a
+             * belt-and-suspenders guard (and covers the case where a paused,
+             * unfocused window also stops presenting): treat it exactly like the
+             * load phase — reset the stall accounting and never dump. */
+            last_hb = (Uint32)SDL_AtomicGet(&s_heartbeat);
+            stalled = 0;
+            dumps = 0;
+            continue;
+        }
+
         hb = (Uint32)SDL_AtomicGet(&s_heartbeat);
         if (hb != last_hb) {
             last_hb = hb;
@@ -374,6 +387,7 @@ void portWatchdogInit(void) {
 
     SDL_AtomicSet(&s_heartbeat, 0);
     SDL_AtomicSet(&s_running, 0);
+    SDL_AtomicSet(&s_paused, 0);
 
     thread = SDL_CreateThread(watchdogThreadMain, "ge007-stall-watchdog", NULL);
     if (thread == NULL) {
@@ -397,6 +411,13 @@ void portWatchdogLoadEnd(void) {
         return;
     }
     SDL_AtomicSet(&s_running, 1);
+}
+
+void portWatchdogSetPaused(int paused) {
+    if (!s_armed) {
+        return;
+    }
+    SDL_AtomicSet(&s_paused, paused ? 1 : 0);
 }
 
 void portWatchdogFrameTick(void) {

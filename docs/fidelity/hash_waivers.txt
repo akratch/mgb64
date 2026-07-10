@@ -1,0 +1,201 @@
+# Sim-hash coverage waivers (S-Tier Task 0.4 / FID-0030).
+#
+# Consumed by tools/fidelity/hash_coverage_audit.py. Each writable (.data/.bss)
+# symbol in the decomp TUs (src/game/* + top-level src/*) must be either HASHED
+# (its runtime address lands in a SimHashRegion — see
+# `ge007 --print-sim-hash-regions`) or WAIVED here with a reason, else the audit
+# fails (ctest fidelity_hash_coverage). This file records why a symbol is
+# deliberately NOT in the render-invariance sim-hash.
+#
+# WHAT THE SIM-HASH IS FOR. The hash exists to prove one property: a RAMROM
+# replay is byte-identical for identical simulation with the remaster's
+# screen-space rendering flags OFF vs ON (tools/sim_invariance_gate.sh). It is a
+# render->sim tripwire, not a whole-memory determinism check. Full per-symbol
+# sim determinism is a SEPARATE mechanism: the gameplay-field trace-state lane
+# (tools/compare_state.py) and the 0-tick purity-fuzz gate (FID-0033). A symbol
+# is therefore legitimately waivable from THIS hash when it is:
+#   (a) immutable after load (const definition table the decomp emits writable),
+#   (b) debug / diagnostics / cheat / instrumentation state,
+#   (c) port/host-layer or audio state (not N64 gameplay simulation), or
+#   (d) render / DL-build / HUD / menu / text state, OR
+#   (e) game-logic simulation state written only by the sim tick and NEVER by the
+#       renderer (render-invariant by construction; covered per-symbol by the
+#       trace + purity lanes, and represented in this hash by the pool / RNG /
+#       prop-record / stan-collision / g_BgRoomInfo tripwire regions).
+#
+# THE READ-BACK RULE (FID-0012 precedent). A symbol written by the RENDERER and
+# read back by the SIM tick is NOT waivable — it must be hashed. The known case,
+# g_BgRoomInfo.room_rendered (renderer visibility consumed by chr.c/chrprop.c
+# auto-aim), is registered (bgBuildHashRegions), not waived. Render TUs below
+# were scoped-waived only after confirming no such read-back beyond that one.
+#
+# TEETH / MAINTENANCE. Object-scoped (`@file.c.o`) waivers waive a whole non-sim
+# or render-invariant TU; a NEW mutable global in a NEW (un-listed) TU still
+# surfaces as UNCOVERED and forces a human decision. The tradeoff: a new global
+# in an already-listed TU is auto-waived, so its per-symbol determinism rides on
+# the purity-fuzz gate rather than this audit. Promote a symbol out of a waiver
+# (register a region) the moment it is found to be read back into sim.
+#
+# Grammar (fields separated by 2+ spaces or a tab):
+#   <name_glob>              <reason>
+#   @<obj_glob>              <reason>            (any symbol from a matching object)
+#   <name_glob> @<obj_glob>  <reason>
+# A bare '*' with no @object scope is rejected (would defeat the audit).
+
+# ---------------------------------------------------------------------------
+# (0) Mechanical decomp artifacts — retail-address-named symbols.
+# Unnamed-in-decomp retail data tables and BSS scratch. When one is demoted to a
+# meaningful name it leaves this pattern and must be re-dispositioned per its TU.
+# ---------------------------------------------------------------------------
+D_[0-9A-Fa-f]*      retail-address-named data table / BSS scratch (unnamed in decomp)
+dword_*             retail-address-named 32-bit data/BSS scratch (unnamed in decomp)
+word_*              retail-address-named 16-bit data/BSS scratch (unnamed in decomp)
+byte_*              retail-address-named 8-bit data/BSS scratch (unnamed in decomp)
+qword_*             retail-address-named 64-bit data/BSS scratch (unnamed in decomp)
+flt_*               retail-address-named float constant (unnamed in decomp)
+dbl_*               retail-address-named double constant (unnamed in decomp)
+off_*               retail-address-named offset/pointer table (unnamed in decomp)
+jpt_*               retail jump table (immutable dispatch data)
+jtbl_*              retail jump table (immutable dispatch data)
+stru_*              retail-address-named struct constant (unnamed in decomp)
+asc_*               retail-address-named ASCII string constant
+unk_[0-9A-Fa-f]*    retail-address-named unknown constant (unnamed in decomp)
+bss_*               retail-address-named BSS scratch (unnamed in decomp)
+nullsub*            retail nullsub placeholder
+
+# ---------------------------------------------------------------------------
+# (0b) Function-static locals — per-call scratch, cached flag lookups, debug logs
+# (names contain a '.'). Not cross-tick simulation state. Includes e.g. the
+# cached GE007_* env-flag lookups (*.cached / *.v), trace logs (*_log), and
+# per-call counters (*_cnt) inside collision/AI/render helpers.
+# ---------------------------------------------------------------------------
+*.*                 function-static local (per-call scratch / cached flag / debug log); not cross-tick sim state
+
+# ---------------------------------------------------------------------------
+# (a) Immutable object/definition data tables — decomp emits retail const data as
+# writable arrays; never mutated during the tick, so identical render-OFF/ON.
+# ---------------------------------------------------------------------------
+@pobjdata.c.o               immutable prop-object definition table
+@gobjdata.c.o               immutable object definition table
+@gobjdata2.c.o              immutable object definition table
+@cobjdata.c.o               immutable object definition table
+@chraidata.c.o              immutable chr-AI definition table
+@ads_profiles.c.o           immutable aim-down-sights profile table (port config)
+@initanitable.c.o           immutable animation definition table
+@initobjects.c.o            immutable object-init definition table
+@initBondDATA.c.o           immutable Bond-defaults definition table
+@initBondDATAdefaults.c.o   immutable Bond-defaults definition table
+@indy_commands.c.o          immutable scripted-command table
+@lvl_text.c.o               immutable level-text definition table
+
+# ---------------------------------------------------------------------------
+# (b) Debug / diagnostics / cheat / instrumentation — not simulation state.
+# ---------------------------------------------------------------------------
+@speed_graph.c.o            debug frame-time graph state
+@speedgraphrenderer.c.o     debug frame-time graph renderer state
+@debugmenu.c.o              debug menu state
+@debugmenu_handler.c.o      debug menu handler state
+@debugmenu_08FE00.c.o       debug menu state
+@deb.c.o                    debug/diagnostics state
+@deb_loadallmodels.c.o      debug model-load diagnostics state
+@crash.c.o                  crash-diagnostics state (port)
+@game_debug.c.o             game debug instrumentation state
+@spectrum.c.o               audio spectrum debug-visualiser state
+@cheat_buttons.c.o          cheat-code input/tracking state (debug/cheat)
+
+# ---------------------------------------------------------------------------
+# (c) Port/host-layer + audio — not N64 gameplay simulation. Determinism of the
+# replay harness / scheduler / audio is out of the render-invariance hash scope.
+# ---------------------------------------------------------------------------
+@boss.c.o                   port pool/bootstrap bookkeeping (host layer)
+@sched.c.o                  N64 scheduler shim state (host layer)
+@joy.c.o                    host input latch state (not the deterministic sim input)
+@stacks.c.o                 thread-stack storage (host layer)
+@mema.c.o                   memory-arena allocator bookkeeping (host layer)
+@memp.c.o                   memory-pool allocator bookkeeping (host layer)
+@tlb_manage.c.o             TLB management shim (host layer)
+@tlb_random.c.o             TLB shim (host layer)
+@token.c.o                  memflag/token bookkeeping (host layer)
+@init.c.o                   boot/init sequencing state (host layer)
+@c_data_filler.c.o          data-filler bootstrap (host layer)
+@cfb.c.o                    colour-framebuffer descriptor (host layer)
+@pi.c.o                     PI/DMA shim state (host layer)
+@vi.c.o                     VI/output shim state (host layer)
+@rsp.c.o                    RSP microcode task state (host layer)
+@othermodemicrocode.c.o     RSP othermode microcode table (host layer)
+@ramrom.c.o                 RAMROM replay-buffer bookkeeping (harness)
+@ramromreplay.c.o           RAMROM record/replay harness state (incl. RNG-trace instrumentation)
+@zlib.c.o                   zlib inflate state (decompression; host layer)
+@pc_fps_overlay.c.o         port FPS overlay state (HUD/instrumentation)
+@pc_settings_menu.c.o       port settings-menu state (UI)
+@minimap.c.o                port minimap overlay state (HUD)
+@music.c.o                  music sequencer/playback state (audio)
+@music_0D2720.c.o           music playback state (audio)
+@mp_music.c.o               multiplayer music state (audio)
+@snd.c.o                    sound-effect playback state (audio)
+
+# ---------------------------------------------------------------------------
+# (d) Render / DL-build / HUD / menu / text / model — not simulation. Verified
+# free of render->sim read-back beyond g_BgRoomInfo.room_rendered (registered).
+# ---------------------------------------------------------------------------
+DL_LUT_*                    room display-list command LUT (render, immutable)
+@bg.c.o                     background/room DL-build + portal-visibility render state (the sim read-back g_BgRoomInfo.room_rendered is registered, not waived)
+@bg2.c.o                    background render helper state
+@fog.c.o                    fog/atmosphere render state
+@fr.c.o                     framebuffer/render helper state
+@dyn.c.o                    graphics-task dynamic-memory bookkeeping (render)
+@viewport.c.o               render viewport state
+@model.c.o                  model render/draw state
+@image.c.o                  image/texture render state
+@image_bank.c.o             image-bank (texture) render state
+@textrelated.c.o            text/font render state
+@front.c.o                  front-end menu/HUD state
+@title.c.o                  title/menu screen state
+@initmenus.c.o              menu-init state
+@watch.c.o                  watch/menu HUD state
+@mp_watch.c.o               multiplayer watch HUD state
+@objective_status.c.o       objective-status HUD state
+@objective_status2.c.o      objective-status HUD state
+@blood_animation.c.o        blood decal/animation render fx state
+@lightfixture.c.o           shoot-out-lights render tables (darkened-vertex lists; read by render/lvl only, not by AI/sim)
+@math_asinacos.c.o          asin/acos lookup table (immutable)
+@matrixmath.c.o             matrix-math scratch/LUT (render)
+@bondview_r.c.o             Bond viewmodel render helper state
+@initunk_005450.c.o         render/init helper state
+@unk_0BC530.c.o             bgroomtrans: room transform/matrix render state
+@unk_0C0A70.c.o             per-frame framerate/counter render-timing state
+
+# ---------------------------------------------------------------------------
+# (e) Game-logic simulation state written only by the sim tick, never by the
+# renderer (render-invariant by construction). Represented in this hash by the
+# pool / RNG / prop-record / stan-collision / g_BgRoomInfo tripwire regions;
+# exhaustive per-symbol determinism is enforced by the trace-state lane and the
+# 0-tick purity-fuzz gate (FID-0033), not this render-invariance hash.
+# ---------------------------------------------------------------------------
+@bondview.c.o               game-logic sim state (Bond view/camera/anim tick)
+@bondhead.c.o               game-logic sim state (Bond head/gaze tick)
+@bondinv.c.o                game-logic sim state (Bond inventory)
+@gun.c.o                    game-logic sim state (weapon/fire tick)
+@mp_weapon.c.o              game-logic sim state (multiplayer weapon)
+@chr.c.o                    game-logic sim state (chr AI/movement tick)
+@chrai.c.o                  game-logic sim state (chr AI)
+@chrlv.c.o                  game-logic sim state (chr level/patrol)
+@chrprop.c.o                game-logic sim state (chr/prop link tick)
+@chrobjhandler.c.o          game-logic sim state (chr object handler)
+@chrObjRandom.c.o           game-logic sim state (chr object RNG helper)
+@objecthandler.c.o          game-logic sim state (object handler tick)
+@prop.c.o                   game-logic sim state (prop tick)
+@explosions.c.o             game-logic sim state (explosion/projectile tick)
+@player.c.o                 game-logic sim state (player tick)
+@lvl.c.o                    game-logic sim state (level tick/streaming control)
+@ob.c.o                     game-logic sim state (object decompress/setup)
+@file2.c.o                  save/file game-state serialisation buffers
+@random.c.o                 RNG state (g_randomSeed is registered; residual is RNG trace instrumentation)
+@stan.c.o                   stan collision state (navmesh/cache/BFS registered; residual is debug flags + LEFTOVERDEBUG scratch)
+@unk_01B240.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@unk_091080.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@unk_092E50.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@unk_09B7A0.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@unk_0A1DA0.c.o             game-logic sim support (chrobjhandler helper; render-invariant)
+@unk_0CC4C0.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@decor_native.c.o            render-only scene decoration (W9, doc 09 §6.5): DL emission over the untouched sim; Video.SceneDecor=0 emits zero commands (identity-gated), sim never reads decor state

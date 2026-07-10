@@ -1,0 +1,49 @@
+{
+  "id": "FID-0065",
+  "title": "handles_projectile_motion: endpoint pull-back block has inverted result guard + wrong base operand vs retail ASM",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "landed",
+  "suspect": [
+    "src/game/chrobjhandler.c:5207"
+  ],
+  "repro": "audit: asm_audit.py entry handles_projectile_motion; diff ASM after-room-loop pull-back block (chrobjhandler.c:5657-5717) vs live C (chrobjhandler.c:5207-5227)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:5660"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:5660,5698,5724"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/derivations/FID-0064-0065-batch2.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T09:53:28Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:5660",
+      "note": "Projectile deposit-motion after-room-loop endpoint pull-back. 'result' (stack 0x2a4) init 1 (C:5069), set 0 only on a recorded background hit (ASM sw zero 0x2a4 ~:5615; C result=0 :5186). TWO divergences in the pull-back block: (1) GUARD POLARITY INVERTED. ASM :5660 'bnezl $t5,.L7F0426FC' with $t5=result skips the block when result!=0, i.e. runs it ONLY when result==0 (a wall/bg hit occurred). Live C :5207 'if (result != 0)' runs the block on the OPPOSITE branch (no hit). (2) WRONG BASE OPERAND. ASM reads the base from ($s3)=arg2 (:5698 'lwc1 $f6,($s3)'; $s3 is arg2, cf. call :5724 'sw $s3,0x10(sp)'=5th arg), i.e. arg2 -= frac*delta; then copies arg2->dest(sp+0x268). Live C reads the base from dest (=arg1, init C:5079-5081): arg2 = dest - frac*delta; dest = arg2 (C:5220-5226). frac=0.1/dist (or 0.5 if dist<=0.1); delta=saved_arg1-runtime_pos (identical both). NET (passed dest,arg2 to projectileFindCollidingProp): on a wall HIT retail clamps the collision-test endpoint AND reported impact to bg_hit_pos-0.1*travel; the port instead skips the clamp on hit (passes dest=arg1 through the wall, arg2=raw bg_hit_pos) and applies the -0.1 shorten only on the NO-hit path. Enumerated: neither the hit nor no-hit case reconciles between ASM and C -> not a compensating decompiler restructuring. REACHABILITY: live path -- sub_GAME_7F042EB4 (chrobjhandler.c:6403) calls this under (runtime_bitflags & RUNTIMEBITFLAG_DEPOSIT) && projectile->flags&4, dispatched from object-physics tick (chrobjhandler.c:9452/9562/9946); divergence is unconditional within the function. NOT YET verified: exactly which projectile/weapon types set projectile->flags&4, and runtime pixel/trace confirmation of the through-wall impact (static-derived). Found by S-tier Task 2.4 ASM-audit batch-2. DO NOT fix from this note; re-derive from ASM. Fix polarity if actioned: default-ON GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX."
+    },
+    {
+      "ts": "2026-07-10T10:29:50Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "src/game/chrobjhandler.c:5660,5698,5724",
+      "note": "Re-derived from ASM independently. Guard: bnezl $t5(result),.L7F0426FC at :5660 -> pull-back block (:5662-5717) runs ONLY when result==0 (wall hit). Base: lwc1 $f6,($s3) at :5698 with $s3=arg2 (5th arg, sw $s3,0x10($sp) at :5724); block sets arg2=arg2-frac*travel then copies arg2->dest(sp+0x268). On a wall hit arg2 was already set to bg_hit_pos (C:5187). Net retail: dest=arg2=bg_hit-0.1*travel. Port (C:5207) inverted guard (if result!=0) + read base from dest(=arg1). REACHABILITY CONFIRMED: flags&4=PROJECTILEFLAG_STICKY, set by projectileSetSticky via sub_GAME_7F05EB0C (thrown grenades/mines/knives, gun.c:4001) and AI object-rocket (chrai.c:5490); function reached via sub_GAME_7F042EB4 deposit path (chrobjhandler.c:6403)."
+    },
+    {
+      "ts": "2026-07-10T10:30:02Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "docs/fidelity/derivations/FID-0064-0065-batch2.md",
+      "note": "Fixed both divergences (guard polarity result==0 + base operand arg2) via factored pure helper src/platform/projectile_endpoint_clamp.c behind default-ON flag; opt-out GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX reproduces the legacy polarity+operand (byte-identical by construction + unit-asserted). RUNTIME EVIDENCE (dam, grenade item26 thrown at wall, GE007_PROJECTILE_TRACE motion_end result=0 wall hits): fix-ON clamps impact hit.x~=19409.1 just before the wall (hit==settled pos); fix-OFF reports hit.x~=19412-19414 (~3u further, through/past the wall) = the derived defect. Sim hashes differ (ON b7aad4323271dbf2 vs OFF 304562660edbb6ab), both deterministic 3/3. Regression lane: ctest projectile_endpoint_clamp (PASS fix, fail-on-revert proven for BOTH guard[6 fail] and operand[2 fail]). combat_route_capture dam_combat_guard6 (PP7, non-sticky) hash 3c8939968e0eb50e UNCHANGED (no re-baseline). Full native Release build green."
+    }
+  ]
+}

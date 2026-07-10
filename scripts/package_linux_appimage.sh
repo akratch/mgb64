@@ -30,6 +30,10 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/lib"
 
 cp "$binary" "$appdir/usr/bin/ge007"
 
+# Community controller-mapping DB (MC.2), next to the binary where
+# SDL_GetBasePath() resolves it at controller init.
+cp lib/sdl_gamecontrollerdb/gamecontrollerdb.txt "$appdir/usr/bin/" 2>/dev/null || true
+
 # Bundle the linked SDL2 (GL/glibc come from the host; AppImage targets glibc>=host).
 sdl="$(ldd "$binary" | awk '/libSDL2/{print $3; exit}')"
 if [[ -n "${sdl:-}" && -f "$sdl" ]]; then

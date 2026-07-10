@@ -1,0 +1,51 @@
+{
+  "id": "FID-0015",
+  "title": "Movement-stick square deadzone (aim stick already radial) (M2.1)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "verified",
+  "suspect": [
+    "stubs.c:6322-6337",
+    "stubs.c:5887-5900"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:sim_state_hash"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:radial_deadzone"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M2.1",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:26:35Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "ctest:sim_state_hash",
+      "note": "Landed a48c12a (fix(input): M2.1 radial deadzone + rescale for movement stick via platformApplyRadialDeadzone). NOT verified: gamepad mapping only runs when g_gameController!=NULL, so headless deterministic routes bypass it \u2014 sim_state_hash (green at landing) cannot regress-guard it. Needs a dedicated input-mapping fidelity lane (Input.GamepadRadialDeadzone on/off diagonal-creep assertion)."
+    },
+    {
+      "ts": "2026-07-10T01:46:40Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:radial_deadzone",
+      "note": "Regression lane tests/test_radial_deadzone.c (ctest radial_deadzone) drives the pure radial_deadzone.c TU shared by aim+movement sticks: below-deadzone->0, diagonal (6000,6000) radial->(7,-7) nonzero, full deflection->80, movement map==shared helper. Fail-on-revert proven: forcing movement stick to per-axis square collapses the diagonal to (0,0), 7 checks red; restored->green. ge007 builds clean; sim_state_hash unchanged. Committed 82b0a4f."
+    }
+  ]
+}

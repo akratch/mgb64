@@ -40,6 +40,8 @@
 #include "settings.h"
 #include "bondconstants.h"
 #include "game/ramromreplay.h"
+#include "input_tape.h"           /* --record-tape / --play-tape (FID-0034) */
+#include "sim_state_hash.h"        /* simHashRegistryBuild for --print-sim-hash-regions */
 #include "../app/input_actions.h"  /* rebindable keyboard registry (not app-gated) */
 #ifdef MGB64_APP
 #include "../app/engine_entry.h"  /* MgbBootConfig + mgb64_engine_boot decl */
@@ -173,6 +175,13 @@ static const PcStartStage *pcFindStageByLevelId(int level_id) {
         }
     }
     return NULL;
+}
+
+/* Exported for the scene-decoration layer (include/decor.h): the per-level
+ * decor manifest is keyed by the CLI slug ("surface1", ...). */
+const char *pcStageSlugForLevelId(s32 level_id) {
+    const PcStartStage *st = pcFindStageByLevelId((int)level_id);
+    return st != NULL ? st->slug : NULL;
 }
 
 static const PcStartStage *pcFindStageByMission(int mission_num) {
@@ -804,6 +813,36 @@ int main(int argc, char **argv)
             pcSetTraceStatePath(argv[++i]);
         } else if (strcmp(argv[i], "--sim-state-hash-out") == 0 && i + 1 < argc) {
             g_simStateHashOut = argv[++i];
+        } else if (strcmp(argv[i], "--record-tape") == 0 && i + 1 < argc) {
+            /* Byte-exact input capture (FID-0034). Forces the determinism
+             * envelope so the recorded seed/clock are the fixed ones a replay
+             * will reproduce. Requires --level and refuses --ramrom (validated
+             * post-parse). */
+            extern int g_deterministic;
+            extern int g_freezeInput;
+            inputTapeConfigureRecord(argv[++i]);
+            g_deterministic = 1;
+            g_freezeInput = 1;
+        } else if (strcmp(argv[i], "--play-tape") == 0 && i + 1 < argc) {
+            extern int g_deterministic;
+            extern int g_freezeInput;
+            inputTapeConfigurePlayback(argv[++i]);
+            g_deterministic = 1;
+            g_freezeInput = 1;
+        } else if (strcmp(argv[i], "--print-sim-hash-regions") == 0) {
+            /* Emit the sim-state-hash region table (`name base size`, one per
+             * line) and exit. ROM-free: simHashRegistryBuild() only reads the
+             * static region bases (g_ClockTimer/g_GlobalTimer/pos_data_entry)
+             * plus the not-yet-allocated pool base (0x0/0 pre-init). Consumed by
+             * tools/fidelity/hash_coverage_audit.py to cross-reference every
+             * writable decomp symbol against the hashed regions (FID-0030). */
+            SimHashRegion regs[SIM_HASH_MAX_REGIONS];
+            int nregs = 0;
+            simHashRegistryBuild(regs, &nregs);
+            for (int r = 0; r < nregs; r++) {
+                printf("%s %p %zu\n", regs[r].name, regs[r].base, regs[r].size);
+            }
+            return 0;
         } else if (strcmp(argv[i], "--mission") == 0 && i + 1 < argc) {
             int mission = 0;
             const PcStartStage *stage;
@@ -899,6 +938,25 @@ int main(int argc, char **argv)
         } else if (argv[i][0] != '-') {
             romPath = argv[i];
         }
+    }
+
+    /* Input-tape semantics (FID-0034): record and playback are mutually
+     * exclusive, require a direct --level boot, and refuse --ramrom (the tape
+     * IS the input stream — a demo would double-drive the seam). */
+    if (inputTapeIsRecordingRequested() && inputTapeIsPlaybackRequested()) {
+        fprintf(stderr, "[GE007-PC] --record-tape and --play-tape are mutually exclusive.\n");
+        return 2;
+    }
+    if (inputTapeIsRecordingRequested() || inputTapeIsPlaybackRequested()) {
+        if (g_pcStartRamrom != NULL) {
+            fprintf(stderr, "[GE007-PC] input tape and --ramrom cannot be combined.\n");
+            return 2;
+        }
+        if (g_pcStartLevel < 0) {
+            fprintf(stderr, "[GE007-PC] --record-tape/--play-tape require --level (direct boot).\n");
+            return 2;
+        }
+        inputTapeSetSessionParams(g_pcStartLevel, g_pcStartDifficulty);
     }
 
     if ((g_autoScreenshotExit || g_traceStatePath != NULL)

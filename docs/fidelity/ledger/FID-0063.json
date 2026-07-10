@@ -1,0 +1,27 @@
+{
+  "id": "FID-0063",
+  "title": "Systemic PRNG call-count phase desync (rng_seed) \u2014 residual combat divergence after sim-tick alignment: guards perceive/act a few ticks off retail",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/random.c"
+  ],
+  "repro": "dam_combat_guard6 both-sides under --align tick (FID-0062): after removing the alignment artifact, residual guard divergence (315 actiontype) is driven by native vs retail PRNG randomGetNext() being called a different NUMBER of times per tick (call-count phase), so probabilistic see-target (randomGetNext()%distance==0) fires a few ticks off \u2014 e.g. guard6 perceives +108t native vs +76t stock. The PRNG itself is bit-faithful (random.c:279); the CALL COUNT diverges.",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#12"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T09:35:05Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#12",
+      "note": "Filed from FID-0062 re-validation. THE real systemic owner of the residual perception-timing divergence that survives correct sim-tick alignment. NOT a guard-AI bug (perception logic is faithful ASM). FID-0054 = mostly artifact + THIS. FID-0011/0012/0013 must be re-captured under --align tick; whatever survives is THIS class (RNG call-count phase + tiny position drift), not chr.c/stan.c logic. Root-cause needs: find where native makes a different number of randomGetNext() calls per tick than retail (extra/missing consumers, order, or a call gated differently). XL systemic. Related: rng_seed \u00a75/\u00a78, FID-0046 (Streets nondeterminism)."
+    }
+  ]
+}

@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
 project(ge007 C)
 
+# Default to Release when no build type is given. This is the CANONICAL config:
+# the deterministic sim-state-hash baselines (baselines/tapes/*.expected.json,
+# combat_route_capture_smoke, tape_regression) are recorded under Release, and the
+# hash is floating-point-optimization-sensitive (FP contraction/reordering differs
+# at -O0), so a default/empty-type build silently reddens those lanes with a
+# confusing "sim diverged" message. Pinning the default here makes a bare
+# `cmake -B build` reproduce the canonical hashes (FID-0061). Multi-config
+# generators (Xcode/VS) ignore this and choose per-build. Deeper cross-config
+# reproducibility (strict-FP flags) is tracked separately in FID-0061.
+get_property(_ge007_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _ge007_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (canonical: Release)" FORCE)
+    message(STATUS "ge007: CMAKE_BUILD_TYPE not set — defaulting to Release (canonical sim-hash config)")
+endif()
+
 # macOS-only native Metal rendering backend (opt-in; GL stays default). The
 # backend TU is Objective-C++ against the system Metal/QuartzCore frameworks —
 # no metal-cpp vendoring. Guarded so Linux/Windows are untouched.
@@ -127,6 +142,25 @@ if(BUILD_TESTING)
         NAME port_release_ready_guard
         COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/ci/check_release_ready.sh"
     )
+    # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
+    add_test(
+        NAME combat_oracle_contract
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/combat_route_contract_smoke.sh" --gate
+    )
+    # FID-0062 sim-tick alignment regression lane (ROM-free): --align tick pairs the
+    # native (1 rec/tick) vs ares (~2 rec/tick + empty-roster interleave) streams by
+    # sim-tick with no phantom divergences, while --align move (index) skews ~2x.
+    # Fail-on-revert: reverting the tick branch to index pairing reddens this.
+    add_test(
+        NAME combat_comparator_align_unittest
+        COMMAND python3 -m unittest tools.tests.test_compare_combat_trace
+    )
+    set_tests_properties(
+        combat_comparator_align_unittest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
@@ -139,6 +173,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/compare_audio_reference.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_intro_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_movement_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/compare_combat_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_screenshots.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_state.py"
             "${CMAKE_SOURCE_DIR}/tools/intro_trace_summary.py"
@@ -181,9 +216,18 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/check_rdp_render_mode_trace_summary_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/select_glass_shard_pixel_targets.py"
             "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
+            "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_scale_regression.py"
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
             "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_normalize.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_diff.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_candidates.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_candidates.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/gen_pixel_calibration.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_trace_candidates.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_pixel_candidates.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(
@@ -235,6 +279,14 @@ if(BUILD_TESTING)
         NAME port_glass_shard_pixel_target_selection_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
     )
+    # FID-0003: shard geometry scale = 1/visibility, coupled to field_10E0
+    # (retail-ASM-faithful net transform). Source invariant; ROM-free.
+    # Fail-on-revert: re-adding any retired shard A/B scale flag reddens this.
+    add_test(
+        NAME port_glass_shard_scale_guard
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_scale_regression.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+    )
     add_test(
         NAME port_native_sdk_surface_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_native_sdk_surface.py"
@@ -280,6 +332,45 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
     )
+    # Task 1.3 pixel-oracle calibration (ROM-free): known-good synthetic pair
+    # reports 0 unexplained clusters, deliberately-broken pair reports >= 1.
+    add_test(
+        NAME pixel_diff_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_pixel_diff.py"
+    )
+    # Task 2.1 S1 trace-sweep candidate-emission logic (ROM-free).
+    add_test(
+        NAME sense_trace_candidates_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_trace_candidates.py"
+    )
+    # Task 2.1 S1 sweep harness self-test: emits a candidate from a synthetic
+    # comparator report with no ROM/ares.
+    add_test(
+        NAME sense_trace_sweep_selftest
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_sweep.sh" --self-test
+    )
+    # Task 2.2 S2 pixel-sweep candidate-emission logic (ROM-free): runs the real
+    # classifier on the synthetic calibration images.
+    add_test(
+        NAME sense_pixel_candidates_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_pixel_candidates.py"
+    )
+    # Task 2.2 S2 sweep harness self-test: full normalize->diff->classify->
+    # candidate pipeline on synthetic images (good->0, broken->>=1), no ROM/ares.
+    add_test(
+        NAME sense_pixel_sweep_selftest
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_sweep.sh" --self-test
+    )
+    set_tests_properties(
+        pixel_diff_unittest
+        sense_trace_candidates_unittest
+        sense_trace_sweep_selftest
+        sense_pixel_candidates_unittest
+        sense_pixel_sweep_selftest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     set_tests_properties(
         port_native_switch_guard
         port_release_ready_guard
@@ -312,6 +403,18 @@ if(BUILD_TESTING)
     target_include_directories(test_sim_state_hash PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME sim_state_hash COMMAND test_sim_state_hash)
 
+    # PC input tape .ge7tape reader/writer — ROM-free unit test (FID-0034,
+    # S-Tier Task 0.6). Compiles only the pure serialisation half of
+    # input_tape.c: the record/playback hooks are behind NATIVE_PORT, which the
+    # test target does not define, so no joy.h / game headers are pulled in.
+    add_executable(test_input_tape
+        "${CMAKE_SOURCE_DIR}/tests/test_input_tape.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/input_tape.c"
+    )
+    target_compile_definitions(test_input_tape PRIVATE INPUT_TAPE_UNIT_TEST)
+    target_include_directories(test_input_tape PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME input_tape COMMAND test_input_tape)
+
     # Smooth env-normals builder — ROM-free unit test (remaster W1.E1.T1).
     # Compiles only the pure builder core (game-facing wrapper excluded via the
     # GFX_ROOM_NORMALS_UNIT_TEST guard, so no g_BgRoomInfo dependency).
@@ -328,6 +431,40 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME room_normals COMMAND test_room_normals)
 
+    # N64 struct-layout lock — ROM-free compile-time guard (S-tier Task 0.7,
+    # FID-0035 + FID-0036 first half). The _Static_asserts in the TU fire at
+    # COMPILE time if any asserted sizeof/offsetof of a StandTile navmesh or
+    # PROPDEF record struct drifts, failing the build instead of corrupting
+    # memory at runtime — the exact v0.3.2 Windows-crash class (MinGW's default
+    # -mms-bitfields repacked StandTile and OOB'd the stan navmesh). Built with
+    # the SAME layout-critical flags (-fms-extensions to parse the `inherits`
+    # idiom; -mno-ms-bitfields to force SysV bit-field packing) + defines +
+    # include dirs as the ge007 target so it locks the real game layout. The
+    # global add_definitions() (CMakeLists:536) runs after this block, so the
+    # game defines are applied explicitly here.
+    add_executable(test_struct_layout
+        "${CMAKE_SOURCE_DIR}/tests/test_struct_layout.c"
+    )
+    target_compile_definitions(test_struct_layout PRIVATE
+        NONMATCHING NATIVE_PORT PORT_FIXME_STUBS _LANGUAGE_C
+        VERSION_US LANG_US REFRESH_NTSC LEFTOVERDEBUG
+        LEFTOVERSPECTRUM BUGFIX_R0 BYTEMATCH SDL_MAIN_HANDLED)
+    target_compile_options(test_struct_layout PRIVATE
+        -w -fms-extensions -mno-ms-bitfields)
+    target_include_directories(test_struct_layout PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/include/PR"
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/game"
+        "${CMAKE_SOURCE_DIR}/src/platform"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d"
+        "${CMAKE_SOURCE_DIR}/src/libultra/audio"
+        "${CMAKE_SOURCE_DIR}/assets"
+        "${CMAKE_SOURCE_DIR}/lib/glad/include"
+        "${CMAKE_SOURCE_DIR}/lib/stb"
+        "${CMAKE_SOURCE_DIR}")
+    add_test(NAME struct_layout COMMAND test_struct_layout)
+
     # Registering GE007_* env-flag accessors — ROM-free unit test.
     add_executable(test_port_env
         "${CMAKE_SOURCE_DIR}/tests/test_port_env.c"
@@ -335,6 +472,91 @@ if(BUILD_TESTING)
     )
     target_include_directories(test_port_env PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME port_env COMMAND test_port_env)
+
+    # Movement-stick radial deadzone — ROM-free unit test (FID-0015 / M2.1).
+    # Compiles only the pure radial_deadzone.c TU (no SDL / game headers): the
+    # shared platformApplyRadialDeadzone helper + the movement-stick N64 map.
+    add_executable(test_radial_deadzone
+        "${CMAKE_SOURCE_DIR}/tests/test_radial_deadzone.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/radial_deadzone.c"
+    )
+    target_include_directories(test_radial_deadzone PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    if(NOT WIN32)
+        target_link_libraries(test_radial_deadzone m)   # sqrtf (glibc keeps libm separate)
+    endif()
+    add_test(NAME radial_deadzone COMMAND test_radial_deadzone)
+
+    # Stick MAGNITUDE / range verify-ratchet — ROM-free unit test (FID-0060):
+    # full SDL deflection maps to the N64 practical ±80 (GE's /70 analog tuning
+    # saturates at raw ≈75), NOT a hot ±127-equivalent. Shares the exact pure
+    # helper the runtime uses (radial_deadzone.c). Composes with FID-0015 geometry.
+    add_executable(test_stick_range
+        "${CMAKE_SOURCE_DIR}/tests/test_stick_range.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/radial_deadzone.c"
+    )
+    target_include_directories(test_stick_range PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    if(NOT WIN32)
+        target_link_libraries(test_stick_range m)   # sqrtf (glibc keeps libm separate)
+    endif()
+    add_test(NAME stick_range COMMAND test_stick_range)
+
+    # Mouse-wheel weapon-cycle queue/drain — ROM-free unit test (FID-0016 / M2.2).
+    add_executable(test_weapon_cycle_queue
+        "${CMAKE_SOURCE_DIR}/tests/test_weapon_cycle_queue.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/weapon_cycle_queue.c"
+    )
+    target_include_directories(test_weapon_cycle_queue PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME weapon_cycle_queue COMMAND test_weapon_cycle_queue)
+
+    # Automatic Shotgun (AUTOSHOT) firing-dispatch grouping — ROM-free unit test
+    # (FID-0052): jpt_weapon_bullet_type routes AUTOSHOT to shotgun_mine, not pistol.
+    add_executable(test_weapon_bullet_type
+        "${CMAKE_SOURCE_DIR}/tests/test_weapon_bullet_type.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/weapon_bullet_type.c"
+    )
+    target_include_directories(test_weapon_bullet_type PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME weapon_bullet_type COMMAND test_weapon_bullet_type)
+
+    # Sticky-projectile deposit-motion endpoint pull-back — ROM-free unit test
+    # (FID-0065): retail clamps the collision endpoint + impact to bg_hit-0.1*travel
+    # ONLY on a wall hit (result==0), measured from arg2; the port inverted the
+    # guard and read the base from dest. Fails if guard polarity or base operand reverts.
+    add_executable(test_projectile_endpoint_clamp
+        "${CMAKE_SOURCE_DIR}/tests/test_projectile_endpoint_clamp.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/projectile_endpoint_clamp.c"
+    )
+    target_include_directories(test_projectile_endpoint_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME projectile_endpoint_clamp COMMAND test_projectile_endpoint_clamp)
+
+    # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
+    # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
+    # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
+    add_executable(test_fire_rate_authentic
+        "${CMAKE_SOURCE_DIR}/tests/test_fire_rate_authentic.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fire_rate_authentic.c"
+    )
+    target_include_directories(test_fire_rate_authentic PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME fire_rate_authentic COMMAND test_fire_rate_authentic)
+
+    # Metal MSAA sample-count resolution — ROM-free, Metal-free unit test
+    # (FID-0018). Compiles the exact pure helper the Metal backend uses
+    # (gfx_msaa_util.c) so the requested->device-clamped rasterSampleCount ladder
+    # and the same-pass sample-count consistency guard are checked without a live
+    # MTLDevice. Runs on every platform (the helper is pure C).
+    add_executable(test_msaa_sample_count
+        "${CMAKE_SOURCE_DIR}/tests/test_msaa_sample_count.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d/gfx_msaa_util.c"
+    )
+    target_include_directories(test_msaa_sample_count PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/fast3d")
+    add_test(NAME msaa_sample_count COMMAND test_msaa_sample_count)
+
+    # speedgraphframes frame-spike clamp — ROM-free unit test (FID-0017 / M2.4).
+    add_executable(test_speedgraph_clamp
+        "${CMAKE_SOURCE_DIR}/tests/test_speedgraph_clamp.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/frame_clamp.c"
+    )
+    target_include_directories(test_speedgraph_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME speedgraph_clamp COMMAND test_speedgraph_clamp)
 
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
@@ -347,6 +569,63 @@ if(BUILD_TESTING)
     )
     set_tests_properties(env_reference_current PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # Fidelity findings ledger must stay schema-valid with consistent transition
+    # history (S-tier program Phase 0, Task 0.2). ROM-free python guard — the
+    # loop's persistent memory can never silently corrupt.
+    add_test(
+        NAME fidelity_ledger_valid
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" validate
+    )
+    set_tests_properties(fidelity_ledger_valid PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # The generated human index docs/fidelity/LEDGER.md must not silently drift
+    # from the JSON source of truth (it had fallen 10 findings behind). Guard it.
+    add_test(
+        NAME fidelity_ledger_index_current
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" render --check
+    )
+    set_tests_properties(fidelity_ledger_index_current PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
+    # integrity (S-tier Task 2.4, FID-0042). ROM-free python guard: validates
+    # docs/fidelity/asm_audit_queue.json (verdict grammar, finding-filed FIDs
+    # resolve to real ledger entries, ranks are a contiguous 1..N permutation,
+    # every referenced source file exists). The queue drives all ~388 GLOBAL_ASM
+    # reimplementations to a recorded verdict (S-tier exit criterion 4).
+    add_test(
+        NAME fidelity_asm_audit_valid
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/asm_audit.py" validate
+    )
+    set_tests_properties(fidelity_asm_audit_valid PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # Sim-hash coverage audit (S-tier Task 0.4, FID-0030): make "what the
+    # sim-state invariance hash covers" a checked property. Every writable
+    # (.data/.bss) symbol in the decomp TUs (src/game/* + top-level src/*) must
+    # be either hashed by a SimHashRegion or waived in docs/fidelity/
+    # hash_waivers.txt with a reason, else this fails. ROM-free: nm over the
+    # built ge007 objects + the region table from `ge007 --print-sim-hash-regions`.
+    # Needs the built ge007 binary + its objects; SKIPs (not fails) via the
+    # prereq wrapper when ge007 has not been built (e.g. a test-only checkout),
+    # the same convention as the intro_* smokes. The ge007 target is defined
+    # later in this file, so the binary is referenced by path, not $<TARGET_FILE>.
+    add_test(
+        NAME fidelity_hash_coverage
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/ctest_require_prereqs.sh"
+            --require "${CMAKE_BINARY_DIR}/ge007"
+            --
+            python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/hash_coverage_audit.py"
+                --binary "${CMAKE_BINARY_DIR}/ge007"
+                --objroot "${CMAKE_BINARY_DIR}/CMakeFiles/ge007.dir"
+                --waivers "${CMAKE_SOURCE_DIR}/docs/fidelity/hash_waivers.txt"
+                --report "${CMAKE_BINARY_DIR}/hash_coverage_report.json"
+    )
+    set_tests_properties(fidelity_hash_coverage PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        SKIP_RETURN_CODE 125)
 
     # Local MinGW cross-compile lane (backlog MW.2): proves ge007.exe compiles
     # and links for Windows from this host instead of waiting for the release
@@ -408,6 +687,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
+    # MC.7 solo-pause: boots a solo level via the app shell, scripts the F1/View
+    # settings overlay open for ~11s (> the 5s watchdog threshold) then closed,
+    # and asserts (a) the sim clock g_GlobalTimer is FROZEN across the whole pause
+    # and resumes after, and (b) the stall watchdog stayed silent (suppression
+    # holds). Real-time run — the pause can't engage under --deterministic.
+    add_port_validation_smoke(port_overlay_solo_pause_smoke overlay_solo_pause_smoke.sh 180)
     # Post-intro movement gate: boots each level with the intro enabled, lets it
     # play to the FP handoff, then holds forward and asserts the player actually
     # moves -- guards the Silo "look works, WASD dead" regression. Includes a
@@ -429,6 +714,19 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # Per-level frame-time budget gate (docs/design/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
+    # FID-0007 (b): dyn-allocator fail-closed contract on the glass-shard float-
+    # matrix render path. Forces VTX-arena overflow (GE007_DYN_STRESS_LIMIT) on the
+    # Dam regular-glass shatter route and asserts the shard path skips overflowed
+    # pieces (zero screen-spanning triangles, only dyn_overflow moves) with a
+    # GE007_DYN_LEGACY_ALIAS=1 A/B negative control that restores the old aliasing.
+    add_port_validation_smoke(port_dyn_glass_stress_smoke dyn_glass_stress_smoke.sh 400)
+    # FID-0054: combat-route determinism guard. Replays the committed Dam combat
+    # input tape (baselines/tapes/dam_combat_guard6.ge7tape) — which FIRES the PP7,
+    # spawns projectiles and provokes guard-AI reactions — and asserts the whole-sim
+    # state hash matches the recorded baseline. Fail-on-divergence proves combat
+    # stays deterministic under the seed envelope (the precondition for frame-locking
+    # the guard-AI parity divergence against the ares oracle). ares-free / ROM-gated.
+    add_port_validation_smoke(port_combat_route_capture_smoke fidelity/combat_route_capture_smoke.sh 180)
 endif()
 
 # T5: cheap intro-path regression
@@ -564,6 +862,7 @@ set(FAST3D_SOURCES
     src/platform/fast3d/gfx_cc.c
     src/platform/fast3d/gfx_backend.c
     src/platform/fast3d/gfx_room_normals.c
+    src/platform/fast3d/gfx_msaa_util.c
 )
 # Native Metal backend (macOS-only, opt-in at runtime). GL TU stays on all platforms.
 if(APPLE)
@@ -683,6 +982,7 @@ target_include_directories(ge007 PRIVATE
     assets
     lib/glad/include
     lib/stb
+    lib/cgltf
     .
 )
 
@@ -932,6 +1232,29 @@ if(MGB64_APP)
         target_include_directories(test_rom_validate PRIVATE src/app)
         target_compile_features(test_rom_validate PRIVATE cxx_std_17)
         add_test(NAME rom_validate COMMAND test_rom_validate)
+
+        # Keyboard-free ROM discovery (auto-scan + directory browser). rom_scan.cpp
+        # is SDL-/ImGui-free precisely so this links tiny. The test harness uses
+        # POSIX mkdtemp / 2-arg mkdir, so it is host-only (not a Windows-native
+        # BUILD_TESTING build); rom_scan.cpp itself still cross-compiles for MinGW.
+        if(NOT WIN32)
+            add_executable(test_rom_scan
+                tests/test_rom_scan.cpp
+                src/app/rom_scan.cpp)
+            target_include_directories(test_rom_scan PRIVATE src/app)
+            target_compile_features(test_rom_scan PRIVATE cxx_std_17)
+            add_test(NAME rom_scan COMMAND test_rom_scan)
+        endif()
+
+        # App-prefs value escaping (F1): a dropped/browsed filename with an
+        # embedded newline must not inject an ini line. SDL-free core so this
+        # links tiny and runs everywhere.
+        add_executable(test_app_config
+            tests/test_app_config.cpp
+            src/app/app_config_escape.cpp)
+        target_include_directories(test_app_config PRIVATE src/app)
+        target_compile_features(test_app_config PRIVATE cxx_std_17)
+        add_test(NAME app_config COMMAND test_app_config)
 
         # Pure tag-parse + semver-compare logic for the update check (no SDL, no
         # network): update_check_core.cpp is SDL-free precisely so this links tiny.

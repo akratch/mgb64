@@ -1,0 +1,41 @@
+{
+  "id": "FID-0034",
+  "title": "No PC disk input record/replay (RAMROM records only to RAM for Indy path)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "verified",
+  "suspect": [
+    "ramromreplay.c:1207",
+    "ramromreplay.c:1226",
+    "hooks joy.c:111-112"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-09T21:36:39Z",
+      "from": "root-caused",
+      "to": "verified",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "PC .ge7tape disk record/replay landed: input_tape ctest (format roundtrip, ROM-free) PASS; tapeRecordFunc/tapePlaybackFunc at the retail g_ContRecordFunc/g_ContPlaybackFunc seam; --record-tape/--play-tape wired in main_pc.c under the determinism envelope; Dam 30s tape replays byte-exact record==replay1==replay2 sim hash 17d978581466799f; tape_regression.sh GREEN."
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "FID-0033",
+  "title": "0-tick purity fuzz gate spec'd, not built",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P0",
+  "status": "verified",
+  "suspect": [
+    "docs/design/UNCAPPED_FPS_PLAN.md:897-1004"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/design/UNCAPPED_FPS_PLAN.md",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/uncap_purity_gate.sh"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "docs/design/UNCAPPED_FPS_PLAN.md",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:16:06Z",
+      "from": "root-caused",
+      "to": "verified",
+      "evidence": "tools/uncap_purity_gate.sh",
+      "note": "0-tick purity gate built (tools/uncap_purity_gate.sh + GE007_UNCAP_FUZZ render-only-frame injection in unk_0C0A70.c/boss.c). --quick GREEN (33/9/24, both seeds); full 20-level matrix PASS 19/20 GREEN (Streets/29 UNSTABLE = pre-existing vanilla non-determinism, flagged not failed); negative-control RED proven; byte-identical fuzz-off (sim_state_hash + sim_invariance PASS, clean-revert hash match). Report: /private/tmp/claude-501/-Users-adamkratch-Desktop-dev-mgb64/b6b8bf07-2d0a-43e2-9fc8-19e1ba2c590d/scratchpad/task-stier05-report.md"
+    }
+  ]
+}

@@ -5,6 +5,10 @@
 namespace AppTheme {
 
 static AppFonts g_fonts;
+static float      g_fbScale   = 1.0f;   // framebuffer/logical ratio from setup()
+static float      g_uiScale   = 1.0f;   // player UI.Scale multiplier
+static ImGuiStyle g_baseStyle;          // metrics at scale 1.0, captured in setup()
+static bool       g_baseCaptured = false;
 
 ImVec4 hex(unsigned rgb, float a) {
     return ImVec4(((rgb >> 16) & 0xFF) / 255.0f,
@@ -99,10 +103,33 @@ static void applyStyle() {
     c[ImGuiCol_DragDropTarget]       = acc;
 }
 
+float uiScale() { return g_uiScale; }
+
+void setUiScale(float uiScale) {
+    if (uiScale < 0.5f) uiScale = 0.5f;
+    if (uiScale > 3.0f) uiScale = 3.0f;
+    if (!g_baseCaptured) return;             // setup() not run yet
+    if (uiScale == g_uiScale) return;        // no-op: cheap to call every frame
+    g_uiScale = uiScale;
+
+    // Rescale metrics from the pristine base so repeated calls never compound.
+    ImGuiStyle &s = ImGui::GetStyle();
+    s = g_baseStyle;
+    s.ScaleAllSizes(uiScale);
+    // Fonts are rasterized at g_fbScale*pt; FontGlobalScale = uiScale/g_fbScale
+    // makes the displayed size pt*uiScale (crisp on Retina, larger on handhelds).
+    ImGui::GetIO().FontGlobalScale = uiScale / g_fbScale;
+}
+
 void setup(float fbScale) {
     if (fbScale < 1.0f) fbScale = 1.0f;
+    g_fbScale = fbScale;
 
     applyStyle();
+    // Capture the scale-1.0 metrics so setUiScale can rescale from a clean base.
+    g_baseStyle = ImGui::GetStyle();
+    g_baseCaptured = true;
+    g_uiScale = 1.0f;
 
     ImGuiIO &io = ImGui::GetIO();
     io.Fonts->Clear();

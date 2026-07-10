@@ -1,0 +1,30 @@
+{
+  "id": "FID-0028",
+  "title": "Audio hygiene: dead simple-synth + dead spatial branch (M5.4)",
+  "class": "instrumentation-gap",
+  "surface": "audio",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "audio_pc.c:2361",
+    "audio_pc.c:751",
+    "audio_pc.c:1271"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/BACKLOG_v0.4.0.md#M5.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-09T00:00:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/BACKLOG_v0.4.0.md#M5.4",
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    }
+  ]
+}

@@ -98,9 +98,11 @@ if [[ "${#VARIANT_SPECS[@]}" -eq 0 ]]; then
     VARIANT_SPECS+=("default:")
     VARIANT_SPECS+=("shards_off:GE007_GLASS_SHARDS=0")
     VARIANT_SPECS+=("fixed_mtx:GE007_GLASS_SHARD_FIXED_MTX=1")
-    VARIANT_SPECS+=("compress:GE007_GLASS_SHARD_COMPRESS=1")
-    VARIANT_SPECS+=("legacy_basis_scale:GE007_GLASS_SHARD_BASIS_SCALE=1")
-    VARIANT_SPECS+=("legacy_field_10e0_scaled:GE007_FIELD_10E0_SCALED=1")
+    # FID-0003: the six per-shard scale flags collapsed to the one ASM-faithful
+    # answer (shard ×1/visibility couples to the vis-scaled field_10E0). The
+    # meaningful A/B is now the field_10E0 scaling opt-out; the retired
+    # COMPRESS/BASIS_SCALE variants are no longer read by the emitter.
+    VARIANT_SPECS+=("unscaled_field_10e0:GE007_FIELD_10E0_SCALED=0")
     VARIANT_SPECS+=("loaded_tile_2tex_filter:GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER=0x00f38e4f020a2d12")
     VARIANT_SPECS+=("nopersp_inputs:GE007_DIAG_NOPERSPECTIVE_CC_INPUTS=0x00f38e4f020a2d12")
     VARIANT_SPECS+=("nopersp_cc:GE007_DIAG_NOPERSPECTIVE_CC=0x00f38e4f020a2d12")

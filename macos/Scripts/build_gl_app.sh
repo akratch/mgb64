@@ -61,6 +61,11 @@ mkdir -p "${OUTPUT_APP}/Contents/MacOS" \
          "${OUTPUT_APP}/Contents/Frameworks"
 cp "${BINARY}" "${OUTPUT_APP}/Contents/MacOS/${EXECUTABLE_NAME}"
 
+# Community controller-mapping DB (MC.2). SDL_GetBasePath() returns
+# Contents/Resources/ for a .app bundle, so the runtime loader finds it here.
+cp "${PROJECT_ROOT}/lib/sdl_gamecontrollerdb/gamecontrollerdb.txt" \
+   "${OUTPUT_APP}/Contents/Resources/gamecontrollerdb.txt"
+
 # --- 3. Info.plist ---
 INFO_PLIST="${OUTPUT_APP}/Contents/Info.plist"
 cp "${PROJECT_ROOT}/macos/Resources/Info.plist" "${INFO_PLIST}"
