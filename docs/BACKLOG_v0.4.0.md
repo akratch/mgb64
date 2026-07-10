@@ -885,7 +885,13 @@ and it lands squarely on glass.
 `1/bgGetLevelVisibilityScale()` at `:1311-1313`), coverage diag
 `gfx_pc.c:5776` (`GE007_TRACE_GLASS_SHARD_COVERAGE`), scorer
 `tools/compare_glass_shard_pixel_oracle.py`.
-**Bug:** the native projection compresses shard triangles differently from N64, so the
+**Bug (RESOLVED — FID-0003, 2026-07-10):** the six competing A/B scale hypotheses were
+collapsed to the one retail-ASM-faithful answer. The ROM (`sub_GAME_7F0A2C44`) draws
+each shard unscaled; the port scales `field_10E0` by level visibility (0.2 on Dam/
+Surface), so the shard must apply ×1/visibility to net to the ROM transform — the only
+correct hypothesis (already the default), now coupled to `GE007_FIELD_10E0_SCALED` and
+guarded by `port_glass_shard_scale_guard`. Original text below for history:
+the native projection compresses shard triangles differently from N64, so the
 tree carries **six** competing A/B scale hypotheses (`GE007_GLASS_SHARD_COMPRESS`,
 `_BASIS_SCALE`, `_NO_BASIS_SCALE`, `_SQRT_BASIS`, `_INV_VIS_SCALE`, `_FIXED_MTX`) with an
 empirical default that has never been signed off against stock. Shard on-screen
