@@ -166,8 +166,13 @@ clustering, 685k -> 52k tris, 512px textures, sun-lambert vertex bake with an
 (`gen_tree3d.py --detail high`: clustered crossed-quad boughs, supersampled
 needle cards).
 
-Validated: decor-off byte-identical; dam boot smoke; perf median 95.4% of
-pack-only with ~220k decor tris/frame (M3 Max: free); 142 tool tests.
+Validated: decor-off byte-identical; dam boot smoke; 139 tool tests; scaled
+to **45 placements / ~3.0M decor triangles per frame at ~4.6 ms** (M9/M9.1:
+hero pine + full fir + boulders + deadwood, snow baked into COLOR_0.alpha).
+`assets/decor/build_models.sh` reproduces every manifest model from a clean
+checkout (fetch-on-demand Poly Haven cache, ~1.5 GB one-time; args mirror the
+per-model provenance.json — a review catch: the script originally built only
+the generated spruces).
 
 ## 6. Known remaining work (next milestones)
 

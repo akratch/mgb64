@@ -5,8 +5,6 @@
 # boulder_a 0.9u, boulder_b 1.5u, dead_trunk 0.3u tall / 1.5u long.
 model fir_big models/fir_big.glb modern
 model fir_hd models/fir_hd.glb modern
-model spruce_hd_a models/spruce_hd_a.glb modern
-model spruce_hd_c models/spruce_hd_c.glb modern
 model boulder_a models/boulder_a.glb modern
 model boulder_b models/boulder_b.glb modern
 model dead_trunk models/dead_trunk.glb modern
@@ -26,8 +24,8 @@ place dead_trunk -8300 70 -11550 120 150
 place fir_hd -8630 78 -11990 210 91
 place boulder_a -8900 75 -11300 280 120
 place fir_hd -9240 82 -11060 330 78
-place spruce_hd_a -7200 90 -12250 80 700
-place spruce_hd_c -8900 100 -10800 40 650
+place fir_hd -7200 88 -12250 80 96
+place fir_hd -8900 98 -10800 40 90
 place fir_hd -10600 95 -11500 10 95
 
 # ---- upper plateau (pad 60 area: floor ~249) ----
@@ -36,14 +34,14 @@ place fir_hd -600 248 -2600 200 84
 place fir_hd -1800 250 -2700 40 76
 place boulder_b -900 246 -1500 310 130
 place boulder_a -1600 247 -2200 150 115
-place spruce_hd_a -400 250 -1300 260 680
+place fir_hd -400 249 -1300 260 88
 
 # ---- hut approach (pad 10 area: floor ~101) ----
 place fir_hd 900 98 -4400 60 78
 place fir_hd 1800 100 -5300 220 86
 place boulder_a 1550 97 -4600 20 125
 place dead_trunk 800 96 -5100 180 140
-place spruce_hd_c 2100 102 -4300 140 620
+place fir_hd 2100 101 -4300 140 83
 
 # ---- M9.1 densify: variety scans + fuller plateau/hut dressing ----
 model boulder_c models/boulder_c.glb modern
@@ -58,7 +56,7 @@ place fir_hd -300 249 -2100 310 74
 place boulder_c -1100 247 -2500 60 120
 place dead_trunk_b -1500 246 -1000 140 130
 place fir_big -150 250 -2900 20 62
-place spruce_hd_c -2100 250 -2400 200 640
+place fir_hd -2100 249 -2400 200 79
 # hut approach (floor ~95-105)
 place fir_hd 400 96 -4700 120 80
 place fir_big 2300 103 -5600 280 58

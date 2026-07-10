@@ -198,3 +198,4 @@ DL_LUT_*                    room display-list command LUT (render, immutable)
 @unk_09B7A0.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
 @unk_0A1DA0.c.o             game-logic sim support (chrobjhandler helper; render-invariant)
 @unk_0CC4C0.c.o             game-logic sim support (unknown-purpose retail routine; render-invariant)
+@decor_native.c.o            render-only scene decoration (W9, doc 09 §6.5): DL emission over the untouched sim; Video.SceneDecor=0 emits zero commands (identity-gated), sim never reads decor state

@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**904 flags** found across the source.
+**907 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -236,6 +236,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_DEBUG_DL_ROOM` | ? |  | 1 |  |
 | `GE007_DEBUG_ROOM_CMD_RANGE` | ? |  | 1 |  |
 | `GE007_DEBUG_ROOM_MODE` | ? |  | 1 |  |
+| `GE007_DECOR_ONLY_PRIM` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_SPEEDFRAMES` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_STABLE_COUNT` | ? |  | 1 |  |
 | `GE007_DIAG_ALPHA_BLEND` | ? |  | 1 |  |
@@ -682,6 +683,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_CHR_AUDIO` | ? |  | 4 |  |
 | `GE007_TRACE_COLLISION` | ? |  | 8 |  |
 | `GE007_TRACE_COMBAT_SCAN` | ? |  | 1 |  |
+| `GE007_TRACE_DECOR` | ? |  | 3 |  |
 | `GE007_TRACE_DISPLAYCAST` | ? |  | 1 |  |
 | `GE007_TRACE_DISPLAYCAST_MATERIALS` | ? |  | 2 |  |
 | `GE007_TRACE_DISPLAYCAST_MATERIALS_AFTER_FRAME` | ? |  | 2 |  |
