@@ -15,7 +15,7 @@
     {
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M2.3",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
     },
     {
       "kind": "doc-anchor",
@@ -28,7 +28,7 @@
       "from": "",
       "to": "triaged",
       "evidence": "docs/BACKLOG_v0.4.0.md#M2.3",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
     },
     {
       "ts": "2026-07-10T09:35:52Z",
@@ -39,6 +39,7 @@
     }
   ],
   "blocked_on": [
-    "FID-0032"
+    "FID-0032",
+    "FID-0062"
   ]
 }

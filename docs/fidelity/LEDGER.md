@@ -16,9 +16,9 @@
 | FID-0008 | P1 | root-caused | port-defect | renderer | yes |  | Train room-51 windows show sky through grazing apertures; edge-rescue delta 0% on its own control (M3.4) |
 | FID-0009 | P2 | root-caused | port-defect | renderer | yes |  | Silo aperture residual: rooms 28/44 + screen-edge sliver dropped via multi-hop grazing portals |
 | FID-0010 | P2 | root-caused | port-defect | renderer | yes |  | bg.c:7441 frustum-culling stub marks all rooms visible |
-| FID-0011 | P1 | triaged | port-defect | sim | yes | FID-0032 | chrTickBeams minimal reimpl: H4 actiontype dispatch collapsed (HIGH), H5 BACKGROUND_AI bit, H6 held-weapon obj leak, H7 visibility coarsening |
-| FID-0012 | P1 | triaged | parity-divergence | sim | yes | FID-0032 | Guard visibility->sim coupling Phase C default-flip blocked on combat-field oracle (M2.3) |
-| FID-0013 | P1 | triaged | parity-divergence | sim | yes | FID-0032 | stan.c stacked-floor seam selection not frame-exact-verified vs ares (F2 landed, unverified) |
+| FID-0011 | P1 | triaged | port-defect | sim |  | FID-0032, FID-0062 | chrTickBeams minimal reimpl: H4 actiontype dispatch collapsed (HIGH), H5 BACKGROUND_AI bit, H6 held-weapon obj leak, H7 visibility coarsening |
+| FID-0012 | P1 | triaged | parity-divergence | sim |  | FID-0032, FID-0062 | Guard visibility->sim coupling Phase C default-flip blocked on combat-field oracle (M2.3) |
+| FID-0013 | P1 | triaged | parity-divergence | sim |  | FID-0032, FID-0062 | stan.c stacked-floor seam selection not frame-exact-verified vs ares (F2 landed, unverified) |
 | FID-0014 | P2 | root-caused | parity-divergence | sim | yes |  | Patrol force-loop workaround masks stalled WAYMODE_MAGIC (M2.5) |
 | FID-0015 | P1 | verified | port-defect | sim |  |  | Movement-stick square deadzone (aim stick already radial) (M2.1) |
 | FID-0016 | P2 | verified | port-defect | sim |  |  | Mouse-wheel weapon cycling collapses N notches to 1 (M2.2) |
@@ -58,7 +58,7 @@
 | FID-0051 | P2 | waived | port-defect | sim |  |  | gun.c jpt_80054084 shooting-dispatch mis-groupings: ROCKETLAUNCH/REMOTEMINE/PLASTIQUE diverge from retail |
 | FID-0052 | P2 | landed | port-defect | sim | yes |  | gun.c jpt_weapon_bullet_type: Automatic Shotgun (AUTOSHOT) mis-grouped as pistol, diverges from retail shotgun_mine |
 | FID-0053 | P2 | discovered | instrumentation-gap | infra | yes |  | Combat oracle floor.stan_id/stan_flags not cross-comparable native-vs-ares (tile id encoding differs; room+height agree) |
-| FID-0054 | P1 | root-caused | parity-divergence | sim | yes |  | Combat oracle guard AI-state divergence native-vs-stock on Dam (pos/actiontype/room/health/target_visible); roster matches 36/36 |
+| FID-0054 | P1 | root-caused | parity-divergence | sim |  | FID-0062 | Combat oracle guard AI-state divergence native-vs-stock on Dam (pos/actiontype/room/health/target_visible); roster matches 36/36 |
 | FID-0055 | P2 | discovered | parity-divergence | sim | yes |  | Combat oracle guard anim_hash (4968) + flags_onscreen (1568) divergence native-vs-stock on Dam — animation-phase / onscreen visibility |
 | FID-0056 | P1 | landed | parity-divergence | sim | yes |  | Full-auto fire rate gated on per-rendered-frame counter (field_88C), unscaled — automatics likely fire 2-4x too fast at locked 60Hz vs N64 15-30Hz |
 | FID-0057 | P2 | discovered | parity-divergence | sim | yes |  | Locked-60 casualty checklist: gunbarrel/legal-screen intro pacing, frame-count menu timers, attract-demo (ramrom) cadence desync |
