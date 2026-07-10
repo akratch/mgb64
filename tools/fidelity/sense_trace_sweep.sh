@@ -291,8 +291,22 @@ run_route() {
     for spec in "${specs[@]}"; do
         script="${spec%% *}"; surface="${spec##* }"
         report="${OUT_DIR}/${route}_${surface}_report.json"
+        # P1h (Lane C, 2026-07-10 review): with no --align, every comparator
+        # here defaults to `global` alignment. compare_combat_trace.py's own
+        # --align help text calls `global`/`move` untrustworthy for combat
+        # fields (FID-0062 -- native emits 1 record/game-frame, ares emits
+        # ~2/advancing-tick, so index/global-keyed pairing skews the
+        # timelines ~2x and invents/misattributes guard divergences); `tick`
+        # is its one alignment mode designed to be trustworthy for the
+        # combat_oracle surface. Scoped to the combat comparator only --
+        # compare_movement_trace.py's --align choices don't even include
+        # `tick` (would be an argparse error), and this task doesn't touch
+        # the movement/intro/glass surfaces' own alignment default.
+        local -a align_args=()
+        [[ "$surface" == "combat" ]] && align_args=(--align tick)
         python3 "$script" --baseline "$stock" --test "$native" \
-            --json-out "$report" >"${OUT_DIR}/${route}_${surface}_cmp.log" 2>&1 || true
+            "${align_args[@]}" --json-out "$report" \
+            >"${OUT_DIR}/${route}_${surface}_cmp.log" 2>&1 || true
         [[ -f "$report" ]] || { note_route_skip "${route}/${surface}: comparator produced no report"; continue; }
         cand="${CAND_DIR}/${route}_${surface}.json"
         python3 tools/fidelity/sense_trace_candidates.py \
