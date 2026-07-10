@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
 project(ge007 C)
 
+# Default to Release when no build type is given. This is the CANONICAL config:
+# the deterministic sim-state-hash baselines (baselines/tapes/*.expected.json,
+# combat_route_capture_smoke, tape_regression) are recorded under Release, and the
+# hash is floating-point-optimization-sensitive (FP contraction/reordering differs
+# at -O0), so a default/empty-type build silently reddens those lanes with a
+# confusing "sim diverged" message. Pinning the default here makes a bare
+# `cmake -B build` reproduce the canonical hashes (FID-0061). Multi-config
+# generators (Xcode/VS) ignore this and choose per-build. Deeper cross-config
+# reproducibility (strict-FP flags) is tracked separately in FID-0061.
+get_property(_ge007_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _ge007_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (canonical: Release)" FORCE)
+    message(STATUS "ge007: CMAKE_BUILD_TYPE not set — defaulting to Release (canonical sim-hash config)")
+endif()
+
 # macOS-only native Metal rendering backend (opt-in; GL stays default). The
 # backend TU is Objective-C++ against the system Metal/QuartzCore frameworks —
 # no metal-cpp vendoring. Guarded so Linux/Windows are untouched.
