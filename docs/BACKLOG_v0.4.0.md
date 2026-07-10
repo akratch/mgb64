@@ -896,11 +896,19 @@ tree carries **six** competing A/B scale hypotheses (`GE007_GLASS_SHARD_COMPRESS
 `_BASIS_SCALE`, `_NO_BASIS_SCALE`, `_SQRT_BASIS`, `_INV_VIS_SCALE`, `_FIXED_MTX`) with an
 empirical default that has never been signed off against stock. Shard on-screen
 size/coverage is unproven.
-- [ ] Run the shatter route under each hypothesis with the coverage trace + pixel oracle;
+- [x] Run the shatter route under each hypothesis with the coverage trace + pixel oracle;
       pick the one matching stock coverage, make it the unconditional code path.
-- [ ] **Delete the other five flags** (charter rule 7 — this block is the poster child).
+      (FID-0003: retail ASM `sub_GAME_7F0A2C44` derivation; the ×1/visibility default was
+      the one correct hypothesis, now the coupled code path.)
+- [x] **Delete the other five flags** (charter rule 7 — this block is the poster child).
+      (Done with FID-0003 — five env flags removed; the remaining `TRACE_GLASS_SCALE_*`
+      enum in `port_trace.c` is internal instrumentation, not an A/B surface.
+      Source-guarded by ctest `port_glass_shard_scale_guard`.)
+
+Residual (open — NOT covered by the FID-0003 resolution above):
 - [ ] Wire a shard-coverage regression (first-sample shard parity + NDC coverage budget)
-      into the MG.5 glass lane so the answer stays locked.
+      into the MG.5 glass lane so the answer stays locked (the landed guard is a
+      source-level revert guard, not a coverage-budget lane) — track under FID-0005.
 - [ ] While in the file: give the shard float-mtx path a fail-closed overflow (skip shard
       on `dynAllocate` failure) — this is M1.2's contract applied here; today pool
       exhaustion snaps every overflowed shard onto one matrix (07-06 #63).
