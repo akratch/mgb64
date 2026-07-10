@@ -505,6 +505,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # Per-level frame-time budget gate (docs/design/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
+    # FID-0007 (b): dyn-allocator fail-closed contract on the glass-shard float-
+    # matrix render path. Forces VTX-arena overflow (GE007_DYN_STRESS_LIMIT) on the
+    # Dam regular-glass shatter route and asserts the shard path skips overflowed
+    # pieces (zero screen-spanning triangles, only dyn_overflow moves) with a
+    # GE007_DYN_LEGACY_ALIAS=1 A/B negative control that restores the old aliasing.
+    add_port_validation_smoke(port_dyn_glass_stress_smoke dyn_glass_stress_smoke.sh 400)
 endif()
 
 # T5: cheap intro-path regression
