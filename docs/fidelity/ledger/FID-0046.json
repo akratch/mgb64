@@ -13,7 +13,7 @@
   "evidence": [
     {
       "kind": "gate-log",
-      "path": "docs/fidelity/reports/../../../private/tmp scratchpad task-stier05-report.md"
+      "path": "tools/uncap_purity_gate.sh"
     }
   ],
   "history": [
@@ -21,7 +21,7 @@
       "ts": "2026-07-10T00:19:51Z",
       "from": "",
       "to": "discovered",
-      "evidence": "docs/fidelity/reports/../../../private/tmp scratchpad task-stier05-report.md",
+      "evidence": "tools/uncap_purity_gate.sh",
       "note": ""
     }
   ]

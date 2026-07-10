@@ -27,6 +27,25 @@ OPEN_STATUSES = {"discovered", "triaged", "root-caused", "fix-in-progress", "lan
 EVIDENCE_KINDS = ["trace-diff", "pixel-diff", "rdp-diff", "asm-citation", "gate-log",
                   "doc-anchor", "counter-log", "audio-diff"]
 
+# C5 (2026-07-10 review): the legal transition edge-set. "verified" plus the 3 branch
+# terminals have NO outgoing edges (a finding is done) except through --reopen, which
+# records why the flywheel is walking a closed/completed finding back. Everything else
+# (discovered..landed) is "open": it may step exactly one state forward in FORWARD, or
+# branch sideways into documented/refuted/waived, without --reopen. A *backward* move
+# among open states, or reopening a closed one, requires --reopen + --note. Skip-ahead
+# (more than one forward step) is illegal outright -- no override, ever.
+CLOSED_STATUSES = TERMINALS | {"verified"}
+
+
+def legal_edges_from(src):
+    """Statuses reachable from `src` without --reopen. Empty for closed (terminal)
+    statuses -- see CLOSED_STATUSES."""
+    if src in CLOSED_STATUSES:
+        return set()
+    edges = set(TERMINALS)
+    edges.add(FORWARD[FORWARD.index(src) + 1])
+    return edges
+
 
 def iso_now():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -184,6 +203,44 @@ def cmd_transition(args):
     if dst not in FORWARD and dst not in TERMINALS:
         print(f"invalid target status {dst!r}", file=sys.stderr)
         return 1
+    if dst == src:
+        print(f"transition {src!r} -> {dst!r}: not a legal edge (self-transition; "
+              "nothing would change)", file=sys.stderr)
+        return 1
+
+    # C5: enforce the legal transition edge-set (module docstring / CLOSED_STATUSES).
+    if dst not in legal_edges_from(src):
+        # Only two shapes of "illegal" edge are ever recoverable, and only with
+        # --reopen: (a) src is closed (verified/documented/refuted/waived) with no
+        # ordinary outgoing edge, or (b) dst sits strictly earlier than src in the
+        # open (non-terminal) FORWARD chain. Anything else -- skipping ahead past
+        # the very next state -- is illegal outright; the flywheel walks findings
+        # back when evidence contradicts, it never fast-forwards them.
+        backward = (src not in CLOSED_STATUSES and dst in FORWARD
+                    and FORWARD.index(dst) < FORWARD.index(src))
+        reopenable = (src in CLOSED_STATUSES) or backward
+        if not reopenable:
+            print(f"transition {src!r} -> {dst!r} is not a legal edge "
+                  f"(lifecycle: {' -> '.join(FORWARD)}; documented/refuted/waived "
+                  "branch from any open state)", file=sys.stderr)
+            return 1
+        if not args.reopen:
+            reason = ("a terminal status with no outgoing edges" if src in CLOSED_STATUSES
+                      else "a backward move among open lifecycle states")
+            print(f"transition {src!r} -> {dst!r}: {src!r} is {reason} -- retry with "
+                  "--reopen --note '<why>' to record the flywheel walking this finding "
+                  "back (only when evidence contradicts the prior transition)",
+                  file=sys.stderr)
+            return 1
+        if dst in CLOSED_STATUSES:
+            print(f"--reopen must land on a non-terminal status (an earlier state in "
+                  f"{FORWARD}), got {dst!r}", file=sys.stderr)
+            return 1
+        if not args.note:
+            print("transition with --reopen requires --note (the reopen rationale)",
+                  file=sys.stderr)
+            return 1
+
     if dst == "documented" and obj["class"] != "parity-divergence":
         print("documented is only valid for parity-divergence findings", file=sys.stderr)
         return 1
@@ -202,14 +259,17 @@ def cmd_transition(args):
     if dst == "waived":
         obj["waiver"] = {"reason": args.note, "retest": args.retest}
     obj["status"] = dst
-    obj["history"].append({"ts": iso_now(), "from": src, "to": dst,
-                           "evidence": args.evidence or "", "note": args.note or ""})
+    hist_entry = {"ts": iso_now(), "from": src, "to": dst,
+                  "evidence": args.evidence or "", "note": args.note or ""}
+    if args.reopen:
+        hist_entry["reopen"] = True
+    obj["history"].append(hist_entry)
     errs = schema_errors(obj)
     if errs:
         print("schema errors after transition:\n  " + "\n  ".join(errs), file=sys.stderr)
         return 1
     save_entry(ld, obj)
-    print(f"{args.fid}: {src} -> {dst}")
+    print(f"{args.fid}: {src} -> {dst}" + (" [reopen]" if args.reopen else ""))
     return 0
 
 
@@ -286,6 +346,97 @@ def render_ledger_text(ld):
     return "\n".join(lines), len(entries)
 
 
+# --- C5: evidence-path existence check (validate) ---
+# docs/fidelity/reports/ is entirely .gitignore'd (see its own .gitignore: "*" plus two
+# tracked exceptions) -- per-run gate captures live there and are never committed, so a
+# citation into it can never be resolved from a fresh checkout. Treat the prefix itself as
+# the recognized marker instead of requiring the (deliberately untracked) file to exist.
+REPORTS_PREFIX = "docs/fidelity/reports/"
+
+
+def _known_ctest_names(repo_root):
+    """Test names registered in CMakeLists.txt, for validating 'ctest:<name>' evidence
+    shorthand. Regex over the CMake source rather than invoking cmake/ctest, so `validate`
+    stays usable from a bare checkout with no configured build/ directory."""
+    path = os.path.join(repo_root, "CMakeLists.txt")
+    names = set()
+    if not os.path.isfile(path):
+        return names
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    names.update(re.findall(r"add_test\(\s*NAME\s+([A-Za-z0-9_]+)", text))
+    names.update(re.findall(r"add_port_validation_smoke\(\s*([A-Za-z0-9_]+)", text))
+    return names
+
+
+def _basename_index(repo_root):
+    """basename -> [repo-relative paths] for every tracked-tree file, excluding .git and
+    build/ (generated, not evidence). Lets a bare-filename asm-citation shorthand (e.g.
+    'unk_0A1DA0.c: <prose>', matching existing ledger convention) resolve unambiguously."""
+    index = {}
+    skip_dirs = {".git", "build"}
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for name in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, name), repo_root)
+            index.setdefault(name, []).append(rel)
+    return index
+
+
+def _leading_path_token(text):
+    """Pull the leading path-like token off a free-form evidence string, so citations
+    like 'src/game/gun.c:19579', 'file.c:12-34 (note)', or 'file.c: prose...' (existing
+    asm-citation house style) resolve to just the file component."""
+    text = text.strip()
+    m = re.match(r"^([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)", text)
+    if m:
+        return m.group(1)
+    parts = text.split()
+    return parts[0] if parts else text
+
+
+def evidence_target_ok(raw, repo_root, ctest_names, basename_index):
+    """Return (ok, detail) for one evidence 'path' string (C5b). Accepts: a real
+    repo-relative file, optionally with a '#section' anchor or trailing ':line'/prose
+    (only the file part must exist); 'ctest:<name>' shorthand for a name registered in
+    CMakeLists.txt; a bare filename that resolves unambiguously somewhere in the tree
+    (existing asm-citation shorthand); or anything under docs/fidelity/reports/ (ephemeral,
+    untracked by design)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return False, "empty evidence path"
+    if raw.startswith("ctest:"):
+        name = raw[len("ctest:"):].strip()
+        if name in ctest_names:
+            return True, ""
+        return False, (f"ctest:{name} matches no add_test/add_port_validation_smoke "
+                        "name in CMakeLists.txt")
+    file_part = raw.split("#", 1)[0].strip()
+    token = _leading_path_token(file_part)
+    if not token:
+        return False, f"could not extract a path from evidence {raw!r}"
+    # docs/fidelity/reports/ is exempt ONLY if the path actually resolves inside that
+    # directory after normalization -- a naive prefix-string match would rubber-stamp
+    # exactly the ".." path-traversal bug this check exists to catch (the original
+    # FID-0046 evidence was 'docs/fidelity/reports/../../../private/tmp ...').
+    if token.startswith(REPORTS_PREFIX):
+        reports_root = os.path.normpath(os.path.join(repo_root, "docs/fidelity/reports"))
+        resolved = os.path.normpath(os.path.join(repo_root, token))
+        if resolved == reports_root or resolved.startswith(reports_root + os.sep):
+            return True, ""
+        return False, (f"{token!r} escapes docs/fidelity/reports/ via path traversal "
+                        f"(resolves to {resolved!r})")
+    if os.path.isfile(os.path.join(repo_root, token)):
+        return True, ""
+    if "/" not in token:
+        matches = basename_index.get(token, [])
+        if len(matches) == 1:
+            return True, ""
+        if len(matches) > 1:
+            return False, f"{token!r} basename is ambiguous ({len(matches)} matches: {matches})"
+    return False, f"no file at {token!r} (from evidence {raw!r})"
+
+
 def cmd_render(args):
     ld = ledger_dir(args)
     text, n = render_ledger_text(ld)
@@ -311,12 +462,19 @@ def cmd_validate(args):
     ld = ledger_dir(args)
     entries = load_all(ld)
     violations = []
+    # C5b: evidence paths must resolve to something real. Built once for the whole run.
+    ctest_names = _known_ctest_names(REPO_ROOT)
+    basename_index = _basename_index(REPO_ROOT)
     for fid in sorted(entries):
         o = entries[fid]
         for e in schema_errors(o):
             violations.append(f"{fid}: schema: {e}")
         if fid != o.get("id"):
             violations.append(f"{fid}: id field {o.get('id')!r} != filename")
+        for e in o.get("evidence", []):
+            ok, detail = evidence_target_ok(e.get("path"), REPO_ROOT, ctest_names, basename_index)
+            if not ok:
+                violations.append(f"{fid}: evidence path invalid: {detail}")
         hist = o.get("history", [])
         if not hist:
             violations.append(f"{fid}: empty history")
@@ -397,6 +555,10 @@ def build_parser():
     t.add_argument("--evidence-kind", default="gate-log", choices=EVIDENCE_KINDS)
     t.add_argument("--note", default="")
     t.add_argument("--retest", default="")
+    t.add_argument("--reopen", action="store_true",
+                    help="authorize a backward move among open states, or walking a "
+                         "closed (verified/documented/refuted/waived) finding back to an "
+                         "earlier non-terminal state; requires --note")
     t.set_defaults(func=cmd_transition)
 
     ls = sub.add_parser("list")

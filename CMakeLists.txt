@@ -228,6 +228,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_trace_candidates.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_pixel_candidates.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_ledger.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(
@@ -579,6 +580,19 @@ if(BUILD_TESTING)
     )
     set_tests_properties(fidelity_ledger_valid PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # Ledger transition edge-set + evidence-path validation (C5, 2026-07-10 review):
+    # `transition` must reject skip-ahead / backward / terminal-resurrection edges
+    # unless --reopen is given, and `validate` must catch a malformed/unresolvable
+    # evidence path (the FID-0046 shape). ROM-free, operates in a throwaway temp
+    # ledger dir -- never touches docs/fidelity/ledger/.
+    add_test(
+        NAME fidelity_ledger_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_ledger.py"
+    )
+    set_tests_properties(fidelity_ledger_unittest PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        TIMEOUT 30)
 
     # The generated human index docs/fidelity/LEDGER.md must not silently drift
     # from the JSON source of truth (it had fallen 10 findings behind). Guard it.

@@ -25,6 +25,7 @@
     "history":  {"type": "array", "items": {
       "type": "object", "required": ["ts", "from", "to"],
       "properties": {"ts": {"type": "string"}, "from": {"type": "string"}, "to": {"type": "string"},
-                      "evidence": {"type": "string"}, "note": {"type": "string"}}}}
+                      "evidence": {"type": "string"}, "note": {"type": "string"},
+                      "reopen": {"type": "boolean"}}}}
   }
 }

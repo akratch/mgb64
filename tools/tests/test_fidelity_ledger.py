@@ -4,6 +4,11 @@ Auto-discovered by the ctest `intro_tools_unittests` lane
 (`python3 -m unittest discover -s tools/tests -p 'test_*.py'`) and by the
 dedicated `fidelity_ledger_valid` ctest indirectly. Exercises the ledger in an
 isolated tmpdir via --ledger-dir so it never touches the real ledger.
+
+Fixture evidence paths must be real repo-relative files (C5, 2026-07-10 review:
+`validate` now checks evidence paths resolve to something real -- see
+`docs/fidelity/CHARTER.md` used below, and the dedicated edge-set/evidence
+coverage in `tools/fidelity/tests/test_ledger.py`).
 """
 import io
 import json
@@ -43,7 +48,7 @@ class LedgerTest(unittest.TestCase):
              suspect="foo.c:10", status=None, fid=None):
         args = self.base + ["new", "--title", title, "--class", cls,
                             "--surface", surface, "--priority", pri,
-                            "--evidence", "docs/x.md#A", "--evidence-kind", "doc-anchor",
+                            "--evidence", "docs/fidelity/CHARTER.md#A", "--evidence-kind", "doc-anchor",
                             "--repro", "run it", "--suspect", suspect]
         if status:
             args += ["--status", status]
@@ -76,7 +81,7 @@ class LedgerTest(unittest.TestCase):
     def test_transition_with_evidence_records_history(self):
         self._new()
         code, out, err = run(self.base + ["transition", "FID-0001", "--to", "triaged",
-                                          "--evidence", "docs/x.md#A", "--evidence-kind",
+                                          "--evidence", "docs/fidelity/CHARTER.md#A", "--evidence-kind",
                                           "doc-anchor"])
         self.assertEqual(code, 0, err)
         obj = self._load("FID-0001")
@@ -102,7 +107,7 @@ class LedgerTest(unittest.TestCase):
     def test_documented_only_for_parity_divergence(self):
         self._new(cls="port-defect")
         code, _, err = run(self.base + ["transition", "FID-0001", "--to", "documented",
-                                        "--evidence", "docs/x.md"])
+                                        "--evidence", "docs/fidelity/CHARTER.md"])
         self.assertEqual(code, 1)
         self.assertIn("parity-divergence", err)
 
@@ -119,7 +124,7 @@ class LedgerTest(unittest.TestCase):
         self._new(title="Blocker", status="triaged", fid="FID-0032")
         code, out, err = run(self.base + ["new", "--title", "Dependent", "--class",
                                           "parity-divergence", "--surface", "sim",
-                                          "--priority", "P1", "--evidence", "docs/x.md",
+                                          "--priority", "P1", "--evidence", "docs/fidelity/CHARTER.md",
                                           "--status", "triaged", "--blocked-on", "FID-0032"])
         self.assertEqual(code, 0, err)
         dep = out.strip()
