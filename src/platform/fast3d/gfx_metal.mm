@@ -829,6 +829,12 @@ static id<MTLTexture> s_scene_depth = nil;
 static id<MTLTexture> s_scene_color_ms = nil;
 static id<MTLTexture> s_scene_depth_ms = nil;
 static int s_msaa_samples = 1;
+/* FID-0018: the MSAA sample count whose MS-texture allocation last failed at the
+ * current framebuffer size (0 = none). Under sustained VRAM pressure this stops
+ * mtl_ensure_targets from re-attempting the same doomed allocation — and respamming
+ * the warning + reallocating every target — on every frame; it retries only when
+ * the requested count or the size changes. */
+static int s_msaa_failed_req = 0;
 /* W1.E3.T3: sun shadow depth-only pass state (mirrors gfx_opengl.c). */
 static id<MTLTexture> s_shadow_depth = nil;      /* Depth32Float, res x res */
 static int s_shadow_res = 0;
@@ -1059,6 +1065,13 @@ static void mtl_ensure_targets(int w, int h) {
      * off (want_samples == 1) the MS attachments are freed and the pass reverts
      * to the single-sample path = byte-identical. */
     int want_samples = mtl_effective_msaa_samples();
+    /* Don't re-attempt an MS allocation that already failed at this exact size
+     * (VRAM pressure) — that would thrash every target + respam the warning each
+     * frame. Fall back to single-sample until the request or the size changes. */
+    if (want_samples > 1 && want_samples == s_msaa_failed_req &&
+        s_fb_w == w && s_fb_h == h) {
+        want_samples = 1;
+    }
     if (s_scene_color != nil && s_fb_w == w && s_fb_h == h &&
         s_msaa_samples == want_samples) return;
     /* Scene color: render target + blit source (present/readback/snapshot) AND
@@ -1144,7 +1157,10 @@ static void mtl_ensure_targets(int w, int h) {
                     want_samples, w, h);
             color_ms = nil;
             depth_ms = nil;
+            s_msaa_failed_req = want_samples;  /* latch: don't retry this combo */
             want_samples = 1;
+        } else {
+            s_msaa_failed_req = 0;  /* succeeded — clear any prior failure latch */
         }
     }
 
@@ -3425,11 +3441,12 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
      * at 1. Alpha-to-coverage engages under MSAA for alpha-tested cutout surfaces
      * (blend-disabled texture-edge, mirroring GL's cutout_a2c) and the XLU
      * coverage diagnostic blend (GFX_BLEND_ALPHA_COVERAGE == GL's
-     * g_blend_alpha_coverage), gated by the GE007_NO_A2C negative control. */
-    bool blend_on = (s_blend == GFX_BLEND_ALPHA || s_blend == GFX_BLEND_MODULATE ||
-                     s_blend == GFX_BLEND_ALPHA_COVERAGE ||
-                     s_blend == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
-    bool cutout_a2c = !blend_on && ms->cc.opt_texture_edge && ms->cc.opt_alpha;
+     * g_blend_alpha_coverage), gated by the GE007_NO_A2C negative control.
+     * Cutout A2C engages only on the opaque (blend-DISABLED) path, matching GL's
+     * `g_blend_disabled` gate exactly — `!blend_on` would also fire on the
+     * RDP-memory coverage diagnostic blends, which GL never treats as cutout. */
+    bool cutout_a2c = (s_blend == GFX_BLEND_DISABLED) &&
+                      ms->cc.opt_texture_edge && ms->cc.opt_alpha;
     bool a2c = mtl_msaa_active() && mtl_a2c_enabled() &&
                (cutout_a2c || s_blend == GFX_BLEND_ALPHA_COVERAGE);
     id<MTLRenderPipelineState> pso = mtl_pso_for(ms, s_blend, s_msaa_samples, a2c,
