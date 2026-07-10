@@ -49,6 +49,7 @@ extern int g_frame_count_diag;
 #include "quaternion.h"
 #include <limits.h>
 #include "stan.h"
+#include "platform/projectile_endpoint_clamp.h"
 
 extern void *dynAllocate(s32 size);
 extern void modelUpdateRelationsQuick(Model *model, ModelNode *parent);
@@ -5048,9 +5049,6 @@ s32 handles_projectile_motion(struct ObjectRecord *obj, f32 *arg1, struct coord3
     s32 rooms[20];
     coord3d *posptr;
     f32 *saved_arg1;
-    coord3d delta;
-    f32 dist;
-    f32 frac;
     f32 scale;
     s32 i;
     s32 *room_ptr;
@@ -5204,26 +5202,54 @@ s32 handles_projectile_motion(struct ObjectRecord *obj, f32 *arg1, struct coord3
     }
 
 after_room_loop:
-    if (result != 0) {
-        delta.x = saved_arg1[0] - obj->runtime_pos.x;
-        delta.y = saved_arg1[1] - obj->runtime_pos.y;
-        delta.z = saved_arg1[2] - obj->runtime_pos.z;
+    {
+        /* FID-0065: on a wall hit (result==0) retail clamps BOTH the collision
+         * endpoint (dest) and the reported impact (arg2) to bg_hit-0.1*travel,
+         * reading the base from arg2 (ASM chrobjhandler.c:5698 `lwc1 $f6,($s3)`,
+         * $s3 = arg2 per `sw $s3,0x10($sp)` at :5724) under the guard
+         * `bnezl result,skip` (ASM :5660 -> block runs ONLY when result==0). The
+         * NONMATCHING port inverted the guard (`if (result != 0)`) AND read the
+         * base from dest (= arg1), so it skipped the clamp on a hit (sending the
+         * endpoint through the wall) and applied the -0.1 shorten only on the
+         * no-hit path. Both divergences are corrected via the factored helper;
+         * GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX restores the legacy polarity +
+         * operand for A/B (byte-identical to the pre-fix port). [FID-0065] */
+        static int s_legacyProjClamp = -1;
+        struct ProjClampVec3 pc_impact, pc_target, pc_start, pc_out;
 
-        dist = sqrtf(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-
-        if (0.1f < dist) {
-            frac = 0.1f / dist;
-        } else {
-            frac = 0.5f;
+        if (s_legacyProjClamp < 0) {
+            s_legacyProjClamp =
+                (getenv("GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX") != NULL) ? 1 : 0;
         }
 
-        arg2->x = dest.x - frac * delta.x;
-        arg2->y = dest.y - frac * delta.y;
-        arg2->z = dest.z - frac * delta.z;
+        /* arg2 holds the bg-hit position only on a wall hit (result==0), where
+         * the fixed clamp reads it as its base; on the no-hit path it can be an
+         * uninitialized caller stack buffer that the clamp never touches (the
+         * helper's guard returns first). Populate it only when valid so this
+         * stays free of an uninitialized read — byte-identical, since pc_impact
+         * is used as the base only when result==0. [FID-0065] */
+        pc_impact.x = pc_impact.y = pc_impact.z = 0.0f;
+        if (result == 0) {
+            pc_impact.x = arg2->x;
+            pc_impact.y = arg2->y;
+            pc_impact.z = arg2->z;
+        }
+        pc_target.x = saved_arg1[0];
+        pc_target.y = saved_arg1[1];
+        pc_target.z = saved_arg1[2];
+        pc_start.x = obj->runtime_pos.x;
+        pc_start.y = obj->runtime_pos.y;
+        pc_start.z = obj->runtime_pos.z;
 
-        dest.x = arg2->x;
-        dest.y = arg2->y;
-        dest.z = arg2->z;
+        if (projectileEndpointPullback(result, s_legacyProjClamp,
+                                       &pc_impact, &pc_target, &pc_start, &pc_out)) {
+            arg2->x = pc_out.x;
+            arg2->y = pc_out.y;
+            arg2->z = pc_out.z;
+            dest.x = pc_out.x;
+            dest.y = pc_out.y;
+            dest.z = pc_out.z;
+        }
     }
 
     if (projectileFindCollidingProp(prop, posptr, &dest, 31, arg2, arg3, rooms)) {
