@@ -127,9 +127,15 @@ shading is a grayscale multiply, so hue is preserved).
 - **Open-licensed substitution** (the other *distributable* route): replace generic
   surfaces with independent PD/CC0/original art, or attribution/share-alike assets
   only after `NOTICE` and compatibility review. The manual half ships as
-  `cc0_import.py` (resize → optional tile-uniform high-pass → tone-lock to the
-  curated avgRGB → optional I-format intensity-alpha → `tok####.png` + a
-  `tok####.provenance.json` record); Surface 1's snow heroes are its first
-  production use (`overrides/surface1.json`). The automatic `--cc0-library`/Router
-  track is still future work (see `docs/design/REMASTER_ROADMAP.md` §3 and §6 P2).
+  `cc0_import.py` (resize → optional wrap-padded tile-uniform high-pass → chroma
+  control → tone-lock to the curated avgRGB → optional I-format intensity-alpha →
+  `tok####.png` + a `tok####.provenance.json` record); Surface 1's 36 curated
+  heroes are its production use (`overrides/surface1.json`,
+  `docs/design/remaster-aaa/09-surface-showcase.md`). The automatic
+  `--cc0-library`/Router track is still future work (see
+  `docs/design/REMASTER_ROADMAP.md` §3 and §6 P2).
+- **First-party generated art** (also distributable): `gen_treeline.py` draws the
+  distant snowy-conifer hillside bands (layered spruce silhouettes) that AI
+  upscaling melts — deterministic, horizontally seamless, with an
+  `--alpha-cutout` mode for translucent XLU overlay strips.
 - **DDS/BCn** output for VRAM/load wins on a full ~3001-token pack (a later iteration).

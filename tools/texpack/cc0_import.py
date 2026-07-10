@@ -72,13 +72,19 @@ def _wrap_blur(im, sigma):
 
 
 def process(src_rgb, size_wh, mean_target, contrast=1.0, highpass_sigma=None,
-            i_alpha=False):
-    """size_wh=(w,h). Returns an HxWx4 uint8 RGBA array. Pure function (testable)."""
+            i_alpha=False, desat=1.0):
+    """size_wh=(w,h). Returns an HxWx4 uint8 RGBA array. Pure function (testable).
+    desat scales chroma about the per-pixel luma (1.0 = keep the source's cast,
+    0.0 = grayscale) -- for sources whose hue is right in spirit but too loud
+    against the level's palette (e.g. teal ice on a snowfield)."""
     im = src_rgb.convert("RGB").resize(size_wh, Image.LANCZOS)
     a = np.asarray(im).astype(np.float32)
     if highpass_sigma:
         blur = np.asarray(_wrap_blur(im, highpass_sigma), dtype=np.float32)
         a = a - blur + a.mean(axis=(0, 1))
+    if desat != 1.0:
+        luma = _luma(a).astype(np.float32)[..., None]
+        a = luma + (a - luma) * desat
     a = (a - a.mean()) * contrast + mean_target
     a = np.clip(np.rint(a), 0, 255)
     if i_alpha:
@@ -116,6 +122,8 @@ def main(argv=None):
                     help="tile-uniform wrap-padded high-pass sigma (tiled surfaces)")
     ap.add_argument("--i-alpha", action="store_true",
                     help="attach I-format intensity-as-alpha (fmt=4 tokens)")
+    ap.add_argument("--desat", type=float, default=1.0,
+                    help="chroma scale about luma (1.0 keep, 0.0 grayscale)")
     ap.add_argument("--asset", required=True, help='asset name, e.g. "ambientCG Snow010A"')
     ap.add_argument("--license", required=True, help="CC0 / PD / CC-BY-4.0 ...")
     ap.add_argument("--url", default="", help="source URL for the provenance record")
@@ -127,7 +135,7 @@ def main(argv=None):
         ap.error("--token %r is not a token id" % args.token)
     w, h = (int(v) for v in args.size.lower().split("x"))
     rgba = process(Image.open(args.source), (w, h), args.mean, args.contrast,
-                   args.highpass, args.i_alpha)
+                   args.highpass, args.i_alpha, args.desat)
     os.makedirs(args.out_dir, exist_ok=True)
     out = os.path.join(args.out_dir, tok + ".png")
     Image.fromarray(rgba, "RGBA").save(out)
@@ -147,6 +155,7 @@ def main(argv=None):
             "contrast": args.contrast,
             "highpass": args.highpass,
             "i_alpha": bool(args.i_alpha),
+            "desat": args.desat,
         },
     }
     prov_path = os.path.join(args.out_dir, tok + ".provenance.json")

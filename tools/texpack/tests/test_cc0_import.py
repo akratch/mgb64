@@ -88,6 +88,25 @@ def test_highpass_preserves_seamlessness():
     assert wrap_step_y < 3.0 * interior_step + 1.0
 
 
+def test_desat_scales_chroma_about_luma():
+    rng = np.random.default_rng(3)
+    a = np.clip(rng.normal(150, 15, (64, 64, 3)), 0, 255)
+    a[..., 2] += 40                                       # blue-cast source
+    src = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), "RGB")
+
+    def chroma(rgba):
+        rgb = rgba[..., :3].astype(np.float64)
+        luma = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+        return np.abs(rgb - luma[..., None]).mean()
+
+    keep = ci.process(src, (64, 64), 150.0)
+    half = ci.process(src, (64, 64), 150.0, desat=0.5)
+    gray = ci.process(src, (64, 64), 150.0, desat=0.0)
+    assert chroma(half) < 0.7 * chroma(keep)
+    assert chroma(gray) < 1.0                              # rounding only
+    assert abs(float(half[..., :3].mean()) - 150.0) < 2.0  # mean still locked
+
+
 def test_i_alpha_is_output_luma():
     rgba = ci.process(_noise_src(), (64, 64), 188.0, i_alpha=True)
     rgb = rgba[..., :3].astype(np.float64)
@@ -127,7 +146,7 @@ def test_cli_provenance_and_determinism(tmp_path):
     assert prov["tier"] == "A1" and prov["license"] == "CC0"
     # provenance carries the same `args` shape the overrides JSON uses
     assert prov["args"] == {"mean": 188.0, "contrast": 0.9,
-                            "highpass": 8.0, "i_alpha": True}
+                            "highpass": 8.0, "i_alpha": True, "desat": 1.0}
     _, prov_by = run(tmp_path / "c", "CC-BY-4.0")
     assert prov_by["tier"] == "A2"
     im = Image.open(tmp_path / "a" / "tok1267.png")
