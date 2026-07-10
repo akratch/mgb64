@@ -44,7 +44,7 @@ Severity is the review's own; ★ = confirmed live this synthesis.
 
 | # | Sev | Finding | Fix |
 |---|-----|---------|-----|
-| C1 | HIGH ★ | **Public-leak surface** (Lane D). `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**` have no `export-ignore`; `BACKLOG_v0.4.0.md` + dated `RECOMP_LANDSCAPE_SURVEY` defeat the globs; personal Gmail in 2 tracked `scripts/*.sh`; 86 commits carry Claude/session trailers; the WORKFLOW "public=source" model bypasses `export-ignore` entirely. | Decide intent (is the fidelity program public or internal?). If internal: add `export-ignore` for the three trees + the two path-gap docs; scrub the email; add a trailer-strip to the public-publish path. If the publish flow is now direct-to-public, `export-ignore` is not load-bearing — the guard must move to the push path. **Gate before next public release.** |
+| C1 | HIGH ★ | **Public-leak surface** (Lane D). `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**` have no `export-ignore`; `BACKLOG_v0.4.0.md` + dated `RECOMP_LANDSCAPE_SURVEY` defeat the globs; personal Gmail in 2 tracked `scripts/*.sh`; 86 commits carry Claude/session trailers; the WORKFLOW "public=source" model bypasses `export-ignore` entirely. | **Decided D1 = internal-only.** (1) Add `export-ignore` to `.gitattributes` for the three trees + the two path-gap docs; (2) `git archive HEAD` test confirms they no longer appear; (3) scrub the Gmail from the 2 scripts; (4) determine the actual publish flow — if `export-ignore` is not load-bearing (direct-to-public), add the guard to the push/publish path AND a trailer-strip step. Then extend `port_release_ready_guard` to assert none of the internal trees are archive-reachable, so this can't regress. **Gate before next public release.** |
 | C2 | HIGH ★ | **Blocked-on integrity trap** (Lane E). FID-0011/0012/0013 are `blocked_on: FID-0032` (now `verified`) → `is_actionable()` marks them ready, but their prose says they need FID-0062 re-validation; FID-0054 has the same issue with no `blocked_on`. An unattended loop would act on stale/inverted combat findings. | Add `FID-0062` (or a new "combat-realign" gate) to `blocked_on` of FID-0011/0012/0013/0054 until FID-0062 is `verified`. |
 | C3 | IMP ★ | **`env_reference_current` RED on main** (Lane A+D). ENV_FLAGS header says 904, table has 905 rows; `--check` exits 1 → fails tier-1 verify. | One-command regen: `python3 tools/gen_env_reference.py --repo-root . --out docs/ENV_FLAGS.md`. (Coordinate — remaster agent has an uncommitted CMakeLists.txt and may be adding texpack flags.) |
 | C4 | MED | **`verify_all.sh` fail-open** (Lane C). Verdict green when every gate SKIPs → in ROM-less/ares-less CI the ratchet silently degrades to tier-1 static checks yet reports green. | Make a SKIP of a required tier count as non-pass (or emit an explicit "degraded, N gates skipped" verdict that CI treats as amber, not green). |
@@ -112,20 +112,33 @@ Make the machine trustworthy before scaling mileage:
 Exit: `verify_all` can't report a false green, the ledger's fields match its prose, main is green under a Release build, and there is no known public leak.
 
 **Phase B — Coverage build-out (the tall pole).** Build **FID-0031 route
-coverage** (P0, XL — gates criteria 1/2/3): author the ~20-stage deterministic
-route set with `gate:true`, each with an ares oracle capture. Build **FID-0043
-RDP sense lane** (S3, currently a missing script). Add the AK47 combat tape
-(P1d). **Remaster-coordination constraint:** every pixel/RDP sweep must pin
-`--faithful` (RenderScale=1, FXAA/MSAA off, stock textures) or criteria 2/3 are
-unmeasurable — the shipped baseline is deliberately non-pixel-stock.
+coverage** (P0, XL — gates criteria 1/2/3): per **D4**, author a **~6–8 route
+representative subset** — Dam + one route per archetype (indoor / outdoor /
+vehicle / boss / stealth), each a deterministic input tape with `gate:true` and a
+paired ares oracle capture. Build **FID-0043 RDP sense lane** (S3, currently a
+missing `sense_rdp_sweep.sh`). Add the AK47 combat tape (P1d). **Remaster-
+coordination constraint:** every pixel/RDP sweep must pin `--faithful`
+(RenderScale=1, FXAA/MSAA off, stock textures) or criteria 2/3 are unmeasurable —
+the shipped baseline is deliberately non-pixel-stock.
+**DoD:** ≥6 routes with `gate:true`, each 3-run deterministic (Release) + an ares
+capture on disk; S3 RDP lane exists and self-tests; AK47 tape reddens a fire-rate
+call-site revert.
 
 **Phase C — Sense-lane closure.** Run S1 (trace), S2 (pixel), S3 (RDP) to
-closure across the route set. Each divergence → ledger → fix cycle. This is where
-criteria 1/2/3 actually get satisfied and where most new findings surface.
+closure across the route set (pinned `--faithful`). Each divergence → ledger →
+fix cycle. This is where criteria 1/2/3 actually get satisfied and where most new
+findings surface. "Closure" = a sense lane runs a full route sweep and returns
+**zero un-triaged clusters** for two consecutive runs (the loop-until-dry
+pattern).
+**DoD:** every route passes S1/S2/S3 with no un-triaged divergence; each real
+divergence has a filed FID + a fix or a written waiver; criteria 1/2/3 flip to MET.
 
 **Phase D — ASM audit drain.** 14 → 388 bodies via risk-ranked parallel batches
 (the pilot found ~1 defect per few reviews — expect a steady stream of real
-port-defects). Closes criterion 4 / FID-0042.
+port-defects). Batches of ~8–12 bodies per agent, each verdict citing the ASM;
+`finding-filed` verdicts open a FID. Closes criterion 4 / FID-0042.
+**DoD:** `asm_audit.py stats` shows 388/388 reviewed (verified-equivalent or
+finding-filed, none `unreviewed`); every filed FID reaches a terminal state.
 
 **Phase E — Combat parity.** **FID-0063 RNG call-count phase parity** — the XL
 linchpin and deepest unknown (native vs retail differ in how many
@@ -137,17 +150,25 @@ diverge, and trace the extra/missing consumer (an ASM-authored call the reimpl
 added, dropped, or reordered). Because it's open-ended, **start the investigation
 early — in parallel with Phases B/C** — so a long tail doesn't serialize onto the
 end. Closing it unblocks FID-0011/0012/0013/0054, the whole combat-parity cluster.
+**DoD:** the per-tick RNG call-count diff is zero across every combat route;
+FID-0063 `verified`; FID-0011/0012/0013/0054 re-captured under `--align tick` and
+either `verified` or fixed.
 
 **Phase F — Visible artifacts.** Land the near-done **FID-0009 Silo sky-leak**
-(already on `fix/fid-0009-silo-apertures`, needs rebase+review+merge), then
-**FID-0008/0010** sky-leaks, then the hardest single visual — **FID-0001 glass
-compositing** (RDP framebuffer-memory blend not stock-accurate) — plus FID-0002
-overlapping panes and FID-0004 shatter/tint parity. Resume **FID-0064** (MP ammo
-HUD, early-stage branch).
+FIRST (already on `fix/fid-0009-silo-apertures` — the cheapest visible win;
+rebase + Fable-review the T13b sim-purity invariant + merge), then **FID-0008/
+0010** sky-leaks, then the hardest single visual — **FID-0001 glass compositing**
+(RDP framebuffer-memory blend not stock-accurate) — plus FID-0002 overlapping
+panes and FID-0004 shatter/tint parity. Resume **FID-0064** (MP ammo HUD,
+early-stage branch). Coordinate every rendering touch with the remaster agent.
+**DoD:** each artifact evidenced fixed via the pixel oracle (pinned `--faithful`),
+sim-hash unchanged (render-only), each with a regression lane; FIDs `verified`.
 
 **Phase G — Audio & converter.** Audio FID-0025 (env/pole XOR), 0026 (bank
 loop/tuning), 0027 (voice starvation), 0028 (dead-synth hygiene); converter
-FID-0036 (PROPDEF union cases), 0037 (padnames byte-swap), 0039 (OP11).
+FID-0036 (PROPDEF union cases), 0037 (padnames byte-swap), 0039 (OP11). Audio
+needs an oracle/measurement lane it currently lacks — building that is part of G.
+**DoD:** each audio/converter FID reaches a terminal state with cited evidence.
 
 **Phase H — Endurance & closure.** Resolve **Streets FID-0046** non-determinism
 (purity fuzz 19/20), run the **24h soak** (criterion 7), and **per D6 drive the
@@ -157,10 +178,25 @@ rationale (no P2/P3 backlog past 1.0). Confirm the verify ratchet green
 end-to-end at its tightest. Then 1.0.
 
 ### Sequencing notes
-- Phases A→B are gating; C/D can run in parallel once B lands the routes.
-- E (RNG parity) is the biggest risk — start its investigation early even while
-  C/D run, since a waiver decision affects the closure criteria.
-- F's Silo fix is the cheapest visible win available right now (near-merge).
+- Phases A→B are gating; **C, D, E, G can run in parallel** once B lands the
+  routes (C/E need the routes; D and G are independent).
+- **E (RNG parity) is the biggest risk and is committed to full closure (D5) with
+  no waiver escape — start it on day one, in parallel**, so its open-ended tail
+  doesn't serialize onto the end.
+- **F's Silo fix is the cheapest visible win — pull it forward** to run alongside
+  Phase A (its branch is near-merge).
+- **Convergence:** Phases C, D, and E each *generate* new findings that expand the
+  ledger. Phase H (D6 zero-open) can only complete after that inflow settles — so
+  H is a *closing* phase, not a parallel one, and the ledger count will rise before
+  it falls. Track the open-count trend; H starts when C/D/E stop producing new FIDs.
+- **P2 hygiene is a rolling track**, not a phase: the raw-getenv→registered-accessor
+  batch (needed for **criterion 6** — do the fix-flags first, then teach the
+  generator to scan `settingsRegister` mirrors), the 35 dead-glass-script reap
+  (coordinate the 2 the remaster doc name-checks), stale-doc fixes, FID-0050
+  documentation, and the minor-code items. Fold opportunistically; **all P2 must be
+  clear before H** (criterion 6 gates 1.0). P1e (`step==1` under variable clock) is
+  **deferred to the separate F5/uncapped-FPS epic**, not required for 1.0 — but
+  widen its warning comment now.
 - Coordinate all rendering-adjacent work (F glass, pixel sweeps) with the
   concurrent AAA-remaster effort; pin `--faithful` for all parity measurement.
 
@@ -170,8 +206,9 @@ end-to-end at its tightest. Then 1.0.
 3. P1a/D2 file + fix NPC full-auto symmetry (the balance bug the fire-rate fix introduced).
 4. C1/D1 leak fix — `export-ignore` the three fidelity trees + 2 path-gap docs, scrub the email, add trailer-strip (before any public push).
 5. D7 Release-assert lane; C4/C5 ratchet-teeth hardening.
-6. Kick off Phase E (FID-0063 RNG parity) investigation in parallel — per D5 it's committed to full closure and is the long tail.
+6. Kick off Phase E (FID-0063 RNG parity) investigation in parallel — per D5 it's committed to full closure and is the long tail; start day one.
 7. Begin Phase B route coverage (~6-8 archetype routes, D4).
+8. Pull forward the near-done **FID-0009 Silo sky-leak** merge (rebase `fix/fid-0009-silo-apertures`, Fable-review the T13b sim-purity invariant, merge) — cheapest visible win, and resume the **FID-0064** MP-ammo-HUD branch.
 
 **Coordination:** all rendering-adjacent work and every parity sweep pins
 `--faithful`; flag the remaster agent that its `04-content-geometry-effects.md`
