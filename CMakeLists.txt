@@ -452,6 +452,20 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME radial_deadzone COMMAND test_radial_deadzone)
 
+    # Stick MAGNITUDE / range verify-ratchet — ROM-free unit test (FID-0060):
+    # full SDL deflection maps to the N64 practical ±80 (GE's /70 analog tuning
+    # saturates at raw ≈75), NOT a hot ±127-equivalent. Shares the exact pure
+    # helper the runtime uses (radial_deadzone.c). Composes with FID-0015 geometry.
+    add_executable(test_stick_range
+        "${CMAKE_SOURCE_DIR}/tests/test_stick_range.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/radial_deadzone.c"
+    )
+    target_include_directories(test_stick_range PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    if(NOT WIN32)
+        target_link_libraries(test_stick_range m)   # sqrtf (glibc keeps libm separate)
+    endif()
+    add_test(NAME stick_range COMMAND test_stick_range)
+
     # Mouse-wheel weapon-cycle queue/drain — ROM-free unit test (FID-0016 / M2.2).
     add_executable(test_weapon_cycle_queue
         "${CMAKE_SOURCE_DIR}/tests/test_weapon_cycle_queue.c"

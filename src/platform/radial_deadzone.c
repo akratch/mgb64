@@ -45,6 +45,14 @@ void pcMapMovementStickN64(int lx, int ly, float deadzone, int radial_enabled,
         if (lx > square_deadzone || lx < -square_deadzone) mx = (lx * 80) / 32767;
         if (ly > square_deadzone || ly < -square_deadzone) my = (-ly * 80) / 32767;
     }
+    /* Clamp to the N64 PRACTICAL stick range, ±80 (FID-0060). Real N64 hardware
+     * tops out ~±80 of the s8 ±127 theoretical, and GE's analog tuning divides the
+     * (deadzone-trimmed) stick by 70.0f then clamps to ±1.0 (bondview.c walk/strafe/
+     * turn/pitch), so it saturates at raw ≈75. Mapping full deflection to ±80 (not
+     * ±127) keeps movement/turn saturation identical to hardware — the equivalent of
+     * GoldenRecomp's SDL→×0.65-of-N64-range scale (0.65×127≈82.5≈80), solved here at
+     * the mapping constant. Guarded by tests/test_stick_range.c. Do NOT raise toward
+     * ±127: that would reach saturation earlier and play "too hot." */
     if (mx > 80) mx = 80; else if (mx < -80) mx = -80;
     if (my > 80) my = 80; else if (my < -80) my = -80;
     *out_x = mx;

@@ -1,18 +1,34 @@
 {
   "id": "FID-0060",
-  "title": "SDL full stick deflection may deliver ~\u00b1127-equivalent vs N64 practical \u00b184 \u2014 movement/turn saturation differs from hardware",
+  "title": "SDL full stick deflection may deliver ~±127-equivalent vs N64 practical ±84 — movement/turn saturation differs from hardware",
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "verified",
+  "resolution": "clean-negative",
   "suspect": [
     "src/platform/radial_deadzone.c"
   ],
-  "repro": "trace raw magnitude delivered to game code at full deflection vs N64 stick (~\u00b184); GoldenRecomp maps SDL->x0.65 N64 range clamped (controls.cpp:112)",
+  "repro": "trace raw magnitude delivered to game code at full deflection vs N64 stick (~±84); GoldenRecomp maps SDL->x0.65 N64 range clamped (controls.cpp:112)",
   "evidence": [
     {
       "kind": "doc-anchor",
       "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F9"
+    },
+    {
+      "kind": "code-trace",
+      "path": "src/platform/radial_deadzone.c:34-61",
+      "note": "pcMapMovementStickN64: full SDL deflection (±32767) -> ±80 clamp (both radial-on scale nx*80 and legacy square path (lx*80)/32767). This is the ONLY movement-stick magnitude map; both runtime callers (stubs.c:5919 multi-pad, stubs.c:6421 pad0) route through it, and the macOS bridge + scripted paths also clamp to ±80."
+    },
+    {
+      "kind": "code-trace",
+      "path": "src/game/bondview.c:12988,13063,13082,13323,13380",
+      "note": "Game-side consumer bondviewProcessInput(s8 stick_x, s8 stick_y): walk/strafe/turn/pitch all compute (analog - 5 deadzone)/70.0f clamped to ±1.0 -> GE analog saturates at raw stick ≈75. ±80 sits at/just past saturation, exactly like a real N64 stick at full deflection."
+    },
+    {
+      "kind": "test",
+      "path": "tests/test_stick_range.c",
+      "note": "ROM-free verify-ratchet (ctest: stick_range). Asserts full deflection -> N64 practical ±80 (not hot ±127) for radial-on + legacy paths, negatives, zero, diagonal clamp, and linear-region proportionality (half -> ~40 not ~63). Fail-on-revert proven: bumping the ±80 clamp/scale to ±127 reddens 11 checks."
     }
   ],
   "history": [
@@ -21,7 +37,14 @@
       "from": "",
       "to": "discovered",
       "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F9",
-      "note": "Survey F9. Ties FID-0015 (deadzone geometry already covered). If we deliver \u00b1127-equivalent, saturation behavior differs from hardware tuning."
+      "note": "Survey F9. Ties FID-0015 (deadzone geometry already covered). If we deliver ±127-equivalent, saturation behavior differs from hardware tuning."
+    },
+    {
+      "ts": "2026-07-10T00:00:00Z",
+      "from": "discovered",
+      "to": "verified",
+      "evidence": "src/platform/radial_deadzone.c:34-61 + src/game/bondview.c:12988-13380 + tests/test_stick_range.c",
+      "note": "CLEAN NEGATIVE. Traced the full chain: SDL ±32767 -> pcMapMovementStickN64 (radial_deadzone.c) clamps full deflection to ±80 -> pad->stick_x (s8) -> joyGetStickX -> bondviewProcessInput -> (analog-5)/70.0f clamp±1.0 (walk/strafe/turn/pitch). Full-deflection magnitude delivered = ±80; N64 practical ~±80-84; ratio 80/~82 ≈ 0.97 (never hotter). We are NOT delivering ±127-equivalent — a hot map would be ratio 127/80 ≈ 1.59. Our ±80 constant is the functional equivalent of GoldenRecomp's SDL->×0.65-of-N64-range scale (0.65×127 ≈ 82.5 ≈ 80), solved at the mapping constant rather than as a post-scale. NO behavior change / byte-identical. Added verify-ratchet ctest (stick_range) locking full-deflection -> ±80 (fail-on-revert proven) + a discoverability comment at the clamp. FID-0015 radial-deadzone geometry test (test_radial_deadzone) still green (composition confirmed)."
     }
   ]
 }
