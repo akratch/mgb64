@@ -377,6 +377,19 @@ if(BUILD_TESTING)
     target_include_directories(test_port_env PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME port_env COMMAND test_port_env)
 
+    # Movement-stick radial deadzone — ROM-free unit test (FID-0015 / M2.1).
+    # Compiles only the pure radial_deadzone.c TU (no SDL / game headers): the
+    # shared platformApplyRadialDeadzone helper + the movement-stick N64 map.
+    add_executable(test_radial_deadzone
+        "${CMAKE_SOURCE_DIR}/tests/test_radial_deadzone.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/radial_deadzone.c"
+    )
+    target_include_directories(test_radial_deadzone PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    if(NOT WIN32)
+        target_link_libraries(test_radial_deadzone m)   # sqrtf (glibc keeps libm separate)
+    endif()
+    add_test(NAME radial_deadzone COMMAND test_radial_deadzone)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

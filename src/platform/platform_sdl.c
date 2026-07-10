@@ -2605,30 +2605,9 @@ unsigned int platformGetPadButtons(int k) {
     return mask;
 }
 
-/* Radial deadzone + rescale-from-edge on a normalized stick vector. Factored
- * out of the aim-stick path so the movement stick can share the exact same map
- * (see platform_os.h). radial_enabled == 0 -> no-op (legacy square map stays
- * with the caller). */
-void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled) {
-    float x, y, mag;
-    if (!nx || !ny || !radial_enabled) {
-        return;
-    }
-    x = *nx;
-    y = *ny;
-    mag = sqrtf(x * x + y * y);
-    if (mag <= deadzone || mag <= 0.0f) {
-        *nx = 0.0f;
-        *ny = 0.0f;
-    } else {
-        float rescaled = (mag - deadzone) / (1.0f - deadzone);
-        float inv;
-        if (rescaled > 1.0f) rescaled = 1.0f;
-        inv = rescaled / mag;
-        *nx = x * inv;
-        *ny = y * inv;
-    }
-}
+/* platformApplyRadialDeadzone() now lives in the pure src/platform/radial_deadzone.c
+ * TU so the aim stick, movement stick, and the ROM-free unit test share one
+ * implementation (FID-0015 / M2.1). Declared in platform_os.h + radial_deadzone.h. */
 
 /* Raw left-stick axes for pad k (range -32768..32767, 0 if absent). */
 void platformGetPadLeftStick(int k, int *lx_out, int *ly_out) {

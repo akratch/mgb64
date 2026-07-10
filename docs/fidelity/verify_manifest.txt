@@ -4,6 +4,7 @@ ctest --test-dir build --output-on-failure -R fidelity_hash_coverage
 tools/combat_route_contract_smoke.sh --gate                  # Task 1.1: combat/floor oracle schema+comparator contract (FID-0032)
 scripts/ci/check_sim_render_separation.sh
 scripts/ci/check_timing_lock.sh
+ctest --test-dir build --output-on-failure -R radial_deadzone      # FID-0015 movement-stick radial deadzone lane
 # tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)
 ctest --test-dir build --output-on-failure -R "port_"        # validation smokes incl. oracle route contract
 tools/sim_invariance_gate.sh

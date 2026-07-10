@@ -16,6 +16,7 @@
 #include <bondconstants.h>
 #include <boss.h>
 #include "../app/input_actions.h"
+#include "radial_deadzone.h"
 #include "audi.h"
 #include "savedir.h"
 #include "game/bondinv.h"
@@ -5873,25 +5874,12 @@ static void pcApplyScriptedFrontendDirection(u16 *buttons, int *stick_x,
  * invert for N64 (forward = +y). When Input.GamepadRadialDeadzone is 0 the legacy
  * per-axis square deadzone is used as an escape hatch (pre-M2.1 feel). */
 static void pcMapMovementStick(int lx, int ly, int *out_x, int *out_y) {
-    extern void platformApplyRadialDeadzone(float *nx, float *ny, float deadzone, int radial_enabled);
     extern float g_pcGamepadDeadzone;
     extern int g_pcGamepadRadialDeadzone;
-    int mx = 0, my = 0;
-
-    if (g_pcGamepadRadialDeadzone) {
-        float nx = (float)lx / 32767.0f;
-        float ny = (float)(-ly) / 32767.0f;   /* SDL Y inverted vs N64 */
-        platformApplyRadialDeadzone(&nx, &ny, g_pcGamepadDeadzone, 1);
-        mx = (int)(nx * 80.0f);
-        my = (int)(ny * 80.0f);
-    } else {
-        if (lx > GAMEPAD_DEADZONE || lx < -GAMEPAD_DEADZONE) mx = (lx * 80) / 32767;
-        if (ly > GAMEPAD_DEADZONE || ly < -GAMEPAD_DEADZONE) my = (-ly * 80) / 32767;
-    }
-    if (mx > 80) mx = 80; else if (mx < -80) mx = -80;
-    if (my > 80) my = 80; else if (my < -80) my = -80;
-    *out_x = mx;
-    *out_y = my;
+    /* Pure map factored into radial_deadzone.c so the runtime path and the
+     * ROM-free unit test share it (FID-0015 / M2.1). */
+    pcMapMovementStickN64(lx, ly, g_pcGamepadDeadzone, g_pcGamepadRadialDeadzone,
+                          GAMEPAD_DEADZONE, out_x, out_y);
 }
 
 /* Map a single opened pad (slot k) to an N64 OSContPad. Used for players 2..4;
