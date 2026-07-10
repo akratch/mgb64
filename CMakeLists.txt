@@ -207,6 +207,21 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
     )
+    # FID-0063 RNG call-count phase lane (ROM-free): pins the PRNG stepper
+    # (bit-exact to src/random.c randomGetNext, golden vectors from the C body)
+    # and the per-tick call-count extraction (segment gate at g_GlobalTimer
+    # resets, last-record-per-tick sampling, common-tick-span differentials)
+    # of tools/fidelity/rng_callcount_diff.py.
+    add_test(
+        NAME rng_callcount_diff_unittest
+        COMMAND python3 -m unittest tools.tests.test_rng_callcount_diff
+    )
+    set_tests_properties(
+        rng_callcount_diff_unittest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
