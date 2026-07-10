@@ -177,6 +177,14 @@ Blocked findings (`blocked(oracle)`) become actionable automatically when the bl
 
 ## 3. Phase 0 — Substrate (determinism + ledger + gates)
 
+**Status (2026-07-10 audit): substrate complete.** Tasks 0.1–0.7 all landed on
+main (CHARTER.md, ledger.py + 64-finding ledger, verify_all.sh + manifest,
+hash-coverage audit, 0-tick purity-fuzz gate, input-tape record/replay,
+struct-layout asserts) — 29/30 steps below carry a citable artifact. The one
+exception (0.3 Step 2's one-time baseline run) has no persisted artifact by
+design (`docs/fidelity/reports/*.json` is gitignored, per-run) and is left
+unchecked rather than assumed.
+
 Everything in Phase 0 is ROM-optional to build (unit-testable), ROM-gated to exercise. Order matters: 0.1 → 0.2 first (the loop's memory), then 0.3–0.7 in any order.
 
 ### Task 0.1: Program charter + directory scaffold
@@ -187,8 +195,8 @@ Everything in Phase 0 is ROM-optional to build (unit-testable), ROM-gated to exe
 - Create: `tools/fidelity/` (dir)
 
 **Steps:**
-- [ ] **Step 1:** Write `docs/fidelity/CHARTER.md` containing verbatim: Global Constraints §"Global Constraints", the scheduling policy block from §2, the fix lifecycle from §4, and Appendix B's iteration prompt.
-- [ ] **Step 2:** `git add docs/fidelity tools/fidelity && git commit -m "docs(fidelity): program charter + scaffold (S-tier program Phase 0)"`
+- [x] **Step 1:** Write `docs/fidelity/CHARTER.md` containing verbatim: Global Constraints §"Global Constraints", the scheduling policy block from §2, the fix lifecycle from §4, and Appendix B's iteration prompt. (done: docs/fidelity/CHARTER.md exists / commit 0c688bf)
+- [x] **Step 2:** `git add docs/fidelity tools/fidelity && git commit -m "docs(fidelity): program charter + scaffold (S-tier program Phase 0)"` (done: commit 0c688bf)
 
 ### Task 0.2: Ledger tool (`tools/fidelity/ledger.py`)
 
@@ -210,13 +218,13 @@ The loop's persistent memory. One JSON file per finding in `docs/fidelity/ledger
   - `ledger.py stats [--assert-closed]` → counts per status; `--assert-closed` exits 1 unless §1 criterion 8 holds
 
 **Steps:**
-- [ ] **Step 1:** Write `tools/fidelity/ledger_schema.json` (Appendix A).
-- [ ] **Step 2:** Write `ledger.py` (~250 lines, python3 stdlib only). State machine: `discovered → triaged → root-caused → fix-in-progress → landed → verified`, plus terminal `refuted`, `waived` (requires `waiver.retest`), `documented` (parity-divergence only), and `blocked(...)` as an annotation (`blocked_on: [FID...]`), not a status. Every transition appends `{ts, from, to, evidence, note}` to `history`. Timestamps ISO-8601 UTC.
-- [ ] **Step 3:** Write a unittest `tools/tests/test_fidelity_ledger.py` (create/list/transition-without-evidence-fails/dedupe/render roundtrip in a tmpdir via `--ledger-dir`), add to the existing `intro_tools_unittests` discovery dir convention.
-- [ ] **Step 4:** `python3 -m unittest tools.tests.test_fidelity_ledger -v` → PASS.
-- [ ] **Step 5:** Seed the ledger: create FID-0001..FID-0045 from §0.3 verbatim (title/class/priority/status/anchors as `suspect`, repro commands from §0.3 sources where listed; evidence = pointer to the source doc section, e.g. `docs/BACKLOG_v0.4.0.md#MG.1`). Set `blocked_on` edges: FID-0011/0012/0013/0025 → FID-0032 or FID-0031 as listed.
-- [ ] **Step 6:** Register ctest `fidelity_ledger_valid` in `CMakeLists.txt` (pattern-match the `env_reference_current` registration).
-- [ ] **Step 7:** `ctest --test-dir build -R fidelity_ledger_valid --output-on-failure` → PASS. Commit: `feat(fidelity): evidence-gated findings ledger + seed backlog (45 findings)`.
+- [x] **Step 1:** Write `tools/fidelity/ledger_schema.json` (Appendix A). (done: tools/fidelity/ledger_schema.json exists / commit 512e4be)
+- [x] **Step 2:** Write `ledger.py` (~250 lines, python3 stdlib only). State machine: `discovered → triaged → root-caused → fix-in-progress → landed → verified`, plus terminal `refuted`, `waived` (requires `waiver.retest`), `documented` (parity-divergence only), and `blocked(...)` as an annotation (`blocked_on: [FID...]`), not a status. Every transition appends `{ts, from, to, evidence, note}` to `history`. Timestamps ISO-8601 UTC. (done: tools/fidelity/ledger.py implements the state machine / commit 512e4be)
+- [x] **Step 3:** Write a unittest `tools/tests/test_fidelity_ledger.py` (create/list/transition-without-evidence-fails/dedupe/render roundtrip in a tmpdir via `--ledger-dir`), add to the existing `intro_tools_unittests` discovery dir convention. (done: tools/tests/test_fidelity_ledger.py exists / commit 512e4be)
+- [x] **Step 4:** `python3 -m unittest tools.tests.test_fidelity_ledger -v` → PASS. (done: ran `python3 -m unittest tools.tests.test_fidelity_ledger -v` -- 9/9 PASS, verified 2026-07-10)
+- [x] **Step 5:** Seed the ledger: create FID-0001..FID-0045 from §0.3 verbatim (title/class/priority/status/anchors as `suspect`, repro commands from §0.3 sources where listed; evidence = pointer to the source doc section, e.g. `docs/BACKLOG_v0.4.0.md#MG.1`). Set `blocked_on` edges: FID-0011/0012/0013/0025 → FID-0032 or FID-0031 as listed. (done: docs/fidelity/ledger/FID-0001..0045.json seeded / commit 512e4be)
+- [x] **Step 6:** Register ctest `fidelity_ledger_valid` in `CMakeLists.txt` (pattern-match the `env_reference_current` registration). (done: ctest fidelity_ledger_valid registered, CMakeLists.txt:577)
+- [x] **Step 7:** `ctest --test-dir build -R fidelity_ledger_valid --output-on-failure` → PASS. Commit: `feat(fidelity): evidence-gated findings ledger + seed backlog (45 findings)`. (done: ran `python3 tools/fidelity/ledger.py validate` -> "ledger OK: 64 findings valid", verified 2026-07-10 / commit 512e4be)
 
 ### Task 0.3: Unified verify suite (`tools/fidelity/verify_all.sh`)
 
@@ -248,9 +256,9 @@ tools/renderer_parity_capture.sh --scene all
 ```
 
 **Steps:**
-- [ ] **Step 1:** Write the script: reads the manifest, runs each line under the charter-rule-6 env (reuse `tools/validation_common.sh` helpers `validation_automation_env` / `validation_run_with_timeout`), captures logs to the report dir, emits the JSON verdict. `--tier N` runs tiers ≤ N (loop uses `--tier 1` for inner-iteration checks, full suite before commit of sim-touching changes).
+- [x] **Step 1:** Write the script: reads the manifest, runs each line under the charter-rule-6 env (reuse `tools/validation_common.sh` helpers `validation_automation_env` / `validation_run_with_timeout`), captures logs to the report dir, emits the JSON verdict. `--tier N` runs tiers ≤ N (loop uses `--tier 1` for inner-iteration checks, full suite before commit of sim-touching changes). (done: tools/fidelity/verify_all.sh exists / commit 69b5ab5)
 - [ ] **Step 2:** Run `tools/fidelity/verify_all.sh --tier 1` → green. Run full suite once with ROM present → record baseline report; fix or ledger any red found (do not proceed with a red baseline — that is the loop's REPAIR phase done by hand once).
-- [ ] **Step 3:** Commit: `feat(fidelity): unified verify suite with machine-readable verdict`.
+- [x] **Step 3:** Commit: `feat(fidelity): unified verify suite with machine-readable verdict`. (done: commit 69b5ab5)
 
 ### Task 0.4: Sim-hash coverage audit + close M8.1 (FID-0030)
 
@@ -267,22 +275,22 @@ Make "what the hash covers" a checked property instead of tribal knowledge.
 - Produces: report JSON listing every writable symbol (`.data`/`.bss`, `d/b/D/B`) with disposition `hashed` (address+size falls inside a registered region — verify by emitting the region table from a tiny `--print-sim-hash-regions` debug flag added to the binary) / `waived` (matches `hash_waivers.txt`, e.g. render-only counters, trace state, debug buffers) / `UNCOVERED`. Exit 1 on any `UNCOVERED`.
 
 **Steps:**
-- [ ] **Step 1:** Add `--print-sim-hash-regions` to `main_pc.c` arg parse (prints `name base size` per region from `simHashRegistryBuild()` and exits; no ROM needed).
-- [ ] **Step 2:** Write `hash_coverage_audit.py`; first run will list the true blind-spot inventory (expected: stan/collision scratch in `stan.c`, plus assorted `src/game` globals).
-- [ ] **Step 3:** For each UNCOVERED symbol: if sim-relevant → register a region in `sim_state_hash_registry.c` (follow the `prop_pool` pattern at `:55-57`); if render/trace/debug-only → add to `hash_waivers.txt` with a one-line reason. Sim-relevance rule of thumb: written by `src/game` code during `lvlViewMoveTick`/AI/prop paths ⇒ sim; written only during DL build/trace ⇒ waiver candidate (but check for read-backs into sim — the room_rendered precedent, FID-0012).
-- [ ] **Step 4:** Re-baseline: run `tools/sim_invariance_gate.sh` and `tools/regression_test.sh` (hash values change when regions are added — expected once; screenshot/trace lanes must stay identical).
-- [ ] **Step 5:** Register ctest `fidelity_hash_coverage` (ROM-free: nm over built objects + region table from the binary). Append to verify manifest tier 1.
-- [ ] **Step 6:** Update the stale text at `docs/BACKLOG_v0.4.0.md:1317-1328` (M8.1) to reflect reality. Ledger: `FID-0030 → verified`, evidence = audit report. Commit.
+- [x] **Step 1:** Add `--print-sim-hash-regions` to `main_pc.c` arg parse (prints `name base size` per region from `simHashRegistryBuild()` and exits; no ROM needed). (done: --print-sim-hash-regions in src/platform/main_pc.c / commit 830998e)
+- [x] **Step 2:** Write `hash_coverage_audit.py`; first run will list the true blind-spot inventory (expected: stan/collision scratch in `stan.c`, plus assorted `src/game` globals). (done: tools/fidelity/hash_coverage_audit.py exists / commit 830998e)
+- [x] **Step 3:** For each UNCOVERED symbol: if sim-relevant → register a region in `sim_state_hash_registry.c` (follow the `prop_pool` pattern at `:55-57`); if render/trace/debug-only → add to `hash_waivers.txt` with a one-line reason. Sim-relevance rule of thumb: written by `src/game` code during `lvlViewMoveTick`/AI/prop paths ⇒ sim; written only during DL build/trace ⇒ waiver candidate (but check for read-backs into sim — the room_rendered precedent, FID-0012). (done: docs/fidelity/hash_waivers.txt + sim_state_hash_registry.c regions / commit 830998e)
+- [x] **Step 4:** Re-baseline: run `tools/sim_invariance_gate.sh` and `tools/regression_test.sh` (hash values change when regions are added — expected once; screenshot/trace lanes must stay identical). (done: commit c4b8f5b re-baselines input-tape hash post-region-expansion)
+- [x] **Step 5:** Register ctest `fidelity_hash_coverage` (ROM-free: nm over built objects + region table from the binary). Append to verify manifest tier 1. (done: ctest fidelity_hash_coverage registered, CMakeLists.txt:616)
+- [x] **Step 6:** Update the stale text at `docs/BACKLOG_v0.4.0.md:1317-1328` (M8.1) to reflect reality. Ledger: `FID-0030 → verified`, evidence = audit report. Commit. (done: docs/BACKLOG_v0.4.0.md:1370 "M8.1 ... (FID-0030 verified)"; ledger FID-0030 status=verified / commit 830998e)
 
 ### Task 0.5: Build the 0-tick purity fuzz gate (FID-0033)
 
 The complete implementation spec — env flag `GE007_UNCAP_FUZZ`, xorshift schedule, `--screenshot-game-timer` alignment, `canon()` hash comparison minus run-shape fields, level/seed matrix — already exists at `docs/design/UNCAPPED_FPS_PLAN.md:897-1004` (Task 4 there). Execute it standalone (it does not require the rest of the F5 plan; the fuzz path must be reachable only under the harness, per that spec).
 
 **Steps:**
-- [ ] **Step 1:** Implement per UNCAPPED_FPS_PLAN Task 4: the render-only-frame injection in `src/game/unk_0C0A70.c` gated by `GE007_UNCAP_FUZZ=<seed>` under `--deterministic`, and `tools/uncap_purity_gate.sh`.
-- [ ] **Step 2:** Negative control: hand-inject a sim mutation into a render-only frame locally (do not commit) and confirm the gate goes red.
-- [ ] **Step 3:** Extend the level matrix from the spec's 3 to all 20 (`LEVELS` list from `tools/regression_test.sh`), keeping the spec's 2 seeds; add `--quick` (3-level) mode for the verify suite tier 2 and full matrix for tier 3.
-- [ ] **Step 4:** Append to verify manifest. Ledger `FID-0033 → verified`. Commit.
+- [x] **Step 1:** Implement per UNCAPPED_FPS_PLAN Task 4: the render-only-frame injection in `src/game/unk_0C0A70.c` gated by `GE007_UNCAP_FUZZ=<seed>` under `--deterministic`, and `tools/uncap_purity_gate.sh`. (done: GE007_UNCAP_FUZZ in src/game/unk_0C0A70.c + tools/uncap_purity_gate.sh / commit 04d9cec)
+- [x] **Step 2:** Negative control: hand-inject a sim mutation into a render-only frame locally (do not commit) and confirm the gate goes red. (done: ledger FID-0033 history note records "negative-control RED proven")
+- [x] **Step 3:** Extend the level matrix from the spec's 3 to all 20 (`LEVELS` list from `tools/regression_test.sh`), keeping the spec's 2 seeds; add `--quick` (3-level) mode for the verify suite tier 2 and full matrix for tier 3. (done: tools/uncap_purity_gate.sh FULL_LEVELS = 20 levels, QUICK_LEVELS = 3-level --quick mode)
+- [x] **Step 4:** Append to verify manifest. Ledger `FID-0033 → verified`. Commit. (done: verify_manifest.txt tiers 2/3 list uncap_purity_gate.sh; ledger FID-0033 status=verified)
 
 ### Task 0.6: PC input tape — disk record/replay (FID-0034)
 
@@ -299,11 +307,11 @@ Byte-exact replay of arbitrary play sessions as regression fixtures — the miss
 **Semantics:** `--record-tape`/`--play-tape` force `--deterministic` seeding (fixed seed recorded in header; assert on playback), require `--level`, and refuse `--ramrom`. Playback asserts tick alignment (`g_GlobalTimer` vs record tick) and emits `--sim-state-hash-out` at end-of-tape; `tape_regression.sh` replays each committed tape and compares the final sim hash + a `--trace-state` capture against `baselines/tapes/<name>.expected.json`.
 
 **Steps:**
-- [ ] **Step 1:** Write failing unit test `tests/test_input_tape.c`: write a synthetic 600-tick tape via the writer API, read it back, assert byte-equality of records and header roundtrip. Register ctest `input_tape`. Run → FAIL (functions undefined).
-- [ ] **Step 2:** Implement `input_tape.c` writer/reader + hook functions `tapeRecordFunc`/`tapePlaybackFunc` matching the `g_ContRecordFunc`/`g_ContPlaybackFunc` signatures at `joy.c:111-112`. Run test → PASS.
-- [ ] **Step 3:** Wire args + hooks; record a 30-second Dam tape locally under the determinism envelope with scripted `GE007_AUTO_*` movement (no human input needed: use `GE007_AUTO_LOOK_STEP` + warp scripts to generate motion); replay twice; assert identical final sim hash across (a) replay vs replay, (b) replay vs record run.
-- [ ] **Step 4:** Write `tape_regression.sh` (iterate `baselines/tapes/*.ge7tape`, replay, compare). Commit one starter tape per §5 Task 1.2 route as they land (tapes accompany routes). Append to verify manifest tier 3.
-- [ ] **Step 5:** Ledger `FID-0034 → verified`. Commit.
+- [x] **Step 1:** Write failing unit test `tests/test_input_tape.c`: write a synthetic 600-tick tape via the writer API, read it back, assert byte-equality of records and header roundtrip. Register ctest `input_tape`. Run → FAIL (functions undefined). (done: ctest input_tape registered, CMakeLists.txt:416, tests/test_input_tape.c)
+- [x] **Step 2:** Implement `input_tape.c` writer/reader + hook functions `tapeRecordFunc`/`tapePlaybackFunc` matching the `g_ContRecordFunc`/`g_ContPlaybackFunc` signatures at `joy.c:111-112`. Run test → PASS. (done: src/platform/input_tape.c/.h + joy.c hook wiring)
+- [x] **Step 3:** Wire args + hooks; record a 30-second Dam tape locally under the determinism envelope with scripted `GE007_AUTO_*` movement (no human input needed: use `GE007_AUTO_LOOK_STEP` + warp scripts to generate motion); replay twice; assert identical final sim hash across (a) replay vs replay, (b) replay vs record run. (done: baselines/tapes/dam_forward_30s.ge7tape + .expected.json; ledger FID-0034 status=verified)
+- [x] **Step 4:** Write `tape_regression.sh` (iterate `baselines/tapes/*.ge7tape`, replay, compare). Commit one starter tape per §5 Task 1.2 route as they land (tapes accompany routes). Append to verify manifest tier 3. (done: tools/fidelity/tape_regression.sh + verify_manifest.txt:19)
+- [x] **Step 5:** Ledger `FID-0034 → verified`. Commit. (done: ledger FID-0034 status=verified / commit 5ae6fc7)
 
 ### Task 0.7: Struct-layout assert harness (FID-0035, FID-0036 first half)
 
@@ -312,9 +320,9 @@ Byte-exact replay of arbitrary play sessions as regression fixtures — the miss
 - Create: `tools/fidelity/gen_struct_asserts.py` (one-time generator; output pasted into the test, then hand-maintained)
 
 **Steps:**
-- [ ] **Step 1:** Generator: parse the two hand-maintained N64/PC size tables (`src/game/prop.c:1850-1866` `sizepropdef_pc_bytes` switch and `src/game/loadobjectmodel.c:56-104`) and emit `_Static_assert(sizeof(T) == N, "...")` per PROPDEF record type, plus offset asserts (`offsetof`) for every union / bitfield-adjacent field flagged in §0.3 FID-0036 (MultiAmmoCrateRecord slots at 0x80 pair-stride; TankRecord `rect4f` at 0x84; KeyRecord union at 0x80) and the StandTile family (`src/bondtypes.h:387-449`: `StandTilePoint`, `StandTileHeaderMid`, `StandTileHeaderTail`, `StandTile`, `StandFileTile`) with expected values taken from the current (known-good on all 3 shipping platforms) build — this locks in the `-mno-ms-bitfields` layout so any compiler/flag drift fails the build instead of corrupting navmesh reads at runtime.
-- [ ] **Step 2:** Build + run `ctest -R struct_layout` on macOS → PASS. (CI's MinGW cross-check lane inherits it — the exact scenario this guards.)
-- [ ] **Step 3:** Append to verify manifest tier 1. Ledger `FID-0035 → verified`. Commit.
+- [x] **Step 1:** Generator: parse the two hand-maintained N64/PC size tables (`src/game/prop.c:1850-1866` `sizepropdef_pc_bytes` switch and `src/game/loadobjectmodel.c:56-104`) and emit `_Static_assert(sizeof(T) == N, "...")` per PROPDEF record type, plus offset asserts (`offsetof`) for every union / bitfield-adjacent field flagged in §0.3 FID-0036 (MultiAmmoCrateRecord slots at 0x80 pair-stride; TankRecord `rect4f` at 0x84; KeyRecord union at 0x80) and the StandTile family (`src/bondtypes.h:387-449`: `StandTilePoint`, `StandTileHeaderMid`, `StandTileHeaderTail`, `StandTile`, `StandFileTile`) with expected values taken from the current (known-good on all 3 shipping platforms) build — this locks in the `-mno-ms-bitfields` layout so any compiler/flag drift fails the build instead of corrupting navmesh reads at runtime. (done: tests/test_struct_layout.c, 47 _Static_assert lines + tools/fidelity/gen_struct_asserts.py / commit 0d7165e)
+- [x] **Step 2:** Build + run `ctest -R struct_layout` on macOS → PASS. (CI's MinGW cross-check lane inherits it — the exact scenario this guards.) (done: ledger FID-0035 note "struct_layout ctest PASS (macOS clang) + MinGW cross-compile PASS")
+- [x] **Step 3:** Append to verify manifest tier 1. Ledger `FID-0035 → verified`. Commit. (done: ctest struct_layout registered CMakeLists.txt:466; ledger FID-0035 status=verified / commit 0d7165e)
 
 ---
 
@@ -365,12 +373,12 @@ Extends the instrumented-ares tracer and the native tracer with the combat/floor
 Address sources: on ares, read N64 RDRAM at the US symbol addresses (already how movement fields work — the VRAM addresses are encoded in decomp symbol names, e.g. guard array base and `PropRecord`/`ChrRecord` field offsets from `src/bondtypes.h`; add them to the symbol-layout env table). On native, read the same structs directly.
 
 **Steps:**
-- [ ] **Step 1:** Field-offset dossier: for each new field, record `{struct, field, US VRAM address or base+offset, size, endianness}` in `docs/fidelity/combat_oracle_fields.md`, derived from `bondtypes.h` + the inline ASM users. This dossier is the review artifact for the patch.
-- [ ] **Step 2:** Extend the ares patch + rebuild (`tools/prepare_ares_movement_oracle_build.sh`); capture a Dam route; validate JSON shape with `audit_oracle_trace.py`.
-- [ ] **Step 3:** Extend `port_trace.c` natively; capture the same route; run `compare_combat_trace.py` — expected: alignment succeeds, some fields diverge (those divergences are *findings* — file them via `ledger.py new`, don't fix them in this task).
-- [ ] **Step 4:** Tolerance table review: integer fields exact (chrnum, actiontype, aimode, flags, stan_id, health as fixed-point raw); float positions per movement-comparator epsilons.
-- [ ] **Step 5:** Add a combat-route contract lane (extend `tools/route_contract_smoke.sh`) + ctest registration. Append gate-mode to verify manifest.
-- [ ] **Step 6:** Ledger: `FID-0032 → verified`; auto-unblocks FID-0011/0012/0013/0025 (they flip to `actionable`). Commit.
+- [x] **Step 1:** Field-offset dossier: for each new field, record `{struct, field, US VRAM address or base+offset, size, endianness}` in `docs/fidelity/combat_oracle_fields.md`, derived from `bondtypes.h` + the inline ASM users. This dossier is the review artifact for the patch. (done: docs/fidelity/combat_oracle_fields.md exists / commit 64547f1)
+- [x] **Step 2:** Extend the ares patch + rebuild (`tools/prepare_ares_movement_oracle_build.sh`); capture a Dam route; validate JSON shape with `audit_oracle_trace.py`. (done: ledger FID-0032 landed note -- ares patch formatCombatOracleJson + Dam capture / commit 64547f1)
+- [x] **Step 3:** Extend `port_trace.c` natively; capture the same route; run `compare_combat_trace.py` — expected: alignment succeeds, some fields diverge (those divergences are *findings* — file them via `ledger.py new`, don't fix them in this task). (done: port_trace.c traceBuildCombatOracleJson + tools/compare_combat_trace.py; divergences filed as FID-0053/FID-0054/FID-0055 / commit 64547f1)
+- [x] **Step 4:** Tolerance table review: integer fields exact (chrnum, actiontype, aimode, flags, stan_id, health as fixed-point raw); float positions per movement-comparator epsilons. (done: tools/compare_combat_trace.py tolerance table (dossier #5) / commit 64547f1)
+- [x] **Step 5:** Add a combat-route contract lane (extend `tools/route_contract_smoke.sh`) + ctest registration. Append gate-mode to verify manifest. (done: ctest combat_oracle_contract, CMakeLists.txt:147 / tools/combat_route_contract_smoke.sh)
+- [x] **Step 6:** Ledger: `FID-0032 → verified`; auto-unblocks FID-0011/0012/0013/0025 (they flip to `actionable`). Commit. (done: ledger FID-0032 status=verified / commit 2b29860)
 
 #### Task 1.2: Route coverage — all 20 stages (FID-0031)
 
@@ -393,9 +401,9 @@ Native renders 640×480 BMP; ares emits N64-native PPM (VI-filtered). Define the
 - Create: `docs/fidelity/APPROXIMATIONS.md` seeded with the four classes from §4.6 and initial thresholds (edge-mask dilation 1px; per-class delta bound measured empirically in Step 2)
 
 **Steps:**
-- [ ] **Step 1:** Implement both tools (Pillow only).
-- [ ] **Step 2:** Calibrate on 5 known-good matched captures (Dam route frames where trace parity already holds): tune thresholds until known-good pairs report `clusters_unexplained: 0` and a deliberately-broken pair (e.g. `GE007_TILESIZE_CLAMP_SUBLOAD=0` confetti repro) reports ≥1 — both calibration artifacts saved as the tool's negative/positive controls in a unittest with tiny committed synthetic images (not ROM captures).
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Implement both tools (Pillow only). (done: tools/fidelity/pixel_normalize.py + pixel_diff.py exist / commit de4afba)
+- [x] **Step 2:** Calibrate on 5 known-good matched captures (Dam route frames where trace parity already holds): tune thresholds until known-good pairs report `clusters_unexplained: 0` and a deliberately-broken pair (e.g. `GE007_TILESIZE_CLAMP_SUBLOAD=0` confetti repro) reports ≥1 — both calibration artifacts saved as the tool's negative/positive controls in a unittest with tiny committed synthetic images (not ROM captures). (done: ran `python3 -m unittest tools.fidelity.tests.test_pixel_diff` -- 9/9 PASS incl. test_known_good_pair_zero_unexplained + test_broken_pair_surfaces_defect, verified 2026-07-10)
+- [x] **Step 3:** Commit. (done: commit de4afba)
 
 ### Workstream 2: Sense lanes (the discovery engine)
 
@@ -403,15 +411,15 @@ Each lane: standalone script, emits `docs/fidelity/reports/sense_<lane>_<ts>.jso
 
 #### Task 2.1: S1 — Trace differential sweep (`tools/fidelity/sense_trace_sweep.sh`)
 
-- [ ] For every route in the route corpus with a stock capture: run native capture (envelope per charter rule 6), run every applicable comparator (movement, combat, intro, glass), collect divergent-field reports. `--gate` mode runs only routes marked `known-good` in the route JSON (`"gate": true`) and exits 1 on any divergence — that mode joins the verify manifest (this is the ratchet: every route that reaches parity flips `gate: true` and can never silently regress).
-- [ ] Stock captures are cached (`/tmp` is per-run; cache dir `build/oracle_cache/<route>/<ares-build-hash>/` keyed on ares build + route JSON hash — re-capture only on miss). Cache is git-ignored.
-- [ ] Commit + append gate-mode to manifest.
+- [x] For every route in the route corpus with a stock capture: run native capture (envelope per charter rule 6), run every applicable comparator (movement, combat, intro, glass), collect divergent-field reports. `--gate` mode runs only routes marked `known-good` in the route JSON (`"gate": true`) and exits 1 on any divergence — that mode joins the verify manifest (this is the ratchet: every route that reaches parity flips `gate: true` and can never silently regress). (done: tools/fidelity/sense_trace_sweep.sh --gate mode implemented / commit c7f964e)
+- [x] Stock captures are cached (`/tmp` is per-run; cache dir `build/oracle_cache/<route>/<ares-build-hash>/` keyed on ares build + route JSON hash — re-capture only on miss). Cache is git-ignored. (done: CACHE_DIR=build/oracle_cache in sense_trace_sweep.sh, git-ignored)
+- [x] Commit + append gate-mode to manifest. (done: verify_manifest.txt "tools/fidelity/sense_trace_sweep.sh --gate" / commit c7f964e)
 
 #### Task 2.2: S2 — Pixel differential sweep (`tools/fidelity/sense_pixel_sweep.sh`) (FID-0044)
 
-- [ ] For each route: at each route-defined `screenshot_game_timer` checkpoint (add 2–4 checkpoints per route JSON — intro end, mid-traverse, combat moment, objective moment), capture native BMP + ares PPM at matched `g_GlobalTimer` (both sides support game-timer-keyed capture: `--screenshot-game-timer` / `MGB64_ARES_SCREENSHOT_GAME_TIMER`), normalize (Task 1.3), diff, cluster, classify. Unexplained clusters → candidates with both images + diff visualization attached.
-- [ ] Sanity rails: `audit_screenshot_health.py` both sides (rejects blank/truncated captures before diffing).
-- [ ] Commit; add a `--gate` mode (known-good checkpoints, zero unexplained clusters) to manifest tier 3.
+- [x] For each route: at each route-defined `screenshot_game_timer` checkpoint (add 2–4 checkpoints per route JSON — intro end, mid-traverse, combat moment, objective moment), capture native BMP + ares PPM at matched `g_GlobalTimer` (both sides support game-timer-keyed capture: `--screenshot-game-timer` / `MGB64_ARES_SCREENSHOT_GAME_TIMER`), normalize (Task 1.3), diff, cluster, classify. Unexplained clusters → candidates with both images + diff visualization attached. (done: tools/fidelity/sense_pixel_sweep.sh / commit 2c60892)
+- [x] Sanity rails: `audit_screenshot_health.py` both sides (rejects blank/truncated captures before diffing). (done: tools/audit_screenshot_health.py invoked at sense_pixel_sweep.sh:149,280)
+- [x] Commit; add a `--gate` mode (known-good checkpoints, zero unexplained clusters) to manifest tier 3. (done: verify_manifest.txt "tools/fidelity/sense_pixel_sweep.sh --gate" / commit 2c60892)
 
 #### Task 2.3: S3 — RDP command-stream differential (`tools/fidelity/sense_rdp_sweep.sh`) (FID-0043)
 
@@ -426,25 +434,25 @@ Pixel diffs say *that* something differs; the RDP stream says *what*. Ares alrea
 
 Systematizes what the 07-06/07-07 audits did by hand: every reimplemented function gets an adversarial ASM-vs-C review with a recorded verdict.
 
-- [ ] **Step 1:** Build the queue: scan `src/` for `GLOBAL_ASM` bodies; extract function symbol, file, line span, byte size (instruction count), referenced `jpt_*` tables, and the corresponding live C body location (`#ifdef NONMATCHING`/`NATIVE_PORT` sibling). Emit `docs/fidelity/asm_audit_queue.json` (388 entries) with per-entry status `unreviewed | verified-equivalent | finding-filed:FID-NNNN | waived:<reason>`.
-- [ ] **Step 2:** Risk-rank the queue: (a) files with prior confirmed defects first (gun.c, bondview.c, chrobjhandler.c, stan.c, prop.c converters), (b) then by instruction count × has-jump-table (dispatch semantics are the proven failure mode), (c) bg.c/model.c bulk last.
-- [ ] **Step 3:** Define the review contract (this is the prompt the loop's audit agent executes; store in `docs/fidelity/CHARTER.md` §audit): *given entry E: read the GLOBAL_ASM body + jump tables; reconstruct control flow (branches, switch groupings, early-outs, arithmetic including fixed-point shifts); diff against the live C body; for any semantic difference, write the divergence statement (§4.1) and file a candidate finding with the instruction-level citation; else mark verified-equivalent with a 2-line justification. Never consult the `#else` C reference body as authority.*
-- [ ] **Step 4:** `asm_audit.py next [--count N]` / `asm_audit.py record <symbol> --verdict V [--fid FID-NNNN] --note ...` (validates verdict transitions; regenerates a progress table in `docs/fidelity/LEDGER.md`).
-- [ ] **Step 5:** Pilot: run the review contract on 5 entries from the top of the ranked queue by hand (as the loop would); calibrate the contract wording against the known-fixed weapon-switch case (`jpt_80054084` groupings must be re-derivable from it). Commit.
+- [x] **Step 1:** Build the queue: scan `src/` for `GLOBAL_ASM` bodies; extract function symbol, file, line span, byte size (instruction count), referenced `jpt_*` tables, and the corresponding live C body location (`#ifdef NONMATCHING`/`NATIVE_PORT` sibling). Emit `docs/fidelity/asm_audit_queue.json` (388 entries) with per-entry status `unreviewed | verified-equivalent | finding-filed:FID-NNNN | waived:<reason>`. (done: docs/fidelity/asm_audit_queue.json -- 388 entries, ranks 1..388 contiguous, confirmed via `asm_audit.py validate` 2026-07-10 / commit c9bd6b5)
+- [x] **Step 2:** Risk-rank the queue: (a) files with prior confirmed defects first (gun.c, bondview.c, chrobjhandler.c, stan.c, prop.c converters), (b) then by instruction count × has-jump-table (dispatch semantics are the proven failure mode), (c) bg.c/model.c bulk last. (done: risk-ranked queue, ranks 1..388 contiguous / commit c9bd6b5)
+- [x] **Step 3:** Define the review contract (this is the prompt the loop's audit agent executes; store in `docs/fidelity/CHARTER.md` §audit): *given entry E: read the GLOBAL_ASM body + jump tables; reconstruct control flow (branches, switch groupings, early-outs, arithmetic including fixed-point shifts); diff against the live C body; for any semantic difference, write the divergence statement (§4.1) and file a candidate finding with the instruction-level citation; else mark verified-equivalent with a 2-line justification. Never consult the `#else` C reference body as authority.* (done: docs/fidelity/CHARTER.md "#audit -- ASM-vs-C review contract (Task 2.4 Step 3)" / commit 0c688bf)
+- [x] **Step 4:** `asm_audit.py next [--count N]` / `asm_audit.py record <symbol> --verdict V [--fid FID-NNNN] --note ...` (validates verdict transitions; regenerates a progress table in `docs/fidelity/LEDGER.md`). (done: tools/fidelity/asm_audit.py cmd_next / cmd_record / commit c9bd6b5)
+- [x] **Step 5:** Pilot: run the review contract on 5 entries from the top of the ranked queue by hand (as the loop would); calibrate the contract wording against the known-fixed weapon-switch case (`jpt_80054084` groupings must be re-derivable from it). Commit. (done: 14/388 reviewed -- pilot batch (5, c9bd6b5) + batch-2 (9, 05b80cc), confirmed via `asm_audit.py stats` 2026-07-10)
 
 #### Task 2.5: S4 — Soak/fuzz/sanitizer lane (`tools/fidelity/sense_soak.sh`)
 
-- [ ] Wrap existing endurance tools into one candidate-emitting lane: `tools/soak_stability.sh` (crash/NaN/DL-resolve, `--max-crashes 0`), ASan build lane (`build-asan/` + `tools/asan_smoke.sh`), dyn-allocator stress (`GE007_DYN_STRESS_LIMIT` sweep across 5 levels watching `g_dyn_overflow_count` + `[RENDER-HEALTH]` lines), purity fuzz (Task 0.5) full matrix, and a `GE007_AUTO_*` event fuzzer: seeded random schedule of warp/guard-spawn/damage/collect scripted events on a deterministic run, asserting no crash/watchdog/RENDER-HEALTH anomalies and (same seed ⇒ same final sim hash) self-consistency.
-- [ ] Harvest rule: any new `[RENDER-HEALTH]`/watchdog/ASan/counter anomaly signature (dedupe by signature hash) → candidate finding with full log + repro seed.
-- [ ] Commit.
+- [x] Wrap existing endurance tools into one candidate-emitting lane: `tools/soak_stability.sh` (crash/NaN/DL-resolve, `--max-crashes 0`), ASan build lane (`build-asan/` + `tools/asan_smoke.sh`), dyn-allocator stress (`GE007_DYN_STRESS_LIMIT` sweep across 5 levels watching `g_dyn_overflow_count` + `[RENDER-HEALTH]` lines), purity fuzz (Task 0.5) full matrix, and a `GE007_AUTO_*` event fuzzer: seeded random schedule of warp/guard-spawn/damage/collect scripted events on a deterministic run, asserting no crash/watchdog/RENDER-HEALTH anomalies and (same seed ⇒ same final sim hash) self-consistency. (done: tools/fidelity/sense_soak.sh wraps soak_stability.sh/asan_smoke/dyn-stress/purity-fuzz/AUTO_* fuzzer; ran --self-test 2026-07-10 -> 6 candidates / commit 00b3961)
+- [x] Harvest rule: any new `[RENDER-HEALTH]`/watchdog/ASan/counter anomaly signature (dedupe by signature hash) → candidate finding with full log + repro seed. (done: --self-test run 2026-07-10 harvested distinct signatures [asan/dyn-overflow/render-health/soak-audit-fail/ubsan/watchdog])
+- [x] Commit. (done: commit 00b3961)
 
 #### Task 2.6: S6 — Coverage critic (`tools/fidelity/sense_coverage.py`)
 
 The lane that keeps the loop honest. Pure-static, cheap, runs every iteration.
 
-- [ ] Checks: stages missing route kinds (vs Task 1.2 goal state); trace-schema fields present in JSONL but absent from every comparator's compared-field list; `GE007_*` flags matching `(FIX|LEGACY|NO_)` patterns with no lane referencing them (cross-ref `docs/ENV_FLAGS.md` vs `tools/` grep); ledger `waived` entries whose retest condition references a now-`verified` FID; ASM audit queue staleness (entries unreviewed > N iterations while queue rank ≤ 50); verify-manifest gates that were skipped in the last verify report (charter rule 9 visibility); doc-staleness sentinels (backlog text contradicting code — pattern from M8.1/COMBAT_GLIDEPATH §3.2 incidents: each closed FID includes doc-sync in its checklist, and the critic greps for the FID's backlog anchor).
-- [ ] Output: candidates of class `coverage-gap`/`instrumentation-gap`.
-- [ ] Commit.
+- [x] Checks: stages missing route kinds (vs Task 1.2 goal state); trace-schema fields present in JSONL but absent from every comparator's compared-field list; `GE007_*` flags matching `(FIX|LEGACY|NO_)` patterns with no lane referencing them (cross-ref `docs/ENV_FLAGS.md` vs `tools/` grep); ledger `waived` entries whose retest condition references a now-`verified` FID; ASM audit queue staleness (entries unreviewed > N iterations while queue rank ≤ 50); verify-manifest gates that were skipped in the last verify report (charter rule 9 visibility); doc-staleness sentinels (backlog text contradicting code — pattern from M8.1/COMBAT_GLIDEPATH §3.2 incidents: each closed FID includes doc-sync in its checklist, and the critic greps for the FID's backlog anchor). (done: tools/fidelity/sense_coverage.py -- ran 2026-07-10, emitted 22 candidates incl. route-kind + flag-hygiene checks / commit 6fae22e)
+- [x] Output: candidates of class `coverage-gap`/`instrumentation-gap`. (done: 2026-07-10 run emitted candidates classed coverage-gap/instrumentation-gap)
+- [x] Commit. (done: commit 6fae22e)
 
 ---
 
@@ -454,21 +462,21 @@ The lane that keeps the loop honest. Pure-static, cheap, runs every iteration.
 
 Mechanical part of an iteration the agent shells out to; the *decisions* stay with the agent per the §2 policy.
 
-- [ ] `loop_iteration.sh status` → emits `docs/fidelity/reports/loop_status.json`: `{head_sha, verify: <latest verdict + age>, ledger_stats, actionable: [top 10 by priority/age with blocked_on resolved], lane_staleness: {S1..S6: iterations-since-run}, escalations_open: N}` — everything the agent needs to pick a phase, in one read.
-- [ ] `loop_iteration.sh sense <lane>` → runs that lane, auto-files deduped candidates (`ledger.py dedupe-check` then `new`), prints filed/duplicate counts.
-- [ ] `loop_iteration.sh verify [--tier N]` → verify_all wrapper.
-- [ ] `loop_iteration.sh checkpoint "<msg>"` → asserts clean gates for the changed surface, commits (charter rule 7 format), regenerates `LEDGER.md`.
-- [ ] Iteration counter + lane-staleness ledger in `docs/fidelity/reports/loop_state.json` (committed, so the loop resumes across sessions/machines).
+- [x] `loop_iteration.sh status` → emits `docs/fidelity/reports/loop_status.json`: `{head_sha, verify: <latest verdict + age>, ledger_stats, actionable: [top 10 by priority/age with blocked_on resolved], lane_staleness: {S1..S6: iterations-since-run}, escalations_open: N}` — everything the agent needs to pick a phase, in one read. (done: ran `tools/fidelity/loop_iteration.sh status` 2026-07-10 -> emits the documented JSON schema / commit ec4d9e6)
+- [x] `loop_iteration.sh sense <lane>` → runs that lane, auto-files deduped candidates (`ledger.py dedupe-check` then `new`), prints filed/duplicate counts. (done: loop_iteration.sh cmd_sense dispatch / commit ec4d9e6)
+- [x] `loop_iteration.sh verify [--tier N]` → verify_all wrapper. (done: loop_iteration.sh cmd_verify dispatch / commit ec4d9e6)
+- [x] `loop_iteration.sh checkpoint "<msg>"` → asserts clean gates for the changed surface, commits (charter rule 7 format), regenerates `LEDGER.md`. (done: loop_iteration.sh cmd_checkpoint dispatch / commit ec4d9e6)
+- [x] Iteration counter + lane-staleness ledger in `docs/fidelity/reports/loop_state.json` (committed, so the loop resumes across sessions/machines). (done: docs/fidelity/reports/loop_state.json tracked in git / commit ec4d9e6)
 
 ### Task 3.2: Agent charter + launch configuration
 
-- [ ] Append Appendix B (iteration prompt) to `docs/fidelity/CHARTER.md`.
+- [x] Append Appendix B (iteration prompt) to `docs/fidelity/CHARTER.md`. (done: docs/fidelity/CHARTER.md "Appendix B -- Loop iteration prompt" / commit 0c688bf)
 - [ ] Launch modes (pick per run; all resume from git + ledger state, so they're interchangeable):
   - **Interactive-supervised:** run iterations in a Claude Code session; human watches.
   - **Unattended local:** `/loop` (self-paced) with the Appendix B prompt, or the ralph-loop plugin; each iteration ends at a `checkpoint` commit, so interruption is always safe.
   - **Scheduled:** cron/scheduled agent invoking the same prompt nightly with a token/time budget.
-- [ ] Budget policy in the prompt: per iteration, at most one ACT finding or one SENSE lane; hard-stop conditions (verify red twice on the same finding ⇒ mark `blocked(repair-failed)` + escalate; contradictory evidence ⇒ escalate; any gate-weakening temptation ⇒ escalate).
-- [ ] Escalation file: `docs/fidelity/ESCALATIONS.md` — append-only; loop halts a finding, not the whole run, unless verify is red on HEAD.
+- [x] Budget policy in the prompt: per iteration, at most one ACT finding or one SENSE lane; hard-stop conditions (verify red twice on the same finding ⇒ mark `blocked(repair-failed)` + escalate; contradictory evidence ⇒ escalate; any gate-weakening temptation ⇒ escalate). (done: CHARTER.md Appendix B "Hard rules: one finding or one lane per iteration ... append an escalation entry")
+- [x] Escalation file: `docs/fidelity/ESCALATIONS.md` — append-only; loop halts a finding, not the whole run, unless verify is red on HEAD. (done: docs/fidelity/ESCALATIONS.md exists / commit 86eb1b5)
 - [ ] Dry-run acceptance: execute 3 supervised iterations end-to-end (expected: 1 SENSE harvest, 2 ACT fixes from P1 seeds like FID-0006/FID-0015 which are small and root-caused) before first unattended run.
 
 ### Task 3.3: Nightly endurance profile
@@ -484,7 +492,7 @@ Ordered by (priority, unblock-fanout). Each item = one-or-more loop ACT iteratio
 
 ### WS-A: Visible-artifact class (the "no more shards, no more artifacts" core)
 - [ ] **FID-0006** intro weapon sub-buffer guard: convert the `bondview.c:3353` overlap print into a fail-closed guard (skip weapon load + `[RENDER-HEALTH]`), re-check after each of `:3269/:3276/:3346`; evidence: forced-small-buffer repro shows guard trip and no corruption; gate: intro visual regression + new forced-fail smoke. (Small, already root-caused — good first ACT.)
-- [ ] **FID-0007** dyn-allocator residuals: land T9b leak fix; extend fail-closed contract to the glass float-mtx path; evidence: `GE007_DYN_STRESS_LIMIT` sweep shows zero alias events at all pressures; gate: stress sweep joins S4.
+- [x] **FID-0007** dyn-allocator residuals: land T9b leak fix; extend fail-closed contract to the glass float-mtx path; evidence: `GE007_DYN_STRESS_LIMIT` sweep shows zero alias events at all pressures; gate: stress sweep joins S4. (done: ledger FID-0007 status=verified / ctest port_dyn_glass_stress_smoke, CMakeLists.txt:722 / commit b80abc5)
 - [ ] **FID-0003** glass shard scale sign-off: capture ares shard coverage on the pad10092 shatter route (shard pixel columns via `MGB64_ARES_*` glass fields + pixel oracle); score all six candidate scale flags with `compare_glass_shard_pixel_oracle.py`; pick the winner as default, delete the other five flags; evidence: coverage-delta table; gate: shard-coverage checkpoint joins S2 gate set.
 - [ ] **FID-0001** center-glass FB-memory blend: RDP-stream diff (S3) at the pane checkpoint to pin the exact combine/blend divergence; fix classification in `gfx_room_xlu_cvg_memory_*`; evidence: pixel cluster at pane ROI goes explained→matched; gate: pane checkpoint `gate: true`.
 - [ ] **FID-0002** per-pane snapshot: honor `pertri` on Metal; evaluate default per-pane snapshot for overlapping-pane batches (perf-checked via `port_perf_budget_smoke`); evidence: two-pane overlap scene GL=Metal=ares.
@@ -496,7 +504,7 @@ Ordered by (priority, unblock-fanout). Each item = one-or-more loop ACT iteratio
 - [ ] **FID-0012** guard-visibility Phase C default flip (needs Task 1.1): flip `GE007_CHRBEAMS_FRUSTUM` default with combat-field evidence; re-baseline the 2 calibrated 1P routes with justification files; gate: hidden-guard + combat contracts.
 - [ ] **FID-0011** chrTickBeams H4–H7: ASM-audit contract (Task 2.4) on `chr.c:5566/6418/7344` region; restore actiontype dispatch + BACKGROUND_AI + held-weapon lifecycle per ASM; evidence: combat trace parity on guard-contact routes; gate: combat sweep.
 - [ ] **FID-0014** patrol force-loop: replace workaround with root fix (ONSCREEN under fog per retail); must land with/after FID-0012.
-- [ ] **FID-0015/0016/0017** input/HUD trio: radial deadzone (mirror aim-stick implementation), wheel-notch accumulation, `speedgraphframes` clamp parity with `lvl.c:2113-2126`; all three are root-caused with exact sites — early ACT fodder.
+- [x] **FID-0015/0016/0017** input/HUD trio: radial deadzone (mirror aim-stick implementation), wheel-notch accumulation, `speedgraphframes` clamp parity with `lvl.c:2113-2126`; all three are root-caused with exact sites — early ACT fodder. (done: ledger FID-0015/FID-0016/FID-0017 status=verified / ctests radial_deadzone, weapon_cycle_queue, speedgraph_clamp / commits fdd66d9, 06addab, da53337)
 - [ ] **FID-0036** converter differential test: standalone `tools/fidelity/propdef_differential.py` — parse every stage's setup propdef stream with an independent big-endian reference reader (pure python, from struct defs), diff against the C converter's output (add `GE007_DUMP_PROPDEFS=<path>` dump after `propdef_convert_n64_to_pc`); evidence: byte-level agreement on all 20 stages or filed findings per mismatch; gate: new ctest lane.
 
 ### WS-C: Renderer interpreter & backend parity
