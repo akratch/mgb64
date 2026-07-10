@@ -390,6 +390,14 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME radial_deadzone COMMAND test_radial_deadzone)
 
+    # Mouse-wheel weapon-cycle queue/drain — ROM-free unit test (FID-0016 / M2.2).
+    add_executable(test_weapon_cycle_queue
+        "${CMAKE_SOURCE_DIR}/tests/test_weapon_cycle_queue.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/weapon_cycle_queue.c"
+    )
+    target_include_directories(test_weapon_cycle_queue PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME weapon_cycle_queue COMMAND test_weapon_cycle_queue)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

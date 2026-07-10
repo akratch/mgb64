@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "stubs.c:6267-6269",
     "bondview.c:11526",
@@ -20,6 +20,10 @@
     {
       "kind": "gate-log",
       "path": "ctest:sim_state_hash"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:weapon_cycle_queue"
     }
   ],
   "history": [
@@ -36,6 +40,13 @@
       "to": "landed",
       "evidence": "ctest:sim_state_hash",
       "note": "Landed 5d90a94 (fix(input): M2.2 mouse-wheel weapon cycling steps once per notch via pcQueueWeaponCycleSteps). NOT verified: headless cannot inject SDL wheel events (commit validated the wheel=+3 path by hand), sim_state_hash does not exercise it. Needs a wheel-notch cycling lane."
+    },
+    {
+      "ts": "2026-07-10T01:46:48Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:weapon_cycle_queue",
+      "note": "Regression lane tests/test_weapon_cycle_queue.c (ctest weapon_cycle_queue) drives the pure weapon_cycle_queue.c TU: queue clamps at 5, non-positive delta no-op, 3 queued notches -> 3 cycle steps over 3 ticks (not 1), single notch -> exactly one. Fail-on-revert proven: making the drain zero the counter (pre-fix boolean collapse) drops 3-over-3 to 1, lane red; restored->green. ge007 builds clean; sim_state_hash unchanged. Committed 39aae93."
     }
   ]
 }

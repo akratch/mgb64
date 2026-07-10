@@ -17,6 +17,7 @@
 #include <boss.h>
 #include "../app/input_actions.h"
 #include "radial_deadzone.h"
+#include "weapon_cycle_queue.h"
 #include "audi.h"
 #include "savedir.h"
 #include "game/bondinv.h"
@@ -645,23 +646,10 @@ extern int platformGetMouseWheel(void);
 int g_pcWeaponCycleForward = 0;
 int g_pcWeaponCycleBack = 0;
 
-/* Cap on queued weapon-cycle steps per direction so a pathological wheel
- * event (or a stuck/misbehaving device reporting a huge delta) can't
- * queue up a long run of inventory switches. */
-#define PC_WEAPON_CYCLE_MAX_QUEUED_STEPS 5
-
-/* Add `delta` pending weapon-cycle steps to *counter, clamped to
- * [0, PC_WEAPON_CYCLE_MAX_QUEUED_STEPS]. */
-static void pcQueueWeaponCycleSteps(int *counter, int delta)
-{
-    if (delta <= 0) {
-        return;
-    }
-    *counter += delta;
-    if (*counter > PC_WEAPON_CYCLE_MAX_QUEUED_STEPS) {
-        *counter = PC_WEAPON_CYCLE_MAX_QUEUED_STEPS;
-    }
-}
+/* pcQueueWeaponCycleSteps() (queue) and pcDrainWeaponCycleStep() (drain, used by
+ * bondview.c) now live in the pure src/platform/weapon_cycle_queue.c TU so the
+ * runtime paths and the ROM-free unit test share one implementation (FID-0016 /
+ * M2.2). See weapon_cycle_queue.h. */
 int g_pcCrouchRequest = 0;  /* 1 = toggle requested this frame */
 int g_pcScriptedMouseDeltaX = 0;
 int g_pcScriptedMouseDeltaY = 0;

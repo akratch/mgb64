@@ -11904,6 +11904,8 @@ static void bondviewApplyNativeWeaponCycle(struct MoveData *moveData)
 {
     extern int g_pcWeaponCycleForward;
     extern int g_pcWeaponCycleBack;
+    /* Shared drain (one step per tick) — see src/platform/weapon_cycle_queue.c. */
+    extern int pcDrainWeaponCycleStep(int *counter);
 
     if (moveData == NULL) {
         g_pcWeaponCycleForward = 0;
@@ -11911,14 +11913,12 @@ static void bondviewApplyNativeWeaponCycle(struct MoveData *moveData)
         return;
     }
 
-    if (g_pcWeaponCycleForward > 0) {
+    if (pcDrainWeaponCycleStep(&g_pcWeaponCycleForward)) {
         moveData->weaponForwardOffset = 1;
-        g_pcWeaponCycleForward--;
     }
 
-    if (g_pcWeaponCycleBack > 0) {
+    if (pcDrainWeaponCycleStep(&g_pcWeaponCycleBack)) {
         moveData->weaponBackOffset = 1;
-        g_pcWeaponCycleBack--;
     }
 }
 
