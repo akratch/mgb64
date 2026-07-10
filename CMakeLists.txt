@@ -445,6 +445,15 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_cycle_queue PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_cycle_queue COMMAND test_weapon_cycle_queue)
 
+    # Automatic Shotgun (AUTOSHOT) firing-dispatch grouping — ROM-free unit test
+    # (FID-0052): jpt_weapon_bullet_type routes AUTOSHOT to shotgun_mine, not pistol.
+    add_executable(test_weapon_bullet_type
+        "${CMAKE_SOURCE_DIR}/tests/test_weapon_bullet_type.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/weapon_bullet_type.c"
+    )
+    target_include_directories(test_weapon_bullet_type PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME weapon_bullet_type COMMAND test_weapon_bullet_type)
+
     # speedgraphframes frame-spike clamp — ROM-free unit test (FID-0017 / M2.4).
     add_executable(test_speedgraph_clamp
         "${CMAKE_SOURCE_DIR}/tests/test_speedgraph_clamp.c"

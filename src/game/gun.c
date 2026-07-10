@@ -35,6 +35,7 @@
 #include <math.h>
 #include "platform/model_convert.h"
 #include "platform/audio_pc.h"
+#include "platform/weapon_bullet_type.h"
 
 extern VideoSettings *g_ViBackData;
 extern u16 viGetPerspNorm(void);
@@ -6958,33 +6959,32 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
 #endif
 
         if (hp->weapon_firing_status != 0 && item >= ITEM_WPPK && item <= ITEM_WATCHLASER) {
-            switch (item) {
-            case ITEM_WPPK:
-            case ITEM_WPPKSIL:
-            case ITEM_TT33:
-            case ITEM_SKORPION:
-            case ITEM_AK47:
-            case ITEM_UZI:
-            case ITEM_MP5K:
-            case ITEM_MP5KSIL:
-            case ITEM_SPECTRE:
-            case ITEM_M16:
-            case ITEM_FNP90:
-            case ITEM_AUTOSHOT:
-            case ITEM_RUGER:
-            case ITEM_SNIPERRIFLE:
-            case ITEM_GOLDENGUN:
-            case ITEM_SILVERWPPK:
-            case ITEM_GOLDWPPK:
+            /* Retail dispatches jpt_weapon_bullet_type[item-4] (gun.c:7076):
+             * SHOTGUN and AUTOSHOT both route to weapon_bullet_type_shotgun_mine
+             * (no pre-tail action); LASER/WATCHLASER to weapon_bullet_type_none
+             * (sub_GAME_7F061BF4 only); every other in-range item to
+             * weapon_bullet_type_pistol (sub_GAME_7F061BF4 + field_8A0++). The
+             * NONMATCHING port left the Automatic Shotgun (AUTOSHOT) in the
+             * pistol group, so it applied pistol recoil and the shot counter
+             * that retail — which maps AUTOSHOT to shotgun_mine like the pump
+             * SHOTGUN — does not [FID-0052]. Route it via the factored classifier;
+             * GE007_NO_AUTOSHOT_BULLETTYPE_FIX restores the legacy (buggy) pistol
+             * grouping for A/B (byte-identical to the pre-fix port). */
+            static int s_legacyAutoshotBulletType = -1;
+            if (s_legacyAutoshotBulletType < 0) {
+                s_legacyAutoshotBulletType =
+                    (getenv("GE007_NO_AUTOSHOT_BULLETTYPE_FIX") != NULL) ? 1 : 0;
+            }
+            switch (weaponBulletTypeClassify(item, s_legacyAutoshotBulletType)) {
+            case WEAPON_BULLET_TYPE_PISTOL:
                 sub_GAME_7F061BF4(hand);
                 hp->field_8A0++;
                 break;
-            case ITEM_WATCHLASER:
-            case ITEM_LASER:
+            case WEAPON_BULLET_TYPE_NONE:
                 sub_GAME_7F061BF4(hand);
                 break;
-            case ITEM_SHOTGUN:
-            case ITEM_GRENADELAUNCH:
+            case WEAPON_BULLET_TYPE_SHOTGUN_MINE:
+            case WEAPON_BULLET_TYPE_OTHER:
                 break;
             }
         }

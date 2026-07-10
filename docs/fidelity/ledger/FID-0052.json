@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/gun.c:6961"
   ],
@@ -13,6 +13,18 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:7076"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_weapon_bullet_type.c"
     }
   ],
   "history": [
@@ -22,6 +34,27 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:7076",
       "note": "ASM jpt_weapon_bullet_type (gun.c:7076, dispatch gun.c:8696 idx=weapon_id-4, bounds<0x14). Handlers: weapon_bullet_type_pistol calls sub_GAME_7F061BF4(hand)+field_0x30++ then falls to common tail; weapon_bullet_type_shotgun_mine does NEITHER (straight to tail); weapon_bullet_type_none calls sub_GAME_7F061BF4 only. ASM maps SHOTGUN(idx11) AND AUTOSHOT(idx12) both to shotgun_mine (no pre-tail action). The live C switch(item) (gun.c:6961) correctly leaves SHOTGUN empty but places AUTOSHOT in the pistol case (sub_GAME_7F061BF4 + hp->field_8A0++), so the port applies pistol recoil/shot-count to the Automatic Shotgun that retail does not. LASER/WATCHLASER (none) match. Found by S-tier Task 2.4 ASM-audit pilot #2. Do not fix from this note; re-derive from ASM."
+    },
+    {
+      "ts": "2026-07-10T07:06:20Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md",
+      "note": "jpt_weapon_bullet_type[12]=shotgun_mine for AUTOSHOT (like SHOTGUN[11]); C put AUTOSHOT in pistol case (sub_GAME_7F061BF4 + field_8A0++). Reachable: AUTOSHOT fires via guns->state2->pistol, latches weapon_firing_status each shot."
+    },
+    {
+      "ts": "2026-07-10T07:06:20Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md",
+      "note": "Factor weaponBulletTypeClassify() (src/platform/weapon_bullet_type.c) encoding retail table; AUTOSHOT->SHOTGUN_MINE default; GE007_NO_AUTOSHOT_BULLETTYPE_FIX legacy control."
+    },
+    {
+      "ts": "2026-07-10T07:06:31Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_weapon_bullet_type.c",
+      "note": "Fix landed. CTest weapon_bullet_type PASS with fix (AUTOSHOT->shotgun_mine); FAILS on revert (AUTOSHOT->pistol at default): 'FAIL: AUTOSHOT (fix) -> shotgun_mine, not pistol'. Legacy flag GE007_NO_AUTOSHOT_BULLETTYPE_FIX byte-identical. gun.o + globbed weapon_bullet_type.o compile clean."
     }
   ]
 }
