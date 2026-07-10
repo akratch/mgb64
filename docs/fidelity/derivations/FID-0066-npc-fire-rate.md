@@ -59,14 +59,29 @@ The guard counter (`chrlv.c:8350`) is advanced **unconditionally** (no
 The symmetric fix D2 requires is the **divisor** scaling — that is what makes
 "enemies fire slower". Applying the counter-*advance* scaling to the guard would
 be **less** faithful, not more: it would (a) drop the counter on `g_ClockTimer==0`
-frames where retail's ungated `++` still advances, and (b) desync from the
-unscaled `-1` decrement. So the fix keeps retail's exact `firecount[hand]++` and
-scales **only** the gate divisor via the shared `fireRateEffectiveAutoRate`
-helper. At locked 60 Hz this reproduces the N64 cadence exactly; under flag-OFF
-it is byte-identical. (This is a genuine retail-semantics difference from the
-player path — not the "same frame-counter model" plan assumption breaking, but a
-narrowing of *which half* of the FID-0056 mechanism applies. The core assumption
-— guard uses the same per-frame `firecount % rate` gate — holds.)
+frames where retail's ungated `++` still advances. So the fix keeps retail's
+exact `firecount[hand]++` and scales **only** the gate divisor via the shared
+`fireRateEffectiveAutoRate` helper. At locked 60 Hz this reproduces the N64
+cadence exactly; under flag-OFF it is byte-identical. (This is a genuine
+retail-semantics difference from the player path — not the "same frame-counter
+model" plan assumption breaking, but a narrowing of *which half* of the
+FID-0056 mechanism applies. The core assumption — guard uses the same per-frame
+`firecount % rate` gate — holds.)
+
+Review amendments (2026-07-11, independent ROM disassembly of `0x7F02D734`
+confirmed the ungated `++`; see the P1a review for the full derivation):
+
+- The original supporting argument "(b) desync from the unscaled `-1` LOS-retry
+  decrement" was wrong-direction and is withdrawn: counter-gating would in fact
+  MATCH retail's retry pacing more closely. Argument (a) and the shot-pattern
+  equivalence (shots land at wall ticks {9,18,27,…} exactly where retail-at-20fps
+  lands them, identical first-shot phase and ×2 sub-modulo alternation) are what
+  carry the divisor-only decision.
+- Two bounded second-order divergences of the accepted constant `frame_cost=3`
+  model, documented rather than re-mechanized (both below its noise floor):
+  (1) the `u8 firecount` wrap glitch recurs every ~4.27 s at 60 Hz vs retail's
+  ~12.8 s at ~20 fps; (2) LOS-retry polling happens at 60 Hz vs retail ~20 Hz,
+  so fire can resume up to ~33 ms earlier after an obstruction clears.
 
 The `< 0` always-fire branch and the `|| ITEM_LASER` sp264 sub-flag keep exact
 semantics (the raw `auto_rate` feeds the sign test; a non-positive rate passes
