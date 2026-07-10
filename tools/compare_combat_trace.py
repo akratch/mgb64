@@ -153,6 +153,24 @@ def canonical_by_tick(
     return {rel: rec for rel, (n, rec) in buckets.items()}
 
 
+def _empty_roster_record(source: dict[str, Any]) -> dict[str, Any]:
+    """A stand-in record for "this side never produced a full roster this
+    tick" (P1f), shaped like ``source`` but with its ``combat_oracle.guards``
+    zeroed out.
+
+    Used only by ``align_records``'s ``tick`` mode when one side has a
+    roster-bearing canonical record for a tick and the other does not: the
+    synthetic record borrows the roster-bearing side's own combat/floor/
+    projectiles context (so those blocks compare equal to themselves and add
+    no noise) while presenting an empty guard list, so the comparison
+    surfaces exactly the intended ``guards[...].present`` divergence.
+    """
+    co = source.get("combat_oracle") if isinstance(source, dict) else None
+    co = dict(co) if isinstance(co, dict) else {}
+    co["guards"] = []
+    return {"combat_oracle": co}
+
+
 def first_moving_index(records: list[dict[str, Any]], threshold: float) -> int:
     """First record whose player move.speed/raw exceeds ``threshold`` (motion onset).
 
@@ -207,8 +225,50 @@ def align_records(
             if test_start < len(test) else None
         b_tick = canonical_by_tick(baseline, baseline_start, onset_b)
         t_tick = canonical_by_tick(test, test_start, onset_t)
-        keys = sorted(set(b_tick) & set(t_tick))
-        return [(k, b_tick[k], t_tick[k]) for k in keys]
+        both = set(b_tick) & set(t_tick)
+        pairs = [(k, b_tick[k], t_tick[k]) for k in both]
+
+        # P1f (FID-0062 follow-up, Lane C): canonical_by_tick drops EMPTY-roster
+        # records so the WITHIN-a-side ares interleave collapses to one
+        # canonical record per tick (see its docstring) -- that collapse is
+        # correct. But it also means a tick where side A has a full roster and
+        # side B never produced one this tick (side B's records were all
+        # empty-roster, or side B has no record at all here) simply isn't a key
+        # in one of `b_tick`/`t_tick`, so the plain intersection above silently
+        # drops it -- hiding a whole-roster guards[].present divergence, the
+        # exact artifact class this alignment mode exists to surface. That is
+        # NOT the legitimate collapse; it's cross-SIDE one-sidedness, so it
+        # must be paired, not dropped. Pair it against a synthetic record that
+        # borrows the roster-bearing side's own combat/floor/projectiles
+        # context with guards zeroed, so the comparison surfaces exactly the
+        # guards[].present divergence rather than inventing unrelated noise
+        # from a side we have no real data for. A tick where BOTH sides only
+        # ever produced an empty (or absent) roster is correctly left out
+        # entirely: there is nothing to compare (0 guards vs 0 guards).
+        #
+        # Bounded to the MUTUALLY-OBSERVED tick range (the overlap of
+        # [min(b_tick), max(b_tick)] and [min(t_tick), max(t_tick)]):
+        # real dam_combat_guard6 both-sides captures re-validated this fix and
+        # showed the two traces routinely cover very different absolute
+        # sim-tick spans (one side's capture simply runs far longer than the
+        # other's) -- a tick outside the OTHER side's ever-observed range is a
+        # trace-length/coverage-window mismatch (instrumentation-gap), not a
+        # mid-stream roster divergence, and surfacing it would flood real
+        # findings with noise proportional to the length mismatch rather than
+        # to any actual guard-roster behavior.
+        if b_tick and t_tick:
+            overlap_lo = max(min(b_tick), min(t_tick))
+            overlap_hi = min(max(b_tick), max(t_tick))
+            for k in sorted(set(b_tick) ^ set(t_tick)):
+                if not (overlap_lo <= k <= overlap_hi):
+                    continue
+                brec = b_tick.get(k)
+                trec = t_tick.get(k)
+                if brec is not None:
+                    pairs.append((k, brec, _empty_roster_record(brec)))
+                else:
+                    pairs.append((k, _empty_roster_record(trec), trec))
+        return sorted(pairs, key=lambda item: item[0])
 
     def by_key(records: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
         out: dict[Any, dict[str, Any]] = {}

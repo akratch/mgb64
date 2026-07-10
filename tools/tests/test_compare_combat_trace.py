@@ -193,6 +193,152 @@ class TickVsMoveDivergence(unittest.TestCase):
         self.assertLess(tick, move)
 
 
+class OneSidedRosterAlignment(unittest.TestCase):
+    """P1f (FID-0062 follow-up, Lane C): a tick where ONE side has a full
+    roster and the other side has ONLY empty-roster records (or no record at
+    all) must surface as a divergence, not silently vanish pre-intersection.
+    Distinct from (a) the legitimate WITHIN-a-side collapse of ares' ~2-rec/
+    tick interleave (pinned green above by ``TickAlignmentHelpers`` /
+    ``TickVsMoveDivergence``) and (b) a genuinely BOTH-sides-empty tick, which
+    must stay a non-divergence (0 guards vs 0 guards -- nothing to compare).
+    """
+
+    def _gap_stream(self, onset: int, n: int, gap_rel: int, *, drop: bool = False,
+                     empty: bool = False) -> list[dict]:
+        stream = native_stream(onset, n)
+        if drop:
+            return [r for r in stream if r["move"]["global"] - onset != gap_rel]
+        if empty:
+            out = []
+            for r in stream:
+                if r["move"]["global"] - onset == gap_rel:
+                    out.append(record(r["move"]["global"], gap_rel, empty_roster=True))
+                else:
+                    out.append(r)
+            return out
+        return stream
+
+    def test_one_sided_full_vs_empty_tick_is_a_divergence(self) -> None:
+        """(a) Baseline full roster at every tick; test side's gap tick has
+        ONLY an empty-roster sample. FAIL-ON-REVERT: pre-fix, the gap tick is
+        dropped by the plain intersection in ``align_records``'s tick branch
+        and this assertion reddens (no pairing => no divergence found)."""
+        n, gap_rel = 10, 3 * 4
+        baseline = native_stream(1000, n)
+        test = self._gap_stream(1000, n, gap_rel, empty=True)
+
+        aligned = cct.align_records(baseline, test, "tick")
+        keys = [k for k, _, _ in aligned]
+        self.assertIn(gap_rel, keys,
+                      "one-sided full-vs-empty tick must not be dropped pre-intersection")
+
+        _, brec, trec = next(item for item in aligned if item[0] == gap_rel)
+        divs: list[cct.Divergence] = []
+        cct.compare_guards(gap_rel, brec["combat_oracle"], trec["combat_oracle"],
+                            {"health": 1.0, "position": 0.5}, divs)
+        paths = {d.path for d in divs}
+        for cn in GUARD_CHRNUMS:
+            self.assertIn(f"guards[chr={cn}].present", paths,
+                          f"expected guards[chr={cn}].present divergence on the gap tick")
+
+        # End-to-end: the CLI must report it too.
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            b_path, t_path = d / "b.jsonl", d / "t.jsonl"
+            write_jsonl(b_path, baseline)
+            write_jsonl(t_path, test)
+            with tempfile.NamedTemporaryFile("r", suffix=".json") as out:
+                subprocess.run(
+                    [sys.executable, str(SCRIPT), "--baseline", str(b_path),
+                     "--test", str(t_path), "--align", "tick", "--json-out", out.name],
+                    capture_output=True, text=True, check=True,
+                )
+                metrics = json.loads(Path(out.name).read_text())
+        self.assertIn("guards.present", metrics["divergences_by_field"])
+        self.assertGreater(metrics["divergences_by_field"]["guards.present"], 0)
+
+    def test_one_sided_full_vs_missing_record_is_a_divergence(self) -> None:
+        """(a) variant: the gap tick has NO record at all on the test side
+        (not even an empty-roster sample) -- must be treated the same as the
+        empty-roster case above, not as a coverage gap that's silently
+        ignored."""
+        n, gap_rel = 10, 3 * 4
+        baseline = native_stream(1000, n)
+        test = self._gap_stream(1000, n, gap_rel, drop=True)
+
+        aligned = cct.align_records(baseline, test, "tick")
+        keys = [k for k, _, _ in aligned]
+        self.assertIn(gap_rel, keys,
+                      "one-sided full-vs-missing tick must not be dropped pre-intersection")
+
+        _, brec, trec = next(item for item in aligned if item[0] == gap_rel)
+        divs: list[cct.Divergence] = []
+        cct.compare_guards(gap_rel, brec["combat_oracle"], trec["combat_oracle"],
+                            {"health": 1.0, "position": 0.5}, divs)
+        self.assertTrue(divs, "expected a guards[].present divergence on the missing-record tick")
+
+    def test_both_sides_empty_tick_is_not_a_divergence(self) -> None:
+        """(b) Both sides have ONLY an empty-roster sample at the same tick
+        (0 guards vs 0 guards) -- must remain a non-divergence, not be
+        promoted into a spurious one-sided pairing by the P1f fix."""
+        n, gap_rel = 10, 3 * 4
+        baseline = self._gap_stream(1000, n, gap_rel, empty=True)
+        test = self._gap_stream(2000, n, gap_rel, empty=True)
+
+        aligned = cct.align_records(baseline, test, "tick")
+        keys = [k for k, _, _ in aligned]
+        self.assertNotIn(gap_rel, keys,
+                         "both-sides-empty tick has nothing to compare and must stay out of "
+                         "the aligned set")
+
+        # End-to-end: zero divergences overall, same as the plain no-gap case.
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            b_path, t_path = d / "b.jsonl", d / "t.jsonl"
+            write_jsonl(b_path, baseline)
+            write_jsonl(t_path, test)
+            with tempfile.NamedTemporaryFile("r", suffix=".json") as out:
+                subprocess.run(
+                    [sys.executable, str(SCRIPT), "--baseline", str(b_path),
+                     "--test", str(t_path), "--align", "tick", "--json-out", out.name],
+                    capture_output=True, text=True, check=True,
+                )
+                metrics = json.loads(Path(out.name).read_text())
+        self.assertEqual(metrics["divergences_total"], 0)
+
+    def test_one_sided_tick_outside_mutual_coverage_window_is_not_surfaced(self) -> None:
+        """A tick that's one-sided only because the OTHER side's capture never
+        ran that long (a trace-length/coverage-window mismatch) must NOT be
+        surfaced -- re-validating this fix against the real dam_combat_guard6
+        both-sides capture showed the two traces routinely cover very
+        different absolute sim-tick spans, and without this bound the P1f fix
+        drowns real mid-stream findings in coverage-gap noise. A one-sided
+        tick INSIDE the mutually-observed range must still surface (this is
+        the actual P1f bug fix, asserted below alongside the out-of-range
+        tick to prove the bound doesn't just suppress everything)."""
+        baseline = native_stream(1000, 30)          # covers rel 0..87
+        test = native_stream(1000, 10)               # covers rel 0..27 only
+        # Make one in-range tick (rel=12) one-sided (empty on test) and rely
+        # on the many ticks beyond rel=27 (test's last tick) to exercise the
+        # out-of-range case already.
+        gap_rel = 12
+        test = [
+            record(r["move"]["global"], gap_rel, empty_roster=True)
+            if r["move"]["global"] - 1000 == gap_rel else r
+            for r in test
+        ]
+
+        aligned = cct.align_records(baseline, test, "tick")
+        keys = {k for k, _, _ in aligned}
+        self.assertIn(gap_rel, keys,
+                      "in-range one-sided tick must still surface")
+        out_of_range = {k for k in keys if k > 27}
+        self.assertEqual(out_of_range, set(),
+                         "ticks beyond test's own coverage window must not be "
+                         "surfaced as one-sided divergences (trace-length "
+                         "mismatch, not a mid-stream roster divergence)")
+
+
 def write_jsonl(path: Path, records: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for r in records:
