@@ -132,6 +132,17 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // PortMaster / handheld path: skip the launcher entirely and boot straight
+    // into the game. ROM is taken from MGB64_ROM env (or engine auto-detection).
+    // MGB64_PORTMASTER also gates the 640x480 fullscreen mode in platform_sdl.c.
+    if (std::getenv("MGB64_PORTMASTER")) {
+        MgbBootConfig cfg = {std::getenv("MGB64_ROM"), std::getenv("MGB64_APP_SAVEDIR"),
+                             -1, -1, 0, 0, -1, nullptr, 0};
+        play(cfg);
+        host.shutdown();
+        return 0;
+    }
+
     // Quiet, once-per-session check for a newer GitHub release on a background
     // thread (never blocks launch). Interactive path only — the automation/smoke/
     // autoplay/schema paths all returned above, so no test lane spawns curl. Also

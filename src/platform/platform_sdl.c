@@ -13,7 +13,9 @@
 #include <math.h>
 #include <string.h>
 #include <SDL.h>
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+#include <GLES3/gl32.h>
+#elif defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
@@ -692,10 +694,15 @@ void platformSaveScreenshot(void) {
          * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
          * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
          * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
-         * last fully-presented frame (deterministic). Restore GL_BACK after. */
+         * last fully-presented frame (deterministic). Restore GL_BACK after.
+         * ponytail: GL_FRONT is unavailable in GLES; screenshot reads back buffer (stale). */
+#ifndef MGB64_PORTMASTER_GLES
         glReadBuffer(GL_FRONT);
+#endif
         glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
+#ifndef MGB64_PORTMASTER_GLES
         glReadBuffer(GL_BACK);
+#endif
     }
 
     if (src_w == w && src_h == h) {
@@ -2407,14 +2414,24 @@ int platformInitSDL(void) {
     g_backgroundWindow = platformEnvFlagEnabled("GE007_BACKGROUND");
     g_disableInputGrab = g_backgroundWindow || platformEnvFlagEnabled("GE007_NO_INPUT_GRAB");
     platformApplyWindowSizeEnv();
+    if (platformEnvFlagEnabled("MGB64_PORTMASTER")) {
+        g_cfgWindowW   = 640;
+        g_cfgWindowH   = 480;
+        g_windowMode   = PLATFORM_WINDOW_MODE_BORDERLESS; /* fullscreen-desktop, no compositor needed */
+        g_disableInputGrab = 1;
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) < 0) {
         fprintf(stderr, "[SDL] Init failed: %s\n", SDL_GetError());
         return -1;
     }
 
-    /* Request OpenGL Core Profile for shader-based rendering */
-#ifdef __APPLE__
+    /* Request appropriate GL context for the target platform */
+#ifdef MGB64_PORTMASTER_GLES
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#elif defined(__APPLE__)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -2502,8 +2519,8 @@ int platformInitSDL(void) {
     }
     }
 
-    /* Load OpenGL function pointers via glad (not needed on macOS) */
-#ifndef __APPLE__
+    /* Load OpenGL function pointers via glad (desktop only; GLES resolves via SDL) */
+#if !defined(__APPLE__) && !defined(MGB64_PORTMASTER_GLES)
     if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
         fprintf(stderr, "[SDL] Failed to load OpenGL functions via glad\n");
         SDL_GL_DeleteContext(g_glContext);
