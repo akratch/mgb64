@@ -144,6 +144,31 @@ models/ and .cache/ are gitignored to keep the tree binary-free).
 identity); dam/facility/runway boot smokes with decor on; 139 tool tests; perf
 median-of-5 marginal cost recorded in the commit message.
 
+## 6.6 M8 — the modern render path (2026 fidelity through our own renderer)
+
+M7's ceiling (s16 verts, 16-vert loads, 64x64 RGBA16) is gone: **`G_MODERNMESH`
+(0xC1)**, a port DL opcode, flushes the pending N64 batch and hands a
+full-fidelity mesh to the backend at the exact frame position — float32
+vertices, u32 indices, **mipmapped RGBA8 textures of arbitrary size**, drawn
+by a dedicated MSL pipeline into the same color/depth attachments as the N64
+scene (same encoder, correct interleaving), GPU-transformed by the
+interpreter's MP matrix, with the N64 per-vertex fog curve replicated in the
+vertex shader and Metal's 0..1 depth remap applied. PSOs cache per
+(cutout, MSAA sample count); mesh GPU resources upload once (one-off blit
+command buffer for mip generation) keyed by a never-reused mesh id.
+GL slot is NULL (warn-once skip) — the optional-member vtable pattern.
+
+Manifest models tagged `modern` take this path (`decor_assets.c` keeps float
+data, no quantization). Surface 1 now stands **a decimated CC0 Poly Haven
+photoscan fir** (`tools/decor/decimate_gltf.py`: uniform-grid vertex
+clustering, 685k -> 52k tris, 512px textures, sun-lambert vertex bake with an
+`--ambient` dial) at eight placements plus high-detail generated spruces
+(`gen_tree3d.py --detail high`: clustered crossed-quad boughs, supersampled
+needle cards).
+
+Validated: decor-off byte-identical; dam boot smoke; perf median 95.4% of
+pack-only with ~220k decor tris/frame (M3 Max: free); 142 tool tests.
+
 ## 6. Known remaining work (next milestones)
 
 - **Radome/dish whites** (`tok0820` sphere, `tok0668` mesh, `tok1984-1994`
@@ -156,9 +181,11 @@ median-of-5 marginal cost recorded in the commit message.
   `make_sidecars.py` writes the files, but no runtime reader exists (W1 §4.7).
 - **Sky**: the sunset is a `skyRender` backdrop, not a token — engine-side work.
 - **Decor next steps**: rocks/snowdrift models; per-instance tint; distance
-  fade; a settex-style direct RGBA upload to lift the 64x64 texture ceiling;
-  Surface 2 manifest (same models); prop-DL substitution (the deeper endgame
-  for crates/mast/weapons).
+  fade; Surface 2 manifest (same models); richer generated-spruce cards (the
+  photoscan currently outclasses them); normal-mapped + per-pixel-lit modern
+  materials (W1 sun integration); **prop-DL substitution through
+  G_MODERNMESH** — the path to replacing crates/mast/weapon models with HD
+  assets driven by the game's own matrices.
 - **Character/dynamic texture uploads**: the settex hook pays the HD decode on
   every upload; static room geometry uploads once, animated characters do not.
   A future loader-side decoded-PNG cache would make character HD viable.

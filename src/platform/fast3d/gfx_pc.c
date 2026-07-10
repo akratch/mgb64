@@ -842,6 +842,7 @@ static bool gfx_n64_opcode_can_start_dl(uint8_t opcode) {
         case G_SETZIMG:
         case G_SETCIMG:
         case 0xC0:
+        case G_MODERNMESH:
         case G_RDPFULLSYNC:
         case G_RDPTILESYNC:
         case G_RDPPIPESYNC:
@@ -22124,6 +22125,41 @@ volatile uint32_t g_lastDlOpcode = 0;
 volatile uint32_t g_lastDlW0 = 0;
 volatile uintptr_t g_lastDlW1 = 0;  /* uintptr_t: w1 often carries pointers */
 
+/* W9 scene decoration (G_MODERNMESH): flush the pending N64 batch so frame
+ * order is preserved, then hand the mesh to the backend under the current MP
+ * matrix and fog state. Fog mirrors the per-vertex N64 curve: the backend
+ * computes fog_z = (z/w) * fog_mul + fog_offset, clamped 0..255 (see the
+ * gfx_sp_vertex fog math); g_pcFogDensity folds into the multiplier. */
+static void gfx_handle_modern_mesh(struct GfxModernMesh *mesh) {
+    static int warned_no_backend;
+    float fog_color[3];
+    if (mesh == NULL) {
+        return;
+    }
+    if (gfx_rapi == NULL || gfx_rapi->draw_modern_mesh == NULL) {
+        if (!warned_no_backend) {
+            warned_no_backend = 1;
+            fprintf(stderr,
+                    "[DECOR] WARN modern-mesh draw not supported by this "
+                    "renderer backend; modern decor models are skipped\n");
+        }
+        return;
+    }
+    gfx_flush();
+    fog_color[0] = rdp.fog_color.r / 255.0f;
+    fog_color[1] = rdp.fog_color.g / 255.0f;
+    fog_color[2] = rdp.fog_color.b / 255.0f;
+    gfx_rapi->draw_modern_mesh(mesh, rsp.MP_matrix, fog_color,
+                               (float)rsp.fog_mul * g_pcFogDensity,
+                               (float)rsp.fog_offset,
+                               (rsp.geometry_mode & G_FOG) != 0);
+    if (trace_active()) {
+        trace_log("G_MODERNMESH verts=%u idx=%u tex=%dx%d cutout=%d",
+                  mesh->vtx_count, mesh->idx_count, mesh->tex_w, mesh->tex_h,
+                  mesh->cutout);
+    }
+}
+
 static void gfx_run_dl_pc(Gfx *cmd) {
     enum DrawClass entry_draw_class;
 
@@ -22685,6 +22721,15 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                     gfx_handle_settex(cmd->words.w0, cmd->words.w1);
                     if (trace_active()) trace_log("  -> settex_active=%d gl_id=%u w=%.0f h=%.0f", settex_active, settex_gl_tex_id, settex_tex_w, settex_tex_h);
                 }
+                break;
+
+            /* Port extension G_MODERNMESH (0xC1): draw a full-fidelity mesh
+             * (float verts, mipmapped texture) through the backend at this
+             * exact DL position, under the current MP matrix + fog state.
+             * w1 = host pointer to a struct GfxModernMesh (native DLs only —
+             * this opcode never occurs in ROM data). */
+            case G_MODERNMESH:
+                gfx_handle_modern_mesh((struct GfxModernMesh *)cmd->words.w1);
                 break;
 
             /* Sync commands — no-op on PC */
@@ -23731,6 +23776,12 @@ void gfx_process_n64_dl(const uint8_t *data) {
                     gfx_handle_settex(w0, w1);
                     if (trace_active()) trace_log("  -> settex_active=%d gl_id=%u w=%.0f h=%.0f", settex_active, settex_gl_tex_id, settex_tex_w, settex_tex_h);
                 }
+                break;
+
+            /* Port extension G_MODERNMESH carries a HOST pointer; it cannot
+             * legitimately appear in big-endian ROM display lists. Skip. */
+            case G_MODERNMESH:
+                if (trace_active()) trace_log("G_MODERNMESH in N64 DL — ignored");
                 break;
 
             /* Sync / NOOP */

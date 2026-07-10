@@ -23,6 +23,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "fast3d/gfx_rendering_api.h" /* struct GfxModernMesh */
+
 #define DECOR_MAX_MODELS 8
 #define DECOR_MAX_PRIMS 4
 #define DECOR_MAX_INSTANCES 96
@@ -52,6 +54,11 @@ typedef struct DecorPrim {
 
 typedef struct DecorModel {
     char name[32];
+    int modern; /* 1 = drawn via G_MODERNMESH (full fidelity, Metal); the
+                   N64-path fields below stay empty. Manifest: `model <name>
+                   <glb> modern`. */
+    struct GfxModernMesh mmesh[DECOR_MAX_PRIMS]; /* owns vtx/idx/tex blocks */
+    int nmmesh;
     DecorPrim prims[DECOR_MAX_PRIMS];
     int nprims;
     DecorTexture tex[DECOR_MAX_PRIMS];

@@ -76,6 +76,7 @@ static s32 decorCommandEstimate(void) {
     for (i = 0; i < s_level.ninst; i++) {
         const DecorModel *m = &s_level.models[s_level.inst[i].model];
         cmds += 2; /* matrix + slack */
+        cmds += m->nmmesh * 2; /* modern path: matrix + mesh cmd per prim */
         for (p = 0; p < m->nprims; p++) {
             for (b = 0; b < m->prims[p].nbatches; b++) {
                 cmds += 1 + (m->prims[p].batches[b].tcount + 1) / 2;
@@ -178,7 +179,34 @@ Gfx *decorRender(Gfx *gdl) {
     for (pass = 0; pass < 2; pass++) {
         int class_open = 0;
         for (i = 0; i < s_level.nmodels; i++) {
-            const DecorModel *m = &s_level.models[i];
+            DecorModel *m = &s_level.models[i];
+            if (m->modern) {
+                /* Full-fidelity path: one G_MODERNMESH per prim per instance
+                 * under the instance MODELVIEW. The backend draws with float
+                 * verts + mipmapped textures; no N64 texture/vertex commands
+                 * (and no class state) are needed. */
+                s32 k, inst;
+                for (k = 0; k < m->nmmesh; k++) {
+                    if ((m->mmesh[k].cutout ? 1 : 0) != pass) {
+                        continue;
+                    }
+                    if (s_onlyPrim >= 0 && s_onlyPrim != k) {
+                        continue;
+                    }
+                    for (inst = 0; inst < s_level.ninst; inst++) {
+                        if (s_level.inst[inst].model != i) {
+                            continue;
+                        }
+                        gSPMatrix(gdl++, &s_mtx[inst],
+                                  G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH |
+                                      G_MTX_FLOAT_PORT);
+                        gdl->words.w0 = ((uint32_t)G_MODERNMESH) << 24;
+                        gdl->words.w1 = (uintptr_t)&m->mmesh[k];
+                        gdl++;
+                    }
+                }
+                continue;
+            }
             for (p = 0; p < m->nprims; p++) {
                 const DecorPrim *pr = &m->prims[p];
                 const DecorTexture *tx = &m->tex[pr->tex];

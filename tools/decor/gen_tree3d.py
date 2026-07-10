@@ -31,6 +31,7 @@ import argparse
 import json
 import math
 import os
+
 import struct
 
 import numpy as np
@@ -42,9 +43,14 @@ SUN_N = SUN / np.linalg.norm(SUN)
 
 # ------------------------------------------------------------------ textures
 
-def paint_needles(size, seed, snow, rng=None):
+def paint_needles(size, seed, snow, rng=None, supersample=1):
     """Needle-spray card: layered strokes fanning off a central stem, snow
-    dusted on the upper edge. Returns an RGBA PIL image with native alpha."""
+    dusted on the upper edge. Returns an RGBA PIL image with native alpha.
+    supersample>1 paints at N x resolution and LANCZOS-downsamples for
+    anti-aliased needles (the modern render path keeps that fidelity)."""
+    if supersample > 1:
+        im = paint_needles(size * supersample, seed, snow, rng)
+        return im.resize((size, size), Image.LANCZOS)
     rng = rng or np.random.default_rng(seed)
     im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
@@ -93,7 +99,7 @@ def paint_bark(size, seed):
 
 # ------------------------------------------------------------------ geometry
 
-def build_tree(seed, height, whorls, cards, snow):
+def build_tree(seed, height, whorls, cards, snow, detail="classic"):
     """Returns dict of numpy arrays per primitive:
     {'trunk': (pos,nrm,uv,col,idx), 'cards': (...)}. Local space: Y up,
     origin at trunk base, height = `height` units."""
@@ -108,7 +114,7 @@ def build_tree(seed, height, whorls, cards, snow):
         return np.clip(col * 255, 0, 255).astype(np.uint8)
 
     # trunk: tapered cylinder
-    sides, segs = 8, 3
+    sides, segs = (12, 6) if detail == "high" else (8, 3)
     r0, r1 = 0.050 * H, 0.012 * H
     tp, tn, tu, ti = [], [], [], []
     for s in range(segs + 1):
@@ -150,15 +156,35 @@ def build_tree(seed, height, whorls, cards, snow):
                 nrm = -nrm                         # cards light from above
             # crossed-quad bough: a flat spray plus a perpendicular one, so
             # the branch keeps silhouette seen from below/side (a single
-            # drooping quad collapses to a streak at eye level)
+            # drooping quad collapses to a streak at eye level). High detail
+            # adds a second, smaller cluster per branch (offset + rotated) so
+            # boughs read dense instead of planar.
             up2 = np.cross(out, side)
             up2 = up2 / (np.linalg.norm(up2) + 1e-9)
-            for span in (side, up2):
+            clusters = [(root, tip, Wd)]
+            if detail == "high":
+                for koff in (-0.45, 0.4):
+                    a2 = a + koff
+                    d2 = np.array([math.cos(a2), 0.0, math.sin(a2)])
+                    o2 = d2 * math.cos(droop) + np.array(
+                        [0.0, -math.sin(droop) * rng.uniform(0.8, 1.3), 0.0])
+                    r2 = root + np.array([0.0, 0.035 * H * rng.uniform(-1, 1),
+                                          0.0])
+                    clusters.append((r2, r2 + o2 * L * 0.62, Wd * 0.62))
+            for c_root, c_tip, c_w in clusters:
+              c_side = c_tip - c_root
+              c_side = np.cross(c_side / (np.linalg.norm(c_side) + 1e-9),
+                                np.array([0.0, 1.0, 0.0]))
+              nlen = np.linalg.norm(c_side)
+              c_side = side if nlen < 1e-6 else c_side / nlen
+              c_up = np.cross(c_tip - c_root, c_side)
+              c_up = c_up / (np.linalg.norm(c_up) + 1e-9)
+              for span in (c_side, c_up):
                 base_i = len(cp)
-                for corner, uvc in ((root - span * Wd / 2, (0.0, 1.0)),
-                                    (root + span * Wd / 2, (1.0, 1.0)),
-                                    (tip - span * Wd / 2, (0.0, 0.0)),
-                                    (tip + span * Wd / 2, (1.0, 0.0))):
+                for corner, uvc in ((c_root - span * c_w / 2, (0.0, 1.0)),
+                                    (c_root + span * c_w / 2, (1.0, 1.0)),
+                                    (c_tip - span * c_w / 2, (0.0, 0.0)),
+                                    (c_tip + span * c_w / 2, (1.0, 0.0))):
                     cp.append(corner); cn.append(nrm); cu.append(uvc)
                     cint.append(1.0 - t)           # lower cards sit in shadow
                 ci += [base_i, base_i + 1, base_i + 2,
@@ -259,6 +285,10 @@ def main(argv=None):
     ap.add_argument("--cards", type=int, default=6)
     ap.add_argument("--snow", type=float, default=0.55,
                     help="snow-stroke density on the needle card (0..1)")
+    ap.add_argument("--detail", choices=("classic", "high"), default="classic",
+                    help="classic = N64-path budgets (16-vert batches, 64px "
+                         "textures); high = modern-path budgets (dense "
+                         "clustered boughs, supersampled textures)")
     ap.add_argument("--tex-size", type=int, default=64,
                     help="card/bark texture edge; the engine standard texture path caps at 4096 texels (64x64)")
     ap.add_argument("--bark", default=None,
@@ -269,7 +299,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     os.makedirs(args.out, exist_ok=True)
-    needles = paint_needles(args.tex_size, args.seed, args.snow)
+    needles = paint_needles(args.tex_size, args.seed, args.snow,
+                            supersample=2 if args.detail == "high" else 1)
     needles.save(os.path.join(args.out, f"{args.name}_needles.png"))
     if args.bark:
         bark = Image.open(args.bark).convert("RGB").resize(
@@ -279,7 +310,7 @@ def main(argv=None):
     bark.save(os.path.join(args.out, f"{args.name}_bark.png"))
 
     prims = build_tree(args.seed, args.height, args.whorls, args.cards,
-                       args.snow)
+                       args.snow, args.detail)
     tris = sum(len(p[4]) // 3 for p in prims.values())
     write_glb(os.path.join(args.out, f"{args.name}.glb"), prims,
               {"trunk": f"{args.name}_bark.png",
@@ -292,7 +323,8 @@ def main(argv=None):
                      "license": args.bark_license, "url": args.bark_url},
             "args": {"seed": args.seed, "height": args.height,
                      "whorls": args.whorls, "cards": args.cards,
-                     "snow": args.snow, "tex_size": args.tex_size},
+                     "snow": args.snow, "tex_size": args.tex_size,
+                     "detail": args.detail},
             "triangles": tris}
     with open(os.path.join(args.out, f"{args.name}.provenance.json"),
               "w") as f:

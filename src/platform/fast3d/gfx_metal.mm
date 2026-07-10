@@ -3658,6 +3658,244 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
 
 /* Positional init MUST match the field order in gfx_rendering_api.h. C linkage
  * so gfx_pc.c's `extern struct GfxRenderingAPI gfx_metal_api;` resolves. */
+/* ------------------------------------------------------------------------
+ * Modern-mesh draw path (W9 scene decoration, G_MODERNMESH).
+ *
+ * Draws a full-fidelity mesh (float32 verts, u32 indices, mipmapped RGBA8
+ * texture of arbitrary size) directly into the live scene encoder, at the
+ * exact DL position the interpreter reached — same color/depth attachments,
+ * same (persisting) viewport/scissor as the surrounding N64 draws. The GPU
+ * transforms with the interpreter's MP matrix; the vertex shader replicates
+ * the N64 per-vertex fog curve and Metal's 0..1 depth remap
+ * (mtl_z_is_from_0_to_1 == true, so clip.z = (z+w)/2 like the CPU T&L).
+ * PSOs are cached per (cutout, sample count) — the scene pass carries
+ * s_msaa_samples, and a mismatched rasterSampleCount GPU-faults (FID-0018).
+ * GPU resources per mesh upload once (private-ish shared buffers + a one-off
+ * blit command buffer for mipmap generation, which cannot run on s_cmdbuf
+ * while the scene encoder is open) and cache in s_modern_cache.
+ * ---------------------------------------------------------------------- */
+
+struct MtlModernUniforms {
+    float mvp[16];       /* row-major MP; memcpy into MSL float4x4 gives
+                            columns == MP rows, so u.mvp * v == the CPU
+                            row-vector T&L exactly */
+    float fog[4];        /* rgb + pad */
+    float fogMul, fogOffset, fogOn, pad;
+};
+static_assert(sizeof(MtlModernUniforms) == 96, "MSL DecorUniforms layout");
+
+static NSMutableDictionary<NSNumber *, NSArray *> *s_modern_cache = nil;
+static id<MTLRenderPipelineState> s_modern_pso[2][2] = {};  /* [cutout][msaa>1] */
+static int s_modern_pso_samples[2][2] = {};
+static id<MTLSamplerState> s_modern_sampler = nil;
+
+static const char *kModernMeshMSL =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct DecorVertex {\n"
+    "  float3 pos [[attribute(0)]];\n"
+    "  float3 nrm [[attribute(1)]];\n"
+    "  float2 uv  [[attribute(2)]];\n"
+    "  float4 col [[attribute(3)]];\n"
+    "};\n"
+    "struct DecorUniforms { float4x4 mvp; float4 fog; float fogMul; float fogOffset; float fogOn; float pad; };\n"
+    "struct DecorOut { float4 position [[position]]; float2 uv; float4 col; float fogA; };\n"
+    "vertex DecorOut decorVertex(DecorVertex in [[stage_in]],\n"
+    "                            constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 clip = u.mvp * float4(in.pos, 1.0);\n"
+    "  float fogA = 0.0;\n"
+    "  if (u.fogOn > 0.5) {\n"    /* N64 fog curve: gfx_fog_coord_from_clip */
+    "    float ww = clip.w;\n"
+    "    if (fabs(ww) < 0.001) ww = 0.001;\n"
+    "    float winv = 1.0 / ww;\n"
+    "    float coord = (winv < 0.0) ? clip.z * 32767.0 : clip.z * winv;\n"
+    "    fogA = clamp(coord * u.fogMul + u.fogOffset, 0.0, 255.0) / 255.0;\n"
+    "  }\n"
+    "  DecorOut o;\n"
+    "  clip.z = (clip.z + clip.w) * 0.5;\n"   /* Metal 0..1 depth remap */
+    "  o.position = clip; o.uv = in.uv; o.col = in.col; o.fogA = fogA;\n"
+    "  return o;\n"
+    "}\n"
+    "static float4 decorShade(DecorOut in, texture2d<float> tex, sampler smp,\n"
+    "                         constant DecorUniforms& u) {\n"
+    "  float4 c = tex.sample(smp, in.uv) * in.col;\n"
+    "  c.rgb = mix(c.rgb, u.fog.rgb, in.fogA);\n"
+    "  return c;\n"
+    "}\n"
+    "fragment float4 decorFragmentOpaque(DecorOut in [[stage_in]],\n"
+    "    texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],\n"
+    "    constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 c = decorShade(in, tex, smp, u);\n"
+    "  return float4(c.rgb, 1.0);\n"
+    "}\n"
+    "fragment float4 decorFragmentCutout(DecorOut in [[stage_in]],\n"
+    "    texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]],\n"
+    "    constant DecorUniforms& u [[buffer(1)]]) {\n"
+    "  float4 c = decorShade(in, tex, smp, u);\n"
+    "  if (c.a < 0.45) discard_fragment();\n"
+    "  return float4(c.rgb, 1.0);\n"
+    "}\n";
+
+static bool mtl_ensure_modern_pso(int cutout, int samples) {
+    int msaa = samples > 1 ? 1 : 0;
+    if (s_modern_pso[cutout][msaa] != nil &&
+        s_modern_pso_samples[cutout][msaa] == samples) {
+        return true;
+    }
+    if (s_device == nil) return false;
+
+  @autoreleasepool {
+    NSError *err = nil;
+    NSString *nssrc = [NSString stringWithUTF8String:kModernMeshMSL];
+    id<MTLLibrary> lib = [s_device newLibraryWithSource:nssrc options:nil error:&err];
+    if (lib == nil) {
+        fprintf(stderr, "[metal] modern-mesh MSL compile failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    id<MTLFunction> vfn = [lib newFunctionWithName:@"decorVertex"];
+    id<MTLFunction> ffn = [lib newFunctionWithName:cutout ? @"decorFragmentCutout"
+                                                          : @"decorFragmentOpaque"];
+    if (vfn == nil || ffn == nil) return false;
+
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    vd.attributes[0].format = MTLVertexFormatFloat3;
+    vd.attributes[0].offset = 0;
+    vd.attributes[0].bufferIndex = 0;
+    vd.attributes[1].format = MTLVertexFormatFloat3;
+    vd.attributes[1].offset = 12;
+    vd.attributes[1].bufferIndex = 0;
+    vd.attributes[2].format = MTLVertexFormatFloat2;
+    vd.attributes[2].offset = 24;
+    vd.attributes[2].bufferIndex = 0;
+    vd.attributes[3].format = MTLVertexFormatUChar4Normalized;
+    vd.attributes[3].offset = 32;
+    vd.attributes[3].bufferIndex = 0;
+    vd.layouts[0].stride = 36;
+    vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    vd.layouts[0].stepRate = 1;
+
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vfn;
+    pd.fragmentFunction = ffn;
+    pd.vertexDescriptor = vd;
+    pd.rasterSampleCount = samples;   /* MUST match the scene pass (FID-0018) */
+    pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    pd.colorAttachments[0].blendingEnabled = NO;
+    if (cutout && samples > 1) {
+        pd.alphaToCoverageEnabled = YES;  /* soften cutout edges under MSAA */
+    }
+    s_modern_pso[cutout][msaa] =
+        [s_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (s_modern_pso[cutout][msaa] == nil) {
+        fprintf(stderr, "[metal] modern-mesh PSO build failed: %s\n",
+                err ? err.localizedDescription.UTF8String : "(no error)");
+        return false;
+    }
+    s_modern_pso_samples[cutout][msaa] = samples;
+    return true;
+  }
+}
+
+static NSArray *mtl_modern_mesh_resources(struct GfxModernMesh *mesh) {
+    if (s_modern_cache == nil) {
+        s_modern_cache = [NSMutableDictionary new];
+    }
+    NSNumber *key = @(mesh->mesh_id);
+    NSArray *res = s_modern_cache[key];
+    if (res != nil) return res;
+    if (s_modern_cache.count > 64) {
+        /* level churn eviction: ids are never reused, so dropping the whole
+           cache is safe -- live meshes re-upload once on next draw */
+        [s_modern_cache removeAllObjects];
+    }
+
+    id<MTLBuffer> vb = [s_device newBufferWithBytes:mesh->vtx
+                                             length:(NSUInteger)mesh->vtx_count * 36
+                                            options:MTLResourceStorageModeShared];
+    id<MTLBuffer> ib = [s_device newBufferWithBytes:mesh->idx
+                                             length:(NSUInteger)mesh->idx_count * 4
+                                            options:MTLResourceStorageModeShared];
+    MTLTextureDescriptor *td = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                     width:(NSUInteger)mesh->tex_w
+                                    height:(NSUInteger)mesh->tex_h
+                                 mipmapped:YES];
+    td.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> tex = [s_device newTextureWithDescriptor:td];
+    if (vb == nil || ib == nil || tex == nil) return nil;
+    [tex replaceRegion:MTLRegionMake2D(0, 0, mesh->tex_w, mesh->tex_h)
+           mipmapLevel:0
+             withBytes:mesh->tex_rgba
+           bytesPerRow:(NSUInteger)mesh->tex_w * 4];
+    /* Mip generation on a ONE-OFF command buffer: a blit encoder cannot run
+     * on s_cmdbuf while the scene render encoder is open. Happens once per
+     * mesh at first draw. */
+    id<MTLCommandBuffer> cb = [s_queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit generateMipmapsForTexture:tex];
+    [blit endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    res = @[ vb, ib, tex ];
+    s_modern_cache[key] = res;
+    return res;
+}
+
+static void mtl_draw_modern_mesh(struct GfxModernMesh *mesh,
+                                 const float mvp[4][4],
+                                 const float fog_color[3], float fog_mul,
+                                 float fog_offset, int fog_enabled) {
+    if (s_enc == nil || s_device == nil || mesh == NULL ||
+        mesh->vtx == NULL || mesh->idx == NULL || mesh->tex_rgba == NULL) {
+        return;
+    }
+    int cutout = mesh->cutout ? 1 : 0;
+    if (!mtl_ensure_modern_pso(cutout, s_msaa_samples)) {
+        return;
+    }
+    NSArray *res = mtl_modern_mesh_resources(mesh);
+    if (res == nil) return;
+    if (s_modern_sampler == nil) {
+        MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
+        sd.minFilter = MTLSamplerMinMagFilterLinear;
+        sd.magFilter = MTLSamplerMinMagFilterLinear;
+        sd.mipFilter = MTLSamplerMipFilterLinear;
+        sd.maxAnisotropy = 16;
+        sd.sAddressMode = MTLSamplerAddressModeRepeat;
+        sd.tAddressMode = MTLSamplerAddressModeRepeat;
+        s_modern_sampler = [s_device newSamplerStateWithDescriptor:sd];
+    }
+
+    MtlModernUniforms u;
+    memset(&u, 0, sizeof u);
+    memcpy(u.mvp, mvp, sizeof u.mvp);
+    u.fog[0] = fog_color[0];
+    u.fog[1] = fog_color[1];
+    u.fog[2] = fog_color[2];
+    u.fogMul = fog_mul;
+    u.fogOffset = fog_offset;
+    u.fogOn = fog_enabled ? 1.0f : 0.0f;
+
+    int msaa = s_msaa_samples > 1 ? 1 : 0;
+    [s_enc setRenderPipelineState:s_modern_pso[cutout][msaa]];
+    [s_enc setDepthStencilState:mtl_depth_state_for(true, true, true, 0)];
+    [s_enc setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    [s_enc setCullMode:MTLCullModeNone];  /* cutout cards are two-sided */
+    [s_enc setVertexBuffer:(id<MTLBuffer>)res[0] offset:0 atIndex:0];
+    [s_enc setVertexBytes:&u length:sizeof u atIndex:1];
+    [s_enc setFragmentBytes:&u length:sizeof u atIndex:1];
+    [s_enc setFragmentTexture:(id<MTLTexture>)res[2] atIndex:0];
+    [s_enc setFragmentSamplerState:s_modern_sampler atIndex:0];
+    [s_enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                      indexCount:mesh->idx_count
+                       indexType:MTLIndexTypeUInt32
+                     indexBuffer:(id<MTLBuffer>)res[1]
+               indexBufferOffset:0];
+}
+
 extern "C" struct GfxRenderingAPI gfx_metal_api = {
     mtl_z_is_from_0_to_1,
     mtl_unload_shader,
@@ -3681,4 +3919,5 @@ extern "C" struct GfxRenderingAPI gfx_metal_api = {
     mtl_start_frame,
     mtl_end_frame,
     mtl_finish_render,
+    mtl_draw_modern_mesh,
 };

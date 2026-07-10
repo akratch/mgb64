@@ -27,4 +27,29 @@ COMMON=(--bark "$BARK" --bark-license CC0
 python3 "$GEN" --name spruce_a --seed 7  --whorls 10 --cards 6 "${COMMON[@]}"
 python3 "$GEN" --name spruce_b --seed 23 --whorls 12 --cards 7 "${COMMON[@]}"
 python3 "$GEN" --name spruce_c --seed 41 --whorls 9  --cards 6 --snow 0.75 "${COMMON[@]}"
+
+# High-detail variants for the G_MODERNMESH path (float verts, big textures)
+HD=(--detail high --tex-size 512)
+python3 "$GEN" --name spruce_hd_a --seed 7  --whorls 22 --cards 7 "${HD[@]}" "${COMMON[@]}"
+python3 "$GEN" --name spruce_hd_b --seed 23 --whorls 26 --cards 8 "${HD[@]}" "${COMMON[@]}"
+python3 "$GEN" --name spruce_hd_c --seed 41 --whorls 20 --cards 7 --snow 0.8 "${HD[@]}" "${COMMON[@]}"
+
+# Photoscan hero: Poly Haven fir_sapling_medium (CC0), decimated 685k->52k.
+# ~74 MB one-time download into the gitignored cache.
+FIR="$CACHE/fir_sapling_medium"
+if [ ! -s "$FIR/fir_sapling_medium_1k.gltf" ]; then
+  mkdir -p "$FIR/textures"
+  python3 - "$FIR" <<'PY'
+import json, sys, urllib.request
+dst = sys.argv[1]
+api = json.load(urllib.request.urlopen(
+    "https://api.polyhaven.com/files/fir_sapling_medium"))
+inc = api["gltf"]["1k"]["gltf"]
+urllib.request.urlretrieve(inc["url"], f"{dst}/fir_sapling_medium_1k.gltf")
+for rel, meta in inc["include"].items():
+    urllib.request.urlretrieve(meta["url"], f"{dst}/{rel}")
+PY
+fi
+python3 "$REPO/tools/decor/decimate_gltf.py" "$FIR/fir_sapling_medium_1k.gltf"   --name fir_hd --grid 170 --ambient 0.85 --license CC0   --url "https://polyhaven.com/a/fir_sapling_medium"   --cutout-material twig --out "$HERE/models"
+
 echo "decor models ready: $HERE/models"

@@ -23,6 +23,27 @@ enum GfxBlendMode {
     GFX_BLEND_ALPHA_RDP_CVG_MEMORY = 6, /* shader coverage + memory color */
 };
 
+/* Modern-mesh draw path (W9 scene decoration): a full-fidelity mesh drawn by
+ * the backend itself — float32 vertices, u32 indices, mipmapped RGBA8 texture
+ * of arbitrary size — into the SAME color/depth attachments as the N64 scene,
+ * transformed on the GPU by the interpreter's current MP matrix. Vertex
+ * layout is interleaved, stride 36: pos float3 @0, normal float3 @12,
+ * uv float2 @24, rgba u8x4 (normalized) @32. `backend_handle` starts NULL;
+ * the backend uploads GPU resources on first draw and caches them there. */
+struct GfxModernMesh {
+    uint32_t mesh_id;      /* loader-assigned, monotonic, never reused --
+                              the backend caches GPU resources by this id
+                              (struct addresses recycle across level loads) */
+    const float *vtx;      /* vtx_count * 9 floats (36-byte stride) */
+    uint32_t vtx_count;
+    const uint32_t *idx;
+    uint32_t idx_count;
+    const uint8_t *tex_rgba; /* tex_w * tex_h * 4 */
+    int tex_w, tex_h;
+    int cutout;            /* alpha-cutout (discard), drawn two-sided */
+    void *backend_handle;
+};
+
 struct GfxRenderingAPI {
     bool (*z_is_from_0_to_1)(void);
     void (*unload_shader)(struct ShaderProgram *old_prg);
@@ -47,6 +68,13 @@ struct GfxRenderingAPI {
     void (*start_frame)(void);
     void (*end_frame)(void);
     void (*finish_render)(void);
+    /* OPTIONAL (NULL on backends without it — call sites must guard, like
+     * read_framebuffer_rgb): draw a modern mesh at the current DL position.
+     * mvp = the interpreter's current MP matrix (row-vector convention);
+     * fog_* mirror the N64 per-vertex fog curve (see gfx_pc.c fog math). */
+    void (*draw_modern_mesh)(struct GfxModernMesh *mesh, const float mvp[4][4],
+                             const float fog_color[3], float fog_mul,
+                             float fog_offset, int fog_enabled);
 };
 
 #endif

@@ -4137,5 +4137,6 @@ struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_on_resize,
     gfx_opengl_start_frame,
     gfx_opengl_end_frame,
-    gfx_opengl_finish_render
+    gfx_opengl_finish_render,
+    NULL, /* draw_modern_mesh: unsupported — gfx_pc warns once and skips */
 };

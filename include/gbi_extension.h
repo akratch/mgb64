@@ -40,6 +40,13 @@
 #    define G_SETTEX 0xc0 /*   0 */
 #endif
 
+/* Port extension (W9 scene decoration): draw a modern high-fidelity mesh at
+ * this DL position. w1 = HOST pointer to a struct GfxModernMesh
+ * (gfx_rendering_api.h). Native-built DLs only — never appears in ROM data;
+ * the big-endian interpreter skips it. 0xC1 sits in the free opcode range
+ * next to Rare's G_SETTEX. */
+#define G_MODERNMESH 0xc1
+
 /* Fade Modes ... for GE? */
 #define G_CC_MODULATEIFADE    TEXEL0, 0, SHADE, 0, 0, 0, 0, ENVIRONMENT
 #define G_CC_MODULATERGBFADE  G_CC_MODULATEIFADE

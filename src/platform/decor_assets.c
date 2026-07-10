@@ -60,6 +60,14 @@ static int decor_load_texture(const char *path, DecorTexture *out) {
     return 1;
 }
 
+/* ---------------------------------------------------- modern-path loading */
+
+static uint32_t s_next_mesh_id = 1; /* monotonic; never reused (backend cache key) */
+
+static int decor_load_modern_prim(const cgltf_primitive *pr,
+                                  const char *glb_path,
+                                  struct GfxModernMesh *out);
+
 /* ------------------------------------------------------------ accessors */
 
 static int read_floats(const cgltf_accessor *acc, int comps, float *dst,
@@ -73,6 +81,106 @@ static int read_floats(const cgltf_accessor *acc, int comps, float *dst,
 }
 
 /* ----------------------------------------------------------- glb loading */
+
+static int decor_load_modern_prim(const cgltf_primitive *pr,
+                                  const char *glb_path,
+                                  struct GfxModernMesh *out) {
+    const cgltf_accessor *pos = NULL, *nrm = NULL, *uv = NULL, *col = NULL;
+    for (size_t a = 0; a < pr->attributes_count; a++) {
+        const cgltf_attribute *at = &pr->attributes[a];
+        if (at->type == cgltf_attribute_type_position) pos = at->data;
+        if (at->type == cgltf_attribute_type_normal) nrm = at->data;
+        if (at->type == cgltf_attribute_type_texcoord) uv = at->data;
+        if (at->type == cgltf_attribute_type_color) col = at->data;
+    }
+    if (pos == NULL || pr->indices == NULL) {
+        decor_warn("modern primitive missing POSITION/indices", glb_path);
+        return 0;
+    }
+
+    /* texture first (any size up to 4096 per side; RGBA8 straight bytes) */
+    const cgltf_material *mat = pr->material;
+    if (mat == NULL ||
+        mat->pbr_metallic_roughness.base_color_texture.texture == NULL) {
+        decor_warn("modern primitive has no baseColor texture", glb_path);
+        return 0;
+    }
+    const cgltf_image *img =
+        mat->pbr_metallic_roughness.base_color_texture.texture->image;
+    if (img == NULL || img->uri == NULL) {
+        decor_warn("modern primitive texture has no uri", glb_path);
+        return 0;
+    }
+    char tpath[1024];
+    {
+        const char *slash = strrchr(glb_path, '/');
+        int dirlen = slash ? (int)(slash - glb_path) + 1 : 0;
+        snprintf(tpath, sizeof(tpath), "%.*s%s", dirlen, glb_path, img->uri);
+    }
+    int tw, th, tn;
+    unsigned char *px = stbi_load(tpath, &tw, &th, &tn, 4);
+    if (px == NULL || tw < 1 || th < 1 || tw > 4096 || th > 4096) {
+        decor_warn("modern texture load failed or oversized", tpath);
+        if (px) stbi_image_free(px);
+        return 0;
+    }
+
+    size_t vc = pos->count;
+    size_t ic = pr->indices->count;
+    uint8_t *vblob = malloc(vc * 36);
+    uint32_t *iblob = malloc(ic * sizeof(uint32_t));
+    uint8_t *tblob = malloc((size_t)tw * th * 4);
+    if (vblob == NULL || iblob == NULL || tblob == NULL) {
+        free(vblob);
+        free(iblob);
+        free(tblob);
+        stbi_image_free(px);
+        return 0;
+    }
+    memcpy(tblob, px, (size_t)tw * th * 4);
+    stbi_image_free(px);
+
+    for (size_t i = 0; i < vc; i++) {
+        float *f = (float *)(vblob + i * 36);
+        uint8_t *c8 = vblob + i * 36 + 32;
+        float tmp[4] = {0, 0, 0, 1};
+        cgltf_accessor_read_float(pos, i, f, 3);
+        if (nrm) {
+            cgltf_accessor_read_float(nrm, i, f + 3, 3);
+        } else {
+            f[3] = 0.0f;
+            f[4] = 1.0f;
+            f[5] = 0.0f;
+        }
+        if (uv) {
+            cgltf_accessor_read_float(uv, i, f + 6, 2);
+        } else {
+            f[6] = f[7] = 0.0f;
+        }
+        if (col) {
+            cgltf_accessor_read_float(col, i, tmp, 4);
+        }
+        c8[0] = (uint8_t)(tmp[0] * 255.0f + 0.5f);
+        c8[1] = (uint8_t)(tmp[1] * 255.0f + 0.5f);
+        c8[2] = (uint8_t)(tmp[2] * 255.0f + 0.5f);
+        c8[3] = (uint8_t)(tmp[3] * 255.0f + 0.5f);
+    }
+    for (size_t i = 0; i < ic; i++) {
+        iblob[i] = (uint32_t)cgltf_accessor_read_index(pr->indices, i);
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->mesh_id = s_next_mesh_id++;
+    out->vtx = (const float *)vblob;
+    out->vtx_count = (uint32_t)vc;
+    out->idx = iblob;
+    out->idx_count = (uint32_t)ic;
+    out->tex_rgba = tblob;
+    out->tex_w = tw;
+    out->tex_h = th;
+    out->cutout = (mat->alpha_mode == cgltf_alpha_mode_mask);
+    return 1;
+}
 
 static int decor_load_model(const char *glb_path, DecorModel *m) {
     cgltf_options opt = {0};
@@ -91,6 +199,28 @@ static int decor_load_model(const char *glb_path, DecorModel *m) {
     const cgltf_mesh *mesh = &data->meshes[0];
     int nprims = (int)mesh->primitives_count;
     if (nprims > DECOR_MAX_PRIMS) nprims = DECOR_MAX_PRIMS;
+
+    if (m->modern) {
+        /* Full-fidelity path (G_MODERNMESH): float verts + big mipmapped
+         * textures, no s16 quantization -- vquant 1 keeps the instance
+         * matrix in plain model units. */
+        m->vquant = 1.0f;
+        m->nmmesh = 0;
+        for (int p = 0; p < nprims; p++) {
+            if (decor_load_modern_prim(&mesh->primitives[p], glb_path,
+                                       &m->mmesh[m->nmmesh])) {
+                m->tri_total += (int)m->mmesh[m->nmmesh].idx_count / 3;
+                m->vtx_total += (int)m->mmesh[m->nmmesh].vtx_count;
+                m->nmmesh++;
+            }
+        }
+        cgltf_free(data);
+        if (m->nmmesh == 0) {
+            decor_warn("modern model has no drawable primitives", glb_path);
+            return 0;
+        }
+        return 1;
+    }
 
     /* pass 1: totals + extent for s16 quantization */
     float ext = 0.0f;
@@ -322,7 +452,8 @@ int decorAssetsLoadLevel(const char *dir, const char *slug, DecorLevel *out) {
                 decor_warn("too many models; extra ignored", path);
                 continue;
             }
-            if (sscanf(line, "%*s %31s %959s", name, rest) != 2) {
+            char kind[16] = "";
+            if (sscanf(line, "%*s %31s %959s %15s", name, rest, kind) < 2) {
                 decor_warn("bad model line", line);
                 continue;
             }
@@ -331,6 +462,7 @@ int decorAssetsLoadLevel(const char *dir, const char *slug, DecorLevel *out) {
             DecorModel *m = &out->models[out->nmodels];
             memset(m, 0, sizeof(*m));
             snprintf(m->name, sizeof(m->name), "%s", name);
+            m->modern = (strcmp(kind, "modern") == 0);
             if (decor_load_model(glb, m)) {
                 out->nmodels++;
             }
@@ -378,6 +510,11 @@ void decorAssetsFree(DecorLevel *lvl) {
          * unregistered. Keep the block alive to keep the region valid. */
         for (int t = 0; t < m->ntex; t++) {
             free(m->tex[t].rgba16);
+        }
+        for (int t = 0; t < m->nmmesh; t++) {
+            free((void *)m->mmesh[t].vtx);
+            free((void *)m->mmesh[t].idx);
+            free((void *)m->mmesh[t].tex_rgba);
         }
         free(m->batch_pool_base);
         free(m->tri_pool_base);
