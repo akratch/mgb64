@@ -36,7 +36,15 @@
 #include "minimap.h"
 #endif
 #include "ramromreplay.h"
+#include "platform/fire_rate_authentic.h"
 extern int g_frame_count_diag;
+/* FID-0066: guard full-auto cadence tick-scaling shares the FID-0056 player
+ * mechanism + flag (Input.FireRateAuthentic, default ON; opt-out
+ * GE007_FIRE_RATE_AUTHENTIC=0). Retail gated BOTH the player (gun.c field_88C)
+ * and the guard (self->firecount) on the same per-rendered-frame counter; the
+ * port's locked-60Hz loop advances both 3x too fast. Same globals as gun.c. */
+extern s32 g_pcFireRateAuthentic;
+extern s32 g_pcFireRateN64FrameCost;
 extern void portTraceLatchChrReaction(const ChrRecord *chr);
 extern void portTraceGuardSpawnEvent(const char *source,
                                      const char *reason,
@@ -116,7 +124,52 @@ static s32 s_GuardBondShotTraceEnabled = -1;
 static s32 s_GuardBondShotTraceBudget = 160;
 static s32 s_GuardBondShotTraceChrnum = INT_MIN;
 
+/* FID-0066 evidence counter: GE007_TRACE_GUARD_AUTOFIRE emits one line per guard
+ * full-auto MODULO-gate fire (the `firecount % rate == 0` cadence path in
+ * chrlvFireWeaponRelated — NOT the `rate < 0` single-shot always-fire branch).
+ * Grep-count the lines to measure guard full-auto shots-per-run fix-ON vs
+ * fix-OFF; ON must be ~1/frame_cost of OFF. Optional _CHRNUM filter. */
+static s32 s_GuardAutoFireTraceEnabled = -1;
+static s32 s_GuardAutoFireTraceChrnum = INT_MIN;
+
 static s32 chrlvPropHasRenderedRoom(const PropRecord *prop);
+
+static s32 guardAutoFireTraceEnabled(void)
+{
+    const char *value;
+
+    if (s_GuardAutoFireTraceEnabled < 0) {
+        value = getenv("GE007_TRACE_GUARD_AUTOFIRE");
+        s_GuardAutoFireTraceEnabled =
+            value != NULL && *value != '\0' && *value != '0' ? 1 : 0;
+
+        value = getenv("GE007_TRACE_GUARD_AUTOFIRE_CHRNUM");
+        if (value != NULL && *value != '\0') {
+            s_GuardAutoFireTraceChrnum = atoi(value);
+        }
+    }
+
+    return s_GuardAutoFireTraceEnabled;
+}
+
+static void guardAutoFireTraceEmit(const ChrRecord *chr, s32 hand, s32 item,
+                                   s32 firecount, s32 raw_rate, s32 eff_rate)
+{
+    if (!guardAutoFireTraceEnabled() || chr == NULL) {
+        return;
+    }
+    if (s_GuardAutoFireTraceChrnum != INT_MIN
+        && chr->chrnum != s_GuardAutoFireTraceChrnum) {
+        return;
+    }
+    fprintf(stderr,
+            "[GUARD_AUTOFIRE] frame=%d global=%u chr=%d hand=%d item=%d "
+            "firecount=%d raw_rate=%d eff_rate=%d authentic=%d cost=%d\n",
+            g_frame_count_diag, (unsigned int)g_GlobalTimer, chr->chrnum, hand,
+            item, firecount, raw_rate, eff_rate, g_pcFireRateAuthentic,
+            g_pcFireRateN64FrameCost);
+    fflush(stderr);
+}
 
 static s32 guardObjectShotTraceEnabled(void)
 {
@@ -8267,6 +8320,8 @@ void chrlvFireWeaponRelated(ChrRecord *self, s32 hand)
     s32 sp44;
     s32 unused;
     f32 sp4C;
+    s32 auto_rate; /* FID-0066: raw AutomaticFiringRate (retail per-frame divisor) */
+    s32 eff_rate;  /* FID-0066: FireRateAuthentic-scaled divisor (== auto_rate OFF) */
 
     self_prop = self->prop;
     weapon_prop = chrGetEquippedWeaponProp(self, hand);
@@ -8286,26 +8341,62 @@ void chrlvFireWeaponRelated(ChrRecord *self, s32 hand)
 
         sp44 = attack_type & 1;
 
+        /* FID-0066: the retail entry gate (ASM 0x7F02D734, matched C body) reads
+         * bondwalkItemGetAutomaticFiringRate() directly; the raw rate feeds the
+         * `< 0` sign test unchanged. Cache it (pure item-stat lookup) so the
+         * scaled divisor below reuses the same value. */
+        auto_rate = bondwalkItemGetAutomaticFiringRate(prop_selfchr->act_attack.attack_item);
+
         if (
             (sp44 == 0)
             || (self->seen_bond_time >= (g_GlobalTimer - CHRLV_SEEN_RECENT_CHECK))
-            || (bondwalkItemGetAutomaticFiringRate(prop_selfchr->act_attack.attack_item) < 0))
+            || (auto_rate < 0))
         {
             sp268 = 0;
             sp264 = 0;
 
+            /* Retail advances the guard fire counter once per AI tick,
+             * UNCONDITIONALLY (ASM 0x7F02D734: no g_ClockTimer gate — unlike the
+             * player's field_88C at gun.c:17939-17945). Kept verbatim: it is the
+             * counter's per-tick value progression that reproduces retail, and it
+             * pairs with the hardcoded `-1` LOS-retry decrement below. */
             self->firecount[hand]++;
 
-            if (bondwalkItemGetAutomaticFiringRate(prop_selfchr->act_attack.attack_item) < 0)
+            /* FID-0066 (symmetric mirror of the player fix, gun.c:18367): the AI
+             * tick runs once per game-loop iteration, so this per-tick counter is
+             * advanced ~3x faster at the port's locked 60Hz than on the N64's
+             * ~15-30fps loop, and the `firecount % auto_rate` gate below fires ~3x
+             * too fast — the SAME defect FID-0056 fixed for the player, left
+             * unscaled for guards (a player-vs-guard balance skew the player fix
+             * introduced). Behind the SAME flag (Input.FireRateAuthentic, default
+             * ON), scale ONLY the gate divisor by the assumed N64 frame cost so
+             * the gate fires once per (auto_rate * frame_cost) ticks -> the N64
+             * cadence, symmetric with the player (D2). Divisor-only (not counter
+             * tick-scaling) is the faithful guard mirror: it preserves retail's
+             * unconditional `++` above and the -1 decrement's exact 1:1 pairing,
+             * and needs no `g_ClockTimer>1` accumulator. OFF (opt-out
+             * GE007_FIRE_RATE_AUTHENTIC=0) returns auto_rate unchanged ->
+             * byte-identical. A non-positive rate passes through untouched, so the
+             * `< 0` always-fire branch and its sign test above keep exact
+             * semantics. */
+            eff_rate = fireRateEffectiveAutoRate(auto_rate, g_pcFireRateAuthentic,
+                                                 g_pcFireRateN64FrameCost);
+
+            if (auto_rate < 0)
             {
                 sp268 = 1;
                 sp264 = 1;
             }
-            else if (((s32) self->firecount[hand] % bondwalkItemGetAutomaticFiringRate(prop_selfchr->act_attack.attack_item)) == 0)
+            else if (((s32) self->firecount[hand] % eff_rate) == 0)
             {
                 sp268 = 1;
 
-                if ((((s32) self->firecount[hand] % (s32) (bondwalkItemGetAutomaticFiringRate(prop_selfchr->act_attack.attack_item) * 2)) == 0)
+                guardAutoFireTraceEmit(self, hand,
+                                       prop_selfchr->act_attack.attack_item,
+                                       (s32) self->firecount[hand], auto_rate,
+                                       eff_rate);
+
+                if ((((s32) self->firecount[hand] % (s32) (eff_rate * 2)) == 0)
                     || (prop_selfchr->act_attack.attack_item == ITEM_LASER))
                 {
                     sp264 = 1;
