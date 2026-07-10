@@ -28,6 +28,7 @@
 #include "tlb_manage.h"
 #include "fr.h"
 #include "game/image.h"
+#include "unk_0C0A70.h"
 #include "game/initgamedata.h"
 #ifdef NATIVE_PORT
 #include "game/initmenus.h"
@@ -592,6 +593,28 @@ void bossMainloop(void)
 #endif
                             permit_stderr(0);
 
+#ifdef NATIVE_PORT
+                            /* FID-0033 0-tick purity fuzz (docs/design/UNCAPPED_FPS_PLAN.md
+                             * Task 4): a render-only fuzz frame injects ZERO sim ticks.
+                             * The N64 engine runs sim + render 1:1 and was never designed
+                             * for a 0-tick frame — the sim tick (lvlManageMpGame /
+                             * lvlViewMoveTick), lvlRender, the double-buffer swap
+                             * (dynSwapBuffers) and the mema defrag pass all advance
+                             * per-frame game-pool state, or pool-resident (un-canonicalized)
+                             * render pointers into the double-buffered VTX arena, that is
+                             * NOT clock-delta-gated. So a genuine 0-tick frame skips the
+                             * entire DL-build + sim + present + maintenance block below,
+                             * leaving the render/present pipeline to advance exactly once
+                             * per TICK frame — identical to a vanilla all-tick run. The
+                             * loop / frame-timing machinery still runs and must leave every
+                             * hashed sim byte untouched; that is the invariant
+                             * tools/uncap_purity_gate.sh proves. Full render-path decoupling
+                             * under a variable frame rate is the separate scope of the F5
+                             * uncapped-FPS project (Tasks 5-8). Never taken in normal play
+                             * (the flag is 0 unless armed by the harness). */
+                            if (g_pcUncapRenderOnlyFrame) goto pc_fuzz_render_only_skip;
+#endif
+
                             gdl = firstGdl = dynGetMasterDisplayList();
 
 #ifdef DEBUGMENU
@@ -741,6 +764,7 @@ void bossMainloop(void)
                             speedgraphMarkerHandler(0x10000);
                             if(1);
 #ifdef NATIVE_PORT
+pc_fuzz_render_only_skip:;
                             {
                                 /* End of a full sim+render frame (after the DL
                                  * was processed/presented in rspGfxTaskStart):

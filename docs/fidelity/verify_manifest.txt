@@ -6,9 +6,11 @@ scripts/ci/check_timing_lock.sh
 # tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)
 ctest --test-dir build --output-on-failure -R "port_"        # validation smokes incl. oracle route contract
 tools/sim_invariance_gate.sh
+tools/uncap_purity_gate.sh --quick                           # Task 0.5: 0-tick purity, 3-level smoke
 # tier 3 — regression + endurance (ROM-gated, ~45 min)
 tools/regression_test.sh
 tools/renderer_parity_capture.sh --scene all
+tools/uncap_purity_gate.sh                                   # Task 0.5: 0-tick purity, full 20-level matrix
 tools/fidelity/tape_regression.sh                            # (Task 0.6) input-tape replay hash regression
 # appended by later tasks:
 # tools/uncap_purity_gate.sh                                  (Task 0.5)
