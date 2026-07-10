@@ -25,6 +25,10 @@
     {
       "kind": "gate-log",
       "path": "tools/fidelity/guard_fire_rate_symmetry_smoke.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_bca507f3301b-dirty.json"
     }
   ],
   "history": [
@@ -55,6 +59,13 @@
       "to": "landed",
       "evidence": "tools/fidelity/guard_fire_rate_symmetry_smoke.sh",
       "note": "Landed. Both-sides evidence (dam_forward_30s, guard chr=6 KF7 rate=3): within-burst inter-shot interval OFF=3 -> ON=9 frames = exactly 3.0x (eff_rate 3->9); default sim-hash 95944e22->11f0b8ef, opt-out restores 95944e22 byte-identical. Player path untouched (gun.c unchanged; dam_combat_guard6 hash 3c89 unchanged both flags). Regression lane port_guard_fire_rate_symmetry_smoke (commit 5f6d173) PASS at HEAD; fail-on-revert PROVEN (divisor neutered -> ON interval collapses to 3 == OFF -> CADENCE FAIL exit 1). Baseline re-record 91320c1 (tape_regression PASS). ENV_FLAGS regen bca507f (env_reference_current green). verify_all all-tiers in progress."
+    },
+    {
+      "ts": "2026-07-10T22:17:02Z",
+      "from": "landed",
+      "to": "landed",
+      "evidence": "docs/fidelity/reports/verify_bca507f3301b-dirty.json",
+      "note": "Full verify adjudication (fresh worktree, /tmp Release build): tier-1 green (env_reference regen bca507f; intro_parse red only under build->/tmp symlink CWD artifact, passes in-tree). Tier-2/3: port_ batch 39/42 PASS incl port_guard_fire_rate_symmetry_smoke + combat_route_capture + hidden_guard_contract; sim_invariance PASS; uncap --quick PASS; renderer_parity PASS; tape_regression PASS; aspect_cull PASS; sense trace/pixel SKIP (missing-ares, documented). 3 port_ fails adjudicated: (1) release_ready_guard = concurrent main commit 37c84ee escalation text (external, not reachable from HEAD); (2) campaign bunker1 two-door route + (3) knife_impact = A/B-proven faithful-cadence timing shifts (FAIL default/PASS opt-out; guard blocks door 138 sweep, Bond pos byte-identical; knife misses shifted guard) -> re-tuned in 449d4a3 (route env pin w/ doc'd justification; knife warp 120->90 passes BOTH flag states), both ctest-green after. regression_test = missing local ROM-derived goldens in fresh worktree (charter rule 7, environmental). No thresholds weakened."
     }
   ]
 }
