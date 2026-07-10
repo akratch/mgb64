@@ -18,7 +18,9 @@
 #endif
 #include <PR/gbi.h>
 
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+#include <GLES3/gl32.h>
+#elif defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
@@ -887,8 +889,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
         cc_features.tile_mask[0][0] || cc_features.tile_mask[0][1] ||
         cc_features.tile_mask[1][0] || cc_features.tile_mask[1][1];
 
-    /* Use GLSL 150 for macOS Core Profile compatibility, 330 elsewhere */
-#ifdef __APPLE__
+    /* Use GLSL 150 for macOS Core Profile, 320 es for GLES3, 330 elsewhere */
+#ifdef MGB64_PORTMASTER_GLES
+    append_line(vs_buf, &vs_len, "#version 320 es");
+    append_line(vs_buf, &vs_len, "precision mediump float;");
+#elif defined(__APPLE__)
     append_line(vs_buf, &vs_len, "#version 150");
 #else
     append_line(vs_buf, &vs_len, "#version 330 core");
@@ -1005,7 +1010,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint64_t shad
     append_line(vs_buf, &vs_len, "}");
 
     /* Fragment shader */
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+    append_line(fs_buf, &fs_len, "#version 320 es");
+    append_line(fs_buf, &fs_len, "precision mediump float;");
+    append_line(fs_buf, &fs_len, "out vec4 fragColor;");
+#elif defined(__APPLE__)
     append_line(fs_buf, &fs_len, "#version 150");
     append_line(fs_buf, &fs_len, "out vec4 fragColor;");
 #else
@@ -3055,7 +3064,12 @@ static GLuint gfx_opengl_compile_filter_shader(GLenum type, const char *source) 
 
 static bool gfx_opengl_ensure_output_filter_program(void) {
     static const char *vs_source =
+#ifdef MGB64_PORTMASTER_GLES
+        "#version 320 es\n"
+        "precision mediump float;\n"
+#else
         "#version 330 core\n"
+#endif
         "out vec2 vTexCoord;\n"
         "const vec2 kPos[3] = vec2[3](\n"
         "    vec2(-1.0, -1.0),\n"
@@ -3067,7 +3081,12 @@ static bool gfx_opengl_ensure_output_filter_program(void) {
         "    gl_Position = vec4(pos, 0.0, 1.0);\n"
         "}\n";
     static const char *fs_source =
+#ifdef MGB64_PORTMASTER_GLES
+        "#version 320 es\n"
+        "precision mediump float;\n"
+#else
         "#version 330 core\n"
+#endif
         "uniform sampler2D uTex;\n"
         "uniform vec2 uSrcSize;\n"
         "uniform vec2 uDstSize;\n"
@@ -3814,7 +3833,15 @@ static bool gfx_opengl_ensure_shadow_resources(int res) {
     }
     if (s_shadow_resource_perma_fail) return false;
     if (g_shadow_program == 0) {
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+        static const char *vs =
+            "#version 320 es\n"
+            "precision mediump float;\n"
+            "in vec3 aShadowPos;\n"
+            "uniform mat4 uShadowMat;\n"
+            "void main() { gl_Position = uShadowMat * vec4(aShadowPos, 1.0); }\n";
+        static const char *fs = "#version 320 es\nprecision mediump float;\nvoid main() {}\n";
+#elif defined(__APPLE__)
         static const char *vs =
             "#version 150\n"
             "in vec3 aShadowPos;\n"
@@ -3877,8 +3904,10 @@ static bool gfx_opengl_ensure_shadow_resources(int res) {
         glBindFramebuffer(GL_FRAMEBUFFER, g_shadow_fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                g_shadow_depth_tex, 0);
+#ifndef MGB64_PORTMASTER_GLES  /* depth-only FBO needs no explicit glDrawBuffer in GLES */
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
+#endif
         GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glActiveTexture((GLenum)prev_active);
@@ -3905,7 +3934,11 @@ static void gfx_opengl_dump_shadow_pgm(void) {
     float *depth = (float *)malloc((size_t)res * res * sizeof(float));
     if (!depth) return;
     glBindTexture(GL_TEXTURE_2D, g_shadow_depth_tex);
+#ifndef MGB64_PORTMASTER_GLES  /* glGetTexImage unavailable in GLES — shadow dump skipped */
     glGetTexImage(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, GL_FLOAT, depth);
+#else
+    memset(depth, 0, (size_t)res * res * sizeof(float));
+#endif
     float mn = 1e9f, mx = -1e9f;
     for (int i = 0; i < res * res; i++) { if (depth[i] < mn) mn = depth[i]; if (depth[i] > mx) mx = depth[i]; }
     FILE *f = fopen("shadow_map.pgm", "wb");
@@ -4054,9 +4087,11 @@ static void gfx_opengl_start_frame(void) {
         wireframe_on = (getenv("GE007_WIREFRAME") != NULL);
         wireframe_checked = 1;
     }
+#ifndef MGB64_PORTMASTER_GLES  /* glPolygonMode unavailable in GLES */
     if (wireframe_on) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     }
+#endif
 
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE);
