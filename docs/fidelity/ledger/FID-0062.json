@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "tools/compare_combat_trace.py"
   ],
@@ -13,6 +13,14 @@
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/combat_oracle_fields.md#11"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#12"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#12"
     }
   ],
   "history": [
@@ -22,6 +30,20 @@
       "to": "discovered",
       "evidence": "docs/fidelity/combat_oracle_fields.md#11",
       "note": "Discovered by FID-0054 ACT re-analysis (\u00a711). This is the LINCHPIN instrumentation defect: --align move systematically skews timelines ~2x in sim-tick space, so a large fraction of combat-oracle guard divergences are alignment artifacts, not port defects. FIX: --align tick mode (agent prototyped, reverted \u2014 naive version added a 'present' artifact 3492 hits because ares interleaves full/empty-roster records; needs careful design handling the interleave). BLOCKS trustworthy combat-parity ACT: FID-0054 (perception, now known-inverted), FID-0011/0012/0013 (chrTickBeams/stan LOS/guard-coupling \u2014 all seeded from --align move, must be RE-VALIDATED under sim-tick alignment before any ACT). Residual real divergence after alignment fix = systemic PRNG call-count desync (rng_seed, \u00a75/\u00a78) + tiny position drift."
+    },
+    {
+      "ts": "2026-07-10T09:31:52Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#12",
+      "note": "Sim-tick alignment designed: canonical_by_tick pairs by move.global relative to shared motion onset, drops empty-roster ares samples, keeps last-max-roster record per tick. Handles the ares full/empty interleave that broke the naive tick (\u00a711.4 3492 present-hit artifact). Tooling only, no sim change."
+    },
+    {
+      "ts": "2026-07-10T09:32:03Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#12",
+      "note": "--align tick landed in compare_combat_trace.py + regression lane tools/tests/test_compare_combat_trace.py (ctest combat_comparator_align_unittest, fail-on-revert proven: index-pairing reddens 3 asserts, 144 divergences incl 32 phantom present). dam_combat_guard6 both-sides Release: move 18588/actiontype596/218f -> tick 9874(-47%)/actiontype315(-47%)/116f, ZERO phantom present (naive was 3492). FID-0054 inversion CONFIRMED: guard6 stock tv=1 @ +76t vs native +108t (native LATER), both engage act8; stock also engages 7&44. Residual = systemic RNG call-count phase (rng_seed 116/frame) + pos drift, not guard-AI bug. Sim byte-identical (no src change)."
     }
   ]
 }
