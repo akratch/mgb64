@@ -379,3 +379,129 @@ canonical Release build the fixed tree (flag OFF) passes
 helpers and the simulated sustained-fire cadence. Proven fail-on-revert:
 reverting the divisor scaling collapses the ON/OFF cadence ratio to 1.00× and
 reddens 8 assertions.
+
+## 11. Combat perception — FID-0054 ACT: root-cause CORRECTED (2026-07-10)
+
+Durable evidence anchor for the FID-0054 ACT iteration. Per-run traces are
+ROM-derived (`/tmp`, charter rule 7); this section records the corrected
+mechanism and the follow-on proposal. **This section revises the §9 root-cause
+hypothesis** — the "native perceives / N64 stays unaware" framing was largely an
+alignment artifact, not a guard-AI port-defect.
+
+**Recipe** (determinism envelope, charter rule 6). Native built in
+`/tmp/mgb64-perception` (Release); combat route `dam_combat_guard6` both sides:
+
+```
+tools/movement_oracle_capture.sh --route dam_combat_guard6 --native-full-trace \
+  --no-compare --no-build --binary /tmp/mgb64-perception/ge007 \
+  --ares-bin build/ares-movement-oracle/.../ares --rom baserom.u.z64 \
+  --out-dir /tmp/cap-combat --timeout 400
+tools/compare_combat_trace.py --baseline <stock>.jsonl --test <native>.jsonl --align move
+```
+
+### 11.1 What §9 reported vs what actually happens
+
+§9 (record-index `--align move`) reported: guard chrnum 6 identical frames 0..35,
+then at "aligned frame 36" `target_visible` 0→1 and `actiontype` 1(STAND)→8(ATTACK)
+on native while stock stays STAND/unaware. Re-captured and re-analysed both sides
+by **true sim-tick** (each record's `move.global` = `g_GlobalTimer`, relative to the
+shared motion onset — Bond starts forward at gameplay frame 80: native onset
+global 241, stock onset global 1387, both == gameplay-frame-80 × speedframes 3):
+
+| event (relative sim-tick past onset) | STOCK / ares (N64) | NATIVE |
+|---|---|---|
+| guard 6 first `target_visible=1` | **+76 ticks** (enters ACT_SIDESTEP) | **+108 ticks** |
+| guard 6 first `actiontype=8` (ATTACK) | later, phase-offset | +108 ticks |
+| guards that engage over the run | **6, 7 AND 44** all reach ACT8 | 6 (run ended at +~650t before 7/44) |
+
+So **both sides' guard 6 perceive Bond and enter combat**; in true sim-time the
+STOCK guard perceives ~32 ticks **earlier** than native (native is *later*, not
+earlier). The subsequent AI phases (SIDESTEP → ATTACK → GOPOS(15) → ATTACK) occur
+on both sides, offset by tens of ticks. The "N64 stays unaware" reading was false.
+
+### 11.2 The dominant cause: trace-cadence mismatch (instrumentation-gap)
+
+`compare_combat_trace.py --align move` pairs `baseline[start+i]` with
+`test[start+i]` by **record index**. The two emitters run at different record
+cadences on this route:
+
+- **native**: exactly 1 combat_oracle record per game-frame — `move.global`
+  advances by `g_ClockTimer` (=3, speedframes 3) **every** record.
+- **ares/stock**: ~2 records per advancing global-tick (mean 2.01, max 5 in the
+  combat window) — the emitter samples multiple times per game-frame and captures
+  intra-frame AI evolution. Example: at stock global 1463 four consecutive records
+  show guard 6 evolving `act 1,tv0 → 1,tv1 → 11,tv1 → 11,tv1` **within one frame**.
+  It also interleaves 0-guard / partial-roster records (2789 of 6500 records have
+  an empty guard list — menu / not-yet-populated samples).
+
+Consequence: record-index alignment advances ~2× faster in sim-tick space on the
+native side. At "aligned frame 36" native sits at +108 sim-ticks (already
+attacking) while stock sits at only ~+27..54 sim-ticks (still standing) — a pure
+time-base skew, reported as a guard-AI divergence. Quantified: aligning the same
+two traces by sim-tick (dedupe to last roster-complete record per `g_GlobalTimer`)
+cuts `guards.actiontype` field-hits from **666 → 249 (−63%)** and total combat
+divergences from **18657 → ~9327 (−50%)**. A large fraction of FID-0054's reported
+`actiontype`/`room`/`target_visible`/`pos` divergence is this artifact.
+
+### 11.3 The residual (genuine) divergence is systemic RNG-phase, not a guard-AI bug
+
+After tick-alignment a real residual remains (~249 `actiontype`, ~81
+`target_visible` hits, phase-offset AI). Its mechanism is **not** a bounded
+guard-AI counter error:
+
+- **AI decision cadence is faithful.** The guard AI tick
+  (`chrlvActionTick`, `chrlv.c:11309`) gates on `self->sleep -= g_ClockTimer` and
+  runs `ai()` when sleep expires — tick-scaled. This capture runs `g_ClockTimer==3`
+  throughout (speedframes 3, N64 Dam frame cost), so the FID-0056 class
+  (per-rendered-frame counter unscaled at locked 60Hz) **does not apply** here.
+- **Perception logic is a faithful ASM match.** Perception is
+  `chrCheckTargetInSight` (`chrlv.c:5671`, US `0x7F029D70`) → `chrCanSeeBond`
+  (`chrlv.c:5358`) → `chrlvSetTargetToPlayer` (`chrlv.c:5604`, stamps
+  `lastseetarget60` = `target_visible`). The decisive gate is **probabilistic**:
+  after the vision-cone/range/fog checks, `pass = (randomGetNext() % (u32)distance)
+  == 0` (`chrlv.c:5749-5755`), where `distance` derives from range, facing angle and
+  the guard's speed-rating. Instrumented native run (`GE007_TRACE_SIGHT6`, temporary)
+  confirmed guard 6's perception fires via this path once it has turned to face Bond
+  (radChangeToFaceBond 5.85→0.047 rad) after being alerted by the shots.
+- **The PRNG is bit-faithful** to the retail `GLOBAL_ASM` (`random.c:279-311`;
+  `randomGetNext` xor/shift sequence matches `glabel randomGetNext`). So identical
+  seed + identical call-count + identical inputs ⇒ identical draw. The perception
+  frame therefore shifts iff the **RNG stream desyncs** (call-count parity) or the
+  probability inputs (Bond/guard position, facing) drift upstream.
+- **RNG call-count parity is a known systemic port gap** (§5/§8: `combat.rng_seed`
+  diverges every frame; the extensive ramrom deferral machinery in
+  `chrlv.c:824-897` exists precisely to re-phase the port's PRNG schedule against
+  N64). A guard's probabilistic perception draw succeeding a few ticks earlier/later
+  is the expected downstream symptom of that whole-engine schedule difference — plus
+  small guard-position differences (guard 6 rests ~3.7u off between sides, within the
+  comparator position tolerance) feeding `distance`.
+
+**Classification.** FID-0054 combat-perception lane = (a) an **instrumentation-gap**
+(comparator record-index alignment over mismatched-cadence emitters — the actionable,
+bounded part) layered on (b) a **deferred systemic parity item** (PRNG call-count
+schedule divergence, the true driver of the residual perception-timing). It is **not**
+a bounded, ASM-clear guard-AI/LOS correction. Per the ACT charter, no guard-AI change
+was landed (a targeted change would chase an artifact + RNG phase and risk the faithful
+path). Sim left byte-identical.
+
+### 11.4 Proposal (follow-on, not landed this iteration)
+
+1. **Comparator sim-tick alignment (`compare_combat_trace.py`).** Add an `--align tick`
+   mode: motion-onset anchor + resample each side to one record per advancing
+   `move.global`. A naive "last record per tick" is insufficient — it can land on the
+   ares 0-guard/partial-roster samples and spuriously report the whole roster absent
+   (present-divergence artifact observed: 3492 hits). The correct rule needs the ares
+   emission pattern characterised first (why are full/empty records interleaved
+   mid-gameplay?) and then "last **roster-complete** record per tick", or better, drop
+   the ares over-sampling at the emitter so both sides emit once per game-frame. This is
+   the bounded fix for the artifact half of FID-0054 and removes ~60% of its reported
+   `actiontype` divergence. Land with a ROM-free regression test using synthetic
+   over-sampled fixtures (one side 2-3 records/tick, the other 1/tick) asserting
+   record-index inflates divergences while tick-align does not.
+2. **Residual perception-timing parity** is gated on RNG call-count parity (the systemic
+   `rng_seed` gap) and is not closable from the guard-AI code; it should be tracked
+   against that item, not fixed in `chr.c`/`chrlv.c`/`chrai.c`/`stan.c`.
+
+**Determinism.** The committed `baselines/tapes/dam_combat_guard6.ge7tape` still
+replays to sim-state hash `3c8939968e0eb50e` (ctest `port_combat_route_capture_smoke`,
+Release) — this iteration changed no sim code, so the combat sim is byte-identical.
