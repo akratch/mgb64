@@ -1,0 +1,27 @@
+{
+  "id": "FID-0062",
+  "title": "compare_combat_trace --align move pairs by record index but native emits 1 rec/frame vs ares ~2 rec/tick \u2014 ~2x sim-tick skew inflates+misattributes combat divergences",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "tools/compare_combat_trace.py"
+  ],
+  "repro": "dam_combat_guard6 both-sides: --align move gives 666 guards.actiontype divergences / 18657 total; true sim-tick alignment gives 249 (-63%) / 9327 (-50%) AND INVERTS FID-0054 (native perceives Bond LATER +108 vs stock +76 ticks, not earlier). ares emits ~2 records/advancing-global-tick (intra-frame AI + empty-roster samples) vs native 1/game-frame.",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#11"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T09:19:00Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#11",
+      "note": "Discovered by FID-0054 ACT re-analysis (\u00a711). This is the LINCHPIN instrumentation defect: --align move systematically skews timelines ~2x in sim-tick space, so a large fraction of combat-oracle guard divergences are alignment artifacts, not port defects. FIX: --align tick mode (agent prototyped, reverted \u2014 naive version added a 'present' artifact 3492 hits because ares interleaves full/empty-roster records; needs careful design handling the interleave). BLOCKS trustworthy combat-parity ACT: FID-0054 (perception, now known-inverted), FID-0011/0012/0013 (chrTickBeams/stan LOS/guard-coupling \u2014 all seeded from --align move, must be RE-VALIDATED under sim-tick alignment before any ACT). Residual real divergence after alignment fix = systemic PRNG call-count desync (rng_seed, \u00a75/\u00a78) + tiny position drift."
+    }
+  ]
+}
