@@ -192,3 +192,51 @@ reads). The emitter allocates no sim state, calls no stan line-test (target_visi
 plain `lastseetarget60` read, not `stanTestLineUnobstructed`), and mutates nothing. It runs
 only on the trace path. Therefore the new fields are trace-only and must not perturb the
 sim-state hash; verified by `tools/sim_invariance_gate.sh` at defaults.
+
+## 8. Verification — both-sides live Dam capture (FID-0032 → verified, 2026-07-10)
+
+Durable evidence anchor for the `landed → verified` transition. Per-run ROM traces
+and the raw diff JSON are ROM-derived (`/tmp`, charter rule 7); this section records
+the recipe + divergence counts only.
+
+**Recipe** (determinism envelope, charter rule 6):
+
+```
+tools/movement_oracle_capture.sh --route dam_forward_stop \
+  --native-full-trace --no-compare \
+  --binary build/ge007 --ares-bin build/ares-movement-oracle/.../ares \
+  --rom baserom.u.z64 --out-dir /tmp/cap --timeout 400
+tools/compare_combat_trace.py \
+  --baseline /tmp/cap/stock_dam_forward_stop.jsonl \
+  --test    /tmp/cap/native_dam_forward_stop.jsonl \
+  --align move --json-out /tmp/cap/combat_diff.json
+```
+
+Two infra additions the verify surfaced as missing from the first cut (both landed):
+`--native-full-trace` (the slim flow-only movement trace omits `combat_oracle`) and
+`--align move` (native direct-boot `g_GlobalTimer` 0..652 = gameplay cannot align by
+absolute timer against ares menu-boot where gameplay starts ~global 1146; motion-onset
+anchoring pairs them).
+
+**Result:** alignment SUCCEEDED — **138 aligned frames**. Anchor validated (not just
+"it ran"): `floor.height` 138/138 exact (-107.0), `floor.stan_room` 138/138, guard
+ROSTER 36/36 common every frame, `player_health` agrees. Sim-hash neutral: whole-sim
+`--sim-state-hash-out` byte-identical (`27ce75d02a10abcc`) with combat_oracle OFF vs
+ON — the trace fields did not enter the sim hash. `combat_oracle_contract` ctest PASS.
+
+**Divergences (the product — filed as findings):**
+
+| family | field-hits | finding |
+|---|---|---|
+| guards.anim_hash | 4968 | FID-0055 (anim-phase cadence) |
+| guards.flags_onscreen | 1568 | FID-0055 (render visibility) |
+| guards.pos[0/1/2] | 1379/1295/1378 | FID-0054 (~10/36 guards, stable — not drift) |
+| guards.actiontype / room | 293 / 217 | FID-0054 (AI-state) |
+| guards.health / target_visible | 115 / 104 | FID-0054 |
+| combat.rng_seed | 138 | documented-expected (§5; ares reads ~0) |
+| floor.stan_id / stan_flags | 138 / 60 | FID-0053 (encoding non-comparable; room+height agree) |
+
+`projectiles`, `shots_fired_total`, `hits_landed_total` = 0/0 both sides
+(dam_forward_stop is a no-combat route) ⇒ FID-0047/0048 unexercised here (triaged with
+disposition; hits_landed_total is a native-only counter with no retail accumulator).
+This verify auto-unblocks FID-0011/0012/0013 (`blocked_on: FID-0032`).

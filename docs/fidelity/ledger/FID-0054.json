@@ -1,0 +1,28 @@
+{
+  "id": "FID-0054",
+  "title": "Combat oracle guard AI-state divergence native-vs-stock on Dam (pos/actiontype/room/health/target_visible); roster matches 36/36",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chr.c chrTickBeams",
+    "src/game/chrai.c"
+  ],
+  "repro": "tools/movement_oracle_capture.sh --route dam_forward_stop --native-full-trace --ares-bin <ares> --no-compare --out-dir /tmp/cap; tools/compare_combat_trace.py --baseline /tmp/cap/stock_dam_forward_stop.jsonl --test /tmp/cap/native_dam_forward_stop.jsonl --align move",
+  "evidence": [
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T06:55:13Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "Both-sides Dam capture (FID-0032 verify), 138 motion-anchored frames. Guard ROSTER matches perfectly: 36 guards common on both sides every frame. Divergences are a stable subset (NOT alignment drift - counts flat across frames 0..130): guard pos ~10/36 differ consistently (guards.pos 0/1/2 = 1379/1295/1378 field-hits), actiontype ~1-3/36 (293), room (217), health (115), target_visible (104). This is the core combat/AI parity signal seeding FID-0011 (H4 actiontype dispatch/H5 background-AI) and FID-0013 (F2). ACT follow-up needs a frame-LOCKED capture (identical input timeline both sides, not motion-anchored) to isolate each guard's genuine divergence and classify port-defect vs n64-quirk per guard. dam_forward_stop is a no-combat route so shots/hits/projectiles stayed 0/0 (FID-0047/0048 unexercised here)."
+    }
+  ]
+}

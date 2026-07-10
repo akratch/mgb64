@@ -4,7 +4,7 @@
   "class": "coverage-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "tools/prepare_ares_movement_oracle_build.sh"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "doc-anchor",
       "path": "docs/fidelity/combat_oracle_fields.md"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "docs/fidelity/combat_oracle_fields.md",
       "note": "Native emitter compiles clean (-fsyntax-only OK) and ares patch is bash -n clean; verified milestone needs one native trace + one ares trace through compare_combat_trace.py. Retest when the build environment is uncontended."
+    },
+    {
+      "ts": "2026-07-10T06:58:05Z",
+      "from": "discovered",
+      "to": "verified",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "RESOLVED: both-sides live capture completed uncontended \u2014 ares rebuilt with combat-oracle patch (incremental from existing checkout), native built clean in /tmp (cmake did not hang outside the worktree overlay FS). FID-0032 -> verified. The landed infra also needed two additions the verify surfaced: --native-full-trace (movement_oracle_capture.sh; flow-only trace omitted combat_oracle) and --align move (compare_combat_trace.py; native direct-boot vs ares menu-boot cannot align by absolute g_GlobalTimer). Both landed 460b80e/49df4c8 and are the documented recipe."
     }
   ]
 }

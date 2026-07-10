@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P2",
-  "status": "discovered",
+  "status": "triaged",
   "suspect": [
     "tools/prepare_ares_movement_oracle_build.sh"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "doc-anchor",
       "path": "docs/fidelity/combat_oracle_fields.md#4"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/combat_oracle_fields.md#8"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "docs/fidelity/combat_oracle_fields.md#4",
       "note": "By construction: native populates projectiles via get_ptr_obj_pos_list_current_entry; ares emits empty. Close by mapping the prop list base into the MGB64_ARES symbol table."
+    },
+    {
+      "ts": "2026-07-10T06:56:34Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#8",
+      "note": "FID-0032 verify capture (dam_forward_stop) did NOT exercise projectiles: 0 projectiles both sides all 138 frames (no thrown ordnance on this route) so the gap did not surface as a divergence. Ares-side close requires: (1) the US VRAM address of the prop position-list head global ptr_obj_pos_list_current_entry (src/game/chrprop.c:493-495 -> get_ptr_obj_pos_list_current_entry @ chrprop.c:613) added to the MGB64_ARES symbol layout table; NO US symbol map is committed in-tree (ares base addrs are externally-derived constants), so the address is not derivable from this repo alone. (2) the prev-linked traversal implemented in formatCombatOracleJson. (3) an ares rebuild. (4) a projectile-bearing route (mine/grenade throw) to validate. Deferred: derivable in principle but needs the US map + patch + rebuild + new route (more work). Left open."
     }
   ]
 }
