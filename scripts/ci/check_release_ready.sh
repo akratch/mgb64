@@ -73,6 +73,32 @@ else
 fi
 
 echo
+echo "== Internal fidelity-program archive isolation =="
+if [ "$HAVE_GIT" -eq 1 ]; then
+  # D1 (2026-07-10 fidelity review, docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md):
+  # the fidelity program is internal-only. .gitattributes export-ignores its
+  # trees plus a few named path-gap docs; assert that actually holds for the
+  # archive artifact itself (not just the .gitattributes text), so a removed
+  # export-ignore line, a typo'd glob, or a new internal file added outside
+  # those trees regresses loudly here instead of silently shipping in the next
+  # public archive/launch repo. Bare empty-directory entries (e.g.
+  # "docs/fidelity/" with nothing after the slash) are excluded: `git archive`
+  # emits one of those for every export-ignored directory that ever had
+  # tracked content (docs/design/ does the same) -- it reveals a directory
+  # name only, never content, and isn't fixable short of patching git itself.
+  archive_leak_hits=$(git archive HEAD | tar -t \
+    | grep -E '^docs/fidelity/[^/]|^tools/fidelity/[^/]|^baselines/tapes/[^/]|^docs/BACKLOG_v0\.4\.0\.md$|^docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10\.md$|^tools/tests/test_fidelity_ledger\.py$' \
+    || true)
+  if [ -n "$archive_leak_hits" ]; then
+    while IFS= read -r f; do note "internal fidelity-program path is archive-reachable: $f"; done <<< "$archive_leak_hits"
+  else
+    echo "  OK -- no internal fidelity-program paths (docs/fidelity, tools/fidelity, baselines/tapes, path-gap docs) are archive-reachable."
+  fi
+else
+  echo "  SKIP -- not a git checkout; git archive is not meaningful here."
+fi
+
+echo
 echo "== Tracked build artifact hygiene =="
 artifact_hits=$(public_file_list \
   | grep -E '\.(o|a|so|dylib|dll|exe|pyc|pyo|class|dSYM|app|dmg|zip|7z|tar|tgz|gz)$|(^|/)(__pycache__|build|build-[^/]*|dist)(/|$)|(^|/)(extractor|gzip|armips|n64cksum|report)$' \
