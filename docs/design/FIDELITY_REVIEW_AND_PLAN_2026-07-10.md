@@ -18,6 +18,24 @@ program would leak into the public archive**. All fixable and well-scoped.
 
 ---
 
+## Decisions Locked (owner, 2026-07-10)
+
+These bind the plan below. Owner chose maximal fidelity on the strategic forks.
+
+| # | Decision | Choice | Consequence for the plan |
+|---|----------|--------|--------------------------|
+| D1 | Fidelity program visibility | **Internal-only** | Phase A: add `export-ignore` for `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**` + the two path-gap docs (`BACKLOG_v0.4.0.md`, dated `RECOMP_LANDSCAPE_SURVEY`); scrub the personal email from tracked scripts; strip Claude/session trailers on the public-publish path. **Gate before any public push.** |
+| D2 | Enemy full-auto cadence | **Fix symmetrically** | P1a: tick-scale the guards' fire counter (`chrlv.c:8297`) behind the same `Input.FireRateAuthentic`, so both player and enemies fire at true N64 cadence. Faithful; enemies fire slower too. |
+| D3 | MSAA default level | **Keep SSAA+FXAA, MSAA off** | No default change. `Video.MSAA=0` stays (baseline already AAs via 2× SSAA + FXAA); MSAA remains a working opt-in knob. Update the stale "OFF by design" comments to read as a settled decision, not a TODO. |
+| D4 | Route-coverage scope (crit. 1) | **Representative subset ~6-8** | Phase B: Dam + a spread across archetypes (indoor / outdoor / vehicle / boss / stealth), each with a `gate:true` ares-oracle route. Expandable post-1.0. |
+| D5 | FID-0063 RNG parity | **Commit to full closure** | Phase E is now a HARD requirement, not a waiver option: pursue call-for-call `randomGetNext()` parity until native matches retail exactly. Biggest single risk/effort in the Epic; start its investigation early (parallel with B/C). No "faithful-within-tolerance" exit. |
+| D6 | Ledger-closure bar (crit. 8) | **Zero open (all terminal)** | Phase H: EVERY finding (64+ and growing) must reach verified / documented / refuted / waived. No P2/P3 backlog carried past 1.0 — the purest bar. Every open item is either fixed or has a written terminal rationale. |
+| D7 | Cross-config determinism | **Release-canonical + assert lane** | Phase A: add a cheap lane asserting the running binary is Release (a Debug build gives a clear message, not a false RED). strict-FP deferred as unnecessary for 1.0. |
+
+**Auto-handled (no decision needed; scheduled in Phase A):** ENV_FLAGS regen (clears the red gate C3); FID-0019 opt-out flag + real shadow lane retrofit (P1b); `verify_all` SKIP → amber locally / hard-fail in the release gate (C4); blocked-on trap fix — add FID-0062 to FID-0011/12/13/54 (C2); `ledger validate` verifies evidence paths exist + scrub FID-0046's malformed private-path evidence (C5).
+
+---
+
 ## Part 1 — Findings & Cleanup Backlog
 
 Severity is the review's own; ★ = confirmed live this synthesis.
@@ -82,11 +100,16 @@ drain → endurance.
 ### Phases
 
 **Phase A — Foundation hardening (P0/P1 cleanup). Do first; small, high-leverage.**
-Make the machine trustworthy before scaling mileage: fix the ratchet teeth
-(C4 fail-open, C5 gating), the blocked-on trap (C2), the red gate (C3), the leak
-surface (C1), and the fidelity gaps that are quick (P1a NPC symmetry, P1b/c/d
-missing lanes, P1f/g/h loop/comparator). Exit: `verify_all` can't report a false
-green, the ledger's fields match its prose, main is green, no known leak.
+Make the machine trustworthy before scaling mileage:
+- **Leak (C1/D1):** `export-ignore` the three fidelity trees + the two path-gap docs; scrub the personal email from tracked scripts; add a trailer-strip to the public-publish path.
+- **Ratchet teeth (C4/C5):** `verify_all` SKIP → amber-local / hard-fail-release; enforce legal ledger transition edges; `validate` verifies evidence paths exist.
+- **Blocked-on trap (C2):** add FID-0062 to FID-0011/12/13/54 `blocked_on`.
+- **Red gate (C3):** ENV_FLAGS regen.
+- **Determinism (D7):** add the Release-binary assert lane (kills the false-RED footgun).
+- **Quick fidelity gaps:** P1a NPC full-auto symmetry (D2), P1b FID-0019 flag+lane, P1c/d missing lanes + AK47 tape, P1f/g/h comparator/loop fixes.
+- **Docs (D3):** update the MSAA "OFF by design" comments to settled-decision wording.
+
+Exit: `verify_all` can't report a false green, the ledger's fields match its prose, main is green under a Release build, and there is no known public leak.
 
 **Phase B — Coverage build-out (the tall pole).** Build **FID-0031 route
 coverage** (P0, XL — gates criteria 1/2/3): author the ~20-stage deterministic
@@ -107,8 +130,13 @@ port-defects). Closes criterion 4 / FID-0042.
 **Phase E — Combat parity.** **FID-0063 RNG call-count phase parity** — the XL
 linchpin and deepest unknown (native vs retail differ in how many
 `randomGetNext()` calls per tick, so probabilistic perception fires a few ticks
-off). May be unclosable without a documented waiver. Resolving it (or waiving it)
-unblocks FID-0011/0012/0013/0054 — the whole combat-parity cluster.
+off). **Per D5, this is committed to full closure — no waiver exit.** Method:
+instrument a per-tick `randomGetNext()` call-count differential between native
+and the ares oracle on a combat route, bisect to the first tick where the counts
+diverge, and trace the extra/missing consumer (an ASM-authored call the reimpl
+added, dropped, or reordered). Because it's open-ended, **start the investigation
+early — in parallel with Phases B/C** — so a long tail doesn't serialize onto the
+end. Closing it unblocks FID-0011/0012/0013/0054, the whole combat-parity cluster.
 
 **Phase F — Visible artifacts.** Land the near-done **FID-0009 Silo sky-leak**
 (already on `fix/fid-0009-silo-apertures`, needs rebase+review+merge), then
@@ -122,9 +150,11 @@ loop/tuning), 0027 (voice starvation), 0028 (dead-synth hygiene); converter
 FID-0036 (PROPDEF union cases), 0037 (padnames byte-swap), 0039 (OP11).
 
 **Phase H — Endurance & closure.** Resolve **Streets FID-0046** non-determinism
-(purity fuzz 19/20), run the **24h soak** (criterion 7), drain the ledger to the
-closure threshold (criterion 8), and confirm the verify ratchet green end-to-end
-at its tightest. Then 1.0.
+(purity fuzz 19/20), run the **24h soak** (criterion 7), and **per D6 drive the
+ledger to ZERO open** (criterion 8) — every finding reaches verified / documented
+/ refuted / waived, each open item either fixed or carrying a written terminal
+rationale (no P2/P3 backlog past 1.0). Confirm the verify ratchet green
+end-to-end at its tightest. Then 1.0.
 
 ### Sequencing notes
 - Phases A→B are gating; C/D can run in parallel once B lands the routes.
@@ -134,10 +164,16 @@ at its tightest. Then 1.0.
 - Coordinate all rendering-adjacent work (F glass, pixel sweeps) with the
   concurrent AAA-remaster effort; pin `--faithful` for all parity measurement.
 
-### Immediate next actions (when the coast is clear of the remaster agent)
+### Immediate next actions (Phase A — when the tree is clear of the remaster agent)
 1. C3 ENV_FLAGS regen (unblocks the red gate).
-2. C2 blocked-on trap (protects the unattended loop).
-3. P1a file + fix NPC full-auto symmetry (a real gameplay balance bug the
-   fire-rate fix introduced).
-4. C1 leak decision + fix (before any public push).
-5. Begin Phase B FID-0031 route coverage (the tall pole).
+2. C2 blocked-on trap — add FID-0062 to FID-0011/12/13/54 (protects the loop).
+3. P1a/D2 file + fix NPC full-auto symmetry (the balance bug the fire-rate fix introduced).
+4. C1/D1 leak fix — `export-ignore` the three fidelity trees + 2 path-gap docs, scrub the email, add trailer-strip (before any public push).
+5. D7 Release-assert lane; C4/C5 ratchet-teeth hardening.
+6. Kick off Phase E (FID-0063 RNG parity) investigation in parallel — per D5 it's committed to full closure and is the long tail.
+7. Begin Phase B route coverage (~6-8 archetype routes, D4).
+
+**Coordination:** all rendering-adjacent work and every parity sweep pins
+`--faithful`; flag the remaster agent that its `04-content-geometry-effects.md`
+references the retired glass flags, and coordinate before reaping the 2 dead
+glass scripts it name-checks.
