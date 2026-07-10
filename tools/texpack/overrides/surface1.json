@@ -1,18 +1,22 @@
 {
-  "_comment": "Surface (I) per-level curation (W2.E8.T2; the exit-demo level, outdoor snow -- exercises the W2.E5.T1 SNOW preset). Token ids + routing choices only -- no ROM data, committable. Top-5 hue-ID heroes (RemasterFX=0 pin, coverage): tok1267 28.2% (tiled snow ground), tok1263 15.5% (bright snow bank), tok1200 5.2% / tok1201 4.2% / tok1199 2.0% (thin 64x17 dark tree/cliff bands on the hillsides -> ride the automatic whole_image AI-upscale tree; they are dark ~95 luma, NOT snow). The pink/orange sunset sky is a separate skyRender backdrop, not a hero token. tok2228 is pinned seam_safe to match dam's global curation (shared pack, global token ids). See docs/design/remaster-aaa/02-hd-asset-pipeline.md sec 4.2/4.7.",
+  "_comment": "Surface (I) per-level curation (W2.E8.T2; the exit-demo level, outdoor snow). Token ids + routing choices only -- no ROM data, committable. Top-5 hue-ID heroes (RemasterFX=0 pin, coverage): tok1267 28.2% (tiled snow ground), tok1263 15.5% (bright snow bank), tok1200 5.2% / tok1201 4.2% / tok1199 2.0% (thin 64x17 dark tree/cliff bands on the hillsides -> ride the automatic whole_image AI-upscale tree; they are dark ~95 luma, NOT snow). The pink/orange sunset sky is a separate skyRender backdrop, not a hero token. tok2228 is pinned seam_safe to match dam's global curation (shared pack, global token ids). 2026-07-10: both snow heroes re-curated procedural->cc0_import (ambientCG Snow010A, CC0): A/B close-ups showed the photo material reads cleaner than the W2.E5.T1 snow synth (whose bank rendition mottles like dirt speckle), and cc0_import is Tier A1 (distributable) where tone=match synth was B. Built manually via tools/texpack/cc0_import.py (build_pack.py defers cc0_import); commands recorded per-token below. See docs/design/remaster-aaa/02-hd-asset-pipeline.md sec 4.2/4.7.",
   "tok1267": {
-    "source": "procedural",
-    "preset": "snow",
+    "source": "cc0_import",
+    "asset": "ambientCG Snow010A (Color map)",
+    "license": "CC0",
+    "url": "https://ambientcg.com/view?id=Snow010A",
     "size": "1024x512",
-    "tone": {"mode": "match"},
-    "_note": "Surface snow ground (hero #1, 64x32 fmt=4 I-format tileable=1 room, avgRGB bcbcbc). The dominant tiled snow floor -> seamless tone-matched SNOW synth (W2.E5.T1) reads cleaner than ESRGAN on a 64x32 tile and is the mandated preset exercise for this level. I-format 'alpha' is intensity; synth_inject re-attaches it. tone=match -> Tier B."
+    "args": {"mean": 188, "contrast": 0.9, "highpass": 48, "i_alpha": true},
+    "_note": "Surface snow ground (hero #1, 64x32 fmt=4 I-format tileable=1 room, avgRGB bcbcbc). Build with cc0_import.py using size+args verbatim. mean 188 = the committed avgRGB (not ROM stats). highpass keeps the photo tile-uniform across the big tiled snowfield; i_alpha re-attaches the I-format intensity-as-alpha coupling (the loader's stbi path would otherwise force alpha=255). Tier derives from license (CC0 -> A1)."
   },
   "tok1263": {
-    "source": "procedural",
-    "preset": "snow",
+    "source": "cc0_import",
+    "asset": "ambientCG Snow010A (Color map)",
+    "license": "CC0",
+    "url": "https://ambientcg.com/view?id=Snow010A",
     "size": "1024x1024",
-    "tone": {"mode": "match"},
-    "_note": "Surface bright snow bank/slope (hero #2, 32x32 fmt=2 CI tileable=0 room, avgRGB dadae0 ~218,218,225 -- bright white snow, not the pink sky). Route to the SNOW preset for a consistent snow look; non-tileable so no wrap needed. tone=match -> Tier B."
+    "args": {"mean": 218, "contrast": 0.8, "i_alpha": false},
+    "_note": "Surface bright snow bank/slope (hero #2, 32x32 fmt=2 CI tileable=0 room, avgRGB dadae0 ~218,218,225 -- bright white snow, not the pink sky). Build with cc0_import.py using size+args verbatim. Non-tileable so no highpass needed; CI format keeps opaque alpha. Contrast 0.8 tames the photo's relief so the bank reads as clean bright snow. Tier derives from license (CC0 -> A1)."
   },
   "tok2228": {
     "source": "ai_upscale",
