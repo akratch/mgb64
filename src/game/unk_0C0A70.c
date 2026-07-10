@@ -256,14 +256,13 @@ void updateFrameCounters(s32 deltaFrames)
     {
         extern s32 D_80048380;
         extern s32 get_is_ramrom_flag(void);
+        /* Shared clamp so the runtime path and the ROM-free unit test agree —
+         * see src/platform/frame_clamp.c (FID-0017 / M2.4). */
+        extern int clampSpeedgraphFrames(int deltaFrames, int is_ramrom, int is_first_tick);
 
-        if (get_is_ramrom_flag() != 0) {
-            /* preserve raw timing for RAMROM playback fidelity */
-        } else if (D_80048380 == 0 && speedgraphframes > 1) {
-            speedgraphframes = 1;
-        } else if (speedgraphframes > 4) {
-            speedgraphframes = 4;
-        }
+        speedgraphframes = (s32) clampSpeedgraphFrames((int) speedgraphframes,
+                                                       get_is_ramrom_flag() != 0,
+                                                       D_80048380 == 0);
     }
 #endif
 

@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "unk_0C0A70.c:151",
     "ref clamp lvl.c:2113-2126"
@@ -19,6 +19,10 @@
     {
       "kind": "gate-log",
       "path": "ctest:sim_state_hash"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:speedgraph_clamp"
     }
   ],
   "history": [
@@ -35,6 +39,13 @@
       "to": "landed",
       "evidence": "ctest:sim_state_hash",
       "note": "Landed eab7804 (fix(timing): M2.4 clamp speedgraphframes at the assignment site, NATIVE_PORT-gated, RAMROM-playback exempt) \u2014 unk_0C0A70.c:262-265 mirrors lvl.c cap policy (1/4). NOT verified: clamp only fires on frame spikes (deltaFrames>4); no lane injects a synthetic spike and asserts HUD/watch timers stay bounded. Needs a frame-spike clamp lane."
+    },
+    {
+      "ts": "2026-07-10T01:46:48Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:speedgraph_clamp",
+      "note": "Regression lane tests/test_speedgraph_clamp.c (ctest speedgraph_clamp) drives the pure frame_clamp.c TU mirroring lvl.c cap: spike 13->4, within-cap pass-through, first-tick->1, RAMROM playback preserves raw (overrides caps). Fail-on-revert proven: bypassing the clamp (return raw) makes 13->13 + first-tick 13->13, 4 checks red; restored->green. ge007 builds clean; sim_state_hash unchanged. Committed 0c161d7."
     }
   ]
 }

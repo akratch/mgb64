@@ -398,6 +398,14 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_cycle_queue PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_cycle_queue COMMAND test_weapon_cycle_queue)
 
+    # speedgraphframes frame-spike clamp — ROM-free unit test (FID-0017 / M2.4).
+    add_executable(test_speedgraph_clamp
+        "${CMAKE_SOURCE_DIR}/tests/test_speedgraph_clamp.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/frame_clamp.c"
+    )
+    target_include_directories(test_speedgraph_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME speedgraph_clamp COMMAND test_speedgraph_clamp)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
