@@ -14,6 +14,7 @@ import difflib
 import json
 import os
 import re
+import subprocess
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -380,11 +381,25 @@ def _known_ctest_names(repo_root):
 
 
 def _basename_index(repo_root):
-    """basename -> [repo-relative paths] for every tracked-tree file, excluding .git and
-    build/ (generated, not evidence). Lets a bare-filename asm-citation shorthand (e.g.
-    'unk_0A1DA0.c: <prose>', matching existing ledger convention) resolve unambiguously."""
+    """basename -> [repo-relative paths] for every TRACKED file (git ls-files), so a
+    bare-filename asm-citation shorthand (e.g. 'unk_0A1DA0.c: <prose>', matching existing
+    ledger convention) resolves unambiguously. Evidence must point at tracked artifacts;
+    indexing the raw filesystem instead broke whenever agent worktrees existed under
+    .claude/worktrees/ (every src basename became "ambiguous" -- 2026-07-10 red main).
+    Falls back to a filesystem walk only when git is unavailable (e.g. an extracted
+    archive), skipping the known untracked working-dir roots."""
     index = {}
-    skip_dirs = {".git", "build"}
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "-z"],
+            capture_output=True, check=True)
+        for rel in out.stdout.decode("utf-8", "replace").split("\0"):
+            if rel:
+                index.setdefault(os.path.basename(rel), []).append(rel)
+        return index
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    skip_dirs = {".git", "build", ".claude", "dist", ".superpowers"}
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for name in filenames:

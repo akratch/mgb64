@@ -306,6 +306,18 @@ class TestEvidenceTargetOk(unittest.TestCase):
         ok, _ = self.check("gun.c", basenames=basenames)
         self.assertFalse(ok)
 
+    def test_basename_index_skips_agent_worktrees(self):
+        # 2026-07-10 red main: agent worktrees under .claude/worktrees/ duplicated
+        # every src basename, making tracked evidence "ambiguous". The index must
+        # cover tracked files only (git ls-files); the git-less fallback (this
+        # fixture) must skip the known untracked working-dir roots.
+        decoy = os.path.join(self.root, ".claude", "worktrees", "agent-x", "src")
+        os.makedirs(decoy)
+        with open(os.path.join(decoy, "gun.c"), "w", encoding="utf-8") as f:
+            f.write("decoy\n")
+        basenames = ledger._basename_index(self.root)
+        self.assertEqual(basenames.get("gun.c"), [os.path.join("src", "game", "gun.c")])
+
 
 class TestValidateCatchesBadEvidence(unittest.TestCase):
     """End-to-end: cmd_validate must surface an invalid evidence path as a violation,
