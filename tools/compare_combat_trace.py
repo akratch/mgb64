@@ -91,14 +91,45 @@ def key_for(record: dict[str, Any], mode: str) -> Any:
     raise AssertionError(mode)
 
 
+def first_moving_index(records: list[dict[str, Any]], threshold: float) -> int:
+    """First record whose player move.speed/raw exceeds ``threshold`` (motion onset).
+
+    Mirrors ``compare_movement_trace.first_moving_index`` so a native direct-boot
+    trace (g_GlobalTimer starts at 0 in gameplay) can be anchored against an ares
+    menu-boot trace (gameplay begins well after the menu) by motion onset rather
+    than absolute timer, which otherwise pairs native-gameplay with ares-menu frames.
+    """
+    for index, record in enumerate(records):
+        move = record.get("move", {})
+        if not isinstance(move, dict):
+            continue
+        speed = move.get("speed") or []
+        raw = move.get("raw") or []
+        for seq in (speed, raw):
+            if isinstance(seq, list):
+                for value in seq:
+                    if isinstance(value, (int, float)) and abs(float(value)) > threshold:
+                        return index
+    return 0
+
+
 def align_records(
     baseline: list[dict[str, Any]],
     test: list[dict[str, Any]],
     mode: str,
+    motion_threshold: float = 0.01,
 ) -> list[tuple[Any, dict[str, Any], dict[str, Any]]]:
     if mode == "index":
         count = min(len(baseline), len(test))
         return [(i, baseline[i], test[i]) for i in range(count)]
+    if mode == "move":
+        baseline_start = first_moving_index(baseline, motion_threshold)
+        test_start = first_moving_index(test, motion_threshold)
+        count = min(len(baseline) - baseline_start, len(test) - test_start)
+        return [
+            (i, baseline[baseline_start + i], test[test_start + i])
+            for i in range(max(0, count))
+        ]
 
     def by_key(records: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
         out: dict[Any, dict[str, Any]] = {}
@@ -234,7 +265,7 @@ def compare(args: argparse.Namespace) -> int:
         "health": args.health_tolerance,
     }
 
-    aligned = align_records(baseline, test, args.align)
+    aligned = align_records(baseline, test, args.align, args.motion_threshold)
 
     divergences: list[Divergence] = []
     field_counts: dict[str, int] = {}
@@ -294,8 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", required=True, help="ares (or reference) JSONL trace")
     p.add_argument("--test", required=True, help="native (or candidate) JSONL trace")
     p.add_argument("--align", default="global",
-                   choices=["global", "frame", "clock", "index"],
-                   help="frame alignment key (default: global = g_GlobalTimer)")
+                   choices=["global", "frame", "clock", "index", "move"],
+                   help="frame alignment key (default: global = g_GlobalTimer). "
+                        "'move' anchors both sides on motion onset (native direct-boot "
+                        "vs ares menu-boot) — the correct mode for combat routes.")
+    p.add_argument("--motion-threshold", type=float, default=0.01,
+                   help="min |move.speed/raw| to count as motion onset for --align move")
     p.add_argument("--position-tolerance", type=float, default=0.5,
                    help="float position/height epsilon (world units)")
     p.add_argument("--health-tolerance", type=float, default=1.0,
