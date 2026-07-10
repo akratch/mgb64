@@ -82,6 +82,17 @@ include(CTest)
 # automation/CLI invocations to the unchanged engine path. -DMGB64_APP=OFF
 # builds the bare engine CLI (useful for minimal/headless builds).
 option(MGB64_APP "Build the in-process ImGui app shell (portable launcher + overlay)" ON)
+# Build for PortMaster on GLES3 ARM handhelds (R36S/RG353* etc.).
+# Swaps glad+OpenGL3.3 for GLES3.2, changes shader version to 320 es,
+# and forces 640x480 fullscreen. Implies MGB64_PORTMASTER.
+option(MGB64_PORTMASTER_GLES "Build for PortMaster/ARM GLES3 (R36S etc.)" OFF)
+# -mno-ms-bitfields is an x86-family flag (it disables a layout that only
+# exists there); ARM/RISC-V compilers reject it outright.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86|X86|x86)$")
+    set(MGB64_MS_BITFIELD_FLAG -mno-ms-bitfields)
+else()
+    set(MGB64_MS_BITFIELD_FLAG "")
+endif()
 if(MGB64_APP)
     enable_language(CXX)
     set(CMAKE_CXX_STANDARD 17)
@@ -861,8 +872,8 @@ if(APPLE)
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
-# glad OpenGL loader (not needed on macOS — uses framework directly)
-if(NOT APPLE)
+# glad OpenGL loader — not needed on macOS (uses framework) or GLES (SDL handles it)
+if(NOT APPLE AND NOT MGB64_PORTMASTER_GLES)
     set(GLAD_SOURCES lib/glad/src/glad.c)
 else()
     set(GLAD_SOURCES "")
@@ -1014,7 +1025,9 @@ target_compile_options(ge007 PRIVATE
     # read over ROM/model/setup data from the bytes actually there, which is the
     # Windows-only immediate-crash-on-load. macOS/Linux already default to this
     # layout, so the flag is a no-op there and keeps all three targets in sync.
-    -mno-ms-bitfields
+    # (x86-only: ARM toolchains reject the flag, and the MS layout it disables
+    # never existed off x86 -- guarded so PortMaster/ARM builds configure.)
+    ${MGB64_MS_BITFIELD_FLAG}
     # This is a decomp port: pointer punning between the original N64 struct
     # layouts and PC-native types (ROM_OFFSET in platform_os.h, bg.c/gun.c/
     # chrobjhandler.c/bondview.c reinterpret casts) is pervasive and relied
@@ -1101,6 +1114,15 @@ elseif(WIN32)
     # bracketed -Bstatic/-Bdynamic at the END of the link line so the import
     # lib above is overridden by the static archive.
     target_link_options(ge007 PRIVATE -static-libgcc -static-libstdc++)
+elseif(MGB64_PORTMASTER_GLES)
+    target_link_libraries(ge007
+        GLESv2
+        EGL
+        SDL2::SDL2
+        m
+        ${CMAKE_DL_LIBS}
+    )
+    target_compile_definitions(ge007 PRIVATE MGB64_PORTMASTER_GLES MGB64_PORTMASTER)
 else()
     target_link_libraries(ge007
         OpenGL::GL
@@ -1321,7 +1343,7 @@ if(MACOS_APP_BUNDLE AND APPLE)
         # See the ge007 target above for both of these: N64-matching bit-field
         # layout on every platform (Windows/MinGW defaults to -mms-bitfields),
         # and decomp-port pointer punning.
-        -mno-ms-bitfields
+        ${MGB64_MS_BITFIELD_FLAG}
         -fno-strict-aliasing
     )
 

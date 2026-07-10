@@ -8,7 +8,9 @@
 #include <ultra64.h>
 
 #include <SDL.h>
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+#include <GLES3/gl32.h>
+#elif defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
@@ -223,7 +225,12 @@ static GLuint minimap_overlay_compile_shader(GLenum type, const char *source)
 static int minimap_overlay_ensure_program(void)
 {
     static const char *vs_source =
+#ifdef MGB64_PORTMASTER_GLES
+        "#version 320 es\n"
+        "precision mediump float;\n"
+#else
         "#version 330 core\n"
+#endif
         "layout(location = 0) in vec2 aPos;\n"
         "layout(location = 1) in vec4 aColor;\n"
         "uniform vec2 uScreen;\n"
@@ -235,7 +242,12 @@ static int minimap_overlay_ensure_program(void)
         "    vColor = aColor;\n"
         "}\n";
     static const char *fs_source =
+#ifdef MGB64_PORTMASTER_GLES
+        "#version 320 es\n"
+        "precision mediump float;\n"
+#else
         "#version 330 core\n"
+#endif
         "in vec4 vColor;\n"
         "out vec4 fragColor;\n"
         "void main() {\n"

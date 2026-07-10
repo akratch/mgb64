@@ -33,10 +33,12 @@ bool AppHost::init(const char *title, int width, int height) {
         sdlOwned_ = true;
     }
 
-    // Request the SAME GL context attributes the engine uses (platform_sdl.c),
-    // so the engine's fast3d renderer runs correctly when it adopts this
-    // context in a later task.
-#if defined(__APPLE__)
+    // Request the SAME GL context attributes the engine uses (platform_sdl.c).
+#if defined(MGB64_PORTMASTER_GLES)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#elif defined(__APPLE__)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);

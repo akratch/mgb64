@@ -74,7 +74,9 @@ static inline void gfx_diag_write_stderr(const char *msg, int len)
 #include "gfx_ptr.h"
 
 #include <SDL.h>
-#ifdef __APPLE__
+#ifdef MGB64_PORTMASTER_GLES
+#include <GLES3/gl32.h>
+#elif defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
@@ -21988,6 +21990,7 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
      * overflow). Also GL-only: raw glGetTexImage() has no Metal-backend
      * equivalent/context. */
     extern bool gfx_backend_use_metal(void); /* gfx_backend.c */
+#ifndef MGB64_PORTMASTER_GLES  /* glGetTexImage unavailable in GLES — GPU verify skipped */
     if ((texturenum == 1988) && getenv("GE007_VERIFY_GPU") && hd_rgba == NULL &&
         !gfx_backend_use_metal()) {
         uint8_t *readback = (uint8_t *)malloc(rgba_bytes);
@@ -22006,6 +22009,7 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
             free(readback);
         }
     }
+#endif
     free(linear_tex_data);
     uint8_t *sample_rgba = NULL;
     if (gfx_trace_settex_material_cc_samples_enabled() ||
