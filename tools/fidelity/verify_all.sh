@@ -10,13 +10,12 @@
 #     { sha, started, gates: [{name, cmd, status: pass|fail|skip, seconds, log}],
 #       verdict: green|degraded|red, skip_count, fail_count, strict, skipped_reason? }
 #
-# A gate may be SKIPPED only for a missing prerequisite (missing-ROM / missing-ares /
-# missing-build, i.e. a fresh checkout with no `cmake -B build` yet) --
-# charter rule 9 requires every skip be listed in the report; a skip alone never turns the
-# verdict red (the gate could not run, it did not fail). BUT a skip is not a pass either
-# (C4, 2026-07-10 review): if every gate in the requested tier range SKIPped, a ROM-less/
-# ares-less CI run has silently degraded to whatever ran (often just tier-1 static checks)
-# while still claiming full coverage. So the verdict has three values:
+# A gate may be SKIPPED only for a missing LICENSING-BOUND prerequisite (missing-ROM /
+# missing-ares) -- charter rule 9 requires every skip be listed in the report; a skip alone
+# never turns the verdict red (the gate could not run, it did not fail). BUT a skip is not
+# a pass either (C4, 2026-07-10 review): if every gate in the requested tier range SKIPped,
+# a ROM-less/ares-less CI run has silently degraded to whatever ran (often just tier-1
+# static checks) while still claiming full coverage. So the verdict has three values:
 #
 #   green    -- fail_count == 0 and skip_count == 0 (every gate that was supposed to run,
 #               ran, and passed).
@@ -27,6 +26,14 @@
 # Exit code: 0 for green; 0 for degraded UNLESS GE007_VERIFY_STRICT=1 is set, in which case
 # degraded exits 1 too (the release gate sets this so a ROM-less/ares-less environment can
 # never rubber-stamp a release); 1 for red always, strict or not.
+#
+# A missing/unconfigured build/ tree (no `cmake -B build` yet) is NOT a skip class (I1,
+# 2026-07-10 review, superseding an earlier draft of this file that briefly treated it as
+# one): tier 1 is defined ROM-free specifically so it always runs, and unlike ROM/ares --
+# licensing-bound prerequisites nobody but the owner can produce -- every runner can
+# `cmake -B build` for free. So a missing build/ is a hard FAIL in ALL modes, strict or
+# not (see gate_hardfail_reason below), with a one-line actionable message telling the
+# runner exactly which command to run.
 #
 # Usage:
 #   tools/fidelity/verify_all.sh [--tier N] [--manifest PATH] [--report-dir DIR]
@@ -120,11 +127,14 @@ gate_name_for() {
     printf '%s\n' "$base" | tr -c 'A-Za-z0-9_' '_' | sed 's/_\{1,\}/_/g; s/^_//; s/_$//'
 }
 
-# Prerequisite check for a gate. Prints "" if runnable, else a skip reason string.
-# Charter rule: skips allowed ONLY for missing-ROM / missing-ares / missing-build
-# prerequisites.
-gate_skip_reason() {
-    local tier="$1" cmd="$2"
+# Hard-fail prerequisite check for a gate. Prints "" if the gate is not gated on a
+# not-yet-configured build/ tree, else a FAIL reason string. NOT a skip class (I1,
+# 2026-07-10 review): tier 1 is ROM-free precisely so it always runs, and a build is
+# producible by every runner (unlike the licensing-bound ROM/ares prerequisites below) --
+# so a missing build/ must hard-stop the loop (charter Appendix B REPAIR trigger), not
+# quietly degrade to exit 0.
+gate_hardfail_reason() {
+    local cmd="$1"
     # ctest-based gates (the bulk of tier 1) need a configured build/ tree --
     # ctest's own test list is generated at `cmake -B build` time, so a fresh,
     # build-less checkout would otherwise make every one of these report the same
@@ -132,13 +142,41 @@ gate_skip_reason() {
     # (tools/fidelity/check_release_build.sh) reads build/CMakeCache.txt directly,
     # and check_sim_render_separation.sh nm's the built game objects (it already
     # exits non-zero with "build the native port first" for the same reason --
-    # this just lets verify_all record that as SKIP instead of a generic FAIL).
+    # this just lets verify_all record ONE clear FAIL instead of a wall of identical
+    # generic ones from every gate that shares the same root cause).
     # Keyed on the exact substrings the manifest actually uses, so this can't
     # accidentally swallow an unrelated command that merely mentions "build".
     if [[ "$cmd" == *"--test-dir build"* || "$cmd" == *check_release_build.sh* \
           || "$cmd" == *check_sim_render_separation.sh* ]]; then
         if [[ ! -f build/CMakeCache.txt ]]; then
-            printf 'missing-build: build/ not configured (run: cmake -B build -DCMAKE_BUILD_TYPE=Release)\n'
+            printf 'missing-build: build/ is not configured -- run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build   (tier 1 is ROM-free and must always be able to run; a missing build/ is a hard FAIL, not a degradable skip)\n'
+            return
+        fi
+    fi
+    printf ''
+}
+
+# Prerequisite check for a gate. Prints "" if runnable, else a skip reason string.
+# Charter rule: skips allowed ONLY for missing-ROM / missing-ares prerequisites --
+# licensing-bound assets the loop cannot produce for itself. A missing build/ tree is
+# handled separately, above, as a hard FAIL (not a skip); by the time this function runs,
+# gate_hardfail_reason has already ruled that case out for every gate it can fire on.
+gate_skip_reason() {
+    local tier="$1" cmd="$2"
+    # M1 (2026-07-10 review): on a multi-config generator (Xcode / Ninja Multi-Config),
+    # CMAKE_BUILD_TYPE is deliberately left blank in the cache -- this project's
+    # CMakeLists.txt only forces CMAKE_BUILD_TYPE=Release (CACHE ... FORCE) for
+    # single-config generators (the `_ge007_multi_config` guard), so a genuinely blank
+    # value here can only happen on multi-config, never on the mainstream single-config
+    # path. That's a real ambiguity check_release_build.sh itself can't resolve without a
+    # --binary/--config hint (it already reports this as its own exit 2 "SKIP"), not a
+    # missing prerequisite -- so pre-detect it here too, or the generic nonzero-rc-means-
+    # FAIL runtime loop below would turn the script's own SKIP into a spurious FAIL.
+    if [[ "$cmd" == *check_release_build.sh* && -f build/CMakeCache.txt ]]; then
+        local build_type
+        build_type="$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Za-z]*=//p' build/CMakeCache.txt | head -1)"
+        if [[ -z "$build_type" ]]; then
+            printf 'ambiguous-build-type: CMAKE_BUILD_TYPE is blank in build/CMakeCache.txt (multi-config generator; run check_release_build.sh --binary PATH directly if you need this assert)\n'
             return
         fi
     fi
@@ -211,6 +249,18 @@ while IFS= read -r rawline || [[ -n "$rawline" ]]; do
     SEEN_NAMES+=("$name")
 
     log_path="${REPORT_DIR}/verify_${SHA}_${name}.log"
+
+    hardfail_reason="$(gate_hardfail_reason "$cmd")"
+    if [[ -n "$hardfail_reason" ]]; then
+        echo "  [tier ${current_tier}] FAIL ${name}: ${hardfail_reason}"
+        {
+            echo "FAILED (prerequisite missing -- not a degradable skip): ${hardfail_reason}"
+            echo "cmd: ${cmd}"
+        } >"$log_path"
+        emit_record "$name" "$cmd" "fail" "0" "$log_path"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        continue
+    fi
 
     skip_reason="$(gate_skip_reason "$current_tier" "$cmd")"
     if [[ -n "$skip_reason" ]]; then

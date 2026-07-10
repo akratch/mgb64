@@ -24,11 +24,21 @@
 #
 # Exit 0: build is configured Release and (if built) the binary is newer than the
 #         configure, or no binary exists yet (nothing to falsely redden).
-# Exit 2: build/ is not configured yet (no CMakeCache.txt) -- a legitimate
-#         prerequisite-missing case; verify_all.sh's gate_skip_reason() detects
-#         this ahead of running the command and records it as SKIP, not FAIL (see
-#         its "missing-build" prerequisite class). Running this script directly
-#         (outside verify_all) surfaces the same condition as exit 2.
+# Exit 2: one of two "can't assert" shapes, both surfaced this way when the script runs
+#         standalone -- inside verify_all.sh, each is pre-detected before this script is
+#         even invoked, and handled differently (see below):
+#           (a) build/ is not configured yet (no CMakeCache.txt). NOT a degradable skip
+#               inside verify_all.sh (I1, 2026-07-10 review): its gate_hardfail_reason()
+#               detects this ahead of running the command and records a hard FAIL --
+#               tier 1 is ROM-free and must always be able to run, and every runner can
+#               produce a build for free (unlike the licensing-bound ROM/ares
+#               prerequisites, which remain degradable skips).
+#           (b) build/ IS configured, but CMAKE_BUILD_TYPE is blank in the cache (a
+#               multi-config generator -- Xcode / Ninja Multi-Config -- deliberately
+#               leaves it blank; see the CMAKE_BUILD_TYPE read below). This genuinely
+#               can't be resolved from the cache alone. verify_all.sh's gate_skip_reason()
+#               pre-detects this specific case (M1, 2026-07-10 review) and records it as
+#               a degradable SKIP, since it is a real ambiguity, not a missing build.
 # Exit 1: build IS configured, but not Release, or the binary predates the
 #         configure -- a real, actionable failure with a one-line fix.
 set -euo pipefail
@@ -50,7 +60,7 @@ while [[ $# -gt 0 ]]; do
         --binary) BINARY="$2"; shift 2 ;;
         --binary=*) BINARY="${1#*=}"; shift ;;
         -h|--help)
-            sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "check_release_build: unknown arg: $1" >&2; exit 2 ;;
     esac
@@ -77,15 +87,16 @@ if [[ -z "$BUILD_TYPE" ]]; then
     # `_ge007_multi_config` guard), so a blank value is a real ambiguity, not a
     # defect -- report it plainly rather than guess.
     echo "check_release_build: SKIP -- CMAKE_BUILD_TYPE is blank in ${CACHE}" \
-         "(multi-config generator: build type is chosen per \`cmake --build ---config\`," \
+         "(multi-config generator: build type is chosen per \`cmake --build --config X\`," \
          " not recorded in the cache -- pass --binary to point at the configured binary" \
          " if you need this assert)" >&2
     exit 2
 fi
 
 if [[ "$BUILD_TYPE" != "Release" ]]; then
-    echo "check_release_build: FAIL -- binary is ${BUILD_TYPE} -- sim-hash baselines" \
-         "are Release-only; rebuild with -DCMAKE_BUILD_TYPE=Release" >&2
+    echo "check_release_build: FAIL -- detected build type is ${BUILD_TYPE}, required is" \
+         "Release -- sim-hash baselines are Release-only; reconfigure and rebuild with:" \
+         "cmake -B ${BUILD_DIR} -DCMAKE_BUILD_TYPE=Release && cmake --build ${BUILD_DIR}" >&2
     exit 1
 fi
 
