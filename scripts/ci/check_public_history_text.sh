@@ -33,6 +33,16 @@
 # archive/re-launch path and a text scan of history, not a replacement for that
 # discipline.
 #
+# Scan scope truth (2026-07-10, CR-2 fix): being export-ignored from the
+# archive does NOT exempt a path from this guard's history scan. The only
+# paths this guard skips are the narrow, explicitly-marked "history-scan-exempt"
+# set in .gitattributes (docs/design/** + the LEGACY dead paths) -- see the
+# path-scope block below. Everything else that is merely export-ignored --
+# today that's docs/fidelity/**, tools/fidelity/**, baselines/tapes/**,
+# tools/tests/test_fidelity_ledger.py, and the path-gap docs -- is STILL
+# content-scanned here, on purpose, because it still reaches the public remote
+# verbatim via the direct-push path above.
+#
 set -euo pipefail
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -48,11 +58,29 @@ sdk_notice_text='(UNPUBLISHED[[:space:]]+PROPRI''ETARY|may not be disclo''sed|wi
 pattern="(${private_text}|${secret_text}|${sdk_notice_text})"
 
 # Path scope. The three guard scripts embed the detection patterns themselves, so
-# they are excluded. Internal documentation is excluded too: the public/internal
-# boundary is declared once in .gitattributes via `export-ignore`, and those docs
-# never enter the public source archive (`git archive`) or the fresh launch
-# repository (scripts/create_public_launch_repo.sh). Deriving the same exclusion
-# set here means this guard scans exactly the text that can ever become public.
+# they are excluded.
+#
+# A narrow, explicitly-marked set of internal documentation is excluded too:
+# ONLY the export-ignore entries between the ".gitattributes" comment markers
+# "--- BEGIN history-scan-exempt ---" and "--- END history-scan-exempt ---"
+# (today: docs/design/** and the LEGACY dead-path globs). This is NOT derived
+# from every export-ignore entry in .gitattributes, and that is deliberate
+# (2026-07-10, CR-2 fix): export-ignore alone only ever governs the `git
+# archive` / GitHub "Download ZIP" artifact and a fresh
+# scripts/create_public_launch_repo.sh checkout. It says nothing about whether
+# a path's *history* is safe to stop scanning, because this repo's real
+# publish path is a direct `git push` of ordinary merged history
+# (docs/WORKFLOW.md rule 6) -- so trees that are export-ignored from the
+# archive can still land, verbatim, on the public remote as ordinary commits.
+# Concretely: this guard DOES still content-scan the history of
+# docs/fidelity/**, tools/fidelity/**, baselines/tapes/**,
+# tools/tests/test_fidelity_ledger.py, and the path-gap docs
+# (docs/BACKLOG_v0.4.0.md, docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md) even
+# though none of them ever appear in a fresh archive/launch-repo checkout --
+# see .gitattributes for why those entries sit outside the marked block. Only
+# move a path inside the marked block with the same explicit, written sign-off
+# .gitattributes requires for it; an incidental new export-ignore line must
+# never silently widen this guard's blind spot again.
 pathspecs=(
   .
   ':!scripts/ci/check_public_history_text.sh'
@@ -62,7 +90,12 @@ pathspecs=(
 if [ -f .gitattributes ]; then
   while IFS= read -r pat; do
     [ -n "$pat" ] && pathspecs+=( ":(glob,exclude)${pat}" )
-  done < <(awk '/^[[:space:]]*#/ { next } /(^|[[:space:]])export-ignore([[:space:]]|$)/ { print $1 }' .gitattributes)
+  done < <(awk '
+    /^[[:space:]]*# --- BEGIN history-scan-exempt/ { active=1; next }
+    /^[[:space:]]*# --- END history-scan-exempt/   { active=0; next }
+    /^[[:space:]]*#/ { next }
+    active && /(^|[[:space:]])export-ignore([[:space:]]|$)/ { print $1 }
+  ' .gitattributes)
 fi
 
 limit="${GE007_HISTORY_TEXT_HIT_LIMIT:-80}"

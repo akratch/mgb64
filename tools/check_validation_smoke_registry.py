@@ -68,7 +68,18 @@ def main() -> int:
         # when the script is absent. Only flag a fidelity/ script as missing
         # when the fidelity tree exists but the specific script inside it
         # does not (a genuine phantom).
-        if script.startswith("fidelity/") and not os.path.isdir(os.path.join(root, "tools", "fidelity")):
+        #
+        # Check a load-bearing FILE (ledger.py, matching CMakeLists.txt's
+        # GE007_HAVE_FIDELITY_PROGRAM gate), not os.path.isdir() (2026-07-10,
+        # CR-1 fix). `git archive` / GitHub "Download ZIP" still emit a bare,
+        # EMPTY tools/fidelity/ directory entry for the export-ignored tree,
+        # and extracting that archive materializes an empty directory --
+        # os.path.isdir() is TRUE for that empty directory, so this guard was
+        # treating the real public-archive artifact as "the fidelity tree
+        # exists but the script is missing" (a false phantom) and failing out
+        # of the box for any public-archive consumer who runs
+        # `cmake -B build -DPORT_VALIDATION_TESTS=ON && ctest`.
+        if script.startswith("fidelity/") and not os.path.isfile(os.path.join(root, "tools", "fidelity", "ledger.py")):
             continue
         missing.append(script)
 

@@ -142,10 +142,42 @@ if(BUILD_TESTING)
     # (i.e. the public archive) simply doesn't register those tests, the same
     # "absent prereq -> not configured" convention add_port_validation_smoke
     # uses below for a missing ROM.
-    if(EXISTS "${CMAKE_SOURCE_DIR}/tools/fidelity")
+    #
+    # Gate on a specific load-bearing FILE, not the directory (2026-07-10,
+    # CR-1 fix). `git archive` / GitHub "Download ZIP" still emits a bare,
+    # EMPTY tools/fidelity/ directory entry for an export-ignored tree, and
+    # `tar -x`/unzip materializes that empty directory on extraction -- so
+    # `if(EXISTS tools/fidelity)` is TRUE in exactly the public-consumer
+    # checkout this gate exists to protect, registering ~10 fidelity ctests
+    # against files that were never extracted (all ~9 then FAIL, one SKIPs,
+    # naming this internal program's file layout in the output). ledger.py is
+    # the file every fidelity ctest below ultimately depends on, so its
+    # presence is the correct proxy for "this is a real internal checkout".
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py")
         set(GE007_HAVE_FIDELITY_PROGRAM TRUE)
     else()
         set(GE007_HAVE_FIDELITY_PROGRAM FALSE)
+    endif()
+
+    # IM-1 (2026-07-10 fidelity-leak review): fail loudly, not silently, if an
+    # INTERNAL checkout ever loses the fidelity tree. Pre-CR-1, a checkout
+    # missing tools/fidelity hard-failed ~10 ctests with missing-file errors;
+    # post-CR-1 it configures clean and those ctests just don't register --
+    # indistinguishable from a genuine public checkout unless something checks
+    # for exactly this. docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md is
+    # export-ignored the same way tools/fidelity/ is, so it is absent from
+    # every public archive/launch-repo checkout (only a bare empty docs/design/
+    # directory entry survives extraction there, not this file) and present in
+    # every real internal checkout -- so its presence, paired with the
+    # fidelity tree's absence, can only mean an internal checkout lost
+    # tools/fidelity/ (a bad rebase, an overzealous cleanup, ...), not that
+    # this is a legitimate public/export-filtered tree.
+    if(EXISTS "${CMAKE_SOURCE_DIR}/docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md" AND NOT GE007_HAVE_FIDELITY_PROGRAM)
+        message(FATAL_ERROR
+            "internal checkout has docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md "
+            "but is missing tools/fidelity/ledger.py -- refusing to silently drop the "
+            "fidelity ctest surface (ledger/asm-audit/hash-coverage ratchet). Restore "
+            "tools/fidelity/ (e.g. `git checkout -- tools/fidelity` or re-clone).")
     endif()
 
     add_test(
