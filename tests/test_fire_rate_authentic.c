@@ -79,6 +79,20 @@ int main(void) {
     CHECK(fireRateEffectiveAutoRate(0, 1, 3) == 0,   "eff rate ON fire_rate 0 -> 0");
     CHECK(fireRateEffectiveAutoRate(-5, 1, 3) == -5, "eff rate ON fire_rate <0 -> unchanged");
 
+    /* --- FID-0066: the GUARD full-auto gate (chrlv.c chrlvFireWeaponRelated)
+     * reuses this SAME divisor helper — self->firecount[hand] % eff_rate — so the
+     * guard path scales symmetrically with the player. KF7 Soviet (the Dam guard
+     * rifle) has AutomaticFiringRate 3: OFF fires every 3 ticks, ON every 9.
+     * The guard's `< 0` always-fire branch and `firecount % (eff_rate * 2)`
+     * sub-flag also flow through this helper unchanged. NB: this only covers the
+     * shared arithmetic; the guard call site itself is exercised end-to-end by
+     * tools/fidelity/guard_fire_rate_symmetry_smoke.sh. --- */
+    CHECK(fireRateEffectiveAutoRate(3, 0, 3) == 3,  "guard KF7 OFF -> divisor 3 (every 3 ticks)");
+    CHECK(fireRateEffectiveAutoRate(3, 1, 3) == 9,  "guard KF7 ON  -> divisor 9 (every 9 ticks, 1/3)");
+    CHECK((fireRateEffectiveAutoRate(3, 1, 3) * 2) == 18,
+          "guard KF7 ON  -> sub-flag divisor eff_rate*2 == 18 (2:1 ratio preserved)");
+    CHECK(fireRateEffectiveAutoRate(-1, 1, 3) == -1, "guard non-automatic (rate<0) -> unchanged (always-fire branch)");
+
     /* --- cadence over a fixed tick window at locked 60Hz (clock==1) --- */
     {
         const int fire_rate = 3;      /* AK47-class automatic (fires ~every 3 ticks) */

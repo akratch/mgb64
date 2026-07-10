@@ -831,6 +831,16 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # opt-out (draw-only never enters the sim), and (c) the opt-out reproduces the leak
     # (fail-on-revert control).
     add_port_validation_smoke(port_silo_intro_aperture_regression silo_intro_aperture_regression.sh 300)
+    # FID-0066: NPC full-auto cadence symmetry (the port-half of the FID-0056
+    # parity skew). Replays dam_forward_30s — on which guard chr=6 (KF7, rate=3)
+    # sustains full-auto — and, from the GE007_TRACE_GUARD_AUTOFIRE gate-fire
+    # stream, asserts the DEFAULT (fix-ON) within-burst inter-shot interval is
+    # exactly FrameCost(=3)x the GE007_FIRE_RATE_AUTHENTIC=0 (opt-out) interval,
+    # AND the opt-out sim-hash is byte-identical to the recorded pre-fix baseline.
+    # Exercises the real chrlvFireWeaponRelated call site end-to-end: a divisor-
+    # scaling revert collapses the ON interval to the OFF interval (ratio 1x) and
+    # reddens this lane. Two full 1802-tick replays -> 300s. ROM-gated / ares-free.
+    add_port_validation_smoke(port_guard_fire_rate_symmetry_smoke fidelity/guard_fire_rate_symmetry_smoke.sh 300)
 endif()
 
 # T5: cheap intro-path regression
