@@ -518,6 +518,18 @@ if(BUILD_TESTING)
     target_include_directories(test_fire_rate_authentic PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME fire_rate_authentic COMMAND test_fire_rate_authentic)
 
+    # Metal MSAA sample-count resolution — ROM-free, Metal-free unit test
+    # (FID-0018). Compiles the exact pure helper the Metal backend uses
+    # (gfx_msaa_util.c) so the requested->device-clamped rasterSampleCount ladder
+    # and the same-pass sample-count consistency guard are checked without a live
+    # MTLDevice. Runs on every platform (the helper is pure C).
+    add_executable(test_msaa_sample_count
+        "${CMAKE_SOURCE_DIR}/tests/test_msaa_sample_count.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d/gfx_msaa_util.c"
+    )
+    target_include_directories(test_msaa_sample_count PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/fast3d")
+    add_test(NAME msaa_sample_count COMMAND test_msaa_sample_count)
+
     # speedgraphframes frame-spike clamp — ROM-free unit test (FID-0017 / M2.4).
     add_executable(test_speedgraph_clamp
         "${CMAKE_SOURCE_DIR}/tests/test_speedgraph_clamp.c"
@@ -830,6 +842,7 @@ set(FAST3D_SOURCES
     src/platform/fast3d/gfx_cc.c
     src/platform/fast3d/gfx_backend.c
     src/platform/fast3d/gfx_room_normals.c
+    src/platform/fast3d/gfx_msaa_util.c
 )
 # Native Metal backend (macOS-only, opt-in at runtime). GL TU stays on all platforms.
 if(APPLE)

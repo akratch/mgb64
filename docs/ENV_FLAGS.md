@@ -499,7 +499,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_MUTE` | ? |  | 1 |  |
 | `GE007_NATIVE_EXPLOSION_FALLBACK` | ? |  | 1 |  |
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
-| `GE007_NO_A2C` | ? |  | 1 |  |
+| `GE007_NO_A2C` | ? |  | 2 |  |
 | `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | ? |  | 1 |  |
 | `GE007_NO_BOND_BODY_FIX` | ? |  | 1 |  |
 | `GE007_NO_CAMERA_SEED_FIX` | ? |  | 1 |  |
@@ -515,6 +515,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | ? |  | 1 |  |
 | `GE007_NO_INTRO_PHASE3` | ? |  | 1 |  |
 | `GE007_NO_INTRO_ROOTMOTION` | ? |  | 1 |  |
+| `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | ? |  | 1 |  |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | ? |  | 1 |  |
 | `GE007_NO_SKY` | ? |  | 1 |  |

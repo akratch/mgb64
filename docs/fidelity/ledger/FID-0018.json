@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P1",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "gfx_metal.mm:1209",
     "gfx_metal.mm:2131",
@@ -19,6 +19,10 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M3.1",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "tests/test_msaa_sample_count.c + native-Metal MSAA0/MSAA4 pixel diff (89.5% edge-localized, sim-hash 0c10c8a9952539a0 identical both ways)"
     }
   ],
   "history": [
@@ -28,6 +32,13 @@
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M3.1",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T10:56:06Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "tests/test_msaa_sample_count.c + native-Metal MSAA0/MSAA4 pixel diff (89.5% edge-localized, sim-hash 0c10c8a9952539a0 identical both ways)",
+      "note": "Metal now honors Video.MSAA: MS scene color attachment resolves into s_scene_color, rasterSampleCount plumbed through mtl_pso_for, A2C on alpha-tested cutouts under MSAA, SSAO off under MSAA (GL contract). MSAA=1 byte-identical to pre-fix; GE007_NO_METAL_MSAA negative control. Regression lane: ctest msaa_sample_count (fail-on-revert proven)."
     }
   ]
 }
