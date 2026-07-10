@@ -26,7 +26,12 @@ OUT_DIR="/tmp/mgb64_knife_impact_$$"
 LEVEL=33
 CHRNUM=0
 WARP_FRAME=60
-WARP_DISTANCE=120
+# FID-0066: 120 -> 90. Under the faithful default guard fire cadence
+# (Input.FireRateAuthentic=1) the warped guard's fire/anim schedule shifts and
+# the 120-unit throw deterministically missed (0 hit events -> false-red). At 90
+# the knife lands on chr 0 under BOTH flag states (default ON: hit frame 258;
+# legacy GE007_FIRE_RATE_AUTHENTIC=0: hit frame 192), keeping crash-branch coverage.
+WARP_DISTANCE=90
 GIVE_FRAME=70
 EQUIP_FRAME=85
 FIRE_SPEC="110:240"
