@@ -1,0 +1,143 @@
+# Fidelity Effort — Code Review & Epic Completion Plan (2026-07-10)
+
+> Internal design doc (`docs/design/**`, export-ignored). Consolidates a 6-lane
+> read-only review of the S-Tier fidelity effort and lays out the plan to
+> complete the Epic toward 1.0. Source reports: `scratchpad/review-lane-{A..F}-*.md`.
+
+**Review method.** Six parallel read-only lanes: A sim-fix correctness (Fable),
+B renderer-fix correctness (Fable), C fidelity tooling (Opus), D docs & repo
+hygiene (Sonnet), E ledger integrity (Sonnet), F systemic + Epic map (Opus).
+
+**Headline verdict.** The fixes are sound — **0 Critical, 0 High in the code
+itself**; every opt-out path was verified byte-identical, both renderer folds
+are correct, sim-purity holds, and the glass algebra is an exact identity. The
+real weaknesses are in the **connective tissue**: the ratchet has inert teeth in
+some paths, the ledger's machine-readable fields lag its own prose, a red gate is
+live on main, one fix created an unledgered balance skew, and **the internal
+program would leak into the public archive**. All fixable and well-scoped.
+
+---
+
+## Part 1 — Findings & Cleanup Backlog
+
+Severity is the review's own; ★ = confirmed live this synthesis.
+
+### P0 — Integrity, correctness, leak (do before any public push or unattended loop)
+
+| # | Sev | Finding | Fix |
+|---|-----|---------|-----|
+| C1 | HIGH ★ | **Public-leak surface** (Lane D). `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**` have no `export-ignore`; `BACKLOG_v0.4.0.md` + dated `RECOMP_LANDSCAPE_SURVEY` defeat the globs; personal Gmail in 2 tracked `scripts/*.sh`; 86 commits carry Claude/session trailers; the WORKFLOW "public=source" model bypasses `export-ignore` entirely. | Decide intent (is the fidelity program public or internal?). If internal: add `export-ignore` for the three trees + the two path-gap docs; scrub the email; add a trailer-strip to the public-publish path. If the publish flow is now direct-to-public, `export-ignore` is not load-bearing — the guard must move to the push path. **Gate before next public release.** |
+| C2 | HIGH ★ | **Blocked-on integrity trap** (Lane E). FID-0011/0012/0013 are `blocked_on: FID-0032` (now `verified`) → `is_actionable()` marks them ready, but their prose says they need FID-0062 re-validation; FID-0054 has the same issue with no `blocked_on`. An unattended loop would act on stale/inverted combat findings. | Add `FID-0062` (or a new "combat-realign" gate) to `blocked_on` of FID-0011/0012/0013/0054 until FID-0062 is `verified`. |
+| C3 | IMP ★ | **`env_reference_current` RED on main** (Lane A+D). ENV_FLAGS header says 904, table has 905 rows; `--check` exits 1 → fails tier-1 verify. | One-command regen: `python3 tools/gen_env_reference.py --repo-root . --out docs/ENV_FLAGS.md`. (Coordinate — remaster agent has an uncommitted CMakeLists.txt and may be adding texpack flags.) |
+| C4 | MED | **`verify_all.sh` fail-open** (Lane C). Verdict green when every gate SKIPs → in ROM-less/ares-less CI the ratchet silently degrades to tier-1 static checks yet reports green. | Make a SKIP of a required tier count as non-pass (or emit an explicit "degraded, N gates skipped" verdict that CI treats as amber, not green). |
+| C5 | MED | **Ledger gating is bypassable** (Lane C+E). `transition` allows any status→any status (backward, skip, resurrect terminal); evidence is a non-empty-string check, path never verified. FID-0046's evidence is a malformed private-`/tmp` path that resolves to nothing. | Enforce a legal transition edge-set in `cmd_transition`; verify evidence paths exist (or are a recognized gate name) in `validate`; fix/scrub FID-0046's evidence. |
+
+### P1 — Fidelity correctness & missing ratchets
+
+| # | Sev | Finding | Fix |
+|---|-----|---------|-----|
+| P1a | IMP ★ | **NPC full-auto unfixed** (Lane A, `chrlv.c:8297-8308`). Guards use the same per-frame `firecount % rate` gate FID-0056 fixed for the player, so with the fix default-ON the player fires at N64 cadence while **guards fire ~3× it** — a player-vs-guard balance skew that didn't exist pre-fix. Unledgered. | File a FID. Fix symmetrically (tick-scale the guard counter behind the same `Input.FireRateAuthentic`) — the faithful choice, since retail gated both on the same frame counter. Add to the fire-rate regression evidence. |
+| P1b | HIGH | **FID-0019 has no opt-out flag + no real lane** (Lane E). The Metal shadow fix landed with no `GE007_NO_*` (policy violation) and its cited lane doesn't exercise shadow scenes. | Add the opt-out flag; add a shadow-casting regression scene/assertion or downgrade its status honestly. |
+| P1c | HIGH | **FID-0006 lane doesn't guard the fail path** (Lane E, self-admitted). | Strengthen the lane or re-open the finding. |
+| P1d | IMP | **FID-0056 has no end-to-end gate** (Lane A+E). The unit test re-implements the gate; a gun.c call-site revert stays green. Canonical tape is PP7 (never hits the machinegun case). | Record the open AK47 sustained-fire tape as a `combat_route_capture` baseline so a call-site revert reddens. |
+| P1e | IMP | **`step==1` assumptions beyond the noted one** (Lane A). Burst catch-up divide (`gun.c:18372`) and `field_88C<2` state timers (`gun.c:19058/19067`) mis-behave in authentic mode under `g_ClockTimer>1`. | Blocks F5/variable-clock: land the `>=`-accumulator refactor before uncapped-FPS work; widen the warning comment now. |
+| P1f | MED | **`compare_combat_trace --align tick` silently drops data** (Lane C). One-sided empty-roster ticks are dropped pre-intersection, hiding whole-roster `guards[].present` divergences — the alignment FID-0062 leaned on. | Treat a one-sided full/empty-roster tick as a divergence, not a drop. Re-validate FID-0062's numbers after. |
+| P1g | MED | **Loop sense lanes are inert** (Lane C). S5 (asm) runs `asm_audit.py` with no subcommand → argparse exit 2 swallowed → no-op; S3 (rdp) maps to a missing `sense_rdp_sweep.sh`; loop dedup swallows a 2nd distinct bug in an already-ledgered file (OR not AND on suspect file). | Fix the S5 invocation, build/land S3, tighten dedup to (file AND signature). |
+| P1h | MED | **`sense_trace_sweep` uses wrong alignment** (Lane C, `:294`) — default `global`, not `--align tick`, so combat candidates use the mode the comparator itself calls untrustworthy. | Pass `--align tick`. |
+
+### P2 — Hygiene, docs, minor code
+
+- **Raw-getenv → registered-accessor batch** (all lanes): ~898/905 flags read via raw `getenv` → blank ENV_FLAGS type/default. The **fix-flags** to migrate first: `GE007_NO_AUTOSHOT_BULLETTYPE_FIX`, `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX`, `GE007_NO_CULL_ASPECT_FIX`, `GE007_NO_SKY_ASPECT_FIX`, `GE007_NO_CAMERA_SEED_WALK`, and the intro cluster. Inverse gap: the settings-registered `GE007_FIRE_RATE_AUTHENTIC`/`_N64_FRAME_COST` are **absent** from ENV_FLAGS (generator doesn't scan `settingsRegister` mirrors) — teach it to.
+- **35 dead glass scripts** (Lane B/D): of 50 `tools/glass_*`, 12 wired, 3 semi-wired, 35 dead. Reap — but 2 are name-checked in the remaster AAA doc; **coordinate before deleting**.
+- **Stale docs**: FAITHFULNESS_S_TIER_PLAN.md 97 checkboxes all unchecked (Phase 0 done); BACKLOG MG.3 "RESOLVED" note over a still-open checklist; 2 dead CHARTER links (QUIRKS.md, ESCALATIONS.md); stale "OFF by default" comments (`gun.c:42`, `fire_rate_authentic.h:51/63`) missed in the default-flip; the remaster AAA doc (`04-content-geometry-effects.md`) references the retired six glass flags (remaster-owned — **coordinate**).
+- **FID-0050 missing** (Lane C/D/E): an unexplained ID gap — document it as intentionally skipped or reallocate.
+- **Minor code**: `weapon_cycle_queue` add-before-clamp overflow; `lvl.c` cap duplicates `frame_clamp` rather than sharing it; `s_msaa_failed_req` doesn't retry after MSAA off→on at the same size; stale CW/CCW winding comment near the FID-0019 shadow code; `gfxMsaaPipelineCountsConsistent` has no production caller (test-only guard).
+- **sim-hash cross-config (FID-0061)**: mitigated (default Release) not solved — no lane asserts the binary is Release (a Debug build gives a false RED); strict-FP flags are the full fix.
+
+**Confirmed clean (no action):** no tracked build artifacts (`__pycache__` false alarm retired), LEDGER.md current, commit convention 98.8% consistent, all referenced tool paths exist, no duplicate findings, no FP-reassociation in any extracted helper.
+
+---
+
+## Part 2 — Epic Completion Plan (toward 1.0)
+
+**Where we are.** Phase 0 substrate is 100% complete and the loop is trustworthy.
+The **content pass has barely begun** — the mileage, not the machine, is what
+remains. Exit-criteria status (from Lane F against plan §1):
+
+| # | Criterion | Status | Evidence |
+|---|-----------|--------|----------|
+| 1 | Sim parity across routes | **NOT STARTED** | 0 routes `gate:true`, Dam-only |
+| 2 | Renderer parity | PARTIAL | pixel infra built, not run to closure |
+| 3 | RDP parity | **NOT STARTED** | S3 lane unbuilt (missing script) |
+| 4 | ASM audit | 14 / 388 | ~1 defect per few reviews so far |
+| 5 | State-hash coverage | MOSTLY MET | 19/20 (Streets FID-0046 open) |
+| 6 | Flag hygiene | PARTIAL | 24 unreferenced gates; raw-getenv batch |
+| 7 | Endurance (24h soak) | **NOT STARTED** | — |
+| 8 | Ledger closure | **NOT MET** | 40 findings open |
+
+**Critical path** (Lane F): route coverage → RDP lane → run sense lanes to
+closure → ASM drain → RNG-phase parity → visible artifacts → Streets → ledger
+drain → endurance.
+
+### Phases
+
+**Phase A — Foundation hardening (P0/P1 cleanup). Do first; small, high-leverage.**
+Make the machine trustworthy before scaling mileage: fix the ratchet teeth
+(C4 fail-open, C5 gating), the blocked-on trap (C2), the red gate (C3), the leak
+surface (C1), and the fidelity gaps that are quick (P1a NPC symmetry, P1b/c/d
+missing lanes, P1f/g/h loop/comparator). Exit: `verify_all` can't report a false
+green, the ledger's fields match its prose, main is green, no known leak.
+
+**Phase B — Coverage build-out (the tall pole).** Build **FID-0031 route
+coverage** (P0, XL — gates criteria 1/2/3): author the ~20-stage deterministic
+route set with `gate:true`, each with an ares oracle capture. Build **FID-0043
+RDP sense lane** (S3, currently a missing script). Add the AK47 combat tape
+(P1d). **Remaster-coordination constraint:** every pixel/RDP sweep must pin
+`--faithful` (RenderScale=1, FXAA/MSAA off, stock textures) or criteria 2/3 are
+unmeasurable — the shipped baseline is deliberately non-pixel-stock.
+
+**Phase C — Sense-lane closure.** Run S1 (trace), S2 (pixel), S3 (RDP) to
+closure across the route set. Each divergence → ledger → fix cycle. This is where
+criteria 1/2/3 actually get satisfied and where most new findings surface.
+
+**Phase D — ASM audit drain.** 14 → 388 bodies via risk-ranked parallel batches
+(the pilot found ~1 defect per few reviews — expect a steady stream of real
+port-defects). Closes criterion 4 / FID-0042.
+
+**Phase E — Combat parity.** **FID-0063 RNG call-count phase parity** — the XL
+linchpin and deepest unknown (native vs retail differ in how many
+`randomGetNext()` calls per tick, so probabilistic perception fires a few ticks
+off). May be unclosable without a documented waiver. Resolving it (or waiving it)
+unblocks FID-0011/0012/0013/0054 — the whole combat-parity cluster.
+
+**Phase F — Visible artifacts.** Land the near-done **FID-0009 Silo sky-leak**
+(already on `fix/fid-0009-silo-apertures`, needs rebase+review+merge), then
+**FID-0008/0010** sky-leaks, then the hardest single visual — **FID-0001 glass
+compositing** (RDP framebuffer-memory blend not stock-accurate) — plus FID-0002
+overlapping panes and FID-0004 shatter/tint parity. Resume **FID-0064** (MP ammo
+HUD, early-stage branch).
+
+**Phase G — Audio & converter.** Audio FID-0025 (env/pole XOR), 0026 (bank
+loop/tuning), 0027 (voice starvation), 0028 (dead-synth hygiene); converter
+FID-0036 (PROPDEF union cases), 0037 (padnames byte-swap), 0039 (OP11).
+
+**Phase H — Endurance & closure.** Resolve **Streets FID-0046** non-determinism
+(purity fuzz 19/20), run the **24h soak** (criterion 7), drain the ledger to the
+closure threshold (criterion 8), and confirm the verify ratchet green end-to-end
+at its tightest. Then 1.0.
+
+### Sequencing notes
+- Phases A→B are gating; C/D can run in parallel once B lands the routes.
+- E (RNG parity) is the biggest risk — start its investigation early even while
+  C/D run, since a waiver decision affects the closure criteria.
+- F's Silo fix is the cheapest visible win available right now (near-merge).
+- Coordinate all rendering-adjacent work (F glass, pixel sweeps) with the
+  concurrent AAA-remaster effort; pin `--faithful` for all parity measurement.
+
+### Immediate next actions (when the coast is clear of the remaster agent)
+1. C3 ENV_FLAGS regen (unblocks the red gate).
+2. C2 blocked-on trap (protects the unattended loop).
+3. P1a file + fix NPC full-auto symmetry (a real gameplay balance bug the
+   fire-rate fix introduced).
+4. C1 leak decision + fix (before any public push).
+5. Begin Phase B FID-0031 route coverage (the tall pole).
