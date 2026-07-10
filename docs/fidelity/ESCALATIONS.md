@@ -23,4 +23,28 @@ Format, one entry per escalation:
 - Resolution (filled when closed):
 ```
 
-_No open escalations._
+## 2026-07-10 C1/D1 — fidelity program + personal email already on the public remote
+- Lane/phase: Phase A (C1 leak fix), FIDELITY_REVIEW_AND_PLAN_2026-07-10 P0.
+- What was attempted: C1 forward-fix branch (export-ignore for the fidelity
+  trees + path-gap docs, email scrub, archive-reachability guard) — lands as
+  forward protection. During verification the controller confirmed against the
+  live remote: `origin/main` (the public repo) ALREADY contains
+  `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**`, the personal
+  email address in both public-launch scripts, and ~86 commits carrying
+  AI-authorship/session trailers — the ongoing publish flow is a plain
+  `git push origin main`, which never consults `export-ignore`.
+- The contradiction / irreversible action: Decision D1 declared the program
+  internal-only, but it is already published. Removing it retroactively
+  requires rewriting or replacing public-repo history — irreversible and
+  outward-facing, therefore owner-only (charter rule 10; the loop never
+  touches remotes).
+- Decision needed from owner: (a) rewrite/replace the public repo history to
+  expunge the fidelity trees + email + trailers, (b) accept the program as
+  public retroactively and revise D1 to forward-only (new content stays
+  internal via the landed guards), or (c) accept as-is including future
+  pushes (revoking D1). Until decided, NO further public push should include
+  new `docs/fidelity/**` / `tools/fidelity/**` / `baselines/tapes/**` content
+  — note that a plain `git push origin main` of current local main WOULD do
+  so; the landed guard blocks the archive/bundle paths only. The email scrub
+  is on local HEAD either way and shrinks the exposure on the next push.
+- Resolution: OPEN.
