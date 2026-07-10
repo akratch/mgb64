@@ -1,0 +1,28 @@
+{
+  "id": "FID-0046",
+  "title": "Streets (LEVELID 29) vanilla non-deterministic across processes under determinism envelope",
+  "class": "instrumentation-gap",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/sim_state_hash_registry.c",
+    "level 29 Streets"
+  ],
+  "repro": "two vanilla --deterministic runs of level 29 (Streets) produce different sim hashes; independent of GE007_UNCAP_FUZZ; exposed by tools/uncap_purity_gate.sh full matrix (reports UNSTABLE)",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/../../../private/tmp scratchpad task-stier05-report.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T00:19:51Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/reports/../../../private/tmp scratchpad task-stier05-report.md",
+      "note": ""
+    }
+  ]
+}
