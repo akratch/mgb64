@@ -1229,6 +1229,18 @@ use `MGB64_ARES_RNG_SEED_SCRIPT=GAMEPLAY_FRAME:SEED`, or the single-event pair
 `MGB64_ARES_RNG_SEED_FRAME` and `MGB64_ARES_RNG_SEED`; stock traces report
 `oracle.rng_seed.events`, `applies`, and `last_seed`.
 
+The stock-side analogue of `GE007_TRACE_RNG_CALLS` is
+`MGB64_ARES_RNG_PC_TRACE=PATH` (FID-0063): the instrumented ares build arms a
+CPU-dispatch PC hook at the retail `randomGetNext` entry (VRAM `0x7000A450`,
+the `GLOBAL_ASM` block in `src/random.c`; override with
+`MGB64_ARES_RNG_PC_HOOK=ADDR` for non-US layouts) and writes one JSONL line per
+call: call index `i`, guest `$ra` (caller PC = `ra - 8` for a `jal`),
+`g_randomSeed` BEFORE the call's step, `g_GlobalTimer`, and the VI frame.
+Consecutive lines must be exactly one PRNG step apart unless a seed write
+(scripted lock or `randomSetSeed`) landed between them, so the log is
+self-validating against missed or duplicated calls. Default off; the hook only
+reads guest state and never adds RNG calls.
+
 `tools/rom_oracle_routes/dam_regular_glass_shatter_rng_isolation_probe.json`
 uses the call-level native seed control as an explicit renderer-isolation route:
 it keeps the Dam pad-103 same-pose stock/native shot from the visual probe,

@@ -94,6 +94,7 @@ if ! git -C "$SRC_DIR" diff --quiet || ! git -C "$SRC_DIR" diff --cached --quiet
     while IFS= read -r dirty_path; do
         case "$dirty_path" in
             ares/n64/controller/gamepad/gamepad.cpp|\
+            ares/n64/cpu/cpu.cpp|\
             ares/n64/n64.hpp|\
             ares/n64/rdp/render.cpp|\
             ares/n64/vulkan/parallel-rdp/parallel-rdp/rdp_device.cpp|\
@@ -372,6 +373,15 @@ struct OracleState {
   OracleRngSeedEvent rngSeedEvents[64];
   u32 rngSeedEventCount = 0;
   bool rngSeedRepeat = false;
+  /* FID-0063 randomGetNext caller-PC trace (MGB64_ARES_RNG_PC_TRACE, default off).
+   * One JSONL line per retail randomGetNext() ENTRY: call index, $ra (caller),
+   * g_randomSeed BEFORE the step (chain-validatable offline: consecutive seeds
+   * must be exactly one PRNG step apart), g_GlobalTimer, and the VI frame.
+   * The hook itself lives in cpu.cpp (dispatch PC compare against
+   * mgb64OracleRngPcHookAddress); it never CALLS randomGetNext and never
+   * writes guest memory. */
+  FILE* rngPcTrace = nullptr;
+  u64 rngPcCallIndex = 0;
   u32 rngSeedApplyCount = 0;
   int lastRngSeedEvent = -1;
   u64 lastRngSeedGameplayFrame = 0;
@@ -725,6 +735,34 @@ struct OracleState {
     loadForcePlayerEvents();
     loadCrosshairEvents();
     loadRngSeedEvents();
+
+    /* FID-0063: randomGetNext caller-PC trace. Enabled ONLY when
+     * MGB64_ARES_RNG_PC_TRACE names a writable path; the hook address defaults
+     * to the retail US randomGetNext entry (VRAM 0x7000A450, src/random.c
+     * GLOBAL_ASM "glabel randomGetNext") and can be overridden with
+     * MGB64_ARES_RNG_PC_HOOK for other layouts. While disabled the global
+     * stays 0 and the cpu.cpp dispatch compare never fires the call. */
+    if(auto rngPcPath = getenv("MGB64_ARES_RNG_PC_TRACE")) {
+      if(*rngPcPath) {
+        u32 hookAddress = 0x7000A450;
+        if(auto hookEnv = getenv("MGB64_ARES_RNG_PC_HOOK")) {
+          if(*hookEnv) {
+            char* end = nullptr;
+            u64 parsed = strtoull(hookEnv, &end, 0);
+            if(end && *end == 0 && parsed != 0) hookAddress = (u32)parsed;
+          }
+        }
+        rngPcTrace = fopen(rngPcPath, "wb");
+        if(!rngPcTrace) {
+          fprintf(stderr, "mgb64 oracle: failed to open RNG PC trace %s\n", rngPcPath);
+        } else {
+          mgb64OracleRngPcHookAddress = hookAddress;
+          fprintf(stderr,
+            "mgb64 oracle: RNG PC trace hook=0x%08X -> %s\n",
+            hookAddress, rngPcPath);
+        }
+      }
+    }
 
     auto path = getenv("MGB64_ARES_ORACLE_TRACE");
     if(!path || !*path) path = getenv("MGB64_ARES_MOVEMENT_TRACE");
@@ -4113,6 +4151,29 @@ struct OracleState {
     }
   }
 
+  /* FID-0063: one line per retail randomGetNext() entry. `seed` is
+   * g_randomSeed BEFORE this call's step, so consecutive lines must be exactly
+   * one PRNG step apart unless a seed WRITE (randomSetSeed / scripted lock)
+   * landed between them — the offline analyzer uses that invariant to prove
+   * the log captured every call. `ra` is the guest $ra at entry (caller PC =
+   * ra - 8 for a jal). `global` is g_GlobalTimer at entry (exact sim-tick
+   * attribution, no VI-window smear). */
+  auto rngPcCall(u64 ra) -> void {
+    if(!rngPcTrace) return;
+    rngPcCallIndex++;
+    u64 seed = randomSeedAddress != 0 && validRdram(randomSeedAddress, 8)
+      ? readU64(randomSeedAddress)
+      : 0;
+    s32 global = readS32(globalTimerAddress);
+    fprintf(rngPcTrace,
+      "{\"i\":%llu,\"ra\":\"0x%08X\",\"seed\":\"0x%016llX\",\"global\":%d,\"vf\":%llu}\n",
+      (unsigned long long)rngPcCallIndex,
+      (u32)ra,
+      (unsigned long long)seed,
+      global,
+      (unsigned long long)videoFrame);
+  }
+
   auto validPlayerPointer(u32 player) -> bool {
     return player != 0 && validRdram(player, PlayerSpeedGo + 4);
   }
@@ -4891,12 +4952,24 @@ struct OracleState {
       fclose(trace);
       trace = nullptr;
       complete = true;
+      if(rngPcTrace) {
+        mgb64OracleRngPcHookAddress = 0;
+        fclose(rngPcTrace);
+        rngPcTrace = nullptr;
+        fprintf(stderr,
+          "mgb64 oracle: RNG PC trace captured %llu call(s)\n",
+          (unsigned long long)rngPcCallIndex);
+      }
       fprintf(stderr, "mgb64 oracle: captured %llu frame(s)\n", (unsigned long long)videoFrame);
     }
   }
 
   ~OracleState() {
     if(trace) fclose(trace);
+    if(rngPcTrace) {
+      mgb64OracleRngPcHookAddress = 0;
+      fclose(rngPcTrace);
+    }
   }
 };
 
@@ -4905,6 +4978,15 @@ auto oracleState() -> OracleState& {
   return state;
 }
 
+}
+
+/* FID-0063: guest PC the CPU dispatcher compares against on every block/
+ * instruction dispatch (ares/n64/cpu/cpu.cpp). 0 = disabled (default);
+ * configure() arms it only when MGB64_ARES_RNG_PC_TRACE is set. */
+u32 mgb64OracleRngPcHookAddress = 0;
+
+auto mgb64OracleRngPcCall(u64 ra) -> void {
+  oracleState().rngPcCall(ra);
 }
 
 auto mgb64OracleControllerRead(n32 data) -> n32 {
@@ -4970,11 +5052,50 @@ elif "mgb64OracleVideoFrame" not in text:
 elif text != n64_hpp.read_text(encoding="utf-8"):
     n64_hpp.write_text(text, encoding="utf-8")
 
+# FID-0063: randomGetNext caller-PC hook declarations (used by cpu.cpp).
+text = n64_hpp.read_text(encoding="utf-8")
+if "mgb64OracleRngPcCall" not in text:
+    text = text.replace(
+        "  auto mgb64OracleFrameHook() -> void;\n",
+        "  auto mgb64OracleFrameHook() -> void;\n"
+        "  extern u32 mgb64OracleRngPcHookAddress;\n"
+        "  auto mgb64OracleRngPcCall(u64 ra) -> void;\n",
+        1,
+    )
+    n64_hpp.write_text(text, encoding="utf-8")
+
 gamepad_cpp = src / "ares/n64/controller/gamepad/gamepad.cpp"
 text = gamepad_cpp.read_text(encoding="utf-8")
 if "mgb64OracleControllerRead" not in text:
     text = text.replace("\n  return data;\n}\n\nauto Gamepad::getInodeChecksum", "\n  return mgb64OracleControllerRead(data);\n}\n\nauto Gamepad::getInodeChecksum", 1)
     gamepad_cpp.write_text(text, encoding="utf-8")
+
+# FID-0063: randomGetNext caller-PC hook in the CPU dispatcher. Every entry
+# into the retail randomGetNext lands here with ipu.pc == the function entry:
+# jal/jalr are hard block terminals in the recompiler ("Unconditional jumps
+# (J/JR/JAL/JALR)" in recompiler.cpp's compilation-window model, cross-block
+# chaining disabled), so a called function's first instruction is always
+# reached through this dispatch; the interpreter path dispatches every
+# instruction. The compare sits AFTER the interrupt/NMI/devirtualize
+# early-outs so an interrupted or faulting dispatch at the hook PC is not
+# double-counted when it re-enters. Disabled (address 0) unless
+# MGB64_ARES_RNG_PC_TRACE is set; the hook only reads guest state.
+cpu_cpp = src / "ares/n64/cpu/cpu.cpp"
+text = cpu_cpp.read_text(encoding="utf-8")
+if "mgb64OracleRngPcCall" not in text:
+    anchor = "  auto access = devirtualize<Read, Word>(ipu.pc);\n  if(!access) return true;\n"
+    if anchor not in text:
+        raise SystemExit("FAIL: cpu.cpp dispatch anchor not found for the RNG PC hook")
+    text = text.replace(
+        anchor,
+        anchor
+        + "\n"
+        + "  if(mgb64OracleRngPcHookAddress && (u32)ipu.pc == mgb64OracleRngPcHookAddress) {\n"
+        + "    mgb64OracleRngPcCall(ipu.r[31].u64);\n"
+        + "  }\n",
+        1,
+    )
+    cpu_cpp.write_text(text, encoding="utf-8")
 
 vi_cpp = src / "ares/n64/vi/vi.cpp"
 text = vi_cpp.read_text(encoding="utf-8")
