@@ -1,0 +1,30 @@
+{
+  "id": "FID-0075",
+  "title": "Heavier-mission boot-load non-determinism bounds deterministic-tape route coverage to missions 1-5",
+  "class": "coverage-gap",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/input_tape.c"
+  ],
+  "repro": "Record an intro-disable or self-contained traversal tape on a heavier mission (silo/archives/depot/egypt) or a boss (cradle/aztec) under the determinism envelope; replay via tools/fidelity/gate_routes_smoke.sh. Boss levels: tape length + record-path hash vary run-to-run. Heavier levels: intermittent 'tick misalignment at record 4 (expected rel 5, got 2)' boot-load race.",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/route_coverage_nondeterminism_2026-07-11.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:41:46Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/route_coverage_nondeterminism_2026-07-11.md",
+      "note": "Found while authoring the Phase B archetype route subset (FID-0031/D4). 6 gate:true routes landed on the reliably race-free early missions (Dam x2 + facility/runway/surface1/bunker1). Boss archetype (cradle/aztec) dropped for Mode-A non-determinism; heavier levels blocked by Mode-B boot-load tick race. FID-0046-adjacent."
+    }
+  ],
+  "blocked_on": [
+    "FID-0046"
+  ]
+}

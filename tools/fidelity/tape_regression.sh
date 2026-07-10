@@ -90,10 +90,16 @@ for tape in "${tapes[@]}"; do
         echo "tape-regression: FAIL $name — baseline missing level/sim_state_hash" >&2
         fail=1; continue
     fi
+    # Optional replay_env: space-separated KEY=VALUE deterministic state-injection
+    # (e.g. give/equip a non-default weapon) that a tape needs on replay because
+    # it is env-driven, not baked into the OSContPad stream. The baseline hash is
+    # captured WITH this env applied. Tapes without it (the common case) replay
+    # under the bare determinism envelope, byte-identical to before this field.
+    replay_env="$(json_get "$exp" replay_env)"
 
     dir="$(mktemp -d)"
     # shellcheck disable=SC2086
-    ( cd "$dir" && env "${ENVV[@]}" "$BIN" --rom "$ROM" --savedir "$dir/sd" \
+    ( cd "$dir" && env "${ENVV[@]}" $replay_env "$BIN" --rom "$ROM" --savedir "$dir/sd" \
         --level "$level" --deterministic --play-tape "$tape" \
         --sim-state-hash-out "$dir/rep.json" >"$dir/log" 2>&1 )
     rc=$?

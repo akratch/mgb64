@@ -841,6 +841,21 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # scaling revert collapses the ON interval to the OFF interval (ratio 1x) and
     # reddens this lane. Two full 1802-tick replays -> 300s. ROM-gated / ares-free.
     add_port_validation_smoke(port_guard_fire_rate_symmetry_smoke fidelity/guard_fire_rate_symmetry_smoke.sh 300)
+    # FID-0056 / P1d: end-to-end gate for the full-auto fire-cadence fix's gun.c
+    # CALL-SITE. Replays a committed AK47 sustained-fire tape (baselines/tapes/
+    # dam_ak47_sustained.ge7tape) that holds the full-auto machinegun case for 400
+    # ticks — the case the PP7 combat tape never reaches and the ROM-free unit test
+    # only re-implements. Input.FireRateAuthentic ships ON (faithful N64 cadence),
+    # so the gate asserts the authentic hash; a call-site revert makes the default
+    # behave like the legacy locked-60Hz cadence, diverging the hash and failing
+    # this lane. ares-free / ROM-gated. (--prove self-tests authentic != legacy.)
+    add_port_validation_smoke(port_ak47_fire_rate_capture_smoke fidelity/ak47_fire_rate_capture_smoke.sh 180)
+    # Phase B (FID-0031 / D4): ares-free hard gate for gate:true ROM-oracle routes.
+    # Enumerates every route marked "gate": true and replays its paired determinism
+    # tape (baselines/tapes/<tape>.ge7tape), asserting the sim-state hash. Enforces
+    # the route<->tape linkage: a route cannot claim gate:true without a passing
+    # tape. SKIPs cleanly (and passes on an empty gate set). ares-free / ROM-gated.
+    add_port_validation_smoke(port_gate_routes_smoke fidelity/gate_routes_smoke.sh 600)
 endif()
 
 # T5: cheap intro-path regression

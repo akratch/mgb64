@@ -1,0 +1,11 @@
+{
+  "tape": "surface1_traverse.ge7tape",
+  "level": "surface1",
+  "level_id": 36,
+  "difficulty": 0,
+  "tick_count": 362,
+  "controller_count": 1,
+  "sim_state_hash": "84f1ce11dfdc143b",
+  "replay_env": "GE007_DISABLE_LEVEL_INTRO=1 GE007_AUTO_FORWARD=60:180 GE007_AUTO_RIGHT=140:60 GE007_AUTO_CRIGHT=210:40",
+  "note": "Archetype traversal route on surface1 (Phase B, FID-0031/D4). Bond walks forward, strafes right, then turns (GE007_AUTO_FORWARD/RIGHT/CRIGHT baked into the captured OSContPad stream) with the level intro skipped (replay_env) so the movement window exercises the level geometry/collision sim. Deterministic under the determinism envelope + replay_env: record==replay1==replay2 (sim_state_hash byte-exact, verified across independent recordings). The ares-free determinism half of the surface1 gate:true route; the ares trace comparison is the manual oracle step (movement_oracle_capture.sh --route surface1_traverse). Regenerate only via scratchpad/finalize_archetype_tapes.sh. Gated by tools/fidelity/gate_routes_smoke.sh + tools/fidelity/tape_regression.sh."
+}

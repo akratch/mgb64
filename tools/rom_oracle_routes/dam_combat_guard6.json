@@ -1,6 +1,8 @@
 {
   "schema": "mgb64.rom_oracle.route.v1",
   "name": "dam_combat_guard6",
+  "gate": true,
+  "tape": "dam_combat_guard6",
   "level": "33",
   "frames": 300,
   "native_frames": 300,

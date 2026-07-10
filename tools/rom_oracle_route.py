@@ -212,6 +212,10 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("native_render_audit", False)
     if field == "native_menu_boot":
         return route.get("native_menu_boot", False)
+    if field == "gate":
+        return route.get("gate", False)
+    if field == "tape":
+        return route.get("tape", "")
     if field == "stock_speedframes":
         return route.get("stock_speedframes", route.get("native_speedframes", ""))
     if field == "stock_gameplay_start_global":
@@ -903,6 +907,19 @@ def validate_route(route: dict[str, Any]) -> None:
     route_bool(route, "compare_bond_anim", False)
     route_bool(route, "native_render_audit", False)
     route_bool(route, "native_menu_boot", False)
+    # Phase B (FID-0031, D4): gate:true promotes a route into the hard verify gate
+    # set. A gate:true route MUST carry a paired determinism tape
+    # (baselines/tapes/<tape>.ge7tape + .expected.json) so the ares-free ratchet
+    # (tools/fidelity/gate_routes_smoke.sh) can replay it; the "tape" field names
+    # that baseline (defaults to the route name). Additive: routes without "gate"
+    # default to False and are unaffected.
+    if route_bool(route, "gate", False):
+        tape_name = str(route.get("tape", route.get("name", "")))
+        if not tape_name:
+            errors.append("gate:true route must resolve a tape name (set 'tape' or 'name')")
+    tape_field = route.get("tape", "")
+    if tape_field not in ("", None) and not isinstance(tape_field, str):
+        errors.append("route tape must be a string when set")
     for env_field in ("native_env", "stock_env", "native_config"):
         direct_env = route.get(env_field, {})
         if direct_env in (None, ""):

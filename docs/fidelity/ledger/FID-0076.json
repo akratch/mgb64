@@ -1,0 +1,27 @@
+{
+  "id": "FID-0076",
+  "title": "5 gate routes lack paired ares stock captures (menu-nav choreography + unlocked EEPROM prerequisite)",
+  "class": "coverage-gap",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "tools/rom_oracle_routes"
+  ],
+  "repro": "sense_trace_sweep --gate prints per-route 'no cached stock capture' skips for bunker1/dam_forward/facility/runway/surface1_traverse",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "tools/rom_oracle_routes/facility_traverse.json"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T23:37:37Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "tools/rom_oracle_routes/facility_traverse.json",
+      "note": "Phase B DoD gap made durable per review: the 6 gate:true routes are 3-run deterministic, but only dam_combat_guard6 has a stock-side ares capture; the other 5 need per-mission frontend menu-nav choreography + an unlocked EEPROM recipe before movement_oracle_capture.sh can drive them. Blocks S-tier criterion 1 route-parity measurement on those archetypes."
+    }
+  ]
+}

@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "discovered",
+  "status": "triaged",
   "suspect": [
     "MGB64_ARES_TRACE_RDP_COMMANDS",
     "GE007_TRACE_RDP_RENDER_MODES"
@@ -15,6 +15,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/sense_rdp_sweep.sh"
     }
   ],
   "history": [
@@ -24,6 +28,13 @@
       "to": "discovered",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T22:51:33Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "tools/fidelity/sense_rdp_sweep.sh",
+      "note": "S3 RDP native/ares command-stream differential lane BUILT: tools/fidelity/sense_rdp_sweep.sh + tools/fidelity/rdp_fingerprint.py. Wires both suspects (native GE007_TRACE_RDP_RENDER_MODES -> [RDP-MODE] fingerprint; ares MGB64_ARES_TRACE_RDP_COMMANDS via analyze_stock_rdp_command_stream.py --json). Self-tests green (seeded RDP-mode divergence caught), ROM/ares-free. Native capture verified: 22 distinct RDP configs on Dam --faithful. Registered in verify_manifest (tier-1 selftest + tier-3 --gate) and the loop S3 slot. Remaining for closure (Phase C): wire the ares RDP sidecar auto-capture and run the differential to zero un-triaged clusters across the gate:true routes."
     }
   ]
 }

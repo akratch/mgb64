@@ -9,6 +9,7 @@ ctest --test-dir build --output-on-failure -R radial_deadzone      # FID-0015 mo
 ctest --test-dir build --output-on-failure -R weapon_cycle_queue    # FID-0016 mouse-wheel notch queue/drain lane
 ctest --test-dir build --output-on-failure -R speedgraph_clamp      # FID-0017 speedgraphframes spike-clamp lane
 ctest --test-dir build --output-on-failure -R fidelity_asm_audit_valid  # Task 2.4 (FID-0042) ASM-audit queue schema+verdict integrity
+tools/fidelity/sense_rdp_sweep.sh --selftest                 # FID-0043 S3 RDP comparator self-test (ROM/ares-free; proves the native/ares RDP-config differ catches a seeded divergence)
 # tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)
 ctest --test-dir build --output-on-failure -R "port_"        # validation smokes incl. oracle route contract
 tools/sim_invariance_gate.sh
@@ -19,8 +20,11 @@ tools/renderer_parity_capture.sh --scene all
 tools/uncap_purity_gate.sh                                   # Task 0.5: 0-tick purity, full 20-level matrix
 tools/fidelity/tape_regression.sh                            # (Task 0.6) input-tape replay hash regression
 tools/fidelity/combat_route_capture_smoke.sh                 # FID-0054 combat-route determinism guard (also ctest port_combat_route_capture_smoke)
+tools/fidelity/ak47_fire_rate_capture_smoke.sh               # FID-0056/P1d full-auto fire-rate gun.c call-site gate (also ctest port_ak47_fire_rate_capture_smoke; --prove self-tests authentic!=legacy)
+tools/fidelity/gate_routes_smoke.sh                          # FID-0031/D4 ares-free hard gate: replays the paired determinism tape of every gate:true route (also ctest port_gate_routes_smoke)
 tools/fidelity/aspect_cull_coupling_smoke.sh                 # FID-0058 aspect->sim cull coupling: widen-OFF aspect-invariant + widen-ON divergence characterization
 tools/fidelity/sense_trace_sweep.sh --gate                   # Task 2.1 S1 trace ratchet (gate:true routes; SKIPs cleanly w/o ROM+ares)
 tools/fidelity/sense_pixel_sweep.sh --gate                   # Task 2.2 S2 pixel ratchet (gate:true checkpoints; SKIPs cleanly w/o ROM+ares)
+tools/fidelity/sense_rdp_sweep.sh --gate                     # FID-0043 S3 RDP native/ares command-stream differential (native ROM-gated, ares differential needs --ares-rdp-sidecar; SKIPs cleanly)
 # appended by later tasks:
 # tools/uncap_purity_gate.sh                                  (Task 0.5)
