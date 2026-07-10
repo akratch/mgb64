@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "waived",
   "suspect": [
     "src/game/gun.c:18247"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:19579"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md"
     }
   ],
   "history": [
@@ -22,6 +26,17 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:19579",
       "note": "ASM authority jpt_80054084 (gun.c:19579, dispatch gun.c:20144-20154 idx=weapon_id-2) vs live C switch(weapon_id-2) (gun.c:18247). Three residual mis-groupings after TRIGGER/TANKSHELLS/M16/FNP90 fixes: idx23 ROCKETLAUNCH ASM=pistol but C=default(throwable); idx27 REMOTEMINE ASM=throwable but C=pistol; idx32 PLASTIQUE ASM=throwable but C=pistol. Player-visibility (reachability under state==2 + ammo guard) to be root-caused. Found by S-tier Task 2.4 ASM-audit pilot #1."
+    },
+    {
+      "ts": "2026-07-10T07:07:02Z",
+      "from": "discovered",
+      "to": "waived",
+      "evidence": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md",
+      "note": "STATE-2-only fix not landable as scoped. ROCKETLAUNCH STATE-2 is dead code (fires via bespoke STATE-1 state 26/27 -> gunFireTankShell, never reaches state 2). REMOTEMINE/PLASTIQUE STATE-1 also diverges (C=guns->state2, retail=throwable_item->throw); the throw is gated purely on weapon_firing_status latched by the STATE-2 pistol case, so removing them from pistol (per the narrow finding) would stop them from ever being thrown -- a regression of a user-confirmed feature + the detonator path. Faithful fix needs a coupled jpt_80053F24+jpt_80054084 rework + oracle validation."
     }
-  ]
+  ],
+  "waiver": {
+    "reason": "STATE-2-only fix not landable as scoped. ROCKETLAUNCH STATE-2 is dead code (fires via bespoke STATE-1 state 26/27 -> gunFireTankShell, never reaches state 2). REMOTEMINE/PLASTIQUE STATE-1 also diverges (C=guns->state2, retail=throwable_item->throw); the throw is gated purely on weapon_firing_status latched by the STATE-2 pistol case, so removing them from pistol (per the narrow finding) would stop them from ever being thrown -- a regression of a user-confirmed feature + the detonator path. Faithful fix needs a coupled jpt_80053F24+jpt_80054084 rework + oracle validation.",
+    "retest": "coupled STATE-1(jpt_80053F24)+STATE-2(jpt_80054084) dispatch rework scoped with ares oracle captures of stock REMOTEMINE/PLASTIQUE throw + ROCKETLAUNCH fire"
+  }
 }
