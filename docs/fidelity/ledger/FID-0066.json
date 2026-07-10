@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P1",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "src/game/chrlv.c"
   ],
@@ -17,6 +17,14 @@
     {
       "kind": "gate-log",
       "path": "docs/fidelity/derivations/FID-0066-npc-fire-rate.md"
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/chrlv.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/guard_fire_rate_symmetry_smoke.sh"
     }
   ],
   "history": [
@@ -33,6 +41,20 @@
       "to": "root-caused",
       "evidence": "docs/fidelity/derivations/FID-0066-npc-fire-rate.md",
       "note": "Root-caused vs matched decomp body chrlvFireWeaponRelated (0x7F02D734): guard firecount%%auto_rate gate = same per-rendered-frame model FID-0056 fixed for the player; port 60Hz advances it ~3x too fast. Measured on dam_forward_30s (guard chr=6 KF7 rate=3): within-burst inter-shot interval OFF=3 frames -> ON=9 frames = exactly 3.0x. Divergence + divisor-only-mirror rationale in derivation."
+    },
+    {
+      "ts": "2026-07-10T20:52:52Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chrlv.c",
+      "note": "Fix committed d7a5849: divisor-only symmetric mirror in chrlvFireWeaponRelated behind Input.FireRateAuthentic (eff_rate = fireRateEffectiveAutoRate(auto_rate, authentic, frame_cost)). Shared FID-0056 helper reused; firecount++ kept verbatim (retail-ungated). GE007_TRACE_GUARD_AUTOFIRE counter added."
+    },
+    {
+      "ts": "2026-07-10T20:52:52Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/fidelity/guard_fire_rate_symmetry_smoke.sh",
+      "note": "Landed. Both-sides evidence (dam_forward_30s, guard chr=6 KF7 rate=3): within-burst inter-shot interval OFF=3 -> ON=9 frames = exactly 3.0x (eff_rate 3->9); default sim-hash 95944e22->11f0b8ef, opt-out restores 95944e22 byte-identical. Player path untouched (gun.c unchanged; dam_combat_guard6 hash 3c89 unchanged both flags). Regression lane port_guard_fire_rate_symmetry_smoke (commit 5f6d173) PASS at HEAD; fail-on-revert PROVEN (divisor neutered -> ON interval collapses to 3 == OFF -> CADENCE FAIL exit 1). Baseline re-record 91320c1 (tape_regression PASS). ENV_FLAGS regen bca507f (env_reference_current green). verify_all all-tiers in progress."
     }
   ]
 }
