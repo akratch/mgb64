@@ -3332,6 +3332,13 @@ void platformFrameSync(void) {
         extern void portTraceFrame(void);
         portTraceFrame();
     }
+    /* Per-frame sim-hash trace (GE007_SIM_HASH_EVERY_FRAME): behavior-neutral
+     * frame-lock diagnostic for aspect/cull A/B (FID-0058). No-op otherwise. */
+    {
+        extern void simStateHashPerFrameTrace(int global_timer);
+        extern s32 g_GlobalTimer;
+        simStateHashPerFrameTrace((int)g_GlobalTimer);
+    }
 
     /* Send retrace message to all registered scheduler clients */
     os_scheduler.frameCount++;

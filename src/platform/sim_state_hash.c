@@ -68,6 +68,23 @@ uint64_t sim_state_hash_compute(const SimHashRegion *hr, int nh) {
     return h;
 }
 
+uint64_t sim_state_hash_compute_region(const SimHashRegion *hr, int nh, int k) {
+    uint64_t h = FNV64_OFFSET;
+    if (k < 0 || k >= nh) return h;
+    h = fnv1a(h, hr[k].name ? hr[k].name : "", hr[k].name ? strlen(hr[k].name) : 0);
+    if (!hr[k].base || hr[k].size == 0) return h;
+    const unsigned char *b = (const unsigned char *)hr[k].base;
+    size_t sz = hr[k].size, i = 0;
+    for (; i + sizeof(uintptr_t) <= sz; i += sizeof(uintptr_t)) {
+        uintptr_t w;
+        memcpy(&w, b + i, sizeof w);
+        uint64_t c = canon_word(w, hr, nh);   /* full set for canonicalization */
+        h = fnv1a(h, &c, sizeof c);
+    }
+    if (i < sz) h = fnv1a(h, b + i, sz - i);
+    return h;
+}
+
 int sim_state_hash_emit_json(const char *path, uint64_t hash,
                              const SimHashRegion *rg, int n,
                              int frame, const char *replay) {

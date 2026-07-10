@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "root-caused",
   "suspect": [
     "src/game/bondview.c:2064"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "doc-anchor",
       "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F3"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "tools/fidelity/aspect_cull_coupling_smoke.sh"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F3",
       "note": "Survey F3. GoldenRecomp independently hit this (widescreen cull \u00b14 screens desync attract demos; they revert to stock in demoMode/Jungle intro). Feeds FID-0033: extend 0-tick purity fuzz to cover widescreen/cull state on render-only frames."
+    },
+    {
+      "ts": "2026-07-10T08:08:33Z",
+      "from": "discovered",
+      "to": "root-caused",
+      "evidence": "tools/fidelity/aspect_cull_coupling_smoke.sh",
+      "note": "VERDICT: aspect-dependent gameplay CONFIRMED. A/B replay of baselines/tapes/dam_forward_30s.ge7tape (level dam, determinism envelope, only aspect varied via GE007_WINDOW_WIDTH/HEIGHT 960x720 vs 1280x720) diverges: 4:3 sim-hash=9a17e103b4ad437a, 16:9=b29050401571502c. Per-region breakdown (GE007_SIM_HASH_PER_REGION): ONLY prop_pool differs (guard/prop sim state) 873cce37ffb5ae3a vs a475fe7af0d2f72c; pool + g_BgRoomInfo (room_rendered) identical at final frame. Frame-lock (GE007_SIM_HASH_EVERY_FRAME): FIRST divergence at global=1 (first sim tick), region prop_pool, BEFORE g_BgRoomInfo diverges -> coupling is the DIRECT frustum-plane path, not the room_rendered read-back. Root cause: widenCullHorizontal (src/game/bondview.c:2064) widens the horizontal frustum-plane bss globals in sub_GAME_7F0785DC; those planes are read by SIM visibility tests camIsPosInScreen/camIsPosInScreenBox/sub_GAME_7F054D6C -> chrIsPosOffScreen (chrlv.c:12719) + object/guard detection (chrobjhandler.c:11045), so an edge guard/object is on-screen earlier at 16:9 than at retail 4:3. PROOF widenCull is SOLE cause: with GE007_NO_CULL_ASPECT_FIX=1 both aspects are BYTE-IDENTICAL (9a17e103b4ad437a). Class: parity-divergence. Byte-identity of diagnostics verified vs clean-main build (identical hashes all aspects). Fix (clean decouple: sim tests read faithful 4:3 frustum, render cull stays widened) is NON-TRIVIAL (shared plane globals) -> ACT deferred to follow-on. Regression lane tools/fidelity/aspect_cull_coupling_smoke.sh PASSES (invariant: widen-OFF aspect-invariant; characterization: widen-ON diverges)."
     }
   ]
 }

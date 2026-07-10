@@ -11,6 +11,7 @@
 #include "game/chrai.h"    /* pos_data_entry, POS_DATA_ENTRY_LEN, PropRecord  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Set from --sim-state-hash-out (defined in main_pc.c). */
 extern const char *g_simStateHashOut;
@@ -95,6 +96,30 @@ void simHashRegistryBuild(SimHashRegion *out, int *n) {
     *n = i;
 }
 
+/* Per-frame region-hash trace (GE007_SIM_HASH_EVERY_FRAME). Behavior-neutral
+ * diagnostic for frame-locking an aspect A/B: emits the prop_pool (guard/prop
+ * sim state) and g_BgRoomInfo (render->sim room_rendered read-back) region
+ * hashes once per sim frame, keyed on g_GlobalTimer, so two runs' logs can be
+ * diffed to the FIRST diverging frame + region. Only the cheap regions are
+ * hashed per-frame (the 8 MB pool is skipped for speed). FID-0058. */
+void simStateHashPerFrameTrace(int global_timer) {
+    static int enabled = -1;
+    if (enabled < 0) enabled = (getenv("GE007_SIM_HASH_EVERY_FRAME") != NULL);
+    if (!enabled) return;
+    SimHashRegion regs[SIM_HASH_MAX_REGIONS];
+    int n = 0;
+    simHashRegistryBuild(regs, &n);
+    uint64_t prop = 0, room = 0;
+    for (int r = 0; r < n; r++) {
+        if (regs[r].name && strcmp(regs[r].name, "prop_pool") == 0)
+            prop = sim_state_hash_compute_region(regs, n, r);
+        else if (regs[r].name && strcmp(regs[r].name, "g_BgRoomInfo") == 0)
+            room = sim_state_hash_compute_region(regs, n, r);
+    }
+    fprintf(stderr, "[SIM-HASH-FRAME] global=%d prop_pool=%016llx g_BgRoomInfo=%016llx\n",
+            global_timer, (unsigned long long)prop, (unsigned long long)room);
+}
+
 void simStateHashEmitIfRequested(int frame, const char *replay) {
     if (!g_simStateHashOut) {
         return;
@@ -113,6 +138,22 @@ void simStateHashEmitIfRequested(int frame, const char *replay) {
                 fclose(df);
             }
         }
+    }
+
+    /* Per-region hash breakdown (GE007_SIM_HASH_PER_REGION). Behavior-neutral
+     * diagnostic: lets an aspect-ratio A/B attribute a full-hash divergence to
+     * the specific region whose bytes changed — e.g. is the render->sim
+     * room_rendered read-back (g_BgRoomInfo) the only mover, or does it
+     * propagate into pool/prop_pool guard state (auto-aim / targeting)?
+     * FID-0058 / FID-0012. */
+    if (getenv("GE007_SIM_HASH_PER_REGION")) {
+        for (int r = 0; r < n; r++) {
+            uint64_t rh = sim_state_hash_compute_region(regs, n, r);
+            fprintf(stderr, "[SIM-HASH-REGION] %02d %-20s size=%zu hash=%016llx\n",
+                    r, regs[r].name ? regs[r].name : "", regs[r].size,
+                    (unsigned long long)rh);
+        }
+        fflush(stderr);
     }
 
     uint64_t h = sim_state_hash_compute(regs, n);
