@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "root-caused",
   "suspect": [
     "src/game/random.c"
   ],
@@ -16,6 +16,10 @@
     },
     {
       "kind": "gate-log",
+      "path": "docs/fidelity/derivations/FID-0063-rng-phase.md"
+    },
+    {
+      "kind": "counter-log",
       "path": "docs/fidelity/derivations/FID-0063-rng-phase.md"
     }
   ],
@@ -33,6 +37,13 @@
       "to": "triaged",
       "evidence": "docs/fidelity/derivations/FID-0063-rng-phase.md",
       "note": "Round-1 measurement: per-tick call-count differential infrastructure landed (tools/fidelity/rng_callcount_diff.py, ctest rng_callcount_diff_unittest; seeds->counts via 33-bit PRNG chain walk, validated 218/218 ticks against the exact native rng.call_count counter). Natural route: rate parity pre-combat within schedule noise; fire burst on the same tick both sides (282v287); post-engagement bursts phase-shifted (the +76/+108t perception offset); NOT a gross constant-rate class. Seed-locked route (dam_combat_guard6_rngseedlock, both sides g_randomSeed=0x1D8F3CC2B at gameplay frame 40): SAME seed in one idle frame -> retail draws 15, native 13; systemic idle-weighted bias stock +2.1 draws/frame (cum -15 -> -99 over 40 idle frames), flattening to +0.5/frame walking; streams never re-sync (seed_match_ticks 0). Native side of the locked frame fully attributed (shuffle x3, idle-roll x4, sight x2, ai x1, tickstand x1, viewmodel x2). Ruled out: idle-roll cadence (breathing=0 both sides, bondhead.c:887), port viewmodel prep (ASM-anchored: 7F060FF0 scale / 7F06105C roll, same guards). Remaining: guard-AI pool/cadence vs Bond-frame consumer -> needs retail callsite hook (round-2 map in derivation). BONUS FIX: ares combat.rng_seed read the BE HIGH word (0/1 after first step) -> part of the sec5/sec8 per-frame rng_seed divergence was instrumentation artifact; patched to base+4."
+    },
+    {
+      "ts": "2026-07-10T23:45:24Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0063-rng-phase.md",
+      "note": "Round 2: retail caller-PC attribution via the new ares randomGetNext PC hook (MGB64_ARES_RNG_PC_TRACE, cpu.cpp dispatch compare at VRAM 0x7000A450; 39904 retail calls logged, seed-chain-validated). Consumer sets are 1:1 (derivation sec9.2 census: shuffle 3/f both, muzzle pair 2/f both, bheadUpdateIdleRoll 4-draw group cadence-matched, chrlvTickStand 4.35 vs 4.38/f, ai/AI_SetNewRandom ~equal). The ENTIRE residual (+1.2-1.5/f idle) is the geometry-conditional perception draw chrCheckTargetInSight (retail 0x7F029FE0 = chrlv.c:5749, 3.08 vs 1.60/f): identical consumer at the identical program point on both sides; the RATE differs because patrolling guards (chrnum 2,39-45) sit 300-2000u apart at aligned ticks (27+ static guards byte-identical) \u2014 patrol-phase state divergence from the pre-route history (menu vs direct boot, natural seeds), upstream of the RNG layer. First-frame ground truth corrects round 1: retail 12 vs native 13 (the '15' was RDRAM dcache-writeback smear). No missing/extra/reordered consumer exists; charter 4.2 fix N/A. D5 closure gated on FID-0054/0055 guard-state parity. Headline machine-reproducible: rng_callcount_diff.py --lock-seed (lock_frame block; unit-tested)."
     }
   ]
 }

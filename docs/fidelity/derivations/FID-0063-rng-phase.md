@@ -1,7 +1,12 @@
-# FID-0063 — systemic randomGetNext() call-count phase desync: measurement method + round-1 findings
+# FID-0063 — systemic randomGetNext() call-count phase desync: measurement method + round-1/round-2 findings
 
-Status: round 1 (measurement infrastructure + first differential + consumer census).
+Status: **root-caused (round 2, §9)** — the retail idle excess is fully attributed
+per-callsite: consumer sets are 1:1; the entire residual is the geometry-conditional
+guard-perception draw, driven by cross-side guard patrol-state divergence, not an
+RNG-layer defect.
 Decision D5: committed to FULL closure — call-for-call RNG parity, no tolerance exit.
+Round-2 consequence: D5 closure is GATED ON guard-state parity (the FID-0054/0055
+position/anim lanes); there is no missing or extra consumer to fix in the port.
 
 ## 1. The measurement insight
 
@@ -159,7 +164,10 @@ both chains forward from LOCK:
    seed.** Stock's application frame (rel −123, starting exactly at LOCK)
    drew **15**; native's first locked frame (rel −120, also starting exactly
    at LOCK) drew **13**. Same seed values in, +2 draws consumed by retail in
-   one idle frame.
+   one idle frame. ⚠ **CORRECTED in §9.3**: the per-call PC-trace ground truth
+   puts the retail first locked frame at **12** draws (native 13 confirmed);
+   the "15" was the RDRAM-writeback/VI-window smear (§9.1). The idle-window
+   MEAN bias (item 2) survives at +1.2/frame and is fully attributed in §9.2.
 2. **The per-frame gap is systemic and idle-weighted.** Cumulative
    native−stock delta from the lock: −15 at rel −120 → −99 at rel 0 (motion
    onset) ≈ **stock draws +2.1/frame more during idle**; the drift flattens to
@@ -214,7 +222,7 @@ takes effect on the next ares oracle rebuild. The movement-record `rng` block
    log `$ra` + call index per gameplay frame). With it, diff the retail
    locked-frame consumption order (15 draws) against native's fully-attributed
    13 (§6.3) and name the +2 idle consumer directly. This closes the
-   remaining attribution gap in one capture.
+   remaining attribution gap in one capture. **DONE — see §9.**
 2. **Per-frame seed pinning refinement:** script up to 64 per-frame seed
    events on both sides (`GE007_AUTO_RNG_SEED_SCRIPT="40:S,41:S,…"`,
    `MGB64_ARES_RNG_SEED_SCRIPT` same, offsetting the known 1-frame skew of the
@@ -228,3 +236,117 @@ takes effect on the next ares oracle rebuild. The movement-record `rng` block
    gap is closed; then extend to boot/level-load parity (the pre-lock draws:
    `bodiesReset` ×6, `init_player_data_ptrs_construct_viewports`, guard-body
    picks — the T6/D29 census window).
+
+## 9. Round 2 — retail caller-PC attribution (root cause)
+
+### 9.1 Instrumentation: ares randomGetNext caller-PC hook
+
+`MGB64_ARES_RNG_PC_TRACE=PATH` (default off) arms a guest-PC compare in the
+ares CPU dispatcher (`ares/n64/cpu/cpu.cpp`, patched by
+`tools/prepare_ares_movement_oracle_build.sh`) at the retail `randomGetNext`
+entry (VRAM `0x7000A450`, the `GLOBAL_ASM` in `src/random.c`; override
+`MGB64_ARES_RNG_PC_HOOK`). Correctness: `J/JR/JAL/JALR` are hard
+block-window terminals in the ares recompiler (no cross-block chaining), so
+EVERY call enters through the dispatcher with `ipu.pc` at the entry; the
+compare sits after the interrupt/NMI/devirtualize early-outs so a faulting
+dispatch is not double-counted. One JSONL line per call: call index, guest
+`$ra` (caller PC = `ra − 8`), `g_randomSeed` at entry, `g_GlobalTimer`, VI
+frame.
+
+**Log-completeness validation:** every distinct sampled seed in the post-lock
+stream lies on the LOCK chain in monotone order, and the per-frame counts are
+internally consistent with per-callsite structure. **Instrumentation caveat
+discovered:** the RDRAM-side `seed`/`global` fields LAG the guest CPU's
+dcache (writeback visibility) by a few draws and catch up in bursts — this is
+also why the §2 VI-window sampler smears by ±a few draws at tick boundaries
+(it reads the same RDRAM). Per-call chain POSITION is the call index from the
+LOCK entry; the seed column is auxiliary.
+
+Reference run (dam_combat_guard6_rngseedlock, rebuilt instrumented ares +
+Release native, 2026-07-11): 39,904 retail calls logged; LOCK consumed at
+retail call 6173 (global 1263, VI frame 2408); native LOCK consumed at
+call_count 699 (frame ending global 121). Both application points at the
+same sim-tick boundary, confirming §4.
+
+### 9.2 Complete callsite census — consumer sets are 1:1
+
+Caller identification: exact `jal randomGetNext` word (`0x0C002914`) in the
+retained `GLOBAL_ASM` reference bodies (`src/game/gun.c` etc.), the
+`Address 0x7F......` function headers (chrlv.c, gun.c, fog.c, …), and
+address-encoding `sub_GAME_7F......` names. 40-frame locked idle window
+(frame boundaries = the per-frame `shuffle_player_ids` triple):
+
+| retail callsite (`ra−8`) | retail function | native consumer | stock rate | native rate |
+|---|---|---|---|---|
+| `0x7F09B470` | `shuffle_player_ids` loop (player_2.c:685, precedes `sub_GAME_7F09B4D8`) | `shuffle_player_ids<-bossMainloop` | 3.00/f | 3.00/f |
+| `0x7F060FF0` | `handles_firing_or_throwing_weapon_in_hand` muzzle scale (gun.c:8198 asm) | `portPrepareFirstPersonWeaponModel` gun.c:3663 | 1.00/f | 1.00/f |
+| `0x7F06105C` | same, muzzle roll (gun.c:8226 asm) | gun.c:3669 | 1.00/f | 1.00/f |
+| `0x7F08DBDC/0x7F08DC64/0x7F08DCEC/0x7F08DD34` | `bheadUpdateIdleRoll` 4-draw group (bondhead.c:514) | `bheadUpdate` ×4 | 4 draws ×1 firing in window | same (×1 firing) |
+| `0x7F02B05C` | `chrlvTickStand` sleep draw (chrlv.c:6365, `+0x2C4`) | `chrlvTickStand<-chrlvActionTick` | 4.35/f | 4.38/f |
+| `0x7F036188` | `ai()` `AI_SetNewRandom` (chrai.c:1595/2414) | `ai<-chrlvActionTick` | 1.32/f | 1.45/f |
+| `0x7F02B608` | `chrlvTickAnim` (chrlv.c:6630, `+0x120`) | `chrlvTickAnim` | 0.17/f | 0.10/f |
+| `0x7F05E3CC` | weapon-sway syncchange class (gun.c:2069 region) | `bgunCalculateBlend`/`gunSetBondWeaponSway` | 0.05/f | 0.22/f |
+| `0x7F029FE0` | **`chrCheckTargetInSight` probabilistic gate** (chrlv.c:5749-5755, `+0x270` from US `0x7F029D70`) | `chrCheckTargetInSight<-ai` | **3.08/f** | **1.60/f** |
+
+No retail callsite lacks a native counterpart and vice versa. Totals over the
+window: stock 14.07/f vs native 12.85/f (+1.22 stock); adjacent windows:
+pre-lock 15.90 vs ~14.33, later (walking) 15.80 vs 15.61. The mean bias is
+real but is **entirely concentrated in the perception-gate class** (+1.48/f);
+every other consumer is call-for-call matched (the sway class contributes
+−0.17/f the OTHER way, Bond-sway state phase).
+
+### 9.3 Divergence statement (the “+2” named)
+
+**Retail consumer:** `chrCheckTargetInSight`'s probabilistic perception draw,
+retail callsite `0x7F029FE0` (`AI_IFISeeBond` → chrai.c:1929 →
+chrlv.c:5749-5755). **The native port has the identical consumer at the
+identical program point** (`src/game/chrlv.c:5749`, decomp-matching body) —
+nothing is missing, extra, or reordered. The draw is CONDITIONAL on guard–Bond
+geometry (vision cone ±110°, `visionrange`/200u floor, `
+fogGetScaledFarFogIntensitySquared()` gate): it fires at a different RATE
+because the PATROLLING guard population's state differs between the two runs.
+At aligned rel ticks in the locked window, 27+ static Dam guards match
+**byte-identically** (`pos` delta 0.0) while the patrollers (chrnum 2, 39–45)
+sit **300–2000 units apart** with different phase (e.g. chr 45 walks 295u
+natively while parked on stock; chr 39/40 walk 633–685u on stock vs 150u
+natively). Patrol phase is a function of the whole pre-route history
+(menu-boot vs direct-boot + different natural boot seeds consuming
+`rand()%120+180` wallcounts / `rand()%5+14` sleeps before the lock) — i.e.
+upstream SIM STATE, unfixable at the RNG layer and unremovable by a mid-route
+seed lock.
+
+**First-frame ground truth (corrects §6.1):** retail 12 draws
+(`SSS C C A TTT C gg`) vs native 13 (`SSS HHHH CC A T gg` — native's
+bheadUpdateIdleRoll happened to hit its ≈40-frame phase in that exact frame;
+retail's fired 20 frames later in the window). Both consumed LOCK at their
+`shuffle_player_ids` triple.
+
+**Effect:** cross-side per-frame call-count divergence on any cross-boot route
+= perception-gate rate modulation by divergent patrol geometry → cumulative
+stream phase drift (±1–2/frame, window-dependent sign of everything except
+the perception class) → downstream probabilistic perception fires ticks off
+retail (the FID-0054 +76/+108t offset). **D5 call-for-call closure is
+therefore gated on guard-state parity (FID-0054 position lane / FID-0055 anim
+lane), not on an RNG-layer fix.** Charter §4.2 assessed: no faithful
+mechanically-small reintroduction exists because there is no missing
+consumer; no code change made.
+
+### 9.4 Machine-reproducible headline
+
+`tools/fidelity/rng_callcount_diff.py --lock-seed 0x00000001D8F3CC2B` now
+emits a `lock_frame` block: native `first_locked_frame_calls` via bounded
+chain scan to the lock-consuming record (=13, f=42, global 121), stock via
+per-global bucket walk from the application sample (lock bucket cum = 12,
+matching the PC-trace ground truth; RDRAM-lag caveat embedded in the output).
+Unit-tested in `tools/tests/test_rng_callcount_diff.py::TestLockFrameMode`
+(native reachability, stock buckets, segment gate, absent-lock).
+
+### 9.5 Round-3 map (if D5 is pursued past guard-state parity)
+
+1. Re-run this differential after the FID-0054/0055 guard position/anim lanes
+   land, on a route seed-locked from LEVEL LOAD on both sides (kills patrol
+   phase divergence at its source).
+2. The §8.2 per-frame seed pinning and §8.3 consumer-class isolation remain
+   valid follow-ups but are now known to be insufficient alone (they pin
+   VALUES, not patrol state).
+3. Boot/level-load draw parity (§8.4) unchanged.
