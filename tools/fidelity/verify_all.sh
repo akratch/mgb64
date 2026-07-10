@@ -8,11 +8,25 @@
 #
 #   docs/fidelity/reports/verify_<git-sha>.json
 #     { sha, started, gates: [{name, cmd, status: pass|fail|skip, seconds, log}],
-#       verdict: green|red, skipped_reason? }
+#       verdict: green|degraded|red, skip_count, fail_count, strict, skipped_reason? }
 #
-# Exit 0 iff verdict==green. A gate may be SKIPPED only for a missing prerequisite
-# (missing-ROM / missing-ares) -- charter rule 9 requires every skip be listed in the
-# report; skips do not turn the verdict red (the gate could not run, it did not fail).
+# A gate may be SKIPPED only for a missing prerequisite (missing-ROM / missing-ares /
+# missing-build, i.e. a fresh checkout with no `cmake -B build` yet) --
+# charter rule 9 requires every skip be listed in the report; a skip alone never turns the
+# verdict red (the gate could not run, it did not fail). BUT a skip is not a pass either
+# (C4, 2026-07-10 review): if every gate in the requested tier range SKIPped, a ROM-less/
+# ares-less CI run has silently degraded to whatever ran (often just tier-1 static checks)
+# while still claiming full coverage. So the verdict has three values:
+#
+#   green    -- fail_count == 0 and skip_count == 0 (every gate that was supposed to run,
+#               ran, and passed).
+#   degraded -- fail_count == 0 but skip_count > 0 (nothing failed, but N gate(s) could not
+#               run -- coverage is incomplete). Printed as "degraded: N gate(s) skipped".
+#   red      -- fail_count > 0 (something actually failed).
+#
+# Exit code: 0 for green; 0 for degraded UNLESS GE007_VERIFY_STRICT=1 is set, in which case
+# degraded exits 1 too (the release gate sets this so a ROM-less/ares-less environment can
+# never rubber-stamp a release); 1 for red always, strict or not.
 #
 # Usage:
 #   tools/fidelity/verify_all.sh [--tier N] [--manifest PATH] [--report-dir DIR]
@@ -20,6 +34,10 @@
 #   --tier N        run tiers <= N (default: all tiers present in the manifest).
 #                   The loop uses --tier 1 for inner-iteration checks; the full suite
 #                   runs before committing any sim-touching change.
+#
+#   GE007_VERIFY_STRICT=1   (env) treat a "degraded" (skip-only) verdict as a failure --
+#                   for release-oriented callers where a silent coverage drop must hard-fail
+#                   instead of passing through as green/degraded-but-exit-0.
 #
 # The manifest is APPEND-ONLY: adding a gate = appending a line; deleting a gate requires a
 # waiver ledger entry (charter rule 4 -- gates only get stricter). This script executes the
@@ -103,9 +121,25 @@ gate_name_for() {
 }
 
 # Prerequisite check for a gate. Prints "" if runnable, else a skip reason string.
-# Charter rule: skips allowed ONLY for missing-ROM / missing-ares prerequisites.
+# Charter rule: skips allowed ONLY for missing-ROM / missing-ares / missing-build
+# prerequisites.
 gate_skip_reason() {
     local tier="$1" cmd="$2"
+    # ctest-based gates (the bulk of tier 1) need a configured build/ tree --
+    # ctest's own test list is generated at `cmake -B build` time, so a fresh,
+    # build-less checkout would otherwise make every one of these report the same
+    # generic FAIL for the same root cause. Likewise check_sim_render_separation.sh
+    # nm's the built game objects (it already exits non-zero with "build the
+    # native port first" for the same reason -- this just lets verify_all record
+    # that as SKIP instead of a generic FAIL). Keyed on the exact substrings the
+    # manifest actually uses, so this can't accidentally swallow an unrelated
+    # command that merely mentions "build".
+    if [[ "$cmd" == *"--test-dir build"* || "$cmd" == *check_sim_render_separation.sh* ]]; then
+        if [[ ! -f build/CMakeCache.txt ]]; then
+            printf 'missing-build: build/ not configured (run: cmake -B build -DCMAKE_BUILD_TYPE=Release)\n'
+            return
+        fi
+    fi
     # Tier >= 2 gates drive the built binary against the retail ROM.
     if [[ "$tier" -ge 2 && ! -e "$ROM_PATH" ]]; then
         printf 'missing-ROM: %s not present\n' "$ROM_PATH"
@@ -222,11 +256,25 @@ while IFS= read -r rawline || [[ -n "$rawline" ]]; do
 done <"$MANIFEST"
 
 # --- verdict + JSON ---------------------------------------------------------------------
-if [[ "$FAIL_COUNT" -eq 0 ]]; then
-    VERDICT="green"
-else
+# C4 (2026-07-10 review): a SKIP is not a pass. green requires zero fails AND zero skips;
+# any skip with zero fails is "degraded" (amber) -- ratchet coverage silently dropped, but
+# nothing actually broke. A single fail is always red, skips or not.
+if [[ "$FAIL_COUNT" -gt 0 ]]; then
     VERDICT="red"
+elif [[ "$SKIP_COUNT" -gt 0 ]]; then
+    VERDICT="degraded"
+else
+    VERDICT="green"
 fi
+
+# GE007_VERIFY_STRICT=1 (release gate) promotes a "degraded" verdict to a hard failure --
+# see file header. Any non-empty value other than "0"/"" counts as strict, matching the
+# GE007_* boolean-flag convention used throughout the codebase (validation_common.sh).
+STRICT=0
+case "${GE007_VERIFY_STRICT:-}" in
+    ""|0) STRICT=0 ;;
+    *) STRICT=1 ;;
+esac
 
 SKIPPED_REASON=""
 if [[ "$SKIP_COUNT" -gt 0 ]]; then
@@ -235,6 +283,7 @@ fi
 
 VERIFY_SHA="$SHA" VERIFY_STARTED="$STARTED" VERIFY_VERDICT="$VERDICT" \
 VERIFY_SKIPPED_REASON="$SKIPPED_REASON" VERIFY_RECORDS="$RECORDS" \
+VERIFY_SKIP_COUNT="$SKIP_COUNT" VERIFY_FAIL_COUNT="$FAIL_COUNT" VERIFY_STRICT="$STRICT" \
 python3 - "$REPORT_JSON" <<'PY'
 import json, os, sys
 
@@ -259,6 +308,9 @@ report = {
     "started": os.environ["VERIFY_STARTED"],
     "gates": gates,
     "verdict": os.environ["VERIFY_VERDICT"],
+    "fail_count": int(os.environ["VERIFY_FAIL_COUNT"]),
+    "skip_count": int(os.environ["VERIFY_SKIP_COUNT"]),
+    "strict": bool(int(os.environ["VERIFY_STRICT"])),
 }
 skipped = os.environ.get("VERIFY_SKIPPED_REASON", "")
 if skipped:
@@ -271,6 +323,17 @@ print(out_path)
 PY
 
 echo "verify_all: verdict=${VERDICT} (pass=$((gate_index - FAIL_COUNT - SKIP_COUNT)) fail=${FAIL_COUNT} skip=${SKIP_COUNT})"
+if [[ "$VERDICT" == "degraded" ]]; then
+    echo "verify_all: degraded: ${SKIP_COUNT} gate(s) skipped -- ${SKIPPED_REASON}"
+fi
 echo "verify_all: report=${REPORT_JSON}"
 
-[[ "$VERDICT" == "green" ]]
+# Exit status: red always fails. degraded fails only under GE007_VERIFY_STRICT=1 (the
+# release gate). green always passes.
+if [[ "$VERDICT" == "red" ]]; then
+    exit 1
+elif [[ "$VERDICT" == "degraded" && "$STRICT" -eq 1 ]]; then
+    echo "verify_all: GE007_VERIFY_STRICT=1 -- degraded verdict treated as failure" >&2
+    exit 1
+fi
+exit 0
