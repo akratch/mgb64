@@ -392,7 +392,12 @@ if [[ "${APP_BUNDLE_INPUT}" == true ]]; then
             case "${REL}" in
                 Contents/Resources/AppIcon.icns|\
                 Contents/Resources/Localizable.xcstrings|\
-                Contents/Resources/PrivacyInfo.xcprivacy)
+                Contents/Resources/PrivacyInfo.xcprivacy|\
+                Contents/Resources/gamecontrollerdb.txt)
+                    # SDL_GameControllerDB: plain-text community pad mappings
+                    # (zlib; THIRD_PARTY.md + lib/sdl_gamecontrollerdb/LICENSE.txt).
+                    # No ROM/asset content -- deliberately shipped so exotic and
+                    # handheld controllers map out of the box.
                     ;;
                 *)
                     fail "Unexpected app resource in asset-free bundle: ${REL}"
