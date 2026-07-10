@@ -1,0 +1,27 @@
+{
+  "id": "FID-0056",
+  "title": "Full-auto fire rate gated on per-rendered-frame counter (field_88C), unscaled \u2014 automatics likely fire 2-4x too fast at locked 60Hz vs N64 15-30Hz",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:17927"
+  ],
+  "repro": "input tape holds fire; count shots per wall-second in ares oracle (real N64 frame costs) vs native (g_ClockTimer==1 at 60Hz); field_88C++ unscaled while adjacent field_890 += g_ClockTimer is tick-scaled; gate is field_88C % fire_rate",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F1"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F1",
+      "note": "Survey F1. GoldenRecomp README confirms empirically (unfixed). Mechanism confirmed in our source. Needs ares cadence A/B to quantify, then fidelity-policy call (retail-code-at-60Hz vs retail-experience-at-15-30Hz); remediation design in survey F18 (scale per-frame counters by g_ClockTimer behind Input.FireRateAuthentic). Oracle lane buildable now that combat oracle FID-0032 is verified."
+    }
+  ]
+}

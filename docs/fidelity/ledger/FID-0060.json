@@ -1,0 +1,27 @@
+{
+  "id": "FID-0060",
+  "title": "SDL full stick deflection may deliver ~\u00b1127-equivalent vs N64 practical \u00b184 \u2014 movement/turn saturation differs from hardware",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/radial_deadzone.c"
+  ],
+  "repro": "trace raw magnitude delivered to game code at full deflection vs N64 stick (~\u00b184); GoldenRecomp maps SDL->x0.65 N64 range clamped (controls.cpp:112)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F9"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F9",
+      "note": "Survey F9. Ties FID-0015 (deadzone geometry already covered). If we deliver \u00b1127-equivalent, saturation behavior differs from hardware tuning."
+    }
+  ]
+}

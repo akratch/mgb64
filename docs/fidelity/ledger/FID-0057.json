@@ -1,0 +1,25 @@
+{
+  "id": "FID-0057",
+  "title": "Locked-60 casualty checklist: gunbarrel/legal-screen intro pacing, frame-count menu timers, attract-demo (ramrom) cadence desync",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [],
+  "repro": "time gunbarrel/legalscreen vs ares oracle; grep menu code for frame-count timers (MENU_LEGALSCREEN_MENU_TIMER_MAX class) and compare durations; verify attract-demo playback timing",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F2"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F2",
+      "note": "Survey F2. Attract-demo cadence matters doubly: our ramrom replay is itself oracle infra, so a cadence mismatch would silently bias any lane built on it. GoldenRecomp fixes via demoMode + retrace gate (speedgraphframes*2 tick count)."
+    }
+  ]
+}

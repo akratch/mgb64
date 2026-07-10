@@ -1,0 +1,27 @@
+{
+  "id": "FID-0058",
+  "title": "Widescreen cull widening (widenCullHorizontal) may make auto-aim aspect-ratio-dependent \u2014 render->sim coupling",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/bondview.c:2064"
+  ],
+  "repro": "run identical input tapes at 4:3 vs widescreen; diff sim-state hashes; if diverge, decide accept+document vs decouple sim-visible read from widened render cull (chr.c:5205 room_rendered->auto-aim)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F3",
+      "note": "Survey F3. GoldenRecomp independently hit this (widescreen cull \u00b14 screens desync attract demos; they revert to stock in demoMode/Jungle intro). Feeds FID-0033: extend 0-tick purity fuzz to cover widescreen/cull state on render-only frames."
+    }
+  ]
+}

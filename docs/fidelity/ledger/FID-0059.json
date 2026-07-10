@@ -1,0 +1,27 @@
+{
+  "id": "FID-0059",
+  "title": "musicTrack1/2/3Play alCSPGetState busy-wait spin \u2014 latent hang landmine on rapid track transitions",
+  "class": "port-defect",
+  "surface": "audio",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/platform/audi_port.c:417"
+  ],
+  "repro": "grep tree for alCSPGetState spin; our synth is synchronous per frame (portAudioFrame) so spin either passes immediately or deadlocks \u2014 since music works, likely former, but latent for rapid transitions",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F4"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T07:36:56Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md#F4",
+      "note": "Survey F4. GoldenRecomp hung two ways (clang collapsed empty spin -> optnone; spin starved cooperative scheduler -> yield_self_1ms). 5-min audit: classify, comment, bound if present."
+    }
+  ]
+}
