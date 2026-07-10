@@ -29,6 +29,10 @@
     {
       "kind": "gate-log",
       "path": "docs/fidelity/reports/verify_bca507f3301b-dirty.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_bca507f3301b-dirty.json"
     }
   ],
   "history": [
@@ -66,6 +70,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/reports/verify_bca507f3301b-dirty.json",
       "note": "Full verify adjudication (fresh worktree, /tmp Release build): tier-1 green (env_reference regen bca507f; intro_parse red only under build->/tmp symlink CWD artifact, passes in-tree). Tier-2/3: port_ batch 39/42 PASS incl port_guard_fire_rate_symmetry_smoke + combat_route_capture + hidden_guard_contract; sim_invariance PASS; uncap --quick PASS; renderer_parity PASS; tape_regression PASS; aspect_cull PASS; sense trace/pixel SKIP (missing-ares, documented). 3 port_ fails adjudicated: (1) release_ready_guard = concurrent main commit 37c84ee escalation text (external, not reachable from HEAD); (2) campaign bunker1 two-door route + (3) knife_impact = A/B-proven faithful-cadence timing shifts (FAIL default/PASS opt-out; guard blocks door 138 sweep, Bond pos byte-identical; knife misses shifted guard) -> re-tuned in 449d4a3 (route env pin w/ doc'd justification; knife warp 120->90 passes BOTH flag states), both ctest-green after. regression_test = missing local ROM-derived goldens in fresh worktree (charter rule 7, environmental). No thresholds weakened."
+    },
+    {
+      "ts": "2026-07-10T23:02:10Z",
+      "from": "landed",
+      "to": "landed",
+      "evidence": "docs/fidelity/reports/verify_bca507f3301b-dirty.json",
+      "note": "Verify complete: full 20-level uncap_purity_gate PASS (0 sim-hash divergence all testable levels; level 29 = lane's documented pre-existing vanilla non-determinism flag, printed not silent). With this, every tier-1/2/3 gate is green, adjudicated-external, or documented-SKIP; FID-0066 tier-appropriate verify is done on the branch. Held at landed (not verified) deliberately: verify_all machine-verdict on this fresh worktree carries the two environmental artifacts (build->/tmp symlink intro_parse CWD; missing local regression goldens) plus the external concurrent-main release-guard trip - a clean in-tree run on main post-merge should do the landed->verified transition. Full log: /tmp/mgb64-p1a-evidence/uncap_purity_full.log"
     }
   ]
 }
