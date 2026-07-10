@@ -110,7 +110,9 @@ def build_tree(seed, height, whorls, cards, snow, detail="classic"):
         lam = np.clip(nrm @ SUN_N, 0.0, 1.0)
         heightk = 0.55 + 0.45 * (pos[:, 1] / H)
         shade = (0.42 + 0.58 * lam) * heightk * (1.0 - 0.35 * interior)
-        col = np.stack([shade, shade, shade, np.ones_like(shade)], axis=-1)
+        # COLOR_0.a = modern-shader snow cover; the painted textures already
+        # carry snow, so bake none here
+        col = np.stack([shade, shade, shade, np.zeros_like(shade)], axis=-1)
         return np.clip(col * 255, 0, 255).astype(np.uint8)
 
     # trunk: tapered cylinder

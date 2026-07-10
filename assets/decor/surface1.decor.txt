@@ -1,21 +1,46 @@
-# Surface 1 scene decoration -- W9 M8: full-fidelity models via G_MODERNMESH.
-# fir_hd = decimated CC0 Poly Haven photoscan (8.7 model units tall; world
-# height = 8.7 * scale). Varied scale+yaw makes one scan read as many trees.
+# Surface 1 scene decoration -- W9 M9: the full-level HD pass.
+# All models CC0 Poly Haven photoscans (decimated, snow baked into COLOR_0.a)
+# or first-party generated art. World units ~1cm; y = local floor from pad
+# traces. Model heights: fir_big 18.8u, fir_hd 8.7u, spruce_hd_* 1.0u,
+# boulder_a 0.9u, boulder_b 1.5u, dead_trunk 0.3u tall / 1.5u long.
+model fir_big models/fir_big.glb modern
 model fir_hd models/fir_hd.glb modern
 model spruce_hd_a models/spruce_hd_a.glb modern
 model spruce_hd_c models/spruce_hd_c.glb modern
-# spawn framing
+model boulder_a models/boulder_a.glb modern
+model boulder_b models/boulder_b.glb modern
+model dead_trunk models/dead_trunk.glb modern
+
+# ---- spawn valley run (creek z ~ -11500, banks +/- 350-600) ----
+place fir_big -5600 55 -11950 250 70
 place fir_hd -5350 60 -11150 20 80
-place fir_hd -5600 55 -11900 250 95
-# valley run, alternating banks
+place boulder_b -4900 20 -11800 70 100
+place dead_trunk -5900 22 -11600 340 130
 place fir_hd -6420 45 -12080 130 88
+place boulder_a -6600 40 -11200 10 140
 place fir_hd -6890 55 -10980 300 74
-place fir_hd -7480 65 -11960 40 100
+place fir_big -7480 65 -12060 40 78
+place boulder_b -7700 60 -11250 200 95
 place fir_hd -8050 72 -11020 160 82
+place dead_trunk -8300 70 -11550 120 150
 place fir_hd -8630 78 -11990 210 91
+place boulder_a -8900 75 -11300 280 120
 place fir_hd -9240 82 -11060 330 78
-# mid-distance generated accents on the upper banks
 place spruce_hd_a -7200 90 -12250 80 700
 place spruce_hd_c -8900 100 -10800 40 650
-# distant fog sentinel
 place fir_hd -10600 95 -11500 10 95
+
+# ---- upper plateau (pad 60 area: floor ~249) ----
+place fir_big -1900 245 -1400 120 65
+place fir_hd -600 248 -2600 200 84
+place fir_hd -1800 250 -2700 40 76
+place boulder_b -900 246 -1500 310 130
+place boulder_a -1600 247 -2200 150 115
+place spruce_hd_a -400 250 -1300 260 680
+
+# ---- hut approach (pad 10 area: floor ~101) ----
+place fir_hd 900 98 -4400 60 78
+place fir_hd 1800 100 -5300 220 86
+place boulder_a 1550 97 -4600 20 125
+place dead_trunk 800 96 -5100 180 140
+place spruce_hd_c 2100 102 -4300 140 620

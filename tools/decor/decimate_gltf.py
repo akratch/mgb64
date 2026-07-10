@@ -80,11 +80,15 @@ def cluster(pos, nrm, uv, idx, grid):
             cuv.astype(np.float32), tri.astype(np.uint32))
 
 
-def bake_colors(pos, nrm, height, ambient=0.45):
+def bake_colors(pos, nrm, height, ambient=0.45, snow=0.0):
+    """rgb = sun-lambert light bake; ALPHA = snow cover from upward-facing
+    normals (the modern shader lerps toward snow white by COLOR_0.a)."""
     lam = np.clip(nrm @ SUN_N, 0.0, 1.0)
     hk = 0.55 + 0.45 * np.clip(pos[:, 1] / max(height, 1e-6), 0.0, 1.0)
     shade = (ambient + (1.15 - ambient) * lam) * hk
-    col = np.stack([shade, shade, shade, np.ones_like(shade)], axis=-1)
+    up = np.clip(nrm[:, 1], 0.0, 1.0)
+    cover = snow * up ** 1.5
+    col = np.stack([shade, shade, shade, cover], axis=-1)
     return np.clip(col * 255, 0, 255).astype(np.uint8)
 
 
@@ -99,6 +103,8 @@ def main(argv=None):
     ap.add_argument("--url", default="")
     ap.add_argument("--ambient", type=float, default=0.45,
                     help="vertex-bake ambient floor (raise for bright scenes)")
+    ap.add_argument("--snow", type=float, default=0.0,
+                    help="snow cover on upward-facing surfaces (0..1)")
     ap.add_argument("--cutout-material", default=None,
                     help="material-name substring rendered as alpha-cutout "
                          "double-sided (e.g. twig/leaf cards)")
@@ -147,7 +153,7 @@ def main(argv=None):
         prims_out.append({"name": mname, "pos": cpos, "nrm": cnrm,
                           "uv": cuv,
                           "col": bake_colors(cpos, cnrm, all_top,
-                                             args.ambient),
+                                             args.ambient, args.snow),
                           "idx": tri.reshape(-1),
                           "material": len(mats_out) - 1})
         tri_out += len(tri)
@@ -160,7 +166,7 @@ def main(argv=None):
             "tier": "A1" if args.license.strip().upper().startswith(
                 ("CC0", "PD", "PUBLIC DOMAIN")) else "A2",
             "args": {"grid": args.grid, "tex_size": args.tex_size,
-                     "ambient": args.ambient,
+                     "ambient": args.ambient, "snow": args.snow,
                      "cutout_material": args.cutout_material},
             "triangles_in": tri_in, "triangles_out": tri_out}
     with open(os.path.join(args.out, args.name + ".provenance.json"),
