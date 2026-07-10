@@ -233,8 +233,9 @@ def cmd_transition(args):
                   file=sys.stderr)
             return 1
         if dst in CLOSED_STATUSES:
-            print(f"--reopen must land on a non-terminal status (an earlier state in "
-                  f"{FORWARD}), got {dst!r}", file=sys.stderr)
+            print(f"--reopen must land on an open lifecycle state (one of "
+                  f"{FORWARD[:-1]}), not a terminal/closed status; got {dst!r}",
+                  file=sys.stderr)
             return 1
         if not args.note:
             print("transition with --reopen requires --note (the reopen rationale)",
@@ -248,6 +249,15 @@ def cmd_transition(args):
     if promotion and not args.evidence:
         print(f"transition to {dst} requires --evidence (evidence monopoly)", file=sys.stderr)
         return 1
+    if args.evidence:
+        # M6 (2026-07-10 review): validate at transition time, not just at the next
+        # `validate`/ctest run -- a bad --evidence string used to leave the ledger
+        # invalid in the gap between the transition and whoever next runs `validate`.
+        ok, detail = evidence_target_ok(args.evidence, REPO_ROOT, _known_ctest_names(REPO_ROOT),
+                                         _basename_index(REPO_ROOT))
+        if not ok:
+            print(f"--evidence {args.evidence!r} invalid: {detail}", file=sys.stderr)
+            return 1
     if dst in ("refuted", "waived") and not args.note:
         print(f"transition to {dst} requires --note", file=sys.stderr)
         return 1
@@ -542,7 +552,14 @@ def build_parser():
     n.add_argument("--repro", default="")
     n.add_argument("--suspect", action="append", default=[])
     n.add_argument("--blocked-on", action="append", default=[])
-    n.add_argument("--status", default="discovered", choices=FORWARD + sorted(TERMINALS))
+    # M3 (2026-07-10 review): `new` mints a finding with a synthetic genesis history
+    # entry (from="" -> status) rather than walking cmd_transition's edge-set, so an
+    # unrestricted --status let a finding be birthed directly into a terminal state
+    # (e.g. `new --status verified`) with no chain and no evidence-progression at all --
+    # the cheapest way to fake closure. The only legitimate callers (loop_iteration.sh's
+    # auto-filer, and test fixtures seeding an already-triaged finding for blocked_on
+    # coverage) ever pass "discovered" (the default) or "triaged"; restrict to those.
+    n.add_argument("--status", default="discovered", choices=["discovered", "triaged"])
     n.add_argument("--note", default="")
     n.add_argument("--id", default=None, help="explicit id (seeding only)")
     n.add_argument("--ts", default=None, help="explicit genesis ts (seeding only)")

@@ -132,10 +132,12 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("FID-0032", out)     # blocker itself is actionable
         self.assertNotIn(dep, out)         # dependent is blocked
         # verify the blocker -> dependent becomes actionable
-        run(self.base + ["transition", "FID-0032", "--to", "root-caused", "--evidence", "e"])
-        run(self.base + ["transition", "FID-0032", "--to", "fix-in-progress", "--evidence", "e"])
-        run(self.base + ["transition", "FID-0032", "--to", "landed", "--evidence", "e"])
-        run(self.base + ["transition", "FID-0032", "--to", "verified", "--evidence", "e"])
+        for to in ("root-caused", "fix-in-progress", "landed", "verified"):
+            # M6 (2026-07-10 review): transition now validates --evidence the same way
+            # `validate` does, so it must be a real path, not a placeholder like "e".
+            code, out, err = run(self.base + ["transition", "FID-0032", "--to", to,
+                                              "--evidence", "docs/fidelity/CHARTER.md"])
+            self.assertEqual(code, 0, err)
         code, out, _ = run(self.base + ["list", "--actionable"])
         self.assertIn(dep, out)
 
@@ -148,7 +150,14 @@ class LedgerTest(unittest.TestCase):
         self.assertIn("FID-0001", open(md).read())
 
     def test_stats_assert_closed(self):
-        self._new(status="verified")  # only closed statuses -> assert passes
+        # M3 (2026-07-10 review): `new --status` no longer accepts terminal/closed
+        # statuses (it minted findings directly into e.g. "verified" with no chain,
+        # the cheapest way to fake closure) -- walk the real edge-set instead.
+        fid = self._new()  # discovered
+        for to in ("triaged", "root-caused", "fix-in-progress", "landed", "verified"):
+            code, out, err = run(self.base + ["transition", fid, "--to", to,
+                                              "--evidence", "docs/fidelity/CHARTER.md"])
+            self.assertEqual(code, 0, err)
         code, out, err = run(self.base + ["stats", "--assert-closed"])
         self.assertEqual(code, 0, err)
         # add an open finding -> assert fails

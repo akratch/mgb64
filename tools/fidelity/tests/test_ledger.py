@@ -183,7 +183,12 @@ class TestTerminalStates(LedgerTransitionTestCase):
         self._reach_verified()
         rc, _, err = self.transition("refuted", reopen=True, note="reopen misuse")
         self.assertNotEqual(rc, 0)
-        self.assertIn("non-terminal", err)
+        # M4 (2026-07-10 review): the message used to print the full FORWARD list
+        # (which includes "verified") as if it were the legal --reopen target set;
+        # it must name only the actual open lifecycle states and must not claim
+        # "verified" is a valid landing spot.
+        self.assertIn("open lifecycle state", err)
+        self.assertNotIn("'verified']", err)
         self.assertEqual(self.status(), "verified")
 
 
