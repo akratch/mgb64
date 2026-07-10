@@ -2153,7 +2153,10 @@ void platformRegisterConfig(void)
     /* Full-auto fire-rate authenticity (FID-0056). OFF = current locked-60Hz
      * cadence (byte-identical). ON = automatics fire at the N64 per-frame
      * cadence (~1/FrameCost as fast). OWNER DECISION: to make faithful cadence
-     * the default, change the 5th arg (default) on the next line from 0 to 1. */
+     * the default, change the default argument on the next line — the 3rd
+     * positional (the first `0` after &g_pcFireRateAuthentic) — from 0 to 1.
+     * (Args are: name, ptr, default, min, max, ...; the trailing `0, 1` are
+     * min/max, NOT the default.) */
     settingsRegisterInt("Input.FireRateAuthentic", &g_pcFireRateAuthentic, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FIRE_RATE_AUTHENTIC",
                         "--config-override Input.FireRateAuthentic=VALUE",

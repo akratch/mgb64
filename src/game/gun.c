@@ -18383,6 +18383,13 @@ check_state:
             }
 
 machinegun_fire:
+            /* FID-0056 note: this exact-modulo gate assumes field_88C advances by 1
+             * per tick — true at the locked 60Hz loop (g_ClockTimer==1). In authentic
+             * mode the counter still steps by g_ClockTimer, so if tick deltas ever
+             * vary (>1, e.g. GE007_DETERMINISTIC_SPEEDFRAMES or an uncapped-FPS path)
+             * a jump that doesn't divide the scaled `fire_rate` could skip a gate step
+             * and halve cadence; switch to a `>=` accumulator (subtract fire_rate on
+             * fire) before relying on authentic mode under a variable clock. */
             if (hand_ptr->field_88C % fire_rate != 0) {
                 break;
             }
