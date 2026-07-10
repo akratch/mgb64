@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "triaged",
   "suspect": [
     "src/game/random.c"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/combat_oracle_fields.md#12"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/derivations/FID-0063-rng-phase.md"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "docs/fidelity/combat_oracle_fields.md#12",
       "note": "Filed from FID-0062 re-validation. THE real systemic owner of the residual perception-timing divergence that survives correct sim-tick alignment. NOT a guard-AI bug (perception logic is faithful ASM). FID-0054 = mostly artifact + THIS. FID-0011/0012/0013 must be re-captured under --align tick; whatever survives is THIS class (RNG call-count phase + tiny position drift), not chr.c/stan.c logic. Root-cause needs: find where native makes a different number of randomGetNext() calls per tick than retail (extra/missing consumers, order, or a call gated differently). XL systemic. Related: rng_seed \u00a75/\u00a78, FID-0046 (Streets nondeterminism)."
+    },
+    {
+      "ts": "2026-07-10T20:52:39Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0063-rng-phase.md",
+      "note": "Round-1 measurement: per-tick call-count differential infrastructure landed (tools/fidelity/rng_callcount_diff.py, ctest rng_callcount_diff_unittest; seeds->counts via 33-bit PRNG chain walk, validated 218/218 ticks against the exact native rng.call_count counter). Natural route: rate parity pre-combat within schedule noise; fire burst on the same tick both sides (282v287); post-engagement bursts phase-shifted (the +76/+108t perception offset); NOT a gross constant-rate class. Seed-locked route (dam_combat_guard6_rngseedlock, both sides g_randomSeed=0x1D8F3CC2B at gameplay frame 40): SAME seed in one idle frame -> retail draws 15, native 13; systemic idle-weighted bias stock +2.1 draws/frame (cum -15 -> -99 over 40 idle frames), flattening to +0.5/frame walking; streams never re-sync (seed_match_ticks 0). Native side of the locked frame fully attributed (shuffle x3, idle-roll x4, sight x2, ai x1, tickstand x1, viewmodel x2). Ruled out: idle-roll cadence (breathing=0 both sides, bondhead.c:887), port viewmodel prep (ASM-anchored: 7F060FF0 scale / 7F06105C roll, same guards). Remaining: guard-AI pool/cadence vs Bond-frame consumer -> needs retail callsite hook (round-2 map in derivation). BONUS FIX: ares combat.rng_seed read the BE HIGH word (0/1 after first step) -> part of the sec5/sec8 per-frame rng_seed divergence was instrumentation artifact; patched to base+4."
     }
   ]
 }

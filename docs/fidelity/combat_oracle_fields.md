@@ -106,7 +106,7 @@ player health/armor offsets and the (already-present) random-seed address.
 | `player_armor` | `g_CurrentPlayer->bondarmour` | player `+PlayerBondArmour` | f32 | BE | `%.4f`. |
 | `shots_fired_total` | sum of per-weapon shot regs (existing `shots.total`) | derived / `0` if unavailable ares-side | s32 | — | integer-exact. |
 | `hits_landed_total` | accumulated guard-hit counter (`s_traceGuardHitEventCount` running total) | `0` ares-side placeholder | s32 | — | integer-exact; only-native counter ⇒ expected divergence / finding (§5). |
-| `rng_seed` | `g_randomSeed & 0xFFFFFFFF` (low 32) | `readU32(randomSeedAddress)` | u32 hex | BE | **low 32 bits** — the PC PRNG state is 64-bit; the N64 seed is 32-bit. Emitting the low word makes the two comparable. `"0x%08X"`. |
+| `rng_seed` | `g_randomSeed & 0xFFFFFFFF` (low 32) | `readU32(randomSeedAddress + 4)` | u32 hex | BE | **low 32 bits** — `g_randomSeed` is a 64-bit doubleword on BOTH sides (the state collapses to 33 bits after one step); on big-endian N64 the low word is at base+4. ⚠ FID-0063: the first ares cut read `readU32(base)` = the HIGH word (0/1 after the first step), so this field diverged every frame BY CONSTRUCTION until the patch fix (needs an ares oracle rebuild to take effect). The movement-record `rng` block (`readU64`) was always correct. `"0x%08X"`. |
 
 ## 4. Projectiles array — `combat_oracle.projectiles[]`
 
