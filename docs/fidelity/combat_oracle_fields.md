@@ -505,3 +505,109 @@ path). Sim left byte-identical.
 **Determinism.** The committed `baselines/tapes/dam_combat_guard6.ge7tape` still
 replays to sim-state hash `3c8939968e0eb50e` (ctest `port_combat_route_capture_smoke`,
 Release) — this iteration changed no sim code, so the combat sim is byte-identical.
+
+## 12. Sim-tick alignment — FID-0062 (`--align tick`, landed 2026-07-10)
+
+Durable evidence anchor for FID-0062 (`discovered → landed`). This lands §11.4 item 1:
+the trustworthy sim-tick alignment that removes the ~2x record-index skew. **Tooling
+only — no sim/gameplay code changed** (sim byte-identical; `combat_route_capture_smoke`
+Release baseline `3c8939968e0eb50e` unchanged).
+
+### 12.1 The alignment rule
+
+`compare_combat_trace.py --align tick` (`canonical_by_tick`):
+
+1. **Motion-onset anchor** (reused from `--align move`): find the first record on each
+   side whose `move.speed/raw` exceeds threshold. `onset_global = records[start].move.global`.
+   Native onset = g_GlobalTimer **241**, stock onset **1386** (both == gameplay-frame-80 ×
+   speedframes 3, offset by the menu boot). Absolute `move.global` cannot pair the sides;
+   the **relative** sim-tick `move.global − onset_global` can (both step by g_ClockTimer=3).
+2. **Collapse each side to one canonical record per relative sim-tick.** Native is already
+   1 record/tick; ares emits ~2/tick (intra-frame AI substeps) interleaved with
+   EMPTY-roster sampling records (2789/6500 on this route).
+   - **EMPTY-roster records (`roster_size == 0`) are dropped** — never canonical. A tick
+     whose only samples are empty produces no entry and simply does not pair (dropped, not
+     a divergence). This is what kills the naive-tick **`present` artifact (§11.4: 3492
+     hits)**: an empty ares roster is never compared against native's full roster.
+   - Among the roster-bearing records for a tick, keep the **last record with the maximum
+     roster size** (the roster-complete, latest intra-frame substep) — matches native's
+     end-of-frame once-per-tick snapshot.
+3. Pair by the intersection of relative sim-ticks present on both sides.
+
+### 12.2 Before/after (dam_combat_guard6, both-sides, Release native)
+
+| metric | `--align move` (index) | `--align tick` (sim-tick) |
+|---|---|---|
+| aligned frames | 218 | 116 (native emits 1/tick; move double-counted the ares over-sampling) |
+| divergences total | 18588 | **9874 (−47%)** |
+| `guards.actiontype` | 596 | **315 (−47%)** |
+| `guards.target_visible` | 41 | 91 (tick *reveals* the real perception phase-gap; move masked it) |
+| `guards[...].present` | (none here) | **none** — interleave handled (naive-tick was 3492) |
+
+Consistent with the FID-0054 §11.2 manual sim-tick estimate (666→249 actiontype, 18657→
+9327 total, ~−50%/−63%); exact counts differ by capture (RNG/AI phase noise) but direction
+and magnitude match.
+
+### 12.3 FID-0054 inversion confirmed under clean alignment
+
+Tick-align reproduces the §11 manual re-analysis exactly (guard-6 first `target_visible=1`,
+relative sim-ticks past shared onset):
+
+| guard | STOCK / ares (N64) | NATIVE |
+|---|---|---|
+| 6 | tv=1 **+76t**, act8 +153t | tv=1 **+108t**, act8 +108t |
+| 7 | tv=1 +520t, act8 +538t | (run ended before) |
+| 44 | tv=1 +269t, act8 +269t | (run ended before) |
+
+So **both sides' guard 6 perceive Bond and enter ACT_ATTACK**; the STOCK guard perceives
+~32 ticks **earlier** (native is *later*, not earlier). The §9 "native over-perceives / N64
+stays unaware" reading was the index-skew artifact. Residual under clean alignment =
+systemic **PRNG call-count phase** (`combat.rng_seed` 116 field-hits, every aligned frame)
++ small guard-position drift (`guards.pos` ~1.2–1.3k), i.e. the deferred RNG-parity item
+(§11.3) — **not** a bounded guard-AI bug.
+
+### 12.4 Canonical combat-route recipe (use `--align tick`)
+
+```
+tools/movement_oracle_capture.sh --route dam_combat_guard6 --native-full-trace \
+  --no-compare --no-build --binary <release-ge007> \
+  --ares-bin <ares-movement-oracle>/.../ares --rom baserom.u.z64 \
+  --out-dir /tmp/cap-combat --timeout 400
+tools/compare_combat_trace.py \
+  --baseline /tmp/cap-combat/stock_dam_combat_guard6.jsonl \
+  --test    /tmp/cap-combat/native_dam_combat_guard6.jsonl \
+  --align tick --json-out /tmp/cap-combat/combat_diff.json
+```
+
+`--align tick` is the **trustworthy** mode for combat both-sides comparison. `--align move`
+is retained (motion-onset, index-paired) but is only valid where both emitters share a
+record cadence; on a live combat route it skews ~2x and **must not** be used for divergence
+attribution. The CLI *default* stays `global` for the generic tool (the ROM-free contract
+smoke uses single-tick fixtures); combat routes pass `--align tick` explicitly. The route
+JSON's `compare_align` field targets the separate *movement* comparator
+(`compare_movement_trace.py`, no tick mode) and is unchanged.
+
+### 12.5 Regression lane
+
+`tools/tests/test_compare_combat_trace.py` (ROM-free, auto-discovered by ctest
+`intro_tools_unittests` **and** the dedicated ctest `combat_comparator_align_unittest`).
+Synthetic streams — native 1 record/tick, ares 2–3 records/tick incl. empty-roster
+interleave, guard actiontype a function of sim-tick so both sides agree per tick. Asserts:
+tick-align pairs by sim-tick with **0** divergences; `--align move` (index) inflates
+divergences AND surfaces phantom `guards.present`; tick < move strictly. **Fail-on-revert
+proven**: reverting the tick branch to index pairing reddens 3 assertions with 144
+divergences incl. 32 phantom `guards.present`.
+
+### 12.6 Re-validation guidance for the combat findings seeded from `--align move`
+
+Under clean sim-tick alignment:
+
+- **FID-0054** (guard perception): the "native perceives, N64 unaware" divergence was
+  **largely an artifact** (index skew); the real residual is the RNG-phase perception shift
+  (+76 vs +108t) + position drift = the deferred RNG-parity item, not a guard-AI defect.
+  `actiontype` divergence drops ~47%. **Verdict: mostly artifact + systemic RNG-phase.**
+- **FID-0011 / FID-0012 / FID-0013** (chrTickBeams / stan LOS / guard-coupling, all seeded
+  from `--align move`): their evidence must be **re-captured under `--align tick`** before
+  any ACT. Whatever survives will be the same systemic RNG-call-count phase + small position
+  drift class, not a bounded per-guard counter bug. They should be tracked against RNG-parity,
+  not fixed in `chr.c`/`chrlv.c`/`stan.c` on the strength of the index-skewed numbers.

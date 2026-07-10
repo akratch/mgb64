@@ -136,6 +136,20 @@ if(BUILD_TESTING)
         NAME combat_oracle_contract
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/combat_route_contract_smoke.sh" --gate
     )
+    # FID-0062 sim-tick alignment regression lane (ROM-free): --align tick pairs the
+    # native (1 rec/tick) vs ares (~2 rec/tick + empty-roster interleave) streams by
+    # sim-tick with no phantom divergences, while --align move (index) skews ~2x.
+    # Fail-on-revert: reverting the tick branch to index pairing reddens this.
+    add_test(
+        NAME combat_comparator_align_unittest
+        COMMAND python3 -m unittest tools.tests.test_compare_combat_trace
+    )
+    set_tests_properties(
+        combat_comparator_align_unittest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile

@@ -91,6 +91,68 @@ def key_for(record: dict[str, Any], mode: str) -> Any:
     raise AssertionError(mode)
 
 
+def roster_size(record: dict[str, Any]) -> int:
+    """Number of guard entries in a record's combat_oracle block.
+
+    The ares combat emitter interleaves FULL-roster records with EMPTY-roster
+    sampling records (menu / not-yet-populated / intra-frame samples): ~2789 of
+    6500 records on the dam_combat_guard6 route carry an empty guard list. Native
+    emits exactly one full-roster record per game-frame. This count is how
+    ``--align tick`` distinguishes a canonical (roster-bearing) record from an
+    empty sampling record so the interleave cannot create phantom
+    ``guards[...].present`` divergences (the FID-0062 bug).
+    """
+    co = record.get("combat_oracle")
+    if not isinstance(co, dict):
+        return 0
+    guards = co.get("guards")
+    return len(guards) if isinstance(guards, list) else 0
+
+
+def canonical_by_tick(
+    records: list[dict[str, Any]], start: int, onset_global: Any
+) -> dict[int, dict[str, Any]]:
+    """Collapse ``records[start:]`` to one canonical record per SIM-TICK.
+
+    Sim-tick = ``move.global`` (g_GlobalTimer) relative to the shared motion
+    onset (``onset_global``). Because native emits 1 record/game-frame while ares
+    emits ~2 records per advancing g_GlobalTimer tick (intra-frame AI substeps +
+    empty-roster samples), pairing by record INDEX skews the two timelines ~2x in
+    sim-tick space (FID-0062). Keying by the tick stamp instead makes the two
+    cadences commensurate.
+
+    Canonicalisation rule (handles the ares full/empty interleave):
+      * EMPTY-roster records (roster_size == 0) are DROPPED — they never become
+        the canonical record for a tick. A tick that has *only* empty-roster
+        samples produces no entry and simply does not pair (dropped, not a
+        divergence), instead of pairing an empty roster against native's full
+        roster and inventing ~36 phantom ``guards[...].present`` divergences
+        (the naive-tick artifact: 3492 hits, §11.4).
+      * Among the roster-bearing records for a tick, keep the LAST one with the
+        MAXIMUM roster size (the roster-complete, latest intra-frame substep) —
+        this matches native's once-per-frame end-of-frame snapshot.
+    """
+    buckets: dict[int, tuple[int, dict[str, Any]]] = {}
+    onset = parse_int(onset_global)
+    if onset is None:
+        return {}
+    for record in records[start:]:
+        move = record.get("move", {})
+        if not isinstance(move, dict):
+            continue
+        g = parse_int(move.get("global"))
+        if g is None:
+            continue
+        n = roster_size(record)
+        if n == 0:
+            continue  # drop empty-roster sampling records
+        rel = g - onset
+        prev = buckets.get(rel)
+        if prev is None or n >= prev[0]:  # last record with >= max roster wins
+            buckets[rel] = (n, record)
+    return {rel: rec for rel, (n, rec) in buckets.items()}
+
+
 def first_moving_index(records: list[dict[str, Any]], threshold: float) -> int:
     """First record whose player move.speed/raw exceeds ``threshold`` (motion onset).
 
@@ -130,6 +192,23 @@ def align_records(
             (i, baseline[baseline_start + i], test[test_start + i])
             for i in range(max(0, count))
         ]
+    if mode == "tick":
+        # FID-0062: pair by SIM-TICK (move.global relative to shared motion
+        # onset), collapsing the ares full/empty-roster interleave to one
+        # canonical record per tick (see canonical_by_tick). This is the
+        # trustworthy combat-route alignment: --align move pairs by record index
+        # and skews the timelines ~2x because native emits 1 rec/game-frame while
+        # ares emits ~2 rec/advancing-tick, inflating+misattributing divergences.
+        baseline_start = first_moving_index(baseline, motion_threshold)
+        test_start = first_moving_index(test, motion_threshold)
+        onset_b = baseline[baseline_start].get("move", {}).get("global") \
+            if baseline_start < len(baseline) else None
+        onset_t = test[test_start].get("move", {}).get("global") \
+            if test_start < len(test) else None
+        b_tick = canonical_by_tick(baseline, baseline_start, onset_b)
+        t_tick = canonical_by_tick(test, test_start, onset_t)
+        keys = sorted(set(b_tick) & set(t_tick))
+        return [(k, b_tick[k], t_tick[k]) for k in keys]
 
     def by_key(records: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
         out: dict[Any, dict[str, Any]] = {}
@@ -325,10 +404,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", required=True, help="ares (or reference) JSONL trace")
     p.add_argument("--test", required=True, help="native (or candidate) JSONL trace")
     p.add_argument("--align", default="global",
-                   choices=["global", "frame", "clock", "index", "move"],
+                   choices=["global", "frame", "clock", "index", "move", "tick"],
                    help="frame alignment key (default: global = g_GlobalTimer). "
-                        "'move' anchors both sides on motion onset (native direct-boot "
-                        "vs ares menu-boot) — the correct mode for combat routes.")
+                        "'tick' is the TRUSTWORTHY combat-route mode (FID-0062): it "
+                        "anchors both sides on motion onset AND pairs by sim-tick "
+                        "(move.global relative to onset), collapsing the ares "
+                        "~2-rec/tick full/empty-roster interleave to one canonical "
+                        "record per tick so the sampling-rate mismatch cannot invent "
+                        "divergences. 'move' anchors on motion onset but pairs by "
+                        "record INDEX — it skews the timelines ~2x on combat routes "
+                        "(native 1 rec/frame vs ares ~2 rec/tick).")
     p.add_argument("--motion-threshold", type=float, default=0.01,
                    help="min |move.speed/raw| to count as motion onset for --align move")
     p.add_argument("--position-tolerance", type=float, default=0.5,
