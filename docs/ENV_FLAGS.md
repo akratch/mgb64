@@ -724,6 +724,8 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_GOLDENEYE_LOGO_MATERIALS` | ? |  | 2 |  |
 | `GE007_TRACE_GOLDENEYE_LOGO_RENDER` | ? |  | 1 |  |
+| `GE007_TRACE_GUARD_AUTOFIRE` | ? |  | 1 |  |
+| `GE007_TRACE_GUARD_AUTOFIRE_CHRNUM` | ? |  | 1 |  |
 | `GE007_TRACE_GUARD_BOND_SHOTS` | ? |  | 1 |  |
 | `GE007_TRACE_GUARD_BOND_SHOTS_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_GUARD_BOND_SHOTS_CHRNUM` | ? |  | 1 |  |
