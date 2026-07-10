@@ -1781,6 +1781,13 @@ Gfx* lvlRender(Gfx* DL)
                 gfx_register_draw_class_dl_range(DRAWCLASS_ROOM, drawclass_start, DL);
                 lvlTracePhasePrintf("bgLevelRender", tris_before_bg_render);
             }
+            /* W9 scene decoration: render-only imported 3D models, drawn after
+             * rooms so they Z-test against the world and sit under characters/
+             * effects/viewmodel. Video.SceneDecor=0 (default) emits nothing. */
+            {
+                extern Gfx *decorRender(Gfx *gdl);
+                DL = decorRender(DL);
+            }
 #else
             DL = bgLevelRender(DL);
 #endif

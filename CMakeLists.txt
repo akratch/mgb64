@@ -971,6 +971,7 @@ target_include_directories(ge007 PRIVATE
     assets
     lib/glad/include
     lib/stb
+    lib/cgltf
     .
 )
 

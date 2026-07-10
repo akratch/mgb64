@@ -358,6 +358,8 @@ f32 g_pcSunShadowRadius = 500.0f; /* W1.E3: camera-centered ortho half-extent in
 f32 g_pcSunShadowBias = 0.0015f;  /* W1.E3.T4: receiver depth-compare bias (peter-panning vs acne dial). */
 f32 g_pcSunShadowUmbra = 0.55f;   /* W1.E3.T4: shadowed-surface darkening (1.0 = no darken, 0 = black). */
 s32 g_pcPerPixelLight = 0;       /* W1.E4: default OFF (identity-first). Per-pixel geometric-normal (dFdx) directional sun on room surfaces; supersedes E1 CPU relight when on. */
+s32 g_pcSceneDecor = 0;          /* W9: default OFF (identity-first). Render-only imported 3D models over the untouched sim (decor_native.c). */
+char g_pcSceneDecorDir[1024] = "assets/decor"; /* Video.SceneDecorDir: per-level <slug>.decor.txt manifests + glTF models. */
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
 s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
@@ -2021,6 +2023,19 @@ void platformRegisterConfig(void)
                         "recomputes Lambert per fragment from the world-position derivative and "
                         "luma-replaces the baked directional shading (reuses Video.EnvRelightBlend "
                         "as the strength dial). Supersedes Video.EnvSmoothNormals when on. 0 = off (identity).");
+    settingsRegisterInt("Video.SceneDecor", &g_pcSceneDecor, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR",
+                        "--config-override Video.SceneDecor=VALUE",
+                        "3D scene decoration",
+                        "Render-only imported 3D models (glTF) drawn over the untouched simulation "
+                        "from per-level manifests in Video.SceneDecorDir (e.g. real trees on Surface). "
+                        "Zero gameplay effect by construction. 0 = off (identity).");
+    settingsRegisterString("Video.SceneDecorDir", g_pcSceneDecorDir, sizeof(g_pcSceneDecorDir),
+                           "assets/decor",
+                           SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR_DIR",
+                           "--config-override Video.SceneDecorDir=PATH",
+                           "Scene decoration dir",
+                           "Directory holding <level>.decor.txt manifests and their glTF models.");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",

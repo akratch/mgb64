@@ -1,0 +1,16 @@
+# Surface 1 scene decoration -- W9: real 3D snowy spruces along the spawn valley.
+# Positions from pad traces (world units, y = local floor); the valley runs -X
+# from spawn (-4838,~128,-11572); banks rise at |z +/- ~350| off the creek line.
+model spruce_a models/spruce_a.glb
+model spruce_b models/spruce_b.glb
+model spruce_c models/spruce_c.glb
+place spruce_a -5455 20 -11044 0 700
+place spruce_b -5055 20 -10844 120 560
+place spruce_c -5850 25 -12010 200 640
+place spruce_a -6420 45 -12080 80 730
+place spruce_b -6890 55 -10980 300 590
+place spruce_c -7480 65 -11960 40 700
+place spruce_a -8050 72 -11020 160 620
+place spruce_b -8630 78 -11990 250 760
+place spruce_c -9240 82 -11060 330 580
+place spruce_a -9880 88 -11950 20 710

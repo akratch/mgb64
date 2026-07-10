@@ -177,6 +177,13 @@ static const PcStartStage *pcFindStageByLevelId(int level_id) {
     return NULL;
 }
 
+/* Exported for the scene-decoration layer (include/decor.h): the per-level
+ * decor manifest is keyed by the CLI slug ("surface1", ...). */
+const char *pcStageSlugForLevelId(s32 level_id) {
+    const PcStartStage *st = pcFindStageByLevelId((int)level_id);
+    return st != NULL ? st->slug : NULL;
+}
+
 static const PcStartStage *pcFindStageByMission(int mission_num) {
     size_t i;
     for (i = 0; i < sizeof(kPcStartStages) / sizeof(kPcStartStages[0]); i++) {
