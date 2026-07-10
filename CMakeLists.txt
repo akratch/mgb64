@@ -181,8 +181,10 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_normalize.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_diff.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_candidates.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/gen_pixel_calibration.py"
             "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
+            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_trace_candidates.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
     add_test(
@@ -283,10 +285,23 @@ if(BUILD_TESTING)
     # reports 0 unexplained clusters, deliberately-broken pair reports >= 1.
     add_test(
         NAME pixel_diff_unittest
-        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_*.py"
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_pixel*.py"
+    )
+    # Task 2.1 S1 trace-sweep candidate-emission logic (ROM-free).
+    add_test(
+        NAME sense_trace_candidates_unittest
+        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense*.py"
+    )
+    # Task 2.1 S1 sweep harness self-test: emits a candidate from a synthetic
+    # comparator report with no ROM/ares.
+    add_test(
+        NAME sense_trace_sweep_selftest
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_sweep.sh" --self-test
     )
     set_tests_properties(
         pixel_diff_unittest
+        sense_trace_candidates_unittest
+        sense_trace_sweep_selftest
         PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
