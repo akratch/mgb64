@@ -1,0 +1,27 @@
+{
+  "id": "FID-0072",
+  "title": "sub_GAME_7F06359C: joypad button depress offset on wrong translation vector; wrong hand slot",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:16424"
+  ],
+  "repro": "Open the watch controller-setting page (watch.c:9201, g_WatchBackgroundGreen<0xE0), hold A/B/Start/any C: the pressed button model moves straight -10 in the post-rotation frame vs retail's -10 tilted through the -pi/3 X rotation; also dump hands[] state: port loads ITEM_JOYPAD into GUNLEFT, retail into hand 0 (GUNRIGHT)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:17047"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:45:29Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:17047",
+      "note": "Watch-menu 3D N64 controller renderer (ASM gun.c:16597-17568, retail 7F06359C via glabel 16653-region; live C 16183-16607). (D1) DEPRESS OFFSET ON WRONG VECTOR, all 7 button cases (i=1,4,5,6,7,8,9): retail adds f20=-10.0 (li 0xC1200000/mtc1 at gun.c:16861-16862) to the y of the FIRST translation block -- the coord copied from static table D_80035D44 and passed as arg0 of sub_GAME_7F06351C. Case i==4 anchor: table copy D_80035D44+0x48 -> sp+0x190 (17028-17035); vertices fp+0x70.. -> sp+0x19c (17036-17042); joyGetButtons mask 8 (17043); add at sp+0x194 = pos.y (lwc1/add.s f20/swc1 17047-17049); call a0=sp+0x190(pos), 0x10(sp)=sp+0x19c(rot) (17053-17061). Same shape at 17449-17451(i=1,0x94), 17092-17094(i=5,0x17c), 17137-17139(i=6,0x164), 17182-17184(i=7,0x14c), 17227-17229(i=9,0x134), 17272-17274(i=8,0x11c). Port adds neg_ten to rotN.y = the vertices-derived arg4 block (C 16424-16426 i=4; 16438/16452/16466/16480/16494/16548 for the rest). sub_GAME_7F06351C (C 16152-16163) composes T(arg0) BEFORE the Y/X rotations and T(arg4) AFTER, so with the -pi/3 X rotation retail's offset contributes ~(0,-5,-8.66) in the post-rotation frame vs port's (0,-10,0): button travel direction/depth differs visibly (table entries at these indices are 0, gun.c:852-856, so the offset IS the whole pos contribution). (D2) WRONG HAND: retail loads ITEM_JOYPAD into hand 0: move $a0,$zero; li $a1,85; jal sub_GAME_7F05DA8C (16687-16689), and all hand queries use a0=0 (16691-16696); GUNRIGHT=0/GUNLEFT=1 (bondconstants.h GUNHAND). Port uses GUNLEFT throughout (C 16256-16266, 16601-16606) -> the wrong hand's weaponnum_watchmenu/pending-model state is mutated while the controller page is up. (D3) PHANTOM SAVE/RESTORE: retail never reads nor restores the previous watchmenu item (single 7F05DA8C call in the whole ASM body; every exit goes to the bare epilogue); port saves prev_watchmenu_item and re-swaps every call (C 16256, 16601-16606) -- same pattern as FID-0073 (sibling set_enviro_fog); initial-transcription provenance (blame 8de295b), no fix rationale. Rest of fn verified equivalent per audit (renderdata template 16674-16690 = C 16249-16251; stick rot consts D_80053ED4/ED8 16736-16769 = C 16309-16311; PropType green>=255 grouping 16796-16807 = C 16326-16332; case masks/constants for all 12 cases incl else-if chaining 17370/17391 = C 16524-16534; subdraw + f32->s32 loops 16817-16839/17537-17559 = C 16336-16355/16575-16598; arg3 gate + Switches[13] hide 16843-16852 = C 16357-16369). Callers watch.c:9201/9239 + wrapper sub_GAME_7F064364 (gun.c:17590). DO NOT fix from this note; re-derive from ASM."
+    }
+  ]
+}

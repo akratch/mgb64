@@ -260,9 +260,9 @@
         "body_start": null,
         "body_end": 16595
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0072",
+      "note": "Watch controller-page 3D joypad renderer, ASM 16597-17568 vs C 16183-16607. THREE divergences: (1) held-button depress -10.0 applied to the D_80035D44 pos block (arg0 of sub_GAME_7F06351C, PRE-rotation; e.g. i==4 swc1 sp+0x194 @17047-17049, same shape all 7 cases i=1,4,5,6,7,8,9) while C adds to the vertices-derived rotN (arg4, POST-rotation, C 16424-16426 etc) -> button travel direction/depth differs under the -pi/3 X rot; (2) retail loads ITEM_JOYPAD into hand 0 GUNRIGHT (move $a0,$zero; li $a1,85 @16687-16689 + all hand queries a0=0) vs C GUNLEFT throughout; (3) phantom per-frame save/restore of prev_watchmenu_item (C 16256/16601-16606) with no ASM counterpart. All 12 case masks/consts/else-if chains + subdraw + f32->s32 loops otherwise equivalent. See FID-0072.",
+      "reviewed_ts": "2026-07-10T22:49:10Z",
       "rank": 9,
       "rank_score": 882,
       "rank_reason": "prior-defect-file 882i"
@@ -368,9 +368,9 @@
         "body_start": null,
         "body_end": 36023
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0071",
+      "note": "Ray-vs-object collision DL walker, ASM 36044-36617 vs C 35471-35789. Divergence in the post-hit texture backward-scan boundary: retail exits the 8-byte-step scan with search==gdlstart and the bnel v0,s3 (36320) then yields texturenum=-1 EVEN when *gdlstart is the G_SETTIMG (loop 36310-36317 re-derived; same in TRI4 path 36557-36580); port helper hit_find_texture_for_triangle_command scans INCLUSIVE of gdlstart (while search>=gdlstart, break only after examining it, C 35452-35480) -> real texture id where retail gives -1, changing bullet-impact material classification for DLs whose texture cmd opens the list. Benign: 0xC0 G_SETTEX direct recognition (port-data counterpart of retail load-time rewrite), continue-past-invalid-0xFD (malformed data only). Dispatch senses, vtx/TRI1/TRI4 index lanes, bbox+intersect ordering, s32-trunc distance, HitThing stores all verified equivalent. See FID-0071.",
+      "reviewed_ts": "2026-07-10T22:49:10Z",
       "rank": 13,
       "rank_score": 529,
       "rank_reason": "prior-defect-file 529i"
@@ -449,9 +449,9 @@
         "body_start": null,
         "body_end": 17753
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0068",
+      "note": "[US variant audited] Watch-scene renderer ASM 17756-18273 vs C 17339-17751. Tint written to WRONG FIELD: retail sw to sp+0x1ec = renderdata(sp+0x1b8)+0x34 = envcolour (205 @18203-18205 states 5/12; r<<24|g<<16|b<<8|a from lbu 0xfdc..0xfdf @18207-18217) feeding gDPSetFogColor via PropType-4 material path; C 17677/17679 writes cullmode (+0x3c, inert) with LE-byte-reversed *(u32*)&tileColor -> pause arm loses room tint + raise/lower darkening. Plus guPerspective aspect 0x3FBA2E8C=1.4545455 (17820-17821) vs C 1.456f (JP variant 18341-18342 shows same retail bits). Rest verified equivalent. See FID-0068.",
+      "reviewed_ts": "2026-07-10T22:47:16Z",
       "rank": 16,
       "rank_score": 489,
       "rank_reason": "prior-defect-file 489i"
@@ -557,9 +557,9 @@
         "body_start": null,
         "body_end": 37974
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0074",
+      "note": "5 divergences re-derived from ASM 38027-38457 vs live C 37425-37667: (D1) retail type-20 destroyed block (randomGetNext%13 + slot scan + ammocrateAllocate salvage magazine spawn, 38215-38326) entirely missing from C switch 37607-37656 (also RNG stream desync); (D2) armour type-21 amount INVERTED (ASM bnezl 38418: destroyed->0.0, else formula; C 37646-37652 backwards); (D3) unarmed non-collectable gate INVERTED (ASM bgezl 38072 proceeds iff flags&0x01000000 CLEAR; C 37467 proceeds iff SET); (D4) armed-path INVINCIBLE 0x20000 early-out (bltzl 38079) dropped -> timer=0/chain-flag side effects on invincible explosives; (D5) type-7/8 non-matching cases return in retail (38102/38128 -> bare epilogue) but fall through to objIsMortal+damage in C. See FID-0074.",
+      "reviewed_ts": "2026-07-10T22:46:57Z",
       "rank": 20,
       "rank_score": 390,
       "rank_reason": "prior-defect-file 390i"
@@ -584,9 +584,9 @@
         "body_start": null,
         "body_end": 23221
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[US variant audited] Upper-text HUD window + debug manpos line renderer. ASM 23224-23622 vs C 23057-23215, traced fully: 151-byte stringbuffer stride via sll/addu/sll/subu/sll3/subu chain (23245-23252) = stringbuffer_top[2][0x97]; four early gates bnez/bltz/beqz/bnez all -> debug path (23235-23257) = C 23081-23093 (upper_text_window_timer s32 so bltz==signed <0); cameraBufferToggle two-arm layout incl signed (top+0x20)/11*11-2 (23288-23322) = C 23105-23110; main menus call y-2 vs debug path y2 undecremented + bottom+1 (23331-23338 / 23481-23490 = C 23115/23177, spot-verified); s16 trunc of viGetX via sh/lh delay-slot store (23342/23353) = (s16) cast; all 6 textRender 11-arg stacks matched 1:1; compass trunc-toward-zero *180/pi (late_rodata 0x40490fdb) + (deg+0x16)/45 idx*3 (23381-23464) = C 23137-23170; 5 rodata format strings byte-verified. Benign: 27- vs 30-byte compass table copy (max reachable idx 8 -> byte 26), snprintf bounds, NATIVE_PORT tile NULL guard. No branch-likely hazards; no jump table.",
+      "reviewed_ts": "2026-07-10T22:48:10Z",
       "rank": 21,
       "rank_score": 386,
       "rank_reason": "prior-defect-file 386i"
@@ -611,9 +611,9 @@
         "body_start": 20597,
         "body_end": 20822
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "End-credits scroll renderer (Cradle stage 54). ASM 20824-21186 vs live C 20597-20822 (NONMATCHING guard), traced fully: three early-outs stage!=54 / credits_state!=1 (bnel w/ delay lw ra only-when-taken) / credits_pointer NULL (20840-20852) = C 20618-20628, all return original gdl pre-microcode_constructor; signed div-by-16 with +15 negative bias + endrow+1 + startrow<0 clamp (20868-20883) = C 20642-20656; skip-loop with mid-loop i++ in always-executed delay slot (20915-20916) + both-TextId-zero exit setting credits_state=2 (20891-20899) = C 20663-20691 (CreditsEntry stride 0xC); lhu u16 TextId1/2 vs 0x5011, lh s16 Position1/2 bltzl-skip, Alignment via (s16) cast reproducing lh (20889-21068) = C 20672-20723; alignment grouping ==1 right / ==2 center (sra 1) / default left in both text blocks (20997-21016/21099-21118, spot-verified) = C 20733-20742/20779-20788; menus call ypos-1 only on the register copy, textRender gets undecremented ypos, s16 viewheight trunc per block (20972-21086) = C 20726-20773; render-loop entry/exit incl TextId1==0/TextId2!=0 langGet(0) quirk preserved; final combiner_bayer_lod_perspective from all four exits (21167-21170) = C 20818. No jump table; single caller maybe_mp_interface.",
+      "reviewed_ts": "2026-07-10T22:48:10Z",
       "rank": 22,
       "rank_score": 332,
       "rank_reason": "prior-defect-file 332i"
@@ -638,9 +638,9 @@
         "body_start": null,
         "body_end": 32121
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Recursive per-prop DL builder (monitor microcode, door cull/env, destroyed fade, portal projection swaps, impact decals, subdraw + child recursion). ASM 32123-32488 vs C 31743-32146: entry flags&2 beql early-out (32157-32161 = C 31785, spot-verified); portal double test w/ field_10E0 re-derive (32166-32174 = C 31797-31802); monitor arg4 selection incl screen-1 0x10000000 vs screen-2 0x30000000 mask difference (32190-32270 = C 31831-31923, spot-verified) and screens 3-4 reusing screen-2 arg4; Switches[0..3] to +0x80/+0xF4/+0x168/+0x1DC stride 0x74; needsAnimation rodata Vertices-vs-rwdata compare via u16 RwDataIndex (32345-32360 = C 32036-32049); destroyed-level double call + cullmode 3/1 stores in non-likely delay slots (32368-32391 = C 32054-32066); alpha x50+0x64 strength-reduced clamp 255 (32392-32409 = C 32070-32078); door pre/post subdraw B6000000/3000 emits + doorFlags&8 (32314-32340/32436-32446 = C 32012-32029/32101-32109); bullet-impact gate lbu obj+2 & 1<<pane (32448-32457 = C 32111); child chain 0x20/0x24 recursion (32476-32488 = C 32126-32132); tail transform count lh +0xE (32491-32506 = C 32134-32146). NATIVE_PORT deviations documented as substrate/guard family: glass portal-projection skip (C 31804-31819, commented native camera-space matrix adaptation \u2014 faithful transcription would double-apply the camera basis on native; renderer-surface, pixel-verifiable if ever suspected), G_MTX_FLOAT_PORT marker, modelGetSwitchNodeSafe/monitorFindDrawableNode identity-on-valid-data resolution.",
+      "reviewed_ts": "2026-07-10T22:49:38Z",
       "rank": 23,
       "rank_score": 332,
       "rank_reason": "prior-defect-file 332i"
@@ -665,9 +665,9 @@
         "body_start": null,
         "body_end": 31381
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0067",
+      "note": "NATIVE_PORT rewrite (C 31196-31242) faithful in GBI plumbing but position/flip math diverges from ASM 31418-31716 while callers pass retail values: y>=0 anchor y-h*0.5 (ASM 31513-31525) vs y; y<0 anchor H+S-(h*0.5-(h>>1)) (31536-31552) vs H+S-h*0.5 (floor(h/2) px shift); retail flipX slot constant 0 (sw zero 0x18 31669, incoming flipX only negates subpixel frac 31502-31505) vs port passes flipX through -> left dual-wield icon mirrored; minor: dropped +/-fracW x term + forced G_TF_POINT. Guard census clean (zero retail early-outs). See FID-0067.",
+      "reviewed_ts": "2026-07-10T22:46:57Z",
       "rank": 24,
       "rank_score": 319,
       "rank_reason": "prior-defect-file 319i"
@@ -692,9 +692,9 @@
         "body_start": null,
         "body_end": 15777
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0073",
+      "note": "Watch-menu item renderer, ASM 15779-16118 vs C 15578-15790. Divergence: phantom per-frame save/restore of hands[GUNRIGHT].weaponnum_watchmenu (C 15619 + done: 15782-15787 calling 7F05DA8C/7F05DAE4) with no ASM counterpart -- retail sets the item once (single jal 7F05DA8C a0=0 @15829, {30,23}->60 remap 15821-15827) and leaves it pinned between frames (teardown elsewhere); zero jal sub_GAME_7F05DAE4 in any GLOBAL_ASM repo-wide. State-visible: bondview raise/lower model-swap consumers see equipped weapon instead of menu item while browsing. Rest fully equivalent: guard senses/order incl bitflag 0x4000, renderdata template, render_pos-before-modelInit ordering, revolver skeleton compare + slots 4/5, shell loop 18/23+j, lights item set + GBI words + dual 7F078474 calls, alpha>=255 PropType split, f32->s32 loop. See FID-0073.",
+      "reviewed_ts": "2026-07-10T22:49:10Z",
       "rank": 25,
       "rank_score": 309,
       "rank_reason": "prior-defect-file 309i"
@@ -719,9 +719,9 @@
         "body_start": null,
         "body_end": 39217
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0069",
+      "note": "Object-hit shot handler ASM 39219-39554 vs C 38959-39247. Impact-FX suppression gate on WRONG WEAPON ID: retail li $at,23 + beq on shotdata->weapon (39354-39356) = ITEM_WATCHLASER (enum pos verified, ITEM_TRIGGER=30 anchor); C 39069 gates on ITEM_TASER (31) -> watch laser spawns impact FX + extra randomGetNext (RNG desync); corroborated by chrprop.c:3040 using ITEM_WATCHLASER for the identical construct. Rest verified equivalent (ancestor walk, 26.0f impact math, material table stride-8 hitSound&0xf, door/cctv grouping, damage scaling, bounce flag senses). See FID-0069.",
+      "reviewed_ts": "2026-07-10T22:47:16Z",
       "rank": 26,
       "rank_score": 307,
       "rank_reason": "prior-defect-file 307i"
@@ -746,9 +746,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0070",
+      "note": "[LEFTOVERDEBUG variant @7F089208] HUD/interface frame renderer, audited first-hand line-by-line vs C 21194-21406. Divergence: retail calls ONLY bondviewGetIfCurrentPlayerHealthShowTime for the health-bar draw gate (jal 21486; target 0FC227AF decodes to 0x7F089EBC, distinct from DamageShowTime 0x7F089EA4; sub_GAME_7F088618 jal 0FC22186 decodes exactly to 0x7F088618 confirming symbol fidelity) + watch_animation_state==0; C 21253 ORs in DamageShowTime (damageshowtime>=0, active during damage flash) -> port draws health/armour bars during damage flashes retail gates behind sub_GAME_7F0C6048, and skips the healthdisplaytime decrement (C 21257-21268 = ASM 21499-21521) in that window. All else equivalent: intro-camera path, mpmenu rect s16 truncs, death/music/missionstate sequence, ClockTimer 1:2 pick, c.le.s field28 gate, kill_counts stride-0x70 loop, scenario!=1||kills<2, joyGetButtons 0xB000, HUD tail order. See FID-0070.",
+      "reviewed_ts": "2026-07-10T22:49:38Z",
       "rank": 27,
       "rank_score": 302,
       "rank_reason": "prior-defect-file 302i"
@@ -773,9 +773,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0070",
+      "note": "[retail US variant @7F089370] Same structure as the LEFTOVERDEBUG variant, audited first-hand: single HealthShowTime call (jal 21816, word 0FC2281C -> 0x7F08A070 US) + lw 0x1c8 watch gate (21818-21822); no DamageShowTime reference anywhere in the block (regional struct shifts only: mpmenuon 0x29bc vs 0x29c4, healthdisplaytime 0x29f8 vs 0x2a00). C 21253 ORs in DamageShowTime -> same divergence. See FID-0070.",
+      "reviewed_ts": "2026-07-10T22:49:38Z",
       "rank": 28,
       "rank_score": 302,
       "rank_reason": "prior-defect-file 302i"

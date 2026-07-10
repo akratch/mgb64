@@ -1,0 +1,27 @@
+{
+  "id": "FID-0074",
+  "title": "maybe_detonate_object: missing PROPDEF_AMMO salvage spawn, inverted armour amount, inverted unarmed gate vs retail ASM",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrobjhandler.c:37607"
+  ],
+  "repro": "audit: asm_audit.py entry maybe_detonate_object; ASM chrobjhandler.c:38027-38457 vs live C 37425-37667. Gameplay: (D2) shoot a body-armour vest once without destroying it, collect -> port gives 0 armour, retail gives proportionally-reduced; (D1) destroy a FORCEMORTAL multi-slot ammo crate -> retail drops a salvage magazine pickup, port drops nothing",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:38216"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:42:58Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:38216",
+      "note": "FIVE divergences re-derived from GLOBAL_ASM (chrobjhandler.c:38027-38457, retail 7F04E108) vs live C (37425-37667), each independently instruction-verified. (D1) MISSING PROPDEF_AMMO SALVAGE SPAWN: retail type==20 && objGetDestroyedLevel==1 block (ASM 38215-38326) calls randomGetNext()%13 (divu at 38227-38229), circularly scans the 13 {u16 modelnum,u16 quantity} slot pairs at obj+0x80 (lhu 0x82 quantity blezl-skip 38235-38237; lhu 0x80 modelnum !=0xFFFF 38238-38241), ammocrateAllocate (38244), stamps blank_07_object magazine, sets ammoType=(i+1==2)?1:i+1, reparents as child prop -> dropped by end-of-fn child loop. Port post-damage switch (C 37607-37656) has NO PROPDEF_AMMO case; ammocrateAllocate is only referenced from the dead PORT_FIXME_STUBS branch (37894). Also skips retail's randomGetNext -> RNG stream desync on every ammo-box destruction. (D2) ARMOUR AMOUNT INVERTED: retail type==21 (ASM 38412-38431): objGetDestroyedLevel!=0 -> bnezl 38418 with delay mtc1 zero,f8 -> amount(0x84)=0.0; NOT destroyed -> amount = [0x80]*([0x74]-[0x70])/[0x74] (38420-38427). Port C 37646-37652 is exactly backwards: destroyed_now -> formula, else -> 0.0. Player-visible: any nonlethal damage zeroes an armour pickup's value. (D3) UNARMED NON-COLLECTABLE GATE INVERTED: retail proceeds to damage iff (flags & 0x01000000)==0 (sll ,,7 + bgezl 38070-38072, bit24 CLEAR -> proceed); port C 37467 'else if (!(obj->flags & PROPFLAG_01000000)) return' proceeds only when bit SET. Live via ITEM_UNARMED landing damage chrobjhandler.c:11997. Collectable side (bit 0x00800000, ASM 38063-38066 = C 37453) is correct. (D4) DROPPED ARMED-PATH INVINCIBLE EARLY-OUT: retail returns first thing on the armed path when flags&0x00020000 (sll ,,0xe + bltzl 38077-38079), BEFORE type-7/8 handling; port has no such check -> INVINCIBLE type-8 explosive weapon still gets timer=0 (C 37486) and INVINCIBLE type-7 explosive crate still gets flags|=0x10000000 (C 37503); objIsMortal (37364) masks only the non-collectable non-7/8 path. (D5) TYPE-7/8 NON-MATCHING FALL-THROUGH: retail type 8 weaponnum not in {26,27,29,28,86,87,33,34} returns (bnel 38102); type 7 ammoType not in {5,6,7,8,9,11,15,16,19} returns (bne 38128 -> exit L4E70C which is the plain epilogue, verified 38450-38456); port falls out of the if (C 37481-37517) and continues to objIsMortal+damage -> FORCEMORTAL dropped weapons / non-explosive crates take armed damage retail can never apply. Callers: chr.c:10076, chrai.c:3200, chrobjhandler.c:9725/11997/37299/37379 (explosions.c:1297, bondview.c:15308). DO NOT fix from this note; re-derive from ASM. Fix polarity default-ON (GE007_NO_* opt-outs); D1 fix must reproduce the randomGetNext call for stream parity."
+    }
+  ]
+}

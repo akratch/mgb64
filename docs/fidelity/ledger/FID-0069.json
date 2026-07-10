@@ -1,0 +1,27 @@
+{
+  "id": "FID-0069",
+  "title": "sub_GAME_7F04EA68: laser impact-FX suppression gates on ITEM_TASER instead of ITEM_WATCHLASER",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrobjhandler.c:39069"
+  ],
+  "repro": "Equip the Watch Laser (weapon id 23) and fire at a door/crate: port spawns a material bullet-impact effect + consumes an extra randomGetNext draw; retail spawns none. Symmetrically the Taser (31) has its impact FX wrongly suppressed",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:39354"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:44:08Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:39354",
+      "note": "Object-hit shot handler (ASM chrobjhandler.c:39219-39554, retail 7F04EA68; live C 38959-39247). Retail skips the entire explosionCreateBulletImpact block when shotdata->weapon == 23: li $at,23 (39354); lw $a0,0x18($t5) (39355); beq -> .L7F04ED84 (39356). Weapon 23 = ITEM_WATCHLASER (bondconstants.h ITEM_IDS enum, no explicit initializers: ITEM_UNARMED line 3344 = 0 -> line 3367 = 23; sanity anchor ITEM_TRIGGER = line 3374 = 30 matches the validated GE007_AUTO_EQUIP_ITEM=30 detonator repro). Port C 39069 gates on ITEM_TASER (line 3375 = 31, unused leftover item) -> watch-laser hits on props spawn impact FX retail suppresses, and each such hit consumes an extra randomGetNext() (ASM 39373/39413 skipped when weapon==23) shifting the PRNG stream (relevant to oracle/fuzz gates, cf FID-0063). Corroboration: the sibling background-hit path uses the correct id for the identical construct (chrprop.c:3040 weapon_id != ITEM_WATCHLASER; also 2812/3020/3378). Rest of fn verified equivalent (ancestor walk beql/bnezl 39256-39263 = C 39005-39010; impact pos math incl 26.0f 39265-39304 = C 39015-39021; hit-count chain li a1,6 39322-39336 = C 39046-39048; material table D_8004E86C stride-8 + hitSound lbu&0xf 39397-39410 = C 39093-39097; door/cctv skeleton grouping 39430-39448 = C 39104-39121; autogun *F_80030B24 / cctv *100*F_80030B18 39464-39499 = C 39169-39184; detonate call 39502-39511 = C 39209; door rattle unkbd>=3 39512-39530 = C 39212-39217; bounce flag logic sll9/bltzl sll10/bgezl 39539-39573 = C 39219-39242). Live callers: chrprop.c:2919/3438 (player hitscan on OBJ/WEAPON/DOOR props). Fix is one token at chrobjhandler.c:39069 but re-derive from ASM; default-ON with GE007_NO_WATCHLASER_IMPACT_FIX opt-out."
+    }
+  ]
+}

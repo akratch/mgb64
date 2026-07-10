@@ -1,0 +1,27 @@
+{
+  "id": "FID-0067",
+  "title": "microcode_generation_ammo_related: HUD ammo icon anchor math and flip semantics diverge from retail ASM",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:31227"
+  ],
+  "repro": "Boot Dam with PP7: bottom-right ammo icon sits floor(h/2) px higher than retail (compare ares capture); dual-wield (GE007_AUTO_ADD_ITEM) -> left-hand icon is horizontally mirrored vs retail unmirrored; open watch inventory -> icon ~h/2 px lower (y>=0 branch)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:31523"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:43:23Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:31523",
+      "note": "Live body is a NATIVE_PORT rewrite (gun.c:31196-31242) around display_image_at_position; GBI plumbing is faithful but the position/flip math diverges from the retail ASM (gun.c:31418-31716, 7F0694E8) while live callers pass retail argument values, so composite output differs. position[] is the rect CENTER in the shared consumer (draw_textured_rectangle bondwalk2.c:33-37). (D1) y>=0 branch: retail position[1] = y - h*0.5 (c.le.s 0,f12(y) at 31508; lbu h 31513; mul f0=0.5 [li 0x3F000000 at 31474, mtc1 31478] 31522; sub.s 31523; swc1 0xb4 31525). Port: xypos[1] = y (C 31229-31230). Live caller sub_GAME_7F06A334 (gun.c:33258) passes 180.0f = retail literal -> watch ammo icon drawn ~h/2 lower. (D2) y<0 branch: retail position[1] = H - (h*0.5 - (h>>1)) + S i.e. H+S-fracH, fracH in {0,0.5} (sra h,1 31538; sub 31545; f18=0xc8(sp)=H 31543; f4=0xd0(sp)=S 31546; final swc1 31552). Port: H + S - h*0.5 (C 31232) -> in-game hand ammo icons floor(h/2) px HIGHER (caller portDrawHandAmmo gun.c:31999, y=-1). (D3) FLIP: retail passes flipX slot = constant 0 to display_image_at_position (sw zero,0x18(sp) 31669) and consumes incoming flipX(0xcc(sp)) ONLY to negate the sub-pixel x fraction (beqz 31502 / neg.s 31504); port passes flipX?1:0 through (C 31237) -> left-hand dual-wield icon mirror-imaged (caller passes is_left_hand, gun.c:32005/32067). (D4) minor: retail position[0] = x +/- (w*0.5-(w>>1)) (31480-31512); port x only (C 31227): 0.5px for odd widths. (D5) minor: retail forces G_TF_POINT for the icon draw (prologue 31419-31472) + restores; port ambient HUD filter is BILERP (textrelated.c:724) -> softer icons, interacts with the dropped \u00b10.5 offsets. Retail prologue has ZERO early-return guards (FID-0064-style census clean). Verified equivalent: texSelect args/tex_mode (31556,31653-31657 = C 31221/31235), half-extents (31564-31582 = C 31223-31224), rgba passthrough (31663-31675 = C 31238), mip flag lbu 6 + slt (31676-31680 = C 31239), flipY=1 (31668). DO NOT fix from this note; re-derive from ASM."
+    }
+  ]
+}

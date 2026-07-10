@@ -1,0 +1,27 @@
+{
+  "id": "FID-0071",
+  "title": "bgTestHitOnObj: texture backward-scan honors SETTIMG at DL start where retail returns -1",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrobjhandler.c:35452"
+  ],
+  "repro": "Instrument hit_find_texture_for_triangle_command to log search==gdlstart matches (or GE007_POLY_TRACE=1 tri_hit texture=N events) and shoot props whose collision DL begins with its texture command: port reports the real texture id, retail semantics give -1 (default impact material)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:36320"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T22:45:01Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:36320",
+      "note": "Ray-vs-object-model collision tester (ASM chrobjhandler.c:36044-36617, retail 7F04CE54-region; live C 35471-35789 + port helper 35443-35483). After a confirmed triangle hit, retail scans backward 8-byte steps from the tri command for opcode 253 (G_SETTIMG) and returns texturenum=-1 whenever the scan terminates AT gdlstart, even if *gdlstart IS the SETTIMG: loop 36310-36317 (addiu v0,-8; sltu at,s3(gdlstart),v0; beq s5(253),t2 -> exit; bnezl at loop w/ delay lbu t2,-8(v0)) exits with v0==gdlstart both when the 253 sits at gdlstart and when none found; then bnel v0,s3 -> read *(u16*)(((w1@v0+4)-8)|0x80000000) (36320-36329) else li a0,-1 (36323). Identical structure in the TRI4 path (36557-36580). Port helper hit_find_texture_for_triangle_command scans INCLUSIVE of gdlstart: while (search >= gdlstart) examines search[0] BEFORE the search < gdlstart+8 break (C 35452-35480), so a texture command at DL position 0 yields the real texture number where retail structurally always yields -1. hitthing->texturenum drives impact material classification (consumers chrobjhandler.c:39034-39200 incl the FID-0069 material table) -> different impact sound/decal for object parts whose only/nearest texture cmd opens the DL ([SETTEX][VTX][TRI...] single-texture layout); reachability data-dependent, not enumerated from code. Two lesser deltas judged benign: port keeps scanning past a 0xFD with out-of-range token (35467-35473, malformed data only); port recognizes Rare 0xC0 G_SETTEX directly w0|w1!=0 (35457) = port-data counterpart of retail's load-time 0xC0->0xFD rewrite (othermodemicrocode.c:115-129). Rest of fn verified equivalent (dispatch senses ENDDL/VTX/TRI1/TRI4 36098-36371 = C 35578-35684; vtxbase math w1&0xFFFFFF - (cmd1&0xF)<<4 36112-36122 = C 35589; TRI1 /10 indices 36146-36181 = C 35599-35601; TRI4 12 index lanes 36394-36441 = C 35691-35702; bbox s16 min/max + intersectLineTriangle arg order 36127-36272 = C 35605-35642; s32-trunc distance + strict c.lt.s best 36275-36335 = C 35644-35664; HitThing stores/loop bookkeeping 36337-36618 = C 35665-35783). Single caller sub_GAME_7F04D9B0 (chrobjhandler.c:36790) in the shot pipeline. DO NOT fix from this note; re-derive from ASM."
+    }
+  ]
+}
