@@ -475,6 +475,19 @@ if(BUILD_TESTING)
     set_tests_properties(fidelity_ledger_valid PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+    # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
+    # integrity (S-tier Task 2.4, FID-0042). ROM-free python guard: validates
+    # docs/fidelity/asm_audit_queue.json (verdict grammar, finding-filed FIDs
+    # resolve to real ledger entries, ranks are a contiguous 1..N permutation,
+    # every referenced source file exists). The queue drives all ~388 GLOBAL_ASM
+    # reimplementations to a recorded verdict (S-tier exit criterion 4).
+    add_test(
+        NAME fidelity_asm_audit_valid
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/asm_audit.py" validate
+    )
+    set_tests_properties(fidelity_asm_audit_valid PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
     # Sim-hash coverage audit (S-tier Task 0.4, FID-0030): make "what the
     # sim-state invariance hash covers" a checked property. Every writable
     # (.data/.bss) symbol in the decomp TUs (src/game/* + top-level src/*) must

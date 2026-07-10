@@ -1,0 +1,27 @@
+{
+  "id": "FID-0051",
+  "title": "gun.c jpt_80054084 shooting-dispatch mis-groupings: ROCKETLAUNCH/REMOTEMINE/PLASTIQUE diverge from retail",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:18247"
+  ],
+  "repro": "audit: asm_audit.py entry handle_weapon_id_values_possibly_1st_person_animation (rank 1); diff jpt_80054084[weapon_id-2] vs switch(weapon_id-2)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:19579"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T06:31:49Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:19579",
+      "note": "ASM authority jpt_80054084 (gun.c:19579, dispatch gun.c:20144-20154 idx=weapon_id-2) vs live C switch(weapon_id-2) (gun.c:18247). Three residual mis-groupings after TRIGGER/TANKSHELLS/M16/FNP90 fixes: idx23 ROCKETLAUNCH ASM=pistol but C=default(throwable); idx27 REMOTEMINE ASM=throwable but C=pistol; idx32 PLASTIQUE ASM=throwable but C=pistol. Player-visibility (reachability under state==2 + ammo guard) to be root-caused. Found by S-tier Task 2.4 ASM-audit pilot #1."
+    }
+  ]
+}
