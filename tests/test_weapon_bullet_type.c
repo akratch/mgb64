@@ -92,6 +92,18 @@ int main(void)
               "in-range item matches retail jpt_weapon_bullet_type");
     }
 
+    /* --- Byte-identity contract: under the legacy opt-out the table must equal
+     *     retail for EVERY item except AUTOSHOT (the one reverted defect). A
+     *     future change that made the legacy flag perturb any other weapon goes
+     *     red here — guards the "opt-out is byte-identical to the pre-fix port"
+     *     claim across the whole table, not just AUTOSHOT/SHOTGUN. --- */
+    for (item = ITEM_WPPK; item <= ITEM_WATCHLASER; item++) {
+        enum WeaponBulletType want =
+            (item == ITEM_AUTOSHOT) ? WEAPON_BULLET_TYPE_PISTOL : expect_retail(item);
+        CHECK(weaponBulletTypeClassify(item, 1) == want,
+              "legacy flag moves ONLY AUTOSHOT; every other item byte-identical");
+    }
+
     if (g_failures == 0) {
         printf("test_weapon_bullet_type: OK\n");
         return 0;

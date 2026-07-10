@@ -6958,6 +6958,14 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
         sub_GAME_7F06EFC4(gunmodel);
 #endif
 
+        /* The ROM-free classifier (src/platform/weapon_bullet_type.c) re-declares
+         * these ITEM ordinals as local literals so its TU stays decomp-header-free.
+         * Pin them here, where bondconstants.h is in scope, so future enum drift
+         * can't silently desync the classifier's table from this dispatch [FID-0052]. */
+        _Static_assert(ITEM_WPPK == 4 && ITEM_SHOTGUN == 15 && ITEM_AUTOSHOT == 16 &&
+                           ITEM_WATCHLASER == 23,
+                       "weapon_bullet_type.c local ITEM ordinals out of sync with bondconstants.h");
+
         if (hp->weapon_firing_status != 0 && item >= ITEM_WPPK && item <= ITEM_WATCHLASER) {
             /* Retail dispatches jpt_weapon_bullet_type[item-4] (gun.c:7076):
              * SHOTGUN and AUTOSHOT both route to weapon_bullet_type_shotgun_mine

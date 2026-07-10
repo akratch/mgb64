@@ -19,10 +19,6 @@
       "path": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md"
     },
     {
-      "kind": "asm-citation",
-      "path": "docs/fidelity/derivations/FID-0051-0052-weapon-dispatch.md"
-    },
-    {
       "kind": "gate-log",
       "path": "tests/test_weapon_bullet_type.c"
     }
