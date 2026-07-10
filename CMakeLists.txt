@@ -116,6 +116,11 @@ if(BUILD_TESTING)
         NAME port_release_ready_guard
         COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/ci/check_release_ready.sh"
     )
+    # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
+    add_test(
+        NAME combat_oracle_contract
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/combat_route_contract_smoke.sh" --gate
+    )
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
@@ -128,6 +133,7 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/compare_audio_reference.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_intro_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_movement_trace.py"
+            "${CMAKE_SOURCE_DIR}/tools/compare_combat_trace.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_screenshots.py"
             "${CMAKE_SOURCE_DIR}/tools/compare_state.py"
             "${CMAKE_SOURCE_DIR}/tools/intro_trace_summary.py"

@@ -1,0 +1,27 @@
+{
+  "id": "FID-0048",
+  "title": "Combat oracle shots_fired_total/hits_landed_total have no retail-equivalent accumulator read ares-side",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "tools/compare_combat_trace.py (combat.shots_fired_total / combat.hits_landed_total divergence)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#3"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T00:55:04Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#3",
+      "note": "Native reads shot regs + a player-hit counter; ares emits 0. Locate/read the retail equivalents to close."
+    }
+  ]
+}

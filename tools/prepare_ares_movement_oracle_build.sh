@@ -608,7 +608,13 @@ struct OracleState {
     ChrPadpreset1 = 0x0112,
     ChrChrpreset1 = 0x0114,
     ChrShotbondsum = 0x013c,
+    ChrLastseetarget60 = 0x00d4,   /* combat oracle target_visible (FID-0032) */
     ChrStride = 0x01dc,
+
+    /* StandTile (combat oracle floor{}) */
+    StandTileId = 0x0000,   /* u32:24 */
+    StandTileRoom = 0x0003, /* u8 */
+    StandTileMid = 0x0004,  /* s16 header-mid halfword */
 
     ModelRenderPos = 0x000c,
     ModelAnim = 0x0020,
@@ -2441,6 +2447,33 @@ struct OracleState {
     return (s32)readU8(stan + 3);
   }
 
+  /* Combat/floor oracle (FID-0032) tile field readers. */
+  auto stanId(u32 stan) -> s32 {
+    if(!validRdram(stan, 4)) return -1;
+    return (s32)(readU32(stan + StandTileId) & 0x00ffffffu);
+  }
+
+  auto stanFlags(u32 stan) -> s32 {
+    if(!validRdram(stan + StandTileMid, 2)) return -1;
+    return (s32)(s16)readU16(stan + StandTileMid);
+  }
+
+  /* Model animation header hash — MUST match the native
+   * traceModelAnimationHeaderHash (port_trace.c:1295) word-for-word so guard
+   * anim_hash is comparable across the two tracers. */
+  auto animHeaderHash(u32 anim) -> u64 {
+    if(anim == 0 || !validRdram(anim, 0x14)) return 0;
+    u64 hash = 1469598103934665603ull;
+    hash = hashU32(hash, (u32)readU16(anim + 0x04));
+    hash = hashU32(hash, (u32)readU8(anim + 0x06));
+    hash = hashU32(hash, (u32)readU8(anim + 0x07));
+    hash = hashU32(hash, readU32(anim + 0x08));
+    hash = hashU32(hash, (u32)readU16(anim + 0x0c));
+    hash = hashU32(hash, (u32)readU16(anim + 0x0e));
+    hash = hashU32(hash, readU32(anim + 0x10));
+    return hash;
+  }
+
   auto roomRendered(s32 room, s32 renderedRoomsCount) -> bool {
     if(room < 0 || renderedRoomsCount <= 0 || bgRenderedRoomsAddress == 0) return false;
     if(renderedRoomsCount > 204) renderedRoomsCount = 204;
@@ -3815,6 +3848,113 @@ struct OracleState {
     }
   }
 
+  /*
+   * Combat / floor-field oracle (FID-0032). Emits the "combat_oracle" namespace
+   * with schema parity to the native tracer (port_trace.c traceBuildCombatOracleJson).
+   * See docs/fidelity/combat_oracle_fields.md. projectiles[] is emitted empty on the
+   * ares side (the prop position list is not mapped in the symbol layout yet) — a
+   * documented instrumentation-gap sub-finding; the native side populates it.
+   */
+  auto formatCombatOracleJson(char* out, size_t outSize, bool hasPlayer, u32 player, s32 renderedRoomsCount) -> void {
+    if(outSize == 0) return;
+    (void)renderedRoomsCount;
+    size_t used = 0;
+    s32 global = readS32(globalTimerAddress);
+
+    appendText(out, outSize, used, "\"combat_oracle\":{\"guards\":[");
+
+    s32 emitted = 0;
+    s32 overflow = 0;
+    if(chrSlotsAddress != 0 && numChrSlotsAddress != 0 && validRdram(chrSlotsAddress, 4) && validRdram(numChrSlotsAddress, 4)) {
+      u32 chrSlots = readU32(chrSlotsAddress);
+      s32 slots = readS32(numChrSlotsAddress);
+      if(slots < 0 || slots > 256 || !validRdram(chrSlots, ChrMaxDamage + 4)) slots = 0;
+
+      for(s32 index = 0; index < slots; index++) {
+        u32 chr = chrSlots + (u32)index * ChrStride;
+        if(!validRdram(chr, ChrShotbondsum + 4)) break;
+
+        s32 chrnum = readS16(chr + ChrChrnum);
+        u32 model = readU32(chr + ChrModel);
+        u32 prop = readU32(chr + ChrProp);
+        if(model == 0 || chrnum < 0 || chrnum >= 1000) continue;
+        if(!(validRdram(prop, PropRooms + 4) && readU8(prop + PropType) == 3)) continue;
+
+        if(emitted >= 64) { overflow = 1; break; }
+
+        f32 x = readF32(prop + PropPos + 0);
+        f32 y = readF32(prop + PropPos + 4);
+        f32 z = readF32(prop + PropPos + 8);
+        s32 actiontype = readS8(chr + ChrActiontype);
+        s32 aimode = readU8(chr + ChrAlertness);
+        f32 health = readF32(chr + ChrMaxDamage) - readF32(chr + ChrDamage);
+        f32 shotbondsum = readF32(chr + ChrShotbondsum);
+        s32 flagsOnscreen = (readU8(prop + PropFlags) & 0x02) != 0 ? 1 : 0;
+        s32 lastSee = readS32(chr + ChrLastseetarget60);
+        s32 targetVisible = (lastSee > 0 && (global - lastSee) < 600) ? 1 : 0;
+        u64 animHash = animHeaderHash(readU32(model + ModelAnim));
+        s32 room = stanRoom(readU32(prop + PropStan));
+
+        appendText(out, outSize, used,
+          "%s{\"chrnum\":%d,\"pos\":[%.2f,%.2f,%.2f],"
+          "\"actiontype\":%d,\"aimode\":%d,\"health\":%.4f,"
+          "\"shotbondsum\":%.4f,\"flags_onscreen\":%d,"
+          "\"target_visible\":%d,\"anim_hash\":\"0x%016llX\",\"room\":%d}",
+          emitted == 0 ? "" : ",",
+          chrnum, x, y, z,
+          actiontype, aimode, health, shotbondsum,
+          flagsOnscreen, targetVisible,
+          (unsigned long long)animHash, room);
+        emitted++;
+      }
+    }
+    appendText(out, outSize, used, "],\"guards_overflow\":%d,", overflow);
+
+    /* floor{} — player's current stan tile */
+    s32 stanIdVal = -1;
+    s32 stanRoomVal = -1;
+    s32 stanFlagsVal = -1;
+    f32 height = 0.0f;
+    if(hasPlayer && player != 0) {
+      u32 tile = readU32(player + PlayerField488 + CollisionCurrentTile);
+      if(tile != 0) {
+        stanIdVal = stanId(tile);
+        stanRoomVal = stanRoom(tile);
+        stanFlagsVal = stanFlags(tile);
+      }
+      height = readF32(player + PlayerStanHeight);
+    }
+    appendText(out, outSize, used,
+      "\"floor\":{\"stan_id\":%d,\"stan_room\":%d,\"stan_flags\":%d,\"height\":%.2f},",
+      stanIdVal, stanRoomVal, stanFlagsVal, height);
+
+    /* combat{} — scalar player summary. hits_landed_total has no retail-equivalent
+     * accumulator read here (documented divergence); shots_fired_total likewise 0. */
+    f32 playerHealth = 0.0f;
+    f32 playerArmor = 0.0f;
+    u32 rngSeedLow = readU32(randomSeedAddress);
+    if(hasPlayer && player != 0) {
+      playerHealth = readF32(player + PlayerBondHealth);
+      playerArmor = readF32(player + PlayerBondArmour);
+    }
+    appendText(out, outSize, used,
+      "\"combat\":{\"player_health\":%.4f,\"player_armor\":%.4f,"
+      "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x%08X\"},",
+      playerHealth, playerArmor, rngSeedLow);
+
+    /* projectiles[] — prop list not mapped ares-side yet (documented gap) */
+    appendText(out, outSize, used, "\"projectiles\":[],\"projectiles_overflow\":0},");
+
+    if(used >= outSize) {
+      std::snprintf(out, outSize,
+        "\"combat_oracle\":{\"guards\":[],\"guards_overflow\":1,"
+        "\"floor\":{\"stan_id\":-1,\"stan_room\":-1,\"stan_flags\":-1,\"height\":0.00},"
+        "\"combat\":{\"player_health\":0.0000,\"player_armor\":0.0000,"
+        "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x00000000\"},"
+        "\"projectiles\":[],\"projectiles_overflow\":1},");
+    }
+  }
+
   auto resolvePadStan(s32 pad, u32* padTableOut, u32* padAddressOut) -> u32 {
     if(padTableOut) *padTableOut = 0;
     if(padAddressOut) *padAddressOut = 0;
@@ -4157,6 +4297,12 @@ struct OracleState {
     }
     char actorSummaryJson[4096] = "{\"slots\":0,\"live\":0,\"alive\":0,\"hidden\":0,\"onscreen\":0,\"rendered\":0,\"sample\":[]}";
     char trackedChrJson[4096] = "";
+    char combatOracleJson[16384] =
+      "\"combat_oracle\":{\"guards\":[],\"guards_overflow\":0,"
+      "\"floor\":{\"stan_id\":-1,\"stan_room\":-1,\"stan_flags\":-1,\"height\":0.00},"
+      "\"combat\":{\"player_health\":0.0000,\"player_armor\":0.0000,"
+      "\"shots_fired_total\":0,\"hits_landed_total\":0,\"rng_seed\":\"0x00000000\"},"
+      "\"projectiles\":[],\"projectiles_overflow\":0},";
     char glassStateJson[4096] = "{\"present\":0,\"buffer_len\":0,\"next\":0,\"ptr\":\"0x00000000\",\"active\":0,\"first\":{\"index\":-1},\"sample\":[],\"hash\":\"0x0000000000000000\"}";
     char glassProjectionJson[65536] = "{\"present\":0,\"source\":\"stock_fixed_projection\",\"emit_enabled\":1,\"projection_valid\":0,\"projection_float\":0,\"compress_full_matrix\":0,\"basis_scale\":0,\"no_basis_scale\":1,\"active\":0,\"projected\":0,\"onscreen\":0,\"behind\":0,\"sample\":[]}";
     char glassPropsJson[16384] = "{\"present\":0,\"count\":0,\"live\":0,\"with_prop\":0,\"with_model\":0,\"destroyed\":0,\"remove\":0,\"truncated\":0,\"nearest\":{\"index\":-1},\"first_removed\":{\"index\":-1},\"first_destroyed\":{\"index\":-1},\"sample\":[],\"sample_truncated\":0,\"hash\":\"0x0000000000000000\"}";
@@ -4545,6 +4691,7 @@ struct OracleState {
 
     formatActorSummaryJson(actorSummaryJson, sizeof(actorSummaryJson), hasPlayer, posX, posY, posZ, renderedRoomsCount);
     formatTrackedChrJson(trackedChrJson, sizeof(trackedChrJson), hasPlayer, posX, posY, posZ, renderedRoomsCount);
+    formatCombatOracleJson(combatOracleJson, sizeof(combatOracleJson), hasPlayer, player, renderedRoomsCount);
     formatGlassStateJson(glassStateJson, sizeof(glassStateJson));
     formatGlassProjectionJson(glassProjectionJson, sizeof(glassProjectionJson), player);
     formatGlassPropsJson(glassPropsJson, sizeof(glassPropsJson), hasPlayer, posX, posY, posZ);
@@ -4581,7 +4728,7 @@ struct OracleState {
       "\"portal_trace\":{\"index\":%d,\"depth_byte\":%d,\"cache_valid\":%d,\"bbox\":[%.2f,%.2f,%.2f,%.2f],"
       "\"portals_ptr\":\"0x%08x\",\"offset\":\"0x%08x\",\"rooms\":[%d,%d],\"control\":[%d,%d],"
       "\"room_counts\":[%d,%d],\"dest_from_cur\":%d,\"dest_room_count\":%d}},"
-      "\"actors\":%s,%s"
+      "\"actors\":%s,%s%s"
       "\"glass\":%s,"
       "\"glass_projection\":%s,"
       "\"glass_props\":%s,"
@@ -4667,6 +4814,7 @@ struct OracleState {
       portalTraceDestFromCur, portalTraceDestRoomCount,
       actorSummaryJson,
       trackedChrJson,
+      combatOracleJson,
       glassStateJson,
       glassProjectionJson,
       glassPropsJson,

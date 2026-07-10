@@ -1,6 +1,7 @@
 # tier 1 — static + unit (ROM-free, ~2 min)
 ctest --test-dir build --output-on-failure -E "port_"        # all ROM-free lanes incl. fidelity_ledger_valid
 ctest --test-dir build --output-on-failure -R fidelity_hash_coverage
+tools/combat_route_contract_smoke.sh --gate                  # Task 1.1: combat/floor oracle schema+comparator contract (FID-0032)
 scripts/ci/check_sim_render_separation.sh
 scripts/ci/check_timing_lock.sh
 # tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)

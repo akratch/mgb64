@@ -1,0 +1,27 @@
+{
+  "id": "FID-0049",
+  "title": "Combat/floor oracle both-sides live capture blocked by parallel-agent toolchain contention (FID-0032 landed not verified)",
+  "class": "coverage-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "cmake configure stalled (0 CPU, no CMakeCache after 20min) under concurrent sibling-agent builds; ares rebuild is slow/fragile per plan",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T00:55:04Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md",
+      "note": "Native emitter compiles clean (-fsyntax-only OK) and ares patch is bash -n clean; verified milestone needs one native trace + one ares trace through compare_combat_trace.py. Retest when the build environment is uncontended."
+    }
+  ]
+}

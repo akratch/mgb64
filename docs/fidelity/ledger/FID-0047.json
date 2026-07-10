@@ -1,0 +1,27 @@
+{
+  "id": "FID-0047",
+  "title": "Combat oracle projectiles[] unpopulated ares-side (prop position list not in ares symbol layout)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "tools/prepare_ares_movement_oracle_build.sh"
+  ],
+  "repro": "tools/compare_combat_trace.py --baseline <ares> --test <native> (projectiles.count divergence)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#4"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-10T00:55:03Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#4",
+      "note": "By construction: native populates projectiles via get_ptr_obj_pos_list_current_entry; ares emits empty. Close by mapping the prop list base into the MGB64_ARES symbol table."
+    }
+  ]
+}
