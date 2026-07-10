@@ -191,5 +191,80 @@ class TestChainWalk(unittest.TestCase):
         )
 
 
+class TestLockFrameMode(unittest.TestCase):
+    """FID-0063 round 2: the --lock-seed lock-frame block must reproduce the
+    seed-locked headline (native 13 / stock 12 on the reference capture)
+    mechanically from the movement traces."""
+
+    LOCK = 0x00000001D8F3CC2B
+
+    def test_native_first_locked_frame(self) -> None:
+        # Native records are 1/frame, end-of-tick exact. The lock is applied at
+        # an input-poll boundary, so no record samples the lock seed itself:
+        # frames before the lock carry chain-unreachable seeds; the first
+        # reachable record IS the lock-consuming frame and the step count is
+        # its draw count.
+        chain = _chain(self.LOCK, 40)
+        recs = [
+            _record(40, 115, 0x1DEADBEEF, call_count=688),
+            _record(41, 118, 0x1BADF00D0, call_count=698),
+            _record(42, 121, chain[12], call_count=711),   # 13 draws from LOCK
+            _record(43, 124, chain[26], call_count=725),
+        ]
+        out = rcd.native_lock_frame(recs, self.LOCK, scan_steps=4096)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["first_locked_frame_calls"], 13)
+        self.assertEqual(out["f"], 42)
+        self.assertEqual(out["global"], 121)
+        self.assertEqual(out["call_count"], 711)
+
+    def test_native_lock_never_consumed(self) -> None:
+        recs = [_record(1, 0, 0x1DEADBEEF)]
+        self.assertIsNone(rcd.native_lock_frame(recs, self.LOCK, scan_steps=64))
+
+    def test_stock_lock_buckets(self) -> None:
+        # Stock samples ~3 records per game frame (VI cadence); the seed-script
+        # application record itself carries the lock seed. The lock frame's
+        # draws land under the lock global; the next frame's under global+3.
+        chain = _chain(self.LOCK, 40)
+        recs = [
+            _record(1, 1260, 0x1DEADBEEF),      # pre-lock, unreachable
+            _record(2, 1263, self.LOCK),        # application sample
+            _record(3, 1263, chain[4]),         # mid-frame writeback
+            _record(4, 1263, chain[11]),        # last sample at lock global: 12 draws
+            _record(5, 1266, chain[19]),
+            _record(6, 1266, chain[23]),        # last at 1266: cum 24
+            _record(7, 1269, chain[35]),        # cum 36
+        ]
+        out = rcd.stock_lock_frame(recs, self.LOCK, max_steps=100, frame_buckets=8)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["lock_global"], 1263)
+        self.assertEqual(out["first_locked_frame_calls"], 12)
+        self.assertEqual(
+            [(b["global"], b["cum"]) for b in out["buckets"]],
+            [(1263, 12), (1266, 24), (1269, 36)],
+        )
+
+    def test_stock_segment_gate(self) -> None:
+        # A post-death g_GlobalTimer reset after the lock must stop bucketing
+        # (later segments re-visit the same globals with unrelated seeds).
+        chain = _chain(self.LOCK, 20)
+        recs = [
+            _record(1, 1263, self.LOCK),
+            _record(2, 1263, chain[11]),
+            _record(3, 0, 0x1DEADBEEF),        # reset: segment boundary
+            _record(4, 1266, 0x1BADF00D0),     # unrelated; must be ignored
+        ]
+        out = rcd.stock_lock_frame(recs, self.LOCK, max_steps=100, frame_buckets=8)
+        self.assertEqual([(b["global"], b["cum"]) for b in out["buckets"]],
+                         [(1263, 12)])
+
+    def test_stock_lock_absent(self) -> None:
+        recs = [_record(1, 100, 0x1DEADBEEF)]
+        self.assertIsNone(
+            rcd.stock_lock_frame(recs, self.LOCK, max_steps=10, frame_buckets=2)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

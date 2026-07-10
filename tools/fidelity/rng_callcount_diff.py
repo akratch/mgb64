@@ -187,6 +187,121 @@ def chain_walk(samples: list[dict[str, Any]], max_steps: int) -> dict[str, Any]:
     return {"cum": cums, "discontinuities": discontinuities}
 
 
+def native_lock_frame(
+    records: list[dict[str, Any]], lock_seed: int, scan_steps: int
+) -> dict[str, Any] | None:
+    """First-locked-frame draw count on the NATIVE side.
+
+    The native lock (GE007_AUTO_RNG_SEED_SCRIPT) is applied at an input-poll
+    boundary, so no native record ever SAMPLES the lock seed itself; the first
+    record whose end-of-frame seed is chain-reachable from the lock within
+    ``scan_steps`` is the frame that consumed the lock, and the step count is
+    exactly that frame's randomGetNext() draws (native records are 1/frame,
+    exact end-of-tick).
+    """
+    for record in records:
+        seed = parse_seed(record)
+        if seed is None:
+            continue
+        k = steps_between(lock_seed, seed, scan_steps)
+        if k is not None and k > 0:
+            return {
+                "first_locked_frame_calls": k,
+                "f": record.get("f"),
+                "global": parse_int(record.get("move", {}).get("global")),
+                "call_count": parse_call_count(record),
+            }
+    return None
+
+
+def stock_lock_frame(
+    records: list[dict[str, Any]],
+    lock_seed: int,
+    max_steps: int,
+    frame_buckets: int,
+) -> dict[str, Any] | None:
+    """Post-lock per-frame-bucket cumulative draw counts on the STOCK side.
+
+    Anchors at the first record whose sampled seed EQUALS the lock (the ares
+    seed-script application sample), then buckets last-wins per ``move.global``
+    within the contiguous non-decreasing-global segment (same segment gate as
+    rel_tick_samples) and chain-walks the bucket seeds from the lock.
+
+    CAVEAT (FID-0063 round 2, derivation doc section 9.1): the ares tracer reads
+    g_randomSeed from RDRAM, which lags the guest CPU's dcache by a few draws
+    until a writeback lands, so per-bucket counts here are the RDRAM-writeback
+    view and can smear by a few calls across adjacent buckets; cumulative
+    counts across several buckets are exact. The per-call ground truth is the
+    MGB64_ARES_RNG_PC_TRACE caller-PC log, not this sampler.
+    """
+    lock_idx = None
+    for idx, record in enumerate(records):
+        if parse_seed(record) == lock_seed:
+            lock_idx = idx
+            break
+    if lock_idx is None:
+        return None
+    lock_global = parse_int(records[lock_idx].get("move", {}).get("global"))
+    if lock_global is None:
+        return None
+
+    buckets: dict[int, int] = {}
+    prev_g: int | None = None
+    for record in records[lock_idx:]:
+        g = parse_int(record.get("move", {}).get("global"))
+        if g is None:
+            continue
+        if prev_g is not None and g < prev_g:
+            break  # segment gate: g_GlobalTimer reset
+        prev_g = g
+        seed = parse_seed(record)
+        if seed is None:
+            continue
+        buckets[g] = seed  # last record per global wins
+
+    cum = 0
+    prev_seed = lock_seed
+    series: list[dict[str, Any]] = []
+    for g in sorted(buckets):
+        k = steps_between(prev_seed, buckets[g], max_steps)
+        if k is None:
+            series.append({"global": g, "cum": None, "discontinuity": True})
+            break
+        cum += k
+        series.append({"global": g, "cum": cum})
+        prev_seed = buckets[g]
+        if len(series) >= frame_buckets:
+            break
+
+    # The lock frame's draws land under the lock global (the sim burst runs
+    # before the global increments for the next frame), so the LAST sample at
+    # lock_global is the closest boundary estimate of the first locked frame.
+    # Validated against the per-call PC-trace ground truth on the reference
+    # capture (both = 12); can undercount by the writeback lag when the last
+    # VI sample lands mid-burst.
+    lock_bucket = next(
+        (row for row in series if row["global"] == lock_global and row.get("cum")),
+        None,
+    )
+    first_after = next(
+        (row for row in series if row["global"] > lock_global and row.get("cum")),
+        None,
+    )
+    return {
+        "lock_global": lock_global,
+        "buckets": series,
+        "first_locked_frame_calls": (
+            lock_bucket["cum"]
+            if lock_bucket
+            else (first_after["cum"] if first_after else None)
+        ),
+        "note": (
+            "RDRAM-writeback view (seed sampling lags the guest dcache by a few "
+            "draws); use MGB64_ARES_RNG_PC_TRACE for per-call ground truth"
+        ),
+    }
+
+
 def native_cums_from_counter(samples: list[dict[str, Any]]) -> dict[int, int] | None:
     """Cumulative counts straight from the native exact rng.call_count field."""
     if not samples or any(s["call_count"] is None for s in samples):
@@ -342,7 +457,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         "pre_onset": pre,
     }
 
-    return {
+    result = {
         "native": str(args.native),
         "stock": str(args.stock),
         "motion_threshold": args.motion_threshold,
@@ -351,6 +466,22 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         "summary": summary,
         "timeline": timeline,
     }
+
+    # Lock-frame mode (FID-0063): machine-reproducible first-locked-frame
+    # counts on a seed-locked route (GE007_AUTO_RNG_SEED_SCRIPT /
+    # MGB64_ARES_RNG_SEED_SCRIPT), independent of the motion-onset anchor —
+    # the lock lands PRE-onset, which the rel-tick extractor never samples.
+    lock_seed = parse_int(args.lock_seed) if args.lock_seed else None
+    if lock_seed is not None:
+        result["lock_frame"] = {
+            "lock_seed": f"0x{lock_seed:016X}",
+            "native": native_lock_frame(native_all, lock_seed, args.lock_scan_steps),
+            "stock": stock_lock_frame(
+                stock_all, lock_seed, args.max_steps, args.lock_frame_buckets
+            ),
+        }
+
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -364,6 +495,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json-out", help="write the full result JSON to this path")
     p.add_argument("--print-ticks", type=int, default=24,
                    help="rows of the timeline to print around the first divergence")
+    p.add_argument("--lock-seed",
+                   help="seed-locked route: the scripted g_randomSeed value "
+                        "(hex); adds the lock_frame block (first-locked-frame "
+                        "draw counts both sides)")
+    p.add_argument("--lock-scan-steps", type=int, default=4096,
+                   help="bounded chain scan for the native lock-consuming frame")
+    p.add_argument("--lock-frame-buckets", type=int, default=8,
+                   help="stock per-global buckets to report after the lock")
     return p
 
 
@@ -386,6 +525,10 @@ def main(argv: list[str]) -> int:
               f"{'OK' if ok else 'MISMATCH'} ({ncv['ticks_checked']} ticks)")
     print(f"validation: stock chain discontinuities: "
           f"{len(v['stock_chain_discontinuities'])}")
+
+    lock = result.get("lock_frame")
+    if lock is not None:
+        print(json.dumps({"lock_frame": lock}, indent=2))
 
     first = s["first_pertick_divergent_tick"]
     if first is not None:
