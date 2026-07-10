@@ -44,3 +44,29 @@ place fir_hd 1800 100 -5300 220 86
 place boulder_a 1550 97 -4600 20 125
 place dead_trunk 800 96 -5100 180 140
 place spruce_hd_c 2100 102 -4300 140 620
+
+# ---- M9.1 densify: variety scans + fuller plateau/hut dressing ----
+model boulder_c models/boulder_c.glb modern
+model dead_trunk_b models/dead_trunk_b.glb modern
+# valley extras
+place boulder_c -6100 35 -11900 90 130
+place dead_trunk_b -7000 58 -11750 200 120
+place boulder_c -9600 85 -11350 30 145
+# plateau (floor ~245-250)
+place fir_hd -2300 248 -1200 90 82
+place fir_hd -300 249 -2100 310 74
+place boulder_c -1100 247 -2500 60 120
+place dead_trunk_b -1500 246 -1000 140 130
+place fir_big -150 250 -2900 20 62
+place spruce_hd_c -2100 250 -2400 200 640
+# hut approach (floor ~95-105)
+place fir_hd 400 96 -4700 120 80
+place fir_big 2300 103 -5600 280 58
+place boulder_b 1100 98 -5450 250 105
+place boulder_c 1900 100 -4150 340 115
+place dead_trunk 2200 101 -4900 30 120
+# hero pines (20.3u scan)
+model pine_big models/pine_big.glb modern
+place pine_big -6100 50 -10850 150 85
+place pine_big -2600 250 -2100 40 75
+place pine_big 600 100 -5550 260 68

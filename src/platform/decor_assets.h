@@ -25,7 +25,7 @@
 
 #include "fast3d/gfx_rendering_api.h" /* struct GfxModernMesh */
 
-#define DECOR_MAX_MODELS 8
+#define DECOR_MAX_MODELS 16
 #define DECOR_MAX_PRIMS 4
 #define DECOR_MAX_INSTANCES 96
 /* F3D (not F3DEX) vertex loads encode (n-1)<<4|v0 in ONE byte: the RSP
