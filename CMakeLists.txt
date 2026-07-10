@@ -134,6 +134,20 @@ endif()
 option(PORT_VALIDATION_TESTS "Register runtime validation smoke tests with CTest" OFF)
 
 if(BUILD_TESTING)
+    # The internal fidelity program (docs/fidelity/, tools/fidelity/,
+    # baselines/tapes/) is export-ignored out of the public source archive and
+    # the fresh public-launch repo (D1, docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md;
+    # .gitattributes is the source of truth). Gate every ctest registration that
+    # references tools/fidelity/** behind this so a checkout without that tree
+    # (i.e. the public archive) simply doesn't register those tests, the same
+    # "absent prereq -> not configured" convention add_port_validation_smoke
+    # uses below for a missing ROM.
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tools/fidelity")
+        set(GE007_HAVE_FIDELITY_PROGRAM TRUE)
+    else()
+        set(GE007_HAVE_FIDELITY_PROGRAM FALSE)
+    endif()
+
     add_test(
         NAME port_native_switch_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_native_switch_access.py"
@@ -220,17 +234,28 @@ if(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/tools/export_github_launch_items.py"
             "${CMAKE_SOURCE_DIR}/tools/check_validation_smoke_registry.py"
             "${CMAKE_SOURCE_DIR}/tools/gen_env_reference.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_normalize.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_diff.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_candidates.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_candidates.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/gen_pixel_calibration.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_trace_candidates.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_pixel_candidates.py"
-            "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_ledger.py"
             "${CMAKE_SOURCE_DIR}/macos/Scripts/generate_app_icon.py"
     )
+    # tools/fidelity/** syntax coverage lives in its own registration (not the
+    # "public" list above): that tree is export-ignored from the public
+    # archive/launch repo, so this test is gated the same way.
+    if(GE007_HAVE_FIDELITY_PROGRAM)
+        add_test(
+            NAME fidelity_python_tool_syntax
+            COMMAND python3 -m py_compile
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_normalize.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/pixel_diff.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_candidates.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_candidates.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/gen_pixel_calibration.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_pixel_diff.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_trace_candidates.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_sense_pixel_candidates.py"
+                "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_ledger.py"
+        )
+        set_tests_properties(fidelity_python_tool_syntax PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
     add_test(
         NAME port_stock_rdp_command_stream_analyzer_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_stock_rdp_command_stream_regression.py"
@@ -333,45 +358,49 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
     )
-    # Task 1.3 pixel-oracle calibration (ROM-free): known-good synthetic pair
-    # reports 0 unexplained clusters, deliberately-broken pair reports >= 1.
-    add_test(
-        NAME pixel_diff_unittest
-        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_pixel_diff.py"
-    )
-    # Task 2.1 S1 trace-sweep candidate-emission logic (ROM-free).
-    add_test(
-        NAME sense_trace_candidates_unittest
-        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_trace_candidates.py"
-    )
-    # Task 2.1 S1 sweep harness self-test: emits a candidate from a synthetic
-    # comparator report with no ROM/ares.
-    add_test(
-        NAME sense_trace_sweep_selftest
-        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_sweep.sh" --self-test
-    )
-    # Task 2.2 S2 pixel-sweep candidate-emission logic (ROM-free): runs the real
-    # classifier on the synthetic calibration images.
-    add_test(
-        NAME sense_pixel_candidates_unittest
-        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_pixel_candidates.py"
-    )
-    # Task 2.2 S2 sweep harness self-test: full normalize->diff->classify->
-    # candidate pipeline on synthetic images (good->0, broken->>=1), no ROM/ares.
-    add_test(
-        NAME sense_pixel_sweep_selftest
-        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_sweep.sh" --self-test
-    )
-    set_tests_properties(
-        pixel_diff_unittest
-        sense_trace_candidates_unittest
-        sense_trace_sweep_selftest
-        sense_pixel_candidates_unittest
-        sense_pixel_sweep_selftest
-        PROPERTIES
-            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            TIMEOUT 30
-    )
+    # tools/fidelity/** is export-ignored from the public archive/launch repo
+    # (D1); gate its ctest registrations on the tree actually being present.
+    if(GE007_HAVE_FIDELITY_PROGRAM)
+        # Task 1.3 pixel-oracle calibration (ROM-free): known-good synthetic pair
+        # reports 0 unexplained clusters, deliberately-broken pair reports >= 1.
+        add_test(
+            NAME pixel_diff_unittest
+            COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_pixel_diff.py"
+        )
+        # Task 2.1 S1 trace-sweep candidate-emission logic (ROM-free).
+        add_test(
+            NAME sense_trace_candidates_unittest
+            COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_trace_candidates.py"
+        )
+        # Task 2.1 S1 sweep harness self-test: emits a candidate from a synthetic
+        # comparator report with no ROM/ares.
+        add_test(
+            NAME sense_trace_sweep_selftest
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_trace_sweep.sh" --self-test
+        )
+        # Task 2.2 S2 pixel-sweep candidate-emission logic (ROM-free): runs the real
+        # classifier on the synthetic calibration images.
+        add_test(
+            NAME sense_pixel_candidates_unittest
+            COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_sense_pixel_candidates.py"
+        )
+        # Task 2.2 S2 sweep harness self-test: full normalize->diff->classify->
+        # candidate pipeline on synthetic images (good->0, broken->>=1), no ROM/ares.
+        add_test(
+            NAME sense_pixel_sweep_selftest
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/sense_pixel_sweep.sh" --self-test
+        )
+        set_tests_properties(
+            pixel_diff_unittest
+            sense_trace_candidates_unittest
+            sense_trace_sweep_selftest
+            sense_pixel_candidates_unittest
+            sense_pixel_sweep_selftest
+            PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                TIMEOUT 30
+        )
+    endif()
     set_tests_properties(
         port_native_switch_guard
         port_release_ready_guard
@@ -571,75 +600,80 @@ if(BUILD_TESTING)
     set_tests_properties(env_reference_current PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-    # Fidelity findings ledger must stay schema-valid with consistent transition
-    # history (S-tier program Phase 0, Task 0.2). ROM-free python guard — the
-    # loop's persistent memory can never silently corrupt.
-    add_test(
-        NAME fidelity_ledger_valid
-        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" validate
-    )
-    set_tests_properties(fidelity_ledger_valid PROPERTIES
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    # tools/fidelity/ + docs/fidelity/ are export-ignored from the public
+    # archive/launch repo (D1); a checkout without that tree just doesn't
+    # register these ctests.
+    if(GE007_HAVE_FIDELITY_PROGRAM)
+        # Fidelity findings ledger must stay schema-valid with consistent transition
+        # history (S-tier program Phase 0, Task 0.2). ROM-free python guard — the
+        # loop's persistent memory can never silently corrupt.
+        add_test(
+            NAME fidelity_ledger_valid
+            COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" validate
+        )
+        set_tests_properties(fidelity_ledger_valid PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-    # Ledger transition edge-set + evidence-path validation (C5, 2026-07-10 review):
-    # `transition` must reject skip-ahead / backward / terminal-resurrection edges
-    # unless --reopen is given, and `validate` must catch a malformed/unresolvable
-    # evidence path (the FID-0046 shape). ROM-free, operates in a throwaway temp
-    # ledger dir -- never touches docs/fidelity/ledger/.
-    add_test(
-        NAME fidelity_ledger_unittest
-        COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_ledger.py"
-    )
-    set_tests_properties(fidelity_ledger_unittest PROPERTIES
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        TIMEOUT 30)
+        # Ledger transition edge-set + evidence-path validation (C5, 2026-07-10 review):
+        # `transition` must reject skip-ahead / backward / terminal-resurrection edges
+        # unless --reopen is given, and `validate` must catch a malformed/unresolvable
+        # evidence path (the FID-0046 shape). ROM-free, operates in a throwaway temp
+        # ledger dir -- never touches docs/fidelity/ledger/.
+        add_test(
+            NAME fidelity_ledger_unittest
+            COMMAND python3 -m unittest discover -s "${CMAKE_SOURCE_DIR}/tools/fidelity/tests" -p "test_ledger.py"
+        )
+        set_tests_properties(fidelity_ledger_unittest PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30)
 
-    # The generated human index docs/fidelity/LEDGER.md must not silently drift
-    # from the JSON source of truth (it had fallen 10 findings behind). Guard it.
-    add_test(
-        NAME fidelity_ledger_index_current
-        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" render --check
-    )
-    set_tests_properties(fidelity_ledger_index_current PROPERTIES
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # The generated human index docs/fidelity/LEDGER.md must not silently drift
+        # from the JSON source of truth (it had fallen 10 findings behind). Guard it.
+        add_test(
+            NAME fidelity_ledger_index_current
+            COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" render --check
+        )
+        set_tests_properties(fidelity_ledger_index_current PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-    # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
-    # integrity (S-tier Task 2.4, FID-0042). ROM-free python guard: validates
-    # docs/fidelity/asm_audit_queue.json (verdict grammar, finding-filed FIDs
-    # resolve to real ledger entries, ranks are a contiguous 1..N permutation,
-    # every referenced source file exists). The queue drives all ~388 GLOBAL_ASM
-    # reimplementations to a recorded verdict (S-tier exit criterion 4).
-    add_test(
-        NAME fidelity_asm_audit_valid
-        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/asm_audit.py" validate
-    )
-    set_tests_properties(fidelity_asm_audit_valid PROPERTIES
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
+        # integrity (S-tier Task 2.4, FID-0042). ROM-free python guard: validates
+        # docs/fidelity/asm_audit_queue.json (verdict grammar, finding-filed FIDs
+        # resolve to real ledger entries, ranks are a contiguous 1..N permutation,
+        # every referenced source file exists). The queue drives all ~388 GLOBAL_ASM
+        # reimplementations to a recorded verdict (S-tier exit criterion 4).
+        add_test(
+            NAME fidelity_asm_audit_valid
+            COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/asm_audit.py" validate
+        )
+        set_tests_properties(fidelity_asm_audit_valid PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-    # Sim-hash coverage audit (S-tier Task 0.4, FID-0030): make "what the
-    # sim-state invariance hash covers" a checked property. Every writable
-    # (.data/.bss) symbol in the decomp TUs (src/game/* + top-level src/*) must
-    # be either hashed by a SimHashRegion or waived in docs/fidelity/
-    # hash_waivers.txt with a reason, else this fails. ROM-free: nm over the
-    # built ge007 objects + the region table from `ge007 --print-sim-hash-regions`.
-    # Needs the built ge007 binary + its objects; SKIPs (not fails) via the
-    # prereq wrapper when ge007 has not been built (e.g. a test-only checkout),
-    # the same convention as the intro_* smokes. The ge007 target is defined
-    # later in this file, so the binary is referenced by path, not $<TARGET_FILE>.
-    add_test(
-        NAME fidelity_hash_coverage
-        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/ctest_require_prereqs.sh"
-            --require "${CMAKE_BINARY_DIR}/ge007"
-            --
-            python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/hash_coverage_audit.py"
-                --binary "${CMAKE_BINARY_DIR}/ge007"
-                --objroot "${CMAKE_BINARY_DIR}/CMakeFiles/ge007.dir"
-                --waivers "${CMAKE_SOURCE_DIR}/docs/fidelity/hash_waivers.txt"
-                --report "${CMAKE_BINARY_DIR}/hash_coverage_report.json"
-    )
-    set_tests_properties(fidelity_hash_coverage PROPERTIES
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        SKIP_RETURN_CODE 125)
+        # Sim-hash coverage audit (S-tier Task 0.4, FID-0030): make "what the
+        # sim-state invariance hash covers" a checked property. Every writable
+        # (.data/.bss) symbol in the decomp TUs (src/game/* + top-level src/*) must
+        # be either hashed by a SimHashRegion or waived in docs/fidelity/
+        # hash_waivers.txt with a reason, else this fails. ROM-free: nm over the
+        # built ge007 objects + the region table from `ge007 --print-sim-hash-regions`.
+        # Needs the built ge007 binary + its objects; SKIPs (not fails) via the
+        # prereq wrapper when ge007 has not been built (e.g. a test-only checkout),
+        # the same convention as the intro_* smokes. The ge007 target is defined
+        # later in this file, so the binary is referenced by path, not $<TARGET_FILE>.
+        add_test(
+            NAME fidelity_hash_coverage
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/ctest_require_prereqs.sh"
+                --require "${CMAKE_BINARY_DIR}/ge007"
+                --
+                python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/hash_coverage_audit.py"
+                    --binary "${CMAKE_BINARY_DIR}/ge007"
+                    --objroot "${CMAKE_BINARY_DIR}/CMakeFiles/ge007.dir"
+                    --waivers "${CMAKE_SOURCE_DIR}/docs/fidelity/hash_waivers.txt"
+                    --report "${CMAKE_BINARY_DIR}/hash_coverage_report.json"
+        )
+        set_tests_properties(fidelity_hash_coverage PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            SKIP_RETURN_CODE 125)
+    endif()
 
     # Local MinGW cross-compile lane (backlog MW.2): proves ge007.exe compiles
     # and links for Windows from this host instead of waiting for the release

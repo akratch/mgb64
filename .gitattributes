@@ -56,6 +56,27 @@ tools/mktex/src/libpdtex/** linguist-vendored
 # ad-hoc top-level exclusions — top-level docs/ is the public reference surface).
 docs/design/** export-ignore
 #
+# Fidelity program (2026-07-10 internal-only decision D1; see
+# docs/design/FIDELITY_REVIEW_AND_PLAN_2026-07-10.md). Its tooling and working
+# data live outside docs/design/, so they need their own entries:
+docs/fidelity/** export-ignore
+tools/fidelity/** export-ignore
+baselines/tapes/** export-ignore
+#
+# tools/tests/test_fidelity_ledger.py lives in the general (public) tools/tests/
+# directory, not under tools/fidelity/, so the glob above misses it. It exists
+# solely to unit-test the internal tools/fidelity/ledger.py (imports it
+# directly), so it is exactly as internal as the tree it tests.
+tools/tests/test_fidelity_ledger.py export-ignore
+#
+# Path-gap docs: internal working documents that predate the docs/design/
+# convention and sit at top-level docs/ paths that defeat every glob above.
+# Exclude them explicitly rather than rename them (renaming would break
+# in-flight references); this list is why "any new internal doc goes under
+# docs/design/" above matters going forward.
+docs/BACKLOG_v0.4.0.md export-ignore
+docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md export-ignore
+#
 # LEGACY paths, retained on purpose. Internal docs previously lived at these
 # paths (before consolidation under docs/design/). They match nothing in the
 # current tree, but scripts/ci/check_public_history_text.sh derives its

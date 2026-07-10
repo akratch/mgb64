@@ -57,8 +57,20 @@ def main() -> int:
     for script in scripts:
         # Scripts are resolved relative to tools/ by the CMake helper.
         path = os.path.join(root, "tools", script)
-        if not os.path.isfile(path):
-            missing.append(script)
+        if os.path.isfile(path):
+            continue
+        # tools/fidelity/** is export-ignored from the public source archive
+        # and the fresh public-launch repo (D1, docs/design/
+        # FIDELITY_REVIEW_AND_PLAN_2026-07-10.md). A checkout with no
+        # tools/fidelity/ at all (the public tree) is the expected, on-purpose
+        # case for a fidelity/-prefixed registration, not a phantom lane --
+        # add_port_validation_smoke() itself already skips registering it
+        # when the script is absent. Only flag a fidelity/ script as missing
+        # when the fidelity tree exists but the specific script inside it
+        # does not (a genuine phantom).
+        if script.startswith("fidelity/") and not os.path.isdir(os.path.join(root, "tools", "fidelity")):
+            continue
+        missing.append(script)
 
     total = len(scripts)
     if missing:
