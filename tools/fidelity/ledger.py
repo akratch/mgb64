@@ -254,8 +254,12 @@ def cmd_dedupe_check(args):
     return 0
 
 
-def cmd_render(args):
-    ld = ledger_dir(args)
+def render_ledger_text(ld):
+    """Build the LEDGER.md index text from the JSON source of truth.
+
+    Pure (no I/O) so both `render` (write) and `render --check` (drift guard)
+    share one generator — the rendered index can never disagree with the check.
+    """
     entries = load_all(ld)
     escalated = escalated_fids(ld)
     counts = {}
@@ -279,10 +283,27 @@ def cmd_render(args):
         lines.append(f"| {o['id']} | {o['priority']} | {o['status']} | {o['class']} | "
                      f"{o['surface']} | {act} | {blocked} | {title} |")
     lines.append("")
+    return "\n".join(lines), len(entries)
+
+
+def cmd_render(args):
+    ld = ledger_dir(args)
+    text, n = render_ledger_text(ld)
     out = os.path.join(os.path.dirname(os.path.abspath(ld)), "LEDGER.md")
+    if getattr(args, "check", False):
+        current = ""
+        if os.path.exists(out):
+            with open(out, "r", encoding="utf-8") as f:
+                current = f.read()
+        if current != text:
+            print("LEDGER.md is STALE — run `tools/fidelity/ledger.py render` "
+                  f"(index has drifted from the {n} JSON findings)")
+            return 1
+        print(f"LEDGER.md current ({n} findings)")
+        return 0
     with open(out, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    print(f"wrote {out} ({len(entries)} findings)")
+        f.write(text)
+    print(f"wrote {out} ({n} findings)")
     return 0
 
 
@@ -390,7 +411,10 @@ def build_parser():
     d.add_argument("--suspect", default=None)
     d.set_defaults(func=cmd_dedupe_check)
 
-    sub.add_parser("render").set_defaults(func=cmd_render)
+    p_render = sub.add_parser("render")
+    p_render.add_argument("--check", action="store_true",
+                          help="exit non-zero if LEDGER.md is out of date instead of writing it")
+    p_render.set_defaults(func=cmd_render)
     sub.add_parser("validate").set_defaults(func=cmd_validate)
 
     st = sub.add_parser("stats")

@@ -497,6 +497,17 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_bullet_type PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_bullet_type COMMAND test_weapon_bullet_type)
 
+    # Sticky-projectile deposit-motion endpoint pull-back — ROM-free unit test
+    # (FID-0065): retail clamps the collision endpoint + impact to bg_hit-0.1*travel
+    # ONLY on a wall hit (result==0), measured from arg2; the port inverted the
+    # guard and read the base from dest. Fails if guard polarity or base operand reverts.
+    add_executable(test_projectile_endpoint_clamp
+        "${CMAKE_SOURCE_DIR}/tests/test_projectile_endpoint_clamp.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/projectile_endpoint_clamp.c"
+    )
+    target_include_directories(test_projectile_endpoint_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME projectile_endpoint_clamp COMMAND test_projectile_endpoint_clamp)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
@@ -535,6 +546,15 @@ if(BUILD_TESTING)
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" validate
     )
     set_tests_properties(fidelity_ledger_valid PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # The generated human index docs/fidelity/LEDGER.md must not silently drift
+    # from the JSON source of truth (it had fallen 10 findings behind). Guard it.
+    add_test(
+        NAME fidelity_ledger_index_current
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/fidelity/ledger.py" render --check
+    )
+    set_tests_properties(fidelity_ledger_index_current PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
