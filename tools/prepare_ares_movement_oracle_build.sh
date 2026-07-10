@@ -3932,7 +3932,13 @@ struct OracleState {
      * accumulator read here (documented divergence); shots_fired_total likewise 0. */
     f32 playerHealth = 0.0f;
     f32 playerArmor = 0.0f;
-    u32 rngSeedLow = readU32(randomSeedAddress);
+    /* FID-0063: g_randomSeed is a 64-bit doubleword; the LOW word lives at
+     * base+4 (big-endian). readU32(base) is the HIGH word, which collapses to
+     * 0/1 after the first randomGetNext step (the PRNG state is 33-bit), so it
+     * made combat.rng_seed diverge from native's low-word emission by
+     * construction. The movement-record "rng" block (readU64) was always
+     * correct; only this combat-block scalar was wrong. */
+    u32 rngSeedLow = readU32(randomSeedAddress + 4);
     if(hasPlayer && player != 0) {
       playerHealth = readF32(player + PlayerBondHealth);
       playerArmor = readF32(player + PlayerBondArmour);
