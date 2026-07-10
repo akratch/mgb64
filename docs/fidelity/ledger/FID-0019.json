@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "gfx_metal.mm:1631-1649",
     "gfx_metal.mm:3308-3311"
@@ -15,6 +15,10 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M3.2",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_renderer_parity_smoke"
     }
   ],
   "history": [
@@ -24,6 +28,13 @@
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M3.2",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:26:45Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "ctest:port_renderer_parity_smoke",
+      "note": "Landed dc55008 (depth-clip clamp on shadow pass) + 73bbdac (1x1 far-cleared dummy depth instead of live scene depth attachment as shadow fallback) + e8d283a (@autoreleasepool around each MSL compile). NOT verified: renderer_parity scenes are facility_scissor/surface_sky_fog/world_attrs \u2014 none shadow-casting \u2014 so the parity smoke does not guard the shadow depth-clip/fallback; the autorelease leak is not pixel-observable at all. Needs a shadow-parity scene (+ leak/robustness assertion)."
     }
   ]
 }

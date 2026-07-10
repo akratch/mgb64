@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "stubs.c:6267-6269",
     "bondview.c:11526",
@@ -16,6 +16,10 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M2.2",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:sim_state_hash"
     }
   ],
   "history": [
@@ -25,6 +29,13 @@
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M2.2",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:26:38Z",
+      "from": "root-caused",
+      "to": "landed",
+      "evidence": "ctest:sim_state_hash",
+      "note": "Landed 5d90a94 (fix(input): M2.2 mouse-wheel weapon cycling steps once per notch via pcQueueWeaponCycleSteps). NOT verified: headless cannot inject SDL wheel events (commit validated the wheel=+3 path by hand), sim_state_hash does not exercise it. Needs a wheel-notch cycling lane."
     }
   ]
 }

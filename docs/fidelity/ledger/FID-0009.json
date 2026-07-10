@@ -14,6 +14,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/bg.c:2737 (g_BgRoomDrawOnly)"
     }
   ],
   "history": [
@@ -23,6 +27,13 @@
       "to": "root-caused",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T00:26:51Z",
+      "from": "root-caused",
+      "to": "root-caused",
+      "evidence": "src/game/bg.c:2737 (g_BgRoomDrawOnly)",
+      "note": "T13b landed the draw-only room-admission mechanism this can reuse: camera-seed portal walk adds grazing-portal rooms to the draw list without sim coupling (g_BgRoomDrawOnly/g_BgRoomDrawOnlyCount, bg.c:2737-2741,16930; default-on via GE007_NO_CAMERA_SEED_WALK opt-out, commits f6ad61a/7a918a7/f312ef7). T13b closed the Silo/Dam BLUE-SKY part, but the aperture residual \u2014 rooms 28/44 screen-edge sliver dropped via multi-hop grazing portals \u2014 REMAINS. Stays root-caused (not fixed); fix path = extend the T13b draw-only walk to the multi-hop grazing case."
     }
   ]
 }
