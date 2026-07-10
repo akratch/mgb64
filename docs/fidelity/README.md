@@ -54,6 +54,10 @@ discovered → triaged → root-caused → fix-in-progress → landed → verifi
 A transition requires a machine artifact (a trace diff, a pixel diff, an ASM
 citation, a passing gate log). No evidence, no transition.
 
+ID gaps: **FID-0050 was never allocated** — the ID was skipped during the
+2026-07-10 parallel filing window between FID-0049 (00:55Z) and FID-0051
+(06:31Z); no finding was lost. Do not reallocate it.
+
 ```sh
 tools/fidelity/ledger.py stats                 # counts by status
 tools/fidelity/ledger.py list --actionable     # what's ready to work
