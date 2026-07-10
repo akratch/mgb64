@@ -19,6 +19,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/COMBAT_GLIDEPATH.md#3.1",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/combat_oracle_fields.md#12"
     }
   ],
   "history": [
@@ -28,6 +32,13 @@
       "to": "triaged",
       "evidence": "docs/design/COMBAT_GLIDEPATH.md#3.1",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-10T09:35:52Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "docs/fidelity/combat_oracle_fields.md#12",
+      "note": "RE-VALIDATION REQUIRED before ACT (FID-0062): this finding was seeded from compare_combat_trace --align move, which has a ~2x sim-tick skew (record-index vs sim-tick). RE-CAPTURE dam route both-sides under --align tick (now the trustworthy combat mode, combat_oracle_fields.md#12) before root-causing. Much of the reported guard divergence is likely alignment artifact + the systemic RNG call-count phase (FID-0063), NOT a chr.c/stan.c logic bug."
     }
   ],
   "blocked_on": [
