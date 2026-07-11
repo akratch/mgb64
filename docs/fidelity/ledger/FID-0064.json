@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c:32056"
   ],
@@ -13,6 +13,26 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:32355"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0064-0065-batch2.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c GLOBAL_ASM generate_ammo_total_microcode US VRAM 7F069D14 lw t7,0x29c4(v0)=mpmenuon / 7F069D18 bnezl return-gdl"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/gun.c:32079"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "tools/ammo_hud_mpmenu_smoke.sh (commit 31f431f; ctest port_ammo_hud_mpmenu_smoke): runtime A/B fix-ON hides P2 ammo HUD vs fix-OFF draws it, delta 478px P2-pane bbox 449,356-479,378; fail-on-revert proven (early-out removed -> delta 0)"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/sim_invariance_gate.sh (sim_invariance PASS OFF==ON 1f8bc5bdca0eef42; ctest port_ammo_hud_mpmenu_smoke PASS; ctest port_ammo_hud_smoke PASS 13 types)"
     }
   ],
   "history": [
@@ -22,6 +42,41 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:32355",
       "note": "Retail ASM prologue (glabel generate_ammo_total_microcode, gun.c:32343) has TWO independent !=0 early-outs: lw 0x1064(g_CurrentPlayer)=gunammooff bnezl return (gun.c:32351-32353) AND lw 0x29c4=mpmenuon bnezl return (gun.c:32354-32356). Offsets confirmed: gunammooff bondview.h:1043@0x1064, mpmenuon bondview.h:2272@0x29c4. Live C (gun.c:32053, NATIVE_PORT) checks ONLY gunammooff (gun.c:32056); no mpmenuon guard in generate_ammo_total_microcode nor its delegate portDrawHandAmmo (gun.c:31959). REACHABILITY CONFIRMED: caller bondview.c:21384 invokes it unconditionally; the caller's own mpmenuon block (bondview.c:21242-21251) only appends the menu-darkening overlay (microcode_constructor + microcode_constructor_related_to_menus) and does NOT early-return, so the internal guard is the sole gate. mpmenuon set TRUE by mp_watch.c:353,642,708 (MP watch/pause menu). Effect: in MP with watch menu open, retail suppresses the entire ammo HUD for that pane; port still draws ammo icon+clip+reserve for both hands over/behind the overlay. This mpmenuon HUD-suppress pattern IS honored elsewhere in the port (radar.c:63, minimap.c:828, bondview.c:22840/22884) but missed here. Visual-only, no sim/determinism impact. Found by S-tier Task 2.4 ASM-audit batch-2. DO NOT fix from this note; re-derive from ASM. Fix polarity if actioned: default-ON GE007_NO_AMMO_HUD_MPMENU_FIX."
+    },
+    {
+      "ts": "2026-07-11T08:36:46Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0064-0065-batch2.md",
+      "note": "Batch-2 ASM audit triage: port-defect / renderer / P2. Live NATIVE_PORT generate_ammo_total_microcode checks only gunammooff; retail ASM has a second mpmenuon early-out."
+    },
+    {
+      "ts": "2026-07-11T08:36:46Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c GLOBAL_ASM generate_ammo_total_microcode US VRAM 7F069D14 lw t7,0x29c4(v0)=mpmenuon / 7F069D18 bnezl return-gdl",
+      "note": "Confirmed at anchor: second of two !=0 guards (after gunammooff 7F069D08). Base is g_CurrentPlayer so guard is PER-PANE. Solo-safe: mpmenuon init FALSE (player_2.c:500), set TRUE only under player_count!=1 (mp_watch.c:561->642/708) or MP awards (mp_watch.c:353) -> FALSE single-player, matching retail's unconditional check."
+    },
+    {
+      "ts": "2026-07-11T08:36:46Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:32079",
+      "note": "Added mpmenuon early-out default-ON with GE007_NO_MP_AMMO_HUD_MENU_FIX negative control (portMpAmmoHudMenuFixDisabled). ASM anchor cited at change site."
+    },
+    {
+      "ts": "2026-07-11T08:41:26Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/ammo_hud_mpmenu_smoke.sh (commit 31f431f; ctest port_ammo_hud_mpmenu_smoke): runtime A/B fix-ON hides P2 ammo HUD vs fix-OFF draws it, delta 478px P2-pane bbox 449,356-479,378; fail-on-revert proven (early-out removed -> delta 0)",
+      "note": "Landed 31f431f. 2p split-screen temple deathmatch, P2 armed PP7, MP menu forced open via GE007_AUTO_MPMENU. delta=478px localized entirely to P2 pane (top-pane=0)."
+    },
+    {
+      "ts": "2026-07-11T08:41:26Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/sim_invariance_gate.sh (sim_invariance PASS OFF==ON 1f8bc5bdca0eef42; ctest port_ammo_hud_mpmenu_smoke PASS; ctest port_ammo_hud_smoke PASS 13 types)",
+      "note": "Tiers 1-2 green. Renderer-only: sim_invariance PASS -> no render->sim leak; check_sim_render_separation PASS; check_timing_lock PASS; env_reference_current PASS (ENV_FLAGS regenerated for GE007_NO_MP_AMMO_HUD_MENU_FIX + GE007_AUTO_MPMENU); validation_smoke_registry PASS. Solo untouched: port_ammo_hud_smoke green."
     }
   ]
 }
