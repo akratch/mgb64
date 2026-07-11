@@ -36,6 +36,7 @@
 #include "stan.h"
 #include "unk_0CC4C0.h"
 #include "ge_debug.h"
+#include "platform/hull_vertex_clamp.h"  /* FID-0096 bbox-hull vertex count */
 #ifdef NATIVE_PORT
 #include "gfx_pc.h"
 #endif
@@ -7938,6 +7939,25 @@ void sub_GAME_7F03EC3C(struct ModelRoData_BoundingBoxRecord *bbox, Mtxf *arg1, s
 
 
 
+/* FID-0096 A/B control (parity-divergence, documented; port clamp is the
+ * memory-safe faithful default). Retail (ASM src/game/chrprop.c:8710-8712) stores
+ * the true convex-hull vertex count (up to 8) with NO clamp; the port clamps to 4
+ * because the TANK caller (chrobjhandler.c:11890) writes into TankRecord.rect
+ * (bondtypes.h:3719), immediately followed by live fields (unkA4 acceleration,
+ * ...) in the port's 64-bit-grown struct — NOT spare polygon slots — so >4
+ * vertices there would corrupt tank state and the tank consumer (bondview.c:8881)
+ * would read tank fields as polygon coords. GE007_HULL_VERTS_RETAIL (opt-in,
+ * default OFF) removes the clamp (retail-faithful for the object/door path, NOT
+ * memory-safe for the tank path). */
+static int portHullVertsRetail(void)
+{
+    static int s_retail = -1;
+    if (s_retail < 0) {
+        s_retail = ge_env_bool("GE007_HULL_VERTS_RETAIL", 0);
+    }
+    return s_retail;
+}
+
 #ifdef NONMATCHING
 void sub_GAME_7F03ECC0(f32 xmin, f32 xmax, f32 ymin, f32 ymax, f32 zmin, f32 zmax, Mtxf *mtx, struct rect4f *rect, struct collision_data *data) {
     f64 vertices[8][2];
@@ -8223,10 +8243,14 @@ void sub_GAME_7F03ECC0(f32 xmin, f32 xmax, f32 ymin, f32 ymax, f32 zmin, f32 zma
     }
 
     /* Store vertex count and translate all output vertices by matrix translation.
-     * Clamp to 4 — rect4f only holds 4 coord2d vertices. Keeps first 4 in
-     * hull construction order (not necessarily the tightest bounding polygon).
-     * Original N64 bug; matches original behavior. */
-    if (count > 4) count = 4;
+     * FID-0096: retail stores the true count (up to 8) with NO clamp (ASM
+     * src/game/chrprop.c:8710-8712) — the claim "Original N64 bug" was incorrect.
+     * The port clamps to 4 as a memory-safe default: the collision_data path has
+     * spare words (unk24..unk40) after the 4-vertex rect4f, but the TANK path
+     * (TankRecord.rect, chrobjhandler.c:11890) is followed by live fields, so >4
+     * vertices there corrupt tank state. GE007_HULL_VERTS_RETAIL removes the
+     * clamp (retail-faithful; not tank-safe). */
+    count = hullVertexCount(count, portHullVertsRetail());
     data->unk00 = count;
     if (count > 0) {
         for (i = 0; i < count; i++) {

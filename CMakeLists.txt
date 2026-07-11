@@ -712,6 +712,17 @@ if(BUILD_TESTING)
     target_include_directories(test_aimbone_dispatch PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME aimbone_dispatch COMMAND test_aimbone_dispatch)
 
+    # Bbox-hull vertex-count clamp — ROM-free unit test (FID-0096): the port
+    # clamps to 4 by default (memory-safe for all callers incl. the tank);
+    # GE007_HULL_VERTS_RETAIL opts into the retail true count (no clamp). Fails if
+    # the default clamp is dropped or the opt-in re-clamps.
+    add_executable(test_hull_vertex_clamp
+        "${CMAKE_SOURCE_DIR}/tests/test_hull_vertex_clamp.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/hull_vertex_clamp.c"
+    )
+    target_include_directories(test_hull_vertex_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME hull_vertex_clamp COMMAND test_hull_vertex_clamp)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

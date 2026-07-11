@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1035 flags** found across the source.
+**1036 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -503,6 +503,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_HAT_TRACE_BUDGET` | ? |  | 2 |  |
 | `GE007_HIDPI` | int | 0 | 1 | Render at your display's full Retina/high-DPI resolution (sharper, more GPU cost). Off renders at the window size for steadier performance. |
 | `GE007_HIT_MARKERS` | int | 1 | 1 | Flash a marker on the crosshair when your shot registers (white hit, yellow head, red kill; 0 = off). |
+| `GE007_HULL_VERTS_RETAIL` | bool | 0 | 1 |  |
 | `GE007_INTERACT_TRACE` | ? |  | 2 |  |
 | `GE007_INTERACT_TRACE_BUDGET` | ? |  | 2 |  |
 | `GE007_INTRO_ANIM_LEGACY_SEED` | presence | unset | 1 | Force the pre-T12 unnamed literal intro-anim seed (same value; documentation-only A/B) |
