@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P1",
-  "status": "fix-in-progress",
+  "status": "landed",
   "suspect": [
     "src/game/chrlv.c:11328 (per-tick modelSetAnimLooping force -- applies walk root-motion even in WAYMODE_MAGIC)",
     "src/game/chrlv.c:11348 (!chrlvPropHasRenderedRoom suppresses WAYMODE_MAGIC entry)",
@@ -16,11 +16,15 @@
     {
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M2.5",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
     },
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/derivations/FID-0054-guard-state.md"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/derivations/FID-0014-patrol-magic.md"
     },
     {
       "kind": "trace-diff",
@@ -33,14 +37,14 @@
       "from": "",
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M2.5",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
     },
     {
       "ts": "2026-07-11T05:13:43Z",
       "from": "root-caused",
       "to": "root-caused",
       "evidence": "docs/fidelity/derivations/FID-0054-guard-state.md",
-      "note": "First trace-grade machine evidence + \u00a74.1 statement (FID-0054 investigation, 2026-07-11). RETAIL keeps unseen patrolling guards frozen at their pad in WAYMODE_MAGIC, walking them virtually and teleporting pad-to-pad on virtual segment completion (dam_combat_guard6 stock oracle: patrol guards chr 2/40/45 stationary 96-99.7% of pre-onset ticks; position steps 100-1900u at warp instants; recently-drawn guards walk normally at 2.8u/t). PORT walks all 8 Dam patrollers smoothly on every tick (892/892 observed, zero pauses): chrlv.c:11348 blocks magic ENTRY for rendered-room guards, and chrlv.c:11328's per-tick anim-loop force applies walk root-motion even while IN magic mode (live GE007_TRACE_MAGIC_TRAVEL: chr 41/42/43/45 mode=6 creeping 1-5u/t + immediate ground-Y snap at tick 1). Effect: every patrolling guard's position diverges from retail from sim tick 1 under IDENTICAL initial state (spawn byte-identical; up to ~640u within 22s at equal ages; up to 2000u observed cross-side) -- this is FID-0054's Layer B and the upstream driver of the FID-0063 \u00a79.2 perception-class RNG residual, so it now GATES D5 call-for-call RNG parity. Priority P2->P1 accordingly. Faithful fix shape (retail ONSCREEN semantics + un-forced anim looping + retail magic entry/exit) must land with FID-0012/M2.3 Phase C per the BACKLOG M2.5 sequencing note; regression bar = dam_combat_guard6_agealign both-sides capture (recipe layer removed) with the 8-guard patrol set matching stock pause/warp profiles."
+      "note": "First trace-grade machine evidence + §4.1 statement (FID-0054 investigation, 2026-07-11). RETAIL keeps unseen patrolling guards frozen at their pad in WAYMODE_MAGIC, walking them virtually and teleporting pad-to-pad on virtual segment completion (dam_combat_guard6 stock oracle: patrol guards chr 2/40/45 stationary 96-99.7% of pre-onset ticks; position steps 100-1900u at warp instants; recently-drawn guards walk normally at 2.8u/t). PORT walks all 8 Dam patrollers smoothly on every tick (892/892 observed, zero pauses): chrlv.c:11348 blocks magic ENTRY for rendered-room guards, and chrlv.c:11328's per-tick anim-loop force applies walk root-motion even while IN magic mode (live GE007_TRACE_MAGIC_TRAVEL: chr 41/42/43/45 mode=6 creeping 1-5u/t + immediate ground-Y snap at tick 1). Effect: every patrolling guard's position diverges from retail from sim tick 1 under IDENTICAL initial state (spawn byte-identical; up to ~640u within 22s at equal ages; up to 2000u observed cross-side) -- this is FID-0054's Layer B and the upstream driver of the FID-0063 §9.2 perception-class RNG residual, so it now GATES D5 call-for-call RNG parity. Priority P2->P1 accordingly. Faithful fix shape (retail ONSCREEN semantics + un-forced anim looping + retail magic entry/exit) must land with FID-0012/M2.3 Phase C per the BACKLOG M2.5 sequencing note; regression bar = dam_combat_guard6_agealign both-sides capture (recipe layer removed) with the 8-guard patrol set matching stock pause/warp profiles."
     },
     {
       "ts": "2026-07-11T06:23:50Z",
@@ -48,6 +52,20 @@
       "to": "fix-in-progress",
       "evidence": "docs/fidelity/derivations/FID-0014-patrol-magic.md",
       "note": "Original-stall root cause CORRECTED by instrumented A/B (both chrlv patches hard-disabled = bit-identical profile on current HEAD): the two workarounds are DEAD today (loop-force shadowed by model.c portChrActionNeedsLooping; remote guards enter magic regardless and creep-walk at full speed). Live divergence = native chrTickBeams reimpl missing retail's magic dispatch (US .L7F021178/.L7F0211C4: freeze unless sub_GAME_7F054D6C passes; visible-magic pos-sync WITHOUT anim advance) and missing the per-tick lastvisible60/unk9c visible-refresh (US 7F021254-7F021284) that keeps seen patrollers out of magic. Historical stall = no-refresh + fog-era ONSCREEN-never-set + anim-loop lifecycle breaking walk root motion (the latter two since fixed elsewhere). Fix: retail dispatch + refresh in chr.c chrTickBeams (frustum-union == 7F054D6C in 1P), chrlv.c workarounds gated legacy-only, retail entry gate restored. Default ON, GE007_NO_PATROL_MAGIC_FIX=1 = byte-identical legacy (all 7 tape hashes reproduced)."
+    },
+    {
+      "ts": "2026-07-11T06:54:17Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "docs/fidelity/derivations/FID-0014-patrol-magic.md",
+      "note": "Fix landed (commits 060face + 199147d determinism follow-up; lane 9e6f7bc; re-records c7f51ff). Retail chrTickBeams magic dispatch (US .L7F021178/.L7F0211C4: freeze, no anim tick; visible-magic pos-sync sans advance) + per-tick lastvisible60/unk9c visible-refresh (US 7F021254-7F021284) + retail entry gate restored; chrlv.c workarounds gated legacy-only under GE007_NO_PATROL_MAGIC_FIX (default ON = faithful). Sim-consumed visibility uses the retail UNWIDENED frustum (US 0x7F0785DC) via portCullWidenSuppress scope — the widened planes read the live window drawable (gfx_get_aspect_x_factor) and produced a run-to-run ak47 replay-hash flip. ORACLE (pinned FID-0082 stock capture, agealign): chr45 equal-age pos delta 566.5u mean/1460u max -> 0.00 over all 174 common ticks, warp steps [1301.0,1460.8] bit-identical to stock; chr41/42/43 0% -> 85.7% paused w/ 7 pad warps each (stock 34-47% paused; residual = camera-recipe visibility-set difference, stock menu/intro cams vs native direct boot); chr2/39/40/44 stay walking (their path rooms genuinely rendered natively -> retail entry gate refuses; recipe+FID-0012 class). align-tick comparator: guards.room 132->49 (-63%), guards.pos -18/-37/-19%; combat fields unchanged. RNG domino: native rng.call_count stream bit-identical pre/post fix (0/681) -> FID-0063 residual NOT moved on this route (patrollers outside perception pre-checks pre-onset). Negative control: all 7 tape hashes reproduced byte-identically flag-OFF; re-records isolated in c7f51ff. Regression lane port_patrol_magic_profile_smoke PASS both sides (fail-on-revert proven by the OFF assertions)."
+    },
+    {
+      "ts": "2026-07-11T08:53:28Z",
+      "from": "landed",
+      "to": "landed",
+      "evidence": "docs/fidelity/derivations/FID-0014-patrol-magic.md",
+      "note": "REPAIR + adjudication round complete (b1fe896): (1) runway_traverse hash flip root-caused to the fix scope's exit-path plane recompute re-reading the live window drawable mid-tick; repaired via byte-save/restore of the frame's cull planes (portRetailFrustumEnter/Leave, bondview.c) - runway 12/12 bit-stable incl. under load, flag-OFF identity 7/7; (2) dyn_glass lane's pane break is emergent guard return-fire that legitimately disappears under the faithful default - lane scenario pinned to the legacy world (allocator contract sim-independent; glass destruction NOT regressed, canonical shatter route passes fix-ON); (3) perf_budget thermal flake, solo PASS; (4) 20-level regression: flag-OFF state PASS 20/20, fix-ON diverges ONLY in combat_oracle.guards[].pos on 13 patroller levels, local goldens re-recorded. NOT promoted to verified: two full-suite re-runs on b1fe896 collapsed in a machine-wide OOM cascade (Docker VM 11GB RSS + sibling-agent contention; mkdir/sleep killed inside validation_common) unrelated to the change; first full pass (c7f51ff) green apart from the four adjudicated items. Next loop iteration on an unloaded machine: run verify_all to promote landed->verified."
     }
   ]
 }

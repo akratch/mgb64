@@ -1,6 +1,6 @@
 {
   "id": "FID-0063",
-  "title": "Systemic PRNG call-count phase desync (rng_seed) \u2014 residual combat divergence after sim-tick alignment: guards perceive/act a few ticks off retail",
+  "title": "Systemic PRNG call-count phase desync (rng_seed) — residual combat divergence after sim-tick alignment: guards perceive/act a few ticks off retail",
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
@@ -8,7 +8,7 @@
   "suspect": [
     "src/game/random.c"
   ],
-  "repro": "dam_combat_guard6 both-sides under --align tick (FID-0062): after removing the alignment artifact, residual guard divergence (315 actiontype) is driven by native vs retail PRNG randomGetNext() being called a different NUMBER of times per tick (call-count phase), so probabilistic see-target (randomGetNext()%distance==0) fires a few ticks off \u2014 e.g. guard6 perceives +108t native vs +76t stock. The PRNG itself is bit-faithful (random.c:279); the CALL COUNT diverges.",
+  "repro": "dam_combat_guard6 both-sides under --align tick (FID-0062): after removing the alignment artifact, residual guard divergence (315 actiontype) is driven by native vs retail PRNG randomGetNext() being called a different NUMBER of times per tick (call-count phase), so probabilistic see-target (randomGetNext()%distance==0) fires a few ticks off — e.g. guard6 perceives +108t native vs +76t stock. The PRNG itself is bit-faithful (random.c:279); the CALL COUNT diverges.",
   "evidence": [
     {
       "kind": "trace-diff",
@@ -29,7 +29,7 @@
       "from": "",
       "to": "discovered",
       "evidence": "docs/fidelity/combat_oracle_fields.md#12",
-      "note": "Filed from FID-0062 re-validation. THE real systemic owner of the residual perception-timing divergence that survives correct sim-tick alignment. NOT a guard-AI bug (perception logic is faithful ASM). FID-0054 = mostly artifact + THIS. FID-0011/0012/0013 must be re-captured under --align tick; whatever survives is THIS class (RNG call-count phase + tiny position drift), not chr.c/stan.c logic. Root-cause needs: find where native makes a different number of randomGetNext() calls per tick than retail (extra/missing consumers, order, or a call gated differently). XL systemic. Related: rng_seed \u00a75/\u00a78, FID-0046 (Streets nondeterminism)."
+      "note": "Filed from FID-0062 re-validation. THE real systemic owner of the residual perception-timing divergence that survives correct sim-tick alignment. NOT a guard-AI bug (perception logic is faithful ASM). FID-0054 = mostly artifact + THIS. FID-0011/0012/0013 must be re-captured under --align tick; whatever survives is THIS class (RNG call-count phase + tiny position drift), not chr.c/stan.c logic. Root-cause needs: find where native makes a different number of randomGetNext() calls per tick than retail (extra/missing consumers, order, or a call gated differently). XL systemic. Related: rng_seed §5/§8, FID-0046 (Streets nondeterminism)."
     },
     {
       "ts": "2026-07-10T20:52:39Z",
@@ -43,7 +43,14 @@
       "from": "triaged",
       "to": "root-caused",
       "evidence": "docs/fidelity/derivations/FID-0063-rng-phase.md",
-      "note": "Round 2: retail caller-PC attribution via the new ares randomGetNext PC hook (MGB64_ARES_RNG_PC_TRACE, cpu.cpp dispatch compare at VRAM 0x7000A450; 39904 retail calls logged, seed-chain-validated). Consumer sets are 1:1 (derivation sec9.2 census: shuffle 3/f both, muzzle pair 2/f both, bheadUpdateIdleRoll 4-draw group cadence-matched, chrlvTickStand 4.35 vs 4.38/f, ai/AI_SetNewRandom ~equal). The ENTIRE residual (+1.2-1.5/f idle) is the geometry-conditional perception draw chrCheckTargetInSight (retail 0x7F029FE0 = chrlv.c:5749, 3.08 vs 1.60/f): identical consumer at the identical program point on both sides; the RATE differs because patrolling guards (chrnum 2,39-45) sit 300-2000u apart at aligned ticks (27+ static guards byte-identical) \u2014 patrol-phase state divergence from the pre-route history (menu vs direct boot, natural seeds), upstream of the RNG layer. First-frame ground truth corrects round 1: retail 12 vs native 13 (the '15' was RDRAM dcache-writeback smear). No missing/extra/reordered consumer exists; charter 4.2 fix N/A. D5 closure gated on FID-0054/0055 guard-state parity. Headline machine-reproducible: rng_callcount_diff.py --lock-seed (lock_frame block; unit-tested)."
+      "note": "Round 2: retail caller-PC attribution via the new ares randomGetNext PC hook (MGB64_ARES_RNG_PC_TRACE, cpu.cpp dispatch compare at VRAM 0x7000A450; 39904 retail calls logged, seed-chain-validated). Consumer sets are 1:1 (derivation sec9.2 census: shuffle 3/f both, muzzle pair 2/f both, bheadUpdateIdleRoll 4-draw group cadence-matched, chrlvTickStand 4.35 vs 4.38/f, ai/AI_SetNewRandom ~equal). The ENTIRE residual (+1.2-1.5/f idle) is the geometry-conditional perception draw chrCheckTargetInSight (retail 0x7F029FE0 = chrlv.c:5749, 3.08 vs 1.60/f): identical consumer at the identical program point on both sides; the RATE differs because patrolling guards (chrnum 2,39-45) sit 300-2000u apart at aligned ticks (27+ static guards byte-identical) — patrol-phase state divergence from the pre-route history (menu vs direct boot, natural seeds), upstream of the RNG layer. First-frame ground truth corrects round 1: retail 12 vs native 13 (the '15' was RDRAM dcache-writeback smear). No missing/extra/reordered consumer exists; charter 4.2 fix N/A. D5 closure gated on FID-0054/0055 guard-state parity. Headline machine-reproducible: rng_callcount_diff.py --lock-seed (lock_frame block; unit-tested)."
+    },
+    {
+      "ts": "2026-07-11T06:54:53Z",
+      "from": "root-caused",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0014-patrol-magic.md",
+      "note": "FID-0014 (patrol magic semantics) landed and did NOT move the native RNG schedule on dam_combat_guard6_agealign: native rng.call_count stream bit-identical pre/post fix (0/681 records differ); rng_callcount_diff vs the pinned stock capture unchanged (cum -5979 over 114 common ticks). The pre-onset patrollers sit outside chrCheckTargetInSight's range/cone pre-checks on this route, so their position divergence never reached the probabilistic draw here. The Sec.9.2 perception-class attribution needs re-measurement on a route where patrolling guards approach the player before D5 sequencing can lean on FID-0014."
     }
   ]
 }

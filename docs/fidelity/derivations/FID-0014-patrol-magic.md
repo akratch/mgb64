@@ -156,3 +156,54 @@ warp = step > 50u):
 (chr45 ≥90% paused with a ≥1000u warp; chr41/42/43 ≥50% paused) AND the
 negative control (flag=1 → chr45 ≤5% paused, no ≥1000u warp — fail-on-revert:
 a workaround revert or flag-polarity bug reddens the lane).
+
+## 6. Full-verify adjudications (2026-07-11, tree b1fe896)
+
+First full-verify pass (on c7f51ff) was green except four reds, each
+attributed exactly:
+
+1. **gate_routes / runway_traverse hash flip** (`d5dd956c…` once vs recorded
+   `56c32149…`): the fix scope's exit path recomputed widened planes and
+   re-read the live window drawable mid-tick (§3 sim-determinism note).
+   REPAIRED in b1fe896 (byte-restore of the frame's plane state:
+   `portRetailFrustumEnter/Leave`, bondview.c). Runway replay 12/12
+   bit-stable at `56c32149…` incl. under concurrent build load; all other
+   tape hashes unchanged; flag-OFF byte-identity re-proven 7/7.
+2. **port_dyn_glass_stress_smoke**: its pane break is EMERGENT guard return
+   fire (~frame 126, 56 frames after Bond's scripted burst — flag A/B +
+   GLASS-SHATTER tracing), which legitimately disappears under the faithful
+   patrol default. The FID-0007 allocator contract is sim-world-independent
+   ⇒ scenario pinned to the legacy world (`GE007_NO_PATROL_MAGIC_FIX=1` in
+   the lane env, header-documented). A guard-independent deterministic
+   shatter refit (canonical `dam_regular_glass_shatter_probe` targeting,
+   which DOES shatter under fix-ON — glass destruction itself is not
+   regressed) has no overflow window (fits at 8192, frame-starved at 7168).
+   Lane PASS both dyn sides after the pin.
+3. **port_perf_budget_smoke**: thermal/load flake class (in-suite under
+   sustained load); solo re-run on the fix build: ALL budgets met
+   (worst 5.8 ms vs 16.6 ms hard budget).
+4. **regression_test (20-level)**: local ROM-derived goldens absent in the
+   fresh worktree; populated from the primary checkout. Flag-OFF replay:
+   **state PASS 20/20** (gameplay-trace byte-identity campaign-wide; pixel
+   lanes stale-golden vintage, pre-existing). Fix-ON: 13 levels diverge in
+   `combat_oracle.guards[N].pos[*]` ONLY (frozen-at-pad signatures, e.g.
+   Dam guard32 y −603.8→−633.5 = the chr45 pad-Y freeze), 7 levels
+   byte-identical — exactly the expected patrol-position baseline-shift
+   class. Local goldens re-recorded on the fix default (20/20 PASS;
+   gitignored per-checkout artifacts — other checkouts re-record via
+   `tools/regression_test.sh --baseline`).
+
+**Verify status on the final tree (b1fe896): `landed`, NOT promoted to
+`verified`.** Two full-suite re-runs on b1fe896 collapsed in a machine-wide
+OOM cascade unrelated to the change (`Cannot allocate memory` killing
+`mkdir`/`sleep`/`head` inside validation_common; Docker Desktop VM holding
+11 GB RSS + concurrent sibling-agent sessions; one transient
+runtime-lock-timeout FAIL from cross-agent lock contention). Per-lane
+evidence on the final build is green where runnable: runway tape 12/12
+whole-sim-hash bit-stable (incl. under load), 20-level flag-OFF gameplay-
+trace identity, fix-ON regression goldens 20/20, dyn_glass PASS both dyn
+sides, perf_budget solo PASS, patrol lane PASS both flag sides, and the
+first full verify pass (tree c7f51ff, pre-OOM) was green apart from the
+four adjudicated items above. The next loop iteration on an unloaded
+machine should run `tools/fidelity/verify_all.sh` to promote
+landed→verified.
