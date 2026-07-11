@@ -34,8 +34,27 @@ second lineage.
    (`git config core.hooksPath .githooks`). No ROM bytes, extracted assets, or captured
    traces/screenshots are ever committed — see `.gitignore` and
    `docs/RENDERING_REGRESSION_NOTES.md` ("must stay local").
-4. **Releases are tags on `main`.** `vX.Y.Z` tags live on `public/main` only. Cut releases
-   from `main`, never from a fork.
+4. **Releases are tags on `main`, published only through the guarded path.**
+   `vX.Y.Z` tags live on `main` only; cut releases from `main`, never from a fork.
+   Every push to the public remote — routine or release — goes through the one
+   guarded entrypoint **`scripts/publish_public.sh`**, never a raw `git push
+   origin main`. That script refuses a dirty tree, runs the release-ready +
+   public-history-text guards, requires a strict green verify report for the
+   commit, and **never force-pushes**. It does not rewrite history and does not
+   filter content: the already-public history is accepted as-is and the boundary
+   is forward-only (owner ruling 2026-07-11, `docs/fidelity/ESCALATIONS.md`,
+   resolved C1/D1). A **release** push additionally requires, before the tag:
+   - a **strict verify green** report for the release commit
+     (`GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh`);
+   - **owner gameplay verification on macOS AND Windows**, attested to the script
+     via `--confirm-gameplay "macos=<initials/date>,windows=<initials/date>"`;
+   - the **PortMaster/GLES lane green** (`tools/portmaster_build_check.sh`, or the
+     release CI "PortMaster GLES compile check" job);
+   - macOS ships **unsigned** (Apple signing is deferred) — the release notes tell
+     users to right-click → Open on first launch.
+
+   See `docs/RELEASING.md` for the operational checklist and the internal/external
+   boundary doctrine.
 5. **Keep `main` releasable.** Merge only branches that build and pass the smoke/ctest
    gates. Land focused PRs; don't stack unrelated work on one branch (the local `main`
    briefly accumulated eight unrelated fixes before this cleanup — that's the anti-pattern).

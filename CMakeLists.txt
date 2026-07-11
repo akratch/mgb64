@@ -188,6 +188,17 @@ if(BUILD_TESTING)
         NAME port_release_ready_guard
         COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/ci/check_release_ready.sh"
     )
+    # Guarded public-publish entrypoint (scripts/publish_public.sh) refusal-path
+    # unit tests (ROM-free): dirty-tree / red-guard / missing-or-non-green-verify
+    # / missing-gameplay / force-push / non-fast-forward refusals, plus a
+    # happy-path dry-run and a real push to a LOCAL bare fake remote. Never
+    # touches origin or the network -- guards are stubbed and the only push
+    # target is a tempdir bare repo (see the script header).
+    add_test(
+        NAME publish_public_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_publish_public.sh"
+    )
+    set_tests_properties(publish_public_guard PROPERTIES TIMEOUT 120)
     # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
     add_test(
         NAME combat_oracle_contract
@@ -750,6 +761,28 @@ if(BUILD_TESTING)
         )
         set_tests_properties(mingw_cross_check PROPERTIES
             LABELS mingw_cross
+            TIMEOUT 1800)
+    endif()
+
+    # Local PortMaster / GLES3 ARM check (PR #25, repaired c486be2): proves the
+    # MGB64_PORTMASTER_GLES target still configures + compiles instead of
+    # discovering breaks only on-device. Opt-in, mirroring PORT_MINGW_CROSS_CHECK:
+    #   cmake -B build -DPORT_PORTMASTER_GLES_CHECK=ON && ctest -R portmaster_gles_check
+    # The script always runs its structural-wiring + host-configure lanes (fail
+    # HARD on regression); it attempts a real GLES compile+link when a toolchain
+    # is present (Linux GLES dev packages / aarch64 cross / running Docker) and
+    # otherwise SKIPs that deep lane (exit 125), deferring compile+link to the CI
+    # portmaster job in .github/workflows/release.yml.
+    option(PORT_PORTMASTER_GLES_CHECK
+        "Register the PortMaster/GLES3 configure+compile check (tools/portmaster_build_check.sh) with CTest" OFF)
+    if(PORT_PORTMASTER_GLES_CHECK)
+        add_test(
+            NAME portmaster_gles_check
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/portmaster_build_check.sh"
+        )
+        set_tests_properties(portmaster_gles_check PROPERTIES
+            LABELS portmaster
+            SKIP_RETURN_CODE 125
             TIMEOUT 1800)
     endif()
 endif()

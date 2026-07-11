@@ -81,3 +81,24 @@ jobs:
         with:
           name: mgb64-windows-${{ github.event.inputs.version }}
           path: dist/mgb64-windows-*
+
+  portmaster:
+    # PortMaster / GLES3 ARM target (PR #25, repaired c486be2) compile gate.
+    # Not a release artifact -- the shippable handheld build is produced on the
+    # ARM device / by the PortMaster community. This job fails the release loudly
+    # if the MGB64_PORTMASTER_GLES target stops configuring or compiling. It does
+    # the real GLES compile+link with Mesa GLES headers on x86_64 Linux (the
+    # buildable engine config, MGB64_APP=OFF); ARM-specific codegen is validated
+    # on-device. Same asset-free, no-repo-state posture as the other jobs.
+    name: PortMaster GLES compile check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install GLES/EGL/SDL2 dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ pkg-config \
+            libgles2-mesa-dev libegl1-mesa-dev libsdl2-dev libdbus-1-dev
+      - name: Configure + compile the GLES target
+        run: ./tools/portmaster_build_check.sh --require-deep

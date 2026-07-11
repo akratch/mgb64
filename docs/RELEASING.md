@@ -89,6 +89,73 @@ end users on first launch.
 
 ---
 
+## The publish gate: `scripts/publish_public.sh`
+
+Every push to the public remote — routine `main` update or release — goes through
+**one guarded entrypoint**, `scripts/publish_public.sh`. There is no raw
+`git push origin main`. This is the mechanized, forward-only boundary the owner
+ruled for on 2026-07-11 (recorded in `docs/fidelity/ESCALATIONS.md`, resolved
+C1/D1): the already-public history is accepted **as-is** — the script does **not**
+rewrite history and does **not** filter content — and safety comes from guards
+that run on every push.
+
+What it enforces, in order, and refuses on any failure:
+
+1. **Clean tree** — a dirty working tree is refused (the push must match what the
+   guards + verify report were computed against).
+2. **Hygiene guards** — `scripts/ci/check_release_ready.sh` and
+   `scripts/ci/check_public_history_text.sh`. These catch the never-leak classes:
+   private paths, personal email, credentials, ROM/media artifacts, and
+   proprietary SDK-notice text, in the tree and in reachable history.
+3. **Strict verify green** — a `docs/fidelity/reports/verify_<sha>.json` report
+   for the exact `HEAD` commit, verdict `green`. Produce it with
+   `GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh`. A non-green verdict can
+   only proceed with an explicit `--verify-report <path> --red-note "<why>"`
+   owner adjudication, which is logged into the push annotation.
+4. **Gameplay attestation (releases only)** — `--confirm-gameplay
+   "macos=<initials/date>,windows=<initials/date>"`; owner gameplay verification
+   on macOS **and** Windows. A `--dev-push` skips only this gate (never the
+   others), for routine non-release `main` updates.
+5. **Never force-push** — there is no force flag; a non-fast-forward push is
+   refused (rebase onto the remote first).
+
+Without `--yes` it is a non-destructive dry run that prints the exact rev range
+that would be pushed. Examples:
+
+```sh
+# routine main update (guards + strict verify, no gameplay gate), preview then push:
+scripts/publish_public.sh --dev-push
+scripts/publish_public.sh --dev-push --yes
+
+# release: tag locally, gameplay-verify on macOS + Windows, then publish the tag:
+git tag -a v0.4.0 -m "MGB64 v0.4.0"
+scripts/publish_public.sh --tag v0.4.0 \
+  --confirm-gameplay "macos=AK/2026-07-11,windows=AK/2026-07-11" --yes
+```
+
+`scripts/release.sh --publish` (below) runs this guard chain itself and stops if
+it goes red, so the GitHub Release artifacts can never be attached to a tree that
+would fail the publish gate.
+
+## The internal / external boundary (operationally)
+
+- **Internal = the `export-ignore`'d trees.** `.gitattributes export-ignore` is
+  the single source of truth for what is internal-only: today `docs/design/**`,
+  `docs/fidelity/**`, `tools/fidelity/**`, `baselines/tapes/**`, and a few named
+  path-gap docs. `export-ignore` keeps those out of `git archive` / GitHub
+  "Download ZIP" and a fresh `create_public_launch_repo.sh` tree.
+- **What the guards catch (the never-leak classes).** Because the day-to-day
+  publish path is ordinary merged history (not an archive), `export-ignore` alone
+  does not stop internal *content* reaching the remote. The publish gate's guards
+  do: private paths, personal email, credentials, ROM/media, and proprietary
+  SDK-notice text — scanned in the tree and in reachable history on every push.
+- **Accepted-as-is, forward-only.** The history already on the public remote
+  (including the fidelity trees and AI-authorship trailers) is accepted; there is
+  no rewrite. The rule is forward: new pushes flow through the gate, which is why
+  `git push origin main` is never run by hand.
+- **Where the ruling lives.** The owner decision that set this boundary is the
+  resolved **C1/D1** entry in `docs/fidelity/ESCALATIONS.md`.
+
 ## Cut a release
 
 1. **Windows + Linux (CI):** a maintainer dispatches the release workflow
@@ -162,7 +229,11 @@ ever needed — routine work is just PRs (above).
 ## Checklist
 
 - [ ] `scripts/release_preflight.sh` passes (clean tree, warning-clean build, ROM-free tests, asset-free).
+- [ ] Strict verify green for the release commit: `GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh`.
+- [ ] PortMaster/GLES lane green (release CI "PortMaster GLES compile check", or `tools/portmaster_build_check.sh`).
 - [ ] Windows + Linux CI artifacts downloaded into `dist/`.
-- [ ] `scripts/release.sh --version <v> --repo <r> --publish` (macOS built locally + all assets attached).
+- [ ] Owner gameplay verification done on **macOS AND Windows**.
+- [ ] `scripts/release.sh --version <v> --repo <r> --publish` (guard chain runs; macOS built locally + all assets attached).
+- [ ] Public git tag pushed **only** via `scripts/publish_public.sh --tag <v> --confirm-gameplay "macos=…,windows=…" --yes`.
+- [ ] `RELEASE_NOTES.md` updated, including the macOS unsigned right-click → Open note (Apple signing deferred).
 - [ ] README Download links resolve (macOS asset present on `/releases/latest`).
-- [ ] `RELEASE_NOTES.md` updated.

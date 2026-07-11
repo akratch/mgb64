@@ -102,6 +102,32 @@ ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null || echo "  (none for version $ver
 if [[ "$publish" -eq 1 ]]; then
   [[ -n "$repo" ]] || { echo "ERROR: --publish requires --repo OWNER/NAME." >&2; exit 1; }
   command -v gh >/dev/null || { echo "ERROR: gh CLI required for --publish." >&2; exit 1; }
+
+  # Compose (don't duplicate) the public-publish guard chain: run the ONE guarded
+  # entrypoint's dry-run so clean-tree + release-ready + history-text + strict
+  # verify are enforced before any release artifact is attached. STOP on red.
+  # (dev-push dry-run skips only the gameplay gate, which is enforced separately
+  # at the git-history push below.) See docs/RELEASING.md "The publish gate".
+  echo "[release] running the public-publish guard chain (scripts/publish_public.sh --dev-push, dry-run)..."
+  if ! "$(git rev-parse --show-toplevel)/scripts/publish_public.sh" --dev-push; then
+    echo "ERROR: public-publish guards failed -- refusing to publish the release." >&2
+    echo "       Fix the guard failures above (or produce a strict verify report for HEAD)." >&2
+    exit 1
+  fi
+
+  # Owner gameplay gate + boundary reminders (ruling C1/D1, docs/fidelity/ESCALATIONS.md).
+  cat >&2 <<'GATE'
+[release] RELEASE GATE REMINDER (owner):
+  - Gameplay-verify this build by hand on macOS AND Windows before tagging.
+  - Push the public git history/tag ONLY via the guarded entrypoint:
+      scripts/publish_public.sh --tag <vX.Y.Z> \
+        --confirm-gameplay "macos=<initials/date>,windows=<initials/date>" --yes
+  - macOS ships UNSIGNED (Apple signing deferred): note the right-click > Open
+    first-launch step in the release notes.
+  - Confirm the PortMaster/GLES lane is green (release CI "PortMaster GLES compile
+    check", or: tools/portmaster_build_check.sh).
+GATE
+
   mapfile -t assets < <(ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null)
   [[ ${#assets[@]} -gt 0 ]] || { echo "ERROR: no dist/ assets for version $version." >&2; exit 1; }
 
