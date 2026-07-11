@@ -231,7 +231,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_BG_PORTAL_AABB_EXPAND` | ? |  | 1 |  |
 | `GE007_BLEND_AUDIT` | ? |  | 1 |  |
 | `GE007_BLEND_AUDIT_INTERVAL` | ? |  | 1 |  |
-| `GE007_BLOOM` | int | 1 | 1 | In-shader bright-pass bloom on bright emitters. 0 = off. |
+| `GE007_BLOOM` | int | 1 | 1 | Soft glow that blooms around bright lights and highlights. 0 = off. |
 | `GE007_BLOOM_INTENSITY` | float | 0.5f | 1 | Strength of the bloom halo added to the image. |
 | `GE007_BLOOM_THRESHOLD` | float | 0.8f | 1 | Luma above which pixels contribute to bloom. |
 | `GE007_BONDHEAD_GAIT_CLAMP` | ? |  | 1 |  |
@@ -483,7 +483,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_FULLSCREEN_REFRESH` | int | 0 | 1 | Exclusive fullscreen refresh rate in Hz; 0 accepts any/default. |
 | `GE007_FULLSCREEN_WIDTH` | int | 0 | 1 | Exclusive fullscreen mode width; 0 uses SDL/default. |
 | `GE007_FULL_FRUSTUM_CLIP` | ? |  | 1 |  |
-| `GE007_FXAA` | int | 1 | 1 | Fast approximate anti-aliasing on the output pass; cleans sprite/alpha/HUD edges. 0 = off. |
+| `GE007_FXAA` | int | 1 | 1 | Smooths jagged edges across the whole image, including sprites and the HUD. 0 = off. |
 | `GE007_GAMEPAD_DEADZONE` | float | 0.15f | 1 | Right-stick inner deadzone as a fraction of full deflection (radial mode). |
 | `GE007_GAMEPAD_FPS_SCALE` | int | 1 | 1 | Scale right-stick look by frame delta so speed is fps-independent. |
 | `GE007_GAMEPAD_LOOK_CURVE` | float | 1.5f | 1 | Response exponent: 1.0 linear (vanilla), >1 finer near center. |
@@ -646,12 +646,12 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_PROP_SETUP_TRACE` | ? |  | 1 |  |
 | `GE007_PROP_SETUP_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_RDP_CVG_SNAPSHOT_RECTS` | ? |  | 1 |  |
-| `GE007_REMASTER_FX` | int | 1 | 1 | Master switch for the cinematic post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA). 0 = faithful original look (HD textures + SSAA still apply via their own settings). |
+| `GE007_REMASTER_FX` | int | 1 | 1 | Master switch for the cinematic image effects (color grade, tonemap, bloom, vignette, sharpening, edge smoothing). 0 = the faithful original N64 look. HD textures and render resolution have their own settings. |
 | `GE007_RENDERER` | ? |  | 1 |  |
 | `GE007_RENDER_CAMERA_CLEARANCE` | ? |  | 1 |  |
 | `GE007_RENDER_CAMERA_EXTRA_CLEARANCE` | ? |  | 1 |  |
 | `GE007_RENDER_POS_DIAG` | ? |  | 1 |  |
-| `GE007_RENDER_SCALE` | float | 2.0f | 1 | Scene framebuffer scale. 1.0 matches the window; up to 4.0 supersamples (clamped to GPU texture/renderbuffer limits). |
+| `GE007_RENDER_SCALE` | float | 2.0f | 1 | Internal rendering resolution. 1.0 matches the window; higher values render the scene sharper (a strong form of anti-aliasing) at more GPU cost. Automatically capped to what your GPU supports. |
 | `GE007_RETICLE_TARGET_FEEDBACK` | int | 1 | 1 | Tint the modern reticle green and thicken the dot when your crosshair is over an enemy (0 = off). |
 | `GE007_RETRO_FILTER` | enum | PLATFORM_RETRO_FILTER_AUTO | 1 | N64-style output smoothing filter that softens hard pixel edges: auto, off, or on. |
 | `GE007_ROOM_ALPHA_AS_TEXEDGE` | ? |  | 1 |  |
@@ -660,8 +660,8 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_RUMBLE` | int | 1 | 1 | Controller vibration on the game's faithful Rumble Pak events (weapon fire, taking damage). Needs a physical pad; no effect on keyboard/mouse. |
 | `GE007_RUMBLE_INTENSITY` | int | 100 | 1 | Vibration strength as a percentage (0-100). 0 is the same as Rumble off. |
 | `GE007_SATURATION` | float | 1.15f | 1 | Output color saturation. 1.0 leaves colors unchanged. |
-| `GE007_SCENE_DECOR` | int | 0 | 1 | Render-only imported 3D models (glTF) drawn over the untouched simulation from per-level manifests in Video.SceneDecorDir (e.g. real trees on Surface). Zero gameplay effect by construction. 0 = off (identity). |
-| `GE007_SCENE_DECOR_DIR` | string | assets/decor | 1 | Directory holding <level>.decor.txt manifests and their glTF models. |
+| `GE007_SCENE_DECOR` | int | 0 | 1 | Adds extra 3D scenery -- like real trees and props -- layered on top of the original levels for a richer look. Purely cosmetic; never affects gameplay. 0 = off. |
+| `GE007_SCENE_DECOR_DIR` | string | assets/decor | 1 | Folder the 3D scene decoration is loaded from. The default is fine unless you are authoring your own scenery. |
 | `GE007_SCREENSHOT` | ? |  | 1 |  |
 | `GE007_SCREENSHOT_SERIES_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_SCREENSHOT_SERIES_DIR` | ? |  | 1 |  |
@@ -712,12 +712,12 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SKY_QUEUE` | ? |  | 1 |  |
 | `GE007_SKY_SCREENSPACE` | ? |  | 2 |  |
 | `GE007_SKY_UV_SCALE` | ? |  | 1 |  |
-| `GE007_SMAA` | int | 0 | 1 | Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. (Metal builds only -- no effect on this OpenGL build.) |
+| `GE007_SMAA` | int | 0 | 1 | Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. Metal renderer only -- no effect on the OpenGL build. |
 | `GE007_SND_ALLOW_LEGACY_OVERLAP` | ? |  | 1 |  |
 | `GE007_SORT_ROOM_XLU` | ? |  | 2 |  |
 | `GE007_SORT_ROOM_XLU_DEFER` | ? |  | 1 |  |
 | `GE007_SORT_ROOM_XLU_ROOMS` | ? |  | 1 |  |
-| `GE007_SSAO` | int | 0 | 1 | Screen-space ambient occlusion: depth-based contact darkening in corners and under geometry. 0 = off. |
+| `GE007_SSAO` | int | 0 | 1 | Adds soft contact shadows in corners and where objects meet the ground, for a greater sense of depth. 0 = off. |
 | `GE007_SSAO_BIAS` | float | 0.15f | 1 | v2 tangent-plane angle threshold; rejects grazing self-occlusion. |
 | `GE007_SSAO_BLUR` | int | 0 | 1 | Separable depth-aware (bilateral) blur of the AO buffer. |
 | `GE007_SSAO_BLUR_DEPTH_SHARP` | float | 8.0f | 1 | Bilateral blur depth-weight sharpness (higher = edge-preserving). |
@@ -737,7 +737,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_STD_MTX_MUL` | ? |  | 1 |  |
 | `GE007_STEADY_VIEW` | int | 1 | 1 | Keep the world camera upright during movement; head motion still drives position and weapon sway. |
 | `GE007_STOCK_HEADPOS_MOVEMENT` | ? |  | 1 |  |
-| `GE007_SUN_SHADOW` | int | 0 | 1 | Capture-and-replay directional sun shadow map on room + character geometry (single-cascade ortho, 3x3 PCF, retires the fake drop-shadow blob). 0 = off (identity). |
+| `GE007_SUN_SHADOW` | int | 0 | 1 | Real-time shadows cast by the level's sunlight onto rooms and characters, replacing the original blurry blob shadow. 0 = off. |
 | `GE007_SUN_SHADOW_BIAS` | float | 0.0015f | 1 | Depth-compare bias for the sun shadow receiver. Higher hides acne but risks peter-panning (detached shadows); default 0.0015. |
 | `GE007_SUN_SHADOW_RADIUS` | float | 500.0f | 1 | Camera-centered ortho half-extent (GAME-LOGIC units, scaled to world by the level's room_data_float2) for the sun shadow map. Larger covers more, softer detail. |
 | `GE007_SUN_SHADOW_RES` | int | 2048 | 1 | Depth-map resolution for the sun shadow pass (1024/2048/4096). Higher = sharper, more cost. |
@@ -746,7 +746,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SYNTHETIC_WALK_MOVEMENT` | ? |  | 1 |  |
 | `GE007_SYNTHETIC_WALK_SCALE` | ? |  | 1 |  |
 | `GE007_TANK_AIM_TRACE` | ? |  | 1 |  |
-| `GE007_TEXTURE_PACK` | string |  | 1 | Directory of an HD texture pack (textures/tok####.png), built by tools/texpack from your own ROM dump. Empty = off (stock). |
+| `GE007_TEXTURE_PACK` | string |  | 1 | Folder containing an HD texture pack you built from your own ROM. Empty = off (original N64 textures). |
 | `GE007_TEXT_AUDIT` | ? |  | 1 |  |
 | `GE007_TEXT_GLYPH_AUDIT` | ? |  | 1 |  |
 | `GE007_TEX_ARENA_CHUNK_KB` | ? |  | 1 |  |
@@ -1007,7 +1007,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_UI_SCALE` | float | 1.0f | 1 | Scales the launcher and in-game overlay text, padding and buttons. 1.0 = default; handhelds usually want ~1.25-1.5 for a readable 7-inch panel. Applies live. |
 | `GE007_UNCAP_FUZZ` | ? |  | 1 |  |
 | `GE007_UNMUTE` | ? |  | 1 |  |
-| `GE007_UPDATE_CHECK` | int | 1 | 2 | At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a dismissible banner if one exists (0 = never check). A single plain HTTPS GET via the system curl; no telemetry. Never runs under automation/--deterministic. |
+| `GE007_UPDATE_CHECK` | int | 1 | 2 | At startup, quietly check for a newer version of MGB64 and show a dismissible banner if one is available. No personal data is sent. 0 = never check. |
 | `GE007_UPDATE_CHECK_URL` | ? |  | 1 |  |
 | `GE007_VERBOSE` | ? |  | 54 |  |
 | `GE007_VERIFY_GPU` | ? |  | 1 |  |

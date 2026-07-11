@@ -128,8 +128,9 @@ launcher/settings census, Windows-fullscreen root-cause, backlog reprioritizatio
 
 ### RX.1 — Settings curation (the "no junk shown to players" mandate)
 **P0 · M**
+**DONE 2026-07-11** (landed incrementally + closed out this pass: 107 settings, tier split 67 player / 40 advanced; SMAA backend-gated; plain-language help pass over the graphics toggles; verified live on macOS + settings_menu_model/sim_state_hash/env_reference green). Code is the source of truth.
 Census (survey 2026-07-09): 99 settings, **no player/advanced tier** — everything shows.
-- [ ] **Add an `advanced` (dev/diagnostic) tier** to the `Setting` struct (`settings.h:34-51`)
+- [x] **Add an `advanced` (dev/diagnostic) tier** to the `Setting` struct (`settings.h:34-51`)
       + thread through `MgbCfgEntry` (`config_schema.h`); tag the ~30 dev knobs at their
       `settingsRegister*` sites (11 SSAO tuning: `SsaoMode/Radius/Intensity/Bias/Power/
       FarCutoff/NearCut/SkyCut/HalfRes/Blur/BlurDepthSharp`; 4 SunShadow tuning; `PerPixel
@@ -138,19 +139,19 @@ Census (survey 2026-07-09): 99 settings, **no player/advanced tier** — everyth
       `OutputFilterAlpha`; `DeviceSamples`). Gate them behind a collapsing "Advanced
       (expert)" disclosure per tab (`ui_settings.cpp:78-83`). Player tabs show only
       player-facing settings.
-- [ ] **Fix the STRING-setting bug** (`ui_settings.cpp:16-53`): `MGB_CFG_STRING` falls to
+- [x] **Fix the STRING-setting bug** (`ui_settings.cpp:16-53`): `MGB_CFG_STRING` falls to
       `default:` → `Video.TexturePack` renders "(unsupported type)", uneditable. Add a
       read-only display + folder-picker, or hide string entries from the auto-list.
-- [ ] **Visible help, not hover-only** (`ui_settings.cpp:55-56`): render each setting's
+- [x] **Visible help, not hover-only** (`ui_settings.cpp:55-56`): render each setting's
       `help` as an inline caption (or a nav-focusable "?") — hover tooltips are invisible
       to controller/touch users, i.e. the whole handheld audience.
-- [ ] **Relabel/gate leaky entries:** `MinimapObjectives` ("once … implemented" =
+- [x] **Relabel/gate leaky entries:** `MinimapObjectives` ("once … implemented" =
       unimplemented feature exposed), `Smaa`/`SsaoMode` "Metal only" on a GL build,
       `FpsOverlay` help leaking `--deterministic`/`GE007_BACKGROUND`. Plain-language the
       jargon (`OutputDither`, `RetroFilter`, `HiDPI`, `Tonemap`, grade presets).
-- [ ] **Group the ADS family** (`platform_sdl.c:1925-1994`): 13 sub-knobs render even when
+- [x] **Group the ADS family** (`platform_sdl.c:1925-1994`): 13 sub-knobs render even when
       `AdsEnabled=0` — nest under `AdsEnabled` with `BeginDisabled`, tuning ones → Advanced.
-- [ ] Validation: schema round-trip + `settings_menu_model` ctest; a headless dump proving
+- [x] Validation: schema round-trip + `settings_menu_model` ctest; a headless dump proving
       player tabs exclude the advanced-tagged set; env/CLI overrides for advanced settings
       still work (hidden ≠ removed).
 

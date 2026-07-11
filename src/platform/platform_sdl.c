@@ -2074,10 +2074,12 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_SMAA",
                         "--config-override Video.Smaa=VALUE",
                         "SMAA",
-                        gfx_backend_use_metal()
-                            ? "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off."
-                            : "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. "
-                              "Only available on the Metal renderer, so it has no effect on this build.");
+                        /* Single static help string (not a runtime ternary): the
+                         * ENV_FLAGS generator extracts the literal, and a
+                         * conditional garbled the generated row. Accurate on both
+                         * backends; the backend gate below hides it on OpenGL. */
+                        "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. "
+                        "Metal renderer only -- no effect on the OpenGL build.");
     /* Gate by backend: SMAA runs only on the Metal renderer. On the default
      * OpenGL build it is inert, so it must not sit in the player-facing Video
      * tab as a dead toggle -- hide it behind the "Advanced (expert)" disclosure
