@@ -1475,9 +1475,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[US/LEFTOVERDEBUG variant @7F043650 \u2014 the config the port builds (CMakeLists VERSION_US+LEFTOVERDEBUG; Makefile US BYTEMATCH also defines LEFTOVERDEBUG)] Throwing-knife whoosh sound cycler. ASM chrobjhandler.c:7169-7298 vs live C 7061-7162, traced fully: gates runtime_bitflags&0x80 (0x64) early-out, proj->flags&1 (lw 0x0), unk90 bgtzl signed >0 -> else (C u32 <=0 == ==0; unk90 only ever 0/1/++ per 2420/34396/9688 \u2014 never negative, equivalent on reachable data), bitflags&0x20; then-path: unkA4 saved_idx (retail UNCLAMPED index into sound slots; C clamp+unkA4=0 store is additive, unreachable \u2014 projectileReset:2425 inits 0, only write is 1-saved_idx), randomGetNext%3 divu (u32 mod, same single RNG call), Throwing_knife_SFX[3] s16 table (retail stack-copies 6 bytes then lh \u2014 equivalent), deactivate window slt (s32)unkA0 < g_GlobalTimer-6 (addiu -6 @0x781DC) = C exactly, sndGetPlayingState/sndDeactivate on slot idx*4+0x98, *slot!=NULL -> return (bnezl), lvlGetControlsLockedFlag -> return, sndPlaySfx(g_musicSfxBufferPtr, sfx, &proj->soundN slot ADDRESS a2=proj+idx*4+0x98) \u2014 NATIVE_PORT passes same address + assigns return (port snd substrate returns state instead of writing through; slot was NULL on entry, end-state identical), chrobjSndCreatePostEventDefault(*slot, &prop->pos prop+8), unkA0=g_GlobalTimer, unkA4=1-saved_idx. Else path: bitflags&=~0x20 store (0x64, both delay-slot and-computations), deactivate sound1(0x98)/sound2(0x9c) if playing \u2014 matches; NATIVE_PORT chrobjClearStaleSoundSlot + slot-nulling = port sound-lifetime substrate (retail post-event nulls slots). Additive-only: proj NULL guard. No jump table; no uninit frame locals (0x2c/0x30/0x34 all stored before read).",
+      "reviewed_ts": "2026-07-11T09:17:22Z",
       "rank": 54,
       "rank_score": 122,
       "rank_reason": "prior-defect-file 122i"
@@ -1502,9 +1502,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[EU/!LEFTOVERDEBUG variant @VRAM 7F043710] Same function, instruction-identical structure to the US variant (independently traced: same gates, RNG, slot indexing, sndPlaySfx slot-address a2, else-path deactivates; only symbol-address lui/lo shifts). SINGLE delta vs live C: sound-deactivate window addiu $t0,$t9,-5 (@0x7619C) vs US/C -6 \u2014 PAL 50Hz regional retiming of the same ~100ms window (5 ticks@50Hz == 6 ticks@60Hz), not a port defect; the port builds the US/LEFTOVERDEBUG config and C matches that variant exactly. No finding.",
+      "reviewed_ts": "2026-07-11T09:17:34Z",
       "rank": 55,
       "rank_score": 122,
       "rank_reason": "prior-defect-file 122i"
@@ -1529,9 +1529,9 @@
         "body_start": 4452,
         "body_end": 4498
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Recursive obj shot-candidate tester w/ best-dist pick + child recursion. ASM chrobjhandler.c:4504-4627 vs live C 4456-4499 (NONMATCHING), traced fully: prop captured pre-call (lw 0x10(a0) spill 0x6c, reload post-call = C capture-before semantics); sub_GAME_7F0417DC(obj,arg1,arg2,arg3,arg4@0x10,arg5@0x14,arg6@0x18,&normal sp+0x8c@0x1c,&pos sp+0x80@0x20,&dist sp+0x7c@0x24,&model sp+0x78@0x28,&node sp+0x74@0x2c) \u2014 all 12 arg slots verified vs incoming 0xa8-0xbc; hit path gated c.lt.s local_dist < *arg9 (bc1fl skip w/ prop-flags lbu in delay), then *arg9=dist, arg7(0xb4)=normal 0x8c/90/94, arg8(0xb8)=pos 0x80/84/88, D_80030B0C=obj->prop (fresh lw 0x10(s0), same value), bodypartshot=-1, g_CurrentProjectileModel=model(0x78), dword_CODE_bss_80075B74=node(0x74), result=1 \u2014 exact C order/values; child scan gate prop->flags&2 (lbu 1(v1)) sense = C proceed-iff-set; chain child=prop+0x20, advance prev=+0x24, per-child flags&2 (lbu 1(s0)) gate, recursive call child->obj (lw 4) w/ arg7/arg8 (s1/s2 reloaded 0xb4/0xb8, NOT the locals) + arg9 passthrough \u2014 stack slots 0x10-0x24 verified; recursion nonzero -> result=1 (beql v0,0 w/ advance-in-delay = C if-TRUE). Out-locals only read under 0417DC success where callee fills them (per rank-50 audit) \u2014 no uninit exposure; C identical. Return s6 0/1. No jump table; no early-outs beyond the C's.",
+      "reviewed_ts": "2026-07-11T09:18:35Z",
       "rank": 56,
       "rank_score": 117,
       "rank_reason": "prior-defect-file 117i"
@@ -1556,9 +1556,9 @@
         "body_start": null,
         "body_end": 546
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Room bbox init / first-tile-per-room walker (called from stanLoadFile per level load). ASM stan.c:551-678 vs live NATIVE_PORT C 351-403, traced fully: B9DC=0 + clear B128..B350 (sw zero x3 + 0x10-stride loop to B354 excl) = firststaninroom clear; tile source retail *(stanfile+4) raw binary word (lw stan_prefix; lw 4) = port stan_prefix.ptr_firstroom populated by stanDetermineEOF from the same file offset 4 (endian/reloc substrate); *(s32*)tile==0 pre-check + bottom bnezl do-while = C if-return + while; room change gate beql a1,lbu 3(a0) (room u8 @3, struct verified bondtypes.h:420) = C curroom!=(tile->room&0xFF); count ratchet slt curroom<B9DC else count=curroom+1 = C >= sense; firststaninroom[room]=tile (sw, room*4) + bbox extremes init B358+room*12: +0/+2/+4=0x7FFF, +6/+8/+0xa=-0x8000 = C [0..2]/[3..5]; pointCount (lh +6 sra 12 andi 0xF, s16 sign bits masked) recomputed per point iter (tile invariant \u2014 C hoists, equivalent); vertex loop lh tile+8+8i+{0,2,4} vs bbox axis min strict slt coord<min -> min=coord, max strict slt max<coord -> max=coord (original coord reloaded, unchanged) = C independent < / > tests; advance tile += lbu list_of_tilesizes[pointCount] both paths (blez-skip keeps pointCount=0 -> tilesizes[0]). Port deviations all additive on shipped data: STAN_MAX_ROOMS=256 arrays + bounds guards vs retail UNGUARDED 139-entry BSS run (B128-B354 ptrs, B358-B9DC bbox \u2014 room>=139 would corrupt adjacent BSS in retail, rooms never reach 139 in shipped levels; port room==0xFF first-tile writes its in-bounds bbox[255] where retail would OOB at B358+0xBF4 \u2014 malformed-data-only); stan_room_bbox memset (retail leaves stale cross-level bbox for absent rooms \u2014 unreachable, every consumer gates on firststaninroom[room]!=NULL per rank-36 audit); NULL-tile guard. No jump table; no frame locals at all (leaf-frame regs only).",
+      "reviewed_ts": "2026-07-11T09:21:28Z",
       "rank": 57,
       "rank_score": 117,
       "rank_reason": "prior-defect-file 117i"
@@ -1583,9 +1583,9 @@
         "body_start": null,
         "body_end": 30740
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0088",
+      "note": "[US variant audited; EU variant @7F069658 separate queue entry] Ejected shell-casing DL builder. ASM gun.c:30832-30951 vs live NONMATCHING C 30748-30819, traced fully: saved_gdl=*gdl; header=casing+0x9c (US); dynAllocate(lh hdr+0xe <<6) = modelAllocRenderPosForObject (substrate, + additive NULL guard); 16-word D_80035EB0 template copy (words {0,1,3,0..}, 16th word = adjacent dword_D_80035EEC=0 -> port memset+zbufferenabled=1+flags=3 equivalent, ModelRenderData offsets verified bondtypes.h:697); modelCalculateRwDataLen + modelInit(&model,hdr,NULL) + render_pos=alloc (model+0xc); matrix chain copy(casing+0x1c)/scalar(0.10000001 rodata 0x3dccccce)/set_position(casing+4)/camGetWorldToScreenMtxf multiply into alloc; translation validity: 3 floats at alloc+0x30/34/38, strict >30000 (c.lt.s 30000<f0) || < -30000 -> valid=0, senses exact; valid path: zbuf=0(+4), PropType=4(+0x30), gdl(+0xc), mtxlist(+0x10), subdraw(&rd,&model), *gdl=rd.gdl, TransformManyPos(alloc, lh hdr+0xe). ONE divergence: envcolour packs lbu player 0xfdc-0xfdf (tileColor rgba) but live C uses raw (u8*)g_CurrentPlayer+0xFDC on the native 64-bit struct (offset invalid past pointer-bearing hands[]/ptr_hand_weapon_buffer) -> garbage tint; sibling 7F062BE4 does it right via player->tileColor (gun.c:14925). FID-0085/0087 class. See FID-0088.",
+      "reviewed_ts": "2026-07-11T09:26:05Z",
       "rank": 58,
       "rank_score": 114,
       "rank_reason": "prior-defect-file 114i"
@@ -1610,9 +1610,9 @@
         "body_start": 1049,
         "body_end": 1117
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Keyframe interpolator for 36-byte gun-anim entries (quat slerp chain + spline position). ASM gun.c:1140-1256 vs live C 1070-1136 (NONMATCHING), traced fully: entry gate c.le.s *(f32*)(data+0x44) <= time (== first dur at (data+0x24)+0x20, consistent both sides); scan loop time-=dur/index++ with flags(s0+0x6c)&1 break (bnez non-likely delay-slot s0+=0x24 advance is DEAD \u2014 both sides recompute s0=data+index*36 after via v0*9<<2 chain) and continue-iff dur<=time (bc1tl, flags reload only-when-taken = C's post-break load placement); keyframe-static path flags(s0+0x48)&1 -> set_rotation(s0+0x10)+set_position(s0+4) return 0; interp path frac=time/dur(s0+0x20) spill 0x98, angular=s0+0x1c spill 0x94, four quaternion_set_rotation_around_xyzf (s0-0x14->q0@0x68, +0x10->q1@0x58, +0x34->q2@0x48, +0x58->q3@0x38), ensure_shortest_path (q1,q2)/(q2,q3)/(q1,q0) exact order+arg order, quaternion_7F05C2F0(q0,q1,q2,q3,frac@0x10,qresult@0x78), sub_GAME_7F05B024(s0-0x20, s0+4, s0+0x28, s0+0x4c, frac, angular, &presult@0x88) stack slots 0x10/0x14/0x18 verified; flag==1 mirror negates presult.x + qresult[0]/[1] (0x88/0x78/0x7c) exactly; quaternion_to_matrix(qresult, matrix) + set_position(presult, matrix), return 1. Raw u8* offsets identical both sides on the same keyframe blob (not a repacked native struct \u2014 no FID-0085 class exposure). No jump table; all frame locals stored before read.",
+      "reviewed_ts": "2026-07-11T09:27:18Z",
       "rank": 59,
       "rank_score": 110,
       "rank_reason": "prior-defect-file 110i"

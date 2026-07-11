@@ -1,0 +1,27 @@
+{
+  "id": "FID-0088",
+  "title": "Shell-casing render tint reads raw N64 offset 0xFDC off the native player struct (garbage envcolour instead of tileColor)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:30807-30810"
+  ],
+  "repro": "Fire any casing-ejecting weapon in a strongly tinted room (e.g. Dam vents); compare ejected-shell tint vs ares \u2014 retail casings inherit the stan tile RGBA like the gun subdraw does; port casings render with unrelated envcolour. Sim-neutral (render-only), pixel-verifiable.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "ASM gun.c:30925-30935 (US @7F069024-7F06904C): lbu 0xfdc/0xfdd/0xfde/0xfdf(g_CurrentPlayer) packed r<<24|g<<16|b<<8|a into renderdata envcolour (+0x34) \u2014 the same player tileColor bytes the verified sibling sub_GAME_7F062BE4 reads via proper fields (live C gun.c:14925 player->tileColor.r/g/b/a). Live C gun.c:30807-30810 instead does cp=(u8*)g_CurrentPlayer; cp[0xFDC..0xFDF] \u2014 raw N64 byte offsets on the NATIVE 64-bit struct. tileColor sits after ModelFileHeader *ptr_hand_weapon_buffer[2] (bondview.h:992, N64 0x808) and struct hand hands[2] (pointer-bearing, N64 stride 0x3A8), so native offsetof(player,tileColor) != 0xFDC; the read lands inside hands[] state -> casing envcolour is garbage/unrelated bytes instead of the room stan-tile tint. FID-0085/0087 class (raw-offset cast on native struct). Fix: renderdata.envcolour.word = (player->tileColor.r<<24)|(g<<16)|(b<<8)|a, mirroring gun.c:14925."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T09:25:29Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "ASM gun.c:30925-30935 (US @7F069024-7F06904C): lbu 0xfdc/0xfdd/0xfde/0xfdf(g_CurrentPlayer) packed r<<24|g<<16|b<<8|a into renderdata envcolour (+0x34) \u2014 the same player tileColor bytes the verified sibling sub_GAME_7F062BE4 reads via proper fields (live C gun.c:14925 player->tileColor.r/g/b/a). Live C gun.c:30807-30810 instead does cp=(u8*)g_CurrentPlayer; cp[0xFDC..0xFDF] \u2014 raw N64 byte offsets on the NATIVE 64-bit struct. tileColor sits after ModelFileHeader *ptr_hand_weapon_buffer[2] (bondview.h:992, N64 0x808) and struct hand hands[2] (pointer-bearing, N64 stride 0x3A8), so native offsetof(player,tileColor) != 0xFDC; the read lands inside hands[] state -> casing envcolour is garbage/unrelated bytes instead of the room stan-tile tint. FID-0085/0087 class (raw-offset cast on native struct). Fix: renderdata.envcolour.word = (player->tileColor.r<<24)|(g<<16)|(b<<8)|a, mirroring gun.c:14925.",
+      "note": "Found by ASM-audit batch 6 (queue rank 58; function = ejected shell-casing DL builder sub_GAME_7F068EC4). Remainder verified equivalent instruction-by-instruction incl. 16-word D_80035EB0 template copy (16th word = dword_D_80035EEC = 0 = port memset), +/-30000 translation validity gates, subdraw arg block, and TransformManyPos count lh hdr+0xe. EU variant (gun.c:30965, header at casing +0x64 due to EU matrix layout) shares the retail semantics; port builds US."
+    }
+  ]
+}
