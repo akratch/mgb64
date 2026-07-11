@@ -492,6 +492,11 @@ void settingsPrintList(FILE *f)
                 settingsScopeName(setting->scope),
                 def,
                 range);
+        /* Curation tier: player-facing settings show in the launcher's tabs;
+         * advanced ones are hidden behind the per-tab "Advanced (expert)"
+         * disclosure. Emitted so the tiering is observable headlessly (env/CLI
+         * overrides still apply to advanced settings -- hidden != removed). */
+        fprintf(f, "  tier=%s\n", setting->advanced ? "advanced" : "player");
         if (setting->env != NULL || setting->cli != NULL) {
             fprintf(f, "  override env=%s cli=%s\n",
                     setting->env != NULL ? setting->env : "-",
