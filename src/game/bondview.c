@@ -2062,6 +2062,8 @@ f32 getPlayer_c_perspnear(void)
 }
 
 #ifdef NATIVE_PORT
+static int s_cullWidenSuppressDepth = 0;
+
 /* Widescreen edge-object cull fix. The PC backend squeezes the rendered scene
  * to a wider effective FOV (gfx_adjust_x_for_aspect_ratio in gfx_pc.c), so
  * geometry beyond the fixed 1.4545 frustum is actually visible near the
@@ -2079,11 +2081,35 @@ static f32 widenCullHorizontal(f32 x)
     if (enabled < 0) {
         enabled = (getenv("GE007_NO_CULL_ASPECT_FIX") == NULL); /* default ON */
     }
-    if (!enabled) {
+    if (!enabled || s_cullWidenSuppressDepth > 0) {
         return x;
     }
     factor = gfx_get_aspect_x_factor();
     return (factor != 0.0f) ? x / factor : x;
+}
+
+/* FID-0014: scoped suppression of the widescreen cull widening for
+ * SIM-CONSUMED visibility tests. gfx_get_aspect_x_factor() reads the LIVE
+ * window drawable (it returns 1.0 until the window dimensions are known, then
+ * the real aspect factor), so any sim state derived through
+ * widenCullHorizontal is coupled to window-server timing — observed as a
+ * run-to-run sim-hash flip on the dam_ak47_sustained replay when the
+ * WAYMODE_MAGIC patrol fix first consumed the frustum test per tick. Retail
+ * sub_GAME_7F0785DC / camIsPosInScreen(Box) (US 0x7F0785DC) have no widening:
+ * the retail frustum is pure sim state (c_halfwidth/height, c_scalex/y,
+ * field_10D4). chr.c's patrol-magic visibility (chrPatrolMagicRetailVisible)
+ * recomputes the planes with suppression active, runs the test, then restores
+ * the widened render planes. Render-side culling is unaffected. */
+void portCullWidenSuppressPush(void)
+{
+    s_cullWidenSuppressDepth++;
+}
+
+void portCullWidenSuppressPop(void)
+{
+    if (s_cullWidenSuppressDepth > 0) {
+        s_cullWidenSuppressDepth--;
+    }
 }
 #else
 #define widenCullHorizontal(x) (x)

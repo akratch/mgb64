@@ -4919,6 +4919,43 @@ s32 portPatrolMagicFixEnabled(void)
 }
 #endif
 
+#ifdef NATIVE_PORT
+/* FID-0014: the retail-shaped, SIM-SAFE visibility test for the patrol/gopos
+ * WAYMODE_MAGIC lifecycle (magic freeze/render gate + the walking
+ * lastvisible60/unk9c refresh). Retail evaluates sub_GAME_7F054D6C against
+ * the pure-sim 4:3 frustum (US 0x7F0785DC computes the planes from
+ * c_halfwidth/height * c_scalex/y + field_10D4 — no widening). The port's
+ * render planes are widened by widenCullHorizontal (bondview.c), whose
+ * gfx_get_aspect_x_factor() reads the LIVE window drawable — 1.0 until the
+ * window dims are known — so consuming them in sim state couples the sim to
+ * window-server timing (observed: a run-to-run dam_ak47_sustained sim-hash
+ * flip). Recompute the planes unwidened (retail semantics), run the MP-safe
+ * union test, then restore the widened render planes. Declarations for the
+ * bondview.c suppression scope: */
+extern void portCullWidenSuppressPush(void);
+extern void portCullWidenSuppressPop(void);
+static s32 chrBeamsFrustumVisibleUnion(PropRecord *prop, coord3d *pos, f32 inst_size);
+
+static s32 chrPatrolMagicRetailVisible(PropRecord *prop, Model *model)
+{
+    s32 vis;
+
+    /* Camera not established yet (mission boot): treat as not visible —
+     * sub_GAME_7F0785DC and camIsPosInScreen dereference field_10D4. */
+    if (g_CurrentPlayer == NULL || g_CurrentPlayer->field_10D4 == NULL) {
+        return 0;
+    }
+
+    portCullWidenSuppressPush();
+    sub_GAME_7F0785DC();  /* retail 4:3 planes (US 0x7F0785DC, unwidened) */
+    vis = chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model));
+    portCullWidenSuppressPop();
+    sub_GAME_7F0785DC();  /* restore the port's widened render planes */
+
+    return vis;
+}
+#endif
+
 
 
 
@@ -5234,7 +5271,7 @@ s32 chrTickBeams(PropRecord *prop) {
          * test (== sub_GAME_7F054D6C in 1P, see chrBeamsFrustumVisibleUnion). */
         if (portPatrolMagicFixEnabled() && chrShouldHoldMagicTravelPropPosition(chr)) {
             magic_hold = 1;
-            magic_visible = chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model));
+            magic_visible = chrPatrolMagicRetailVisible(prop, model);
             if (magic_visible) {
                 /* retail US 7F0211EC-7F02121C: sync pos, no anim advance */
                 getsuboffset(model, &chr->prevpos);
@@ -5263,7 +5300,7 @@ s32 chrTickBeams(PropRecord *prop) {
              * Phase C. */
             if (portPatrolMagicFixEnabled()
                 && (chr->actiontype == ACT_PATROL || chr->actiontype == ACT_GOPOS)) {
-                if (chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model))) {
+                if (chrPatrolMagicRetailVisible(prop, model)) {
                     if (chr->actiontype == ACT_PATROL) {
                         chr->act_patrol.lastvisible60 = g_GlobalTimer;
                     } else {

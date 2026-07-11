@@ -78,6 +78,20 @@ made all 8 Dam patrollers walk 892/892 ticks vs stock's pause/warp profile
   lastvisible60/unk9c refresh for walking patrol/gopos chrs. The global
   render/ONSCREEN gate for NON-magic chrs stays the room-rendered bypass
   (FID-0012 Phase C unchanged).
+- **Sim-determinism scope (`chrPatrolMagicRetailVisible`)**: the port's
+  frustum planes are widened by `widenCullHorizontal` (bondview.c), whose
+  `gfx_get_aspect_x_factor()` reads the LIVE window drawable (1.0 until the
+  window dims are known) — consuming them in sim state coupled the sim to
+  window-server timing (observed: a one-off run-to-run `dam_ak47_sustained`
+  sim-hash flip, `ca055c77…` vs `1cea291e…`). Retail `sub_GAME_7F0785DC` (US
+  `0x7F0785DC`) has no widening — the retail frustum is pure sim state. The
+  fix recomputes the planes UNWIDENED (suppression scope
+  `portCullWidenSuppressPush/Pop`, also covering `camIsPosInScreenBox`'s
+  widen inside `sub_GAME_7F054D6C`), runs the test, then restores the widened
+  render planes. Render-side culling unaffected. Post-change: all 7 tape
+  replays reproduce bit-exact across repeated runs (ak47 3x
+  `8c1c6f13a440c0eb`), and the oracle profile/comparator numbers in §4 are
+  unchanged.
 - `src/game/chrlv.c`: the per-tick anim-loop force and the
   `!chrlvPropHasRenderedRoom` entry suppression become legacy-only
   (flag-gated). Retail entry gate is restored verbatim.
