@@ -2312,9 +2312,9 @@
         "body_start": null,
         "body_end": 5218
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "addTileRoomIfNew. ASM stan.c:5244-5282 vs live NATIVE_PORT C 5196-5214: roomBuf=data->unk00; for i<data->count: roomBuf[i]==tile->room (lw vs lbu room@+3) -> return 0 (bnel loop @5254); post-loop data->count<data->bufMax (slt @5269) -> roomBuf[count]=tile->room (sw @5276), count++. Loop reloads count (loop-invariant) equivalent. Record is host stack struct (named-field access, not ROM-overlaid; unk00 pointer-width repack is standard substrate, no FID-0085 class). Senses/offsets exact.",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 85,
       "rank_score": 33,
       "rank_reason": "prior-defect-file 33i"
@@ -2339,9 +2339,9 @@
         "body_start": null,
         "body_end": 2575
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Scaled point-distance. ASM stan.c:2601-2632 vs live C 2585-2596: v_x=p_x*level_scale-(f32)points[index].x (lh +8), v_z=p_z*level_scale-(f32)points[index].z (lh +0xc), dist=sqrtf(v_x*v_x+v_z*v_z), return dist*inv_level_scale. Instruction-exact; no jump table.",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 86,
       "rank_score": 31,
       "rank_reason": "prior-defect-file 31i"
@@ -2366,9 +2366,9 @@
         "body_start": null,
         "body_end": 1245
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Stan file activate. ASM stan.c:1269-1302 vs live NATIVE_PORT C 1237-1246: m_stanRegion=1, stan_prefix.stanfile=arg0, tokenFind(1, -stanlinelog)!=0 -> stanlinelog_flag=1, sub_GAME_7F0AF038(), setLevelScale(1.0f). ONLY diff: retail also computes standTileStart=ptr_firstroom-0x80 here (t9=lw(a0+4)-0x80 @1280-1284); port defers to stanDetermineEOF substrate which sets the SAME value (relocated ptr_firstroom-0x80, verified rank-78) - value-equivalent, set once. The #else reference body -0x10 is the lying stub (ignored).",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 87,
       "rank_score": 30,
       "rank_reason": "prior-defect-file 30i"
@@ -2393,9 +2393,9 @@
         "body_start": null,
         "body_end": 5482
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Triple-index -> coord3d fill (inv-scaled). ASM stan.c:5508-5537 vs live C 5494-5501: pntIndex=STAN_TRIPLE_TO_PNT_INDEX(tile,tripleIndex)=(tail.half>>(8-tripleIndex*4))&0xf (srav @5513); pnt->x=(f32)points[pntIndex].x*inv_level_scale (lh +8), pnt->y=(lh +0xa)*inv, pnt->z=(lh +0xc)*inv (@5517-5537). Named-field coord access; offsets/scale exact; no jump table.",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 88,
       "rank_score": 29,
       "rank_reason": "prior-defect-file 29i"
@@ -2420,9 +2420,9 @@
         "body_start": null,
         "body_end": 6999
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Thin wrapper. ASM stan.c:7025-7052 vs live NATIVE_PORT C 7009-7012: return stanTestLineUnobstructed(pTile,p_x,p_z,dest_x,dest_z,cdtypes,unkHeight,unkA, 0.0f, 1.0f). Arg shuffle exact (a0=pTile from arg1, trailing 0 via mtc1 zero f10@sp+0x20, 1.0 via f16@sp+0x24); unused arg0 spilled unused. Equivalent.",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 89,
       "rank_score": 27,
       "rank_reason": "prior-defect-file 27i"
@@ -2447,9 +2447,9 @@
         "body_start": null,
         "body_end": 2634
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Scaled dot-product. ASM stan.c:2660-2682 vs live C 2646-2655: d_x=(p_x*level_scale)*(f32)points[index].x (lh +8), d_z=(p_z*level_scale)*(f32)points[index].z (lh +0xc), return (d_x+d_z)*inv_level_scale. ASM forms d_z-term (points.z*(p_z*ls)) before d_x-term and adds them - IEEE mul/add commute exactly, equivalent. No jump table.",
+      "reviewed_ts": "2026-07-11T18:11:52Z",
       "rank": 90,
       "rank_score": 22,
       "rank_reason": "prior-defect-file 22i"
