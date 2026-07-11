@@ -1314,7 +1314,7 @@
         "body_end": 4725
       },
       "status": "verified-equivalent",
-      "note": "Chr prop projectile/shot line intersect (dot-window + body-part hit + best-depth pick). ASM chrobjhandler.c:4731-4885 vs live C 4644-4726 (NATIVE_PORT), traced fully: prop=chr+0x18, getinstsize(chr->model +0x1c); dot = arg2.(prop->pos(+8/0xc/0x10) - arg1) with z+(x+y) vs C (x+y)+z single commutative add (IEEE-identical); reject senses exact on finite data: bc1fl !(-instsize<=dot) == dot<-instsize, bc1fl !(dot<=arg3+instsize) == dot>arg3+instsize (unordered/NaN would diverge retail-reject vs port-proceed \u2014 unreachable for finite sim positions); prop->flags&2 (lbu 1) gate; sub_GAME_7F06C010(&local_head=chr->field_20(0x20), arg4, arg5, &local_model@0x40, &local_node@0x3c) \u2014 retail passes UNINITIALIZED out-slots, port zero-inits (strictly safer; slots only read after hit_result>0 where callee fills them); blez reject; modelFindNodeMtx(model,node,0) + port-only NULL dyn-overflow guard (documented additive); dot2 = arg5.(mtx->m[3][.](0x30/34/38) - arg4) same add shape; bc1fl !(dot2<*arg8) == dot2>=*arg8 reject; *arg8=dot2; arg6 = arg2*dot2+arg1 per component; arg7 = (-arg2.x, 0, -arg2.z) w/ x==0&&z==0 -> z=1.0 (c.eq pair + bc1tl) else guNormalize(&x,&y,&z); globals D_80030B0C=prop, bodypartshot=hit_result, g_CurrentProjectileModel=local_model, bss_80075B74=local_node; return 1. No jump table.",
+      "note": "Chr prop projectile/shot line intersect (dot-window + body-part hit + best-depth pick). ASM chrobjhandler.c:4731-4885 vs live C 4644-4726 (NATIVE_PORT), traced fully: prop=chr+0x18, getinstsize(chr->model +0x1c); dot = arg2.(prop->pos(+8/0xc/0x10) - arg1) with z+(x+y) vs C (x+y)+z single commutative add (IEEE-identical); reject senses exact on finite data: bc1fl !(-instsize<=dot) == dot<-instsize, bc1fl !(dot<=arg3+instsize) == dot>arg3+instsize (unordered/NaN would diverge retail-reject vs port-proceed \u2014 unreachable for finite sim positions); prop->flags&2 (lbu 1) gate; sub_GAME_7F06C010(&local_head=chr->field_20(0x20), arg4, arg5, &local_model@0x40, &local_node@0x3c) \u2014 retail passes UNINITIALIZED out-slots, port zero-inits (strictly safer; slots only read after hit_result>0 where callee fills them); blez reject; modelFindNodeMtx(model,node,0) + port-only NULL dyn-overflow guard (documented additive); dot2 = arg5.(mtx->m[3] components at +0x30/34/38 - arg4) same add shape; bc1fl !(dot2<*arg8) == dot2>=*arg8 reject; *arg8=dot2; arg6 = arg2*dot2+arg1 per component; arg7 = (-arg2.x, 0, -arg2.z) w/ x==0&&z==0 -> z=1.0 (c.eq pair + bc1tl) else guNormalize(&x,&y,&z); globals D_80030B0C=prop, bodypartshot=hit_result, g_CurrentProjectileModel=local_model, bss_80075B74=local_node; return 1. No jump table.",
       "reviewed_ts": "2026-07-11T07:16:19Z",
       "rank": 48,
       "rank_score": 149,
@@ -1800,7 +1800,7 @@
         "body_end": 5117
       },
       "status": "verified-equivalent",
-      "note": "Rocket-in-hand render/transform builder. ASM gun.c(US glabel, 7F05F928) = live NONMATCHING C. KEY delay-slot: 'sw v0,0x7c(sp)' in the jal get_curplayer_positiondata delay stores the OLD v0 (hand base g_CurrentPlayer+arg0*296 +0x870), NOT the return; so matrix_4x4_copy src (0x7c+0x268=hand+0xAD8=throw_item_pos_related) and objChangeShading arg1 (0x7c+0x2e8=hand+0xB58=field_B58) are hand-relative == C, while the real posdata (g_CurrentPlayer->prop, saved at 0x30) feeds only arg3=posdata->stan(0x14). objChangeShading/chrobjCollisionRelated, render_pos alloc (model->obj->0xe<<6), obj->mtx copy(+0x18)/set_position(+0x58), cam multiply_homogeneous, modelUpdateRelationsQuick(model->obj->RootNode), prop->flags|=2 (byte@1), zDepth=-render_pos->pos.m[3][2](0x38) all match. Only add = NATIVE_PORT render_pos NULL guard (behavior-preserving).",
+      "note": "Rocket-in-hand render/transform builder. ASM gun.c(US glabel, 7F05F928) = live NONMATCHING C. KEY delay-slot: 'sw v0,0x7c(sp)' in the jal get_curplayer_positiondata delay stores the OLD v0 (hand base g_CurrentPlayer+arg0*296 +0x870), NOT the return; so matrix_4x4_copy src (0x7c+0x268=hand+0xAD8=throw_item_pos_related) and objChangeShading arg1 (0x7c+0x2e8=hand+0xB58=field_B58) are hand-relative == C, while the real posdata (g_CurrentPlayer->prop, saved at 0x30) feeds only arg3=posdata->stan(0x14). objChangeShading/chrobjCollisionRelated, render_pos alloc (model->obj->0xe<<6), obj->mtx copy(+0x18)/set_position(+0x58), cam multiply_homogeneous, modelUpdateRelationsQuick(model->obj->RootNode), prop->flags|=2 (byte@1), zDepth=-render_pos->pos.m[3] z-component at +0x38 all match. Only add = NATIVE_PORT render_pos NULL guard (behavior-preserving).",
       "reviewed_ts": "2026-07-11T16:11:34Z",
       "rank": 66,
       "rank_score": 85,
@@ -2546,9 +2546,9 @@
         "body_start": 1561,
         "body_end": 2045
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Audio event dispatcher. ASM binary-search over event->common.type (glabel snd.c:2049): type<257 -> type<65 -> type<17 jump-table jpt_80029160 index=type-1 bounds 0..15; plus explicit compares 512/1024/2048/4096, 128/256, and 64. Maps 1:1 onto live C switch snd.c:1629: PLAY(1); STOP(2) and DEACTIVATE(1024) share target .L70008388 = C fallthrough group; UNKNOWN_12(4096) enters .L7000838C same group; PAN(4) VOL(8) PITCH(16) FX(256) RELEASE(2048) DECAY(64) END(128) PLAY_SFX(512) each distinct; API(32) has no handler -> default tail = C default. Tail .L700088D8 snd.c:2777: msgtype = type AND 0x2d1, done_state = state->unk3e AND 1 only when nextState!=0 and msgtype==0, break on done_state or state==NULL, continue on msgtype==0, else prevState=state then break -- all match C snd.c:2014-2038. Top early-outs (nextState evt copy, snd==NULL sndCountAllocList return) match. Port startVolume telemetry additive.",
+      "reviewed_ts": "2026-07-11T20:09:37Z",
       "rank": 93,
       "rank_score": 2570,
       "rank_reason": "dispatch(jpt_80029160) 690i"
@@ -2575,9 +2575,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch mission-briefing page renderer. ASM glabel watch.c:11720 (LEFTOVERDEBUG variant) vs live NONMATCHING C watch.c:11360. Dispatch idx=mission_brief_index bounds<5 (sltiu 5) into jpt_80058570, else falls past switch = C no-default. Enum WATCH_BRIEF_INDEX watch.h:101 BACKGROUND=0 M=1 Q=2 MONEYPENNY=3 OBJECTIVES=4 maps 1:1 to the 5 jpt targets. Cases 0-3 verified: langGet 44088/44089/44090/44091, get_ptr_text_for_watch_breifing_page(1/2/3/4)=BRIEFING_OVERVIEW/M/Q/MONEYPENNY, sub_GAME_7F0AEB64(210,...), and background/m/q/moneypenny navigation calls all match C. OBJECTIVES case (idx4) ASM call sequence matches C order exactly: setTextOverlapCorrection, langGet 44092, objectiveGetCount loop, get_difficulty_for_objective + lvlGetSelectedDifficulty continue-gate, get_text_for_objective, spacing appends, letter-prefix, viGetX/viGetY textRender 0x00FF00B0, sub_GAME_7F0AC0E8/7F0AC120, get_status_of_objective status coloring. Only mechanism diff = LEFTOVERDEBUG sprintf/strcat/strlen where live C uses watchCopyText/watchAppendText/watchBoundedLen (documented safe-PC bounded-copy, behavior-preserving; C 11412-11418 explicitly guards the debug memcpy 0xBB8 overflow).",
+      "reviewed_ts": "2026-07-11T20:24:40Z",
       "rank": 94,
       "rank_score": 2180,
       "rank_reason": "dispatch(jpt_80058570) 560i"
@@ -2604,9 +2604,9 @@
         "body_start": null,
         "body_end": 1362
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Model-node z-bias depth walker. ASM glabel objecthandler.c:1392 vs live C objecthandler.c:1049. Dispatch idx=(node->Opcode AND 0xff)-1 bounds<21 into jpt_800544E4; handler targets map 1:1 onto C switch cases 1,2,3,11,12,13,14,15,16,21 at indices 0,1,2,10,11,12,13,14,15,20, with .L7F06B6A4 default for types 4-10 and 17-20 = C default. Verified cases: type1 m3-2 average with FirstGroup at data+4; type13 rwdata ground-minus-posY subtraction sign correct plus Shadow fields at +0/+4; type15 min-pick c.lt.s neg1<neg2 strict picks neg1 else neg2; type16 special=entry side effect via sp 0x110 slot zero-init at prologue. Post-loop special block: f2<0 vs 0<=f2 and f18<0 vs 0<=f18 comparison trees match; epsilon subtractions 0x38000000=2^-15, 0x38800000=2^-14, 0x38C00000=9.15e-05, 0x37800000=2^-16 all match C constants at same branch sites. Loop advances entry=entry+0xC then node=entry+4 while entry!=NULL.",
+      "reviewed_ts": "2026-07-11T20:14:15Z",
       "rank": 95,
       "rank_score": 2141,
       "rank_reason": "dispatch(jpt_800544E4) 547i"
@@ -2633,9 +2633,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Region-sibling variant of the same shared C body watch.c:11360 (ASM glabel watch.c:12336). Second GLOBAL_ASM block with its own jpt_80058570 (5 entries, same structure). Dispatch idx=mission_brief_index bounds<5 and the 5 briefing cases are identical in structure to the US variant audited at asm_start 11709 (verified-equivalent); no per-region behavior difference in the shared live C path.",
+      "reviewed_ts": "2026-07-11T20:24:40Z",
       "rank": 96,
       "rank_score": 2099,
       "rank_reason": "dispatch(jpt_80058570) 533i"
@@ -2663,9 +2663,9 @@
         "body_start": 1546,
         "body_end": 1814
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Texture-preload DL parser. ASM glabel unk_0CC4C0.c:1847 vs live C unk_0CC4C0.c:1546. Outer dispatch: cmdByte>=0xC1 copy-through with E7 setting pipeSyncWritten via .L7F0CE650, else sltiu (cmdByte-0xB1)<0x10 into jpt_tlb_ptrDL_type_B1toC0 else copy = C 3-way. jpt idx0 for 0xB1 and idx14 for 0xBF share .L7F0CE66C = C case 0xB1/0xBF firstTexCmd=1 pipeSync=0; idx9 0xBA=.L7F0CE6B8; idx10 0xBB=.L7F0CE694 prevTexGdl=gdl; idx15 0xC0=.L7F0CE1D8; rest .L7F0CE720 default copy. C0 preamble pipeSync, isLight save, texturenum=w1 AND 0xFFF, override gate texturenum==D_800483C4 and D_800483C8!=NULL and unk_0<0xFF. Inner switch word0 AND 7, sltiu<5 into jpt_tlb_ptr_C0_image_recall_types 5 handlers else default = C. Case0 bit fields smode=w0>>22 AND 3, min=w1>>24 AND 0xFF, tmode=w0>>20 AND 3, offset=w0>>18 AND 3, shifts=w0>>14 AND 0xF, shiftt=w0>>10 AND 0xF; entry rewrite masks 0x1F/0xE3/0x1C with (15-shifts)<<5 and (15-shiftt)<<2, s7=15 confirmed; override recompute 15-(unk_1>>5), 15-((u32 entry<<11)>>29), min=unk_0, plus BA-injection literals 0xBA001402/0xBA001001/0xBA001102 all match. 0xBA case: hasOverride==0 copy else skip src++ only when mwIdx signed lb src+2 in 0x10/0x11/0x14. Return gdl-dst byte delta.",
+      "reviewed_ts": "2026-07-11T20:19:23Z",
       "rank": 97,
       "rank_score": 1745,
       "rank_reason": "dispatch(jpt_tlb_ptrDL_type_B1toC0,jpt_tlb_ptr_C0_image_recall_types) 415i"
@@ -2692,9 +2692,9 @@
         "body_start": 791,
         "body_end": 842
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "MP scoreboard points-per-player scorer. ASM glabel mp_watch.c:859 vs live C mp_watch.c:791. Dispatch idx=get_scenario() bounds<8 (sltiu 8) into jpt_MP_overlays_scoring, else default .L7F0C3C80 leaving points=0 = C no-default. Enum MPSCENARIOS bondconstants.h:1661 NORMAL=0 YOLT=1 TLD=2 MWTGG=3 LTK=4 2v2=5 3v1=6 2v1=7 matches jpt grouping: num_player_kills at idx 0,3,4 = C NORMAL/MWTGG/LTK; num_deaths idx1 = YOLT; time_with_flag idx2 = TLD; team_player_kills idx 5,6,7 = C 2v2/3v1/2v1. Bodies verified: num_deaths = 4 - order_out_in_yolt at +0x68; time_with_flag = flag_counter at +0x60; num_player_kills loop sign i==arg0 subtract else add, tail killed_gg_owner_count at +0x20 times (playerCount-2); team loop filters team=have_token_or_goldengun at +0x69. g_playerPlayerData stride 0x70.",
+      "reviewed_ts": "2026-07-11T20:16:13Z",
       "rank": 98,
       "rank_score": 1217,
       "rank_reason": "dispatch(jpt_MP_overlays_scoring) 239i"
@@ -2858,9 +2858,9 @@
         "body_start": null,
         "body_end": 519
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Model-node free-list slot binder. ASM glabel objecthandler.c:548 vs live C objecthandler.c:430. Dispatch idx=(node->Opcode AND 0xff)-1 bounds<21 (sltiu 0x15) into jpt_80054490; loc_CODE_7F06B174 for indices 0,1,2,10,11,12,13,14,15,20 = types 1,2,3,11,12,13,14,15,16,21 = C switch cases exactly, all else def_7F06B16C = C default. Handler writes cursor+0=model, cursor+4=node, then cursor=cursor->0xC. Node walk offsets Child 0x14 Next 0xC Parent 0x8 match C child/sibling/parent traversal + break on node==NULL or cursor==NULL. Reconnect .L7F06B1D8: early return when cursor==*head; result==NULL -> result=*head; else append *head to result chain tail via +0xC walk then set head+0x10=tail; head update sets *head=cursor severing back-link (*(back+0xC)=0, *(cursor+0x10)=0) when back!=0, all match C 484-517. Return=result.",
+      "reviewed_ts": "2026-07-11T20:11:13Z",
       "rank": 104,
       "rank_score": 722,
       "rank_reason": "dispatch(jpt_80054490) 74i"
