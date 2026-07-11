@@ -8,6 +8,7 @@ scripts/ci/check_timing_lock.sh
 ctest --test-dir build --output-on-failure -R radial_deadzone      # FID-0015 movement-stick radial deadzone lane
 ctest --test-dir build --output-on-failure -R weapon_cycle_queue    # FID-0016 mouse-wheel notch queue/drain lane
 ctest --test-dir build --output-on-failure -R speedgraph_clamp      # FID-0017 speedgraphframes spike-clamp lane
+ctest --test-dir build --output-on-failure -R chrobj_detonate       # FID-0074 maybe_detonate_object gate/armour/salvage helpers (D1-D5, both flag sides)
 ctest --test-dir build --output-on-failure -R fidelity_asm_audit_valid  # Task 2.4 (FID-0042) ASM-audit queue schema+verdict integrity
 tools/fidelity/sense_rdp_sweep.sh --selftest                 # FID-0043 S3 RDP comparator self-test (ROM/ares-free; proves the native/ares RDP-config differ catches a seeded divergence)
 # tier 2 — runtime smokes (ROM-gated, serialized, ~30 min)

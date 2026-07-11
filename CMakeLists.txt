@@ -650,6 +650,19 @@ if(BUILD_TESTING)
     target_include_directories(test_stan_roomset PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME stan_roomset COMMAND test_stan_roomset)
 
+    # maybe_detonate_object gate/armour/salvage helpers — ROM-free unit test
+    # (FID-0074): retail ASM src/game/chrobjhandler.c:38029-38459. Guards all
+    # five divergences on both flag sides (D2 armour polarity, D3 unarmed-gate
+    # polarity, D4 armed INVINCIBLE early-out, D5 type-7/8 non-explosive return,
+    # D1 salvage slot arithmetic). Fails if any polarity reverts or the legacy
+    # negative control (GE007_NO_DETONATE_OBJECT_FIX) drifts from the old port.
+    add_executable(test_chrobj_detonate
+        "${CMAKE_SOURCE_DIR}/tests/test_chrobj_detonate.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/chrobj_detonate.c"
+    )
+    target_include_directories(test_chrobj_detonate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME chrobj_detonate COMMAND test_chrobj_detonate)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.

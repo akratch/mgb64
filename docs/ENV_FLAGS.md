@@ -573,6 +573,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_CULL_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen cull-window horizontal widen (default ON) [FID-0058] |
 | `GE007_NO_CULL_HITBOX_MAGIC_BYPASS` | bool | 0 | 1 |  |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
+| `GE007_NO_DETONATE_OBJECT_FIX` | presence | unset | 1 | Restore the pre-fix maybe_detonate_object body (inverted armour amount, no ammo-crate salvage spawn, inverted unarmed gate) [FID-0074] |
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |

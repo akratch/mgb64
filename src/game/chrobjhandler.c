@@ -50,6 +50,7 @@ extern int g_frame_count_diag;
 #include <limits.h>
 #include "stan.h"
 #include "platform/projectile_endpoint_clamp.h"
+#include "platform/chrobj_detonate.h"
 
 extern void *dynAllocate(s32 size);
 extern void modelUpdateRelationsQuick(Model *model, ModelNode *parent);
@@ -37424,7 +37425,61 @@ static bool ammo_type_uses_explosive_flag(AMMOTYPE ammo_type)
     }
 }
 
+/* Defined later in this file / in chrai.h; forward-declared for the FID-0074
+ * salvage-spawn block (D1) below. */
+AmmoCrateRecord *ammocrateAllocate(void);
+extern void chrpropReparent(PropRecord *newChild, PropRecord *host);
+
+/* Retail blank magazine template (`blank_07_object`, ASM src/game/chrobjhandler.c
+ * :38004-38028). The NATIVE_PORT build does not compile the file-scope copy in
+ * the GLOBAL_ASM branch, so the D1 salvage spawn keeps its own byte-identical
+ * copy: type 0x07 (PROPDEF_MAGAZINE), damage 1000.0, identity matrix. */
+static const ObjectRecord blank_07_object = {
+    0x0100, /* extrascale */
+    0x0,    /* state */
+    0x07,   /* type */
+    0,      /* obj */
+    0xFFFF, /* pad */
+    0x00000001, /* flags */
+    0,      /* flags2 */
+    NULL,   /* prop */
+    NULL,   /* model */
+    {
+       1.0f, 0.0f, 0.0f, 0.0f,
+       0.0f, 1.0f, 0.0f, 0.0f,
+       0.0f, 0.0f, 1.0f, 0.0f,
+       0.0f, 0.0f, 0.0f, 1.0f
+    }, /* mtx */
+    {0.0, 0.0, 0.0}, /* runtime_pos */
+    {0x00000000}, /* runtime_bitflags */
+    NULL, /* ptr_allocated_collisiondata_block */
+    NULL, /* projectile/embedment */
+    0.0f, /* maxdamage */
+    1000.0f, /* damage */
+    {0xFF, 0xFF, 0xFF, 0x00}, /* shadecol */
+    {0xFF, 0xFF, 0xFF, 0x00}, /* nextcol */
+};
+
+/* FID-0074 master negative control. Default-ON port-defect fix restores five
+ * retail behaviors in maybe_detonate_object (D1 PROPDEF_AMMO salvage spawn +
+ * its randomGetNext draw, D2 armour-amount polarity, D3 unarmed-gate polarity,
+ * D4 armed-path INVINCIBLE early-out, D5 type-7/8 non-explosive return);
+ * setting GE007_NO_DETONATE_OBJECT_FIX reproduces the pre-fix port body
+ * byte-identically. */
+static int portNoDetonateObjectFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_DETONATE_OBJECT_FIX",
+                              "Restore the pre-fix maybe_detonate_object body "
+                              "(inverted armour amount, no ammo-crate salvage "
+                              "spawn, inverted unarmed gate) [FID-0074]");
+    }
+    return cached;
+}
+
 void maybe_detonate_object(ObjectRecord *obj, f32 damage, coord3d *pos, ITEM_IDS item, s32 owner) {
+    const int s_legacyDetonate = portNoDetonateObjectFix();
     bool was_destroyed;
     bool destroyed_now;
     f32 clamped_damage;
@@ -37450,88 +37505,72 @@ void maybe_detonate_object(ObjectRecord *obj, f32 damage, coord3d *pos, ITEM_IDS
     obj->runtime_bitflags = (obj->runtime_bitflags & ~RUNTIMEBITFLAG_OWNER)
         | portPackRuntimeOwnerBits(owner);
 
-    if (item == ITEM_UNARMED) {
-        if (objIsCollectable((PropDefHeaderRecord *)obj)) {
-            if (!(obj->flags & PROPFLAG_00800000)) {
+    /* Pre-damage gate (retail ASM 7F04E168-7F04E2A8). D3 (unarmed-gate
+     * polarity), D4 (armed-path INVINCIBLE early-out) and D5 (type-7/8
+     * non-explosive return) all live in chrobjDetonateGate(); the switch below
+     * performs the retail side effects. Setting GE007_NO_DETONATE_OBJECT_FIX
+     * (s_legacyDetonate) reproduces the pre-fix control flow byte-identically. */
+    {
+        WeaponObjRecord *weapon = (WeaponObjRecord *)obj;
+        AmmoCrateRecord *ammo = (AmmoCrateRecord *)obj;
+        ChrobjDetonateAction gate = chrobjDetonateGate(
+            item == ITEM_UNARMED,
+            objIsCollectable((PropDefHeaderRecord *)obj) != 0,
+            (unsigned int)obj->flags,
+            obj->type,
+            (obj->type == PROPDEF_COLLECTABLE) && weapon_uses_explosive_timer(weapon),
+            (obj->type == PROPDEF_MAGAZINE) && ammo_type_uses_explosive_flag(ammo->ammoType),
+            s_legacyDetonate);
+
+        switch (gate) {
+            case CHROBJ_DETONATE_SKIP:
                 if (objectTraceMatchesObject(obj)) {
                     objectTracePrintf(
-                        "frame=%d event=skip obj=%d type=%d pad=%d reason=collectable_unarmed_disabled item=%d damage=%.3f flags=0x%08x",
-                        g_frame_count_diag,
-                        obj->obj,
-                        obj->type,
-                        obj->pad,
-                        item,
-                        damage,
+                        "frame=%d event=skip obj=%d type=%d pad=%d reason=gate_skip item=%d damage=%.3f flags=0x%08x",
+                        g_frame_count_diag, obj->obj, obj->type, obj->pad, item, damage,
                         (unsigned int)obj->flags);
                 }
                 return;
-            }
-        } else if (!(obj->flags & PROPFLAG_01000000)) {
-            if (objectTraceMatchesObject(obj)) {
-                objectTracePrintf(
-                    "frame=%d event=skip obj=%d type=%d pad=%d reason=unarmed_disabled item=%d damage=%.3f flags=0x%08x",
-                    g_frame_count_diag,
-                    obj->obj,
-                    obj->type,
-                    obj->pad,
-                    item,
-                    damage,
-                    (unsigned int)obj->flags);
-            }
-            return;
-        }
-    } else {
-        if (obj->type == PROPDEF_COLLECTABLE) {
-            WeaponObjRecord *weapon = (WeaponObjRecord *)obj;
-
-            if (weapon_uses_explosive_timer(weapon)) {
+            case CHROBJ_DETONATE_ARM_WEAPON:
                 weapon->timer = 0;
                 if (objectTraceMatchesObject(obj)) {
                     objectTracePrintf(
                         "frame=%d event=skip obj=%d type=%d pad=%d reason=armed_collectable item=%d damage=%.3f",
-                        g_frame_count_diag,
-                        obj->obj,
-                        obj->type,
-                        obj->pad,
-                        item,
-                        damage);
+                        g_frame_count_diag, obj->obj, obj->type, obj->pad, item, damage);
                 }
                 return;
-            }
-        } else if (obj->type == PROPDEF_MAGAZINE) {
-            AmmoCrateRecord *ammo = (AmmoCrateRecord *)obj;
-
-            if (ammo_type_uses_explosive_flag(ammo->ammoType)) {
+            case CHROBJ_DETONATE_ARM_MAGAZINE:
                 obj->flags |= 0x10000000;
                 if (objectTraceMatchesObject(obj)) {
                     objectTracePrintf(
                         "frame=%d event=skip obj=%d type=%d pad=%d reason=armed_magazine item=%d damage=%.3f ammo=%d",
-                        g_frame_count_diag,
-                        obj->obj,
-                        obj->type,
-                        obj->pad,
-                        item,
-                        damage,
+                        g_frame_count_diag, obj->obj, obj->type, obj->pad, item, damage,
                         ammo->ammoType);
                 }
                 return;
-            }
-        }
-
-        if (!objIsMortal(obj)) {
-            if (objectTraceMatchesObject(obj)) {
-                objectTracePrintf(
-                    "frame=%d event=skip obj=%d type=%d pad=%d reason=immortal item=%d damage=%.3f flags=0x%08x flags2=0x%08x",
-                    g_frame_count_diag,
-                    obj->obj,
-                    obj->type,
-                    obj->pad,
-                    item,
-                    damage,
-                    (unsigned int)obj->flags,
-                    (unsigned int)obj->flags2);
-            }
-            return;
+            case CHROBJ_DETONATE_TYPE78_INERT:
+                /* D5: retail returns for a non-explosive dropped weapon / ammo
+                 * magazine without applying armed damage. */
+                if (objectTraceMatchesObject(obj)) {
+                    objectTracePrintf(
+                        "frame=%d event=skip obj=%d type=%d pad=%d reason=armed_type78_inert item=%d damage=%.3f",
+                        g_frame_count_diag, obj->obj, obj->type, obj->pad, item, damage);
+                }
+                return;
+            case CHROBJ_DETONATE_CHECK_MORTAL:
+                if (!objIsMortal(obj)) {
+                    if (objectTraceMatchesObject(obj)) {
+                        objectTracePrintf(
+                            "frame=%d event=skip obj=%d type=%d pad=%d reason=immortal item=%d damage=%.3f flags=0x%08x flags2=0x%08x",
+                            g_frame_count_diag, obj->obj, obj->type, obj->pad, item, damage,
+                            (unsigned int)obj->flags, (unsigned int)obj->flags2);
+                    }
+                    return;
+                }
+                break;
+            case CHROBJ_DETONATE_APPLY:
+            default:
+                break;
         }
     }
 
@@ -37583,6 +37622,48 @@ void maybe_detonate_object(ObjectRecord *obj, f32 damage, coord3d *pos, ITEM_IDS
         }
 
         object_explosion_related(obj, pos, owner);
+    }
+
+    /* D1: PROPDEF_AMMO salvage-magazine spawn (retail ASM 7F04E3A8-7F04E540).
+     * On a destroyed multi-ammo crate, retail draws randomGetNext() to pick a
+     * start slot, scans the 13 authored {modelnum,quantity} pairs circularly,
+     * and reparents a fresh magazine of the first usable slot's model as a
+     * child prop (dropped by the end-of-function child loop). The port omitted
+     * this entirely -> no salvage drop AND a one-draw RNG-stream desync on every
+     * ammo-crate destruction. Gated so GE007_NO_DETONATE_OBJECT_FIX draws no RNG
+     * (byte-identical to the pre-fix port). */
+    if (!s_legacyDetonate && obj->type == PROPDEF_AMMO && objGetDestroyedLevel(obj) == 1) {
+        MultiAmmoCrateRecord *crate = (MultiAmmoCrateRecord *)obj;
+        s32 start = (s32)(randomGetNext() % AMMOTYPE_GLOBAL_MAX); /* ASM: divu %13 */
+        s32 i = start;
+
+        do {
+            if (chrobjAmmoSalvageSlotUsable(crate->slots[i].quantity, crate->slots[i].modelnum)) {
+                AmmoCrateRecord *mag = ammocrateAllocate();
+
+                if (mag != NULL) {
+                    u16 modelnum = crate->slots[i].modelnum;
+                    ObjectRecord *magobj = (ObjectRecord *)mag;
+                    PropRecord *magprop;
+
+                    *magobj = blank_07_object;                  /* ASM: copy blank_07_object */
+                    magobj->obj = (s16)modelnum;                /* ASM: sh $a3,4($v0) */
+                    mag->ammoType = chrobjAmmoSalvageAmmoType(i); /* ASM: sw ...,0x80($v0) */
+
+                    magprop = objInitWithModelDef(magobj, PitemZ_entries[modelnum].header);
+                    if (magprop != NULL) {
+                        /* ASM re-applies the model's own scale (a no-op). */
+                        modelSetScale(magobj->model, magobj->model->scale);
+                        chrpropReparent(magprop, obj->prop);
+                    }
+                    /* A successful allocation ends the scan (ASM -> L7F04E544),
+                     * whether or not objInitWithModelDef succeeded. */
+                    break;
+                }
+                /* allocate failed: keep scanning (ASM L7F04E528). */
+            }
+            i = (i + 1) % AMMOTYPE_GLOBAL_MAX;
+        } while (i != start);
     }
 
     destroyed_now = objGetDestroyedLevel(obj) != 0;
@@ -37645,14 +37726,22 @@ void maybe_detonate_object(ObjectRecord *obj, f32 damage, coord3d *pos, ITEM_IDS
                 init_trigger_toxic_gas_effect(&obj->runtime_pos);
             }
             break;
-        case PROPDEF_ARMOUR:
-            if (destroyed_now) {
-                BodyArmourRecord *armour = (BodyArmourRecord *)obj;
-                armour->amount = armour->initialamount * (obj->damage - obj->maxdamage) / obj->damage;
-            } else {
-                ((BodyArmourRecord *)obj)->amount = 0.0f;
-            }
+        case PROPDEF_ARMOUR: {
+            /* D2: retail sets amount=0.0 when the vest was DESTROYED and the
+             * proportional formula when it SURVIVED (ASM 7F04E688-7F04E6C8:
+             * `bnezl` on objGetDestroyedLevel -> amount=0.0; fall-through ->
+             * initialamount*(damage-maxdamage)/damage). The port had the two
+             * branches swapped, so one non-lethal shot zeroed a pickup's armour
+             * value. */
+            BodyArmourRecord *armour = (BodyArmourRecord *)obj;
+            armour->amount = chrobjArmourCollectAmount(
+                destroyed_now,
+                armour->initialamount,
+                obj->damage,
+                obj->maxdamage,
+                s_legacyDetonate);
             break;
+        }
         default:
             break;
     }
