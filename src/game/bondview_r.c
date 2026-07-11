@@ -5,6 +5,7 @@
 #include "math_atan2f.h"
 #include "bondview_r.h"
 #include "bondview.h"
+#include "platform/port_env.h"
 #include "random.h"
 #include "game/bondinv.h"
 #include "game/chr.h"
@@ -1209,7 +1210,7 @@ void bondviewLoadSetupIntroSection(void)
          * content -- see the SWIRL-side no-data fallback audit in
          * bondview.c's bondviewFrozenCameraTick for the companion fix. */
         if (portIntroEnabled() &&
-            (g_IntroSwirl != NULL || getenv("GE007_NO_CINEMA_INTRO_FIX") == NULL)) {
+            (g_IntroSwirl != NULL || !port_env_set("GE007_NO_CINEMA_INTRO_FIX", NULL))) {
             if (getenv("GE007_VERBOSE")) {
                 fprintf(stderr, "[INTRO] authentic level intro enabled\n");
             }

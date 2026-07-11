@@ -9,6 +9,7 @@
 #include "othermodemicrocode.h"
 #include "fr.h"
 #include "image_bank.h"
+#include "platform/port_env.h"
 
 #ifdef NATIVE_PORT
 #include "gfx_pc.h"
@@ -64,7 +65,8 @@ void sub_GAME_7F093880(f32 offset_x, f32 offset_y, coord3d* out) {
     {
         static int sky_aspect_fix = -1;
         if (sky_aspect_fix < 0) {
-            sky_aspect_fix = (getenv("GE007_NO_SKY_ASPECT_FIX") == NULL); /* default ON */
+            sky_aspect_fix = !port_env_set("GE007_NO_SKY_ASPECT_FIX",
+                "Disable the widescreen sky/horizon aspect widen (default ON)"); /* default ON */
         }
         if (sky_aspect_fix) {
             f32 halfwidth = getPlayer_c_screenwidth() * 0.5f;

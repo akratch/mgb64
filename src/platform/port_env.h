@@ -42,6 +42,14 @@ int   port_env_bool(const char *name, int default_on, const char *help);
 int   port_env_int(const char *name, int default_val, const char *help);
 float port_env_float(const char *name, float default_val, const char *help);
 
+/* Registering *presence* accessor: returns 1 iff the variable is present in the
+ * environment (getenv(name) != NULL), 0 otherwise -- exactly the semantics of a
+ * raw `getenv("X") != NULL` gate, so a presence site migrates behavior-identically
+ * (unlike port_env_bool, this treats "GE007_X=0" and "GE007_X=" as SET). Registers
+ * {name, presence, help} the first time it is seen (enumerable in the reference)
+ * and reads the environment once, caching the result. `help` may be NULL. */
+int   port_env_set(const char *name, const char *help);
+
 /* Dump the flags registered so far.
  *   format == "md"  -> a Markdown table (name | type | default | current | help)
  *   otherwise       -> aligned human-readable text

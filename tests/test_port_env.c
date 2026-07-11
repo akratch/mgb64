@@ -58,6 +58,31 @@ int main(void) {
     setenv("GE007_TEST_F3", "junk", 1);
     CHECK(port_env_float("GE007_TEST_F3", 3.5f, NULL) == 3.5f, "invalid float -> default");
 
+    /* --- presence semantics: port_env_set == (getenv(name) != NULL) exactly ---
+     * This is the behavior contract the raw-getenv presence-site migration relies
+     * on: "0" and "" (empty) still count as SET, unlike port_env_bool. */
+    unsetenv("GE007_TEST_S");
+    CHECK(port_env_set("GE007_TEST_S", "presence gate") == 0, "unset presence -> 0");
+    setenv("GE007_TEST_S1", "1", 1);
+    CHECK(port_env_set("GE007_TEST_S1", NULL) == 1, "set \"1\" -> 1");
+    setenv("GE007_TEST_S0", "0", 1);
+    CHECK(port_env_set("GE007_TEST_S0", NULL) == 1, "set \"0\" -> 1 (presence: 0 counts as set)");
+    setenv("GE007_TEST_SE", "", 1);
+    CHECK(port_env_set("GE007_TEST_SE", NULL) == 1, "set \"\" (empty) -> 1 (present)");
+    setenv("GE007_TEST_SX", "anything", 1);
+    CHECK(port_env_set("GE007_TEST_SX", NULL) == 1, "set non-empty -> 1");
+    /* read-once cache: unsetting after first read must NOT change the value. */
+    setenv("GE007_TEST_SCACHE", "x", 1);
+    CHECK(port_env_set("GE007_TEST_SCACHE", NULL) == 1, "presence first read sees set");
+    unsetenv("GE007_TEST_SCACHE");
+    CHECK(port_env_set("GE007_TEST_SCACHE", NULL) == 1, "cached: still set after unset");
+    /* each presence read equals a fresh getenv()!=NULL for the same input. */
+    unsetenv("GE007_TEST_SEQ_A"); setenv("GE007_TEST_SEQ_B", "0", 1);
+    CHECK(port_env_set("GE007_TEST_SEQ_A", NULL) == (getenv("GE007_TEST_SEQ_A") != NULL),
+          "presence matches getenv!=NULL (unset)");
+    CHECK(port_env_set("GE007_TEST_SEQ_B", NULL) == (getenv("GE007_TEST_SEQ_B") != NULL),
+          "presence matches getenv!=NULL (set to 0)");
+
     /* --- registry: distinct names counted once --- */
     int before = port_env_registered_count();
     (void)port_env_bool("GE007_TEST_B", 1, NULL);   /* already registered */

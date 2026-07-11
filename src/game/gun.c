@@ -29,6 +29,7 @@
 #include "fr.h"
 #include "assets/obseg/text/LgunE.h"
 #include "textrelated.h"
+#include "platform/port_env.h"
 #ifdef NATIVE_PORT
 #include <stdlib.h>
 #include <string.h>
@@ -80,7 +81,9 @@ static int portNoProjectileInitMtxFix(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        cached = getenv("GE007_NO_PROJECTILE_INIT_MTX_FIX") != NULL;
+        cached = port_env_set("GE007_NO_PROJECTILE_INIT_MTX_FIX",
+                              "Restore the legacy raw N64 byte-offset read of the "
+                              "grenade-round projectile init matrix [FID-0085]");
     }
     return cached;
 }
@@ -7032,7 +7035,9 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
             static int s_legacyAutoshotBulletType = -1;
             if (s_legacyAutoshotBulletType < 0) {
                 s_legacyAutoshotBulletType =
-                    (getenv("GE007_NO_AUTOSHOT_BULLETTYPE_FIX") != NULL) ? 1 : 0;
+                    port_env_set("GE007_NO_AUTOSHOT_BULLETTYPE_FIX",
+                                 "Restore the legacy (buggy) pistol grouping for the "
+                                 "AUTOSHOT bullet type [FID-0052]");
             }
             switch (weaponBulletTypeClassify(item, s_legacyAutoshotBulletType)) {
             case WEAPON_BULLET_TYPE_PISTOL:
@@ -32103,7 +32108,9 @@ static int portMpAmmoHudMenuFixDisabled(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        cached = getenv("GE007_NO_MP_AMMO_HUD_MENU_FIX") != NULL;
+        cached = port_env_set("GE007_NO_MP_AMMO_HUD_MENU_FIX",
+                              "Restore the pre-fix MP per-pane ammo HUD drawn over the "
+                              "watch/pause darkening overlay [FID-0064]");
     }
     return cached;
 }

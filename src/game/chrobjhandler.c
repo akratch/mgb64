@@ -5219,7 +5219,9 @@ after_room_loop:
 
         if (s_legacyProjClamp < 0) {
             s_legacyProjClamp =
-                (getenv("GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX") != NULL) ? 1 : 0;
+                port_env_set("GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX",
+                             "Restore the legacy projectile-endpoint clamp polarity + "
+                             "operand [FID-0065]");
         }
 
         /* arg2 holds the bg-hit position only on a wall hit (result==0), where

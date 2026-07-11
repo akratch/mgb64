@@ -717,7 +717,9 @@ static void stanConsiderFloorTile(StandTile *tile, f32 *pos, StandTile **best_ti
 s32 stanRoomsetByteFixEnabled(void) {
     static int s_gate = -1;
     if (s_gate < 0) {
-        s_gate = ge_env_bool("GE007_NO_STAN_ROOMSET_BYTE_FIX", 0) ? 0 : 1;
+        s_gate = port_env_bool("GE007_NO_STAN_ROOMSET_BYTE_FIX", 0,
+                               "Restore the legacy stan roomset-byte read (default: fix ON)")
+                     ? 0 : 1;
     }
     return s_gate;
 }

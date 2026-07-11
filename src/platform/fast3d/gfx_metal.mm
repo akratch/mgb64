@@ -57,6 +57,9 @@ extern "C" {
 #include "smaa_area_tex.h"
 #include "smaa_search_tex.h"
 }
+/* port_env.h carries its own extern "C" guard (and pulls <stdio.h>), so include
+ * it outside the C-linkage block above. */
+#include "port_env.h"
 
 /* Growable text buffer. STL (<string>/<vector>) is unusable in this TU because
  * the project's include/math.h shim shadows the system <math.h>, which breaks
@@ -1027,8 +1030,9 @@ static bool mtl_msaa_force_off(void) {
 static bool mtl_shadow_depth_clamp_disabled(void) {
     static int force = -1;
     if (force < 0) {
-        const char *e = getenv("GE007_NO_METAL_SHADOW_DEPTH_CLAMP");
-        force = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+        force = port_env_bool("GE007_NO_METAL_SHADOW_DEPTH_CLAMP", 0,
+                              "Revert the Metal sun-shadow depth clamp to GL-parity "
+                              "off (fix active by default; Metal-only)");
     }
     return force != 0;
 }
@@ -1046,8 +1050,9 @@ static bool mtl_shadow_depth_clamp_disabled(void) {
 static bool mtl_shadow_dummy_depth_disabled(void) {
     static int force = -1;
     if (force < 0) {
-        const char *e = getenv("GE007_NO_METAL_SHADOW_DUMMY_DEPTH");
-        force = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+        force = port_env_bool("GE007_NO_METAL_SHADOW_DUMMY_DEPTH", 0,
+                              "Revert the Metal sun-shadow receiver dummy-depth fallback "
+                              "(fix active by default; Metal-only)");
     }
     return force != 0;
 }

@@ -243,7 +243,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_BULLET_IMPACT_NORMAL_OFFSET` | ? |  | 1 |  |
 | `GE007_BULLET_SPARKS` | ? |  | 1 |  |
 | `GE007_BYPASS_PORTAL_BACKFACE` | ? |  | 1 |  |
-| `GE007_CAMERA_SEED_WALK_HOPS` | ? |  | 1 |  |
+| `GE007_CAMERA_SEED_WALK_HOPS` | int | 0 | 1 | Extra opt-in deeper-reach camera-seed visibility-supplement frontier hops (0 = off) |
 | `GE007_CC_POOL_INITIAL` | ? |  | 1 |  |
 | `GE007_CHRBEAMS_FRUSTUM` | bool | 0 | 1 |  |
 | `GE007_CHR_SPAWN_TRACE` | ? |  | 1 |  |
@@ -505,7 +505,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_HIT_MARKERS` | int | 1 | 1 | Flash a marker on the crosshair when your shot registers (white hit, yellow head, red kill; 0 = off). |
 | `GE007_INTERACT_TRACE` | ? |  | 2 |  |
 | `GE007_INTERACT_TRACE_BUDGET` | ? |  | 2 |  |
-| `GE007_INTRO_ANIM_LEGACY_SEED` | ? |  | 1 |  |
+| `GE007_INTRO_ANIM_LEGACY_SEED` | presence | unset | 1 | Force the pre-T12 unnamed literal intro-anim seed (same value; documentation-only A/B) |
 | `GE007_INTRO_BODY_Y_OFFSET` | ? |  | 1 |  |
 | `GE007_INTRO_CAMERA_INDEX` | ? |  | 3 |  |
 | `GE007_INTRO_FRUSTUM_ALL` | ? |  | 1 |  |
@@ -559,34 +559,34 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NATIVE_EXPLOSION_FALLBACK` | ? |  | 1 |  |
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
 | `GE007_NO_A2C` | ? |  | 2 |  |
-| `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | ? |  | 1 |  |
-| `GE007_NO_BOND_BODY_FIX` | ? |  | 1 |  |
-| `GE007_NO_CAMERA_SEED_FIX` | ? |  | 1 |  |
-| `GE007_NO_CAMERA_SEED_MULTIHOP` | ? |  | 1 |  |
+| `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | presence | unset | 1 | Restore the legacy (buggy) pistol grouping for the AUTOSHOT bullet type [FID-0052] |
+| `GE007_NO_BOND_BODY_FIX` | presence | unset | 1 | Revert the intro/outro Bond body to its original invisible behaviour (default ON) |
+| `GE007_NO_CAMERA_SEED_FIX` | presence | unset | 1 | Disable the detached-authored-camera visibility BFS seed (default ON) [D42/T14] |
+| `GE007_NO_CAMERA_SEED_MULTIHOP` | presence | unset | 1 | Recover the T13b single-hop camera-seed walk (no multi-hop iteration) [FID-0009] |
 | `GE007_NO_CAMERA_SEED_WALK` | ? |  | 1 |  |
-| `GE007_NO_CINEMA_INTRO_FIX` | ? |  | 2 |  |
+| `GE007_NO_CINEMA_INTRO_FIX` | presence | unset | 2 | Restore the old swirl-no-data intro fallback (skip to FP) for A/B |
 | `GE007_NO_CRASH_HANDLER` | ? |  | 1 |  |
 | `GE007_NO_CRITICAL_ROOM_SHARD_LOG` | ? |  | 1 |  |
 | `GE007_NO_CULL` | ? |  | 1 |  |
-| `GE007_NO_CULL_ASPECT_FIX` | ? |  | 1 |  |
+| `GE007_NO_CULL_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen cull-window horizontal widen (default ON) [FID-0058] |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
-| `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | ? |  | 1 |  |
+| `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
-| `GE007_NO_INTRO_CHR_TIMING_FIX` | ? |  | 1 |  |
-| `GE007_NO_INTRO_PHASE3` | ? |  | 1 |  |
-| `GE007_NO_INTRO_ROOTMOTION` | ? |  | 1 |  |
+| `GE007_NO_INTRO_CHR_TIMING_FIX` | presence | unset | 1 | Restore the old same-tick native Bond intro chr load |
+| `GE007_NO_INTRO_PHASE3` | presence | unset | 1 | Disable the scripted phase-3 Bond intro animation |
+| `GE007_NO_INTRO_ROOTMOTION` | presence | unset | 1 | Restore the static intro-Bond pin (disable anim root motion, default ON) |
 | `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
-| `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | ? |  | 1 |  |
-| `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | ? |  | 1 |  |
-| `GE007_NO_MP_AMMO_HUD_MENU_FIX` | ? |  | 1 |  |
+| `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
+| `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
+| `GE007_NO_MP_AMMO_HUD_MENU_FIX` | presence | unset | 1 | Restore the pre-fix MP per-pane ammo HUD drawn over the watch/pause darkening overlay [FID-0064] |
 | `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
-| `GE007_NO_POSTINTRO_SPAWN_FIX` | ? |  | 1 |  |
-| `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | ? |  | 1 |  |
-| `GE007_NO_PROJECTILE_INIT_MTX_FIX` | ? |  | 1 |  |
+| `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
+| `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |
+| `GE007_NO_PROJECTILE_INIT_MTX_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile init matrix [FID-0085] |
 | `GE007_NO_SKY` | ? |  | 1 |  |
-| `GE007_NO_SKY_ASPECT_FIX` | ? |  | 1 |  |
-| `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 |  |
+| `GE007_NO_SKY_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen sky/horizon aspect widen (default ON) |
+| `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 | Restore the legacy stan roomset-byte read (default: fix ON) |
 | `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |

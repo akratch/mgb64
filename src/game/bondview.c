@@ -2079,7 +2079,8 @@ static f32 widenCullHorizontal(f32 x)
     static int enabled = -1;
     f32 factor;
     if (enabled < 0) {
-        enabled = (getenv("GE007_NO_CULL_ASPECT_FIX") == NULL); /* default ON */
+        enabled = !port_env_set("GE007_NO_CULL_ASPECT_FIX",
+            "Disable the widescreen cull-window horizontal widen (default ON) [FID-0058]"); /* default ON */
     }
     if (!enabled || s_cullWidenSuppressDepth > 0) {
         return x;
@@ -2984,7 +2985,8 @@ static int portBondBodyFixEnabled(void)
     if (enabled < 0) {
         /* Default ON; set GE007_NO_BOND_BODY_FIX to revert to the original
          * (invisible) behaviour for A/B. */
-        enabled = (getenv("GE007_NO_BOND_BODY_FIX") == NULL);
+        enabled = !port_env_set("GE007_NO_BOND_BODY_FIX",
+            "Revert the intro/outro Bond body to its original invisible behaviour (default ON)");
     }
     return enabled;
 }
@@ -6017,7 +6019,9 @@ static void bondviewPrepareNativeBondIntroChr(void)
      * GE007_INTRO_ANIM_LEGACY_SEED=1 forces the pre-T12 unnamed literal
      * for A/B parity (same value; documentation-only otherwise). */
     #define INTRO_CHR_ANIM_SEED_TICKS 3.0f
-    if (getenv("GE007_INTRO_ANIM_LEGACY_SEED") != NULL) {
+    if (port_env_set("GE007_INTRO_ANIM_LEGACY_SEED",
+                     "Force the pre-T12 unnamed literal intro-anim seed (same value; "
+                     "documentation-only A/B)")) {
         start_frame += speed * 3.0f;
     } else {
         start_frame += speed * INTRO_CHR_ANIM_SEED_TICKS;
@@ -6233,7 +6237,8 @@ void bondviewSetCameraMode(s32 arg0)
              * instead, so native's presence boundary lands on the same tick
              * as stock's. GE007_NO_INTRO_CHR_TIMING_FIX=1 restores the old
              * same-tick load. */
-            if (getenv("GE007_NO_INTRO_CHR_TIMING_FIX") != NULL) {
+            if (port_env_set("GE007_NO_INTRO_CHR_TIMING_FIX",
+                             "Restore the old same-tick native Bond intro chr load")) {
                 bondviewPrepareNativeBondIntroChr();
             } else {
                 s_nativeBondIntroChrPending = TRUE;
@@ -6546,7 +6551,9 @@ void sub_GAME_7F07B1A4(void)
          * GE007_NO_POSTINTRO_SPAWN_FIX=1 restores the old drifted-anchor
          * handoff for A/B (reproduces the frozen-movement bug; used as the
          * negative control in tools/intro_movement_regression.sh). */
-        if (getenv("GE007_NO_POSTINTRO_SPAWN_FIX") == NULL) {
+        if (!port_env_set("GE007_NO_POSTINTRO_SPAWN_FIX",
+                          "Restore the old drifted-anchor post-intro spawn handoff "
+                          "(reproduces the frozen-movement bug) for A/B")) {
             portApplyGameplaySpawnFromIntro();
         }
 #endif
@@ -7043,7 +7050,8 @@ static void bondviewMaybeDriveIntroPhase3(void)
     bondviewDumpAnimHashesOnce();
 
     if (disabled < 0) {
-        disabled = (getenv("GE007_NO_INTRO_PHASE3") != NULL);
+        disabled = port_env_set("GE007_NO_INTRO_PHASE3",
+                                "Disable the scripted phase-3 Bond intro animation");
     }
     if (disabled || g_CurrentPlayer == NULL || g_CurrentPlayer->prop == NULL) {
         return;
@@ -7333,7 +7341,9 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
          * against retail data: every retail stage ships swirl data (T3), so
          * g_IntroSwirl is never NULL here on real content. */
         if (!g_IntroSwirl) {
-            if (getenv("GE007_NO_CINEMA_INTRO_FIX") != NULL) {
+            if (port_env_set("GE007_NO_CINEMA_INTRO_FIX",
+                             "Restore the old swirl-no-data intro fallback (skip to FP) "
+                             "for A/B")) {
                 bondviewSetCameraMode(CAMERAMODE_FP);
                 goto swirl_done;
             }
@@ -24749,7 +24759,8 @@ s32 playerTickBeams(PropRecord *prop) {
                  * Default ON; GE007_NO_INTRO_ROOTMOTION restores the static pin. */
                 static int rootmotion = -1;
                 if (rootmotion < 0) {
-                    rootmotion = (getenv("GE007_NO_INTRO_ROOTMOTION") == NULL);
+                    rootmotion = !port_env_set("GE007_NO_INTRO_ROOTMOTION",
+                        "Restore the static intro-Bond pin (disable anim root motion, default ON)");
                 }
                 /* The intro Bond animation is a 3-phase sequence with matching
                  * actiontypes on stock and native: phase 1 = ACT_BONDINTRO,

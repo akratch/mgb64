@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum { K_BOOL, K_INT, K_FLOAT } Kind;
+typedef enum { K_BOOL, K_INT, K_FLOAT, K_SET } Kind;
 
 typedef struct {
     const char *name; /* caller's string literal (must be static/stable) */
@@ -44,6 +44,7 @@ static const char *kind_name(Kind kind) {
         case K_BOOL:  return "bool";
         case K_INT:   return "int";
         case K_FLOAT: return "float";
+        case K_SET:   return "presence";
         default:      return "?";
     }
 }
@@ -169,6 +170,20 @@ float port_env_float(const char *name, float default_val, const char *help) {
     return e->cur.f;
 }
 
+int port_env_set(const char *name, const char *help) {
+    Entry *e = get_or_create(name, K_SET, help);
+    if (e == NULL) {
+        return getenv(name) != NULL;
+    }
+    if (!e->parsed) {
+        e->was_set = (getenv(name) != NULL);
+        e->def.b = 0;                 /* absent by default */
+        e->cur.b = e->was_set ? 1 : 0;
+        e->parsed = 1;
+    }
+    return e->cur.b;
+}
+
 int port_env_registered_count(void) {
     return s_count;
 }
@@ -194,6 +209,11 @@ static void fmt_values(const Entry *e, char *defbuf, char *curbuf, size_t n,
             *type = "float";
             snprintf(defbuf, n, "%g", (double)e->def.f);
             snprintf(curbuf, n, "%g", (double)e->cur.f);
+            break;
+        case K_SET:
+            *type = "presence";
+            snprintf(defbuf, n, "%s", "unset");
+            snprintf(curbuf, n, "%s", e->cur.b ? "set" : "unset");
             break;
         default:
             *type = "?";

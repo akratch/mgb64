@@ -16,6 +16,7 @@
 #include "bg.h"
 #include "bondview.h"
 #include "debugmenu_handler.h"
+#include "platform/port_env.h"
 #include "decompress.h"
 #include "fog.h"
 #include "lvl.h"
@@ -16683,7 +16684,9 @@ void sub_GAME_7F0B8A6C(void) {
                 sub_GAME_7F0B39BC(portal_seed_rooms[i], 0, player_bbox, 1);
                 bgClearRoomAdmitTraceContext();
             }
-        } else if (getenv("GE007_NO_CAMERA_SEED_FIX") == NULL) {
+        } else if (!port_env_set("GE007_NO_CAMERA_SEED_FIX",
+                                 "Disable the detached-authored-camera visibility BFS "
+                                 "seed (default ON) [D42/T14]")) {
             /* D42/T14: a detached authored camera (INTRO/FADESWIRL/SWIRL) frames a
              * region that can be far from the player's spawn room, so seeding the
              * visibility BFS only from g_BgCurrentRoom (the player's room) leaves the
@@ -16949,7 +16952,9 @@ void sub_GAME_7F0B8A6C(void) {
             if (no_multihop < 0) {
                 /* FID-0009 opt-out: recover the T13b single-hop behavior (walk only when
                  * the camera resolves to a room != Bond's, and no multi-hop iteration). */
-                no_multihop = (getenv("GE007_NO_CAMERA_SEED_MULTIHOP") != NULL);
+                no_multihop = port_env_set("GE007_NO_CAMERA_SEED_MULTIHOP",
+                                           "Recover the T13b single-hop camera-seed walk "
+                                           "(no multi-hop iteration) [FID-0009]");
             }
             /* Single-hop (T13b) seeded only when camera_seed_room >= 0 (cam_room != cur);
              * the multi-hop extension (FID-0009) also runs for the same-room swirl. */
@@ -17022,8 +17027,9 @@ void sub_GAME_7F0B8A6C(void) {
                     static int max_hops = -1;
                     s32 hop;
                     if (max_hops < 0) {
-                        const char *env = getenv("GE007_CAMERA_SEED_WALK_HOPS");
-                        max_hops = env ? atoi(env) : 0;
+                        max_hops = port_env_int("GE007_CAMERA_SEED_WALK_HOPS", 0,
+                                                "Extra opt-in deeper-reach camera-seed "
+                                                "visibility-supplement frontier hops (0 = off)");
                         if (max_hops < 0) max_hops = 0;
                         if (max_hops > BG_CAMERA_SEED_WALK_MAX_HOPS) {
                             max_hops = BG_CAMERA_SEED_WALK_MAX_HOPS;
@@ -17110,7 +17116,9 @@ void sub_GAME_7F0B8A6C(void) {
             static int no_faithful_draw_only = -1;
             if (no_faithful_draw_only < 0) {
                 no_faithful_draw_only =
-                    (getenv("GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS") != NULL);
+                    port_env_set("GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS",
+                                 "Restore the leak: disable the --faithful draw-only "
+                                 "visibility-supplement wideners");
             }
             if (g_pcFaithfulSim && !no_faithful_draw_only
                 && use_portal_bfs && camera_walk_seed_room < 0) {
