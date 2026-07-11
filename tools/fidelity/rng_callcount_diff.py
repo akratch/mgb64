@@ -204,7 +204,16 @@ def native_lock_frame(
         if seed is None:
             continue
         k = steps_between(lock_seed, seed, scan_steps)
-        if k is not None and k > 0:
+        # k == 0 is a LEGITIMATE answer, not "not yet reached": a paused/menu
+        # frame that consumes the lock without drawing at all still samples
+        # the lock seed exactly. `k is not None` (not the old falsy `k > 0`)
+        # accepts that zero-draw frame instead of skipping past it and
+        # misattributing a LATER frame's cumulative count as the lock frame's
+        # (unreachable on gameplay routes, where shuffle_player_ids guarantees
+        # >=3 draws/frame, but wrong on menu/paused routes). Tie-break:
+        # iteration is in record order, so the FIRST reachable record (lowest
+        # chain position) always wins -- there is no later record to prefer.
+        if k is not None:
             return {
                 "first_locked_frame_calls": k,
                 "f": record.get("f"),
@@ -279,12 +288,20 @@ def stock_lock_frame(
     # Validated against the per-call PC-trace ground truth on the reference
     # capture (both = 12); can undercount by the writeback lag when the last
     # VI sample lands mid-burst.
+    # `row.get("cum") is not None` (not the old falsy truthiness check): a
+    # legitimate 0-draw lock bucket (e.g. a paused/menu frame sampled at the
+    # lock global) must not be treated as "no bucket here" and skipped in
+    # favor of the next frame's cumulative count. Tie-break: `series` has at
+    # most one row per distinct `global` (bucketed by dict key before this
+    # walk), so `next(...)` never actually has to choose between two rows at
+    # the same global -- it only needs to stop skipping the one legitimate
+    # row whose `cum` happens to be 0.
     lock_bucket = next(
-        (row for row in series if row["global"] == lock_global and row.get("cum")),
+        (row for row in series if row["global"] == lock_global and row.get("cum") is not None),
         None,
     )
     first_after = next(
-        (row for row in series if row["global"] > lock_global and row.get("cum")),
+        (row for row in series if row["global"] > lock_global and row.get("cum") is not None),
         None,
     )
     return {

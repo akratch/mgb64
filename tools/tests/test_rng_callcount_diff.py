@@ -222,6 +222,33 @@ class TestLockFrameMode(unittest.TestCase):
         recs = [_record(1, 0, 0x1DEADBEEF)]
         self.assertIsNone(rcd.native_lock_frame(recs, self.LOCK, scan_steps=64))
 
+    def test_native_zero_draw_lock_frame(self) -> None:
+        # M1 (2026-07-11 review): a paused/menu shape where the frame that
+        # consumes the lock draws ZERO times -- the record samples the lock
+        # seed exactly (k == 0). The old `k is not None and k > 0` guard
+        # treated that as "not yet reached" and walked past it, misattributing
+        # the NEXT frame's cumulative draws (5) to f=42 as though that were
+        # the lock frame. The correct answer is 0 draws at f=41 (the frame
+        # that actually samples the lock).
+        chain = _chain(self.LOCK, 40)
+        recs = [
+            _record(40, 115, 0x1DEADBEEF, call_count=688),
+            _record(41, 118, self.LOCK, call_count=698),  # 0 draws: paused/menu frame
+            _record(42, 121, chain[5], call_count=703),   # next frame draws 6 (chain[k] = k+1 steps)
+        ]
+        out = rcd.native_lock_frame(recs, self.LOCK, scan_steps=4096)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["first_locked_frame_calls"], 0)
+        self.assertEqual(out["f"], 41)
+        self.assertEqual(out["global"], 118)
+        self.assertEqual(out["call_count"], 698)
+        # Stash proof: the pre-fix predicate (`k > 0`) would have skipped f=41
+        # and reported f=42 / 5 draws instead of f=41 / 0 draws.
+        seed_41 = rcd.parse_seed(recs[1])
+        k_41 = rcd.steps_between(self.LOCK, seed_41, 4096)
+        self.assertEqual(k_41, 0)
+        self.assertFalse(k_41 is not None and k_41 > 0)  # old buggy condition: skips f=41
+
     def test_stock_lock_buckets(self) -> None:
         # Stock samples ~3 records per game frame (VI cadence); the seed-script
         # application record itself carries the lock seed. The lock frame's
@@ -244,6 +271,33 @@ class TestLockFrameMode(unittest.TestCase):
             [(b["global"], b["cum"]) for b in out["buckets"]],
             [(1263, 12), (1266, 24), (1269, 36)],
         )
+
+    def test_stock_zero_draw_lock_bucket(self) -> None:
+        # M1 (2026-07-11 review): a paused/menu shape where the lock bucket
+        # itself draws ZERO calls (cum == 0). The old `row.get("cum")` falsy
+        # check treated a 0-draw bucket as "no bucket" and fell through to
+        # `first_after`, misattributing the NEXT global's cumulative count
+        # (7) as the lock frame's. The correct answer is 0 draws at the lock
+        # global.
+        chain = _chain(self.LOCK, 20)
+        recs = [
+            _record(1, 1260, 0x1DEADBEEF),  # pre-lock, unreachable
+            _record(2, 1263, self.LOCK),    # application sample: 0 draws this tick
+            _record(3, 1266, chain[6]),     # next global: cum 7 (chain[k] = k+1 steps)
+        ]
+        out = rcd.stock_lock_frame(recs, self.LOCK, max_steps=100, frame_buckets=8)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["lock_global"], 1263)
+        self.assertEqual(out["first_locked_frame_calls"], 0)
+        self.assertEqual(
+            [(b["global"], b["cum"]) for b in out["buckets"]],
+            [(1263, 0), (1266, 7)],
+        )
+        # Stash proof: the pre-fix falsy check (`row.get("cum")`) is False for
+        # a legitimate cum == 0 bucket, so it would have skipped straight to
+        # first_after (cum 7) instead of reporting the lock bucket's true 0.
+        lock_row = next(b for b in out["buckets"] if b["global"] == 1263)
+        self.assertFalse(bool(lock_row.get("cum")))  # falsy despite being a valid answer
 
     def test_stock_segment_gate(self) -> None:
         # A post-death g_GlobalTimer reset after the lock must stop bucketing
