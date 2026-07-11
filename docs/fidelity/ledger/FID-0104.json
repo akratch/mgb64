@@ -1,0 +1,27 @@
+{
+  "id": "FID-0104",
+  "title": "texWriteLoadToTmemAddr NATIVE_PORT rewrite: g_TexPipeSynced pipesync-suppression, 16b load fast-path, tile-5 vs retail LOADTILE-7 -- diverges from retail texture-load GBI stream",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "src/game/unk_0CC4C0.c:506 (texWriteLoadToTmemAddr, NONMATCHING body)"
+  ],
+  "repro": "audit asm_audit.py texWriteLoadToTmemAddr; compare retail US ASM 7F0CD078 GBI stream vs the port-built DL; reachable on every non-TLUT texture load. Ares RDP-command-stream and ROI pixel check pending.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/unk_0CC4C0.c:572"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T22:43:33Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/unk_0CC4C0.c:572",
+      "note": "Intentional NATIVE_PORT NONMATCHING rewrite of the texture-load DL builder (C unk_0CC4C0.c around 506 to 568) vs retail US ASM 7F0CD078. Divergences from the retail GBI stream: first, the port adds a module-local g_TexPipeSynced flag (defined unk_0CC4C0.c:20, referenced in no GLOBAL_ASM block) and emits gDPPipeSync only on the first load then suppresses it, whereas retail emits an unconditional 0xE7 pipesync at the tail of every load-block sequence. Second, the port lutmodeindex-zero branch has a depth equals G_IM_SIZ_16b and tmemoffset equals 0 fast path that emits gDPLoadBlock on G_TX_LOADTILE directly, which retail lacks -- retail uniformly does texTrySetTileState then gDPSetTile then loadsync then loadblock. Third, retail calls texTrySetTileState with a0 equal 7 and a1 equal the depth field extracted from tex+8, and issues the 0xF500 SETTILE on tile 7, whereas the port calls texTrySetTileState with leading args 5 and 0 and sets tile 5. lutmodeindex is bits 30-31 of tex+0xc; the TLUT branch tail (gDPLoadTLUT over the 0x3ff-minus-tex+0xa clamp) matches. Pipesync placement and the 16b fast path are almost certainly pixel-neutral (sync primitives and equivalent TMEM loads), but the tile-number and texTrySetTileState-arg differences could alter sampled tile state. Class parity-divergence per charter rule 8 and the FID-0080 precedent; sim-neutral pure DL builder. Retest: ares RDP-command-stream capture of a texture load through this path plus an ROI pixel check on a lutmodeindex-zero texture to confirm parity, then decide the faithful-mode default. No A/B flag exists."
+    }
+  ]
+}

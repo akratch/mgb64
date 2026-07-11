@@ -1,0 +1,27 @@
+{
+  "id": "FID-0103",
+  "title": "Object-respawn SFX (sound 82) and type-21 field copy dropped from chrprop respawn tick",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "src/game/chrprop.c:5486 (handle_mp_respawn_and_some_things, NATIVE_PORT body)"
+  ],
+  "repro": "A destructible or regenerating OBJ/WEAPON/DOOR prop crosses its regen threshold (timetoregen goes above 0 and below 0x3C with was_above_threshold zero): retail plays a respawn sound; the port is silent.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop.c:5699-5715"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T22:32:36Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chrprop.c:5699-5715",
+      "note": "Retail handle_mp_respawn_and_some_things (US ASM 7F03C648) has a respawn tail at labels .L7F03C8AC through .L7F03C8C8 that the NATIVE_PORT C body drops entirely. At the object-regen respawn moment (prop timetoregen greater than 0 and below 0x3C with was_above_threshold zero), after the maxdamage-and-state handling, retail does two things the port omits: first, if the object type byte at offset 3 equals 21, copy the float at object offset 0x80 into offset 0x84; second, when the reparent marker s3 is zero (always zero in the port, since the reparent path is also skipped), play the object-respawn sound via sndPlaySfx of g_musicSfxBufferPtr with sound index 82, then chrobjSndCreatePostEventDefault of that returned handle with the prop position at prop offset 8. The port never calls either, so regenerating objects respawn silently and the type-21 field copy is lost. The exact sndPlaySfx-then-chrobjSndCreatePostEventDefault idiom is live elsewhere in the port at chrlv.c:6711 with sound 0x101, so the machinery exists and only this call site is missing. Reachable every frame the prop list holds an OBJ, WEAPON or DOOR prop crossing its regen threshold. Separately, this function carries two author-documented but unsubstantiated MP-only omissions relative to the ASM: the object flags 0x8000 reparent path at ASM .L7F03C7B8 (chrpropDeregisterRooms, chrpropDelist, setupGetCommandIndexByProp, modelSetScale, chrpropReparent, sets s3 to 1) and the entire PROP_TYPE_VIEWER type-6 handler at ASM .L7F03C944 (two player-pointer beam ticks at player offsets 0xA54 and 0xDFC plus a getPlayerCount greater-or-equal 2 gated pair). Those two skips are plausibly MP-only but lack an oracle anchor, so they are flagged here for oracle confirmation rather than independently filed. Fix: re-add the respawn tail behind a default-ON flag with byte-identical negative control; leave the two MP skips until a single-player oracle route proves whether flag 0x8000 or a VIEWER prop ever occurs outside MP."
+    }
+  ]
+}

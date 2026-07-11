@@ -3614,9 +3614,9 @@
         "body_start": 844,
         "body_end": 977
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Debug portal editor, reachable only via debug controller combos. arg0!=0 path: input-buffer shift-by-one (unrolled 4 iters), A-button OR of both pads, two not-equal toggles of D_800483C0, bgRemoved call with ternary CC-or-minus1, returns the saved bgDebugRemoved7F0B9DE4 result (not raw arg0). arg0==0 path: L/R-JPAD dec/inc of g_DebugPortalsD_800483CC with clamp-at-0, then four-way if/else-if chain R_TRIG-and-L_TRIG then R_TRIG then L_TRIG then else, each toggling bg data-portal control bytes with matching bit-1/bit-2 get-then-set senses; D_JPAD in the R_TRIG-and-L_TRIG branch is PLAYER_1-only in both C and ASM (faithful). All button masks, branch senses, bounds equivalent.",
+      "reviewed_ts": "2026-07-11T22:35:16Z",
       "rank": 132,
       "rank_score": 255,
       "rank_reason": "255i"
@@ -3641,9 +3641,9 @@
         "body_start": 510,
         "body_end": 596
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Gradient DL builder (renderer helper). val = (f32)color stored to D_8002BB2C/24/28; divisor 217.0. All three color deltas evaluate to zero (r/g deltas are val-val, b delta is D_8002BB2C-val which just equals val) and the C faithfully reproduces this flat-gradient retail quirk. 217-iteration loop (bound i+1 < 218) emits the same eleven Gfx commands per iteration with identical w0/w1 immediates including 0xFD10, 0xF510 with 0x07080200, 0xE6, 0xF3 with 0x0713F01A, 0xE7, 0xF510A000 with 0x00080200, 0xF2 with 0x004FC000, 0xFA00 plus packed rgba, the 0xE44FF000 tile command using i+13 and i+12 strides, 0xB4, 0xB3 with 0x04000400. rgba packs r shifted left 24 (no mask, matching ASM), g and b masked to 0xFF then shifted 16 and 8, low byte 0xFF. Running texture pointer advances 0x280 per iter. Standard IDO cvt.w.s overflow-clamp idiom for the float-to-u32 casts. Trailer stores val, g_base, r_base to D_8002BB20/1C/18 and returns advanced gdl. Writes only to gdl buffer and scratch globals; no sim state. Equivalent.",
+      "reviewed_ts": "2026-07-11T22:35:16Z",
       "rank": 133,
       "rank_score": 254,
       "rank_reason": "254i"
@@ -3668,9 +3668,9 @@
         "body_start": null,
         "body_end": 5501
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0103",
+      "note": "Live NATIVE_PORT body (PORT_FIXME_STUBS else-branch) vs US ASM 7F03C648. Type dispatch matches: PROP_TYPE_CHR=3 (beam tick on chr+0x180 and +0x1AC), OBJ/WEAPON/DOOR=1/4/2 (regen-timer handling), EXPLOSION=7, SMOKE=8, VIEWER=6. Regen path faithfully reproduces was_above_threshold, timetoregen -= g_ClockTimer, sub_GAME_7F03C574 +0x3C readd, state 0x10 runtime_bitflags 0x1000 toggle, maxdamage-zero-and-not-state-0x80 branch, and the autogun beam tick (obj type 13, landed FID fix using the beam field not the raw 0xCC offset). DIVERGENCE FID-0103: the respawn tail at ASM .L7F03C8AC through .L7F03C8C8 is dropped -- the type-21 float copy (object 0x80 into 0x84) and the object-respawn sound (sndPlaySfx index 82 then chrobjSndCreatePostEventDefault) are never emitted, so regenerating objects respawn silently. Two further author-documented but unsubstantiated MP-only skips: the object flags 0x8000 reparent path at .L7F03C7B8 and the whole VIEWER type-6 handler at .L7F03C944; flagged in FID-0103 for oracle confirmation. The added obj-not-NULL and chr-not-NULL guards vs the unconditional ASM derefs are benign port hardening.",
+      "reviewed_ts": "2026-07-11T22:35:58Z",
       "rank": 134,
       "rank_score": 250,
       "rank_reason": "250i"
@@ -3695,9 +3695,9 @@
         "body_start": 8143,
         "body_end": 8237
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "MP-teams menu DL constructor (UI/renderer; reads menu state, writes only DL). spCC=get_selected_num_players; viSetFillColor(0,0,0), viFillScreen, frontSetupMenuBackground, microcode_constructor; microcode_constructor_related_to_menus with immediates 38/169/388/171/144, then a spCC>=3 gated call with 212/30/214/310/128. Per-slot loop i in 0..spCC: var_v0=(i>=2)?0x8C:0 giving temp_s6=var_v0+0x1E, second var_v0=(i&1)?0xAF:0, gDPSetScissor at (var_v0+0x2c, temp_s6+5, var_v0+0xcf, temp_s6+0x87) with the *4.0 fixed-point scale, spB4=var_v0+0x7d. i==0 draws the title via langGet 0x9C58 centered by textMeasure. var_s0 is (i==0 || i==teamsize) when scenario==5 else (i!=teamsize); text = var_s0 ? langGet 0x9C59 : langGet 0x9C5A; var_s2 = var_s0 ? -0xFFFF01 (encodes 0xFF0000FF) : 0xFFFF. Second label centered (sp88=spB4-(sp8C>>1), sp84=(temp_s6-(sp90>>1))+0x46) and printed only when (i!=teamsize) or (i==teamsize and D_8002B560<0xA). Trailer combiner_bayer_lod_perspective. viGetX sign-extended via shift pair. C annotated 99.55 percent regalloc-nonmatching but logic is identical. Equivalent.",
+      "reviewed_ts": "2026-07-11T22:39:22Z",
       "rank": 135,
       "rank_score": 246,
       "rank_reason": "246i"
@@ -3722,9 +3722,9 @@
         "body_start": 125,
         "body_end": 239
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Glass-shatter shard generator (sim; advances RNG). Both arg1/arg2 normalizations via sqrtf and 1.0/len reciprocal, scaledArg4-7 = argN*len, atan2f(arg3[0], arg3[2]) saved as theta in f30, range1=scaledArg5-scaledArg4, range2=scaledArg7-scaledArg6, halfBuf=SHATTERED_WINDOW_PIECES_BUFFER_LEN/2 via the signed round-toward-zero idiom, sqrtResult=sqrtf(range1*range2/halfBuf), gridTotal=trunc(sqrtResult), half=gridTotal>>1 (non-negative so equals /2), gridF=(f32)gridTotal, cols=trunc(range1/gridF), rows=trunc(range2/gridF), and centerX/Y/Z = arg0 plus center1*norm1 plus center2*norm2 all match (FP add order differs only by commutative reorderings). sndPlaySfx(g_musicSfxBufferPtr, 71, NULL) then chrobjSndCreatePostEventDefault called once. Nested loop guarded rows>0 then cols>0, iterating j outer then i inner, calls randomGetNext exactly once per shard in identical order; randF=(f32)(u32)rand * 2^-32 via the standard unsigned-correction, size=(randF*0.7 + 0.1)*sqrtResult using the ordinary 0x3f333333 and 0x3dcccccd literals (not the IDO 1-ULP variant), dispatching sub_GAME_7F0A2160(&pos, theta, size). Only divergence is the behavior-neutral GE007_TRACE_GLASS stderr instrumentation (reads state, writes nothing). Equivalent.",
+      "reviewed_ts": "2026-07-11T22:38:00Z",
       "rank": 136,
       "rank_score": 240,
       "rank_reason": "240i"
@@ -3749,9 +3749,9 @@
         "body_start": 506,
         "body_end": 568
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0104",
+      "note": "NATIVE_PORT NONMATCHING rewrite of the texture-load DL builder vs retail US ASM 7F0CD078. Port adds module-local g_TexPipeSynced (unk_0CC4C0.c:20, in no ASM block) to suppress repeat pipesyncs, adds a depth-16b-and-tmemoffset-0 loadblock fast path retail lacks, and calls texTrySetTileState with leading args 5 and 0 plus tile 5 where retail uses a0=7 with the tex+8 depth field and tile 7 (0xF500 SETTILE). lutmodeindex is bits 30-31 of tex+0xc; TLUT branch tail (gDPLoadTLUT over 0x3ff-minus-tex+0xa) matches. Renderer GBI-stream parity-divergence, sim-neutral; needs ares RDP/pixel confirmation. See FID-0104.",
+      "reviewed_ts": "2026-07-11T22:43:44Z",
       "rank": 137,
       "rank_score": 238,
       "rank_reason": "238i"
@@ -3776,9 +3776,9 @@
         "body_start": 1139,
         "body_end": 1185
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Texture-load-to-TMEM-0 DL builder vs retail US ASM 7F0CD7AC, faithful. dxt=sub_GAME_7F0CCB38(tex); texGetDepthAndSize into depth(0x94)/len(0x90); lutmodeindex is bits 30-31 of tex+0xc. Both branches: gDPSetTextureImage (0xFD00 with fmt from tex+8 bits and depth), texTrySetTileState(7, gbiformat=(tex+8 shifted), depth, 0, 0, ...) gating a gDPSetTile on tile 7 (0xF500 with 0x0700 tile), gDPLoadSync (0xE600), gDPLoadBlock tile 7 with clamped len-1 texels and dxt, then an unconditional gDPPipeSync (0xE700). The lutmodeindex!=0 branch adds the TLUT load: a2 = (0x3ff-tex+0xa) if unsigned-less-than len else 0, tmp = len-a2, texTrySetTileState(7,0,0,1,256,...) gating gDPSetTile(line 1, tmem 256, tile 7 -> 0xF5000300), gDPLoadSync, gDPLoadTLUT07(tmp, a2, tex+0xa+tmp, a2), gDPPipeSync. All branch senses, immediates, tile numbers, and arg registers match. Unlike its sibling texWriteLoadToTmemAddr (FID-0104) this variant uses no g_TexPipeSynced and no 16b fast path -- it is the retail-faithful pattern. Renderer DL builder, sim-neutral. Equivalent.",
+      "reviewed_ts": "2026-07-11T22:45:05Z",
       "rank": 138,
       "rank_score": 238,
       "rank_reason": "238i"
