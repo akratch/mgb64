@@ -1961,9 +1961,9 @@
         "body_start": 48411,
         "body_end": 48449
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Door front/back test (7F055A70). ASM=live C: pad=&g_CurrentSetup.boundpads[door->pad] (door->pad lh@6, boundpads@0x1C, stride 0x44); normal = up(0xc) x look(0x18) cross product (all 3 components byte-verified); value = sum normal[i]*(prop->pos[i]-pad->pos[i]) (prop.pos@8, pad.pos@0); other=value, negate if door->doorFlags(0x98)&8; return other<0?0:(other>0?1:1) i.e. other>=0 -> 1. c.lt.s strictness matches; float add commutativity bit-identical.",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 72,
       "rank_score": 66,
       "rank_reason": "prior-defect-file 66i"
@@ -1988,9 +1988,9 @@
         "body_start": null,
         "body_end": 1998
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "10%-toward-centre tile point (7F0AFA1C). ASM=live C: pntIndex=STAN_TRIPLE_TO_PNT_INDEX=(tail.half>>(8-4*tripleIndex))&0xF via srav (matches macro exactly); pnt.xyz=points[pntIndex].xyz*inv_level_scale; getTileMidPoint(tile,&mid); pnt=mid*0.1f + pnt*0.9f componentwise. Constants D_800585D8=0x3dcccccd(0.1f), D_800585DC=0x3f666666(0.9f) match. DEBUG assert(c<3) inert.",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 73,
       "rank_score": 64,
       "rank_reason": "prior-defect-file 64i"
@@ -2015,9 +2015,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Camera-mode state machine (7F07B1A4). GLOBAL_ASM retained under #if 0; live always-compiled C 6511-6579 = that ASM: mode=g_CameraMode; g_CameraMode=g_CameraAfterCinema=0; dispatch INTRO(1)->SetMode(FADESWIRL 2); FADESWIRL(2)->ResetIntroCameraMessageDialogs+SetMode(SWIRL 3); MP(9)/FP(4) no-op; SWIRL(3)->maybe_solo_intro_camera_handler+currentPlayerStartChrFade(0,1)+SetMode(FP 4); DEATH_CAM_SP(5)->SetMode(MP 6); DEATH_CAM_MP(6)->camera_mode++, if<3 SetMode(SP 5). NATIVE_PORT portApplyGameplaySpawnFromIntro block is an additive ledgered default-ON fix (GE007_NO_POSTINTRO_SPAWN_FIX), not a divergence.",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 74,
       "rank_score": 63,
       "rank_reason": "prior-defect-file 63i"
@@ -2042,9 +2042,9 @@
         "body_start": null,
         "body_end": 1894
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Tile triangle centroid (7F0AF924). ASM=live C: three point indices via STAN_TRIPLE_TO_PNT_INDEX (bits {8-11,4-7,0-3}); midPnt.{x,y,z} = (pA+pB+pC)/3 * inv_level_scale. ASM associates (A+(B+C)) vs C ((A+B)+C) but s16 coords sum <2^24 so exactly representable -> bit-identical; centroid is symmetric so the A/B/C label permutation between macro (idxA=bits8-11) and ASM (A=bits0-3) is irrelevant. points x@8/y@0xa/z@0xc, stride 8.",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 75,
       "rank_score": 62,
       "rank_reason": "prior-defect-file 62i"
@@ -2069,9 +2069,9 @@
         "body_start": 48976,
         "body_end": 49027
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Stale-DL-collision obj free sweep (7F056690). ASM=live C (source comment: only 7 regalloc instrs differ): iterate prop list (prev@0x24); type==1 && !(flags@1 & 2) && obj->state(byte@2)&0x80 -> node=sub_GAME_7F04B478(obj), NULL->return; Data(+4) NULL->return; if sub_GAME_7F04B590(model->obj, node) then compare Data->Vertices(+8) vs runtime vertices = *(model->0x10 + Data->0x1a*4) (ASM inlines this; C factors it into modelGetDlColRuntimePointers) -> differ -> objFreePermanently(obj,1); return. Relies on that helper being faithful (out of scope).",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 76,
       "rank_score": 59,
       "rank_reason": "prior-defect-file 59i"
@@ -2096,9 +2096,9 @@
         "body_start": null,
         "body_end": 4710
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Edge endpoints (7F0B1CF8). ASM=live C: currPntRtn=points[pointI].xyz*inv_level_scale; pointCount=STAN_TAIL_E(tile)=(tail.half>>12)&0xF (CORRECT top nibble, cf FID-0090); nextPointRtn=points[(pointI+1)%pointCount].xyz*inv_level_scale via div/mfhi. points x@8/y@0xa/z@0xc stride 8; div-by-zero break traps inert on valid data.",
+      "reviewed_ts": "2026-07-11T16:12:26Z",
       "rank": 77,
       "rank_score": 57,
       "rank_reason": "prior-defect-file 57i"
