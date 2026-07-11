@@ -1,0 +1,27 @@
+{
+  "id": "FID-0105",
+  "title": "title Bond gunbarrel renderer sub_GAME_7F007F30 sets renderData envcolour (gBloodColour) and fogcolour (0xFFFFFF00) that retail ASM omits",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "src/game/title.c:347 (sub_GAME_7F007F30, NONMATCHING body)"
+  ],
+  "repro": "Title-screen Bond gunbarrel intro (insert_bond_eye_intro path). Compare the port-built DL to retail: the port writes an environment colour derived from gBloodColour and a fogcolour of 0xFFFFFF00 into ModelRenderData before drawjointlist; retail does not. Ares ROI pixel check on the title Bond model pending.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/title.c:405"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T22:58:24Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/title.c:405",
+      "note": "The NATIVE_PORT NONMATCHING C body of sub_GAME_7F007F30 (title.c around 347 to 350) writes renderData.envcolour.word as gBloodColour red-green-blue packed into the top three bytes and renderData.fogcolour.word as 0xFFFFFF00 immediately before the two drawjointlist calls. Neither retail ASM copy contains these writes: the LEFTOVERDEBUG copy at address 7F007F30 (PAL animation constants 137/212/230) and the shipping non-debug copy at 7F007EB0 (US constants 114/176/191) both set only PropType 7, zbufferenabled 0, flags 1 then 2, and gdl before drawjointlist. Retail leaves envcolour and fogcolour at whatever the leading template block copy from D_8002A7FC produced (that block is D_8002A7FC 0, D_8002A800 1, D_8002A804 3 and following globals). So the port adds an environment tint and white fog to the title Bond that retail does not apply here. Plausibly a deliberate port reproduction of the red gunbarrel tint via a different mechanism, hence parity-divergence pending an ares decision; could reclassify to port-defect if the ares ROI shows an unintended tint. Sim-neutral (renderer DL only). Separately, both ASM copies contain the fixed-point matrix conversion (matrix_4x4_copy then matrix_4x4_f32_to_s32 over each render_pos) that the port omits under the ifndef NATIVE_PORT guard because it renders f32 matrices directly -- that omission is the documented port f32-renderer approach and is expected. The animation frame-counter logic (dword_CODE_bss_80069594 progression, modelSetAnimation of bond_eye_fire at the start frame, modelSetAnimSpeed at the speed frame, modelTickAnimQuarterSpeed each tick, sndPlaySfx index 111 at the trigger frame setting sfxPlayed) matches both copies with the correct region constants per the C REFRESH_PAL guard. Retest: ares RDP or ROI pixel capture of the title Bond, then decide the faithful-mode default."
+    }
+  ]
+}

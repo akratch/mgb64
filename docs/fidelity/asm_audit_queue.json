@@ -3803,9 +3803,9 @@
         "body_start": 1964,
         "body_end": 2142
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Character move/ground-settle callback vs retail US ASM 7F01FC10, faithful core. stan==NULL early-out to store_ground preserved. ACT_DIE (actiontype byte at chr+7 equals 4) with timeextra>0: accel = playspeed(model+0xa4)*g_GlobalTimerDelta*(timeextra-elapseextra)/timeextra, newpos += extraspeed(chr+0x40/44/48)*accel, elapseextra += delta*playspeed, timeextra zeroed if exceeded. newpos.x/z += fallspeed.x/z(chr+0xb0/0xb8)*delta. sub_GAME_7F01F614(chr, stan, oldpos, newpos, 1) updates stan and sets stanchanged/posptr. LOCK_Y_POS(0x1000) sets yval=chr->ground(0xac) and skips; else stanGetPositionYValue into ground, CHRFLAG_INIT(1) bootstrap (manground=ground, sumground=ground/0.10000002, clears INIT), the sub_GAME_7F057D44(&manground,&fallspeed.y,delta) settle gated on fallspeed.y!=0 or ground<manground, the g_ClockTimer friction loop (fallspeed.x/z *= 0.89999998, sumground = sumground*0.89999998 + ground), manground = sumground*0.10000002, the four fallspeed-in--0.1-to-0.1 goto-update_y guards then zero both, update_y newpos.y += manground-yval. store_ground writes yval to ground_out; if not stanchanged restores newpos.x/z from oldpos; returns 1. All offsets, branch senses, and the 0.10000002/0.1/-0.1/0.89999998 late_rodata constants match. Divergences are documented landed NATIVE_PORT compensations for the stubbed sub_GAME_7F03E27C: stan==NULL recovery via sub_GAME_7F0AF20C, an added rwdata Header.ground = groundval sync in the INIT branch that retail omits (retail only copies rwdata+0x28 into rwdata+0x38), and behavior-neutral debug logging. Core logic equivalent; port additions out-of-scope landed fixes per the solo_char_load precedent.",
+      "reviewed_ts": "2026-07-11T22:49:34Z",
       "rank": 139,
       "rank_score": 236,
       "rank_reason": "236i"
@@ -3830,9 +3830,9 @@
         "body_start": 1015,
         "body_end": 1107
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ZX Spectrum emulator init vs retail US ASM 7F0D2FC4, faithful. mempAllocBytesInBank calls for the 256-byte keyboard-parity table, 24576-byte ptr_6000alloc, 768-byte ptr_300alloc, and 65536-byte ptr_spectrum_roms all match sizes and alignment 4. Parity table: for each i in 0..256 count set bits over j in 0..8, store 0 when the count is odd else 4 (ASM count-odd branch writes zero, even writes 4). ptr_300alloc filled with 1. Monitor ROM loaded via _fileNameLoadToBank(aEmDataSpec_rom_seg_rz,1,256,4) then 0x4000 bytes copied into ptr_spectrum_roms. spec_cur_rom_id set to low byte of game, rom_id clamped to 0 when 5 or more. Game snapshot loaded via romnames indexed by rom_id, then 0xC000 bytes copied from source offset 0x1B into roms offset 0x4000 (ASM unrolled by 4, source bytes 0x1B..0x1E to dest 0x4000..0x4003). Snapshot header parse matches byte-for-byte: spec_I from byte 0, the E347 down to E33A bytes from bytes 1..14, spec_IY as byte0x10 shifted left 8 plus byte0x0F, spec_IX from bytes 0x12 and 0x11, IFF2 upper and lower from bit 2 of byte 0x13, spec_R from 0x14, E339 from 0x15, spectrum_header16_15 from 0x16, spec_SP from byte0x18 shifted left 8 plus byte0x17, spec_IM from byte 0x19 with a plus-1 when positive, and finally spec_PC read from ptr_spectrum_roms at the SP value (low byte then high byte shifted 8) with spec_SP advanced by 2. All offsets, shifts, and branch senses match. Mechanical byte copy and header parse, no RNG or float. Equivalent.",
+      "reviewed_ts": "2026-07-11T22:50:47Z",
       "rank": 140,
       "rank_score": 236,
       "rank_reason": "236i"
@@ -3857,9 +3857,9 @@
         "body_start": 4617,
         "body_end": 4775
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Text word-wrap builder vs retail US ASM 7F0AEB64, faithful. Outer do-while on continue_flag. Per iteration: measuredwidth/wordlen/wordwidth zeroed, curchar = src byte. When curchar is printable (>=0x21) the inner do-while copies the word into wordbuf(sp+0x4c), advancing src and wordlen, accumulating wordwidth via font1[ch-0x21].width (fontchar stride 24, width field at +12, encoded as the -0x30c displacement after ch*24), with the double-byte path taken when the just-buffered char is >=0x80 (reads ch2, stores it, adds its width), breaking when the next char is <0x21. wordbuf[wordlen] nulled, textMeasure(&measuredheight, &measuredwidth, wordbuf, font1, font2, 0), accumulated_width += measuredwidth, fits_on_line = (maxwidth < accumulated_width) ? 0 : 1. Then the delimiter switch on the current src byte: newline (10) emits a wrap newline plus text_wordwrap spaces when not fitting, zeroes accumulated_width, copies the word, emits newline; space (32) emits the wrap newline plus spaces and sets accumulated_width = text_wordwrap*5 + measuredwidth when not fitting (wordwrap*5 as shift-2 plus self), adds 5, copies the word, emits a space; nul (0) clears continue_flag, emits the wrap if not fitting, copies the word, emits nul; any other byte just advances. src advanced each iteration; loop repeats while continue_flag == 1. All branch senses, the unrolled word-copy, offsets, and the wordwrap arithmetic match. UI/text builder, no sim state, RNG, or float. Equivalent.",
+      "reviewed_ts": "2026-07-11T22:52:38Z",
       "rank": 141,
       "rank_score": 234,
       "rank_reason": "234i"
@@ -3884,9 +3884,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0105",
+      "note": "Title Bond gunbarrel renderer, LEFTOVERDEBUG(7F007F30, PAL 137/212/230) and shipping(7F007EB0, US 114/176/191) copies vs the shared NONMATCHING C. Animation/sfx sim logic faithful in both: dword_CODE_bss_80069594 progression, modelSetAnimation(bond_eye_fire) at the start frame, modelSetAnimSpeed at the speed frame, modelTickAnimQuarterSpeed each tick, sndPlaySfx(111) at the trigger frame with sfxPlayed propagated to the gun switch-node Gunfire.visible (sh) and Raw.unk00 (sw). Region constants match the C REFRESH_PAL guard. DIVERGENCE FID-0105: the C writes renderData.envcolour from gBloodColour and fogcolour 0xFFFFFF00 before drawjointlist; neither ASM copy does (they set only PropType 7, zbufferenabled 0, flags 1 then 2, gdl). Also the ifndef NATIVE_PORT fixed-point matrix conversion (matrix_4x4_copy then matrix_4x4_f32_to_s32 over each render_pos) present in both ASM copies is intentionally skipped by the port f32 renderer, and NATIVE_PORT dyn-overflow guards are added -- both documented/expected. See FID-0105 (renderer parity-divergence, ares check pending).",
+      "reviewed_ts": "2026-07-11T22:58:38Z",
       "rank": 142,
       "rank_score": 230,
       "rank_reason": "230i"
@@ -3911,9 +3911,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0105",
+      "note": "Title Bond gunbarrel renderer, LEFTOVERDEBUG(7F007F30, PAL 137/212/230) and shipping(7F007EB0, US 114/176/191) copies vs the shared NONMATCHING C. Animation/sfx sim logic faithful in both: dword_CODE_bss_80069594 progression, modelSetAnimation(bond_eye_fire) at the start frame, modelSetAnimSpeed at the speed frame, modelTickAnimQuarterSpeed each tick, sndPlaySfx(111) at the trigger frame with sfxPlayed propagated to the gun switch-node Gunfire.visible (sh) and Raw.unk00 (sw). Region constants match the C REFRESH_PAL guard. DIVERGENCE FID-0105: the C writes renderData.envcolour from gBloodColour and fogcolour 0xFFFFFF00 before drawjointlist; neither ASM copy does (they set only PropType 7, zbufferenabled 0, flags 1 then 2, gdl). Also the ifndef NATIVE_PORT fixed-point matrix conversion (matrix_4x4_copy then matrix_4x4_f32_to_s32 over each render_pos) present in both ASM copies is intentionally skipped by the port f32 renderer, and NATIVE_PORT dyn-overflow guards are added -- both documented/expected. See FID-0105 (renderer parity-divergence, ares check pending).",
+      "reviewed_ts": "2026-07-11T22:58:38Z",
       "rank": 143,
       "rank_score": 230,
       "rank_reason": "230i"
