@@ -44,10 +44,16 @@ TIMEOUT_SECONDS=180
 TAPE_NAME="dam_forward_30s"
 GUARD_CHRNUM=6              # the KF7 guard that sustains full-auto in this tape
 FRAME_COST=3               # Input.FireRateN64FrameCost default (Dam ~20fps combat)
-# Recorded pre-fix (legacy / opt-out) sim-state hash for dam_forward_30s. This is
-# the byte-identity anchor for GE007_FIRE_RATE_AUTHENTIC=0; it must equal the
-# value dam_forward_30s carried before FID-0066 re-based its default baseline.
-OPTOUT_HASH="95944e2282a48178"
+# Recorded legacy / opt-out sim-state hash for dam_forward_30s. This is the
+# byte-identity anchor for GE007_FIRE_RATE_AUTHENTIC=0 — the pre-FID-0066
+# fire-rate cadence on the CURRENT default baseline world. Re-based 2026-07-11
+# (95944e2282a48178 -> 4dc07b71623b315c) for FID-0014: the faithful
+# WAYMODE_MAGIC patrol semantics (default ON) shift offscreen patroller
+# positions in every Dam replay, so the fire-rate opt-out hash moved with the
+# world; the FID-0066 contract itself (ON interval == FRAME_COST x OFF
+# interval, OFF == this anchor) is unchanged. See
+# docs/fidelity/derivations/FID-0014-patrol-magic.md.
+OPTOUT_HASH="4dc07b71623b315c"
 
 usage() { sed -n '2,33p' "$0"; exit 0; }
 while [[ $# -gt 0 ]]; do

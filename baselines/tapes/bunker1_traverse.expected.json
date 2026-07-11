@@ -1,11 +1,11 @@
 {
-  "tape": "bunker1_traverse.ge7tape",
-  "level": "bunker1",
-  "level_id": 9,
-  "difficulty": 0,
-  "tick_count": 362,
-  "controller_count": 1,
-  "sim_state_hash": "0c16993802d87011",
-  "replay_env": "GE007_DISABLE_LEVEL_INTRO=1 GE007_AUTO_FORWARD=60:180 GE007_AUTO_RIGHT=140:60 GE007_AUTO_CRIGHT=210:40",
-  "note": "Archetype traversal route on bunker1 (Phase B, FID-0031/D4). Bond walks forward, strafes right, then turns (GE007_AUTO_FORWARD/RIGHT/CRIGHT baked into the captured OSContPad stream) with the level intro skipped (replay_env) so the movement window exercises the level geometry/collision sim. Deterministic under the determinism envelope + replay_env: record==replay1==replay2 (sim_state_hash byte-exact, verified across independent recordings). The ares-free determinism half of the bunker1 gate:true route; the ares trace comparison is the manual oracle step (movement_oracle_capture.sh --route bunker1_traverse). Regenerate only via scratchpad/finalize_archetype_tapes.sh. Gated by tools/fidelity/gate_routes_smoke.sh + tools/fidelity/tape_regression.sh."
+ "tape": "bunker1_traverse.ge7tape",
+ "level": "bunker1",
+ "level_id": 9,
+ "difficulty": 0,
+ "tick_count": 362,
+ "controller_count": 1,
+ "sim_state_hash": "4c1a309a187fdb9b",
+ "replay_env": "GE007_DISABLE_LEVEL_INTRO=1 GE007_AUTO_FORWARD=60:180 GE007_AUTO_RIGHT=140:60 GE007_AUTO_CRIGHT=210:40",
+ "note": "Archetype traversal route on bunker1 (Phase B, FID-0031/D4). Bond walks forward, strafes right, then turns (GE007_AUTO_FORWARD/RIGHT/CRIGHT baked into the captured OSContPad stream) with the level intro skipped (replay_env) so the movement window exercises the level geometry/collision sim. Deterministic under the determinism envelope + replay_env: record==replay1==replay2 (sim_state_hash byte-exact, verified across independent recordings). The ares-free determinism half of the bunker1 gate:true route; the ares trace comparison is the manual oracle step (movement_oracle_capture.sh --route bunker1_traverse). Regenerate only via scratchpad/finalize_archetype_tapes.sh. Gated by tools/fidelity/gate_routes_smoke.sh + tools/fidelity/tape_regression.sh. Re-baselined 2026-07-11 (0c16993802d87011->4c1a309a187fdb9b) for FID-0014: the faithful WAYMODE_MAGIC patrol semantics (default ON) freeze unseen patrolling/gopos guards and pad-warp them per retail chrTickBeams US 0x7F020EF0 / chrlvTravelTickMagic US 0x7F028600, so offscreen patroller positions (sim state) differ from the legacy creep-walk. GE007_NO_PATROL_MAGIC_FIX=1 reproduces the previous hash 0c16993802d87011 byte-identically (verified on this tape). See docs/fidelity/derivations/FID-0014-patrol-magic.md."
 }
