@@ -1,0 +1,27 @@
+{
+  "id": "FID-0095",
+  "title": "YOLT MP scenario end-game accounting default-disabled (GE007_MP_YOLT) \u2014 port skips retail round-end logic",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/lvl.c:2350-2441"
+  ],
+  "repro": "Start a multiplayer match with scenario YOLT (You Only Live Twice), 2+ players; play until the lives condition should end the round. Default build: round-end accounting never fires (mpCalculateAwards/mpwatchSetStopPlayFlag from the YOLT path skipped). Set GE007_MP_YOLT=1 to enable the (imperfect, ~63% decomp-match) reimpl.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/lvl.c:2358"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T20:32:51Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/lvl.c:2358",
+      "note": "Retail US lvlManageMpGame (glabel lvl.c:3173) runs the YOLT round-end block unconditionally inside the getPlayerCount>=2 MP section: get_scenario()==SCENARIO_YOLT(1) and g_ClockTimer!=0 -> per-player not_dead/killed accounting, then not_dead_count >= playerCount-1 -> mpCalculateAwards(0) (end round) else killed_count >= playerCount-1 -> mpwatchSetStopPlayFlag(). ASM call sequence get_scenario, getPlayerCount, mpCalculateAwards, mpwatchSetStopPlayFlag confirmed in US body 3173-4033. Live C lvl.c:2358 wraps the same block in NATIVE_PORT 'if (s_yoltEnabled)' where s_yoltEnabled defaults 0 (getenv GE007_MP_YOLT), so by DEFAULT the port skips YOLT end-game entirely -> a YOLT MP match never resolves via this path. In-code comment: 63.28% match on decomp.me, gated due to known inaccuracies. All other lvlManageMpGame sections verified equivalent to the US ASM: timer A (controls-locked/paused->0 else speedgraphframes + D_80048380++, g_GlobalTimer+=clockTimer), cheat B (s0=1..CHEAT_INVALID=75 with cheatIsEnemyRockets gate), mission-state-6 C1, time-limit C2 (one-minute-left + alarm + mpCalculateAwards), kill-limit C3, time-accum D, idle E, zbuf/title-vs-gameplay F, debug G. parity-divergence not port-defect: gating is deliberate. Faithful-mode decision: default-off; retest when YOLT reimpl brought to ASM-match then default-on. Found by ASM-audit batch 9 (queue rank 102, region US)."
+    }
+  ]
+}

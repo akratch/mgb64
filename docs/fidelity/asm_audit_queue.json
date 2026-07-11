@@ -2511,9 +2511,9 @@
         "body_start": 1475,
         "body_end": 2152
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "MP watch pause/scoreboard menu renderer (US variant). ASM glabel mp_watch.c:2171 vs live NONMATCHING C mp_watch.c:1475. Title-text dispatch jpt_MP_menu_window_text: idx=g_CurrentPlayer->mpmenumode at +0x29c8, bounds<8 (sltiu 8), else no-text default .L7F0C4190. MPMENU enum bondconstants.h:1649 GOWOC=0 LOSSES=1 KILLS=2 SCORES=3 PAUSE=4 EXIT=5 MENU_6=6 MENU_7=7 maps 1:1 to jpt: text_play idx0-3 (gameover-conditional langGet 40981 PLAY / 40982 GAMEOVER via time_trigger_alt_gameover_msg / 40983 STARTTOEXIT), text_pause_unpause idx4 (g_pausedFlag -> 40984 PAUSED + who_paused==get_cur_playernum highlight else 40985 PAUSE), text_exit idx5-6 (40986 EXIT + x=viGetViewLeft+viewleft_offset+0x41), text_blank idx7 = ascii_MP_watch_menu_BLANK = C case MENU_7. All 8 cases with langGet IDs, conditionals, highlight and x-offset traced exact. Body scoreboard ordered call sequence matches C composition: microcode_constructor, nav arrows mpwatchMenuCanGoLeft/Right + textRender, per-player row loop get_points_for_mp_player / mpwatchShouldDisplayRank / write_playerrank_to_buffer / mpwatchShouldDisplayScore / get_scenario / display_text_for_playerdata_on_MP_menu / textMeasure / textRender / textRenderGlow. Renderer domain (charter rule 2: pixel-exactness is ares-capture territory); dispatch semantics fully verified.",
+      "reviewed_ts": "2026-07-11T20:36:22Z",
       "rank": 92,
       "rank_score": 6671,
       "rank_reason": "dispatch(jpt_MP_menu_window_text) 2057i"
@@ -2748,9 +2748,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch controls-mapping page renderer. ASM glabel watch.c:7252 (LEFTOVERDEBUG variant) vs live C watch.c:7007. No jump table. Structural match confirmed: 18 sub_GAME_7F0A9398 label-render calls partition exactly as C -- 7 left-column at x=50 (L_TRIG col4 y=82, D-pad col7, pause col8, Z col3; pressed+unpressed each except pause single), 9 right-column at x=270 (R_TRIG col5, C-buttons col6 incl multi-press dim goto, B col2, A col1), 2 move-sight at x=250 y=195. joyGetButtons masks appear at matching gates; pressed color 0x007000A0 and 0x003000B0 via lui+ori 7357-7360 vs unpressed 0xAA00B0; column index via ctrl_type*5 base (sll 2 then addu = times 5, word-scaled to times 40) plus col into D_800409DC; up/down label swap reads game_options_entries+0x8 current_value==1. move_sight_flag set from AIM-string compare on L/Z/R columns. LEFTOVERDEBUG glyph-string buf_ copies from aA/aB/aZ/... are behavior-preserving.",
+      "reviewed_ts": "2026-07-11T20:27:36Z",
       "rank": 100,
       "rank_score": 836,
       "rank_reason": "836i"
@@ -2775,9 +2775,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Region-sibling variant of the same shared C body watch.c:7007 (ASM glabel watch.c:8132). Second GLOBAL_ASM block; same 18-call left/right/move-sight render partition and no jump table. Structurally identical to the US variant audited at asm_start 7249 (verified-equivalent); shared live C path has no per-region behavior difference.",
+      "reviewed_ts": "2026-07-11T20:27:36Z",
       "rank": 101,
       "rank_score": 836,
       "rank_reason": "836i"
@@ -2802,9 +2802,9 @@
         "body_start": null,
         "body_end": 3142
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0095",
+      "note": "US variant. ASM glabel lvl.c:3173 vs live C lvl.c:2114 (documented full N64 convergence). Sections A (timer: controls-locked/paused->g_ClockTimer=0 else speedgraphframes + D_80048380++, then g_GlobalTimerDelta=(f32)clockTimer, g_GlobalTimer+=clockTimer; NATIVE_PORT overlaySoloPause/cap/minimap additions correctly absent from retail), B (cheat activation s0=1..CHEAT_INVALID=75 with g_CheatActivated gate + cheatIsEnemyRockets skip, LEVELID_TITLE=90/D_80048394==0/clockTimer>0 guards), C1 (mission-state-6 dead/finished count -> set_missionstate 1), C2 (time-limit: one-minute-left hudmsg loop, 10s alarm sndPlaySfx 0xA1, stop-alarm sndDeactivate, mpCalculateAwards at limit), C3 (kill-limit g_MpPoint: dying-anim count + get_points_for_mp_player>=MpPoint -> mpCalculateAwards or mpwatchSetStopPlayFlag), D (time accum), E (idle input timer), F (viSetUseZBuf, title cheat/menu/langTick vs gameplay update_* chain), G (LEFTOVERDEBUG) all verified equivalent to ASM call sequence + traced A/B. DIVERGENCE: Section C4 YOLT round-end block is default-disabled via NATIVE_PORT GE007_MP_YOLT gate (lvl.c:2358) while retail runs it unconditionally -> FID-0095 (parity-divergence).",
+      "reviewed_ts": "2026-07-11T20:33:07Z",
       "rank": 102,
       "rank_score": 798,
       "rank_reason": "798i"
@@ -2829,9 +2829,9 @@
         "body_start": null,
         "body_end": 5560
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Live C chr.c:5208 is an explicitly-annotated PARTIAL NATIVE_PORT reimplementation of chrTickBeams, not a transcription: header comment states the retail body is ~800 instrs handling many chr action states and this version does the essentials only (AI tick, anim advance, matrix, render). Under active fidelity management with filed/landed findings for its retail-divergent paths: FID-0014 (WAYMODE_MAGIC patrol-freeze dispatch, landed/verified), FID-0054 (guard-state derivation), FID-0091 (CHRFLAG_CULL_USING_HITBOX magic bypass). Port carries ASM-faithful gates on specific documented paths (CHRFLAG_HIDDEN + 0x40000 skip US 7F020F64, freeze-aware animTick US 7F02101C, magic dispatch US 7F021178-7F02121C, H5 background-AI 0x200 flag US 7F0213C8, H6 held-weapon RUNTIMEBITFLAG_REMOVE free US 7F02106C) but the full retail action-state dispatch is NOT transcribed. verified-equivalent is impossible (not a 1:1 body) and exhaustive new-divergence enumeration is a dedicated task -- same class as the deferred object_interaction and playerTickBeams. WAIVED. Retest when a chrTickBeams full-body parity oracle exists (FID-0012 Phase C visibility work referenced in-body).",
+      "note": "Live C chr.c:5208 is an explicitly-annotated PARTIAL NATIVE_PORT reimplementation of chrTickBeams, not a transcription: header comment states the retail body is ~800 instrs handling many chr action states and this version does the essentials only (AI tick, anim advance, matrix, render). Under active fidelity management with filed/landed findings for its retail-divergent paths: FID-0014 (WAYMODE_MAGIC patrol-freeze dispatch, landed/verified), FID-0054 (guard-state derivation), FID-0091 (CHRFLAG_CULL_USING_HITBOX magic bypass). Port carries ASM-faithful gates on specific documented paths (CHRFLAG_HIDDEN + 0x40000 skip US 7F020F64, freeze-aware animTick US 7F02101C, magic dispatch US 7F021178-7F02121C, H5 background-AI 0x200 flag US 7F0213C8, H6 held-weapon RUNTIMEBITFLAG_REMOVE free US 7F02106C) but the full retail action-state dispatch is NOT transcribed. verified-equivalent is impossible (not a 1:1 body) and exhaustive new-divergence enumeration is a dedicated task -- same class as the deferred object_interaction and playerTickBeams. WAIVED. Retest when a chrTickBeams full-body parity oracle exists (FID-0012 Phase C visibility work referenced in-body).",
+      "reviewed_ts": "2026-07-11T20:29:16Z",
       "rank": 103,
       "rank_score": 780,
       "rank_reason": "780i"
