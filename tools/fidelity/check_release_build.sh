@@ -106,15 +106,27 @@ if [[ ! -e "$BINARY" ]]; then
     exit 0
 fi
 
-# Binary predates the current configure -> it may have been built under a PRIOR
-# (e.g. Debug) config that was since reconfigured to Release without a rebuild.
-if [[ "$CACHE" -nt "$BINARY" ]]; then
-    echo "check_release_build: FAIL -- ${BINARY} predates the current cmake configure" \
-         "(${CACHE} is newer) -- it may not reflect CMAKE_BUILD_TYPE=Release; rebuild" \
-         "with: cmake --build ${BUILD_DIR}" >&2
-    exit 1
+# Is the binary a CURRENT LINK? The reliable staleness signal is the object
+# files it links, NOT CMakeCache.txt's mtime: a `cmake -B build` RECONFIGURE
+# touches the cache (and leaves a perpetual `cmake_check_build_system` phony
+# dep, so `make -q` never reports up-to-date) without changing what the binary
+# links -- so a cache-mtime or make-query heuristic FALSE-REDs on the most
+# common workflow (reconfigure, then verify), which is exactly the false-RED
+# footgun D7 exists to kill. Object files only change on a real (re)compile, so
+# a binary newer than every .o it links is a current link that reflects the
+# cache's CMAKE_BUILD_TYPE=Release confirmed above. A binary OLDER than some .o
+# is genuinely stale (a real recompile happened without a relink) -> FAIL.
+_obj_root="${BUILD_DIR}/CMakeFiles"
+if [[ -d "$_obj_root" ]]; then
+    _stale_obj="$(find "$_obj_root" -name '*.o' -newer "$BINARY" 2>/dev/null | head -1)"
+    if [[ -n "$_stale_obj" ]]; then
+        echo "check_release_build: FAIL -- ${BINARY} is older than a compiled object" \
+             "(${_stale_obj}) -- a source recompiled without relinking the binary;" \
+             "rebuild with: cmake --build ${BUILD_DIR}" >&2
+        exit 1
+    fi
 fi
 
 echo "check_release_build: PASS -- ${BINARY} is Release (build/CMakeCache.txt" \
-     "CMAKE_BUILD_TYPE=Release, binary newer than the configure)"
+     "CMAKE_BUILD_TYPE=Release; binary is a current link, newer than every object)"
 exit 0
