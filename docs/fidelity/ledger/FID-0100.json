@@ -4,13 +4,29 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [],
   "repro": "In the solo watch inventory page (non-debug mode), tap the up C-button or up d-pad with the analog stick centered. Retail snap-scrolls up one item (D_800409BC -= 1.0). The port requires the stick to ALSO be pushed up past 0x47 for the snap to fire, so a plain up-button tap no longer snap-scrolls (only the separate hold path at 0.1/frame still advances). GE007 A/B flag not present.",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/watch.c:1257"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/watch.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/watch.c"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/watch_scroll_gate.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_watch_scroll_gate.c"
     }
   ],
   "history": [
@@ -20,6 +36,34 @@
       "to": "discovered",
       "evidence": "src/game/watch.c:1257",
       "note": "Retail sub_GAME_7F0A5B80 (glabel watch.c:1246, VERSION_US) up-scroll gate (ASM watch.c:1255-1262): joyGetButtonsPressedThisFrame(PLAYER_1, 0x808 = U_CBUTTONS|U_JPAD) then bnez v0 -> up-action label L7F0A5BC0; on fall-through joyGetStickY, slti 0x47, bnez -> down path L7F0A5C08, else fall through to the up-action. That branch shape (bnez A -> then; eval B; if !B -> else; else fall to then) is the compiler codegen for 'if (A || B)'. The live C (watch.c:1120) writes 'if ((joyGetButtonsPressedThisFrame(PLAYER_1,U_CBUTTONS|U_JPAD) != 0) && (joyGetStickY(PLAYER_1) >= 0x47))'. The && vs || inverts the gate: retail snap-scrolls up when the button is pressed OR the stick is fully up; the port only when the button is pressed AND the stick is fully up. Corroboration: the symmetric DOWN block (ASM L7F0A5C08, C 1128) correctly uses || in both (joyGetButtonsPressedThisFrame 0x404 = D_CBUTTONS|D_JPAD, bnez -> down, or stickY < -0x46), so the up-block && is an asymmetric decomp transcription error. Player-visible: an up C-button/d-pad tap with the stick centered no longer performs the instant one-item jump (the separate held-button path at watch.c:1137 still advances D_800409BC by 0.1 per frame, so navigation is not fully broken but loses its snap responsiveness). SECONDARY divergence in the same block: the up-scroll and hold-up '> 0' guards on D_800409BC are truncated-int in retail (trunc.w.s + blez at ASM 1268-1271 and 1326-1329 = (s32)D_800409BC > 0) but plain float in the C ('D_800409BC > 0' at watch.c:1122, '0 < D_800409BC' at 1139); these differ only for D_800409BC in the open interval 0 to 1 (retail treats a positive fractional scroll offset as not-yet-past item 0 and skips the decrement; the port decrements and then clamps). The '< invItems-1' bound checks are truncated in retail too but are mathematically equivalent to the C float compare for D_800409BC >= 0, so no divergence there. Everything else in the function verified equivalent to the US ASM: bondinvCountTotalItemsInInv/get_debug_gunwatchpos_flag gating, the down button-press block (||), both held-button 0.1 blocks (D_8005847C/D_80058480), the two stick fine-scroll blocks (stickY/300.0, D_800409BC bound checks), sub_GAME_7F0A5160/7F0A519C plus-minus-1.0 blocks, is_holding up/down -> D_80040AE4, the min(invItems-0.5)/max(-0.5) clamp and g_curWatchItemIndex trunc, the j_text_trigger 12-vs-14 line metric, the D_800409B4 = flag*2 - idx*invItems (flag==invItems here so operand swap is neutral) and the D_800409B0 3-step ease toward D_800409B4 with D_800409C0, and the final 0.55/0.45 (D_80058484/D_8005848C) plus ANY_BUTTON ease block. Found by ASM-audit batch 10, queue rank 115, region US."
+    },
+    {
+      "ts": "2026-07-11T21:57:12Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/watch.c",
+      "note": "Batch-10 rank 115 up-scroll && vs || defect; scheduled for fix."
+    },
+    {
+      "ts": "2026-07-11T21:57:12Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/watch.c",
+      "note": "Retail ASM sub_GAME_7F0A5B80 watch.c:1255-1262 up-snap gate = button || stick>=0x47 (bnez then; slti 0x47 else -> down; else fall to up = if(A||B)), matching the down sibling (ASM L7F0A5C08). Port wrote && (watch.c:1121) so up-button tap alone no longer snap-scrolls."
+    },
+    {
+      "ts": "2026-07-11T21:57:12Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/watch_scroll_gate.c",
+      "note": "Factored watchInvUpSnapGate(up_pressed, stick_y, legacy) pure helper; watch.c calls it with portNoWatchUpscrollFix(). Default || (retail), GE007_NO_WATCH_UPSCROLL_FIX restores &&."
+    },
+    {
+      "ts": "2026-07-11T21:57:23Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_watch_scroll_gate.c",
+      "note": "Fix default-ON. ROM-free ctest watch_scroll_gate (tests/test_watch_scroll_gate.c) asserts button-tap-alone snaps (fix) and does not under legacy. ENV_FLAGS.md regenerated."
     }
   ]
 }

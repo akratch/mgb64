@@ -680,6 +680,17 @@ if(BUILD_TESTING)
     target_include_directories(test_speedgraph_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME speedgraph_clamp COMMAND test_speedgraph_clamp)
 
+    # Watch inventory UP snap-scroll gate — ROM-free unit test (FID-0100):
+    # retail snaps up on button OR stick-full-up (||, matching the down sibling);
+    # the port defect required button AND stick (&&). Fails if the gate reverts
+    # to && or the GE007_NO_WATCH_UPSCROLL_FIX legacy path flips.
+    add_executable(test_watch_scroll_gate
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_scroll_gate.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_scroll_gate.c"
+    )
+    target_include_directories(test_watch_scroll_gate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_scroll_gate COMMAND test_watch_scroll_gate)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

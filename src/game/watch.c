@@ -24,6 +24,25 @@
 #include "unk_0A1DA0.h"
 #include "unk_0C0A70.h"
 #include "assets/obseg/text/LoptionE.h"
+#include "platform/port_env.h"
+#include "platform/watch_scroll_gate.h"  /* FID-0100 up-scroll gate */
+
+/* FID-0100 negative control. Default-ON port-defect fix: the solo watch
+ * inventory UP snap-scroll fires on button-press OR stick-full-up (retail
+ * ASM sub_GAME_7F0A5B80, src/game/watch.c:1255-1262, `||` — matching the down
+ * sibling). The NONMATCHING port used `&&`, so a plain up-button tap with the
+ * stick centered no longer snap-scrolled. Setting GE007_NO_WATCH_UPSCROLL_FIX
+ * restores the `&&` gate byte-identically. */
+static int portNoWatchUpscrollFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCH_UPSCROLL_FIX",
+                              "Restore the legacy watch up-scroll AND-gate "
+                              "(up-button tap alone no longer snap-scrolls) [FID-0100]");
+    }
+    return cached;
+}
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
 
@@ -1118,7 +1137,11 @@ void sub_GAME_7F0A5B80(void)
     watchDebugFlag = get_debug_gunwatchpos_flag();
     if (watchDebugFlag == 0)
     {
-        if ((joyGetButtonsPressedThisFrame(PLAYER_1,U_CBUTTONS|U_JPAD) != 0) && (joyGetStickY(PLAYER_1) >= 0x47))
+        /* FID-0100: retail up-snap gate is `button || stick>=0x47` (ASM
+         * watch.c:1255-1262), matching the down sibling below; the port defect
+         * used `&&`. GE007_NO_WATCH_UPSCROLL_FIX restores `&&`. */
+        if (watchInvUpSnapGate(joyGetButtonsPressedThisFrame(PLAYER_1,U_CBUTTONS|U_JPAD),
+                               joyGetStickY(PLAYER_1), portNoWatchUpscrollFix()))
         {
             if ((D_800409BC > 0) && (watch_item_is_actively_selected == 0))
             {
