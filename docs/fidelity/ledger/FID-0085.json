@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c:4757",
     "src/game/gun.c:4728"
@@ -32,6 +32,10 @@
       "kind": "trace-diff",
       "path": "tools/grenade_round_spawn_mtx_smoke.sh",
       "note": "[durable re-anchor: the runtime A/B (fix-ON orthonormal rotation + Bond translation vs fix-OFF blend-region garbage) is reproducible via this smoke; original /tmp summary was volatile]"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_447c02f6772b.json"
     }
   ],
   "history": [
@@ -69,6 +73,13 @@
       "to": "landed",
       "evidence": "/tmp/mgb64-fid0085-evidence/runtime_ab_summary.txt",
       "note": "Runtime A/B (Dam, deterministic, grenade launcher item 24, GE007_TRACE_PROJECTILE_INIT_MTX): fix-ON = proper per-shot orthonormal rotation basis + Bond world-space translation (20180,41,16892); fix-OFF (legacy raw+0xAD8) = static non-orthonormal garbage from the blendpos region + near-origin translation. Regression lanes: (1) compile-time tests/test_struct_layout.c FID-0085 hand-matrix offset lock; (2) end-to-end tools/grenade_round_spawn_mtx_smoke.sh (ctest port_grenade_round_spawn_mtx_smoke) asserts fix-ON basis differs from fix-OFF and is orthonormal -- fail-on-revert PROVEN (revert-sim binary -> fix-ON==fix-OFF -> smoke FAILs). Sim verify: all 7 golden tapes replay byte-exact (zero sim-hash shift; no committed tape/route equips item 24/35/36); sim_invariance_gate PASS; ROM-free ctest suite green."
+    },
+    {
+      "ts": "2026-07-11T20:03:08Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_447c02f6772b.json",
+      "note": "Same strict-verify environmental-red adjudication as FID-0014. Grenade-round matrix fix proven: port_grenade_round_spawn_mtx_smoke fail-on-revert, struct_layout field lock, tape_regression 7/7 byte-exact (zero sim-hash shift), Fable review APPROVE (independent ASM re-derivation, 3 live dispatch callers confirmed)."
     }
   ]
 }
