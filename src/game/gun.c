@@ -32096,10 +32096,34 @@ static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
     return gdl;
 }
 
+/* Default-ON restoration of retail's second ammo-HUD early-out. Setting
+ * GE007_NO_MP_AMMO_HUD_MENU_FIX restores the pre-fix behavior (per-pane ammo
+ * HUD drawn over the MP watch/pause darkening overlay). */
+static int portMpAmmoHudMenuFixDisabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("GE007_NO_MP_AMMO_HUD_MENU_FIX") != NULL;
+    }
+    return cached;
+}
+
 Gfx *generate_ammo_total_microcode(Gfx *gdl) {
     /* NATIVE_PORT ammo HUD: magazine/clip count + total reserve for both hands.
      * Right-hand weapon at bottom-right, left-hand at bottom-left. */
     if (g_CurrentPlayer->gunammooff != 0) return gdl;
+
+    /* Retail prologue has TWO independent !=0 early-outs; the port had dropped
+     * the second. Suppress this pane's entire ammo HUD while its MP watch/pause
+     * menu is up (mpmenuon). mpmenuon is initialized FALSE (player_2.c:500) and
+     * only set TRUE under `player_count != 1` (mp_watch.c:561 -> 642/708) or the
+     * MP match-awards path (mp_watch.c:353), so it stays FALSE in solo and this
+     * guard never fires single-player — matching retail's unconditional check.
+     * ASM: generate_ammo_total_microcode prologue (US VRAM 7F069D14/7F069D18,
+     * the second of retail's two !=0 guards after gunammooff at 7F069D08):
+     *   lw    $t7, 0x29c4($v0)   ; g_CurrentPlayer->mpmenuon
+     *   bnezl $t7, <return gdl> */
+    if (g_CurrentPlayer->mpmenuon != 0 && !portMpAmmoHudMenuFixDisabled()) return gdl;
 
     s32 left_offset;
     s32 right_offset;

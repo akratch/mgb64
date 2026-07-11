@@ -151,6 +151,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_AUTO_LOOK_STEP` | ? |  | 1 |  |
 | `GE007_AUTO_MISSION_END_FRAME` | ? |  | 1 |  |
 | `GE007_AUTO_MISSION_END_RESULT` | ? |  | 1 |  |
+| `GE007_AUTO_MPMENU` | ? |  | 1 |  |
 | `GE007_AUTO_MUTE_TOGGLE_FRAME` | ? |  | 1 |  |
 | `GE007_AUTO_MUTE_TOGGLE_SCRIPT` | ? |  | 1 |  |
 | `GE007_AUTO_NEIGHBOR_ROOMS` | ? |  | 1 |  |
@@ -517,6 +518,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | ? |  | 1 |  |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | ? |  | 1 |  |
+| `GE007_NO_MP_AMMO_HUD_MENU_FIX` | ? |  | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | ? |  | 1 |  |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | ? |  | 1 |  |
 | `GE007_NO_PROJECTILE_INIT_MTX_FIX` | ? |  | 1 |  |

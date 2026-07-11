@@ -949,6 +949,12 @@ static int s_autoArmorInitialized = 0;
 static int s_autoArmorFrame = -1;
 static float s_autoArmorAmount = 0.0f;
 static int s_autoArmorDone = 0;
+/* GE007_AUTO_MPMENU: force the multiplayer watch/pause menu open (mpmenuon) on
+ * every split-screen pane from the given frame onward. Deterministic stand-in
+ * for a per-pane Start press, which the scripted-input router cannot deliver to
+ * pads 1-3 (it only fills controller 0). Regression lane FID-0064. */
+static int s_autoMpMenuInitialized = 0;
+static int s_autoMpMenuFrame = -1;
 static int s_autoDamageBondInitialized = 0;
 static int s_autoDamageBondFrame = -1;
 static float s_autoDamageBondAmount = 0.125f;
@@ -4410,6 +4416,53 @@ static void pcMaybeApplyScriptedArmor(int input_frame)
     s_autoArmorDone = 1;
 }
 
+static void pcInitScriptedMpMenu(void)
+{
+    if (s_autoMpMenuInitialized) {
+        return;
+    }
+
+    s_autoMpMenuInitialized = 1;
+
+    {
+        const char *frame_env = getenv("GE007_AUTO_MPMENU");
+
+        if (frame_env != NULL && *frame_env != '\0') {
+            s_autoMpMenuFrame = (int)strtol(frame_env, NULL, 10);
+        }
+    }
+}
+
+/* Hold the MP watch/pause menu open on all panes from s_autoMpMenuFrame onward.
+ * Mirrors the real setter (mp_watch.c:708-709: mpmenuon=TRUE, mpmenumode=3),
+ * but drives every pane so a pane the scripted-input router can't reach (pads
+ * 1-3) can still be tested. No-op in solo (getPlayerCount()==1) — the same
+ * guard mp_watch.c:561 uses — so it can never perturb single-player state. */
+static void pcMaybeApplyScriptedMpMenu(int input_frame)
+{
+    int count;
+    int i;
+
+    pcInitScriptedMpMenu();
+
+    if (!g_deterministic || s_autoMpMenuFrame < 0 || input_frame < s_autoMpMenuFrame) {
+        return;
+    }
+
+    count = getPlayerCount();
+    if (count <= 1) {
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        if (g_playerPointers[i] == NULL) {
+            continue;
+        }
+        g_playerPointers[i]->mpmenuon = TRUE;
+        g_playerPointers[i]->mpmenumode = 3;
+    }
+}
+
 static void pcInitScriptedDamageBond(void)
 {
     if (s_autoDamageBondInitialized) {
@@ -6006,6 +6059,7 @@ s32 osContGetReadData(OSContPad *data) {
     pcMaybeApplyScriptedForcePlayer(input_frame);
     pcMaybeApplyScriptedTankFaceCoord(input_frame);
     pcMaybeApplyScriptedArmor(input_frame);
+    pcMaybeApplyScriptedMpMenu(input_frame);
     pcMaybeApplyScriptedDamageBond(input_frame);
     pcMaybeApplyScriptedCameraMode(input_frame);
     pcMaybeApplyScriptedWeaponAmmo(input_frame);

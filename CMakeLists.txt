@@ -845,6 +845,14 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # mapping. Guards against the quantities[] overlay regression.
     add_port_validation_smoke(port_ammo_crate_collect_smoke ammo_crate_collect_smoke.sh 180)
     add_port_validation_smoke(port_ammo_hud_smoke ammo_hud_smoke.sh 1800)
+    # FID-0064: generate_ammo_total_microcode dropped retail's mpmenuon early-out
+    # (gun.c:32354-32356), so an MP pane with the watch/pause menu open still drew
+    # its ammo HUD over the darkening overlay. This lane boots a 2p split-screen
+    # deathmatch, arms the P2 pane, forces the MP menu open (GE007_AUTO_MPMENU) and
+    # asserts the restored early-out hides that pane's ammo HUD -- with a
+    # GE007_NO_MP_AMMO_HUD_MENU_FIX=1 negative control that reproduces the legacy
+    # draw. Reverting the fix makes open_on draw the HUD too (delta -> 0) -> red.
+    add_port_validation_smoke(port_ammo_hud_mpmenu_smoke ammo_hud_mpmenu_smoke.sh 300)
     # Per-level frame-time budget gate (docs/design/PERFORMANCE_PLAN.md M0). Reference-
     # hardware sensitive; opt-in and serialized like the other runtime lanes.
     add_port_validation_smoke(port_perf_budget_smoke perf_budget_smoke.sh 900)
