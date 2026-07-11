@@ -4932,8 +4932,8 @@ s32 portPatrolMagicFixEnabled(void)
  * flip). Recompute the planes unwidened (retail semantics), run the MP-safe
  * union test, then restore the widened render planes. Declarations for the
  * bondview.c suppression scope: */
-extern void portCullWidenSuppressPush(void);
-extern void portCullWidenSuppressPop(void);
+extern void portRetailFrustumEnter(void);
+extern void portRetailFrustumLeave(void);
 static s32 chrBeamsFrustumVisibleUnion(PropRecord *prop, coord3d *pos, f32 inst_size);
 
 static s32 chrPatrolMagicRetailVisible(PropRecord *prop, Model *model)
@@ -4946,11 +4946,14 @@ static s32 chrPatrolMagicRetailVisible(PropRecord *prop, Model *model)
         return 0;
     }
 
-    portCullWidenSuppressPush();
-    sub_GAME_7F0785DC();  /* retail 4:3 planes (US 0x7F0785DC, unwidened) */
+    /* Enter: save the frame's (widened) render planes, recompute UNWIDENED
+     * (retail US 0x7F0785DC). Leave: byte-restore the saved planes — never
+     * recompute on exit, so no mid-tick window-drawable read can publish
+     * planes differing from the frame's render pass (see bondview.c
+     * portRetailFrustumEnter/Leave). */
+    portRetailFrustumEnter();
     vis = chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model));
-    portCullWidenSuppressPop();
-    sub_GAME_7F0785DC();  /* restore the port's widened render planes */
+    portRetailFrustumLeave();
 
     return vis;
 }

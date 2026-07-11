@@ -2111,6 +2111,55 @@ void portCullWidenSuppressPop(void)
         s_cullWidenSuppressDepth--;
     }
 }
+
+/* FID-0014: scoped retail-frustum window for the patrol-magic sim visibility
+ * test. Enter: SAVE the current (render, possibly widened) cull-plane
+ * globals, then recompute them UNWIDENED (retail US 0x7F0785DC semantics;
+ * the widen suppression above also covers camIsPosInScreenBox inside
+ * sub_GAME_7F054D6C). Leave: RESTORE the saved plane bytes verbatim rather
+ * than recomputing — a recompute would re-read the live window drawable
+ * (gfx_get_aspect_x_factor) MID-sim-tick and could publish planes that
+ * differ from the ones the frame's render pass computed whenever the window
+ * dimensions settle mid-run, which other plane consumers (render culling,
+ * chrlv.c camIsPosInScreen callers) would then observe — a timing-dependent
+ * sim input. Byte-restore keeps the frame's plane state invariant around the
+ * scope. Declarations consumed by chr.c (chrPatrolMagicRetailVisible). */
+static coord3d s_savedCullPlane[4];
+static f32 s_savedCullPlaneOfs[4];
+static f32 s_savedCullPlaneNear;
+
+void sub_GAME_7F0785DC(void);
+
+void portRetailFrustumEnter(void)
+{
+    s_savedCullPlane[0] = flt_CODE_bss_80079940;
+    s_savedCullPlane[1] = flt_CODE_bss_80079950;
+    s_savedCullPlane[2] = flt_CODE_bss_80079960;
+    s_savedCullPlane[3] = flt_CODE_bss_80079970;
+    s_savedCullPlaneOfs[0] = flt_CODE_bss_8007994C;
+    s_savedCullPlaneOfs[1] = flt_CODE_bss_8007995C;
+    s_savedCullPlaneOfs[2] = flt_CODE_bss_8007996C;
+    s_savedCullPlaneOfs[3] = flt_CODE_bss_8007997C;
+    s_savedCullPlaneNear = flt_CODE_bss_80079980;
+
+    portCullWidenSuppressPush();
+    sub_GAME_7F0785DC();  /* retail 4:3 planes, no window reads */
+}
+
+void portRetailFrustumLeave(void)
+{
+    portCullWidenSuppressPop();
+
+    flt_CODE_bss_80079940 = s_savedCullPlane[0];
+    flt_CODE_bss_80079950 = s_savedCullPlane[1];
+    flt_CODE_bss_80079960 = s_savedCullPlane[2];
+    flt_CODE_bss_80079970 = s_savedCullPlane[3];
+    flt_CODE_bss_8007994C = s_savedCullPlaneOfs[0];
+    flt_CODE_bss_8007995C = s_savedCullPlaneOfs[1];
+    flt_CODE_bss_8007996C = s_savedCullPlaneOfs[2];
+    flt_CODE_bss_8007997C = s_savedCullPlaneOfs[3];
+    flt_CODE_bss_80079980 = s_savedCullPlaneNear;
+}
 #else
 #define widenCullHorizontal(x) (x)
 #endif

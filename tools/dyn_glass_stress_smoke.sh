@@ -145,7 +145,24 @@ auto_aim_dir_script() {
 
 # Shared Dam regular-glass shatter route env (mirrors glass_material_regression.sh's
 # regular_glass_bullet_hit case) plus the effect-triangle tracer.
+#
+# FID-0014 world pin: this scenario's glass break is EMERGENT — the straight-Z
+# burst alerts nearby guards and a guard's return fire crosses the pane
+# (~frame 126); the pane never breaks from Bond's scripted shots directly.
+# Under the faithful WAYMODE_MAGIC patrol default the guard world legitimately
+# changes (unseen patrollers freeze; onscreen/aim sets shift) and the emergent
+# break no longer occurs, so the lane's stress window (STRESS_LIMIT=16384,
+# overflow mid-shard-pass) never engages. The FID-0007 allocator contract
+# under test (dynAllocate fail-closed vs GE007_DYN_LEGACY_ALIAS) is
+# sim-world-independent, so pin the scenario to the byte-identical legacy
+# guard world (GE007_NO_PATROL_MAGIC_FIX=1 — the FID-0014 negative-control
+# flag) to keep the proven shatter/stress tuning. A deterministic
+# guard-independent shatter refit (canonical dam_regular_glass_shatter_probe
+# targeting) was probed 2026-07-11 but has no overflow window between
+# "everything fits" (8192) and "frame starved pre-shatter" (7168) at this
+# viewpoint; see docs/fidelity/derivations/FID-0014-patrol-magic.md.
 shatter_route_env=(
+    GE007_NO_PATROL_MAGIC_FIX=1
     GE007_TRACE_GLASS=1
     GE007_TRACE_GLASS_BUDGET=400
     GE007_TRACE_SHARDS=1
