@@ -23,6 +23,28 @@ Format, one entry per escalation:
 - Resolution (filled when closed):
 ```
 
+## 2026-07-11 Publish-gate backstop strength — OWNER POLICY DECISION (non-blocking)
+- Lane/phase: release mechanics (owner ruling C1/D1 below, RESOLVED).
+- Context: the forward-leak protection now has a structural client-side control
+  (the `.githooks/pre-push` leak-class scan — verified airtight against every
+  probed bypass: force-push, message-only leak, URL-resolved remote, tags).
+  It ships and is the primary net. But the *always-on* guarantee is only as
+  strong as its weakest server-side backstop, and there currently isn't a
+  strong one: the hook is client-side (a `--no-verify` push or a fresh clone
+  that skipped `scripts/install_git_hooks.sh` evades it), and CI's
+  `check_public_history_text.sh` is `workflow_dispatch`-only (manual) and
+  content-only (misses commit-message-class leaks).
+- Decision needed from owner (NOT blocking any release — current posture is
+  reasonable): do you want a true automatic server-side net — a
+  `pull_request`-triggered CI job running the leak-class + history-text scans?
+  It would fully deliver "never think about it again," but it **conflicts with
+  the deliberate hosted-runners-disabled / cost posture** (CI minutes on every
+  PR). Options: (a) add the `pull_request` trigger (accept the CI cost);
+  (b) keep the client-hook + manual-CI posture as-is (accept that a
+  `--no-verify`/skipped-install push is unguarded); (c) a middle path —
+  a lightweight scheduled scan of recent public history that alerts, not gates.
+- Resolution: OPEN — owner to choose; default (b) holds until then.
+
 ## 2026-07-10 C1/D1 — fidelity program + personal email already on the public remote
 - Lane/phase: Phase A (C1 leak fix), FIDELITY_REVIEW_AND_PLAN_2026-07-10 P0.
 - What was attempted: C1 forward-fix branch (export-ignore for the fidelity

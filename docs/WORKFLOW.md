@@ -48,8 +48,15 @@ second lineage.
      blocked. The hook also nudges direct `main`/tag pushes through the guarded
      entrypoint below (override for a deliberate manual push:
      `MGB64_ALLOW_DIRECT_PUBLIC_PUSH=1`). A contributor who has not installed the
-     hook loses this backstop — so installing it is not optional; CI's
-     `check_public_history_text.sh` remains the reachable-history net.
+     hook loses this local backstop — so installing it is not optional.
+     **Backstop honesty:** the always-on control is *client-side only* (a
+     `--no-verify` push or a clone that skipped the install evades it). CI's
+     `check_public_history_text.sh` is currently `workflow_dispatch`-only
+     (manual) and scans diff content, not commit messages — so it is a manual,
+     partial net, **not** an automatic server-side one. Making it a true net
+     (a `pull_request` trigger) is an owner policy call that conflicts with the
+     repo's deliberate hosted-runners-disabled posture — see the open decision
+     in `docs/fidelity/ESCALATIONS.md`.
 4. **Releases are tags on `main`, published only through the guarded path.**
    `vX.Y.Z` tags live on `main` only; cut releases from `main`, never from a fork.
    Routine `main` updates and release tags go through the one guarded entrypoint
