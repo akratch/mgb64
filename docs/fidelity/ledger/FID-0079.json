@@ -1,0 +1,27 @@
+{
+  "id": "FID-0079",
+  "title": "sub_GAME_7F0AF20C: roomset filter reads s32 words where retail reads u8 room bytes \u2014 filter never matches live u8 roomset callers",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/stan.c:757"
+  ],
+  "repro": "audit: asm_audit.py entry sub_GAME_7F0AF20C; ASM stan.c:949-1203 vs live C 708-822. Gameplay: put a projectile prop into the off-navmesh state (proj->flags&8, e.g. throw a mine so walkTilesBetweenPoints fails), reach handles_projectile_motion stan_done path chrobjhandler.c:5328 \u2014 retail reacquires prop->stan restricted to the sub_GAME_7F0B4AB4 room list; port returns NULL (filter rejects every room). GE007_TRACE_COLLISION assists",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/stan.c:1065"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T03:34:40Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/stan.c:1065",
+      "note": "Divergence re-derived from GLOBAL_ASM (retail 7F0AF20C) vs live NATIVE_PORT C. Retail roomset filter (stan.c:1063-1086, .L7F0AF3CC-410): lbu byte loads, +1 stride, terminator byte 0xFF (li s6,255), <=4 entries (bne s0,a0(4)), compare each byte against the room counter. Live C 757-764 casts roomset to s32* and reads rs[j] stride 4 with rs[j]!=-1 terminator. The retail-path caller passes u8 roomset[8] built by sub_GAME_7F0B4AB4 (u8* out per its signature gun.c:96 / bg.c:6746; consumed as bytes at chrobjhandler.c:5339-5358), so under the port read the first word packs 4 room bytes: it neither matches the room index nor equals -1 unless 4 consecutive 0xFF bytes \u2014 the filter rejects every room and the function returns NULL where retail finds a tile. Player-visible: flag-8 projectile/prop tile reacquire (chrobjhandler.c:5328) permanently fails -> thrown explosives that cross a failed tile-walk keep flags&8 (floor logic degraded). NOTE the port-added caller portResolveFrozenCameraRoomTile (bondview.c:2646-2651) builds an s32{room,-1} list consistent with the current misread \u2014 the fix must convert it to u8{room,0xFF} in the same change. Fix default-ON w/ GE007_NO_* control; regression lane = unit test feeding a u8 roomset. DO NOT fix from this note; re-derive from ASM."
+    }
+  ]
+}

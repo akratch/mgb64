@@ -1,0 +1,27 @@
+{
+  "id": "FID-0080",
+  "title": "sub_GAME_7F088618: native HUD health/armour-bar overlay rewrite diverges from retail GBI stream (ortho scale, alpha-compare, geometry-mode family, extra modelview restore)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/bondview.c:19369"
+  ],
+  "repro": "audit: asm_audit.py entries sub_GAME_7F088618 (LEFTOVERDEBUG bondview.c:19483, retail US 19671 \u2014 semantically identical, regional offsets only). Pixel check: ares ROI capture of the health/armour bars (pause/damage HUD) vs port, esp. on 0.2-scale stages (Dam/Surface)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c:19524"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T03:35:03Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/bondview.c:19524",
+      "note": "Intentional NATIVE_PORT rewrite of the HUD bar DL builder (C bondview.c:19345-19407) vs retail ASM (19486-19666 LEFTOVERDEBUG / 19671+ US). Retail stream re-derived first-hand: 7F0A2F30/7F0A3330 pairs (armor +0x12b8->DL+0x19f8, health +0x1598->DL+0x2128, uncached 0x80000000 aliases), 2x dynAllocateMatrix, guOrtho(-800*D_800364CC, 800*s, -600*s, 600*s, -100, 1000, 1) [near/far unscaled] (19524-19553), G_MTX proj 01030040 + fixed-point modelview via matrix_4x4_7F059694(0,500,0,...,-1)+f32_to_s32 + 01020040, E7 pipesync, BA001402 1CYCLE, B900031D/005041C8 AA_XLU_SURF, B9000002/0 (alpha-compare off), FCFFFFFF/FFFE793C SHADE combine, FA/E6E6E600 primcolor, B6000000/00003000 (clear CULL_BOTH only), two 06 gSPDisplayList, restore = projection matrix ONLY (01030040 + currentPlayerGetProjectionMatrix, 19648-19658). Port divergences: (a) drops the D_800364CC ortho-extent scale (in-code rationale: port bar verts unscaled; room-vis scale clips bars at 0.2 \u2014 retail vertex-side scaling in 7F0A3330 unverified, so net pixel parity UNVERIFIED); (b) omits the B9000002 alpha-compare-off command; (c) replaces the single CULL_BOTH clear with SetGeometryMode(SHADE|SMOOTH)+ClearGeometryMode(ZBUFFER|CULL|FOG|LIGHTING|TG|TGL) plus a post-DL restore pair (compensates PC renderer fog re-injection per comment); (d) adds a modelview (10C8) restore retail does not emit; (e) float G_MTX_FLOAT_PORT matrices + relocated static DL buffers + dyn-overflow early-return (substrate). No A/B flag exists for (a)-(d). Disposition per charter rule 8: document + decide faithful-mode default + pixel-verify vs ares ROI; sim unaffected (pure HUD overlay)."
+    }
+  ]
+}

@@ -989,9 +989,9 @@
         "body_start": null,
         "body_end": 938
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0079",
+      "note": "Highest-floor tile-at-position finder. ASM stan.c:949-1203 vs live NATIVE_PORT C 708-822 (F2 gated-ON faithful path), traced fully: scale+clamp-Y(32767 senses)+trunc s16 triple; room loop w/ firststaninroom NULL skip and 5 bbox slt rejects (x vs [0]/[3], z vs [2]/[5], y vs [1]) all senses verified; tile walk *tile!=0 && room byte@3 match; 3-edge getShortest2dDispToInfTripleEdge(tile,e,sx,sz) loop w/ disp<-2 tile-skip (bc1tl) and disp<2 sticky on-edge; 7F0AF760 degenerate skip; on-edge midpoint walk-back (getTileMidPoint -> walkTilesBetweenPoints_NoCallback(&walkTile, mid.xz, pos[0]/pos[2])) w/ fail-or-different-tile reject; highest-floor pick tile_y<=pos[1] && best<tile_y; advance via (tail>>12)&0xF size table; *out_dist=best_y when found. TWO divergences: (1) roomset filter element width u8-vs-s32 -> FID-0079 (live defect, P2); (2) retail on-edge flag seeded from uninit sp+0x88 (lw s2 @1026) -> FID-0081 (n64-quirk, port zero-init).",
+      "reviewed_ts": "2026-07-11T03:35:39Z",
       "rank": 36,
       "rank_score": 235,
       "rank_reason": "prior-defect-file 235i"
@@ -1016,9 +1016,9 @@
         "body_start": 9145,
         "body_end": 9219
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch raise/lower vv_verta transition + speedverta. ASM bondview.c:9232-9435 vs C 9145-9219, traced fully: state 1 blends 0x208(pause_related)->0x20c(pause_target_angle), state 2 blends 0x20c->0x208, both via blend=(1-cosf(frac*6.2831855*0.5))*0.5 w/ field_210 += delta*watch_transition_time and field_210<field_214 sense (bc1fl), completion writes target + state 3/0; operand mapping cross-checked via completion stores (case1 ends at 0x20c, case2 at 0x208) \u2014 consistent both cases. Wrap senses c.lt.s(-180) / c.le.s(180<=v); g_ClockTimer>0 gate (blez); speedverta = new-old, <0 +=360, 180<v -=360, /= (delta+delta), clamp [-0.69999999, 0.69999999] exact rodata constants. No jump table; no early-outs beyond state dispatch.",
+      "reviewed_ts": "2026-07-11T03:35:51Z",
       "rank": 37,
       "rank_score": 190,
       "rank_reason": "prior-defect-file 190i"
@@ -1043,9 +1043,9 @@
         "body_start": null,
         "body_end": 4945
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Tile-radius BFS locus search. ASM stan.c:4949-5155 vs live NATIVE_PORT C 4791-4930, traced fully: scaled x/z/radius; BFS queue at sp+0xb0 seeded *arg0, readIdx(0xa4)<depth(s4) loop; callback_A(curTile, cbRecord) per visit; pointCount (tail>>12)&0xF blez skip; per edge: getShortest2dDispToInfTileEdge->f22, distToTilePnt2D(i)->f20, distToTilePnt2D((i+1)%pc)->f24, qualify = edgeDist<r && (p0<r || p1<r || 7F0B0198!=0) \u2014 all senses verified; callback_B(tile, edge, edgeDist, distPt0, distPt1@0x10, cbRecord) nonzero -> stanSavedColl_tile/pointI + callback_C(stack, depth, rec)==1 continue else return 2; link@points[i].link (lhu 0xe+8i) >>4 nonzero -> dup-scan top-down then push standTileStart+link*8, ==0 -> same collision path; depth>=0x29(41) -> return 5 after each tile; exhausted -> callback_C + return -2. Port deviations additive-only: per-push depth<41 bounds guard (retail pushes unguarded past its 40-slot region \u2014 caller-frame UB), env-gated trace print.",
+      "reviewed_ts": "2026-07-11T03:36:06Z",
       "rank": 38,
       "rank_score": 189,
       "rank_reason": "prior-defect-file 189i"
@@ -1070,9 +1070,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0080",
+      "note": "[LEFTOVERDEBUG variant] HUD health/armour bar overlay DL builder. Retail stream re-derived first-hand (see FID-0080 note): 7F0A2F30/3330 pairs w/ uncached aliases, guOrtho extents x D_800364CC, fixed-point proj+modelview loads, E7/BA-1CYCLE/B9-AA_XLU/B9000002-alphacompare-off/FC-SHADE/FA-primcolor/B6-CULL_BOTH, two 06 DL calls (player+0x19f8/0x2128), projection-only restore. Live NATIVE_PORT rewrite diverges in ortho scale, alpha-compare omission, geometry-mode family, extra modelview restore, float-matrix substrate -> FID-0080 (parity-divergence, pixel parity vs ares unverified).",
+      "reviewed_ts": "2026-07-11T03:36:18Z",
       "rank": 39,
       "rank_score": 180,
       "rank_reason": "prior-defect-file 180i"
@@ -1097,9 +1097,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0080",
+      "note": "[retail US variant @7F088780] Same structure as the LEFTOVERDEBUG variant, independently spot-verified: identical command sequence and constants, regional struct offset shifts only (armor vals 0x12b8->0x12b0, health 0x1598->0x1590, DLs 0x19f8->0x19f0 / 0x2128->0x2120, g_CurrentPlayer 8008A0B0->80078BC0). Same divergence set vs live NATIVE_PORT rewrite -> FID-0080.",
+      "reviewed_ts": "2026-07-11T03:36:29Z",
       "rank": 40,
       "rank_score": 180,
       "rank_reason": "prior-defect-file 180i"
@@ -1124,9 +1124,9 @@
         "body_start": null,
         "body_end": 3421
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0081",
+      "note": "walkTilesBetweenPoints_withCallback (tile line walker). ASM stan.c:3423-3620 vs live NATIVE_PORT C 3264-3415, traced fully: scaled endpoints, zDist=-(dz2-dz1)/xDist=dx2-dx1; per-iteration func(curTile, prevTile, funcData); edge loop w/ (i+1)%pc, edge_cross=(npt_z-pt_z)*xDist + zDist*(npt_x-pt_x) exact operand order, c.le.s <=0 gate, 7F0B07BC(start,dest,pt,npt,(link>>4)!=0); on hit crossCount++ then prev/prevprev backtrack rejects (beq s6/s7), lastCrossEdge=i in delay slot (always on accepted-cross path, matches C unconditional assign), nextTile=standTileStart+link*8 or NULL by link>>4; tile shift prevprev=prev/prev=cur/cur=next w/ oldCur==next -> crossCount=0; crossCount==0 -> return TRUE (*tileStack==prevTile via prior continue store \u2014 C's explicit store is state-identical); pre-increment iterCount<0x1F5 cap (501 steps, C comment documents the delay-slot increment semantics) and nextTile==NULL -> savedColl tile/pointI + return FALSE; continue stores *tileStack=nextTile, crossCount=0, edgeIdx=0 (delay slot). ONE divergence: retail lastCrossEdge seeded from uninit sp+0x98 (lw fp @3463) -> FID-0081 (n64-quirk; port zero-init).",
+      "reviewed_ts": "2026-07-11T03:36:46Z",
       "rank": 41,
       "rank_score": 180,
       "rank_reason": "prior-defect-file 180i"

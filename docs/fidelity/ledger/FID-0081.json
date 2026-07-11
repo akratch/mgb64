@@ -1,0 +1,27 @@
+{
+  "id": "FID-0081",
+  "title": "stan.c retail uninitialized locals: 7F0AF20C on-edge flag and 7F0B0914 lastCrossEdge read garbage stack; port zero-inits (quirk not reproduced)",
+  "class": "n64-quirk",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/stan.c:746"
+  ],
+  "repro": "audit: asm_audit.py entries sub_GAME_7F0AF20C + sub_GAME_7F0B0914. (1) lw $s2,0x88($sp) stan.c:1026 with no prior store to sp+0x88 anywhere in the prologue/body (only write is the loop-exit spill at 1177) \u2014 s2 is the sticky on-edge flag (bVar2). (2) lw $fp,0x98($sp) stan.c:3463 with no store to sp+0x98 in the function \u2014 fp is lastCrossEdge, stored to stanSavedColl_pointI on walk failure (3594)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/stan.c:1026"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T03:35:22Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/stan.c:1026",
+      "note": "Two retail uninitialized-local reads re-derived from GLOBAL_ASM. (Q1) 7F0AF20C: the on-edge seam flag starts as whatever the caller left at sp+0x88; if garbage is nonzero and no tile edge is within 2.0 scaled units, retail still runs the midpoint walk-back disambiguation for candidate tiles (possibly rejecting stacked-floor tiles the zero-init port accepts). Live C zero-inits on_edge (stan.c:746, F2 gate path). (Q2) 7F0B0914: lastCrossEdge starts as garbage from sp+0x98; reachable write-out when the walk fails with every crossing resolving to prevTile/prevPrevTile (fp never assigned) \u2014 retail then stores garbage into stanSavedColl_pointI; live C zero-inits (stan.c:3290). Both are deterministic-per-context on console (previous frame contents) but not sanely reproducible on a host port. Disposition: keep zero-init; register in docs/fidelity/QUIRKS.md; treat as known bounded divergence source for movement/seam oracle comparisons (tile pick near seams, stanSavedColl_pointI consumers after failed walks). No fix planned \u2014 mitigation IS the zero-init."
+    }
+  ]
+}
