@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P3",
-  "status": "landed",
+  "status": "verified",
   "suspect": [],
   "repro": "Open the watch (pause) inventory page and view the 3D weapon/item model. The port builds its perspective projection with aspect 1.2857143 (9/7) instead of the retail 1.3333334 (4/3), so the rendered item is slightly narrower/taller than on N64. Pixel-parity vs an ares capture is unverified.",
   "evidence": [
@@ -27,6 +27,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_watch_inv_aspect.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/sim_invariance_gate.sh"
     }
   ],
   "history": [
@@ -64,6 +68,13 @@
       "to": "landed",
       "evidence": "tests/test_watch_inv_aspect.c",
       "note": "Fix default-ON. ROM-free ctest watch_inv_aspect asserts both IEEE-754 bit patterns (0x3FAAAAAB fix / 0x3FA49249 legacy). ENV_FLAGS.md regenerated. NOTE: sibling draw_current_hand_item_and_ammo (watch.c) also passes 1.2857143f but is a distinct un-audited function, left untouched."
+    },
+    {
+      "ts": "2026-07-11T22:17:21Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/sim_invariance_gate.sh",
+      "note": "Render-only fix. Full verify green: sim_invariance byte-identical sim hash (render aspect touches no sim byte), 7 tapes byte-exact, ROM-free ctest watch_inv_aspect asserts both IEEE-754 bit patterns. Pixel-parity vs ares deferred (no ares in this env); the guPerspective aspect arg is ASM-settled at 0x3FAAAAAB. Build: /tmp/mgb64-b10fix-build Release."
     }
   ]
 }

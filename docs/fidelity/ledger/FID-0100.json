@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [],
   "repro": "In the solo watch inventory page (non-debug mode), tap the up C-button or up d-pad with the analog stick centered. Retail snap-scrolls up one item (D_800409BC -= 1.0). The port requires the stick to ALSO be pushed up past 0x47 for the snap to fire, so a plain up-button tap no longer snap-scrolls (only the separate hold path at 0.1/frame still advances). GE007 A/B flag not present.",
   "evidence": [
@@ -27,6 +27,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_watch_scroll_gate.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
     }
   ],
   "history": [
@@ -64,6 +68,13 @@
       "to": "landed",
       "evidence": "tests/test_watch_scroll_gate.c",
       "note": "Fix default-ON. ROM-free ctest watch_scroll_gate (tests/test_watch_scroll_gate.c) asserts button-tap-alone snaps (fix) and does not under legacy. ENV_FLAGS.md regenerated."
+    },
+    {
+      "ts": "2026-07-11T22:17:21Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "Full verify green: 7 input tapes replay byte-exact (sim hash unchanged; watch is not opened by any tape so the watch-scroll fix does not perturb sim state), sim_invariance byte-identical (c83e78eabba5be2e), struct/sim_state_hash + ROM-free ctests pass, sim/render separation R1 + timing-lock R2 pass. Build: /tmp/mgb64-b10fix-build Release."
     }
   ]
 }

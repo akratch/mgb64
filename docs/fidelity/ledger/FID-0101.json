@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [],
   "repro": "During character aim-bone posing (g_aimBoneCallback invoked per bone at model.c:3701 and model.c:4012 with the bone index as arg0), the callback is called with arg0==0 for the gun-hand aim bone. Retail computes that bone's aim rotation (gunhand-based shoulder-angle selection); the port returns immediately, so bone 0 receives no aim pose. GE007 A/B flag not present.",
   "evidence": [
@@ -27,6 +27,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_aimbone_dispatch.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
     }
   ],
   "history": [
@@ -64,6 +68,13 @@
       "to": "landed",
       "evidence": "tests/test_aimbone_dispatch.c",
       "note": "Fix default-ON. ROM-free ctest aimbone_dispatch asserts arg0==0 proceeds (fix) / returns (legacy). Render-side bone-matrix posing (not sim state). ENV_FLAGS.md regenerated."
+    },
+    {
+      "ts": "2026-07-11T22:17:21Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "Full verify green: 7 tapes byte-exact INCLUDING combat (dam_combat_guard6, dam_ak47_sustained) which exercise aiming \u2014 confirming the gun-hand aim-bone pose is render-side and perturbs no sim byte (sim/render separation R1 PASS). sim_invariance byte-identical. intro_parse_digest gate PASS (deterministic intro incl. chr.c path). Build: /tmp/mgb64-b10fix-build Release."
     }
   ]
 }
