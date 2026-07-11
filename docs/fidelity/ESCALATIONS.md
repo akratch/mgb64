@@ -47,4 +47,13 @@ Format, one entry per escalation:
   — note that a plain `git push origin main` of current local main WOULD do
   so; the landed guard blocks the archive/bundle paths only. The email scrub
   is on local HEAD either way and shrinks the exposure on the next push.
-- Resolution: OPEN.
+- Resolution: **RESOLVED by owner ruling, 2026-07-11.** The already-public
+  history is accepted as-is — no rewrite/expunge. The boundary is forward-only
+  and mechanized: `.gitattributes export-ignore` is the single source of truth
+  for internal trees; public pushes/releases go ONLY through the guarded
+  publish path (release-ready + history-text guards + strict verify, never a
+  raw `git push origin main`); public releases additionally gate on owner
+  gameplay verification on macOS AND Windows; Apple signing deferred
+  (unsigned macOS builds ship); the PortMaster/GLES target gets a compile
+  validation lane in the release checks. What must never appear in new pushes
+  remains the guard classes: private paths, personal email, credentials.
