@@ -261,9 +261,14 @@ run_route() {
     local kind; kind="$(route_json_field "$rj" compare_kind)"
     [[ -z "$kind" ]] && kind="movement"
 
-    # Latest cached stock capture for this route (git-ignored).
+    # Latest cached stock capture for this route (git-ignored). The `|| true`
+    # is load-bearing: when the route has NO cache dir at all, the unexpanded
+    # glob makes `ls` fail; under macOS /bin/bash 3.2 + pipefail that failing
+    # substitution silently aborted the whole sweep at this assignment (exit 1,
+    # empty log — 2026-07-11 red verify on the first stock-less gate route),
+    # so the rule-9 skip below was never reached.
     local stock
-    stock="$(ls -1t "${CACHE_DIR}/${route}"/*/stock_trace.jsonl 2>/dev/null | head -1)"
+    stock="$(ls -1t "${CACHE_DIR}/${route}"/*/stock_trace.jsonl 2>/dev/null | head -1 || true)"
     if [[ -z "$stock" || ! -f "$stock" ]]; then
         note_route_skip "${route}: no cached stock capture (${CACHE_DIR}/${route}/<hash>/stock_trace.jsonl)"
         return 0
