@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1036 flags** found across the source.
+**1037 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -228,6 +228,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_BBOX_TRACE` | ? |  | 1 |  |
 | `GE007_BBOX_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_BGORDER_PORTAL` | ? |  | 1 |  |
+| `GE007_BG_IMPACT_RETAIL_OOB` | bool | 0 | 1 |  |
 | `GE007_BG_PORTAL_AABB_EXPAND` | ? |  | 1 |  |
 | `GE007_BLEND_AUDIT` | ? |  | 1 |  |
 | `GE007_BLEND_AUDIT_INTERVAL` | ? |  | 1 |  |

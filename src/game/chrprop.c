@@ -37,6 +37,7 @@
 #include "unk_0CC4C0.h"
 #include "ge_debug.h"
 #include "platform/hull_vertex_clamp.h"  /* FID-0096 bbox-hull vertex count */
+#include "platform/bg_impact_guard.h"    /* FID-0097 bg-only bullet-impact gate */
 #ifdef NATIVE_PORT
 #include "gfx_pc.h"
 #endif
@@ -2559,6 +2560,25 @@ static void chraiMaybeQueueForcedGuardHit(struct ShotData *shotdata, s32 hand)
 }
 #endif
 
+/* FID-0097 A/B control (parity-divergence, documented; the port's guard is the
+ * memory-safe faithful default). Retail chraiDefaultWeaponFireHandler (ASM
+ * src/game/chrprop.c:4050-4079) reads g_Textures at texture_index with NO
+ * `>= 0` guard and spawns a bullet-impact explosionCreate unless hitSound is
+ * HIT_WATER(5)/HIT_SNOW(6); on a bg-only hit texture_index is -1, so retail
+ * performs an OOB read of g_Textures[-1]. The port cannot reproduce that fixed
+ * N64 garbage byte (g_Textures[] is a real C array here, src/game/image.c:318),
+ * so it keeps a `texture_index >= 0` guard. GE007_BG_IMPACT_RETAIL_OOB (opt-in,
+ * default OFF) spawns the effect for texture_index < 0 (the "retail spawns"
+ * hypothesis) WITHOUT reading OOB. */
+static int portBgImpactRetailOob(void)
+{
+    static int s_retail = -1;
+    if (s_retail < 0) {
+        s_retail = ge_env_bool("GE007_BG_IMPACT_RETAIL_OOB", 0);
+    }
+    return s_retail;
+}
+
 void chraiDefaultWeaponFireHandler(s32 hand) {
     struct ShotData shotdata;
     coord3d gun_pos_raw;
@@ -3113,13 +3133,18 @@ check_weapon:
     if (do_effects != 0) {
         recall_joy2_hits_edit_flag(weapon_id, impact_pos, texture_index);
 
-        if (texture_index >= 0) {
-            hit_type_byte = g_Textures[texture_index].hitSound;
-            if (hit_type_byte != HIT_WATER && hit_type_byte != HIT_SNOW) {
-                rooms[0] = (u8)best_room;
-                rooms[1] = 0xFF;
-                explosionCreate(NULL, impact_pos, tile, 1, 0, get_cur_playernum(), rooms, 0);
-            }
+        /* FID-0097: retail reads g_Textures[texture_index].hitSound and spawns a
+         * bullet-impact effect unless HIT_WATER/HIT_SNOW (ASM chrprop.c:4050-4079).
+         * On a bg-only hit texture_index is -1, so retail OOB-reads g_Textures[-1];
+         * the port guards the read as the memory-safe default (index >= 0), and
+         * only reads g_Textures for a valid index. GE007_BG_IMPACT_RETAIL_OOB
+         * spawns for index < 0 (the "retail spawns" hypothesis) without reading
+         * OOB. The sentinel 0 for index < 0 is ignored by the helper. */
+        hit_type_byte = (texture_index >= 0) ? g_Textures[texture_index].hitSound : 0;
+        if (bgImpactShouldSpawn(texture_index, hit_type_byte, portBgImpactRetailOob())) {
+            rooms[0] = (u8)best_room;
+            rooms[1] = 0xFF;
+            explosionCreate(NULL, impact_pos, tile, 1, 0, get_cur_playernum(), rooms, 0);
         }
     }
 

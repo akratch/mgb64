@@ -723,6 +723,18 @@ if(BUILD_TESTING)
     target_include_directories(test_hull_vertex_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME hull_vertex_clamp COMMAND test_hull_vertex_clamp)
 
+    # Background-only bullet-impact spawn gate — ROM-free unit test (FID-0097):
+    # the port keeps a texture_index>=0 guard around the retail g_Textures[-1] OOB
+    # read as the memory-safe default; GE007_BG_IMPACT_RETAIL_OOB opts into
+    # spawning for index<0 without reading OOB. Fails if the default guard drops
+    # or the water/snow skip is lost.
+    add_executable(test_bg_impact_guard
+        "${CMAKE_SOURCE_DIR}/tests/test_bg_impact_guard.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/bg_impact_guard.c"
+    )
+    target_include_directories(test_bg_impact_guard PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME bg_impact_guard COMMAND test_bg_impact_guard)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
