@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1037 flags** found across the source.
+**1038 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |

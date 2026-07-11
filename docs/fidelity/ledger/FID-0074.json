@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P1",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/chrobjhandler.c:37607"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/chrobjhandler.c:38216"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0067-0074-batch3.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:38029"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/chrobj_detonate.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_chrobj_detonate.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/chrobjhandler.c:38216",
       "note": "FIVE divergences re-derived from GLOBAL_ASM (chrobjhandler.c:38027-38457, retail 7F04E108) vs live C (37425-37667), each independently instruction-verified. (D1) MISSING PROPDEF_AMMO SALVAGE SPAWN: retail type==20 && objGetDestroyedLevel==1 block (ASM 38215-38326) calls randomGetNext()%13 (divu at 38227-38229), circularly scans the 13 {u16 modelnum,u16 quantity} slot pairs at obj+0x80 (lhu 0x82 quantity blezl-skip 38235-38237; lhu 0x80 modelnum !=0xFFFF 38238-38241), ammocrateAllocate (38244), stamps blank_07_object magazine, sets ammoType=(i+1==2)?1:i+1, reparents as child prop -> dropped by end-of-fn child loop. Port post-damage switch (C 37607-37656) has NO PROPDEF_AMMO case; ammocrateAllocate is only referenced from the dead PORT_FIXME_STUBS branch (37894). Also skips retail's randomGetNext -> RNG stream desync on every ammo-box destruction. (D2) ARMOUR AMOUNT INVERTED: retail type==21 (ASM 38412-38431): objGetDestroyedLevel!=0 -> bnezl 38418 with delay mtc1 zero,f8 -> amount(0x84)=0.0; NOT destroyed -> amount = [0x80]*([0x74]-[0x70])/[0x74] (38420-38427). Port C 37646-37652 is exactly backwards: destroyed_now -> formula, else -> 0.0. Player-visible: any nonlethal damage zeroes an armour pickup's value. (D3) UNARMED NON-COLLECTABLE GATE INVERTED: retail proceeds to damage iff (flags & 0x01000000)==0 (sll ,,7 + bgezl 38070-38072, bit24 CLEAR -> proceed); port C 37467 'else if (!(obj->flags & PROPFLAG_01000000)) return' proceeds only when bit SET. Live via ITEM_UNARMED landing damage chrobjhandler.c:11997. Collectable side (bit 0x00800000, ASM 38063-38066 = C 37453) is correct. (D4) DROPPED ARMED-PATH INVINCIBLE EARLY-OUT: retail returns first thing on the armed path when flags&0x00020000 (sll ,,0xe + bltzl 38077-38079), BEFORE type-7/8 handling; port has no such check -> INVINCIBLE type-8 explosive weapon still gets timer=0 (C 37486) and INVINCIBLE type-7 explosive crate still gets flags|=0x10000000 (C 37503); objIsMortal (37364) masks only the non-collectable non-7/8 path. (D5) TYPE-7/8 NON-MATCHING FALL-THROUGH: retail type 8 weaponnum not in {26,27,29,28,86,87,33,34} returns (bnel 38102); type 7 ammoType not in {5,6,7,8,9,11,15,16,19} returns (bne 38128 -> exit L4E70C which is the plain epilogue, verified 38450-38456); port falls out of the if (C 37481-37517) and continues to objIsMortal+damage -> FORCEMORTAL dropped weapons / non-explosive crates take armed damage retail can never apply. Callers: chr.c:10076, chrai.c:3200, chrobjhandler.c:9725/11997/37299/37379 (explosions.c:1297, bondview.c:15308). DO NOT fix from this note; re-derive from ASM. Fix polarity default-ON (GE007_NO_* opt-outs); D1 fix must reproduce the randomGetNext call for stream parity."
+    },
+    {
+      "ts": "2026-07-11T23:01:06Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0067-0074-batch3.md",
+      "note": "Confirmed port-defect P1: 5-divergence cluster in maybe_detonate_object (native NONMATCHING body) vs retail. Headline = armour vest zeroed by one non-lethal shot."
+    },
+    {
+      "ts": "2026-07-11T23:01:06Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/chrobjhandler.c:38029",
+      "note": "All 5 re-derived instruction-level from GLOBAL_ASM maybe_detonate_object (VRAM 0x7F04E108, chrobjhandler.c:38029-38459): D1 salvage spawn+randomGetNext gate (7F04E3A8-540), D2 armour polarity (7F04E688-6C8), D3 unarmed gate (7F04E1A4 sll7+bgezl: proceed iff 0x01000000 CLEAR), D4 armed INVINCIBLE early-out (7F04E1BC sll0xe+bltzl on 0x20000), D5 type-7/8 non-explosive unconditional return."
+    },
+    {
+      "ts": "2026-07-11T23:01:06Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/chrobj_detonate.c",
+      "note": "Fix behind master negative control GE007_NO_DETONATE_OBJECT_FIX (default-ON). Pure helpers factored to chrobj_detonate.{h,c}; real maybe_detonate_object calls them."
+    },
+    {
+      "ts": "2026-07-11T23:01:06Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_chrobj_detonate.c",
+      "note": "All 5 fixed (commit 301e768). ROM-free lane chrobj_detonate exercises D1-D5 both flag sides (fail-on-revert). Armour both-sides: fix-ON survived vest=175.0, fix-OFF=0.0; destroyed fix-ON=0.0, fix-OFF=-50.0. gate_routes_smoke(6)+tape_regression(7)+combat_route byte-exact -> no baseline shift. verify_all reds all env/pre-existing: env_reference FIXED via ENV_FLAGS regen; intro_parse_digest = /tmp-build git artifact; regression_test = fresh-worktree missing baselines (spawn+render_health PASS x20); uncap_purity_gate_2 = pre-existing flaky render->sim leak (prior fb9bece build w/o FID-0074 also failed on a different level)."
     }
   ]
 }
