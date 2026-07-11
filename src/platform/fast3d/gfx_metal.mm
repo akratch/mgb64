@@ -1015,6 +1015,43 @@ static bool mtl_msaa_force_off(void) {
     return force != 0;
 }
 
+/* FID-0019 negative control (P1b): GE007_NO_METAL_SHADOW_DEPTH_CLAMP=1 reverts
+ * mtl_shadow_encode to its pre-fix (dc55008) behavior — the depth-only shadow
+ * pass leaves the fresh encoder in Metal's default MTLDepthClipModeClip, so a
+ * boundary caster whose light-space z runs past the shadow ortho's [0,4*radius]
+ * range is near/far-CLIPPED out of the shadow map here, where GL's process-global
+ * GL_DEPTH_CLAMP (gfx_opengl.c:3734) clamps it instead. Off (default) = fix active
+ * (clamp), matching GL. Metal-only: the default GL backend is unaffected either
+ * way, so tools/sim_invariance_gate.sh and the GL faithful path stay byte-identical
+ * (charter rule 5). A/B: metal_shadow_clamp_regression.sh. */
+static bool mtl_shadow_depth_clamp_disabled(void) {
+    static int force = -1;
+    if (force < 0) {
+        const char *e = getenv("GE007_NO_METAL_SHADOW_DEPTH_CLAMP");
+        force = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return force != 0;
+}
+
+/* FID-0019 negative control (P1b): GE007_NO_METAL_SHADOW_DUMMY_DEPTH=1 reverts the
+ * sun-shadow receiver fallback (mtl_draw_triangles) to its pre-fix (73bbdac)
+ * behavior — binding the live scene depth attachment (s_scene_depth) as the
+ * shadow-map fragment sampler when s_shadow_depth is nil. That is a read-while-
+ * write hazard: s_scene_depth is THIS encoder's live depth ATTACHMENT for the
+ * same draw. Off (default) = fix active (cleared 1x1 dummy = "fully lit", matching
+ * GL's gfx_opengl.c:1310 out-of-frustum rule). This fallback is unreachable in
+ * normal play (SHADER_OPT_SUN_SHADOW is only set when g_pc_shadow_map_ready=1,
+ * which requires s_shadow_depth non-nil — see mtl_render_shadow_map), so the flag
+ * only changes behavior under a forced invariant break. Metal-only. */
+static bool mtl_shadow_dummy_depth_disabled(void) {
+    static int force = -1;
+    if (force < 0) {
+        const char *e = getenv("GE007_NO_METAL_SHADOW_DUMMY_DEPTH");
+        force = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return force != 0;
+}
+
 /* Effective, device-clamped scene-pass sample count for Video.MSAA (1 = off).
  * Reads the live setting each call (Video.MSAA is SETTING_SCOPE_LIVE) so a
  * runtime toggle re-sizes the targets next frame. The device-support mask is
@@ -1859,8 +1896,10 @@ static void mtl_shadow_encode(id<MTLRenderCommandEncoder> enc, id<MTLBuffer> vbu
      * already in effect during GL's shadow pass too. Metal's depth-clip mode is
      * per-encoder (default Clip), so without this call boundary casters get
      * near/far-clipped here where GL clamps them — mirror the scene encoder
-     * (mtl_open_scene_encoder, :1184). */
-    [enc setDepthClipMode:MTLDepthClipModeClamp];
+     * (mtl_open_scene_encoder, :1184). GE007_NO_METAL_SHADOW_DEPTH_CLAMP=1
+     * (negative control) skips it to reproduce the pre-fix clip. */
+    if (!mtl_shadow_depth_clamp_disabled())
+        [enc setDepthClipMode:MTLDepthClipModeClamp];
     [enc setVertexBuffer:vbuf offset:0 atIndex:0];
     [enc setVertexBytes:sm16 length:16 * sizeof(float) atIndex:1];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
@@ -3564,8 +3603,14 @@ static void mtl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_v
                                 "shadow-map resource this frame; using cleared dummy "
                                 "(fully-lit) fallback\n");
             }
-            mtl_ensure_shadow_dummy();
-            smap = s_shadow_dummy_depth;
+            if (mtl_shadow_dummy_depth_disabled()) {
+                /* Negative control: revert to the pre-fix read-while-write hazard
+                 * (bind the live scene depth attachment as the shadow sampler). */
+                smap = s_scene_depth;
+            } else {
+                mtl_ensure_shadow_dummy();
+                smap = s_shadow_dummy_depth;
+            }
         }
         if (smap != nil && s_shadow_cmp_sampler != nil) {
             [s_enc setFragmentTexture:smap atIndex:5];                /* §4.4: unit 5 */

@@ -804,6 +804,16 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # gap). Reverting the skip logic makes the hatch a no-op -> this lane reddens.
     add_port_validation_smoke(port_intro_weapon_buf_fail_smoke intro_weapon_buf_fail_smoke.sh 300)
     add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
+    # FID-0019 (P1b): Metal sun-shadow path guard. The renderer_parity smoke renders
+    # only shadow-FREE scenes, so it never exercised the M3.2 shadow fixes. This lane
+    # boots the native Metal backend with sun shadows on Dam and asserts the shadow
+    # path is live (shadow map rendered + non-trivial), the 73bbdac nil-fallback stays
+    # unreachable in normal play, and both P1b negative-control flags
+    # (GE007_NO_METAL_SHADOW_DEPTH_CLAMP / _DUMMY_DEPTH) are wired. Metal-only: SKIPs
+    # cleanly on non-Apple hosts and when no Metal device is available. The clamp's
+    # pixel effect (near-plane pancaking) is inert on the reachable scene (documented,
+    # not asserted -- FID-0019 stays open for a hand-crafted pancaking scene).
+    add_port_validation_smoke(port_metal_shadow_clamp_regression metal_shadow_clamp_regression.sh 300)
     add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360
         --msaa-values 0
     )
