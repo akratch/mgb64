@@ -175,7 +175,12 @@ both chains forward from LOCK:
    combat (native bursts larger). Because the value streams diverge from the
    first frame, downstream schedules decohere and per-frame counts wander —
    but a persistent nonzero MEAN bias cannot come from schedule noise over an
-   identical consumer set; it is a consumer-set or cadence-law difference.
+   identical consumer set; it is a consumer-set or cadence-law difference. ⚠
+   **CORRECTED in §9.3/§9.2**: the +2.1/frame figure above is the same
+   round-1 RDRAM-writeback-smeared measurement as item 1's stale "15"; the
+   PC-trace ground truth puts the idle-window mean bias at +1.22/frame
+   (§9.2), entirely concentrated in the `chrCheckTargetInSight` perception
+   class (+1.48/f), with every other consumer call-for-call matched.
 3. **Native side of the locked frame fully attributed** (deterministic rerun
    with `GE007_TRACE_RNG_CALLS`, calls 699–711 = the 13 draws from LOCK):
    `shuffle_player_ids`×3 → `bheadUpdateIdleRoll` (via `bheadUpdate`)×4 →
@@ -220,9 +225,11 @@ takes effect on the next ares oracle rebuild. The movement-record `rng` block
 1. **Retail callsite attribution (the decisive tool):** extend the ares patch
    with a `randomGetNext` PC-hook (breakpoint at the function's entry VRAM,
    log `$ra` + call index per gameplay frame). With it, diff the retail
-   locked-frame consumption order (15 draws) against native's fully-attributed
-   13 (§6.3) and name the +2 idle consumer directly. This closes the
-   remaining attribution gap in one capture. **DONE — see §9.**
+   locked-frame consumption order (15 draws) ⚠ **stale round-1 figure,
+   corrected to 12 in §9.3/§9.1 (RDRAM-writeback smear, not the true per-call
+   count)** against native's fully-attributed 13 (§6.3) and name the +2 idle
+   consumer directly. This closes the remaining attribution gap in one
+   capture. **DONE — see §9.**
 2. **Per-frame seed pinning refinement:** script up to 64 per-frame seed
    events on both sides (`GE007_AUTO_RNG_SEED_SCRIPT="40:S,41:S,…"`,
    `MGB64_ARES_RNG_SEED_SCRIPT` same, offsetting the known 1-frame skew of the
@@ -288,12 +295,18 @@ address-encoding `sub_GAME_7F......` names. 40-frame locked idle window
 | `0x7F05E3CC` | weapon-sway syncchange class (gun.c:2069 region) | `bgunCalculateBlend`/`gunSetBondWeaponSway` | 0.05/f | 0.22/f |
 | `0x7F029FE0` | **`chrCheckTargetInSight` probabilistic gate** (chrlv.c:5749-5755, `+0x270` from US `0x7F029D70`) | `chrCheckTargetInSight<-ai` | **3.08/f** | **1.60/f** |
 
-No retail callsite lacks a native counterpart and vice versa. Totals over the
+No retail callsite lacks a native counterpart and vice versa (scoped to this
+40-frame locked idle window; the full trace has 124 distinct retail
+callsites, only these 9 classes fire inside the window). Totals over the
 window: stock 14.07/f vs native 12.85/f (+1.22 stock); adjacent windows:
-pre-lock 15.90 vs ~14.33, later (walking) 15.80 vs 15.61. The mean bias is
-real but is **entirely concentrated in the perception-gate class** (+1.48/f);
-every other consumer is call-for-call matched (the sway class contributes
-−0.17/f the OTHER way, Bond-sway state phase).
+pre-lock 15.90 vs ~14.33, later (walking) 15.80 vs 15.61 (+0.19/f — the
+"+1.2–1.5/frame" figure below is a locked-idle-window statement, not a
+universal one). The mean bias is real but is **entirely concentrated in the
+perception-gate class** (+1.48/f); every UNCONDITIONAL consumer is
+call-for-call matched (the sway class contributes −0.17/f the OTHER way,
+Bond-sway state phase; `ai`/`chrlvTickAnim`/`chrlvTickStand` carry small
+deltas of their own since they are also per-guard conditional, just not
+literally call-for-call identical).
 
 ### 9.3 Divergence statement (the “+2” named)
 
@@ -305,11 +318,21 @@ nothing is missing, extra, or reordered. The draw is CONDITIONAL on guard–Bond
 geometry (vision cone ±110°, `visionrange`/200u floor, `
 fogGetScaledFarFogIntensitySquared()` gate): it fires at a different RATE
 because the PATROLLING guard population's state differs between the two runs.
-At aligned rel ticks in the locked window, 27+ static Dam guards match
-**byte-identically** (`pos` delta 0.0) while the patrollers (chrnum 2, 39–45)
-sit **300–2000 units apart** with different phase (e.g. chr 45 walks 295u
+At aligned rel ticks in the locked window (41 aligned tick pairs across the
+full 36-guard roster), **25** Dam guards match **byte-identically** (`pos`
+delta 0.0). Two more are close but NOT byte-identical: chr 28 (≤1.71u) and
+chr 6 (a constant 3.95u — the known FID-0054 offset). The remaining **9**
+diverge >100u, chrnum **{2, 3, 39, 40, 41, 42, 43, 44, 45}**, spanning
+**127–2003 units** apart at aligned ticks (chr 43 nearest at 127–333u, chr 45
+farthest at 1831–2003u), with different phase (e.g. chr 45 walks 295u
 natively while parked on stock; chr 39/40 walk 633–685u on stock vs 150u
-natively). Patrol phase is a function of the whole pre-route history
+natively). ⚠ **chr 3 (~620u apart) is a distinct sub-symptom, not patrol
+phase:** it is STATIONARY on BOTH sides (walks 2.6u stock / 0.0u native) — a
+divergent SPAWN/STATION position, not a divergent patrol trajectory, so the
+"patrol phase" mechanism below explains the other 8 but not chr 3. Flag chr 3
+explicitly as a FID-0054-relevant target distinct from the patrol set: its
+fix is a spawn/station-position parity check, not a patrol-cadence one.
+Patrol phase (chr 2, 39–45) is a function of the whole pre-route history
 (menu-boot vs direct-boot + different natural boot seeds consuming
 `rand()%120+180` wallcounts / `rand()%5+14` sleeps before the lock) — i.e.
 upstream SIM STATE, unfixable at the RNG layer and unremovable by a mid-route

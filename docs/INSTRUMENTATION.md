@@ -1236,10 +1236,23 @@ the `GLOBAL_ASM` block in `src/random.c`; override with
 `MGB64_ARES_RNG_PC_HOOK=ADDR` for non-US layouts) and writes one JSONL line per
 call: call index `i`, guest `$ra` (caller PC = `ra - 8` for a `jal`),
 `g_randomSeed` BEFORE the call's step, `g_GlobalTimer`, and the VI frame.
-Consecutive lines must be exactly one PRNG step apart unless a seed write
-(scripted lock or `randomSetSeed`) landed between them, so the log is
-self-validating against missed or duplicated calls. Default off; the hook only
-reads guest state and never adds RNG calls.
+Validation is NOT a per-line "exactly one PRNG step apart" invariant: the
+RDRAM-sampled seed lags the guest CPU's dcache writeback by a few draws and
+catches up in bursts, so most consecutive lines sample the SAME seed (0 steps
+apart) and a single-pair gap can span into the hundreds. The log is instead
+self-validating as a whole, against the LOCK chain established by a seed
+write (scripted lock or `randomSetSeed`): every sampled seed after the write
+must lie on that chain in monotone order, the lag (line offset minus chain
+position) must be negative NOWHERE, and the lag must return to exactly 0 at
+every frame-boundary writeback catch-up point — a missed or duplicated call
+would force a negative lag at one of those catch-up points. See derivation
+`docs/fidelity/derivations/FID-0063-rng-phase.md` §9.1 for the measured lag
+distribution this is based on. Default off; the hook only reads guest state
+and never adds RNG calls. Entry-PC counting assumes the hooked address is
+never block-interior code (true for `randomGetNext`, empirically confirmed by
+this same chain/lag analysis); re-run the chain/lag validation whenever
+`MGB64_ARES_RNG_PC_HOOK` retargets the hook to a different address, since
+nothing else checks that assumption for an arbitrary target.
 
 `tools/rom_oracle_routes/dam_regular_glass_shatter_rng_isolation_probe.json`
 uses the call-level native seed control as an explicit renderer-isolation route:

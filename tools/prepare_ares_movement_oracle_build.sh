@@ -375,8 +375,15 @@ struct OracleState {
   bool rngSeedRepeat = false;
   /* FID-0063 randomGetNext caller-PC trace (MGB64_ARES_RNG_PC_TRACE, default off).
    * One JSONL line per retail randomGetNext() ENTRY: call index, $ra (caller),
-   * g_randomSeed BEFORE the step (chain-validatable offline: consecutive seeds
-   * must be exactly one PRNG step apart), g_GlobalTimer, and the VI frame.
+   * g_randomSeed BEFORE the step, g_GlobalTimer, and the VI frame.
+   * Chain-validatable offline, but NOT via a per-line "one PRNG step apart"
+   * check: the RDRAM-sampled seed lags the guest dcache writeback by a few
+   * draws and catches up in bursts, so most consecutive lines repeat the same
+   * seed (0 steps apart) and single-pair gaps reach into the hundreds. The
+   * actual (sufficient) check is a monotone LOCK-chain walk with nonnegative
+   * lag (line offset - chain position) everywhere and lag == 0 at every
+   * frame-boundary catch-up point; see derivation
+   * docs/fidelity/derivations/FID-0063-rng-phase.md sec 9.1.
    * The hook itself lives in cpu.cpp (dispatch PC compare against
    * mgb64OracleRngPcHookAddress); it never CALLS randomGetNext and never
    * writes guest memory. */
@@ -4152,12 +4159,18 @@ struct OracleState {
   }
 
   /* FID-0063: one line per retail randomGetNext() entry. `seed` is
-   * g_randomSeed BEFORE this call's step, so consecutive lines must be exactly
-   * one PRNG step apart unless a seed WRITE (randomSetSeed / scripted lock)
-   * landed between them — the offline analyzer uses that invariant to prove
-   * the log captured every call. `ra` is the guest $ra at entry (caller PC =
-   * ra - 8 for a jal). `global` is g_GlobalTimer at entry (exact sim-tick
-   * attribution, no VI-window smear). */
+   * g_randomSeed BEFORE this call's step. This is NOT a per-line "exactly one
+   * PRNG step apart" log: the RDRAM-sampled seed lags the guest dcache
+   * writeback by a few draws and catches up in bursts, so most consecutive
+   * lines repeat the same seed and single-pair gaps reach into the hundreds
+   * (measured: docs/fidelity/derivations/FID-0063-rng-phase.md sec 9.1). The
+   * offline analyzer instead proves completeness against the LOCK chain
+   * established by a seed WRITE (randomSetSeed / scripted lock): every
+   * sampled seed after the write is on that chain in monotone order, with
+   * nonnegative lag (line offset - chain position) everywhere and lag == 0 at
+   * every frame-boundary catch-up point. `ra` is the guest $ra at entry
+   * (caller PC = ra - 8 for a jal). `global` is g_GlobalTimer at entry (exact
+   * sim-tick attribution, no VI-window smear). */
   auto rngPcCall(u64 ra) -> void {
     if(!rngPcTrace) return;
     rngPcCallIndex++;
