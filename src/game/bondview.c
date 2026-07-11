@@ -7339,7 +7339,11 @@ void bondviewFrozenCameraTick(u16 buttons, u16 oldbuttons, struct coord3d *pos, 
          * this tick. GE007_NO_CINEMA_INTRO_FIX=1 restores the old fallback
          * for A/B (see bondview_r.c's companion D2 gate fix). Untestable
          * against retail data: every retail stage ships swirl data (T3), so
-         * g_IntroSwirl is never NULL here on real content. */
+         * g_IntroSwirl is never NULL here on real content. NOTE: unlike the
+         * raw getenv it replaced, port_env_set caches the first read for the
+         * process lifetime (shared with bondview_r.c's site) -- fine here
+         * because the branch is unreachable on retail content and nothing
+         * mutates the env mid-process. */
         if (!g_IntroSwirl) {
             if (port_env_set("GE007_NO_CINEMA_INTRO_FIX",
                              "Restore the old swirl-no-data intro fallback (skip to FP) "
