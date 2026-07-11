@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P1",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/chrobjhandler.c:37607"
   ],
@@ -29,6 +29,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_chrobj_detonate.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:chrobj_detonate"
     }
   ],
   "history": [
@@ -66,6 +70,13 @@
       "to": "landed",
       "evidence": "tests/test_chrobj_detonate.c",
       "note": "All 5 fixed (commit 301e768). ROM-free lane chrobj_detonate exercises D1-D5 both flag sides (fail-on-revert). Armour both-sides: fix-ON survived vest=175.0, fix-OFF=0.0; destroyed fix-ON=0.0, fix-OFF=-50.0. gate_routes_smoke(6)+tape_regression(7)+combat_route byte-exact -> no baseline shift. verify_all reds all env/pre-existing: env_reference FIXED via ENV_FLAGS regen; intro_parse_digest = /tmp-build git artifact; regression_test = fresh-worktree missing baselines (spawn+render_health PASS x20); uncap_purity_gate_2 = pre-existing flaky render->sim leak (prior fb9bece build w/o FID-0074 also failed on a different level)."
+    },
+    {
+      "ts": "2026-07-11T23:50:00Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:chrobj_detonate",
+      "note": "Verified on main 369c295: regression lane test_chrobj_detonate PASS with structural fail-on-revert (asserts faithful!=legacy on all 5 divergences D1-D5); test_sim_state_hash PASS = sim byte-identical (dormant on golden tapes); test_struct_layout PASS; Fable review APPROVE 0C/2I/2m, reviewer ASM-confirmed D1 salvage RNG draw = exactly one at retail 7F04E3C8 unconditional %13, correct FID-0063 direction. All 5 behind GE007_NO_DETONATE_OBJECT_FIX."
     }
   ]
 }
