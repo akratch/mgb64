@@ -1,5 +1,95 @@
 # Release Notes
 
+## v0.4.0-alpha.3 — faithful fire, rumble, solo pause, handheld polish (pre-release)
+
+> **Pre-release.** The v0.4.0 alpha series is an in-progress preview on the road
+> to v0.4.0, published for testing. Still bring-your-own-ROM; the
+> automation/validation path is unchanged.
+
+- 🔫 **Authentic full-auto fire cadence, on by default.** Full-auto weapons now
+  fire at the N64's original tick-scaled rate (`Input.FireRateAuthentic`).
+- 🎮 **Rumble.** The game's Rumble Pak signal now drives controller vibration
+  (`Input.Rumble`, tunable with `Input.RumbleIntensity`).
+- ⏸️ **Real single-player pause.** Opening the in-game overlay in solo play now
+  freezes the simulation instead of letting it keep running under the menu.
+- 📀 **Keyboard-free ROM selection.** The launcher auto-scans for your ROM and
+  adds an in-app browser, so you can get in with a controller alone.
+- 🎛️ **Friendlier settings.** A dev/diagnostic "advanced" tier keeps the common
+  options uncluttered, alongside per-tab "Reset to defaults", inline help, and
+  plain-language descriptions.
+- 🕹️ **More controllers, more screens.** A bundled controller database is loaded
+  before pads are opened, and `UI.Scale` / `UI.LauncherFullscreen` make the UI
+  readable on handhelds. A PortMaster/handheld (GLES) build target also landed as
+  a community contribution.
+- 🎯 **Fidelity fixes.** The Automatic Shotgun fires through its correct path,
+  thrown sticky projectiles clamp cleanly on wall hits, glass shards use the
+  retail shard scale, the Metal backend honors `Video.MSAA`, and the ammo-total
+  HUD restores its retail multiplayer behavior.
+- 🧪 **Opt-in visual experiments.** An early, default-off scene-decoration /
+  modern-mesh preview for a single level — a work-in-progress showcase, not a
+  gameplay change.
+
+## v0.4.0-alpha.2 — controller-first, Windows-native (pre-release)
+
+- 🎮 **Play from the couch.** Full gamepad navigation for the launcher and the
+  in-game overlay, rebindable player-1 buttons, names for all 21 SDL controller
+  buttons, and rebinds that persist between sessions. The overlay toggles on
+  Back/View while Start stays the N64 Start.
+- 🪟 **Runs on a stock Windows install.** The Windows `.exe` statically links the
+  GCC runtimes (no extra DLLs to chase), launches cleanly as a GUI app with a
+  real icon and version info, writes a diagnostic log, and ships with an
+  install/setup guide in the portable `.zip`. Crashes now produce real `[CRASH]`
+  diagnostics via structured exception handling, and the stall watchdog runs on
+  Windows too.
+- 🔔 **Update check.** An opt-in `Game.CheckForUpdates` shows your running
+  version and a banner when a newer release is available.
+- 🎬 **Fewer blank cinematic shots.** The establishing-camera portal walk is
+  decoupled from the simulation and on by default, so intro/outro/death-cam shots
+  that frame away from Bond render their scenery instead of bare sky. Post-intro
+  movement also works correctly at the swirl→first-person handoff.
+- 🖼️ **Real app branding** across macOS, Windows, and Linux, and release tooling
+  gained Developer ID signing/notarization support.
+
+## v0.4.0-alpha.1 — weapon & pickup fixes, intro fidelity, hardening (pre-release)
+
+- 🔫 **Weapon fixes.** The tank cannon fires one shell per trigger press instead
+  of full-auto, and the Cougar Magnum and Grenade Launcher fire-rate floor is
+  restored.
+- 🎒 **Pickup fixes.** A magazine pickup grants that clip's real ammunition
+  (previously it could hand out remote mines), and a multi-ammo crate gives the
+  authored quantity per slot.
+- 🎬 **Intro fidelity.** Bond's head is no longer overwritten by the intro
+  weapon, he plays his scripted intro animation with root motion, and he stays
+  grounded through the intro swirl instead of hovering.
+- 🔦 **Muzzle flash fixed.** Forced room fog no longer tints the first-person
+  muzzle flash.
+- 🕹️ **Input feel.** A radial dead-zone and rescale for the movement stick, and
+  mouse-wheel weapon cycling that advances exactly one weapon per notch.
+- 🛡️ **Stability & rendering hardening.** A simulation stall watchdog (heartbeat
+  plus a forensic dump), HUD ammo-icon fallbacks and a health readout,
+  `FrameCap=display` paced to 60 Hz so the sim can't run too fast, and a batch of
+  renderer robustness fixes (grow-on-demand color-combiner and texture pools,
+  capped display-list recursion, guarded allocators, native Metal minimap).
+
+## v0.3.2 — repository quality, Windows crash fix, license correction
+
+- 🪟 **Windows: no more crash on load.** MinGW/GCC defaulted to a struct-packing
+  mode that repacked the game's N64-layout structures and desynced them from the
+  ROM data read through them, crashing on level load. The engine now builds with
+  the matching layout on every platform (byte-identical on macOS/Linux), so
+  Windows parses the data correctly.
+- 🔫 **AR33 (M16) and RC-P90 fire full-auto again.** Both are full-auto on the
+  N64 original, but the port had grouped them with the semi-auto pistols; they
+  are now routed to the machine-gun firing group the retail game assigns them to.
+- 📄 **Licensing correctness.** The vendored Fast3D renderer's upstream license
+  was corrected from MIT to its actual modified BSD-2-Clause (© 2020 Emill,
+  MaikelChan) and reconciled verbatim against upstream; the port's prebuilt
+  binaries are asset-free and satisfy its binary-redistribution clause.
+- 🧹 **Repo quality.** Navigable docs/tools indexes, a generated drift-gated
+  environment-flag reference, a one-command local CI runner, a hardened ROM DMA
+  bounds check, and new ROM-free test guards — with the internal design/roadmap
+  notes moved out of the public tree.
+
 ## v0.3.1 — Remote Mine detonator fix
 
 A focused gameplay-correctness patch.
@@ -43,7 +133,7 @@ the automation/validation path is unchanged (byte-identical).
   `Video.PerPixelLight` / `GE007_PERPIXEL_LIGHT` (**default off** — the faithful
   path is byte-identical).
 
-## Unreleased — pre-ship hardening
+## v0.2.1 — pre-ship hardening
 
 A stability/fidelity pass on top of v0.2.0: a measured faithfulness pass on the
 level intro/outro cinematics (below), a rendering-correctness fix, a one-time
