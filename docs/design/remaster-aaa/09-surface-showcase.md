@@ -190,7 +190,9 @@ the generated spruces).
   photoscan currently outclasses them); normal-mapped + per-pixel-lit modern
   materials (W1 sun integration); **prop-DL substitution through
   G_MODERNMESH** — the path to replacing crates/mast/weapon models with HD
-  assets driven by the game's own matrices.
+  assets driven by the game's own matrices — now fully specified (hook points,
+  sim-coupling proof, task plan) in
+  [10-asset-replacement-architecture.md](10-asset-replacement-architecture.md).
 - **Character/dynamic texture uploads**: the settex hook pays the HD decode on
   every upload; static room geometry uploads once, animated characters do not.
   A future loader-side decoded-PNG cache would make character HD viable.

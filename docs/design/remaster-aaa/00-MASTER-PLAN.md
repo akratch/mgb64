@@ -80,6 +80,12 @@ task breakdown with IDs/files/acceptance-commands/estimates → milestones → r
 | **W7** | [07-multiplayer.md](07-multiplayer.md) | 3–4P split-screen hardening + pane-correct HUD/post-FX + 4-pane 60 fps budget; then deterministic-lockstep netplay (the sim-hash work *is* the state inventory), staged loopback → LAN → rollback verdict → internet beta. | **~100 jd (≈20 jw)** |
 | **W8** | [08-engineering-foundation.md](08-engineering-foundation.md) | The shipping machine: branch merge-train to `main`, Metal-default-on-macOS decision path, signed/notarized `.app`, macOS CI lane + PORT_STRICT cleanup, Metal perf census, crash diagnostics, release process. | **~66 jd (≈13 jw)** |
 
+Two later additions extend the set: **[09-surface-showcase.md](09-surface-showcase.md)**
+(W9 — the Surface 1 AAA testbed: curated HD pack + the SceneDecor/`G_MODERNMESH`
+modern render path, shipped) and **[10-asset-replacement-architecture.md](10-asset-replacement-architecture.md)**
+(W10 — the game-wide 1:1 asset-replacement architecture: sim-coupling ledger,
+prop/character/room swap design, keying doctrine, asset buy list, task plan).
+
 **Program total: ≈ 690 junior-days ≈ 138 junior-weeks** (sum of the docs' stated totals:
 90+100+94+78+65+96+100+66 = 689 base; 697 if W2's conditional hash-key loader is needed).
 With a squad of **6 juniors + 2 seniors** (reviews, unblocking, the hard 20%):
