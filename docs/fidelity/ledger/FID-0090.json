@@ -1,0 +1,27 @@
+{
+  "id": "FID-0090",
+  "title": "sub_GAME_7F0AF808 (findSomeTile): tile-size advance indexes wrong tail nibble (STAN_POINT_COUNT bits0-3 vs retail pointCount bits12-15)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/stan.c:1753"
+  ],
+  "repro": "audit: asm_audit.py entry sub_GAME_7F0AF808 (retail 7F0AF808). ASM stan.c:1802-1878 vs live NATIVE_PORT C 1731-1757. LATENT/dead-code: the function has NO callers anywhere in src/ (no C call site, no 'jal sub_GAME_7F0AF808' in any GLOBAL_ASM, not declared in stan.h), so there is no player-visible effect today; this is a latent correctness defect that would misalign the tile walk if the function is ever wired up.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/stan.c:1858"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T16:10:20Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/stan.c:1858",
+      "note": "DIVERGENCE (single, instruction-cited): retail advances to the next StandTile by the tile's POINT COUNT field, which lives in tail.half bits 12-15 (StandTileHeaderTail.pointCount, the FIRST bitfield => high nibble on big-endian). ASM stan.c:1857-1862 (.L7F0AF8D8, 7F0AF8D8): lh v0,6(tile) [tail.half]; sra t9,v0,0xc; andi t0,t9,0xf -> idx=(tail.half>>12)&0xF; lbu list_of_tilesizes[idx]; tile += size. Live C stan.c:1753 instead uses list_of_tilesizes[STAN_POINT_COUNT(tile)], and STAN_POINT_COUNT (stan.h:14) = (tile->tail.half & 0xF) = bits 0-3 = headerE (a POINT INDEX, not the count). Wrong nibble => wrong table entry => wrong stride => the tile walk misaligns and can walk off the tile blob / return a wrong-or-null tile. list_of_tilesizes[] (stan.c:123) = {0x20,0x20,0x20,0x20,0x28,0x30,0x38,0x40,0x48,0x50,0x58,0x00}; it is size-by-point-count. CORROBORATION: every OTHER tile-advance site reads the top nibble \u2014 stan.c:836 's32 pc=(tile->tail.half>>12)&0xF', stan.c:2174 'list_of_tilesizes[((tile->tail.half>>12)&0xF)]', and sibling stan.c:400/6534/6751/6796 all use a >>12-derived pointCount; the getTileEdgePoints sibling (stan.c:4723) reads pointCount via STAN_TAIL_E (bits 12-15) correctly. sub_GAME_7F0AF808 (and its dead non-live #else twin at stan.c:1791) are the ONLY sites using STAN_POINT_COUNT for the advance. FIX (do NOT apply from this note; re-derive): replace STAN_POINT_COUNT(tile) at stan.c:1753 with ((tile->tail.half>>12)&0xF) (== STAN_TAIL_E). Default-ON port-defect fix; because it is currently unreachable there is no A/B runtime gate to add until a caller exists \u2014 file remains P3/latent. NOTE the STAN_POINT_COUNT macro itself is mis-named (reads headerE not pointCount) and is a footgun for future reimpls."
+    }
+  ]
+}

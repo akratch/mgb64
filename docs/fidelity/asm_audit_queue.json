@@ -1799,9 +1799,9 @@
         "body_start": 5065,
         "body_end": 5117
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rocket-in-hand render/transform builder. ASM gun.c(US glabel, 7F05F928) = live NONMATCHING C. KEY delay-slot: 'sw v0,0x7c(sp)' in the jal get_curplayer_positiondata delay stores the OLD v0 (hand base g_CurrentPlayer+arg0*296 +0x870), NOT the return; so matrix_4x4_copy src (0x7c+0x268=hand+0xAD8=throw_item_pos_related) and objChangeShading arg1 (0x7c+0x2e8=hand+0xB58=field_B58) are hand-relative == C, while the real posdata (g_CurrentPlayer->prop, saved at 0x30) feeds only arg3=posdata->stan(0x14). objChangeShading/chrobjCollisionRelated, render_pos alloc (model->obj->0xe<<6), obj->mtx copy(+0x18)/set_position(+0x58), cam multiply_homogeneous, modelUpdateRelationsQuick(model->obj->RootNode), prop->flags|=2 (byte@1), zDepth=-render_pos->pos.m[3][2](0x38) all match. Only add = NATIVE_PORT render_pos NULL guard (behavior-preserving).",
+      "reviewed_ts": "2026-07-11T16:11:34Z",
       "rank": 66,
       "rank_score": 85,
       "rank_reason": "prior-defect-file 85i"
@@ -1826,9 +1826,9 @@
         "body_start": null,
         "body_end": 2782
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Edge-projection test. Traced the full messy ASM branch tree (7F0B0198): it reduces to 'return (0 < dot && dot < edge_len_sq) ? 1 : 0' with STRICT c.lt.s on both bounds, exactly the NATIVE_PORT C (dot>0.0f && dot<edge_len_sq). pointCount=(tail.half>>12)&0xF (correct top nibble), nextIndex=(index+1)%pointCount via div/mfhi, edge=next-curr, d=p-curr, dot=dx*ex+dz*ez, len_sq=ex^2+ez^2 all match; points x@8/z@0xc, stride 8.",
+      "reviewed_ts": "2026-07-11T16:11:00Z",
       "rank": 67,
       "rank_score": 80,
       "rank_reason": "prior-defect-file 80i"
@@ -1853,9 +1853,9 @@
         "body_start": null,
         "body_end": 27658
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Visible-prop beam DL walker (7F049B58). ASM iterates prop list (prev@0x24): type==3 & type==6(!=cur player, voidp!=0) render two beams at chr+0x180/+0x1AC; type==1 autogun reads def-type byte@+3==13 then beam@+0xCC. Live NATIVE_PORT branches use struct fields (&chr->unk180[0]/[1], autogun->beam) that map to the same retail offsets \u2014 deliberate 64-bit pointer-widening fixes; raw-offset casts exist only in the non-compiled #else. Additive NULL guards behavior-preserving. getPlayerPointerIndex(prop)/get_cur_playernum compare, return gfx all match.",
+      "reviewed_ts": "2026-07-11T16:11:00Z",
       "rank": 68,
       "rank_score": 77,
       "rank_reason": "prior-defect-file 77i"
@@ -1880,9 +1880,9 @@
         "body_start": null,
         "body_end": 1497
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "stanFillin polarity-flip BFS (7F0AF638). Live NATIVE_PORT C = ASM: stack push start; pop (depth s1); if desiredPolarity!=(id>>15&1) flip id^=0x8000, if sub_GAME_7F0AF760==0 flipCount++; numSides=(tail.half>>12)&0xF, walk points[i] (a0+=8, link@0xe) push &standTileStart[link] (link*8; sizeof(StandTile)==8: 24b id+u8 room+2 s16 unions, points[] flexible) when neighbor polarity mismatches, re-read numSides after push. Back-edges bnez i<numSides / bnezl depth!=0; return flipCount(s7).",
+      "reviewed_ts": "2026-07-11T16:11:00Z",
       "rank": 69,
       "rank_score": 74,
       "rank_reason": "prior-defect-file 74i"
@@ -1907,9 +1907,9 @@
         "body_start": null,
         "body_end": 1776
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0090",
+      "note": "findSomeTile (7F0AF808). Body matches ASM (firstroom walk, sub_GAME_7F0AF760/isPointInsideTri/sub_GAME_7F0B20D0/tile==stack[0]/stanGetPositionYValue<f2 chain) EXCEPT the tile advance: retail list_of_tilesizes[(tail.half>>12)&0xF] (pointCount, bits12-15) vs C STAN_POINT_COUNT(tile)=tail.half&0xF (bits0-3=headerE, a point index) -> wrong stride. Every other advance site uses >>12 (stan.c:836/2174/4723). LATENT: no callers anywhere. Filed FID-0090.",
+      "reviewed_ts": "2026-07-11T16:11:00Z",
       "rank": 70,
       "rank_score": 71,
       "rank_reason": "prior-defect-file 71i"
@@ -1934,9 +1934,9 @@
         "body_start": null,
         "body_end": 3752
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Room-path resolver (7F0B0D0C). ASM=live C: *tilePtr!=0 -> roomA=tile->room(byte@3),roomB=(*tilePtr)->room; equal -> *roomBuf=roomA,return 1; sub_GAME_7F0B8FD0(roomA&0xFF,roomB&0xFF)!=0 -> roomBuf[0]=tile->room,roomBuf[1]=(*tilePtr)->room,return 2. Else sub_GAME_7F0B0C24(tileStack,start_x,start_z,end_x,end_z,roomBuf,&bufCount,maxBufSize); ==0->0; else clamp bufCount to maxBufSize, unkTile=*tilePtr (NULL->=tileStack[0]), tileStack[0]!=unkTile->0, return bufCount. All 8 args & stack layout match.",
+      "reviewed_ts": "2026-07-11T16:11:00Z",
       "rank": 71,
       "rank_score": 70,
       "rank_reason": "prior-defect-file 70i"
