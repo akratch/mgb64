@@ -574,12 +574,12 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |
-| `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0092] |
+| `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0093] |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | presence | unset | 1 | Restore the old same-tick native Bond intro chr load |
 | `GE007_NO_INTRO_PHASE3` | presence | unset | 1 | Disable the scripted phase-3 Bond intro animation |
 | `GE007_NO_INTRO_ROOTMOTION` | presence | unset | 1 | Restore the static intro-Bond pin (disable anim root motion, default ON) |
-| `GE007_NO_LAST_Z_TRIGGER_TIMER_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write of the rocket-launch fire timer to player+0x105C [FID-0091] |
+| `GE007_NO_LAST_Z_TRIGGER_TIMER_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write of the rocket-launch fire timer to player+0x105C [FID-0092] |
 | `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
