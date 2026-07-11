@@ -2885,9 +2885,9 @@
         "body_start": null,
         "body_end": 1288
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Font-glyph microcode/DL builder. ASM textrelated.c:1292-1937 vs live NATIVE_PORT C 919-1288, traced fully. Prologue: ybase=*pypos+unk, kerning=kerntbl at index fc_prev.kerningindex*13+fc.kerningindex (sll/subu*13 chain), newx=*pxpos-(kerning+text_spacing)+1 stored back. Early-outs all sense-verified: text_orientation!=0 skips screen culls (bnezl), newx<=0/viGetX<*pxpos/viGetY<ybase+baseline, xend=ulx+lrx<*pxpos, yend<ytop->skip_render, *pxpos<ulx, ytop+height<uly. Texture split fc.index<0x80 (CI4/I4) vs >=0x80 (CI8). CI4 LOADBLOCK math matches: alignw=(width+7)&mask, texels=(alignw*height+1)/2-1 clamp 0x7FF, dwords=alignw>>3 clamp 1, dxt=(dwords+0x7FF)/dwords2 signed div, w1 word assembled identically. CI8 D_80040EA8 one-shot TLUT-load gate (beqz, then zero it) + two osVirtualToPhysical TLUT loads + render-tile/tilesize all constant-verified. Post-texture: xright=*pxpos+width<xend, four rect variants (clipped-top when ytop<uly, clipped-bottom when yend<ybot, rotated E5-flip when text_orientation!=0, normal E4) all with text_x/text_y/text_s/text_t offset math and B4/B3 words matched 1:1. Tail *pxpos+=fc.width, return DL. Deviations: (1) retail masks alignw with andi 0xf8 vs C and-not-7 -- identical for font-glyph widths under 249 (benign truncation, unreachable-differing); (2) NATIVE_PORT text_audit_log_glyph is an env-gated diagnostic, behavior-neutral. Renderer/microcode: writes only the DL and the *pxpos layout cursor (identical both sides), no other sim state. No jump table.",
+      "reviewed_ts": "2026-07-11T20:46:06Z",
       "rank": 105,
       "rank_score": 625,
       "rank_reason": "625i"
@@ -2912,9 +2912,9 @@
         "body_start": 7942,
         "body_end": 8237
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0096",
+      "note": "Bbox-to-2D convex-hull projector. ASM chrprop.c:8243-8821 vs live NONMATCHING C 7942-8237. 8 vertex projections, four extreme-corner searches (min-x/max-y/max-x/min-y with tiebreaks, all comparison senses verified), remaining-vertex collector, and four cross-product edge-insert loops (px*edge_dy < py*edge_dx) all verified equivalent. DIVERGENCE at tail: retail stores raw hull vertex count into data unk00 and translates all count vertices with NO clamp (chrprop.c:8710-8712, unrolled loop adds matrix row-3 components at plus 0x30 / plus 0x38); live C adds 'if (count > 4) count = 4' at 8229. Reachable when projected hull is a pentagon/hexagon (up to 6 verts). rect4f holds only 4 coord2d and callers pass rect = collision_data unk04 (contiguous with count), so retail emits 5-6 vertices where port emits 4 -- smaller collision polygon. C comment 'matches original behavior' is incorrect. See FID-0096 (parity-divergence, P3).",
+      "reviewed_ts": "2026-07-11T20:51:14Z",
       "rank": 106,
       "rank_score": 544,
       "rank_reason": "544i"
@@ -2939,9 +2939,9 @@
         "body_start": null,
         "body_end": 3533
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0097",
+      "note": "Default hitscan weapon-fire handler. ASM chrprop.c:3537-4116 vs live NATIVE_PORT C 2561-3139, traced fully. DIVERGENCE: retail final impact block (chrprop.c:4055-4064) reads g_Textures at texture_index and runs the water/snow(5/6) check + explosionCreate with NO texture_index>=0 guard; live C 3115 wraps it in 'if (texture_index >= 0)'. Reachable on background-only hits (hit_bg=1, sub_GAME_7F03AB58<=0 leaves texture_index=-1) -> retail indexes g_Textures at -1 (OOB) and conditionally spawns the impact effect where the port skips it. See FID-0097. Everything else equivalent: bullet-path/transform, both walkTiles early-outs, bg hit + portal-room branch (g_BgPortals nonzero -> ADF4 else AF5C), scale2 gate, AB58 hit split with s16 texturenum, screen-transform gate + neg_z, WATCHLASER(23) 300-threshold clamps, prop loop dispatch by type (3/6->022648 with non-self VIEWER check, 1/4/2->04E9BC), hit loop (3/6->022980, 1/4/2->04EA68), shoot-through hit_count>=GetObjectsShootThrough clears flags, no-impact return, imgsnd selection, single randomGetNext%thing2_len impact_type, explosionCreateBulletImpact, light check, 26.0 pushback + 067B4C + do_effects-gated 0A3E1C tail. NATIVE_PORT portTrace/shotBgTracePrintf are env-gated diagnostics.",
+      "reviewed_ts": "2026-07-11T20:56:24Z",
       "rank": 107,
       "rank_score": 537,
       "rank_reason": "537i"
@@ -2966,9 +2966,9 @@
         "body_start": null,
         "body_end": 4019
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0098",
+      "note": "Watch inventory-page renderer. ASM watch.c:4027-4504 (VERSION_US) vs live NATIVE_PORT C 3855-4018, traced fully. DIVERGENCE: guPerspective aspect a3 = immediate 0x3FAAAAAB = 1.3333334 (4/3) in retail (watch.c:4147) vs 1.2857143f in C (watch.c:3926, compiles to 0x3FA49249, does not round-trip); near 10.0, far D_80058528=10000.0, scale 1.0, fovy different45angle all match. Renderer-surface HUD-space item aspect. See FID-0098. Everything else equivalent: transition/health-armor early paths, dynAllocateMatrix, seven bondinv getters, debug gunwatchpos block (gitem stride 0x38, six joyGetButtons adjusting watch_pos_x/y/z with 2.0 and D_80058520=0.98 / D_80058524=1.0204082), gSPMatrix, both rotation matrices + matrix_4x4_7F059694, enviro-fog call (64, 0xA0FFA03C), inventory strcat loop, D_800409C4 decrement, j_text_trigger 14-vs-12 metrics, xpos 0x4E ypos 0x8C yoffset constants, both microcode_constructor_related_to_menus (colors 0 / 0x800050), textRender 0x00AA00B0, sprintf(aDDDF) f64-promoted D_800409BC, D_800409C0 gate, D_800409C4==0 textRender(0xA0FFA0F0) vs textRenderGlow(0x007000A0) split + 7F0A8378.",
+      "reviewed_ts": "2026-07-11T21:00:45Z",
       "rank": 108,
       "rank_score": 443,
       "rank_reason": "443i"
@@ -2993,9 +2993,9 @@
         "body_start": 9118,
         "body_end": 9252
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Dual-controller watch 3D-background renderer. ASM watch.c:9274-9725 (VERSION_US) vs live NONMATCHING C 9120-9252, traced fully. 12-byte position copy from D_80040B5C/B60/B64, three 55-element vertex unroll-copies (D_80040B68/C44/D20, compiler unroll-by-3 + trailing word), flag2=0/flag1=1, sub_GAME_7F0A9684, identity, D_80040B24 += D_80040B28*speedgraphframes*0.5 + watchWrapAroundPI + rot_z, watch_item_is_actively_selected && controller_options_index==1 stick_y(0) path (D_80058550=6.2831855, 4.0) else 0.0, rot_x(-D_80040B20 - D_80058554=0.78539819), four matrix ops, controllerCheckDual arm: vertices2 + matrix_4x4_7F059694(D_80058558=495.0,2500.0,32.0,...) else vertices1 + (-5.0,2000.0,-168.0,...), guPerspective(50.5, aspect 0x3FAAAAAB=1.3333334, 1000.0, D_8005855C=3000.0, 1.0) -- aspect CORRECT here (corroborates FID-0098 in the sibling), gSPMatrix, g_WatchBackgroundGreen<0xE0 -> sub_GAME_7F06359C(green-6) else sub_GAME_7F064364, then the mirrored second dual-controller block (D_80040B3C/38/34, stick_y(1), D_80058560/64, mtxf_cam2 D_80058568=-505.0, guPerspective aspect 0x3FAAAAAB again, vertices3/flag1), final controllerCheckDual -> display_text_buttons_dual_control else sub_GAME_7F0A9AB8. All camera/angle constants byte-verified against the US late_rodata. Renderer/DL builder; the only sim-touching writes (D_80040B20/24/30/34 accumulators) are identical both sides. No jump table. NATIVE_PORT note about non-adjacent BSS position copy is a substrate comment, behavior-neutral.",
+      "reviewed_ts": "2026-07-11T21:02:42Z",
       "rank": 109,
       "rank_score": 435,
       "rank_reason": "435i"

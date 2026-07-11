@@ -1,0 +1,25 @@
+{
+  "id": "FID-0097",
+  "title": "chraiDefaultWeaponFireHandler: port adds texture_index>=0 guard around impact explosionCreate; retail reads g_Textures at index -1 (background-only hits)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [],
+  "repro": "Fire the default hitscan weapon at background geometry where the coarse bullet-vs-bg line is blocked (hit_bg becomes 1) but the fine surface tracer sub_GAME_7F03AB58 returns <= 0, leaving texture_index at -1 (a wall/surface with no detailed texture record). Retail then indexes g_Textures at -1 and, unless the low nibble of that out-of-bounds byte equals HIT_WATER(5) or HIT_SNOW(6), spawns a bullet-impact explosionCreate at the impact point; the port skips the entire block. No runtime flag toggles this.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop.c:4055"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T20:56:11Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrprop.c:4055",
+      "note": "Retail chraiDefaultWeaponFireHandler (glabel chrprop.c:3537, US) final impact block at ASM chrprop.c:4050-4079: beqz do_effects skip; else recall_joy2_hits_edit_flag(weapon_id, impact_pos, texture_index) unconditional; then DIRECTLY reads g_Textures at index texture_index (sll texture_index by 3 for stride-8, lbu byte 0, andi 0xf = hitSound), beq hitSound==5 (HIT_WATER) skip, beq hitSound==6 (HIT_SNOW) skip, else explosionCreate(NULL, impact_pos, tile, 1, 0, get_cur_playernum(), rooms{best_room,0xFF}, 0). There is NO texture_index>=0 (bltz) guard on this g_Textures index. Live NATIVE_PORT C (chrprop.c:3115) wraps the g_Textures read + water/snow check + explosionCreate in 'if (texture_index >= 0)'. texture_index=-1 is reachable at this site: the background-only hit path sets texture_index=-1 when sub_GAME_7F03AB58 returns <= 0 (C 2731 / ASM L54C sw -1 to 0x540) while hit_bg=1 from the second walkTilesBetweenPoints miss, and impact_pos is then set to the recomputed dest_point (C 3097-3102). So retail performs an out-of-bounds read of g_Textures at -1 and conditionally spawns a bullet-impact effect based on that fixed garbage byte, whereas the port never spawns it for texture_index<0. Player-visible: bullet-impact decal/effect presence differs on untextured/special background surfaces; if explosionCreate (or its children) consumes the RNG stream the divergence also desyncs subsequent randomness. Classified parity-divergence: the port's bounds guard is a deliberate mitigation of a retail OOB read; it lacks an A/B negative-control flag and faithful-mode decision. Resolving whether retail actually spawns the effect requires a ROM byte check of the word at g_Textures minus 8 (whether its low nibble is 5 or 6). EVERYTHING ELSE in the 537-instruction function verified equivalent to the US ASM: bullet-path setup + matrix transform/rotate, far_point, both walkTiles early-outs, bg hit test, portal room search branch (g_BgPortals nonzero picks sub_GAME_7F03ADF4 else sub_GAME_7F03AF5C), scale2 gate, sub_GAME_7F03AB58 hit split with s16 lh texturenum, screen-transform gate (hit_bg or hit_something) and neg_z, WATCHLASER(=23) threshold-300 clamps (both sites), on-screen prop loop dispatch by type (CHR 3 and non-self VIEWER 6 to sub_GAME_7F022648, OBJ 1/WEAPON 4/DOOR 2 to sub_GAME_7F04E9BC), hit-resolution loop (CHR/VIEWER to sub_GAME_7F022980, OBJ/WEAPON/DOOR to sub_GAME_7F04EA68), shoot-through accounting (hit_count++ then hit_count >= bondwalkItemGetObjectsShootThrough clears hit_something/hit_bg), no-impact early return, imgsnd selection (texturenum<0 to D_8004E86C index 0 else D_8004E86C at g_Textures hitSound), single randomGetNext then modulo thing2_len for impact_type (RNG ordering matched), explosionCreateBulletImpact, light check, and the 26.0 pushback + sub_GAME_7F067B4C + do_effects-gated sub_GAME_7F0A3E1C tail. NATIVE_PORT shotBgTracePrintf/portTrace* are env-gated diagnostics. Found by ASM-audit batch 10, queue rank 107, region US."
+    }
+  ]
+}

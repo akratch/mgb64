@@ -1,0 +1,25 @@
+{
+  "id": "FID-0096",
+  "title": "sub_GAME_7F03ECC0 bbox-hull vertex count clamped to 4 in port (retail writes up to 6-8 hull vertices, no clamp)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [],
+  "repro": "Collision-bounds path for a prop/door whose screen-projected axis-aligned bounding box (linear 3D-to-2D map using matrix X and Z columns) forms a pentagon or hexagon convex hull -- e.g. an angled/rotated prop viewed obliquely. Retail collision polygon has 5-6 vertices; port has at most 4. No runtime flag toggles this.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop.c:8710"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T20:51:02Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrprop.c:8710",
+      "note": "Retail sub_GAME_7F03ECC0 (glabel chrprop.c:8243, US) projects the 8 bbox corners to 2D, finds the four extreme corners (min-x/tiebreak-min-y, max-y/tiebreak-min-x, max-x/tiebreak-max-y, min-y/tiebreak-max-x -- all four search loops verified with correct comparison senses), then for each of the four hull edges inserts at most one remaining vertex using the cross-product test px*edge_dy < py*edge_dx (all four edge loops verified). Output vertex total is thus up to 8 (4 corners + up to 4 inserts); for a box projected by a linear map the hull is a hexagon at most, so 5 or 6 is reachable. RETAIL TAIL (chrprop.c:8710-8712): loads data ptr, blez count skip, then sw count into data unk00 with NO clamp; the compiler-unrolled translate loop (andi count and 3 remainder + groups of 4) adds matrix row-3 components at plus 0x30 and plus 0x38 to ALL count output vertices. Live C (chrprop.c:8229) inserts 'if (count > 4) count = 4;' BEFORE storing data unk00 and before the translate loop. Callers (chrobjhandler.c:2927, 11890, 45882) pass rect = address of collision_data unk04 and data = collision_data, so the count field and the polygon buffer are contiguous; rect4f (bondtypes.h:361) is a union of 4 coord2d, so retail writing 5-8 vertices continues past unk04 into the trailing collision_data words (unk24 onward). DIVERGENCE: when the projected-hull has more than 4 vertices, the port stores count=4 and emits a 4-vertex collision polygon, whereas retail stores the true count (5-6) and emits that many vertices (writing the extra ones into the words following rect4f). Consumers read data unk00 as the polygon vertex count, so the port produces a smaller collision hull for such props. The C comment claims 'Original N64 bug; matches original behavior' but retail performs no clamp -- the claim is incorrect. Classified parity-divergence: the clamp is a deliberate port change (avoids retail's write past the 4-vertex rect4f) but it lacks the required A/B negative-control flag and faithful-mode decision. Faithful-mode resolution deferred pending confirmation of whether the trailing collision_data words are intended extra polygon slots (retail self-consistent, port under-computes) or independent fields (retail overrun is the n64-quirk). Everything else in the function verified equivalent (8 vertex projections, four extreme searches, four cross-product edge inserts, remaining-vertex collector, matrix translate). Found by ASM-audit batch 10, queue rank 106, region US."
+    }
+  ]
+}
