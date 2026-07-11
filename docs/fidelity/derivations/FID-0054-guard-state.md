@@ -117,7 +117,7 @@ bit-identical, stock pre-onset 97.4% byte-stable, worst 14.9u):
   deterministic signature: native walks **2.10u in XZ** (root-motion) while
   stock's position is frozen at the spawn pad; native Y **ground-snaps**
   immediately (chr 2: −0.48 vs stock −55.64; chr 45: −603.8 vs −633.5) while
-  stock keeps the pad Y. By age 31 native has walked 30–61u; stock has not moved.
+  stock keeps the pad Y. By age 31 native has walked 55–117u (3D, incl. Y-snap); the magic-frozen stock subset (chr 2/39/40/44/45) has not moved, while stock chr 41/42/43 had walked ~67u onscreen (per §5.2) — all 8 nonetheless diverge deterministically from age 1.
   Max equal-age deltas within the pre-route window: chr 2: 4021, chr 45: 1460,
   chr 43: 641, chr 39: 638 …
 - chr 3 diverges at age 130 by 0.02u (a paused-vs-walking scheduling tick),
@@ -129,8 +129,8 @@ Movement profile over the pre-onset window (speed threshold 0.05 u/tick):
 
 | side | patrol guards (chr 2, 39–45) |
 |---|---|
-| **stock/N64** | **pause-then-warp**: stationary 63–99.7% of ticks (e.g. chr 40: 1359/1386 paused in 9 stops of ~100–260t; chr 2: 1382/1386; chr 45: 1379/1386), position steps of **100–1900u per tick** at warp instants; guards recently drawn walk normally (chr 41/42/43 while onscreen: 2.8 u/t) |
-| **native** | **continuous walking**: 892/892 ticks moving at ~2.8 u/t for all 8 patrollers, zero pauses; a handful of small residual jumps |
+| **stock/N64** | **pause-then-warp**: stationary 34.4–99.7% of ticks unconditioned (magic-frozen subset chr 2/40/45: 98.1–99.7% — e.g. chr 40: 1359/1386 paused in 9 stops of ~100–260t; chr 41/42/44 sit lower, 34.4–46.8%, because onscreen intro-camera windows keep them walking), position steps of **100–1900u per tick** at warp instants; guards recently drawn walk normally (chr 41/42/43 while onscreen: 2.8 u/t) |
+| **native** | **continuous walking**: 892/892 ticks of the full baseline capture (onset at 241; behavior uniform) moving at ~2.8 u/t for all 8 patrollers, zero pauses; a handful of small residual jumps |
 
 ### 5.3 Mechanism (code anchors)
 
@@ -171,10 +171,10 @@ the M2.5 note in `docs/BACKLOG_v0.4.0.md` already sequences these together).
 *Retail* keeps unseen patrolling guards frozen at their current pad in
 `WAYMODE_MAGIC`, walking them virtually and teleporting them pad-to-pad
 (`chrlvTickPatrol` `0x7F032548` + `chrlvTravelTickMagic` `0x7F028600`; oracle:
-stock patrol guards stationary 63–99.7% of pre-onset ticks with 100–1900u warp
+stock patrol guards stationary 34.4–99.7% of pre-onset ticks unconditioned (98.1–99.7% for the magic-frozen chr 2/40/45) with 100–1900u warp
 steps). *The port* (`src/game/chrlv.c:11328` force-loop, `:11348` rendered-room
 magic-entry suppression, `:274-290` intro exit-narrowing) makes all Dam patrol
-guards walk smoothly on every tick (892/892 observed, 2.8 u/t, zero pauses).
+guards walk smoothly on every tick (892/892 across the full capture, 2.8 u/t, zero pauses).
 *Player-visible effect*: every patrolling guard's world position at any given
 time diverges from retail (up to 2000u observed; up to ~640u within 22 s of
 mission start at equal ages from byte-identical state); downstream it modulates

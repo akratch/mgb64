@@ -1,0 +1,27 @@
+{
+  "id": "FID-0082",
+  "title": "ares stock combat captures are run-to-run nondeterministic post-onset (\u00b11 VI-frame input jitter)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "tools/movement_oracle_capture.sh"
+  ],
+  "repro": "two stock captures of dam_combat_guard6: pre-onset 97.4% byte-stable, post-onset positions diverge up to 14.9u (reviewer-measured; chr 2 cross-capture mean 1646 vs 4157 in the FID-0054 \u00a74 table)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0054-guard-state.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T05:33:10Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/derivations/FID-0054-guard-state.md",
+      "note": "Filed per the FID-0054 review: post-onset stock-vs-stock comparisons inherit this noise, so D5 work must not compare stock runs across captures \u2014 pin one stock capture per analysis or bound claims to pre-onset windows. Distinct from BUG-3 (intro camera RNG pick) and FID-0075 (native-side heavier-mission non-determinism)."
+    }
+  ]
+}
