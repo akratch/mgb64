@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/stan.c:757"
   ],
@@ -29,6 +29,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_stan_roomset.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/thrown_mine_reacquire_smoke.sh"
     }
   ],
   "history": [
@@ -66,6 +70,13 @@
       "to": "landed",
       "evidence": "tests/test_stan_roomset.c",
       "note": "Landed: fix 85fcd0f + regression lane f54de42 (ctest stan_roomset). Both-sides evidence /tmp/mgb64-fid0079-evidence/both_sides_evidence.txt: fix-ON admits the live u8 roomset[8]'s rooms 5,9 (reacquire succeeds); fix-OFF s32 misread admits nothing (reproduces the always-fail). Fail-on-revert proven (revert-proof/test_reverted.out: 7 assertions red incl. the fix-ON!=fix-OFF divergence). Sim-behavioral gates green pre-verified-transition: ctest port_ routes + sim_invariance_gate PASS -> no golden route/tape baseline shifts (the reacquire-success path does not fire on the golden routes)."
+    },
+    {
+      "ts": "2026-07-11T20:57:31Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/thrown_mine_reacquire_smoke.sh",
+      "note": "Verified: end-to-end live-path guard landed + both-sides proven. New ROM smoke tools/thrown_mine_reacquire_smoke.sh (ctest port_thrown_mine_reacquire_smoke, registered via add_port_validation_smoke) lobs a proximity mine (item 28) on Dam (mission 1, race-free per FID-0075): it arcs and descends onto a lower floor, so walkTilesBetweenPoints_NoCallback from the mine's stale tile fails mid-flight and handles_projectile_motion sets projectile flag 8 (projflags 0x47->0x4f, chrobjhandler.c:5308-5325), then sub_GAME_7F0AF20C(pos, roomset) reacquires at chrobjhandler.c:5328. Both-sides evidence (GE007_PROJECTILE_TRACE, /tmp/mgb64_thrown_mine_reacquire_*): fix-ON REACQUIRES the room-135 floor tile -> flag 8 CLEARS (0x4f->0x47 at frame 297, prop->pos advances) and whole-sim hash=eb6042514ec40733; GE007_NO_STAN_ROOMSET_BYTE_FIX=1 -> the s32 misread rejects room 135 -> reacquire returns NULL -> flag 8 STAYS STUCK -> hash=3b79c48a1a574bfe. Deterministic 3/3 both polarities. Fail-on-revert proven: running the smoke with GE007_NO_STAN_ROOMSET_BYTE_FIX=1 reddens it (fix-ON run loses its flag-8 clear -> FAIL exit 1). This closes the P1d-residual (the platform-TU stan_roomset unit lane pinned the pure filter; this drives the whole live flag-8 path in-game). Note: a deterministic .ge7tape cannot carry this scenario -- the add/equip/ammo state injections live in osContGetReadData, which --play-tape bypasses (tapePlaybackFunc fills the pad ring directly, input_tape.c:515), so the env-driven ROM smoke is the correct end-to-end form (task-sanctioned 'or a dedicated ctest')."
     }
   ]
 }

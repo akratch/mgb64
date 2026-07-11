@@ -853,6 +853,13 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # differs (the fix is load-bearing -> reddens on a gun.c revert) and that fix-ON is
     # a real orthonormal rotation while the legacy raw+0xAD8 read is not.
     add_port_validation_smoke(port_grenade_round_spawn_mtx_smoke grenade_round_spawn_mtx_smoke.sh 240)
+    # FID-0079: end-to-end guard for the live flag-8 projectile tile-reacquire
+    # path (chrobjhandler.c:5328 -> stan.c sub_GAME_7F0AF20C roomset filter).
+    # Lobs a proximity mine on Dam so its stan tile is invalidated mid-flight and
+    # reacquired; asserts fix-ON reacquires the tile (flag-8 clears) while fix-OFF
+    # (GE007_NO_STAN_ROOMSET_BYTE_FIX) stays stuck, and the whole-sim hash differs
+    # (fail-on-revert). Complements the pure-TU stan_roomset unit lane.
+    add_port_validation_smoke(port_thrown_mine_reacquire_smoke thrown_mine_reacquire_smoke.sh 240)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
     # MC.7 solo-pause: boots a solo level via the app shell, scripts the F1/View
