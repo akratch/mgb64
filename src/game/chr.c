@@ -32,6 +32,7 @@
 #include "dyn.h"
 #include "bondview.h"
 #include "unk_0CC4C0.h"
+#include "platform/aimbone_dispatch.h"  /* FID-0101 aim-bone arg0 dispatch */
 #endif
 
 // forward declarations
@@ -3780,6 +3781,21 @@ extern f32 D_80051D4C; /* M_TAU_F 6.2831855 */
 extern f32 D_80051D50; /* M_TAU_F 6.2831855 */
 extern f32 D_80051D54; /* M_TAU_F 6.2831855 */
 
+/* FID-0101 negative control. Default-ON port-defect fix: sub_GAME_7F02083C
+ * proceeds for arg0 in {0,1,2,3} — retail ASM src/game/chr.c:4098-4106 gates
+ * with `bnezl arg0`, which is not taken for arg0==0 so it falls through and
+ * poses the gun-hand aim bone (index 0). The NONMATCHING port returned for
+ * arg0==0, deadening its own arg0==0 block. GE007_NO_GUNHAND_AIMBONE_FIX
+ * restores the arg0==0 early-return byte-identically. */
+static int portNoGunhandAimboneFix(void)
+{
+    static int s_legacy = -1;
+    if (s_legacy < 0) {
+        s_legacy = ge_env_bool("GE007_NO_GUNHAND_AIMBONE_FIX", 0);
+    }
+    return s_legacy;
+}
+
 void sub_GAME_7F02083C(s32 arg0, Mtxf *arg1)
 {
     ChrRecord *chr;
@@ -3813,15 +3829,11 @@ void sub_GAME_7F02083C(s32 arg0, Mtxf *arg1)
         }
     }
 
-    if (arg0 == 2 || arg0 == 3)
-    {
-        /* fall through */
-    }
-    else if (arg0 == 1)
-    {
-        /* fall through */
-    }
-    else
+    /* FID-0101: retail proceeds for arg0 in {0,1,2,3} (ASM src/game/chr.c:
+     * 4098-4106; `bnezl arg0` is not taken for arg0==0, so it falls through to
+     * pose the gun-hand aim bone). The port defect returned for arg0==0.
+     * GE007_NO_GUNHAND_AIMBONE_FIX restores that early-return. */
+    if (!aimBoneArg0Proceeds(arg0, portNoGunhandAimboneFix()))
     {
         return;
     }

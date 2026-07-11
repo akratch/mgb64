@@ -701,6 +701,17 @@ if(BUILD_TESTING)
     target_include_directories(test_watch_inv_aspect PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME watch_inv_aspect COMMAND test_watch_inv_aspect)
 
+    # Aim-bone arg0 validity dispatch — ROM-free unit test (FID-0101):
+    # sub_GAME_7F02083C proceeds for arg0 in {0,1,2,3} (retail `bnezl arg0`); the
+    # port defect returned for arg0==0, deadening the gun-hand aim-bone block.
+    # Fails if arg0==0 stops proceeding or GE007_NO_GUNHAND_AIMBONE_FIX flips.
+    add_executable(test_aimbone_dispatch
+        "${CMAKE_SOURCE_DIR}/tests/test_aimbone_dispatch.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/aimbone_dispatch.c"
+    )
+    target_include_directories(test_aimbone_dispatch PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME aimbone_dispatch COMMAND test_aimbone_dispatch)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
