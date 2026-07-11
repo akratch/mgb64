@@ -794,6 +794,15 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # negative control (GE007_NO_POSTINTRO_SPAWN_FIX=1) that must reproduce the
     # frozen state, proving the detector fires.
     add_port_validation_smoke(port_intro_movement_regression intro_movement_regression.sh 600)
+    # FID-0006: intro weapon sub-buffer overlap guard. Drives BOTH sides of the R9
+    # bounds guard on the shared body/head/weapon load buffer: the positive path
+    # (weapon held, 0 RENDER-HEALTH) and the GE007_BOND_WEAPON_BUF_FAIL=1 hatch-forced
+    # fail path (exactly 1 [BONDVIEW][RENDER-HEALTH], weapon skipped so
+    # right_item_match=0, body intact -- present/rendered equal to the positive path,
+    # no crash). Stock Dam leaves ~48KB slack so the fail branch is reachable only via
+    # the hatch by design; the prior lane never exercised it (FID-0006 self-admitted
+    # gap). Reverting the skip logic makes the hatch a no-op -> this lane reddens.
+    add_port_validation_smoke(port_intro_weapon_buf_fail_smoke intro_weapon_buf_fail_smoke.sh 300)
     add_port_validation_smoke(port_renderer_parity_smoke renderer_parity_capture.sh 300)
     add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360
         --msaa-values 0

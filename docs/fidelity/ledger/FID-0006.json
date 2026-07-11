@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P1",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "bondview.c:3353 (print)",
     "bondview.c:3362 (unguarded size)"
@@ -19,6 +19,10 @@
     {
       "kind": "gate-log",
       "path": "ctest:port_renderer_parity_smoke"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_intro_weapon_buf_fail_smoke"
     }
   ],
   "history": [
@@ -35,6 +39,13 @@
       "to": "landed",
       "evidence": "ctest:port_renderer_parity_smoke",
       "note": "Landed 25acc40 (fix(bondview): R9 bounds-guard intro weapon load): weapon load bounds-guarded, skips attachment on overlap; GE007_BOND_WEAPON_BUF_FAIL forced-fail hatch added (bondview.c:2920). NOT verified: no registered lane drives the fail path \u2014 intro_visual_regression.sh is not ctest-wired and does not exercise the weapon buffer overlap; port_renderer_parity_smoke was green at landing but does not guard this finding. Needs a forced-fail weapon-buf smoke."
+    },
+    {
+      "ts": "2026-07-11T05:11:42Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:port_intro_weapon_buf_fail_smoke",
+      "note": "Verified: tools/intro_weapon_buf_fail_smoke.sh (ctest port_intro_weapon_buf_fail_smoke) drives BOTH sides of the R9 bounds guard on the Dam intro (level 33, GE007_INTRO_CAMERA_INDEX=5, frame 900). Positive: 0 RENDER-HEALTH, weapon held (right_item_match=356), body present/rendered=356, exit 0. GE007_BOND_WEAPON_BUF_FAIL=1 hatch-forced fail path: EXACTLY 1 [BONDVIEW][RENDER-HEALTH] line, weapon skipped (right_item_match=0), body intact (present/rendered=356 == positive path), no crash -- the T4/M1.1 negative-control numbers. Equal body counts prove the guard skips ONLY the weapon. Fail-on-revert demonstrated: neutralizing skip_weapon makes the fail path load the weapon (right_item_match=356!=0) and reddens the lane. Closes the self-admitted 'lane doesn't guard the fail path' gap (P1c). Full verify: tier-1 ROM-free ctests green, sim_invariance PASS, ENV_FLAGS --check PASS."
     }
   ]
 }
