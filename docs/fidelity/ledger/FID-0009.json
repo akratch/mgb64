@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "reuse T13b draw-only walk (g_BgRoomDrawOnly)"
   ],
@@ -22,6 +22,10 @@
     {
       "kind": "pixel-diff",
       "path": "src/game/bg.c camera-seed walk (camera_walk_seed_room); tools/silo_intro_aperture_regression.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_efe8f7a6a4ef.json"
     }
   ],
   "history": [
@@ -45,6 +49,13 @@
       "to": "landed",
       "evidence": "src/game/bg.c camera-seed walk (camera_walk_seed_room); tools/silo_intro_aperture_regression.sh",
       "note": "Root cause was NOT a hop/threshold limit: during the Silo intro SWIRL the detached camera orbits INSIDE Bond's own room (room_pointer resolves to g_BgCurrentRoom==26), so the T13b camera-seed walk's camera_seed_room stayed -1 and the draw-only walk was DORMANT for the whole swirl -- the grazing far-wall room (27 at frame 730; the sightline sliver) dropped to the sky-blue clear color (0,24,93). Fix (bg.c): seed the DRAW-ONLY walk from the camera's resolved room for EVERY detached authored-camera frame via a new camera_walk_seed_room (set even when ==g_BgCurrentRoom), leaving the sim-visible D42 seed untouched. The existing single additive visibility pass then admits the grazing room DRAW-ONLY (never room_rendered). Verified: leak closes (Silo swirl blue-sky px 35261->0 at f730, 1177->0 at f690, 995->0 at f705; residual small counts are genuine silo-top sky, confirmed by GE007_FORCE_ALL_ROOMS leaving the same px). Sim purity: room_rendered read-back + RNG call-count + onscreen actors byte-identical fix vs opt-out across 729 intro frames (0 diffs); baseline(main)-default sim-state-hash == fix-default on Silo (16cd4d1f20824692) and Dam (7973f959e096b53a). Over-admit: +1 draw room in swirl (extra mean 0.09), intro-mode unchanged. Opt-out GE007_NO_CAMERA_SEED_MULTIHOP=1 = today's dormant-during-swirl behavior (leak returns; fail-on-revert proven against baseline binary, ctest exit=1). Optional deeper reach GE007_CAMERA_SEED_WALK_HOPS=N (default 0). Lane: port_silo_intro_aperture_regression."
+    },
+    {
+      "ts": "2026-07-11T04:39:02Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_efe8f7a6a4ef.json",
+      "note": "Strict all-tier verify 24/25 green incl. port_silo_intro_aperture_regression; sole red = port_perf_budget_smoke, adjudicated thermal (12 levels uniformly >15% over the cold 2026-07-01 baseline CSV incl. levels this fix cannot touch; all absolute frame times well under the 16.6ms hard budget; matches the 2026-07-09 interleaved A/B precedent proving the lane code-independent under thermal soak)."
     }
   ]
 }

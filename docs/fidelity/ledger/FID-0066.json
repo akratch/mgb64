@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P1",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/chrlv.c"
   ],
@@ -33,6 +33,10 @@
     {
       "kind": "gate-log",
       "path": "docs/fidelity/reports/verify_bca507f3301b-dirty.json"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_efe8f7a6a4ef.json"
     }
   ],
   "history": [
@@ -77,6 +81,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/reports/verify_bca507f3301b-dirty.json",
       "note": "Verify complete: full 20-level uncap_purity_gate PASS (0 sim-hash divergence all testable levels; level 29 = lane's documented pre-existing vanilla non-determinism flag, printed not silent). With this, every tier-1/2/3 gate is green, adjudicated-external, or documented-SKIP; FID-0066 tier-appropriate verify is done on the branch. Held at landed (not verified) deliberately: verify_all machine-verdict on this fresh worktree carries the two environmental artifacts (build->/tmp symlink intro_parse CWD; missing local regression goldens) plus the external concurrent-main release-guard trip - a clean in-tree run on main post-merge should do the landed->verified transition. Full log: /tmp/mgb64-p1a-evidence/uncap_purity_full.log"
+    },
+    {
+      "ts": "2026-07-11T04:39:02Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_efe8f7a6a4ef.json",
+      "note": "Strict all-tier verify 24/25 green incl. port_guard_fire_rate_symmetry_smoke + port_ak47_fire_rate_capture_smoke + tape_regression on the merged tree; sole red = port_perf_budget_smoke, adjudicated thermal (same uniform-elevation signature, cold-baseline CSV, absolute budgets held)."
     }
   ]
 }
