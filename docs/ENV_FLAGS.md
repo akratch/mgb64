@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**914 flags** found across the source.
+**915 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -508,6 +508,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_CULL` | ? |  | 1 |  |
 | `GE007_NO_CULL_ASPECT_FIX` | ? |  | 1 |  |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
+| `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | ? |  | 1 |  |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | ? |  | 1 |  |

@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P1",
-  "status": "root-caused",
+  "status": "verified",
   "suspect": [
     "bg.c:2094",
     "bg.c:2160+",
@@ -17,6 +17,18 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M3.4",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/bg.c bgApplyVisibilitySupplement draw-only pass; tools/train_faithful_aperture_regression.sh"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/bg.c draw-only supplement pass (g_bgDrawOnlyWidenerForce); tools/train_faithful_aperture_regression.sh; CMakeLists.txt port_train_faithful_aperture_regression"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/train_faithful_aperture_regression.sh"
     }
   ],
   "history": [
@@ -26,6 +38,27 @@
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M3.4",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-11T07:23:03Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/bg.c bgApplyVisibilitySupplement draw-only pass; tools/train_faithful_aperture_regression.sh",
+      "note": "Root-caused (pad 74, level train, frame 120). retail X: retail's portal BFS reaches Train room 51's rear-office window neighbor room 53 (docs/RENDERING_REGRESSION_NOTES.md: the projected portal aperture collapses to an empty 2D bbox at the grazing slat angle). port Y: the native pure BFS rejects the empty-bbox portal, dropping room 53. The port's visibility-supplement widener recovers room 53 in DEFAULT mode (proven: pad74 default renders [51,53]; toggling GE007_PORTAL_EDGE_RESCUE=0 keeps [51,53] -> the supplement, not edge-rescue, admits it = the 'edge-rescue delta 0%' finding). But under --faithful the wideners are default OFF (bg.c:1117/1986 g_pcFaithfulSim?0:1, because widening room_rendered perturbs the sim RNG via PROPFLAG_ONSCREEN), so room 53 drops (ROOM-CLASSIFY: room=53 class=dropped adj_rendered=51) and the window fill is wrong (8.1% of the window ROI changes vs room-53-admitted). effect Z: --faithful players (and pixel work, which pins --faithful) see a wrong grazing-window fill at the Trevelyan 'that's close enough' beat. repro R: --level train --faithful --deterministic + GE007_AUTO_WARP_PAD=74. FIX: run the visibility-supplement as a DRAW-ONLY pass under --faithful (reuse FID-0009/T13b): snapshot pure-BFS room_rendered/neighbor/portals, force the supplement on (g_bgDrawOnlyWidenerForce), mark added rooms draw-only, restore the 3 sim fields -> window covered, faithful sim byte-identical. Default-ON; GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS opt-out. NOTE: pad-24 corridor blue-ceiling wedge is a SEPARATE geometry gap (admitting rooms 14/15 changes 0.10% -> faithful, not this finding)."
+    },
+    {
+      "ts": "2026-07-11T07:33:27Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/bg.c draw-only supplement pass (g_bgDrawOnlyWidenerForce); tools/train_faithful_aperture_regression.sh; CMakeLists.txt port_train_faithful_aperture_regression",
+      "note": "Fix landed: --faithful-only draw-only visibility-supplement pass in sub_GAME_7F0B8A6C (bg.c), reusing the FID-0009/T13b snapshot-restore mechanism. Default-ON; GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS opt-out. Regression lane port_train_faithful_aperture_regression added."
+    },
+    {
+      "ts": "2026-07-11T07:33:44Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/train_faithful_aperture_regression.sh",
+      "note": "Verified. Lane port_train_faithful_aperture_regression PASS: fix-ON admits room 53 DRAW-ONLY (draw=[51,53], rendered=[51]); opt-out GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS drops it (draw=[51], fail-on-revert). Sim byte-identical: the sim-consumed tuple (room_rendered sample, rendered/neighbor counts, RNG call_count, onscreen actors) matches fix vs opt-out across all 119 --faithful frames. Window fill recovered (window ROI 8.11%/2920px changed vs opt-out). Default mode untouched (gated on g_pcFaithfulSim): sim_invariance_gate hash identical 1f8bc5bdca0eef42, renderer_parity_capture --scene all 100% identical. FID-0009 silo lane still green (reused mechanism no-regression). Tier-1 ROM-free green. NOTE: the pad-24 corridor blue-ceiling wedge is a SEPARATE geometry gap, not this finding (admitting frustum-visible rooms 14/15 changes 0.10% -> faithful; both port and retail load identical room geometry from the ROM)."
     }
   ]
 }

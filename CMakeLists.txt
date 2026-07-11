@@ -864,6 +864,14 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # opt-out (draw-only never enters the sim), and (c) the opt-out reproduces the leak
     # (fail-on-revert control).
     add_port_validation_smoke(port_silo_intro_aperture_regression silo_intro_aperture_regression.sh 300)
+    # FID-0008: Train room-51 window grazing-aperture fill under --faithful. The
+    # wideners are OFF under --faithful (they widen room_rendered and perturb the sim
+    # RNG), so the pure BFS drops room 53 behind the venetian-slat window and the fill
+    # is wrong. Boots Train to pad 74 with --faithful and asserts (a) the fix admits
+    # room 53 DRAW-ONLY (window covered, never sim-rendered), (b) every sim-consumed
+    # field is byte-identical fix vs the GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS opt-out,
+    # and (c) the opt-out drops room 53 and reverts the fill (fail-on-revert control).
+    add_port_validation_smoke(port_train_faithful_aperture_regression train_faithful_aperture_regression.sh 300)
     # FID-0066: NPC full-auto cadence symmetry (the port-half of the FID-0056
     # parity skew). Replays dam_forward_30s — on which guard chr=6 (KF7, rate=3)
     # sustains full-auto — and, from the GE007_TRACE_GUARD_AUTOFIRE gate-fire

@@ -1970,7 +1970,16 @@ static void bgForceAdmitRoomsForDiagnostics(bbox2d *player_bbox)
 
 static int bgVisibilitySupplementEnabled(void)
 {
+    extern int g_bgDrawOnlyWidenerForce;
     static int enabled = -1;
+
+    /* FID-0008: the draw-only widener pass (sub_GAME_7F0B8A6C) forces the
+     * supplement ON transiently under --faithful, where it is otherwise default
+     * OFF. Checked before the cached default so the override works even after the
+     * first-use cache already latched OFF under --faithful. */
+    if (g_bgDrawOnlyWidenerForce) {
+        return 1;
+    }
 
     if (enabled < 0) {
         const char *env = getenv("GE007_VIS_SUPPLEMENT");
@@ -2745,6 +2754,13 @@ s_bound_info dword_CODE_bss_8007FFA0[204];
  * asserted so and exposed for a gameplay-route perf check. */
 u8  g_BgRoomDrawOnly[MAXROOMCOUNT];
 s32 g_BgRoomDrawOnlyCount = 0;
+/* FID-0008: set only for the duration of the --faithful draw-only widener pass
+ * (sub_GAME_7F0B8A6C, below). While set, bgVisibilitySupplementEnabled() reports
+ * ON regardless of the --faithful default-off, so the supplement can widen the
+ * draw list (never room_rendered) to cover grazing-aperture rooms the pure BFS
+ * drops (Train room 51's rear-office window -> room 53). Cleared immediately
+ * after the pass; the pass restores room_rendered so the sim is byte-identical. */
+int g_bgDrawOnlyWidenerForce = 0;
 #endif
 
 // 7ca30??
@@ -17059,12 +17075,84 @@ void sub_GAME_7F0B8A6C(void) {
             }
         }
 
-        /* T13b/FID-0009 invariant + perf probe: draw-only rooms exist ONLY when a detached
-         * authored camera is active. During normal gameplay (camera_walk_seed_room < 0)
-         * the walk above never runs and the set stays empty, so both sim and render
-         * are exactly as before -- the decoupling has zero cost off-intro.
-         * GE007_TRACE_DRAW_ONLY logs the per-frame count. */
-        assert(g_BgRoomDrawOnlyCount == 0 || camera_walk_seed_room >= 0);
+        /* FID-0008: Train room-51 rear-office window (the Trevelyan "that's close
+         * enough" beat) -- and any grazing-aperture room whose projected portal
+         * bbox collapses so the pure portal BFS drops it -- shows a wrong window
+         * fill under --faithful. Retail's BFS reaches these rooms
+         * (docs/RENDERING_REGRESSION_NOTES.md: the empty-2D-bbox aperture case);
+         * the port's visibility wideners recover them in DEFAULT mode but are OFF
+         * under --faithful, where they are disabled because widening room_rendered
+         * perturbs the sim RNG (room_rendered -> PROPFLAG_ONSCREEN -> actor tick).
+         * Recover the LOOK without perturbing the faithful sim: run the visibility-
+         * supplement as a DRAW-ONLY pass, reusing the FID-0009/T13b mechanism.
+         * Snapshot the settled pure-BFS room_rendered/neighbor/portals, force the
+         * supplement on, mark every room it adds beyond the snapshot draw-only
+         * (draw list only, never room_rendered), then RESTORE the three sim-visible
+         * fields. Every sim consumer therefore reads exactly the pure-BFS set it
+         * read before -- the faithful sim is byte-identical -- while the widened
+         * rooms draw. Only under --faithful (default mode already draws these rooms
+         * via the sim-coupled supplement) and only in gameplay (camera_walk_seed_room
+         * < 0; intros are handled by the camera-seed walk above). Only the supplement
+         * is run: edge-rescue does not reach the room-51 window (FID-0008's
+         * "edge-rescue delta 0%") and the frustum-fallback can rebuild the whole draw
+         * list, which this restore does not cover. Opt out (restore the leak) with
+         * GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS. */
+        {
+            extern int g_pcFaithfulSim;
+            static int no_faithful_draw_only = -1;
+            if (no_faithful_draw_only < 0) {
+                no_faithful_draw_only =
+                    (getenv("GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS") != NULL);
+            }
+            if (g_pcFaithfulSim && !no_faithful_draw_only
+                && use_portal_bfs && camera_walk_seed_room < 0) {
+                u8 snap_rendered[MAXROOMCOUNT];
+                u8 snap_neighbor[MAXROOMCOUNT];
+                u8 snap_portals[MAXROOMCOUNT];
+                s32 idx;
+
+                for (idx = 0; idx < MAXROOMCOUNT; idx++) {
+                    snap_rendered[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_rendered : 0;
+                    snap_neighbor[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_neighbor_to_rendered : 0;
+                    snap_portals[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].portals_to_room_count : 0;
+                }
+
+                /* Force the supplement on for exactly this pass; it widens
+                 * room_rendered + the draw list, both undone/kept below. */
+                g_bgDrawOnlyWidenerForce = 1;
+                {
+                    u8 draw_only_neighbor_snapshot[MAXROOMCOUNT] = {0};
+                    bgComputePortalNeighborSnapshotLocal(g_BgPortals,
+                                                         draw_only_neighbor_snapshot);
+                    bgApplyVisibilitySupplement(player_bbox, draw_only_neighbor_snapshot);
+                }
+                g_bgDrawOnlyWidenerForce = 0;
+
+                for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+                    if (g_BgRoomInfo[idx].room_rendered && !snap_rendered[idx]) {
+                        g_BgRoomDrawOnly[idx] = 1;
+                        g_BgRoomDrawOnlyCount++;
+                    }
+                    g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
+                    g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
+                    g_BgRoomInfo[idx].portals_to_room_count = snap_portals[idx];
+                }
+            }
+        }
+
+        /* T13b/FID-0009/FID-0008 invariant + perf probe: draw-only rooms exist only
+         * when a detached authored camera is active (the T13b/FID-0009 camera-seed
+         * walk) or under --faithful (the FID-0008 draw-only supplement pass above).
+         * In default-mode gameplay both paths are dormant and the set stays empty, so
+         * sim and render are exactly as before. GE007_TRACE_DRAW_ONLY logs the count. */
+        {
+            extern int g_pcFaithfulSim;
+            assert(g_BgRoomDrawOnlyCount == 0 || camera_walk_seed_room >= 0
+                   || g_pcFaithfulSim);
+        }
         {
             static int trace_draw_only = -1;
             if (trace_draw_only < 0) {
