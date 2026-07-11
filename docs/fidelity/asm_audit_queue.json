@@ -3209,9 +3209,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "LEFTOVERDEBUG copy (glabel unk_0A1DA0.c:2467, VRAM 7F0A33F8) of the same watch-arc WatchVertex builder. Same source function as the retail non-LEFTOVERDEBUG copy at glabel 2851 (VRAM 7F0A2938); reviewed together. This copy references its own .late_rodata D_8005774C=0x40490fdb (=pi, unk_0A1DA0.c:2465) for the (f32)i*pi/total_f angle multiply, matching both the retail copy (which uses D_8004CE1C=0x40490fdb) and the live C literal 3.1415927f. All vertex/color/loop structure identical to the retail copy verdict. verified-equivalent per that analysis. Found by ASM-audit batch 11, queue ranks 117/118, region US.",
+      "reviewed_ts": "2026-07-11T21:37:39Z",
       "rank": 117,
       "rank_score": 352,
       "rank_reason": "352i"
@@ -3236,9 +3236,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch radar/compass arc WatchVertex builder (retail glabel unk_0A1DA0.c:2851, VERSION_US non-LEFTOVERDEBUG, VRAM 7F0A2938). Live C NONMATCHING body unk_0A1DA0.c:2393-2459 traced against retail ASM 2852-3225. arg3!=0 seed vertex (coord1.x=1, color 0/44/0/176) = ASM beqz a3 block 2870-2885. end=arg1-7, guard end>=7 = slti at,s7,7 bnez 2888-2890. Loop i=7; i<=end; i+=2 = s1 init 7, addiu s1,2 + slt end<i beql 2204-2206. Angle = (f32)i times pi over total_f: retail loads D_8004CE1C (=0x40490fdb=3.1415927 confirmed at unk_0A1DA0.c:1952-1953) mul by (f32)i div by (f32)arg1 (2905-2910) = C 3.1415927f literal. sin/cos vertex: sinf then mul 520.0 (f24) then mul arg2 (f30) trunc.w.s = (s16)(s32)(sinf(angle)*520*arg2) 2911-2921; coord1.x=sin+1, coord1.z=-(cos*520*arg2 truncation), coord2 all 0. Color r=(u8)(u32)(0.0-cosf*0.0)=0, g=(u8)(u32)(44.0-cosf*20.0), b=0, a=176 via three cosf calls with the standard 0x4F000000 unsigned-overflow cvt sequences (2940-3061) = C. Second vertex guarded i!=0 && i<arg1 = beqz s1 + slt i<arg1 beqz 3062-3065; coord1.x=1-sin, coord1.z=-cos, r/g/b preset 255 then overwritten by same cosf color formulas, a=176 (3066-3202) = C incl the redundant 0xFF pre-store. NOTE: the retail dump declares .late_rodata D_8005774C=0x3fb501e2 in this block but the body never references it (angle uses D_8004CE1C); it is a pooled-constant disasm artifact, not a divergence. Second queue entry asm 2464-2844 is the LEFTOVERDEBUG copy (glabel 2467, VRAM 7F0A33F8) of the same source fn; it references its own D_8005774C=0x40490fdb=pi (unk_0A1DA0.c:2465) for the identical multiply, so both builds and the C agree. Found by ASM-audit batch 11, queue ranks 117/118, region US.",
+      "reviewed_ts": "2026-07-11T21:37:31Z",
       "rank": 118,
       "rank_score": 352,
       "rank_reason": "352i"
@@ -3290,9 +3290,9 @@
         "body_start": 1639,
         "body_end": 1778
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Generic watch-page scroll/ease controller (glabel watch.c:1795, VERSION_US, 9 args). Live C NONMATCHING body watch.c:1639-1778 fully traced against retail ASM 1796-2137. UP-GATE (watch.c:1652) correctly uses || : ASM 1804-1815 joyGetButtonsPressedThisFrame(P1,0x808) bnezl -> up-action, else joyGetStickY slti 0x47 bnez -> down-gate, else fall to up-action = 'pressed OR stickY>=0x47' (NOTE: this is the correct polarity; its sibling sub_GAME_7F0A5B80 had the && defect filed as FID-0100 - this function is NOT affected). DOWN-GATE (watch.c:1664) 0x404 + stickY<-0x46 || likewise matches (ASM 1830-1856). Up/down button-press scroll: (s32)val<=0 via blezl and (s32)val>=arg2-1 via slt, +/-1.0 gated on arg7 = C truncated-int compares. Hold-button 0.1 blocks (D_80058494/98) gated (s32)val>0 && arg7 / (s32)val<arg2-1 && arg7 (ASM 1859-1896). Analog fine-scroll ranges stickY in 0x1f..0x46 and -0x45..-0x1e, both subtract stickY/300.0 (0x43960000) gated *arg1>0/(s32)val<arg2-1 && arg7 (ASM 1897-1957) = C 1694-1707. Helper sub_GAME_7F0A5160/7F0A519C +/-1.0 blocks (ASM 1959-1993) = C 1711-1723. D_80040AE4 = up||down holding (ASM 1995-2009) = C. Clamp val to arg2-0.5 upper / -0.5 lower via c.lt.s (ASM 2011-2034) = C 1734-1746. ival=(s32)val trunc; *arg1=ival; target = (u32)(-ival)*arg8 + (u32)arg6*arg8 via multu/mflo/addu (ASM 2036-2051) = C 1749-1752; the 3-way target vs scrollval ease (target<scrollval: scrollval-(scrollval-target)/3-1,*arg5=0; scrollval<target: scrollval+(target-scrollval)/3+1,*arg5=0; else *arg5=1) via signed div by 3 (ASM 2055-2083) = C 1755-1763. Drift-correction: *arg0 > *arg1+0.55 (D_8005849C) && !joyGetButtons(0xFFFF) -> -0.1 (D_800584A0) then return; *arg0 <= *arg1+0.45 (D_800584A4) && !held -> +0.1 (D_800584A8) via c.lt.s/c.le.s (ASM 2084-2137) = C 1766-1777. No divergence. Found by ASM-audit batch 11, queue rank 120, region US.",
+      "reviewed_ts": "2026-07-11T21:40:17Z",
       "rank": 120,
       "rank_score": 319,
       "rank_reason": "319i"
@@ -3317,9 +3317,9 @@
         "body_start": null,
         "body_end": 340
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0102",
+      "note": "Port NATIVE_PORT body (initpathtablelinks.c:27-33) returns immediately, compiling none of the retail work. Retail glabel initpathtablelinks.c:344 (VRAM 7F006890) assigns waypoint groupNum in loop 3 (store sw t1,8(a1) at initpathtablelinks.c:201) and writes waypoint dist in loop 5 (sw 0xc(...) at 259/262/294), then hangs on error. groupNum is consumed by LIVE AI pathfinding (padhalllv.c do_BFS_withinPathSet:295, findPadWithDistAndSet:312/330/358, 419-420, 555-556); it is otherwise set only by the setup converter (prop.c:2775) from ROM bytes. Skipping the load-time groupNum fixup is a real semantic divergence -> FID-0102. Severity is conditional on whether ROM setup waypoints ship groupNum<0 (Ryan note + PD/GE convention say yes -> potential OOB waygroup index); needs a ROM-byte check (no-run/no-ROM lane cannot settle it). Only the trailing while(1) error-hang is correctly skipped. Found by ASM-audit batch 11, queue rank 121, region US.",
+      "reviewed_ts": "2026-07-11T21:44:08Z",
       "rank": 121,
       "rank_score": 318,
       "rank_reason": "318i"
@@ -3344,9 +3344,9 @@
         "body_start": null,
         "body_end": 188
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Per-scanline color-gradient Gfx DL builder (eye/gunbarrel iris; glabel unk_01B240.c:195, VERSION_US). Live C body unk_01B240.c:44-187 (the PORT_FIXME_STUBS #else, compiled under NATIVE_PORT) traced against retail ASM 196-503. Prologue: r/g/b_base = (f32)color_from unk00/04/08 (f0/f2/f12), r/g/b_target = (f32)color_to unk00/04/08 (f14/f16/f18); D_8002BB0C/10/14 = targets pre-loop (swc1 at unk_01B240.c:234/239/244); r/g/b_delta = target-base (f20/f22/f24 sub.s 248/251/254); divisor 299.0 = D_80051CF0 0x43958000 (unk_01B240.c:249). Loop i=1; i<300 (slti 0x12c at 479); i_prev tracked in t0, move t0,t1 then t1++ (477-478); texture (s0) += 0x1B8 in delay slot (481). Per iteration emits 8 fixed Gfx cmds matching C w0/w1 immediates: 0xFD900000/texture, 0xF5900000/0x07080200, 0xE6000000/0, 0xF3000000/0x070DB026, 0xE7000000/0, 0xF5886E00/0x00080200, 0xF2000000/0x006DC000, 0xFA000000/rgba (stores at 267-304). rgba: r=(u32)(r_delta*iter_f/divisor+r_base) then r<<24 UNMASKED (t7=t6<<0x18 at 343), g=(u32)(...) then (g&0xFF)<<16 (andi 0xff, sll 0x10 at 381-382), b=(u32)(...) then (b&0xFF)<<8 | 0xFF (andi 0xff, sll 8, ori 0xff at 423-426); each float-to-u32 uses the standard 0x4F000000 unsigned-overflow cvt sequence = C (u32) casts. arg2 branch: bgez s1 -> arg2>=0 uses w0=0xE46DF000|((i_prev+17)*4-1 & 0xFFF), w1=((arg2*4 & 0xFFF)<<12)|((i_prev+16)*4 & 0xFFF), then 0xB4000000/0, 0xB3000000/0x04000400 (452-475 = C 165-175); arg2<0 uses same w0, w1=(i_prev+16)*4 & 0xFFF, then 0xB4000000/(-arg2)<<21, 0xB3000000/0x04000400 (429-451 = C 152-163). Epilogue D_8002BB08/04/00 = b/g/r_base (483/486/500), return final gdl (v0=a0). No divergence. The NATIVE_PORT block (unk_01B240.c:84-113) is a behavior-neutral port shim: a GE007_TRACE_EYE_DL debug print plus gfx_ptr_store(texture) pointer-table registration; it emits no Gfx words and does not alter gdl, so it has no ASM counterpart and does not affect the DL contents. Found by ASM-audit batch 11, queue rank 122, region US.",
+      "reviewed_ts": "2026-07-11T21:46:37Z",
       "rank": 122,
       "rank_score": 296,
       "rank_reason": "296i"

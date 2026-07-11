@@ -1,0 +1,27 @@
+{
+  "id": "FID-0102",
+  "title": "init_path_table_links fully stubbed in port (returns immediately); retail assigns waypoint groupNum + dist at load, which live AI pathfinding consumes",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/initpathtablelinks.c"
+  ],
+  "repro": "Load any level with guard AI that path-searches across waygroups (patrol/go-to routes that span more than one waygroup). Retail init_path_table_links (NTSC 0x7F006890) runs at setup load and computes each waypoint groupNum from the waygroup membership lists. The port body is guarded by NATIVE_PORT and returns immediately, so groupNum keeps whatever the setup converter loaded from ROM bytes. If any waypoint ships with groupNum less than 0 (Ryan decomp note says loop 3 assigns it only when negative, implying ROM data is unassigned), the live pathfinder do_BFS_withinPathSet reads the waygroup table indexed by that negative groupNum (padhalllv.c:295) = out-of-bounds. No GE007 A/B flag present.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/initpathtablelinks.c:201"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T21:43:58Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/initpathtablelinks.c:201",
+      "note": "ASM-audit batch 11 (queue rank 121, region US). Retail glabel init_path_table_links at initpathtablelinks.c:344 (VRAM 7F006890). The port live body (initpathtablelinks.c:25-33) is: if NATIVE_PORT return; else the full validation body. So the port compiles ONLY 'return;' and performs none of the retail work. The retail ASM has two persistent side effects plus an error-hang: (1) LOOP 3 (C 185-224) assigns waypoint groupNum: for each waygroup it walks the group waypoint-id list and, when the target waypoint groupNum is negative, stores the waygroup index into waypoint+0x8 (ASM store 'sw t1, 8(a1)' at initpathtablelinks.c:201, VRAM 7F006B50). (2) LOOP 5 (C 237-331) writes waypoint dist (waypoint+0xC): 'sw a3/zero, 0xc(...)' at initpathtablelinks.c:259/262/294, a BFS reachability bookkeeping pass. (3) Final 'if (var_s6) while(1);' hang on any consistency error (C 334-336) - this is the ONLY part the port is right to skip (a debug hang). CONSUMPTION: waypoint groupNum is read by LIVE (non-stubbed) AI pathfinding in padhalllv.c - do_BFS_withinPathSet computes 'groups indexed by from groupNum then .waypoints' (padhalllv.c:295), and findPadWithDistAndSet / sub_GAME_7F08F138 pass from groupNum (padhalllv.c:312/330/358), plus getPadDistanceToPad-style lookups at padhalllv.c:419-420 and 555-556. groupNum is WRITTEN nowhere else in the port except the setup converter (prop.c:2775, from ROM bytes at entry+0x08) and its sentinel (prop.c:2781). Therefore skipping this function leaves groupNum at the ROM-loaded value permanently. CRUX / UNRESOLVED: the gameplay severity hinges on whether GE setup ROM data ships waypoint groupNum negative (needing the load-time fixup) or already-valid indices. Ryan decomp note (initpathtablelinks.c:15) and PD/GE convention (groupnum computed at load) indicate ROM ships it unassigned, which would make the port read an out-of-bounds waygroup in do_BFS_withinPathSet (potential crash or corrupt AI navigation). If instead ROM ships valid groupNum, loop 3 is a near-no-op and only the (correctly-skipped) error-hang differs. This cannot be settled without a ROM-byte inspection of a real setup waypoint table or an instrumented game run (both out of scope for the no-run/no-ROM ASM-audit lane). RETEST: dump a real level setup waypoint table (e.g. Dam) and check the groupNum field at offset 0x08 for any negative value; if present, this is a live AI-navigation defect (raise toward P1) and the fix is to port a correct, non-hanging groupNum-assignment pass (the decompiled C loop terminations are buggy per the port comment, so re-derive loop 3 from the ASM rather than transcribing the NONMATCHING C). The dist writes in loop 5 are transient reachability marks; verify whether any consumer reads dist before the next path search re-initialises it. The port's in-code justification that the side effects are 'non-critical' is an unverified assertion (charter: agent/comment assertion is not evidence), which is why this is filed rather than waived."
+    }
+  ]
+}
