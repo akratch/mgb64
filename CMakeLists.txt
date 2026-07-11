@@ -905,6 +905,16 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # behave like the legacy locked-60Hz cadence, diverging the hash and failing
     # this lane. ares-free / ROM-gated. (--prove self-tests authentic != legacy.)
     add_port_validation_smoke(port_ak47_fire_rate_capture_smoke fidelity/ak47_fire_rate_capture_smoke.sh 180)
+    # FID-0014: faithful WAYMODE_MAGIC patrol semantics. Native-only capture of
+    # dam_combat_guard6_agealign twice (fix ON default / GE007_NO_PATROL_MAGIC_FIX=1),
+    # profiled with tools/fidelity/patrol_profile.py over the pre-onset window.
+    # Asserts the retail pause/warp profile natively (chr45 >=90% paused with a
+    # >=1000u pad warp; chr41/42/43 >=50% paused) AND the negative control
+    # (opt-out -> legacy creep-walk: chr45 <=5% paused, no >=1000u warp).
+    # Fail-on-revert: removing the chr.c magic dispatch (or a flag-polarity bug)
+    # reddens the ON side; the OFF side pins the byte-identical legacy path.
+    # Two ~682-frame native captures -> 900s. ares-free / ROM-gated.
+    add_port_validation_smoke(port_patrol_magic_profile_smoke fidelity/patrol_magic_profile_smoke.sh 900)
     # Phase B (FID-0031 / D4): ares-free hard gate for gate:true ROM-oracle routes.
     # Enumerates every route marked "gate": true and replays its paired determinism
     # tape (baselines/tapes/<tape>.ge7tape), asserting the sim-state hash. Enforces
