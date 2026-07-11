@@ -691,6 +691,16 @@ if(BUILD_TESTING)
     target_include_directories(test_watch_scroll_gate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME watch_scroll_gate COMMAND test_watch_scroll_gate)
 
+    # Watch inventory guPerspective aspect — ROM-free unit test (FID-0098):
+    # retail passes 0x3FAAAAAB (4/3); the port defect passed 0x3FA49249 (9/7).
+    # Asserts both IEEE-754 bit patterns so a revert of either reddens.
+    add_executable(test_watch_inv_aspect
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_inv_aspect.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_inv_aspect.c"
+    )
+    target_include_directories(test_watch_inv_aspect PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_inv_aspect COMMAND test_watch_inv_aspect)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

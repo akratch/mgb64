@@ -26,6 +26,7 @@
 #include "assets/obseg/text/LoptionE.h"
 #include "platform/port_env.h"
 #include "platform/watch_scroll_gate.h"  /* FID-0100 up-scroll gate */
+#include "platform/watch_inv_aspect.h"   /* FID-0098 inventory perspective aspect */
 
 /* FID-0100 negative control. Default-ON port-defect fix: the solo watch
  * inventory UP snap-scroll fires on button-press OR stick-full-up (retail
@@ -40,6 +41,23 @@ static int portNoWatchUpscrollFix(void)
         cached = port_env_set("GE007_NO_WATCH_UPSCROLL_FIX",
                               "Restore the legacy watch up-scroll AND-gate "
                               "(up-button tap alone no longer snap-scrolls) [FID-0100]");
+    }
+    return cached;
+}
+
+/* FID-0098 negative control. Default-ON port-defect fix: draw_watch_inventory_page
+ * builds the HUD-space item guPerspective with aspect 4/3 = 0x3FAAAAAB (retail
+ * ASM src/game/watch.c:4147-4148 immediate a3, VERSION_US). The NONMATCHING port
+ * passed 1.2857143f = 0x3FA49249 = 9/7 (an accidental transcription; a HUD-space
+ * item aspect has no widescreen-correction rationale). Setting
+ * GE007_NO_WATCH_INV_ASPECT_FIX restores the 9/7 aspect byte-identically. */
+static int portNoWatchInvAspectFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCH_INV_ASPECT_FIX",
+                              "Restore the legacy watch-inventory guPerspective "
+                              "aspect 9/7 (vs retail 4/3) [FID-0098]");
     }
     return cached;
 }
@@ -3946,7 +3964,11 @@ Gfx *draw_watch_inventory_page(Gfx *gdl, Mtx *proj_mtx) {
         }
     }
 
-    guPerspective(mtx, &perspNorm, different45angle, 1.2857143f, 10.0f, 10000.0f, 1.0f);
+    /* FID-0098: retail aspect a3 = 0x3FAAAAAB (4/3), ASM src/game/watch.c:4147-4148;
+     * the port defect passed 0x3FA49249 (9/7). GE007_NO_WATCH_INV_ASPECT_FIX
+     * restores 9/7. */
+    guPerspective(mtx, &perspNorm, different45angle,
+                  watchInvPerspAspect(portNoWatchInvAspectFix()), 10.0f, 10000.0f, 1.0f);
 
     gSPMatrix(gdl++, osVirtualToPhysical(mtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
 

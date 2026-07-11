@@ -4,13 +4,29 @@
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [],
   "repro": "Open the watch (pause) inventory page and view the 3D weapon/item model. The port builds its perspective projection with aspect 1.2857143 (9/7) instead of the retail 1.3333334 (4/3), so the rendered item is slightly narrower/taller than on N64. Pixel-parity vs an ares capture is unverified.",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/watch.c:4147"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/watch.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/watch.c"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/watch_inv_aspect.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_watch_inv_aspect.c"
     }
   ],
   "history": [
@@ -20,6 +36,34 @@
       "to": "discovered",
       "evidence": "src/game/watch.c:4147",
       "note": "Retail draw_watch_inventory_page (glabel watch.c:4027, VERSION_US) calls guPerspective(mtx, perspNorm, different45angle, aspect, near, far, scale) with aspect in a3 = immediate 0x3FAAAAAB (watch.c:4147-4148 lui/ori) = 1.3333334 = 4/3, near = 10.0 (li 0x41200000), far = D_80058528 = 0x461C4000 = 10000.0 (watch.c:3187), scale = 1.0. Live NATIVE_PORT C (watch.c:3926) passes guPerspective(mtx, perspNorm, different45angle, 1.2857143f, 10.0f, 10000.0f, 1.0f). fovy (different45angle from bondinvGet45AngleForIndex), near, far and scale all match; only the aspect differs: 1.2857143f compiles to 0x3FA49249, which does NOT round-trip to the retail 0x3FAAAAAB, so the port produces a different projection matrix for the HUD-space item. This is analogous to the sibling watch-scene aspect divergence in FID-0068 (retail 0x3FBA2E8C = 1.4545455 vs C 1.456f). Because a HUD-space item aspect has no widescreen-correction rationale and the constant does not round-trip, this most likely is an accidental transcription error (leaning port-defect); classified parity-divergence pending an ares pixel-parity capture confirming the on-screen proportion change, and it lacks an A/B negative-control flag. EVERYTHING ELSE in draw_watch_inventory_page verified equivalent to the US ASM: draw_background_health_and_armor, check_watch_page_transistion_running==1 early return, dynAllocateMatrix, the seven bondinv per-index getters (45angle/Hoffset/Voffset/Depth/text/Xrot/Yrot), the get_debug_gunwatchpos_flag debug block (gitem_structs stride 0x38, six joyGetButtons 2/1/4/8/32/16 adjusting watch_pos_y at 0x2c, watch_pos_x at 0x30, watch_pos_z at 0x34 by plus/minus 2.0 and multiply by D_80058520=0.98 / D_80058524=1.0204082), gSPMatrix projection load, both matrix_4x4 rotation builds (yrot and 6.2831855 minus xrot scaled by D_8005852C/D_80058530 over 360.0), matrix_4x4_7F059694 with cos/sin(D_80040B14)*depth, sub_GAME_7F0A6EE8, set_enviro_fog_for_items_in_solo_watch_menu(gdl, weapontext, mtxf, 64, 0xA0FFA03C), the inventory-text strcat loop over bondinvCountTotalItemsInInv, D_800409C4 decrement (blez guard), the j_text_trigger 14-vs-12 line metric ternaries at every use, xpos=0x4E ypos=0x8C yoffset=(14or12)*2+0x8D constants, textMeasure, both microcode_constructor_related_to_menus calls (0x4E/0x8C/textwidth+0x4E and 0x4B/yoffset/textwidth+0x52 with color 0x800050), textRender color 0x00AA00B0, the sprintf(aDDDF) with D_800409BC promoted to f64, the D_800409C0 gate, and the D_800409C4==0 textRender(color 0xA0FFA0F0) vs textRenderGlow(-1, color 0x007000A0) split + sub_GAME_7F0A8378. Found by ASM-audit batch 10, queue rank 108, region US."
+    },
+    {
+      "ts": "2026-07-11T22:01:30Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/watch.c",
+      "note": "Batch-10 rank 108 watch-inventory aspect 9/7 vs retail 4/3; fixing to retail."
+    },
+    {
+      "ts": "2026-07-11T22:01:30Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/watch.c",
+      "note": "Retail draw_watch_inventory_page guPerspective a3 = immediate 0x3FAAAAAB (ASM watch.c:4147-4148 lui/ori) = 4/3; NONMATCHING port passed 1.2857143f = 0x3FA49249 = 9/7, which does not round-trip. HUD-space item aspect has no widescreen rationale; the 4/3 sibling (watch.c:9217/9255) confirms intent. ASM-settled transcription error."
+    },
+    {
+      "ts": "2026-07-11T22:01:30Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/watch_inv_aspect.c",
+      "note": "Factored watchInvPerspAspect(legacy): 4/3 (0x3FAAAAAB) default, 9/7 (0x3FA49249) under legacy. Faithful-mode decision: 4/3 (retail)."
+    },
+    {
+      "ts": "2026-07-11T22:01:30Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_watch_inv_aspect.c",
+      "note": "Fix default-ON. ROM-free ctest watch_inv_aspect asserts both IEEE-754 bit patterns (0x3FAAAAAB fix / 0x3FA49249 legacy). ENV_FLAGS.md regenerated. NOTE: sibling draw_current_hand_item_and_ammo (watch.c) also passes 1.2857143f but is a distinct un-audited function, left untouched."
     }
   ]
 }
