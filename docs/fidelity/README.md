@@ -103,6 +103,16 @@ the fix is reverted — that's the ratchet, and it only ever tightens. Examples:
 `combat_oracle_contract`, `port_combat_route_capture_smoke`, `struct_layout`,
 `fidelity_ledger_valid`, `fidelity_ledger_index_current`.
 
+The 20-level `tools/regression_test.sh` **pixel lane is a pure STOCK baseline by
+design**: every capture runs from an isolated per-level config dir and pins the
+opt-in remaster layer OFF (`Video.SceneDecor=0 RenderScale=1 RemasterFX=0
+TexturePack=`), so the screenshot goldens ignore the user's `ge007.ini` and stay
+immune to the remaster/texpack agent's asset churn. It does not use `--faithful`
+because that also pins `Video.FovY=60` (sim state), which would shift the state
+goldens — the render layer is neutralized directly instead, keeping the sim
+byte-identical. Pixel-testing the *remaster* look is a separate concern owned by
+the remaster agent, not this lane.
+
 ## Sense lanes (finding divergences)
 
 | Lane | Tool | Finds |

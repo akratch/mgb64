@@ -5,6 +5,42 @@
 # Runs deterministic captures on multiple levels and compares against
 # saved baselines. Tests three lanes: screenshots, state traces, and audio.
 #
+# ─── STOCK PIXEL BASELINE (test hygiene — read before touching capture) ──────
+# The screenshot (pixel) lane is a PURE STOCK baseline BY DESIGN. Every capture
+# pins the opt-in remaster layer OFF and runs from an ISOLATED, per-level config
+# dir, so the goldens do NOT inherit the user's ge007.ini and are IMMUNE to the
+# remaster/texpack agent's churn (regenerated HD packs, edited assets/decor/**).
+# Concretely each capture passes:
+#     --savedir <fresh temp dir>            # ignore the user's ge007.ini entirely
+#     --config-override Video.SceneDecor=0  # no 3D decor  (── the one --faithful
+#                                           #   leaves ACTIVE: it never pins
+#                                           #   Video.SceneDecor/SceneDecorDir)
+#     --config-override Video.RenderScale=1 # native res (no SSAA supersampling)
+#     --config-override Video.RemasterFX=0  # no post-FX (grade/tonemap/bloom/…)
+#     --config-override Video.TexturePack=  # stock N64 textures (no HD pack)
+# These four --config-override values are applied AFTER env+ini, so they also win
+# over any GE007_REMASTER_FX / GE007_RENDER_SCALE / GE007_SCENE_DECOR /
+# GE007_TEXTURE_PACK env the remaster lane might export → capture is reproducible
+# on any machine regardless of local remaster settings.
+#
+# Why NOT `--faithful`: --faithful pins most of the above, BUT it ALSO sets
+# Video.FovY=60 and flips g_pcFaithfulSim (the visibility/physics wideners) —
+# both of which are SIM STATE (FovY gates frustum-visibility RNG). Under
+# --deterministic a plain run pins FovY back to the registered default (50);
+# --faithful's FovY=60 is EXEMPT, so --faithful would SHIFT the state/audio
+# goldens (measured: gameplay trace diverges at frame 2 on Surface). Charter
+# rule 5: "Video.FovY is sim state — never perturb it in gates." So the render
+# layer is neutralized DIRECTLY (render-only settings) rather than via
+# --faithful, keeping the sim byte-identical (compare_state.py MATCH vs the
+# pre-change config) while the pixels become stock.
+#
+# The STATE and AUDIO lanes are sim/audio and unaffected by these render-only
+# overrides (RenderScale-invariant per tools/compare_state.py); they are captured
+# under the SAME isolated config for consistency. Testing the REMASTER-layered
+# look (decor/HD-textures/post-FX pixels) is a SEPARATE concern owned by the
+# remaster agent — it is deliberately NOT this lane's job.
+# ─────────────────────────────────────────────────────────────────────────────
+#
 # Usage:
 #   ./tools/regression_test.sh              # test against baselines
 #   ./tools/regression_test.sh --baseline   # capture new baselines
@@ -91,6 +127,20 @@ FAILED=0
 PASSED=0
 TOTAL=0
 
+# Stock pixel-baseline config (see the "STOCK PIXEL BASELINE" header). The four
+# --config-override values force the opt-in remaster layer OFF; they are applied
+# after env+ini so they also override any GE007_* remaster env. These are
+# render-only settings — the sim (state/audio goldens) is byte-identical with or
+# without them (verified: compare_state.py MATCH vs the pre-change config).
+# Deliberately NOT --faithful: that also pins Video.FovY=60 + flips the sim
+# wideners, which are SIM STATE and would shift the state goldens.
+STOCK_RENDER_OVERRIDES=(
+    --config-override Video.SceneDecor=0
+    --config-override Video.RenderScale=1
+    --config-override Video.RemasterFX=0
+    --config-override Video.TexturePack=
+)
+
 run_with_timeout() {
     if [[ -n "$TIMEOUT_BIN" ]]; then
         "$TIMEOUT_BIN" --kill-after=5 30 "$@"
@@ -115,10 +165,18 @@ for lvl in $LEVELS; do
     # a leftover from a previous run being mistaken for this run's output
     rm -f "screenshot_${lvl}.bmp"
 
+    # Fresh, isolated config dir per level so the capture never reads/writes the
+    # user's ge007.ini — the pixel goldens are reproducible on any machine
+    # regardless of local remaster settings (see the STOCK PIXEL BASELINE header).
+    CFG_DIR="$TMP_DIR/cfg_${lvl}"
+    mkdir -p "$CFG_DIR"
+
     GAME_EXIT=0
     run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_AUDIO_DUMP="$AUDIO" "$BINARY" \
         --rom "$ROM" \
+        --savedir "$CFG_DIR" \
         --level "$lvl" --deterministic \
+        "${STOCK_RENDER_OVERRIDES[@]}" \
         --trace-state "$TRACE" \
         --screenshot-frame "$FRAME" --screenshot-label "${lvl}" \
         --screenshot-exit >"$RUN_LOG" 2>&1 || GAME_EXIT=$?
@@ -277,9 +335,13 @@ for lvl in $LEVELS; do
     (
         cd "$TMP_DIR"
         rm -f "screenshot_spawn_${lvl}.bmp"
+        # Same isolated + stock config as the main capture, so the spawn-health
+        # lane is likewise immune to the user's ge007.ini / remaster layer.
         run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 "$BINARY" \
             --rom "$ROM" \
+            --savedir "$CFG_DIR/spawn" \
             --level "$lvl" --deterministic \
+            "${STOCK_RENDER_OVERRIDES[@]}" \
             --screenshot-frame 30 --screenshot-label "spawn_${lvl}" --screenshot-exit
     ) >"$SPAWN_LOGFILE" 2>&1 || SPAWN_EXIT=$?
 
