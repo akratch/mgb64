@@ -1,0 +1,29 @@
+{
+  "id": "FID-0083",
+  "title": "Glass shot-depth tolerance (default 2.0) accepts prop hits retail rejects in sub_GAME_7F04E720/7F04E9BC depth gates",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrobjhandler.c:38612",
+    "src/game/chrobjhandler.c:38890",
+    "src/game/chrobjhandler.c:664"
+  ],
+  "repro": "A/B: GE007_GLASS_SHOT_DEPTH_TOLERANCE=0 (retail gate) vs unset (2.0 default); shoot glass pane coplanar with BG collision (e.g. Dam GE007_AUTO_DAMAGE_TAG=19); compare hit acceptance / crack spawn / RNG stream",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:38806"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T07:07:37Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:38806",
+      "note": "ASM audit batch 5. Retail sub_GAME_7F04E720 rejects the object hit outright when -transformed.z > shotdata->unk34 (c.le.s $f0,$f10 + bc1fl return, chrobjhandler.c:38806-38811); the live C adds a NATIVE_PORT-only acceptance window objectShotDepthWithinGlassTolerance (chrobjhandler.c:664-677) for PROPDEF_GLASS/TINTED_GLASS: when depth<=limit+tolerance the hit is ACCEPTED and neg_z clamped to unk34. Same addition in the coarse gate sub_GAME_7F04E9BC (C 38890). Tolerance defaults to 2.0f (chrobjhandler.c:86), env-tunable via GE007_GLASS_SHOT_DEPTH_TOLERANCE (0 disables => byte-retail). In-code rationale: glass panes coplanar with BG collision should attach cracks to the pane, not the wall behind. Sim-visible by default: extra accepted prop hit => hits[] queue entry via sub_GAME_7F03B9C0, crack/shatter bookkeeping, extra RNG draws. Intentional mitigation for an n64 depth-tie artifact but currently default-ON with no ledger/QUIRKS registration and no faithful-mode default decision; env control exists but is not a GE007_NO_* negative-control flag per charter rule 4 polarity. Related (distinct): FID-0004 shatter/opacity/crack-fade parity (renderer surface)."
+    }
+  ]
+}

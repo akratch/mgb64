@@ -1,0 +1,27 @@
+{
+  "id": "FID-0084",
+  "title": "sub_GAME_7F06A334 (watch ammo panel) omits retail weapon-switch-state early-out: ammo icon/counts drawn during hand states 6/7",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:33214"
+  ],
+  "repro": "Watch screen ammo panel (caller watch.c:3155) while a right-hand weapon switch is in flight: retail hides the panel for hands[GUNRIGHT].when_detonating_mines_is_0 in {6,7} (weapon-switch animation, gun.c:18794-18831); port draws it. Compare vs ares capture during a watch-initiated weapon change",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:33471"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T07:11:52Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:33471",
+      "note": "ASM audit batch 5. Retail US ASM gun.c:33468-33475: lw $v0,0x894(g_CurrentPlayer) (= hands[GUNRIGHT].when_detonating_mines_is_0, hand struct +0x24, hands[0]@0x870) with beq $v0,6 / beq $v0,7 -> return gdl before any drawing. States 6/7 are the weapon-switch animation (unequip->equip transition, gun.c:18794 comment; state 6 set at 18767/18831 path). The NATIVE_PORT rewrite (gun.c:33214-33313) has no counterpart check -> the watch ammo icon + clip/reserve digits render for a hand mid-switch where retail blanks them (and the displayed weapon/ammo pair is transiently stale). All other lanes of the rewrite verified against ASM: HIDE_AMMO_DISPLAY 0x80000 / NO_CLIP_RELOADS 0x400000 gates, ammo_related stride 12, icon y offset stats+8 (portGetAmmoIconYOffset bit-reconstruction equivalent), draw args (196-(w/2), RIGHT, 177, MIDDLE) / (((w+1)/2)+203, LEFT, 177, MIDDLE) incl signed-div-round-toward-zero (u8 width, no divergence), clip/reserve sources 0x89C/0x1130/0xC44, dual-wield same-weapon merge. Additive-only port deltas: <=0 weapon guard, ammoType upper bound, g_CurrentPlayer NULL guard, icon fault-injection diagnostics (env-gated), dropped retail dead call get_ptr_item_statistics (pure getter, result unused in retail). Same family as FID-0064 (dropped ammo-HUD early-out, different function/gate)."
+    }
+  ]
+}
