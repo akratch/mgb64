@@ -207,3 +207,25 @@ first full verify pass (tree c7f51ff, pre-OOM) was green apart from the
 four adjudicated items above. The next loop iteration on an unloaded
 machine should run `tools/fidelity/verify_all.sh` to promote
 landed→verified.
+
+## Note (2026-07-11): full uncap purity gate found a render-only leak this fix exposed — repaired under FID-0089
+
+The FID-0014 verify ran only the QUICK 3-level uncap purity mode (33/9/24). The
+FULL `tools/uncap_purity_gate.sh` (FID-0033) then went **RED on levels 22 and 24**
+("render-only frames perturbed sim state (vanilla stable)" —
+`docs/fidelity/reports/verify_fb9beceae183_uncap_purity_gate_2.log`).
+
+Root cause is **not** in FID-0014 code. Evidence: every FID-0014 visibility
+evaluation is byte-identical vanilla-vs-fuzz (3496/3496 traced lines), the sole
+divergent pool word is `ChrRecord.ptr_SEbuffer1` (a guard's fired-weapon SFX
+handle, native offset 0x1b0), and with `GE007_NO_PATROL_MAGIC_FIX=1` the fuzz run
+is byte-pure. The defect is a **pre-existing render→sim audio-pump leak**:
+`portAudioFrame()` advances SFX voice playback once per loop iteration (including
+render-only 0-tick frames), and a finished voice is disposed by the next
+`sndGetPlayingState()`, which NULLs the owning `ptr_SEbuffer*` slot (hashed pool
+state). FID-0014's faithful magic-freeze correctly shifted guard fire timing on
+22/24 so a gunshot's finish straddled the gate's exit tick cadence-sensitively,
+exposing the latent leak. Repaired by skipping the audio pump on 0-tick frames —
+**FID-0089** (`docs/fidelity/derivations/FID-0089-uncap-audio-pump.md`,
+`GE007_NO_UNCAP_AUDIO_FIX=1` negative control). FID-0014's sim behavior is
+unchanged (tapes 7/7 byte-exact, patrol-magic profile smoke PASS both polarities).

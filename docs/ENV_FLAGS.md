@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**920 flags** found across the source.
+**921 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -526,6 +526,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | ? |  | 1 |  |
 | `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 |  |
+| `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |

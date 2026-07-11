@@ -30,6 +30,7 @@
 #include "settings.h"
 #include "fire_rate_authentic.h"
 #include "frame_stats.h"
+#include "port_env.h"
 #include "game/front.h"
 #include "game/initmenus.h"
 #include "game/title.h"
@@ -3276,6 +3277,30 @@ const PlatformFrameStats *platformFrameStatsGet(void) {
     return &s_frameStatsPublished;
 }
 
+/* FID-0089 (FID-0033 rail defect; found by the full uncap purity gate, exposed by
+ * the FID-0014 merge; derivation docs/fidelity/derivations/FID-0089-uncap-audio-pump.md).
+ * A render-only (0-tick) fuzz frame must leave every hashed sim byte untouched.
+ * portAudioFrame() advances the SFX voice mixer once per call, and a voice whose
+ * samples are exhausted is disposed by the next sndGetPlayingState(), which writes
+ * NULL back into the owning ChrRecord.ptr_SEbuffer* slot (src/snd.c
+ * sndDisposeSound -> *ownerSlot = NULL). Those slots live in the hashed 8 MB game
+ * pool, so pumping audio on a 0-tick frame leaks the render frame cadence into
+ * hashed sim state: under GE007_UNCAP_FUZZ ~75% of loop iterations are render-only,
+ * so a guard's gunshot voice finishes at a different SIM tick than the all-tick
+ * vanilla run and its handle is NULLed at a different g_GlobalTimer. On the N64 the
+ * audio task runs once per video frame == once per 60 Hz sim tick; the port's
+ * per-loop-iteration pump is the divergence. Skip the pump on the 0-tick frame,
+ * mirroring boss.c's render-only skip of sim + present + maintenance, so audio
+ * advances exactly once per sim tick. Never taken in normal play (the flag is 0
+ * unless the fuzz harness armed it). GE007_NO_UNCAP_AUDIO_FIX=1 restores the legacy
+ * per-frame pump (negative control). */
+static int portUncapAudioSkipEnabled(void) {
+    /* port_env_bool is read-once/cached; default 0 => fix active.
+     * GE007_NO_UNCAP_AUDIO_FIX=1 restores the legacy per-frame pump. */
+    return !port_env_bool("GE007_NO_UNCAP_AUDIO_FIX", 0,
+        "FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles).");
+}
+
 void platformFrameSync(void) {
     OSScClient *client;
     int perf_trace = platformPerfTraceEnabled();
@@ -3404,7 +3429,15 @@ void platformFrameSync(void) {
         /* Swap is now handled by gfx_end_frame() — don't double-swap */
     }
 
-    { extern void portAudioFrame(void); portAudioFrame(); }
+    {
+        extern void portAudioFrame(void);
+        extern s32 g_pcUncapRenderOnlyFrame;
+        /* Sim-pure 0-tick frame: do not advance audio playback (see the
+         * portUncapAudioSkipEnabled comment above). No-op in normal play. */
+        if (!(g_pcUncapRenderOnlyFrame && portUncapAudioSkipEnabled())) {
+            portAudioFrame();
+        }
+    }
     /* Only call trace if tracing was requested. Dump-only trace modes do not
      * set g_traceStatePath, so include their env gates here too. */
     if (platformTraceRequested()) {
