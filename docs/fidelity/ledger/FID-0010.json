@@ -18,6 +18,11 @@
     {
       "kind": "counter-log",
       "path": "src/game/bg.c"
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/game/bg.c",
+      "note": "Reproducible dead-code check (review M1): cpp with -DNONMATCHING -DNATIVE_PORT -DPORT_FIXME_STUBS over bg.c:7383-7679 compiles the real 8-corner/6-plane frustum body; the mark-all-visible stub is the dead #else (flips live only if NATIVE_PORT is dropped). 12 live call sites consume the linked definition; empirical: default pad 74 renders 2/54 rooms, --faithful 1."
     }
   ],
   "history": [

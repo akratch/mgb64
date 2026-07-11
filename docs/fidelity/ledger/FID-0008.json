@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P1",
-  "status": "verified",
+  "status": "landed",
   "suspect": [
     "bg.c:2094",
     "bg.c:2160+",
@@ -25,6 +25,10 @@
     {
       "kind": "pixel-diff",
       "path": "src/game/bg.c draw-only supplement pass (g_bgDrawOnlyWidenerForce); tools/train_faithful_aperture_regression.sh; CMakeLists.txt port_train_faithful_aperture_regression"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/train_faithful_aperture_regression.sh"
     },
     {
       "kind": "gate-log",
@@ -59,6 +63,14 @@
       "to": "verified",
       "evidence": "tools/train_faithful_aperture_regression.sh",
       "note": "Verified. Lane port_train_faithful_aperture_regression PASS: fix-ON admits room 53 DRAW-ONLY (draw=[51,53], rendered=[51]); opt-out GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS drops it (draw=[51], fail-on-revert). Sim byte-identical: the sim-consumed tuple (room_rendered sample, rendered/neighbor counts, RNG call_count, onscreen actors) matches fix vs opt-out across all 119 --faithful frames. Window fill recovered (window ROI 8.11%/2920px changed vs opt-out). Default mode untouched (gated on g_pcFaithfulSim): sim_invariance_gate hash identical 1f8bc5bdca0eef42, renderer_parity_capture --scene all 100% identical. FID-0009 silo lane still green (reused mechanism no-regression). Tier-1 ROM-free green. NOTE: the pad-24 corridor blue-ceiling wedge is a SEPARATE geometry gap, not this finding (admitting frustum-visible rooms 14/15 changes 0.10% -> faithful; both port and retail load identical room geometry from the ROM)."
+    },
+    {
+      "ts": "2026-07-11T07:56:33Z",
+      "from": "verified",
+      "to": "landed",
+      "evidence": "tools/train_faithful_aperture_regression.sh",
+      "note": "Reviewer reopen (I1+I2): (a) the divergence statement over-claimed a retail anchor \u2014 RENDERING_REGRESSION_NOTES item 18 documents the PORT-side empty-aperture rescue only and makes no retail/ares claim; whether retail's BFS admits room 53 is UNKNOWN (no train-window ares route tooling exists). The empty-2D-bbox portal collapse could be a port float-projection artifact (port-defect) or faithful retail behavior (would reclass as parity-divergence/mitigation); the fix is safe under either (draw-only, --faithful-only, opt-out, sim byte-identical 119 frames). (b) Tier-2 verify incomplete at the verified claim (full port_ suite + uncap_purity --quick skipped under sibling lock contention; the three change-exercising gates + parity all green, reviewer re-ran independently). RE-VERIFY CONDITION: next full strict verify_all green on a tree containing this fix + record it as evidence; ares pixel confirmation when train-window route tooling lands.",
+      "reopen": true
     }
   ]
 }

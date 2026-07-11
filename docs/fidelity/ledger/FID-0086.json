@@ -1,0 +1,27 @@
+{
+  "id": "FID-0086",
+  "title": "Intros under --faithful may under-fill rooms (wideners off; camera-seed walk relies on them)",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/bg.c"
+  ],
+  "repro": "boot an intro under --faithful and compare admitted-room set vs default mode at swirl frames (same-class as FID-0008: visibility-supplement/wideners disabled under --faithful; FID-0009's draw-only camera-seed walk may not cover supplement-dependent rooms)",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/bg.c"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T07:56:52Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/bg.c",
+      "note": "Filed per the FID-0008 review (I3): same-class player-visible gap suspected, unverified \u2014 the FID-0008 fix runs the supplement draw-only under --faithful for gameplay, but intro paths take the frustum-fallback early-returns. Needs a --faithful intro sweep across the 20 intro routes."
+    }
+  ]
+}
