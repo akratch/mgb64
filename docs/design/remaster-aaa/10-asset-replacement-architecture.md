@@ -58,7 +58,7 @@ repeatably across 20 levels.
 | **R-W** room visual swap | Room opaque/XLU geometry | room id per level | 🔬 spike-verdict only (breaches roadmap §8 "no mesh re-topology" — needs written spike + sign-off) | Zero **iff** invariants 1–2 hold; lights-out needs a parallel path (§2.3) |
 
 **R-T** and **R-A** are production systems with their own docs (02, 09 §6.5–6.6).
-This doc specifies **R-P** fully (§4, §7), **R-C** as its direct extension, and
+This doc specifies **R-P** fully (§4, §8), **R-C** as its direct extension, and
 **R-W** as a bounded spike.
 
 ---
@@ -250,7 +250,7 @@ foliage/TBDR research. These bind every G_MODERNMESH producer:
 
 1. **Measure at the player's real resolution.** Headless perf gates at RenderScale=1
    said "fine" while Retina RenderScale=2 was unplayable. Every perf acceptance in
-   §7 runs at the user-representative config (RenderScale=2, MSAA as shipped,
+   §8 runs at the user-representative config (§7.2's resolution decision,
    ≥8-sample interleaved medians) with the F1 overlay for spot truth.
 2. **TBDR draw ordering:** within the modern layer draw opaque → alpha-test → blend.
    `discard` defeats Apple's hidden-surface removal — prefer **alpha-to-coverage
@@ -287,7 +287,7 @@ foliage/TBDR research. These bind every G_MODERNMESH producer:
 ```
 tools/texpack/overrides/<slug>.json     R-T   curated texture routes (shipped)
 assets/decor/<slug>.decor.txt           R-A   model/place set-dressing (shipped)
-assets/decor/<slug>.props.txt           R-P   substitution table (new, §7 P1):
+assets/decor/<slug>.props.txt           R-P   substitution table (new, §8 P1):
     swap  PROP_SATDISH        satdish_hd.glb        # per-type
     swap  model:ammo_crate1   crate_hd.glb  cutout  # per-debugName
 ```
@@ -320,7 +320,7 @@ us it's both hygiene and legal necessity).
 5. **Silhouette A/B (R-P/R-C/R-W only):** paired screenshots retail-vs-swap from 3
    gameplay vantages; C1 tolerance stated; taste checkpoint (◆) for hero props.
 6. **Manifest lint:** schema + duplicate-key + missing-file + license-tier check
-   (new tool, §7 P1.T4).
+   (new tool, §8 P1.T4).
 7. **Tool tests:** `tools/decor`/`tools/texpack` suites stay green.
 
 ### 5.4 The A/B toggle is the regression oracle
@@ -367,7 +367,7 @@ Full per-category tables live in the research record; this is the operative core
 
 Vegetation stays **generate-led** (friggog/tree-gen headless Blender + ambientCG
 PineNeedles001 needle atlas + Poly Haven bark; heroes = re-decimated photoscans
-after the decimator's UV-seam fix, §7 P2.T3). Dead logs/stumps: Poly Haven
+after the decimator's UV-seam fix, §8 P2.T3). Dead logs/stumps: Poly Haven
 tree-stump/dead-trunk set. **Named gaps needing in-house or generated art:**
 realistic server rack/console, pole floodlight, watchtower, pallet, jerry
 can/cylinders, bare standing winter trees (tree-gen leafless config).
@@ -395,7 +395,95 @@ cohesion with the retail frame is the aesthetic, not a limitation to engineer aw
 
 ---
 
-## 7. Milestones & tasks (junior-executable)
+## 7. The HD bar — ensuring it actually reads as stunning
+
+Architecture makes swaps *safe*; this section is what makes them *stunning*. It is
+built on the program's one hard calibration datapoint — on the shipped Surface
+showcase, **the wood textures looked great and the trees looked bad** — plus a
+2026-07-11 inventory of what the engine already has built.
+
+### 7.0 The weakest-channel law (why the wood worked)
+
+The eye grades every surface on four channels, roughly in this order:
+**silhouette → texel density → light response → motion stability.** A surface
+reads "HD" only when its *weakest* channel is fixed; polishing a strong channel
+buys nothing. The wood worked because its silhouette was already fine (flat planks
+on flat walls), baked shading already gave it a light gradient, and the import
+fixed the one broken channel (texel density) while the tone-lock preserved the
+rest. The trees failed *despite* good texture resolution because their weakest
+channels — silhouette (flat crossed cards) and light response (none) — stayed
+broken. **The law: audit each surface by its weakest channel and spend there.**
+This is why F0/F1 (mips, lighting) outrank any further tree-texture work, and why
+no asset enters a manifest without naming which channel it fixes.
+
+### 7.1 Built-but-dark: the cheapest stunning available (verified 2026-07-11)
+
+A large fraction of "2026 HD" is already implemented and **switched off**:
+
+| Feature | State | Anchor |
+|---|---|---|
+| Per-pixel directional sun (W1.E4) | Built, default OFF, **not in `--remaster`** | `Video.PerPixelLight`, `platform_sdl.c:374` |
+| Sun shadow map (W1.E3, capture-replay, res/bias/umbra dials) | Built, default OFF, **not in `--remaster`** | `Video.SunShadow`, `platform_sdl.c:367-373` |
+| Hemisphere SSAO v2 | Built, held ◆ — `--remaster` still runs planar v1 | preset comment, `platform_sdl.c` (`s_remasterPreset`) |
+| Scene decor + modern meshes | Built, default OFF, **not in `--remaster`** | `Video.SceneDecor` |
+| HD texture pack | Loader shipped; preset deliberately doesn't pin a pack | `Video.TexturePack` |
+| Bloom/FXAA/tonemap/grade/vignette/sharpen/dither, 16× aniso | ON in `--remaster` | `s_remasterPreset`; `gfx_metal.mm:1527` |
+
+The single highest-leverage "make it stunning" task is therefore **H0: a validated
+showcase preset** that turns the dark features on together — each flag individually
+A/B'd at the real resolution first, shadow/SSAO flips through their ◆ gates.
+A reviewer must boot ONE switch and see everything we've built.
+
+### 7.2 The resolution decision (perf IS image quality)
+
+`--remaster` pins `RenderScale=2, MSAA=0` (SSAA). On a Retina backbuffer that
+multiplies an already-2×-dense target ≈ 4× pixels — the root of "performance is
+ass" — and `MSAA=0` disables alpha-to-coverage, forcing cutout foliage onto the
+`discard` path that defeats Apple TBDR hidden-surface removal. **The showcase
+preset flips this: native scale + MSAA 4x + A2C** — cheaper *and* better foliage
+edges *and* unlocks §4.3's cutout doctrine. A stable 60 at the player's real
+resolution is itself a visual feature; a gorgeous still that judders reads worse
+than a clean plain one. (SSAA remains right for non-Retina displays — the preset
+should choose by backbuffer density.)
+
+### 7.3 The pixel budget (spend by screen coverage × weakness)
+
+What actually fills a Surface frame, and its weakest channel today:
+
+| Frame share | Element | Weakest channel → fix |
+|---|---|---|
+| ~25–40% | **Sky** | Texel density + art (low-res backdrop) → **H2** LDR skybox via `skyRender` remaster path (respects §2.3 order: sky first, no depth) |
+| ~25–35% | **Snow ground** | Light response (albedo done at M1, reads flat) → **H1** normal/roughness sidecar reader + subtle sparkle; **H3** drift/skirt decor breaking the plane |
+| ~15–25% | **Treeline/forest** | Silhouette + light response → F-track |
+| ~10–15% | **Viewmodel gun** | Texel density — *the most-stared-at object in the game, in focus every frame* → **H4** complete weapon texture pass (KF7 walnut proves settex path works; verify per-weapon token class first — hash-keyed textures have no loader path yet) |
+| ~5–10% | Cabins/structures | Done (the wood) — protect it |
+| small but focal | Props (dish, crates) | Silhouette → P-track |
+
+Two cheap tricks with outsized returns: **contact seams** (snow skirts/drifts where
+walls meet ground kill the "geometry placed on a plane" read — pure R-A decor), and
+**one grade, one fog** (every asset through the same tone-lock and fog curve; a
+single off-tone surface breaks the whole frame's cohesion — LDR cohesion is the
+look, per §4.3.7).
+
+### 7.4 The money-shot protocol (how "stunning" gets enforced, not hoped for)
+
+Per level, define **four golden vantages + one 5-second orbit** (Surface: spawn
+valley, dish clearing, cabin cluster, plateau overlook). Every visually-facing PR
+ships before/after captures from them at the user-representative config. Gates:
+
+1. **Weakest-channel checklist** per vantage — silhouette / texel density / light
+   response / motion each pass-fail, calling out the weakest.
+2. **Squint test** — downsample to 640×480: it must still read as *GoldenEye*
+   (composition and vibe survive; if it only impresses at 4K it's wallpaper, not
+   art direction).
+3. **Motion check** — the orbit capture, viewed at speed: shimmer (mip bias/aniso
+   on modern meshes), pop-in, LOD flicker, wind root-sliding.
+4. **◆ human taste** on heroes and any default flip — machine gates bound the
+   floor; the ceiling stays human.
+
+---
+
+## 8. Milestones & tasks (junior-executable)
 
 Estimates in junior-days. Every task lands as its own PR against §5.3.
 ◆ = taste checkpoint (human review of captures).
@@ -442,7 +530,24 @@ and every level's props with one mechanism.
 
 ---
 
-## 8. Risks & kill criteria
+### Track H — the HD multipliers (doctrine in §7)
+
+| ID | Task | Files | Acceptance | Est |
+|---|---|---|---|---|
+| H0 | Showcase preset: per-flag validated flips of PerPixelLight / SunShadow (◆) / hemisphere SSAO (◆) / SceneDecor + pack pinning + the §7.2 resolution decision (native scale + MSAA 4x + A2C on Retina) | `platform_sdl.c`, `main_pc.c` | One switch boots everything; each flag A/B'd at real res; perf ≥ 60 median; identity-off untouched | 4 |
+| H1 | Sidecar runtime reader: `tok####_n/_r` normal+roughness on hero settex surfaces under per-pixel sun (Metal first, GL parity; bridges to W1.E5 — `make_sidecars.py` already writes the files, `texture_pack.c` has no reader) | `texture_pack.c`, `gfx_metal.mm`, `gfx_opengl.c` | Snow/wood heroes respond to sun direction ◆; identity-off byte-identical | 6 |
+| H2 | Sky: `skyRender` remaster path — LDR skybox from repainted CC0 HDRI (buy list #10), drawn at the retail sky position (§2.3 order law) | engine sky path + `tools/` | Sunset reads painterly at all vantages ◆; no room bleed-through | 5 |
+| H3 | Snow contact seams: drift/skirt decor at wall-ground junctions + subtle snow sparkle in the modern-mesh shader | manifests, `gfx_metal.mm` | Golden vantages show no hard 90° seams ◆ | 3 |
+| H4 | Viewmodel texture completion: audit every weapon's texture token class (settex vs hash-key), finish settex weapons, verdict on the hash-key loader gap | `tools/texpack`, evidence | All settex weapons HD in-hand ◆; written verdict for hash-keyed remainder | 4 |
+| H5 | Motion-quality audit: mip bias + aniso on modern meshes, shimmer/pop-in pass over the orbit captures | `gfx_metal.mm` | Orbit captures clean at speed ◆ | 2 |
+| H6 | Texel-density adjacency auditor: scene dump → per-vantage density report, flags outlier neighbors | `tools/texpack/audit_density.py` | Seeded outlier detected; wired into §5.3 | 3 |
+
+**Combined execution order: F0 → H0 → H1 + P1 → H2 → F1–F3 → H3/H4 → P2 → F4 →
+P3 → H5/H6 (continuous) → P4 → W-spike.** F0 repairs the shipped experience;
+H0/H1 turn on the light; P1 plants the hero dish; H2 repaints the biggest surface
+in the game.
+
+## 9. Risks & kill criteria
 
 | # | Risk | Mitigation / kill |
 |---|---|---|
@@ -453,13 +558,13 @@ and every level's props with one mechanism.
 | 5 | Scope bleed into sim "to make collision match visuals" | Forbidden by §0; the fix direction is always visuals→fit-collision, never collision→fit-visuals |
 | 6 | Per-frame table lookups misapply on aliased viewmodel buffers | §3 hard rule (stable keys, no pointer caching); P4 spike validates before any R-C ships |
 
-## 9. Validation doctrine
+## 10. Validation doctrine
 
 Every PR in this workstream runs §5.3 in full. Additionally: any change touching
 `model.c`, `bg.c`, or `chr*.c` paths runs the sim-state hash across a 20-level
 deterministic sweep (the FID-0012 oracle); any change touching `gfx_metal.mm` runs
 the GL/Metal parity capture; any manifest change runs the linter + boot smoke of
-the touched level. Perf claims are only valid at RenderScale=2 with ≥8-sample
+the touched level. Perf claims are only valid at the user-representative resolution (§7.2) with ≥8-sample
 interleaved medians — single-sample numbers are noise and have already misled us
 once.
 
