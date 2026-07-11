@@ -1,0 +1,28 @@
+{
+  "id": "FID-0085",
+  "title": "sub_GAME_7F05F73C (grenade-launcher/flare/piton round spawn): native body copies projectile init matrix from raw N64 byte offset player+0xAD8 instead of hands[hand].throw_item_pos_related",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c:4757",
+    "src/game/gun.c:4728"
+  ],
+  "repro": "Fire ITEM_GRENADELAUNCH (also FLAREPISTOL/PITONGUN; dispatch gun.c:7018-7034) and inspect the projectile's initial rotation matrix vs retail/ares; dual-wield (2x Grenade Launchers cheat) makes the dropped per-hand stride independently visible for hand 1",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4757"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T07:23:33Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:4757",
+      "note": "ASM audit batch 5. Retail US ASM gun.c:4865-4870: matrix_4x4_copy source = g_CurrentPlayer + hand_offset + 0xAD8 where hand_offset = arg0*936 (strength-reduced chain 4796-4805) == &hands[arg0].throw_item_pos_related (hands@0x870, field@+0x268; same anchor as the verified gunFireTankShell rank-33 audit). Live NATIVE_PORT C (gun.c:4716-4782): the #ifdef NATIVE_PORT branch fixes only the hand POINTER (&hands[arg0], gun.c:4731) but leaves hand_offset=0 and keeps the raw-offset copy 'matrix_4x4_copy((Mtxf*)((u8*)g_CurrentPlayer + hand_offset + 0xAD8), &local_mtx)' (gun.c:4757). Two defects on native: (1) 0xAD8 is an N64 byte offset \u2014 the native 64-bit player struct contains real pointers before hands (e.g. StandTile* room_pointer at N64-0x34, bondview.h:363), so player+0xAD8 is not any field boundary -> the projectile's initial rotation matrix (m[3][*] zeroed after copy; forwarded via sub_GAME_7F05EC1C arg2 -> sub_GAME_7F05EB0C) is copied from an unrelated interior of the player struct; (2) even on a layout-matching build, hand_offset=0 drops the per-hand stride -> hand 1 uses hand 0's matrix. Sibling port bodies use the correct idiom (&g_CurrentPlayer->hands[hand].throw_item_pos_related \u2014 gun.c:4393/4482 thrown grenade/knife, tankshell) confirming this is an incomplete conversion, not a substrate convention. Rest of the function verified equivalent (936 stride, velocity dir*33.333332 rodata 0x42055555 + (pos-prev)/delta correction w/ port-added delta!=0 guard, create_new_item_instance_of_model(203,87), &~0x60000 + timer 0x82=1200 + playernum<<17, DEPOSIT 0x80 -> proj unk8C=0.30000001/unk94=0.13333333/refreshrate=60)."
+    }
+  ]
+}

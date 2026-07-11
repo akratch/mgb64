@@ -1286,9 +1286,9 @@
         "body_start": null,
         "body_end": 17165
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Bond cuff/outfit switch-visibility setter (6 consecutive switch nodes from base index arg2, callers pass 29). ASM bondview.c:7F087C14 (17186-17346) vs live C 16987-17024 (PORT_FIXME_STUBS port body w/ portSetCuffSwitchVisible), traced fully: per node k=0..5 retail gates on hdr->Switches[arg2+k]!=0 (Switches = ptr array at hdr+8, lw 8 + idx*4) then modelGetNodeRwData(model,node) word-store of visibility \u2014 port modelGetSwitchNodeSafe+rwdata NULL guards reproduce the same skip semantics (additive on valid data). Visibility predicates all verified vs xori/sltiu chains against player->bondtype (0x41c, offset verified via header 0x408..0x420 run): k0 ==3; k1 ==1||==6||==7||(==8 && folder!=1) (bnezl store-1 chain + sltu 0<(folder^1)); k2 ==5||(==8 && folder==1); k3 ==0; k4 ==2; k5 ==4. fileGetBondForCurrentFolder captured once pre-loop both sides. Retail reloads bondtype per block, port hoists \u2014 no interleaved mutation. Retail return = garbage v0 (last rwdata ptr); port returns 0/1 \u2014 all 3 callers (bondview.c:17485, gun.c:3914/6919) discard it. GE007_DISABLE_CUFF_MICROCODE early-return = env-gated diagnostic, default-off. No jump table.",
+      "reviewed_ts": "2026-07-11T07:14:23Z",
       "rank": 47,
       "rank_score": 152,
       "rank_reason": "prior-defect-file 152i"
@@ -1313,9 +1313,9 @@
         "body_start": null,
         "body_end": 4725
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Chr prop projectile/shot line intersect (dot-window + body-part hit + best-depth pick). ASM chrobjhandler.c:4731-4885 vs live C 4644-4726 (NATIVE_PORT), traced fully: prop=chr+0x18, getinstsize(chr->model +0x1c); dot = arg2.(prop->pos(+8/0xc/0x10) - arg1) with z+(x+y) vs C (x+y)+z single commutative add (IEEE-identical); reject senses exact on finite data: bc1fl !(-instsize<=dot) == dot<-instsize, bc1fl !(dot<=arg3+instsize) == dot>arg3+instsize (unordered/NaN would diverge retail-reject vs port-proceed \u2014 unreachable for finite sim positions); prop->flags&2 (lbu 1) gate; sub_GAME_7F06C010(&local_head=chr->field_20(0x20), arg4, arg5, &local_model@0x40, &local_node@0x3c) \u2014 retail passes UNINITIALIZED out-slots, port zero-inits (strictly safer; slots only read after hit_result>0 where callee fills them); blez reject; modelFindNodeMtx(model,node,0) + port-only NULL dyn-overflow guard (documented additive); dot2 = arg5.(mtx->m[3][.](0x30/34/38) - arg4) same add shape; bc1fl !(dot2<*arg8) == dot2>=*arg8 reject; *arg8=dot2; arg6 = arg2*dot2+arg1 per component; arg7 = (-arg2.x, 0, -arg2.z) w/ x==0&&z==0 -> z=1.0 (c.eq pair + bc1tl) else guNormalize(&x,&y,&z); globals D_80030B0C=prop, bodypartshot=hit_result, g_CurrentProjectileModel=local_model, bss_80075B74=local_node; return 1. No jump table.",
+      "reviewed_ts": "2026-07-11T07:16:19Z",
       "rank": 48,
       "rank_score": 149,
       "rank_reason": "prior-defect-file 149i"
@@ -1340,9 +1340,9 @@
         "body_start": 2646,
         "body_end": 2717
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Prop shadow tint from stan tile color. ASM chrobjhandler.c:2722-2866 vs live C 2647-2718 (NONMATCHING), traced fully: copy_tile_RGB_as_24bit(prop->stan(0x14), pos.x(8), pos.z(0x10), color); luminance strength-reduction chains re-derived (5b*4+b=21b, 5r*16-r=79r, ((5g)*8-g)*4=156g) = C (r*79+g*156+b*21)>>8; alpha = trunc((f32)(255-lum)*0.75) incl FCSR round-mode-1 trunc expansion = C (u8) cast; max/min seed r<g slt sense; three-way b placement verified branch-by-branch incl beql delay-slot loads and dead li in branch shadow: maxb) max_val<b -> mid=old max, max_ptr=&rgba[2], max=b; else mid=min then min_val<b -> mid=2 else min=2; blez max_val skip; saturation stretch *min=0, range=max-min_v, *mid=mid_v*range/max (multu/div w/ break-guard artifacts), *max=range, r/g/b reloaded (skip path keeps originals in regs = C non-reload semantics); final r/g/b >>1 halving stores. Port-only NULL prop/stan -> 128/128/128/96 fallback = additive guard on invalid data (retail would fault). No jump table; no uninit reads.",
+      "reviewed_ts": "2026-07-11T07:17:16Z",
       "rank": 49,
       "rank_score": 134,
       "rank_reason": "prior-defect-file 134i"
@@ -1367,9 +1367,9 @@
         "body_start": 4249,
         "body_end": 4305
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Obj shot candidate gate + dispatch (onscreen model-trace vs offscreen bbox/edge fallback). ASM chrobjhandler.c:4310-4444 vs live C 4250-4306 (NONMATCHING), traced fully: instsize=getinstsize(obj->model +0x14); dot=0 when prop->parent(+0x1c) !=NULL (bnezl w/ neg.s in taken-delay, duplicated on fall-through \u2014 both paths f8=-instsize) else dot=(runtime_pos(0x58/5c/60)-arg1).arg3 (z+(x+y) commutative add); gates c.le.s/bc1fl written in C as !(-instsize<=dot) / !(dot<=arg4+instsize) \u2014 exact ASM senses incl unordered; prop->flags&2 (lbu 1): onscreen -> sub_GAME_7F041160(obj, arg5, arg6, out_normal, out_pos, out_model, out_node; stack 0x10/14/18 verified \u2014 note C's out_normal/out_pos names are semantically position/normal-swapped vs 041160's internals but wiring identical both sides), re-dot vs out slot, !(0<=dot) / !(dot<=arg4) gates (no +instsize, matches), *out_dist=dot return 1; else re-getinstsize(model), sub_GAME_7F041074(arg1, arg3, &obj->runtime_pos, instsize) gate, *out_dist=arg4 pre-store, sub_GAME_7F041400(prop, arg1, arg2, arg3, out_normal, out_pos, out_dist) gate, *out_model=model, *out_node=model->obj->RootNode, return 1. prop spill 0x3c stored before read; all other reads are caller arg slots. No jump table.",
+      "reviewed_ts": "2026-07-11T07:18:15Z",
       "rank": 50,
       "rank_score": 130,
       "rank_reason": "prior-defect-file 130i"
@@ -1394,9 +1394,9 @@
         "body_start": null,
         "body_end": 4190
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Projectile spawn placement + blocked-spawn fallback + room-set seed (called from gunFireTankShell \u2014 rank-33 anchor). ASM gun.c:4200-4336 vs live C 4018-4104 (PORT_FIXME_STUBS port body), traced fully: obj->prop(0x10) gate; get_curplayer_positiondata -> s0; bondviewGetPlayerStanHeight(g_CurrentPlayer); height_high/low swap on arg1->y < prop->pos.y(0xc) \u2014 bc1fl delay-slot nullification traced both arms, 0xb8=high/0xb4=low consistent, stack args 0x18/0x1c ordered (high,low) = C; UpdateGuardTankFlagsRelated(prop,0) / (prop,1) bracket (a0 preserved via beqz delay move); stanTestLineUnobstructed(&spawn_stan@0xc4=prop->stan(0x14), pos.x(8), pos.z(0x10), arg1->x, arg1->z@0x10, 31@0x14 (=OBJS|DOORS|PLAYERS|CHRS|PATHBLOCKER), high, low, 0.0@0x20, 1.0@0x24); fail -> spawn_pos=prop->pos + stan reset + blocked=1, success -> spawn_pos=*arg1; sub_GAME_7F05EB0C(obj,&spawn_pos,stan,arg2,arg3@0x10,arg4@0x14,prop@0x18); DEPOSIT 0x80(0x64) gate; blocked -> proj(0x6c)->flags|=0x100 + unkD4/D8/DC=*arg1; rooms seed sb room@0xa8 + sb 0xFF@0xa9 (RETAIL leaves rooms[2..7] + portal_output@0x54 + portal_count@0x50 UNINIT \u2014 verified harmless: 7F0B4AB4 (bg.c:6746) walks room sets to first 0xFF terminator and writes *portalCountOut/portalOutput before any read, so port's full memset/zero-init is behavior-identical, same class as FID-0081 but no reachable read); sub_GAME_7F0B4AB4(position3, &spawn_pos, rooms, proj+0xCC, out@0x54, &count@0x50, 20). Port-only additive: arg/prop/projectile NULL guards. No jump table.",
+      "reviewed_ts": "2026-07-11T07:20:12Z",
       "rank": 51,
       "rank_score": 130,
       "rank_reason": "prior-defect-file 130i"
@@ -1421,9 +1421,9 @@
         "body_start": null,
         "body_end": 4776
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0085",
+      "note": "[US variant audited; EU separate queue entry] Grenade-launcher/flare-pistol/piton-gun round spawner (dispatch gun.c:7018-7034, hand 0/1). ASM gun.c:4795-4919 vs live NATIVE_PORT C 4716-4782, traced fully: hand stride 936 strength-reduction chain; get_curplayer_positiondata/get_BONDdata_field408; identity mtx @0xa0; bullet_path_from_screen_center(&origin@0x44,&dir@0x38,hand); Matrix10D4 RotateVec; velocity=dir*33.333332 (rodata 0x42055555 verified) + g_ClockTimer>0 (pos-prev)/g_GlobalTimerDelta correction (posdata pos@8/c/10 minus field408 xyz \u2014 port adds delta!=0 guard, additive family per rank-33); DIVERGENCE: matrix_4x4_copy source \u2014 retail player+hand_offset+0xAD8 = &hands[hand].throw_item_pos_related; native C keeps raw offset with hand_offset pinned 0 -> wrong field on 64-bit layout + dropped per-hand stride -> FID-0085; m[3][0..2]=0; create_new_item_instance_of_model(203,87); flags &0xFFF9FFFF, sh 1200@0x82, playernum<<17 or; sub_GAME_7F05EC1C(newobj, hand+0x2E8, &local_mtx, &velocity, &identity@0x10); DEPOSIT 0x80 -> proj(0x6c) unk8C=0.30000001 (0x3e99999a) / unk94=0.13333333 (0x3e088888) / refreshrate(0xbc)=60. All constants/senses otherwise equivalent.",
+      "reviewed_ts": "2026-07-11T07:24:03Z",
       "rank": 52,
       "rank_score": 123,
       "rank_reason": "prior-defect-file 123i"
@@ -1448,9 +1448,9 @@
         "body_start": null,
         "body_end": 5606
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Ladder move-collision tile pair + 12-rotation vertex fill. ASM stan.c:5630-5761 vs live C 5557-5625 (NATIVE_PORT real body), traced fully: srcTile = bss_8007BA0C; numSides = STAN_TAIL_E = (lh +6 >>12)&0xF (macro verified stan.h:24, tail.half s16); blez guard; per-side link = lhu 0xe+8*side, gate (link>>4)==0 continue, neighbor = standTileStart + link*8 (FULL link value, low-nibble-included quirk consistent w/ rank-38/41 audits, C standTileStart[link] identical); flag gate D_80040F30[mid.half>>12] & 0x40 \u2014 SIGNED index (lh +4 / sra 12, no mask) == C s16>>0xc (bondtypes.h:425 s16), negative-index under-read quirk preserved identically; found: *arg0=src *arg1=neighbor, startTriple=(side+2)%3 (div/mfhi); rotate 0..11: base=rotate>>2 (sra), i 0..2: tripleIndex=(base+i)%3, slotIndex=(rotate+i)&3, 7F0B23AC(neighbor, tripleIndex, slots+12*slotIndex); then 7F0B23AC(src, startTriple, slots+12*((rotate+3)&3)); height gates slots[2].y(0x1c)<slots[0].y(0x04) / <slots[1].y(0x10) / slots[3].y(0x28)< both \u2014 all four c.lt.s + bc1tl continue senses verified, pass -> return, 12 exhaust -> return (never resumes side loop, matches C); side++/tile cursor +8. div break guards = compiler artifacts. No uninit frame locals (0x40 spill stored before reload). No jump table.",
+      "reviewed_ts": "2026-07-11T07:25:58Z",
       "rank": 53,
       "rank_score": 123,
       "rank_reason": "prior-defect-file 123i"
@@ -3560,9 +3560,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[LEFTOVERDEBUG variant] Same fn as the fully-audited US variant (queue line 1946): prologue (f32)arg2->0x74 spill, arg3*8, sin/cos*4*130*(6-v)/5 mul/div chains, vertex/color/alpha store layout spot-verified instruction-identical; only lui references = D_80057740 (142.5) / D_80057748 (pi) rodata \u2014 no D_800364CC / level-scale reads. Same FID-0080 adjudication: no retail vertex-side scaling.",
+      "reviewed_ts": "2026-07-11T07:28:29Z",
       "rank": 130,
       "rank_score": 256,
       "rank_reason": "256i"
@@ -3587,9 +3587,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[US variant, pull-forward companion for FID-0080] HUD bar vertex-array filler (23 arcs x 2 radii, damage_display_parent stride 32/item 16). ASM unk_0A1DA0.c:1958-2224 vs live C 1581-1662 (NONMATCHING), traced fully: angle=(f32)(s32)(142.5-(f64)sp80)*pi*2/360 (double 142.5 rodata + trunc.w.d, sp80+=5/iter, exact op order); x = (s16)(s32)(((sinf*4)*130*(6-v))/5 * sp74)+1 where sp74=(f32)arg2 \u2014 THE ONLY X SCALE IS ARG2 (callers pass +/-1 mirror; ZERO references to D_800364CC / level scale \u2014 only lui pair = 142.5/pi rodata); z = -(s32)((cosf*4*130*(6-v))/5) UNSCALED; unk02/06/08/0A=0, default rgb FF; arg2>0 -> r=96-cos*96, g=127-cos*127, b=FF; arg2<0 -> g=127-cos*127, b=32-cos*32 (blez/bgezl senses verified, arg2==0 writes none); alpha lanes i<10 (2*(s32)arg3'-1>=i -> FF / i<(s32)(2*arg3') -> frac*207+0x30 / else 0x30) and i>=10 ((f32)i<=9+(arg3'-5)*4 -> FF / (s32)((arg3'-5)*4+0.5)+9>=i && (s32)(arg3'-5)*2+8<i -> frac*207+0x30 / else 0x30) \u2014 all slt/c.le.s/bnezl/beql senses verified, arg3'=arg3*8; item stride 0x10, inner x2, outer x23. arg1 (0x2E from HUD callers) UNUSED in retail \u2014 matches C. FID-0080(a) ADJUDICATION: retail has NO vertex-side compensation for the D_800364CC ortho-extent scale (this fn + 7F0A3330 both scale-free) -> on visibility-scale!=1 stages retail renders the bars magnified/clipped by 1/scale; the port's unscaled guOrtho is a REAL intentional parity divergence there (normalizes what retail distorts), pixel-verifiable vs ares per FID-0080 repro.",
+      "reviewed_ts": "2026-07-11T07:28:29Z",
       "rank": 131,
       "rank_score": 256,
       "rank_reason": "256i"
