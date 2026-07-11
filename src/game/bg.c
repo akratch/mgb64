@@ -16907,8 +16907,14 @@ void sub_GAME_7F0B8A6C(void) {
          * computation), while the widened rooms stay in the draw list and draw. The BFS
          * scratch (portals_to_room_count >=9 throttle, portal-depth bytes) is reset first
          * so the walk propagates as freshly as the T13 combined pass did; both are pure
-         * per-frame scratch with no consumer after visibility. GE007_CAMERA_SEED_WALK
-         * (the retired T13 opt-in) is still accepted for script compat but is now a no-op. */
+         * per-frame scratch with no sim consumer. portals_to_room_count additionally sits
+         * inside the hashed g_BgRoomInfo region (bgBuildHashRegions), so it is snapshotted
+         * alongside room_rendered/room_neighbor_to_rendered and restored below too -- purely
+         * to keep the sim-state-hash oracle free of this walk's scratch noise (no behavior
+         * change; nothing reads it before the top-of-pass zero on the next visibility pass).
+         * The portal-depth bytes (D_800442FC) are NOT part of that hashed region, so they
+         * stay reset-only. GE007_CAMERA_SEED_WALK (the retired T13 opt-in) is still accepted
+         * for script compat but is now a no-op. */
         {
             static int no_camera_seed_walk = -1;
             static int no_multihop = -1;
@@ -16928,6 +16934,7 @@ void sub_GAME_7F0B8A6C(void) {
             if (!no_camera_seed_walk && walk_seed >= 0) {
                 u8 snap_rendered[MAXROOMCOUNT];
                 u8 snap_neighbor[MAXROOMCOUNT];
+                u8 snap_portals[MAXROOMCOUNT];
                 s32 walk_tmp = 0;
                 s32 idx;
 
@@ -16936,6 +16943,16 @@ void sub_GAME_7F0B8A6C(void) {
                         (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_rendered : 0;
                     snap_neighbor[idx] =
                         (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_neighbor_to_rendered : 0;
+                    /* portals_to_room_count has no sim consumer (dead
+                     * sub_GAME_7F0B3B20 + the whole array is zeroed again at the
+                     * top of every visibility pass before any read) but it DOES
+                     * sit inside the hashed g_BgRoomInfo region (bgBuildHashRegions,
+                     * FID-0012 read-back rule hashes the whole struct). Snapshot
+                     * and restore it below with the other two fields so the
+                     * sim-state-hash oracle carries no phantom noise from this
+                     * walk's BFS scratch (hygiene follow-up to FID-0009 review). */
+                    snap_portals[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].portals_to_room_count : 0;
                     g_BgRoomInfo[idx].portals_to_room_count = 0;
                 }
                 memset(D_800442FC, 0, 200);
@@ -17037,6 +17054,7 @@ void sub_GAME_7F0B8A6C(void) {
                     }
                     g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
                     g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
+                    g_BgRoomInfo[idx].portals_to_room_count = snap_portals[idx];
                 }
             }
         }

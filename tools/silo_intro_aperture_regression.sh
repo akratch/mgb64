@@ -18,9 +18,18 @@
 #      fix on vs the GE007_NO_CAMERA_SEED_MULTIHOP opt-out -- the room_rendered read-back
 #      (the FID-0012 render->sim field auto-aim/AI read), the RNG call count, the onscreen
 #      actor count, and the rendered-room count. (The whole-struct g_BgRoomInfo hash is a
-#      deliberately BROADER probe that also covers portals_to_room_count -- per-frame BFS
-#      scratch the walk leaves unrestored with no sim consumer -- so it is NOT used as the
-#      purity oracle here; the sim-consumed fields above are.)
+#      deliberately BROADER probe covering every byte of the struct. portals_to_room_count
+#      -- per-frame BFS scratch with no sim consumer -- is now snapshotted/restored by the
+#      walk alongside room_rendered/room_neighbor_to_rendered so it carries no phantom
+#      noise either. The broader hash can still legitimately differ fix-vs-opt-out on
+#      frames where the draw-only widening runs: field_36/mtxid, the room's render
+#      matrix-buffer slot (src/game/unk_0BC530.c), is assigned only to actually-DRAWN
+#      rooms and is itself render-only with no sim consumer -- same "renders more rooms"
+#      category as the draw list/g_BgNumberOfRoomsDrawn, just struct-colocated. It is
+#      intentionally NOT restored: unlike portals_to_room_count it is load-bearing for
+#      the display list already queued this frame, so stomping it back would risk a real
+#      rendering regression for zero sim benefit. The sim-consumed field tuple below is
+#      therefore the authoritative purity oracle for this lane, not the whole-struct hash.)
 #   3. fail-on-revert: with GE007_NO_CAMERA_SEED_MULTIHOP=1 (today's single-hop T13b
 #      behavior) the aperture leaks again -- blue-sky pixels return and the grazing room
 #      is absent -- so reverting the fix reddens this lane.
