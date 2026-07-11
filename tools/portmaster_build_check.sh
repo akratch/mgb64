@@ -11,6 +11,11 @@
 # `./ge007 --rom ...` with MGB64_PORTMASTER=1 (640x480 fullscreen via
 # platform_sdl.c).
 #
+# NOTE: MGB64_APP=ON does NOT build under GLES (the launcher's glad/ImGui wiring
+# is unfinished for the GLES path); this lane deliberately builds MGB64_APP=OFF
+# and must not flip it on. The desktop release (release.yml) builds MGB64_APP=ON
+# on desktop GL only.
+#
 # LAYERED, LOCAL-FIRST -- it runs the deepest lane the host supports:
 #
 #   Phase 1  STRUCTURAL (always)    grep-level wiring invariants in CMakeLists +

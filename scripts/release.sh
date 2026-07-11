@@ -21,13 +21,22 @@ skip_macos=0
 universal=0
 sign=0
 skip_notarize=0
+gameplay=""
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/release.sh [options]
   --version VER     Version label (e.g. v0.3.0). Default: dev
   --repo OWNER/NAME GitHub repo to publish to (required with --publish)
-  --publish         Create/update the GitHub Release with the assets in dist/
+  --publish         Create/update the GitHub Release with the assets in dist/.
+                    Requires --confirm-gameplay (owner ruling C1/D1) and NEVER
+                    mints the tag server-side: for a version tag the git tag must
+                    already be on the remote (pushed via
+                    scripts/publish_public.sh --tag), enforced with gh's
+                    --verify-tag.
+  --confirm-gameplay "macos=<initials/date>,windows=<initials/date>"
+                    Owner gameplay attestation on macOS AND Windows. Required
+                    with --publish; same shape the publish gate enforces.
   --rolling-latest  Publish to a rolling 'latest' prerelease instead of a tag
   --skip-macos      Don't build macOS (just publish whatever is in dist/)
   --universal       Build a universal arm64+x86_64 macOS binary. Default: host
@@ -47,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --version) version="$2"; shift 2 ;;
     --repo) repo="$2"; shift 2 ;;
     --publish) publish=1; shift ;;
+    --confirm-gameplay) gameplay="$2"; shift 2 ;;
     --rolling-latest) rolling=1; shift ;;
     --skip-macos) skip_macos=1; shift ;;
     --universal) universal=1; shift ;;
@@ -109,23 +119,46 @@ if [[ "$publish" -eq 1 ]]; then
   # (dev-push dry-run skips only the gameplay gate, which is enforced separately
   # at the git-history push below.) See docs/RELEASING.md "The publish gate".
   echo "[release] running the public-publish guard chain (scripts/publish_public.sh --dev-push, dry-run)..."
+  head_sha="$(git rev-parse --short=12 HEAD)"
   if ! "$(git rev-parse --show-toplevel)/scripts/publish_public.sh" --dev-push; then
     echo "ERROR: public-publish guards failed -- refusing to publish the release." >&2
     echo "       Fix the guard failures above (or produce a strict verify report for HEAD)." >&2
     exit 1
   fi
 
-  # Owner gameplay gate + boundary reminders (ruling C1/D1, docs/fidelity/ESCALATIONS.md).
-  cat >&2 <<'GATE'
-[release] RELEASE GATE REMINDER (owner):
-  - Gameplay-verify this build by hand on macOS AND Windows before tagging.
-  - Push the public git history/tag ONLY via the guarded entrypoint:
-      scripts/publish_public.sh --tag <vX.Y.Z> \
-        --confirm-gameplay "macos=<initials/date>,windows=<initials/date>" --yes
+  # (C2) Owner gameplay gate -- STRUCTURAL, not a printed reminder. A publish with
+  # no attestation, or a lazily-shaped one, is refused right here (same shape the
+  # publish gate enforces: macos AND windows, each <initials>/<date>).
+  [[ -n "$gameplay" ]] || {
+    echo "ERROR: --publish requires --confirm-gameplay \"macos=<initials/date>,windows=<initials/date>\"" >&2
+    echo "       (owner gameplay verification on macOS AND Windows -- ruling C1/D1)." >&2
+    exit 1
+  }
+  gp_macos="" ; gp_windows=""
+  IFS=',' read -ra _pairs <<< "$gameplay"
+  for pair in "${_pairs[@]}"; do
+    [[ "$pair" == *=* ]] || { echo "ERROR: --confirm-gameplay entry '$pair' is not key=value." >&2; exit 1; }
+    k="${pair%%=*}"; v="${pair#*=}"; k="${k// /}"
+    case "$k" in
+      macos) gp_macos="$v" ;;
+      windows) gp_windows="$v" ;;
+      *) echo "ERROR: --confirm-gameplay unknown key '$k' (expected macos/windows)." >&2; exit 1 ;;
+    esac
+  done
+  for pv in "macos:$gp_macos" "windows:$gp_windows"; do
+    val="${pv#*:}"
+    [[ -n "${val// /}" && "$val" == */* ]] || {
+      echo "ERROR: --confirm-gameplay ${pv%%:*} value must be <initials>/<date> (got '${val}')." >&2; exit 1; }
+  done
+  echo "[release] gameplay attested: macos=${gp_macos} windows=${gp_windows}"
+  cat >&2 <<GATE
+[release] boundary reminders (ruling C1/D1, docs/fidelity/ESCALATIONS.md):
   - macOS ships UNSIGNED (Apple signing deferred): note the right-click > Open
     first-launch step in the release notes.
-  - Confirm the PortMaster/GLES lane is green (release CI "PortMaster GLES compile
-    check", or: tools/portmaster_build_check.sh).
+  - PortMaster/GLES lane must be green (release CI "PortMaster GLES compile check",
+    or: tools/portmaster_build_check.sh).
+  - PROVENANCE CAVEAT: dist/ assets are matched by version glob, not cryptographically
+    bound to the verified commit (${head_sha}); build them from this same HEAD.
 GATE
 
   mapfile -t assets < <(ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null)
@@ -138,9 +171,25 @@ GATE
   echo "[release] publishing ${#assets[@]} asset(s) to $repo @ $tag ..."
   if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
     gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber
-  else
+  elif [[ "$rolling" -eq 1 ]]; then
+    # Rolling 'latest' prerelease is a GitHub-managed rolling pointer, not a
+    # version tag pushed through the git gate; create/refresh it directly.
     gh release create "$tag" "${assets[@]}" --repo "$repo" \
       --title "MGB64 $version" --notes-file "$notes_file" "${extra[@]}"
+  else
+    # (C2) A VERSION release: never let gh mint the tag server-side. --verify-tag
+    # aborts unless the git tag already exists on the remote (it must have arrived
+    # via scripts/publish_public.sh --tag, i.e. through the gameplay-gated git
+    # push). This closes the "gh release create mints public tags outside the
+    # gate" hole.
+    gh release create "$tag" "${assets[@]}" --repo "$repo" --verify-tag \
+      --title "MGB64 $version" --notes-file "$notes_file" "${extra[@]}" || {
+        echo "ERROR: no git tag '$tag' on $repo -- refusing to mint it here." >&2
+        echo "       Push it through the gate FIRST:" >&2
+        echo "         scripts/publish_public.sh --tag $tag --confirm-gameplay \"$gameplay\" --yes" >&2
+        echo "       then re-run this publish to attach the dist/ assets." >&2
+        exit 1
+      }
   fi
   echo "[release] done: https://github.com/$repo/releases/tag/$tag"
 else

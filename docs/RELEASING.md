@@ -99,6 +99,17 @@ C1/D1): the already-public history is accepted **as-is** — the script does **n
 rewrite history and does **not** filter content — and safety comes from guards
 that run on every push.
 
+**The structural backstop is the `.githooks/pre-push` hook** (install once with
+`scripts/install_git_hooks.sh`). For *any* push whose remote is the public repo —
+crucially including a day-to-day `git push -u origin fix/whatever` topic branch,
+the lane whose subsequent server-side PR merge advances `main` without this
+script ever running — the hook scans the exact pushed commits (content **and**
+messages) for the never-leak classes and refuses on a hit. So the leak boundary
+is enforced at the git layer for every configured clone, not only when this
+script is run by hand. `publish_public.sh` runs the same ranged scan itself
+(belt-and-suspenders) and the hook nudges `main`/tag pushes here for the strict
+verify + gameplay gate.
+
 What it enforces, in order, and refuses on any failure:
 
 1. **Clean tree** — a dirty working tree is refused (the push must match what the
@@ -163,35 +174,55 @@ would fail the publish gate.
    It builds, packages, verifies asset-free, headless-smokes the Linux launcher,
    and uploads `mgb64-windows-*` / `mgb64-linux-*` artifacts. Download them into
    `dist/`.
-2. **macOS + publish (local):**
+2. **Push the release tag through the gate (git history):**
    ```sh
-   # build + validate macOS, stage all dist/ assets, and publish the release:
-   scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --publish
-   # signed + notarized (credentials exported per "Code signing" above):
-   scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --sign --publish
-   # or a rolling 'latest' prerelease refreshed from main:
-   scripts/release.sh --version v0.3.0 --repo akratch/mgb64 --rolling-latest --publish
+   git tag -a v0.3.0 -m "MGB64 v0.3.0"
+   scripts/publish_public.sh --tag v0.3.0 \
+     --confirm-gameplay "macos=<initials/date>,windows=<initials/date>" --yes
+   ```
+   This is the only path that puts the tag on the public remote (strict verify +
+   gameplay gate). Do it **before** step 3 — `release.sh` will not mint the tag.
+
+3. **macOS build + attach the release assets (local):**
+   ```sh
+   # build + validate macOS, stage all dist/ assets, attach them to the release:
+   scripts/release.sh --version v0.3.0 --repo akratch/mgb64 \
+     --confirm-gameplay "macos=<initials/date>,windows=<initials/date>" --publish
+   # signed + notarized (credentials exported per "Code signing" above): add --sign
+   # rolling 'latest' prerelease refreshed from main: add --rolling-latest
    ```
    Without `--publish` it only builds/stages `dist/` assets and prints the next
-   command. `--publish` requires `gh` auth and creates/updates the GitHub
-   Release, attaching every `dist/mgb64-*-<version>.*` present (macOS locally +
-   Windows/Linux from CI). Without `--sign`, the macOS asset ships ad-hoc
-   signed and Gatekeeper will warn end users on first launch.
+   command. `--publish` **requires `--confirm-gameplay`** (the gameplay gate is
+   enforced here structurally, not as a printed reminder) and `gh` auth. It runs
+   the publish guard chain, then attaches every `dist/mgb64-*-<version>.*` present
+   (macOS locally + Windows/Linux from CI). For a **version** tag it uses
+   `gh release create --verify-tag`, so it can **never mint the tag
+   server-side** — the git tag must already be on the remote from step 2. Without
+   `--sign`, the macOS asset ships ad-hoc signed and Gatekeeper will warn end
+   users on first launch.
 
 The README's **Download** table links to `/releases/latest`, so a rolling
 `latest` prerelease keeps the download current between tagged majors.
 
 ---
 
-## The two repositories
+## The repository model (historical note)
+
+> **Superseded — read `docs/WORKFLOW.md` for the current model.** The project used
+> to carry two disjoint repos (a private `mgb64-prepublic-*` staging fork and the
+> public `akratch/mgb64`). That two-repo model is **retired**: there is now a
+> **single lineage** — `akratch/mgb64` is the one source of truth, developed in
+> the open, and the old private repo is archived read-only. The paragraphs below
+> are kept only for historical context; do not treat the private staging fork as
+> a live development target.
 
 - **`akratch/mgb64`** — the **public** repo. Canonical, developed **in the open**
   with real, additive history. Its root is a one-time clean snapshot (the private
   pre-history could not ship — it contained proprietary/SDK-notice text — so the
   public history begins at the launch snapshot and grows normally from there).
-- **`akratch/mgb64-prepublic-*`** — the **private** staging/archive. Holds the
-  full pre-launch development history (kept private for the reason above). Useful
-  for private experimentation; only clean work is ported to public.
+- **`akratch/mgb64-prepublic-*`** — the **archived** private staging repo
+  (read-only). It held the full pre-launch development history (kept private for
+  the reason above); it is no longer a development target.
 
 `main` on the public repo is protected: **changes go through a PR** (0 required
 approvals so a solo maintainer can self-merge; admins can merge). No direct
@@ -228,12 +259,13 @@ ever needed — routine work is just PRs (above).
 
 ## Checklist
 
+- [ ] Hooks installed (`scripts/install_git_hooks.sh`; `git config core.hooksPath` == `.githooks`).
 - [ ] `scripts/release_preflight.sh` passes (clean tree, warning-clean build, ROM-free tests, asset-free).
-- [ ] Strict verify green for the release commit: `GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh`.
+- [ ] Strict **full-coverage** verify green for the release commit: `GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh` (no `--tier`; the gate rejects a tier-limited report).
 - [ ] PortMaster/GLES lane green (release CI "PortMaster GLES compile check", or `tools/portmaster_build_check.sh`).
 - [ ] Windows + Linux CI artifacts downloaded into `dist/`.
 - [ ] Owner gameplay verification done on **macOS AND Windows**.
-- [ ] `scripts/release.sh --version <v> --repo <r> --publish` (guard chain runs; macOS built locally + all assets attached).
-- [ ] Public git tag pushed **only** via `scripts/publish_public.sh --tag <v> --confirm-gameplay "macos=…,windows=…" --yes`.
+- [ ] Public git tag pushed **first**, only via `scripts/publish_public.sh --tag <v> --confirm-gameplay "macos=…,windows=…" --yes`.
+- [ ] `scripts/release.sh --version <v> --repo <r> --confirm-gameplay "macos=…,windows=…" --publish` (guard chain + gameplay gate run; macOS built locally; assets attached to the already-pushed tag via `--verify-tag`).
 - [ ] `RELEASE_NOTES.md` updated, including the macOS unsigned right-click → Open note (Apple signing deferred).
 - [ ] README Download links resolve (macOS asset present on `/releases/latest`).

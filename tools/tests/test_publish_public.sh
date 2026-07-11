@@ -62,14 +62,29 @@ sha12() { ( cd "$REPO" && git rev-parse --short=12 HEAD ); }
 write_green_report() {
   local s; s="$(sha12)"
   cat > "$REPORTS/verify_${s}.json" <<EOF
-{ "sha": "${s}", "started": "now", "gates": [], "verdict": "green", "fail_count": 0, "skip_count": 0, "strict": true }
+{ "sha": "${s}", "started": "now", "gates": [], "verdict": "green", "fail_count": 0, "skip_count": 0, "strict": true, "tier_limit": 0 }
 EOF
 }
 
 write_report_verdict() {  # verdict [sha-override]
   local s="${2:-$(sha12)}"
   cat > "$REPORTS/verify_$(sha12).json" <<EOF
-{ "sha": "${s}", "started": "now", "gates": [], "verdict": "$1", "fail_count": 1, "skip_count": 0, "strict": true }
+{ "sha": "${s}", "started": "now", "gates": [], "verdict": "$1", "fail_count": 1, "skip_count": 0, "strict": true, "tier_limit": 0 }
+EOF
+}
+
+# Green report with an arbitrary tier_limit (0 = full; N>0 = partial --tier run).
+write_green_tier() {  # tier_limit
+  local s; s="$(sha12)"
+  cat > "$REPORTS/verify_${s}.json" <<EOF
+{ "sha": "${s}", "started": "now", "gates": [], "verdict": "green", "fail_count": 0, "skip_count": 0, "strict": true, "tier_limit": $1 }
+EOF
+}
+
+# Green report with NO sha field at all (forged/malformed).
+write_green_no_sha() {
+  cat > "$REPORTS/verify_$(sha12).json" <<EOF
+{ "started": "now", "gates": [], "verdict": "green", "fail_count": 0, "skip_count": 0, "strict": true, "tier_limit": 0 }
 EOF
 }
 
@@ -151,6 +166,16 @@ expect 6 "gameplay missing macos refused"        --confirm-gameplay "windows=AK/
 setup_repo
 expect 6 "gameplay empty macos value refused"    --confirm-gameplay "macos= ,windows=AK/2026-07-11"
 
+# (I5) attestation must be deliberately shaped, not the laziest string.
+setup_repo
+expect 6 "bare-key attestation (no '=') refused"     --confirm-gameplay "macos,windows"
+setup_repo
+expect 6 "attestation value == key refused"          --confirm-gameplay "macos=macos,windows=AK/2026-07-11"
+setup_repo
+expect 6 "attestation value w/o slash refused"       --confirm-gameplay "macos=AK-today,windows=AK/2026-07-11"
+setup_repo
+expect 6 "unknown attestation platform key refused"  --confirm-gameplay "mac=AK/2026-07-11,windows=AK/2026-07-11"
+
 # --- happy-path dry runs ------------------------------------------------------
 setup_repo
 expect 0 "dev-push dry run OK (skips gameplay)"  --dev-push
@@ -213,6 +238,78 @@ else bad "push annotation not recorded"; fi
 ( cd "$REPO" && git fetch -q pub )
 expect 0 "second push is a no-op"                --remote pub --confirm-gameplay "$GAMEPLAY" --yes
 expect_grep "nothing to push" "no-op message"
+
+# --- (C1) a TAG must still push when the branch is already current ------------
+# The original bug: with main already at HEAD, --tag exit-0'd "nothing to push"
+# BEFORE the tag push, silently dropping the release tag.
+setup_repo
+( cd "$REPO"
+  git remote add pub "$BARE"
+  git push -q pub HEAD:refs/heads/main         # remote main == HEAD (current)
+  git tag -a v9.9.9 -m "release 9.9.9"         # local annotated tag at HEAD
+  git fetch -q pub )                            # pub/main tracking ref == HEAD
+write_green_report
+expect 0 "tag pushes even when branch current"  --remote pub --tag v9.9.9 --confirm-gameplay "$GAMEPLAY" --yes
+expect_grep "branch is current" "tag-only proceed message"
+if [[ -n "$( git --git-dir="$BARE" tag -l v9.9.9 2>/dev/null )" ]]; then
+  ok "tag v9.9.9 reached the fake remote (C1 fixed)"
+else bad "tag v9.9.9 did NOT reach the fake remote (C1 regression)"; fi
+
+# --- (I1) a green report with no sha field is refused (fail closed) -----------
+setup_repo
+rm -f "$REPORTS"/verify_*.json
+write_green_no_sha
+expect 5 "sha-less green report refused"          --dev-push
+expect_grep "sha == HEAD" "sha-less refusal message"
+
+# --- (I2) a tier-limited green report is refused; full-coverage passes --------
+setup_repo
+write_green_tier 1
+expect 5 "tier-limited (tier 1) verify report refused" --dev-push
+expect_grep "tier-limited" "tier-limited refusal message"
+setup_repo
+write_green_tier 0
+expect 0 "full-coverage (tier 0) verify report OK"     --dev-push
+
+# --- (I3) adjudication-note injection is neutralized -------------------------
+setup_repo
+( cd "$REPO" && git remote add pub "$BARE" )
+write_report_verdict red
+INJ='pwned""" , "forged": true, "x": "\ end'
+expect 0 "adjudicated push w/ injecty red-note (--yes)" \
+  --remote pub --dev-push --verify-report "$REPORTS/verify_$(sha12).json" --red-note "$INJ" --yes
+if python3 - "$REPORTS/publish_annotations.log" "$INJ" <<'PY'
+import json, sys
+recs = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+pub = [r for r in recs if r.get("event") == "publish"][-1]
+ok = (pub.get("red_note") == sys.argv[2]) and ("forged" not in pub)
+sys.exit(0 if ok else 1)
+PY
+then ok "red-note injection neutralized (note intact verbatim, no injected keys)"
+else bad "red-note injection NOT neutralized"; fi
+
+# --- (I4) test seams are refused when the remote resolves to the public repo --
+setup_repo
+( cd "$REPO" && git remote add pub "$BARE" )
+MGB64_PUBLIC_REMOTE_RE='public\.git$' \
+  expect 2 "test seams refused on a public-resolved remote"  --remote pub --dev-push
+expect_grep "must not be set when the remote resolves to the public repo" "seams-on-public message"
+
+# (I4/M3) annotation records the seam-override + completion marker on a real push
+setup_repo
+( cd "$REPO" && git remote add pub "$BARE" )
+expect 0 "real push records seam + push_ok"       --remote pub --confirm-gameplay "$GAMEPLAY" --yes
+if grep -q '"test_seams_overridden": true' "$REPORTS/publish_annotations.log"; then
+  ok "annotation records the seam override"; else bad "annotation missing seam-override flag"; fi
+if grep -q '"event": "push_ok"' "$REPORTS/publish_annotations.log"; then
+  ok "annotation records the post-push completion marker"; else bad "annotation missing push_ok marker"; fi
+
+# --- (M1) refuse pushing a HEAD that isn't the named branch -------------------
+setup_repo
+( cd "$REPO" && git checkout -q -b topic/x )
+expect 2 "branch/HEAD mismatch refused"           --dev-push
+expect_grep "mismatched HEAD" "branch-mismatch message"
+expect 0 "branch mismatch overridable"            --dev-push --branch topic/x
 
 echo
 echo "== publish_public.sh: ${pass} passed, ${fail} failed =="

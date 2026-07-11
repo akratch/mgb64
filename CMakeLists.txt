@@ -199,6 +199,16 @@ if(BUILD_TESTING)
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_publish_public.sh"
     )
     set_tests_properties(publish_public_guard PROPERTIES TIMEOUT 120)
+    # Structural pre-push leak-class gate (.githooks/pre-push) refusal proof
+    # (ROM-free): a scratch repo pushes to a LOCAL bare fake public remote wired
+    # with the real tracked hooks; a clean topic branch is allowed while planted
+    # private-path / personal-email / credential commits are refused at the git
+    # layer. Never touches origin or the network.
+    add_test(
+        NAME pre_push_leak_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_pre_push_hook.sh"
+    )
+    set_tests_properties(pre_push_leak_guard PROPERTIES TIMEOUT 120)
     # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
     add_test(
         NAME combat_oracle_contract

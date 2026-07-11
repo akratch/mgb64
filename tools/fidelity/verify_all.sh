@@ -336,6 +336,7 @@ fi
 VERIFY_SHA="$SHA" VERIFY_STARTED="$STARTED" VERIFY_VERDICT="$VERDICT" \
 VERIFY_SKIPPED_REASON="$SKIPPED_REASON" VERIFY_RECORDS="$RECORDS" \
 VERIFY_SKIP_COUNT="$SKIP_COUNT" VERIFY_FAIL_COUNT="$FAIL_COUNT" VERIFY_STRICT="$STRICT" \
+VERIFY_TIER_LIMIT="$MAX_TIER" VERIFY_GATE_COUNT="$gate_index" \
 python3 - "$REPORT_JSON" <<'PY'
 import json, os, sys
 
@@ -363,6 +364,11 @@ report = {
     "fail_count": int(os.environ["VERIFY_FAIL_COUNT"]),
     "skip_count": int(os.environ["VERIFY_SKIP_COUNT"]),
     "strict": bool(int(os.environ["VERIFY_STRICT"])),
+    # tier_limit: 0 == full coverage (all tiers in the manifest ran); a positive
+    # N means only tiers <= N ran (--tier N). The publish gate requires 0, so a
+    # fast-lane partial run can never be laundered into a release-grade report.
+    "tier_limit": int(os.environ["VERIFY_TIER_LIMIT"]),
+    "gate_count": int(os.environ["VERIFY_GATE_COUNT"]),
 }
 skipped = os.environ.get("VERIFY_SKIPPED_REASON", "")
 if skipped:

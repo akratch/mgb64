@@ -29,21 +29,39 @@ second lineage.
 2. **Branch → PR → merge.** Never commit directly to `main`. Cut a topic branch
    (`fix/…`, `feat/…`, `docs/…`), push it, open a PR, and merge it into `main`. This is the
    "develop in the open" model the v0.3.x releases already used.
-3. **Every commit passes the contamination guard.** The `.githooks` pre-commit guard
-   rejects ROM/ROM-derived data in tracked files. Keep it installed
-   (`git config core.hooksPath .githooks`). No ROM bytes, extracted assets, or captured
-   traces/screenshots are ever committed — see `.gitignore` and
-   `docs/RENDERING_REGRESSION_NOTES.md` ("must stay local").
+3. **Install the hooks — they are the structural gate.** Run
+   `scripts/install_git_hooks.sh` once per checkout (sets `core.hooksPath
+   .githooks`; verify with `git config core.hooksPath`). Two tracked hooks then
+   run automatically:
+   - **pre-commit** rejects ROM/ROM-derived data in tracked files (no ROM bytes,
+     extracted assets, or captured traces/screenshots — see `.gitignore` and
+     `docs/RENDERING_REGRESSION_NOTES.md`, "must stay local").
+   - **pre-push** additionally, for **any push to the public remote**
+     (`akratch/mgb64` / `origin`) — *including a routine `git push -u origin
+     fix/whatever` topic branch* — scans the exact commits being pushed (diff
+     content **and** commit messages) for the never-leak classes (private
+     absolute paths, personal email, credentials, proprietary SDK notice) and
+     **refuses** on a hit (`scripts/ci/scan_leak_classes.sh`). This is the
+     structural control that closes the day-to-day PR lane: leak-class text
+     cannot reach the public repo via a topic-branch push + server-side merge.
+     The accepted-public fidelity trees and AI-authorship trailers are **not**
+     blocked. The hook also nudges direct `main`/tag pushes through the guarded
+     entrypoint below (override for a deliberate manual push:
+     `MGB64_ALLOW_DIRECT_PUBLIC_PUSH=1`). A contributor who has not installed the
+     hook loses this backstop — so installing it is not optional; CI's
+     `check_public_history_text.sh` remains the reachable-history net.
 4. **Releases are tags on `main`, published only through the guarded path.**
    `vX.Y.Z` tags live on `main` only; cut releases from `main`, never from a fork.
-   Every push to the public remote — routine or release — goes through the one
-   guarded entrypoint **`scripts/publish_public.sh`**, never a raw `git push
-   origin main`. That script refuses a dirty tree, runs the release-ready +
-   public-history-text guards, requires a strict green verify report for the
-   commit, and **never force-pushes**. It does not rewrite history and does not
-   filter content: the already-public history is accepted as-is and the boundary
-   is forward-only (owner ruling 2026-07-11, `docs/fidelity/ESCALATIONS.md`,
-   resolved C1/D1). A **release** push additionally requires, before the tag:
+   Routine `main` updates and release tags go through the one guarded entrypoint
+   **`scripts/publish_public.sh`** (which the pre-push hook nudges you toward),
+   never a raw `git push origin main`. That script refuses a dirty tree, runs the
+   release-ready + public-history-text guards **and the same ranged leak-class
+   scan the hook runs**, requires a strict green **full-coverage** verify report
+   for the commit, and **never force-pushes**. It does not rewrite history and
+   does not filter content: the already-public history is accepted as-is and the
+   boundary is forward-only (owner ruling 2026-07-11,
+   `docs/fidelity/ESCALATIONS.md`, resolved C1/D1). A **release** push
+   additionally requires, before the tag:
    - a **strict verify green** report for the release commit
      (`GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh`);
    - **owner gameplay verification on macOS AND Windows**, attested to the script
@@ -74,14 +92,22 @@ second lineage.
 ## Day-to-day
 
 ```sh
+scripts/install_git_hooks.sh                 # once per checkout (enables the hooks)
 git switch main && git pull                 # main == origin/main == akratch/mgb64
 git switch -c fix/whatever                   # topic branch
 # … edit, build (cmake --build build --target ge007), test …
-git commit                                   # contamination guard runs here
-git push -u origin fix/whatever
+git commit                                   # pre-commit: ROM/asset contamination guard
+git push -u origin fix/whatever              # pre-push: leak-class scan of these commits
 gh pr create --base main                     # open the PR
 # review, then squash-or-merge into main; delete the topic branch
 ```
+
+This `git push -u origin fix/whatever` lane is **safe by hook**: with the hooks
+installed (rule 3) the pre-push leak-class scan runs on exactly these commits
+before they can reach the public remote, so a private path / personal email /
+credential in the branch is refused at the git layer — no `publish_public.sh`
+discipline required for topic branches. (Routine `main` and release-tag pushes
+still go through `scripts/publish_public.sh`, which the hook nudges you toward.)
 
 ## The archived private repo
 

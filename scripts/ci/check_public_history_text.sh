@@ -86,6 +86,7 @@ pathspecs=(
   ':!scripts/ci/check_public_history_text.sh'
   ':!scripts/ci/check_no_rom_data.sh'
   ':!scripts/ci/check_release_ready.sh'
+  ':!scripts/ci/scan_leak_classes.sh'
 )
 if [ -f .gitattributes ]; then
   while IFS= read -r pat; do
