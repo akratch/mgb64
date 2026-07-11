@@ -22,6 +22,13 @@
       "to": "discovered",
       "evidence": "docs/fidelity/route_coverage_nondeterminism_2026-07-11.md",
       "note": "Found while authoring the Phase B archetype route subset (FID-0031/D4). 6 gate:true routes landed on the reliably race-free early missions (Dam x2 + facility/runway/surface1/bunker1). Boss archetype (cradle/aztec) dropped for Mode-A non-determinism; heavier levels blocked by Mode-B boot-load tick race. FID-0046-adjacent."
+    },
+    {
+      "ts": "2026-07-11T20:29:28Z",
+      "from": "discovered",
+      "to": "discovered",
+      "evidence": "tools/fidelity/gate_routes_smoke.sh",
+      "note": "Gate hardening (NOT a resolution — the underlying boot-load non-determinism stays open, blocked_on FID-0046). gate_routes_smoke.sh no longer trusts the first clean replay: each gate:true route is decided by AGREEMENT over a bag of clean (non-misaligned) replay hashes (decide_verdict/evaluate_route). A genuine code change makes the OLD baseline unreachable and the NEW hash reproduce -> want_count==0 && a non-baseline hash agreeing (>=2) => hard FAIL (never retried away). A non-reproducible FID-0075 load flake leaves the baseline reachable -> the baseline appearing even once (or reproducing) is not a hard fail; pure noise with the baseline never seen downgrades to an UNSTABLE note (green, flagged for isolated re-run). This removes the false-RED where runway_traverse (3/3 deterministic uncontended = 56c32149572a6055) drifted to f043e7f0 under aggregate verify_all load and all 4 back-to-back retries agreed on the load-shifted value. Proofs: ROM-free `gate_routes_smoke.sh --self-test` (9 cases incl. PROOF-A genuine-divergence->FAIL and PROOF-B one-off-flake->green), registered ctest gate_routes_smoke_selftest; real lane normal PASS 6/6 (exit 0); GE007_NO_PATROL_MAGIC_FIX=1 -> hard FAIL 6/6 (exit 1, each divergent hash reproduced, baseline never observed); GATE_ROUTES_FLAKE_INJECT=deadbeef one-off flake -> bunker1 absorbs it (baseline reproduced 2/3), lane green (exit 0)."
     }
   ],
   "blocked_on": [

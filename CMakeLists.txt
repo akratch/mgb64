@@ -214,6 +214,16 @@ if(BUILD_TESTING)
         NAME combat_oracle_contract
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/combat_route_contract_smoke.sh" --gate
     )
+    # FID-0075 gate-routes load-robustness decision proofs (ROM-free): the
+    # gate_routes_smoke agreement logic must (a) still hard-FAIL a genuine
+    # consistent divergence and (b) downgrade a non-reproducible one-off load
+    # flake to an unstable-note (green), so the release-gating lane stops
+    # false-reddening runway_traverse under aggregate verify_all load.
+    add_test(
+        NAME gate_routes_smoke_selftest
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/gate_routes_smoke.sh" --self-test
+    )
+    set_tests_properties(gate_routes_smoke_selftest PROPERTIES TIMEOUT 60)
     # FID-0062 sim-tick alignment regression lane (ROM-free): --align tick pairs the
     # native (1 rec/tick) vs ares (~2 rec/tick + empty-roster interleave) streams by
     # sim-tick with no phantom divergences, while --align move (index) skews ~2x.
