@@ -3938,9 +3938,9 @@
         "body_start": 830,
         "body_end": 890
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Multi-LOD tile-state/tile-size DL builder. Live C 830-890 vs ASM 894-1131. endlod=(tex byte-0xb>>5 maxlod)+startlod, loop-guard startlod<endlod (slt beqz 916) and terminator currentTile!=endlod (bne 1115) both match; lod inits startlod-startlod=0 (subu 918) and increments each iter (addiu s2 1087). texSetLutMode(lutmodeindex<<14) gate emits SETOTHERMODE_H TEXTLUT; texTrySetTileState arg order currentTile,gbiformat(bits2-4),depth(bits0-1),line,tmembase,smode,tmode,masks,maskt,lod,lod verified reg-by-reg; uls/ult/lrs/lrt all (offset==2 && !unk0c_02)?2:0 with (dim-1)<<2 addend (branch senses bne offset,2 + bnezl unk0c_02 correct polarity). tmembase+=sizeInBytes accumulates (addu 1113). Renderer DL builder, sim-neutral.",
+      "reviewed_ts": "2026-07-11T23:12:34Z",
       "rank": 144,
       "rank_score": 223,
       "rank_reason": "223i"
@@ -3965,9 +3965,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Shattered-glass-piece integrator. Live C 567-609 vs ASM (LEFTOVERDEBUG variant 629-863). timescale=g_ClockTimer<15?(f32)g_ClockTimer:15.0 (slti 0xf 634); per-piece early-out piece->piece<=0 continue (blezl 660); frames=(s32)timescale via trunc.w.s (662); piece+=frames; five field MACs field_0x10+=0x28*ts, 0x14+=0x2c*ts, 0x18+=0x30*ts, x(4)+=0x1c*ts, z(0xc)+=0x24*ts all offset-verified; inner j<frames loop (4x-unrolled, blez guard) does y(8)+=field_0x20, field_0x20-=0.1 (0x3dcccccd); piece>=150 (slti 0x96) zeroes piece; y<-30000||y>30000 (c.lt.s pair, bc1tl/bc1fl senses correct) zeroes piece; stride 0x68, bound re-read from SHATTERED_WINDOW_PIECES_BUFFER_LEN global each iter. Renderer decor, no sim-hash state.",
+      "reviewed_ts": "2026-07-11T23:13:48Z",
       "rank": 145,
       "rank_score": 220,
       "rank_reason": "220i"
@@ -3992,9 +3992,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Same function, non-LEFTOVERDEBUG (retail) variant ASM 879-1113. Byte-identical control flow to the LEFTOVERDEBUG copy; rodata 0.1=0x3dcccccd, +-30000 clamps identical. Equivalent to live C 567-609.",
+      "reviewed_ts": "2026-07-11T23:13:48Z",
       "rank": 146,
       "rank_score": 220,
       "rank_reason": "220i"
@@ -4019,9 +4019,9 @@
         "body_start": 492,
         "body_end": 589
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "N64 controller SI poll. Live C 494-588 vs ASM 594-830. Disable-poll / enable-poll / poll branches all map: osRecvMesg NOBLOCK==0 gate senses correct (bnez skips), g_ContBusy block/clear, g_ContPollDisableCount ++/--, (count==0 && g_ContInitDone) short-circuit (bnezl early return then beqz). index=(nextlast+1)%20 with ==curstart -> nextlast fallback; nextsecondlast=(index+19)%20; sample stride 24, pad stride 6, errnum@4; g_ContCheckStatusTimer60++ %120 joyCheckStatus; errnum edge-detect XOR loop (both || clauses + break) verified; bad-reads reset zeroes all four arrays iff any nonzero, 2x-unrolled, bound at g_ContBadReadTimer60 addr. ONE naming note (not a divergence): C uses function-static 'count' where ASM uses global g_ContBadReadTimer60 (joy.c:125, commented 'Static variable?') -- same exclusive storage, referenced nowhere else, so behavior identical. joyPoll live via sched.c:303/316, boss.c.",
+      "reviewed_ts": "2026-07-11T23:16:00Z",
       "rank": 147,
       "rank_score": 217,
       "rank_reason": "217i"
@@ -4046,9 +4046,9 @@
         "body_start": 650,
         "body_end": 757
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Spectrum-emulator easter-egg N64->kempston/keyboard input map. Live C 650-757 vs ASM 761-1005. reg map a3=btns, t0=stickX, v0=stickY (joyGetButtons then StickX(-3,3) then StickY(-3,3)). spec_keyboard_buffer[0..8]=0xFF init (byte0 + 8-byte loop). Direction gates verified: Z_TRIG(0x2000)->goAction; (0x202 L_C|L_JPAD)||stickX<-1->goLeft; (0x101 R)||stickX>=2->goRight; (0x808 U)||stickY>=2->goUp; (0x404 D)||stickY<-1->goDown; all branch senses (bnez/slti) correct. Per-ROM dispatch: every derived ASM id-compare matches spectrum.h enum exactly (JETPAC=2 goUp, {ALIEN8=4,KNIGHTLORE=7} goDown, six-set {0,1,4,6,7,9} kbd[4]&=0xFE, {JETPAC=2,PSSST=8} kbd[3]&=0xEF, GUNFRIGHT=5 kbd[3]&=0xFB, JETMAN=3 kbd[4]&=0xEF/kbd[0]&=0xFD/kbd[7]&=0xFE, UNDER=6 goUp-A/kbd[7]-B, ATIC=1 four jpad masks) with A=0x8000,B=0x4000. L_TRIG(0x20) zeroes ptr_spectrum_roms[0..0x3fff]. Final D_8004EC40 = goAction<<4|goUp<<3|goDown<<2|goLeft<<1|goRight verified bit-for-bit. Minigame-local, deterministic.",
+      "reviewed_ts": "2026-07-11T23:18:14Z",
       "rank": 148,
       "rank_score": 208,
       "rank_reason": "208i"
@@ -4073,9 +4073,9 @@
         "body_start": null,
         "body_end": 9726
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0106",
+      "note": "chr shot hit-scan. Live C 9713-9904 vs ASM 9908-10122. Equivalent: actiontype==ACT_DEAD(5) early-out, prop->flags&2 gate, (zDepth-instsize)<unk34 gate, 2-iter weapons_held[chr+0x160] maxweaponsize=max(getinstsize(wobj->model)*model->scale), instsize+=maxweaponsize, sphere test sub_GAME_7F041074(shot_pos,shot_dir,&submatrix m30,instsize), coarse sub_GAME_7F06C010 then 100||110 poly do-while (sub_GAME_7F04D9B0 break-on-hit else probably_damage_detail_blood_effect_related), hit_result>0 via blezl s1, rotate shot_dir by currentPlayerGetMatrix10D4, nodemtx delta+sqrtf dist, neg_z=-(dir.z*dist+pos.z)<unk34 -> sub_GAME_7F03B9C0, hit_in_range (persistent 0xd4 slot, distinct from reassigned s1 hit_result) -> zDepth<=unk34 sets chrflags|=4 and numclosearghs++. ONE divergence -> FID-0106: retail directly uses chr->field_20 as list head (no NULL fallback, no free); port adds lazy sub_GAME_7F06B120/7F0523F8 rebuild when field_20==NULL plus 7F06B248 cleanup, decoupling shootability from render-time hit-list build.",
+      "reviewed_ts": "2026-07-11T23:22:51Z",
       "rank": 149,
       "rank_score": 206,
       "rank_reason": "206i"

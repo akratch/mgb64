@@ -1,0 +1,27 @@
+{
+  "id": "FID-0106",
+  "title": "sub_GAME_7F022648 chr shot-scan adds render-decoupled lazy hit-list rebuild (chr->field_20 NULL fallback + temp free) absent in retail ASM",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chr.c"
+  ],
+  "repro": "requires a character whose render-time hit-list chr->field_20 is NULL when sub_GAME_7F022648 runs under fire; oracle-gated",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c:9990-9999 retail ASM uses chr->field_20 directly; port lazy rebuild at src/game/chr.c:9803-9822 and free at 9901-9903"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T23:22:20Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chr.c:9990-9999 retail ASM uses chr->field_20 directly; port lazy rebuild at src/game/chr.c:9803-9822 and free at 9901-9903",
+      "note": "Retail ASM sub_GAME_7F022648 (glabel chr.c:9908) unconditionally loads chr->field_20 into local_head and passes it straight to sub_GAME_7F06C010: at label L7F02277C it does lw t2 from chr offset 0x20 then sw t2 to sp+0x80 then jal sub_GAME_7F06C010 with NO field_20==0 test (chr.c lines 9990-9999), and the epilogue L7F022928 through L7F02296C frees nothing. Live C at chr.c:9803-9822 instead does: when local_head is NULL, build a temporary list via sub_GAME_7F06B120, populate hands 0 and 1 via sub_GAME_7F0523F8, use it, then free it at chr.c:9901-9903 via sub_GAME_7F06B248. Those three helpers appear in retail ASM only inside the separate render-time hit-list builder near 7F0215xx and 7F0218xx, never inside 7F022648. Effect: retail cannot polygon-hit a character whose render-time hit-list is NULL or unbuilt this frame, so shootability is render-coupled; the port rebuilds on demand and can register hits retail would miss. Same render-to-sim coupling family as FID-0012 and FID-0058. Not gated by any A/B flag; only the inner hand-2 hat sub-call and GEDBG traces are NATIVE_PORT-wrapped. Observability hinges on whether chr->field_20 is ever NULL when this scan runs -- needs oracle/runtime confirmation."
+    }
+  ]
+}
