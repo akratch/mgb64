@@ -1,0 +1,25 @@
+{
+  "id": "FID-0099",
+  "title": "intersectLineTriangle is a low-fidelity NATIVE_PORT reimpl (24.30% decomp match) of a heavily-reachable collision primitive -- fidelity unverified",
+  "class": "coverage-gap",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [],
+  "repro": "Any bullet-vs-background hit test (bg.c bgTestBulletHitBackground path, callers bg.c:11789/11910/12152/12336) or ray-vs-object collision (chrobjhandler.c:35643/35748/35895/35999, the bgTestHitOnObj/FID-0071 family) exercises intersectLineTriangle. The live body is the 24.30%-match reimpl; whether its impact point, barycentric in-triangle test, and facing test match the retail f64 result bit-for-bit (or even behaviorally on edge cases) is unverified.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/unk_092890.c:46"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T21:14:09Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/unk_092890.c:46",
+      "note": "The live NATIVE_PORT C body (unk_092890.c:46-219, selected because PORT_FIXME_STUBS && !NATIVE_PORT is false under the port build) is self-documented as 'Not close to matching ... 24.30%' on decomp.me, with author uncertainty comments ('why would this happen', 'what is this doing?'). The retail ASM (glabel unk_092890.c:225, 367 instructions, 90 f64 mul/add/sub/div/compare ops) is an f64-heavy line-vs-triangle intersection (Moller-Trumbore-style barycentric). The reimpl computes: edge vectors sp140/148/150 (v1-v0) and sp128/130/138 (v2-v1) and sp110/118/120 (v2-v0); triangle normal via cross product sp108/sp100/spF8; a parallel-plane early return when (sp108*dirx + sp100*diry + spF8*dirz) == 0.0; intersection parameter temp_f2; impact point spC8/spD0/spD8; barycentric coords var_f2 (three-way branch on which normal component is nonzero) and var_f0 (three-way branch on sp140/sp148/sp150 nonzero); an in-triangle test (var_f0>=0 && var_f2>=0 && var_f0+var_f2<=1.0); and a facing test (dot of dir with (impact - arg4) >= 0.0) before storing arg7 fields unk00/04/08 (impact) + unk0c/10/14 (normal) + unk2a=0 and returning 1. This structure is plausibly the right ALGORITHM, but at 24.30% byte-match the exact f64 operand ordering, the three-way branch selection thresholds, the compare senses/epsilon handling, and the exact arg7 store set cannot be confirmed equivalent without a dedicated instruction-by-instruction f64 forensic trace -- which exceeds the per-entry audit budget and is not a solid basis for a verified-equivalent verdict. Because this primitive is a CORE collision routine reached on every bullet-vs-background and ray-vs-object test, any divergence would mis-classify or mis-place level/object hits. Queue verdict recorded as waived pending this dedicated audit (same disposition as chrTickBeams in batch 9). coverage-gap, P2: retest by authoring an oracle route that feeds known line/triangle inputs through both the retail ASM (via a reference harness) and the port and compares the return value + arg7 fields, or by raising the decomp match to a level where an instruction diff is tractable. Found by ASM-audit batch 10, queue rank 112."
+    }
+  ]
+}

@@ -3020,9 +3020,9 @@
         "body_start": 2703,
         "body_end": 2962
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Glow-text font-glyph microcode/DL builder. ASM textrelated.c:2966-3413 vs live NONMATCHING C 2708-2962, traced fully. Prologue y_total=*y+lineheight, kerning=kerning_table at index prev_char.kerningindex*13+fontchar.kerningindex (sll/subu*13 chain), *x=*x-(kerning+text_spacing)+1. All seven early-outs sense-verified: *x<=0, viGetX<*x, viGetY<y_bottom (y_total+baseline), vp_x+vp_w<xval, vp_y+vp_h<y_bottom, xval<vp_x, y_bottom+height<vp_y (three jump to L_AE414, rest to L_AE418, both reach epilogue). Texture split fontchar.index<0x80 CI4/I4 vs >=0x80 CI8 -- identical structure and constants to construct_fontchar_microcode (rank 105): LOADBLOCK alignw=(width+7)&0xF8, texels=(alignw*height+1)/2-1 clamp 0x7FF, dwords=alignw>>3 clamp 1, dxt=(dwords+0x7FF)/dwords2 signed div; CI8 D_80040EA8 one-shot TLUT gate + two osVirtualToPhysical loads + render-tile 0xF5400200 w1=((index&1)<<20)|0x00080200 + tilesize; C uses and-0xF8 matching the ASM andi 0xf8 (no truncation gap). Glow tail: FA000000 prim color from glow_color reconstructed byte-by-byte, then the 8-offset outline loop (xoff -1..1, yoff -1..1) skipping the (0,0) center via beql, each iter sub_GAME_7F0AE45C(xval+xoff, y_total+yoff, fontchar, vp_x/vp_y/vp_w/vp_h) with xval reloaded from *x; then main FA000000 prim from color and final sub_GAME_7F0AE45C(gdl+1, xval, y_total, ...); epilogue *x+=fontchar.width, return gdl. Renderer/microcode: writes only the DL and *x cursor. NATIVE_PORT text_audit_log_glyph is an env-gated diagnostic. No jump table.",
+      "reviewed_ts": "2026-07-11T21:05:01Z",
       "rank": 110,
       "rank_score": 428,
       "rank_reason": "428i"
@@ -3047,9 +3047,9 @@
         "body_start": 6464,
         "body_end": 6606
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "MP character-select menu constructor (decomp.me 99.89%, only a stack-slot alloc diff). ASM front.c:6610-7054 vs live NONMATCHING C 6467-6606, traced fully. Setup: get_selected_num_players, viSetFillColor(0,0,0), viFillScreen, frontSetupMenuBackground, microcode_constructor, microcode_constructor_related_to_menus(0x26,0xA9,0x184,0xAB,0x90); spE4>=3 gate adds a second menu box (0xD4,0x1E,0xD6,0x136,0x80). Per-player loop (base pointers for player_has_selected_char/mp_char_cur/dword_bss_80069730/mp_char_prev/size all post-incremented by 4 = [i]): layout math verified both branches -- spE4==2 (var_s2=0x26, var_s4=0x15E, var_s7=(i>0?0x8c:0)+0x1E) and spE4!=2 (var_s4=0xAF, var_s7=(i>=2?0x8c:0)+0x1E, var_s2=(i&1?0xAF:0)+0x26); gDPSetScissor coords (var_s2+6, var_s7+5, var_s2+var_s4-6, var_s7+0x87) scaled x4; not-selected langGet(0x9C55) text block with spB4=(var_s4>>1)+var_s2-(width>>1); mp_chr_setup[mp_char_cur_select_player[i]].text_preset (stride 12, u16 lhu) text block; main frontRenderCharacterPortrait at (var_s2+0xD, var_s2+var_s4-0xE, (var_s4>>1)+var_s2-dword_bss[i], var_s7+0x46, prev, size). Neighbor block gate ((has_selected==0 && size==0) || prev!=cur) verified; all six neighbor portraits verified with correct gates (prev>=3/>=2/>=1, prev<num-1/-2/-3), x-offsets (-0xFC/-0xA8/-0x54/+0x54/+0xA8/+0xFC) and char deltas (prev-3/-2/-1/+1/+2/+3). Tail combiner_bayer_lod_perspective. Renderer/menu (front.c, not a prior-defect file); reads menu state, writes only the DL. No jump table.",
+      "reviewed_ts": "2026-07-11T21:07:01Z",
       "rank": 111,
       "rank_score": 423,
       "rank_reason": "423i"
@@ -3074,9 +3074,9 @@
         "body_start": null,
         "body_end": 4295
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Bullet-spark billboard-quad DL builder. ASM unk_0A1DA0.c:4297-4695 vs live NATIVE_PORT C 4123-4292, traced fully. Early-outs sense-verified: arg0.unk04<=0 (lh blezl), arg0.unk00<0 (bltzl), !camIsPosInScreen(&unk10, unk24). vtxtemplate = D_80040980 (16B copy); currentPlayerGetMatrix10D4; gdl=*gdl_ptr; dynAllocate7F0BD6C4(4); roomPos=getRoomPositionByIndex(unk06); vtxtemplate.cn[0..3]=unk28 bytes; frameIndex=(s32)((f32)unk00 * unk08); posX/Y/Z=unk10/14/18. All 12 mtx-row-by-scale products verified (mrow0/mrow1 x scaleA=unk1c / scaleB=unk20). Four vtxtemplate copies, then all four billboard corners with correct sign patterns: v0 (-A-B), v1 (+B-A), v2 (+A+B), v3 (-B+A), each component computed as (pos +/- mrowX +/- mrowY) * get_room_data_float1() - roomPos comp (retail calls get_room_data_float1 per-component, matched), trunc.w.s to s16 ob. Texcoords: v0 tc[0]=frameData[byteOffset+4]<<5 tc[1]=0; v1 tc=0/0; v2 tc[0]=0 tc[1]=byte+5<<5; v3 tc[0]=byte+4<<5 tc[1]=byte+5<<5; byteOffset=frameIndex*12. GBI stream: B7 clear-geom 0x2000, modelview matrix 0x01030040, applyRoomMatrixToDisplayList(roomIndex), texSelect(frameData+byteOffset, 4, arg2, 2), 04300040 vertex, B1000032/0x2010 tri, 01030040 projection matrix, *gdl_ptr=gdl. Port substrate deviations (all behavior-neutral): unk0C used as frameData directly in retail vs effect_image_from_handle(unk0C_handle) handle-resolve in port; G_MTX_FLOAT_PORT marker OR-ed into modelview w0 high word via bondviewGetField10E0GbiFlags (float-matrix marker, not an N64 GBI bit); ge007_bullet_sparks_enabled A/B gate (default-on = retail render); dynAllocate NULL guard; GE007_TRACE_SPARKS diagnostic. No jump table.",
+      "reviewed_ts": "2026-07-11T21:09:49Z",
       "rank": 112,
       "rank_score": 393,
       "rank_reason": "393i"
@@ -3101,9 +3101,9 @@
         "body_start": 1375,
         "body_end": 1559
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Chr slide-to-wall movement/collision resolver. ASM chr.c:1561-1958 vs live NONMATCHING C 1381-1559, traced fully. chrGetChrWidthHeight, chrSetMoving(0), sub_GAME_7F0B1CC4. Direct move: stanTestLineUnobstructed(old.xz -> new.xz, 31, height, always20, 0.0, 1.0) beqz-skip + stanTestVolume(new, width, 31, height, always20) bgez-skip (both < 0 senses correct); flag -> invalidmove(+9)=0, lastmoveok60(+0xcc)=g_GlobalTimer; result=currentStan. getCollisionEdge_maybe(&edgePt0@0x78, &edgePt1@0x6c) beql-0 -> done. dx/dz = new-old. Degenerate edge (edgePt0.x==edgePt1.x && .z==.z, c.eq.s pair) -> check_edge with hasEdge=0. Edge-normal path: edgeNormZ=pt1.z-pt0.z, edgeNormX=pt1.x-pt0.x, hasEdge=1, sqrtf+1.0/len normalize, dot=normalZ*dz+dx*normalX, slide=normal*dot+old, currentStan=stan. check_edge: hasEdge && line-clear && volume<0 -> newpos=slide, invalidmove=2, result. radiusSq=width*width; the !(normalZ^2+normalX^2 <= radiusSq) c.le.s+bc1fl gate selects edgePt0 (within-radius) vs edgePt1 (outside) block; each block: edgePt==old degenerate guard (c.eq.s x then c.eq.s z -> done), perpendicular normalX=-(edgePt.z-old.z) normalZ=edgePt.x-old.x, normalize, dot, slide, line+volume gates -> newpos=slide/invalidmove=2/result. Epilogue chrSetMoving(1), result==NULL -> invalidmove=1, return result. All branch senses, invalidmove values 0/1/2, field offsets, and FP operand order verified. No jump table; no uninit frame locals (hasEdge/slide only read on their set paths). Sim-relevant (chr movement) and retail-exact.",
+      "reviewed_ts": "2026-07-11T21:12:02Z",
       "rank": 113,
       "rank_score": 383,
       "rank_reason": "383i"
@@ -3128,9 +3128,9 @@
         "body_start": null,
         "body_end": 221
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:WAIVED: live NATIVE_PORT body (unk_092890.c:46-219) is a 24.30% decomp.me reimpl of the 367-instruction f64-heavy line-vs-triangle intersection primitive (glabel unk_092890.c:225). Heavily reachable (bg.c bullet-vs-background + chrobjhandler.c ray-vs-object collision). Algorithm shape is plausibly correct (Moller-Trumbore barycentric: edge/normal cross product, parallel-plane==0 early return, intersection param, impact point, three-way branch var_f2/var_f0 selection, in-triangle var_f0>=0 && var_f2>=0 && sum<=1.0, facing-dot>=0 gate, arg7 unk00/04/08/0c/10/14 + unk2a=0 stores, return 1) but at 24% byte-match the f64 operand ordering, branch thresholds, compare senses and exact store set cannot be confirmed equivalent within the per-entry budget. Not a solid verified-equivalent basis; same disposition as chrTickBeams (batch 9). Dedicated f64 forensic audit / oracle route owed. See FID-0099 (coverage-gap, P2). Retest when a line-triangle oracle comparator exists or the decomp match is raised.",
+      "note": "WAIVED: live NATIVE_PORT body (unk_092890.c:46-219) is a 24.30% decomp.me reimpl of the 367-instruction f64-heavy line-vs-triangle intersection primitive (glabel unk_092890.c:225). Heavily reachable (bg.c bullet-vs-background + chrobjhandler.c ray-vs-object collision). Algorithm shape is plausibly correct (Moller-Trumbore barycentric: edge/normal cross product, parallel-plane==0 early return, intersection param, impact point, three-way branch var_f2/var_f0 selection, in-triangle var_f0>=0 && var_f2>=0 && sum<=1.0, facing-dot>=0 gate, arg7 unk00/04/08/0c/10/14 + unk2a=0 stores, return 1) but at 24% byte-match the f64 operand ordering, branch thresholds, compare senses and exact store set cannot be confirmed equivalent within the per-entry budget. Not a solid verified-equivalent basis; same disposition as chrTickBeams (batch 9). Dedicated f64 forensic audit / oracle route owed. See FID-0099 (coverage-gap, P2). Retest when a line-triangle oracle comparator exists or the decomp match is raised.",
+      "reviewed_ts": "2026-07-11T21:14:19Z",
       "rank": 114,
       "rank_score": 367,
       "rank_reason": "367i"
@@ -3155,9 +3155,9 @@
         "body_start": 1110,
         "body_end": 1229
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0100",
+      "note": "Watch inventory scroll/selection input state machine. ASM watch.c:1246-1631 (VERSION_US) vs live NONMATCHING C 1111-1229, traced fully. DIVERGENCE: up button-press snap-scroll gate is || in retail (ASM 1255-1262: bnez pressed -> up-action, else stickY>=0x47 -> up-action) but && in C (watch.c:1120); the symmetric down block correctly uses || in both, so the up && is an asymmetric decomp error -- up C-button/d-pad tap with stick centered no longer snap-scrolls. Secondary: the '> 0' guards on D_800409BC (up-press 1268-1271, hold-up 1326-1329) are truncated-int (s32) in retail vs float in C, differing for D_800409BC in (0,1); the '< invItems-1' checks trunc too but are equivalent for D_800409BC>=0. See FID-0100 (port-defect, P2). All else equivalent: down press block, both held 0.1 blocks, two stick fine-scroll blocks (stickY/300.0), sub_GAME_7F0A5160/519C +/-1.0, is_holding -> D_80040AE4, min/max clamp + g_curWatchItemIndex trunc, j_text_trigger 12/14 metrics, D_800409B4/B0/C0 ease math, final 0.55/0.45 ANY_BUTTON block. Constants D_8005847C..90 byte-verified.",
+      "reviewed_ts": "2026-07-11T21:21:42Z",
       "rank": 115,
       "rank_score": 359,
       "rank_reason": "359i"
@@ -3182,9 +3182,9 @@
         "body_start": null,
         "body_end": 4063
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0101",
+      "note": "[!VERSION_US (JP/EU) variant] Same function/shared C body as the VERSION_US entry; the port builds VERSION_US so glabel chr.c:4069 is authoritative. Same arg0==0 early-return divergence (the C early-return at chr.c:3814-3825 is region-independent). See FID-0101.",
+      "reviewed_ts": "2026-07-11T21:26:11Z",
       "rank": 116,
       "rank_score": 352,
       "rank_reason": "352i"
@@ -3263,9 +3263,9 @@
         "body_start": null,
         "body_end": 4063
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0101",
+      "note": "[VERSION_US variant, authoritative] Chr aim-bone pose-matrix builder (g_aimBoneCallback). ASM chr.c:4069-4445 vs live NONMATCHING C 3783-4063, traced fully. DIVERGENCE: retail dispatch (chr.c:4098-4106) PROCEEDS for arg0==0 (bnezl arg0 branch-likely returns only when arg0 != 0; arg0==0 falls through to the gun-hand aim block L7F020974) whereas the live C early-return (chr.c:3814-3825 'else { return; }') returns for arg0==0, making the C's own arg0==0 block (3877-3907) dead. arg0==0 is the gun-hand aim bone (g_aimBoneCallback invoked per bone at model.c:3701/4012); port skips its pose. See FID-0101 (port-defect, P2). All else equivalent: cheatIsActive(12) scale, arg0 1/2/3 aim selections + hidden&0x400 D_80051D30/34/38 clamps, flinchcnt<0 skip + flinch adjustments (D_80051D44/48, hidden 0x1000/2000/4000/8000), all-zero+scale==1.0 return, subroty, f14/f12 adjustments, player-matrix premult, m[3] save/zero/restore, Y/X/Z rotation chain around subroty (D_80051D4C/50/54), scale mult, camera premult.",
+      "reviewed_ts": "2026-07-11T21:26:11Z",
       "rank": 119,
       "rank_score": 342,
       "rank_reason": "342i"
