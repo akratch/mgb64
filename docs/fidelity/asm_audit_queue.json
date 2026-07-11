@@ -2123,9 +2123,9 @@
         "body_start": null,
         "body_end": 6784
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Stan file-load substrate (byte-swap + host-pointer relocation). Core matches ASM stan.c:6810-6857: standTileStart=relocated_ptr_firstroom-0x80 (ASM t7=lw(a0+4)+offset; t8=t7-0x80 @6817-6819 == port base+first_room_off-0x80 stan.c:6723), ptr_firstroom_0=relocated (@6823-6824), tile-EOF walk sets D_80040F60=last tile via pointCount=(tail.half>>12)&0xf stride list_of_tilesizes[pc] (@6846-6854 == port 6745-6756). Substrate deviations behavior-neutral on valid data: retail relocates room-ptr array in place (*roomPtr+=offset @6832-6837), port only counts num_rooms and routes tile access via stan_prefix.ptr_firstroom/firststaninroom (rank-57 model); port adds stanByteSwapBinary + additive pointCount>10 abort guard (6746, retail unguarded, malformed-data-only). Endian/reloc has no 1:1 ASM counterpart (out of scope).",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 78,
       "rank_score": 43,
       "rank_reason": "prior-defect-file 43i"
@@ -2150,9 +2150,9 @@
         "body_start": null,
         "body_end": 5773
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Height-below-two-adjacent-triple-points test. ASM stan.c:5799-5846 vs live C 5779-5793: height=*(f32*)&arg5->unk00 (lwc1 (a2) @5807, arg5=lw sp+0x14; port memcpy reinterpret bit-identical), gate1 height<(f32)points[index].y (lh +0xa @5804, c.lt.s+bc1fl @5809-5811 -> return 0 if not <), gate2 nextIndex=(index+1)%STAN_TAIL_E (div by (tail.half>>12)&0xf @5813-5818), height<(f32)points[nextIndex].y (c.lt.s+bc1fl @5836-5839) -> return 1 else 0. Caller sub_GAME_7F0B26B8 passes &(radius*level_scale) cast to record => unk00 holds float bits. Senses/offsets exact; no jump table.",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 79,
       "rank_score": 43,
       "rank_reason": "prior-defect-file 43i"
@@ -2177,9 +2177,9 @@
         "body_start": null,
         "body_end": 6524
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Tile lookup by packed name id. ASM stan.c:6550-6596 vs live NATIVE_PORT C 6495-6545: name[0]==0->NULL (bnez @6555), stanPackId(name,&hi@sp+0x22,&lo@sp+0x21), tile=stan_prefix.ptr_firstroom (retail *(stanfile+4) @6563-6566, port substrate), *(u32*)tile==0->NULL, per-tile match *(u16*)tile==stanIdHi && *((u8*)tile+2)==stanIdLo (@6567-6577), advance tile+=list_of_tilesizes[(tail.half>>12)&0xf] (@6583-6587). STRUCTURAL DIFF (benign, identical return): retail returns immediately on first match (b .L7F0B2EF0;move v0,v1 @6579-6580); port scans full list tracking first_match then returns it (no side effects in extra iters; GE007_TRACE_TILE_NAME env-gated fprintf only). tile bytes read from byte-swapped file data = same bytes ASM lhu/lbu reads (on-disk POD, not native-repacked struct; no FID-0085 class).",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 80,
       "rank_score": 42,
       "rank_reason": "prior-defect-file 42i"
@@ -2204,9 +2204,9 @@
         "body_start": null,
         "body_end": 1650
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Degenerate-tile cross-product==0 test. ASM stan.c:1676-1718 vs live NATIVE_PORT C 1614-1627: iA=(tail.half>>8)&0xf, iB=(>>4)&0xf, iC=(&0xf); AB=(points[iB]-points[iA]).xz, AC=(points[iC]-points[iA]).xz (lh x@+8/z@+0xc within tile+idx*8); cross=(AB.z*AC.x)-(AB.x*AC.z) (multu low-word == signed low-word), return (cross==0) via sltiu<1 (@6718). Index masks/point-offsets/operand-order exact; no jump table; no uninit (AB/AC spilled before mul).",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 81,
       "rank_score": 42,
       "rank_reason": "prior-defect-file 42i"
@@ -2231,9 +2231,9 @@
         "body_start": null,
         "body_end": 263
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Tile debug-id string formatter (-stanlinelog). ASM stan.c:266-311 vs live NATIVE_PORT/PORT_FIXME_STUBS C 218-234: buf=D_80040F64+D_80040FAC*9 (old idx via sll3+addu @273-276), then D_80040FAC=(FAC+1)&7; word0=lhu(arg0), byte2=lbu(arg0+2); sprintf(buf, %c%d%c%c, flag=((word0>>15)&1)+0x70, room=word0&0x7fff, letter=((byte2>>3)&0x1f)+0x61, suffix=(byte2&7)?+0x30:0). Arg order a2/a3/sp+0x10/sp+0x14 @301-306; return buf. Only diff = additive port NULL guard (retail derefs unguarded). Debug-only reachability.",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 82,
       "rank_score": 41,
       "rank_reason": "prior-defect-file 41i"
@@ -2258,9 +2258,9 @@
         "body_start": null,
         "body_end": 5370
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Ladder/special-tile neighbor flag test. ASM stan.c:5396-5441 vs live C 5362-5391: link=points[arg1].link (lhu +0xe), (link>>4)==0->return 0 (beql @5404); neighbor=&standTileStart[link] (full link*8 @5407-5409); val=neighbor->mid.half>>0xc (lh @5410 then sra 0xc); D_80040F30[val]&2 -> arg5->unk00=1,return 1; else D_80040F30[val]&0x40 -> dword_CODE_bss_8007BA0C=neighbor, arg5->count=1, return 0; else 0. SIGNED-index quirk preserved (mid.half s16>>0xc -> D_80040F30[negative] under-read, same as rank-53). val recomputed twice (decomp comment) inert. Senses exact.",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 83,
       "rank_score": 40,
       "rank_reason": "prior-defect-file 40i"
@@ -2285,9 +2285,9 @@
         "body_start": null,
         "body_end": 6286
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Single-vertex height -> heights[0]/[1] + return. ASM stan.c:6312-6356 vs live C 6295-6306: y=(f32)points[STAN_TRIPLE_TO_PNT_INDEX(tile,0)].y (idx=(tail.half>>8)&0xf, lh +0xa @6320); inlined min/max macro over 4 copies of y (the c.lt.s f2,f2 filler @6324-6349) collapses to y; heights[0]=heights[1]=y*inv_level_scale (@6351-6356) IDENTICAL to C. DEAD RETURN DIVERGENCE: ASM returns f0=y UNSCALED (mov.s f0,f2 @6325, f0 never re-touched), C returns y*inv_level_scale (SCALED); sole caller sub_GAME_7F0B2D14 (stan.c:6366) DISCARDS the return and reads vs[0]=heights[0] (scaled, matches) -> non-observable (chain 2C74<-2D14<-3004 also has no live caller). Equivalent on all observable outputs; latent return diff noted, not filed.",
+      "reviewed_ts": "2026-07-11T18:11:16Z",
       "rank": 84,
       "rank_score": 40,
       "rank_reason": "prior-defect-file 40i"
