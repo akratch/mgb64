@@ -7459,6 +7459,14 @@ s32 sub_GAME_7F0B5208(s32 arg0, void *arg1) {
 }
 #else
 #ifdef PORT_FIXME_STUBS
+/* FID-0010 (refuted): this "mark all rooms visible" stub is DEAD in the native
+ * build. The port compiles with NONMATCHING && NATIVE_PORT (CMakeLists.txt:992-993),
+ * which selects the real 8-corner / 6-plane frustum test above (`#ifdef NONMATCHING
+ * / #ifdef NATIVE_PORT`); this body sits in the NATIVE_PORT `#else` and is never
+ * compiled. The real cull is consumed at ~12 live call sites (the room loops all
+ * gate admission on its return value) and empirically culls -- Train pad 74 renders
+ * 2 of ~54 rooms, not all. Kept as the decomp reference body per house style; do
+ * NOT read it as the live path. */
 s32 sub_GAME_7F0B5208(s32 arg0, void *arg1) {
     /* TODO: proper frustum culling — for now, mark all rooms visible */
     return 1;

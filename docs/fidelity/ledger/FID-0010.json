@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "root-caused",
+  "status": "refuted",
   "suspect": [
     "src/game/bg.c:7441"
   ],
@@ -14,6 +14,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/game/bg.c"
     }
   ],
   "history": [
@@ -23,6 +27,13 @@
       "to": "root-caused",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-11T07:35:16Z",
+      "from": "root-caused",
+      "to": "refuted",
+      "evidence": "src/game/bg.c",
+      "note": "Premise false at HEAD: the 'mark all rooms visible' stub (PORT_FIXME_STUBS body) is DEAD. The port compiles with NONMATCHING && NATIVE_PORT (CMakeLists.txt:992-993); the '#ifdef NONMATCHING / #ifdef NATIVE_PORT' gate selects the REAL 8-corner/6-plane frustum test (sub_GAME_7F0B5208, bg.c real body); the stub sits in the NATIVE_PORT '#else' and is never compiled (cpp proof REAL_FRUSTUM_BODY_COMPILES). The real cull is consumed at ~12 live call sites (room loops gate admission on its return, e.g. 'if (!sub_GAME_7F0B5208(r, player_bbox)) continue;'). Empirically culling: Train pad 74 renders 2 of ~54 rooms (default) / 1 under --faithful, not all; renderer_parity all-scenes rendered-counts far below room totals. Real body landed in v0.2.1 (8de295b), before FID-0010 was seeded 2026-07-09 from a grep of the TODO string in dead code. Added a refutation comment at the dead stub. No behavior change, no fix needed."
     }
   ]
 }
