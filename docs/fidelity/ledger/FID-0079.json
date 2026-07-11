@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/stan.c:757"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/stan.c:1065"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/ASM_AUDIT.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/stan.c:1065"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/stan_roomset.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_stan_roomset.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/stan.c:1065",
       "note": "Divergence re-derived from GLOBAL_ASM (retail 7F0AF20C) vs live NATIVE_PORT C. Retail roomset filter (stan.c:1063-1086, .L7F0AF3CC-410): lbu byte loads, +1 stride, terminator byte 0xFF (li s6,255), <=4 entries (bne s0,a0(4)), compare each byte against the room counter. Live C 757-764 casts roomset to s32* and reads rs[j] stride 4 with rs[j]!=-1 terminator. The retail-path caller passes u8 roomset[8] built by sub_GAME_7F0B4AB4 (u8* out per its signature gun.c:96 / bg.c:6746; consumed as bytes at chrobjhandler.c:5339-5358), so under the port read the first word packs 4 room bytes: it neither matches the room index nor equals -1 unless 4 consecutive 0xFF bytes \u2014 the filter rejects every room and the function returns NULL where retail finds a tile. Player-visible: flag-8 projectile/prop tile reacquire (chrobjhandler.c:5328) permanently fails -> thrown explosives that cross a failed tile-walk keep flags&8 (floor logic degraded). NOTE the port-added caller portResolveFrozenCameraRoomTile (bondview.c:2646-2651) builds an s32{room,-1} list consistent with the current misread \u2014 the fix must convert it to u8{room,0xFF} in the same change. Fix default-ON w/ GE007_NO_* control; regression lane = unit test feeding a u8 roomset. DO NOT fix from this note; re-derive from ASM."
+    },
+    {
+      "ts": "2026-07-11T05:17:02Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/ASM_AUDIT.md",
+      "note": "Batch-4 audit row (ASM_AUDIT.md rank 36) adjudicated finding-filed:FID-0079. Classified port-defect/sim/P2. Callers enumerated: only chrobjhandler.c:5328 (live u8 roomset[8], retail-path) and bondview.c:2646 (port-added s32{room,-1}) pass a non-zero roomset; the other 9 (port_trace x3, bondview.c:2660/8721/8913, chr.c:2015/5198, bg.c:16608) pass 0; chrobjhandler.c:5903 is inside the handles_projectile_motion GLOBAL_ASM body, not a live caller."
+    },
+    {
+      "ts": "2026-07-11T05:17:02Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/stan.c:1065",
+      "note": "Re-derived from GLOBAL_ASM at instruction level. Retail (stan.c:1063-1086): beql roomset,0 skips filter; .L7F0AF3CC lbu byte load; li s6,255 (0xFF) terminator; li a0,4 cap; addiu v0,v0,1 byte stride; bnel s5,v1 compares room counter to each byte. Live C (stan.c:757-764 pre-fix) cast to s32* with rs[j]!=-1 terminator and stride 4. Verified StandTile.room is u8 with the retail comment 'compared to 0xFF, not -1 ... Seen LBUs' (bondtypes.h:420) and sub_GAME_7F0B4AB4's u8 *outputRoomSet (bg.c:6746). Divergence: port packs 4 room bytes into one word -> matches no room index, never sees -1 -> filter rejects every room -> NULL; flag-8 projectile tile reacquire (chrobjhandler.c:5328) always fails."
+    },
+    {
+      "ts": "2026-07-11T05:17:18Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/stan_roomset.c",
+      "note": "Fix: route the filter decision through the pure stanRoomsetFilterAdmitsRoom() (byte reader; legacy s32 reader kept as the negative control). Default ON via stanRoomsetByteFixEnabled() (GE007_NO_STAN_ROOMSET_BYTE_FIX). bondview.c:2646 caller converted to the paired u8/legacy data width under the same gate."
+    },
+    {
+      "ts": "2026-07-11T05:17:18Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_stan_roomset.c",
+      "note": "Landed: fix 85fcd0f + regression lane f54de42 (ctest stan_roomset). Both-sides evidence /tmp/mgb64-fid0079-evidence/both_sides_evidence.txt: fix-ON admits the live u8 roomset[8]'s rooms 5,9 (reacquire succeeds); fix-OFF s32 misread admits nothing (reproduces the always-fail). Fail-on-revert proven (revert-proof/test_reverted.out: 7 assertions red incl. the fix-ON!=fix-OFF divergence). Sim-behavioral gates green pre-verified-transition: ctest port_ routes + sim_invariance_gate PASS -> no golden route/tape baseline shifts (the reacquire-success path does not fire on the golden routes)."
     }
   ]
 }
