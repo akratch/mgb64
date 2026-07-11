@@ -4894,6 +4894,29 @@ static s32 chrShouldSuppressIntroMagicTravelVisibility(ChrRecord *chr)
         && (chr->hidden & CHRHIDDEN_BACKGROUND_AI) != 0
         && playerHasFrozenIntroCamera(g_CurrentPlayer);
 }
+
+/* FID-0014: faithful WAYMODE_MAGIC patrol/gopos semantics (default ON).
+ * Retail chrTickBeams (US 0x7F020EF0) freezes an unseen magic-travel guard
+ * (no anim tick, no root motion, no prop-position sync) while
+ * chrlvTravelTickMagic (US 0x7F028600) walks it virtually and pad-warps it;
+ * retail also re-stamps act_patrol.lastvisible60 / act_gopos.unk9c every
+ * tick a WALKING patroller passes the real visibility test (US
+ * 7F021254-7F021284), which is what keeps seen guards out of magic. The
+ * native chrTickBeams reimpl had neither piece, and the chrlv.c workarounds
+ * (rendered-room magic-entry suppression + per-tick anim-loop force) made
+ * magic guards creep-walk continuously instead. Shared by chr.c and chrlv.c.
+ * GE007_NO_PATROL_MAGIC_FIX=1 restores the legacy workaround behavior
+ * byte-identically. */
+s32 portPatrolMagicFixEnabled(void)
+{
+    static int s_fix = -1;
+
+    if (s_fix < 0) {
+        s_fix = ge_env_bool("GE007_NO_PATROL_MAGIC_FIX", 0) ? 0 : 1;
+    }
+
+    return s_fix;
+}
 #endif
 
 
@@ -5130,6 +5153,8 @@ s32 chrTickBeams(PropRecord *prop) {
     ModelRenderData renderdata;
     Mtxf *cam_mtx;
     s32 visible;
+    s32 magic_hold = 0;
+    s32 magic_visible = 0;
 
     chr = prop->chr;
     if (chr == NULL) return 0;
@@ -5182,7 +5207,71 @@ s32 chrTickBeams(PropRecord *prop) {
         if (D_8002C90C != 0) {
             animTick = (D_8002C910 != 0) ? 1 : 0;
         }
-        chrPositionRelated7F020E40(chr, animTick);
+
+        /* --- FID-0014: retail WAYMODE_MAGIC dispatch (default ON) ---
+         * Retail chrTickBeams does NOT tick every chr unconditionally. Its
+         * action dispatch (US .L7F021178) special-cases ACT_PATROL(14) /
+         * ACT_GOPOS(15) whose waydata.mode == WAYMODE_MAGIC (lb 0x38/0x5C($s0)
+         * == 6, US 7F02119C-7F0211C0): the chr is left FROZEN — no
+         * chrPositionRelated7F020E40, no modelTickAnimQuarterSpeed, no
+         * prop-position sync — unless the real visibility test
+         * sub_GAME_7F054D6C passes at the frozen position (US .L7F0211C4).
+         * When it passes, the model→prop position is synced WITHOUT an
+         * animation advance (getsuboffset/subcalcpos/
+         * set_color_shading_from_tile/getsuboffset/chrPositionRelated7F020D94,
+         * US 7F0211EC-7F02121C — the reference body's "VISIBLE MAGIC MODE"
+         * branch) and the guard renders normally. The virtual walk keeps
+         * accumulating in chrlvTravelTickMagic (US 0x7F028600) off the STORED
+         * model->speed, so the freeze does not stall the pad-warp.
+         *
+         * The port previously ran chrPositionRelated7F020E40 for every chr
+         * every frame, so magic-travel guards creep-walked at full walk
+         * root-motion speed instead of freezing (all 8 Dam patrollers moving
+         * 892/892 ticks vs stock's 98-99.7%-paused magic subset —
+         * docs/fidelity/derivations/FID-0054-guard-state.md §5.2).
+         * GE007_NO_PATROL_MAGIC_FIX=1 restores that legacy always-tick path
+         * byte-identically. The MP-safe frustum union is used for the retail
+         * test (== sub_GAME_7F054D6C in 1P, see chrBeamsFrustumVisibleUnion). */
+        if (portPatrolMagicFixEnabled() && chrShouldHoldMagicTravelPropPosition(chr)) {
+            magic_hold = 1;
+            magic_visible = chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model));
+            if (magic_visible) {
+                /* retail US 7F0211EC-7F02121C: sync pos, no anim advance */
+                getsuboffset(model, &chr->prevpos);
+                subcalcpos(model);
+                set_color_shading_from_tile(prop, &chr->nextcol);
+                getsuboffset(model, &prop->pos);
+                chrPositionRelated7F020D94(chr);
+            }
+        } else {
+            chrPositionRelated7F020E40(chr, animTick);
+
+            /* FID-0014: retail refreshes the patrol/gopos recently-visible
+             * stamp on every tick a WALKING guard passes the visibility test:
+             * US 7F021254-7F02126C stores g_GlobalTimer into 0x78($s0)
+             * (act_patrol.lastvisible60) when actiontype==14, US
+             * 7F021274-7F021284 into 0x9C($s0) (act_gopos.unk9c) when
+             * actiontype==15. This stamp is what keeps a seen patroller out
+             * of WAYMODE_MAGIC (entry gate lastvisible60 + CHRLV_DEFAULT_TIMER
+             * < g_GlobalTimer, chrlvTickPatrol US 0x7F032548 /
+             * chrlv.c:11334). The native reimpl never refreshed it — the
+             * original reason guards "perpetually re-entered" magic and grew
+             * the chrlv.c workarounds. Gated on the retail-shaped frustum
+             * test, NOT the broad room-rendered render bypass, so the magic
+             * lifecycle keeps retail's narrow visibility semantics while the
+             * render/ONSCREEN gate itself stays untouched pending FID-0012
+             * Phase C. */
+            if (portPatrolMagicFixEnabled()
+                && (chr->actiontype == ACT_PATROL || chr->actiontype == ACT_GOPOS)) {
+                if (chrBeamsFrustumVisibleUnion(prop, &prop->pos, getinstsize(model))) {
+                    if (chr->actiontype == ACT_PATROL) {
+                        chr->act_patrol.lastvisible60 = g_GlobalTimer;
+                    } else {
+                        chr->act_gopos.unk9c = g_GlobalTimer;
+                    }
+                }
+            }
+        }
     }
 
     /* --- Stan tile fix-up ---
@@ -5278,7 +5367,15 @@ s32 chrTickBeams(PropRecord *prop) {
              * footgun that silently enables the frustum path). */
             s_frustum_gate = ge_env_bool("GE007_CHRBEAMS_FRUSTUM", 0);
         }
-        if (s_frustum_gate) {
+        if (magic_hold) {
+            /* FID-0014: retail evaluated sub_GAME_7F054D6C once at the frozen
+             * magic-travel position (US .L7F0211C4) and reused that single
+             * result as the render gate; keep it instead of re-testing with
+             * the room-rendered bypass, so an unseen frozen guard neither
+             * renders nor latches PROPFLAG_ONSCREEN (the chrlvTickPatrol
+             * magic-exit reads that flag, chrlv.c:11359). */
+            visible = magic_visible;
+        } else if (s_frustum_gate) {
             f32 inst_size = getinstsize(model);
             visible = chrBeamsFrustumVisibleUnion(prop, &prop->pos, inst_size);
         } else {

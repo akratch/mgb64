@@ -134,6 +134,11 @@ static s32 s_GuardAutoFireTraceChrnum = INT_MIN;
 
 static s32 chrlvPropHasRenderedRoom(const PropRecord *prop);
 
+/* FID-0014: shared fidelity gate, defined in chr.c (see the retail
+ * WAYMODE_MAGIC dispatch there). Default ON; GE007_NO_PATROL_MAGIC_FIX=1
+ * restores the legacy workaround behavior below byte-identically. */
+extern s32 portPatrolMagicFixEnabled(void);
+
 static s32 guardAutoFireTraceEnabled(void)
 {
     const char *value;
@@ -11324,8 +11329,18 @@ void chrlvTickPatrol(ChrRecord *self)
      * looping via the chrlvTravelTick path. On NATIVE_PORT, fog aggressively
      * zeros alpha, preventing visibility, which causes WAYMODE_MAGIC entry,
      * which bypasses chrlvTravelTick entirely. This per-tick enforcement
-     * breaks the circular dependency. */
-    if (self->model && self->model->animlooping == 0 && self->model->anim != NULL) {
+     * breaks the circular dependency.
+     *
+     * FID-0014: legacy-only. Retail chrlvTickPatrol (US 0x7F032548) has no
+     * such force; the walking path's own animation selection keeps walk anims
+     * looping (and model.c's scoped locomotion loop-restore,
+     * portChrActionNeedsLooping, already covers the residual reset case).
+     * Inside WAYMODE_MAGIC the force re-applied walk root-motion to a prop
+     * retail keeps FROZEN (the "creep" in
+     * docs/fidelity/derivations/FID-0054-guard-state.md §5.3); the faithful
+     * freeze now lives in chr.c chrTickBeams (US .L7F0211C4 dispatch). */
+    if (!portPatrolMagicFixEnabled()
+        && self->model && self->model->animlooping == 0 && self->model->anim != NULL) {
         modelSetAnimLooping(self->model, 0.0f, 16.0f);
     }
 #endif
@@ -11344,8 +11359,20 @@ void chrlvTickPatrol(ChrRecord *self)
          * currently rendered. On N64, fog doesn't zero alpha for nearby guards,
          * so this check is effectively always true there. This is the
          * canonical behavior: guards in rendered rooms should walk normally,
-         * not teleport. */
-        && !chrlvPropHasRenderedRoom(self_prop)
+         * not teleport.
+         *
+         * FID-0014: legacy-only. Retail gates magic ENTRY on exactly the two
+         * conditions above — lastvisible60 staleness + the path-room test
+         * (this function is the decomp-matched body of US 0x7F032548;
+         * chrlvStanRoomRelated is US 0x7F027DB0: magic only when NO room
+         * along the tile path chr→pad is rendered, via getROOMID_isRendered,
+         * start room included). The suppression below was a workaround for
+         * the era when the native chrTickBeams never refreshed lastvisible60
+         * (retail does, US 7F021254-7F021284) and fog kept PROPFLAG_ONSCREEN
+         * from ever being set; with the retail visible-refresh restored in
+         * chr.c it is redundant for seen guards and wrongly blocks entry for
+         * unseen ones whose registered room is rendered but out of frustum. */
+        && (portPatrolMagicFixEnabled() || !chrlvPropHasRenderedRoom(self_prop))
 #endif
         )
     {

@@ -8,7 +8,7 @@ Flags read through the registering `port_env_*` accessors (or `ge_env_bool`)
 carry a type, default, and description here; flags still read through a raw
 `getenv` show none of those — migrating them to `port_env_*` fills them in.
 
-**919 flags** found across the source.
+**920 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -519,6 +519,7 @@ carry a type, default, and description here; flags still read through a raw
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | ? |  | 1 |  |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | ? |  | 1 |  |
 | `GE007_NO_MP_AMMO_HUD_MENU_FIX` | ? |  | 1 |  |
+| `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | ? |  | 1 |  |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | ? |  | 1 |  |
 | `GE007_NO_PROJECTILE_INIT_MTX_FIX` | ? |  | 1 |  |
