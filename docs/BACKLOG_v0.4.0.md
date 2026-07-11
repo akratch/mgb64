@@ -155,38 +155,42 @@ Census (survey 2026-07-09): 99 settings, **no player/advanced tier** — everyth
       still work (hidden ≠ removed).
 
 ### RX.2 — Launcher/handheld UX pass
-**P0 · M**
-- [ ] **Fullscreen-fill on launch** for handhelds: `main_app.cpp:67` opens windowed
-      1280×800; borderless-fill the display (compose with RX.3's window-mode logic; a
-      first-run/`--handheld`-style default or auto-detect small-high-DPI displays).
-- [ ] **UI scale for a 7-inch panel:** bump `FontGlobalScale`/style metrics (13px small
-      font + 40–42px targets are too small); a `UI.Scale` setting (S/M/L or numeric).
-- [ ] **Reset-to-default affordance:** `mgb_config_reset_default` exists
-      (`config_schema.c:133`) but no UI calls it — add per-tab (min) reset, high-value for
-      pad users who can't retype values.
+**P0 · M · MOSTLY LANDED (verified 2026-07-11) — touch pass gated on RX.5**
+- [x] **Fullscreen-fill on launch** for handhelds (`ba0bb18`): `UI.LauncherFullscreen`
+      (auto/on/off) borderless-fills the display; `auto` detects a small/high-DPI panel
+      (`app_host.cpp autoWantsFullscreen`) and leaves desktop dev windows windowed.
+- [x] **UI scale for a 7-inch panel** (`68ca47e`): `UI.Scale` (0.75–2.0) rescales the
+      font + style metrics live for the launcher AND the in-game overlay.
+- [x] **Reset-to-default affordance** (`0ad1dd0`): per-tab "Reset to defaults" footer
+      (confirm popup) in the settings panel — calls `mgb_config_reset_default`.
 - [ ] **Touch pass** (if RX.5 lands): larger hit targets, L1/R1 shoulder tab-switching with
       on-screen hints, touch-scroll of the settings/log children.
-- [ ] Validation: panel render smokes; pad-nav reachability unchanged; no macOS regression.
+- [x] Validation: panel render smoke green; `rom_scan`/`settings_menu_model` ctests green;
+      `sim_state_hash` unaffected; macOS launcher launch confirmed (no regression).
 
 ### RX.3 — Windows true fullscreen
-**P0 · S-M · IN FLIGHT (2026-07-09)**
-Root cause (survey): `platformApplyWindowMode()` (`platform_sdl.c:1490`) is called only in
-the engine-owned `else` branch (`:2481`); the **adopted app-shell path** (Windows/macOS
-release, `:2430-2442`) never calls it → `Video.WindowMode` is loaded but never pushed to
-SDL. Fix A: call apply-mode on both paths (guard headless). Fix C: exclusive with
-`FullscreenWidth/Height==0` passes NULL → wrong res; default to desktop mode + fall back to
-borderless on mode-set failure. Fix B: Alt+Enter reaches the configured mode. Borderless
+**P0 · S-M · LANDED (verified 2026-07-11) — Windows-HARDWARE verification pending**
+Landed: Fix A `eca323f` (apply mode on the adopted app-shell path too), Fix C `b13b51e`
+(exclusive defaults to native res + falls back to borderless), Fix B `008882c` (Alt+Enter
+returns to the configured mode). `platformApplyWindowMode()` now runs on BOTH the adopted
+app-shell window and the engine-owned window (guarded off for the hidden/background window),
+so `Video.WindowMode` is finally pushed to SDL on the Windows/macOS release path. Borderless
 stays the safe cross-platform default; exclusive is opt-in/best-effort (Wayland can't
-mode-set). macOS `.app` uses the same adopted path → blind-provable there. Hardware-only:
-Windows exclusive native-res, HiDPI on 1920×1200, alt-tab.
+mode-set) and falls back to borderless on any mode-set failure. Compile-clean in a full
+Release build (macOS). **Still needs Windows HARDWARE:** exclusive native-res, HiDPI on
+1920×1200, alt-tab (no ROM in the CI env, so the engine-boot path that calls apply-mode
+can't be driven headless here).
 
 ### RX.4 — Controller/keyboard-free ROM selection
-**P0 · M**
-`ui_rom.cpp:31-41` uses a native NFD dialog — not controller-navigable (first-run hard stop
-on a handheld). Add an in-app ImGui file browser AND/OR auto-scan of common dirs (Downloads/
-Documents/Desktop/cwd, mirroring the CLI auto-detect) AND/OR `SDL_DROPFILE` drag-and-drop.
-Keep NFD as the mouse/desktop convenience. Validation: pad-only reachability to a selected+
-validated ROM; the existing validation card path unchanged.
+**P0 · M · LANDED (verified 2026-07-11)**
+Landed: `417b982` (auto-scan + in-app directory browser + `SDL_DROPFILE` drag-and-drop;
+NFD kept as the mouse/desktop convenience), `a0fe528` (F1 review: escape AppConfig values so
+a dropped/browsed ROM filename can't inject an ini line). Three pad-reachable paths to a
+validated ROM: (1) auto-scan of `./`, `~/Downloads`, `~/Documents`, `~/Desktop`, `~`
+(`rom_scan.cpp defaultScanDirs`, mirroring `main_pc.c:652`); (2) an in-app pad-navigable
+directory browser (up/into, `..` first); (3) drag-and-drop. All flow through the unchanged
+`mgb_validate_rom` + validation card. Verified: `rom_scan` ctest green + a live macOS
+launcher screenshot showing an auto-detected ROM validated "Ready to play".
 
 ### RX.5 — Touch input wiring
 **P1 · M**
