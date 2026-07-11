@@ -4917,6 +4917,29 @@ s32 portPatrolMagicFixEnabled(void)
 
     return s_fix;
 }
+
+/* FID-0091 (FID-0014 review follow-up): retail chrTickBeams NEVER routes a chr
+ * with CHRFLAG_CULL_USING_HITBOX (0x800000) into the WAYMODE_MAGIC freeze/refresh
+ * dispatch. The gate is US 7F021118 `bgez (chrflags << 8), .L7F021178`: chrflags
+ * is left-shifted 8 so bit 23 (CHRFLAG_CULL_USING_HITBOX) becomes the sign bit —
+ * when it is SET, bgez is not taken and control falls to .L7F021120, the normal
+ * walking tick (chrPositionRelated7F020E40 / modelTickAnimQuarterSpeed) which
+ * then `b .L7F0213C8`, bypassing BOTH the magic freeze/sync (.L7F0211C4) and the
+ * lastvisible60/unk9c refresh (7F021254-7F021284, reachable only from the
+ * .L7F021178 dispatch). The native reimpl's magic dispatch was missing this
+ * pre-check and would freeze such a guard. Default ON;
+ * GE007_NO_CULL_HITBOX_MAGIC_BYPASS=1 restores the legacy (freeze) behavior. */
+static s32 chrCullHitboxBypassesMagic(ChrRecord *chr)
+{
+    static int s_optout = -1;
+
+    if (s_optout < 0) {
+        s_optout = ge_env_bool("GE007_NO_CULL_HITBOX_MAGIC_BYPASS", 0);
+    }
+
+    return !s_optout && chr != NULL
+        && (chr->chrflags & CHRFLAG_CULL_USING_HITBOX) != 0;
+}
 #endif
 
 #ifdef NATIVE_PORT
@@ -5272,7 +5295,10 @@ s32 chrTickBeams(PropRecord *prop) {
          * GE007_NO_PATROL_MAGIC_FIX=1 restores that legacy always-tick path
          * byte-identically. The MP-safe frustum union is used for the retail
          * test (== sub_GAME_7F054D6C in 1P, see chrBeamsFrustumVisibleUnion). */
-        if (portPatrolMagicFixEnabled() && chrShouldHoldMagicTravelPropPosition(chr)) {
+        if (portPatrolMagicFixEnabled() && !chrCullHitboxBypassesMagic(chr)
+            && chrShouldHoldMagicTravelPropPosition(chr)) {
+            /* FID-0091: a CHRFLAG_CULL_USING_HITBOX guard is never frozen (retail
+             * US 7F021118 bgez bypass) — it falls to the normal walking tick. */
             magic_hold = 1;
             magic_visible = chrPatrolMagicRetailVisible(prop, model);
             if (magic_visible) {
@@ -5301,8 +5327,11 @@ s32 chrTickBeams(PropRecord *prop) {
              * lifecycle keeps retail's narrow visibility semantics while the
              * render/ONSCREEN gate itself stays untouched pending FID-0012
              * Phase C. */
-            if (portPatrolMagicFixEnabled()
+            if (portPatrolMagicFixEnabled() && !chrCullHitboxBypassesMagic(chr)
                 && (chr->actiontype == ACT_PATROL || chr->actiontype == ACT_GOPOS)) {
+                /* FID-0091: the lastvisible60/unk9c refresh lives on the retail
+                 * magic dispatch (US 7F021254-7F021284) which a
+                 * CHRFLAG_CULL_USING_HITBOX guard's bgez bypass never reaches. */
                 if (chrPatrolMagicRetailVisible(prop, model)) {
                     if (chr->actiontype == ACT_PATROL) {
                         chr->act_patrol.lastvisible60 = g_GlobalTimer;

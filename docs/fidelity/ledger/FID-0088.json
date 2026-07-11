@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c:30807-30810"
   ],
@@ -14,6 +14,26 @@
       "kind": "asm-citation",
       "path": "src/game/gun.c:30807",
       "note": "ASM gun.c:30925-30935 (US @7F069024-7F06904C): lbu 0xfdc/0xfdd/0xfde/0xfdf(g_CurrentPlayer) packed r<<24|g<<16|b<<8|a into renderdata envcolour (+0x34) \u2014 the same player tileColor bytes the verified sibling sub_GAME_7F062BE4 reads via proper fields (live C gun.c:14925 player->tileColor.r/g/b/a). Live C gun.c:30807-30810 instead does cp=(u8*)g_CurrentPlayer; cp[0xFDC..0xFDF] \u2014 raw N64 byte offsets on the NATIVE 64-bit struct. tileColor sits after ModelFileHeader *ptr_hand_weapon_buffer[2] (bondview.h:992, N64 0x808) and struct hand hands[2] (pointer-bearing, N64 stride 0x3A8), so native offsetof(player,tileColor) != 0xFDC; the read lands inside hands[] state -> casing envcolour is garbage/unrelated bytes instead of the room stan-tile tint. FID-0085/0087 class (raw-offset cast on native struct). Fix: renderdata.envcolour.word = (player->tileColor.r<<24)|(g<<16)|(b<<8)|a, mirroring gun.c:14925."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:30807"
+    },
+    {
+      "kind": "counter-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:30807"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/verify_manifest.txt"
     }
   ],
   "history": [
@@ -23,6 +43,41 @@
       "to": "discovered",
       "evidence": "ASM gun.c:30925-30935 (US @7F069024-7F06904C): lbu 0xfdc/0xfdd/0xfde/0xfdf(g_CurrentPlayer) packed r<<24|g<<16|b<<8|a into renderdata envcolour (+0x34) \u2014 the same player tileColor bytes the verified sibling sub_GAME_7F062BE4 reads via proper fields (live C gun.c:14925 player->tileColor.r/g/b/a). Live C gun.c:30807-30810 instead does cp=(u8*)g_CurrentPlayer; cp[0xFDC..0xFDF] \u2014 raw N64 byte offsets on the NATIVE 64-bit struct. tileColor sits after ModelFileHeader *ptr_hand_weapon_buffer[2] (bondview.h:992, N64 0x808) and struct hand hands[2] (pointer-bearing, N64 stride 0x3A8), so native offsetof(player,tileColor) != 0xFDC; the read lands inside hands[] state -> casing envcolour is garbage/unrelated bytes instead of the room stan-tile tint. FID-0085/0087 class (raw-offset cast on native struct). Fix: renderdata.envcolour.word = (player->tileColor.r<<24)|(g<<16)|(b<<8)|a, mirroring gun.c:14925.",
       "note": "Found by ASM-audit batch 6 (queue rank 58; function = ejected shell-casing DL builder sub_GAME_7F068EC4). Remainder verified equivalent instruction-by-instruction incl. 16-word D_80035EB0 template copy (16th word = dword_D_80035EEC = 0 = port memset), +/-30000 translation validity gates, subdraw arg block, and TransformManyPos count lh hdr+0xe. EU variant (gun.c:30965, header at casing +0x64 due to EU matrix layout) shares the retail semantics; port builds US."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:30807",
+      "note": "Raw-cast sweep pass; verified sibling gun.c:14930 reads player->tileColor."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "offsetof(struct player,tileColor) != raw N64 0xFDC (test_struct_layout FID-0088 lock)."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:30807",
+      "note": "Fix: renderdata.envcolour.word = player->tileColor.rgba packed (mirrors sibling 14930); GE007_NO_SHELL_CASING_TINT_FIX restores raw cp[0xFDC..0xFDF] read. Renderer-side (charter rule 2): ASM field-identity + sibling-consistency anchor; no deterministic casing-eject repro tooling exists."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "Render-only; sim untouched. Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/verify_manifest.txt",
+      "note": "Render-only; sim untouched. Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
     }
   ]
 }

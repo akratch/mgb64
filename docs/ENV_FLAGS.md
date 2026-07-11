@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1027 flags** found across the source.
+**1032 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -569,13 +569,17 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_CRITICAL_ROOM_SHARD_LOG` | ? |  | 1 |  |
 | `GE007_NO_CULL` | ? |  | 1 |  |
 | `GE007_NO_CULL_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen cull-window horizontal widen (default ON) [FID-0058] |
+| `GE007_NO_CULL_HITBOX_MAGIC_BYPASS` | bool | 0 | 1 |  |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
+| `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |
+| `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0092] |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | presence | unset | 1 | Restore the old same-tick native Bond intro chr load |
 | `GE007_NO_INTRO_PHASE3` | presence | unset | 1 | Disable the scripted phase-3 Bond intro animation |
 | `GE007_NO_INTRO_ROOTMOTION` | presence | unset | 1 | Restore the static intro-Bond pin (disable anim root motion, default ON) |
+| `GE007_NO_LAST_Z_TRIGGER_TIMER_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write of the rocket-launch fire timer to player+0x105C [FID-0091] |
 | `GE007_NO_METAL_MSAA` | ? |  | 1 |  |
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
@@ -584,6 +588,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |
 | `GE007_NO_PROJECTILE_INIT_MTX_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile init matrix [FID-0085] |
+| `GE007_NO_SHELL_CASING_TINT_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the ejected shell-casing render tint [FID-0088] |
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen sky/horizon aspect widen (default ON) |
 | `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 | Restore the legacy stan roomset-byte read (default: fix ON) |
@@ -871,7 +876,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_PORTAL_VERTS` | ? |  | 1 |  |
 | `GE007_TRACE_PORTAL_VERTS_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_PORTAL_VERTS_IDX` | ? |  | 1 |  |
-| `GE007_TRACE_PROJECTILE_INIT_MTX` | ? |  | 1 |  |
+| `GE007_TRACE_PROJECTILE_INIT_MTX` | ? |  | 2 |  |
 | `GE007_TRACE_PROP_CONTEXT` | ? |  | 1 |  |
 | `GE007_TRACE_PROP_TRIS` | ? |  | 1 |  |
 | `GE007_TRACE_PROP_TRIS_AFTER_FRAME` | ? |  | 1 |  |

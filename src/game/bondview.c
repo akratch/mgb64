@@ -19993,7 +19993,22 @@ void mp_respawn_handler(void) {
     g_CurrentPlayer->startnewbonddie = 1;
     g_CurrentPlayer->healthDamageType = 7;
     g_CurrentPlayer->damagetype = 7;
-    *(s32 *)((u8 *)g_CurrentPlayer + 0x1064) = 0;
+    /* FID-0093 (raw-cast sweep): retail US ASM mp_respawn_handler
+     * (7F08897C: sw $zero, 0x1064($t6)) clears g_CurrentPlayer+0x1064 =
+     * player->gunammooff on respawn. On the 64-bit port layout gunammooff is NOT
+     * at raw N64 0x1064 (hands[] pointer growth shifts every post-hands field by
+     * +0x150), so the raw write misses it and corrupts an unrelated field — while
+     * the gun-render gate (gun.c:32121 `if (gunammooff != 0) return gdl;`) and
+     * initBondDATA.c:322 use the named field, so a respawn could leave the gun
+     * un-rendered. Write the real field. Same class as FID-0085/0087/0088/0091.
+     * GE007_NO_GUNAMMOOFF_RESPAWN_FIX restores the raw write byte-identically. */
+    if (port_env_set("GE007_NO_GUNAMMOOFF_RESPAWN_FIX",
+                     "Restore the legacy raw N64 byte-offset write clearing "
+                     "gunammooff at player+0x1064 on MP respawn [FID-0093]")) {
+        *(s32 *)((u8 *)g_CurrentPlayer + 0x1064) = 0;
+    } else {
+        g_CurrentPlayer->gunammooff = 0;
+    }
     g_CurrentPlayer->gunsightmode = 2;
 
     hudmsgsSetOn(-1);

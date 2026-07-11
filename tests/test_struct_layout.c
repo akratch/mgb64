@@ -113,10 +113,46 @@ _Static_assert(offsetof(struct hand, throw_item_pos_related) != FID0085_N64_MTX_
 _Static_assert(sizeof(struct hand) != FID0085_N64_HAND_STRIDE,
     "native hand stride equals the N64 936 — per-hand raw stride would be correct; re-derive");
 
+/* ---- FID-0087: grenade-round projectile SPAWN POSITION hand field ----
+ * sub_GAME_7F05F73C passes the spawn position as retail hand+0x2E8 = field_B58.
+ * On the 64-bit layout pointer fields inside struct hand before field_B58 expand
+ * 4->8B (+0xC), so it sits at native 0x2F4 not 0x2E8; the legacy raw read
+ * (GE007_NO_GRENADE_SPAWN_POS_FIX) would land on field_B4C/B50/B54. */
+#define FID0087_N64_POS_FIELD  0x2E8   /* raw (u8*)hand + 0x2E8 legacy read */
+_Static_assert(offsetof(struct hand, field_B58) == 0x2F4,
+    "offsetof(struct hand, field_B58) drifted from locked 0x2F4 — FID-0087");
+_Static_assert(offsetof(struct hand, field_B58) != FID0087_N64_POS_FIELD,
+    "native field_B58 coincides with the raw N64 hand+0x2E8 offset — the legacy "
+    "raw read would be correct and the FID-0087 fix moot; re-derive");
+
+/* ---- FID-0088 / FID-0092 / FID-0093: post-hands PLAYER fields read/written via
+ * raw N64 byte offsets in the legacy paths. The hands[] array grows on the
+ * 64-bit layout (per-hand 936->968 + pre-hands pointer growth), shifting every
+ * field after hands[] by a single uniform delta, so NONE of these fields sit at
+ * their raw N64 offset. A `==` here would mean the raw read/write coincides with
+ * the real field and the default-ON fix is moot -> a fix-invalidating drift. */
+#define FID0088_N64_TILECOLOR      0xFDC   /* raw (u8*)g_CurrentPlayer + 0xFDC  */
+#define FID0091_N64_LASTZTRIGGER   0x105C  /* raw (u8*)g_CurrentPlayer + 0x105C */
+#define FID0092_N64_GUNAMMOOFF     0x1064  /* raw (u8*)g_CurrentPlayer + 0x1064 */
+_Static_assert(offsetof(struct player, tileColor) != FID0088_N64_TILECOLOR,
+    "native player.tileColor coincides with raw N64 0xFDC — FID-0088 fix moot; re-derive");
+_Static_assert(offsetof(struct player, last_z_trigger_timer) != FID0091_N64_LASTZTRIGGER,
+    "native player.last_z_trigger_timer coincides with raw N64 0x105C — FID-0092 fix moot");
+_Static_assert(offsetof(struct player, gunammooff) != FID0092_N64_GUNAMMOOFF,
+    "native player.gunammooff coincides with raw N64 0x1064 — FID-0093 fix moot");
+/* The post-hands shift is a single uniform delta (one hands[] growth event): */
+_Static_assert(offsetof(struct player, last_z_trigger_timer) - FID0091_N64_LASTZTRIGGER
+            == offsetof(struct player, tileColor) - FID0088_N64_TILECOLOR,
+    "post-hands native shift not uniform (tileColor vs last_z_trigger_timer)");
+_Static_assert(offsetof(struct player, gunammooff) - FID0092_N64_GUNAMMOOFF
+            == offsetof(struct player, tileColor) - FID0088_N64_TILECOLOR,
+    "post-hands native shift not uniform (tileColor vs gunammooff)");
+
 int main(void) {
     /* If this TU compiled at all, every _Static_assert above held. The runtime
      * body exists only so the ctest has something to link and run. */
     printf("test_struct_layout: PASS (45 layout asserts + FID-0085 hand-matrix "
-           "lock held at compile time)\n");
+           "lock + FID-0087/0088/0091/0092 raw-cast field locks held at compile "
+           "time)\n");
     return 0;
 }

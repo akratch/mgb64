@@ -1,0 +1,30 @@
+{
+  "id": "FID-0094",
+  "title": "MP other-player beam-tick reads/writes player struct via raw N64 offsets + N64 hand stride (raw-cast cluster, filed)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [
+    "src/game/bondview.c:24935 (aimback/aimsideback player+0x2A00/0x2A04)",
+    "src/game/bondview.c:25388 (chrSetFiring player+0x875/0xC1D)",
+    "src/game/bondview.c:25405 (beam pos/frame player+handOffset+0x2A10/0x2A28)",
+    "src/game/bondview.c:25429 (hand-pos copy srcOff=i*936 N64 stride, player+0xB50/B54/B58)"
+  ],
+  "repro": "Split-screen / multi-player beam-tick for a non-current player (g_playerPointers[playerIndex]) reads and writes the player struct through raw N64 byte offsets and indexes hands[] with the N64 936-byte stride.",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0094-mp-beam-rawcast.md"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T16:14:44Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0094-mp-beam-rawcast.md",
+      "note": "ASM-audit batch-6 raw-cast sweep -- the COMPLEX member of the class (filed, not fixed this pass). Unlike FID-0085/0087/0088/0091/0092 (single-field one-liners with a named-field sibling), this is a whole cluster in the MP other-player beam/aim tick (bondview.c ~24935-25439) that is NATIVE-ACTIVE (no #ifdef guard) yet uses N64 raw offsets throughout: aimback/aimsideback = player+0x2A00/0x2A04; chrSetFiring reads player+0x875 (hand0 firing) / player+0xC1D (hand1 firing); the 2-hand beam loop reads/writes player+handOffset+0x2A10/0x2A14/0x2A18 (beam pos) and player+handOffset4+0x2A28 (last-active frame); and the hand-position source uses srcOff = i*936 (the N64 struct hand stride, 968 on native) with player+srcOff+0xB50/0xB54/0xB58. On the 64-bit layout every one of these offsets (and the 936 stride) is wrong. It affects only the MP/split-screen non-current-player beam+aim path, which the current deterministic 1P oracle does not exercise, so it is left filed-with-derivation pending a per-field native mapping (each needs its named field or an offsetof-correct expression, and the i*936 index must become &hands[i].<field>). Derivation: docs/fidelity/derivations/FID-0094-mp-beam-rawcast.md."
+    }
+  ]
+}

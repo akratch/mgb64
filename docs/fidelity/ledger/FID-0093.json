@@ -1,0 +1,71 @@
+{
+  "id": "FID-0093",
+  "title": "MP respawn clears raw player+0x1064 instead of gunammooff (raw-cast sweep)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "verified",
+  "suspect": [
+    "src/game/bondview.c:19996 (mp_respawn_handler)"
+  ],
+  "repro": "Multiplayer respawn: gunammooff is cleared via raw player+0x1064 (native mis-offset) instead of the named field, so the gun-render suppression flag may not reset.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c:19996"
+    },
+    {
+      "kind": "counter-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/verify_manifest.txt"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T16:14:23Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bondview.c:19996",
+      "note": "ASM-audit batch-6 raw-cast sweep, same class as FID-0085/0087/0088/0091. Retail US ASM mp_respawn_handler (7F08897C: sw $zero, 0x1064($t6=g_CurrentPlayer)) clears g_CurrentPlayer+0x1064. N64 player+0x1064 = gunammooff (after last_z_trigger_timer@0x105C, copiedgoldeneye@0x1060). On the 64-bit port layout the uniform +0x150 post-hands shift means the raw write misses gunammooff and corrupts an unrelated field -- while the gun-render gate (gun.c:32121 'if (g_CurrentPlayer->gunammooff != 0) return gdl;'), gun.c:31114/31118, and initBondDATA.c:322 use the named field, so a respawn could leave the first-person gun un-rendered. Fix: write g_CurrentPlayer->gunammooff = 0. Default ON; GE007_NO_GUNAMMOOFF_RESPAWN_FIX restores the raw write byte-identically. Struct-layout lock: offsetof(struct player,gunammooff) != 0x1064."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "ASM-derived offset locked; see finding note."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chr.c",
+      "note": "One-line guard/field fix behind default-ON flag with byte-identical negative control (see finding note)."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    },
+    {
+      "ts": "2026-07-11T16:16:30Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/verify_manifest.txt",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    }
+  ]
+}

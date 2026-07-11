@@ -88,6 +88,52 @@ static int portNoProjectileInitMtxFix(void)
     return cached;
 }
 
+/* FID-0087 negative control. Default-ON port-defect fix reads the grenade-round
+ * projectile SPAWN POSITION from the real per-hand field (&hand->field_B58);
+ * setting GE007_NO_GRENADE_SPAWN_POS_FIX restores the legacy raw N64 byte offset
+ * ((u8*)hand + 0x2E8) byte-identically. Sibling of FID-0085 (same function). */
+static int portNoGrenadeSpawnPosFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_GRENADE_SPAWN_POS_FIX",
+                              "Restore the legacy raw N64 byte-offset read of the "
+                              "grenade-round projectile spawn position [FID-0087]");
+    }
+    return cached;
+}
+
+/* FID-0088 negative control. Default-ON port-defect fix reads the ejected
+ * shell-casing render tint from the real player field (player->tileColor),
+ * mirroring the verified gun-subdraw sibling (gun.c:14930); setting
+ * GE007_NO_SHELL_CASING_TINT_FIX restores the legacy raw N64 byte-offset read
+ * ((u8*)g_CurrentPlayer + 0xFDC..0xFDF) byte-identically. */
+static int portNoShellCasingTintFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_SHELL_CASING_TINT_FIX",
+                              "Restore the legacy raw N64 byte-offset read of the "
+                              "ejected shell-casing render tint [FID-0088]");
+    }
+    return cached;
+}
+
+/* FID-0092 negative control. Default-ON port-defect fix writes the rocket-launch
+ * fire timer to the real player field (player->last_z_trigger_timer, N64 0x105C);
+ * setting GE007_NO_LAST_Z_TRIGGER_TIMER_FIX restores the legacy raw N64
+ * byte-offset write ((u8*)g_CurrentPlayer + 0x105C) byte-identically. */
+static int portNoLastZTriggerTimerFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_LAST_Z_TRIGGER_TIMER_FIX",
+                              "Restore the legacy raw N64 byte-offset write of the "
+                              "rocket-launch fire timer to player+0x105C [FID-0092]");
+    }
+    return cached;
+}
+
 static f32 portLoadFloatSlot(const s32 *slot)
 {
     f32 value = 0.0f;
@@ -4818,9 +4864,36 @@ void sub_GAME_7F05F73C(s32 arg0) {
         playernum = get_cur_playernum();
         newobj->runtime_bitflags |= ((u32)playernum << 17);
 
-        sub_GAME_7F05EC1C((struct WeaponObjRecord *)newobj,
-                          (coord3d *)((u8 *)hand + 0x2E8),
-                          &local_mtx, &velocity, (s32 *)&identity_mtx);
+        /* FID-0087: sibling of FID-0085 (same function sub_GAME_7F05F73C).
+         * Retail US ASM passes the projectile spawn POSITION as hand+0x2E8 =
+         * &hand->field_B58 (per-hand stride INTACT here; only the intra-hand
+         * offset is a raw N64 byte offset). On the 64-bit port layout, pointer
+         * fields inside struct hand before field_B58 expand 4->8B, so the field
+         * sits at native offsetof 0x2F4, not 0x2E8 (+0xC shift) — the raw read
+         * lands on field_B4C/B50/B54 (three s32s) reinterpreted as a coord3d and
+         * fed to sub_GAME_7F05EC1C's LOS test / height window / blocked-copy.
+         * Read the real per-hand C field like FID-0085's matrix fix.
+         * GE007_NO_GRENADE_SPAWN_POS_FIX restores the raw+0x2E8 read
+         * byte-identically (&hand->field_B58 == hand+0x2E8 under the N64 layout). */
+        {
+            coord3d *spawn_pos = portNoGrenadeSpawnPosFix()
+                ? (coord3d *)((u8 *)hand + 0x2E8)
+                : &hand->field_B58;
+            if (getenv("GE007_TRACE_PROJECTILE_INIT_MTX") != NULL) {
+                /* FID-0087 fail-on-revert probe (shares the FID-0085 trace env):
+                 * fix-ON reads &hand->field_B58, fix-OFF the raw hand+0x2E8
+                 * interior (field_B4C/B50/B54) -> the two positions must differ. */
+                fprintf(stderr,
+                    "[PROJ_SPAWN_POS] hand=%d fix=%d src=%s pos=(%.5f,%.5f,%.5f)\n",
+                    arg0, portNoGrenadeSpawnPosFix() ? 0 : 1,
+                    portNoGrenadeSpawnPosFix() ? "raw+0x2E8" : "field_B58",
+                    spawn_pos->x, spawn_pos->y, spawn_pos->z);
+                fflush(stderr);
+            }
+            sub_GAME_7F05EC1C((struct WeaponObjRecord *)newobj,
+                              spawn_pos,
+                              &local_mtx, &velocity, (s32 *)&identity_mtx);
+        }
 
         if (newobj->runtime_bitflags & 0x80) {
             newobj->projectile->unk8C = 0.30000001f;
@@ -18224,7 +18297,21 @@ check_state:
                     break;
                 }
             }
-            *(s32 *)((u8 *)g_CurrentPlayer + 0x105C) = hand_ptr->field_890;
+            /* FID-0092 (raw-cast sweep): retail US ASM (Weapon_function_grenades /
+             * rocket-launch fire, sub_GAME_7F064xxx @ 7F064ED8: sw $t6, 0x105c($t8))
+             * stores the fire timer (hand+0x20 = field_890) to g_CurrentPlayer+0x105C
+             * = player->last_z_trigger_timer. On the 64-bit port layout that field is
+             * NOT at raw N64 0x105C (hands[] pointer growth shifts every post-hands
+             * field by +0x150), so the raw write corrupts an unrelated hands[1]
+             * interior AND leaves last_z_trigger_timer stale — while the reader at
+             * gun.c:4419 uses the named field. Write the real field. Same class as
+             * FID-0085/0087/0088. GE007_NO_LAST_Z_TRIGGER_TIMER_FIX restores the raw
+             * write byte-identically. */
+            if (portNoLastZTriggerTimerFix()) {
+                *(s32 *)((u8 *)g_CurrentPlayer + 0x105C) = hand_ptr->field_890;
+            } else {
+                g_CurrentPlayer->last_z_trigger_timer = hand_ptr->field_890;
+            }
             hand_ptr->when_detonating_mines_is_0 = 26;
             hand_ptr->field_88C = 0;
             hand_ptr->field_890 = 0;
@@ -30809,10 +30896,28 @@ void sub_GAME_7F068EC4(CasingRecord *entry, Gfx **gdl) {
         renderdata.gdl = saved_gdl;
         renderdata.mtxlist = (Mtxf *)alloc;
 
-        cp = (u8 *)g_CurrentPlayer;
-        *(u32 *)&renderdata.envcolour =
-            ((u32)cp[0xFDC] << 24) | ((u32)cp[0xFDD] << 16) |
-            ((u32)cp[0xFDE] << 8) | (u32)cp[0xFDF];
+        /* FID-0088: ejected shell-casing render tint. Retail US ASM
+         * (sub_GAME_7F068EC4 @ 7F069024-7F06904C) packs lbu 0xFDC/0xFDD/0xFDE/0xFDF
+         * (g_CurrentPlayer) as r<<24|g<<16|b<<8|a into renderdata.envcolour (+0x34)
+         * — the same player tileColor bytes the verified gun-subdraw sibling
+         * (sub_GAME_7F062BE4, live gun.c:14930) reads via proper fields. On the
+         * 64-bit port layout tileColor is NOT at raw N64 0xFDC: the pointer-bearing
+         * ptr_hand_weapon_buffer[2] and the hands[] array (pointer growth) shift it,
+         * so cp[0xFDC..0xFDF] lands inside hands[] state -> the casing renders with
+         * garbage envcolour instead of the room stan-tile tint. Read player->tileColor
+         * like the sibling. GE007_NO_SHELL_CASING_TINT_FIX restores the raw read
+         * byte-identically. */
+        if (portNoShellCasingTintFix()) {
+            cp = (u8 *)g_CurrentPlayer;
+            *(u32 *)&renderdata.envcolour =
+                ((u32)cp[0xFDC] << 24) | ((u32)cp[0xFDD] << 16) |
+                ((u32)cp[0xFDE] << 8) | (u32)cp[0xFDF];
+        } else {
+            renderdata.envcolour.word = (g_CurrentPlayer->tileColor.r << 24) |
+                                        (g_CurrentPlayer->tileColor.g << 16) |
+                                        (g_CurrentPlayer->tileColor.b << 8) |
+                                        g_CurrentPlayer->tileColor.a;
+        }
 
         subdraw(&renderdata, &model);
 

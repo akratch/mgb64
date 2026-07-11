@@ -15,14 +15,20 @@
 # the real per-hand C field (default-ON); GE007_NO_PROJECTILE_INIT_MTX_FIX
 # restores the raw read byte-identically.
 #
+# The sibling FID-0087 covers the same function's SPAWN POSITION: retail passes
+# hand+0x2E8 = &hand->field_B58 (native 0x2F4, +0xC), and the legacy raw read
+# (GE007_NO_GRENADE_SPAWN_POS_FIX) lands on field_B4C/B50/B54. This smoke guards
+# both: the fix-OFF run restores BOTH raw reads.
+#
 # This smoke boots Dam, gives+equips the grenade launcher, and fires it twice --
-# once fix-ON (default) and once fix-OFF -- capturing the copied matrix via
-# GE007_TRACE_PROJECTILE_INIT_MTX. It asserts:
+# once fix-ON (default) and once fix-OFF -- capturing the copied matrix AND the
+# spawn position via GE007_TRACE_PROJECTILE_INIT_MTX. It asserts:
 #   (1) both runs actually fired a round (>=1 matrix trace each);
-#   (2) fix-ON differs from fix-OFF (the fix is load-bearing -- fails on revert);
+#   (2) fix-ON matrix differs from fix-OFF (FID-0085 load-bearing -- fails on revert);
 #   (3) fix-ON is a real rotation basis (each row magnitude ~1.0), while the
 #       legacy raw read is not (magnitude check separates them);
-#   (4) neither process crashed.
+#   (4) fix-ON spawn position differs from fix-OFF (FID-0087 load-bearing);
+#   (5) neither process crashed.
 #
 # ROM-derived captures stay local; do not commit them.
 #
@@ -134,7 +140,10 @@ run_state() {
 echo "== grenade-round init matrix A/B: level $LEVEL, item $ITEM, fire $FIRE_SPEC =="
 
 RC_ON="$(run_state fixon)"
-RC_OFF="$(run_state fixoff GE007_NO_PROJECTILE_INIT_MTX_FIX=1)"
+# fix-OFF restores BOTH sibling raw reads in sub_GAME_7F05F73C: the FID-0085
+# projectile init matrix AND the FID-0087 spawn position -- so the run is the
+# negative control for both.
+RC_OFF="$(run_state fixoff GE007_NO_PROJECTILE_INIT_MTX_FIX=1 GE007_NO_GRENADE_SPAWN_POS_FIX=1)"
 
 LOG_ON="$OUT_DIR/run_fixon.log"
 LOG_OFF="$OUT_DIR/run_fixoff.log"
@@ -184,6 +193,19 @@ else
     fail "fix-ON basis rows are not unit-length -- not a valid throw_item_pos_related rotation"
 fi
 
-echo "grenade-round init matrix smoke: PASS"
+# --- FID-0087: grenade-round SPAWN POSITION fail-on-revert ---
+# fix-ON reads &hand->field_B58; fix-OFF the raw hand+0x2E8 interior. The two
+# must resolve to different memory -> different spawn position.
+POS_ON="$(grep -F "[PROJ_SPAWN_POS]" "$LOG_ON"  | head -1 | sed -E 's/.*(pos=\([^)]*\)).*/\1/' || true)"
+POS_OFF="$(grep -F "[PROJ_SPAWN_POS]" "$LOG_OFF" | head -1 | sed -E 's/.*(pos=\([^)]*\)).*/\1/' || true)"
+[[ -n "$POS_ON"  ]] || fail "fix-ON emitted no spawn-position trace (FID-0087 probe missing)"
+[[ -n "$POS_OFF" ]] || fail "fix-OFF emitted no spawn-position trace (FID-0087 probe missing)"
+echo "  fix-ON  spawn pos: $POS_ON"
+echo "  fix-OFF spawn pos: $POS_OFF"
+[[ "$POS_ON" != "$POS_OFF" ]] || \
+    fail "fix-ON and fix-OFF spawn position identical -- the FID-0087 fix is not load-bearing (reverted?)"
+echo "  FID-0087 spawn position is load-bearing (fix-ON != fix-OFF): PASS"
+
+echo "grenade-round init matrix + spawn position smoke: PASS"
 echo "artifacts: $OUT_DIR"
 exit 0

@@ -1,0 +1,71 @@
+{
+  "id": "FID-0091",
+  "title": "chrTickBeams freezes CHRFLAG_CULL_USING_HITBOX guards in WAYMODE_MAGIC (retail bgez bypass missing)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "verified",
+  "suspect": [
+    "src/game/chr.c:5275 (chrTickBeams native magic-hold dispatch)"
+  ],
+  "repro": "A patrol/gopos guard with CHRFLAG_CULL_USING_HITBOX (0x800000) in WAYMODE_MAGIC: retail walks it normally, the native reimpl froze it.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c:5185"
+    },
+    {
+      "kind": "counter-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/verify_manifest.txt"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T16:13:41Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chr.c:5185",
+      "note": "FID-0014 review follow-up. Retail chrTickBeams gates the ENTIRE WAYMODE_MAGIC freeze/refresh dispatch on !(chrflags & CHRFLAG_CULL_USING_HITBOX): US 7F021118 'bgez (chrflags<<8), .L7F021178' left-shifts chrflags by 8 so bit 23 (CHRFLAG_CULL_USING_HITBOX=0x800000) becomes the sign bit -- when SET, bgez is NOT taken and control falls to .L7F021120 (normal walking tick: chrPositionRelated7F020E40 / modelTickAnimQuarterSpeed) then 'b .L7F0213C8', bypassing both the magic freeze/sync (.L7F0211C4) AND the lastvisible60/unk9c refresh (7F021254-7F021284, reachable only from the .L7F021178 dispatch). The native reimpl (chr.c chrTickBeams, FID-0014 merge) special-cased ACT_PATROL/ACT_GOPOS+WAYMODE_MAGIC via chrShouldHoldMagicTravelPropPosition WITHOUT the CHRFLAG_CULL_USING_HITBOX pre-check, so such a guard would be frozen instead of walked. Fix: gate the magic hold and the refresh on !chrCullHitboxBypassesMagic(chr). Default ON; GE007_NO_CULL_HITBOX_MAGIC_BYPASS=1 restores the legacy freeze."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "ASM-derived offset locked; see finding note."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chr.c",
+      "note": "One-line guard/field fix behind default-ON flag with byte-identical negative control (see finding note)."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/verify_manifest.txt",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    }
+  ]
+}

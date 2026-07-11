@@ -1,0 +1,71 @@
+{
+  "id": "FID-0092",
+  "title": "Rocket-launch fire timer written to raw player+0x105C instead of last_z_trigger_timer (raw-cast sweep)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "verified",
+  "suspect": [
+    "src/game/gun.c:18227 (Weapon_function_grenades / rocket-launch fire)"
+  ],
+  "repro": "Fire the rocket launcher (ITEM_ROCKETLAUNCH); the fire timer is written to player+0x105C (native mis-offset) instead of last_z_trigger_timer.",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:18227"
+    },
+    {
+      "kind": "counter-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/verify_manifest.txt"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T16:14:23Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:18227",
+      "note": "ASM-audit batch-6 raw-cast sweep, same class as FID-0085/0087/0088. Retail US ASM Weapon_function_grenades (7F064ED8: sw $t6, 0x105c($t8=g_CurrentPlayer)) stores the fire timer ($t6 = hand+0x20 = field_890) to g_CurrentPlayer+0x105C, followed by 'sw $t9=26, 0x24($s0)' (when_detonating_mines_is_0=26). N64 player+0x105C = last_z_trigger_timer (after field_101C Mtxf@0x101C). On the 64-bit port layout hands[] pointer growth shifts every post-hands field by a uniform +0x150 (test_struct_layout uniform-shift lock), so the raw write lands ~0x150 before last_z_trigger_timer (inside the hands[1] interior) AND leaves last_z_trigger_timer stale -- while the reader at gun.c:4419 (wor->timer = THROWN_ITEM_TIMER_DEFAULT - g_CurrentPlayer->last_z_trigger_timer) uses the named field. Fix: write g_CurrentPlayer->last_z_trigger_timer. Default ON; GE007_NO_LAST_Z_TRIGGER_TIMER_FIX restores the raw write byte-identically. Struct-layout lock: offsetof(struct player,last_z_trigger_timer) != 0x105C."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "ASM-derived offset locked; see finding note."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chr.c",
+      "note": "One-line guard/field fix behind default-ON flag with byte-identical negative control (see finding note)."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/fidelity/tape_regression.sh",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/verify_manifest.txt",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    }
+  ]
+}

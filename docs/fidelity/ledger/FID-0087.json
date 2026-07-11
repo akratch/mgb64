@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c"
   ],
@@ -13,6 +13,26 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:4819"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4821"
+    },
+    {
+      "kind": "counter-log",
+      "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4821"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/grenade_round_spawn_mtx_smoke.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/verify_manifest.txt"
     }
   ],
   "history": [
@@ -22,6 +42,41 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:4819",
       "note": "Sibling of FID-0085 (same function sub_GAME_7F05F73C, position half), reviewer-confirmed numbers. Masking: sub_GAME_7F05EC1C (gun.c:4070-4085) LOS-tests player->arg1 and falls back to player_prop->pos on failure \u2014 but garbage arg1->y feeds the height window BEFORE the test (gun.c:4060-4066), and when blocked the garbage is memcpy'd into projectile->unkd4 (gun.c:4099-4102). Fix should mirror FID-0085's idiom (&hand->field_B58) and add a field_B58 lock to test_struct_layout. Last remaining raw (u8*)hand+0x... read in live gun.c."
+    },
+    {
+      "ts": "2026-07-11T16:16:05Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:4821",
+      "note": "Raw-cast sweep pass: sibling of FID-0085, reviewer-confirmed field_B58 @native 0x2F4."
+    },
+    {
+      "ts": "2026-07-11T16:16:05Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tests/test_struct_layout.c",
+      "note": "field_B58 native offset locked 0x2F4 != raw N64 0x2E8 (test_struct_layout FID-0087 lock)."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:4821",
+      "note": "Fix: spawn position reads &hand->field_B58; GE007_NO_GRENADE_SPAWN_POS_FIX restores raw hand+0x2E8. ASM anchor comment at site."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/grenade_round_spawn_mtx_smoke.sh",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
+    },
+    {
+      "ts": "2026-07-11T16:16:29Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/verify_manifest.txt",
+      "note": "Task-specified validation bar GREEN: test_struct_layout PASS (field locks hold), sim_state_hash PASS, sim_invariance_gate PASS (dam1 f600 OFF==ON c83e78eabba5be2e), tape_regression PASS 7/7 byte-exact (zero sim-hash shift -- affected weapon/path not in any committed tape), ROM-free ctest green (only pre-existing out-of-tree intro_parse_digest CWD artifact). Negative control restores legacy raw offset byte-identically."
     }
   ]
 }
