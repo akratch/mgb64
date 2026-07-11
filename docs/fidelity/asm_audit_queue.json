@@ -800,9 +800,9 @@
         "body_start": 5940,
         "body_end": 6073
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Projectile/prop slide-to-stan resolver. ASM chrobjhandler.c:6101-6418 vs live C 5966-6099, traced fully: early-outs dest==pos.xyz -> 1 and !(runtime_bitflags&0x80) -> 1; heights branch senses (proj flags&0x40 bnezl; destY<posY c.lt.s swap -> height1=max-side/height2=min-side, else 0/1); both stanTestLineUnobstructed calls (a3=destX/newX, 0x10=destZ/newZ, 31, h1,h2, 0,1) + stan!=NULL + stanTestVolume<0 (bgez skip) senses; first success block returns result=1 (0xb0 untouched) w/ pos+runtime_pos update = C 6029-6037; fail path getCollisionEdge(A@sp+0x80,B@sp+0x74), arg3=(B.z-A.z, 0, A.x-B.x) w/ zero->z=1 else guNormalize; delta path chrlvStanLineDirIntersection + calculateNormalizedLineIntersection(linePoint{width,pos.x,pos.z}, A.xz, B.xz, dir{dx,dz}) then newX/Z = pos + dir*intersect*0.99000001 (D_80052A5C) and pos.y=savedY(=destY)/result=0 tail. The arg2-all-equal branch (E7C) is unreachable in both (top equality check already returned); retail reads uninit savedY there vs C 0.0f \u2014 dead code both sides.",
+      "reviewed_ts": "2026-07-11T03:31:34Z",
       "rank": 29,
       "rank_score": 298,
       "rank_reason": "prior-defect-file 298i"
@@ -827,9 +827,9 @@
         "body_start": null,
         "body_end": 40808
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[US variant] Pickup/interact dispatcher. Retail dispatch = object_interaction_table fn-pointer table idx=type-3, bounds sltiu<0x2d (chrobjhandler.c:40910-40919): idx1=key(type4) idx4=magazine(7) idx5=weapon(8) idx17=ammobox(20) idx18=bodyarmor(21) else default \u2014 maps 1:1 onto live C switch (PROPDEF enum verified bondconstants.h:3436). Entry gate bonddead||!g_ClockTimer -> 0 = C 40616. Handlers traced: key sfx 0xE5 + ActivatedText||langGet(0xA43C) -> v1=4; magazine add_ammo(lw 0x80 ammoType, get_ammo_in_magazine, 1, show) -> v1=1; ammobox 13-slot loop lhu 0x82 stride 4 w/ i==1->9mm (AMMO enum verified), getPlayerCount==1 solo multiplier trunc, sfx 0xEA -> v1=1 (= corrected FID-landed loop); weapon: 29->AddInvItem(30), 88->EquipWrapper(0,88), DESTROYED 0x400 branch w/ weaponnum<33 AddWeaponByProp + pass=1 text block -> v1=4, else AddWeaponByProp!=0 pass=1 + ActivatedTextWeapon/else-pass display -> v1=1, ammo tail (type!=0, collected>0, cur<max slt sense, give=cur+collected, (pass==0&&show) display); armour amount lwc1 0x84 + sfx 0x51 + playercount<3 text pick -> v1=1; default sfx 0xE5 + 0xA43F -> v1=4. Tail: v1==1 && !(runtime_bitflags&0x10) -> objFree(obj,0,state@2 &4) return 1(INV_ITEM_WEAPON); v1!=0 -> AddPropToInv return 4(INV_ITEM_PICKUP); else 0 \u2014 INV enum verified 3333-3340.",
+      "reviewed_ts": "2026-07-11T03:32:06Z",
       "rank": 30,
       "rank_score": 291,
       "rank_reason": "prior-defect-file 291i"
@@ -854,9 +854,9 @@
         "body_start": 5306,
         "body_end": 5443
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Death-camera position sampler (129 angle-seeds x 16 sectors x 4 scale steps). ASM bondview.c:5458-5761 vs live C 5306-5443, traced fully: RANDOMFRAC = u32 randomGetNext w/ +2^32 bgez correction x 2^-32 (all 3 sites); angle += 0.39269909 w/ >=tau wrap (c.le.s f20,f12); dir=sin/0/cos; candidate = dir*dist + srcPos; per-probe tile=stan(arg5@0xf0) + 7F03D058(prop,0/1) bracket around stanTestLineUnobstructed(&tile, target.xz, cand.xz, 19, 0,1,0,1); lineResult==0 -> chrlvStanPointPointIntersection + sqrt recompute of distance; distance-=radius then distance<minDist(0xf4) continue sense (c.le.s minDist,dist bc1fl); rangeDiff=dist-minDist; randDist=(frac*rangeDiff)*scale+minDist; bss pos = dir*randDist+src; line test again + stanTestVolume(&tile,bss.xz,radius,31,0,1) bgez reject; y = frac*(185-radius)+(floorY+radius); yDiff<=-1000 reject (c.lt.s -1000,yDiff bc1f), yDiff<1000 -> found=1; scale-=0.25 loop while 0<scale && !found; counters fp<16 / outer<0x81 both w/ found exits; collision_radius reloaded from player+0x4b0 per outer iter (loop-invariant, C hoists \u2014 equivalent). Return found; found path skips further RNG identically both sides.",
+      "reviewed_ts": "2026-07-11T03:32:22Z",
       "rank": 31,
       "rank_score": 289,
       "rank_reason": "prior-defect-file 289i"
@@ -881,9 +881,9 @@
         "body_start": 6547,
         "body_end": 6707
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0078",
+      "note": "Projectile release/spin setup. Fully traced ASM chrobjhandler.c:6750-7048 vs C 6573-6733: ~0x10000 clear + 0x80 gate, type==1 projectileFree, ownerprop@0x88=NULL + flags &~1 &~4, matrix/quat chain (get_rot -> set_rot(mtx1@0xcc) -> quat(unk68) -> inverse(mtx2@0x8c) -> multiply(mtx3@0x4c)), unkC0/C4/C8 row magnitudes (outer-add commutative swaps only, IEEE-exact), dirX/dirZ zero-branch + normalize, mtx2 rows incl 0<=m11 sign branch, quat(unk78) + ensure_shortest_path, dot(m2 row0 . m1 row0), both 0.05/(theta*4/tau) gate chains w/ senses verified, theta==0 -> unk64=1.0, |.|/clamp [0.03,0.15] tail. ONE divergence: acos-operand sum association a+(b+c) vs C (a+b)+c -> FID-0078.",
+      "reviewed_ts": "2026-07-11T03:32:38Z",
       "rank": 32,
       "rank_score": 283,
       "rank_reason": "prior-defect-file 283i"
@@ -908,9 +908,9 @@
         "body_start": 5376,
         "body_end": 5503
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "[US/JP block] Tank-shell / chrrocket spawn. ASM gun.c:5513-5815 vs live C 5382-5509, traced fully: hand stride 0x3A8 -> player+0x870; weapon==32 (ITEM_TANKSHELLS) branch w/ tank flags&2 (byte@1) dual check \u2014 bondviewSet3dCoord7F07CEB0 vs 7F068190+RotateVec; velocity = dir*66.666664 (+ (pos-prev)/delta when g_ClockTimer>0, register pairs re-verified pos-minus-prev in BOTH branches); tank position = model->render_pos[4].pos.m[3][x/y/z] (+0x130/134/138) + TransformVec, else player pos; setSixExplosionAndSmokeEntries. Else branch: bullet_path_from_screen_center(origin,dir,hand), pos=hand->field_B58(+0x2e8), base=dir*1.111111, vel=base*delta (+ pos-prev correction). Common tail: matrix_4x4_copy(hands[hand].throw_item_pos_related@+0xad8), m[3][0..2]=0, rocket reuse (firedrocket=1) vs create(202=PROP_CHRROCKET, 86=ITEM_NULL86), &~0x60000 owner + timer@0x82=-1 + playernum<<17 (RUNTIMEBITFLAG/SHIFT_OWNER verified bondconstants.h:613-614), sub_GAME_7F05EC1C(obj,&pos,&mtx,&vel,&identity), DEPOSIT 0x80 gate -> proj flags|=0x80, weapon!=32 -> |=0x20 + unkB0=runtime_pos.y(0x5c) + unkB4=speed.y + unk10=base + refreshrate=60 + sound1(0x98)/sound2(0x9c) else-if sndPlaySfx(bank,1,&slot). Only deviation: C adds g_GlobalTimerDelta!=0 guard on the (pos-prev)/delta correction (both branches) with no ASM counterpart \u2014 additive div-by-zero hardening, unreachable-differing while delta>0 whenever g_ClockTimer>0.",
+      "reviewed_ts": "2026-07-11T03:33:12Z",
       "rank": 33,
       "rank_score": 281,
       "rank_reason": "prior-defect-file 281i"
@@ -935,9 +935,9 @@
         "body_start": null,
         "body_end": 14993
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0077",
+      "note": "[US/JP block] FP-weapon per-hand DL builder (2-hand loop, stride 0x3A8). Retail traced ASM gun.c:15010-15292 vs C 14738-15006: field_87F gate (lb +0xf), WATCHLASER 23 head-skip/tail-emit of 7F061E18(&field_A54@+0x1e4), lights group {19,18,2,3,20,21} 5-cmd GBI block (BC000002/80000040 NumLights1, 0386@+8/0388@+0 D_80032440 lights, 0384/0382 LookAtX/Y via 7F078474()+0/+0x10), numSwitches>=17 (lh 0xc of field_B70) switch-array[16]!=NULL gate + rwdata[switch17]=1, ROCKETLAUNCH 25 -> crosshair img + monitor-microcode(arg 0,4) else taser(0,1), renderdata PropType=4/envcolour r<<24|g<<16|b<<8|a (0xfdc-0xfdf)/zbuffer=0/gdl sync, 7F058C64, rocket subdraw + TransformManyPos(render_pos, header+0xe count) + firedrocket clear, mirror-dual 0x400 B6/3000 + cullmode i==0?3:2 both sides of subdraw, 7F058C88, BC00000E viGetPerspNorm tail, loop i!=2, *arg0=gdl. TWO divergences (perspnorm arg 0.0->1.0 => word 436->435; perspnorm emitted before monitor-microcode in retail, after in C) -> FID-0077. Port-substrate deviations documented in-code (added weapon projection matrix behind g_pcViewmodelFov/portSkipFpWeaponProjection + gdl-sync bugfix ordering, DL-region registration, field_B68 pointer-vs-embedded layout, portGetWeaponSwitchNode w/ additive switch17 NULL guard, portSkipFpWeaponRender hooks).",
+      "reviewed_ts": "2026-07-11T03:33:31Z",
       "rank": 34,
       "rank_score": 264,
       "rank_reason": "prior-defect-file 264i"
@@ -962,9 +962,9 @@
         "body_start": 3860,
         "body_end": 3974
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Prop collision-bounds line intersect (projectile-vs-prop edge pick). ASM chrobjhandler.c:3978-4242 vs live C 3862-3975, traced fully: chraiGetCollisionBounds out-params mapped (0xd4 vertices/0xd0 numverts/0xcc ymax/0xc8 ymin, usage-verified); numverts<=0 -> 0; Y-band rejects (ymax<y1&&ymax<y2, y1<ymin&&y2<ymin) senses verified; edge loop (i+1)%numverts w/ 8-byte vertex pairs, 7F0B0688(line, v[i], v[next]) gate, calculateLineIntersectionFactor(&start1@0xa0=arg1.xz, &end1@0x98=arg2.xz, edge) w/ dot<best (c.lt.s f0,f20) best_edge=i; best_edge<=0 -> 0 (blez \u2014 edge 0 never selectable, quirk preserved in C); chrlvLineLineIntersection(p1{v[be],0,v[be+1]}, p2{v[next2]}, arg1, arg3, &result); dot = (r-a1).x*n.x + (r-a1).y*n.y + n.z*(r-a1).z (outer add commutative swap only); !(dot<*arg6) -> 0; *arg6=dot, arg4=result, arg5=(-n.x,0,-n.z) w/ zero->z=1 else guNormalize; D_80030B0C=prop, bodypartshot=0, g_CurrentProjectileModel=0, bss_80075B74=0, return 1. div-by-zero break guards are compiler artifacts.",
+      "reviewed_ts": "2026-07-11T03:33:48Z",
       "rank": 35,
       "rank_score": 247,
       "rank_reason": "prior-defect-file 247i"

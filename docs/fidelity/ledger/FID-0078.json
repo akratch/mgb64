@@ -1,0 +1,27 @@
+{
+  "id": "FID-0078",
+  "title": "sub_GAME_7F0431E4: acosf operand sum association differs from retail (a+(b+c) vs (a+b)+c) in projectile spin-rate derivation",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrobjhandler.c:6708"
+  ],
+  "repro": "audit: asm_audit.py entry sub_GAME_7F0431E4; ASM chrobjhandler.c:6750-7048 vs live C 6573-6733. Observable only via trace comparator on proj->unk64 (unclamped range 0.03..0.15) for thrown/dropped projectiles",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:6997"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T03:31:14Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrobjhandler.c:6997",
+      "note": "Single divergence re-derived from GLOBAL_ASM (retail 7F0431E4) vs live C: the acosf operand in the default spin-rate path. Retail: f8=mtx02*arg1z (mul chrobjhandler.c:6988), f6=arg1x*m00 (6992), f4=arg1y*m01 (6994), f10=f6+f4 (6995), f6=f8+f10 (6997) = a+(b+c). Live C 6708: (mtx02*arg1z + argX*mtx00) + arg1y*mtx01 = (a+b)+c. FP addition is not associative -> up-to-1-ulp difference in the acos input, propagating through /scale^2, acosf, /g_GlobalTimerDelta, /theta into proj->unk64 (projectile rotation-speed factor, clamped [0.029999999, 0.15000001] so bounded). All other paths verified equivalent: ~0x10000 clear + 0x80 gate, type==1 projectileFree branch, flag clears ~1/~4, quaternion/matrix call chain and unkC0/C4/C8 magnitudes (outer adds are commutative-only swaps, exact), dirX/dirZ normalize + mtx2 construction incl m11-sign branch senses (c.le.s 0<=m11), both 0.05/(theta*4/tau) gates (senses 0<theta, 0<mtx01, arg1y<mtx01 / mtx01<0, mtx01<arg1y), theta==0 -> 1.0, clamp senses. Fix = reassociate the C sum to match ASM; verify with a proj->unk64 trace lane. DO NOT transcribe from this note; re-derive from ASM."
+    }
+  ]
+}
