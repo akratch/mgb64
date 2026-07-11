@@ -605,6 +605,20 @@ if(BUILD_TESTING)
     target_include_directories(test_projectile_endpoint_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME projectile_endpoint_clamp COMMAND test_projectile_endpoint_clamp)
 
+    # sub_GAME_7F0AF20C roomset filter — ROM-free unit test (FID-0079): retail
+    # reads the roomset as u8 room bytes (0xFF-terminated, <=4 entries; ASM
+    # src/game/stan.c:1063-1086), the port cast to s32* and never matched, so
+    # flag-8 projectile tile reacquire (chrobjhandler.c:5328) always failed.
+    # Compiles only the pure stan_roomset.c TU (both readers + the dispatcher the
+    # real reader calls). Fails if the byte reader reverts to s32, the legacy
+    # negative control reverts to bytes, or the dispatcher wiring flips.
+    add_executable(test_stan_roomset
+        "${CMAKE_SOURCE_DIR}/tests/test_stan_roomset.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/stan_roomset.c"
+    )
+    target_include_directories(test_stan_roomset PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME stan_roomset COMMAND test_stan_roomset)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
