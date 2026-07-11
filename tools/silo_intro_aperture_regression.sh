@@ -192,12 +192,15 @@ def room_sets(rec):
 
 def sim_fields(rec):
     """Every field the SIM consumes (must match render-OFF vs -ON): the room_rendered
-    read-back set (FID-0012), the deterministic RNG call count, the onscreen actor
-    count, and the rendered-room count. Deliberately excludes the DRAW list."""
+    read-back set (FID-0012), the rendered-room count, the room_neighbor_to_rendered
+    count (getROOMID_isNeighborToRendered -> chrobjhandler.c:47737 door/obj/weapon
+    prop visibility -- also restored by the walk, bg.c:17039), the deterministic RNG
+    call count, and the onscreen actor count. Deliberately excludes the DRAW list."""
     vis = rec["rooms"]["vis"]
     return (
         tuple(sorted(vis.get("sample") or [])),
         vis.get("rendered"),
+        vis.get("neighbor"),
         rec["rng"]["call_count"],
         rec["actors"]["onscreen"],
     )
