@@ -1,0 +1,27 @@
+{
+  "id": "FID-0108",
+  "title": "textRender adds printable-range bound (ch 0x21..0x7e) that retail ASM lacks; retail renders control/DEL bytes via out-of-range font-table indexing",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/textrelated.c"
+  ],
+  "repro": "render a text string containing a byte in 0x01..0x1f (excluding 0x0A) or 0x7f; port skips it (prev_char reset to 72, ptr advanced), retail emits a fontchar from font-table offset ch*24-0x318",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/textrelated.c:2176 retail ASM only gates ch<0x80 (slti 0x80) before construct_fontchar_microcode; port C textrelated.c:2014 adds ch>=0x21 && ch<=0x7e, and 2032 skips ch<0x80 control bytes"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T23:35:08Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/textrelated.c:2176 retail ASM only gates ch<0x80 (slti 0x80) before construct_fontchar_microcode; port C textrelated.c:2014 adds ch>=0x21 && ch<=0x7e, and 2032 skips ch<0x80 control bytes",
+      "note": "After handling ch==0x20 (space) and ch==0x0A (newline), the retail US ASM at textrelated.c:2176 computes slti at,v0,0x80 and beqz at -> JP path, else falls straight into the ASCII construct_fontchar_microcode call using second_font_table + ch*24 - 0x318 (and prev_char*24 - 0x318). There is no lower/upper bound: every ch in 0x01..0x7f except 0x20 and 0x0A is rendered. For ch<0x21 the offset ch*24-0x318 is negative (reads before the table); for ch==0x7f it is one entry past the printable 0x21..0x7e range. The live C at textrelated.c:2014 instead guards ch>=0x21 && ch<=0x7e for the render, and textrelated.c:2032 routes any other ch<0x80 to prev_char=72; ptr++ (no render, no OOB read). Behavior-neutral for all valid printable ASCII (0x21..0x7e) and the JP path (ch>=0x80) which both match retail exactly; differs only for control/DEL bytes that retail renders via out-of-range font indexing. The added bound is present in BOTH the NATIVE_PORT and retail-form C branches (not NATIVE_PORT-gated). Rest of textRender verified equivalent: arga default = *(sft+0x88c)+*(sft+0x890), j_text_trigger && arga<14 -> 14, FA000000 header with arg6 identity byte-reassembly, space (*x+=5), newline (overlap_correction>=0 && *x==initial_x ? *y+=overlap : *y+=arga; *x=initial_x), full JP branch (24-byte D_80040EFC template copy, jis_code=((ch&0x7f)<<7|ptr[1]&0x7f)&0xffff, &0x2000 sets width15/height16, (jis&0x1fff)>=0x3c7 -> jis=2, index=jis+0x80, pixeldata=langGetJpnCharPixels), and all construct_fontchar_microcode arg tuples."
+    }
+  ]
+}

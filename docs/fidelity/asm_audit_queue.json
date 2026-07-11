@@ -4100,9 +4100,9 @@
         "body_start": 1382,
         "body_end": 1515
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0107",
+      "note": "Spectrum easter-egg screen DL builder. Live C 1382-1514 vs ASM 1519-1723. 10-command prologue (PipeSync, TLUT SETTIMG spec_palette, SETTILE, LoadSync, LOADTLUT 0x0703C000, render-mode BA001301/B900031D, combine FCFFFFFF/FFFCF87C, BA000C02, BB000001/-1) all byte-verified. 3x4 tile loop: yl_bot=(((row+1)*64+24)<<2)&0xFFF, yl_top=((row*64+24)<<2)&0xFFF, dram_offset=tile_row<<11 then +=0x800, tile_row+=4; per-tile 13 commands (SETTIMG ptr_6000alloc+dram_offset, SETTILE, LoadSync, LOADBLOCK 0x073FF200, PipeSync, BA000E02/0x8000, F5400800/0x00018060, SetTileSize 0x007E07E0, TextureRectangle w0=E4000000|xr|yl_bot w1=xl|yl_top with xr/xl=((..*64+32)<<2 &0xFFF)<<12, B4000000, B3000000/0x04000400) all verified. ONE divergence -> FID-0107: SETTILE w1 retail 0x07000000 (tile 7=LOADTILE, matches LOADTLUT/LOADBLOCK tile-7 refs) vs port 0x00070000 (tile 0 + stray cmt/maskt), both palette (1404) and loop (1463) sites; likely digit-shift typo, sibling of FID-0104.",
+      "reviewed_ts": "2026-07-11T23:26:57Z",
       "rank": 150,
       "rank_score": 201,
       "rank_reason": "201i"
@@ -4127,9 +4127,9 @@
         "body_start": null,
         "body_end": 10949
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Options-menu toggle renderer (real body live; #if 0 PORT_FIXME_STUBS stub correctly disabled). Live C 10858-10992 vs ASM 10998-11212. color_opt1/2/3 default 0x800080; x_pos=j_text_trigger?0xAA:0xB4, option2_x_pos=?0xDC:0xE1 (slot 0x4c); select_state dispatch (beqz/beq 0,1,2) verified: state 0 and 1 set 0xff00b0 by current_value(entry+8), state 2 calls game_option_toggle_input(option_index) then 0xa0ffa0f0 by current_value, other->stay default; entry stride 0xC (option_index*12), text u16[4] at +0/2/4/6; text[3]==0 override x_pos=0xC8/0xBE and option2_x_pos=0xFA both branches (dead 3rd store harmless); three sub_GAME_7F0A9398 calls with (color,0,0xffffffff,1,0,0x3000B0,0) tuples and x_pos/option2_x_pos/0x10e a1 all arg-verified; branch senses correct. Deterministic UI, live via draw_toggle_options.",
+      "reviewed_ts": "2026-07-11T23:28:21Z",
       "rank": 151,
       "rank_score": 197,
       "rank_reason": "197i"
@@ -4154,9 +4154,9 @@
         "body_start": 4794,
         "body_end": 4910
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Player melee/fist attack hit-scan. Live C 4820-4936 vs ASM 4940-5143. Reverse walk pp=g_LastOnScreenProp-1 down to g_OnScreenPropList[0] (sltu guards, stride -4). Per prop: NULL skip, zDepth<500 (c.lt.s), type==3(CHR) fall-through else type==6(VIEWER) needs chr!=NULL and getPlayerPointerIndex!=get_cur_playernum else continue. range=50, chr=prop->chr(+4), getCurrentWeaponOrItem==17(SNIPERRIFLE)->range=100. Three sub_GAME_7F03F748(chr->model+0x1c, &max,&min, lane 0/1/2) axis tests: lanes 0,1 require 0<=max && min<=0; lane 2 requires min<=0 && -range<=max (order and c.le.s senses verified). stanTestLineUnobstructed(&tile=posdata->stan+0x14, posdata pos.x+8/pos.z+0x10, prop pos.x+8/pos.z+0x10, 19, dh, dh, 0.0, 1.0) then tile==prop->stan(+0x14). bodypart=15 default, ==200 when crouch==CROUCH_HALF(1), ==201 when crouch==CROUCH_SQUAT(0) -- verified against CROUCH enum SQUAT=0/HALF=1/STAND=2 and the else-if two-call structure. bullet_path_from_screen_center(&pos,&dir,hand)+mtx4RotateVecInPlace(currentPlayerGetMatrix10D4,&dir), handles_shot_actors(chr,bodypart,&dir,item_id,1)->hit=1 + recall_joy2_hits_edit_detail_edit_flag(item_id,prop,-1). No-hit && item_id==ITEM_FIST(1) -> sndPlaySfx(g_musicSfxBufferPtr,105,0). All enum literals (item 1/17, type 3/6, crouch 0/1) confirmed. Sim-critical, fully equivalent.",
+      "reviewed_ts": "2026-07-11T23:30:55Z",
       "rank": 152,
       "rank_score": 193,
       "rank_reason": "193i"
@@ -4181,9 +4181,9 @@
         "body_start": null,
         "body_end": 2072
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0108",
+      "note": "Text renderer (ASCII + JP). Live C 1949-2071 (NATIVE_PORT form live) vs US ASM 2077-2279. Verified equivalent: D_80040EA8=1, initial_x=*x/initial_y=*y, prev_char=72, arga default *(sft+0x88c)+*(sft+0x890), j_text_trigger&&arga<14->14, FA000000 header + arg6 (byteswap reassembles to identity), space *x+=5, newline (overlap_correction>=0 && *x==initial_x?*y+=overlap:*y+=arga then *x=initial_x), JP path (24B D_80040EFC copy, jis=((ch&0x7f)<<7|ptr[1]&0x7f)&0xFFFF, &0x2000->w15/h16, (jis&0x1fff)>=0x3c7->jis=2, index=jis+0x80, pixeldata=langGetJpnCharPixels, ptr+=2), ASCII construct offsets sft+ch*24-0x318 & prev_char*24-0x318, all construct_fontchar_microcode arg tuples (both call sites). ONE divergence -> FID-0108: port adds ch>=0x21 && ch<=0x7e render bound (C 2014) + skips other ch<0x80 (C 2032); retail (ASM only slti 0x80 at 2176) renders control/DEL bytes via out-of-range font indexing. Behavior-neutral on valid printable+JP text. JP/PAL region-variant glabels (2284,2492) share identical logic.",
+      "reviewed_ts": "2026-07-11T23:35:19Z",
       "rank": 153,
       "rank_score": 188,
       "rank_reason": "188i"
@@ -4208,9 +4208,9 @@
         "body_start": null,
         "body_end": 1379
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Falling glass-shards DL builder (un-stubbed for native, A/B via GE007_GLASS_SHARDS; FID-0003/FID-0007 tracked). Live retail-form C 1139-1375 vs ASM 1381-1571. texSelect(&gdl, glassoverlayimage+0xC, 2,1,2); 7 header GBI words byte-verified (BB001001/0D800D80, BA001402/00100000, BA001001/00010000, B6000000/00003000, BA000C02/00002000, B7000000/00060000, field_10E0 base 0x01030040 + osVirtualToPhysical(get_BONDdata_field_10E0)). Per-piece loop (bound SHATTERED_WINDOW_PIECES_BUFFER_LEN, stride 0x68, piece->piece>0 gate): matrix_4x4_set_position_and_rotation_around_xyz(&piece->x=+4, &piece->field_0x10=+0x10, &mtxf@sp+0x90), subtract g_CurrentPlayer->current_model_pos (x+0x38/y+0x3c/z+0x40) from mtxf.m[3][0..2] (mtxf+0x30/34/38) with NO per-piece scalar multiply (matches ASM .L7F0A2DB0 straight into matrix_4x4_f32_to_s32), emit 0x01020040/osVirtualToPhysical(mtx) + 0x04200030/osVirtualToPhysical(piece+0x38) + 0xBF000000/0x00000A14. Footer B6000000/00060000 + 0x01030040/proj + 0x01020040/matrix10C8. dynAllocateMatrix ordering (ASM calls before matrix build, C after) is a no-op reorder. DELTAS all documented port matrix-format/pointer plumbing, not divergences: FID-0003 1/vis scale cancellation (A/B GE007_FIELD_10E0_SCALED, =0 is byte-identical to ASM), FID-0007 float-mtx path + G_MTX_FLOAT_PORT / bondviewGetField10E0GbiFlags tag (0 in fixed config -> retail 0x01030040), osVirtualToPhysical wrapping on footer proj/10C8 pointers (port interpreter needs it; N64 reads raw), plus additive NULL/overflow guards and GE007_TRACE_GLASS diag.",
+      "reviewed_ts": "2026-07-11T23:38:05Z",
       "rank": 154,
       "rank_score": 187,
       "rank_reason": "187i"
@@ -4235,9 +4235,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch controller-options text renderer. Live C 6545-6612 vs ASM (LEFTOVERDEBUG glabel 6618). pFontFile=ptrFontBankGothic(0x58)/pFontChars=ptrFontBankGothicChars(0x54), textheight/textwidth 0 (0x60/0x5c), buffer[0x7DC]@sp+0x74[0]=0. Loop i<D_800409D8 appends langGet(D_800409DC[i*10]) (u16, stride 0x14). actively_selected!=0 && controller_options_index==0 -> sub_GAME_7F0A611C 9 args verified (player +0x2a60/2a58/2a64/2a5c/2a68, D_800409D8, 0, 1, j_text_trigger?14:10). x=170(0x70)/y=26(0x6c). textMeasure(&th,&tw,buffer,pFontChars,pFontFile,lh) then textRender(gdl,&x,&y,buffer,pFontChars,pFontFile,0x00AA00B0,textwidth,lineheight,neg_vspacing@+0x2a64,lineheight2) all args verified. has_set_control_type_data(+0x2a68)!=0 -> selectedText=langGet(D_800409DC[cur_player_control_type_0(+0x2a58)*10]) recomputed twice, textMeasure, x/y reset, textRender(...,0xA0FFA0F0,textwidth,100,0,lineheight). ONE delta: retail strcat -> port watchAppendText(buffer,0x7DC,...) bounded concat (behavior-neutral for fixed short menu strings).",
+      "reviewed_ts": "2026-07-11T23:40:08Z",
       "rank": 155,
       "rank_score": 186,
       "rank_reason": "186i"
@@ -4262,9 +4262,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Same function, non-LEFTOVERDEBUG region variant (glabel 6827). Identical control flow/args to the LEFTOVERDEBUG copy; equivalent to live C 6545-6612 (same strcat->watchAppendText bounded-concat delta, behavior-neutral).",
+      "reviewed_ts": "2026-07-11T23:40:08Z",
       "rank": 156,
       "rank_score": 186,
       "rank_reason": "186i"

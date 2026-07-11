@@ -1,0 +1,27 @@
+{
+  "id": "FID-0107",
+  "title": "spectrum_draw_screen emits SETTILE with tile field 0 (w1=0x00070000) where retail uses load-tile 7 (0x07000000), mismatching its own LOADTLUT/LOADBLOCK tile-7 references",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/spectrum.c"
+  ],
+  "repro": "enter the Spectrum emulator easter-egg and observe screen tile/TLUT rendering; compare emitted GBI stream vs retail",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/spectrum.c:1547 retail ASM lui s1 0x700 (=0x07000000) stored as SETTILE w1 at 1550 and loop 1639; port C spectrum.c:1404 and 1463 emit 0x00070000"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T23:26:45Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/spectrum.c:1547 retail ASM lui s1 0x700 (=0x07000000) stored as SETTILE w1 at 1550 and loop 1639; port C spectrum.c:1404 and 1463 emit 0x00070000",
+      "note": "Hand-written DL builder for the Spectrum easter-egg screen. Retail ASM holds the constant 0x07000000 in s1 (lui s1,0x700 at spectrum.c:1547) and stores it as the SETTILE low word (w1) both for the palette-load SETTILE (0xF5000300, sw s1 at 1550) and the per-tile SETTILE (0xF5100000, sw s1 at 1639 inside the 3x4 loop). Decoded, 0x07000000 sets the SETTILE tile field bits 24-26 to 7 = G_TX_LOADTILE, and both following loads reference tile 7: the palette LOADTLUT is 0xF0000000/0x0703C000 (tile 7) and the per-tile LOADBLOCK is 0xF3000000/0x073FF200 (tile 7). The live C instead writes w1 = 0x00070000 at spectrum.c:1404 and 1463, which decodes to tile field 0 plus spurious cmt=1 and maskt=12 bits -- the SETTILE configures tile 0 while the LOADTLUT/LOADBLOCK still read tile 7. Appears to be a digit-shift transcription typo (0x07000000 vs 0x00070000), not NATIVE_PORT-gated. Sibling of FID-0104 (same wrong-load-tile-in-GBI-stream class, texWriteLoadToTmemAddr tile-5-vs-7). Observability depends on whether the port Fast3D interpreter binds LOADBLOCK/LOADTLUT to the preceding SETTILE regardless of tile index or tracks descriptors per tile number; if per-tile, the Spectrum screen loads with a stale tile-7 descriptor. Rest of spectrum_draw_screen (10-cmd prologue, 3x4 tile loop geometry: yl_top/yl_bot masks, xr/xl <<12, dram_offset tile_row<<11 then +=0x800, tile_row+=4, all other command words) verified byte-identical to ASM."
+    }
+  ]
+}
