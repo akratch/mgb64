@@ -1925,7 +1925,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_BLOOM",
                         "--config-override Video.Bloom=VALUE",
                         "Bloom",
-                        "In-shader bright-pass bloom on bright emitters. 0 = off.");
+                        "Soft glow that blooms around bright lights and highlights. 0 = off.");
     settingsRegisterFloat("Video.BloomThreshold", &g_pcBloomThreshold, 0.8f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_BLOOM_THRESHOLD",
                           "--config-override Video.BloomThreshold=VALUE",
@@ -1939,9 +1939,9 @@ void platformRegisterConfig(void)
     settingsRegisterInt("Video.Ssao", &g_pcSsao, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_SSAO",
                         "--config-override Video.Ssao=VALUE",
-                        "SSAO",
-                        "Screen-space ambient occlusion: depth-based contact darkening in "
-                        "corners and under geometry. 0 = off.");
+                        "Ambient occlusion",
+                        "Adds soft contact shadows in corners and where objects meet the "
+                        "ground, for a greater sense of depth. 0 = off.");
     settingsRegisterEnum("Video.SsaoMode", &g_pcSsaoMode, 1,
                          k_ssaoModeOptions,
                          (s32)(sizeof(k_ssaoModeOptions) / sizeof(k_ssaoModeOptions[0])),
@@ -2015,9 +2015,9 @@ void platformRegisterConfig(void)
     settingsRegisterInt("Video.SunShadow", &g_pcSunShadow, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_SUN_SHADOW",
                         "--config-override Video.SunShadow=VALUE",
-                        "Sun shadow map",
-                        "Capture-and-replay directional sun shadow map on room + character geometry "
-                        "(single-cascade ortho, 3x3 PCF, retires the fake drop-shadow blob). 0 = off (identity).");
+                        "Sun shadows",
+                        "Real-time shadows cast by the level's sunlight onto rooms and characters, "
+                        "replacing the original blurry blob shadow. 0 = off.");
     settingsRegisterInt("Video.SunShadowRes", &g_pcSunShadowRes, 2048, 1024, 4096,
                         SETTING_SCOPE_LIVE, "GE007_SUN_SHADOW_RES",
                         "--config-override Video.SunShadowRes=VALUE",
@@ -2052,26 +2052,40 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR",
                         "--config-override Video.SceneDecor=VALUE",
                         "3D scene decoration",
-                        "Render-only imported 3D models (glTF) drawn over the untouched simulation "
-                        "from per-level manifests in Video.SceneDecorDir (e.g. real trees on Surface). "
-                        "Zero gameplay effect by construction. 0 = off (identity).");
+                        "Adds extra 3D scenery -- like real trees and props -- layered on top of "
+                        "the original levels for a richer look. Purely cosmetic; never affects "
+                        "gameplay. 0 = off.");
     settingsRegisterString("Video.SceneDecorDir", g_pcSceneDecorDir, sizeof(g_pcSceneDecorDir),
                            "assets/decor",
                            SETTING_SCOPE_LIVE, "GE007_SCENE_DECOR_DIR",
                            "--config-override Video.SceneDecorDir=PATH",
-                           "Scene decoration dir",
-                           "Directory holding <level>.decor.txt manifests and their glTF models.");
+                           "Scene decoration folder",
+                           "Folder the 3D scene decoration is loaded from. The default is fine "
+                           "unless you are authoring your own scenery.");
+    /* Authoring-only path knob -- players never set it; hide behind Advanced.
+     * The 3D-scene-decoration on/off toggle (Video.SceneDecor) stays player-facing. */
+    settingsMarkAdvanced("Video.SceneDecorDir");
     settingsRegisterInt("Video.Fxaa", &g_pcFxaa, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FXAA",
                         "--config-override Video.Fxaa=VALUE",
                         "FXAA",
-                        "Fast approximate anti-aliasing on the output pass; cleans sprite/alpha/HUD edges. 0 = off.");
+                        "Smooths jagged edges across the whole image, including sprites and the HUD. 0 = off.");
     settingsRegisterInt("Video.Smaa", &g_pcSmaa, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_SMAA",
                         "--config-override Video.Smaa=VALUE",
                         "SMAA",
-                        "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. "
-                        "(Metal builds only -- no effect on this OpenGL build.)");
+                        gfx_backend_use_metal()
+                            ? "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off."
+                            : "Sharper edge anti-aliasing than FXAA; replaces FXAA when on. "
+                              "Only available on the Metal renderer, so it has no effect on this build.");
+    /* Gate by backend: SMAA runs only on the Metal renderer. On the default
+     * OpenGL build it is inert, so it must not sit in the player-facing Video
+     * tab as a dead toggle -- hide it behind the "Advanced (expert)" disclosure
+     * there. On a Metal build it is a real option and stays player-facing.
+     * Env/CLI/ini overrides still apply either way (hidden != removed). */
+    if (!gfx_backend_use_metal()) {
+        settingsMarkAdvanced("Video.Smaa");
+    }
     settingsRegisterFloat("Video.Sharpen", &g_pcSharpen, 0.15f, 0.0f, 1.0f,
                           SETTING_SCOPE_LIVE, "GE007_SHARPEN",
                           "--config-override Video.Sharpen=VALUE",
@@ -2090,13 +2104,17 @@ void platformRegisterConfig(void)
     settingsRegisterInt("Video.RemasterFX", &g_pcRemasterFX, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_REMASTER_FX",
                         "--config-override Video.RemasterFX=VALUE",
-                        "Remaster post-FX (master)",
-                        "Master switch for the cinematic post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA). 0 = faithful original look (HD textures + SSAA still apply via their own settings).");
+                        "Remaster image effects (master)",
+                        "Master switch for the cinematic image effects (color grade, tonemap, bloom, "
+                        "vignette, sharpening, edge smoothing). 0 = the faithful original N64 look. "
+                        "HD textures and render resolution have their own settings.");
     settingsRegisterFloat("Video.RenderScale", &g_pcRenderScale, 2.0f, 1.0f, 4.0f,
                           SETTING_SCOPE_RESTART, "GE007_RENDER_SCALE",
                           "--config-override Video.RenderScale=VALUE",
                           "Render scale",
-                          "Scene framebuffer scale. 1.0 matches the window; up to 4.0 supersamples (clamped to GPU texture/renderbuffer limits).");
+                          "Internal rendering resolution. 1.0 matches the window; higher values render "
+                          "the scene sharper (a strong form of anti-aliasing) at more GPU cost. "
+                          "Automatically capped to what your GPU supports.");
     settingsRegisterEnum("Video.MSAA", &g_pcMsaaSamples, 0,
                          k_msaaOptions,
                          (s32)(sizeof(k_msaaOptions) / sizeof(k_msaaOptions[0])),
@@ -2128,7 +2146,7 @@ void platformRegisterConfig(void)
                            SETTING_SCOPE_RESTART, "GE007_TEXTURE_PACK",
                            "--config-override Video.TexturePack=PATH",
                            "HD texture pack",
-                           "Directory of an HD texture pack (textures/tok####.png), built by tools/texpack from your own ROM dump. Empty = off (stock).");
+                           "Folder containing an HD texture pack you built from your own ROM. Empty = off (original N64 textures).");
     settingsRegisterEnum("Video.RetroFilter", &g_pcRetroFilterMode, PLATFORM_RETRO_FILTER_AUTO,
                          k_retroFilterOptions,
                          (s32)(sizeof(k_retroFilterOptions) / sizeof(k_retroFilterOptions[0])),
@@ -2355,9 +2373,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_UPDATE_CHECK",
                         "--config-override Game.CheckForUpdates=VALUE",
                         "Check for updates",
-                        "At launcher startup, quietly check GitHub Releases for a newer MGB64 and show a "
-                        "dismissible banner if one exists (0 = never check). A single plain HTTPS GET via "
-                        "the system curl; no telemetry. Never runs under automation/--deterministic.");
+                        "At startup, quietly check for a newer version of MGB64 and show a dismissible "
+                        "banner if one is available. No personal data is sent. 0 = never check.");
     settingsRegisterEnum("UI.LauncherFullscreen", &g_uiLauncherFullscreen, PLATFORM_LAUNCHER_FS_AUTO,
                          k_launcherFullscreenOptions,
                          (s32)(sizeof(k_launcherFullscreenOptions) / sizeof(k_launcherFullscreenOptions[0])),
