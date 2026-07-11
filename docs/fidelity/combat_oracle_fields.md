@@ -619,3 +619,24 @@ Under clean sim-tick alignment:
   any ACT. Whatever survives will be the same systemic RNG-call-count phase + small position
   drift class, not a bounded per-guard counter bug. They should be tracked against RNG-parity,
   not fixed in `chr.c`/`chrlv.c`/`stan.c` on the strength of the index-skewed numbers.
+
+## 13. Guard-state onset + mechanism — FID-0054 layered root cause (2026-07-11)
+
+The §12.6 "verdict: mostly artifact + systemic RNG-phase" for FID-0054 is
+**superseded** for the guard-position lane by
+`docs/fidelity/derivations/FID-0054-guard-state.md`: the divergent-guard set
+{2, 3, 39–45} decomposes into (A) a capture-RECIPE guard-age skew — the stock
+menu-boot runs 1146 pre-gameplay sim ticks (mission start `move.global` 0 →
+`stock_gameplay_start_global` 1146) that the native direct `--level` boot does
+not, so guards are 1145 ticks older on the stock side at every aligned tick —
+removed by the `dam_combat_guard6_agealign` route (native events shifted +382
+frames; onsets land at global 1387 == 1387); and (B) a SIM-layer patrol
+movement-semantics divergence — retail pause/warps unseen patrol guards in
+WAYMODE_MAGIC (`chrlvTickPatrol` 0x7F032548 / `chrlvTravelTickMagic`
+0x7F028600) while the port's NATIVE_PORT patches (`chrlv.c:11328` force-loop,
+`:11348` rendered-room magic-entry suppression) walk them continuously — which
+persists at equal ages from byte-identical spawn state (all 36 guards spawn
+pos-delta 0.00 at `move.global` 0 on both sides; patrollers diverge from age 1)
+and is tracked as **FID-0014** (+ **FID-0012** ONSCREEN coupling). Use
+`dam_combat_guard6_agealign` for guard-state parity captures; the RNG-phase
+residual (§9.2 of the FID-0063 derivation) is DOWNSTREAM of (B), not its cause.

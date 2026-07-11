@@ -332,11 +332,24 @@ divergent SPAWN/STATION position, not a divergent patrol trajectory, so the
 "patrol phase" mechanism below explains the other 8 but not chr 3. Flag chr 3
 explicitly as a FID-0054-relevant target distinct from the patrol set: its
 fix is a spawn/station-position parity check, not a patrol-cadence one.
+⚠ **CORRECTED (FID-0054-guard-state.md §4):** chr 3's SPAWN is byte-identical
+on both sides (all 36 guards are, at `move.global` 0); chr 3 walks ~620u from
+spawn to a scripted station, stock finishes the walk during its 1146-tick
+pre-route window while the native direct-boot side is still mid-walk at onset —
+the "stationary both sides" reading sampled a finished walk vs a paused one.
+Under the age-aligned recipe it collapses to a constant 58u endpoint offset.
 Patrol phase (chr 2, 39–45) is a function of the whole pre-route history
 (menu-boot vs direct-boot + different natural boot seeds consuming
 `rand()%120+180` wallcounts / `rand()%5+14` sleeps before the lock) — i.e.
 upstream SIM STATE, unfixable at the RNG layer and unremovable by a mid-route
-seed lock.
+seed lock. ⚠ **CORRECTED (FID-0054-guard-state.md §5):** the pre-route-history
+skew (1145 guard-age ticks) is real but is the SMALLER layer; the dominant
+driver is a SIM-layer movement-semantics divergence — retail pause/warps
+unseen patrol guards in WAYMODE_MAGIC while the port's chrlvTickPatrol
+NATIVE_PORT patches (chrlv.c:11328/11348) make them walk continuously — which
+persists at equal ages from byte-identical state (guards diverge from age 1)
+and is tracked as FID-0014 (+FID-0012 ONSCREEN coupling). A level-load seed
+lock alone (§9.5.1) will NOT collapse patrol state.
 
 **First-frame ground truth (corrects §6.1):** retail 12 draws
 (`SSS C C A TTT C gg`) vs native 13 (`SSS HHHH CC A T gg` — native's

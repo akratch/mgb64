@@ -15,11 +15,15 @@
     {
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M2.3",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
     },
     {
       "kind": "doc-anchor",
       "path": "docs/fidelity/combat_oracle_fields.md#12"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0054-guard-state.md"
     }
   ],
   "history": [
@@ -28,7 +32,7 @@
       "from": "",
       "to": "triaged",
       "evidence": "docs/BACKLOG_v0.4.0.md#M2.3",
-      "note": "seed from FAITHFULNESS_S_TIER_PLAN §0.3"
+      "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
     },
     {
       "ts": "2026-07-10T09:35:52Z",
@@ -36,6 +40,13 @@
       "to": "triaged",
       "evidence": "docs/fidelity/combat_oracle_fields.md#12",
       "note": "RE-VALIDATION REQUIRED before ACT (FID-0062): this finding was seeded from compare_combat_trace --align move, which has a ~2x sim-tick skew (record-index vs sim-tick). RE-CAPTURE dam route both-sides under --align tick (now the trustworthy combat mode, combat_oracle_fields.md#12) before root-causing. Much of the reported guard divergence is likely alignment artifact + the systemic RNG call-count phase (FID-0063), NOT a chr.c/stan.c logic bug."
+    },
+    {
+      "ts": "2026-07-11T05:13:43Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0054-guard-state.md",
+      "note": "Coupling evidence from the FID-0054 investigation (2026-07-11): native PROPFLAG_ONSCREEN is set far more broadly than stock on dam_combat_guard6 (e.g. patrol guards chr 2/3/39/40 onscreen 68.6% of native ticks vs 0% of stock ticks; position divergence confounds a direct flag comparison but the asymmetry direction is stable). The flag feeds act_patrol.lastvisible60 and hence the WAYMODE_MAGIC gate in chrlvTickPatrol (0x7F032548), so this finding co-gates FID-0054 guard-state parity with FID-0014 (see docs/fidelity/derivations/FID-0054-guard-state.md \u00a75.3 and the BACKLOG M2.5 sequencing note: the M2.5 ONSCREEN fix must land with or before the M2.3 Phase-C flip)."
     }
   ],
   "blocked_on": [

@@ -3,11 +3,13 @@
   "title": "Patrol force-loop workaround masks stalled WAYMODE_MAGIC (M2.5)",
   "class": "parity-divergence",
   "surface": "sim",
-  "priority": "P2",
+  "priority": "P1",
   "status": "root-caused",
   "suspect": [
-    "chrlv.c:11216-11218",
-    "chrlv.c:11257"
+    "src/game/chrlv.c:11328 (per-tick modelSetAnimLooping force -- applies walk root-motion even in WAYMODE_MAGIC)",
+    "src/game/chrlv.c:11348 (!chrlvPropHasRenderedRoom suppresses WAYMODE_MAGIC entry)",
+    "src/game/chrlv.c:274-290 (chrlvMagicTravelShouldUseRenderedPathExit intro narrowing)",
+    "retail chrlvTickPatrol 0x7F032548 / chrlvTravelTickMagic 0x7F028600"
   ],
   "repro": "",
   "evidence": [
@@ -15,6 +17,10 @@
       "kind": "doc-anchor",
       "path": "docs/BACKLOG_v0.4.0.md#M2.5",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "docs/fidelity/derivations/FID-0054-guard-state.md"
     }
   ],
   "history": [
@@ -24,6 +30,13 @@
       "to": "root-caused",
       "evidence": "docs/BACKLOG_v0.4.0.md#M2.5",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-11T05:13:43Z",
+      "from": "root-caused",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0054-guard-state.md",
+      "note": "First trace-grade machine evidence + \u00a74.1 statement (FID-0054 investigation, 2026-07-11). RETAIL keeps unseen patrolling guards frozen at their pad in WAYMODE_MAGIC, walking them virtually and teleporting pad-to-pad on virtual segment completion (dam_combat_guard6 stock oracle: patrol guards chr 2/40/45 stationary 96-99.7% of pre-onset ticks; position steps 100-1900u at warp instants; recently-drawn guards walk normally at 2.8u/t). PORT walks all 8 Dam patrollers smoothly on every tick (892/892 observed, zero pauses): chrlv.c:11348 blocks magic ENTRY for rendered-room guards, and chrlv.c:11328's per-tick anim-loop force applies walk root-motion even while IN magic mode (live GE007_TRACE_MAGIC_TRAVEL: chr 41/42/43/45 mode=6 creeping 1-5u/t + immediate ground-Y snap at tick 1). Effect: every patrolling guard's position diverges from retail from sim tick 1 under IDENTICAL initial state (spawn byte-identical; up to ~640u within 22s at equal ages; up to 2000u observed cross-side) -- this is FID-0054's Layer B and the upstream driver of the FID-0063 \u00a79.2 perception-class RNG residual, so it now GATES D5 call-for-call RNG parity. Priority P2->P1 accordingly. Faithful fix shape (retail ONSCREEN semantics + un-forced anim looping + retail magic entry/exit) must land with FID-0012/M2.3 Phase C per the BACKLOG M2.5 sequencing note; regression bar = dam_combat_guard6_agealign both-sides capture (recipe layer removed) with the 8-guard patrol set matching stock pause/warp profiles."
     }
   ]
 }
