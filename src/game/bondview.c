@@ -2645,10 +2645,27 @@ static StandTile *portResolveFrozenCameraRoomTile(const coord3d *pos, StandTile 
 
     if (hint_tile != NULL)
     {
-        s32 roomset[2];
-        roomset[0] = hint_tile->room;
-        roomset[1] = -1;
-        resolved_hint = sub_GAME_7F0AF20C(exact_pos, (intptr_t)roomset, NULL);
+        /* FID-0079: sub_GAME_7F0AF20C's roomset filter reads u8 room bytes
+         * (0xFF-terminated) under the faithful path, so this port-added hint
+         * list must be bytes too. The data width is paired with the reader via
+         * stanRoomsetByteFixEnabled(): under GE007_NO_STAN_ROOMSET_BYTE_FIX the
+         * legacy s32 reader is restored, so the legacy s32{room,-1} list is
+         * rebuilt to keep the negative control byte-identical (feeding a u8[2]
+         * to the s32 reader would read past the array). */
+        if (stanRoomsetByteFixEnabled())
+        {
+            u8 roomset[2];
+            roomset[0] = (u8)hint_tile->room;
+            roomset[1] = 0xFF;
+            resolved_hint = sub_GAME_7F0AF20C(exact_pos, (intptr_t)roomset, NULL);
+        }
+        else
+        {
+            s32 roomset[2];
+            roomset[0] = hint_tile->room;
+            roomset[1] = -1;
+            resolved_hint = sub_GAME_7F0AF20C(exact_pos, (intptr_t)roomset, NULL);
+        }
         resolved = resolved_hint;
     }
 

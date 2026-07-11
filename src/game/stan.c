@@ -11,6 +11,7 @@
 #ifdef NATIVE_PORT
 #include "../token.h"
 #include "../platform/byteswap.h"
+#include "../platform/stan_roomset.h"  /* FID-0079 roomset-filter readers */
 #include <string.h>
 #include "ge_debug.h"
 /* Forward declarations for functions defined later in this file */
@@ -705,6 +706,22 @@ static void stanConsiderFloorTile(StandTile *tile, f32 *pos, StandTile **best_ti
     }
 }
 
+/* FID-0079 polarity gate (port-defect fix, default ON). Returns 1 for the
+ * faithful u8 byte read; GE007_NO_STAN_ROOMSET_BYTE_FIX=1 returns 0 to restore
+ * the legacy s32-word read byte-identically. Both the sub_GAME_7F0AF20C reader
+ * and the bond frozen-camera hint caller (bondview.c:2646) read this one gate so
+ * the roomset data width stays paired with the reader under either polarity (a
+ * half-converted pair would read past a mismatched array). The byte/legacy
+ * decision itself lives in the pure, unit-tested stanRoomsetFilterAdmitsRoom()
+ * (src/platform/stan_roomset.c), which cites the ASM anchor. */
+s32 stanRoomsetByteFixEnabled(void) {
+    static int s_gate = -1;
+    if (s_gate < 0) {
+        s_gate = ge_env_bool("GE007_NO_STAN_ROOMSET_BYTE_FIX", 0) ? 0 : 1;
+    }
+    return s_gate;
+}
+
 StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
     StandTile *best_tile = NULL;
     f32 best_y = -3.402823e+38f;
@@ -753,14 +770,17 @@ StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist) {
         if (sz16 < stan_room_bbox[room][2] || sz16 > stan_room_bbox[room][5]) continue;
         if (sy16 < stan_room_bbox[room][1]) continue; /* below room floor min */
 
-        /* Check roomset filter (if provided) */
+        /* Check roomset filter (if provided). FID-0079: the retail filter reads
+         * u8 room bytes (0xFF-terminated, <=4 entries; ASM stan.c:1063-1086) — the
+         * prior port cast to s32* and never matched, so flag-8 projectile tile
+         * reacquire always failed. stanRoomsetFilterAdmitsRoom() encapsulates both
+         * readers; legacy = !fix restores the s32 read under
+         * GE007_NO_STAN_ROOMSET_BYTE_FIX. */
         if (roomset != 0) {
-            s32 *rs = (s32 *)roomset;
-            s32 found = 0;
-            for (s32 j = 0; rs[j] != -1 && j < 4; j++) {
-                if (rs[j] == room) { found = 1; break; }
+            if (!stanRoomsetFilterAdmitsRoom((const void *)roomset, room,
+                                             !stanRoomsetByteFixEnabled())) {
+                continue;
             }
-            if (!found) continue;
         }
 
         /* Walk tiles in this room */

@@ -59,6 +59,13 @@ void *stanDetermineEOF(struct StanPrefixRecord *r, s32 arg1, s32 arg2);
 s32 sub_GAME_7F0AF760(StandTile *tile);
 
 StandTile *sub_GAME_7F0AF20C(f32 *pos, intptr_t roomset, f32 *out_dist);
+/* FID-0079: default-ON polarity gate for the sub_GAME_7F0AF20C roomset filter
+ * (returns 1 for the faithful u8 byte read; GE007_NO_STAN_ROOMSET_BYTE_FIX=1
+ * returns 0 to restore the legacy s32-word read). The byte/legacy readers
+ * themselves are the pure helpers in src/platform/stan_roomset.h. Shared by the
+ * reader (stan.c) and the bond frozen-camera hint caller (bondview.c:2646) so
+ * their roomset data widths stay paired. */
+s32 stanRoomsetByteFixEnabled(void);
 void debugStanView(s8 joyX, s8 joyY, u16 joyBtns);
 void sub_GAME_7F0AF630(s32 arg0);
 void sub_GAME_7F0B1CC4(void);
