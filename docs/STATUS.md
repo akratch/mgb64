@@ -1,9 +1,12 @@
 # Project Status
 
-**MGB64 is experimental, proof-of-principle software.** It demonstrates that the
-game can be decompiled and run through a native port, but it is not a finished,
-one-command, plug-and-play release. This document is the honest current state so
-you know what to expect and where help is most valuable.
+**MGB64 is an experimental but genuinely playable native port.** The full
+single-player campaign boots, plays, and reaches mission-complete across all 20
+levels from a clean checkout plus your own ROM — this is well past a proof of
+principle. It is still experimental: not a one-command, plug-and-play consumer
+release, and not a 1:1 replacement for the original on real hardware. This
+document is the honest current state so you know what to expect and where help is
+most valuable.
 
 ## What works
 

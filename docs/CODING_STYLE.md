@@ -61,7 +61,7 @@ maintainability wins in platform-owned code.
 - When a native-port fix must touch game code, keep it narrow and explain the
   port-specific reason in the commit or PR.
 - For matching work, document known mismatches and use the existing diff tooling
-  (`tools/diff.py`, `scripts/asmdiff.sh`, and related helpers).
+  (`scripts/asmdiff.sh` and related helpers).
 
 ## Native Port Code
 

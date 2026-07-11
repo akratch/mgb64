@@ -83,8 +83,8 @@ diagnostic environment variables).
 ## Decompilation / matching work
 
 - New or changed decompiled functions should aim to **match** the original. Use
-  the in-tree tooling (`tools/asm-processor`, `tools/diff.py`,
-  `scripts/asmdiff.sh`) to compare against the target.
+  the in-tree tooling (`tools/asm-processor`, `scripts/asmdiff.sh`) to compare
+  against the target.
 - Prefer matching code. If a function can't be matched yet, document why.
 - Don't change behavior of game code to "fix" a port issue — fix it in the
   platform layer instead, so the decompilation stays faithful.

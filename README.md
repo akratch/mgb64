@@ -119,9 +119,9 @@ and run the unchanged engine path, so the validation harness is unaffected.
 - macOS bundle: `./macos/Scripts/build_gl_app.sh` → `build-macos-app/MGB64.app`.
 - Architecture + per-OS build/seams: **[docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md)**.
 
-> macOS is validated; Windows/Linux use only portable seams and are wired in the
-> build. A prebuilt "Download" section (rolling latest + tagged releases) is
-> planned.
+> macOS is validated; Windows/Linux use only portable seams and are wired into the
+> build and release pipeline. Prebuilt downloads (rolling `latest` + tagged
+> releases) are attached to releases — see the **[Download](#download)** section above.
 
 ## Building
 

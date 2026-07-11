@@ -6,7 +6,8 @@ new, start with **[BUILDING.md](BUILDING.md)** and
 
 For the project overview and download links, see the top-level
 [README](../README.md); for how to contribute, see
-[CONTRIBUTING](../CONTRIBUTING.md).
+[CONTRIBUTING](../CONTRIBUTING.md) and the branch → PR → merge
+[WORKFLOW](WORKFLOW.md).
 
 ## Start here
 
@@ -16,6 +17,7 @@ For the project overview and download links, see the top-level
 | [APP_ARCHITECTURE.md](APP_ARCHITECTURE.md) | How the in-process app, engine, and platform layer fit together — the big picture, per-OS seams, and invariants. |
 | [CODING_STYLE.md](CODING_STYLE.md) | Naming, headers, scope, and — importantly — the decompiled-code vs. port-layer boundary. |
 | [STATUS.md](STATUS.md) | Honest current state: what works, what's experimental, known limitations. |
+| [WINDOWS_SETUP.md](WINDOWS_SETUP.md) | Installing and running the Windows portable build: install location, adding your ROM, save/config locations, controller/launcher notes, and logs. |
 
 ## Architecture & internals
 

@@ -12,7 +12,9 @@ MGB64 has two practical targets:
 
 Native-only work must be invisible to the matching target. Keep port code behind
 `#ifdef NATIVE_PORT` or an existing port abstraction, and keep defaults stock.
-For example, `Video.FovY = 60` preserves the original gameplay FOV.
+For example, the original gameplay FOV (`Video.FovY = 60`) is what `--faithful`
+restores; any modern default a port feature adds must stay reversible to that
+stock behavior.
 
 Never add ROM bytes, ROM-derived data, SDK payloads, screenshots, or generated
 captures. The contamination guard and release checks must stay green.
@@ -77,7 +79,7 @@ Every feature should have a reproducible lane. Existing lanes include:
 - `tools/mp_smoke.sh --timelimit SECS` for MP match-timer boundary coverage.
 - `tools/soak_stability.sh` for longer per-stage stability.
 - `tools/asan_smoke.sh` for sanitizer runs.
-- `tools/check_no_rom_data.sh` and the release-readiness checks for provenance.
+- `scripts/ci/check_no_rom_data.sh` and the release-readiness checks for provenance.
 
 Captured traces, screenshots, and logs are generated from the user's ROM and
 must remain local.
