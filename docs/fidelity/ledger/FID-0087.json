@@ -1,0 +1,27 @@
+{
+  "id": "FID-0087",
+  "title": "Grenade-round projectile spawn POSITION read from raw hand+0x2E8 \u2014 12 bytes off on native (field_B58 @0x2F4)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/gun.c"
+  ],
+  "repro": "gun.c:4819 passes (coord3d*)((u8*)hand+0x2E8) as arg1 of sub_GAME_7F05EC1C; retail = hand+0x2E8 (per-hand stride INTACT here, only the intra-hand offset is stale) = field_B58; native offsetof(struct hand, field_B58) = 0x2F4 (+0xC: pad-to-8 before audioHandle + two 4->8B pointer growths), so the raw read hits field_B4C/B50/B54 (three s32s) reinterpreted as coord3d",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4819"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-11T08:29:36Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/gun.c:4819",
+      "note": "Sibling of FID-0085 (same function sub_GAME_7F05F73C, position half), reviewer-confirmed numbers. Masking: sub_GAME_7F05EC1C (gun.c:4070-4085) LOS-tests player->arg1 and falls back to player_prop->pos on failure \u2014 but garbage arg1->y feeds the height window BEFORE the test (gun.c:4060-4066), and when blocked the garbage is memcpy'd into projectile->unkd4 (gun.c:4099-4102). Fix should mirror FID-0085's idiom (&hand->field_B58) and add a field_B58 lock to test_struct_layout. Last remaining raw (u8*)hand+0x... read in live gun.c."
+    }
+  ]
+}

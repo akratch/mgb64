@@ -21,7 +21,8 @@
     },
     {
       "kind": "counter-log",
-      "path": "/tmp/mgb64-fid0085-evidence/offset_probe_output.txt"
+      "path": "tests/test_struct_layout.c",
+      "note": "[durable re-anchor: the offset probe results are locked into test_struct_layout.c asserts (throw_item_pos_related @0x274 native, raw player+0xAD8 misses by 284); original /tmp probe output was volatile]"
     },
     {
       "kind": "asm-citation",
@@ -29,7 +30,8 @@
     },
     {
       "kind": "trace-diff",
-      "path": "/tmp/mgb64-fid0085-evidence/runtime_ab_summary.txt"
+      "path": "tools/grenade_round_spawn_mtx_smoke.sh",
+      "note": "[durable re-anchor: the runtime A/B (fix-ON orthonormal rotation + Bond translation vs fix-OFF blend-region garbage) is reproducible via this smoke; original /tmp summary was volatile]"
     }
   ],
   "history": [
