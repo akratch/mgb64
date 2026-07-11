@@ -794,6 +794,12 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     add_port_validation_smoke(port_hidden_guard_contract_smoke hidden_guard_contract_smoke.sh 240)
     add_port_validation_smoke(port_knife_impact_smoke knife_impact_smoke.sh 180)
     add_port_validation_smoke(port_knife_throw_sfx_smoke knife_throw_sfx_smoke.sh 240)
+    # FID-0085: grenade-round (grenade launcher / flare pistol / piton gun) projectile
+    # init-matrix hand-field fix. Fires the grenade launcher fix-ON (default) and
+    # fix-OFF (GE007_NO_PROJECTILE_INIT_MTX_FIX) and asserts the copied rotation basis
+    # differs (the fix is load-bearing -> reddens on a gun.c revert) and that fix-ON is
+    # a real orthonormal rotation while the legacy raw+0xAD8 read is not.
+    add_port_validation_smoke(port_grenade_round_spawn_mtx_smoke grenade_round_spawn_mtx_smoke.sh 240)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
     # MC.7 solo-pause: boots a solo level via the app shell, scripts the F1/View

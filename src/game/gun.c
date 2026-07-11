@@ -72,6 +72,19 @@ static int portDisableMuzzleFlash(void)
     return cached;
 }
 
+/* FID-0085 negative control. Default-ON port-defect fix reads the projectile
+ * init matrix from the real per-hand field (&hand->throw_item_pos_related);
+ * setting GE007_NO_PROJECTILE_INIT_MTX_FIX restores the legacy raw N64 byte
+ * offset read (g_CurrentPlayer + hand_offset + 0xAD8) byte-identically. */
+static int portNoProjectileInitMtxFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("GE007_NO_PROJECTILE_INIT_MTX_FIX") != NULL;
+    }
+    return cached;
+}
+
 static f32 portLoadFloatSlot(const s32 *slot)
 {
     f32 value = 0.0f;
@@ -4754,7 +4767,40 @@ void sub_GAME_7F05F73C(s32 arg0) {
         velocity.z += (posdata->pos.z - bonddata->z) / g_GlobalTimerDelta;
     }
 
-    matrix_4x4_copy((Mtxf *)((u8 *)g_CurrentPlayer + hand_offset + 0xAD8), &local_mtx);
+    /* FID-0085: retail US ASM (sub_GAME_7F05F73C @ 7F05F84C-7F05F860) copies the
+     * projectile init matrix from source = g_CurrentPlayer + arg0*936 + 0xAD8,
+     * i.e. &hands[arg0].throw_item_pos_related (hands@0x870, field@+0x268 within
+     * a 936-byte hand). The strength-reduced *936 chain (7F05F73C-7F05F764) is
+     * the per-hand stride. The native body left hand_offset pinned to 0 (the
+     * #else path never runs here) AND kept the raw N64 byte offset, so on the
+     * 64-bit layout — where pointer fields before throw_item_pos_related expand
+     * 4->8B, shifting its real offset off 0x268 — player+0xAD8 is not that field,
+     * and the pinned offset also drops the per-hand stride (hand 1 aliases hand
+     * 0). Read the real per-hand field like the thrown-grenade/knife siblings
+     * (gun.c:4393 / gun.c:4482, both matrix_4x4_copy(&hands[hand].throw_item_pos_related,..)).
+     * GE007_NO_PROJECTILE_INIT_MTX_FIX restores the raw-offset read byte-identically. */
+    if (portNoProjectileInitMtxFix()) {
+        matrix_4x4_copy((Mtxf *)((u8 *)g_CurrentPlayer + hand_offset + 0xAD8), &local_mtx);
+    } else {
+        matrix_4x4_copy(&hand->throw_item_pos_related, &local_mtx);
+    }
+
+    if (getenv("GE007_TRACE_PROJECTILE_INIT_MTX") != NULL) {
+        /* Both-sides A/B diagnostic (FID-0085): the copied rotation basis before
+         * the m[3] translation row is zeroed. Fix-ON reads the real per-hand
+         * throw_item_pos_related; fix-OFF the raw player+0xAD8 interior. */
+        fprintf(stderr,
+            "[PROJ_INIT_MTX] hand=%d fix=%d src=%s "
+            "r0=(%.5f,%.5f,%.5f) r1=(%.5f,%.5f,%.5f) r2=(%.5f,%.5f,%.5f) "
+            "t=(%.5f,%.5f,%.5f)\n",
+            arg0, portNoProjectileInitMtxFix() ? 0 : 1,
+            portNoProjectileInitMtxFix() ? "raw+0xAD8" : "throw_item_pos_related",
+            local_mtx.m[0][0], local_mtx.m[0][1], local_mtx.m[0][2],
+            local_mtx.m[1][0], local_mtx.m[1][1], local_mtx.m[1][2],
+            local_mtx.m[2][0], local_mtx.m[2][1], local_mtx.m[2][2],
+            local_mtx.m[3][0], local_mtx.m[3][1], local_mtx.m[3][2]);
+        fflush(stderr);
+    }
 
     local_mtx.m[3][0] = 0.0f;
     local_mtx.m[3][1] = 0.0f;

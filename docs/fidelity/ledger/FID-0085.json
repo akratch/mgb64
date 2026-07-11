@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/gun.c:4757",
     "src/game/gun.c:4728"
@@ -14,6 +14,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:4757"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4757"
+    },
+    {
+      "kind": "counter-log",
+      "path": "/tmp/mgb64-fid0085-evidence/offset_probe_output.txt"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4785"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "/tmp/mgb64-fid0085-evidence/runtime_ab_summary.txt"
     }
   ],
   "history": [
@@ -23,6 +39,34 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:4757",
       "note": "ASM audit batch 5. Retail US ASM gun.c:4865-4870: matrix_4x4_copy source = g_CurrentPlayer + hand_offset + 0xAD8 where hand_offset = arg0*936 (strength-reduced chain 4796-4805) == &hands[arg0].throw_item_pos_related (hands@0x870, field@+0x268; same anchor as the verified gunFireTankShell rank-33 audit). Live NATIVE_PORT C (gun.c:4716-4782): the #ifdef NATIVE_PORT branch fixes only the hand POINTER (&hands[arg0], gun.c:4731) but leaves hand_offset=0 and keeps the raw-offset copy 'matrix_4x4_copy((Mtxf*)((u8*)g_CurrentPlayer + hand_offset + 0xAD8), &local_mtx)' (gun.c:4757). Two defects on native: (1) 0xAD8 is an N64 byte offset \u2014 the native 64-bit player struct contains real pointers before hands (e.g. StandTile* room_pointer at N64-0x34, bondview.h:363), so player+0xAD8 is not any field boundary -> the projectile's initial rotation matrix (m[3][*] zeroed after copy; forwarded via sub_GAME_7F05EC1C arg2 -> sub_GAME_7F05EB0C) is copied from an unrelated interior of the player struct; (2) even on a layout-matching build, hand_offset=0 drops the per-hand stride -> hand 1 uses hand 0's matrix. Sibling port bodies use the correct idiom (&g_CurrentPlayer->hands[hand].throw_item_pos_related \u2014 gun.c:4393/4482 thrown grenade/knife, tankshell) confirming this is an incomplete conversion, not a substrate convention. Rest of the function verified equivalent (936 stride, velocity dir*33.333332 rodata 0x42055555 + (pos-prev)/delta correction w/ port-added delta!=0 guard, create_new_item_instance_of_model(203,87), &~0x60000 + timer 0x82=1200 + playernum<<17, DEPOSIT 0x80 -> proj unk8C=0.30000001/unk94=0.13333333/refreshrate=60)."
+    },
+    {
+      "ts": "2026-07-11T08:02:44Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:4757",
+      "note": "ASM re-derivation confirms the batch-5 finding: sub_GAME_7F05F73C 7F05F73C-7F05F764 strength-reduces arg0*936 (hand stride); 7F05F84C-7F05F860 matrix_4x4_copy source = g_CurrentPlayer + arg0*936 + 0xAD8 = &hands[arg0].throw_item_pos_related (hands@0x870 + 0x268). Callers = the ONLY 3 live-dispatch cases in gun.c:7019/7032/7034 (ITEM_GRENADELAUNCH=24, ITEM_FLAREPISTOL=35, ITEM_PITONGUN=36). port-defect, sim, P2."
+    },
+    {
+      "ts": "2026-07-11T08:02:44Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "/tmp/mgb64-fid0085-evidence/offset_probe_output.txt",
+      "note": "Machine-checkable offset probe (game defines + -fms-extensions -mno-ms-bitfields): sizeof(struct hand) native=968(0x3c8) vs N64 936; offsetof(throw_item_pos_related) native=0x274 vs N64 0x268; hands base native player+0x980 vs N64 0x870. Legacy raw read player+0xAD8 lands hand-rel 0x158 (blendpos region), MISSING the correct native field addr player+0xBF4 by 284B. Sibling sub_GAME_7F05F928 (rocket, gun.c:5141) already uses &hand->throw_item_pos_related -> incomplete conversion, not substrate convention."
+    },
+    {
+      "ts": "2026-07-11T08:02:57Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:4785",
+      "note": "Fix: matrix_4x4_copy source reads &hand->throw_item_pos_related (hand = &g_CurrentPlayer->hands[arg0]) matching the thrown-grenade/knife/rocket siblings. Default-ON; GE007_NO_PROJECTILE_INIT_MTX_FIX restores the raw player+0xAD8 read byte-identically (the #else non-native path is byte-identical either way: &hand->throw_item_pos_related == player+arg0*936+0xAD8 under the N64 layout). ASM anchor comment at the site."
+    },
+    {
+      "ts": "2026-07-11T08:02:57Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "/tmp/mgb64-fid0085-evidence/runtime_ab_summary.txt",
+      "note": "Runtime A/B (Dam, deterministic, grenade launcher item 24, GE007_TRACE_PROJECTILE_INIT_MTX): fix-ON = proper per-shot orthonormal rotation basis + Bond world-space translation (20180,41,16892); fix-OFF (legacy raw+0xAD8) = static non-orthonormal garbage from the blendpos region + near-origin translation. Regression lanes: (1) compile-time tests/test_struct_layout.c FID-0085 hand-matrix offset lock; (2) end-to-end tools/grenade_round_spawn_mtx_smoke.sh (ctest port_grenade_round_spawn_mtx_smoke) asserts fix-ON basis differs from fix-OFF and is orthonormal -- fail-on-revert PROVEN (revert-sim binary -> fix-ON==fix-OFF -> smoke FAILs). Sim verify: all 7 golden tapes replay byte-exact (zero sim-hash shift; no committed tape/route equips item 24/35/36); sim_invariance_gate PASS; ROM-free ctest suite green."
     }
   ]
 }
