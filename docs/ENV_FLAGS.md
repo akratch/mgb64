@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1052 flags** found across the source.
+**1053 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -615,6 +615,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_WATCH_JOYPAD_FIX` | presence | unset | 1 | Restore the pre-fix watch controller page (button depress on the post-rotation vector, GUNLEFT hand, per-frame item save/restore) [FID-0072] |
 | `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
+| `GE007_NO_WEAPONSTATS_RECOIL_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset reads of WeaponStats recoil fields in the FP recoil-settle path; the fix reads the named RecoilSpeed/RecoilBack/RecoilUp fields (pointer-grown struct) [FID-0123] |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_OBJ` | ? |  | 1 |  |

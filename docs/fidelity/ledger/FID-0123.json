@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:18899 the FP recoil-settle interp reads WeaponStats via raw N64 offsets: unk47=*(s8*)(stats+0x47), pos_scale=*(f32*)(stats+0x48), rot_scale=*(f32*)(stats+0x4C). WeaponStats has a real pointer ptr_cartridge_struct at 0x28 (gun.h:92) -> 8 bytes on 64-bit, so every field after shifts +4. Retail N64 0x47=RecoilSpeed low byte, 0x48=RecoilBack, 0x4C=RecoilUp now live at native 0x4B/0x4C/0x50. The raw reads hit wrong fields: pos_scale~=0 (no positional recoil kick), rot_scale uses RecoilBack not RecoilUp, unk47 garbage. Active NATIVE path (no #ifdef/gate), reached every gun post-fire settle (when_detonating_mines_is_0==3). Same class as FID-0088."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:18899 WeaponStats N64 layout: RecoilSpeed@0x44 (LSB 0x47), RecoilBack@0x48, RecoilUp@0x4C; ptr_cartridge_struct@0x28. Native +4 shift confirmed by _Static_assert (RecoilSpeed@0x48/RecoilBack@0x4C/RecoilUp@0x50). Raw reads 0x47/0x48/0x4C hit high-byte-of-Sway / RecoilSpeed-as-f32(~0) / RecoilBack."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:18899 gated fix reads named RecoilSpeed/RecoilBack/RecoilUp."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:18899 reads named recoil fields (default-ON, GE007_NO_WEAPONSTATS_RECOIL_OFFSET_FIX opt-out). A/B: opt-out reproduces all 7 tape hashes byte-identically. Fix-ON changed only the 2 weapon-firing tapes (dam_ak47_sustained/dam_combat_guard6), re-baselined; tape regression green both ways; offset asserts lock the layout."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/gun.c:18899 the FP recoil-settle interp reads WeaponStats via raw N64 offsets: unk47=*(s8*)(stats+0x47), pos_scale=*(f32*)(stats+0x48), rot_scale=*(f32*)(stats+0x4C). WeaponStats has a real pointer ptr_cartridge_struct at 0x28 (gun.h:92) -> 8 bytes on 64-bit, so every field after shifts +4. Retail N64 0x47=RecoilSpeed low byte, 0x48=RecoilBack, 0x4C=RecoilUp now live at native 0x4B/0x4C/0x50. The raw reads hit wrong fields: pos_scale~=0 (no positional recoil kick), rot_scale uses RecoilBack not RecoilUp, unk47 garbage. Active NATIVE path (no #ifdef/gate), reached every gun post-fire settle (when_detonating_mines_is_0==3). Same class as FID-0088.",
       "note": "Found by adjacent-bug review 2026-07-12. Fix: named-field swap (stats->RecoilSpeed&0xFF / RecoilBack / RecoilUp); confirm RecoilSpeed byte semantics vs ASM first. Reachable -> gate + tape re-baseline like FID-0117."
+    },
+    {
+      "ts": "2026-07-12T16:13:42Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c:18899 WeaponStats N64 layout: RecoilSpeed@0x44 (LSB 0x47), RecoilBack@0x48, RecoilUp@0x4C; ptr_cartridge_struct@0x28. Native +4 shift confirmed by _Static_assert (RecoilSpeed@0x48/RecoilBack@0x4C/RecoilUp@0x50). Raw reads 0x47/0x48/0x4C hit high-byte-of-Sway / RecoilSpeed-as-f32(~0) / RecoilBack.",
+      "note": "offset mapping confirmed by compile-time asserts"
+    },
+    {
+      "ts": "2026-07-12T16:13:42Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:18899 gated fix reads named RecoilSpeed/RecoilBack/RecoilUp.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T16:13:42Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/gun.c:18899 reads named recoil fields (default-ON, GE007_NO_WEAPONSTATS_RECOIL_OFFSET_FIX opt-out). A/B: opt-out reproduces all 7 tape hashes byte-identically. Fix-ON changed only the 2 weapon-firing tapes (dam_ak47_sustained/dam_combat_guard6), re-baselined; tape regression green both ways; offset asserts lock the layout.",
+      "note": "restored positional recoil kick; 2 baselines re-recorded 2026-07-12"
     }
   ]
 }

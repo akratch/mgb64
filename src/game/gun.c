@@ -124,6 +124,26 @@ static int portNoShellCasingTintFix(void)
     return cached;
 }
 
+static int portNoWeaponStatsRecoilFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WEAPONSTATS_RECOIL_OFFSET_FIX",
+                              "Restore the legacy raw N64 byte-offset reads of WeaponStats recoil "
+                              "fields in the FP recoil-settle path; the fix reads the named "
+                              "RecoilSpeed/RecoilBack/RecoilUp fields (pointer-grown struct) [FID-0123]");
+    }
+    return cached;
+}
+
+/* FID-0123: lock the native WeaponStats layout. ptr_cartridge_struct (a pointer) at 0x28 grows
+ * 4->8B, shifting the recoil fields +4: RecoilSpeed 0x44->0x48, RecoilBack 0x48->0x4C, RecoilUp
+ * 0x4C->0x50. So the legacy raw reads at N64 0x48/0x4C hit RecoilSpeed(as f32~=0)/RecoilBack. */
+_Static_assert(offsetof(WeaponStats, ptr_cartridge_struct) == 0x28, "WeaponStats ptr_cartridge_struct drifted from 0x28");
+_Static_assert(offsetof(WeaponStats, RecoilSpeed) == 0x48, "WeaponStats RecoilSpeed drifted from native 0x48 (FID-0123)");
+_Static_assert(offsetof(WeaponStats, RecoilBack) == 0x4C, "WeaponStats RecoilBack drifted from native 0x4C (FID-0123)");
+_Static_assert(offsetof(WeaponStats, RecoilUp) == 0x50, "WeaponStats RecoilUp drifted from native 0x50 (FID-0123)");
+
 /* FID-0092 negative control. Default-ON port-defect fix writes the rocket-launch
  * fire timer to the real player field (player->last_z_trigger_timer, N64 0x105C);
  * setting GE007_NO_LAST_Z_TRIGGER_TIMER_FIX restores the legacy raw N64
@@ -18896,7 +18916,12 @@ check_state_3:
                 if (hand_ptr->field_888 != 0 && hand_ptr->weapon_hold_time != 0) {
                     s8 sound_trigger_r = stats->SoundTriggerRate;
                     if (hand_ptr->field_890 >= sound_trigger_r) {
-                        s8 unk47 = *(s8 *)((u8 *)stats + 0x47);
+                        /* FID-0123: retail reads RecoilSpeed's low byte (N64 stats+0x47). The port
+                         * kept the raw offset; on the +4-shifted native WeaponStats (ptr_cartridge_struct
+                         * at 0x28 grew 4->8B) 0x47 is the high byte of Sway. Read the named field. */
+                        s8 unk47 = portNoWeaponStatsRecoilFix()
+                                 ? *(s8 *)((u8 *)stats + 0x47)
+                                 : (s8)(stats->RecoilSpeed & 0xFF);
                         if (unk47 >= 0) {
                             s32 frame_plus_unk = hand_ptr->field_890 + unk47;
                             if (frame_plus_unk < combined && frame_plus_unk >= sound_trigger_r) {
@@ -18912,8 +18937,13 @@ check_state_3:
 state3_interpolate:
                 if (hand_ptr->field_890 < combined) {
                     // Interpolation math
-                    f32 pos_scale = *(f32 *)((u8 *)stats + 0x48);
-                    f32 rot_scale = *(f32 *)((u8 *)stats + 0x4C);
+                    /* FID-0123: retail pos_scale=RecoilBack (N64 0x48), rot_scale=RecoilUp (N64 0x4C).
+                     * On native (+4 shift) the raw offsets hit RecoilSpeed (an s32 read as f32 ~= 0,
+                     * killing the positional recoil kick) and RecoilBack. Read the named fields. */
+                    f32 pos_scale = portNoWeaponStatsRecoilFix()
+                                  ? *(f32 *)((u8 *)stats + 0x48) : stats->RecoilBack;
+                    f32 rot_scale = portNoWeaponStatsRecoilFix()
+                                  ? *(f32 *)((u8 *)stats + 0x4C) : stats->RecoilUp;
                     f32 *mtx_ptr = (f32 *)&hand_ptr->field_8EC;
 
                     if (hand_ptr->field_890 == 0) {
