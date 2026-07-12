@@ -24742,6 +24742,25 @@ glabel sub_GAME_7F08AAE8
 *
 * Returns: tick operation result (compared to 5 by caller)
 */
+static int portNoMpWalkAnimWeaponnumFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX",
+                              "Restore the raw N64 offset read (*(s8*)(obj + 0x80)) for the "
+                              "MP-player walk-animation weapon-flag check; on the 64-bit port "
+                              "ObjectRecord grew +0x10 so 0x80 no longer lands on weaponnum "
+                              "(now 0x90) — read the named field instead [FID-0129]");
+    }
+    return cached;
+}
+
+/* FID-0129: lock weaponnum's post-growth offset so the named-field read above
+ * can't silently drift. N64 0x80; the +0x10 ObjectRecord growth moves it to
+ * 0x90 on the 64-bit port. */
+_Static_assert(offsetof(WeaponObjRecord, weaponnum) == 0x90,
+               "WeaponObjRecord.weaponnum offset drifted from locked 0x90");
+
 s32 playerTickBeams(PropRecord *prop) {
     struct player *player;
     s32 playerIndex;
@@ -25108,7 +25127,7 @@ path2_entry:
 
     /* Check if right hand weapon has flag 0x200 */
     if (rightObj != NULL) {
-        if (!bondwalkItemCheckBitflags(*(s8 *)((u8 *)rightObj + 0x80), 512)) {
+        if (!bondwalkItemCheckBitflags((portNoMpWalkAnimWeaponnumFix() ? *(s8 *)((u8 *)rightObj + 0x80) : ((WeaponObjRecord *)rightObj)->weaponnum), 512)) {
             walkType = 2;
             goto do_crouch_check;
         }
@@ -25116,7 +25135,7 @@ path2_entry:
 
     /* Check if left hand weapon has flag 0x200 */
     if (leftObj != NULL) {
-        if (!bondwalkItemCheckBitflags(*(s8 *)((u8 *)leftObj + 0x80), 512)) {
+        if (!bondwalkItemCheckBitflags((portNoMpWalkAnimWeaponnumFix() ? *(s8 *)((u8 *)leftObj + 0x80) : ((WeaponObjRecord *)leftObj)->weaponnum), 512)) {
             walkType = 2;
             goto do_crouch_check;
         }
@@ -25124,7 +25143,7 @@ path2_entry:
 
     /* Check if right hand weapon has flag 0x100 (rifle type) */
     if (rightObj != NULL) {
-        if (bondwalkItemCheckBitflags(*(s8 *)((u8 *)rightObj + 0x80), 256)) {
+        if (bondwalkItemCheckBitflags((portNoMpWalkAnimWeaponnumFix() ? *(s8 *)((u8 *)rightObj + 0x80) : ((WeaponObjRecord *)rightObj)->weaponnum), 256)) {
             walkType = 0;
             goto do_crouch_check;
         }
@@ -25136,7 +25155,7 @@ path2_entry:
         goto do_crouch_check;
     }
 
-    if (bondwalkItemCheckBitflags(*(s8 *)((u8 *)leftObj + 0x80), 256)) {
+    if (bondwalkItemCheckBitflags((portNoMpWalkAnimWeaponnumFix() ? *(s8 *)((u8 *)leftObj + 0x80) : ((WeaponObjRecord *)leftObj)->weaponnum), 256)) {
         walkType = 0;
     } else {
         walkType = 1;

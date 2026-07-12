@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P3",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/bondview.c:25111/25119/25127/25139 call bondwalkItemCheckBitflags(*(s8*)((u8*)rightObj+0x80),...) on ObjectRecord* (WeaponObjRecord.weaponnum, N64 0x80). ObjectRecord native 0x90 -> weaponnum@0x90; raw 0x80 reads maxdamage low byte -> wrong walk-anim type. Inside the FID-0094 fn but NOT covered by the FID-0094 gate; ungated. MP other-player walk-anim (cosmetic). Fix: ((WeaponObjRecord*)rightObj)->weaponnum."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/bondview.c:25124 playerTickBeams reads the MP other-player weapon flag via raw *(s8*)((u8*)rightObj+0x80); ObjectRecord grew +0x10 on the 64-bit port so 0x80 no longer lands on WeaponObjRecord.weaponnum (now native 0x90) \u2014 it reads into maxdamage, yielding the wrong walk/rifle animation for other players."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/bondview.c:24745 added portNoMpWalkAnimWeaponnumFix() accessor (GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX) + _Static_assert(offsetof(WeaponObjRecord,weaponnum)==0x90); gating the 4 reads to read the named field by default."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/bondview.c:25124 4 reads now ((WeaponObjRecord*)obj)->weaponnum by default, raw offset restorable via GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX=1. Build clean, _Static_assert holds, tape_regression.sh byte-identical on all 7 SP tapes (MP path not exercised)."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/bondview.c:25111/25119/25127/25139 call bondwalkItemCheckBitflags(*(s8*)((u8*)rightObj+0x80),...) on ObjectRecord* (WeaponObjRecord.weaponnum, N64 0x80). ObjectRecord native 0x90 -> weaponnum@0x90; raw 0x80 reads maxdamage low byte -> wrong walk-anim type. Inside the FID-0094 fn but NOT covered by the FID-0094 gate; ungated. MP other-player walk-anim (cosmetic). Fix: ((WeaponObjRecord*)rightObj)->weaponnum.",
       "note": "hunt 2026-07-12; RANK4, MP cosmetic, sibling of FID-0094"
+    },
+    {
+      "ts": "2026-07-12T17:23:35Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/bondview.c:25124 playerTickBeams reads the MP other-player weapon flag via raw *(s8*)((u8*)rightObj+0x80); ObjectRecord grew +0x10 on the 64-bit port so 0x80 no longer lands on WeaponObjRecord.weaponnum (now native 0x90) \u2014 it reads into maxdamage, yielding the wrong walk/rifle animation for other players.",
+      "note": ""
+    },
+    {
+      "ts": "2026-07-12T17:23:35Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/bondview.c:24745 added portNoMpWalkAnimWeaponnumFix() accessor (GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX) + _Static_assert(offsetof(WeaponObjRecord,weaponnum)==0x90); gating the 4 reads to read the named field by default.",
+      "note": ""
+    },
+    {
+      "ts": "2026-07-12T17:23:35Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/bondview.c:25124 4 reads now ((WeaponObjRecord*)obj)->weaponnum by default, raw offset restorable via GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX=1. Build clean, _Static_assert holds, tape_regression.sh byte-identical on all 7 SP tapes (MP path not exercised).",
+      "note": ""
     }
   ]
 }
