@@ -1,0 +1,27 @@
+{
+  "id": "FID-0116",
+  "title": "sub_GAME_7F0747D0 ray-vs-OBB reimplemented with float division; retail uses division-free cross-multiplication",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/model.c:12436"
+  ],
+  "repro": "grep div in ASM span model.c 12514-12827 returns 0; C bodies use / at 12473,12475,12487,12488",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/model.c ASM 7F0747D0-7F074C64 uses only mul.s/add.s/sub.s/neg.s/c.lt.s with swaps (zero div.s); C model.c:12436 uses / division per axis plus a 1e-6f parallel epsilon absent from ASM"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T02:38:29Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/model.c ASM 7F0747D0-7F074C64 uses only mul.s/add.s/sub.s/neg.s/c.lt.s with swaps (zero div.s); C model.c:12436 uses / division per axis plus a 1e-6f parallel epsilon absent from ASM",
+      "note": "Found during ASM audit batch 20 rank 245. Retail sub_GAME_7F0747D0 is a slab ray-vs-OBB test that avoids division entirely: it carries axis_len_sq and local_dir as denominators into cross-multiplied c.lt.s comparisons with near/far swaps (VRAM 7F0747D0..7F074C64, no div.s instruction). The port reimplements it with explicit floating-point division (t1=(bmin-lo)/dir, t2=(bmax-lo)/dir; local_origin and local_dir divided by axis_len_sq) plus a fabsf(local_dir) < 1e-6f parallel-ray early containment test that has no ASM counterpart. Result-equivalence at grazing angles and degenerate axes is unproven; division and cross-multiplication can differ by rounding at the hit/no-hit boundary. This routine is on the sim/combat path: chrobjhandler.c:3614 and 38642 call it with shot_pos/shot_dir for bullet-vs-object and bullet-vs-door hit registration, so a boundary flip changes whether a shot hits. Contrast sibling sub_GAME_7F074CAC (rank 244) which faithfully preserves the retail division-free cross-multiplication. Needs a combat oracle route to confirm or refute observable divergence."
+    }
+  ]
+}

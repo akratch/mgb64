@@ -6412,9 +6412,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "LEFTOVERDEBUG variant (build authority; CMakeLists defines LEFTOVERDEBUG). Visibility-command bytecode interpreter, instruction-identical to non-LEFTOVERDEBUG sibling rank 237 (only assembler-comment and label-name cosmetics differ). All handlers match the single C body: jpt_80058C80 high dispatch index opcode-0x50 bound 0xD for opcodes 0x50-0x5C, vis_command_jpt low dispatch index opcode bound 0x28. Stack ops 0x01-0x06, range-push 0x14, force_visible 0x1E, portal-vis 0x1F-0x23, room ops 0x20-0x27, if/endif/toggle control flow all match. NATIVE_PORT vis_read_s32 byte-swap, fprintf traces, and add_visible_room bounds guard plus trace-context hooks are sim-neutral for valid in-range data.",
+      "reviewed_ts": "2026-07-12T02:39:04Z",
       "rank": 236,
       "rank_score": 1664,
       "rank_reason": "bulk-last dispatch(jpt_80058C80) 388i"
@@ -6441,9 +6441,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Non-LEFTOVERDEBUG sibling of rank 236. Diff of the two GLOBAL_ASM blocks is 388 vs 388 instructions with only assembler-comment and local-label-name cosmetic differences; both map onto the single C body identically. See rank 236 note for the handler-by-handler match. Authority is the LEFTOVERDEBUG variant (rank 236) since the build defines LEFTOVERDEBUG, but the two are byte-logic-identical so the C is equivalent to both.",
+      "reviewed_ts": "2026-07-12T02:39:05Z",
       "rank": 237,
       "rank_score": 1664,
       "rank_reason": "bulk-last dispatch(jpt_80058C80) 388i"
@@ -6470,9 +6470,9 @@
         "body_start": 6455,
         "body_end": 6568
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Portal-chain room resolver. jpt_80058C58 camera-mode switch sets D_800442F8 to 200 for modes 1,2,3,7,9 else 3 (index cam-1 bound 9). Inner portal loop: bg_portal_data_entry stride 8, offset_portal at struct offset 0, connectedRoom1 at 4, connectedRoom2 at 5. Guards flags at D_800443C4 equal 0 and portal_idx not equal last_portal; side test current_room equals connectedRoom1 or connectedRoom2; on sub_GAME_7F0B9F14 hit sets last_portal and current_room = connectedRoom2 xor (current_room xor connectedRoom1). Both break conditions and the 11-iteration outer bound match. NATIVE_PORT block is a comment plus a default-off GE007_FORCE_NEARBY_ROOMS debug override.",
+      "reviewed_ts": "2026-07-12T02:39:05Z",
       "rank": 238,
       "rank_score": 845,
       "rank_reason": "bulk-last dispatch(jpt_80058C58) 115i"
@@ -6499,9 +6499,9 @@
         "body_start": null,
         "body_end": 13603
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Model-node tree walker. Init picks node from *arg3 (then clears it) else model->obj->RootNode; ModelNode fields Opcode halfword at 0, Data at 4, Parent at 8, Next at 0xc, Child at 0x14. Child-descend then Next/Parent ascent match. type = Opcode and 0xFF; jpt_80054DB4 index type-1 bound 0x18 dispatches cases 8 (modelApplyDistanceRelations), 10 (sub_GAME_7F074C68), 17 (sub_GAME_7F074CAC), 18 (modelApplyToggleRelations), 23 (modelApplyHeadRelations), all else default. Cases 10 and 17 on hit set *arg3=node and return *(s32*)node->Data (offset 4). bboxTrace diagnostics and uintptr_t arg casts are NATIVE_PORT-only, sim-neutral.",
+      "reviewed_ts": "2026-07-12T02:39:19Z",
       "rank": 239,
       "rank_score": 812,
       "rank_reason": "bulk-last dispatch(jpt_80054DB4) 104i"
@@ -6526,9 +6526,9 @@
         "body_start": null,
         "body_end": 12401
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:NATIVE_PORT full reimplementation (guard NONMATCHING plus PORT_FIXME_STUBS plus NATIVE_PORT); the decomp else body is mangled question-mark types. Core algorithm verified against retail ASM 7F0B7010: room stride 0x50, coll_index times 8 plus dl_base, coll_dl byte1 and 0xF pool offset, word4 and 0xFFFFFF vertex offset, cmdType checks 4 and 0xB8 and 0xBF and 0xB1, G_TRI1 index cmd bytes 5-7 divided by 10 minus offset, TRI4 0xB1 per-triIndex nibble unpack minus offset, vertex stride 0x10 with big-endian s16 reads, bbox init 0x7FFF and 0xFFFF8000 (D_80044868 and D_80044874), best_dist_sq 0x7FFFFFFF nearest-hit. Waived not verified because the port intentionally diverges structurally: added PC bounds checks (null buffers, coll bounds, vtx range) and a native BgHitRecord output layout replacing the N64 in-place 16-bit metadata overlay. Retest with a room-line collision oracle route.",
+      "note": "NATIVE_PORT full reimplementation (guard NONMATCHING plus PORT_FIXME_STUBS plus NATIVE_PORT); the decomp else body is mangled question-mark types. Core algorithm verified against retail ASM 7F0B7010: room stride 0x50, coll_index times 8 plus dl_base, coll_dl byte1 and 0xF pool offset, word4 and 0xFFFFFF vertex offset, cmdType checks 4 and 0xB8 and 0xBF and 0xB1, G_TRI1 index cmd bytes 5-7 divided by 10 minus offset, TRI4 0xB1 per-triIndex nibble unpack minus offset, vertex stride 0x10 with big-endian s16 reads, bbox init 0x7FFF and 0xFFFF8000 (D_80044868 and D_80044874), best_dist_sq 0x7FFFFFFF nearest-hit. Waived not verified because the port intentionally diverges structurally: added PC bounds checks (null buffers, coll bounds, vtx range) and a native BgHitRecord output layout replacing the N64 in-place 16-bit metadata overlay. Retest with a room-line collision oracle route.",
+      "reviewed_ts": "2026-07-12T02:39:19Z",
       "rank": 240,
       "rank_score": 666,
       "rank_reason": "bulk-last 666i"
@@ -6553,9 +6553,9 @@
         "body_start": null,
         "body_end": 7901
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0115",
+      "note": "NATIVE_PORT root-motion animation reimpl. Setup and early-outs match retail ASM 7F0701EC (Opcode and 0xFF not 1 early-out, modelGetNodeRwData, rwdata unk00 not 0 early-out, numFrames from ModelType upper 16 bits, scaledScale = scale times unkb8, forwards floor/ceil frame stepping). One byte-offset divergence filed as FID-0115: retail seeds save_unk01 from rwdata->unk01 (lb 1(v0) at 7F0702EC, struct offset 1) but the port reads rwdata->unk02 (offset 2). anim2 offset-2 accesses correctly match retail lb/sb 2(s0).",
+      "reviewed_ts": "2026-07-12T02:39:36Z",
       "rank": 241,
       "rank_score": 576,
       "rank_reason": "bulk-last 576i"
@@ -6580,9 +6580,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "LEFTOVERDEBUG variant and the build authority (CMakeLists defines LEFTOVERDEBUG); the C tail fogRemoved7F0BAA5C then D_800442F8=200 matches this variant, absent in the non-LEFTOVERDEBUG sibling rank 243. NATIVE_PORT loader reimpl verified against ASM 7F0B4124: levelentry_index=0, room-info clear loop stride 0x50 clearing ptr_unique_collision_points, levelinfotable search stride 0x18 levelID at 0, dual obLoadBGFileBytesAtOffset (64-byte header then full), size align (x and 0xFFFFFF) minus 1 then (x or 0xF) plus 1, room-list base plus 0xF1000000, stan load, four levelscale calls (levelscale at 0xc), visibility scale, room-count and portal-processing loops. NATIVE_PORT stub-BG guard and byte-swaps are sim-neutral for valid data.",
+      "reviewed_ts": "2026-07-12T02:39:36Z",
       "rank": 242,
       "rank_score": 431,
       "rank_reason": "bulk-last 431i"
@@ -6607,9 +6607,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Non-LEFTOVERDEBUG variant of load_bg_file (411 instructions) and NOT the build authority: the port build defines LEFTOVERDEBUG so the shipping retail body is the LEFTOVERDEBUG sibling rank 242 (431 instructions). This variant omits the fogRemoved7F0BAA5C plus D_800442F8=200 tail that both the LEFTOVERDEBUG ASM and the compiled C body contain. The C matches rank 242; this variant is a non-shipping build alternate. Waived as non-authoritative; equivalence tracked via rank 242.",
+      "note": "Non-LEFTOVERDEBUG variant of load_bg_file (411 instructions) and NOT the build authority: the port build defines LEFTOVERDEBUG so the shipping retail body is the LEFTOVERDEBUG sibling rank 242 (431 instructions). This variant omits the fogRemoved7F0BAA5C plus D_800442F8=200 tail that both the LEFTOVERDEBUG ASM and the compiled C body contain. The C matches rank 242; this variant is a non-shipping build alternate. Waived as non-authoritative; equivalence tracked via rank 242.",
+      "reviewed_ts": "2026-07-12T02:39:36Z",
       "rank": 243,
       "rank_score": 431,
       "rank_reason": "bulk-last 431i"
@@ -6634,9 +6634,9 @@
         "body_start": 12895,
         "body_end": 13060
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Sphere/capsule-vs-ray hit test, faithful transcription verified against ASM 7F074CAC. node->Data at 4, BoundingVolumeRadius at Data+4, Op17 pos at Data+8, RelatedNode at Data+0x14, Scale1 at 0x18, Scale2 at 0x1c. opcode = node->Opcode at 0; flag dispatch 0x100 rotated pos, 0x200 child-node midpoint (0.5 average) else plain diff = mtx row3 minus arg2; then 0x400 double scale1/scale2 projections onto mtx rows 0 and 1, else single-axis 0x800/0x1000/0x2000 or skip to final. Final sphere-ray test is division-free cross-multiplication: dot = dir3 dot diff, gated on 0 < dot, then (lendiff minus radius) times lendir less-equal dotsq returns 1. NATIVE_PORT mtx-null early-outs and bboxTrace are sim-neutral. Contrasts sibling rank 245 which was rewritten with division.",
+      "reviewed_ts": "2026-07-12T02:39:49Z",
       "rank": 244,
       "rank_score": 404,
       "rank_reason": "bulk-last 404i"
@@ -6661,9 +6661,9 @@
         "body_start": 12423,
         "body_end": 12510
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0116",
+      "note": "Ray-vs-OBB slab test. Retail ASM 7F0747D0 is division-free (only mul.s/add.s/sub.s/neg.s/c.lt.s with near/far swaps, zero div.s instructions), carrying axis_len_sq and local_dir as denominators into cross-multiplied comparisons. The port reimplemented it with explicit floating-point division plus a 1e-6f parallel-ray epsilon absent in retail. Filed as FID-0116: bit-exactness at grazing angles and degenerate axes is unproven, and the routine is on the combat path (chrobjhandler.c bullet-vs-object and bullet-vs-door hit tests with shot_pos and shot_dir).",
+      "reviewed_ts": "2026-07-12T02:39:49Z",
       "rank": 245,
       "rank_score": 294,
       "rank_reason": "bulk-last 294i"
@@ -6688,9 +6688,9 @@
         "body_start": 8536,
         "body_end": 8778
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Animation ticker, core verified against ASM 7F070AEC. frame from model unk28, frame2acc from unk58, ticks-less-equal-0 early exit. Per-tick: unkb0 playspeed ramp (playspeed at 0xa4, animrate at 0xa8, unkac at 0xac, unkb0/unkb4 at 0xb0/0xb4) with div.s matching retail; unk88 merge sets anim2 null at 0x54; timespeed interp (speed 0x40, oldspeed 0x44, newspeed 0x48, elapsespeed 0x50); frame += playspeed times speed; anim2 speed2 accumulation; animlooping at 0x26 equal 0 continues; loop-flip calls modelSetAnimation then final modelSetAnimFrame2 or WithChrStuff. Division in the ramps is faithful (retail uses div.s). NATIVE_PORT portChrActionNeedsLooping loop-restore and frame-value guards are documented compat fixes.",
+      "reviewed_ts": "2026-07-12T02:40:09Z",
       "rank": 246,
       "rank_score": 293,
       "rank_reason": "bulk-last 293i"
@@ -6715,9 +6715,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:NATIVE_PORT portal-descent BFS reimplementation (rank 247 ASM is the LEFTOVERDEBUG variant, the build authority). The C implements the LEFTOVERDEBUG 5-arg gdl-passthrough signature: each early-out returns gdl matching the ASM move v0,s2 returns. Depth guards (>=101, D_8004489C, >=16), controlbytes1 and 1 disabled-portal reject, and player-side dot-vs-scale portal tests structurally match the C. Waived not verified because the full recursion, portal-metric float math, and bbox intersection need dedicated tracing; the two retail variants differ (LEFTOVERDEBUG 252i vs non-LEFTOVERDEBUG rank 252 223i) and the port comment claims decompilation from the non-authoritative variant though the C returns gdl per the authority. Retest with a portal-visibility oracle route.",
+      "note": "NATIVE_PORT portal-descent BFS reimplementation (rank 247 ASM is the LEFTOVERDEBUG variant, the build authority). The C implements the LEFTOVERDEBUG 5-arg gdl-passthrough signature: each early-out returns gdl matching the ASM move v0,s2 returns. Depth guards (>=101, D_8004489C, >=16), controlbytes1 and 1 disabled-portal reject, and player-side dot-vs-scale portal tests structurally match the C. Waived not verified because the full recursion, portal-metric float math, and bbox intersection need dedicated tracing; the two retail variants differ (LEFTOVERDEBUG 252i vs non-LEFTOVERDEBUG rank 252 223i) and the port comment claims decompilation from the non-authoritative variant though the C returns gdl per the authority. Retest with a portal-visibility oracle route.",
+      "reviewed_ts": "2026-07-12T02:40:09Z",
       "rank": 247,
       "rank_score": 252,
       "rank_reason": "bulk-last 252i"
@@ -6742,9 +6742,9 @@
         "body_start": null,
         "body_end": 6784
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "NATIVE_PORT anim install with root-motion setup, verified against ASM 7F06F8xx and the clean decomp else reference. sp2C = anim was null; anim2 at 0x54 selects unk88/unk84 init; sets anim, gunhand, endframe=-1, speed, timespeed=0, modelSetAnimFrame, animlooping=0. If RootNode Opcode and 0xFF equal 1: rwdata via modelGetNodeRwData, animPos zero-init, scaledScale, sub_GAME_7F06D3F4, cosf/sinf of unk14, merge = unk2c. merge==0 and merge-not-0 root branches match line-for-line including sub_GAME_7F06D0CC angle blend and TAU wraps. Writes rwdata->unk01 = 1 at offset 1 (ASM sb t0,1(s0) at 7F06FC20), corroborating FID-0115. NATIVE_PORT ground-sync from chr->ground and rootMotionReady are documented compat fixes to reach retail-faithful init.",
+      "reviewed_ts": "2026-07-12T02:40:09Z",
       "rank": 248,
       "rank_score": 245,
       "rank_reason": "bulk-last 245i"
