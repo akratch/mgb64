@@ -4640,9 +4640,9 @@
         "body_start": null,
         "body_end": 2224
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Legal-screen logo + 12-line legal text renderer. ASM front.c:2226-2364 vs live NATIVE_PORT C front.c:2153-2223, traced fully: 0x40-byte spE4 = D_8002AABC struct copy (3-word loop + tail word); insert_imageDL; matrix_4x4_7F059694(&spA0, 0,0,4000, 0,0,0,0,1,0) with stack args at 0x10-0x24 matching arg order; spE4.unk_matrix at offset 0, mtxlist at 0x10 (=dynAllocate of logoinst header halfword-0xe << 6), flags=3 at 0x8, zbuf=0 at 0x4, gdl at 0xc; subdraw then DL=spE4.gdl; microcode_constructor; legal loop legalpage_text_array[0..12] stride 0x14 (terminator address = D_8002AABC by linker adjacency), display_aligned_white_text_to_screen with h_pos/v_pos/halign/valign/txtID at offsets 0/4/8/0xc/0x10 and fonts ptrFontZurichBoldChars/Bold. Only deviations are NATIVE_PORT substrate: the retail float-to-s32 view-matrix conversion loop (matrix_4x4_f32_to_s32 over render_pos) is compiled out on native (matrix-format substrate, float path used), plus additive modelAllocRenderPos null guard and gfx_register_draw_class_dl_range. No sim/behavior divergence.",
+      "reviewed_ts": "2026-07-12T00:44:39Z",
       "rank": 170,
       "rank_score": 131,
       "rank_reason": "131i"
@@ -4667,9 +4667,9 @@
         "body_start": 840,
         "body_end": 910
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Free-list coalescing free (unk_09B7A0 allocator). ASM unk_09B7A0.c:914-1054 vs live C 840-909, traced fully. Pool select by address range: arg0 within pool A base dword_CODE_bss_8007A0E0 span (count dword_CODE_bss_8007A0D0, 16-byte Vertex stride via sll 4) -> entries E8, avail F0; else pool B (E4/D8/EC/F2); else sub_GAME_7F09B7A8 + sub_GAME_7F09B7E4 return. Main do-loop walks entries by idx (a1), 20-byte stride: non-match path idx = entry unk10 with idx==-1 -> found (bnel s0,entry-unk00 delay lh idx); match path found=1, entry unk0E-- and when it reaches 0 does forward-merge (next_idx = unk10 >=0, other unk0E==0 -> absorb unk0C/unk10, other unk0E=-1, fix successor unk12=idx) and backward-merge (prev_idx = unk12 >=0, other unk0E==0 -> other absorbs unk0C/unk10, entry unk0E=-1, fix successor unk12=prev_idx). Every field offset (unk00 ptr, unk0C size at 0xc, unk0E refcount at 0xe, unk10 next at 0x10, unk12 prev at 0x12), branch sense, and *avail_ptr += unk0C match. No jump table; no divergence.",
+      "reviewed_ts": "2026-07-12T00:44:53Z",
       "rank": 171,
       "rank_score": 129,
       "rank_reason": "129i"
@@ -4694,9 +4694,9 @@
         "body_start": null,
         "body_end": 1742
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Closest-bg-hit-over-rooms selector. ASM chrprop.c:1746-1881 vs live NATIVE_PORT C 1659-1744, traced fully. best_dist init 4294967296.0 (0x4F800000 in f26), best_room=0, scale=get_room_data_float2 (f24); gate getMaxNumRooms>=2 (slti v0,2). Per-room loop room_id 1..getMaxNumRooms with visited_rooms pointer s2 advancing in lockstep: skip when visited_rooms[room_id]!=0 (else set =1 via sb s5), skip when sub_GAME_7F03A97C(room_id, scaled_pos, direction)==0, skip when bgTestBulletHitBackground(src_pos, dest_pos, room_id, &hit_buf)==0. Then dx/dy/dz = hit_buf.pos * scale - src_pos component-wise, dist_sq sum; adj_dist = dist_sq - 4.0 when check_if_imageID_is_light(hit_buf.texturenum at 0x2A)!=0; if adj_dist < best_dist store best_dist/best_room and copy the 0x2C-byte hit record field-by-field into hit_output (f32 at 0/4/8/c/10/14, s32 at 18/1c/20/24, s16 at 28/2a). The bc1fl not-better path folds room_id++ into the delay slot; better path stores then increments at the shared tail. arg registers (src_pos a1, dest_pos at 0xc8(sp), scaled_pos at 0xd0, visited_rooms 0xd4, hit_output 0xd8) all match. Return best_room. NATIVE_PORT typed-struct copy is bit-identical to the retail field copy; no divergence.",
+      "reviewed_ts": "2026-07-12T00:45:17Z",
       "rank": 172,
       "rank_score": 128,
       "rank_reason": "128i"
@@ -4721,9 +4721,9 @@
         "body_start": 435,
         "body_end": 499
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ZX Spectrum tile-refresh dispatcher (spectrum minigame). ASM spectrum.c:501-642 vs live C 435-499, traced fully. Frame counter D_8004ED08 = (s8)(D_8004ED08+1); every 25th frame ((counter & 0xff) % 25 == 0 via div/mfhi): reset counter=0, set all 768 ptr_300alloc dirty bytes to 1 (unrolled x4 loop, pointer reloaded each store), and flip D_8004ED04 = 1 - D_8004ED04. Then a 3x64 row_block x 4x64 col_block nest (row_block 0..192 step 64, col_block 0..256 step 64): base_col=(row_block>>6)<<2, tile_ptr = arg1 + ((base_col + (col_block>>6))<<11), inner while row<row_end (row+=8, tile_ptr+=0xe0) x while col<col_end (col+=8, tile_ptr+=4): when ptr_300alloc[((row>>3)<<5)|(col>>3)]!=0 call sub_GAME_7F0D28E0(arg0, col, row, tile_ptr). Finally clear all 768 dirty bytes to 0. The while-loop entry guards (row<row_end via beqz at loop top L7F0D2B70, col<col_end at L7F0D2B94) and increment-tests match the C nested do/while compilation; col_end computed once, col reset per row via move s0,s7; tile_ptr per-row +0x100 total (8*4 inner + 0xe0). All strides, masks and branch senses match; no divergence.",
+      "reviewed_ts": "2026-07-12T00:45:53Z",
       "rank": 173,
       "rank_score": 128,
       "rank_reason": "128i"
@@ -4748,9 +4748,9 @@
         "body_start": 581,
         "body_end": 686
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Free-list first-fit alloc + block split (unk_09B7A0 allocator). ASM unk_09B7A0.c:688-832 vs live C 581-686, traced fully. Pool select maps 0xCCCC -> pool A (E8/F0/max D4) and 0x0B0B -> pool B (EC/F2/max DC) else NULL (ASM tests 0x0B0B first then 0xCCCC, C lists CCCC first; distinct constants so identical result). Walk loop by idx: skip when entry unk0E!=0 or unk0C < count (both delay lh idx=unk10), else found=1; tail iter++ then found=-1 when idx==-1 (beql) or max_entries < iter (slt). After loop: max_entries<iter -> call 7F09B7A8+7F09B7E4 return NULL; found!=1 -> NULL. Alloc body: old_count=unk0C, unk04=arg2, unk08=arg3, unk0E++, and when old_count!=count and max_entries>0 scans for a free slot (unk0E==-1) to carve the remainder (new slot unk00 = entry-unk00 + count*16, unk0C = old_count-count, unk0E=0, unk12=idx, unk10=entry-unk10; fixup old successor unk12=j; entry-unk10=j; split_done=1). Then *avail_ptr -= count if split else old_count; return entry-unk00. Every offset and branch sense matches. The live C adds defensive guards absent from retail: top-of-loop idx bounds break, the idx>=max_entries term in the found=-1 test, and the entries/avail null + max_entries<=0 + count<=0 + count > avail early return. These never fire on a well-formed acyclic free-list (retail exits on idx==-1 before re-indexing; unk10 is always a valid index or -1; callers pass count>0) and do not change the split/coalesce math -> behavior-neutral on valid state.",
+      "reviewed_ts": "2026-07-12T00:45:05Z",
       "rank": 174,
       "rank_score": 126,
       "rank_reason": "126i"
@@ -4775,9 +4775,9 @@
         "body_start": null,
         "body_end": 573
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:NATIVE_PORT full rewrite, not instruction-diffable. Live compiled body is the NATIVE_PORT branch textrelated.c:468-506 (build defines NATIVE_PORT), which parses the two font blobs (bank-gothic 0x24B0, zurich-bold 0x3540) via pc_convert_font into port-native struct font / struct fontchar. Retail ASM textrelated.c:575-703 (matched by the non-compiled else body 510-572) loads each ROM blob with romCopy and RELOCATES in-place glyph pointers by adding the allocation base (gothic: offset 0x14 per 0x18-byte char across 0..0x8d0; zurich: same field, char0/char1 peeled then 4x-unrolled from 0x30). Verifying equivalence requires auditing pc_convert_font byte-output vs the retail relocated blob and the downstream glyph metrics/render path -- a dedicated deep audit, not an ASM-vs-C instruction diff. The globals zeroed at entry (text_spacing/orientation/wordwrap/x/y/s/t, overlap_correction=-1, bilevel=0) match both; the divergence is entirely in the font-loading mechanism.",
+      "note": "NATIVE_PORT full rewrite, not instruction-diffable. Live compiled body is the NATIVE_PORT branch textrelated.c:468-506 (build defines NATIVE_PORT), which parses the two font blobs (bank-gothic 0x24B0, zurich-bold 0x3540) via pc_convert_font into port-native struct font / struct fontchar. Retail ASM textrelated.c:575-703 (matched by the non-compiled else body 510-572) loads each ROM blob with romCopy and RELOCATES in-place glyph pointers by adding the allocation base (gothic: offset 0x14 per 0x18-byte char across 0..0x8d0; zurich: same field, char0/char1 peeled then 4x-unrolled from 0x30). Verifying equivalence requires auditing pc_convert_font byte-output vs the retail relocated blob and the downstream glyph metrics/render path -- a dedicated deep audit, not an ASM-vs-C instruction diff. The globals zeroed at entry (text_spacing/orientation/wordwrap/x/y/s/t, overlap_correction=-1, bilevel=0) match both; the divergence is entirely in the font-loading mechanism.",
+      "reviewed_ts": "2026-07-12T00:46:47Z",
       "rank": 175,
       "rank_score": 123,
       "rank_reason": "123i"
@@ -4802,9 +4802,9 @@
         "body_start": null,
         "body_end": 575
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0110",
+      "note": "Float-to-s16.16 matrix packer. ASM matrixmath.c:577-700 vs live NATIVE_PORT C 511-528. The s16.16 bit-packing is byte-identical (traced: top-half int = (e1 & 0xffff0000) | (e2 >> 16), bottom-half int = (e1 << 16) | (e2 & 0xffff); ai walks ms row0, af walks ms row2; 8 unrolled iterations indexed as flat float pairs a0 + v0*8). The ONE divergence is the fixed-point scale source: retail multiplies e1 by D_80032310 index 0 (load matrixmath.c:592, mul 598) and e2 by D_80032310 index v0-and-1 (matrixmath.c:600-601); native FTOFIX32 uses constant 65536 for both (matrixmath.c:506). D_80032310 index 0 is runtime-mutated by matrix_4x4_7F058C4C(mCurrentLevelVisibilityScale) at bg.c:5143, so native ignores the per-level visibility scale. Byte-identical at the default scale. See FID-0110.",
+      "reviewed_ts": "2026-07-12T00:46:30Z",
       "rank": 176,
       "rank_score": 119,
       "rank_reason": "119i"
@@ -4829,9 +4829,9 @@
         "body_start": 4389,
         "body_end": 4473
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Text width/height measurer. ASM textrelated.c:4475-4609 vs live C 4389-4473, traced fully. Inits prevchar='H'(72), longest=0, *textheight=0, *textwidth=0; lineheight defaults to font1['[' code 0x5B] baseline (offset 4) + height (offset 8) reading font1 index 0x5B at 0x888 (a retail quirk preserved verbatim, no glyph-index adjustment) when lineheight==0; clamped to 14 when j_text_trigger and lineheight<14. Per-char loop: space (0x20) adds 5 unless next is newline and resets prevchar; newline (0x0a) updates longest, zeroes *textwidth, adds lineheight to *textheight; normal printable computes tmp = font2.kerning[prevchar_ki*13 + thischar_ki] + text_spacing - 1 (fontchar 0x18 stride, kerningindex at 0x10, width at 0xc, base offset -0x308/-0x30c compensates the raw-code index) and *textwidth += width - tmp, prevchar=cur; multibyte 0x80..0xBF adds 11 and 0xC0+ adds 15 (both tmp = kerning[0] + text_spacing - 1, text += 2). Final *textwidth = max(*textwidth, longest). Every offset/const/branch sense matches for printable + newline + multibyte input. Documented deviation: the C adds a printable-range guard (cur in 0x21..0x7e) plus a separate control-char branch (prevchar='H', text++) that retail lacks -- retail runs the normal-char kerning path for ALL cur<0x80 after space/newline. Unreachable on valid game text (langGet strings are printable ASCII, newline, or multibyte >=0x80); no divergence on real data. Plus additive NATIVE_PORT font1/font2 null guard.",
+      "reviewed_ts": "2026-07-12T00:46:05Z",
       "rank": 177,
       "rank_score": 118,
       "rank_reason": "118i"
@@ -4856,9 +4856,9 @@
         "body_start": null,
         "body_end": 729
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0110",
+      "note": "s16.16-to-float matrix unpacker (inverse of matrix_4x4_f32_to_s32). ASM matrixmath.c:731-850 vs live NATIVE_PORT C 708-729. The bit-unpacking is byte-identical (traced: e1 = (*ai & 0xffff0000) | (*af >> 16), e2 = (*ai << 16) | (*af & 0xffff); ai = arg0, af = arg0 + 8 ints; 8 unrolled iterations). The ONE divergence is the scale: retail divides e1 by D_80032310 index 0 (load matrixmath.c:748, div 761) and e2 by D_80032310 index v0-and-1 (matrixmath.c:791-797); native divides both by constant 65536 (matrixmath.c:721-722). Same runtime-scale-ignored issue as matrix_4x4_f32_to_s32; byte-identical at default scale. See FID-0110.",
+      "reviewed_ts": "2026-07-12T00:46:38Z",
       "rank": 178,
       "rank_score": 115,
       "rank_reason": "115i"
@@ -4883,9 +4883,9 @@
         "body_start": 20,
         "body_end": 95
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:NATIVE_PORT texture/GDL-loader reconstruction at 69.88 percent (decomp.me note in-source), structurally divergent, needs dedicated audit. Live compiled body objecthandler_2.c:28-95 (NONMATCHING, uses NATIVE_PORT texLoadFromGdl/fileSetSize). Function relocates model-file GDL segment pointers using ROM-vs-PC remaining-buffer offsets (get_rom/get_pc_remaining_buffer_for_index) and reloads textures into the port texture pool via texCopyGdls/texLoadFromModelFileHeader/texLoadFromGdl. The C loop diverges from ASM objecthandler_2.c:97-218: the ASM else-branch (gdl==0, L7F0763E8) computes var_s1 = prev_gdl & 0xFFFFFF and var_s2 = sp54 + temp_fp - Switches - var_s1 using a cross-iteration s0 = previous-iteration gdl carry (reloaded in the loop-back delay slot 7F076438), whereas the C sets var_s1=0, var_s2=temp_fp with no prev-gdl term. Confidently classifying this (real defect vs absorbed by the port texture-pool helper semantics) requires deep analysis of the ROM/PC buffer relocation model and the reimplemented tex helpers, not a straight instruction diff.",
+      "note": "NATIVE_PORT texture/GDL-loader reconstruction at 69.88 percent (decomp.me note in-source), structurally divergent, needs dedicated audit. Live compiled body objecthandler_2.c:28-95 (NONMATCHING, uses NATIVE_PORT texLoadFromGdl/fileSetSize). Function relocates model-file GDL segment pointers using ROM-vs-PC remaining-buffer offsets (get_rom/get_pc_remaining_buffer_for_index) and reloads textures into the port texture pool via texCopyGdls/texLoadFromModelFileHeader/texLoadFromGdl. The C loop diverges from ASM objecthandler_2.c:97-218: the ASM else-branch (gdl==0, L7F0763E8) computes var_s1 = prev_gdl & 0xFFFFFF and var_s2 = sp54 + temp_fp - Switches - var_s1 using a cross-iteration s0 = previous-iteration gdl carry (reloaded in the loop-back delay slot 7F076438), whereas the C sets var_s1=0, var_s2=temp_fp with no prev-gdl term. Confidently classifying this (real defect vs absorbed by the port texture-pool helper semantics) requires deep analysis of the ROM/PC buffer relocation model and the reimplemented tex helpers, not a straight instruction diff.",
+      "reviewed_ts": "2026-07-12T00:47:01Z",
       "rank": 179,
       "rank_score": 113,
       "rank_reason": "113i"
@@ -4910,9 +4910,9 @@
         "body_start": null,
         "body_end": 8901
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Oriented-bounding-box point-inclusion test (BoundPadRecord). Live compiled body is the PORT_FIXME_STUBS branch chrprop.c:8883-8918 (build defines NONMATCHING+NATIVE_PORT+PORT_FIXME_STUBS per CMakeLists.txt:557; the else node-walker 8920-8949 is dead/never-compiled decomp garbage). ASM chrprop.c:8955-9069 traced fully: rel = pos - boundpads.pos (fields at 0/4/8); side = up cross look where up = fields 0x0c/0x10/0x14 and look = fields 0x18/0x1c/0x20 (all three cross components verified against sp-local side.x/y/z at 0x10/0x14/0x18, mul commutes only); three axis projections rel dot look / rel dot up / rel dot side, each compared as (bbox.max + arg1) < proj || proj < (bbox.min - arg1) -> return 0, with bbox fields xmin 0x2c xmax 0x30 ymin 0x34 ymax 0x38 zmin 0x3c zmax 0x40; look axis uses z-bounds, up axis y-bounds, side axis x-bounds; all pass -> return 1. Every mul/sub/add, c.lt.s and bc1t/bc1fl branch sense, and field offset match. Only deviation = additive pos/boundpads null guard (behavior-neutral on valid pointers).",
+      "reviewed_ts": "2026-07-12T00:45:31Z",
       "rank": 180,
       "rank_score": 108,
       "rank_reason": "108i"
@@ -4937,9 +4937,9 @@
         "body_start": 7036,
         "body_end": 7123
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Weapon tracer-sound firing handler. ASM chrlv.c:7183-7302 vs live C 7105-7180, traced fully. prop = chrGetEquippedWeaponProp(self, arg1); temp_v1 = prop-chr (offset 4); attack_item = lb temp_v1 offset 0x80; sp33 = bondwalkItemGetSoundTriggerRate(attack_item) as unsigned byte; sp30 = bondwalkItemGetSound(attack_item) halfword. should_fire logic: arg2!=0 and (sp33<=0 -> fire; else fire only when (self.hidden & 0x80 CHRHIDDEN_FIRE_TRACER)==0 and self.field_178[arg1] < g_GlobalTimer). On fire: pick two sound slots per hand at self + arg1*8 + 0x168/0x16c (hand0 168/16c, hand1 170/174); deactivate each non-null slot whose sndGetPlayingState != AL_STOPPED(0); if sp30!=0 pick target_slot = first null of slot1/slot2; if found sndPlaySfx(g_musicSfxBufferPtr, (s16)sp30, target_slot), chrobjSndCreatePostEventDefault(*target_slot, &self.prop.pos) with self.prop at 0x18 + pos at 8, set self.field_178[arg1] = g_GlobalTimer + sp33 (field_178 offset 0x178 stride 4), self.hidden |= 0x80. All offsets, blezl/slt/beql branch senses, and slot arithmetic match. Only deviation = additive prop==NULL / prop-chr==NULL null guard (behavior-neutral on an equipped weapon). Header note 'identical instructions/registers: fail' is decomp regalloc/scheduling, not behavior.",
+      "reviewed_ts": "2026-07-12T00:46:20Z",
       "rank": 181,
       "rank_score": 107,
       "rank_reason": "107i"
@@ -4964,9 +4964,9 @@
         "body_start": null,
         "body_end": 297
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ZX Spectrum 1bpp-to-4bpp cell pixel expander (spectrum minigame). ASM spectrum.c:299-427 vs live NATIVE_PORT C 113-157 (build takes the elif-NATIVE_PORT branch), traced fully. var_v0 pixel-row address = arg0 + (((arg2<<5)&0x1800)|((arg2<<8)&0x700)|((arg2<<2)&0xE0)|(arg1>>3)); temp_t1 attribute byte = arg0[((arg2<<2)&0x3E0)+(arg1>>3)+0x1800]. Foreground/background nibbles: when (temp_t1 & 0x80) and D_8004ED04 (D_8004EC40+0xC4) !=0 -> var_a0=(t1>>3)&7, var_v1=t1&7 else swapped; when !(temp_t1 & 0x40) both += 8 masked to 0xff (bright bit). 8-row loop reads *var_v0 and emits 4 output bytes, bit pairs 0x80/0x40 -> byte0, 0x20/0x10 -> byte1, 0x08/0x04 -> byte2, 0x02/0x01 -> byte3, each = t0_source | (a2_source << 4), then arg3 += 0x20, var_v0 += 0x100. Every mask, shift, ternary select (beqz senses) and stride matches; no divergence.",
+      "reviewed_ts": "2026-07-12T00:45:41Z",
       "rank": 182,
       "rank_score": 105,
       "rank_reason": "105i"
