@@ -4,12 +4,16 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P3",
-  "status": "discovered",
+  "status": "documented",
   "suspect": [
     "src/game/lvl.c:2350-2441"
   ],
   "repro": "Start a multiplayer match with scenario YOLT (You Only Live Twice), 2+ players; play until the lives condition should end the round. Default build: round-end accounting never fires (mpCalculateAwards/mpwatchSetStopPlayFlag from the YOLT path skipped). Set GE007_MP_YOLT=1 to enable the (imperfect, ~63% decomp-match) reimpl.",
   "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/lvl.c:2358"
+    },
     {
       "kind": "asm-citation",
       "path": "src/game/lvl.c:2358"
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "src/game/lvl.c:2358",
       "note": "Retail US lvlManageMpGame (glabel lvl.c:3173) runs the YOLT round-end block unconditionally inside the getPlayerCount>=2 MP section: get_scenario()==SCENARIO_YOLT(1) and g_ClockTimer!=0 -> per-player not_dead/killed accounting, then not_dead_count >= playerCount-1 -> mpCalculateAwards(0) (end round) else killed_count >= playerCount-1 -> mpwatchSetStopPlayFlag(). ASM call sequence get_scenario, getPlayerCount, mpCalculateAwards, mpwatchSetStopPlayFlag confirmed in US body 3173-4033. Live C lvl.c:2358 wraps the same block in NATIVE_PORT 'if (s_yoltEnabled)' where s_yoltEnabled defaults 0 (getenv GE007_MP_YOLT), so by DEFAULT the port skips YOLT end-game entirely -> a YOLT MP match never resolves via this path. In-code comment: 63.28% match on decomp.me, gated due to known inaccuracies. All other lvlManageMpGame sections verified equivalent to the US ASM: timer A (controls-locked/paused->0 else speedgraphframes + D_80048380++, g_GlobalTimer+=clockTimer), cheat B (s0=1..CHEAT_INVALID=75 with cheatIsEnemyRockets gate), mission-state-6 C1, time-limit C2 (one-minute-left + alarm + mpCalculateAwards), kill-limit C3, time-accum D, idle E, zbuf/title-vs-gameplay F, debug G. parity-divergence not port-defect: gating is deliberate. Faithful-mode decision: default-off; retest when YOLT reimpl brought to ASM-match then default-on. Found by ASM-audit batch 9 (queue rank 102, region US)."
+    },
+    {
+      "ts": "2026-07-12T01:03:52Z",
+      "from": "discovered",
+      "to": "documented",
+      "evidence": "src/game/lvl.c:2358",
+      "note": "Documented parity-divergence with a faithful-mode default decision. Retail lvlManageMpGame runs the YOLT round-end block unconditionally inside the getPlayerCount>=2 MP section (lvl.c 2358, US body 3173 to 4033): scenario YOLT and g_ClockTimer nonzero drive per-player not_dead and killed accounting, then mpCalculateAwards(0) or mpwatchSetStopPlayFlag. The port gates the same block behind NATIVE_PORT s_yoltEnabled defaulting 0 (getenv GE007_MP_YOLT). Default-off is the safe choice: the reimpl is only 63.28 percent decomp-match with known inaccuracies, so enabling it by default would inject wrong round-end accounting and extra RNG draws into the deterministic path and break byte-identity (charter rule 5) for the far-more-common non-YOLT scenarios. The divergence is strictly MP-only (2+ players, scenario YOLT) and opt-in via the A/B flag; all other lvlManageMpGame sections verified equivalent to the US ASM. Faithful-mode default: default-off, retest when the YOLT reimpl is brought to ASM-match then flip default-on."
     }
   ]
 }

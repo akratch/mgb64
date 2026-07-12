@@ -118,3 +118,69 @@ Predicate keys (all optional; a cluster satisfies a class only if it satisfies
 
 Every skip / near-miss the classifier makes is recorded in the verdict JSON so a
 too-tight or too-loose bound is auditable (charter rule 9).
+
+## Non-classifier renderer approximations
+
+These are accepted, bounded renderer approximations that are **not** expressed as
+pixel-cluster classes and are therefore **not** part of the `json` block above —
+`pixel_diff.py` never consumes them. Each is a deliberate port divergence from a
+documented retail behavior where reproducing retail exactly is either unsafe on a
+host (out-of-bounds host memory read) or has been relocated to a different, more
+appropriate pipeline stage. Each cites the retail behavior, the port's
+approximation, and the bound within which the difference is confined.
+
+### T1. Text control/DEL bytes are not drawn (FID-0108 textRender, FID-0109 textRenderGlow)
+
+Retail (US) `textRender` and `textRenderGlow` gate only `ch < 0x80` before the
+ASCII fontchar construct (slti 0x80 at `src/game/textrelated.c:2176` and the
+`textRenderGlow` body at `src/game/textrelated.c:3901`), then index the font
+table at `second_font_table + ch*24 - 0x318`. Because `0x318 == 33*24` and
+`struct fontchar` is 24 bytes, that offset is exactly `(ch-33)` entries into the
+table. For a control byte in `0x01..0x1f` (excluding the specially-handled
+newline `0x0A`) the offset is **negative** — retail reads *before* the font
+table — and for DEL `0x7f` it is entry 94, one past the printable `0x21..0x7e`
+range (entries 0..93). On the N64 those reads return the deterministic bytes
+adjacent to the table in ROM/RAM and draw a spurious glyph. On the port the same
+indexing is `(&((struct fontchar *)second_font_table)[ch - 33])`
+(`src/game/textrelated.c:2018` and `:3775`), so replicating retail would perform
+a genuine **out-of-bounds host array read** (negative index, or one element past
+the printable subrange) — undefined behavior, possibly a crash, and in no case
+the same bytes as the N64. The port therefore narrows the render to `0x21..0x7e`
+and skips other `ch < 0x80` bytes (advance pointer, reset `prev_char`, no glyph:
+`src/game/textrelated.c:2032` and `:3790`). **Bound:** behavior is byte-identical
+to retail for every printable ASCII glyph `0x21..0x7e`, for space `0x20`, for
+newline `0x0A`, and for the full Japanese path `ch >= 0x80`; it differs *only*
+for control/DEL bytes that no authored game string is known to contain (game
+text is printable ASCII plus JIS). The divergence is unreachable by real content
+and, where it would trigger, replicating retail is memory-unsafe on a host.
+
+### M1. Level-visibility scale relocated from the RSP fixed-point pack to the float gfx domain (FID-0110)
+
+Retail scales every model/room view matrix by the per-level visibility factor
+**inside** the s16.16 fixed-point pack: `matrix_4x4_f32_to_s32` multiplies matrix
+elements by `D_80032310` (`src/game/matrixmath.c:598`), and `D_80032310[0]` is set
+to `65536 * visibility` by `matrix_4x4_7F058C4C` (`src/game/matrixmath.c:478`),
+driven from the per-level `mCurrentLevelVisibilityScale` at `src/game/bg.c:5143`.
+This was a precision optimization for the RSP's 16.16 hardware. The port's native
+converters instead hardcode the plain `65536` scale (`FTOFIX32` native branch
+`src/game/matrixmath.c:506`; unpack divides `src/game/matrixmath.c:721-722`) — but
+it does **not** drop the visibility scale. The scale is *relocated* into the PC
+float domain and re-applied at draw time: `gfx_apply_level_visibility_scale_to_matrix`
+multiplies the spatial columns of each registered modelview matrix
+(`src/platform/fast3d/gfx_pc.c:427`, applied at `:15971-15976`, excluding
+projection, room, and field_10e0 matrices), world-space `render_pos` regions are
+registered for that pass by `bondviewRegisterLevelVisibilityScaledRenderPos`
+(`src/game/bondview.c:27301`), dynamic-model matrices are scaled directly by
+`matrix_scalar_multiply_3` (`src/game/bondview.c:27294`), and the room/character
+paths read `bgGetLevelVisibilityScale` in float (`src/game/unk_0BC530.c:416`,
+`src/game/unk_0A1DA0.c:1227`, `src/game/chrprop.c:2690`). The reciprocal z-range
+compensation is preserved (`src/game/bg.c:7409`, `:7506`, `:7927`). Retail also
+force-resets `D_80032310[0]` to plain `65536` around HUD/weapon conversions via
+the `matrix_4x4_7F058C64` / `_7F058C88` save-restore wrap, so those conversions
+match the port's constant exactly on both sides. **Bound:** net rendering
+(z-buffer ordering / visibility compression on levels such as Dam and Surface)
+is preserved; the divergence is the pipeline stage and numeric domain at which
+the scale is applied (a float multiply of columns 0..2, versus retail's
+per-element fixed-point pre-scale with 16.16 truncation). The FID-0110 filer
+observed only the `matrixmath.c` converters and did not see the compensating
+gfx-layer application.
