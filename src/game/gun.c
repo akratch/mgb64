@@ -41,6 +41,7 @@
 #include "platform/fire_rate_authentic.h"
 #include "platform/fp_weapon_perspnorm.h"     /* FID-0077 */
 #include "platform/watch_ammo_switchstate.h"  /* FID-0084 */
+#include "platform/watchmenu_hand_lifecycle.h"  /* FID-0073 / FID-0072 */
 
 extern VideoSettings *g_ViBackData;
 /* FID-0056 full-auto fire-cadence authenticity flags (platform_sdl.c). OFF by
@@ -186,6 +187,24 @@ static int portNoWatchAmmoSwitchEarlyout(void)
         cached = port_env_set("GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT",
                               "Restore the pre-fix watch ammo panel drawn during a "
                               "right-hand weapon switch (hand state 6/7) [FID-0084]");
+    }
+    return cached;
+}
+
+/* FID-0073 negative control. Default-ON port-defect fix restores the retail
+ * set_enviro_fog_for_items_in_solo_watch_menu lifecycle: set the right-hand
+ * watch-menu item ONCE (single sub_GAME_7F05DA8C, ASM 7F063080) and never
+ * restore it (every exit is the bare epilogue; jal sub_GAME_7F05DAE4 appears in
+ * zero GLOBAL_ASM bodies). Setting GE007_NO_WATCHMENU_FOG_ITEM_FIX reproduces
+ * the pre-fix per-frame save/restore byte-identically.
+ * See src/platform/watchmenu_hand_lifecycle.c. */
+static int portNoWatchmenuFogItemFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCHMENU_FOG_ITEM_FIX",
+                              "Restore the pre-fix per-frame save/restore of the "
+                              "solo watch-menu inventory-item hand state [FID-0073]");
     }
     return cached;
 }
@@ -15982,10 +16001,19 @@ Gfx *set_enviro_fog_for_items_in_solo_watch_menu(Gfx *gdl, s32 weaponnum, Mtxf *
     matrix_4x4_7F058C88();
 
 done:
-    if ((s32)prev_watchmenu_item >= 0) {
+    /* FID-0073: retail sets the item once (7F063080) and never restores it.
+     * The pre-fix port's per-frame save/restore is a phantom; drop it so the
+     * highlighted menu item stays pinned like retail. */
+    switch (watchMenuHandExitAction((s32)prev_watchmenu_item,
+                                    portNoWatchmenuFogItemFix())) {
+    case WATCHMENU_HAND_EXIT_RESTORE:
         sub_GAME_7F05DA8C(GUNRIGHT, prev_watchmenu_item);
-    } else {
+        break;
+    case WATCHMENU_HAND_EXIT_CLEAR:
         sub_GAME_7F05DAE4(GUNRIGHT);
+        break;
+    case WATCHMENU_HAND_EXIT_NONE:
+        break;
     }
 
     return gdl;

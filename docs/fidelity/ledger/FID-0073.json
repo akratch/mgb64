@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/gun.c:15783"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:15829"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:16031"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0073-watchmenu-hand-lifecycle.md"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/watchmenu_hand_lifecycle.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_watchmenu_hand_lifecycle.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:15829",
       "note": "Watch-menu inventory item renderer (ASM gun.c:15779-16118, retail 7F063040-region; live C 15578-15790). Retail sets the right-hand watchmenu item ONCE and never restores: single jal sub_GAME_7F05DA8C with a0=0/GUNRIGHT (15829, weaponnum remapped {30,23}->60 at 15821-15827) is the only hand-state call in the entire ASM body; every exit path goes to the bare epilogue (15840-15841 early-outs return original gdl; 16123-16130 lw ra..jr). Tree-wide grep: jal sub_GAME_7F05DAE4 appears in ZERO GLOBAL_ASM blocks anywhere in the repo. Port C captures prev_watchmenu_item (15619) and on every exit restores it or clears it (done: 15782-15787, 7F05DA8C(GUNRIGHT,prev) / 7F05DAE4(GUNRIGHT)); 7F05DAE4 (gun.c:1815-1824) resets weaponnum_watchmenu=-1 and calls place_item_in_hand_swap_and_make_visible which overwrites the pending hand-model request and toggles hand_invisible. Effect: retail keeps hands[GUNRIGHT].weaponnum_watchmenu pinned to the highlighted item between frames while the menu is up (teardown elsewhere: bondview.c:10258/10347); port reverts within the same draw call so consumers outside this function (bondview gun raise/lower model-swap state machine bondview.c:10321-10372, 3144) see the equipped weapon instead of the menu item, and the pending hand-model request oscillates every frame. Initial-transcription provenance (blame 8de295b), no fix rationale. Same phantom pattern (plus a wrong-hand GUNLEFT twist) exists in sibling sub_GAME_7F06359C = FID-0072. Rest of fn verified equivalent per audit (early-out guard senses/order 15831-15851 = C 15622-15635 incl bitflag 0x4000; renderdata template = D_80035D00 words {0,1,3,0..}; matrix alloc numMatrices<<6 15853-15869 = C 15640-15651; render_pos set BEFORE modelCalculateRwDataLen/modelInit 15872-15879 = C 15655-15657; revolver skeleton-compare bnel + slots 4/5 -> mtxlist[3]/[4] 15900-15926 = C 15675-15686; shell loop numSwitches>=0x13, 5 iters, +0x48/+0x5C 15965-15998 = C 15709-15725; lights item set {19,18,2,3,20,21} + GBI words incl two sub_GAME_7F078474 calls 16004-16057 = C 15729-15736; alpha>=255 PropType 4/5 split 16077-16090 = C 15752-15758; f32->s32 loop + 7F058C88 16098-16120 = C 15769-15780). Callers watch.c:3150/3152/3940. Class judgment: recorded as port-defect (state trajectory diverges from ASM on valid data, undocumented); if a deliberate port lifecycle rationale is later found, reclassify parity-divergence with an A/B flag. DO NOT fix from this note; re-derive from ASM."
+    },
+    {
+      "ts": "2026-07-12T02:33:22Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:16031",
+      "note": "ASM: single jal sub_GAME_7F05DA8C (a0=0/GUNRIGHT, {30,23}->60 remap) at 7F063080; bare epilogue 7F0634B8-7F0634D4; no restore; jal 7F05DAE4 in zero GLOBAL_ASM bodies"
+    },
+    {
+      "ts": "2026-07-12T02:33:22Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/derivations/FID-0073-watchmenu-hand-lifecycle.md",
+      "note": "retail pins the highlighted item; port phantom save (gun.c:15821) + restore (15985-15989) reverts it within the draw call -> bondview raise/lower FSM sees equipped weapon"
+    },
+    {
+      "ts": "2026-07-12T02:33:31Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/watchmenu_hand_lifecycle.c",
+      "note": "pure helper watchMenuHandExitAction(prev,legacy); wired at gun.c done: switch behind GE007_NO_WATCHMENU_FOG_ITEM_FIX"
+    },
+    {
+      "ts": "2026-07-12T02:33:31Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_watchmenu_hand_lifecycle.c",
+      "note": "ctest watchmenu_hand_lifecycle PASS (fail-on-revert: faithful NONE != legacy RESTORE/CLEAR); gun.c compiles Release; sim_state_hash + struct_layout PASS. Dormant on tapes; oracle re-verify blocked on runtime lock."
     }
   ]
 }

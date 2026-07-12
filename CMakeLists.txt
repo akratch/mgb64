@@ -722,6 +722,17 @@ if(BUILD_TESTING)
     target_include_directories(test_chrobj_impact_suppress PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME chrobj_impact_suppress COMMAND test_chrobj_impact_suppress)
 
+    # Watch-menu hand-item exit lifecycle — ROM-free unit test (FID-0073, reused
+    # by FID-0072): retail sets the hand item ONCE and never restores it; the
+    # pre-fix port did a phantom per-frame save/restore. Fails if the phantom
+    # restore is reintroduced (faithful==legacy) or the negative controls drift.
+    add_executable(test_watchmenu_hand_lifecycle
+        "${CMAKE_SOURCE_DIR}/tests/test_watchmenu_hand_lifecycle.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watchmenu_hand_lifecycle.c"
+    )
+    target_include_directories(test_watchmenu_hand_lifecycle PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watchmenu_hand_lifecycle COMMAND test_watchmenu_hand_lifecycle)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
