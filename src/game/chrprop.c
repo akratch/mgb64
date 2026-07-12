@@ -38,6 +38,8 @@
 #include "ge_debug.h"
 #include "platform/hull_vertex_clamp.h"  /* FID-0096 bbox-hull vertex count */
 #include "platform/bg_impact_guard.h"    /* FID-0097 bg-only bullet-impact gate */
+#include "platform/mp_respawn_tail.h"    /* FID-0103 object-respawn tail decision */
+#include "platform/port_env.h"           /* FID-0103 negative-control flag */
 #ifdef NATIVE_PORT
 #include "gfx_pc.h"
 #endif
@@ -5423,6 +5425,21 @@ s32 sub_GAME_7F03C574(PropRecord* prop)
 void handle_mp_respawn_and_some_things(void) {
 }
 #else
+/* FID-0103 negative control. Default-ON port-defect fix restores the retail
+ * object-respawn tail (sound 82 + chrobjSndCreatePostEventDefault, plus the
+ * PROPDEF_ARMOUR amount reset); setting GE007_NO_MP_RESPAWN_TAIL_FIX restores the
+ * pre-fix silent respawn (the whole tail dropped) byte-identically. */
+static int portNoMpRespawnTailFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_MP_RESPAWN_TAIL_FIX",
+                              "Restore the pre-fix silent object respawn: drop the "
+                              "respawn sound (82) + armour-amount reset tail [FID-0103]");
+    }
+    return cached;
+}
+
 void handle_mp_respawn_and_some_things(void) {
     PropRecord *prev_prop;
     s32 var_s2;
@@ -5482,6 +5499,32 @@ void handle_mp_respawn_and_some_things(void) {
                             obj->maxdamage = 0.0f;
                             obj->state = (u8)(obj->state & 0xFF7F);
                             sub_GAME_7F050DE8(obj->model);
+                        }
+                        /* FID-0103: the respawn tail (US ASM .L7F03C8AC-
+                         * .L7F03C8E4) that BOTH branches above converge on
+                         * (the simple-respawn `b .L7F03C8AC` and the else
+                         * branch's fall-through). retail: (1) PROPDEF_ARMOUR
+                         * (obj+3 == 21) resets amount(0x84)=initialamount(0x80);
+                         * (2) s3==0 fires the object-respawn sound. s3 is only
+                         * set by the flags&0x8000 reparent path, which the port
+                         * skips, so it is ALWAYS 0 here and the sound always
+                         * plays. The port dropped this tail (silent respawns).
+                         * Default ON; GE007_NO_MP_RESPAWN_TAIL_FIX = legacy. */
+                        {
+                            MpRespawnTailPlan plan;
+                            _Static_assert(PROPDEF_ARMOUR == MP_RESPAWN_TAIL_ARMOUR_TYPE,
+                                "PROPDEF_ARMOUR drifted from ASM li $at,21 (FID-0103)");
+                            plan = mpRespawnTailPlan(obj->type, 0 /* s3: reparent path skipped */,
+                                                     portNoMpRespawnTailFix());
+                            if (plan.copy_armour_amount) {
+                                BodyArmourRecord *armour = (BodyArmourRecord *)obj;
+                                armour->amount = armour->initialamount;
+                            }
+                            if (plan.play_respawn_sfx) {
+                                chrobjSndCreatePostEventDefault(
+                                    sndPlaySfx((struct ALBankAlt_s *)g_musicSfxBufferPtr, 82, 0),
+                                    &prop_s1->pos);
+                            }
                         }
                     }
                 }

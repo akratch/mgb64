@@ -787,6 +787,19 @@ if(BUILD_TESTING)
     target_include_directories(test_mp_healthbar_gate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME mp_healthbar_gate COMMAND test_mp_healthbar_gate)
 
+    # MP object-respawn tail — ROM-free unit test (FID-0103): retail's respawn
+    # tail (US ASM 7F03C8AC-7F03C8E4) plays sound 82 + posts a sound event and,
+    # for PROPDEF_ARMOUR (type 21), resets armour amount to initialamount; the
+    # port dropped the whole tail so regenerating objects respawned silently.
+    # Pins the retail vs legacy decision so a revert or a
+    # GE007_NO_MP_RESPAWN_TAIL_FIX flip reddens.
+    add_executable(test_mp_respawn_tail
+        "${CMAKE_SOURCE_DIR}/tests/test_mp_respawn_tail.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/mp_respawn_tail.c"
+    )
+    target_include_directories(test_mp_respawn_tail PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME mp_respawn_tail COMMAND test_mp_respawn_tail)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

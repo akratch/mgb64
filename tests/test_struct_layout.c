@@ -148,11 +148,43 @@ _Static_assert(offsetof(struct player, gunammooff) - FID0092_N64_GUNAMMOOFF
             == offsetof(struct player, tileColor) - FID0088_N64_TILECOLOR,
     "post-hands native shift not uniform (tileColor vs gunammooff)");
 
+/* ---- FID-0094: MP other-player beam/aim tick (bondview.c playerTickBeams) reads
+ * and writes struct player through raw N64 byte offsets and indexes hands[] with
+ * the N64 936-byte stride. ROOT-CAUSED, code fix pending (playerTickBeams lives in
+ * bondview.c). These locks pin the correct native mapping the fix must use AND
+ * prove the raw offsets the live code uses cannot be right on the 64-bit layout:
+ *   - firing flags: retail raw player+0x875 / +0xC1D are hands[0]/hands[1]
+ *     .weapon_firing_status (gun.c:1949 accesses the same field by name); the two
+ *     raws are one N64 hand-stride (0x3A8 = 936) apart.
+ *   - hand-position source: retail raw player + i*936 + 0xB50 is hands[i].field_B50.
+ *   - the beam loop's srcOff strength-reduces to i*936 = the N64 sizeof(struct hand);
+ *     native is 968 (locked above), so hand 1's source mis-indexes.
+ * An `==` on any lock below means the raw access coincides with the real field and
+ * the divergence is illusory -> re-derive. */
+#define FID0094_N64_HAND0_FIRING  0x875   /* lb player+0x875 (7F08BE40)  */
+#define FID0094_N64_HAND1_FIRING  0xC1D   /* lb player+0xC1D (7F08BE54)  */
+#define FID0094_N64_HAND_STRIDE   936     /* srcOff strength-reduce = i*936 */
+#define FID0094_N64_HAND0_SRCPOS  0xB50   /* lwc1 player+0xB50 (7F08BEF0) */
+_Static_assert(offsetof(struct player, hands) + offsetof(struct hand, weapon_firing_status)
+               != FID0094_N64_HAND0_FIRING,
+    "native hands[0].weapon_firing_status coincides with raw N64 0x875 — FID-0094 moot; re-derive");
+_Static_assert(offsetof(struct player, hands) + offsetof(struct hand, weapon_firing_status)
+               + sizeof(struct hand) != FID0094_N64_HAND1_FIRING,
+    "native hands[1].weapon_firing_status coincides with raw N64 0xC1D — FID-0094 moot; re-derive");
+_Static_assert(offsetof(struct player, hands) + offsetof(struct hand, field_B50)
+               != FID0094_N64_HAND0_SRCPOS,
+    "native hands[0].field_B50 coincides with raw N64 0xB50 — FID-0094 moot; re-derive");
+_Static_assert(sizeof(struct hand) != FID0094_N64_HAND_STRIDE,
+    "native hand stride equals the N64 936 beam-loop srcOff — FID-0094 stride moot; re-derive");
+/* The two firing raws are exactly one N64 hand-stride apart (0xC1D-0x875==936). */
+_Static_assert(FID0094_N64_HAND1_FIRING - FID0094_N64_HAND0_FIRING == FID0094_N64_HAND_STRIDE,
+    "FID-0094 firing-flag raws are not one N64 hand stride apart — re-read ASM");
+
 int main(void) {
     /* If this TU compiled at all, every _Static_assert above held. The runtime
      * body exists only so the ctest has something to link and run. */
     printf("test_struct_layout: PASS (45 layout asserts + FID-0085 hand-matrix "
-           "lock + FID-0087/0088/0091/0092 raw-cast field locks held at compile "
-           "time)\n");
+           "lock + FID-0087/0088/0091/0092 raw-cast field locks + FID-0094 MP "
+           "beam/aim raw-offset locks held at compile time)\n");
     return 0;
 }
