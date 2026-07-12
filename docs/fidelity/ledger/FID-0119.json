@@ -1,0 +1,26 @@
+{
+  "id": "FID-0119",
+  "title": "bgTestBulletHitBackground texture_s/texture_t always -1 vs retail backward DL-scan derivation",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bg.c GLOBAL_ASM bgTestBulletHitBackground tail 7F0B7D2C-7F0B7D5C: after the nearest-hit is chosen it walks backward from the hit DL pointer at output+0x24 to the previous G_SETTIMG (0xF5) command and derives output+0x2c = tex_byte1 shifted right 5 and output+0x2e = tex_word0 shifted left 11 then right 30 (logical). The NATIVE_PORT path at bg.c:13415 hardcodes both output+0x2c and output+0x2e to -1 because the native bgTestLineIntersectionInRoom (audit rank 240, waived) does not populate the N64 DL pointer at output+0x24."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T06:36:56Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bg.c GLOBAL_ASM bgTestBulletHitBackground tail 7F0B7D2C-7F0B7D5C: after the nearest-hit is chosen it walks backward from the hit DL pointer at output+0x24 to the previous G_SETTIMG (0xF5) command and derives output+0x2c = tex_byte1 shifted right 5 and output+0x2e = tex_word0 shifted left 11 then right 30 (logical). The NATIVE_PORT path at bg.c:13415 hardcodes both output+0x2c and output+0x2e to -1 because the native bgTestLineIntersectionInRoom (audit rank 240, waived) does not populate the N64 DL pointer at output+0x24.",
+      "note": "S5 ASM audit batch 21 rank 256. Core nearest-hit algorithm (bbox cull bgTestLineIntersectsBbox, room-line test, dist_sq with the 4-unit light bias, best-distance field copy) matches retail instruction-for-instruction. Only the texture_s and texture_t surface-coordinate fields diverge: retail computes them from the impact surface DL command, port returns -1. Downstream of the rank-240 native-BgHitRecord reimpl. Retest with a room-line collision oracle."
+    }
+  ],
+  "blocked_on": []
+}

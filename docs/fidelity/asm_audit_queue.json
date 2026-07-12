@@ -6769,9 +6769,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0118",
+      "note": "Rank 249 LEFTOVERDEBUG build authority, room render pass. Bucket min/max scan, opaque i-ascending 3-phase pass (proj matrix, fogRenderClearFogMode, chrpropsRenderPass 0, field10E0 matrix, fogSetRenderFogColor of bgScissorCurrentPlayerViewF bbox pass 0, sub_GAME_7F0B677C, chrpropsRenderPass 2), mid scorch/bullet-impact, transparent i-descending pass all match ASM 7F0B3C8C. NATIVE_PORT ships two non-retail defaults filed FID-0118: exact_room_scissor default 0 emits bgScissorCurrentPlayerViewDefault where retail emits per-room bgScissorCurrentPlayerViewF (7F0B3DD8 opaque, 7F0B3F4C transparent); transparent rooms via bgSortTransparentRoomOrderForBucket depth sort where retail loops array order (7F0B3F10).",
+      "reviewed_ts": "2026-07-12T06:38:44Z",
       "rank": 249,
       "rank_score": 243,
       "rank_reason": "bulk-last 243i"
@@ -6796,9 +6796,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0118",
+      "note": "Rank 250 non-LEFTOVERDEBUG sibling of rank 249 (0x7F0B2FA4, 234i vs LEFTOVERDEBUG 243i; differ only in stack frame and debug-count instrs). Same shared C body and DL pass structure; port render-default divergence tracked at FID-0118. Authority is the LEFTOVERDEBUG variant rank 249.",
+      "reviewed_ts": "2026-07-12T06:38:44Z",
       "rank": 250,
       "rank_score": 234,
       "rank_reason": "bulk-last 234i"
@@ -6823,9 +6823,9 @@
         "body_start": 6739,
         "body_end": 6906
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 251 portal flood-fill room-set expansion traced vs ASM 7F0B4AB4. Stack layout confirms retail 16-byte roomSet/newRoomSet/portalRoomSet buffers (0x150/0x140/0x130) matching the C, portalResults 200 at 0x5c. Per-portal sub_GAME_7F0B9F14 result 1 matches connectedRoom1 adds connectedRoom2, result 2 matches connectedRoom2 adds connectedRoom1 via addToByteSetMaxSize15 dedup-insert; roomSet 0xFF terminator walks, output copy max 7 rooms then 0xFF, portalRoomSet to portalOutput s32 stride 4 bounded by maxPortals, portalCountOut all match. NATIVE_PORT read-be reproduction only.",
+      "reviewed_ts": "2026-07-12T06:38:44Z",
       "rank": 251,
       "rank_score": 227,
       "rank_reason": "bulk-last 227i"
@@ -6850,9 +6850,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Rank 252 non-LEFTOVERDEBUG sibling of portal-descent sub_GAME_7F0B7F84 (223i); build authority is the LEFTOVERDEBUG variant rank 247 (waived: NATIVE_PORT portal-descent BFS reimplementation needing a portal-visibility oracle). Waived as non-authoritative sibling; equivalence tracked via rank 247.",
+      "note": "Rank 252 non-LEFTOVERDEBUG sibling of portal-descent sub_GAME_7F0B7F84 (223i); build authority is the LEFTOVERDEBUG variant rank 247 (waived: NATIVE_PORT portal-descent BFS reimplementation needing a portal-visibility oracle). Waived as non-authoritative sibling; equivalence tracked via rank 247.",
+      "reviewed_ts": "2026-07-12T06:38:44Z",
       "rank": 252,
       "rank_score": 223,
       "rank_reason": "bulk-last 223i"
@@ -6877,9 +6877,9 @@
         "body_start": null,
         "body_end": 11207
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 253 per-room collision bbox builder traced vs ASM 7F0B6994. Pass 1 counts G_VTX (type 4, end 0xB8); memaAlloc quadCount times 0x1C aligned 16; writes ptr_unique_collision_points at 0x2c and bitflags3 count at 0x30. Pass 2 per quad: cmdIndex s16 at rec 0, numVerts from cmd byte1 upper nibble plus 1, vtxOffset from big-endian cmd bytes 4-7 masked 0xFFFFFF, per-vertex s16 x/y/z bbox stride 0x10 init 0x7FFF/0xFFFF8000, min==max bump, room-position add from ptr_bgdata_room_fileposition_list pos truncated to s32, 6 bbox s32 at rec 0x04-0x18. All match. Port malloc+memset (zeroes unused pad 0x02), big-endian reassembly and null-checks are sim-neutral.",
+      "reviewed_ts": "2026-07-12T06:38:44Z",
       "rank": 253,
       "rank_score": 214,
       "rank_reason": "bulk-last 214i"
@@ -6904,9 +6904,9 @@
         "body_start": null,
         "body_end": 19611
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 254 portal-crossing test traced vs ASM 7F0B9F14. dir=arg2-arg1; dot1/dot2 = arg dot normal times room_data_float1; same-side reject; D_80044900 = midpoint minus metric.min; per-edge cross product of edge and dir with mag_sq==0 reject; vert_dot; arg1_dot with the arg1.z times cross.z operand-order quirk; flag_pos/flag_neg consistency reject; return (dot1<min)?1:2 all match. Sole divergence is latent: at numPoints==0 retail returns (dot1<min)?1:2 (blezl skips loop to 7F0BA238) while NATIVE_PORT returns 0; dead because BG portals always have at least 3 vertices. NATIVE_PORT bgGetPortalEntryPtr null-checks are added hardening.",
+      "reviewed_ts": "2026-07-12T06:39:06Z",
       "rank": 254,
       "rank_score": 214,
       "rank_reason": "bulk-last 214i"
@@ -6931,9 +6931,9 @@
         "body_start": null,
         "body_end": 7989
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 255 portal-vertex projection and near-plane clip traced vs ASM 7F0B5528. Per vertex: read portal vert offsets 4/8/0xc, optional metric.normal times offset add when offset nonzero (sub_GAME_7F0B96CC), times room_data_float2, mtx4TransformVecInPlace; all-behind test -maxZ times 0.9 (rodata D_80058C7C) less than cur z clears allBehind, maxZ = zrange 1 over mCurrentLevelVisibilityScale. Near-plane clip t = -curZ over (nextZ minus curZ) interpolates x and y with z=0. numPoints<=0 returns 0 via allBehind on both. Match. NATIVE_PORT null-checks added.",
+      "reviewed_ts": "2026-07-12T06:39:06Z",
       "rank": 255,
       "rank_score": 207,
       "rank_reason": "bulk-last 207i"
@@ -6958,9 +6958,9 @@
         "body_start": null,
         "body_end": 13420
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0119",
+      "note": "Rank 256 traced vs ASM 7F0B7A78. Core nearest-hit matches: scale by room_data_float1, per-quad bgTestLineIntersectsBbox cull then bgTestLineIntersectionInRoom, dist_sq of integer-truncated hit minus start, 4-unit dist bias when check_if_imageID_is_light, best-distance field copy to output (0-0x14 f32, 0x18/0x1c/0x20 s32, 0x24, 0x28 s16, 0x2a texturenum). Divergence filed FID-0119: retail tail 7F0B7D2C-7F0B7D5C derives texture_s at output 0x2c and texture_t at 0x2e from a backward DL scan to the 0xF5 command; NATIVE_PORT hardcodes both to -1 because native bgTestLineIntersectionInRoom (rank 240) has no DL pointer at 0x24.",
+      "reviewed_ts": "2026-07-12T06:39:06Z",
       "rank": 256,
       "rank_score": 199,
       "rank_reason": "bulk-last 199i"
@@ -6985,9 +6985,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Rank 257 LEFTOVERDEBUG build authority, room-visibility setup. Core skeleton verified vs ASM 7F0B8A6C: bgUpdateCurrentPlayerScreenMinMax, screen bbox capture from g_CurrentPlayer 0x1118-0x1124, sub_GAME_7F0B3BC4, per-room clear of room_rendered (0), room_neighbor_to_rendered (1), room_loaded_mask (0x34) stride 0x50, D_800442FC clear, D_80044858 = (x+1) mod 10, sub_GAME_7F0B7D94/5168/8A24, levelentry_index==21 special path. The room-admission portal-BFS core carries documented NATIVE_PORT FID-0009 camera-seed-walk and draw-only-room-set additions that intentionally diverge from retail (Silo sky-leak fix). Waived: full admission diff needs a portal-visibility oracle.",
+      "note": "Rank 257 LEFTOVERDEBUG build authority, room-visibility setup. Core skeleton verified vs ASM 7F0B8A6C: bgUpdateCurrentPlayerScreenMinMax, screen bbox capture from g_CurrentPlayer 0x1118-0x1124, sub_GAME_7F0B3BC4, per-room clear of room_rendered (0), room_neighbor_to_rendered (1), room_loaded_mask (0x34) stride 0x50, D_800442FC clear, D_80044858 = (x+1) mod 10, sub_GAME_7F0B7D94/5168/8A24, levelentry_index==21 special path. The room-admission portal-BFS core carries documented NATIVE_PORT FID-0009 camera-seed-walk and draw-only-room-set additions that intentionally diverge from retail (Silo sky-leak fix). Waived: full admission diff needs a portal-visibility oracle.",
+      "reviewed_ts": "2026-07-12T06:39:06Z",
       "rank": 257,
       "rank_score": 195,
       "rank_reason": "bulk-last 195i"
@@ -7012,9 +7012,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Rank 258 non-LEFTOVERDEBUG sibling of sub_GAME_7F0B8A6C (190i vs LEFTOVERDEBUG 195i). Same shared NATIVE_PORT C body; build authority is the LEFTOVERDEBUG variant rank 257 (waived: visibility-setup reimpl with documented FID-0009 divergences, retest with portal-visibility oracle). Waived as non-authoritative sibling.",
+      "note": "Rank 258 non-LEFTOVERDEBUG sibling of sub_GAME_7F0B8A6C (190i vs LEFTOVERDEBUG 195i). Same shared NATIVE_PORT C body; build authority is the LEFTOVERDEBUG variant rank 257 (waived: visibility-setup reimpl with documented FID-0009 divergences, retest with portal-visibility oracle). Waived as non-authoritative sibling.",
+      "reviewed_ts": "2026-07-12T06:39:06Z",
       "rank": 258,
       "rank_score": 190,
       "rank_reason": "bulk-last 190i"
@@ -7039,9 +7039,9 @@
         "body_start": null,
         "body_end": 20143
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 259 portal-bbox room flood-fill traced vs ASM 7F0BA2D4. propbbmin/max = arg bbox times room_data_float1. Per source room, per portal: skip if controlbytes1 bit 0, dest_room = source==room1?room2 : source==room2?room1 : skip, portal bbox init from FLT_MAX globals D_80044904 and -FLT_MAX D_80044910 over all points equals the C point-0 init over the rest, bgIsBboxOverlapping, dedup then arg2 count++ guarded by count<arg4. Two non-obvious equivalences hold: sentinel-init equals point-0 init for real coords; the C do-while reset-to-0 pass equals the ASM monotonic queue walk because the dedup makes reprocessing idempotent and preserves append order. NATIVE_PORT null/bounds/count-clamp are hardening.",
+      "reviewed_ts": "2026-07-12T06:39:20Z",
       "rank": 259,
       "rank_score": 187,
       "rank_reason": "bulk-last 187i"
@@ -7066,9 +7066,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0118",
+      "note": "Rank 260 LEFTOVERDEBUG build authority, portal screen-bbox. Traced vs ASM 7F0B5864: cache check on entry unk0>=0 returns cached bbox and count; dual sub_GAME_7F0B5528 calls (+scale then -scale when scale>0); per z<=0 vertex transform3Dto2DWithZScaling and min/max bbox left/top/right/bottom at 0x68/0x6c/0x70/0x74; viscount==0 zeroing; right<=left or bottom<=top full-screen fallback from g_CurrentPlayer; store to entry and arg1; return viscount all match. NATIVE_PORT ships portal near-plane clip default ON (bgPortalNearClipEnabled default 1) plus isfinite guard and default-off legacy-clamp; the near-clip default is a non-retail default filed FID-0118.",
+      "reviewed_ts": "2026-07-12T06:39:20Z",
       "rank": 260,
       "rank_score": 172,
       "rank_reason": "bulk-last 172i"
@@ -7093,9 +7093,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0118",
+      "note": "Rank 261 non-LEFTOVERDEBUG sibling of sub_GAME_7F0B5864 (both 172i, logic-identical to rank 260). Same shared C body; the portal near-plane-clip non-retail default is tracked at FID-0118 via authority rank 260.",
+      "reviewed_ts": "2026-07-12T06:39:20Z",
       "rank": 261,
       "rank_score": 172,
       "rank_reason": "bulk-last 172i"

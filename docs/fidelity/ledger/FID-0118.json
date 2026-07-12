@@ -1,0 +1,25 @@
+{
+  "id": "FID-0118",
+  "title": "bg.c render-path ships non-retail defaults (per-room scissor off, transparent-room depth sort, portal near-plane clip on)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B3C8C emits bgScissorCurrentPlayerViewF per room at 7F0B3DD8 (opaque) and 7F0B3F4C (transparent) and draws transparent rooms in array order at loop 7F0B3F10; sub_GAME_7F0B5864 projects raw portal verts with no near-plane clip. Ports diverge at bg.c around lines 4254 and 4388 (exact_room_scissor default 0 uses bgScissorCurrentPlayerViewDefault), bgSortTransparentRoomOrderForBucket, and bgPortalNearClipEnabled default 1."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T06:36:43Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B3C8C emits bgScissorCurrentPlayerViewF per room at 7F0B3DD8 (opaque) and 7F0B3F4C (transparent) and draws transparent rooms in array order at loop 7F0B3F10; sub_GAME_7F0B5864 projects raw portal verts with no near-plane clip. Ports diverge at bg.c around lines 4254 and 4388 (exact_room_scissor default 0 uses bgScissorCurrentPlayerViewDefault), bgSortTransparentRoomOrderForBucket, and bgPortalNearClipEnabled default 1.",
+      "note": "S5 ASM audit batch 21 ranks 249/250/260/261. Three intentional PC render defaults diverge from retail ASM: exact_room_scissor default OFF substitutes a full-view scissor for retail per-room projected scissor (avoids PC blue seam cracks); transparent-room bucket depth sort replaces retail array-order XLU draw; portal near-plane clip default ON pushes grazing verts off the near plane so bboxes stay finite. Core DL/pass structure otherwise matches retail instruction-for-instruction. Faithful-mode default decision open. Retest with pixel/portal-visibility oracle."
+    }
+  ]
+}
