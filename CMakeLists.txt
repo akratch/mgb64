@@ -733,6 +733,18 @@ if(BUILD_TESTING)
     target_include_directories(test_watchmenu_hand_lifecycle PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME watchmenu_hand_lifecycle COMMAND test_watchmenu_hand_lifecycle)
 
+    # Watch controller-settings page per-value fixes — ROM-free unit test
+    # (FID-0072): D1 the face-button depress −10 offset lands on posN.y (arg0,
+    # table copy) not rotN.y (arg4, vertices); D2 the page drives hand 0
+    # (GUNRIGHT) not GUNLEFT. Fails if either per-value fix reverts or the
+    # GE007_NO_WATCH_JOYPAD_FIX negative control drifts.
+    add_executable(test_watch_joypad_page
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_joypad_page.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_joypad_page.c"
+    )
+    target_include_directories(test_watch_joypad_page PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_joypad_page COMMAND test_watch_joypad_page)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.

@@ -42,6 +42,7 @@
 #include "platform/fp_weapon_perspnorm.h"     /* FID-0077 */
 #include "platform/watch_ammo_switchstate.h"  /* FID-0084 */
 #include "platform/watchmenu_hand_lifecycle.h"  /* FID-0073 / FID-0072 */
+#include "platform/watch_joypad_page.h"  /* FID-0072 */
 
 extern VideoSettings *g_ViBackData;
 /* FID-0056 full-auto fire-cadence authenticity flags (platform_sdl.c). OFF by
@@ -205,6 +206,26 @@ static int portNoWatchmenuFogItemFix(void)
         cached = port_env_set("GE007_NO_WATCHMENU_FOG_ITEM_FIX",
                               "Restore the pre-fix per-frame save/restore of the "
                               "solo watch-menu inventory-item hand state [FID-0073]");
+    }
+    return cached;
+}
+
+/* FID-0072 negative control. Default-ON port-defect fix restores three retail
+ * behaviors of the watch controller-settings page sub_GAME_7F06359C: D1 the
+ * face-button depress −10 offset lands on posN.y (arg0, the D_80035D44 table
+ * copy applied before the rotations) not rotN.y (arg4, vertices); D2 the page
+ * drives hand 0 (GUNRIGHT, ASM move $a0,$zero @7F06361C) not GUNLEFT; D3 no
+ * phantom per-frame save/restore (shared with FID-0073). Setting
+ * GE007_NO_WATCH_JOYPAD_FIX reproduces the pre-fix port byte-identically.
+ * See src/platform/watch_joypad_page.c. */
+static int portNoWatchJoypadFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCH_JOYPAD_FIX",
+                              "Restore the pre-fix watch controller page (button "
+                              "depress on the post-rotation vector, GUNLEFT hand, "
+                              "per-frame item save/restore) [FID-0072]");
     }
     return cached;
 }
@@ -16472,6 +16493,9 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
     f32 neg_pi_over_3;
     f32 neg_ten;
     f32 zero_f;
+    /* FID-0072: resolved hand + legacy negative-control flag. */
+    s32 legacy = portNoWatchJoypadFix();
+    GUNHAND hand = (GUNHAND)watchJoypadPageHand(legacy);
 
 #ifdef NATIVE_PORT
     /* D_80035D04[15] + D_80035D44 were contiguous on N64 (64 bytes total).
@@ -16483,17 +16507,18 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
     renderdata = *(ModelRenderData *)&D_80035D04[15];
 #endif
 
-    prev_watchmenu_item = g_CurrentPlayer->hands[GUNLEFT].weaponnum_watchmenu;
-    sub_GAME_7F05DA8C(GUNLEFT, ITEM_JOYPAD);
+    /* FID-0072 D2/D3: retail drives hand 0 (GUNRIGHT) and never restores. */
+    prev_watchmenu_item = g_CurrentPlayer->hands[hand].weaponnum_watchmenu;
+    sub_GAME_7F05DA8C(hand, ITEM_JOYPAD);
 
-    if (!Gun_hand_without_item(GUNLEFT)) {
+    if (!Gun_hand_without_item(hand)) {
         goto done;
     }
-    if (!get_itemtype_in_hand(GUNLEFT)) {
+    if (!get_itemtype_in_hand(hand)) {
         goto done;
     }
 
-    itemheader = get_ptr_itemheader_in_hand(GUNLEFT);
+    itemheader = get_ptr_itemheader_in_hand(hand);
 
 #ifdef NATIVE_PORT
     if (itemheader == NULL || itemheader->Switches == NULL || itemheader->numSwitches <= 13) {
@@ -16505,7 +16530,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                     (void *)itemheader,
                     itemheader ? (void *)itemheader->Switches : NULL,
                     itemheader ? itemheader->numSwitches : -1,
-                    (s32)get_itemtype_in_hand(GUNLEFT));
+                    (s32)get_itemtype_in_hand(hand));
             fflush(stderr);
             warned_bad_watch_header = 1;
         }
@@ -16652,7 +16677,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot4.z = vertices[0x78 / 4];
 
                 if (joyGetButtons(*flag, 8)) {
-                    rot4.y += neg_ten;
+                    watchJoypadButtonDepress(&pos4.y, &rot4.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16666,7 +16691,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot5.z = vertices[0x84 / 4];
 
                 if (joyGetButtons(*flag, 4)) {
-                    rot5.y += neg_ten;
+                    watchJoypadButtonDepress(&pos5.y, &rot5.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16680,7 +16705,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot6.z = vertices[0x90 / 4];
 
                 if (joyGetButtons(*flag, 2)) {
-                    rot6.y += neg_ten;
+                    watchJoypadButtonDepress(&pos6.y, &rot6.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16694,7 +16719,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot7.z = vertices[0x9C / 4];
 
                 if (joyGetButtons(*flag, 1)) {
-                    rot7.y += neg_ten;
+                    watchJoypadButtonDepress(&pos7.y, &rot7.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16708,7 +16733,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot9.z = vertices[0xB4 / 4];
 
                 if (joyGetButtons(*flag, 16384)) {
-                    rot9.y += neg_ten;
+                    watchJoypadButtonDepress(&pos9.y, &rot9.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16722,7 +16747,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot8.z = vertices[0xA8 / 4];
 
                 if (joyGetButtons(*flag, 32768U)) {
-                    rot8.y += neg_ten;
+                    watchJoypadButtonDepress(&pos8.y, &rot8.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16776,7 +16801,7 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
                 rot1.z = vertices[0x54 / 4];
 
                 if (joyGetButtons(*flag, 4096)) {
-                    rot1.y += neg_ten;
+                    watchJoypadButtonDepress(&pos1.y, &rot1.y, neg_ten, legacy);
                 }
 
                 matrix_4x4_set_rotation_around_x(neg_pi_over_3, &mtx_xrot);
@@ -16829,10 +16854,17 @@ Gfx *sub_GAME_7F06359C(Gfx *gdl, Mtxf *mtx, s32 green, s32 arg3, f32 *vertices, 
     }
 
 done:
-    if ((s32)prev_watchmenu_item >= 0) {
-        sub_GAME_7F05DA8C(GUNLEFT, prev_watchmenu_item);
-    } else {
-        sub_GAME_7F05DAE4(GUNLEFT);
+    /* FID-0072 D3: retail sets the item once and never restores it; drop the
+     * pre-fix phantom save/restore (shared decision with FID-0073). */
+    switch (watchMenuHandExitAction((s32)prev_watchmenu_item, legacy)) {
+    case WATCHMENU_HAND_EXIT_RESTORE:
+        sub_GAME_7F05DA8C(hand, prev_watchmenu_item);
+        break;
+    case WATCHMENU_HAND_EXIT_CLEAR:
+        sub_GAME_7F05DAE4(hand);
+        break;
+    case WATCHMENU_HAND_EXIT_NONE:
+        break;
     }
     return gdl;
 }
