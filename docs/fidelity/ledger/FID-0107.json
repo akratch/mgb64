@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/spectrum.c"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/spectrum.c:1547 retail ASM lui s1 0x700 (=0x07000000) stored as SETTILE w1 at 1550 and loop 1639; port C spectrum.c:1404 and 1463 emit 0x00070000"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/spectrum.c:1547 lui $s1,0x700"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "spectrum.c ASM 7F0D3420 lui $s1,0x700 -> SETTILE w1 0x07000000 (tile7); LOADTLUT 0x0703C000 + LOADBLOCK 0x073FF200 both tile7"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/spectrum_settile.c helper + GE007_NO_SPECTRUM_LOADTILE_FIX at both SETTILE sites"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_spectrum_settile.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/spectrum.c:1547 retail ASM lui s1 0x700 (=0x07000000) stored as SETTILE w1 at 1550 and loop 1639; port C spectrum.c:1404 and 1463 emit 0x00070000",
       "note": "Hand-written DL builder for the Spectrum easter-egg screen. Retail ASM holds the constant 0x07000000 in s1 (lui s1,0x700 at spectrum.c:1547) and stores it as the SETTILE low word (w1) both for the palette-load SETTILE (0xF5000300, sw s1 at 1550) and the per-tile SETTILE (0xF5100000, sw s1 at 1639 inside the 3x4 loop). Decoded, 0x07000000 sets the SETTILE tile field bits 24-26 to 7 = G_TX_LOADTILE, and both following loads reference tile 7: the palette LOADTLUT is 0xF0000000/0x0703C000 (tile 7) and the per-tile LOADBLOCK is 0xF3000000/0x073FF200 (tile 7). The live C instead writes w1 = 0x00070000 at spectrum.c:1404 and 1463, which decodes to tile field 0 plus spurious cmt=1 and maskt=12 bits -- the SETTILE configures tile 0 while the LOADTLUT/LOADBLOCK still read tile 7. Appears to be a digit-shift transcription typo (0x07000000 vs 0x00070000), not NATIVE_PORT-gated. Sibling of FID-0104 (same wrong-load-tile-in-GBI-stream class, texWriteLoadToTmemAddr tile-5-vs-7). Observability depends on whether the port Fast3D interpreter binds LOADBLOCK/LOADTLUT to the preceding SETTILE regardless of tile index or tracks descriptors per tile number; if per-tile, the Spectrum screen loads with a stale tile-7 descriptor. Rest of spectrum_draw_screen (10-cmd prologue, 3x4 tile loop geometry: yl_top/yl_bot masks, xr/xl <<12, dram_offset tile_row<<11 then +=0x800, tile_row+=4, all other command words) verified byte-identical to ASM."
+    },
+    {
+      "ts": "2026-07-12T01:25:25Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/spectrum.c:1547 lui $s1,0x700",
+      "note": "confirmed digit-shift vs port 0x00070000 at 1404/1463"
+    },
+    {
+      "ts": "2026-07-12T01:25:25Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "spectrum.c ASM 7F0D3420 lui $s1,0x700 -> SETTILE w1 0x07000000 (tile7); LOADTLUT 0x0703C000 + LOADBLOCK 0x073FF200 both tile7",
+      "note": "port C 0x00070000 decodes tile0 + stray cmt/maskt"
+    },
+    {
+      "ts": "2026-07-12T01:25:25Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/spectrum_settile.c helper + GE007_NO_SPECTRUM_LOADTILE_FIX at both SETTILE sites",
+      "note": "faithful default"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_spectrum_settile.c",
+      "note": "ctest spectrum_settile PASS; fail-on-revert reddens; struct_layout+sim_state_hash PASS; runtime pixel confirm deferred (ROM lane locked)"
     }
   ]
 }

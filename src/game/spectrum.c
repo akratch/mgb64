@@ -4,6 +4,8 @@
 #include <bondconstants.h>
 #include "joy.h"
 #include "ob.h"
+#include "platform/port_env.h"
+#include "platform/spectrum_settile.h"
 
 // bss
 u8* ptr_sectrum_monitor_data_temp_buf;
@@ -1389,6 +1391,15 @@ Gfx* spectrum_draw_screen(Gfx* gdl) {
     s32 yl_bot;
     s32 xr;
     s32 xl;
+    /* SETTILE low word for both SETTILE commands below: retail 0x07000000
+     * (tile 7 = G_TX_LOADTILE) so the following LOADTLUT/LOADBLOCK, which name
+     * tile 7, configure the tile they load into. The port transcribed the
+     * digit-shifted 0x00070000 (tile 0 + stray cmt/maskt). FID-0107.
+     * Faithful default; GE007_NO_SPECTRUM_LOADTILE_FIX restores the port value. */
+    u32 settile_w1 = spectrumSettileLoadTileW1(
+        port_env_set("GE007_NO_SPECTRUM_LOADTILE_FIX",
+            "restore the tile-0 digit-shift SETTILE (0x00070000) in the Spectrum "
+            "easter-egg screen instead of the retail tile-7 0x07000000 (FID-0107)"));
 
     /* gDPPipeSync */
     gdl->words.w0 = 0xE7000000;
@@ -1401,7 +1412,7 @@ Gfx* spectrum_draw_screen(Gfx* gdl) {
     gdl++;
 
     gdl->words.w0 = 0xF5000300;
-    gdl->words.w1 = 0x00070000;
+    gdl->words.w1 = settile_w1;   /* SETTILE tile 7 (FID-0107) */
     gdl++;
 
     /* gDPLoadSync */
@@ -1460,7 +1471,7 @@ Gfx* spectrum_draw_screen(Gfx* gdl) {
 
             /* gDPSetTile */
             gdl->words.w0 = 0xF5100000;
-            gdl->words.w1 = 0x00070000;
+            gdl->words.w1 = settile_w1;   /* SETTILE tile 7 (FID-0107) */
             gdl++;
 
             /* gDPLoadSync */

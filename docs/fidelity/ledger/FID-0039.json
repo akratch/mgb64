@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "converter",
   "priority": "P3",
-  "status": "discovered",
+  "status": "refuted",
   "suspect": [
     "src/platform/model_convert.c:881"
   ],
@@ -14,6 +14,10 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/model.c:10845"
     }
   ],
   "history": [
@@ -23,6 +27,13 @@
       "to": "discovered",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "discovered",
+      "to": "refuted",
+      "evidence": "src/game/model.c:10845",
+      "note": "NOT a live divergence: OP11 render sub_GAME_7F0737FC is a no-op return in the shipping game (model.c:10845; struct 'unused but referenced'); unk0c[15] read as a pointer only by that no-op and by the retail 32-bit PROMOTE path (model.c:14040/13896) which the 64-bit converter replaces; port-used OP11 fields (BoundingVolumeRadius, RwDataIndex) convert correctly. Storing NULL is behaviourally invisible and safe. See docs/fidelity/derivations/FID-0037-0039-0107-batch.md"
     }
   ]
 }

@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1043 flags** found across the source.
+**1045 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -592,6 +592,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_MP_AMMO_HUD_MENU_FIX` | presence | unset | 1 | Restore the pre-fix MP per-pane ammo HUD drawn over the watch/pause darkening overlay [FID-0064] |
 | `GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX` | presence | unset | 1 | Restore the pre-fix MP health-bar draw during damage flashes (OR DamageShowTime) [FID-0070] |
 | `GE007_NO_MP_RESPAWN_TAIL_FIX` | presence | unset | 1 | Restore the pre-fix silent object respawn: drop the respawn sound (82) + armour-amount reset tail [FID-0103] |
+| `GE007_NO_PADNAMES_FIX` | presence | unset | 1 | restore the port defect of leaving setup padnames/boundpadnames NULL instead of resolving the big-endian offset tables (FID-0037) |
 | `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |
@@ -599,6 +600,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_SHELL_CASING_TINT_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the ejected shell-casing render tint [FID-0088] |
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen sky/horizon aspect widen (default ON) |
+| `GE007_NO_SPECTRUM_LOADTILE_FIX` | presence | unset | 1 | restore the tile-0 digit-shift SETTILE (0x00070000) in the Spectrum easter-egg screen instead of the retail tile-7 0x07000000 (FID-0107) |
 | `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 | Restore the legacy stan roomset-byte read (default: fix ON) |
 | `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
