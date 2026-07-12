@@ -30,6 +30,13 @@ SDL_Window *g_window = nullptr;
 char        g_argv0[1024] = {0};
 bool        g_prevRelMouse = false;
 
+// Last input device the user actually acted with, so the overlay shows the right
+// control hints (controller glyphs vs keyboard keys). Switched only on decisive
+// events (button/key presses, a real stick push) so idle drift/mouse jitter
+// doesn't thrash it.
+enum LastInputDevice { DEV_KBM, DEV_PAD };
+LastInputDevice g_lastInputDevice = DEV_KBM;
+
 void setOpen(bool open) {
     if (open == g_open) return;
     g_open = open;
@@ -69,6 +76,26 @@ void returnToLauncher() {
 void onProcessEvent(const void *ev) {
     const SDL_Event *e = (const SDL_Event *)ev;
     ImGui_ImplSDL2_ProcessEvent(e);
+
+    // Track the active device from decisive events only (a key/mouse-button press
+    // vs a pad button or a firm stick push), so the control hints follow what the
+    // user is really holding without flip-flopping on idle drift.
+    switch (e->type) {
+        case SDL_KEYDOWN:
+        case SDL_MOUSEBUTTONDOWN:
+        case SDL_MOUSEWHEEL:
+            g_lastInputDevice = DEV_KBM;
+            break;
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_JOYBUTTONDOWN:
+            g_lastInputDevice = DEV_PAD;
+            break;
+        case SDL_CONTROLLERAXISMOTION:
+            if (e->caxis.value > 8000 || e->caxis.value < -8000) g_lastInputDevice = DEV_PAD;
+            break;
+        default:
+            break;
+    }
 
     // Toggle keys/buttons: the menu opener (default F1 keyboard / Back gamepad)
     // and the FPS-overlay hotkey (default F10) are rebindable settings read live
@@ -142,6 +169,26 @@ void overlayTestFrameTick() {
     s_frame++;
 }
 
+// Human name for the currently-bound menu-open key (e.g. "F1", "Escape", "Tab").
+const char *menuKeyName() {
+    const char *n = SDL_GetKeyName((SDL_Keycode)mgb_config_get_int("Input.MenuToggleKey", SDLK_F1));
+    return (n && n[0]) ? n : "F1";
+}
+
+// Friendly name for the currently-bound menu-open gamepad button.
+const char *menuButtonName() {
+    switch (mgb_config_get_int("Input.MenuToggleButton", SDL_CONTROLLER_BUTTON_BACK)) {
+        case SDL_CONTROLLER_BUTTON_BACK:  return "View";
+        case SDL_CONTROLLER_BUTTON_START: return "Start";
+        case SDL_CONTROLLER_BUTTON_GUIDE: return "Guide";
+        case SDL_CONTROLLER_BUTTON_A:     return "A";
+        case SDL_CONTROLLER_BUTTON_B:     return "B";
+        case SDL_CONTROLLER_BUTTON_X:     return "X";
+        case SDL_CONTROLLER_BUTTON_Y:     return "Y";
+        default:                          return "Menu";
+    }
+}
+
 void onRender() {
     overlayTestFrameTick();
     if (!g_open) return;
@@ -181,11 +228,16 @@ void onRender() {
     // zeroes g_ClockTimer in lvlManageMpGame when platformOverlayWantsInput() is
     // set and getPlayerCount()==1). Multiplayer CANNOT pause — you can't freeze
     // the other players' clocks — so it keeps running and the footer says so.
-    // Keep the wording honest per-mode: never claim "Paused" in MP.
+    // Keep the wording honest per-mode: never claim "Paused" in MP. The control
+    // hints follow the last-used device and the actual (rebindable) menu binding.
+    const char *resume = (g_lastInputDevice == DEV_PAD) ? menuButtonName() : menuKeyName();
+    const char *nav = (g_lastInputDevice == DEV_PAD)
+        ? "D-pad move  \xE2\x80\xA2  A select  \xE2\x80\xA2  B back"
+        : "arrows move  \xE2\x80\xA2  Enter select  \xE2\x80\xA2  Esc back";
     if (platformGetPlayerCount() >= 2) {
-        ui::TextSubtle("Overlay open \xE2\x80\x94 game keeps running (multiplayer)  \xE2\x80\xA2  F1 / View to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
+        ui::TextSubtle("Game keeps running (multiplayer)  \xE2\x80\xA2  %s to resume  \xE2\x80\xA2  %s", resume, nav);
     } else {
-        ui::TextSubtle("Paused  \xE2\x80\xA2  F1 / View to resume  \xE2\x80\xA2  gamepad: D-pad move, A select, B back");
+        ui::TextSubtle("Paused  \xE2\x80\xA2  %s to resume  \xE2\x80\xA2  %s", resume, nav);
     }
     ui::Gap(ui::kGapS);
     ImGui::Separator();
