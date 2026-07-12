@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "documented",
   "suspect": [
     "src/game/matrixmath.c FTOFIX32 macro (native branch line 506) and the two NATIVE_PORT division sites lines 721-722"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "asm-citation",
       "path": "src/game/matrixmath.c:598"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/APPROXIMATIONS.md#m1"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "src/game/matrixmath.c:598",
       "note": "ASM audit batch 15 (ranks 176, 178). Both float/fixed matrix converters diverge ONLY in the fixed-point scale source; the s16.16 bit-packing and unpacking logic is byte-identical to retail (traced instruction-by-instruction). Retail matrix_4x4_f32_to_s32 multiplies element e1 by D_80032310 index 0 (matrixmath.c:592 load, 598 mul) and e2 by D_80032310 index v0-and-1 (matrixmath.c:600-601), then truncates; sub_GAME_7F058E78 divides by the same table entries (matrixmath.c:748 and 761 for index 0, 791-797 for index v0-and-1). The compiled NATIVE_PORT bodies instead use a constant 65536 (FTOFIX32 native branch matrixmath.c:506; divides matrixmath.c:721-722). D_80032310 defaults to two copies of 65536 (matrixmath.c:16, M_U16_MAX_VALUE_F), so at default the native constant matches retail exactly. But D_80032310 index 0 is runtime-mutated: matrix_4x4_7F058C4C sets it to 65536 times arg0 (matrixmath.c:478), invoked from bg.c:5143 with the per-level mCurrentLevelVisibilityScale (levelinfotable visibility). gun.c and bondview.c wrap HUD/weapon matrix conversions in matrix_4x4_7F058C64 / _7F058C88 save-reset-restore (matrixmath.c:481-489) which only makes sense if the level scale is normally non-default. Native therefore ignores the level-visibility scale during any f32-to-s32 / s32-to-f32 conversion. Observability is low/uncertain: the s16.16 packed matrices are the RSP hardware format; on native the float matrix path (G_MTX_FLOAT_PORT) drives rendering and the identical conversion loop was deliberately compiled out of constructor_menu00_legalscreen (rank 170) on native, so the s32 output is likely vestigial. Filed as parity-divergence per the porter comment at matrixmath.c:505-506 asserting the fixed-point scale is RSP-specific. Needs a targeted check of whether any native draw path consumes the s32-packed RenderPos view/pos before promoting or closing."
+    },
+    {
+      "ts": "2026-07-12T01:03:43Z",
+      "from": "discovered",
+      "to": "documented",
+      "evidence": "docs/fidelity/APPROXIMATIONS.md#m1",
+      "note": "Bounded parity-divergence (APPROXIMATIONS.md M1): the matrixmath.c hardcode of 65536 is correct by design. The native port does not drop the per-level visibility scale; it relocates it out of the RSP s16.16 fixed-point pack domain (D_80032310) into the PC float domain. It is re-applied at draw by gfx_apply_level_visibility_scale_to_matrix (gfx_pc.c 427, applied gfx_pc.c 15971 to 15976, excluding projection, room, and field_10e0 matrices); world render_pos regions are registered by bondviewRegisterLevelVisibilityScaledRenderPos (bondview.c 27301); dynamic models are scaled by matrix_scalar_multiply_3 (bondview.c 27294); room, char, and chrprop paths read bgGetLevelVisibilityScale in float (unk_0BC530.c 416, unk_0A1DA0.c 1227, chrprop.c 2690); and the reciprocal z-range compensation is preserved (bg.c 7409, 7506, 7927). Retail also force-resets D_80032310[0] to 65536 around HUD and weapon conversions via the matrix_4x4_7F058C64 and _7F058C88 save-restore wrap, so those match the port constant exactly. Net z-buffer and visibility on Dam and Surface is preserved. The FID-0110 filer observed only matrixmath.c and missed the compensating gfx-layer application. Bound: pipeline stage plus numeric domain, float column scale versus fixed-point-truncated pre-scale."
     }
   ]
 }

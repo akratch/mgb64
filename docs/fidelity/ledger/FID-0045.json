@@ -4,7 +4,7 @@
   "class": "coverage-gap",
   "surface": "infra",
   "priority": "P3",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "chraidata.c:715",
     "\u00a74.6"
@@ -15,6 +15,26 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#4.6",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md"
     }
   ],
   "history": [
@@ -24,6 +44,41 @@
       "to": "discovered",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#4.6",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-12T01:04:12Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/QUIRKS.md",
+      "note": "Triaged: the coverage gap is the absence of a central n64-quirk registry. docs/fidelity/QUIRKS.md now exists (charter 4.6) with the registry contract, retail anchor, player-visible effect, and opt-in mitigation flag per row."
+    },
+    {
+      "ts": "2026-07-12T01:04:12Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "docs/fidelity/QUIRKS.md",
+      "note": "Root cause: known preserved retail quirks were tracked only in scattered code comments and per-finding ledger notes with no single auditable index. The fix is the QUIRKS.md registry plus the ledger-first filing contract for new quirks."
+    },
+    {
+      "ts": "2026-07-12T01:04:12Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "docs/fidelity/QUIRKS.md",
+      "note": "QUIRKS.md populated: Q1 guard shuffle (chraidata.c 715) preserved as-is, and W1 stan.c uninitialized locals (FID-0081) waived as not reproducible on a host. Both currently-known n64-quirk findings are now registered."
+    },
+    {
+      "ts": "2026-07-12T01:04:12Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "docs/fidelity/QUIRKS.md",
+      "note": "QUIRKS.md committed with the preserved-quirk table, the waived not-reproducible sub-section, and the adjudicated non-quirks section; new quirks file as n64-quirk ledger findings and are added on anchor verification."
+    },
+    {
+      "ts": "2026-07-12T01:04:12Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/QUIRKS.md",
+      "note": "Coverage gap closed and verified: docs/fidelity/QUIRKS.md is the central registry, covers both known quirks (Q1 preserved, W1 waived FID-0081), and encodes the contract for future entries. Re-opens if a new n64-quirk finding lands without a registry row."
     }
   ]
 }

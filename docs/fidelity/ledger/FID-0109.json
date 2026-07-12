@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "documented",
   "suspect": [
     "src/game/textrelated.c"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "asm-citation",
       "path": "src/game/textrelated.c:3901 retail US ASM at glabel textRenderGlow gates only ch less-than 0x80 before the sub_GAME_7F0ADDAC construct call: instr 7F0AE7E4 slti at,v0,0x80 then 7F0AE7E8 beqz at to the JP path, else falls straight into the ASCII construct using second_font_table + ch*24 - 0x318; the live port C at textrelated.c:3771 instead guards ch greater-equal 0x21 and ch less-equal 0x7e for the render, and textrelated.c:3790 routes any other ch less-than 0x80 to prev_char=72 with ptr advance and no render"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/APPROXIMATIONS.md#t1"
     }
   ],
   "history": [
@@ -22,6 +26,13 @@
       "to": "discovered",
       "evidence": "src/game/textrelated.c:3901 retail US ASM at glabel textRenderGlow gates only ch less-than 0x80 before the sub_GAME_7F0ADDAC construct call: instr 7F0AE7E4 slti at,v0,0x80 then 7F0AE7E8 beqz at to the JP path, else falls straight into the ASCII construct using second_font_table + ch*24 - 0x318; the live port C at textrelated.c:3771 instead guards ch greater-equal 0x21 and ch less-equal 0x7e for the render, and textrelated.c:3790 routes any other ch less-than 0x80 to prev_char=72 with ptr advance and no render",
       "note": "Exact sibling of FID-0108 which files the identical divergence in textRender (textrelated.c:2014 and 2032). Behavior-neutral for all valid printable ASCII 0x21..0x7e and the JP path ch greater-equal 0x80, which both match retail. Differs only for control and DEL bytes that retail renders via out-of-range font indexing. The added bound is present in the compiled C (not NATIVE_PORT-gated). Rest of textRenderGlow verified equivalent this batch: default argb from second_font_table words at 0x88c and 0x890, j_text_trigger with argb below 14 clamp to 14, space adds 5 to x, newline resets x and adds argb to y, the ASCII and Japanese sub_GAME_7F0ADDAC arg tuples, and the jis_code decode with width15/height16 and index plus 0x80. A separate NATIVE_PORT-only null guard returns early on null text or font, a benign hardening absent from retail."
+    },
+    {
+      "ts": "2026-07-12T01:03:33Z",
+      "from": "discovered",
+      "to": "documented",
+      "evidence": "docs/fidelity/APPROXIMATIONS.md#t1",
+      "note": "Exact sibling of FID-0108 in textRenderGlow, same bound and rationale (APPROXIMATIONS.md T1). Retail US gates only ch<0x80 (textrelated.c 3901) then indexes second_font_table at ch*24 minus 0x318; port native indexing at textrelated.c 3775 would be an out-of-bounds host read for control bytes 0x01 to 0x1f excluding 0x0A (negative entry) and DEL 0x7f (entry 94). Port narrows the render to 0x21 to 0x7e (textrelated.c 3771) and skips other ch<0x80 (textrelated.c 3790). Byte-identical to retail for printable ASCII 0x21 to 0x7e, space, newline, and the JP path ch>=0x80; differs only for control and DEL bytes unreachable by authored content. Replicating retail is memory-unsafe on a host; the narrowed bound is the faithful-mode default."
     }
   ]
 }

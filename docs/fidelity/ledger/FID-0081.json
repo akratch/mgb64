@@ -4,7 +4,7 @@
   "class": "n64-quirk",
   "surface": "sim",
   "priority": "P3",
-  "status": "discovered",
+  "status": "waived",
   "suspect": [
     "src/game/stan.c:746"
   ],
@@ -13,6 +13,10 @@
     {
       "kind": "asm-citation",
       "path": "src/game/stan.c:1026"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/QUIRKS.md#w1"
     }
   ],
   "history": [
@@ -22,6 +26,17 @@
       "to": "discovered",
       "evidence": "src/game/stan.c:1026",
       "note": "Two retail uninitialized-local reads re-derived from GLOBAL_ASM. (Q1) 7F0AF20C: the on-edge seam flag starts as whatever the caller left at sp+0x88; if garbage is nonzero and no tile edge is within 2.0 scaled units, retail still runs the midpoint walk-back disambiguation for candidate tiles (possibly rejecting stacked-floor tiles the zero-init port accepts). Live C zero-inits on_edge (stan.c:746, F2 gate path). (Q2) 7F0B0914: lastCrossEdge starts as garbage from sp+0x98; reachable write-out when the walk fails with every crossing resolving to prevTile/prevPrevTile (fp never assigned) \u2014 retail then stores garbage into stanSavedColl_pointI; live C zero-inits (stan.c:3290). Both are deterministic-per-context on console (previous frame contents) but not sanely reproducible on a host port. Disposition: keep zero-init; register in docs/fidelity/QUIRKS.md; treat as known bounded divergence source for movement/seam oracle comparisons (tile pick near seams, stanSavedColl_pointI consumers after failed walks). No fix planned \u2014 mitigation IS the zero-init."
+    },
+    {
+      "ts": "2026-07-12T01:04:01Z",
+      "from": "discovered",
+      "to": "waived",
+      "evidence": "docs/fidelity/QUIRKS.md#w1",
+      "note": "Two retail uninitialized-local reads (stan.c 1026 on-edge seam flag at sp+0x88 in sub_GAME_7F0AF20C, stan.c 3463 lastCrossEdge at sp+0x98 in sub_GAME_7F0B0914; no prior store to either offset in the prologue or body) that read garbage stack. On console the value is the deterministic contents left by the previous call or frame; on a host port reproducing it requires reading uninitialized memory (undefined behavior, non-deterministic, possibly crashing) and cannot yield the same bytes as the N64. The port zero-inits both locals (stan.c 746 on-edge flag, stan.c 3290 lastCrossEdge). The mitigation IS the zero-init; the quirk cannot and should not be faithfully replicated. Registered as QUIRKS.md W1."
     }
-  ]
+  ],
+  "waiver": {
+    "reason": "Two retail uninitialized-local reads (stan.c 1026 on-edge seam flag at sp+0x88 in sub_GAME_7F0AF20C, stan.c 3463 lastCrossEdge at sp+0x98 in sub_GAME_7F0B0914; no prior store to either offset in the prologue or body) that read garbage stack. On console the value is the deterministic contents left by the previous call or frame; on a host port reproducing it requires reading uninitialized memory (undefined behavior, non-deterministic, possibly crashing) and cannot yield the same bytes as the N64. The port zero-inits both locals (stan.c 746 on-edge flag, stan.c 3290 lastCrossEdge). The mitigation IS the zero-init; the quirk cannot and should not be faithfully replicated. Registered as QUIRKS.md W1.",
+    "retest": "Re-open if a movement or seam oracle lane shows a tile-pick or stanSavedColl_pointI divergence at scaled tile edges within 2.0 units, which would prove the garbage-dependent branch is reachable and needs an ares or console capture of the actual stack contents to model."
+  }
 }
