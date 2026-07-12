@@ -84,6 +84,4 @@ If something crashes or stalls, these files help diagnose it:
 
 For **live** console output while debugging, use a console-subsystem build
 (configure with `-DMGB64_WIN_CONSOLE=ON`) or run the GUI build from a shell with
-output redirection (`ge007.exe … > out.txt 2>&1`). See
-[`docs/WINDOWS_CONFIDENCE.md`](WINDOWS_CONFIDENCE.md) for the full account of the
-Windows logging, crash-handler, and watchdog behavior.
+output redirection (`ge007.exe … > out.txt 2>&1`).

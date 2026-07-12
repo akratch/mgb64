@@ -128,3 +128,8 @@ tools/tests/test_fidelity_ledger.py export-ignore
 # history-scan-exempt block above, for the same direct-push reason.
 docs/BACKLOG_v0.4.0.md export-ignore
 docs/RECOMP_LANDSCAPE_SURVEY_2026-07-10.md export-ignore
+# Internal "Windows Confidence Attestation" — carries dev-branch names and MW.x/M6.x
+# planning codenames CONTRIBUTING.md bans from the public face; keep it maintainer-side.
+docs/WINDOWS_CONFIDENCE.md export-ignore
+# Maintainer doc-triage artifact (OWNER-DECIDE rows, ledger IDs, internal structure).
+docs/DOCS_INVENTORY.md export-ignore

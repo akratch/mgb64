@@ -44,6 +44,13 @@ auto-detected by the port at runtime.) Expected SHA-1s are in `ge007.u.sha1`,
 | macOS | `xcode-select --install` then `brew install cmake sdl2` |
 | Windows (MSYS2 MINGW64) | Use the MSYS2 commands below. |
 
+> **Pillow (optional).** Two image-diff regression ctests
+> (`port_room_glass_source_reconstruction_guard`,
+> `port_glass_shard_pixel_target_selection_guard`) use Pillow. It is already in
+> the Linux (`python3-pil`) and MSYS2 (`python-pillow`) package sets above; on
+> macOS install it with `python3 -m pip install pillow`. Without Pillow those two
+> lanes skip cleanly — they do not fail.
+
 On Windows, use the **MSYS2 MinGW 64-bit** shell, not the plain MSYS shell:
 
 ```sh
@@ -89,8 +96,11 @@ python3 tools/summarize_build_warnings.py \
 ```
 
 Useful options: `-DSANITIZE=ON` (ASan/UBSan), `-DMACOS_APP_BUNDLE=ON` (build the
-engine as a C library for the macOS app shell). To build the local unsigned
-macOS app bundle, run:
+engine as a C library for the macOS app shell).
+
+The `.app` shipped on releases is produced by the in-process ImGui bundler
+`macos/Scripts/build_gl_app.sh` (see [RELEASING.md](RELEASING.md)). To build a
+local unsigned bundle with the legacy Swift/AppKit shell instead, run:
 
 ```sh
 ./macos/Scripts/build_app_bundle.sh --release

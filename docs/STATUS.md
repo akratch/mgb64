@@ -113,10 +113,11 @@ most valuable.
   speed dynamics plus selected-camera and timer-aligned swirl/Bond-animation
   intro checks. Captured traces/screenshots remain local ROM-derived artifacts
   and are not shipped.
-- **A local unsigned macOS app bundle can be built from source:**
-  `macos/Scripts/build_app_bundle.sh` links the Swift/AppKit shell against
-  `build-macos/libge007_lib.a`, assembles `build-macos/MGB64.app`, and keeps the
-  app asset-free (`macos/Scripts/verify_asset_free.sh build-macos/MGB64.app`).
+- **The macOS `.app` shipped on releases is built from source by**
+  `macos/Scripts/build_gl_app.sh` (the in-process ImGui bundler), which assembles
+  `build-macos-app/MGB64.app` and keeps it asset-free
+  (`macos/Scripts/verify_asset_free.sh build-macos-app/MGB64.app`). The legacy
+  Swift/AppKit `macos/Scripts/build_app_bundle.sh` remains for reference.
 
 ## Remaining work
 
@@ -167,12 +168,12 @@ most valuable.
   linker surfaces cannot grow without a deliberate inventory/docs update.
 - **Renderer/audio accuracy** and assorted gameplay parity vs. original
   hardware (see below).
-- **Signed/notarized macOS distribution:** the local `.app` build exists and
-  remains asset-free, but it links against the builder's local SDL2 dylib.
-  The build script can fail closed on a requested deployment target and bundle
-  SDL2 for app-candidate testing, but Developer ID signing, notarization, a
-  controlled SDL2 deployment target, DMG polish, and any prebuilt release
-  artifact remain deferred.
+- **Signed/notarized macOS distribution:** tagged releases already ship prebuilt
+  artifacts on all three platforms — macOS `.app` (zip), Windows portable `.zip`,
+  and Linux AppImage/`.tar.gz` (see [RELEASING.md](RELEASING.md)), each asset-free.
+  What remains deferred is the macOS `.app`'s Developer ID signing, notarization,
+  a controlled SDL2 deployment target, and DMG polish: it currently ships unsigned
+  (right-click → Open to pass Gatekeeper) and links the builder's SDL2 dylib.
 
 ## Known issues
 

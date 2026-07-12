@@ -100,7 +100,7 @@ lanes and must pass for the exact public launch commit.
 | Gameplay coordinator parity | 🟡 Converged + playable; byte-match in progress |
 | Save / mission-flow persistence | 🟢 Cross-session multi-folder smoke validated; broader organic flow coverage in progress |
 | N64 ROM (byte-matching) rebuild | 🟡 Needs data-table extraction wired into the N64 link |
-| Prebuilt/signed distributables | 🟡 No packaged prebuilt release yet; local unsigned macOS `.app` packaging is present and asset-free, with signing/notarization pending |
+| Prebuilt distributables | 🟢 macOS `.app` (zip), Windows portable `.zip`, and Linux AppImage/`.tar.gz` ship on tagged releases (see docs/RELEASING.md); Developer ID signing / notarization still deferred (macOS `.app` is unsigned) |
 
 ## Reporting a divergence
 

@@ -19,7 +19,7 @@ write repository state). Releases are therefore assembled from two sources:
 
 | Platform | Built by | Why |
 | --- | --- | --- |
-| **macOS** (universal) | **Locally** on the maintainer's Mac (`scripts/release.sh`) | This is the developed + tested platform; it also needs the local Apple toolchain. |
+| **macOS** (Apple Silicon) | **Locally** on the maintainer's Mac (`scripts/release.sh`) | This is the developed + tested platform; it also needs the local Apple toolchain. Homebrew SDL2 is single-arch, so the shipped `.app` is arm64-only (`build_gl_app.sh --universal` can produce a universal build when a universal SDL2 is present). |
 | **Windows** (portable `.zip`) | **CI** (`.github/workflows/release.yml`, MSYS2/MinGW) | Can't be built natively on macOS. |
 | **Linux** (AppImage + `.tar.gz`) | **CI** (`.github/workflows/release.yml`, ubuntu-22.04) | Can't be built natively on macOS. |
 
