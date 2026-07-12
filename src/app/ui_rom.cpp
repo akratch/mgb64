@@ -123,6 +123,24 @@ void RomPanel_draw(LauncherState &st, LauncherAction &out) {
                       "Provide your own legally-dumped GoldenEye 007 cartridge (.z64 / .n64 / .v64).");
     ensureScan();
 
+    // First-run welcome: with no remembered ROM, the very first launch lands here.
+    // Greet the player and set expectations before the picker (vanishes once a ROM
+    // is chosen, so it never nags returning users).
+    if (!st.romPath[0]) {
+        ImGui::PushFont(AppTheme::fonts().title);
+        ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::accent());
+        ImGui::TextUnformatted("Welcome to MGB64");
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ui::Gap(ui::kGapXS);
+        ImGui::TextWrapped(
+            "A faithful native port of GoldenEye 007. It ships no game data \xE2\x80\x94 bring "
+            "your own legally-dumped cartridge and MGB64 remembers it for next time. Use any "
+            "option below: pick a detected ROM, browse in app, choose a file, or drag one "
+            "onto the window.");
+        ui::Gap(ui::kGapM);
+    }
+
     // Picker actions. Native dialog for mouse/desktop; the in-app browser is the
     // controller/touch path (NFD can't be driven by a gamepad).
     if (ImGui::Button(st.romPath[0] ? "Change ROM..." : "Choose ROM...", ui::kBtnSecondary())) {
