@@ -1,6 +1,19 @@
 # Post-boot in-game UX — design spec (DRAFT for review)
 
-**Date:** 2026-07-12 · **Status:** DRAFT — awaiting owner approval before implementation.
+**Date:** 2026-07-12 · **Status:** APPROVED (owner decisions recorded below) — ready for planning.
+
+**Owner decisions (2026-07-12):**
+- **Settings apply model → full STAGING.** Edits go to a staged copy; nothing touches the running
+  game until **Apply** (commit staged → live + `ge007.ini`) or **Resume** (apply + close); **Cancel/
+  Back** discards. FOV/Sensitivity get an optional **live Preview** while hovering (reverts unless
+  Applied).
+- **Menu ownership → UNIFY.** **Start** opens ONE system overlay: **Resume · Settings ·
+  Watch/Inventory · Quit**. The retail watch (weapon select, gadgets, objectives) is reached via the
+  overlay's **Watch/Inventory** entry (the overlay delegates to the engine watch, preserving its
+  diegetic rendering); the F1/Back toggle remains as an alternate opener and becomes rebindable.
+- **Scope → polish + menu convergence** (the ambitious path): fullscreen (done) + staging + button
+  glyphs + rebindable toggle + FPS quick-toggle + the unified Start menu.
+
 **Scope:** everything that happens *after* the game boots out of the launcher — window/fullscreen
 behavior, pausing, the settings/overlay experience, quick toggles (FPS), and full parity between
 keyboard/mouse and controller. Explicitly **not** the retail in-fiction watch menu's gameplay
@@ -138,18 +151,24 @@ fullscreen → game fullscreen; explicit user choice always wins. *(Alternative:
 `Video.WindowMode` to `borderless` for everyone — simpler but changes the default for windowed
 users. Recommendation: the inherit approach.)*
 
-### 5.2 Pause = the hub (mostly done — refine, don't rebuild)
-The overlay **already is** a pause hub (Resume/Settings/Return/Quit, freezes solo, pad-navigable).
-The refinements: (a) rename/re-order to a clear **Resume · Settings · Restart mission · Return to
-Launcher · Quit** and add **Restart mission** if missing; (b) resolve the button story below.
-**[DECISION B — button ownership]** Today: **Start → retail watch** (diegetic; weapon select,
-objectives), **F1 / Back-View → modern overlay** (system). Modern players reach for **Start** to get
-a system pause menu, so this split can feel wrong. Options: **(B1, rec.)** keep the split but make
-the overlay toggle **rebindable** and clearly documented, and add a first-run hint ("Back/View =
-menu, Start = watch"); **(B2)** make **Start** open the system overlay and move the retail watch to
-**Select/Back** (more conventional, but retrains muscle memory and touches the engine's Start
-handling); **(B3)** unify — the system overlay gains a "Watch/Inventory" entry and Start opens the
-overlay (largest change). Rec: **B1 for this release**, B2/B3 tracked for later.
+### 5.2 Pause = ONE unified hub (owner chose unify / B3)
+**Start opens the system overlay** with **Resume · Settings · Watch/Inventory · Quit** (Return to
+launcher lives under Quit or as its own row). The overlay is the single post-boot menu.
+- **Delegation to the retail watch.** "Watch/Inventory" does not re-implement the diegetic watch; it
+  **raises the engine's existing watch** (weapon select, gadgets, objectives — `mp_watch.c`) so its
+  authentic rendering/behavior is preserved. The overlay is the *shell*; the watch is a *page* it
+  opens.
+- **Start rerouting.** Today Start → engine watch directly (`mp_watch.c:625`); F1/Back → overlay.
+  New: **Start → overlay** (the modern hub); the overlay's Watch/Inventory entry → the engine watch.
+  F1/Back remain as alternate openers and become **rebindable** (§5.5). Needs care where the engine
+  consumes Start (`mp_watch.c`, and the split-screen P1-instance filtering in `ui_overlay.cpp:79`).
+- **Unified pause state.** Both the overlay and the watch already zero `g_ClockTimer` independently
+  (§3); unify so the overlay-open pause and the watch pause are one coherent solo-freeze (no
+  double-handling), MP unchanged (never pauses). Verify the stall-watchdog + resume-edge latch still
+  hold across the overlay→watch→overlay path.
+- **Risk note.** This is the highest-risk piece (touches diegetic gameplay input). It ships behind
+  the existing overlay infrastructure and must be gameplay-tested on both input devices; keep the
+  old F1/Back opener working throughout so there's always a way in.
 
 ### 5.3 Settings **apply model** (the real fix for problem #2)
 Root cause (§3): controls write **straight into live globals**, per-keystroke, no staging. Design a
@@ -184,9 +203,9 @@ The overlay is already fully pad-navigable, so this is **polish, not plumbing**:
 - Netplay/MP pause semantics (this is solo pause; MP keeps running).
 - Cosmetic theming of the overlay beyond legibility + hints.
 
-## 7. Open decisions for the owner
-- **[DECISION A]** Window inheritance vs. defaulting `Video.WindowMode=borderless`. *(Rec: inherit.)*
-- **[DECISION B]** Controller button for the pause hub + how it coexists with the retail watch menu.
-- **[DECISION C]** How aggressively to converge the two menu systems now vs. later (minimal: pause
-  hub wraps the existing overlay; maximal: unify watch+system menus). *(Rec: minimal for this
-  release.)*
+## 7. Decisions — RESOLVED (see "Owner decisions" at top)
+- **A (window)** → inherit the launcher's fullscreen. **DONE** (`platform_sdl.c`, committed `2fe7cfc`).
+- **B (menu ownership)** → **unify**: Start opens one overlay (Resume/Settings/Watch·Inventory/Quit),
+  delegating to the engine watch (§5.2).
+- **C (scope)** → polish **+** menu convergence (the ambitious path).
+- **Settings apply** → full **staging** with optional live-preview for FOV/sensitivity (§5.3).
