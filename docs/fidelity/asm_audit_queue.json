@@ -7120,9 +7120,9 @@
         "body_start": null,
         "body_end": 3765
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ModelNode matrix processor (euler-angle variant). parent_mtx via modelFindNodeMtx or arg0 unk_matrix; main set_position_and_rotation_around_xyz then multiply_homogeneous into base index_e pos matches 7F06D8B0-D958. The 0x100 half-quat block (set_rotation_around_xyzf, 7F05BC68 at 0.5, to_transform_matrix) and 0x200 scale block (angle halved about PI, set_rotation_around_y, 7F05A9E0 else 1.5, column-3 mult, set_position, conditional multiply) match 7F06D99C-DB58 branch-for-branch incl delay-slot reuse. g_aimBoneCallback replaces raw D_80036090 hook; portTraceGuardMatrixWrite inert; both NATIVE_PORT only.",
+      "reviewed_ts": "2026-07-12T06:59:22Z",
       "rank": 262,
       "rank_score": 171,
       "rank_reason": "bulk-last 171i"
@@ -7147,9 +7147,9 @@
         "body_start": null,
         "body_end": 4075
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ModelNode matrix processor (quaternion variant). Main uses quaternion_to_transform_matrix(data, quat, ...) matching 7F06DBDC-DC44; 0x200 block computes angle = acosf(quat0)*2 via jal acosf then add.s f0,f0 (x+x equals x*2.0 exactly in IEEE) matching 7F06DCF0-DCFC. Half-quat 0x100 block and scale block identical to the 7F06D8B0 sibling. g_aimBoneCallback plus portTraceGuard NATIVE_PORT only.",
+      "reviewed_ts": "2026-07-12T06:59:22Z",
       "rank": 263,
       "rank_score": 170,
       "rank_reason": "bulk-last 170i"
@@ -7174,9 +7174,9 @@
         "body_start": null,
         "body_end": 17987
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0120",
+      "note": "S5 batch 22 rank 264: stan-branch omits retail firststaninroom NULL guard (retail returns early at 7F0B939C when firststaninroom[room] is 0; port bg.c:18130-18144 only gates on room >= dword_CODE_bss_8007B9DC). Stan arithmetic and the geometry BE vertex min/max scan otherwise match instruction-for-instruction. See FID-0120.",
+      "reviewed_ts": "2026-07-12T06:59:22Z",
       "rank": 264,
       "rank_score": 168,
       "rank_reason": "bulk-last 168i"
@@ -7201,9 +7201,9 @@
         "body_start": 4884,
         "body_end": 4974
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ModelNode matrix processor (scalar rotation-around-y variant, 4th arg f32 value in f20). parent_mtx select then set_position_and_rotation_around_y into base index_e pos matches 7F06E2B8-E384. The combined has_bit8-or-has_bit9 value-halving block re-reads has_bit9 = opcode and 0x200 inside the if (andi at 7F06E3B4), and set_rotation_around_y receives value through the beqz delay-slot mov.s f12,f20 in both parent branches; both subtleties reproduced. Scale block (>= PI fold, 7F05A9E0 else 1.5, column-3 mult, set_position, conditional multiply) matches 7F06E464-E528. portTraceGuard NATIVE_PORT only.",
+      "reviewed_ts": "2026-07-12T06:59:38Z",
       "rank": 265,
       "rank_score": 162,
       "rank_reason": "bulk-last 162i"
@@ -7228,9 +7228,9 @@
         "body_start": null,
         "body_end": 7648
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "8-corner 6-plane room AABB frustum cull. NATIVE_PORT body re-derives 7F0B5208 register-for-register: maxZ = zrange1 / mCurrentLevelVisibilityScale, 8 corners via corner_idx bit pattern selecting minbounds when bit set else maxbounds, 7F0B5488 projects (returns 1 if behind). Counters far=s1 left=s2 right=s3 top=s4 bottom=s5 behind=s6. Front branch (5300-538C) bumps far/left/right/top/bottom conditionally plus behind unconditionally; behind branch (5390-5418) uses inverted else-if comparisons and omits behind. Return 0 if any count equals 8 else 1 matches 542C-5460 same short-circuit order. The return-1 stub is dead (FID-0010 refuted); this NONMATCHING plus NATIVE_PORT body is live.",
+      "reviewed_ts": "2026-07-12T06:59:38Z",
       "rank": 266,
       "rank_score": 160,
       "rank_reason": "bulk-last 160i"
@@ -7255,9 +7255,9 @@
         "body_start": null,
         "body_end": 18475
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "portal plane-normal plus min/max dot. NATIVE_PORT re-derives 7F0B96CC: edge1 = pts0..2 minus pts3..5 and edge2 = pts6..8 minus pts3..5 via two unrolled subtract loops (970C-974C, 9768-97A4), cross-product nx/ny/nz stored to arg1 normal as scratch (97A8-9808), mag = sqrtf(nx2+ny2+nz2) with invmag = 1/mag or mag when zero (983C-985C), normal scaled in place. Dot loop over numPoints (byte at portal 0, pts at portal+4, 12-byte stride) seeds FLT_MAX and -FLT_MAX (D_80058D54/58), writes arg1 min at 0xc and max at 0x10 (98C8-9924). Dot terms differ by IEEE-commutative reassociation only.",
+      "reviewed_ts": "2026-07-12T06:59:38Z",
       "rank": 267,
       "rank_score": 156,
       "rank_reason": "bulk-last 156i"
@@ -7282,9 +7282,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:PC room model loader -- full NATIVE_PORT architectural reimplementation. Retail 7F0B6368 loads compressed room vertex/DL binaries from ROM into fixed N64 memory banks; the port at bg.c:10020-10208 malloc's PC_ROOM_LOAD_BUF_SIZE buffers, decompresses via 7F0B5FAC/609C/61DC, registers big-endian N64 DL regions for the GBI translator, then applies CCRM LUT fog rewrites and light-fixture repopulation. Memory-model divergence is intentional and not instruction-diffable. Retest if a room-load-side-effect oracle is authored.",
+      "note": "PC room model loader -- full NATIVE_PORT architectural reimplementation. Retail 7F0B6368 loads compressed room vertex/DL binaries from ROM into fixed N64 memory banks; the port at bg.c:10020-10208 malloc's PC_ROOM_LOAD_BUF_SIZE buffers, decompresses via 7F0B5FAC/609C/61DC, registers big-endian N64 DL regions for the GBI translator, then applies CCRM LUT fog rewrites and light-fixture repopulation. Memory-model divergence is intentional and not instruction-diffable. Retest if a room-load-side-effect oracle is authored.",
+      "reviewed_ts": "2026-07-12T06:59:52Z",
       "rank": 268,
       "rank_score": 151,
       "rank_reason": "bulk-last 151i"
@@ -7309,9 +7309,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Same symbol as rank 268 -- the LEFTOVERDEBUG vs non-debug ASM sibling pair both map to the single NATIVE_PORT room-loader reimplementation at bg.c:10020-10208 (malloc buffers plus DL-region registration vs N64 memory-bank ROM load). Memory-model divergence, not instruction-diffable. Retest if a room-load-side-effect oracle is authored.",
+      "note": "Same symbol as rank 268 -- the LEFTOVERDEBUG vs non-debug ASM sibling pair both map to the single NATIVE_PORT room-loader reimplementation at bg.c:10020-10208 (malloc buffers plus DL-region registration vs N64 memory-bank ROM load). Memory-model divergence, not instruction-diffable. Retest if a room-load-side-effect oracle is authored.",
+      "reviewed_ts": "2026-07-12T06:59:53Z",
       "rank": 269,
       "rank_score": 151,
       "rank_reason": "bulk-last 151i"
@@ -7336,9 +7336,9 @@
         "body_start": 3263,
         "body_end": 3333
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ModelRwData header-record position update. modelGetNodeRwData then early-out if unk00 != 0; target = unk34, unk14 = unk30; when model unk2c != 0 and rwdata unk01 != 0 does interpolate3dVectors(&target, unk24, unk2c) and unk14 = 7F06D0CC(unk30, unk20, unk2c); when model anim2 or unk84 nonzero and rwdata unk02 != 0 blends target.y toward unk4c.y (optionally toward unk40.y by unk5c) by unk84. local_pos = target; optional model unka0 callback(model, rwdata pos, local_pos, rwdata ground) early-outs on 0; then delta = local_pos minus target, writes pos (y plus ground), unk34 plus delta, and unk01/unk02-gated unk24/unk4c/unk40 plus delta. Field offsets and branches match 7F06D490-D6A0 exact; no NATIVE_PORT delta.",
+      "reviewed_ts": "2026-07-12T06:59:53Z",
       "rank": 270,
       "rank_score": 136,
       "rank_reason": "bulk-last 136i"
@@ -7363,9 +7363,9 @@
         "body_start": null,
         "body_end": 4732
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ModelNode type-02 animated position node. data = node Data, skeleton = model obj Skeleton; reads the D_80036094 block into local_pos (native reads the three adjacent globals separately as a PC-redzone contiguity workaround equal to the N64 12-byte memcpy). Calls 7F06DEC0(node 0xC u16, model gunhand, skeleton, model anim, model unk34, local_pos); when unk2c != 0 a second decode into pos2 with unk38 then 7F06D160 blend; branches on unk84 == 0 to 7F06D8B0(local_pos) else decodes pos3 (unk25/anim2/unk64), optional pos4 (unk68) blend by unk5c, quaternion set/ensure-shortest/slerp by unk84, then 7F06DB5C(result_quat). Call args and c.eq.s branches match 7F06E0A0-E2B4. NATIVE_PORT anim/skeleton NULL early-outs guard inputs that would crash retail; default path identical.",
+      "reviewed_ts": "2026-07-12T07:00:09Z",
       "rank": 271,
       "rank_score": 134,
       "rank_reason": "bulk-last 134i"
@@ -7390,9 +7390,9 @@
         "body_start": 4383,
         "body_end": 4482
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "animation bit-field decoder to 3 euler floats. nbits = info_ptr byte 6; entry_offset from entries + index times 6 plus (flag ? 4 : 2), bit_offset = entry_offset times nbits; three 7F06DE04 bit reads at bit_offset incremented by nbits each. out0 = u16 val0 times 6.2831855 / 65536; when flag != 0, out1/out2 use 0x10000 minus val when nonzero else 0; when flag == 0 they use the u16 val directly. Matches 7F06DEC0-E098 incl the bgez u32-to-f32 fixups (no-op for u16 range). NATIVE_PORT NULL/joint-index/OOB-read guards only trip on inputs that would crash retail; entries via skel Joints equals anim_header plus 4; default path identical.",
+      "reviewed_ts": "2026-07-12T07:00:09Z",
       "rank": 272,
       "rank_score": 120,
       "rank_reason": "bulk-last 120i"
@@ -7417,9 +7417,9 @@
         "body_start": null,
         "body_end": 804
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:full NATIVE_PORT architectural reimplementation. Retail 7F06C094 manages a fixed 32-byte-per-slot Model pool (ptr_allocation_1): scans for a free slot (slot 8 field is 0) or allocates 32 bytes via mempAllocBytesInBank, allocates rwdata sized numRecords times 4 aligned to 16 from a bank, then modelInit and writes the saved OISAVESIZE index to slot 2. The port at model.c:766-794 instead calloc's an individual 248-byte pointer-expanded Model and a 2x-sized rwdata array with no pool reuse, because the expanded struct cannot fit the N64 32-byte slot. Documented memory/pointer-size divergence, not instruction-diffable. Retest if a model-pool-reuse oracle is authored.",
+      "note": "full NATIVE_PORT architectural reimplementation. Retail 7F06C094 manages a fixed 32-byte-per-slot Model pool (ptr_allocation_1): scans for a free slot (slot 8 field is 0) or allocates 32 bytes via mempAllocBytesInBank, allocates rwdata sized numRecords times 4 aligned to 16 from a bank, then modelInit and writes the saved OISAVESIZE index to slot 2. The port at model.c:766-794 instead calloc's an individual 248-byte pointer-expanded Model and a 2x-sized rwdata array with no pool reuse, because the expanded struct cannot fit the N64 32-byte slot. Documented memory/pointer-size divergence, not instruction-diffable. Retest if a model-pool-reuse oracle is authored.",
+      "reviewed_ts": "2026-07-12T07:00:09Z",
       "rank": 273,
       "rank_score": 104,
       "rank_reason": "bulk-last 104i"
@@ -7444,9 +7444,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "room-admit bookkeeping (adds or merges a room into the drawn list). Authority is the LEFTOVERDEBUG ASM sibling at 7F0B39BC since the build defines LEFTOVERDEBUG: entry stride 0x1c with roomid s32 at 0, unk1 s32 at 4, bbox at 8, next word at 0x18, and NO entry clamp. The NATIVE_PORT C at bg.c:3716-3818 matches this dword_CODE_bss_8007FFA0 layout: room_rendered=1, return 0 if room_loaded_mask set, merge path does unk1 max then 7F0B5CC0 then overwrites bbox from src and ORs next returning old next, add path appends and bumps g_BgNumberOfRoomsDrawn. The non-debug sibling at 7F0B2C7C uses byte/s16 fields with a 120-entry clamp and is NOT the port authority. Default bbox_src equals the screensize arg matching a2; the GE007_INTRO_FULLSCREEN_BBOX forced bbox and trace logging are default-off NATIVE_PORT diagnostics keeping the default path byte-identical.",
+      "reviewed_ts": "2026-07-12T07:00:35Z",
       "rank": 274,
       "rank_score": 94,
       "rank_reason": "bulk-last 94i"

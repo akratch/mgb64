@@ -1,0 +1,25 @@
+{
+  "id": "FID-0120",
+  "title": "bgRoomCalcBB stan-branch omits retail firststaninroom NULL guard",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B9338 (bgRoomCalcBB) stan branch 7F0B9374-7F0B93A0: retail returns early on BOTH conditions -- room >= dword_CODE_bss_8007B9DC (slt at 7F0B9384 then beqz at 7F0B9388) AND firststaninroom[room] equals 0 (lw firststaninroom at 7F0B9390 then beqz at 7F0B939C). The non-native decomp reference at bg.c:18207 confirms the retail gate is room < bound AND firststaninroom[room] != NULL. The NATIVE_PORT C body at bg.c:18130-18144 checks only room >= dword_CODE_bss_8007B9DC and then unconditionally reads stan_room_bbox[room] to write ri minbounds/maxbounds and rdata pos. The firststaninroom NULL guard is missing, so a room with pPointTableBin == 0, firststaninroom[room] == NULL, and index below the bound gets bounds+position from stale stan_room_bbox data instead of being left untouched as retail does."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T06:57:52Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B9338 (bgRoomCalcBB) stan branch 7F0B9374-7F0B93A0: retail returns early on BOTH conditions -- room >= dword_CODE_bss_8007B9DC (slt at 7F0B9384 then beqz at 7F0B9388) AND firststaninroom[room] equals 0 (lw firststaninroom at 7F0B9390 then beqz at 7F0B939C). The non-native decomp reference at bg.c:18207 confirms the retail gate is room < bound AND firststaninroom[room] != NULL. The NATIVE_PORT C body at bg.c:18130-18144 checks only room >= dword_CODE_bss_8007B9DC and then unconditionally reads stan_room_bbox[room] to write ri minbounds/maxbounds and rdata pos. The firststaninroom NULL guard is missing, so a room with pPointTableBin == 0, firststaninroom[room] == NULL, and index below the bound gets bounds+position from stale stan_room_bbox data instead of being left untouched as retail does.",
+      "note": "S5 ASM audit batch 22 rank 264. Stan-branch arithmetic (min/max store at g_BgRoomInfo offset 0x38 and 0x44, signed mid = bmin+bmax rounded toward zero via bgez sra, rdata pos write at offset 0xc) and the geometry branch (big-endian-adapted 16-byte vertex min/max scan seeded 32767/-32767, minbounds/maxbounds = pos + mins/maxs, was_loaded delete_room_data unwind) both match retail instruction-for-instruction. Sole reachable divergence is the dropped firststaninroom NULL guard. Secondary defensive difference: the port usize<=0 path writes minbounds=-32767 maxbounds=+32767 then returns, whereas retail falls through to write pos + inverted seed bounds -- unreachable when a geometry room actually has vertex data. Retest with a room-bounds oracle over a stan-less geometry-less room."
+    }
+  ]
+}
