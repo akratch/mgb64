@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1051 flags** found across the source.
+**1052 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -562,6 +562,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
 | `GE007_NO_A2C` | ? |  | 2 |  |
 | `GE007_NO_AMMO_ICON_ANCHOR_FIX` | presence | unset | 1 | Restore the pre-fix HUD ammo-icon anchor (floor(h/2) px off) and left dual-wield icon mirroring [FID-0067] |
+| `GE007_NO_ANIMFRAME2_ROOTFLAG_FIX` | presence | unset | 1 | Restore the legacy read of rwdata->unk02 (offset 2) for the modelSetAnimFrame2WithChrStuff root-motion seed flag; the fix reads the retail rwdata->unk01 (offset 1) [FID-0117] |
 | `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | presence | unset | 1 | Restore the legacy (buggy) pistol grouping for the AUTOSHOT bullet type [FID-0052] |
 | `GE007_NO_BOND_BODY_FIX` | presence | unset | 1 | Revert the intro/outro Bond body to its original invisible behaviour (default ON) |
 | `GE007_NO_CAMERA_SEED_FIX` | presence | unset | 1 | Disable the detached-authored-camera visibility BFS seed (default ON) [D42/T14] |

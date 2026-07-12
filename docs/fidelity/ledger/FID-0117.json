@@ -1,27 +1,71 @@
 {
- "id": "FID-0117",
- "title": "modelSetAnimFrame2WithChrStuff seeds root-motion flag from unk02 (offset 2) instead of retail unk01 (offset 1)",
- "class": "port-defect",
- "surface": "sim",
- "priority": "P2",
- "status": "discovered",
- "suspect": [
-  "src/game/model.c:7573"
- ],
- "repro": "Compare ASM 7F0702EC (lb 1(v0)) and 7F06FC20 setter (sb t0,1(s0) = unk01=1 in modelSetAnimation2) against C save_unk01 read in modelSetAnimFrame2WithChrStuff",
- "evidence": [
-  {
-   "kind": "asm-citation",
-   "path": "src/game/model.c ASM 7F0702EC lb t7,1(v0) stores rwdata+1 (unk01) into save_unk01 (sp+0x94); C model.c:7573 reads rwdata->unk02 (offset 2)"
-  }
- ],
- "history": [
-  {
-   "ts": "2026-07-12T02:38:17Z",
-   "from": "",
-   "to": "discovered",
-   "evidence": "src/game/model.c ASM 7F0702EC lb t7,1(v0) stores rwdata+1 (unk01) into save_unk01 (sp+0x94); C model.c:7573 reads rwdata->unk02 (offset 2)",
-   "note": "Root-motion accumulator flag divergence found during ASM audit batch 20 rank 241. Retail modelSetAnimFrame2WithChrStuff seeds its per-loop save_unk01 gate from rwdata->unk01 (struct modeldata_root byte offset 1, bondtypes.h:1480) via lb 1(v0) at VRAM 7F0702EC. The port reads rwdata->unk02 (byte offset 2) with an author comment mistakenly correcting the decomp. modelSetAnimation2 (rank 248) writes unk01=1 at offset 1 (ASM sb t0,1(s0) at 7F06FC20), so the setter and reader are meant to share offset 1; the port reader uses the wrong byte, so the first stepping-loop iteration mis-decides whether to sample root motion via sub_GAME_7F06D3F4 or reuse cached unk24 whenever unk01 and unk02 differ. Affects character root-motion accumulation on animation transitions. anim2 offset-2 accesses in the same function correctly match retail sb/lb 2(s0)."
-  }
- ]
+  "id": "FID-0117",
+  "title": "modelSetAnimFrame2WithChrStuff seeds root-motion flag from unk02 (offset 2) instead of retail unk01 (offset 1)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "landed",
+  "suspect": [
+    "src/game/model.c:7573"
+  ],
+  "repro": "Compare ASM 7F0702EC (lb 1(v0)) and 7F06FC20 setter (sb t0,1(s0) = unk01=1 in modelSetAnimation2) against C save_unk01 read in modelSetAnimFrame2WithChrStuff",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/model.c ASM 7F0702EC lb t7,1(v0) stores rwdata+1 (unk01) into save_unk01 (sp+0x94); C model.c:7573 reads rwdata->unk02 (offset 2)"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/model.c:7573 reads rwdata->unk02 (offset 2); ASM 7F0702EC reads offset 1."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/model.c:7573 ASM 7F0702EC lb 1(v0) stored to sp+0x94==save_unk01; flag written to unk01 (offset 1) by modelSetAnimation2 (6608/6635). unk02 is a separate live flag (6435/7859/7882/7902/14327)."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/model.c:7573 gated fix (GE007_NO_ANIMFRAME2_ROOTFLAG_FIX) reads rwdata->unk01."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/model.c:7573 reads rwdata->unk01 (default-ON). A/B: opt-out reproduces all 7 prior tape hashes byte-identically (tools/fidelity/tape_regression.sh) -> change isolated. Fix-ON re-baselined 5/7 tapes (character root-motion restored per retail); regression green fix-ON and fix-OFF."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T02:38:17Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/model.c ASM 7F0702EC lb t7,1(v0) stores rwdata+1 (unk01) into save_unk01 (sp+0x94); C model.c:7573 reads rwdata->unk02 (offset 2)",
+      "note": "Root-motion accumulator flag divergence found during ASM audit batch 20 rank 241. Retail modelSetAnimFrame2WithChrStuff seeds its per-loop save_unk01 gate from rwdata->unk01 (struct modeldata_root byte offset 1, bondtypes.h:1480) via lb 1(v0) at VRAM 7F0702EC. The port reads rwdata->unk02 (byte offset 2) with an author comment mistakenly correcting the decomp. modelSetAnimation2 (rank 248) writes unk01=1 at offset 1 (ASM sb t0,1(s0) at 7F06FC20), so the setter and reader are meant to share offset 1; the port reader uses the wrong byte, so the first stepping-loop iteration mis-decides whether to sample root motion via sub_GAME_7F06D3F4 or reuse cached unk24 whenever unk01 and unk02 differ. Affects character root-motion accumulation on animation transitions. anim2 offset-2 accesses in the same function correctly match retail sb/lb 2(s0)."
+    },
+    {
+      "ts": "2026-07-12T15:42:37Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/model.c:7573 reads rwdata->unk02 (offset 2); ASM 7F0702EC reads offset 1.",
+      "note": "offset bug"
+    },
+    {
+      "ts": "2026-07-12T15:42:37Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/model.c:7573 ASM 7F0702EC lb 1(v0) stored to sp+0x94==save_unk01; flag written to unk01 (offset 1) by modelSetAnimation2 (6608/6635). unk02 is a separate live flag (6435/7859/7882/7902/14327).",
+      "note": "setter/reader offset match"
+    },
+    {
+      "ts": "2026-07-12T15:42:37Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/model.c:7573 gated fix (GE007_NO_ANIMFRAME2_ROOTFLAG_FIX) reads rwdata->unk01.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T15:42:37Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/model.c:7573 reads rwdata->unk01 (default-ON). A/B: opt-out reproduces all 7 prior tape hashes byte-identically (tools/fidelity/tape_regression.sh) -> change isolated. Fix-ON re-baselined 5/7 tapes (character root-motion restored per retail); regression green fix-ON and fix-OFF.",
+      "note": "5 baselines re-recorded 2026-07-12 with A/B notes"
+    }
+  ]
 }

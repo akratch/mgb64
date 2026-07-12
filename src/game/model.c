@@ -21,6 +21,21 @@
 #include "othermodemicrocode.h"
 #include <ramrom.h>
 
+#ifdef NATIVE_PORT
+/* FID-0117: opt-out for the modelSetAnimFrame2WithChrStuff root-motion seed-flag offset fix. */
+extern int port_env_set(const char *name, const char *help);
+static int portNoAnimFrame2RootFlagFix(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_ANIMFRAME2_ROOTFLAG_FIX",
+                              "Restore the legacy read of rwdata->unk02 (offset 2) for the "
+                              "modelSetAnimFrame2WithChrStuff root-motion seed flag; the fix reads "
+                              "the retail rwdata->unk01 (offset 1) [FID-0117]");
+    }
+    return cached;
+}
+#endif
+
 // forward declarations
 
 void sub_GAME_7F06D490(struct Model *arg0, struct ModelNode *arg1);
@@ -7570,7 +7585,12 @@ void modelSetAnimFrame2WithChrStuff(Model *model, f32 frame1, f32 frame2, f32 fr
     save_unk24_y = rwdata->unk24.y;
     save_unk24_z = rwdata->unk24.z;
     save_unk20 = rwdata->unk20;
-    save_unk01 = rwdata->unk02; /* decomp said unk01, struct has unk02 at byte offset 2 */
+    /* FID-0117: read unk01 (offset 1), not unk02 (offset 2). The root-motion seed flag is
+     * WRITTEN to rwdata->unk01 by modelSetAnimation2 (model.c:6608/6635, sb 1(s0)) and retail
+     * READS offset 1 here (ASM 7F0702EC: lb $t7, 1($v0), v0==rwdata, stored to sp+0x94 ==
+     * save_unk01). The port read the wrong adjacent byte (unk02). Default-ON fix; the opt-out
+     * GE007_NO_ANIMFRAME2_ROOTFLAG_FIX restores the legacy read for A/B baseline verification. */
+    save_unk01 = portNoAnimFrame2RootFlagFix() ? rwdata->unk02 : rwdata->unk01;
     angle = rwdata->unk30;
 
     absSpeed = model->speed;
