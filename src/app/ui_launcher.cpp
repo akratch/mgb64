@@ -82,7 +82,7 @@ bool navButton(const char *label, bool selected) {
     return clicked;
 }
 
-void drawNavRail(int &active) {
+void drawNavRail(int &active, LauncherAction &action) {
     ImGui::BeginChild("##nav", ImVec2(ui::kNavWidth(), 0), true);
 
     ui::Gap(ui::kGapXS);
@@ -104,9 +104,22 @@ void drawNavRail(int &active) {
         if (active == i) ImGui::SetItemDefaultFocus();
     }
 
+    // Pin a Quit button + version line to the bottom of the rail. Quit is the
+    // only in-app exit on a handheld forced into borderless fullscreen (no window
+    // chrome), and it's controller-reachable here (a nav-focusable Button), unlike
+    // the OS window-close. Pre-boot, there's nothing to lose, so it exits directly.
+    const float quitH = 34.0f;
+    const float versionH = ImGui::GetTextLineHeight();
+    const float footerH = quitH + ui::kGapXS + versionH;
     float avail = ImGui::GetContentRegionAvail().y;
-    float vh = ImGui::GetFrameHeight();
-    if (avail > vh) ui::Gap(avail - vh);
+    if (avail > footerH) ui::Gap(avail - footerH);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
+    if (ImGui::Button("Quit", ImVec2(-FLT_MIN, quitH))) action.type = LauncherActionType::Quit;
+    ImGui::PopStyleVar();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit MGB64");
+    ui::Gap(ui::kGapXS);
+
     ImGui::PushFont(AppTheme::fonts().small);
     ui::TextSubtle("v%s \xE2\x80\xA2 GL", AppVersion());
     ImGui::PopFont();
@@ -169,7 +182,13 @@ LauncherAction Launcher::draw(AppHost &host) {
             }
         }
     }
-    RomPanel_ensureInit(state_);  // load remembered ROM regardless of active panel
+    // Load ALL persisted selections up front, regardless of the active panel, so
+    // Play from any tab honors the user's saved ROM, launch options, and mode/
+    // toggle choices (previously mode+launch state was only loaded if you visited
+    // those tabs, so a direct Play used struct defaults).
+    RomPanel_ensureInit(state_);
+    LaunchPanel_ensureInit(state_);
+    ModesPanel_ensureInit(state_);
 
     const ImGuiViewport *vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -183,7 +202,7 @@ LauncherAction Launcher::draw(AppHost &host) {
 
     drawUpdateBanner();
 
-    drawNavRail(active_);
+    drawNavRail(active_, action);
 
     ImGui::SameLine();
     ImGui::BeginChild("##content", ImVec2(0, 0), false);
@@ -191,6 +210,11 @@ LauncherAction Launcher::draw(AppHost &host) {
     if (active_ >= 0 && active_ < kNumPanels) {
         kPanels[active_].draw(state_, action);
     }
+    // A panel may request a tab switch (e.g. disabled-Play → Game ROM).
+    if (state_.requestTab >= 0 && state_.requestTab < kNumPanels) {
+        active_ = state_.requestTab;
+    }
+    state_.requestTab = -1;
     ImGui::EndChild();
 
     ImGui::End();

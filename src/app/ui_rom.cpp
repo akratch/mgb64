@@ -190,8 +190,10 @@ void RomPanel_draw(LauncherState &st, LauncherAction &out) {
         ImGui::TextUnformatted(baseName(st.romPath));
         ImGui::PopFont();
         ui::Gap(ui::kGapXS);
+        // Lead with a status WORD so validity reads without relying on the card
+        // color alone (colorblind accessibility). Em-dash is already font-safe here.
         ImGui::PushStyleColor(ImGuiCol_Text, mark);
-        ImGui::TextWrapped("%s", st.romInfo.message);
+        ImGui::TextWrapped("%s \xE2\x80\x94 %s", ok ? "Ready" : "Problem", st.romInfo.message);
         ImGui::PopStyleColor();
         ui::Gap(ui::kGapXS);
         ImGui::PushFont(AppTheme::fonts().small);

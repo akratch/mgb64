@@ -27,6 +27,7 @@ struct LauncherState {
     int     launchDifficulty = 0;   // 0=Agent, 1=Secret Agent, 2=00 Agent
     bool    launchMultiplayer = false;
     int     launchPlayers = 2;      // 2..4
+    bool    launchInitialized = false;  // launch options loaded from AppConfig
 
     // Modes & Toggles.
     int     modePreset = 0;         // 0=Custom, 1=faithful, 2=faithful-hd, 3=remaster
@@ -34,6 +35,10 @@ struct LauncherState {
     bool    autoAim = true;         // GE007_AUTO_AIM (engine default ON)
     char    advancedEnv[2048] = {0};
     bool    modesInitialized = false;
+
+    // A panel can request the shell switch tabs (e.g. the disabled-Play hint
+    // jumping to Game ROM). -1 = no request; the shell consumes it after drawing.
+    int     requestTab = -1;
 };
 
 // Panels (implemented in ui_rom.cpp / ui_launch.cpp / ui_launcher.cpp).
@@ -41,6 +46,7 @@ void RomPanel_ensureInit(LauncherState &s);                     // load remember
 void RomPanel_draw(LauncherState &s, LauncherAction &out);
 void RomPanel_setRom(LauncherState &s, const char *path);       // drag-and-drop entry (validates)
 void LaunchPanel_draw(LauncherState &s, LauncherAction &out);
+void LaunchPanel_ensureInit(LauncherState &s);                  // load persisted launch options
 void ModesPanel_draw(LauncherState &s, LauncherAction &out);
 void ModesPanel_ensureInit(LauncherState &s);                   // load persisted mode selections
 void applyModeEnv(const LauncherState &s);                      // setenv hatches + advanced (on Play)
