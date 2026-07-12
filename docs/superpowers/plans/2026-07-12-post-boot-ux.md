@@ -1,5 +1,14 @@
 # Post-boot In-Game UX — Implementation Plan
 
+> **STATUS (2026-07-12):** Phases 1–4 **LANDED** on `dev/post-v0.4.0-backlog`
+> (F10 hotkey, rebindable toggles, device-aware hints, settings staging + Preview
+> + `test_config_staging`, Apply/Cancel/Resume wiring). Windows in-game fullscreen
+> fix landed earlier on the same branch. **Phase 5 (Start → unified hub) DEFERRED**
+> — it is engine-sim/determinism-sensitive and gated on owner both-device gameplay
+> (tape guard + `GE007_LEGACY_START_WATCH` A/B). See the review dossier
+> `docs/superpowers/reviews/2026-07-12-post-boot-ux-review.md` for the full landed
+> list and the deferred engine-sim backlog.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the post-boot experience feel like a real game — a single Start-driven pause hub, settings that stage-then-apply (never mutate the live game mid-drag), device-aware button hints, a rebindable menu toggle, a quick FPS-overlay hotkey, and the in-game window inheriting the launcher's fullscreen (already landed).
