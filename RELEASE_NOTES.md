@@ -1,5 +1,28 @@
 # Release Notes
 
+## v0.4.0 — the faithful 0.4 release
+
+> **Stable release.** v0.4.0 promotes the v0.4.0-alpha series to the actual
+> "Latest" build. Everything from the alphas (below) ships here, plus a final
+> faithfulness and release-hygiene pass. Still bring-your-own-ROM. The macOS
+> `.app` is unsigned — on first launch, **right-click → Open** to pass
+> Gatekeeper (Apple notarization is deferred).
+
+- 🎯 **The faithfulness sweep lands.** A large batch of accuracy fixes validated
+  against a stock-ROM reference — authentic weapon and guard fire cadence, the
+  Automatic Shotgun behaving as a shotgun, remote-mine detonation and correct
+  ammo crates, watch/HUD tint/scroll/aspect corrections, a radial movement
+  deadzone, the Silo sky-leak sealed, and clean audio at uncapped frame rates,
+  among others.
+- 🕹️ **Everything from the v0.4.0 alphas.** Authentic full-auto fire on by
+  default, Rumble, real single-player pause, keyboard-free ROM selection,
+  friendlier settings, a bundled controller database, handheld readability, and
+  a PortMaster/GLES build target. See the alpha notes below for detail.
+- 🧹 **Release hygiene.** Ejected shell casings use a well-defined color path,
+  the image-diff regression checks skip cleanly without Pillow, and the public
+  docs (prebuilt availability, macOS build/arch, internal-doc boundaries) are
+  brought current.
+
 ## v0.4.0-alpha.3 — faithful fire, rumble, solo pause, handheld polish (pre-release)
 
 > **Pre-release.** The v0.4.0 alpha series is an in-progress preview on the road

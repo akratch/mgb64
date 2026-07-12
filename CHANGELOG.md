@@ -9,11 +9,20 @@ Detailed, narrative notes for each released version live in
 
 ## [Unreleased]
 
-_Post-alpha.3 development toward v0.4.0; not yet in a tagged release._
+## [0.4.0] - 2026-07-12
 
+Promotes the `0.4.0-alpha.1`–`alpha.3` pre-release line (detailed below) to the
+first stable **v0.4.0** — the new "Latest" release. On top of the alpha content:
+
+### Fixed
 - Continued faithfulness/accuracy hardening validated against a stock-ROM
-  reference (weapons, guard AI, patrols, projectiles, and visibility), plus
-  further settings/help-text polish and documentation-currency work.
+  reference (weapons, guard AI, patrols, projectiles, visibility, and watch/HUD).
+- Ejected shell casings render with the correct tint via a well-defined color
+  path.
+- The two image-diff regression checks skip cleanly when Pillow is absent, so a
+  fresh macOS checkout no longer sees spurious test failures.
+- Documentation currency: prebuilt-download availability, macOS build/arch
+  notes, and internal-doc boundaries corrected.
 
 ## [0.4.0-alpha.3] - 2026-07-10
 
