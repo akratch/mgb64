@@ -374,6 +374,7 @@ f32 g_pcSunShadowBias = 0.0015f;  /* W1.E3.T4: receiver depth-compare bias (pete
 f32 g_pcSunShadowUmbra = 0.55f;   /* W1.E3.T4: shadowed-surface darkening (1.0 = no darken, 0 = black). */
 s32 g_pcPerPixelLight = 0;       /* W1.E4: default OFF (identity-first). Per-pixel geometric-normal (dFdx) directional sun on room surfaces; supersedes E1 CPU relight when on. */
 s32 g_pcSceneDecor = 0;          /* W9: default OFF (identity-first). Render-only imported 3D models over the untouched sim (decor_native.c). */
+s32 g_pcFontUpscale = 3;         /* M4.1: Video.FontUpscale — HUD/menu glyph supersample factor (1-8, default 3). GE007_FONT_UPSCALE overrides via the settings env path. */
 char g_pcSceneDecorDir[1024] = "assets/decor"; /* Video.SceneDecorDir: per-level <slug>.decor.txt manifests + glTF models. */
 f32 g_pcViewmodelFov = 50.0f;    /* remaster default: weapon rendered at a fixed reference FOV (matches the 50deg world default) regardless of world FOV so the gun does not stretch at wide FOV. 0.0 = follow world FOV (vanilla coupling, A/B identity). */
 s32 g_pcGradePresets = 1;        /* remaster default: on (subtle per-level mood grade atop the global grade) */
@@ -2012,6 +2013,12 @@ void platformRegisterConfig(void)
                           "Env relight blend",
                           "Strength of the smooth-normal relight: 0 keeps the baked luma, 1 fully "
                           "replaces it with the recomputed Lambert (seam fix vs authored mood dial).");
+    settingsRegisterInt("Video.FontUpscale", &g_pcFontUpscale, 3, 1, 8,
+                        SETTING_SCOPE_RESTART, "GE007_FONT_UPSCALE",
+                        "--config-override Video.FontUpscale=VALUE",
+                        "Font upscale",
+                        "Supersample factor for HUD and menu text glyphs (1-8). Higher is sharper "
+                        "at more GPU cost; 3 is the faithful default. Takes effect on restart.");
     settingsRegisterInt("Video.SunShadow", &g_pcSunShadow, 0, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_SUN_SHADOW",
                         "--config-override Video.SunShadow=VALUE",

@@ -4452,6 +4452,7 @@ struct GfxDimensions gfx_current_dimensions;
 extern float g_pcFogDensity; /* GE007_FOG_DENSITY: cosmetic haze multiplier (1.0 = identity, AI-neutral) */
 extern int   g_pcEnvSmoothNormals; /* Video.EnvSmoothNormals — smooth-normal room relight */
 extern float g_pcSunShadowRadius;  /* Video.SunShadowRadius — camera-centered ortho half-extent */
+extern int   g_pcFontUpscale;      /* Video.FontUpscale — HUD/menu glyph supersample factor (1-8) */
 
 static float gfx_clamped_render_scale(void) {
     /* NaN (e.g. GE007_RENDER_SCALE=nan) compares false in both branches below,
@@ -14987,12 +14988,12 @@ static int gfx_font_upscale_factor(void)
     static int cached = -1;
 
     if (cached < 0) {
-        const char *env = getenv("GE007_FONT_UPSCALE");
-        /* Three source-filtered sub-samples are the closest current match for
-         * N64 menu font coverage: 2026-06-17 validation sweeps improved both
-         * five-route menu reference metrics and glyph-mask text metrics versus
-         * the older 4x default. Keep the env override for diagnostics. */
-        cached = env != NULL ? atoi(env) : 3;
+        /* Video.FontUpscale (registered in platformRegisterConfig); GE007_FONT_UPSCALE
+         * still overrides it through the settings env path. Three source-filtered
+         * sub-samples are the closest current match for N64 menu font coverage:
+         * 2026-06-17 validation sweeps improved both five-route menu reference metrics
+         * and glyph-mask text metrics versus the older 4x default. */
+        cached = g_pcFontUpscale;
         if (cached < 1) {
             cached = 1;
         } else if (cached > 8) {

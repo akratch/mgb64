@@ -440,7 +440,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_FONT_ALPHA_CUTOFF` | ? |  | 1 |  |
 | `GE007_FONT_ALPHA_WHITE_POINT` | ? |  | 1 |  |
 | `GE007_FONT_POINT` | ? |  | 1 |  |
-| `GE007_FONT_UPSCALE` | ? |  | 1 |  |
+| `GE007_FONT_UPSCALE` | int | 3 | 1 | Supersample factor for HUD and menu text glyphs (1-8). Higher is sharper at more GPU cost; 3 is the faithful default. Takes effect on restart. |
 | `GE007_FORCE_ADMIT_ROOMS` | ? |  | 1 |  |
 | `GE007_FORCE_ALL_ROOMS` | ? |  | 1 |  |
 | `GE007_FORCE_CURRENT_ROOM` | ? |  | 1 |  |

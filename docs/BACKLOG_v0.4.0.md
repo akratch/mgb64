@@ -1002,9 +1002,10 @@ true crispness, and languages.
 **P1 · S — highest value-per-hour in the milestone**
 The F1 overlay auto-renders every schema key (`src/app/ui_settings.cpp:63`), so each of
 these is one `settingsRegister*` call plus replacing the `getenv` read:
-- [ ] `Video.FontUpscale` (1–8, default 3) ← `GE007_FONT_UPSCALE` (`gfx_pc.c:14959`);
-      also `FontAlphaCutoff`/`FontWhitePoint`/`FontPoint` (`:14991/:15008/:14980`) if
-      they prove player-meaningful.
+- [x] `Video.FontUpscale` (1–8, default 3) ← `GE007_FONT_UPSCALE` — **landed** (registered
+      in `platformRegisterConfig`, renderer reads `g_pcFontUpscale`, env still overrides via
+      the settings path; `SETTING_SCOPE_RESTART`). Still open: `FontAlphaCutoff`/`FontWhitePoint`/
+      `FontPoint` (`gfx_pc.c:14991/:15008/:14980`) if they prove player-meaningful.
 - [ ] Crosshair/reticle size-color-thickness ← `GE007_ADS_RETICLE_THK/GAP/LEN/DOT/OUTLINE`
       (`src/game/gun.c:33788`), plus a classic-crosshair scale.
 - [ ] `Game.Language` enum (see M4.4), HUD-scale/opacity if trivially wireable.
