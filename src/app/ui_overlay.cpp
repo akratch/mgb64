@@ -71,6 +71,13 @@ void onProcessEvent(const void *ev) {
         setOpen(!g_open);
         return;
     }
+    // FPS overlay quick-toggle — does NOT open the menu (default F10). Flips the
+    // live Video.FpsOverlay through the config API (also persists on Save).
+    if (e->type == SDL_KEYDOWN && !e->key.repeat && e->key.keysym.sym == SDLK_F10) {
+        mgb_config_set_int("Video.FpsOverlay",
+                           mgb_config_get_int("Video.FpsOverlay", 1) ? 0 : 1);
+        return;
+    }
     if (e->type == SDL_CONTROLLERBUTTONDOWN) {
         // P1-only: in split-screen, P2-4 Start/Back must reach their own N64
         // pad (pcFillPadFromController), not drive the shared overlay — the
