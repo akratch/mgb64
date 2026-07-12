@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "converter",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/prop.c:2538"
   ],
@@ -14,6 +14,22 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/prop.c:2538"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/prop.c:3849-3865"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/setup_pnames.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_setup_pnames.c"
     }
   ],
   "history": [
@@ -23,6 +39,34 @@
       "to": "discovered",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/prop.c:2538",
+      "note": "padnames/boundpadnames left NULL in NATIVE_PORT proplvreset2"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/prop.c:3849-3865",
+      "note": "retail resolves header words 8/9 then relocates each pname.p (loop 4000-4014); struct pname 4B N64 vs 8B host needs re-layout"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/setup_pnames.c",
+      "note": "pure BE swap+count+relocate helper; build_pc_pnames + GE007_NO_PADNAMES_FIX"
+    },
+    {
+      "ts": "2026-07-12T01:25:56Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_setup_pnames.c",
+      "note": "ctest setup_pnames PASS; fail-on-revert reddens; struct_layout+sim_state_hash PASS; consumers are stripped debug prints so no sim/gameplay change"
     }
   ]
 }

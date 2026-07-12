@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdarg.h>
 #include "ge_debug.h"
+#include "platform/port_env.h"
+#include "platform/setup_pnames.h"
 #endif
 #include "game/mp_weapon.h"
 #include "game/player_2.h"
@@ -2426,6 +2428,39 @@ static waypoint *s_pc_waypoints = NULL;
 static waygroup *s_pc_waygroups = NULL;
 static PathRecord *s_pc_patrolpaths = NULL;
 static u8 *s_pc_propdefs = NULL;
+static struct pname *s_pc_padnames = NULL;
+static struct pname *s_pc_boundpadnames = NULL;
+
+/* FID-0037: re-lay-out a setup padnames/boundpadnames table (header word
+ * hdr_index: 8 = padnames, 9 = boundpadnames) into a host-native, NULL-terminated
+ * struct pname array. The on-disk table is big-endian 32-bit file-local offsets;
+ * N64 struct pname is 4 bytes but the host union is 8, so it cannot be cast in
+ * place (same reason the pads are re-laid-out). Mirrors retail prop.c:3849-3865
+ * (resolve the table) + 4000-4014 (relocate each .p). `legacy` reproduces the
+ * port defect (prop.c:2538 left the table NULL). The pure byte-swap/relocation
+ * lives in the unit-tested helper setupPnames*(). */
+static struct pname *build_pc_pnames(u8 *base, int hdr_index, int legacy,
+                                     struct pname **track)
+{
+    u32 table_off = setupPnamesTableOffset((const uint8_t *)base, hdr_index, legacy);
+    size_t n, i;
+    struct pname *arr;
+
+    if (table_off == 0) {
+        return NULL;
+    }
+    n = setupPnamesCount((const uint8_t *)base, table_off, 100000);
+    arr = (struct pname *)calloc(n + 1, sizeof(struct pname));
+    if (arr == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < n; i++) {
+        arr[i].p = (char *)setupPnamesResolve((const uint8_t *)base, table_off, i);
+    }
+    arr[n].p = NULL; /* NULL-terminated (retail loops until .p == 0) */
+    *track = arr;
+    return arr;
+}
 
 void proplvreset2(s32 stageId)
 {
@@ -2445,6 +2480,8 @@ void proplvreset2(s32 stageId)
     if (s_pc_waygroups) { free(s_pc_waygroups); s_pc_waygroups = NULL; }
     if (s_pc_patrolpaths) { free(s_pc_patrolpaths); s_pc_patrolpaths = NULL; }
     if (s_pc_propdefs) { free(s_pc_propdefs); s_pc_propdefs = NULL; }
+    if (s_pc_padnames) { free(s_pc_padnames); s_pc_padnames = NULL; }
+    if (s_pc_boundpadnames) { free(s_pc_boundpadnames); s_pc_boundpadnames = NULL; }
 
     withchrs = (tokenFind(1, "-nochr") == NULL && tokenFind(1, "-noprop") == NULL);
     withobjs = (tokenFind(1, "-noobj") == NULL && tokenFind(1, "-noprop") == NULL);
@@ -2535,8 +2572,16 @@ void proplvreset2(s32 stageId)
     g_CurrentSetup.ailists  = SETUP_PTR(5, AIListRecord);   /* Converted below */
     g_CurrentSetup.pads     = SETUP_PTR(6, PadRecord);
     g_CurrentSetup.boundpads = SETUP_PTR(7, BoundPadRecord);
-    g_CurrentSetup.padnames  = NULL;      /* TODO: byte-swap pname structs */
-    g_CurrentSetup.boundpadnames = NULL;
+    /* FID-0037: padnames (word 8) / boundpadnames (word 9) — big-endian offset
+     * tables re-laid-out to host-native struct pname arrays. Faithful default;
+     * GE007_NO_PADNAMES_FIX restores the port defect (both NULL). */
+    {
+        int pnames_legacy = port_env_set("GE007_NO_PADNAMES_FIX",
+            "restore the port defect of leaving setup padnames/boundpadnames NULL "
+            "instead of resolving the big-endian offset tables (FID-0037)");
+        g_CurrentSetup.padnames      = build_pc_pnames(base, 8, pnames_legacy, &s_pc_padnames);
+        g_CurrentSetup.boundpadnames = build_pc_pnames(base, 9, pnames_legacy, &s_pc_boundpadnames);
+    }
 
 #ifdef NATIVE_PORT
     if (getenv("GE007_SETUP_DIAG")) {

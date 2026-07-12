@@ -875,11 +875,18 @@ static void fixupPointers(
 
         case MODELNODE_OPCODE_OP11:
         {
-            /* unk0c[15] is a pointer in PROMOTE, but unk0c is u32[16] which
-             * can't hold a 64-bit pointer. OP11 rendering (sub_GAME_7F0737FC)
-             * is currently a no-op stub, so store 0 to avoid truncation.
-             * TODO: When OP11 rendering is implemented, widen this field or
-             * use a side pointer. */
+            /* FID-0039 (documented, not a live defect): retail promotes
+             * unk0c[15] as a pointer (model.c:14040 PROMOTE) and BaseAddr, but
+             * OP11 is an "unused but referenced" opcode (bondtypes.h) whose
+             * render handler sub_GAME_7F0737FC (model.c:10845) is a no-op `return;`
+             * in the SHIPPING game — the same no-op the port reproduces. unk0c[15]
+             * is read as a pointer ONLY by that no-op render and by the retail
+             * modelPromoteNodeOffsetsToPointers path, which the 64-bit converter
+             * REPLACES. The port-used OP11 fields (BoundingVolumeRadius, RwDataIndex)
+             * are converted correctly above. So storing NULL here is behaviourally
+             * invisible AND the safe representation (a 64-bit pointer cannot fit in
+             * u32[16]); a truncated pointer would be strictly worse if OP11 render
+             * were ever un-no-op'd. See docs/fidelity/derivations/FID-0037-0039-0107-batch.md. */
             ModelRoData_Op11Record *o = &node->Data->Op11;
             o->unk0c[15] = 0;
             break;

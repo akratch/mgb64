@@ -800,6 +800,32 @@ if(BUILD_TESTING)
     target_include_directories(test_mp_respawn_tail PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME mp_respawn_tail COMMAND test_mp_respawn_tail)
 
+    # Spectrum easter-egg SETTILE tile field — ROM-free unit test (FID-0107):
+    # spectrum_draw_screen must emit SETTILE w1 = 0x07000000 (tile 7 = G_TX_LOADTILE)
+    # so both SETTILEs configure the tile their LOADTLUT/LOADBLOCK load into. The
+    # port transcribed 0x00070000 (tile 0 + stray cmt/maskt), a digit shift.
+    # Pins the corrected constant so a revert or a GE007_NO_SPECTRUM_LOADTILE_FIX
+    # flip reddens.
+    add_executable(test_spectrum_settile
+        "${CMAKE_SOURCE_DIR}/tests/test_spectrum_settile.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/spectrum_settile.c"
+    )
+    target_include_directories(test_spectrum_settile PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME spectrum_settile COMMAND test_spectrum_settile)
+
+    # Setup padnames/boundpadnames re-layout — ROM-free unit test (FID-0037):
+    # the setup file's padnames (header word 8) / boundpadnames (word 9) tables are
+    # big-endian 32-bit file-local offset arrays, zero-terminated, each pointing at
+    # a pad-name string. The port left both NULL (prop.c:2538); retail resolves +
+    # relocates them. Pins the byte-swap, terminator, base+offset relocation and the
+    # legacy negative control (GE007_NO_PADNAMES_FIX -> table NULL).
+    add_executable(test_setup_pnames
+        "${CMAKE_SOURCE_DIR}/tests/test_setup_pnames.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/setup_pnames.c"
+    )
+    target_include_directories(test_setup_pnames PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME setup_pnames COMMAND test_setup_pnames)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
