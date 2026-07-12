@@ -1,0 +1,25 @@
+{
+  "id": "FID-0125",
+  "title": "FID-0103 MP object-respawn tail hardcodes s3=0 -> over-fires sound 82 for embedded (0x8000) regen objects",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/chrprop.c:5517 the FID-0103 respawn tail runs mpRespawnTailPlan with reparent_marker_s3 hardcoded 0. flags&0x8000 = PROPFLAG_INSIDEANOTHEROBJ (bondconstants.h:370, a real SP+MP flag). The port skips the reparent branch (chrprop.c:5487 if(!(obj->flags&0x8000))) then runs the tail with s3=0 -> play_respawn_sfx=1 -> sound 82. Retail's reparent path sets s3=1 which SUPPRESSES the sound. So embedded regenerating objects over-fire sound 82. Narrow: needs embedded + active timetoregen + maxdamage==0 + !(state&0x80)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T15:44:37Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chrprop.c:5517 the FID-0103 respawn tail runs mpRespawnTailPlan with reparent_marker_s3 hardcoded 0. flags&0x8000 = PROPFLAG_INSIDEANOTHEROBJ (bondconstants.h:370, a real SP+MP flag). The port skips the reparent branch (chrprop.c:5487 if(!(obj->flags&0x8000))) then runs the tail with s3=0 -> play_respawn_sfx=1 -> sound 82. Retail's reparent path sets s3=1 which SUPPRESSES the sound. So embedded regenerating objects over-fire sound 82. Narrow: needs embedded + active timetoregen + maxdamage==0 + !(state&0x80).",
+      "note": "Found by adjacent-bug review 2026-07-12. Fix ~2 lines: derive s3 from the 0x8000 flag (set s3=1 in the skipped reparent else-branch). MP-narrow; likely off the SP tapes."
+    }
+  ]
+}

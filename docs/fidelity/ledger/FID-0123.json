@@ -1,0 +1,25 @@
+{
+  "id": "FID-0123",
+  "title": "FP recoil-settle reads raw offsets into pointer-grown WeaponStats -> wrong recoil fields (no positional kick)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:18899 the FP recoil-settle interp reads WeaponStats via raw N64 offsets: unk47=*(s8*)(stats+0x47), pos_scale=*(f32*)(stats+0x48), rot_scale=*(f32*)(stats+0x4C). WeaponStats has a real pointer ptr_cartridge_struct at 0x28 (gun.h:92) -> 8 bytes on 64-bit, so every field after shifts +4. Retail N64 0x47=RecoilSpeed low byte, 0x48=RecoilBack, 0x4C=RecoilUp now live at native 0x4B/0x4C/0x50. The raw reads hit wrong fields: pos_scale~=0 (no positional recoil kick), rot_scale uses RecoilBack not RecoilUp, unk47 garbage. Active NATIVE path (no #ifdef/gate), reached every gun post-fire settle (when_detonating_mines_is_0==3). Same class as FID-0088."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T15:44:36Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:18899 the FP recoil-settle interp reads WeaponStats via raw N64 offsets: unk47=*(s8*)(stats+0x47), pos_scale=*(f32*)(stats+0x48), rot_scale=*(f32*)(stats+0x4C). WeaponStats has a real pointer ptr_cartridge_struct at 0x28 (gun.h:92) -> 8 bytes on 64-bit, so every field after shifts +4. Retail N64 0x47=RecoilSpeed low byte, 0x48=RecoilBack, 0x4C=RecoilUp now live at native 0x4B/0x4C/0x50. The raw reads hit wrong fields: pos_scale~=0 (no positional recoil kick), rot_scale uses RecoilBack not RecoilUp, unk47 garbage. Active NATIVE path (no #ifdef/gate), reached every gun post-fire settle (when_detonating_mines_is_0==3). Same class as FID-0088.",
+      "note": "Found by adjacent-bug review 2026-07-12. Fix: named-field swap (stats->RecoilSpeed&0xFF / RecoilBack / RecoilUp); confirm RecoilSpeed byte semantics vs ASM first. Reachable -> gate + tape re-baseline like FID-0117."
+    }
+  ]
+}
