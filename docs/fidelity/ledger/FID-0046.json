@@ -4,13 +4,33 @@
   "class": "instrumentation-gap",
   "surface": "sim",
   "priority": "P1",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/platform/sim_state_hash_registry.c",
     "level 29 Streets"
   ],
   "repro": "two vanilla --deterministic runs of level 29 (Streets) produce different sim hashes; independent of GE007_UNCAP_FUZZ; exposed by tools/uncap_purity_gate.sh full matrix (reports UNSTABLE)",
   "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "tools/uncap_purity_gate.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/uncap_purity_gate.sh"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/initexplosioncasing.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/initexplosioncasing.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_streets_determinism_regression"
+    },
     {
       "kind": "gate-log",
       "path": "tools/uncap_purity_gate.sh"
@@ -23,6 +43,41 @@
       "to": "discovered",
       "evidence": "tools/uncap_purity_gate.sh",
       "note": ""
+    },
+    {
+      "ts": "2026-07-12T01:19:50Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "tools/uncap_purity_gate.sh",
+      "note": "Reproduced: two separate --deterministic processes of Streets (LEVELID 29), same seed+input, give different whole-sim hashes; per-region breakdown shows 26/27 regions byte-identical, only region 00 pool (the 8MB s_pcPool arena) diverges."
+    },
+    {
+      "ts": "2026-07-12T01:19:50Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/initexplosioncasing.c",
+      "note": "Exactly ONE genuine data-diff word in the 8MB pool: offset 0xcdac0 = g_ExplosionBuffer[12].parts[14].rot (f32). alloc_explosion_smoke_casing_scorch_impact_buffers() initializes only parts[j].frame (+prop=NULL), leaving each free ExplosionPart's pos/size/rot/bb holding leftover transient file-load scratch; under ASLR that dead rot caught the low 32 bits of a converted host pointer (A-B = 0xBC000000 = 188*16MB, an ASLR-granular delta). The game reads part pos/size/rot ONLY when frame>0 and always writes them at activation (explosions.c:1619-1631,1806), so free-slot fields are dead memory the game never reads -> gameplay is identical across processes (screenshots byte-identical); Streets' layout is the first to expose it in a hashed word. Same latent partial-init in smoke/scorch/impact/particle buffers."
+    },
+    {
+      "ts": "2026-07-12T01:19:50Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/initexplosioncasing.c",
+      "note": "Fix: fully zero-init every effect buffer at allocation (explosion/smoke/scorch/impact/particle), removing the uninitialized read at the source. Defaults ON; GE007_NO_EFFECT_BUF_ZERO_INIT=1 restores the legacy leave-uninitialized behavior. Native-only (N64/matching build keeps retail partial-init)."
+    },
+    {
+      "ts": "2026-07-12T01:20:05Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "ctest:port_streets_determinism_regression",
+      "note": "Regression lane tools/streets_determinism_regression.sh (ctest port_streets_determinism_regression, ROM-gated): runs Streets twice fix-ON and twice fix-OFF and asserts (C) the two fix-ON hashes are IDENTICAL, (D) the two fix-OFF hashes DIFFER (fail-on-revert), (B) all four screenshots byte-identical. Verified PASS with fix; verified it REDDENS when the fix is flipped off (GE007_NO_EFFECT_BUF_ZERO_INIT=1 -> fix-ON runs diverge -> assertion C fails, exit 1)."
+    },
+    {
+      "ts": "2026-07-12T01:20:05Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/uncap_purity_gate.sh",
+      "note": "uncap_purity_gate on Streets (lvl29) reported UNSTABLE before the fix; now reports 'level 29: OK (both seeds, 0 sim-hash divergence)' and 'UNCAP PURITY: PASS' (Dam control also OK). 40/40 separate fix-ON Streets processes at game-timer 900 produce the identical hash (c8ae60f450a61b7e) across differing ASLR bases; before the fix every process diverged. Screenshots byte-identical fix-ON vs fix-OFF (gameplay unchanged). ROM-free ctests (sim_state_hash, fidelity_hash_coverage) green."
     }
   ]
 }

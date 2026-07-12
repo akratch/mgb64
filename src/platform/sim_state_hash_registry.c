@@ -149,8 +149,9 @@ void simStateHashEmitIfRequested(int frame, const char *replay) {
     if (getenv("GE007_SIM_HASH_PER_REGION")) {
         for (int r = 0; r < n; r++) {
             uint64_t rh = sim_state_hash_compute_region(regs, n, r);
-            fprintf(stderr, "[SIM-HASH-REGION] %02d %-20s size=%zu hash=%016llx\n",
+            fprintf(stderr, "[SIM-HASH-REGION] %02d %-20s size=%zu base=%016llx hash=%016llx\n",
                     r, regs[r].name ? regs[r].name : "", regs[r].size,
+                    (unsigned long long)(uintptr_t)regs[r].base,
                     (unsigned long long)rh);
         }
         fflush(stderr);

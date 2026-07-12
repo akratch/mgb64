@@ -980,6 +980,14 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # (GE007_NO_STAN_ROOMSET_BYTE_FIX) stays stuck, and the whole-sim hash differs
     # (fail-on-revert). Complements the pure-TU stan_roomset unit lane.
     add_port_validation_smoke(port_thrown_mine_reacquire_smoke thrown_mine_reacquire_smoke.sh 240)
+    # FID-0046: cross-process vanilla determinism. Runs Streets (LEVELID 29 -- the
+    # repro level) twice fix-ON and twice fix-OFF and asserts (C) the two fix-ON
+    # sim-state hashes are IDENTICAL (the effect-buffer zero-init makes the stage
+    # cross-process deterministic) and (D) the two fix-OFF hashes DIFFER (the
+    # uninitialized-read defect the fix closes), plus (B) all four screenshots are
+    # byte-identical (gameplay unaffected by the flag). Reverting the memset in
+    # initexplosioncasing.c reddens assertion (C).
+    add_port_validation_smoke(port_streets_determinism_regression streets_determinism_regression.sh 900)
     add_port_validation_smoke(port_minimap_smoke minimap_smoke.sh 900)
     add_port_validation_smoke(port_playability_smoke playability_smoke.sh 180)
     # MC.7 solo-pause: boots a solo level via the app shell, scripts the F1/View

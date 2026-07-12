@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1042 flags** found across the source.
+**1043 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -575,6 +575,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_CULL_HITBOX_MAGIC_BYPASS` | bool | 0 | 1 |  |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
 | `GE007_NO_DETONATE_OBJECT_FIX` | presence | unset | 1 | Restore the pre-fix maybe_detonate_object body (inverted armour amount, no ammo-crate salvage spawn, inverted unarmed gate) [FID-0074] |
+| `GE007_NO_EFFECT_BUF_ZERO_INIT` | ? |  | 1 |  |
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |
