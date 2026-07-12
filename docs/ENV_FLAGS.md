@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1048 flags** found across the source.
+**1051 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -607,8 +607,11 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
+| `GE007_NO_WATCHLASER_IMPACT_FIX` | presence | unset | 1 | Restore the pre-fix object-hit impact-FX gate (suppress the Taser instead of the Watch Laser) [FID-0069] |
+| `GE007_NO_WATCHMENU_FOG_ITEM_FIX` | presence | unset | 1 | Restore the pre-fix per-frame save/restore of the solo watch-menu inventory-item hand state [FID-0073] |
 | `GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT` | presence | unset | 1 | Restore the pre-fix watch ammo panel drawn during a right-hand weapon switch (hand state 6/7) [FID-0084] |
 | `GE007_NO_WATCH_INV_ASPECT_FIX` | presence | unset | 1 | Restore the legacy watch-inventory guPerspective aspect 9/7 (vs retail 4/3) [FID-0098] |
+| `GE007_NO_WATCH_JOYPAD_FIX` | presence | unset | 1 | Restore the pre-fix watch controller page (button depress on the post-rotation vector, GUNLEFT hand, per-frame item save/restore) [FID-0072] |
 | `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |

@@ -711,6 +711,40 @@ if(BUILD_TESTING)
     target_include_directories(test_chrobj_detonate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME chrobj_detonate COMMAND test_chrobj_detonate)
 
+    # Object-hit bullet-impact suppression gate — ROM-free unit test (FID-0069):
+    # retail sub_GAME_7F04EA68 skips the impact block (+ its randomGetNext draws)
+    # for ITEM_WATCHLASER (23); the pre-fix port gated on ITEM_TASER (31). Fails if
+    # the gate constant reverts or GE007_NO_WATCHLASER_IMPACT_FIX drifts.
+    add_executable(test_chrobj_impact_suppress
+        "${CMAKE_SOURCE_DIR}/tests/test_chrobj_impact_suppress.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/chrobj_impact_suppress.c"
+    )
+    target_include_directories(test_chrobj_impact_suppress PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME chrobj_impact_suppress COMMAND test_chrobj_impact_suppress)
+
+    # Watch-menu hand-item exit lifecycle — ROM-free unit test (FID-0073, reused
+    # by FID-0072): retail sets the hand item ONCE and never restores it; the
+    # pre-fix port did a phantom per-frame save/restore. Fails if the phantom
+    # restore is reintroduced (faithful==legacy) or the negative controls drift.
+    add_executable(test_watchmenu_hand_lifecycle
+        "${CMAKE_SOURCE_DIR}/tests/test_watchmenu_hand_lifecycle.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watchmenu_hand_lifecycle.c"
+    )
+    target_include_directories(test_watchmenu_hand_lifecycle PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watchmenu_hand_lifecycle COMMAND test_watchmenu_hand_lifecycle)
+
+    # Watch controller-settings page per-value fixes — ROM-free unit test
+    # (FID-0072): D1 the face-button depress −10 offset lands on posN.y (arg0,
+    # table copy) not rotN.y (arg4, vertices); D2 the page drives hand 0
+    # (GUNRIGHT) not GUNLEFT. Fails if either per-value fix reverts or the
+    # GE007_NO_WATCH_JOYPAD_FIX negative control drifts.
+    add_executable(test_watch_joypad_page
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_joypad_page.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_joypad_page.c"
+    )
+    target_include_directories(test_watch_joypad_page PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_joypad_page COMMAND test_watch_joypad_page)
+
     # Full-auto fire-cadence tick-scaling — ROM-free unit test (FID-0056):
     # Input.FireRateAuthentic scales the automatic gate to the N64 per-frame
     # cadence. Fails if the divisor scaling or the counter tick-scaling reverts.
