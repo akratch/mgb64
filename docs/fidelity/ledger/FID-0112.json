@@ -1,0 +1,27 @@
+{
+  "id": "FID-0112",
+  "title": "sub_GAME_7F03E27C NATIVE_PORT reimpl drops projectile room-source indirection and restructures top branch",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrprop.c:7215"
+  ],
+  "repro": "S5 ASM audit rank 187 batch 16",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop.c:7215-7277 vs GLOBAL_ASM sub_GAME_7F03E27C 0x7F03E27C (chrprop.c:7342)"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T01:08:26Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrprop.c:7215-7277 vs GLOBAL_ASM sub_GAME_7F03E27C 0x7F03E27C (chrprop.c:7342)",
+      "note": "Retail sub_GAME_7F03E27C at 0x7F03E27C branches at top level on prop->flags bit 8 (andi at 0x7F03E2A0, beqz at 0x7F03E2A4). In the flags-bit-8 path it seeds room source from prop->rooms at prop offset 0x2C, and when prop->type is obj/weapon/door with an active projectile (obj->runtime_bitflags bit 0x80 at 0x7F03E2DC and projectile word bit 8 at 0x7F03E2F4) it redirects the room source to projectile+0xCC at 0x7F03E304; the else path calls sub_GAME_7F0B21B0 with prop->stan, pos.x, pos.z, arg3. The live NATIVE_PORT body instead branches first on prop->type != PROP_TYPE_CHR, only reads prop->rooms when type==CHR with flag 8, drops the projectile+0xCC room-source indirection entirely, substitutes chrpropCollectRoomsNearStan for sub_GAME_7F0B21B0, and adds non-retail behaviors (a prop==NULL guard, a num_rooms<=0 stan->room fallback, and a num_rooms>max clamp). Net effect: non-CHR props with flag 8 and active projectiles get a different room membership than retail, affecting LOS and render-room assignment. Function is a known partial reimpl (PORT_FIXME_STUBS, PD note lists los_find_* candidates); warrants dedicated deep audit before a fix."
+    }
+  ]
+}

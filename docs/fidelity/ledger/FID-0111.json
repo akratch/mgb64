@@ -1,0 +1,27 @@
+{
+  "id": "FID-0111",
+  "title": "set_actor_on_path adds non-retail patrol-init writes (lastvisible60=timer, idle-anim call)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chrlv.c:5185"
+  ],
+  "repro": "S5 ASM audit rank 183 batch 16",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrlv.c:5185 vs GLOBAL_ASM set_actor_on_path 0x7F0290F8 (glabel chrlv.c:5220)"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T01:08:13Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chrlv.c:5185 vs GLOBAL_ASM set_actor_on_path 0x7F0290F8 (glabel chrlv.c:5220)",
+      "note": "Retail set_actor_on_path at 0x7F0290F8 initializes the patrol union with actiontype=ACT_PATROL, forward=1, nextstep, path, waydata.age=rand%100, waydata.unk03=0, then writes -1 to self offset 0x78 at 0x7F029228 and speed=0.0 at self offset 0x7C, and never loads g_GlobalTimer nor calls an idle-animation helper. The NATIVE_PORT body reproduces the patrol-step search and those struct writes faithfully, but adds two non-retail statements: an unconditional lastvisible60=g_GlobalTimer init and a chrlvIdleAnimationRelated call. Both are documented in-code as compensations for port-side fog culling being too aggressive and for a camera-anim state mismatch. They are always-on under NATIVE_PORT with no negative-control flag. The removed non-native padding index 0x13 write is a justified 64-bit adaptation (on N64 it aliases a field that is immediately overwritten; on 64-bit it would corrupt waydata.age)."
+    }
+  ]
+}
