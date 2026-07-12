@@ -7471,9 +7471,9 @@
         "body_start": null,
         "body_end": 1016
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Live NATIVE_PORT body at model.c:935-955 replaces the retail fixed-pool model allocator (ptr_allocation_0 slot reuse gated on D_80036070 and D_80036078) with calloc-per-instance and a 2x-sized rw buffer for 64-bit pointer expansion; observable Model-plus-animInit result preserved, pool and unk02 capacity bookkeeping is an N64 memory concern. Partial NATIVE_PORT reimpl.",
+      "note": "Live NATIVE_PORT body at model.c:935-955 replaces the retail fixed-pool model allocator (ptr_allocation_0 slot reuse gated on D_80036070 and D_80036078) with calloc-per-instance and a 2x-sized rw buffer for 64-bit pointer expansion; observable Model-plus-animInit result preserved, pool and unk02 capacity bookkeeping is an N64 memory concern. Partial NATIVE_PORT reimpl.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 275,
       "rank_score": 94,
       "rank_reason": "bulk-last 94i"
@@ -7498,9 +7498,9 @@
         "body_start": 5315,
         "body_end": 5346
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "C at model.c:5315-5346 matches ASM at glabel model.c:5351 instruction-for-instruction: rodata = node->Data at offset 4, skeleton = model->obj Skeleton (obj at 8, Skeleton at 4), joint_id = Group.JointID at 0xc; first sub_GAME_7F06E540 uses gunhand at 0x24, anim at 0x20, unk34 at 0x34; unk2c-gated interp at 0x2c with unk38 at 0x38; unk84-gated block at 0x84 uses unk25 at 0x25, anim2 at 0x54, unk64 at 0x64, unk5c-gated with unk68 at 0x68; final sub_GAME_7F06E2B8(arg0, model, node, result). Offsets, c.eq.s zero gating, and arg order all match.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 276,
       "rank_score": 87,
       "rank_reason": "bulk-last 87i"
@@ -7525,9 +7525,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Non-debug ASM sibling of the LEFTOVERDEBUG room-admit authority reviewed at rank 274. The compiled NONMATCHING C at bg.c:3684-3818 diffs clean against the LEFTOVERDEBUG ASM at glabel bg.c:3505: room_rendered set to 1 at offset 0, early return 0 when room_loaded_mask at 0x34 is nonzero, linear scan of dword_CODE_bss_8007FFA0 entries at stride 0x1c (roomid at 0, unk1 at 4, bbox at 8, next at 0x18), depth max-merge, bbox overwrite from bbox_src, next OR-in with return of prior next, append at g_BgNumberOfRoomsDrawn. Verified-equivalent to the authority.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 277,
       "rank_score": 82,
       "rank_reason": "bulk-last 82i"
@@ -7552,9 +7552,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Live NATIVE_PORT body at bg.c:9563-9572 intentionally skips retail N64 texture processing (texCopyGdls and texLoadFromGdl) and keeps the primary room DL as raw N64 binary for the gfx_pc.c translator, plus a bgDecompress-failure guard; the load and decompress prefix (len from csize_primary at 0x14, size < len+0x20 returns -1, source, obLoadBGFileBytesAtOffset with pPriMappingBin plus 0xf1000000, bgDecompress) matches the LEFTOVERDEBUG ASM at glabel bg.c:9592. Deliberate PC renderer-architecture substitution, partial NATIVE_PORT reimpl.",
+      "note": "Live NATIVE_PORT body at bg.c:9563-9572 intentionally skips retail N64 texture processing (texCopyGdls and texLoadFromGdl) and keeps the primary room DL as raw N64 binary for the gfx_pc.c translator, plus a bgDecompress-failure guard; the load and decompress prefix (len from csize_primary at 0x14, size < len+0x20 returns -1, source, obLoadBGFileBytesAtOffset with pPriMappingBin plus 0xf1000000, bgDecompress) matches the LEFTOVERDEBUG ASM at glabel bg.c:9592. Deliberate PC renderer-architecture substitution, partial NATIVE_PORT reimpl.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 278,
       "rank_score": 80,
       "rank_reason": "bulk-last 80i"
@@ -7579,9 +7579,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Byte-identical non-debug sibling of sub_GAME_7F0B609C at the same VRAM 7F0B609C (no debug-specific instructions); same NATIVE_PORT texture-path substitution as rank 278. Partial NATIVE_PORT reimpl.",
+      "note": "Byte-identical non-debug sibling of sub_GAME_7F0B609C at the same VRAM 7F0B609C (no debug-specific instructions); same NATIVE_PORT texture-path substitution as rank 278. Partial NATIVE_PORT reimpl.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 279,
       "rank_score": 80,
       "rank_reason": "bulk-last 80i"
@@ -7606,9 +7606,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Secondary-DL twin of sub_GAME_7F0B609C. Live NATIVE_PORT body at bg.c:9797-9806 skips retail texCopyGdls and texLoadFromGdl and keeps the secondary room DL as raw N64 binary for the gfx_pc.c translator, plus a bgDecompress-failure guard; the prefix (len from csize_secondary at 0x18, size check, source, obLoadBGFileBytesAtOffset with pSecMappingBin plus 0xf1000000, bgDecompress) matches the LEFTOVERDEBUG ASM at glabel bg.c:9825. Deliberate PC renderer-architecture substitution, partial NATIVE_PORT reimpl.",
+      "note": "Secondary-DL twin of sub_GAME_7F0B609C. Live NATIVE_PORT body at bg.c:9797-9806 skips retail texCopyGdls and texLoadFromGdl and keeps the secondary room DL as raw N64 binary for the gfx_pc.c translator, plus a bgDecompress-failure guard; the prefix (len from csize_secondary at 0x18, size check, source, obLoadBGFileBytesAtOffset with pSecMappingBin plus 0xf1000000, bgDecompress) matches the LEFTOVERDEBUG ASM at glabel bg.c:9825. Deliberate PC renderer-architecture substitution, partial NATIVE_PORT reimpl.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 280,
       "rank_score": 78,
       "rank_reason": "bulk-last 78i"
@@ -7633,9 +7633,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Byte-identical non-debug sibling of sub_GAME_7F0B61DC at the same VRAM 7F0B61DC; same NATIVE_PORT secondary-DL texture-path substitution as rank 280. Partial NATIVE_PORT reimpl.",
+      "note": "Byte-identical non-debug sibling of sub_GAME_7F0B61DC at the same VRAM 7F0B61DC; same NATIVE_PORT secondary-DL texture-path substitution as rank 280. Partial NATIVE_PORT reimpl.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 281,
       "rank_score": 78,
       "rank_reason": "bulk-last 78i"
@@ -7660,9 +7660,9 @@
         "body_start": null,
         "body_end": 19107
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Compiled PORT_FIXME_STUBS body at bg.c:19200-19266 matches the bgOrderPortal ASM at glabel bg.c:19339 exactly: entry at g_BgPortals stride 8, room centers from connectedRoom1 at 4 and connectedRoom2 at 5 via sub_GAME_7F0B92B4, metric via sub_GAME_7F0B96CC; room1Dot = normal dot room1Center; if metric.max < room1Dot then bgSwapConnectedRooms, negate normal, min = -max, max = -oldMin, swapped=1; room2Dot = normal dot room2Center; if room2Dot <= metric.min and swapped then bgSwapConnectedRooms; return room2Dot. Only float add operand order differs (commutative, IEEE-identical). NATIVE_PORT additions are faithful-default-inert: bgPortalOrderingEnabled defaults to 1, and the null g_BgPortals, arg0<0, offset_portal==0, numPoints<3 guards never fire for the live caller at bg.c:5444 which only passes portals with offset_portal nonzero.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 282,
       "rank_score": 77,
       "rank_reason": "bulk-last 77i"
@@ -7687,9 +7687,9 @@
         "body_start": null,
         "body_end": 2938
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "C at model.c:2879-2937 matches ASM at glabel model.c:2942 exactly: entry = entries + index*6, nbits = entry byte at 2, total_offset = entry u16 at 0 plus bit_addend, cur = data pointer at 0x10 plus total_offset>>3, avail = 8 minus low 3 bits; main loop while bits_left >= avail masks low avail bits and shifts left by remaining bits, avail reset to 8; tail masks low bits_left bits of cur shifted right by avail-bits_left; sign-extend when nbits<16 and bit nbits-1 set; result plus entry u16 at 4 masked to 16 bits. srav equals logical shift because cur was lbu zero-extended. Only NATIVE_PORT change is base-plus-offset reconstruction of the entry and data pointers into ptr_animation_table for 64-bit; entry u16 fields pre-swapped at load by animSwapEntryTable.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 283,
       "rank_score": 70,
       "rank_reason": "bulk-last 70i"
@@ -7714,9 +7714,9 @@
         "body_start": null,
         "body_end": 3106
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "C NATIVE_PORT body at model.c:3029-3105 matches ASM at glabel model.c:3110 in the valid-input path: bit_offset = anim_data u16 at 0xc times frame_mult; joints u16 at index*6+4 when flag nonzero else index*6+2; four sub_GAME_7F06D1CC calls fill out_pos 0..2 and rotation from entry_field plus 0..3 with bit_offset; when flag nonzero out_pos 0 negated unconditionally and rotation = 0x10000 minus rotation only when rotation nonzero; returns rotation. joints via skel Joints struct access replaces the retail anim_header+4 deref for 64-bit layout. Added defensive early-returns (null out_pos, null anim_header or anim_data, anim_data below 0x1000, bad skeleton or index) and the out_pos zeroing are crash-avoidance on N64-UB inputs and never fire for valid callers.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 284,
       "rank_score": 68,
       "rank_reason": "bulk-last 68i"
@@ -7741,9 +7741,9 @@
         "body_start": 5177,
         "body_end": 5225
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "C NATIVE_PORT body at model.c:5184-5225 matches ASM at glabel model.c:5234 exactly: nbits = keyframe_info byte at 6; raw_val = keyframes u16 at index*6+4 when flag nonzero else index*6+2; bitoffset = raw_val times nbits; extracted = sub_GAME_7F06DE04(data_ptr, nbits, bitoffset); position mode result = (0x10000 minus extracted) times 6.2831855 over 65536 only when extracted nonzero else 0; rotation mode result = extracted times 6.2831855 over 65536. extracted is u16 so always non-negative and the retail bgez unsigned-correction is never taken. Only NATIVE_PORT change is keyframes = skel Joints struct access replacing the retail anim_header+4 deref.",
+      "reviewed_ts": "2026-07-12T07:21:24Z",
       "rank": 285,
       "rank_score": 67,
       "rank_reason": "bulk-last 67i"
@@ -7768,9 +7768,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0121",
+      "note": "LEFTOVERDEBUG authority variant at VRAM 7F0B38B4, glabel bg.c:3505. Retail resets s0 to pair start a0 on a room match (move s0,a0 at 7F0B3908) so the entire first visibility string is processed; the compiled C at bg.c:3459-3483 processes from the matched position instead. Currently latent (no caller). See FID-0121.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 286,
       "rank_score": 66,
       "rank_reason": "bulk-last 66i"
@@ -7795,9 +7795,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0121",
+      "note": "Byte-different non-debug sibling at VRAM 7F0B2B74, glabel bg.c:3587, carries the identical divergence (reset move s0,a0 at 7F0B2BC8). Same C body, same FID-0121.",
+      "reviewed_ts": "2026-07-12T07:21:47Z",
       "rank": 287,
       "rank_score": 66,
       "rank_reason": "bulk-last 66i"

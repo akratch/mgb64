@@ -1,0 +1,25 @@
+{
+  "id": "FID-0121",
+  "title": "sub_GAME_7F0B38B4 vis-list first-string processed from match position, not retail pair-start",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B38B4 (LEFTOVERDEBUG variant at VRAM 7F0B38B4, glabel bg.c:3505; byte-different non-debug sibling at VRAM 7F0B2B74, glabel bg.c:3587). At entry a0 is set to the start of the current visibility-list pair (move a0,s0 at 7F0B38D0). The inner search loop advances s0 while a0 stays fixed at the pair start, and when the target room is found the retail code resets s0 = a0 (move s0,a0 at 7F0B3908 in the debug variant, 7F0B2BC8 in the non-debug variant) BEFORE the first-string processing loop at 7F0B3918. Retail thus processes the ENTIRE first string of the pair from its start whenever the target room appears anywhere in it -- the search is a pure membership test. The compiled NATIVE_PORT C at bg.c:3459-3483 does not rewind: after the while byte-not-equal-target search exits with ptr at the matched byte, the do-while processing loop begins at that matched position, so rooms preceding the match in the first string are skipped and never passed to sub_GAME_7F0B39BC room-admit. Player-visible effect would be missing room draw-list admissions for first-string rooms ahead of the matched room. Currently latent: sub_GAME_7F0B38B4 has no caller anywhere in src (no C reference and no jal in any GLOBAL_ASM body), so the divergence is unreachable in the present port build."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T07:19:35Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bg.c GLOBAL_ASM sub_GAME_7F0B38B4 (LEFTOVERDEBUG variant at VRAM 7F0B38B4, glabel bg.c:3505; byte-different non-debug sibling at VRAM 7F0B2B74, glabel bg.c:3587). At entry a0 is set to the start of the current visibility-list pair (move a0,s0 at 7F0B38D0). The inner search loop advances s0 while a0 stays fixed at the pair start, and when the target room is found the retail code resets s0 = a0 (move s0,a0 at 7F0B3908 in the debug variant, 7F0B2BC8 in the non-debug variant) BEFORE the first-string processing loop at 7F0B3918. Retail thus processes the ENTIRE first string of the pair from its start whenever the target room appears anywhere in it -- the search is a pure membership test. The compiled NATIVE_PORT C at bg.c:3459-3483 does not rewind: after the while byte-not-equal-target search exits with ptr at the matched byte, the do-while processing loop begins at that matched position, so rooms preceding the match in the first string are skipped and never passed to sub_GAME_7F0B39BC room-admit. Player-visible effect would be missing room draw-list admissions for first-string rooms ahead of the matched room. Currently latent: sub_GAME_7F0B38B4 has no caller anywhere in src (no C reference and no jal in any GLOBAL_ASM body), so the divergence is unreachable in the present port build.",
+      "note": "S5 ASM audit batch 23 ranks 286-287. Divergence confirmed present in BOTH ASM siblings (debug + non-debug). All other control flow matches: outer pair search, skip-second-string-and-try-next-pair path (b to 7F0B399C, a0 updated to next pair start at 7F0B39A4 delay slot), and second-string processing from its start all match the C. Retest when a caller for sub_GAME_7F0B38B4 is wired up, or with a vis-list oracle where the target room is not the first byte of a first string."
+    }
+  ]
+}
