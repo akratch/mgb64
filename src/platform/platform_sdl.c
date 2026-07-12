@@ -2898,6 +2898,22 @@ int platformInitSDL(void) {
      * SDL_WINDOW_HIDDEN flag above) so CI / screenshot harnesses are never forced
      * fullscreen. */
     if (!g_backgroundWindow) {
+        /* Inherit the launcher's fullscreen so the in-game window matches it. The shell/launcher
+         * may have put the shared SDL window into (borderless) fullscreen via UI.LauncherFullscreen;
+         * Video.WindowMode defaults to WINDOWED, and platformApplyWindowMode() below would revert the
+         * window to a title-barred windowed state — the "game has a title bar while the launcher was
+         * fullscreen" bug (worst on Windows). When the adopted window is ALREADY fullscreen and the
+         * user hasn't chosen a non-windowed Video.WindowMode, keep it fullscreen. A game launched
+         * standalone (no fullscreen launcher) leaves the window windowed, so this only triggers on the
+         * launcher hand-off; an explicit Video.WindowMode (borderless/exclusive) still wins. */
+        if (g_sdlWindow && g_windowMode == PLATFORM_WINDOW_MODE_WINDOWED) {
+            Uint32 wf = SDL_GetWindowFlags(g_sdlWindow);
+            if ((wf & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) {
+                g_windowMode = PLATFORM_WINDOW_MODE_BORDERLESS;
+            } else if (wf & SDL_WINDOW_FULLSCREEN) {
+                g_windowMode = PLATFORM_WINDOW_MODE_EXCLUSIVE;
+            }
+        }
         platformApplyWindowMode();
     }
 
