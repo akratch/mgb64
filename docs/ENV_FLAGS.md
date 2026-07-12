@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1057 flags** found across the source.
+**1061 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -456,6 +456,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_FORCE_WORLD_ATTRS` | ? |  | 1 |  |
 | `GE007_FOV_Y` | float | 50.0f | 1 | Gameplay vertical field of view in degrees (45-105). 60 is the original feel; higher widens peripheral view. |
 | `GE007_FPS_OVERLAY` | int | 1 | 1 | Small top-right overlay showing the current FPS, frame time (ms), and 1%-low FPS. 0 = off. (Automatically hidden during benchmark and screenshot runs.) |
+| `GE007_FPS_TOGGLE_KEY` | int | SDLK_F10 | 1 | SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741899). |
 | `GE007_FP_GADGET_YAW_DEG` | ? |  | 1 |  |
 | `GE007_FP_GLAUNCH_PITCH_DEG` | ? |  | 1 |  |
 | `GE007_FP_GLAUNCH_ROLL_DEG` | ? |  | 1 |  |
@@ -528,6 +529,8 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_LF_VERIFY` | ? |  | 1 |  |
 | `GE007_LOG_FRAME` | ? |  | 1 |  |
 | `GE007_MASTER_VOLUME` | float | 1.0f | 1 | Overall native audio output volume (scales the final music+SFX mix). 1.0 = unity. |
+| `GE007_MENU_TOGGLE_BUTTON` | int | SDL_CONTROLLER_BUTTON_BACK | 1 | SDL_GameController button index that opens the in-game menu overlay (default Back = 4). |
+| `GE007_MENU_TOGGLE_KEY` | int | SDLK_F1 | 1 | SDL keycode that opens the in-game menu overlay (default F1 = 1073741882). |
 | `GE007_METAL_CAPTURE` | ? |  | 1 |  |
 | `GE007_METAL_DEBUG_VP` | ? |  | 1 |  |
 | `GE007_METAL_DUMP_SHADERS` | ? |  | 1 |  |
@@ -597,6 +600,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_MP_BEAM_RAWCAST_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset / 936-stride reads in the MP other-player beam tick (playerTickBeams firing flags + hand position source) [FID-0094] |
 | `GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX` | presence | unset | 1 | Restore the pre-fix MP health-bar draw during damage flashes (OR DamageShowTime) [FID-0070] |
 | `GE007_NO_MP_RESPAWN_TAIL_FIX` | presence | unset | 1 | Restore the pre-fix silent object respawn: drop the respawn sound (82) + armour-amount reset tail [FID-0103] |
+| `GE007_NO_MP_WALK_ANIM_WEAPONNUM_FIX` | presence | unset | 1 | Restore the raw N64 offset read (*(s8*)(obj + 0x80)) for the MP-player walk-animation weapon-flag check; on the 64-bit port ObjectRecord grew +0x10 so 0x80 no longer lands on weaponnum (now 0x90) — read the named field instead [FID-0129] |
 | `GE007_NO_PADNAMES_FIX` | presence | unset | 1 | restore the port defect of leaving setup padnames/boundpadnames NULL instead of resolving the big-endian offset tables (FID-0037) |
 | `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |

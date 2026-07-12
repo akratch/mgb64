@@ -63,17 +63,21 @@ void onProcessEvent(const void *ev) {
     const SDL_Event *e = (const SDL_Event *)ev;
     ImGui_ImplSDL2_ProcessEvent(e);
 
-    // Toggle keys/buttons: F1 (keyboard) and Back/View (gamepad) open/close the
-    // overlay. Back is the conventional system-UI button and its old default
-    // (weapon-prev) is a port invention, so pad Start stays the N64 Start —
-    // GoldenEye's watch is the game's core system menu (review F2 adjudication).
-    if (e->type == SDL_KEYDOWN && !e->key.repeat && e->key.keysym.sym == SDLK_F1) {
+    // Toggle keys/buttons: the menu opener (default F1 keyboard / Back gamepad)
+    // and the FPS-overlay hotkey (default F10) are rebindable settings read live
+    // from the config registry, so a user rebind takes effect without a restart.
+    // Back is the conventional system-UI button and its old default (weapon-prev)
+    // is a port invention, so pad Start stays the N64 Start — GoldenEye's watch is
+    // the game's core system menu (review F2 adjudication).
+    if (e->type == SDL_KEYDOWN && !e->key.repeat &&
+        e->key.keysym.sym == mgb_config_get_int("Input.MenuToggleKey", SDLK_F1)) {
         setOpen(!g_open);
         return;
     }
-    // FPS overlay quick-toggle — does NOT open the menu (default F10). Flips the
-    // live Video.FpsOverlay through the config API (also persists on Save).
-    if (e->type == SDL_KEYDOWN && !e->key.repeat && e->key.keysym.sym == SDLK_F10) {
+    // FPS overlay quick-toggle — does NOT open the menu. Flips the live
+    // Video.FpsOverlay through the config API (also persists on Save).
+    if (e->type == SDL_KEYDOWN && !e->key.repeat &&
+        e->key.keysym.sym == mgb_config_get_int("Input.FpsToggleKey", SDLK_F10)) {
         mgb_config_set_int("Video.FpsOverlay",
                            mgb_config_get_int("Video.FpsOverlay", 1) ? 0 : 1);
         return;
@@ -225,7 +229,9 @@ void onRender() {
 
 }  // namespace
 
-int Overlay_gamepadToggleButton() { return SDL_CONTROLLER_BUTTON_BACK; }
+int Overlay_gamepadToggleButton() {
+    return mgb_config_get_int("Input.MenuToggleButton", SDL_CONTROLLER_BUTTON_BACK);
+}
 
 void Overlay_install(SDL_Window *window, const char *argv0) {
     g_window = window;

@@ -1288,6 +1288,14 @@ s32 g_pcSteadyView = 1;             /* Input.SteadyView       keep world camera 
 s32 g_pcRumble = 1;                  /* Input.Rumble           controller vibration master, ON */
 s32 g_pcRumbleIntensity = 100;      /* Input.RumbleIntensity  strength 0-100 (%) */
 
+/* Rebindable in-game menu / FPS-overlay toggles. These are host-side UI keys
+ * (read by the app-shell overlay via mgb_config_get_int), not sim input, so they
+ * never touch determinism. Defaults preserve the shipped bindings: F1 / gamepad
+ * Back open the menu, F10 toggles the FPS box. */
+s32 g_cfgMenuToggleKey    = SDLK_F1;                    /* Input.MenuToggleKey    keyboard opener */
+s32 g_cfgMenuToggleButton = SDL_CONTROLLER_BUTTON_BACK; /* Input.MenuToggleButton gamepad opener */
+s32 g_cfgFpsToggleKey     = SDLK_F10;                   /* Input.FpsToggleKey     FPS overlay hotkey */
+
 /* ADS (aim-down-sights) feature flags. Master flag g_pcAdsEnabled ships OFF;
  * when 0 every ADS branch is bypassed and behavior is byte-identical to vanilla.
  * Consumers declare these inline as `extern` at their use sites. */
@@ -2218,6 +2226,25 @@ void platformRegisterConfig(void)
                         "--config-override Input.RumbleIntensity=VALUE",
                         "Rumble intensity",
                         "Vibration strength as a percentage (0-100). 0 is the same as Rumble off.");
+
+    /* Rebindable in-game menu / FPS-overlay toggles (host-side UI keys, read by
+     * the app-shell overlay; never sim input, so determinism is unaffected).
+     * Keys are SDL keycodes; the button is an SDL_GameController button index. */
+    settingsRegisterInt("Input.MenuToggleKey", &g_cfgMenuToggleKey, SDLK_F1, 0, 0x40000FFF,
+                        SETTING_SCOPE_LIVE, "GE007_MENU_TOGGLE_KEY",
+                        "--config-override Input.MenuToggleKey=VALUE",
+                        "Menu key",
+                        "SDL keycode that opens the in-game menu overlay (default F1 = 1073741882).");
+    settingsRegisterInt("Input.MenuToggleButton", &g_cfgMenuToggleButton, SDL_CONTROLLER_BUTTON_BACK, 0, 20,
+                        SETTING_SCOPE_LIVE, "GE007_MENU_TOGGLE_BUTTON",
+                        "--config-override Input.MenuToggleButton=VALUE",
+                        "Menu button",
+                        "SDL_GameController button index that opens the in-game menu overlay (default Back = 4).");
+    settingsRegisterInt("Input.FpsToggleKey", &g_cfgFpsToggleKey, SDLK_F10, 0, 0x40000FFF,
+                        SETTING_SCOPE_LIVE, "GE007_FPS_TOGGLE_KEY",
+                        "--config-override Input.FpsToggleKey=VALUE",
+                        "FPS key",
+                        "SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741899).");
 
     /* Full-auto fire-rate authenticity (FID-0056). ON (default, owner decision
      * 2026-07-10) = automatics fire at the faithful N64 per-frame cadence
