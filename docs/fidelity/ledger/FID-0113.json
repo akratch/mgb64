@@ -1,0 +1,27 @@
+{
+  "id": "FID-0113",
+  "title": "disable_sounds_attached_to_player_then_something child-teardown loop type-gates objFreePermanently (retail frees every child unconditionally)",
+  "class": "parity-divergence",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/chr.c:3347"
+  ],
+  "repro": "S5 ASM audit rank 196 batch 17",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chr.c:3347 vs GLOBAL_ASM disable_sounds_attached_to_player_then_something 0x7F020414 (glabel chr.c:3378, child loop 0x7F0204E4-0x7F020500)"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T01:28:07Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/chr.c:3347 vs GLOBAL_ASM disable_sounds_attached_to_player_then_something 0x7F020414 (glabel chr.c:3378, child loop 0x7F0204E4-0x7F020500)",
+      "note": "Retail loops over prop child (offset 0x20) and, for every child, calls objDetach(child) then objFreePermanently(child union field at offset 0x4, 1) unconditionally, advancing via child prev-or-nextSibling at offset 0x24 (the ASM child loop at 0x7F0204E4). The NATIVE_PORT body reproduces the detach and the offset-0x24 walk but gates the free: it only calls objFreePermanently(child obj) when child type is OBJ, WEAPON, or DOOR and child obj is non-NULL and child obj prop equals the child. So non-OBJ/WEAPON/DOOR children (or children whose back-pointer is stale) are detached but never freed, whereas retail frees the offset-0x4 pointer regardless. The decomp itself flagged this loop as suspect. Same function also adds NATIVE-only hardening not in the ASM: prop null/type/chr guard on entry, sndStateIsOwnedBySlot ownership checks plus null-out of all four SEbuffer pointers at offsets 0x168-0x174 (ASM deactivates without ownership check and without nulling), and null guards before sub_GAME_7F050DE8 and clear_aircraft_model_obj (ASM calls both unconditionally with the model at chr offset 0x1c). Needs an oracle-backed prop-teardown route to decide whether retail unconditional free is observable (n64-quirk to preserve) or a safe simplification (documented parity-divergence)."
+    }
+  ]
+}

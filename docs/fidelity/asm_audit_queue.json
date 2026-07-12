@@ -5342,9 +5342,9 @@
         "body_start": null,
         "body_end": 3373
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0113",
+      "note": "Rank 196: child-teardown loop type-gates objFreePermanently vs retail unconditional free of child offset-0x4; plus NATIVE-only SEbuffer null-out and model null guards. See FID-0113.",
+      "reviewed_ts": "2026-07-12T01:29:15Z",
       "rank": 196,
       "rank_score": 75,
       "rank_reason": "75i"
@@ -5369,9 +5369,9 @@
         "body_start": 1057,
         "body_end": 1089
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 197: retail at 0x7F03AA44 computes delta = pos2 minus pos1, scale_factor = bgGetLevelVisibilityScale times get_room_data_float1, scaled = pos1 times scale_factor, then for room index 1 up to getMaxNumRooms (re-read per iteration, guarded by count at least 2) sets occluded_rooms index i to 1 when it is 0 and sub_GAME_7F03A97C(i, scaled ptr at sp+0x4c, delta ptr at sp+0x40) returns 0. C matches branch senses, arg registers, and the dead room_arg.",
+      "reviewed_ts": "2026-07-12T01:29:15Z",
       "rank": 197,
       "rank_score": 69,
       "rank_reason": "69i"
@@ -5396,9 +5396,9 @@
         "body_start": 1731,
         "body_end": 1783
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 198: at 0x7F0D36D8 cmd = arg2 and 0xff, mask = arg1 and 0xff. cmd 0xFE runs two unrolled 4-bit passes over spec_keyboard_buffer indices 0-7, AND-accumulating into accum (init 0xFF) only where the rolling mask bit is 0, shifting mask right 1 and masking 0xff per bit, loop while buf_idx not 8, returns accum. cmd 0x1F returns zero-extended byte D_8004EC40, else 0xFF. C matches bit senses, shifts, and accum persistence across passes.",
+      "reviewed_ts": "2026-07-12T01:29:15Z",
       "rank": 198,
       "rank_score": 63,
       "rank_reason": "63i"
@@ -5423,9 +5423,9 @@
         "body_start": 143,
         "body_end": 197
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 199: at 0x7F09BAC4 walks the obj pos list backward via prop offset 0x24 (union prev with nextSibling), and for each PROP_TYPE_OBJ (type at offset 0) walks the model node tree (prop obj 0x4, obj model 0x14, model obj 0x8, RootNode 0x0; ModelNode Opcode 0x0, Parent 0x8, Next 0xc, Child 0x14) to the first node whose opcode low byte is 0x18, then if modelGetNodeRwData offset-0 Vertices equals arg0 writes arg1. Offsets confirmed vs bondtypes.h; descend, sibling, and parent walk senses match.",
+      "reviewed_ts": "2026-07-12T01:29:26Z",
       "rank": 199,
       "rank_score": 62,
       "rank_reason": "62i"
@@ -5450,9 +5450,9 @@
         "body_start": 875,
         "body_end": 889
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 200: at 0x7F059244 packs 16.16 split matrix. For src row k in 0-7 at a0 plus k times 8 (w1 word0, w2 word1) writes INT = (w1 and 0xffff0000) or (w2 shift right 16) to a1 words 0-7 and FRAC = (w1 shift left 16) or (w2 and 0xffff) to a1 words 8-15. C nested loop i in 0-1, j in 0-3 writes m i j INT and m i+2 j FRAC with k = 4i+j, giving the identical word layout; shift and mask ops match.",
+      "reviewed_ts": "2026-07-12T01:29:26Z",
       "rank": 200,
       "rank_score": 60,
       "rank_reason": "60i"
@@ -5477,9 +5477,9 @@
         "body_start": 1121,
         "body_end": 1138
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 201: at 0x7F059334 for i in 0-7 int = src i, frac = src i+8 (0x20 bytes), dst at 2i = (int and 0xffff0000) or (frac shift right 16), dst at 2i+1 = (int shift left 16) or (frac and 0xffff). Unrolled by 4 with a3 stride 0x10, loop while v0 not 8. C matches exactly including u32 casts that give logical shifts.",
+      "reviewed_ts": "2026-07-12T01:29:26Z",
       "rank": 201,
       "rank_score": 60,
       "rank_reason": "60i"
@@ -5504,9 +5504,9 @@
         "body_start": 209,
         "body_end": 280
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 202: at 0x7F01D1C0 RLE decompress. first_byte = one byte from src; per row byte from src; if byte not 0xFF RLE mode: run_offset = (byte and 0x1f) plus first_byte, repeat = (byte shift right 5) plus 1, rows minus repeat, then repeat times write run_offset bytes of 0xFF then width minus run_offset bytes of 0x00; else escape mode reads run lengths with fill toggling 0xFF and 0x00 via xor until a 0xFF terminator, pads to width, rows minus 1. Loop while rows greater than 0, returns src. C matches all senses, blez and bgtz bounds, and the toggle.",
+      "reviewed_ts": "2026-07-12T01:29:42Z",
       "rank": 202,
       "rank_score": 59,
       "rank_reason": "59i"
@@ -5531,9 +5531,9 @@
         "body_start": 298,
         "body_end": 338
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 203: at 0x70009804 if needmemallocation and ptrdata equals pool 6 prevpos at 0x6C set bank to 6; if pool bank pos at 0x4 is 0 hang; if ptrdata not equal prevpos at 0xc return 2; oldsize = pos minus prevpos; diffsize = newsize minus oldsize; if diffsize at most 0 pos plus diffsize return 1; else if pos greater than end at 0x8 or pos plus diffsize greater than end hang; pos plus diffsize return 1. ASM sltu vs C signed greater-than is harmless because pos and end share sign in one pool region. Non-NATIVE hangs preserved; fields and returns match.",
+      "reviewed_ts": "2026-07-12T01:29:42Z",
       "rank": 203,
       "rank_score": 59,
       "rank_reason": "59i"
@@ -5558,9 +5558,9 @@
         "body_start": null,
         "body_end": 2145
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 204: at 0x7F06BB28 selection sort by descending prio at 0x8 over a list linked next 0xc and prev 0x10. Two stack sentinels bracket the list; each pass finds the max-prio node in the unsorted remainder (best_val init minus 2 to the 32) and splices it after cursor; returns new head with prev and next nulled. The ASM loads at sp+0x40 and sp+0x30 are sentinel_head next and sentinel_tail prev field accesses; the NATIVE ModelRenderSlot body mirrors every splice and both the best-NULL and scan-equals-sentinel_tail breaks.",
+      "reviewed_ts": "2026-07-12T01:29:42Z",
       "rank": 204,
       "rank_score": 57,
       "rank_reason": "57i"
@@ -5585,9 +5585,9 @@
         "body_start": null,
         "body_end": 848
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 205: at 0x7F0AD014 emits 5 display-list words: SetRenderMode 0xB900031D and 0x00504240 (G_RM_XLU_SURF, G_RM_XLU_SURF2), SetCombineMode 0xFCFFFFFF and 0xFFFDF6FB (G_CC_PRIMITIVE), SetPrimColor 0xFA000000 and color where w1 repacks the color bytes to itself with r = color shift right 24 and 0xff and so on, FillRectangle from arg1 arg2 arg3 arg4 as ulx uly lrx lry (stack 0x10 is arg4, 0x14 is color), then raw SetCombineLERP words 0xFCFF97FF and 0xFF2DFEFF; returns gdl plus 5. NATIVE path matches all five commands and the return.",
+      "reviewed_ts": "2026-07-12T01:29:57Z",
       "rank": 205,
       "rank_score": 57,
       "rank_reason": "57i"
@@ -5612,9 +5612,9 @@
         "body_start": null,
         "body_end": 224
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Rank 206 partial NATIVE_PORT allocator reimpl needing deep audit. Retail at 0x70009720 uses the requested byte count unchanged (move a2 a0 at 0x70009740); the NATIVE_PORT path first rounds the request up to a 16-byte multiple before every pool test and commit, changing allocation stride and thus pool-exhaustion timing. Also intptr_t fields and return-NULL replacing retail infinite-loop error paths. Requires a memp oracle to prove the 16-byte alignment is sim-neutral host-ABI hardening rather than a documented parity-divergence.",
+      "note": "Rank 206 partial NATIVE_PORT allocator reimpl needing deep audit. Retail at 0x70009720 uses the requested byte count unchanged (move a2 a0 at 0x70009740); the NATIVE_PORT path first rounds the request up to a 16-byte multiple before every pool test and commit, changing allocation stride and thus pool-exhaustion timing. Also intptr_t fields and return-NULL replacing retail infinite-loop error paths. Requires a memp oracle to prove the 16-byte alignment is sim-neutral host-ABI hardening rather than a documented parity-divergence.",
+      "reviewed_ts": "2026-07-12T01:29:57Z",
       "rank": 206,
       "rank_score": 57,
       "rank_reason": "57i"
@@ -5639,9 +5639,9 @@
         "body_start": 2239,
         "body_end": 2265
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Rank 207: at 0x7F0A68D8 inits watch tick verts. ystep = truncate to s32 of sqrtf(213444.0 minus float of D_80040B40 squared) using multu low 32, cvt.s.w signed, trunc.w.s. For col in 0 and 4, tick in minus 1 and 1, each 0x10 entry writes s16 at 0 = ystep times tick low 16, s16 at 2 = 0, s16 at 4 = col plus D_80040B40, s16 at 6 8 and 0xa = 0, bytes 0xc = 0, 0xd = 160, 0xe = 0, 0xf = low byte of D_80040B08. C matches offsets, loop bounds, and the little-endian LSB read equals retail sb low byte.",
+      "reviewed_ts": "2026-07-12T01:29:57Z",
       "rank": 207,
       "rank_score": 52,
       "rank_reason": "52i"
@@ -5666,9 +5666,9 @@
         "body_start": null,
         "body_end": 67
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:Rank 208 wholesale NATIVE_PORT rewrite needing deep audit. Retail at 0x7F005450 initializes a 600-entry pool of 80-byte stride-0x50 multi-level skip-list nodes (link fields at 0xc and 0x10, 0x20 and 0x24, 0x34 and 0x38, 0x48 and 0x4c) rooted at D_80036060. The NATIVE_PORT path replaces it with a 600-entry ModelRenderSlot array wired as a single-level doubly-linked free list (model, node, sort_z, next 0xc, prev 0x10) and drops the other skip levels. Different data structure, cannot be instruction-compared. Needs a deep audit of the whole render-slot subsystem, this init plus the sort at 0x7F06BB28 plus consumers, with an oracle to confirm the retail extra skip levels are unused.",
+      "note": "Rank 208 wholesale NATIVE_PORT rewrite needing deep audit. Retail at 0x7F005450 initializes a 600-entry pool of 80-byte stride-0x50 multi-level skip-list nodes (link fields at 0xc and 0x10, 0x20 and 0x24, 0x34 and 0x38, 0x48 and 0x4c) rooted at D_80036060. The NATIVE_PORT path replaces it with a 600-entry ModelRenderSlot array wired as a single-level doubly-linked free list (model, node, sort_z, next 0xc, prev 0x10) and drops the other skip levels. Different data structure, cannot be instruction-compared. Needs a deep audit of the whole render-slot subsystem, this init plus the sort at 0x7F06BB28 plus consumers, with an oracle to confirm the retail extra skip levels are unused.",
+      "reviewed_ts": "2026-07-12T01:30:04Z",
       "rank": 208,
       "rank_score": 50,
       "rank_reason": "50i"
