@@ -4991,9 +4991,9 @@
         "body_start": null,
         "body_end": 5155
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0111",
+      "note": "Core patrol-step search and struct writes match ASM 0x7F0290F8; NATIVE_PORT adds non-retail lastvisible60=timer and idle-anim compensations. See FID-0111.",
+      "reviewed_ts": "2026-07-12T01:09:46Z",
       "rank": 183,
       "rank_score": 104,
       "rank_reason": "104i"
@@ -5018,9 +5018,9 @@
         "body_start": 5791,
         "body_end": 5830
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F0A8FEC: dyn-alloc 12 verts, sfx volume read plus optional stick adjust, vol over 32767 float, gfx words 0xB900031D and 0x00504240, three setup_watch_rectangles at 600 20 -299 -205 with 7F0A3B40 emits, then 7F0A8D40 of vtx volFloat 30. Only add is a NATIVE_PORT null-guard on dyn-alloc failure, a no-op on the never-NULL faithful path.",
+      "reviewed_ts": "2026-07-12T01:09:46Z",
       "rank": 184,
       "rank_score": 101,
       "rank_reason": "101i"
@@ -5045,9 +5045,9 @@
         "body_start": 5568,
         "body_end": 5636
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F0A8D40 instruction-for-instruction: some_offset equals s32 of arg2 times 1.2 minus arg1, diff equals halfword 0x20 minus halfword 0x40, entries 0 to 3 RGBA 32 64 32 224, entries 4 to 9 color 48 arg1 plus 64 and 96 arg1 plus 128 with entries 6 to 9 also x-interp clamped to min, entries 10 to 11 x-interp clamped to max, tail copies halfword 0xA0 into halfword 0x10 and halfword 0. The under-10 path float-adds diff and some_offset separately while the 10-and-up path integer-adds them first, exactly as ASM.",
+      "reviewed_ts": "2026-07-12T01:09:46Z",
       "rank": 185,
       "rank_score": 100,
       "rank_reason": "100i"
@@ -5072,9 +5072,9 @@
         "body_start": 5956,
         "body_end": 5990
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Same structure as 7F0A8FEC but for music track 2: reads get_mTrack2Vol, gates on game_options_index equal 0 via bnezl at 0x7F0A9204, calls set_mTrack2Vol, and uses rect y of -275 not -205. All gfx words, 7F0A3B40 emits, and 7F0A8D40 of vtx volFloat 30 tail match ASM 0x7F0A91C8.",
+      "reviewed_ts": "2026-07-12T01:09:46Z",
       "rank": 186,
       "rank_score": 100,
       "rank_reason": "100i"
@@ -5099,9 +5099,9 @@
         "body_start": null,
         "body_end": 7269
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0112",
+      "note": "Retail 0x7F03E27C branches on prop->flags bit 8 and reads projectile+0xCC room source; NATIVE_PORT reimpl restructures the branch and drops that indirection. See FID-0112.",
+      "reviewed_ts": "2026-07-12T01:10:01Z",
       "rank": 187,
       "rank_score": 96,
       "rank_reason": "96i"
@@ -5126,9 +5126,9 @@
         "body_start": null,
         "body_end": 1542
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F03ADF4: room flood-fill from start_room with occluded-mark, sub_GAME_7F03A97C visibility then bgTestBulletHitBackground returning current_room on hit, sub_GAME_7F0B8EFC adjacency with dedup insert into room_list. The inner dedup compares the u8 room entry against the full adjacency word while C casts to u8; equivalent because room ids fit in a byte.",
+      "reviewed_ts": "2026-07-12T01:10:01Z",
       "rank": 188,
       "rank_score": 90,
       "rank_reason": "90i"
@@ -5153,9 +5153,9 @@
         "body_start": 8640,
         "body_end": 8694
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Core matches ASM 0x7F022078: linear search of D_8002C914 stride 44 for chr_num giving found_index, entry field_10 gated by random bit 4 producing scaled_dir equal dir times 42 over mag plus 1 transformed by currentPlayerGetMatrix10D4 then 7F0A3E1C with field_10 field_18 room, plus entry field_4 to 7F0A3E1C with hit_pos field_4 field_C room; room read from prop->stan offset 3. C adds two port-hardening guards absent in ASM: a mag under 0.001 div-by-zero early return and a prop->stan NULL guard, both altering only would-crash-on-N64 degenerate paths.",
+      "reviewed_ts": "2026-07-12T01:10:01Z",
       "rank": 189,
       "rank_score": 89,
       "rank_reason": "89i"
@@ -5180,9 +5180,9 @@
         "body_start": 6350,
         "body_end": 6392
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F0A9684: reads joystick X twice to set active-input when at least 10 or less than -9, resets counter to 0 when active and watch selected and controller option 1 else increments counter up to 100, and when counter reaches 100 rotates by minus speed over 10 via 7F0A95C4 with 4.0 else when watch selected and controller option 1 rotates by minus stickX times 0.2 times 2pi over 360. All branch senses and deltas match.",
+      "reviewed_ts": "2026-07-12T01:10:01Z",
       "rank": 190,
       "rank_score": 83,
       "rank_reason": "83i"
@@ -5207,9 +5207,9 @@
         "body_start": null,
         "body_end": 154
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F00032C: iterate attackanimconfig entries stride 0x48 while the offset field is nonzero, resolve anim pointer equal offset plus ptr_animation_table, floorFloatToInt of speed into 7F0001F0, angle_units equal low 16 of result, write field plus 8 to angle times 6.2831855 over 65536 divided by speed, subtracting 6.2831855 first when angle is at least 32768, or 0 when speed not positive, return count. Only difference is the port keeps the raw offset in the struct field instead of writing back the resolved pointer, a documented 64-bit pointer-width adaptation; the value passed to 7F0001F0 is identical.",
+      "reviewed_ts": "2026-07-12T01:10:14Z",
       "rank": 191,
       "rank_score": 80,
       "rank_reason": "80i"
@@ -5234,9 +5234,9 @@
         "body_start": null,
         "body_end": 3376
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F0A3978 exactly: arg3 nonzero path emits SPDMA words 0x04300040 and 0x04040010 plus tile-setup 0xB1000003 count 66, then a descending do-loop i from 7 to 0 emitting 0x04300040 to dmem_base plus i shifted left 5, 0x04040010 to original arg1, and 0xB1000042 value 12608, then 0xB1000004 value 16; arg3 zero path emits 8 iterations of 0x04300040 to arg1 and 0xB1000032 value 8464 advancing arg1 by 0x20; both end with 0xB8000000 full sync. uintptr_t versus u32 addressing is cosmetic.",
+      "reviewed_ts": "2026-07-12T01:10:14Z",
       "rank": 192,
       "rank_score": 80,
       "rank_reason": "80i"
@@ -5261,9 +5261,9 @@
         "body_start": 75,
         "body_end": 94
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Matches ASM 0x7F05B024: cubic weights square equals t times t, cube equals square times t, temp_f6 equals cube minus square times u, temp_f16 equals 2 square minus t plus cube times u, temp_f18 equals 2 minus u times cube plus square times u minus 3 plus 1, temp_f8 equals u minus 2 times cube plus square times 3 minus 2u plus t times u, then result x y z equal temp_f16 arg0 plus temp_f18 arg1 plus temp_f8 arg2 plus temp_f6 arg3 per component. Every mul add sub and accumulation order matches; the 74 percent decomp.me note is register ordering only.",
+      "reviewed_ts": "2026-07-12T01:10:14Z",
       "rank": 193,
       "rank_score": 76,
       "rank_reason": "76i"
@@ -5288,9 +5288,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "LEFTOVERDEBUG build variant of fileGetIndex at 0x7F0BD254, structurally identical to the built non-debug variant, differing only in the OBJ_INDEX_MAX cap literal 0x2e0 and symbol relocations, and not the port build target. Index search, cap check, indycommHostCheckFileExists with a pointer to size, and table init all match the live C.",
+      "reviewed_ts": "2026-07-12T01:10:26Z",
       "rank": 194,
       "rank_score": 76,
       "rank_reason": "76i"
@@ -5315,9 +5315,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Live NATIVE_PORT body matches built ASM 0x7F0BC60C: search file_resource_table entries 1 up to file_entry_max via strcmp returning i on match, cap check file_entry_max at least OBJ_INDEX_MAX returns 0, increment, indycommHostCheckFileExists of resname and a pointer to size (the port passes a pointer matching the ASM addiu a1 sp 0x34, unlike the buggy non-native reference which passes size by value), then init index filename hw_address and the resource_lookup_data_array fields including pc_size equal size plus 0xf or 0xf xor 0xf. The cap is symbolic OBJ_INDEX_MAX in both; the retail literal 0x30c reflects retail OBENDSEG plus 10 while the port value tracks its own object table.",
+      "reviewed_ts": "2026-07-12T01:10:26Z",
       "rank": 195,
       "rank_score": 76,
       "rank_reason": "76i"
