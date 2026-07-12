@@ -1,0 +1,28 @@
+{
+  "id": "FID-0115",
+  "title": "S2 pixel-oracle checkpoints not camera-registered: full-frame native-vs-ares diff dominated by warp/force-player viewpoint mismatch (frame-spanning parallax cluster)",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "discovered",
+  "suspect": [
+    "dam_glass_visual_probe route (GE007_AUTO_WARP_PAD 100 vs MGB64_ARES_FORCE_PLAYER_SCRIPT)",
+    "sense_pixel_sweep.sh checkpoint camera registration"
+  ],
+  "repro": "Cache stock PPM (ares) for dam_glass_visual_probe, then: sense_pixel_sweep.sh --route dam_glass_visual_probe --binary <rel> --ares-bin <ares>. Verdict on real Dam frame: 777 clusters, 775 auto-attributed (three_point_filter/vi_filter), 2 UNEXPLAINED. Worst = bbox[0,19,640,442] area=97576 mean_delta=34.1 = frame-spanning. PROVEN a viewpoint artifact NOT a renderer defect: (1) native-vs-native identical params = 0 clusters (deterministic); (2) same native renderer/position with ONLY the look-target moved to the stock coords (GE007_AUTO_FACE_COORD_SCRIPT 14051.53:-474.70:1545.11) reproduces the identical frame-spanning signature bbox[0,19,640,442] area=183952 mean_delta=33.1. The route's own actor guard also fails (chr 11 pos delta 13.95>12.0). Criterion-2 per-stage closure needs camera-REGISTERED checkpoints (identical camera matrix both sides); do NOT allowlist and do NOT file as parity-divergence.",
+  "evidence": [
+    {
+      "kind": "pixel-diff",
+      "path": "tools/fidelity/sense_pixel_sweep.sh"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T02:25:17Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "tools/fidelity/sense_pixel_sweep.sh",
+      "note": "Filed by the FID-0044 pixel-oracle-sweep increment. This is the true blocker to a clean per-stage criterion-2 verdict: the only existing pixel checkpoint is not viewpoint-registered tightly enough for a full-frame native-vs-ares diff. Do NOT resolve by loosening APPROXIMATIONS.md bounds (would mask real defects)."
+    }
+  ]
+}
