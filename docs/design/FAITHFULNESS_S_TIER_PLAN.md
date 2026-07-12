@@ -421,6 +421,24 @@ Each lane: standalone script, emits `docs/fidelity/reports/sense_<lane>_<ts>.jso
 - [x] Sanity rails: `audit_screenshot_health.py` both sides (rejects blank/truncated captures before diffing). (done: tools/audit_screenshot_health.py invoked at sense_pixel_sweep.sh:149,280)
 - [x] Commit; add a `--gate` mode (known-good checkpoints, zero unexplained clusters) to manifest tier 3. (done: verify_manifest.txt "tools/fidelity/sense_pixel_sweep.sh --gate" / commit 2c60892)
 
+> **Amendment (2026-07-12, FID-0044 pixel-oracle-sweep increment):** the capture
+> path above had never actually exercised on a real ROM frame — `sense_pixel_sweep.sh`
+> omitted `--level`/`native_config`, so every level-bearing checkpoint booted to the
+> front menu and screenshotted a black frame (unique≤3/black~100% → health-audit
+> skip); only the synthetic `--self-test` ever ran. Fixed: the native capture now
+> passes `--level native_level` + the route `native_config` overrides. Proven
+> end-to-end native-vs-ares on Dam (level 33): 775/777 diff clusters auto-attribute
+> to documented approximation classes (`three_point_filter`/`vi_filter`); the 2
+> residual "unexplained" clusters are a **viewpoint-registration artifact**
+> (native warp-to-pad vs ares force-player differ ~14u + sub-degree angle),
+> **not** renderer defects — proven by native-vs-native = 0 clusters and by
+> reproducing the identical frame-spanning cluster with only the native look-target
+> moved to the stock coords. Filed as **FID-0115** (camera registration), *not*
+> allowlisted and *not* filed as parity-divergence. ROM-gated ctest
+> `port_pixel_oracle_sweep_gate` wired (skips clean w/o cache). **Criterion 2 (§5:
+> zero unattributed clusters per stage) is NOT yet met**: coverage is 1/20 stages
+> (Dam); the other 19 need camera-registered checkpoints (blocked on FID-0115).
+
 #### Task 2.3: S3 — RDP command-stream differential (`tools/fidelity/sense_rdp_sweep.sh`) (FID-0043)
 
 Pixel diffs say *that* something differs; the RDP stream says *what*. Ares already has `MGB64_ARES_TRACE_RDP_COMMANDS`; native has `GE007_TRACE_RDP_RENDER_MODES`/`GE007_TRACE_N64_DL` + existing native-only analyzers (`port_stock_rdp_command_stream_analyzer_guard`).

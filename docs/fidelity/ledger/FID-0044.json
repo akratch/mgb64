@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "discovered",
+  "status": "root-caused",
   "suspect": [
     "compare_screenshots.py",
     "ares PPM"
@@ -15,6 +15,14 @@
       "kind": "doc-anchor",
       "path": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "tools/fidelity/sense_pixel_sweep.sh"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "tools/fidelity/sense_pixel_sweep.sh"
     }
   ],
   "history": [
@@ -24,6 +32,20 @@
       "to": "discovered",
       "evidence": "docs/design/FAITHFULNESS_S_TIER_PLAN.md#0.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-12T02:25:51Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "tools/fidelity/sense_pixel_sweep.sh",
+      "note": "Assessed the S2 pixel lane. ares screenshot path WORKS: prebuilt instrumented ares (build/ares-movement-oracle) emits deterministic 640x480 stock PPMs at a checkpoint game-timer (dam_glass_visual_probe stock PPM byte-identical across 2 attempts). Classifier pipeline (pixel_normalize+pixel_diff vs APPROXIMATIONS.md) + self-test pass. Defect found: sense_pixel_sweep.sh native capture omitted --level and native_config, so the lane had NEVER captured a real ROM frame (booted to menu -> black frame, unique=3/black=100%, health-audit skip) and only its synthetic self-test ever ran."
+    },
+    {
+      "ts": "2026-07-12T02:25:51Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tools/fidelity/sense_pixel_sweep.sh",
+      "note": "Fixed the native capture (pass --level native_level + native_config --config-override) and ran the sweep end-to-end on Dam (level 33): real native-vs-ares verdict = 777 clusters, 775 AUTO-ATTRIBUTED to documented approximation classes (three_point_filter, vi_filter), 2 unexplained. The 2 unexplained are ROOT-CAUSED as a viewpoint-registration artifact (native warp-to-pad vs stock force-player differ ~14u + sub-degree angle), NOT renderer defects: native-vs-native identical params = 0 clusters; moving only the native look-target to the stock coords reproduces the identical frame-spanning cluster (bbox[0,19,640,442]). Filed as FID-0115 (camera registration), NOT allowlisted, NOT filed as parity-divergence. Wired ROM-gated ctest port_pixel_oracle_sweep_gate (--gate ratchet; skips clean w/o cache) + confirmed the injected-regression proof (self-test + a 40x40 garbage block on a real Dam frame -> 1 unexplained cluster mean_delta 199). HONEST COVERAGE: 1/20 stages captured (Dam); the other 19 need camera-registered checkpoints (blocked on FID-0115). Criterion-2 (zero unattributed clusters per stage) NOT yet met -> stays open at root-caused."
     }
   ]
 }

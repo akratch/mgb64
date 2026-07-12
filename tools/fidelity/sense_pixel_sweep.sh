@@ -57,6 +57,9 @@ Usage: tools/fidelity/sense_pixel_sweep.sh [options]
   --self-test       prove the pixel pipeline on synthetic images (no ROM/ares)
   --vi-deblur       apply the N64 VI horizontal-AA approximation during normalize
   --binary PATH     native binary (default: build/ge007)
+  --no-build        accepted + ignored (the sweep never builds; it needs a
+                    prebuilt --binary). Present so the ROM-gated ctest smoke
+                    harness (add_port_validation_smoke) can invoke this lane.
   --rom PATH        ROM (default: ./baserom.u.z64)
   --ares-bin PATH   instrumented ares binary for stock captures
   --build-dir DIR   build dir (default: build)
@@ -74,6 +77,7 @@ while [[ $# -gt 0 ]]; do
         --self-test) SELF_TEST=1; shift ;;
         --vi-deblur) VI_DEBLUR=1; shift ;;
         --binary) BINARY="$2"; shift 2 ;;
+        --no-build) shift ;;   # no-op: this lane requires a prebuilt --binary
         --rom) ROM="$2"; shift 2 ;;
         --ares-bin) ARES_BIN="$2"; shift 2 ;;
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
@@ -265,9 +269,30 @@ run_route() {
     # Native BMP at the game-timer checkpoint.
     local env_lines; env_lines="$(python3 tools/rom_oracle_route.py native-env "$route" 2>/dev/null)" || true
     local extra=(); while IFS= read -r line; do [[ -n "$line" ]] && extra+=("$line"); done <<<"$env_lines"
+    # Route native --config-override overrides (FovY, RemasterFX off, RenderScale=1,
+    # RetroFilter on, ...): a pixel checkpoint must render on the *faithful* config,
+    # not the user's saved ge007.ini — otherwise post-FX/scale/FOV differences swamp
+    # the diff. movement_oracle_capture.sh applies these the same way.
+    local cfg_lines; cfg_lines="$(python3 tools/rom_oracle_route.py native-config "$route" 2>/dev/null)" || true
+    local cfg_args=(); while IFS= read -r line; do [[ -n "$line" ]] && cfg_args+=(--config-override "$line"); done <<<"$cfg_lines"
+    # Level pin: a route reaches its checkpoint via a direct --level boot unless it
+    # declares native_menu_boot (frontend-driven). WITHOUT --level the binary boots
+    # to the front menu, the gameplay game-timer never advances, and the timer-keyed
+    # screenshot fires on a black menu frame (unique<=3, black~100%) that fails the
+    # health audit -- the original defect that kept this lane from ever capturing a
+    # real ROM frame (only the synthetic self-test ran).
+    local level_args=()
+    local menu_boot; menu_boot="$(route_json_field "$rj" native_menu_boot)"
+    local native_level; native_level="$(route_json_field "$rj" native_level)"
+    [[ -z "$native_level" ]] && native_level="$(route_json_field "$rj" level)"
+    case "$menu_boot" in
+        1|true|True|TRUE|yes|YES|on|ON) ;;   # frontend-driven boot; no --level pin
+        *) [[ -n "$native_level" ]] && level_args=(--level "$native_level") ;;
+    esac
     rm -f screenshot_pixorc.bmp
     if ! "${DETERMINISM_ENV[@]}" "${extra[@]}" "$BINARY" \
-            --rom "$ROM" --deterministic \
+            "${cfg_args[@]}" \
+            --rom "$ROM" --deterministic "${level_args[@]}" \
             --screenshot-game-timer "$timer" --screenshot-label pixorc \
             --screenshot-exit >"${OUT_DIR}/${route}_native.log" 2>&1; then
         note_route_skip "${route}: native capture failed (see ${route}_native.log)"; return 0

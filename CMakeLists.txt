@@ -1183,6 +1183,18 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # the route<->tape linkage: a route cannot claim gate:true without a passing
     # tape. SKIPs cleanly (and passes on an empty gate set). ares-free / ROM-gated.
     add_port_validation_smoke(port_gate_routes_smoke fidelity/gate_routes_smoke.sh 600)
+    # FID-0044 (Task 2.2, criterion 2): S2 pixel-oracle ratchet at the ctest layer
+    # (previously only in docs/fidelity/verify_manifest.txt). Runs the per-stage
+    # native-vs-ares screenshot sweep in --gate mode: for every "gate": true pixel
+    # checkpoint it captures the native BMP at the checkpoint game-timer, pairs it
+    # with the cached ares stock PPM, normalizes, diffs, clusters, and classifies
+    # against docs/fidelity/APPROXIMATIONS.md — failing iff any cluster is NOT
+    # attributable to a documented approximation class. SKIPs cleanly (exit 0) when
+    # the ROM, native binary, ares binary, or a checkpoint's cached stock PPM is
+    # absent, and passes on an empty gate-checkpoint set. ares+ROM-gated. The
+    # ROM-free injected-regression proof (broken pair -> unexplained cluster) is the
+    # sibling sense_pixel_sweep_selftest ctest.
+    add_port_validation_smoke(port_pixel_oracle_sweep_gate fidelity/sense_pixel_sweep.sh 600 --gate)
 endif()
 
 # T5: cheap intro-path regression

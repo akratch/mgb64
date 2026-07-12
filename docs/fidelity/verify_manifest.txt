@@ -26,7 +26,7 @@ tools/fidelity/gate_routes_smoke.sh                          # FID-0031/D4 ares-
 tools/fidelity/patrol_magic_profile_smoke.sh                 # FID-0014 faithful WAYMODE_MAGIC patrol pause/warp profile + GE007_NO_PATROL_MAGIC_FIX negative control (also ctest port_patrol_magic_profile_smoke)
 tools/fidelity/aspect_cull_coupling_smoke.sh                 # FID-0058 aspect->sim cull coupling: widen-OFF aspect-invariant + widen-ON divergence characterization
 tools/fidelity/sense_trace_sweep.sh --gate                   # Task 2.1 S1 trace ratchet (gate:true routes; SKIPs cleanly w/o ROM+ares)
-tools/fidelity/sense_pixel_sweep.sh --gate                   # Task 2.2 S2 pixel ratchet (gate:true checkpoints; SKIPs cleanly w/o ROM+ares)
+tools/fidelity/sense_pixel_sweep.sh --gate                   # Task 2.2 S2 pixel ratchet (gate:true checkpoints; SKIPs cleanly w/o ROM+ares) (also ctest port_pixel_oracle_sweep_gate)
 tools/fidelity/sense_rdp_sweep.sh --gate                     # FID-0043 S3 RDP native/ares command-stream differential (native ROM-gated, ares differential needs --ares-rdp-sidecar; SKIPs cleanly)
 # appended by later tasks:
 # tools/uncap_purity_gate.sh                                  (Task 0.5)
