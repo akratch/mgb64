@@ -748,6 +748,19 @@ if(BUILD_TESTING)
     target_include_directories(test_ammo_icon_anchor PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME ammo_icon_anchor COMMAND test_ammo_icon_anchor)
 
+    # Paused-watch scene renderer constants — ROM-free unit test (FID-0068):
+    # retail passes guPerspective aspect 0x3FBA2E8C (16/11) and stores the room
+    # tint into envcolour big-endian packed (r<<24|g<<16|b<<8|a, or 205 for
+    # states 5/12); the port passed 1.456f (0x3FBA5E35) and an LE-reversed
+    # *(u32*)&tileColor into the inert cullmode. Pins both so a revert or a
+    # GE007_NO_WATCH_RENDER_FIX flip reddens.
+    add_executable(test_watch_scene_render
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_scene_render.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_scene_render.c"
+    )
+    target_include_directories(test_watch_scene_render PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_scene_render COMMAND test_watch_scene_render)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

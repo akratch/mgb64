@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1038 flags** found across the source.
+**1039 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -600,6 +600,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
 | `GE007_NO_WATCH_INV_ASPECT_FIX` | presence | unset | 1 | Restore the legacy watch-inventory guPerspective aspect 9/7 (vs retail 4/3) [FID-0098] |
+| `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_BUDGET` | ? |  | 1 |  |
