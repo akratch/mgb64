@@ -1,5 +1,6 @@
 // ui_bindings.cpp — Controls panel: press-to-rebind keyboard AND gamepad actions.
 #include "ui_launcher.h"
+#include "app_theme.h"   // AppTheme::bad() — conflict tint
 #include "input_actions.h"
 #include "ui_common.h"
 #include "ui_overlay.h"  // Overlay_gamepadToggleButton: reserved, not capturable
@@ -8,8 +9,32 @@
 #include <SDL.h>
 
 #include <cstdio>
+#include <cstring>
 
 namespace {
+
+// A keyboard action shares its key with another action (scancode 0 = unbound,
+// never a conflict). Used to flag silent last-writer-wins rebinds.
+bool keyConflicts(int i, int n) {
+    int sc = inputBindingScancode((InputAction)i);
+    if (sc == 0) return false;
+    for (int j = 0; j < n; ++j)
+        if (j != i && inputBindingScancode((InputAction)j) == sc) return true;
+    return false;
+}
+
+// A gamepad action shares its button/trigger with another. We compare the human
+// binding name (two actions on the same input render the same name).
+bool padConflicts(int i, int n) {
+    const char *name = gamepadBindingName((GamepadAction)i);
+    if (!name || !name[0]) return false;
+    for (int j = 0; j < n; ++j) {
+        if (j == i) continue;
+        const char *other = gamepadBindingName((GamepadAction)j);
+        if (other && std::strcmp(other, name) == 0) return true;
+    }
+    return false;
+}
 
 // Lazily open (refcounted; shared with the engine/ImGui) the first game
 // controller so the capture flow can poll it. Never closed — one ref for the
@@ -61,16 +86,26 @@ void drawKeyboardTable() {
 
             ImGui::TableSetColumnIndex(1);
             ImGui::PushID(i);
+            bool cap = (capturing == i);
+            bool conflict = !cap && keyConflicts(i, n);
             char label[64];
-            if (capturing == i) {
+            if (cap) {
                 std::snprintf(label, sizeof(label), "Press a key...");
             } else {
                 const char *kn = SDL_GetScancodeName((SDL_Scancode)inputBindingScancode((InputAction)i));
-                std::snprintf(label, sizeof(label), "%s", (kn && kn[0]) ? kn : "?");
+                // Suffix the conflict as text (not color alone) so it reads for
+                // colorblind/controller users; the tint reinforces it.
+                std::snprintf(label, sizeof(label), conflict ? "%s  \xE2\x80\x94 conflict" : "%s",
+                              (kn && kn[0]) ? kn : "?");
             }
-            bool cap = (capturing == i);
             if (cap) ui::PushPrimaryButtonColors();
+            if (conflict) ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::bad());
             if (ImGui::Button(label, ImVec2(220.0f, 0.0f))) capturing = cap ? -1 : i;
+            if (conflict) {
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("This key is also bound to another action \xE2\x80\x94 the last one set wins in-game.");
+            }
             if (cap) ui::PopPrimaryButtonColors();
             ImGui::PopID();
         }
@@ -153,17 +188,25 @@ void drawGamepadTable() {
 
             ImGui::TableSetColumnIndex(1);
             ImGui::PushID(1000 + i);  // distinct from the keyboard table IDs
+            bool cap = (capturing == i);
+            bool conflict = !cap && padConflicts(i, n);
             char label[64];
-            if (capturing == i) {
+            if (cap) {
                 std::snprintf(label, sizeof(label), "Press a button...");
             } else {
-                std::snprintf(label, sizeof(label), "%s", gamepadBindingName((GamepadAction)i));
+                std::snprintf(label, sizeof(label), conflict ? "%s  \xE2\x80\x94 conflict" : "%s",
+                              gamepadBindingName((GamepadAction)i));
             }
-            bool cap = (capturing == i);
             if (cap) ui::PushPrimaryButtonColors();
+            if (conflict) ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::bad());
             if (ImGui::Button(label, ImVec2(220.0f, 0.0f)) && !committedThisFrame) {
                 if (cap) { capturing = -1; }
                 else     { capturing = i; waitRelease = true; }
+            }
+            if (conflict) {
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("This button is also bound to another action \xE2\x80\x94 the last one set wins in-game.");
             }
             if (cap) ui::PopPrimaryButtonColors();
             ImGui::PopID();
