@@ -1,0 +1,27 @@
+{
+  "id": "FID-0109",
+  "title": "textRenderGlow narrows printable-glyph range to ch 0x21..0x7e that retail ASM lacks; retail renders control/DEL bytes via out-of-range font indexing (sibling of FID-0108)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/textrelated.c"
+  ],
+  "repro": "render via textRenderGlow a string containing a byte in 0x01..0x1f excluding 0x0A, or 0x7f; port skips it (prev_char reset to 72, ptr advanced, no glyph, no x advance), retail emits a fontchar from font-table offset ch*24 - 0x318 (negative for ch below 0x21, one past the 0x21..0x7e range for 0x7f)",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/textrelated.c:3901 retail US ASM at glabel textRenderGlow gates only ch less-than 0x80 before the sub_GAME_7F0ADDAC construct call: instr 7F0AE7E4 slti at,v0,0x80 then 7F0AE7E8 beqz at to the JP path, else falls straight into the ASCII construct using second_font_table + ch*24 - 0x318; the live port C at textrelated.c:3771 instead guards ch greater-equal 0x21 and ch less-equal 0x7e for the render, and textrelated.c:3790 routes any other ch less-than 0x80 to prev_char=72 with ptr advance and no render"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T00:16:42Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/textrelated.c:3901 retail US ASM at glabel textRenderGlow gates only ch less-than 0x80 before the sub_GAME_7F0ADDAC construct call: instr 7F0AE7E4 slti at,v0,0x80 then 7F0AE7E8 beqz at to the JP path, else falls straight into the ASCII construct using second_font_table + ch*24 - 0x318; the live port C at textrelated.c:3771 instead guards ch greater-equal 0x21 and ch less-equal 0x7e for the render, and textrelated.c:3790 routes any other ch less-than 0x80 to prev_char=72 with ptr advance and no render",
+      "note": "Exact sibling of FID-0108 which files the identical divergence in textRender (textrelated.c:2014 and 2032). Behavior-neutral for all valid printable ASCII 0x21..0x7e and the JP path ch greater-equal 0x80, which both match retail. Differs only for control and DEL bytes that retail renders via out-of-range font indexing. The added bound is present in the compiled C (not NATIVE_PORT-gated). Rest of textRenderGlow verified equivalent this batch: default argb from second_font_table words at 0x88c and 0x890, j_text_trigger with argb below 14 clamp to 14, space adds 5 to x, newline resets x and adds argb to y, the ASCII and Japanese sub_GAME_7F0ADDAC arg tuples, and the jis_code decode with width15/height16 and index plus 0x80. A separate NATIVE_PORT-only null guard returns early on null text or font, a benign hardening absent from retail."
+    }
+  ]
+}

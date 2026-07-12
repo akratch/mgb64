@@ -4289,9 +4289,9 @@
         "body_start": 1143,
         "body_end": 1221
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "ASM at glabel write_playerrank_to_buffer matches C: fill indices and get_points_for_mp_player scores, optimized descending bubble sort swapping indices in lockstep on strict less-than, find player_index position, count ties above to derive rank, switch rank 0..3 with scenario-dependent 2v2 or 2v1 (5 or 7) and 3v1 (6) cases mapping to RANK1ST..4TH string ids 0xA011..0xA014. Nuance: retail sprintf vs port snprintf with 256 and a percent-s wrapper, identity for format-free localized rank labels; the not-found player path is unreachable since player_index is always present.",
+      "reviewed_ts": "2026-07-12T00:17:47Z",
       "rank": 157,
       "rank_score": 178,
       "rank_reason": "178i"
@@ -4316,9 +4316,9 @@
         "body_start": null,
         "body_end": 3827
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "finding-filed:FID-0109",
+      "note": "Retail US ASM gates only ch less-than 0x80 before the sub_GAME_7F0ADDAC construct call (7F0AE7E4 slti at,v0,0x80 then 7F0AE7E8 beqz); live C at textrelated.c:3771 narrows the render to ch 0x21..0x7e and routes other ch less-than 0x80 to no-render. Exact sibling of FID-0108 on textRender. Rest of textRenderGlow verified equivalent.",
+      "reviewed_ts": "2026-07-12T00:18:19Z",
       "rank": 158,
       "rank_score": 168,
       "rank_reason": "168i"
@@ -4343,9 +4343,9 @@
         "body_start": null,
         "body_end": 1299
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Room-iteration bullet-vs-background test matches ASM: visited-set marking, sub_GAME_7F03A97C and bgTestBulletHitBackground guard calls with correct arg registers, hit-position scale multiply and writeback, a 3-axis strict-between test whose branch-likely spaghetti implements the C boundary inclusivity (src less-equal hit less-than out when src less-equal out; out less-than hit less-equal src otherwise) on all axes, best_room assignment, and the 0x30-byte hit-record copy.",
+      "reviewed_ts": "2026-07-12T00:17:47Z",
       "rank": 159,
       "rank_score": 167,
       "rank_reason": "167i"
@@ -4370,9 +4370,9 @@
         "body_start": null,
         "body_end": 3527
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Font-glyph RDP texrect emitter matches ASM across all four clip cases: right-edge early-out, top-clipped, bottom-clipped, and unclipped with the text_orientation variant. Every RDP word (0xE4 or 0xE5 texrect, 0xB4, 0xB3), the shift-12 and and-0xFFF and shift-5 bitfield packing, char_data width/y_offset/tex_height at offsets 0xC and 4 and 8, and the gdl-plus-3 return all match.",
+      "reviewed_ts": "2026-07-12T00:17:47Z",
       "rank": 160,
       "rank_score": 164,
       "rank_reason": "164i"
@@ -4397,9 +4397,9 @@
         "body_start": 282,
         "body_end": 393
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Free-block coalescing (stride 20) matches ASM across both merge loops, field offsets 0 4 8 0xC 0xE 0x10 0x12, the merge accounting into word_CODE_bss_8007A0F2, and the part-2 linked-list relink. Nuance: the C guards cast s16 of dword_CODE_bss_8007A0D8 shifted right 2 where the ASM compares full 32-bit; benign because the item count is s16-ranged by construction (default 0x1F4, stored via s16 cast at init) so the shifted value never exceeds s16 range.",
+      "reviewed_ts": "2026-07-12T00:17:47Z",
       "rank": 161,
       "rank_score": 164,
       "rank_reason": "164i"
@@ -4424,9 +4424,9 @@
         "body_start": 6117,
         "body_end": 6166
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Watch text helper matches ASM: textMeasure call, center-flag signed division-toward-zero for text_width over 2 and right-flag x adjust, g_WatchBackgroundGreen below 0xE0 branch emitting 0xB900031D with 0x0050004B vs 0x005041C8, bg-flag microcode_constructor_related_to_menus arg tuple, and mutually-exclusive glow_yoffset zero picks textRender vs nonzero picks textRenderGlow with matching 11 and 12 arg tuples. The s16 and u32 casts on small text-dimension and color args are identity for the value ranges.",
+      "reviewed_ts": "2026-07-12T00:18:19Z",
       "rank": 162,
       "rank_score": 139,
       "rank_reason": "139i"
@@ -4451,9 +4451,9 @@
         "body_start": 1440,
         "body_end": 1537
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Closest IA-palette search matches ASM: 4x-unrolled exact-match linear scan returning correct indices, binary search localizing a region by intensity-squared plus alpha-squared magnitude with correct low and loop_end updates including the equal-sum both-assign case, plus-or-minus-4 window clamp, and final window search minimizing squared IA distance. The C sum2 and the if-j statement are inert compiler-coaxing artifacts.",
+      "reviewed_ts": "2026-07-12T00:18:19Z",
       "rank": 163,
       "rank_score": 137,
       "rank_reason": "137i"
@@ -4478,9 +4478,9 @@
         "body_start": null,
         "body_end": 1295
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Demo-record packet writer matches ASM: CONTSAMPLE_LEN 20 modulo sample walk, per-pad stick and 16-bit button split into low and high bytes, u8-wrapping checksum, count and speedframes and randseed and check header at offsets 1 0 2 3, and the ALIGN16 romWrite plus even-align address advance. The ASM g_randomSeed plus 4 load is the big-endian low-word access for u64 to u8 truncation, identical to the C randseed assignment. NATIVE_PORT trace calls are pure instrumentation.",
+      "reviewed_ts": "2026-07-12T00:18:19Z",
       "rank": 164,
       "rank_score": 137,
       "rank_reason": "137i"
@@ -4505,9 +4505,9 @@
         "body_start": 1088,
         "body_end": 1136
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "MipMap2C microcode emitter matches ASM: arg1 nonzero emits gSPDisplayList opcode 0x06000000 to MipMap2C_Something_Setup; arg1 zero emits 12 Gfx commands with a sinf of flt_CODE_bss_80079E88 times 127 plus 128 pulsing alpha in the 0xFA000000 command. Out-of-order scheduled stores land in the correct 12 slots and every RDP word matches. Float-to-u32 is the standard MIPS bias idiom.",
+      "reviewed_ts": "2026-07-12T00:18:38Z",
       "rank": 165,
       "rank_score": 136,
       "rank_reason": "136i"
@@ -4532,9 +4532,9 @@
         "body_start": 1293,
         "body_end": 1341
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Sibling of sub_GAME_7F09343C, same structure: arg1 nonzero emits gSPDisplayList to MipMap2C_Something2_Setup; arg1 zero emits 12 Gfx commands with the sinf pulsing alpha. Differs from 7F09343C only in 0xF5480400 vs 0xF5100800 for the first two commands and the Something2 DL, both consistent with its C. Verified equivalent.",
+      "reviewed_ts": "2026-07-12T00:18:38Z",
       "rank": 166,
       "rank_score": 136,
       "rank_reason": "136i"
@@ -4559,9 +4559,9 @@
         "body_start": 3254,
         "body_end": 3342
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Guard-yelp sound picker matches ASM: prop type VIEWER 6 check, bonddead offset 0xd8 early-out, single-player c_item_entries isMale (stride 20 offset 16) vs MP get_player_mp_char_gender, male vs female sound-table rotation via sndPlaySfx with counter wrap at 25 and 3, chrobjSndCreatePostEventDefault with prop pos at offset 8. male_guard_yelps 0x86..0x9E and female_guard_yelps 0xD..0xF literals match the globals; the function-static counters behave identically to the single-user retail globals.",
+      "reviewed_ts": "2026-07-12T00:18:38Z",
       "rank": 167,
       "rank_score": 135,
       "rank_reason": "135i"
@@ -4586,9 +4586,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Effect-entry initializer (LEFTOVERDEBUG rodata variant) matches C body at line 3644: u32-to-f32 random angle times 6.2831855, type switch (4 gives unk04 1 and 1.0 and FLARE, 1 gives 11 and 0.5 and SMOKE, 3 gives 9 and 0.5 and SCATTERED, 6 gives 100 and 0.0 and FLARE, default 11 and 0.5 and SMOKE), D_80040960 RGBA pack stride 4 into bytes 0x28 through 0x2b, pos copy, scale times factor times 1.41412 with cosf and sinf. Port stores a stable EFFECT_IMG handle where retail stores the raw image pointer, a pointer-portability refactor with a 1-to-1 resolver, behaviorally equivalent.",
+      "reviewed_ts": "2026-07-12T00:18:56Z",
       "rank": 168,
       "rank_score": 133,
       "rank_reason": "133i"
@@ -4613,9 +4613,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Non-LEFTOVERDEBUG variant of the same sub_GAME_7F0A3C08; the file comment confirms identical asm differing only in which rodata holds 6.2831855 and 1.41412 (D_8004CE20 and D_8005774C vs D_80057750 and D_80057754). Verifies against the same C body as the LEFTOVERDEBUG variant; same verdict.",
+      "reviewed_ts": "2026-07-12T00:18:56Z",
       "rank": 169,
       "rank_score": 133,
       "rank_reason": "133i"
