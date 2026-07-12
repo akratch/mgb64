@@ -25,6 +25,11 @@ int UpdateCheck_bannerTag(char *out, size_t cap);
 // Used by the headless self-test harness (MGB64_UPDATE_CHECK_SELFTEST).
 int UpdateCheck_isDone(void);
 
+// 1 only when a real network response was actually fetched and version-compared
+// (distinguishes "checked, up to date" from "check declined / offline"). Lets the
+// About panel show an honest status instead of over-claiming "up to date".
+int UpdateCheck_didCheck(void);
+
 // Call just before app shutdown: silences the (detached) worker's log lines so
 // a check still in flight can't fprintf into DiagLog's closing stderr pipe.
 void UpdateCheck_quiesce(void);

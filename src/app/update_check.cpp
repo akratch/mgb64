@@ -29,6 +29,7 @@ const size_t kMaxResponse = 64 * 1024;
 SDL_atomic_t s_started;    // 1 once the worker has been (or was declined to be) launched
 SDL_atomic_t s_done;       // 1 when the worker has finished
 SDL_atomic_t s_hasUpdate;  // 1 when s_tag holds a strictly-newer release tag
+SDL_atomic_t s_checked;    // 1 when a real network response was parsed + compared
 SDL_atomic_t s_quiesced;   // 1 once the app is shutting down: worker stops logging
 char         s_tag[128];   // written by the worker before publishing s_hasUpdate
 
@@ -55,15 +56,19 @@ int worker(void * /*arg*/) {
     size_t n = runCurl(resolveUrl(), resp, sizeof(resp));
     if (n > 0) {
         char tag[128];
-        if (mgb_update_extract_tag(resp, n, tag, sizeof(tag)) &&
-            mgb_update_remote_is_newer(tag, AppVersion())) {
-            std::snprintf(s_tag, sizeof(s_tag), "%s", tag);
-            SDL_AtomicSet(&s_hasUpdate, 1);
-            if (logOk())
-                std::fprintf(stderr, "[update] newer release available: %s (current %s)\n",
-                             tag, AppVersion());
+        if (mgb_update_extract_tag(resp, n, tag, sizeof(tag))) {
+            SDL_AtomicSet(&s_checked, 1);  // a real, comparable response arrived
+            if (mgb_update_remote_is_newer(tag, AppVersion())) {
+                std::snprintf(s_tag, sizeof(s_tag), "%s", tag);
+                SDL_AtomicSet(&s_hasUpdate, 1);
+                if (logOk())
+                    std::fprintf(stderr, "[update] newer release available: %s (current %s)\n",
+                                 tag, AppVersion());
+            } else if (logOk()) {
+                std::fprintf(stderr, "[update] up to date (current %s)\n", AppVersion());
+            }
         } else if (logOk()) {
-            std::fprintf(stderr, "[update] up to date (current %s)\n", AppVersion());
+            std::fprintf(stderr, "[update] response unparseable; no banner\n");
         }
     } else if (logOk()) {
         std::fprintf(stderr, "[update] no response (offline / curl unavailable); no banner\n");
@@ -255,6 +260,8 @@ int UpdateCheck_bannerTag(char *out, size_t cap) {
 }
 
 int UpdateCheck_isDone(void) { return SDL_AtomicGet(&s_done); }
+
+int UpdateCheck_didCheck(void) { return SDL_AtomicGet(&s_checked); }
 
 void UpdateCheck_quiesce(void) { SDL_AtomicSet(&s_quiesced, 1); }
 

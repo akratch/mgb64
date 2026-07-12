@@ -4,6 +4,7 @@
 #include "app_host.h"
 #include "app_theme.h"
 #include "app_version.h"
+#include "config_schema.h"  // mgb_config_get_int (Game.CheckForUpdates status)
 #include "ui_common.h"
 #include "ui_settings.h"
 #include "update_check.h"
@@ -17,6 +18,9 @@
 #include <string>
 
 namespace {
+
+// The releases page a player lands on from the "update available" banner/About.
+const char *kReleasesUrl = "https://github.com/akratch/mgb64/releases";
 
 // Wrappers so the panel table has a uniform signature.
 void SettingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
@@ -36,7 +40,29 @@ void AboutPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
     ui::Gap(ui::kGapXS);
     ui::TextSubtle("Overlay: press F1 or the gamepad Back/View button in-game for live settings and quit.");
     ui::Gap(ui::kGapXS);
-    ui::TextSubtle("Fully controller-navigable: D-pad/stick to move, A to select, B to go back.");
+    ui::TextSubtle("Controller-navigable: D-pad/stick to move, A to select, B to go back.");
+
+    // Honest update status: distinguish checking / up-to-date / available / off,
+    // so the version above isn't a dead number the user can't act on.
+    ui::Gap(ui::kGapM);
+    ImGui::Separator();
+    ui::Gap(ui::kGapS);
+    char utag[128];
+    if (UpdateCheck_bannerTag(utag, sizeof(utag))) {
+        ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::accent());
+        ImGui::Text("A newer version is available: %s", utag);
+        ImGui::PopStyleColor();
+        ui::Gap(ui::kGapXS);
+        if (ImGui::Button("Open releases page")) SDL_OpenURL(kReleasesUrl);
+    } else if (!UpdateCheck_isDone()) {
+        ui::TextSubtle("Checking for updates\xE2\x80\xA6");
+    } else if (UpdateCheck_didCheck()) {
+        ui::TextSubtle("You're on the latest version (v%s).", AppVersion());
+    } else if (mgb_config_get_int("Game.CheckForUpdates", 1) == 0) {
+        ui::TextSubtle("Update checks are off \xE2\x80\x94 enable in Settings \xE2\x96\xB8 Game.");
+    } else {
+        ui::TextSubtle("Couldn't reach the update server (offline, or curl unavailable).");
+    }
 }
 
 struct PanelDef {
@@ -126,9 +152,6 @@ void drawNavRail(int &active, LauncherAction &action) {
 
     ImGui::EndChild();
 }
-
-// The releases page a player lands on from the "update available" banner.
-const char *kReleasesUrl = "https://github.com/akratch/mgb64/releases";
 
 // Quiet, dismissible "a newer MGB64 is available" row. Drawn full-width above the
 // nav/content split only when the background check found a strictly-newer,

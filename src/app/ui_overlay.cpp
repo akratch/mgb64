@@ -289,9 +289,23 @@ void onRender() {
             }
         }
 
+        // Solo cross-reference: the F1 overlay and the diegetic GoldenEye watch are
+        // two different menus. Point solo players at the watch for the things this
+        // overlay deliberately doesn't duplicate (objectives, mission options,
+        // progress). MP's watch is the scores/pause menu, so only hint in solo.
+        if (!g_showSettings && platformGetPlayerCount() < 2) {
+            ui::Gap(ui::kGapS);
+            ui::TextSubtle("Objectives, mission options & progress are in the in-game watch \xE2\x80\x94 Start / Esc / Tab.");
+        }
+
         ui::Gap(ui::kGapM);
+        // "Return to Launcher" re-execs the process; that path isn't wired on
+        // Windows yet, so it would silently quit instead. Hide it there rather than
+        // mislabel — Windows keeps a truthful "Quit to Desktop".
+#if !defined(_WIN32)
         if (ImGui::Button("Return to Launcher", ui::kBtnWide())) g_confirm = 1;
         ImGui::SameLine();
+#endif
         if (ImGui::Button("Quit to Desktop", ui::kBtnWide())) g_confirm = 2;
     }
 

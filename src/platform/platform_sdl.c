@@ -3076,7 +3076,11 @@ void platformPollEvents(void) {
                         ? g_preferredFullscreenMode
                         : PLATFORM_WINDOW_MODE_WINDOWED;
                     platformApplyWindowMode();
-                } else if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
+                } else if ((event.key.keysym.sym == SDLK_ESCAPE ||
+                            event.key.keysym.sym == SDLK_TAB) && !event.key.repeat) {
+                    /* Esc and Tab both open the GoldenEye watch (N64 Start) in
+                     * gameplay, or back out (B) in menus. Tab was advertised in the
+                     * H help but previously had no handler — now it matches. */
                     if (g_mouseGrabbed) {
                         /* In gameplay: pause (START_BUTTON) and ungrab mouse */
                         g_pcEscapePressed = 1;  /* 1 = was in gameplay → START */
@@ -3109,8 +3113,8 @@ void platformPollEvents(void) {
                         "F           Interact\n"
                         "C / LCtrl   Crouch toggle\n"
                         "Q / E       Lean L/R (aim mode)\n"
-                        "Esc         Pause\n"
-                        "Tab         Watch menu\n"
+                        "Esc / Tab   Watch menu (objectives, options, pause)\n"
+                        "F1          Settings overlay (MGB64)\n"
                         "M           Mute audio\n"
                         "H           Show this help\n"
                         "\n"
