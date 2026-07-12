@@ -1750,7 +1750,11 @@ StandTile *sub_GAME_7F0AF808(f32 f1, f32 f2, f32 f3, f32 f4)
             return tile;
         }
 
-        tile = (StandTile *)((u8 *)tile + list_of_tilesizes[STAN_POINT_COUNT(tile)]);
+        /* FID-0090: advance by the tail's POINT COUNT (bits 12-15, STAN_TAIL_E), matching the
+         * ASM (7F0AF8D8: srl 0xc / andi 0xf) and every other tile-advance site. STAN_POINT_COUNT
+         * is a misnomer — it reads bits 0-3, a point INDEX, giving the wrong list_of_tilesizes[]
+         * stride. Latent only: sub_GAME_7F0AF808 currently has no callers. */
+        tile = (StandTile *)((u8 *)tile + list_of_tilesizes[STAN_TAIL_E(tile)]);
     }
 
     return NULL;
