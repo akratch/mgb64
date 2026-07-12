@@ -39,6 +39,13 @@ void setOpen(bool open) {
         g_prevRelMouse = (SDL_GetRelativeMouseMode() == SDL_TRUE);
         SDL_SetRelativeMouseMode(SDL_FALSE);  // free the cursor for the overlay
     } else {
+        // Closing the overlay is a "resume": don't silently lose in-progress
+        // settings edits — commit any open staging session. (Cancel already
+        // discarded + ended its session, so this only fires when the user
+        // resumes with unsaved edits.) Reset the Settings panel so reopening
+        // the overlay starts fresh.
+        if (configStagingActive()) configStagingApply();
+        g_showSettings = false;
         SDL_SetRelativeMouseMode(g_prevRelMouse ? SDL_TRUE : SDL_FALSE);
     }
 }
@@ -205,14 +212,29 @@ void onRender() {
     } else {
         if (ui::PrimaryButton("Resume", ui::kBtnSecondary())) setOpen(false);
         ImGui::SameLine();
-        if (ImGui::Button(g_showSettings ? "Hide Settings" : "Settings", ui::kBtnSecondary()))
-            g_showSettings = !g_showSettings;
+        if (ImGui::Button(g_showSettings ? "Hide Settings" : "Settings", ui::kBtnSecondary())) {
+            if (g_showSettings) {
+                // Closing the panel from the overlay = cancel any staged edits.
+                if (configStagingActive()) configStagingDiscard();
+                g_showSettings = false;
+            } else {
+                g_showSettings = true;
+                configStagingBegin();  // edits stage on a working copy until Apply/Resume
+            }
+        }
 
         if (g_showSettings) {
             ui::Gap(ui::kGapS);
             ImGui::BeginChild("##ovsettings", ImVec2(0, 340), true);
-            Settings_draw();  // live settings apply to the running game immediately
+            // Staged: edits go to a working copy; Apply commits to the running
+            // game + saves, Cancel reverts, Resume (above) also commits.
+            SettingsResult sr = Settings_draw();
             ImGui::EndChild();
+            if (sr == SETTINGS_CANCELLED) {
+                g_showSettings = false;    // Cancel already discarded the stage
+            } else if (sr == SETTINGS_APPLIED) {
+                configStagingBegin();      // keep editing on a fresh staged copy
+            }
         }
 
         ui::Gap(ui::kGapM);

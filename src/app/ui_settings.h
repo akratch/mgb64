@@ -2,9 +2,20 @@
 #ifndef MGB64_UI_SETTINGS_H
 #define MGB64_UI_SETTINGS_H
 
-// Draw the settings tabs (Video / Input / Game / Audio) inside the current
-// content region. Reads/writes live engine config; live settings apply next
-// frame. Shared by the launcher and the in-game overlay.
-void Settings_draw();
+// What the user did with the staging controls this frame (only meaningful in the
+// in-game overlay, which opens a staging session; the launcher never stages and
+// always gets SETTINGS_NONE).
+enum SettingsResult {
+    SETTINGS_NONE = 0,   // no staging action (or launcher path — not staging)
+    SETTINGS_APPLIED,    // user hit Apply: staged values committed to live + saved
+    SETTINGS_CANCELLED   // user hit Cancel: staged values discarded, close the panel
+};
+
+// Draw the settings tabs (Video / Input / Game / Audio / UI) inside the current
+// content region. When a staging session is open (configStagingActive()), edits
+// go to a working copy and the panel shows Apply/Cancel + a live Preview toggle;
+// otherwise (launcher) edits apply instantly and the panel shows "Save Settings".
+// Shared by the launcher and the in-game overlay.
+SettingsResult Settings_draw();
 
 #endif  // MGB64_UI_SETTINGS_H

@@ -39,6 +39,37 @@ void drawStringEntry(const MgbCfgEntry &e, const char *label) {
     }
 }
 
+// The single key (if any) currently pushed live via configStagingPreview so the
+// owner can feel a value on the frozen frame. Empty = none. Only one at a time
+// (the config layer enforces this too).
+char g_previewKey[96] = {0};
+
+// FOV and mouse sensitivity are the two settings worth "feeling" before you keep
+// them, so they get a Preview toggle in the staged (in-game) panel.
+bool isPreviewable(const char *key) {
+    return std::strcmp(key, "Video.FovY") == 0 ||
+           std::strcmp(key, "Input.MouseSensitivity") == 0;
+}
+
+// A compact "Preview" toggle that pushes this key's staged value to the live
+// global (and reverts on un-toggle / switching keys). Only drawn while staging.
+void drawPreviewToggle(const MgbCfgEntry &e) {
+    bool on = std::strcmp(g_previewKey, e.key) == 0;
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Preview", &on)) {
+        if (on) {
+            if (g_previewKey[0]) configStagingPreview(g_previewKey, 0);  // revert the old one
+            configStagingPreview(e.key, 1);
+            std::snprintf(g_previewKey, sizeof(g_previewKey), "%s", e.key);
+        } else {
+            configStagingPreview(e.key, 0);
+            g_previewKey[0] = '\0';
+        }
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Feel this value on the live game now; Apply keeps it, Cancel reverts");
+}
+
 void drawEntry(const MgbCfgEntry &e) {
     ImGui::PushID(e.key);
     const char *label = e.label[0] ? e.label : e.name;
@@ -68,6 +99,7 @@ void drawEntry(const MgbCfgEntry &e) {
             ImGui::SetNextItemWidth(ui::kControlWidth());
             if (ImGui::SliderFloat(label, &v, e.min_val, e.max_val, "%.2f"))
                 mgb_config_set_float(e.key, v);
+            if (configStagingActive() && isPreviewable(e.key)) drawPreviewToggle(e);
             break;
         }
         case MGB_CFG_ENUM: {
@@ -176,13 +208,36 @@ void drawResetFooter(const char *sec) {
 
 }  // namespace
 
-void Settings_draw() {
+SettingsResult Settings_draw() {
     static const char *kSections[] = {"Video", "Input", "Game", "Audio", "UI"};
+    SettingsResult result = SETTINGS_NONE;
 
-    if (ui::PrimaryButton("Save Settings", ImVec2(150, 36))) mgb_config_save();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Persist to ge007.ini");
-    ImGui::SameLine();
-    ui::TextSubtle("Live settings apply instantly; \"restart\" settings apply next launch.");
+    // Two button models: the in-game overlay opens a staging session (edits are
+    // held on a working copy while the game keeps running), so it gets Apply /
+    // Cancel. The launcher has no running game to disturb, so it keeps the old
+    // instant-apply + "Save Settings" model.
+    if (configStagingActive()) {
+        if (ui::PrimaryButton("Apply", ImVec2(120, 36))) {
+            g_previewKey[0] = '\0';           // preview folds into the commit
+            configStagingApply();
+            result = SETTINGS_APPLIED;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep these changes and save to ge007.ini");
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 36))) {
+            g_previewKey[0] = '\0';
+            configStagingDiscard();
+            result = SETTINGS_CANCELLED;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Discard these changes");
+        ImGui::SameLine();
+        ui::TextSubtle("Changes are held until Apply — the game keeps running on the current values.");
+    } else {
+        if (ui::PrimaryButton("Save Settings", ImVec2(150, 36))) mgb_config_save();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Persist to ge007.ini");
+        ImGui::SameLine();
+        ui::TextSubtle("Live settings apply instantly; \"restart\" settings apply next launch.");
+    }
     ui::Gap(ui::kGapS);
 
     if (ImGui::BeginTabBar("##settingsTabs")) {
@@ -213,4 +268,6 @@ void Settings_draw() {
         }
         ImGui::EndTabBar();
     }
+
+    return result;
 }
