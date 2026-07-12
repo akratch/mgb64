@@ -7822,9 +7822,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "LEFTOVERDEBUG authority variant (glabel 7F0B7DE4; port defines LEFTOVERDEBUG, CMakeLists:1355). NONMATCHING C bg.c:13709-13758 matches: 32-byte entry stride t6<<5 into dword_CODE_bss_8007C100; depth-gate arg3>=2; dest_room=(g_BgPortals[arg2].connectedRoom2^connectedRoom1)^arg1; sub_GAME_7F0B7DA8 portal-count>=9 drop; entry[0..3]=arg0..arg3 words + entry[4..7]=arg4[0..3] floats at 0x10-0x1c; 500-ring wrap + D_800448A4 tail-collision backoff (new_idx-1). 6/64 diffs = ido_recomp register allocation (in-source note); 58 byte-identical. NATIVE_PORT bgShouldTracePortal traces default-off.",
+      "reviewed_ts": "2026-07-12T11:58:33Z",
       "rank": 288,
       "rank_score": 64,
       "rank_reason": "bulk-last 64i"
@@ -7849,9 +7849,9 @@
         "body_start": null,
         "body_end": null
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Non-debug sibling of the LEFTOVERDEBUG authority (rank recorded at line 13731). This variant (VRAM 7F0B7120) is structurally different: 20-byte byte/halfword-packed entry (stride t6*20, sb/sh writes), 250-entry ring, gating on arg2 with arg0/1/2 portal order. It is a different build variant and NOT the port authority (the port defines LEFTOVERDEBUG); the port C is verified-equivalent to the LEFTOVERDEBUG variant, per the sibling convention (cf. ranks 274/277).",
+      "reviewed_ts": "2026-07-12T11:58:33Z",
       "rank": 289,
       "rank_score": 64,
       "rank_reason": "bulk-last 64i"
