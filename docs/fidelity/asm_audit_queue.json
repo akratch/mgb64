@@ -6065,9 +6065,9 @@
       "jump_tables": [],
       "has_jump_table": false,
       "live_c": null,
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:asm-only N64 TLB and boot bootstrap at ROM 0x70000450: programs cop0 EntryLo0 EntryHi PageMask Wired via mtc0, runs tlbwi to map the 0x70000000 to 0x70400000 region, then jr to init at 0x70000510. No live C sibling and no port reimplementation; GLOBAL_ASM with no NONMATCHING branch so it is not compiled under NATIVE_PORT. Inherently unportable hardware startup, not sim-reachable (port uses its own host startup). Nothing to instruction-diff. Only revisit if a port TLB emulation layer is ever introduced.",
+      "note": "asm-only N64 TLB and boot bootstrap at ROM 0x70000450: programs cop0 EntryLo0 EntryHi PageMask Wired via mtc0, runs tlbwi to map the 0x70000000 to 0x70400000 region, then jr to init at 0x70000510. No live C sibling and no port reimplementation; GLOBAL_ASM with no NONMATCHING branch so it is not compiled under NATIVE_PORT. Inherently unportable hardware startup, not sim-reachable (port uses its own host startup). Nothing to instruction-diff. Only revisit if a port TLB emulation layer is ever introduced.",
+      "reviewed_ts": "2026-07-12T02:13:07Z",
       "rank": 223,
       "rank_score": 27,
       "rank_reason": "27i"
@@ -6092,9 +6092,9 @@
         "body_start": 3957,
         "body_end": 3979
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F027BF4 walks g_CurrentSetup.pathwaypoints (field offset 0, waypoint stride 0x10, padID at waypoint offset 0) until padID goes negative; per entry it indexes pads (g_CurrentSetup field offset 0x18, PadRecord stride 44 bytes) and compares pad stan at PadRecord offset 0x28 against the argument, returning the matching waypoint else NULL, with the NULL-pathwaypoints early-out. Live C chrlv.c matches structure, offsets and both early-outs; the branch-likely next-padID preload equals the for-loop advance-then-test.",
+      "reviewed_ts": "2026-07-12T02:13:07Z",
       "rank": 224,
       "rank_score": 27,
       "rank_reason": "27i"
@@ -6119,9 +6119,9 @@
         "body_start": null,
         "body_end": 712
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F06B248 prepends arg0 (a node or chain) to the free list D_80036060: null-arg early-out; empty-list stores arg0 and returns; else walks arg0 next-chain (link at offset 0xc) to its tail, sets tail next to the old head, sets old-head prev at offset 0x10 to the tail, then head becomes arg0. This body touches only the 0xc and 0x10 link level, which the NATIVE_PORT single-level ModelRenderSlot free list (next 0xc, prev 0x10) preserves; the dropped higher skip levels flagged at rank 208 are not used here. Live C matches the walk, both early-outs and the old-head prev fixup read before the head store.",
+      "reviewed_ts": "2026-07-12T02:13:07Z",
       "rank": 225,
       "rank_score": 21,
       "rank_reason": "21i"
@@ -6146,9 +6146,9 @@
         "body_start": null,
         "body_end": 41
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F01B0E0 8-bit indexed RLE decoder: remaining equals u16 width times u16 height (halfword loads then multu), ptr starts at header+0xa, each run reads count and value at ptr and ptr+1 and writes value exactly count times (inner do-while verified for count 1, 2, 3), advancing ptr by 2 and remaining by minus count, looping while remaining stays positive (signed bgtzl). Live C matches. NATIVE_PORT read_be16 reproduces the big-endian halfword loads on little-endian hosts (out of scope). The added null-header-or-output early return has no retail counterpart but only turns a retail null-deref crash into a clean return; identical for every input retail survives.",
+      "reviewed_ts": "2026-07-12T02:13:07Z",
       "rank": 226,
       "rank_score": 21,
       "rank_reason": "21i"
@@ -6173,9 +6173,9 @@
         "body_start": null,
         "body_end": 3339
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F06C010 walks the next-chain (link at offset 0xc) from the head node to the last node, stores it back to the head slot, zeroes the two output pointers, and tail-calls probably_damage_detail_blood_effect_related passing head, the two unused params, and the fourth output as the fifth stack argument. Live NATIVE_PORT C matches the traversal (ModelRenderSlot next at 0xc), the two zeroing stores and the forwarded call. The added head-null early return (return 0, zero the outputs, no call) has no retail counterpart, but retail would null-deref reading offset 0xc of a null head; identical for every non-null head. Same single-level free list as rank 225.",
+      "reviewed_ts": "2026-07-12T02:13:07Z",
       "rank": 227,
       "rank_score": 20,
       "rank_reason": "20i"
@@ -6200,9 +6200,9 @@
         "body_start": 14,
         "body_end": 26
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F09B740 is instruction-for-instruction identical to randomGetNext but on g_chrObjRandomSeed: t equals seed left-63 right-31 or seed left-31 right-32, xor seed left-44 right-32, new seed equals t xor ((t right-20) and 0xfff), returning the low 32 bits sign-extended via dsll32 then dsra32. Live C matches exactly.",
+      "reviewed_ts": "2026-07-12T02:13:24Z",
       "rank": 228,
       "rank_score": 18,
       "rank_reason": "18i"
@@ -6227,9 +6227,9 @@
         "body_start": null,
         "body_end": 285
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F0004D0 relocates a struct animation table array (stride 0x1c, anonymous_0 at offset 0): while anonymous_0 is nonzero it adds ptr_animation_table to it in place, increments count and advances; returns count, guarding on the first element before the loop. Live C matches. NATIVE_PORT uses uintptr_t 64-bit for the relocation add versus the retail 32-bit addu, the correct host pointer-width accommodation, byte-identical for 32-bit offsets.",
+      "reviewed_ts": "2026-07-12T02:13:24Z",
       "rank": 229,
       "rank_score": 18,
       "rank_reason": "18i"
@@ -6254,9 +6254,9 @@
         "body_start": 273,
         "body_end": 311
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7000A450 iterates g_randomSeed: t equals seed left-63 right-31 or seed left-31 right-32, xor seed left-44 right-32, new seed equals t xor ((t right-20) and 0xfff), stored and returned as the low 32 bits sign-extended. Live C core math matches exactly. The surrounding NATIVE_PORT instrumentation (call counting, RNG trace, scripted call-seed injection) is env-gated and a default no-op, leaving the seed math byte-identical.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 230,
       "rank_score": 18,
       "rank_reason": "18i"
@@ -6281,9 +6281,9 @@
         "body_start": 17,
         "body_end": 26
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x70001B10 is identical to randomGetNext but on g_tlbRandomSeed and returns s32 via dsll32 then dsra32 sign-extension of the low 32 bits. Live C matches exactly.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 231,
       "rank_score": 18,
       "rank_reason": "18i"
@@ -6308,9 +6308,9 @@
         "body_start": 366,
         "body_end": 378
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7000A4AC applies the randomGetNext iteration to a caller-supplied u64 pointer instead of the global: loads the value, computes t equals v left-63 right-31 or v left-31 right-32 xor v left-44 right-32, new equals t xor ((t right-20) and 0xfff), stores it back and returns the low 32 bits sign-extended. Live C matches exactly.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 232,
       "rank_score": 16,
       "rank_reason": "16i"
@@ -6335,9 +6335,9 @@
         "body_start": 53,
         "body_end": 63
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7F09B788 sets g_chrObjRandomSeed to arg plus 1 (daddiu, 64-bit) and stores it; the trailing li a0 0 is a dead argument-register clobber. Live C matches.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 233,
       "rank_score": 5,
       "rank_reason": "5i"
@@ -6362,9 +6362,9 @@
         "body_start": 340,
         "body_end": 350
       },
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "verified-equivalent",
+      "note": "Retail 0x7000A498 sets g_randomSeed to arg plus 1 (daddiu, 64-bit) and stores it; trailing li a0 0 is dead. Live C matches.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 234,
       "rank_score": 5,
       "rank_reason": "5i"
@@ -6383,9 +6383,9 @@
       "jump_tables": [],
       "has_jump_table": false,
       "live_c": null,
-      "status": "unreviewed",
-      "note": "",
-      "reviewed_ts": null,
+      "status": "waived:asm-only ROM trampoline at 0x700004F8: loads decompress_entry (0x7020141C) into a3 and jr to it, tail-calling the inflate routine with a0 a1 a2 (source target buffer) unchanged. No live C sibling; GLOBAL_ASM with no NONMATCHING branch so it is not compiled under NATIVE_PORT. The port decompresses through its own inflate library rather than this ROM-address thunk. Nothing to instruction-diff; asm-only with no reimplementation.",
+      "note": "asm-only ROM trampoline at 0x700004F8: loads decompress_entry (0x7020141C) into a3 and jr to it, tail-calling the inflate routine with a0 a1 a2 (source target buffer) unchanged. No live C sibling; GLOBAL_ASM with no NONMATCHING branch so it is not compiled under NATIVE_PORT. The port decompresses through its own inflate library rather than this ROM-address thunk. Nothing to instruction-diff; asm-only with no reimplementation.",
+      "reviewed_ts": "2026-07-12T02:13:25Z",
       "rank": 235,
       "rank_score": 4,
       "rank_reason": "4i"
