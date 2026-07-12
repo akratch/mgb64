@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P3",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [
     "src/game/chrprop.c:5486 (handle_mp_respawn_and_some_things, NATIVE_PORT body)"
   ],
@@ -13,6 +13,18 @@
     {
       "kind": "asm-citation",
       "path": "src/game/chrprop.c:5699-5715"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop.c:5699-5715"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/mp_respawn_tail.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_mp_respawn_tail.c"
     }
   ],
   "history": [
@@ -22,6 +34,27 @@
       "to": "triaged",
       "evidence": "src/game/chrprop.c:5699-5715",
       "note": "Retail handle_mp_respawn_and_some_things (US ASM 7F03C648) has a respawn tail at labels .L7F03C8AC through .L7F03C8C8 that the NATIVE_PORT C body drops entirely. At the object-regen respawn moment (prop timetoregen greater than 0 and below 0x3C with was_above_threshold zero), after the maxdamage-and-state handling, retail does two things the port omits: first, if the object type byte at offset 3 equals 21, copy the float at object offset 0x80 into offset 0x84; second, when the reparent marker s3 is zero (always zero in the port, since the reparent path is also skipped), play the object-respawn sound via sndPlaySfx of g_musicSfxBufferPtr with sound index 82, then chrobjSndCreatePostEventDefault of that returned handle with the prop position at prop offset 8. The port never calls either, so regenerating objects respawn silently and the type-21 field copy is lost. The exact sndPlaySfx-then-chrobjSndCreatePostEventDefault idiom is live elsewhere in the port at chrlv.c:6711 with sound 0x101, so the machinery exists and only this call site is missing. Reachable every frame the prop list holds an OBJ, WEAPON or DOOR prop crossing its regen threshold. Separately, this function carries two author-documented but unsubstantiated MP-only omissions relative to the ASM: the object flags 0x8000 reparent path at ASM .L7F03C7B8 (chrpropDeregisterRooms, chrpropDelist, setupGetCommandIndexByProp, modelSetScale, chrpropReparent, sets s3 to 1) and the entire PROP_TYPE_VIEWER type-6 handler at ASM .L7F03C944 (two player-pointer beam ticks at player offsets 0xA54 and 0xDFC plus a getPlayerCount greater-or-equal 2 gated pair). Those two skips are plausibly MP-only but lack an oracle anchor, so they are flagged here for oracle confirmation rather than independently filed. Fix: re-add the respawn tail behind a default-ON flag with byte-identical negative control; leave the two MP skips until a single-player oracle route proves whether flag 0x8000 or a VIEWER prop ever occurs outside MP."
+    },
+    {
+      "ts": "2026-07-12T00:46:13Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/chrprop.c:5699-5715",
+      "note": "Retail respawn tail US ASM .L7F03C8AC-.L7F03C8E4: obj+3==21 (PROPDEF_ARMOUR) copies initialamount(0x80)->amount(0x84); s3 (always 0 in port, reparent path skipped) fires chrobjSndCreatePostEventDefault(sndPlaySfx(g_musicSfxBufferPtr,82,0), &prop->pos). Both respawn branches converge on the tail (b .L7F03C8AC + .L7F03C894 fall-through). Port dropped it entirely -> silent respawn + lost armour reset. Derivation: docs/fidelity/derivations/FID-0103-mp-respawn-tail.md"
+    },
+    {
+      "ts": "2026-07-12T00:46:13Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/mp_respawn_tail.c",
+      "note": "Pure decision helper mpRespawnTailPlan returns {copy_armour_amount, play_respawn_sfx}; chrprop.c call site performs the two side effects via named BodyArmourRecord fields (amount=initialamount) + chrlv.c:6717 sndPlaySfx idiom. Default-ON; GE007_NO_MP_RESPAWN_TAIL_FIX restores the silent legacy tail ({0,0})."
+    },
+    {
+      "ts": "2026-07-12T00:46:22Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_mp_respawn_tail.c",
+      "note": "Landed behind default-ON GE007_NO_MP_RESPAWN_TAIL_FIX opt-out. ctest mp_respawn_tail pins retail vs legacy decision + faithful!=legacy flip; fail-on-revert demonstrated (reverting mpRespawnTailPlan reddens 6 checks, restore -> PASS). Byte-identity: full ctest suite 73/73 pass incl. test_sim_state_hash + test_struct_layout (no struct offsets moved; opt-out returns {0,0}); the tail only fires on an MP object-regen threshold crossing which the 1P deterministic tapes do not hit. Runtime 'verified' promotion is gated on an MP-tick harness (1P combat oracle does not reach MP; ROM assets absent here) -- NOT promoted."
     }
   ]
 }
