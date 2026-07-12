@@ -1774,6 +1774,19 @@ if(MGB64_APP)
         target_compile_features(test_app_config PRIVATE cxx_std_17)
         add_test(NAME app_config COMMAND test_app_config)
 
+        # Settings staging layer (post-boot UX): mid-game edits stay on a working
+        # copy until Apply. Links only the registry + config layers (no SDL), with
+        # the engine include dirs so <ultra64.h> resolves for the C sources.
+        add_executable(test_config_staging
+            tests/test_config_staging.c
+            src/platform/config_schema.c
+            src/platform/config_pc.c
+            src/platform/settings.c
+            src/platform/savedir.c)
+        target_include_directories(test_config_staging PRIVATE
+            src/app src/platform include include/PR .)
+        add_test(NAME config_staging COMMAND test_config_staging)
+
         # Pure tag-parse + semver-compare logic for the update check (no SDL, no
         # network): update_check_core.cpp is SDL-free precisely so this links tiny.
         add_executable(test_update_check

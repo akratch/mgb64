@@ -69,6 +69,27 @@ void mgb_config_set_enum(const char *key, int optIndex);
 void mgb_config_set_string(const char *key, const char *value);
 void mgb_config_reset_default(const char *key);
 
+// --- Settings staging (host-side UI working copy) -------------------------
+// The in-game settings UI opens a staging session so a mid-game edit edits a
+// copy and never disturbs the live engine globals until the user Applies. While
+// a session is open, the mgb_config_get/set_* calls above operate on the staged
+// copy; the engine reads its own globals directly, so it keeps running on the
+// last-applied values (this is what makes editing settings mid-match safe, incl.
+// multiplayer, which never pauses). configSetValue — the only path that mutates
+// live globals or the ini — is reached solely on Apply/Preview, so the raw
+// engine/CLI/ini-load paths are unaffected. Not engaged under --deterministic
+// (the app shell isn't present in headless automation).
+void configStagingBegin(void);    // start a session (drops any prior staged copy)
+void configStagingApply(void);    // commit staged -> live globals + persist, then end the session
+void configStagingDiscard(void);  // drop the staged copy (live untouched), end the session
+int  configStagingActive(void);   // 1 while a session is open
+
+// Temporarily push one staged value to its live global so the owner can feel it
+// on the frozen frame (FOV / mouse sensitivity). on=1 previews, on=0 reverts to
+// the pre-preview live value. No-op if the key isn't staged, staging is inactive,
+// or a different key is already being previewed (one preview at a time).
+void configStagingPreview(const char *key, int on);
+
 #ifdef __cplusplus
 }
 #endif

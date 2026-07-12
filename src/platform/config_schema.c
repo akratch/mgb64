@@ -4,6 +4,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>   /* strtol/atof for staged-value parsing */
 
 #include "settings.h"
 #include "config_pc.h"
@@ -11,6 +12,136 @@
 
 extern void platformRegisterConfig(void);
 extern void portAudioRegisterConfig(void);
+
+/* ---- Settings staging (host-side UI working copy) ------------------------
+ * See src/app/config_schema.h for the contract. A session captures the app UI's
+ * mgb_config_set_* writes into s_staged[] instead of the live globals; the
+ * getters overlay s_staged[] so the UI reflects the edit while the engine keeps
+ * running on the last-applied values. configSetValue (the live/ini mutation) is
+ * only reached on Apply and Preview. CONFIG_MAX_SETTINGS (128) bounds how many
+ * distinct keys can be staged, so this store never overflows in practice. */
+#define CONFIG_STAGING_MAX CONFIG_MAX_SETTINGS
+typedef struct { char key[96]; char val[64]; } StagedEntry;
+static StagedEntry s_staged[CONFIG_STAGING_MAX];
+static s32 s_stagedCount = 0;
+static s32 s_stagingActive = 0;
+
+/* One active FOV/sensitivity live-preview at a time (configStagingPreview). */
+static char s_previewKey[96] = {0};
+static char s_previewBackup[64] = {0};
+static s32  s_previewActive = 0;
+
+static StagedEntry *stagedFind(const char *key) {
+    for (s32 i = 0; i < s_stagedCount; i++) {
+        if (strcmp(s_staged[i].key, key) == 0) return &s_staged[i];
+    }
+    return NULL;
+}
+
+/* The staged string for `key`, or NULL when no session is open / key unstaged. */
+static const char *stagedLookup(const char *key) {
+    StagedEntry *e;
+    if (!s_stagingActive) return NULL;
+    e = stagedFind(key);
+    return e ? e->val : NULL;
+}
+
+static void stagedPut(const char *key, const char *val) {
+    StagedEntry *e = stagedFind(key);
+    if (!e) {
+        if (s_stagedCount >= CONFIG_STAGING_MAX) return;  /* cap == setting count; unreachable */
+        e = &s_staged[s_stagedCount++];
+        snprintf(e->key, sizeof(e->key), "%s", key);
+    }
+    snprintf(e->val, sizeof(e->val), "%s", val);
+}
+
+/* Route a validated string write to the staged copy while a session is open,
+ * else straight to the live global (the pre-staging behavior). */
+static void stagedOrLive(const char *key, const char *val) {
+    if (s_stagingActive) stagedPut(key, val);
+    else configSetValue(key, val);
+}
+
+/* Render a setting's current live value in the string form configSetValue reads
+ * (used to snapshot the live value before a preview so it can be restored). */
+static void liveValueToString(const Setting *s, char *buf, size_t n) {
+    if (!s || !buf || n == 0) { if (buf && n) buf[0] = '\0'; return; }
+    switch (s->type) {
+        case SETTING_TYPE_INT:
+            snprintf(buf, n, "%d", s->ptr ? *(s32 *)s->ptr : s->def.s32_value); break;
+        case SETTING_TYPE_UINT:
+            snprintf(buf, n, "%u", s->ptr ? *(u32 *)s->ptr : s->def.u32_value); break;
+        case SETTING_TYPE_FLOAT:
+            snprintf(buf, n, "%g", (double)(s->ptr ? *(f32 *)s->ptr : s->def.f32_value)); break;
+        case SETTING_TYPE_ENUM:
+            snprintf(buf, n, "%s", settingsEnumTokenForValue(s, s->ptr ? *(s32 *)s->ptr : s->def.s32_value)); break;
+        default:
+            snprintf(buf, n, "%s", (s->type == SETTING_TYPE_STRING && s->ptr) ? (const char *)s->ptr : ""); break;
+    }
+}
+
+int configStagingActive(void) { return (int)s_stagingActive; }
+
+void configStagingBegin(void) {
+    s_stagedCount = 0;
+    s_stagingActive = 1;
+}
+
+/* on=1: snapshot live, push staged -> live. on=0: restore the snapshot. */
+void configStagingPreview(const char *key, int on) {
+    if (!key) return;
+    if (on) {
+        const char *sv;
+        const Setting *s;
+        if (s_previewActive) return;              /* one preview at a time */
+        sv = stagedLookup(key);
+        if (!sv) return;                          /* nothing staged to feel */
+        s = settingsFind(key);
+        if (!s) return;
+        liveValueToString(s, s_previewBackup, sizeof(s_previewBackup));
+        snprintf(s_previewKey, sizeof(s_previewKey), "%s", key);
+        s_previewActive = 1;
+        configSetValue(key, sv);                  /* engine feels the staged value */
+    } else {
+        if (!s_previewActive || strcmp(s_previewKey, key) != 0) return;
+        configSetValue(key, s_previewBackup);     /* restore the live value */
+        s_previewActive = 0;
+        s_previewKey[0] = '\0';
+    }
+}
+
+void configStagingDiscard(void) {
+    if (s_previewActive) configStagingPreview(s_previewKey, 0);  /* undo any live preview */
+    s_stagedCount = 0;
+    s_stagingActive = 0;
+}
+
+void configStagingApply(void) {
+    s32 i;
+    if (s_previewActive) {                         /* undo the preview so we commit cleanly */
+        configSetValue(s_previewKey, s_previewBackup);
+        s_previewActive = 0;
+        s_previewKey[0] = '\0';
+    }
+    s_stagingActive = 0;                           /* configSetValue now targets the live globals */
+    for (i = 0; i < s_stagedCount; i++) {
+        configSetValue(s_staged[i].key, s_staged[i].val);
+    }
+    s_stagedCount = 0;
+    configSave();
+}
+
+/* Resolve a staged enum token to its s32 value; returns fallback if not found. */
+static s32 stagedEnumValue(const Setting *s, const char *token, s32 fallback) {
+    s32 i;
+    for (i = 0; i < s->enum_count; i++) {
+        if (s->enum_options[i].token && strcmp(s->enum_options[i].token, token) == 0) {
+            return s->enum_options[i].value;
+        }
+    }
+    return fallback;
+}
 
 void mgb_config_init(void) {
     savedirInit(NULL);
@@ -92,12 +223,43 @@ int mgb_config_get(int index, MgbCfgEntry *out) {
         default:
             break;
     }
+
+    /* Overlay a staged edit so the settings UI reflects the in-progress value
+     * while the engine keeps running on the live global. */
+    {
+        const char *sv = stagedLookup(s->key);
+        if (sv) {
+            switch (s->type) {
+                case SETTING_TYPE_INT:
+                case SETTING_TYPE_UINT:
+                    out->cur_int = (int)strtol(sv, NULL, 10);
+                    break;
+                case SETTING_TYPE_FLOAT:
+                    out->cur_float = (float)atof(sv);
+                    break;
+                case SETTING_TYPE_ENUM:
+                    out->cur_int = (int)stagedEnumValue(s, sv, out->cur_int);
+                    for (s32 i = 0; i < s->enum_count; i++) {
+                        if (s->enum_options[i].value == out->cur_int) { out->cur_enum_index = (int)i; break; }
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
     return 1;
 }
 
 int mgb_config_get_int(const char *key, int fallback) {
     const Setting *s = settingsFind(key);
+    const char *sv;
     if (!s || !s->ptr) return fallback;
+    sv = stagedLookup(key);
+    if (sv) {
+        if (s->type == SETTING_TYPE_ENUM) return (int)stagedEnumValue(s, sv, fallback);
+        return (int)strtol(sv, NULL, 10);
+    }
     switch (s->type) {
         case SETTING_TYPE_INT:
         case SETTING_TYPE_ENUM: return (int)*(s32 *)s->ptr;
@@ -108,16 +270,22 @@ int mgb_config_get_int(const char *key, int fallback) {
 
 float mgb_config_get_float(const char *key, float fallback) {
     const Setting *s = settingsFind(key);
+    const char *sv;
     if (!s || !s->ptr || s->type != SETTING_TYPE_FLOAT) return fallback;
+    sv = stagedLookup(key);
+    if (sv) return (float)atof(sv);
     return *(f32 *)s->ptr;
 }
 
 int mgb_config_get_string(const char *key, char *out, int out_size) {
+    const Setting *s;
+    const char *sv;
     if (!out || out_size <= 0) return 0;
     out[0] = '\0';
-    const Setting *s = settingsFind(key);
+    s = settingsFind(key);
     if (!s || s->type != SETTING_TYPE_STRING || !s->ptr) return 0;
-    snprintf(out, (size_t)out_size, "%s", (const char *)s->ptr);
+    sv = stagedLookup(key);
+    snprintf(out, (size_t)out_size, "%s", sv ? sv : (const char *)s->ptr);
     return 1;
 }
 
@@ -130,24 +298,24 @@ const char *mgb_config_enum_token(const char *key, int optIndex) {
 void mgb_config_set_int(const char *key, int value) {
     char buf[24];
     snprintf(buf, sizeof(buf), "%d", value);
-    configSetValue(key, buf);
+    stagedOrLive(key, buf);
 }
 
 void mgb_config_set_float(const char *key, float value) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%g", (double)value);
-    configSetValue(key, buf);
+    stagedOrLive(key, buf);
 }
 
 void mgb_config_set_enum(const char *key, int optIndex) {
     const Setting *s = settingsFind(key);
     if (!s || optIndex < 0 || optIndex >= s->enum_count) return;
     const char *token = s->enum_options[optIndex].token;
-    if (token) configSetValue(key, token);
+    if (token) stagedOrLive(key, token);
 }
 
 void mgb_config_set_string(const char *key, const char *value) {
-    configSetValue(key, value ? value : "");
+    stagedOrLive(key, value ? value : "");
 }
 
 void mgb_config_reset_default(const char *key) {
@@ -159,11 +327,11 @@ void mgb_config_reset_default(const char *key) {
         case SETTING_TYPE_UINT: snprintf(buf, sizeof(buf), "%u", s->def.u32_value); break;
         case SETTING_TYPE_FLOAT: snprintf(buf, sizeof(buf), "%g", (double)s->def.f32_value); break;
         case SETTING_TYPE_ENUM:
-            configSetValue(key, settingsEnumTokenForValue(s, s->def.s32_value));
+            stagedOrLive(key, settingsEnumTokenForValue(s, s->def.s32_value));
             return;
         default:
-            if (s->def_string) configSetValue(key, s->def_string);
+            if (s->def_string) stagedOrLive(key, s->def_string);
             return;
     }
-    configSetValue(key, buf);
+    stagedOrLive(key, buf);
 }
