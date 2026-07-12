@@ -51,6 +51,8 @@ extern int g_frame_count_diag;
 #include "stan.h"
 #include "platform/projectile_endpoint_clamp.h"
 #include "platform/chrobj_detonate.h"
+#include "platform/chrobj_impact_suppress.h"  /* FID-0069 */
+#include "platform/port_env.h"
 
 extern void *dynAllocate(s32 size);
 extern void modelUpdateRelationsQuick(Model *model, ModelNode *parent);
@@ -39073,6 +39075,24 @@ extern struct image_entry g_Textures[];
 extern struct ModelSkeleton skeleton_door;
 extern struct ModelSkeleton skeleton_cctv;
 
+/* FID-0069 negative control. Default-ON port-defect fix restores the retail
+ * sub_GAME_7F04EA68 gate that suppresses the object-hit bullet-impact block (and
+ * its randomGetNext draws) for the Watch Laser (ITEM_WATCHLASER, id 23; ASM
+ * 7F04EBF8 li $at,23 / beq weapon,$at -> skip), NOT the Taser. Setting
+ * GE007_NO_WATCHLASER_IMPACT_FIX reproduces the pre-fix port (gate on ITEM_TASER,
+ * id 31) byte-identically. See src/platform/chrobj_impact_suppress.c. */
+static int portNoWatchlaserImpactFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCHLASER_IMPACT_FIX",
+                              "Restore the pre-fix object-hit impact-FX gate "
+                              "(suppress the Taser instead of the Watch Laser) "
+                              "[FID-0069]");
+    }
+    return cached;
+}
+
 void sub_GAME_7F04EA68(struct ShotData *shotdata, ShotHitRecord *hit) {
     PropRecord *prop;
     PropRecord *ancestor;
@@ -39157,7 +39177,9 @@ void sub_GAME_7F04EA68(struct ShotData *shotdata, ShotHitRecord *hit) {
 
     weapon = shotdata->weapon;
 
-    if (weapon != ITEM_TASER) {
+    /* FID-0069: retail suppresses the impact block for ITEM_WATCHLASER (23),
+     * not ITEM_TASER (31). ASM 7F04EBF8: li $at,23 / beq weapon,$at,skip. */
+    if (!chrobjImpactFxSuppressed(weapon, portNoWatchlaserImpactFix())) {
         if (hit->do_damage == 0) {
             file_hdr = obj->model->obj;
             is_skeleton_door = 0;
