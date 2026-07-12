@@ -829,8 +829,9 @@ room-51 windows still show sky, and the over-broad variant can admit far terrain
 - [ ] **R12** `gfx_ptr.h` registry: probe all four slots (or tombstones), add
       eviction/collision counters; bump associativity only if counters say so.
 
-### M3.7 — Dam security-door panels render white (CI-palette fallback) [FID-0122]
-**P2 · renderer · triaged (strong root-cause, texturenum capture pending)**
+### M3.7 — Dam security-door panels render white [FID-0122]
+**P2 · renderer · triaged — H1 (CI-palette fallback) UNREPRODUCED headless (2026-07-12 experiment); root cause unconfirmed**
+2026-07-12 experiment result: ~15 headless captures (Dam start × many AUTO_WARP positions + full boot/menu) hit **zero** CI grayscale fallbacks and zero unregistered runtime-TLUT static loads — the AUTO_WARP never reached an interior door console, and every runtime TLUT was already palette-registered. A candidate fix (register the runtime TLUT palette under `static_texture_num`) was implemented then **reverted** (speculative, fires nowhere reachable). H2 (flat-quad `apptype==1` white prop) or a lighting/reachability factor now compete. **Needs a live/interior door-console capture to confirm the root cause before any fix.** Original H1 mechanism below still stands as the leading hypothesis.
 User-reported (2026-07-12): the Dam security-door control panels
 (`PROP_SEC_PANEL`/`PROP_DOORPANEL`/`PROP_DOORCONSOLE`, bondconstants.h:2826/3071/3072)
 render white/gray instead of the intended retail green/red. Root cause is the known
