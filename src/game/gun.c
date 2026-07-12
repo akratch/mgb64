@@ -144,6 +144,30 @@ _Static_assert(offsetof(WeaponStats, RecoilSpeed) == 0x48, "WeaponStats RecoilSp
 _Static_assert(offsetof(WeaponStats, RecoilBack) == 0x4C, "WeaponStats RecoilBack drifted from native 0x4C (FID-0123)");
 _Static_assert(offsetof(WeaponStats, RecoilUp) == 0x50, "WeaponStats RecoilUp drifted from native 0x50 (FID-0123)");
 
+static int portNoGrenadeTimerOffsetFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_GRENADE_TIMER_OFFSET_FIX",
+                              "Restore the legacy raw N64 0x82 write of the grenade/flare/piton fuse "
+                              "timer (corrupts maxdamage on the pointer-grown ObjectRecord and leaves "
+                              "the fuse 0); the fix writes WeaponObjRecord.timer [FID-0126]");
+    }
+    return cached;
+}
+
+static int portNoThrowMatrixOffsetFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_THROW_MATRIX_OFFSET_FIX",
+                              "Restore the legacy raw N64 hand-offset reads of the thrown-item spawn "
+                              "matrix (garbage on the pointer-grown struct hand); the fix reads "
+                              "throw_item_pos_related.m[3][] and field_AD0 [FID-0124]");
+    }
+    return cached;
+}
+
 /* FID-0092 negative control. Default-ON port-defect fix writes the rocket-launch
  * fire timer to the real player field (player->last_z_trigger_timer, N64 0x105C);
  * setting GE007_NO_LAST_Z_TRIGGER_TIMER_FIX restores the legacy raw N64
@@ -4975,7 +4999,14 @@ void sub_GAME_7F05F73C(s32 arg0) {
 
     if (newobj != NULL) {
         newobj->runtime_bitflags &= 0xFFF9FFFF;
-        *(s16 *)((u8 *)newobj + 0x82) = 1200;
+        /* FID-0126: write the named WeaponObjRecord.timer (grenade/flare/piton fuse). Retail wrote
+         * N64 0x82 (ASM sh 0x82(v0)); on the pointer-grown native ObjectRecord (locked 0x90) the raw
+         * 0x82 lands in maxdamage and leaves the fuse timer 0. */
+        if (portNoGrenadeTimerOffsetFix()) {
+            *(s16 *)((u8 *)newobj + 0x82) = 1200;
+        } else {
+            ((WeaponObjRecord *)newobj)->timer = 1200;
+        }
 
         playernum = get_cur_playernum();
         newobj->runtime_bitflags |= ((u32)playernum << 17);
@@ -7116,10 +7147,22 @@ void handles_firing_or_throwing_weapon_in_hand(s32 hand) {
                 matrix_4x4_copy(&mtx_c, kf7_mtx);
             }
         } else {
-            hp->field_B58.x = *(f32 *)((u8 *)hp + 0x298);
-            hp->field_B58.y = *(f32 *)((u8 *)hp + 0x29C);
-            hp->field_B58.z = *(f32 *)((u8 *)hp + 0x2A0);
-            hp->field_B64 = -*(f32 *)((u8 *)hp + 0x260);
+            /* FID-0124: read the thrown-item spawn matrix from named fields. Retail read the throw
+             * matrix translation at N64 hand+0x298 (= throw_item_pos_related.m[3][0], N64 mtx @0x268)
+             * and field_AD0 at N64 0x260. On the pointer-grown struct hand (throw_item_pos_related
+             * locked at native 0x274, field_B58 at 0x2F4) those raw offsets hit m[2][1] and a field
+             * ~0xC short — garbage spawn positions. */
+            if (portNoThrowMatrixOffsetFix()) {
+                hp->field_B58.x = *(f32 *)((u8 *)hp + 0x298);
+                hp->field_B58.y = *(f32 *)((u8 *)hp + 0x29C);
+                hp->field_B58.z = *(f32 *)((u8 *)hp + 0x2A0);
+                hp->field_B64 = -*(f32 *)((u8 *)hp + 0x260);
+            } else {
+                hp->field_B58.x = hp->throw_item_pos_related.m[3][0];
+                hp->field_B58.y = hp->throw_item_pos_related.m[3][1];
+                hp->field_B58.z = hp->throw_item_pos_related.m[3][2];
+                hp->field_B64 = -*(f32 *)&hp->field_AD0;
+            }
         }
 
         {

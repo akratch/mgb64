@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:7099 reads hp->field_B58.{x,y,z}=*(f32*)(hp+0x298/0x29C/0x2A0) and field_B64=-*(f32*)(hp+0x260) on a struct hand* via raw N64 offsets. Retail hand+0x298/0x29C/0x2A0 = throw_item_pos_related.m[3][0..2]; pointer expansions before these shift them +0xC (struct-layout locks: throw_item_pos_related at native 0x274 so m[3][0]=0x2A4, field_B58 at 0x2F4; test_struct_layout.c FID-0085/0087). Raw hp+0x298 reads native 0x298 = m[2][1] (off by 12). Destination field_B58 is correctly named -> thrown items spawn from garbage matrix translation. FID-0087 missed these (declared field_B58 the last raw hand+0x read)."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/gun.c:7099 reads hp->field_B58.{x,y,z}=*(f32*)(hp+0x298/0x29C/0x2A0) and field_B64=-*(f32*)(hp+0x260) on a struct hand* via raw N64 offsets. Retail hand+0x298/0x29C/0x2A0 = throw_item_pos_related.m[3][0..2]; pointer expansions before these shift them +0xC (struct-layout locks: throw_item_pos_related at native 0x274 so m[3][0]=0x2A4, field_B58 at 0x2F4; test_struct_layout.c FID-0085/0087). Raw hp+0x298 reads native 0x298 = m[2][1] (off by 12). Destination field_B58 is correctly named -> thrown items spawn from garbage matrix translation. FID-0087 missed these (declared field_B58 the last raw hand+0x read).",
       "note": "Found by adjacent-bug review 2026-07-12. Fix: hp->field_B58.{x,y,z}=hp->throw_item_pos_related.m[3][{0,1,2}]; field_B64=-field_AD0. Clean named-field swap; verify tape impact (throwing may not be on the SP tapes)."
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX.",
+      "note": "named-field fix confirmed vs ASM + struct locks"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/gun.c:7099 reads hp->throw_item_pos_related.m[3][] + field_AD0 (named fields); raw 0x298/0x260 hit m[2][1] and ~0xC short on the pointer-grown struct hand (throw_item_pos_related locked 0x274, field_B58 0x2F4). Byte-identical on all 7 tapes (throw path not exercised); gated GE007_NO_THROW_MATRIX_OFFSET_FIX.",
+      "note": "byte-identical on tapes (path not exercised); confirmed by static analysis + A/B gate"
     }
   ]
 }

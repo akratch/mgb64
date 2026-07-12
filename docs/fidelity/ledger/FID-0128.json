@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/chrobjhandler.c:3616 calls sub_GAME_7F0747D0((u8*)arg0+0xD0, ...) where arg0 is a DoorRecord (type==1). The correct native form exists at chrobjhandler.c:38644: sub_GAME_7F0747D0(&door->bbox,...). DoorRecord.bbox is N64 0xD0 (bondtypes.h:2973) but DoorRecord inherits the +0x10-grown ObjectRecord AND has 2 pointers just before bbox (linkedDoor@0xC8, unkcc Vertex*@0xCC) -> bbox at native ~0xE8. Raw 0xD0 feeds a garbage bbox into the door shot/collision test. Fix: &((DoorRecord*)arg0)->bbox."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/chrobjhandler.c:3616 calls sub_GAME_7F0747D0((u8*)arg0+0xD0, ...) where arg0 is a DoorRecord (type==1). The correct native form exists at chrobjhandler.c:38644: sub_GAME_7F0747D0(&door->bbox,...). DoorRecord.bbox is N64 0xD0 (bondtypes.h:2973) but DoorRecord inherits the +0x10-grown ObjectRecord AND has 2 pointers just before bbox (linkedDoor@0xC8, unkcc Vertex*@0xCC) -> bbox at native ~0xE8. Raw 0xD0 feeds a garbage bbox into the door shot/collision test. Fix: &((DoorRecord*)arg0)->bbox.",
       "note": "hunt 2026-07-12; RANK3, door collision path"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX.",
+      "note": "named-field fix confirmed vs ASM + struct locks"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/chrobjhandler.c:3616 passes &((DoorRecord*)arg0)->bbox (matching the correct form at 38644); raw arg0+0xD0 was a garbage OBB on the pointer-grown DoorRecord. Byte-identical on all 7 tapes; gated GE007_NO_DOOR_BBOX_OFFSET_FIX.",
+      "note": "byte-identical on tapes (path not exercised); confirmed by static analysis + A/B gate"
     }
   ]
 }

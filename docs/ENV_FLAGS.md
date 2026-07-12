@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1053 flags** found across the source.
+**1057 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -576,11 +576,13 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_CULL_HITBOX_MAGIC_BYPASS` | bool | 0 | 1 |  |
 | `GE007_NO_DEPTH_CLAMP` | ? |  | 1 |  |
 | `GE007_NO_DETONATE_OBJECT_FIX` | presence | unset | 1 | Restore the pre-fix maybe_detonate_object body (inverted armour amount, no ammo-crate salvage spawn, inverted unarmed gate) [FID-0074] |
+| `GE007_NO_DOOR_BBOX_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw arg0+0xD0 (a garbage bounding box on the pointer-grown DoorRecord) passed to the door ray-vs-OBB shot test; the fix passes &((DoorRecord*)arg0)->bbox [FID-0128] |
 | `GE007_NO_EFFECT_BUF_ZERO_INIT` | ? |  | 1 |  |
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
 | `GE007_NO_FP_WEAPON_PERSPNORM_FIX` | presence | unset | 1 | Restore the pre-fix FP-weapon perspnorm (near arg 1.0f => 435, emitted after the monitor microcode) [FID-0077] |
 | `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |
+| `GE007_NO_GRENADE_TIMER_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw N64 0x82 write of the grenade/flare/piton fuse timer (corrupts maxdamage on the pointer-grown ObjectRecord and leaves the fuse 0); the fix writes WeaponObjRecord.timer [FID-0126] |
 | `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0093] |
 | `GE007_NO_GUNHAND_AIMBONE_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
@@ -600,11 +602,13 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |
 | `GE007_NO_PROJECTILE_INIT_MTX_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile init matrix [FID-0085] |
+| `GE007_NO_PROJECTILE_ROOM_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw +0xCC write of the projectile room-visibility list (corrupts unkC0/C4/C8 on the pointer-grown Projectile and never updates the list its readers consume); the fix writes projectile->unkCC [FID-0127] |
 | `GE007_NO_SHELL_CASING_TINT_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the ejected shell-casing render tint [FID-0088] |
 | `GE007_NO_SKY` | ? |  | 1 |  |
 | `GE007_NO_SKY_ASPECT_FIX` | presence | unset | 1 | Disable the widescreen sky/horizon aspect widen (default ON) |
 | `GE007_NO_SPECTRUM_LOADTILE_FIX` | presence | unset | 1 | restore the tile-0 digit-shift SETTILE (0x00070000) in the Spectrum easter-egg screen instead of the retail tile-7 0x07000000 (FID-0107) |
 | `GE007_NO_STAN_ROOMSET_BYTE_FIX` | bool | 0 | 1 | Restore the legacy stan roomset-byte read (default: fix ON) |
+| `GE007_NO_THROW_MATRIX_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw N64 hand-offset reads of the thrown-item spawn matrix (garbage on the pointer-grown struct hand); the fix reads throw_item_pos_related.m[3][] and field_AD0 [FID-0124] |
 | `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |

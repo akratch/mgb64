@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:4970 writes *(s16*)((u8*)newobj+0x82)=1200 on a WeaponObjRecord (via ObjectRecord* newobj). Retail ASM: li 1200 / sh 0x82(v0) = WeaponObjRecord.timer (grenade fuse, N64 0x82). ObjectRecord is locked at native 0x90 (grew +0x10, 4 pointers; test_struct_layout.c:44), so timer sits at native 0x92 and the raw 0x82 write lands in maxdamage (native 0x80) -> corrupts maxdamage, leaves timer=0. Same fn already carries FID-0085/0087; this sibling write was missed. Reachable: every grenade-launcher/flare/piton round in SP. Fix: ((WeaponObjRecord*)newobj)->timer=1200."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/gun.c:4970 writes *(s16*)((u8*)newobj+0x82)=1200 on a WeaponObjRecord (via ObjectRecord* newobj). Retail ASM: li 1200 / sh 0x82(v0) = WeaponObjRecord.timer (grenade fuse, N64 0x82). ObjectRecord is locked at native 0x90 (grew +0x10, 4 pointers; test_struct_layout.c:44), so timer sits at native 0x92 and the raw 0x82 write lands in maxdamage (native 0x80) -> corrupts maxdamage, leaves timer=0. Same fn already carries FID-0085/0087; this sibling write was missed. Reachable: every grenade-launcher/flare/piton round in SP. Fix: ((WeaponObjRecord*)newobj)->timer=1200.",
       "note": "hunt 2026-07-12; RANK1 high-confidence, reachable"
+    },
+    {
+      "ts": "2026-07-12T17:15:59Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX.",
+      "note": "named-field fix confirmed vs ASM + struct locks"
+    },
+    {
+      "ts": "2026-07-12T17:15:59Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T17:15:59Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/gun.c:4978 writes ((WeaponObjRecord*)newobj)->timer (named field @0x82); raw 0x82 hit maxdamage on the pointer-grown ObjectRecord (locked 0x90). Byte-identical on all 7 tapes (fired-grenade path not exercised); gated GE007_NO_GRENADE_TIMER_OFFSET_FIX.",
+      "note": "byte-identical on tapes (path not exercised); confirmed by static analysis + A/B gate"
     }
   ]
 }

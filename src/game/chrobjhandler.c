@@ -2364,6 +2364,31 @@ void sub_GAME_7F053A3C(DoorRecord *arg0);
 bool doorIsClosed(DoorRecord *door);
 bool sub_GAME_7F054D6C(PropRecord *prop, coord3d *pos, f32 arg2, bool arg3);
 #include "initanitable.h"
+
+/* FID-0127/0128: A/B opt-outs for two raw-N64-offset-into-pointer-grown-struct fixes. */
+extern int port_env_set(const char *name, const char *help);
+static int portNoProjectileRoomOffsetFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_PROJECTILE_ROOM_OFFSET_FIX",
+                              "Restore the legacy raw +0xCC write of the projectile room-visibility "
+                              "list (corrupts unkC0/C4/C8 on the pointer-grown Projectile and never "
+                              "updates the list its readers consume); the fix writes projectile->unkCC [FID-0127]");
+    }
+    return cached;
+}
+static int portNoDoorBboxOffsetFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_DOOR_BBOX_OFFSET_FIX",
+                              "Restore the legacy raw arg0+0xD0 (a garbage bounding box on the "
+                              "pointer-grown DoorRecord) passed to the door ray-vs-OBB shot test; "
+                              "the fix passes &((DoorRecord*)arg0)->bbox [FID-0128]");
+    }
+    return cached;
+}
 void doorActivate(DoorRecord *door, DOORSTATE State);
 void doorSetOpenState(DoorRecord *door, s32 newstate);
 void doorActivateWrapper(PropRecord *prop);
@@ -3613,7 +3638,14 @@ s32 sub_GAME_7F041160(ObjectRecord *arg0, coord3d *arg1, coord3d *arg2, coord3d 
     surface_id = 0;
 
     if (arg0->type == 1) {
-        result = sub_GAME_7F0747D0((u8 *)arg0 + 0xD0, model->render_pos, arg1, arg2);
+        /* FID-0128: pass &((DoorRecord*)arg0)->bbox (the named field), matching the correct form at
+         * chrobjhandler.c:38644. Retail passed N64 door+0xD0 (= bbox); on the pointer-grown DoorRecord
+         * the raw 0xD0 is ~0x18 short of the real bbox -> garbage OBB fed to the door shot test. */
+        if (portNoDoorBboxOffsetFix()) {
+            result = sub_GAME_7F0747D0((u8 *)arg0 + 0xD0, model->render_pos, arg1, arg2);
+        } else {
+            result = sub_GAME_7F0747D0(&((DoorRecord *)arg0)->bbox, model->render_pos, arg1, arg2);
+        }
         surface_node = model->obj->RootNode;
         if (result > 0) {
             if (!sub_GAME_7F04D9B0(model, surface_node, arg1, arg2, &hitthing, &mtx_index, (ModelNode **)&surface_id)) {
@@ -5349,7 +5381,10 @@ stan_done:
         val = *src;
 
         while (val != 0xFF && i != 7) {
-            *((u8 *)obj->projectile + 0xCC + i) = val;
+            /* FID-0127: write the named projectile->unkCC room list (readers pass &proj->unkCC).
+             * Raw +0xCC on the pointer-grown Projectile corrupts unkC0/C4/C8. */
+            *(portNoProjectileRoomOffsetFix() ? ((u8 *)obj->projectile + 0xCC + i)
+                                              : ((u8 *)&obj->projectile->unkCC + i)) = val;
             src++;
             val = *src;
             i++;
@@ -5360,7 +5395,9 @@ stan_done:
     }
 
 room_copy_done:
-    *((u8 *)obj->projectile + 0xCC + i) = 0xFF;
+    /* FID-0127: terminator into the named projectile->unkCC room list (see above). */
+    *(portNoProjectileRoomOffsetFix() ? ((u8 *)obj->projectile + 0xCC + i)
+                                      : ((u8 *)&obj->projectile->unkCC + i)) = 0xFF;
 
 epilogue:
 #ifdef NATIVE_PORT

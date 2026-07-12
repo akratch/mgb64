@@ -4,13 +4,25 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "triaged",
+  "status": "landed",
   "suspect": [],
   "repro": "",
   "evidence": [
     {
       "kind": "asm-citation",
       "path": "src/game/chrobjhandler.c:5352/5363 write *((u8*)obj->projectile+0xCC+i)=val/0xFF (struct Projectile*). Projectile has 3 pointers before 0xCC (ownerprop@0x88, sound1@0x98, sound2@0x9C; bondtypes.h:2568), so unkCC shifts (native >=0xD8). The writer at 2526 uses projectile->unkCC and readers (5116/5266/5286/5295) pass &proj->unkCC -> the raw +0xCC writer corrupts unkC0/C4/C8 and never updates the list readers consume. Reachable: projectile crossing rooms. Fix: *((u8*)&obj->projectile->unkCC + i)."
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX."
+    },
+    {
+      "kind": "gate-log",
+      "path": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX."
     }
   ],
   "history": [
@@ -20,6 +32,27 @@
       "to": "triaged",
       "evidence": "src/game/chrobjhandler.c:5352/5363 write *((u8*)obj->projectile+0xCC+i)=val/0xFF (struct Projectile*). Projectile has 3 pointers before 0xCC (ownerprop@0x88, sound1@0x98, sound2@0x9C; bondtypes.h:2568), so unkCC shifts (native >=0xD8). The writer at 2526 uses projectile->unkCC and readers (5116/5266/5286/5295) pass &proj->unkCC -> the raw +0xCC writer corrupts unkC0/C4/C8 and never updates the list readers consume. Reachable: projectile crossing rooms. Fix: *((u8*)&obj->projectile->unkCC + i).",
       "note": "hunt 2026-07-12; RANK2"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX.",
+      "note": "named-field fix confirmed vs ASM + struct locks"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX.",
+      "note": "gated default-on"
+    },
+    {
+      "ts": "2026-07-12T17:16:00Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/chrobjhandler.c:5352 writes &obj->projectile->unkCC (named field, matching the writer at 2526 and readers at 5116/5266); raw +0xCC corrupted unkC0/C4/C8 on the pointer-grown Projectile. Byte-identical on all 7 tapes (room-cross path not exercised); gated GE007_NO_PROJECTILE_ROOM_OFFSET_FIX.",
+      "note": "byte-identical on tapes (path not exercised); confirmed by static analysis + A/B gate"
     }
   ]
 }
