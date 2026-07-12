@@ -1,0 +1,25 @@
+{
+  "id": "FID-0129",
+  "title": "playerTickBeams reads MP other-player weaponnum via raw obj+0x80 (hits maxdamage) \u2014 wrong walk anim",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c:25111/25119/25127/25139 call bondwalkItemCheckBitflags(*(s8*)((u8*)rightObj+0x80),...) on ObjectRecord* (WeaponObjRecord.weaponnum, N64 0x80). ObjectRecord native 0x90 -> weaponnum@0x90; raw 0x80 reads maxdamage low byte -> wrong walk-anim type. Inside the FID-0094 fn but NOT covered by the FID-0094 gate; ungated. MP other-player walk-anim (cosmetic). Fix: ((WeaponObjRecord*)rightObj)->weaponnum."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T16:26:44Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bondview.c:25111/25119/25127/25139 call bondwalkItemCheckBitflags(*(s8*)((u8*)rightObj+0x80),...) on ObjectRecord* (WeaponObjRecord.weaponnum, N64 0x80). ObjectRecord native 0x90 -> weaponnum@0x90; raw 0x80 reads maxdamage low byte -> wrong walk-anim type. Inside the FID-0094 fn but NOT covered by the FID-0094 gate; ungated. MP other-player walk-anim (cosmetic). Fix: ((WeaponObjRecord*)rightObj)->weaponnum.",
+      "note": "hunt 2026-07-12; RANK4, MP cosmetic, sibling of FID-0094"
+    }
+  ]
+}

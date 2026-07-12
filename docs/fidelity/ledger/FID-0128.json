@@ -1,0 +1,25 @@
+{
+  "id": "FID-0128",
+  "title": "sub_GAME_7F041160 door test passes raw DoorRecord arg0+0xD0 (garbage bbox) to ray-vs-OBB",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:3616 calls sub_GAME_7F0747D0((u8*)arg0+0xD0, ...) where arg0 is a DoorRecord (type==1). The correct native form exists at chrobjhandler.c:38644: sub_GAME_7F0747D0(&door->bbox,...). DoorRecord.bbox is N64 0xD0 (bondtypes.h:2973) but DoorRecord inherits the +0x10-grown ObjectRecord AND has 2 pointers just before bbox (linkedDoor@0xC8, unkcc Vertex*@0xCC) -> bbox at native ~0xE8. Raw 0xD0 feeds a garbage bbox into the door shot/collision test. Fix: &((DoorRecord*)arg0)->bbox."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T16:26:44Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chrobjhandler.c:3616 calls sub_GAME_7F0747D0((u8*)arg0+0xD0, ...) where arg0 is a DoorRecord (type==1). The correct native form exists at chrobjhandler.c:38644: sub_GAME_7F0747D0(&door->bbox,...). DoorRecord.bbox is N64 0xD0 (bondtypes.h:2973) but DoorRecord inherits the +0x10-grown ObjectRecord AND has 2 pointers just before bbox (linkedDoor@0xC8, unkcc Vertex*@0xCC) -> bbox at native ~0xE8. Raw 0xD0 feeds a garbage bbox into the door shot/collision test. Fix: &((DoorRecord*)arg0)->bbox.",
+      "note": "hunt 2026-07-12; RANK3, door collision path"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "id": "FID-0130",
+  "title": "playerTickBeams reads MP other-player aim (aimback/aimsideback) via raw player+0x2A00 (post-hands shift)",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P3",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c:25039/25040 read *(f32*)((u8*)player+0x2A00/0x2A04) (struct player*). Reference ASM lwc1 0x2a00(t0)/0x2a04. N64 0x2A00 is post-hands (hands[] ends ~0xA10) -> shifts +0x150 (test_struct_layout.c:143; native ~0x2B50). Raw 0x2A00 lands ~0x150 short. Inside FID-0094 fn, ungated. MP other-player beam/aim (cosmetic). Needs a named post-hands field added before fixing (like tileColor/gunammooff)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T16:26:44Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/bondview.c:25039/25040 read *(f32*)((u8*)player+0x2A00/0x2A04) (struct player*). Reference ASM lwc1 0x2a00(t0)/0x2a04. N64 0x2A00 is post-hands (hands[] ends ~0xA10) -> shifts +0x150 (test_struct_layout.c:143; native ~0x2B50). Raw 0x2A00 lands ~0x150 short. Inside FID-0094 fn, ungated. MP other-player beam/aim (cosmetic). Needs a named post-hands field added before fixing (like tileColor/gunammooff).",
+      "note": "hunt 2026-07-12; RANK5, MP cosmetic, needs field confirmation"
+    }
+  ]
+}

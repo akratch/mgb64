@@ -1,0 +1,25 @@
+{
+  "id": "FID-0127",
+  "title": "projectile room-visibility list written via raw +0xCC, corrupting fields the named-field readers consume",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrobjhandler.c:5352/5363 write *((u8*)obj->projectile+0xCC+i)=val/0xFF (struct Projectile*). Projectile has 3 pointers before 0xCC (ownerprop@0x88, sound1@0x98, sound2@0x9C; bondtypes.h:2568), so unkCC shifts (native >=0xD8). The writer at 2526 uses projectile->unkCC and readers (5116/5266/5286/5295) pass &proj->unkCC -> the raw +0xCC writer corrupts unkC0/C4/C8 and never updates the list readers consume. Reachable: projectile crossing rooms. Fix: *((u8*)&obj->projectile->unkCC + i)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T16:26:44Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chrobjhandler.c:5352/5363 write *((u8*)obj->projectile+0xCC+i)=val/0xFF (struct Projectile*). Projectile has 3 pointers before 0xCC (ownerprop@0x88, sound1@0x98, sound2@0x9C; bondtypes.h:2568), so unkCC shifts (native >=0xD8). The writer at 2526 uses projectile->unkCC and readers (5116/5266/5286/5295) pass &proj->unkCC -> the raw +0xCC writer corrupts unkC0/C4/C8 and never updates the list readers consume. Reachable: projectile crossing rooms. Fix: *((u8*)&obj->projectile->unkCC + i).",
+      "note": "hunt 2026-07-12; RANK2"
+    }
+  ]
+}
