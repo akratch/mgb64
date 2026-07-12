@@ -1,0 +1,27 @@
+{
+  "id": "FID-0114",
+  "title": "obInit writes one extra resource_lookup_data_array entry (index file_entry_max-1) that retail leaves untouched",
+  "class": "port-defect",
+  "surface": "infra",
+  "priority": "P3",
+  "status": "discovered",
+  "suspect": [
+    "src/game/ob.c:168"
+  ],
+  "repro": "S5 ASM audit rank 216 batch 18",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/ob.c:168-175 vs GLOBAL_ASM obInit 0x7F0BCC28 (glabel ob.c:185); retail loop 0x7F0BCC80-0x7F0BCCA8 with end bound register a1 = resource_lookup_data_array + (file_entry_max-1)*20 computed 0x7F0BCC64-0x7F0BCC7C"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T01:56:33Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "src/game/ob.c:168-175 vs GLOBAL_ASM obInit 0x7F0BCC28 (glabel ob.c:185); retail loop 0x7F0BCC80-0x7F0BCCA8 with end bound register a1 = resource_lookup_data_array + (file_entry_max-1)*20 computed 0x7F0BCC64-0x7F0BCC7C",
+      "note": "Retail obInit initializes resource_lookup_data_array via an ASCENDING pointer loop: v0 walks from array index 1 (0x7F0BCC7C sets v0 = base + 0x14) upward by stride 0x14, storing rom_size = frt-next.hw_address minus frt-cur.hw_address at offset 0, then zero to poolRemaining 0x4, pc_size 0x8, rom_remaining 0xC; it continues while the post-incremented pointer is strictly less than a1 = base + (file_entry_max-1)*20. That bound stops after writing index file_entry_max-2, so retail never touches index file_entry_max-1. The NATIVE_PORT C at ob.c:168 instead uses a DESCENDING loop for i = file_entry_max-1 down to 1, which DOES write index file_entry_max-1 (rom_size = frt[file_entry_max].hw - frt[file_entry_max-1].hw, and the three zero fields). Net divergence: the port initializes one extra entry (the last file index) that retail leaves at its BSS/prior value. Order of writes is irrelevant (independent per-entry stores); the only behavioral difference is that extra entry. Likely benign if index file_entry_max-1 is an unused end sentinel, but if that entry is ever consumed by the OB file loader its rom_size differs (port computed vs retail zero). Needs an oracle over the ob file-resource table to confirm whether index file_entry_max-1 is loaded before deciding fix (default-on) vs documented parity."
+    }
+  ]
+}
