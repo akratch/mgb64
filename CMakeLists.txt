@@ -882,6 +882,18 @@ if(BUILD_TESTING)
     target_include_directories(test_mp_respawn_tail PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME mp_respawn_tail COMMAND test_mp_respawn_tail)
 
+    # Glass shot-depth acceptance — ROM-free unit test (FID-0083). Retail hit-depth
+    # gates sub_GAME_7F04E720 / sub_GAME_7F04E9BC reject any object hit behind the
+    # limit plane; the port's glass-crack acceptance window is now OPT-IN with a
+    # faithful default of 0.0 (retail-exact). Pins both sides so a revert of the
+    # default to a positive tolerance, or a change to the window math, reddens.
+    add_executable(test_glass_shot_depth
+        "${CMAKE_SOURCE_DIR}/tests/test_glass_shot_depth.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/glass_shot_depth.c"
+    )
+    target_include_directories(test_glass_shot_depth PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME glass_shot_depth COMMAND test_glass_shot_depth)
+
     # Spectrum easter-egg SETTILE tile field — ROM-free unit test (FID-0107):
     # spectrum_draw_screen must emit SETTILE w1 = 0x07000000 (tile 7 = G_TX_LOADTILE)
     # so both SETTILEs configure the tile their LOADTLUT/LOADBLOCK load into. The

@@ -37,6 +37,18 @@ of truth for status.
 |---|----------------|---------------|-----------------|-------------------------------|
 | W1 | `stan.c` reads two uninitialized stack locals: the on-edge seam flag at `sp+0x88` (sub_GAME_7F0AF20C) and `lastCrossEdge` at `sp+0x98` (sub_GAME_7F0B0914). Neither slot is stored before it is read, so retail runs the midpoint walk-back disambiguation / writes `stanSavedColl_pointI` from whatever the caller left on the stack | `src/game/stan.c:1026` (`lw $s2,0x88($sp)`) and `src/game/stan.c:3463` (`lw $fp,0x98($sp)`), re-derived from GLOBAL_ASM; no prior store to those stack offsets in either prologue/body | Port zero-inits both locals (`src/game/stan.c:746` on-edge flag, `src/game/stan.c:3290` lastCrossEdge), yielding a deterministic result | FID-0081. Re-open if a movement/seam oracle lane shows a tile-pick or `stanSavedColl_pointI` divergence at scaled tile edges within 2.0 units — that would prove the garbage-dependent branch is reachable and needs an ares/console capture of the actual stack contents to model |
 
+## Opt-in cosmetic mitigations (faithful default OFF)
+
+A third sub-class: the faithful default reproduces retail exactly, but the port
+offers an **opt-in** deviation that softens an N64 artifact for players who want
+it. Per charter rule 4 these default **OFF** (faithful), enabled by an env flag,
+and are registered here so the deviation is auditable. The ledger entry is the
+source of truth for status.
+
+| # | Mitigation (opt-in) | Retail anchor (faithful default) | Opt-in effect | Enable flag (ledger FID) |
+|---|---------------------|----------------------------------|---------------|--------------------------|
+| M1 | Glass shot-depth tolerance: accept a glass / tinted-glass hit up to N world units *behind* the shot's limit plane, so cracks attach to a pane coplanar with the background collision surface instead of the wall behind it | Retail hit-depth gates `sub_GAME_7F04E720` / `sub_GAME_7F04E9BC` reject any object hit behind the plane outright (`c.le.s` then `bc1fl` return when `-transformed.z > shotdata->unk34`); the faithful default tolerance is 0.0, which is byte-identical to this rejection | Registers an extra prop hit retail never makes — plus the crack/shatter bookkeeping and PRNG draws that follow it — so it is sim-visible and deliberately OFF by default | `GE007_GLASS_SHOT_DEPTH_TOLERANCE` (a positive value, clamped to 20.0, enables it), FID-0083. The ROM-free lane `glass_shot_depth` pins both sides |
+
 ## Non-quirks (adjudicated)
 
 Claims investigated and **rejected** as quirks — kept here so they are not

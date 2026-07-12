@@ -52,6 +52,7 @@ extern int g_frame_count_diag;
 #include "platform/projectile_endpoint_clamp.h"
 #include "platform/chrobj_detonate.h"
 #include "platform/chrobj_impact_suppress.h"  /* FID-0069 */
+#include "platform/glass_shot_depth.h"  /* FID-0083 */
 #include "platform/port_env.h"
 
 extern void *dynAllocate(s32 size);
@@ -86,7 +87,11 @@ static int g_TintedGlassMinRenderOpacity = -1;
 static int g_GlassTraceEnabled = -1;
 static int g_GlassTraceBudget = -1;
 static int g_GlassShotDepthToleranceInitialized = 0;
-static f32 g_GlassShotDepthTolerance = 2.0f;
+/* FID-0083: faithful default is 0.0 (retail-exact — retail rejects any object
+ * hit behind the limit plane). The glass-crack acceptance window is OPT-IN via
+ * GE007_GLASS_SHOT_DEPTH_TOLERANCE (> 0); see src/platform/glass_shot_depth.c
+ * and QUIRKS.md W2. */
+static f32 g_GlassShotDepthTolerance = 0.0f;
 static int g_InteractTraceEnabled = -1;
 static int g_InteractTraceBudget = -1;
 static int g_AutogunPoseTraceEnabled = -1;
@@ -666,17 +671,12 @@ static int objectIsGlassLikeForShot(const ObjectRecord *obj)
 
 static int objectShotDepthWithinGlassTolerance(const ObjectRecord *obj, f32 depth, f32 limit)
 {
-    f32 tolerance;
-
-    if (!objectIsGlassLikeForShot(obj) || depth <= limit) {
-        return 0;
-    }
-
-    tolerance = glassShotDepthTolerance();
-
-    /* Glass panes are often coplanar with background collision. Allow a tiny
-     * prop-hit bias so cracks attach to the pane instead of the wall behind it. */
-    return tolerance > 0.0f && depth <= limit + tolerance;
+    /* Glass panes are often coplanar with background collision. The opt-in
+     * tolerance (faithful default 0.0 = retail-exact rejection) allows a small
+     * prop-hit bias so cracks attach to the pane instead of the wall behind it.
+     * Decision factored into the ROM-free helper for FID-0083's regression lane. */
+    return glassShotDepthAccept(objectIsGlassLikeForShot(obj), depth, limit,
+                                glassShotDepthTolerance());
 }
 
 static int interactTraceEnabled(void)
