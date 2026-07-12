@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 import tempfile
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:  # Pillow is an optional dev dep; skip cleanly (ctest SKIP_RETURN_CODE 125)
+    import sys
+    print("SKIP: glass-shard pixel target selection regression requires Pillow (pip install pillow)")
+    sys.exit(125)
 
 import select_glass_shard_pixel_targets as selector
 

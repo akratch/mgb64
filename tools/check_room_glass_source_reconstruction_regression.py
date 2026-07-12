@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 import tempfile
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:  # Pillow is an optional dev dep; skip cleanly (ctest SKIP_RETURN_CODE 125)
+    import sys
+    print("SKIP: room-glass source reconstruction regression requires Pillow (pip install pillow)")
+    sys.exit(125)
 
 import analyze_room_glass_source_reconstruction as recon
 

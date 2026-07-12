@@ -367,6 +367,8 @@ if(BUILD_TESTING)
         NAME port_room_glass_source_reconstruction_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_room_glass_source_reconstruction_regression.py"
     )
+    # Pillow is an optional dev dep: the guard exits 125 (SKIP) when it's absent.
+    set_tests_properties(port_room_glass_source_reconstruction_guard PROPERTIES SKIP_RETURN_CODE 125)
     add_test(
         NAME port_rdp_coverage_memory_backend_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_rdp_coverage_memory_backend_guard.py"
@@ -383,6 +385,8 @@ if(BUILD_TESTING)
         NAME port_glass_shard_pixel_target_selection_guard
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_glass_shard_pixel_target_selection_regression.py"
     )
+    # Pillow is an optional dev dep: the guard exits 125 (SKIP) when it's absent.
+    set_tests_properties(port_glass_shard_pixel_target_selection_guard PROPERTIES SKIP_RETURN_CODE 125)
     # FID-0003: shard geometry scale = 1/visibility, coupled to field_10E0
     # (retail-ASM-faithful net transform). Source invariant; ROM-free.
     # Fail-on-revert: re-adding any retired shard A/B scale flag reddens this.
