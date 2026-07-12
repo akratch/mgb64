@@ -761,6 +761,19 @@ if(BUILD_TESTING)
     target_include_directories(test_watch_scene_render PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME watch_scene_render COMMAND test_watch_scene_render)
 
+    # MP health/armour-bar draw gate — ROM-free unit test (FID-0070): retail
+    # gates on HealthShowTime && watch-idle only (both ASM variants); the port
+    # ORed in DamageShowTime, drawing the bars during damage flashes and skipping
+    # the healthdisplaytime decrement. Pins the truth tables (esp. the divergent
+    # damage-flash case) so a revert or a GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX
+    # flip reddens.
+    add_executable(test_mp_healthbar_gate
+        "${CMAKE_SOURCE_DIR}/tests/test_mp_healthbar_gate.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/mp_healthbar_gate.c"
+    )
+    target_include_directories(test_mp_healthbar_gate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME mp_healthbar_gate COMMAND test_mp_healthbar_gate)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

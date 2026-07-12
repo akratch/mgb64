@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1039 flags** found across the source.
+**1040 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -588,6 +588,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
 | `GE007_NO_MP_AMMO_HUD_MENU_FIX` | presence | unset | 1 | Restore the pre-fix MP per-pane ammo HUD drawn over the watch/pause darkening overlay [FID-0064] |
+| `GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX` | presence | unset | 1 | Restore the pre-fix MP health-bar draw during damage flashes (OR DamageShowTime) [FID-0070] |
 | `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |

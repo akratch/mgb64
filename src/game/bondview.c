@@ -61,6 +61,7 @@
 #include "ads_profiles.h"
 #include "minimap.h"
 #include "platform/watch_scene_render.h"  /* FID-0068 watch tint + aspect */
+#include "platform/mp_healthbar_gate.h"    /* FID-0070 MP health-bar draw gate */
 #endif
 
 /* Forward declarations for functions without headers */
@@ -21349,6 +21350,22 @@ glabel sub_GAME_7F088CD8
 
 
 #ifdef NONMATCHING
+/* FID-0070 negative control. Default-ON port-defect fix gates the MP
+ * health/armour-bar draw on HealthShowTime only (matching both retail ASM
+ * variants); setting GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX restores the pre-fix
+ * spurious `|| DamageShowTime()` OR byte-identically (bars drawn during damage
+ * flashes + skipped healthdisplaytime decrement). */
+static int portNoMpHealthbarDamageGateFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX",
+                              "Restore the pre-fix MP health-bar draw during damage "
+                              "flashes (OR DamageShowTime) [FID-0070]");
+    }
+    return cached;
+}
+
 Gfx *maybe_mp_interface(Gfx *arg0) {
     struct player *player;
     s32 viewleft;
@@ -21408,8 +21425,14 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
         arg0 = microcode_constructor_related_to_menus(arg0, viewleft, viewtop, right, bottom, 160);
     }
 
-    if ((bondviewGetIfCurrentPlayerHealthShowTime() || bondviewGetIfCurrentPlayerDamageShowTime())
-        && g_CurrentPlayer->watch_animation_state == 0) {
+    /* FID-0070: retail gates the health/armour bars on HealthShowTime && watch
+     * idle only (both ASM variants; US 7F089490-A8). The port ORed in
+     * DamageShowTime, drawing the bars during damage flashes and taking this
+     * `if` branch — skipping the else-branch healthdisplaytime decrement. */
+    if (mpHealthBarDrawGate(bondviewGetIfCurrentPlayerHealthShowTime(),
+                            bondviewGetIfCurrentPlayerDamageShowTime(),
+                            g_CurrentPlayer->watch_animation_state == 0,
+                            portNoMpHealthbarDamageGateFix())) {
         arg0 = sub_GAME_7F088618(arg0);
     } else {
         if (sub_GAME_7F0C6048()) {
