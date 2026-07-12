@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/game/bondview.c:17677"
   ],
@@ -13,6 +13,26 @@
     {
       "kind": "asm-citation",
       "path": "src/game/bondview.c:18205"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0067-0074-batch3.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/platform/watch_scene_render.h"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/platform/watch_scene_render.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:watch_scene_render"
     }
   ],
   "history": [
@@ -22,6 +42,41 @@
       "to": "discovered",
       "evidence": "src/game/bondview.c:18205",
       "note": "Watch-scene renderer (ASM bondview.c:17756-18273 US 7F087E74; live C 17339-17751). (A) WRONG FIELD + BYTE ORDER: retail stores the watch tint into renderdata.envcolour (+0x34): renderdata base sp+0x1b8 (flags=3 -> 0x1c0 @18192, zbuf=0 -> 0x1bc @18193, PropType=4 -> 0x1e8 @18194, gdl -> 0x1c4 @18195, subdraw a0=sp+0x1b8 @18198/18219); states 5/12 -> li 205 sw 0x1ec (18203-18205); else assembles (tileColor.r<<24)|(g<<16)|(b<<8)|a from lbu player+0xfdc..0xfdf (18207-18216) -> sw 0x1ec (18217). 0x1ec-0x1b8 = 0x34 = ModelRenderData.envcolour (bondtypes.h: PropType 0x30, envcolour 0x34, fogcolour 0x38, cullmode 0x3c). Port writes renderdata.cullmode instead (C 17677/17679) and via *(u32*)&player->tileColor which on LE hosts is additionally byte-reversed (correct faithful idiom exists at gun.c:14879-14882). Effect: envcolour keeps template {0,0,0,0}; PropType=4 material path issues gDPSetFogColor from envcolour under G_RM_FOG_PRIM_A (model.c:9344-9366) -> pause arm/watch loses room-light tint and the states-5/12 alpha-205 darkening; the cullmode clobber itself is inert (205 matches no CULLMODE_*, model.c:9797-9811). (B) WRONG FLOAT CONSTANT: retail guPerspective aspect = 0x3FBA2E8C = 1.4545455 (lui/ori a3 18820-18821 i.e. bondview.c:17820-17821); port passes 1.456f = 0x3FBA5E35 (C 17425) -> ~0.1% horizontal squeeze of the watch scene. Gray-area port addition (not counted): unconditional post-subdraw gSPMatrix+gSPPerspNormalize reassert (C 17690-17691), commented as native projection-churn guard, idempotent when projection unchanged. Rest of fn verified equivalent (early-outs 17769-17775 = C 17383-17389; camera-relative pos math signs 17855-17883 = C 17441-17449; interp clamp c.lt.s+bc1fl 17930-17938 = C 17492-17498; clock-hand math + wrap loops 18024-18147 = C 17562-17610; hand matrices Switches[0..2] 18148-18186 = C 17613-17643; state grouping 5/12 both sites; page overlay + epilogue 18222-18271 = C 17694-17751). DO NOT fix from this note; re-derive from ASM."
+    },
+    {
+      "ts": "2026-07-12T00:08:51Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0067-0074-batch3.md",
+      "note": "batch-3 derivation; P2 renderer port-defect in sub_GAME_7F087E74 watch renderer"
+    },
+    {
+      "ts": "2026-07-12T00:08:51Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/platform/watch_scene_render.h",
+      "note": "re-derived: tint store 7F0884E4-7F088548 to envcolour(+0x34) not cullmode; aspect 0x3FBA2E8C(16/11) 7F087F50-54"
+    },
+    {
+      "ts": "2026-07-12T00:08:51Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/watch_scene_render.c",
+      "note": "factored aspect + envcolour tint-word (ROM-free) with legacy A/B toggle"
+    },
+    {
+      "ts": "2026-07-12T00:08:51Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/bondview.c",
+      "note": "603a2fc: fix behind GE007_NO_WATCH_RENDER_FIX; sim-hash byte-identical fix-ON/OFF"
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:watch_scene_render",
+      "note": "unit test both-sides + A/B pixel 7069px watch-arm tint diff + sim_invariance PASS + parity PASS"
     }
   ]
 }

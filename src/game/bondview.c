@@ -60,6 +60,8 @@
 #ifdef NATIVE_PORT
 #include "ads_profiles.h"
 #include "minimap.h"
+#include "platform/watch_scene_render.h"  /* FID-0068 watch tint + aspect */
+#include "platform/mp_healthbar_gate.h"    /* FID-0070 MP health-bar draw gate */
 #endif
 
 /* Forward declarations for functions without headers */
@@ -17452,6 +17454,23 @@ extern void *dynAllocate(s32 size);
 extern void matrix_4x4_7F058C64(void);
 extern void matrix_4x4_7F058C88(void);
 
+/* FID-0068 negative control. Default-ON port-defect fix writes the paused-watch
+ * room tint to renderdata.envcolour (+0x34, the field the retail ASM stores at
+ * 7F0884E4-7F088548) using the big-endian tileColor packing, and passes the
+ * retail guPerspective aspect 16/11 (0x3FBA2E8C). Setting GE007_NO_WATCH_RENDER_FIX
+ * restores the pre-fix port behavior byte-identically: tint into the inert
+ * cullmode via an LE-reversed *(u32*)&tileColor, plus the 1.456f aspect. */
+static int portNoWatchRenderFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCH_RENDER_FIX",
+                              "Restore the pre-fix paused-watch tint (written to the inert "
+                              "cullmode, LE-reversed) and the 1.456f aspect [FID-0068]");
+    }
+    return cached;
+}
+
 Gfx *sub_GAME_7F087E74(Gfx *gdl) {
     ModelRenderData renderdata;
     coord3d pos;
@@ -17526,9 +17545,11 @@ Gfx *sub_GAME_7F087E74(Gfx *gdl) {
 
     perspMtx = dynAllocateMatrix();
 
+    /* FID-0068: retail aspect a3 = 0x3FBA2E8C = 16/11 (ASM 7F087F50-54); the
+     * port literal 1.456f (0x3FBA5E35) ~0.1% squeezed the watch scene. */
     guPerspective(perspMtx, &perspNorm,
         g_CurrentPlayer->zoominfovy,
-        1.456f,
+        watchScenePerspAspect(portNoWatchRenderFix()),
         10.0f, 300.0f, 1.0f);
 
     gdl[0].words.w0 = 0x01030040;
@@ -17779,10 +17800,27 @@ Gfx *sub_GAME_7F087E74(Gfx *gdl) {
 
     player = g_CurrentPlayer;
 
-    if (player->watch_animation_state == 5 || player->watch_animation_state == 12) {
-        renderdata.cullmode = 205;
+    if (portNoWatchRenderFix()) {
+        /* Pre-fix port defect: the tint was written to the inert cullmode
+         * (+0x3c, matches no CULLMODE_*) via an LE-byte-reversed reinterpret,
+         * so envcolour stayed {0,0,0,0} and the PropType-4 material path lost
+         * the room tint / states-5/12 darkening. */
+        if (player->watch_animation_state == 5 || player->watch_animation_state == 12) {
+            renderdata.cullmode = 205;
+        } else {
+            renderdata.cullmode = *(u32 *)&player->tileColor;
+        }
     } else {
-        renderdata.cullmode = *(u32 *)&player->tileColor;
+        /* FID-0068: retail stores the tint into envcolour (+0x34), big-endian
+         * packed (r<<24)|(g<<16)|(b<<8)|a — or 205 for raise/lower states 5/12
+         * (ASM 7F0884E4-7F088548). cullmode stays at the D_8003683C template
+         * (CULLMODE_BOTH=0, an inert modelApplyCullMode no-op), exactly as
+         * retail leaves it. Mirrors the verified gun-subdraw sibling
+         * gun.c:15002-15006. */
+        renderdata.envcolour.word = watchSceneTintWord(
+            player->watch_animation_state,
+            player->tileColor.r, player->tileColor.g,
+            player->tileColor.b, player->tileColor.a);
     }
 
     subdraw(&renderdata,
@@ -21312,6 +21350,22 @@ glabel sub_GAME_7F088CD8
 
 
 #ifdef NONMATCHING
+/* FID-0070 negative control. Default-ON port-defect fix gates the MP
+ * health/armour-bar draw on HealthShowTime only (matching both retail ASM
+ * variants); setting GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX restores the pre-fix
+ * spurious `|| DamageShowTime()` OR byte-identically (bars drawn during damage
+ * flashes + skipped healthdisplaytime decrement). */
+static int portNoMpHealthbarDamageGateFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX",
+                              "Restore the pre-fix MP health-bar draw during damage "
+                              "flashes (OR DamageShowTime) [FID-0070]");
+    }
+    return cached;
+}
+
 Gfx *maybe_mp_interface(Gfx *arg0) {
     struct player *player;
     s32 viewleft;
@@ -21371,8 +21425,14 @@ Gfx *maybe_mp_interface(Gfx *arg0) {
         arg0 = microcode_constructor_related_to_menus(arg0, viewleft, viewtop, right, bottom, 160);
     }
 
-    if ((bondviewGetIfCurrentPlayerHealthShowTime() || bondviewGetIfCurrentPlayerDamageShowTime())
-        && g_CurrentPlayer->watch_animation_state == 0) {
+    /* FID-0070: retail gates the health/armour bars on HealthShowTime && watch
+     * idle only (both ASM variants; US 7F089490-A8). The port ORed in
+     * DamageShowTime, drawing the bars during damage flashes and taking this
+     * `if` branch — skipping the else-branch healthdisplaytime decrement. */
+    if (mpHealthBarDrawGate(bondviewGetIfCurrentPlayerHealthShowTime(),
+                            bondviewGetIfCurrentPlayerDamageShowTime(),
+                            g_CurrentPlayer->watch_animation_state == 0,
+                            portNoMpHealthbarDamageGateFix())) {
         arg0 = sub_GAME_7F088618(arg0);
     } else {
         if (sub_GAME_7F0C6048()) {

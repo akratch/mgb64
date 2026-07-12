@@ -748,6 +748,45 @@ if(BUILD_TESTING)
     target_include_directories(test_bg_impact_guard PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME bg_impact_guard COMMAND test_bg_impact_guard)
 
+    # HUD ammo-icon rect-center anchor + mirror — ROM-free unit test (FID-0067):
+    # retail centers the icon at y - h*0.5 (y>=0) / H + S - frac(h) (y<0) and
+    # never mirrors the left dual-wield icon; the port defect drew it floor(h/2)
+    # px off on both branches and mirror-imaged the left icon. Pins the fixed and
+    # legacy values so a revert of either or a GE007_NO_AMMO_ICON_ANCHOR_FIX flip
+    # reddens.
+    add_executable(test_ammo_icon_anchor
+        "${CMAKE_SOURCE_DIR}/tests/test_ammo_icon_anchor.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/ammo_icon_anchor.c"
+    )
+    target_include_directories(test_ammo_icon_anchor PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME ammo_icon_anchor COMMAND test_ammo_icon_anchor)
+
+    # Paused-watch scene renderer constants — ROM-free unit test (FID-0068):
+    # retail passes guPerspective aspect 0x3FBA2E8C (16/11) and stores the room
+    # tint into envcolour big-endian packed (r<<24|g<<16|b<<8|a, or 205 for
+    # states 5/12); the port passed 1.456f (0x3FBA5E35) and an LE-reversed
+    # *(u32*)&tileColor into the inert cullmode. Pins both so a revert or a
+    # GE007_NO_WATCH_RENDER_FIX flip reddens.
+    add_executable(test_watch_scene_render
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_scene_render.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_scene_render.c"
+    )
+    target_include_directories(test_watch_scene_render PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_scene_render COMMAND test_watch_scene_render)
+
+    # MP health/armour-bar draw gate — ROM-free unit test (FID-0070): retail
+    # gates on HealthShowTime && watch-idle only (both ASM variants); the port
+    # ORed in DamageShowTime, drawing the bars during damage flashes and skipping
+    # the healthdisplaytime decrement. Pins the truth tables (esp. the divergent
+    # damage-flash case) so a revert or a GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX
+    # flip reddens.
+    add_executable(test_mp_healthbar_gate
+        "${CMAKE_SOURCE_DIR}/tests/test_mp_healthbar_gate.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/mp_healthbar_gate.c"
+    )
+    target_include_directories(test_mp_healthbar_gate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME mp_healthbar_gate COMMAND test_mp_healthbar_gate)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

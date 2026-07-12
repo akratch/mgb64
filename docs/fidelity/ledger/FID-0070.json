@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "discovered",
+  "status": "verified",
   "suspect": [
     "src/game/bondview.c:21253"
   ],
@@ -13,6 +13,26 @@
     {
       "kind": "asm-citation",
       "path": "src/game/bondview.c:21816"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/fidelity/derivations/FID-0067-0074-batch3.md"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/platform/mp_healthbar_gate.h"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/platform/mp_healthbar_gate.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:mp_healthbar_gate"
     }
   ],
   "history": [
@@ -22,6 +42,41 @@
       "to": "discovered",
       "evidence": "src/game/bondview.c:21816",
       "note": "HUD/interface frame renderer (both ASM variants audited: LEFTOVERDEBUG bondview.c:21409-21735 @7F089208, retail US 21739-22065 @7F089370; live C 21194-21406). Retail draws the health/armour bars (sub_GAME_7F088618) iff healthshowtime-getter && watch_animation_state==0: jal bondviewGetIfCurrentPlayerHealthShowTime (US 21816, debug 21486; jal target address verified: debug word 0FC227AF decodes to 0x7F089EBC = HealthShowTime, distinct from DamageShowTime 0x7F089EA4 [decoded from chrobjhandler.c:17119 word 0FC227A9]; sub_GAME_7F088618's debug jal 0FC22186 decodes exactly to 0x7F088618 confirming symbol-name fidelity); beqz -> else-path; lw 0x1c8 watch_animation_state bnez -> else-path (21818-21822). bondviewGetIfCurrentPlayerDamageShowTime is NOT called anywhere in either variant. Port C 21253 ORs it in: (HealthShowTime() || DamageShowTime()) && watch==0. The getters read different fields (bondview.c:22389-22397: damageshowtime >= 0 vs healthshowtime > 0); damageshowtime idles at -1 (init 2466, reset 13655) and is >=0 exactly while a damage-flash sequence runs. Divergent case damageshowtime>=0 && healthshowtime<=0 && watch==0: retail falls to the else-branch (sub_GAME_7F0C6048 gate = !g_gameOverFlag && (mpmenuon | healthdisplaytime>0), mp_watch.c:8709-8712; draws + decrements healthdisplaytime by g_ClockTimer clamped at 0, ASM 21829-21851 = C 21257-21268); port draws unconditionally AND skips the decrement -> pending health display lingers longer (sim-visible player-state trajectory delta on healthdisplaytime). Introduced with the initial transcription (blame 8de295b), no fix rationale. Rest of fn verified equivalent line-by-line by auditor (intro-camera early path incl offset0==1 == playerHasFrozenIntroCamera [bondview.h:2340-2346, PLAYER_VIEWMODE_FROZEN_INTRO_CAMERA=1, unknown @0]; mpmenu rect s16-truncated 2nd Left/Top reads 21785-21814 = C 21243-21250; death sequence music/missionstate 21548-21575 = C 21290-21303; ClockTimer 1:2 pick 21595-21600 = C 21311-21315; c.le.s field28 gate 21625-21627 = C 21329; kill_counts loop stride 0x70 offset 0x24 21674-21687 = C 21348-21350; scenario!=1||kills<2 21689-21694 = C 21352; joyGetButtons (s8)pn 0xB000 21696-21703 = C 21353; HUD tail order 21707-21730 = C 21363-21405; NATIVE_PORT additions all env/flag-gated). Same HUD-guard family as FID-0064. DO NOT fix from this note; re-derive from ASM."
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/derivations/FID-0067-0074-batch3.md",
+      "note": "batch-3 derivation; P2 renderer port-defect in maybe_mp_interface (both ASM variants)"
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/platform/mp_healthbar_gate.h",
+      "note": "re-derived: only HealthShowTime jal'd (US 7F089490); DamageShowTime called in neither variant"
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/mp_healthbar_gate.c",
+      "note": "factored health-bar gate (ROM-free) with legacy A/B toggle"
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "src/game/bondview.c",
+      "note": "4f95a1b: removed spurious || DamageShowTime; behind GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX; sim-hash byte-identical"
+    },
+    {
+      "ts": "2026-07-12T00:08:52Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:mp_healthbar_gate",
+      "note": "unit test both-sides (damage-flash case flips) + ASM ground truth + sim-neutral; solo pixel divergence not reachable (documented)"
     }
   ]
 }

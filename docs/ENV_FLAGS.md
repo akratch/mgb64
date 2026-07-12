@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1038 flags** found across the source.
+**1041 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -561,6 +561,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NATIVE_EXPLOSION_FALLBACK` | ? |  | 1 |  |
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
 | `GE007_NO_A2C` | ? |  | 2 |  |
+| `GE007_NO_AMMO_ICON_ANCHOR_FIX` | presence | unset | 1 | Restore the pre-fix HUD ammo-icon anchor (floor(h/2) px off) and left dual-wield icon mirroring [FID-0067] |
 | `GE007_NO_AUTOSHOT_BULLETTYPE_FIX` | presence | unset | 1 | Restore the legacy (buggy) pistol grouping for the AUTOSHOT bullet type [FID-0052] |
 | `GE007_NO_BOND_BODY_FIX` | presence | unset | 1 | Revert the intro/outro Bond body to its original invisible behaviour (default ON) |
 | `GE007_NO_CAMERA_SEED_FIX` | presence | unset | 1 | Disable the detached-authored-camera visibility BFS seed (default ON) [D42/T14] |
@@ -588,6 +589,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
 | `GE007_NO_MP_AMMO_HUD_MENU_FIX` | presence | unset | 1 | Restore the pre-fix MP per-pane ammo HUD drawn over the watch/pause darkening overlay [FID-0064] |
+| `GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX` | presence | unset | 1 | Restore the pre-fix MP health-bar draw during damage flashes (OR DamageShowTime) [FID-0070] |
 | `GE007_NO_PATROL_MAGIC_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_POSTINTRO_SPAWN_FIX` | presence | unset | 1 | Restore the old drifted-anchor post-intro spawn handoff (reproduces the frozen-movement bug) for A/B |
 | `GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX` | presence | unset | 1 | Restore the legacy projectile-endpoint clamp polarity + operand [FID-0065] |
@@ -600,6 +602,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
 | `GE007_NO_WATCH_INV_ASPECT_FIX` | presence | unset | 1 | Restore the legacy watch-inventory guPerspective aspect 9/7 (vs retail 4/3) [FID-0098] |
+| `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_BUDGET` | ? |  | 1 |  |

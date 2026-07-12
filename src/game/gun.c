@@ -30,6 +30,7 @@
 #include "assets/obseg/text/LgunE.h"
 #include "textrelated.h"
 #include "platform/port_env.h"
+#include "platform/ammo_icon_anchor.h"  /* FID-0067 HUD ammo-icon anchor + mirror */
 #ifdef NATIVE_PORT
 #include <stdlib.h>
 #include <string.h>
@@ -130,6 +131,23 @@ static int portNoLastZTriggerTimerFix(void)
         cached = port_env_set("GE007_NO_LAST_Z_TRIGGER_TIMER_FIX",
                               "Restore the legacy raw N64 byte-offset write of the "
                               "rocket-launch fire timer to player+0x105C [FID-0092]");
+    }
+    return cached;
+}
+
+/* FID-0067 negative control. Default-ON port-defect fix anchors the HUD ammo
+ * icon at the retail rect center (y>=0: y - h*0.5; y<0: H + S - frac(h)) and
+ * stops mirroring the left dual-wield icon, matching microcode_generation_
+ * ammo_related's retail ASM (gun.c glabel 7F0694E8). Setting
+ * GE007_NO_AMMO_ICON_ANCHOR_FIX restores the pre-fix port anchor/flip
+ * byte-identically (see src/platform/ammo_icon_anchor.c). */
+static int portNoAmmoIconAnchorFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_AMMO_ICON_ANCHOR_FIX",
+                              "Restore the pre-fix HUD ammo-icon anchor (floor(h/2) px "
+                              "off) and left dual-wield icon mirroring [FID-0067]");
     }
     return cached;
 }
@@ -31375,22 +31393,29 @@ void *microcode_generation_ammo_related(void *arg0, void *arg1, f32 x, f32 y,
     s32 tex_w = (s32)img->width;
     s32 tex_h = (s32)img->height;
     s32 tex_mode = mode != 0 ? 2 : 1;
+    /* FID-0067: the retail rect-center anchor + flip math (ASM 7F0694E8),
+     * factored into src/platform/ammo_icon_anchor.c so a ROM-free unit test
+     * guards it. `legacy` restores the pre-fix port anchor byte-identically. */
+    int legacy = portNoAmmoIconAnchorFix();
 
     halfedxy[0] = (f32)tex_w * 0.5f;
     halfedxy[1] = (f32)tex_h * 0.5f;
 
-    /* x position: the N64 code centers around x, with flipX adjusting direction */
-    xypos[0] = x;
-    /* y position: if y >= 0, center vertically on y; else anchor from bottom */
+    /* x center: retail x + (flipX ? -frac(w) : +frac(w)) (ASM 7F069624-48). */
+    xypos[0] = ammoIconCenterX(x, tex_w, flipX, legacy);
+    /* y center: y>=0 centers at y - h*0.5 (ASM 7F069674-78); y<0 is the
+     * bottom-anchored H + S - frac(h) (ASM 7F0696A4-E0). */
     if (y >= 0.0f) {
-        xypos[1] = y;
+        xypos[1] = ammoIconCenterYTop(y, tex_h, legacy);
     } else {
-        xypos[1] = height + unk_scale - (f32)tex_h * 0.5f;
+        xypos[1] = ammoIconCenterYBottom(height, unk_scale, tex_h, legacy);
     }
 
     texSelect(&gdl, img, tex_mode, 0, 0);
+    /* flipX slot is the constant 0 in retail (ASM 7F0698A4) — it never mirrors
+     * the icon texture; the incoming flipX only nudged the sub-pixel x above. */
     display_image_at_position(&gdl, xypos, halfedxy,
-        tex_w, (u32)tex_h, 0, flipX ? 1 : 0, 1,
+        tex_w, (u32)tex_h, 0, ammoIconMirrorFlag(flipX, legacy), 1,
         (u32)r, (u32)g, (u32)b, (u32)a,
         (img->level > 0), 0);
 
@@ -32162,7 +32187,10 @@ static Gfx *portDrawHandAmmo(Gfx *gdl, GUNHAND hand, s32 icon_x, s32 y_pos)
             portGetAmmoIconYOffset(stats),
             1);
     } else if (icon_faulted) {
-        /* Same anchor math as the icon draw: y = y_pos + y_off - h/2. */
+        /* Self-contained fixed-height placeholder anchor (a port-only fault
+         * visual, never co-drawn with the real icon). The real icon uses the
+         * FID-0067 retail bottom anchor (y_pos + y_off - frac(h)); this glyph
+         * keeps its own fixed-height centering. */
         s32 center_y = y_pos + (s32)portGetAmmoIconYOffset(stats)
             - PORT_AMMO_PLACEHOLDER_H / 2;
         gdl = portDrawAmmoIconPlaceholder(gdl, icon_x, center_y);
@@ -33447,7 +33475,9 @@ Gfx *sub_GAME_7F06A334(Gfx *gdl) {
                 portGetAmmoIconYOffset(stats),
                 1);
         } else if (icon_faulted) {
-            /* Icon anchor here is (200, 180) — the y >= 0 branch centers on y. */
+            /* Port-only fault glyph at (200, 180); never co-drawn with the real
+             * icon (the FID-0067 retail y>=0 branch centers the icon at
+             * y - h*0.5). */
             gdl = portDrawAmmoIconPlaceholder(gdl, 200, 180);
             g_hud_image_fault_count++;
         }
