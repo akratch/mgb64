@@ -573,6 +573,54 @@ if(BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}")
     add_test(NAME struct_layout COMMAND test_struct_layout)
 
+    # MP other-player beam-tick raw-offset divergence — ROM-free unit test
+    # (FID-0094). Compiles the real struct player / struct hand (bondview.h,
+    # SAME layout-critical flags/defines/includes as test_struct_layout) and
+    # asserts at runtime that the faithful named-field offsets playerTickBeams
+    # uses (hands[i].weapon_firing_status; hands[i].field_B50/B54/B58) never
+    # coincide with the legacy raw N64 offsets (0x875/0xC1D; i*936+0xB50).
+    add_executable(test_mp_beam_rawcast
+        "${CMAKE_SOURCE_DIR}/tests/test_mp_beam_rawcast.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/mp_beam_rawcast.c"
+    )
+    target_compile_definitions(test_mp_beam_rawcast PRIVATE
+        NONMATCHING NATIVE_PORT PORT_FIXME_STUBS _LANGUAGE_C
+        VERSION_US LANG_US REFRESH_NTSC LEFTOVERDEBUG
+        LEFTOVERSPECTRUM BUGFIX_R0 BYTEMATCH SDL_MAIN_HANDLED)
+    target_compile_options(test_mp_beam_rawcast PRIVATE
+        -w -fms-extensions -mno-ms-bitfields)
+    target_include_directories(test_mp_beam_rawcast PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/include/PR"
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/game"
+        "${CMAKE_SOURCE_DIR}/src/platform"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d"
+        "${CMAKE_SOURCE_DIR}/src/libultra/audio"
+        "${CMAKE_SOURCE_DIR}/assets"
+        "${CMAKE_SOURCE_DIR}/lib/glad/include"
+        "${CMAKE_SOURCE_DIR}/lib/stb"
+        "${CMAKE_SOURCE_DIR}")
+    add_test(NAME mp_beam_rawcast COMMAND test_mp_beam_rawcast)
+
+    # FP-weapon perspnorm value/order fix — ROM-free unit test (FID-0077):
+    # retail near arg 0.0f => perspnorm 436, pre-fix port 1.0f => 435.
+    add_executable(test_fp_weapon_perspnorm
+        "${CMAKE_SOURCE_DIR}/tests/test_fp_weapon_perspnorm.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fp_weapon_perspnorm.c"
+    )
+    target_include_directories(test_fp_weapon_perspnorm PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME fp_weapon_perspnorm COMMAND test_fp_weapon_perspnorm)
+
+    # Watch ammo-panel weapon-switch early-out — ROM-free unit test (FID-0084):
+    # retail hides the panel for hand states 6/7; pre-fix port drew through it.
+    add_executable(test_watch_ammo_switchstate
+        "${CMAKE_SOURCE_DIR}/tests/test_watch_ammo_switchstate.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/watch_ammo_switchstate.c"
+    )
+    target_include_directories(test_watch_ammo_switchstate PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME watch_ammo_switchstate COMMAND test_watch_ammo_switchstate)
+
     # Registering GE007_* env-flag accessors — ROM-free unit test.
     add_executable(test_port_env
         "${CMAKE_SOURCE_DIR}/tests/test_port_env.c"

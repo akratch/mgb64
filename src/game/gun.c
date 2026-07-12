@@ -39,6 +39,8 @@
 #include "platform/audio_pc.h"
 #include "platform/weapon_bullet_type.h"
 #include "platform/fire_rate_authentic.h"
+#include "platform/fp_weapon_perspnorm.h"     /* FID-0077 */
+#include "platform/watch_ammo_switchstate.h"  /* FID-0084 */
 
 extern VideoSettings *g_ViBackData;
 /* FID-0056 full-auto fire-cadence authenticity flags (platform_sdl.c). OFF by
@@ -148,6 +150,42 @@ static int portNoAmmoIconAnchorFix(void)
         cached = port_env_set("GE007_NO_AMMO_ICON_ANCHOR_FIX",
                               "Restore the pre-fix HUD ammo-icon anchor (floor(h/2) px "
                               "off) and left dual-wield icon mirroring [FID-0067]");
+    }
+    return cached;
+}
+
+/* FID-0077 negative control. Default-ON port-defect fix emits the FP-weapon
+ * gSPPerspNormalize with the retail near arg 0.0f (perspnorm 436, ASM
+ * sub_GAME_7F05997C(0.0f,300.0f) at 7F062D8C) BEFORE the numSwitches>=17
+ * monitor-microcode block, so the rocket-launcher sight runs under the weapon
+ * perspnorm. Setting GE007_NO_FP_WEAPON_PERSPNORM_FIX restores the pre-fix port
+ * (near arg 1.0f => perspnorm 435, emitted AFTER the monitor block)
+ * byte-identically. See src/platform/fp_weapon_perspnorm.c. */
+static int portNoFpWeaponPerspnormFix(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_FP_WEAPON_PERSPNORM_FIX",
+                              "Restore the pre-fix FP-weapon perspnorm (near arg "
+                              "1.0f => 435, emitted after the monitor microcode) "
+                              "[FID-0077]");
+    }
+    return cached;
+}
+
+/* FID-0084 negative control. Default-ON port-defect fix restores the retail
+ * sub_GAME_7F06A334 early-out that hides the watch ammo panel while the right
+ * hand is mid weapon-switch (hands[GUNRIGHT].when_detonating_mines_is_0 in {6,7},
+ * ASM 7F06A37C lw 0x894 + beq 6/beq 7). Setting
+ * GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT restores the pre-fix port (draw the panel
+ * through the switch) byte-identically. See src/platform/watch_ammo_switchstate.c. */
+static int portNoWatchAmmoSwitchEarlyout(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT",
+                              "Restore the pre-fix watch ammo panel drawn during a "
+                              "right-hand weapon switch (hand state 6/7) [FID-0084]");
     }
     return cached;
 }
@@ -14981,6 +15019,22 @@ void sub_GAME_7F062BE4(Gfx **arg0) {
                 gdl += 1;
             }
 
+            int perspnormLegacy = portNoFpWeaponPerspnormFix();
+
+            /* FID-0077 D2: retail emits the FP-weapon perspnorm BEFORE loading
+             * numSwitches / the monitor-microcode block (ASM: perspnorm store
+             * 7F062D90/D9C precedes the 7F062DA0 numSwitches load and the
+             * 7F062E24 process_monitor_animation_microcode), so the rocket-
+             * launcher sight screen renders under the WEAPON perspnorm. The
+             * pre-fix port emitted it after the monitor block (scene perspnorm).
+             * D1: retail near arg is 0.0f (mtc1 $zero,$f12 at 7F062D8C) => 436.
+             * GE007_NO_FP_WEAPON_PERSPNORM_FIX restores the pre-fix emit below. */
+            if (!perspnormLegacy) {
+                gSPPerspNormalize(gdl,
+                    sub_GAME_7F05997C(fpWeaponPerspNormNearArg(0), 300.0f));
+                gdl += 1;
+            }
+
             objheader = (ModelFileHeader *)hand->field_B70;
             if (objheader->numSwitches >= 17) {
                 ModelNode *switch16_node;
@@ -15027,8 +15081,14 @@ void sub_GAME_7F062BE4(Gfx **arg0) {
 #ifdef NATIVE_PORT
             handmodel = (Model *)hand->field_B68;
 #endif
-            gSPPerspNormalize(gdl, sub_GAME_7F05997C(1.0f, 300.0f));
-            gdl += 1;
+            /* FID-0077 legacy emit position (after the monitor block, near arg
+             * 1.0f => perspnorm 435). Only the pre-fix path emits here; the
+             * default-ON fix emitted the perspnorm before the monitor block. */
+            if (perspnormLegacy) {
+                gSPPerspNormalize(gdl,
+                    sub_GAME_7F05997C(fpWeaponPerspNormNearArg(1), 300.0f));
+                gdl += 1;
+            }
 
 #ifdef NATIVE_PORT
             /* Load weapon-specific pure perspective projection.
@@ -33445,6 +33505,19 @@ Gfx *sub_GAME_7F06A334(Gfx *gdl) {
 
     ammoType = get_ammo_type_for_weapon(rightWeapon);
     if (ammoType <= AMMO_NONE || ammoType >= AMMO_RELATED_MAX) {
+        return gdl;
+    }
+
+    /* FID-0084: retail hides the ammo panel while the right hand is mid
+     * weapon-switch (hands[GUNRIGHT].when_detonating_mines_is_0 in {6,7}); ASM
+     * 7F06A37C lw 0x894(g_CurrentPlayer) + beq 6 / beq 7 -> return, positioned
+     * AFTER the ammo-type check and BEFORE the HIDE_AMMO_DISPLAY check. States
+     * 6/7 are the unequip->equip animation, where the displayed weapon/ammo is
+     * transiently stale. GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT restores the pre-fix
+     * port (draw through the switch). */
+    if (watchAmmoPanelHiddenByWeaponSwitch(
+            g_CurrentPlayer->hands[GUNRIGHT].when_detonating_mines_is_0,
+            portNoWatchAmmoSwitchEarlyout())) {
         return gdl;
     }
 

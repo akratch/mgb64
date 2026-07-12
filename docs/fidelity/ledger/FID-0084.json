@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/gun.c:33214"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:33471"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:33471"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:33471"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_watch_ammo_switchstate.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:33471",
       "note": "ASM audit batch 5. Retail US ASM gun.c:33468-33475: lw $v0,0x894(g_CurrentPlayer) (= hands[GUNRIGHT].when_detonating_mines_is_0, hand struct +0x24, hands[0]@0x870) with beq $v0,6 / beq $v0,7 -> return gdl before any drawing. States 6/7 are the weapon-switch animation (unequip->equip transition, gun.c:18794 comment; state 6 set at 18767/18831 path). The NATIVE_PORT rewrite (gun.c:33214-33313) has no counterpart check -> the watch ammo icon + clip/reserve digits render for a hand mid-switch where retail blanks them (and the displayed weapon/ammo pair is transiently stale). All other lanes of the rewrite verified against ASM: HIDE_AMMO_DISPLAY 0x80000 / NO_CLIP_RELOADS 0x400000 gates, ammo_related stride 12, icon y offset stats+8 (portGetAmmoIconYOffset bit-reconstruction equivalent), draw args (196-(w/2), RIGHT, 177, MIDDLE) / (((w+1)/2)+203, LEFT, 177, MIDDLE) incl signed-div-round-toward-zero (u8 width, no divergence), clip/reserve sources 0x89C/0x1130/0xC44, dual-wield same-weapon merge. Additive-only port deltas: <=0 weapon guard, ammoType upper bound, g_CurrentPlayer NULL guard, icon fault-injection diagnostics (env-gated), dropped retail dead call get_ptr_item_statistics (pure getter, result unused in retail). Same family as FID-0064 (dropped ammo-HUD early-out, different function/gate)."
+    },
+    {
+      "ts": "2026-07-12T01:56:30Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:33471",
+      "note": "ASM audit batch-5 finding; actionable P3 renderer defect in sub_GAME_7F06A334 (gun.c, not bondview.c as the fix-cluster brief assumed)."
+    },
+    {
+      "ts": "2026-07-12T01:56:30Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c:33471",
+      "note": "Re-derived from VERSION_US glabel sub_GAME_7F06A334: 7F06A374 lw g_CurrentPlayer; 7F06A37C lw $v0,0x894($t6) = hands[GUNRIGHT].when_detonating_mines_is_0 (hands[0]@0x870 + 0x24 = 0x894, GUNRIGHT=0 per bondconstants.h:1345 + the ASM's getCurrentPlayerWeaponId(0)=right); li $at,6/beq .L7F06A594 then li $at,7/beq .L7F06A594 -> return gdl. Sits AFTER the ammo-type check (beqz 7F06A368) and BEFORE the HIDE_AMMO_DISPLAY bitflag check (7F06A390). States 6/7 = weapon-switch (unequip->equip) animation. The NATIVE_PORT rewrite (gun.c native body) has no counterpart -> the watch ammo icon + clip/reserve digits render for a hand mid-switch where retail blanks them."
+    },
+    {
+      "ts": "2026-07-12T01:56:30Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c",
+      "note": "Adding the retail early-out behind GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT via pure helper watchAmmoPanelHiddenByWeaponSwitch."
+    },
+    {
+      "ts": "2026-07-12T01:56:39Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_watch_ammo_switchstate.c",
+      "note": "Restored the retail early-out in sub_GAME_7F06A334 (gun.c) behind default-ON GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT: after the ammo-type check and before the HIDE_AMMO_DISPLAY check, return gdl when g_CurrentPlayer->hands[GUNRIGHT].when_detonating_mines_is_0 is 6 or 7 (weapon-switch anim). Logic factored into pure ROM-free helper src/platform/watch_ammo_switchstate.c (watchAmmoPanelHiddenByWeaponSwitch(state, legacy)). LANDED (renderer surface; renderer_parity is ROM-gated and not run this pass -- verify via RDP/pixel capture during a watch-initiated weapon change). No-regression: renderer-only early-out (returns the same gdl, emits no DL when hidden) so no sim state touched; test_sim_state_hash PASS, test_struct_layout PASS, new ROM-free test_watch_ammo_switchstate PASS (faithful hides states 6/7, draws all others; legacy never hides; fail-on-revert demonstrated). Byte-identical under the opt-out."
     }
   ]
 }
