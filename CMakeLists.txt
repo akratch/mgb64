@@ -735,6 +735,19 @@ if(BUILD_TESTING)
     target_include_directories(test_bg_impact_guard PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME bg_impact_guard COMMAND test_bg_impact_guard)
 
+    # HUD ammo-icon rect-center anchor + mirror — ROM-free unit test (FID-0067):
+    # retail centers the icon at y - h*0.5 (y>=0) / H + S - frac(h) (y<0) and
+    # never mirrors the left dual-wield icon; the port defect drew it floor(h/2)
+    # px off on both branches and mirror-imaged the left icon. Pins the fixed and
+    # legacy values so a revert of either or a GE007_NO_AMMO_ICON_ANCHOR_FIX flip
+    # reddens.
+    add_executable(test_ammo_icon_anchor
+        "${CMAKE_SOURCE_DIR}/tests/test_ammo_icon_anchor.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/ammo_icon_anchor.c"
+    )
+    target_include_directories(test_ammo_icon_anchor PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME ammo_icon_anchor COMMAND test_ammo_icon_anchor)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).
