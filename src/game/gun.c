@@ -31051,10 +31051,10 @@ void sub_GAME_7F068EC4(CasingRecord *entry, Gfx **gdl) {
                 ((u32)cp[0xFDC] << 24) | ((u32)cp[0xFDD] << 16) |
                 ((u32)cp[0xFDE] << 8) | (u32)cp[0xFDF];
         } else {
-            renderdata.envcolour.word = (g_CurrentPlayer->tileColor.r << 24) |
-                                        (g_CurrentPlayer->tileColor.g << 16) |
-                                        (g_CurrentPlayer->tileColor.b << 8) |
-                                        g_CurrentPlayer->tileColor.a;
+            renderdata.envcolour.word = ((u32)g_CurrentPlayer->tileColor.r << 24) |
+                                        ((u32)g_CurrentPlayer->tileColor.g << 16) |
+                                        ((u32)g_CurrentPlayer->tileColor.b << 8) |
+                                        (u32)g_CurrentPlayer->tileColor.a;
         }
 
         subdraw(&renderdata, &model);
