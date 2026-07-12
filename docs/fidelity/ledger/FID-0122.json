@@ -1,0 +1,27 @@
+{
+  "id": "FID-0122",
+  "title": "Dam security-door panels render white \u2014 CI-texture TLUT not keyed to texturenum -> grayscale I8 fallback",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "gfx_pc.c:21732 grayscale fallback; image.c:685 texStorePalette; gfx_pc.c:20677 gfx_dp_load_tlut"
+  ],
+  "repro": "",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/fast3d/gfx_pc.c:21732 grayscale-I8 fallback renders Dam security-door control panels (PROP_SEC_PANEL bondconstants.h:2826, PROP_DOORPANEL :3071, PROP_DOORCONSOLE :3072) white/gray instead of retail green/red. Root cause is the known CI-palette fallback class, not a missing door-state->color coupling. The port decodes CI (palette-indexed) textures at draw time via a per-texturenum cached palette: gfx_pc.c:21673 (if fmt==G_IM_FMT_CI: pal=texGetPalette(texturenum,&ncolours)); :21691 decodes with color only if (pal && ncolours>0); :21732-21740 else-branch '/* No palette -- fallback to grayscale I8 */' writes R=G=B=raw_index_byte,A=255 -> near-white for an indicator texture. Palettes are keyed to texturenum ONLY on the zlib/compressed-paletted load path (image.c:685 texStorePalette; store image.c:341, lookup image.c:370). CI textures whose TLUT arrives via runtime G_LOADTLUT (gfx_dp_load_tlut gfx_pc.c:20677) or a shared/static TLUT are never texStorePalette'd -> texGetPalette returns NULL -> grayscale. Same class already fixed+tooled for Dam guard faces + alarm lens (tools/dam_palette_regression.sh: fails on 'No palette | fallback to grayscale', asserts alarm lens >=150 red px); the door-panel texturenums are an uncovered set in the same class. Render path: prop-model DL rewriter unk_0CC4C0.c (texture resolve :1632-1638, TLUT via gDPLoadTLUT06/07) -> gfx_pc.c:21673 CI decode. Door STATE lives at DoorRecord.openstate bondtypes.h:2954 / keyflags :2913, but no prop-color coupling exists (grep-confirmed); retail color is baked in the texture. OPEN QUESTION (needs ares/N64 RDP capture toggling door locked->open): whether retail color is static (baked, likely) or also state-driven via a monitor TVCMD_SETCOLOUR path (chrobjhandler.c:28133). Either way the WHITE symptom is the CI-palette fallback."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-12T11:36:31Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/platform/fast3d/gfx_pc.c:21732 grayscale-I8 fallback renders Dam security-door control panels (PROP_SEC_PANEL bondconstants.h:2826, PROP_DOORPANEL :3071, PROP_DOORCONSOLE :3072) white/gray instead of retail green/red. Root cause is the known CI-palette fallback class, not a missing door-state->color coupling. The port decodes CI (palette-indexed) textures at draw time via a per-texturenum cached palette: gfx_pc.c:21673 (if fmt==G_IM_FMT_CI: pal=texGetPalette(texturenum,&ncolours)); :21691 decodes with color only if (pal && ncolours>0); :21732-21740 else-branch '/* No palette -- fallback to grayscale I8 */' writes R=G=B=raw_index_byte,A=255 -> near-white for an indicator texture. Palettes are keyed to texturenum ONLY on the zlib/compressed-paletted load path (image.c:685 texStorePalette; store image.c:341, lookup image.c:370). CI textures whose TLUT arrives via runtime G_LOADTLUT (gfx_dp_load_tlut gfx_pc.c:20677) or a shared/static TLUT are never texStorePalette'd -> texGetPalette returns NULL -> grayscale. Same class already fixed+tooled for Dam guard faces + alarm lens (tools/dam_palette_regression.sh: fails on 'No palette | fallback to grayscale', asserts alarm lens >=150 red px); the door-panel texturenums are an uncovered set in the same class. Render path: prop-model DL rewriter unk_0CC4C0.c (texture resolve :1632-1638, TLUT via gDPLoadTLUT06/07) -> gfx_pc.c:21673 CI decode. Door STATE lives at DoorRecord.openstate bondtypes.h:2954 / keyflags :2913, but no prop-color coupling exists (grep-confirmed); retail color is baked in the texture. OPEN QUESTION (needs ares/N64 RDP capture toggling door locked->open): whether retail color is static (baked, likely) or also state-driven via a monitor TVCMD_SETCOLOUR path (chrobjhandler.c:28133). Either way the WHITE symptom is the CI-palette fallback.",
+      "note": "User-reported (2026-07-12) Dam security-door buttons white instead of green/red. Root-caused via read-only investigation agent. Fix pattern established (guard faces/alarm lens): register the runtime-G_LOADTLUT palette keyed to the pending texturenum, then add door-panel texturenums to dam_palette_regression COLOR_TEX_IDS. Needs a Dam capture to pinpoint the offending texturenum(s) and a visual/oracle check for the correct color."
+    }
+  ]
+}

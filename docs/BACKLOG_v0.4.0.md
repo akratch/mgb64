@@ -829,6 +829,28 @@ room-51 windows still show sky, and the over-broad variant can admit far terrain
 - [ ] **R12** `gfx_ptr.h` registry: probe all four slots (or tombstones), add
       eviction/collision counters; bump associativity only if counters say so.
 
+### M3.7 — Dam security-door panels render white (CI-palette fallback) [FID-0122]
+**P2 · renderer · triaged (strong root-cause, texturenum capture pending)**
+User-reported (2026-07-12): the Dam security-door control panels
+(`PROP_SEC_PANEL`/`PROP_DOORPANEL`/`PROP_DOORCONSOLE`, bondconstants.h:2826/3071/3072)
+render white/gray instead of the intended retail green/red. Root cause is the known
+CI-palette fallback class, **not** a missing door-state→color coupling (none exists;
+the color is baked in the texture): a CI texture whose TLUT loads via the runtime
+`G_LOADTLUT` path (`gfx_pc.c:20677`) is never keyed to its `texturenum` via
+`texStorePalette` (`image.c:685`), so `texGetPalette` returns NULL and `gfx_pc.c:21732`
+writes the grayscale-I8 fallback (`R=G=B=index` → white). Same class already fixed for
+Dam guard faces + the alarm lens (`tools/dam_palette_regression.sh`); the door-panel
+`texturenum`s are simply an uncovered set.
+- [ ] Capture a Dam door panel (`GE007_TRACE_TEX_PIPELINE=1` + `GE007_DUMP_SETTEX_TEXTURES`)
+      to pinpoint the offending `texturenum`(s) and confirm the `pal=(nil)` / grayscale hit.
+- [ ] Fix by keying the runtime-`G_LOADTLUT` palette to the pending `texturenum` in
+      `gfx_dp_load_tlut` (**shared path — validate no regression to already-correct textures
+      across levels** via the renderer-parity + palette lanes), or route these textures
+      through the compressed-paletted loader.
+- [ ] Add the panel `texturenum`s to `COLOR_TEX_IDS` in `dam_palette_regression.sh`.
+- [ ] Settle static-vs-state color intent with an ares/N64 RDP capture toggling the door
+      locked→open (the white symptom is the palette fallback either way).
+
 ---
 
 ## MG — The glass sprint
