@@ -4,7 +4,7 @@
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P1",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c:17927"
   ],
@@ -21,6 +21,10 @@
     {
       "kind": "doc-anchor",
       "path": "src/platform/platform_sdl.c:1275"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:fire_rate_authentic"
     }
   ],
   "history": [
@@ -51,6 +55,13 @@
       "to": "landed",
       "evidence": "src/platform/platform_sdl.c:1275",
       "note": "OWNER DECISION 2026-07-10: default flipped ON (Input.FireRateAuthentic=1). Gameplay accuracy is the goal; the ~3x automatic overspeed is a canonical fidelity defect, so faithful cadence ships as the default (charter-correct parity-fix polarity: default-ON + opt-out). Opt out via Input.FireRateAuthentic=0 / GE007_FIRE_RATE_AUTHENTIC=0. FrameCost default 3 (oracle-matched Dam ~20fps combat). Grep-verified no preset/config resets the flag. dam_combat_guard6 tape unaffected (PP7 loadout, no automatic path) so combat_route baseline 3c89 unchanged; end-to-end AK47 default-ON tape = coverage follow-up."
+    },
+    {
+      "ts": "2026-07-12T00:01:25Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:fire_rate_authentic",
+      "note": "Lane fire_rate_authentic PASS (ROM-free); pins tick-scaled field_88C counter + N64 cadence ratio (window/(fire_rate*cost)); fail-on-revert proven (revert divisor-scaling -> ON==OFF cadence, ratio assertion reddens). Sim byte-identical: sim_state_hash + struct_layout PASS. Default-ON Input.FireRateAuthentic; opt-out Input.FireRateAuthentic=0 / GE007_FIRE_RATE_AUTHENTIC=0 byte-identical."
     }
   ]
 }

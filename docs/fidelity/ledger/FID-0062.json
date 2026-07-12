@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P1",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "tools/compare_combat_trace.py"
   ],
@@ -21,6 +21,10 @@
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/combat_oracle_fields.md#12"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:combat_comparator_align_unittest"
     }
   ],
   "history": [
@@ -44,6 +48,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/combat_oracle_fields.md#12",
       "note": "--align tick landed in compare_combat_trace.py + regression lane tools/tests/test_compare_combat_trace.py (ctest combat_comparator_align_unittest, fail-on-revert proven: index-pairing reddens 3 asserts, 144 divergences incl 32 phantom present). dam_combat_guard6 both-sides Release: move 18588/actiontype596/218f -> tick 9874(-47%)/actiontype315(-47%)/116f, ZERO phantom present (naive was 3492). FID-0054 inversion CONFIRMED: guard6 stock tv=1 @ +76t vs native +108t (native LATER), both engage act8; stock also engages 7&44. Residual = systemic RNG call-count phase (rng_seed 116/frame) + pos drift, not guard-AI bug. Sim byte-identical (no src change)."
+    },
+    {
+      "ts": "2026-07-12T00:01:25Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:combat_comparator_align_unittest",
+      "note": "Self-test combat_comparator_align_unittest PASS (python unittest, ROM-free); fail-on-revert proven (reverting --align tick to index pairing reddens test_tick_align_has_no_phantom_divergences). Instrumentation/tooling-only, no src change -> sim byte-identical (sim_state_hash + struct_layout PASS confirm)."
     }
   ]
 }

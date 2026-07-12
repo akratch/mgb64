@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "audio",
   "priority": "P0",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/platform/platform_sdl.c:3431 portAudioFrame",
     "src/platform/audi_port.c:417 portAudioFrame",
@@ -28,6 +28,10 @@
     {
       "kind": "gate-log",
       "path": "docs/fidelity/derivations/FID-0089-uncap-audio-pump.md"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/uncap_purity_gate.sh"
     }
   ],
   "history": [
@@ -58,6 +62,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/derivations/FID-0089-uncap-audio-pump.md",
       "note": "Fix landed (platform_sdl.c skip portAudioFrame on 0-tick frames; default ON, GE007_NO_UNCAP_AUDIO_FIX=1 negative control). Proof: lvl22 seed1337/4242 fix-ON 6/6 GREEN (770360a2/matched vanilla) vs fix-OFF DETERMINISTIC bug (seed1337 4c1e45bd, seed4242 dc61cb8c) => fail-on-revert both seeds; lvl24 both seeds GREEN; lvl9/33 GREEN; tape_regression 7/7 byte-exact (isolated); port_patrol_magic_profile_smoke PASS both polarities. Residual rare frame-timing schedule-shift flake (a30bd21e ~1/13) is pre-existing (fix-OFF identical osGetCount timing), documented derivation \u00a76."
+    },
+    {
+      "ts": "2026-07-12T00:10:45Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/uncap_purity_gate.sh",
+      "note": "Ran uncap_purity_gate.sh LEVELS='22 24' (2 seeds, Release ge007+ROM). Fix-ON DEFAULT: levels 22 & 24 both OK, 0 sim-hash divergence -> UNCAP PURITY: PASS; fix-ON reproduces vanilla hash 770360a2 (sim byte-identical). Fail-on-revert PROVEN: GE007_NO_UNCAP_AUDIO_FIX=1 reddens lvl22 both seeds (fuzz 4c1e45bd/dc61cb8c vs vanilla-stable 770360a2, the finding's recorded bug hashes) -> UNCAP PURITY: FAIL. Sim-integrity ctests sim_state_hash + struct_layout PASS. Opt-out GE007_NO_UNCAP_AUDIO_FIX=1. NOTE: lvl22 is only in the FULL soak, not sense_soak --quick(33/9/24) or the ctest set; recommend pinning uncap_purity_gate 22/24 as a permanent automated lane."
     }
   ]
 }

@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/gun.c:6961"
   ],
@@ -21,6 +21,10 @@
     {
       "kind": "gate-log",
       "path": "tests/test_weapon_bullet_type.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:weapon_bullet_type"
     }
   ],
   "history": [
@@ -51,6 +55,13 @@
       "to": "landed",
       "evidence": "tests/test_weapon_bullet_type.c",
       "note": "Fix landed. CTest weapon_bullet_type PASS with fix (AUTOSHOT->shotgun_mine); FAILS on revert (AUTOSHOT->pistol at default): 'FAIL: AUTOSHOT (fix) -> shotgun_mine, not pistol'. Legacy flag GE007_NO_AUTOSHOT_BULLETTYPE_FIX byte-identical. gun.o + globbed weapon_bullet_type.o compile clean."
+    },
+    {
+      "ts": "2026-07-12T00:01:25Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:weapon_bullet_type",
+      "note": "Lane weapon_bullet_type PASS (ROM-free); fail-on-revert proven (AUTOSHOT->shotgun_mine fix vs ->pistol legacy). Sim byte-identical: sim_state_hash + struct_layout PASS. Opt-out GE007_NO_AUTOSHOT_BULLETTYPE_FIX restores legacy."
     }
   ]
 }

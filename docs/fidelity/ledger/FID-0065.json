@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/game/chrobjhandler.c:5207"
   ],
@@ -21,6 +21,10 @@
     {
       "kind": "trace-diff",
       "path": "docs/fidelity/derivations/FID-0064-0065-batch2.md"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:projectile_endpoint_clamp"
     }
   ],
   "history": [
@@ -44,6 +48,13 @@
       "to": "landed",
       "evidence": "docs/fidelity/derivations/FID-0064-0065-batch2.md",
       "note": "Fixed both divergences (guard polarity result==0 + base operand arg2) via factored pure helper src/platform/projectile_endpoint_clamp.c behind default-ON flag; opt-out GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX reproduces the legacy polarity+operand (byte-identical by construction + unit-asserted). RUNTIME EVIDENCE (dam, grenade item26 thrown at wall, GE007_PROJECTILE_TRACE motion_end result=0 wall hits): fix-ON clamps impact hit.x~=19409.1 just before the wall (hit==settled pos); fix-OFF reports hit.x~=19412-19414 (~3u further, through/past the wall) = the derived defect. Sim hashes differ (ON b7aad4323271dbf2 vs OFF 304562660edbb6ab), both deterministic 3/3. Regression lane: ctest projectile_endpoint_clamp (PASS fix, fail-on-revert proven for BOTH guard[6 fail] and operand[2 fail]). combat_route_capture dam_combat_guard6 (PP7, non-sticky) hash 3c8939968e0eb50e UNCHANGED (no re-baseline). Full native Release build green."
+    },
+    {
+      "ts": "2026-07-12T00:01:25Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "ctest:projectile_endpoint_clamp",
+      "note": "Lane projectile_endpoint_clamp PASS (ROM-free); fail-on-revert proven for BOTH guard-polarity (result==0) and base-operand (arg2). Sim byte-identical: sim_state_hash + struct_layout PASS. Opt-out GE007_NO_PROJECTILE_ENDPOINT_CLAMP_FIX restores legacy polarity+operand."
     }
   ]
 }
