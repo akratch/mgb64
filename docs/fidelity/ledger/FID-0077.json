@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P3",
-  "status": "discovered",
+  "status": "landed",
   "suspect": [
     "src/game/gun.c:14888"
   ],
@@ -13,6 +13,22 @@
     {
       "kind": "asm-citation",
       "path": "src/game/gun.c:15124"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:15124"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c:15124"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/gun.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_fp_weapon_perspnorm.c"
     }
   ],
   "history": [
@@ -22,6 +38,34 @@
       "to": "discovered",
       "evidence": "src/game/gun.c:15124",
       "note": "Two divergences re-derived from GLOBAL_ASM (US/JP block, retail 7F062BE4) vs live C. (D1) PERSPNORM ARG: retail computes the FP-weapon gSPPerspNormalize scale via sub_GAME_7F05997C(0.0f, 300.0f) \u2014 mtc1 $zero,$f12 at gun.c:15124 with f14=300.0 at 15120-15121 \u2014 giving 0x20000/300 = 436; live C gun.c:14888 passes (1.0f, 300.0f) giving 0x20000/301 = 435 (matrixmath.c:1300-1320 defines 7F05997C as u16(0x20000/(a+b))). Emitted moveword differs by 1 (0.23% vertex-precision scale on the first-person weapon). Nothing in comments marks the 1.0f intentional (the port's znear=1 rationale concerns its ADDED projection matrix, a separate documented substitution). (D2) COMMAND ORDER: retail emits the BC00000E perspnorm word BEFORE the numSwitches>=17 monitor-microcode block (emit at 15119-15128, process_monitor_animation_microcode receives the post-perspnorm cursor at 15163/15176); live C emits the monitor microcode FIRST (C 14843-14874) then perspnorm (14888) \u2014 rocket-launcher sight screen geometry therefore runs under the scene perspnorm instead of the weapon perspnorm. Rest of the retail block verified equivalent (lights group {19,18,2,3,20,21}, GBI words, envcolour byte order r<<24|g<<16|b<<8|a from 0xfdc-0xfdf, mirror-dual cullmode 3/2 by hand, rocket subdraw + firedrocket clear, tail viGetPerspNorm + WATCHLASER 7F061E18). DO NOT fix from this note; re-derive from ASM. Fix default-ON w/ GE007_NO_* control; verify via RDP-command diff on the FP overlay."
+    },
+    {
+      "ts": "2026-07-12T01:56:51Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "src/game/gun.c:15124",
+      "note": "ASM audit finding; actionable P3 renderer defect in sub_GAME_7F062BE4 (gun.c)."
+    },
+    {
+      "ts": "2026-07-12T01:56:51Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/gun.c:15124",
+      "note": "Re-derived from VERSION_US glabel sub_GAME_7F062BE4. D1 (perspnorm value): retail computes the FP-weapon gSPPerspNormalize scale via sub_GAME_7F05997C(0.0f,300.0f) -- mtc1 $zero,$f12 at 7F062D8C with f14=300.0 (0x43960000) at 7F062D7C/80 -- giving u16(0x20000/300)=436; the NATIVE_PORT rewrite passed (1.0f,300.0f) => 0x20000/301=435 (matrixmath.c sub_GAME_7F05997C = u16 0x20000/(a+b)). Off by 1 on the FP weapon. D2 (command order): retail emits the BC00000E perspnorm word (store 7F062D90/D9C) BEFORE the numSwitches>=17 monitor-microcode block (numSwitches load 7F062DA0; process_monitor_animation_microcode 7F062E24); the port emitted the monitor microcode FIRST then perspnorm, so the rocket-launcher sight screen ran under the SCENE perspnorm instead of the weapon perspnorm."
+    },
+    {
+      "ts": "2026-07-12T01:56:51Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/gun.c",
+      "note": "Fixing near arg 1.0f->0.0f and moving the perspnorm emit before the monitor block, behind GE007_NO_FP_WEAPON_PERSPNORM_FIX; pure helper fp_weapon_perspnorm.c."
+    },
+    {
+      "ts": "2026-07-12T01:57:00Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_fp_weapon_perspnorm.c",
+      "note": "Fixed sub_GAME_7F062BE4 (gun.c) behind default-ON GE007_NO_FP_WEAPON_PERSPNORM_FIX. D1: near arg 1.0f->0.0f => perspnorm 436 (retail) not 435. D2: the weapon gSPPerspNormalize is now emitted BEFORE the numSwitches>=17 monitor block (fix branch), so the rocket-launcher sight runs under the weapon perspnorm; the legacy branch re-emits it after the monitor block with 1.0f to stay byte-identical. near-arg + value math factored into pure ROM-free helper src/platform/fp_weapon_perspnorm.c. LANDED (renderer surface; renderer_parity is ROM-gated and not run this pass -- verify via RDP-command diff on the FP overlay). No-regression: perspnorm/order are RDP-stream commands, not sim state; test_sim_state_hash PASS, test_struct_layout PASS, new ROM-free test_fp_weapon_perspnorm PASS (faithful 436 != legacy 435; fail-on-revert demonstrated). Byte-identical under the opt-out."
     }
   ]
 }

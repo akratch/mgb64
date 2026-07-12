@@ -62,6 +62,8 @@
 #include "minimap.h"
 #include "platform/watch_scene_render.h"  /* FID-0068 watch tint + aspect */
 #include "platform/mp_healthbar_gate.h"    /* FID-0070 MP health-bar draw gate */
+#include "platform/mp_beam_rawcast.h"      /* FID-0094 MP beam-tick raw-offset */
+#include "platform/port_env.h"
 #endif
 
 /* Forward declarations for functions without headers */
@@ -78,6 +80,33 @@ s32 sub_GAME_7F0C6048(void);
 s32 chrTickBeams(PropRecord *prop);
 
 #ifdef NATIVE_PORT
+/* FID-0094 negative control. Default-ON port-defect fix reaches the two
+ * lock-verified sites of the MP other-player beam+aim tick (playerTickBeams
+ * PATH 2) by NAMED field access — hands[i].weapon_firing_status (firing flags,
+ * retail raw player+0x875/+0xC1D) and hands[i].field_B50/B54/B58 (per-hand beam
+ * position source, retail raw player+i*936+0xB50) — instead of the N64 raw byte
+ * offsets and 936-byte hand stride, both of which are wrong on the 64-bit layout
+ * (native sizeof(struct hand)==968; offsets proven != raw in test_struct_layout.c).
+ * Setting GE007_NO_MP_BEAM_RAWCAST_FIX restores the legacy raw offsets
+ * byte-identically. The post-hands aim/beam-destination fields (0x2A00/0x2A04
+ * aim, 0x2A10 beam-pos dest, 0x2A28 last-active) are NOT lock-covered and per
+ * the derivation need a struct-owner-supplied typed overlay; they are left on
+ * the raw path in BOTH branches (see docs/fidelity/derivations/FID-0094-...md).
+ * This path is only reached for a non-current player's beam tick (split-screen /
+ * MP), which the deterministic 1P oracle never exercises. */
+static int portMpBeamRawcastLegacy(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_NO_MP_BEAM_RAWCAST_FIX",
+                              "Restore the legacy raw N64 byte-offset / 936-stride "
+                              "reads in the MP other-player beam tick "
+                              "(playerTickBeams firing flags + hand position source) "
+                              "[FID-0094]");
+    }
+    return cached;
+}
+
 static int s_nativeLoadingBondIntroChr = 0;
 /* T9/D4: set at SWIRL mode-SET time, consumed on the first per-tick SWIRL
  * pass (bondviewFrozenCameraTick) -- see bondviewPrepareNativeBondIntroChr's
@@ -25458,11 +25487,24 @@ skip_anim_setup:
     chr->chrflags |= 1;
     chr->act_bondmulti.unk2c = (f32 *)animPtr;
 
-    /* Set firing state from player hand data */
+    /* Set firing state from player hand data.
+     *
+     * FID-0094: retail reads the per-hand firing flag as raw player+0x875 /
+     * +0xC1D (ASM 7F08BE40 / 7F08BE54); these are hands[0]/hands[1]
+     * .weapon_firing_status (gun.c:1949 accesses the same field by name, and the
+     * two raws are exactly one N64 hand stride 0x3A8=936 apart). On the 64-bit
+     * layout the raw offsets miss the field, so the default-ON fix uses the
+     * named field. GE007_NO_MP_BEAM_RAWCAST_FIX restores the raw read. */
     player = g_playerPointers[playerIndex];
-    chrSetFiring(chr, 0, *(s8 *)((u8 *)player + 0x875));
-    player = g_playerPointers[playerIndex];
-    chrSetFiring(chr, 1, *(s8 *)((u8 *)player + 0xC1D));
+    if (portMpBeamRawcastLegacy()) {
+        chrSetFiring(chr, 0, *(s8 *)((u8 *)player + mpBeamLegacyFiringOffset(0)));
+        player = g_playerPointers[playerIndex];
+        chrSetFiring(chr, 1, *(s8 *)((u8 *)player + mpBeamLegacyFiringOffset(1)));
+    } else {
+        chrSetFiring(chr, 0, player->hands[0].weapon_firing_status);
+        player = g_playerPointers[playerIndex];
+        chrSetFiring(chr, 1, player->hands[1].weapon_firing_status);
+    }
 
     /* Tick beams for this other player */
     tickop2 = chrTickBeams(prop);
@@ -25501,11 +25543,31 @@ skip_anim_setup:
                        v0<<=2 = 116*s0, v0+=s0 = 117*s0, v0<<=3 = 936*s0
                        This is sizeof(some struct) for indexing */
 
-                    *(f32 *)((u8 *)player + handOffset12 + 0x2A10) = *(f32 *)((u8 *)player + srcOff + 0x0B50);
-                    player = g_playerPointers[playerIndex];
-                    *(f32 *)((u8 *)player + handOffset12 + 0x2A14) = *(f32 *)((u8 *)player + srcOff + 0x0B54);
-                    player = g_playerPointers[playerIndex];
-                    *(f32 *)((u8 *)player + handOffset12 + 0x2A18) = *(f32 *)((u8 *)player + srcOff + 0x0B58);
+                    /* FID-0094: the per-hand position SOURCE is retail raw
+                     * player + i*936 + 0xB50/B54/B58 (ASM 7F08BEF0); srcOff above
+                     * strength-reduces to i*936 = the N64 sizeof(struct hand).
+                     * Native sizeof(struct hand)==968 (test_struct_layout.c), so
+                     * hand 1's raw source mis-indexes. The default-ON fix reads
+                     * hands[i].field_B50/B54/B58 by name (field_B58 is a coord3d;
+                     * word 0 = .x). The DESTINATION (raw 0x2A10..) is a post-hands
+                     * field that is NOT lock-covered and needs a struct-owner
+                     * typed overlay, so it stays raw in both branches (see the
+                     * FID-0094 derivation). GE007_NO_MP_BEAM_RAWCAST_FIX restores
+                     * the raw source read byte-identically. */
+                    if (portMpBeamRawcastLegacy()) {
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A10) = *(f32 *)((u8 *)player + srcOff + 0x0B50);
+                        player = g_playerPointers[playerIndex];
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A14) = *(f32 *)((u8 *)player + srcOff + 0x0B54);
+                        player = g_playerPointers[playerIndex];
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A18) = *(f32 *)((u8 *)player + srcOff + 0x0B58);
+                    } else {
+                        struct hand *srchand = &player->hands[i];
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A10) = *(f32 *)&srchand->field_B50;
+                        player = g_playerPointers[playerIndex];
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A14) = *(f32 *)&srchand->field_B54;
+                        player = g_playerPointers[playerIndex];
+                        *(f32 *)((u8 *)player + handOffset12 + 0x2A18) = srchand->field_B58.x;
+                    }
                 }
             }
 

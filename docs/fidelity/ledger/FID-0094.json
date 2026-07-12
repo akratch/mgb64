@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "sim",
   "priority": "P3",
-  "status": "root-caused",
+  "status": "landed",
   "suspect": [
     "src/game/bondview.c:24935 (aimback/aimsideback player+0x2A00/0x2A04)",
     "src/game/bondview.c:25388 (chrSetFiring player+0x875/0xC1D)",
@@ -20,6 +20,14 @@
     {
       "kind": "gate-log",
       "path": "tests/test_struct_layout.c"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "src/game/bondview.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_mp_beam_rawcast.c"
     }
   ],
   "history": [
@@ -36,6 +44,20 @@
       "to": "root-caused",
       "evidence": "tests/test_struct_layout.c",
       "note": "Root-caused against VERSION_US playerTickBeams ASM (7F08B688 aimback+0x2A00; 7F08BE40/BE54 firing lb player+0x875/+0xC1D; 7F08BEF0 hand-source lwc1 player+i*936+0xB50; beam pos +0x2A10, last-active +0x2A28). Native mapping: firing = hands[i].weapon_firing_status (gun.c:1949 accesses same field by name; raws one 936 stride apart 0xC1D-0x875); hand-source = hands[i].field_B50 with real stride 968 not 936; post-hands 0x2A00+ fields shifted by the uniform post-hands delta (FID-0088/0091/0092), so every raw lands on the wrong native field (and the 0x2A10 write corrupts the ptr_text_first_mp_award pointer bytes). Divergence machine-proven: added FID-0094 compile-time locks to test_struct_layout.c (offsetof != raw 0x875/0xC1D/0xB50; sizeof(hand) != 936) -- all hold. Code fix authored in derivation but NOT applied: only site is bondview.c playerTickBeams, off-limits this pass (raw-cast/determinism agent owns it; 80d64f1 explicitly deferred FID-0094). Ready-to-apply patch + split-screen gate in docs/fidelity/derivations/FID-0094-mp-beam-rawcast.md."
+    },
+    {
+      "ts": "2026-07-12T01:56:02Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/bondview.c",
+      "note": "Applying the derivation's lock-verified named-field fixes to playerTickBeams behind GE007_NO_MP_BEAM_RAWCAST_FIX (firing flags + hand-source; post-hands aim/beam-dest deferred to struct-owner overlay)."
+    },
+    {
+      "ts": "2026-07-12T01:56:12Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_mp_beam_rawcast.c",
+      "note": "Applied the derivation's lock-verified named-field fixes to playerTickBeams PATH 2 (bondview.c) behind default-ON GE007_NO_MP_BEAM_RAWCAST_FIX: firing flags player+0x875/+0xC1D -> hands[0]/[1].weapon_firing_status (ASM 7F08BE40/BE54; gun.c:1949 same field by name); per-hand beam-position SOURCE player+i*936+0xB50/B54/B58 -> hands[i].field_B50/field_B54/field_B58.x (ASM 7F08BEF0; correct native 968 stride, not N64 936). Re-derived each offset from VERSION_US glabel playerTickBeams and verified against the FID-0094 compile-time locks in test_struct_layout.c (all hold; PASS). The post-hands aim/beam-DESTINATION fields (aimback/aimsideback 0x2A00/0x2A04; beam-pos dest 0x2A10; last-active 0x2A28) are NOT lock-covered and per the derivation need a struct-owner-supplied typed overlay (beam_pos[2]/last_active_frame[2]); left on the raw path in BOTH branches to avoid corrupting MP state with an unverifiable offset. LANDED-NOT-VERIFIED: PATH 2 is the MP/split-screen non-current-player tick, which the deterministic 1P oracle cannot reach; runtime verify pending a 2-player split-screen beam-capture MP harness. No-regression: test_sim_state_hash PASS, test_struct_layout PASS (locks intact), new ROM-free test_mp_beam_rawcast PASS (faithful named-field offsets != legacy raw 0x875/0xC1D/i*936+0xB50; stride 968!=936). Byte-identical under the opt-out; whole build byte-identical on 1P (PATH 2 dormant)."
     }
   ]
 }

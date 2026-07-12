@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1045 flags** found across the source.
+**1048 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -578,6 +578,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_EFFECT_BUF_ZERO_INIT` | ? |  | 1 |  |
 | `GE007_NO_FAITHFUL_DRAW_ONLY_WIDENERS` | presence | unset | 1 | Restore the leak: disable the --faithful draw-only visibility-supplement wideners |
 | `GE007_NO_FOG` | ? |  | 1 |  |
+| `GE007_NO_FP_WEAPON_PERSPNORM_FIX` | presence | unset | 1 | Restore the pre-fix FP-weapon perspnorm (near arg 1.0f => 435, emitted after the monitor microcode) [FID-0077] |
 | `GE007_NO_GRENADE_SPAWN_POS_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset read of the grenade-round projectile spawn position [FID-0087] |
 | `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0093] |
 | `GE007_NO_GUNHAND_AIMBONE_FIX` | bool | 0 | 1 |  |
@@ -590,6 +591,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_METAL_SHADOW_DEPTH_CLAMP` | bool | 0 | 1 | Revert the Metal sun-shadow depth clamp to GL-parity off (fix active by default; Metal-only) |
 | `GE007_NO_METAL_SHADOW_DUMMY_DEPTH` | bool | 0 | 1 | Revert the Metal sun-shadow receiver dummy-depth fallback (fix active by default; Metal-only) |
 | `GE007_NO_MP_AMMO_HUD_MENU_FIX` | presence | unset | 1 | Restore the pre-fix MP per-pane ammo HUD drawn over the watch/pause darkening overlay [FID-0064] |
+| `GE007_NO_MP_BEAM_RAWCAST_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset / 936-stride reads in the MP other-player beam tick (playerTickBeams firing flags + hand position source) [FID-0094] |
 | `GE007_NO_MP_HEALTHBAR_DAMAGE_GATE_FIX` | presence | unset | 1 | Restore the pre-fix MP health-bar draw during damage flashes (OR DamageShowTime) [FID-0070] |
 | `GE007_NO_MP_RESPAWN_TAIL_FIX` | presence | unset | 1 | Restore the pre-fix silent object respawn: drop the respawn sound (82) + armour-amount reset tail [FID-0103] |
 | `GE007_NO_PADNAMES_FIX` | presence | unset | 1 | restore the port defect of leaving setup padnames/boundpadnames NULL instead of resolving the big-endian offset tables (FID-0037) |
@@ -605,6 +607,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_UNCAP_AUDIO_FIX` | bool | 0 | 1 | FID-0089 negative control: restore the legacy per-loop-iteration audio pump on render-only (0-tick) fuzz frames (leaks render cadence into hashed ChrRecord.ptr_SEbuffer* SFX handles). |
 | `GE007_NO_VSYNC` | ? |  | 1 |  |
 | `GE007_NO_WATCHDOG` | bool | 0 | 1 | disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring) |
+| `GE007_NO_WATCH_AMMO_SWITCH_EARLYOUT` | presence | unset | 1 | Restore the pre-fix watch ammo panel drawn during a right-hand weapon switch (hand state 6/7) [FID-0084] |
 | `GE007_NO_WATCH_INV_ASPECT_FIX` | presence | unset | 1 | Restore the legacy watch-inventory guPerspective aspect 9/7 (vs retail 4/3) [FID-0098] |
 | `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
