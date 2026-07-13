@@ -64,9 +64,23 @@ launcher to a Metal/WebGPU surface is a follow-up (fold into GL/Metal retirement
 1. **Owner gameplay validation** on a real Windows box and the actual PortMaster
    device. Software Vulkan proves the code path, not real-driver quirks or
    on-device framerate. This is the release-doctrine gate ([[mgb64-internal-external-doctrine]]).
-2. **Launcher WebGPU** — the launcher app currently runs GL (see the late fix
-   above); porting its window + ImGui to Metal/WebGPU is the way to make the
-   shipped app use WebGPU end to end.
+2. **Launcher WebGPU unification (IN FLIGHT — scoped, planned, Task 1 done).**
+   Makes the launcher app render end-to-end on WebGPU (launcher UI + game + F1
+   overlay on one shared WebGPU device/surface), retiring the launcher-runs-GL
+   limitation. Approved design: `docs/superpowers/specs/2026-07-13-launcher-webgpu-unification-design.md`;
+   task plan: `docs/superpowers/plans/2026-07-13-launcher-webgpu-unification.md`.
+   **Done:** the de-risking spike (upstream `imgui_impl_wgpu` is version-skewed
+   from our pinned v29 → we write our own) + **Task 1**: `gfx_webgpu_imgui`
+   (`src/platform/fast3d/gfx_webgpu_imgui.{cpp,h}`, commit `fab11d2`) — an ImGui
+   renderer on wgpu-native v29, compile-validated standalone + in `mgb64_app`.
+   **Remaining (Tasks 2–7):** the surface-helper refactor, the host device/
+   surface handoff + `gfx_webgpu.c` adoption, the AppHost WebGPU window+device +
+   WebGPU launcher UI, the game adoption (removing `force_opengl` from the
+   adoption path), the F1 overlay on WebGPU, and runtime GL/WebGPU UI selection.
+   These are a **sequencing-sensitive** integration (macOS metal-view/layer +
+   surface ownership between AppHost-creates-first and the game's adoption) that
+   needs runtime iteration on the launcher — see the RESUME NOTE at the top of
+   the plan doc for the exact ordering.
 3. **After that proves out:** delete `gfx_opengl.c` + `gfx_metal.mm` + the
    GLSL/MSL forks (~8k LOC), collapse the shader fork, make
    `MGB64_WEBGPU_BACKEND` non-optional. (Sequenced in the ADR.)

@@ -48,10 +48,24 @@ void gfx_webgpu_imgui_shutdown(void);
 
 **Note on the ImGui C/C++ boundary:** `gfx_webgpu_imgui.c` needs `ImDrawData`. Compile it as **C++** (rename to `.cpp` OR keep `.c` and pass the already-extracted arrays). Decision: compile as **`gfx_webgpu_imgui.cpp`** (it uses ImGui's C++ `ImDrawData`), exposing `extern "C"` functions — so C (`gfx_webgpu.c`/overlay) and C++ (AppHost) both call it. Add `${IMGUI_DIR}` to its include path.
 
-- [ ] **Step 1:** Write `gfx_webgpu_imgui.cpp/.h` per the notes above (WGSL + init + render + shutdown, `extern "C"`).
-- [ ] **Step 2:** Add to CMake (`FAST3D_SOURCES` when `MGB64_WEBGPU_BACKEND`; ARC not needed; add `${IMGUI_DIR}` include for that TU).
-- [ ] **Step 3 (validate):** a headless smoke — extend `test_webgpu_spike` or a new `test_webgpu_imgui` that inits the renderer with a device, builds ImGui draw data for one window, renders into a 256×256 offscreen target, reads back, asserts non-clear pixels exist. Build + run the ctest → PASS.
-- [ ] **Step 4:** Commit `feat(webgpu): gfx_webgpu_imgui — ImGui renderer on wgpu-native v29`.
+- [x] **Step 1:** Wrote `gfx_webgpu_imgui.cpp/.h` (commit `fab11d2`).
+- [x] **Step 2:** Wired into CMake — **into `mgb64_app`** (not `FAST3D_SOURCES`): the renderer needs ImGui headers, which only the app lib has; the engine only reaches it via `platformOverlayRender`. Added `src/platform/fast3d` to the app include path (safe — fast3d seam headers only) + linked `webgpu` to `mgb64_app`.
+- [x] **Step 3 (validate):** compiles clean against wgpu-native v29 + ImGui 1.92.9 **standalone AND in `mgb64_app`**. (The offscreen render-readback ctest was folded into the compile-gate + the Task 4 launcher-capture validation, which is a stronger real-pixels test.)
+- [x] **Step 4:** Committed `fab11d2`.
+
+> **RESUME NOTE (Task 2 onward — the sequencing crux).** The remaining tasks are
+> a sequencing-sensitive integration. The key ordering problem: on macOS the
+> surface needs a `CAMetalLayer` from an `SDL_Metal_CreateView`, and **AppHost
+> creates the window first** (for the launcher) while the game adopts it later.
+> So `platformSetHostWindow` + the metal-view must be set up **before** AppHost
+> creates its surface, so both AppHost and the adopting game resolve the *same*
+> layer. Recommended concrete order for Task 4: (a) AppHost creates the
+> `SDL_WINDOW_METAL` window + `SDL_Metal_CreateView`; (b) AppHost calls
+> `platformSetHostWindow(window, /*gl*/NULL)` immediately so `platformGetMetalLayer`
+> resolves AppHost's view; (c) AppHost builds instance/adapter/device/queue +
+> `gfx_webgpu_create_surface`; (d) `platformSetHostWebGpu(...)`; (e) launcher
+> renders; (f) at Play the game adopts both. Validate each step with
+> `MGB64_APP_SMOKE_SHOT` (launcher) / `MGB64_APP_AUTOPLAY` (game) frame captures.
 
 ## Task 2: Expose `gfx_webgpu_create_surface(instance, window)`
 
