@@ -113,6 +113,13 @@ docs/fidelity/** export-ignore
 tools/fidelity/** export-ignore
 baselines/tapes/** export-ignore
 #
+# Native-port defect audit (docs/audit/**): internal robustness/correctness
+# findings (unfixed crash repros, signing-pipeline gaps, malformed-asset faults).
+# A public list of unfixed defects does not belong in the release artifact, so it
+# is export-ignored — but DELIBERATELY kept OUTSIDE the history-scan-exempt block
+# above so its history is still content-scanned on the direct-push path.
+docs/audit/** export-ignore
+#
 # tools/tests/test_fidelity_ledger.py lives in the general (public) tools/tests/
 # directory, not under tools/fidelity/, so the glob above misses it. It exists
 # solely to unit-test the internal tools/fidelity/ledger.py (imports it
