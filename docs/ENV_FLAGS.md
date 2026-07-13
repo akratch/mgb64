@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1063 flags** found across the source.
+**1064 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -1066,6 +1066,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEAPON_RENDER_FRAME` | ? |  | 1 |  |
 | `GE007_WEAPON_RENDER_LOG` | ? |  | 1 |  |
 | `GE007_WEBGPU_DUMP_FRAME` | ? |  | 1 |  |
+| `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 1 |  |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |
 | `GE007_WINDOW_SIZE` | ? |  | 1 |  |

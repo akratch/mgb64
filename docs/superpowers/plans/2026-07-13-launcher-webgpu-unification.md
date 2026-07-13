@@ -73,9 +73,9 @@ void gfx_webgpu_imgui_shutdown(void);
 
 **Interfaces (Produces):** `WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *sdl_window);` — the current Metal-layer / Win32 / X11 / Wayland logic, parameterized. `wgpu_init` calls it with `s_instance` + the platform window (via a new `platformGetSdlWindow()` or the existing `g_sdlWindow` extern).
 
-- [ ] **Step 1:** Refactor: move the body of `wgpu_create_surface` into `gfx_webgpu_create_surface(instance, window)`; `wgpu_create_surface()` becomes a thin caller using `s_instance` + the SDL window. On non-macOS it uses `platformWebGpuWindowInfo`; on macOS it uses `platformGetMetalLayer` (needs the window's metal view — for the app path AppHost creates the metal view, see Task 4).
-- [ ] **Step 2 (validate):** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam --no-ui` still boots + renders (no behavior change); tapes byte-exact.
-- [ ] **Step 3:** Commit `refactor(webgpu): parameterize surface creation (instance, window)`.
+- [x] **Step 1:** Refactor: move the body of `wgpu_create_surface` into `gfx_webgpu_create_surface(instance, window)`; `wgpu_create_surface()` becomes a thin caller using `s_instance` + the SDL window. On non-macOS it uses `platformWebGpuWindowInfo`; on macOS it uses `platformGetMetalLayer` (needs the window's metal view — for the app path AppHost creates the metal view, see Task 4).
+- [x] **Step 2 (validate):** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam --no-ui` still boots + renders (no behavior change); tapes byte-exact.
+- [x] **Step 3:** Commit `refactor(webgpu): parameterize surface creation (instance, window)`.
 
 ## Task 3: Host WebGPU handoff seam + `wgpu_init` adoption
 
@@ -92,10 +92,10 @@ void *platformHostWgpuInstance(void); /* + Adapter/Device/Queue/Surface getters 
 int   platformHostWgpuSurfaceFormat(void);
 ```
 
-- [ ] **Step 1:** Add the host slots to `host_window.c` + getters; declare in `engine_entry.h`.
-- [ ] **Step 2:** `wgpu_init`: if `platformHasHostWebGpu()`, adopt (`s_instance = host instance`, … `s_surface_format = host format`), set `s_owns_device=false`; else self-create (set `s_owns_device=true`). Guard the (future) teardown to only release owned objects.
-- [ ] **Step 3 (validate):** standalone boot unchanged (host not set → self-create); tapes byte-exact; ctest green.
-- [ ] **Step 4:** Commit `feat(webgpu): host device/surface handoff + adoption in gfx_webgpu`.
+- [x] **Step 1:** Add the host slots to `host_window.c` + getters; declare in `engine_entry.h`.
+- [x] **Step 2:** `wgpu_init`: if `platformHasHostWebGpu()`, adopt (`s_instance = host instance`, … `s_surface_format = host format`), set `s_owns_device=false`; else self-create (set `s_owns_device=true`). Guard the (future) teardown to only release owned objects.
+- [x] **Step 3 (validate):** standalone boot unchanged (host not set → self-create); tapes byte-exact; ctest green.
+- [x] **Step 4:** Commit `feat(webgpu): host device/surface handoff + adoption in gfx_webgpu`.
 
 ## Task 4: AppHost on WebGPU + WebGPU launcher UI
 
@@ -105,11 +105,11 @@ int   platformHostWgpuSurfaceFormat(void);
 
 **Interfaces (Consumes):** `gfx_webgpu_imgui_*` (Task 1), `gfx_webgpu_create_surface` (Task 2).
 
-- [ ] **Step 1:** Window: `SDL_WINDOW_METAL` on macOS (+ `SDL_Metal_CreateView` so `platformGetMetalLayer` returns a layer), native elsewhere; drop `SDL_GL_CreateContext`.
-- [ ] **Step 2:** Create WebGPU instance/adapter/device/queue + surface (reuse the spike's request sequence; surface via `gfx_webgpu_create_surface(instance, window_)`); configure to drawable size.
-- [ ] **Step 3:** ImGui: `ImGui::CreateContext()` (unchanged) → `ImGui_ImplSDL2_InitForOther(window_)` + `gfx_webgpu_imgui_init(device, queue, format)`. `beginFrame`: `gfx_webgpu_imgui_new_frame` + `ImGui_ImplSDL2_NewFrame` + `ImGui::NewFrame`. `endFrame`: `ImGui::Render` → acquire surface texture → clear render pass → `gfx_webgpu_imgui_render(GetDrawData(), pass, w, h)` → end/submit/present (+ the `captureBmpPath` readback path via `gfx_webgpu`'s readback).
-- [ ] **Step 4 (validate):** `MGB64_APP_SMOKE_FRAMES=30 MGB64_APP_SMOKE_SHOT=/tmp/launcher.bmp build/ge007` renders the **launcher UI** on WebGPU (BMP non-blank, log shows a WebGPU/Metal window, no GL context). Convert + eyeball.
-- [ ] **Step 5:** Commit `feat(app): AppHost + launcher UI on WebGPU`.
+- [x] **Step 1:** Window: `SDL_WINDOW_METAL` on macOS (+ `SDL_Metal_CreateView` so `platformGetMetalLayer` returns a layer), native elsewhere; drop `SDL_GL_CreateContext`.
+- [x] **Step 2:** Create WebGPU instance/adapter/device/queue + surface (reuse the spike's request sequence; surface via `gfx_webgpu_create_surface(instance, window_)`); configure to drawable size.
+- [x] **Step 3:** ImGui: `ImGui::CreateContext()` (unchanged) → `ImGui_ImplSDL2_InitForOther(window_)` + `gfx_webgpu_imgui_init(device, queue, format)`. `beginFrame`: `gfx_webgpu_imgui_new_frame` + `ImGui_ImplSDL2_NewFrame` + `ImGui::NewFrame`. `endFrame`: `ImGui::Render` → acquire surface texture → clear render pass → `gfx_webgpu_imgui_render(GetDrawData(), pass, w, h)` → end/submit/present (+ the `captureBmpPath` readback path via `gfx_webgpu`'s readback).
+- [x] **Step 4 (validate):** `MGB64_APP_SMOKE_FRAMES=30 MGB64_APP_SMOKE_SHOT=/tmp/launcher.bmp build/ge007` renders the **launcher UI** on WebGPU (BMP non-blank, log shows a WebGPU/Metal window, no GL context). Convert + eyeball.
+- [x] **Step 5:** Commit `feat(app): AppHost + launcher UI on WebGPU`.
 
 ## Task 5: Game adopts the host WebGPU; remove `force_opengl` from adoption
 
@@ -119,10 +119,10 @@ int   platformHostWgpuSurfaceFormat(void);
 
 **Interfaces (Consumes):** `platformSetHostWebGpu`/`platformHasHostWebGpu` (Task 3).
 
-- [ ] **Step 1:** `main_app.cpp`: hand the WebGPU host objects to the engine alongside the window.
-- [ ] **Step 2:** `platform_sdl.c` adoption path: `if (host is GL) force_opengl(); else adopt WebGPU` (the game's `wgpu_init` adopts via Task 3). Ensure the adopted window's metal view feeds `platformGetMetalLayer`.
-- [ ] **Step 3 (validate):** `MGB64_APP_AUTOPLAY=1 MGB64_APP_AUTOPLAY_LEVEL=dam MGB64_BOOT_SCREENSHOT_FRAME=90 MGB64_BOOT_SCREENSHOT_EXIT=1 build/ge007` → the adopted window reports **WebGPU** (not GL), the game renders (BMP is Dam, not black). `GE007_RENDERER=gl` variant still renders via GL. Tapes byte-exact.
-- [ ] **Step 4:** Commit `feat(app): game adopts the launcher's WebGPU device+surface`.
+- [x] **Step 1:** `main_app.cpp`: hand the WebGPU host objects to the engine alongside the window.
+- [x] **Step 2:** `platform_sdl.c` adoption path: `if (host is GL) force_opengl(); else adopt WebGPU` (the game's `wgpu_init` adopts via Task 3). Ensure the adopted window's metal view feeds `platformGetMetalLayer`.
+- [x] **Step 3 (validate):** `MGB64_APP_AUTOPLAY=1 MGB64_APP_AUTOPLAY_LEVEL=dam MGB64_BOOT_SCREENSHOT_FRAME=90 MGB64_BOOT_SCREENSHOT_EXIT=1 build/ge007` → the adopted window reports **WebGPU** (not GL), the game renders (BMP is Dam, not black). `GE007_RENDERER=gl` variant still renders via GL. Tapes byte-exact.
+- [x] **Step 4:** Commit `feat(app): game adopts the launcher's WebGPU device+surface`.
 
 ## Task 6: F1 overlay on WebGPU + `wgpu_end_frame` hook
 
@@ -132,19 +132,19 @@ int   platformHostWgpuSurfaceFormat(void);
 
 **Interfaces (Consumes):** `gfx_webgpu_imgui_render` (Task 1), `platformOverlayRender` (existing hook).
 
-- [ ] **Step 1:** `gfx_webgpu.c`: expose the current frame's surface view for the overlay; call `platformOverlayRender()` in `wgpu_end_frame` before present (mirrors GL `gfx_end_frame`).
-- [ ] **Step 2:** `ui_overlay.cpp` render: `gfx_webgpu_imgui_new_frame` + `ImGui_ImplSDL2_NewFrame` + `ImGui::NewFrame` … `ImGui::Render` → `gfx_webgpu_imgui_render(GetDrawData(), <surface pass>, w, h)`.
-- [ ] **Step 3 (validate):** autoplay boot + press-F1 path (or force the overlay on): the F1 overlay renders over the WebGPU game (capture shows the overlay). Tapes byte-exact.
-- [ ] **Step 4:** Commit `feat(app): F1 overlay on WebGPU`.
+- [x] **Step 1:** `gfx_webgpu.c`: expose the current frame's surface view for the overlay; call `platformOverlayRender()` in `wgpu_end_frame` before present (mirrors GL `gfx_end_frame`).
+- [x] **Step 2:** `ui_overlay.cpp` render: `gfx_webgpu_imgui_new_frame` + `ImGui_ImplSDL2_NewFrame` + `ImGui::NewFrame` … `ImGui::Render` → `gfx_webgpu_imgui_render(GetDrawData(), <surface pass>, w, h)`.
+- [x] **Step 3 (validate):** autoplay boot + press-F1 path (or force the overlay on): the F1 overlay renders over the WebGPU game (capture shows the overlay). Tapes byte-exact.
+- [x] **Step 4:** Commit `feat(app): F1 overlay on WebGPU`.
 
 ## Task 7: Remove GL from the app path
 
 **Files:**
 - Modify: `src/app/app_host.cpp` (no GL context — done in Task 4; here delete any dead GL code), `ui_overlay.cpp` (no `imgui_impl_opengl3`), `CMakeLists.txt` (drop `imgui_impl_opengl3.cpp` from `mgb64_app` sources iff nothing else in the app needs it — the engine's standalone GL backend does NOT use ImGui, so the app lib no longer needs the GL ImGui backend).
 
-- [ ] **Step 1:** Remove `imgui_impl_opengl3` from `mgb64_app`; delete dead GL paths in `app_host.cpp`/`ui_overlay.cpp`. Keep `gfx_backend_force_opengl` (the `GE007_RENDERER=gl` app path still needs a GL window + a GL ImGui — so KEEP `imgui_impl_opengl3` if the GL-app fallback must keep working; otherwise the GL app path loses its UI). **Decision:** keep `imgui_impl_opengl3` compiled but only used when `GE007_RENDERER=gl`; AppHost picks the ImGui renderer (GL vs WebGPU) at runtime by the selected backend. (This preserves the GL fallback app fully.)
-- [ ] **Step 2 (validate):** default app → WebGPU UI + game; `GE007_RENDERER=gl` app → GL UI + game (both render). Full ctest green; MinGW `ge007.exe` links; Docker Linux builds; tapes byte-exact.
-- [ ] **Step 3:** Commit `refactor(app): runtime GL/WebGPU UI selection; WebGPU default end to end`.
+- [x] **Step 1:** Remove `imgui_impl_opengl3` from `mgb64_app`; delete dead GL paths in `app_host.cpp`/`ui_overlay.cpp`. Keep `gfx_backend_force_opengl` (the `GE007_RENDERER=gl` app path still needs a GL window + a GL ImGui — so KEEP `imgui_impl_opengl3` if the GL-app fallback must keep working; otherwise the GL app path loses its UI). **Decision:** keep `imgui_impl_opengl3` compiled but only used when `GE007_RENDERER=gl`; AppHost picks the ImGui renderer (GL vs WebGPU) at runtime by the selected backend. (This preserves the GL fallback app fully.)
+- [x] **Step 2 (validate):** default app → WebGPU UI + game; `GE007_RENDERER=gl` app → GL UI + game (both render). Full ctest green; MinGW `ge007.exe` links; Docker Linux builds; tapes byte-exact.
+- [x] **Step 3:** Commit `refactor(app): runtime GL/WebGPU UI selection; WebGPU default end to end`.
 
 ---
 
