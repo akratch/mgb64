@@ -29,4 +29,10 @@ bool gfx_backend_use_webgpu(void);
  * wherever the intent is "only when GL owns the frame". */
 bool gfx_backend_use_opengl(void);
 
+/* Force the OpenGL backend regardless of GE007_RENDERER / the WebGPU default.
+ * Called by platform_sdl.c when the game adopts the MGB64_APP launcher's GL
+ * window (that window has no CAMetalLayer, so WebGPU/Metal cannot render into
+ * it). After this, use_webgpu()/use_metal() return false and use_opengl() true. */
+void gfx_backend_force_opengl(void);
+
 #endif /* GFX_BACKEND_H */

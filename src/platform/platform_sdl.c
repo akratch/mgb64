@@ -257,6 +257,7 @@ static SDL_GLContext  g_glContext  = NULL;
  * WebGPU builds and references both. */
 extern bool gfx_backend_use_metal(void);
 extern bool gfx_backend_use_webgpu(void);
+extern void gfx_backend_force_opengl(void);
 #ifdef __APPLE__
 SDL_MetalView g_metalView = NULL;          /* non-static: gfx_metal reads its CAMetalLayer */
 #endif
@@ -2866,7 +2867,12 @@ int platformInitSDL(void) {
     if (platformHasHostWindow()) {
         /* MGB64_APP shell owns the SDL window + GL context; adopt them so the
          * launcher and the game render into one window. The window/context are
-         * GL (the app shell is GL-only), so the Metal path is skipped here. */
+         * GL (the app shell is GL-only), so force the GL backend: this adopted
+         * window has no CAMetalLayer, so WebGPU/Metal cannot render into it
+         * (without this the WebGPU default goes "backend inert" -> a black frame
+         * while audio/sim run — the launcher->Play regression). WebGPU remains
+         * the default for engine-owned (standalone / direct --level) boots. */
+        gfx_backend_force_opengl();
         g_sdlWindow = (SDL_Window *)platformHostWindow();
         g_glContext = (SDL_GLContext)platformHostGLContext();
         if (!g_sdlWindow || !g_glContext) {
