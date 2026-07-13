@@ -81,7 +81,20 @@ Manual equivalent: `GE007_RENDERER=metal ./build/ge007 --level 33 --config-overr
 | `Video.Tonemap` | `1` | Gentle filmic shadow-lift + highlight rolloff. |
 | `Video.Bloom` (+`BloomThreshold`/`Intensity`) | `1` (0.8/0.5) | Light bleed on bright areas. |
 | `Video.Ssao` (+`SsaoRadius`/`SsaoIntensity`) | `0` (0.5/1.0) | Screen-space ambient occlusion: depth-based contact darkening in crevices/corners/under geometry. Needs `RemasterFX=1`. Default-off because it **op-hangs Apple's GL-over-Metal** translator — enable it via `--remaster` / `GE007_RENDERER=metal` on macOS (native Metal samples the depth directly, no hang), or on native Linux/Windows GL. `--remaster` turns it on. |
-| `GE007_RENDERER` | `gl` | `metal` selects the native Metal backend (macOS only; opt-in). Required for SSAO on macOS; `--remaster` sets it automatically. GL stays the default and byte-identical everywhere. |
+| `GE007_RENDERER` | `gl` | `metal` selects the native Metal backend (macOS only; opt-in). Required for SSAO on macOS; `--remaster` sets it automatically. `webgpu` selects the cross-platform WebGPU (wgpu-native) backend on any platform — **only in a build configured with `-DMGB64_WEBGPU_BACKEND=ON`** (see below); the default build has no WebGPU and ignores it. GL stays the default and byte-identical everywhere. |
+
+### WebGPU backend (`GE007_RENDERER=webgpu`)
+
+The WebGPU backend (`gfx_webgpu.c`) is the in-progress single cross-platform
+renderer built on **wgpu-native** — one backend that dispatches to Metal
+(macOS), D3D12/Vulkan (Windows), and Vulkan (Linux/handheld), replacing the
+GL+Metal fork. It implements the same Fast3D `GfxRenderingAPI` seam as GL/Metal,
+generating WGSL combiner shaders at runtime.
+
+- **Build:** `cmake -B build-webgpu -DMGB64_WEBGPU_BACKEND=ON . && cmake --build build-webgpu --target ge007`. The option is OFF by default, so the shipping `ge007` links no wgpu symbols and stays byte-identical.
+- **Run:** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam`.
+- **Status:** renders the game at near-parity with GL (geometry, textures, depth, blend, viewport/scissor, screenshots/readback). Not yet at pixel-parity: the N64 3-point texture filter and the minimap/radar overlay are not yet ported, and the exact coverage/RDP-memory blend variants approximate to alpha. Not the default — the flip is gated on owner gameplay validation per the release doctrine.
+- **Debug:** `GE007_WEBGPU_DUMP_FRAME=<n>` writes presented frame `n` to `/tmp/webgpu_frame_<n>.ppm`.
 | `Video.Vignette` | `0.15` | Soft edge falloff. |
 | `Video.Fxaa` / `Video.Sharpen` | `1` / `0.15` | Edge AA / adaptive sharpen. |
 | `Video.OutputDither` | `1` | Anti-banding ordered dither. |
