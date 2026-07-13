@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1062 flags** found across the source.
+**1063 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -682,8 +682,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_PROP_SETUP_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_RDP_CVG_SNAPSHOT_RECTS` | ? |  | 1 |  |
 | `GE007_REMASTER_FX` | int | 1 | 1 | Master switch for the cinematic image effects (color grade, tonemap, bloom, vignette, sharpening, edge smoothing). 0 = the faithful original N64 look. HD textures and render resolution have their own settings. |
-| `GE007_RENDERER` | string | `gl` | 1 | Render backend selector. `gl` (default) = OpenGL, everywhere, byte-identical. `metal` = native Metal backend (macOS only; required for SSAO on macOS; set by `--remaster`). `webgpu` = cross-platform WebGPU (wgpu-native) backend — only honored in a build configured with `-DMGB64_WEBGPU_BACKEND=ON`; ignored otherwise. See docs/VISUAL_MODES.md. |
-| `GE007_WEBGPU_DUMP_FRAME` | int | (unset) | 1 | WebGPU backend only: writes presented frame N to `/tmp/webgpu_frame_N.ppm` (debug/validation). No effect unless `MGB64_WEBGPU_BACKEND` + `GE007_RENDERER=webgpu`. |
+| `GE007_RENDERER` | ? |  | 2 |  |
 | `GE007_RENDER_CAMERA_CLEARANCE` | ? |  | 1 |  |
 | `GE007_RENDER_CAMERA_EXTRA_CLEARANCE` | ? |  | 1 |  |
 | `GE007_RENDER_POS_DIAG` | ? |  | 1 |  |
@@ -1066,6 +1065,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEAPON_DIAG_TREE` | ? |  | 1 |  |
 | `GE007_WEAPON_RENDER_FRAME` | ? |  | 1 |  |
 | `GE007_WEAPON_RENDER_LOG` | ? |  | 1 |  |
+| `GE007_WEBGPU_DUMP_FRAME` | ? |  | 1 |  |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |
 | `GE007_WINDOW_SIZE` | ? |  | 1 |  |
