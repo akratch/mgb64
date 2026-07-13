@@ -378,17 +378,193 @@ static void wgpu_shader_get_info(struct ShaderProgram *prg, uint8_t *num_inputs,
 }
 
 /* ------------------------------------------------------------------------
- * Vtable: textures (stubs — real WGPUTexture/WGPUSampler path is Task 2)
+ * Vtable: textures + samplers (Task 2)
+ *
+ * The N64 interpreter's model (mirroring gfx_opengl.c): new_texture() hands out
+ * an opaque id; select_texture(tile, id) makes that id current on a tile;
+ * upload_texture(rgba,w,h) uploads into the id current on the most-recently
+ * selected tile; set_sampler_parameters(tile,...) sets the filter/wrap for that
+ * tile. WebGPU has no global bind state, so textures + samplers are looked up
+ * by id and staged per-tile here; the draw path (Task 3) binds tile 0/1's view
+ * + sampler into a bind group at submit time.
+ *
+ * Ids are recycled through a free-list over a growable array (like glGenTextures
+ * reuse), so live GPU resources stay bounded by the interpreter's texture cache
+ * (~1024) rather than growing with monotonic ids over a long session.
  * ---------------------------------------------------------------------- */
-static uint32_t s_next_texture_id = 1;   /* 0 reserved as "none" */
-static uint32_t wgpu_new_texture(void) { return s_next_texture_id++; }
-static void wgpu_delete_texture(uint32_t texture_id) { (void)texture_id; }
-static void wgpu_select_texture(int tile, uint32_t texture_id) { (void)tile; (void)texture_id; }
-static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
-    (void)rgba32_buf; (void)width; (void)height; return true;
+#define WGPU_TX_MIRROR 0x1u   /* G_TX_MIRROR (PR/gbi.h) — mirrored here to avoid
+                                 pulling the N64 GBI headers into this TU */
+#define WGPU_TX_CLAMP  0x2u   /* G_TX_CLAMP */
+
+struct WgpuTexEntry {
+    WGPUTexture     tex;
+    WGPUTextureView view;
+    int             w, h;
+    bool            used;
+};
+static struct WgpuTexEntry *s_tex = NULL;   /* indexed by (id - 1) */
+static uint32_t s_tex_cap = 0;
+static uint32_t s_tex_hi = 0;               /* highest id ever allocated */
+static uint32_t *s_tex_free = NULL;         /* stack of freed ids for reuse */
+static uint32_t s_tex_free_n = 0, s_tex_free_cap = 0;
+
+/* Per-tile binding staged by select_texture / set_sampler_parameters and read by
+ * the Task 3 draw path. */
+static uint32_t    s_bound_tex[2] = {0, 0};
+static WGPUSampler s_bound_sampler[2] = {NULL, NULL};
+static int         s_active_tile = 0;       /* tile of the last select_texture */
+
+/* Sampler cache keyed by (linear, cms, cmt). Small: the N64 uses a handful of
+ * distinct (filter, wrap) combinations. */
+struct WgpuSamplerEntry { int linear; uint32_t cms, cmt; WGPUSampler sampler; };
+static struct WgpuSamplerEntry s_samplers[64];
+static int s_sampler_n = 0;
+
+static WGPUAddressMode wgpu_cm_to_address(uint32_t cm) {
+    if (cm & WGPU_TX_CLAMP) {
+        return WGPUAddressMode_ClampToEdge;
+    }
+    return (cm & WGPU_TX_MIRROR) ? WGPUAddressMode_MirrorRepeat : WGPUAddressMode_Repeat;
 }
-static void wgpu_set_sampler_parameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) {
-    (void)sampler; (void)linear_filter; (void)cms; (void)cmt;
+
+static struct WgpuTexEntry *wgpu_tex_lookup(uint32_t id) {
+    if (id == 0 || id > s_tex_hi) {
+        return NULL;
+    }
+    struct WgpuTexEntry *e = &s_tex[id - 1];
+    return e->used ? e : NULL;
+}
+
+static uint32_t wgpu_new_texture(void) {
+    uint32_t id;
+    if (s_tex_free_n > 0) {
+        id = s_tex_free[--s_tex_free_n];
+    } else {
+        id = ++s_tex_hi;
+        if (id > s_tex_cap) {
+            uint32_t ncap = s_tex_cap ? s_tex_cap * 2 : 256;
+            struct WgpuTexEntry *n = (struct WgpuTexEntry *)realloc(s_tex, ncap * sizeof(*s_tex));
+            if (n == NULL) {
+                --s_tex_hi;
+                return 0;   /* allocation failure — interpreter treats 0 as none */
+            }
+            memset(n + s_tex_cap, 0, (ncap - s_tex_cap) * sizeof(*s_tex));
+            s_tex = n;
+            s_tex_cap = ncap;
+        }
+    }
+    struct WgpuTexEntry *e = &s_tex[id - 1];
+    e->tex = NULL;
+    e->view = NULL;
+    e->w = e->h = 0;
+    e->used = true;
+    return id;
+}
+
+static void wgpu_delete_texture(uint32_t texture_id) {
+    struct WgpuTexEntry *e = wgpu_tex_lookup(texture_id);
+    if (e == NULL) {
+        return;
+    }
+    if (e->view != NULL) { wgpuTextureViewRelease(e->view); e->view = NULL; }
+    if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
+    e->used = false;
+    if (s_tex_free_n >= s_tex_free_cap) {
+        uint32_t ncap = s_tex_free_cap ? s_tex_free_cap * 2 : 256;
+        uint32_t *n = (uint32_t *)realloc(s_tex_free, ncap * sizeof(*n));
+        if (n == NULL) {
+            return;   /* drop the id (never reused); GPU resource already freed */
+        }
+        s_tex_free = n;
+        s_tex_free_cap = ncap;
+    }
+    s_tex_free[s_tex_free_n++] = texture_id;
+}
+
+static void wgpu_select_texture(int tile, uint32_t texture_id) {
+    if (tile < 0 || tile > 1) {
+        return;
+    }
+    s_active_tile = tile;
+    s_bound_tex[tile] = texture_id;
+}
+
+static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
+    if (!s_ready || rgba32_buf == NULL || width <= 0 || height <= 0 ||
+        width > 8192 || height > 8192) {
+        return false;
+    }
+    struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[s_active_tile]);
+    if (e == NULL) {
+        return false;
+    }
+    /* Re-upload into an existing id: drop the old GPU resources first. */
+    if (e->view != NULL) { wgpuTextureViewRelease(e->view); e->view = NULL; }
+    if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
+
+    WGPUTextureDescriptor td = {0};
+    td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size.width = (uint32_t)width;
+    td.size.height = (uint32_t)height;
+    td.size.depthOrArrayLayers = 1;
+    td.format = WGPUTextureFormat_RGBA8Unorm;
+    td.mipLevelCount = 1;
+    td.sampleCount = 1;
+    e->tex = wgpuDeviceCreateTexture(s_device, &td);
+    if (e->tex == NULL) {
+        return false;
+    }
+    WGPUTexelCopyTextureInfo dst = {0};
+    dst.texture = e->tex;
+    dst.mipLevel = 0;
+    dst.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferLayout layout = {0};
+    layout.offset = 0;
+    layout.bytesPerRow = (uint32_t)width * 4u;
+    layout.rowsPerImage = (uint32_t)height;
+    WGPUExtent3D ext = { (uint32_t)width, (uint32_t)height, 1 };
+    wgpuQueueWriteTexture(s_queue, &dst, rgba32_buf, (size_t)width * (size_t)height * 4u, &layout, &ext);
+
+    e->view = wgpuTextureCreateView(e->tex, NULL);
+    e->w = width;
+    e->h = height;
+    return e->view != NULL;
+}
+
+static WGPUSampler wgpu_get_sampler(bool linear_filter, uint32_t cms, uint32_t cmt) {
+    for (int i = 0; i < s_sampler_n; ++i) {
+        if (s_samplers[i].linear == (int)linear_filter &&
+            s_samplers[i].cms == cms && s_samplers[i].cmt == cmt) {
+            return s_samplers[i].sampler;
+        }
+    }
+    WGPUSamplerDescriptor sd = {0};
+    sd.addressModeU = wgpu_cm_to_address(cms);
+    sd.addressModeV = wgpu_cm_to_address(cmt);
+    sd.addressModeW = WGPUAddressMode_ClampToEdge;
+    sd.magFilter = linear_filter ? WGPUFilterMode_Linear : WGPUFilterMode_Nearest;
+    sd.minFilter = linear_filter ? WGPUFilterMode_Linear : WGPUFilterMode_Nearest;
+    sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;   /* single-level like the GL path */
+    sd.lodMinClamp = 0.0f;
+    sd.lodMaxClamp = 0.0f;
+    sd.maxAnisotropy = 1;
+    WGPUSampler s = wgpuDeviceCreateSampler(s_device, &sd);
+    if (s != NULL && s_sampler_n < (int)(sizeof(s_samplers) / sizeof(s_samplers[0]))) {
+        s_samplers[s_sampler_n].linear = (int)linear_filter;
+        s_samplers[s_sampler_n].cms = cms;
+        s_samplers[s_sampler_n].cmt = cmt;
+        s_samplers[s_sampler_n].sampler = s;
+        s_sampler_n++;
+    }
+    return s;
+}
+
+static void wgpu_set_sampler_parameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+    if (tile < 0 || tile > 1 || !s_ready) {
+        return;
+    }
+    s_bound_sampler[tile] = wgpu_get_sampler(linear_filter, cms, cmt);
 }
 
 /* ------------------------------------------------------------------------

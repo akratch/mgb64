@@ -34,13 +34,13 @@
 - [x] **Validate:** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam --no-ui` boots to a cleared frame + stable game loop + clean exit (no crash, no wgpu validation errors); default `build/ge007` has **zero** real-WebGPU symbols (only the always-false `gfx_backend_use_webgpu` stub); `tape_regression.sh --no-build` byte-exact (7/7); `webgpu_spike` green. (ASan-clean boot deferred — wgpu-native is a non-instrumented prebuilt; will run a dedicated ASan pass at a later task.)
 - [x] Commit.
 
-## Task 2: Textures + samplers
+## Task 2: Textures + samplers — DONE
 
 **Files:** `gfx_webgpu.c`.
 **Interfaces:** `new_texture`/`delete_texture`/`select_texture`/`upload_texture`/`set_sampler_parameters` → `WGPUTexture`+`WGPUSampler` (RGBA8, `wgpuQueueWriteTexture`, clamp/mirror/wrap + linear/point from cms/cmt).
 
-- [ ] Id→texture/view/sampler map; upload via `wgpuQueueWriteTexture`; sampler cache keyed by (filter,cms,cmt).
-- [ ] **Validate:** builds; texture count stable across a boot (no leak). Commit.
+- [x] Id→texture/view map (growable array + free-list id reuse, like glGenTextures, so live GPU resources stay bounded by the interpreter's ~1024 texture cache); `RGBA8Unorm` upload via `wgpuQueueWriteTexture`; sampler cache keyed by (linear, cms, cmt), cms/cmt→`WGPUAddressMode` mirroring `gfx_cm_to_opengl` (G_TX_CLAMP→ClampToEdge, G_TX_MIRROR→MirrorRepeat, else Repeat). Per-tile bound texture + sampler staged for the Task 3 draw path.
+- [x] **Validate:** builds clean; `GE007_RENDERER=webgpu` boot stable with textures uploading each frame; **RSS flat at 156 MB across 30 s (~1800 frames)** — no leak, free-list recycling + release-on-delete confirmed. Default binary untouched (webgpu-only TU). Commit.
 
 ## Task 3: WGSL combiner emitter + `draw_triangles` + shader create/lookup
 
