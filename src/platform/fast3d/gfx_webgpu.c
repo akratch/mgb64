@@ -258,6 +258,14 @@ static WGPUTextureFormat wgpu_choose_format(WGPUSurface surface, WGPUAdapter ada
     return chosen;
 }
 
+/* Whether an 8-bit color target stores B,G,R,A (vs R,G,B,A) — so the readback
+ * paths extract RGB correctly. BGRA8 is what wgpu_choose_format prefers and what
+ * every current target advertises, but a platform that only offers RGBA8Unorm
+ * would otherwise get R/B-swapped screenshots. */
+static bool wgpu_format_is_bgra(WGPUTextureFormat f) {
+    return f == WGPUTextureFormat_BGRA8Unorm || f == WGPUTextureFormat_BGRA8UnormSrgb;
+}
+
 static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     if (s_surface == NULL || s_device == NULL || w == 0 || h == 0) {
         return;
@@ -523,14 +531,15 @@ static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h,
         return;
     }
     const uint8_t *px = (const uint8_t *)wgpuBufferGetConstMappedRange(buf, 0, size);
+    const bool bgra = wgpu_format_is_bgra(s_surface_format);
     FILE *f = px ? fopen(path, "wb") : NULL;
     if (f != NULL) {
         fprintf(f, "P6\n%u %u\n255\n", w, h);
         for (uint32_t y = 0; y < h; y++) {
             const uint8_t *row = px + (size_t)y * bpr;
             for (uint32_t x = 0; x < w; x++) {
-                const uint8_t *p = row + (size_t)x * 4;   /* BGRA8 */
-                uint8_t rgb[3] = { p[2], p[1], p[0] };
+                const uint8_t *p = row + (size_t)x * 4;   /* BGRA8 (or RGBA8) */
+                uint8_t rgb[3] = { bgra ? p[2] : p[0], p[1], bgra ? p[0] : p[2] };
                 fwrite(rgb, 1, 3, f);
             }
         }
@@ -597,40 +606,41 @@ static void wgpu_end_frame(void) {
         cd.texture = st.texture; cd.aspect = WGPUTextureAspect_All;
         WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
         wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
+    }
 
-        /* Draw the app shell's in-game overlay (F1 menu) on top of the presented
-         * scene. Only open the surface render pass when the overlay is actually
-         * visible (platformOverlayWantsInput): a Load+Store pass over the full
-         * surface is real bandwidth, so standalone boots (no hooks → 0) and
-         * closed-overlay gameplay must not pay for an empty pass every frame. The
-         * hook still runs in both cases so its per-frame logic (e.g. the headless
-         * open/close test tick) ticks; when no pass is open the overlay's draw is
-         * skipped (gfx_webgpu_current_overlay_pass() returns NULL). */
-        extern void platformOverlayRender(void);
-        extern int  platformOverlayWantsInput(void);
-        if (platformOverlayWantsInput()) {
-            WGPUTextureView surf_view = wgpuTextureCreateView(st.texture, NULL);
-            if (surf_view != NULL) {
-                WGPURenderPassColorAttachment oa = {0};
-                oa.view = surf_view;
-                oa.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-                oa.loadOp = WGPULoadOp_Load;      /* preserve the blitted scene */
-                oa.storeOp = WGPUStoreOp_Store;
-                WGPURenderPassDescriptor orp = {0};
-                orp.colorAttachmentCount = 1;
-                orp.colorAttachments = &oa;
-                s_overlay_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &orp);
-                s_overlay_w = (int)s_scene_w;
-                s_overlay_h = (int)s_scene_h;
-                platformOverlayRender();
-                wgpuRenderPassEncoderEnd(s_overlay_pass);
-                wgpuRenderPassEncoderRelease(s_overlay_pass);
-                s_overlay_pass = NULL;
-                wgpuTextureViewRelease(surf_view);
-            }
-        } else {
-            platformOverlayRender();   /* per-frame logic only; no pass, no draw */
-        }
+    /* In-game overlay (F1 menu). The hook is called EXACTLY ONCE every frame —
+     * matching the GL gfx_end_frame's unconditional call — so its per-frame logic
+     * (e.g. the headless open/close test tick, which advances the engine-frame
+     * ordinal) stays in lockstep even on a frame that drops its drawable.
+     * The bandwidth-heavy Load+Store surface pass only opens when we actually
+     * have a drawable AND the overlay is visible (platformOverlayWantsInput);
+     * otherwise the overlay's draw is skipped (current_overlay_pass() == NULL) so
+     * standalone boots (no hooks → 0) and closed-overlay gameplay pay nothing. */
+    extern void platformOverlayRender(void);
+    extern int  platformOverlayWantsInput(void);
+    WGPUTextureView overlay_view = NULL;
+    if (present_ok && platformOverlayWantsInput()) {
+        overlay_view = wgpuTextureCreateView(st.texture, NULL);
+    }
+    if (overlay_view != NULL) {
+        WGPURenderPassColorAttachment oa = {0};
+        oa.view = overlay_view;
+        oa.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        oa.loadOp = WGPULoadOp_Load;      /* preserve the blitted scene */
+        oa.storeOp = WGPUStoreOp_Store;
+        WGPURenderPassDescriptor orp = {0};
+        orp.colorAttachmentCount = 1;
+        orp.colorAttachments = &oa;
+        s_overlay_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &orp);
+        s_overlay_w = (int)s_scene_w;
+        s_overlay_h = (int)s_scene_h;
+        platformOverlayRender();
+        wgpuRenderPassEncoderEnd(s_overlay_pass);
+        wgpuRenderPassEncoderRelease(s_overlay_pass);
+        s_overlay_pass = NULL;
+        wgpuTextureViewRelease(overlay_view);
+    } else {
+        platformOverlayRender();   /* per-frame logic only; no pass, no draw */
     }
 
     /* Optional surface dump: the presented frame (scene + overlay), unlike the
@@ -1567,13 +1577,14 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
             continue;
         }
         const uint8_t *srow = px + (size_t)scene_y * bpr;
+        const bool bgra = wgpu_format_is_bgra(s_surface_format);
         for (int col = 0; col < width; col++) {
             int sx = x + col;
             if (sx < 0 || sx >= (int)s_scene_w) { out[col*3] = out[col*3+1] = out[col*3+2] = 0; continue; }
-            const uint8_t *p = srow + (size_t)sx * 4;   /* BGRA8 */
-            out[col*3+0] = p[2];
-            out[col*3+1] = p[1];
-            out[col*3+2] = p[0];
+            const uint8_t *p = srow + (size_t)sx * 4;   /* BGRA8 (or RGBA8) */
+            out[col*3+0] = bgra ? p[2] : p[0];   /* R */
+            out[col*3+1] = p[1];                 /* G */
+            out[col*3+2] = bgra ? p[0] : p[2];   /* B */
         }
     }
     wgpuBufferUnmap(buf);

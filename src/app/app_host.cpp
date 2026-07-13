@@ -342,10 +342,12 @@ void on_map(WGPUMapAsyncStatus s, WGPUStringView m, void *u1, void *u2) {
     WgpuMapReq *r = (WgpuMapReq *)u1; r->status = s; r->done = 1;
 }
 
-// Write a mapped BGRA8 readback buffer (row stride `bpr`, top-down) as a 24-bit
-// BMP. BMP rows are bottom-up, so the source rows are emitted in reverse.
+// Write a mapped 8-bit readback buffer (row stride `bpr`, top-down) as a 24-bit
+// BMP. `bgra` selects the source channel order (BGRA8 — the near-universal
+// surface format — vs RGBA8). BMP rows are bottom-up, so source rows are emitted
+// in reverse; BMP pixels are B,G,R.
 void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
-                  WGPUDevice device) {
+                  WGPUDevice device, bool bgra) {
     if (w <= 0 || h <= 0) return;
     size_t size = (size_t)bpr * (uint32_t)h;
     WgpuMapReq mr = {0, (WGPUMapAsyncStatus)0};
@@ -382,10 +384,10 @@ void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
         std::vector<uint8_t> row(rowBytes + pad, 0);
         for (int y = h - 1; y >= 0; --y) {   // BMP bottom-up
             const uint8_t *srow = px + (size_t)y * bpr;
-            for (int x = 0; x < w; ++x) {     // BGRA -> BGR (drop alpha)
-                row[x * 3 + 0] = srow[x * 4 + 0];
-                row[x * 3 + 1] = srow[x * 4 + 1];
-                row[x * 3 + 2] = srow[x * 4 + 2];
+            for (int x = 0; x < w; ++x) {     // -> BMP B,G,R (drop alpha)
+                row[x * 3 + 0] = bgra ? srow[x * 4 + 0] : srow[x * 4 + 2];  // B
+                row[x * 3 + 1] = srow[x * 4 + 1];                            // G
+                row[x * 3 + 2] = bgra ? srow[x * 4 + 2] : srow[x * 4 + 0];  // R
             }
             std::fwrite(row.data(), 1, rowBytes + pad, f);
         }
@@ -474,7 +476,9 @@ void AppHost::endFrameWebGpu(const char *captureBmpPath) {
     wgpuCommandEncoderRelease(enc);
 
     if (capBuf != nullptr) {
-        writeWgpuBmp(capBuf, capBpr, w, h, captureBmpPath, device);
+        const bool bgra = ((WGPUTextureFormat)wgpuFormat_ == WGPUTextureFormat_BGRA8Unorm ||
+                           (WGPUTextureFormat)wgpuFormat_ == WGPUTextureFormat_BGRA8UnormSrgb);
+        writeWgpuBmp(capBuf, capBpr, w, h, captureBmpPath, device, bgra);
         wgpuBufferRelease(capBuf);
     }
 
