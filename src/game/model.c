@@ -382,16 +382,64 @@ void portUnregisterHeadForModel(Model *m)
  * corrupts adjacent data. Instead, store the full 64-bit pointers here,
  * keyed by the rwdata byte address (unique per node per model).
  */
-#define PORT_DLCOL_TABLE_SIZE 512
-
+/* FID-0122: this table MUST grow dynamically and reset per stage. It was a fixed
+ * 512-entry array that silently dropped registrations once full — Dam alone
+ * registers >512 DLCOLLISION nodes during setup, so later dynamic props (the
+ * security-door PROPDEF_MULTI_MONITOR panels) never got stored. portLookupDlColRwData
+ * then failed and modelRenderNodeDl fell back to the STATIC ROM vertices (white
+ * 254,254,254) instead of the monitor generator's red/green vertices, rendering
+ * the door indicators white. A fixed cap also accumulated stale entries across
+ * stage loads (never cleared). Now: doubling realloc (never silently drops) +
+ * portClearAllDlCol() at stage (re)load (drops stale entries, keyed addresses are
+ * per-stage-instance) + an explicit diagnostic on allocation failure. */
 struct PortDlColEntry {
     void *rwdata_key;   /* address returned by modelGetNodeRwData */
     void *vertices;     /* Vertex* (full 64-bit) */
     void *gdl;          /* Gfx* (full 64-bit) */
 };
 
-static struct PortDlColEntry s_dlColTable[PORT_DLCOL_TABLE_SIZE];
+static struct PortDlColEntry *s_dlColTable = NULL;
 static int s_dlColTableCount = 0;
+static int s_dlColTableCapacity = 0;
+
+static int portEnsureDlColTableCapacity(int needed)
+{
+    struct PortDlColEntry *grown;
+    int newCapacity;
+
+    if (needed <= s_dlColTableCapacity) {
+        return 1;
+    }
+
+    newCapacity = s_dlColTableCapacity > 0 ? s_dlColTableCapacity : 512;
+
+    while (newCapacity < needed) {
+        newCapacity *= 2;
+    }
+
+    grown = realloc(s_dlColTable, sizeof(*grown) * newCapacity);
+
+    if (grown == NULL) {
+        fprintf(stderr,
+                "[PORT] failed to grow DLCOLLISION rwdata table from %d to %d entries\n",
+                s_dlColTableCapacity, newCapacity);
+        return 0;
+    }
+
+    memset(&grown[s_dlColTableCapacity], 0,
+           sizeof(*grown) * (newCapacity - s_dlColTableCapacity));
+    s_dlColTable = grown;
+    s_dlColTableCapacity = newCapacity;
+    return 1;
+}
+
+/* Drop all runtime DLCOLLISION pointer registrations. Called at stage (re)load
+ * (alongside portClearAllHeads) so entries never accumulate across stages and a
+ * reused rwdata address can't hit a stale entry from the previous stage. */
+void portClearAllDlCol(void)
+{
+    s_dlColTableCount = 0;
+}
 
 #define PORT_NODE_TOGGLE_OVERRIDE_TABLE_SIZE 128
 #define PORT_NODE_RENDER_SUPPRESS_TABLE_SIZE 128
@@ -579,12 +627,13 @@ void portStoreDlColRwData(void *rwdata_key, void *vertices, void *gdl)
             return;
         }
     }
-    if (s_dlColTableCount < PORT_DLCOL_TABLE_SIZE) {
-        s_dlColTable[s_dlColTableCount].rwdata_key = rwdata_key;
-        s_dlColTable[s_dlColTableCount].vertices = vertices;
-        s_dlColTable[s_dlColTableCount].gdl = gdl;
-        s_dlColTableCount++;
+    if (!portEnsureDlColTableCapacity(s_dlColTableCount + 1)) {
+        return;   /* OOM already diagnosed; a dropped entry falls back to static geometry */
     }
+    s_dlColTable[s_dlColTableCount].rwdata_key = rwdata_key;
+    s_dlColTable[s_dlColTableCount].vertices = vertices;
+    s_dlColTable[s_dlColTableCount].gdl = gdl;
+    s_dlColTableCount++;
 }
 
 int portLookupDlColRwData(void *rwdata_key, void **out_vertices, void **out_gdl)
