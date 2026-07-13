@@ -81,7 +81,7 @@ Manual equivalent: `GE007_RENDERER=metal ./build/ge007 --level 33 --config-overr
 | `Video.Tonemap` | `1` | Gentle filmic shadow-lift + highlight rolloff. |
 | `Video.Bloom` (+`BloomThreshold`/`Intensity`) | `1` (0.8/0.5) | Light bleed on bright areas. |
 | `Video.Ssao` (+`SsaoRadius`/`SsaoIntensity`) | `0` (0.5/1.0) | Screen-space ambient occlusion: depth-based contact darkening in crevices/corners/under geometry. Needs `RemasterFX=1`. Default-off because it **op-hangs Apple's GL-over-Metal** translator — enable it via `--remaster` / `GE007_RENDERER=metal` on macOS (native Metal samples the depth directly, no hang), or on native Linux/Windows GL. `--remaster` turns it on. |
-| `GE007_RENDERER` | `gl` | `metal` selects the native Metal backend (macOS only; opt-in). Required for SSAO on macOS; `--remaster` sets it automatically. `webgpu` selects the cross-platform WebGPU (wgpu-native) backend on any platform — **only in a build configured with `-DMGB64_WEBGPU_BACKEND=ON`** (see below); the default build has no WebGPU and ignores it. GL stays the default and byte-identical everywhere. |
+| `GE007_RENDERER` | `webgpu` | **WebGPU (wgpu-native) is now the default backend** (built by default; `-DMGB64_WEBGPU_BACKEND=OFF` for a GL/Metal-only binary). `gl`/`opengl` selects the OpenGL fallback (retained one release); `metal` selects the native Metal backend (macOS only; still used by `--remaster` for its post-FX/SSAO). The flip is sim-invariant — determinism tapes are byte-exact on WebGPU. |
 
 ### WebGPU backend (`GE007_RENDERER=webgpu`)
 

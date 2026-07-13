@@ -87,11 +87,14 @@ option(MGB64_APP "Build the in-process ImGui app shell (portable launcher + over
 # and forces 640x480 fullscreen. Implies MGB64_PORTMASTER.
 option(MGB64_PORTMASTER_GLES "Build for PortMaster/ARM GLES3 (R36S etc.)" OFF)
 
-# WebGPU (wgpu-native) — experimental single cross-platform render backend that
-# will replace the GL+Metal fork (see docs/design/RENDERER_BACKEND_STRATEGY_*).
-# OFF by default: does not touch the shipping GL/Metal build. cmake/webgpu.cmake
+# WebGPU (wgpu-native) — the single cross-platform render backend that replaces
+# the GL+Metal fork (see docs/design/WEBGPU_BACKEND_STATUS_2026-07-13.md).
+# ON by default (the deliberate flip): WebGPU is now the default backend, with
+# OpenGL retained as the one-release fallback via GE007_RENDERER=gl (and Metal
+# via GE007_RENDERER=metal, still used by --remaster). Set -DMGB64_WEBGPU_BACKEND=OFF
+# to build a GL/Metal-only binary with no wgpu dependency. cmake/webgpu.cmake
 # downloads + SHA-256-verifies the pinned per-platform wgpu-native prebuilt.
-option(MGB64_WEBGPU_BACKEND "Build the experimental WebGPU (wgpu-native) render backend" OFF)
+option(MGB64_WEBGPU_BACKEND "Build the WebGPU (wgpu-native) render backend (default backend)" ON)
 include(cmake/webgpu.cmake)
 
 # WebGPU spike: a headless, self-validating proof that the backend works — it

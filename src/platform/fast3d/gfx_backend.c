@@ -11,10 +11,22 @@
 
 bool gfx_backend_use_webgpu(void) {
 #ifdef MGB64_WEBGPU_BACKEND
+    /* WebGPU is the DEFAULT backend when compiled in: used unless GE007_RENDERER
+     * explicitly selects the GL or Metal fallback. `gl`/`opengl` -> OpenGL (the
+     * one-release fallback per the flip runbook); `metal` -> native Metal (still
+     * used by --remaster for its post-FX/SSAO on macOS). Anything else, or unset,
+     * is WebGPU. Cached on first call; read consistently before/after window
+     * creation. */
     static int cached = -1;
     if (cached < 0) {
         const char *r = getenv("GE007_RENDERER");
-        cached = (r != NULL && (strcmp(r, "webgpu") == 0 || strcmp(r, "WebGPU") == 0)) ? 1 : 0;
+        if (r != NULL && (strcmp(r, "gl") == 0 || strcmp(r, "opengl") == 0 ||
+                          strcmp(r, "GL") == 0 || strcmp(r, "OpenGL") == 0 ||
+                          strcmp(r, "metal") == 0 || strcmp(r, "Metal") == 0)) {
+            cached = 0;
+        } else {
+            cached = 1;   /* default (unset or "webgpu") */
+        }
     }
     return cached != 0;
 #else

@@ -69,21 +69,22 @@ For each: `tools/fidelity/tape_regression.sh` must stay byte-exact (the sim is
 backend-agnostic — the backend must never affect gameplay), and the parity
 capture harness should be within tolerance.
 
-## The flip (do NOT do without the validation above)
+## The flip — DONE (owner-authorized 2026-07-13)
 
-Per the release doctrine ([[mgb64-internal-external-doctrine]]: releases gated
-on owner macOS+Windows gameplay checks), flipping the default is an owner
-decision after playing it on each platform. The flip is intentionally a small,
-reversible change:
+The default is now WebGPU, done as a small, reversible change:
 
-1. Make `MGB64_WEBGPU_BACKEND` **ON by default** in `CMakeLists.txt` (so the
-   shipping binary links wgpu). — This breaks the "byte-identical default"
-   invariant on purpose; that invariant exists precisely to protect this moment.
-2. In `gfx_backend.c`, default `gfx_backend_use_webgpu()` to **true** unless
-   `GE007_RENDERER=gl` (keep `gl` as the one-release fallback).
-3. Ship one release with WebGPU default + GL fallback. After it proves out,
-   delete `gfx_opengl.c` + `gfx_metal.mm` + the GLSL/MSL forks (~8k LOC) and
-   collapse the shader fork; make `MGB64_WEBGPU_BACKEND` non-optional.
+1. `MGB64_WEBGPU_BACKEND` is **ON by default** in `CMakeLists.txt` (the shipping
+   binary links wgpu). `-DMGB64_WEBGPU_BACKEND=OFF` builds a GL/Metal-only binary.
+2. `gfx_backend.c` `gfx_backend_use_webgpu()` defaults to **true** unless
+   `GE007_RENDERER` is `gl`/`opengl` (OpenGL fallback) or `metal` (native Metal,
+   still used by `--remaster`).
+3. **Validated on macOS:** default boot → WebGPU (M3 Max); `GE007_RENDERER=gl` →
+   OpenGL; `GE007_RENDERER=metal` → Metal. **The determinism gate runs on the
+   WebGPU-default binary and is byte-exact (7/7 tapes, identical hashes to the GL
+   baseline) — the flip is sim-invariant.**
 
-Full regression (parity + determinism + all platforms) must be green at each
-step.
+Remaining (owner cross-platform validation): Windows/Linux/PortMaster gameplay
+runs. After a proving release, delete `gfx_opengl.c` + `gfx_metal.mm` + the
+GLSL/MSL forks (~8k LOC), collapse the shader fork, and make
+`MGB64_WEBGPU_BACKEND` non-optional. See `docs/design/adr/` for the decision
+record.
