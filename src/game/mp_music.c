@@ -310,13 +310,41 @@ void set_missionstate(MISSION_STATE_ID arg0)
 
 
 
+#ifdef NATIVE_PORT
+extern int port_env_set(const char *name, const char *description);
+/* AUDIT-0073: the native build historically stubbed this mission-music
+ * state-machine initializer under a now-stale "subsystem not initialized"
+ * comment. Running the real retail init (below) is more faithful, but it
+ * consumes the SHARED sim RNG at level start on random-track stages
+ * (getmusictrack_or_randomtrack -> randomGetNext), which shifts determinism and
+ * would require a tape re-baseline, and its audio behavior needs gameplay
+ * verification. So it is OPT-IN (default keeps the byte-identical stub); flip to
+ * default-on with a re-baseline once both are validated. */
+static int portMissionMusicInitEnabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = port_env_set("GE007_MISSION_MUSIC_INIT",
+                              "Run the retail mission-music state-machine initializer on the "
+                              "native port instead of the historical stub. Default off: the real "
+                              "init consumes sim RNG at level start (determinism shift, needs a "
+                              "tape re-baseline) and its audio path is not yet gameplay-verified "
+                              "[AUDIT-0073].");
+    }
+    return cached;
+}
+#endif
+
 void sub_GAME_7F0C11FC(s32 stagenum)
 {
 #ifdef NATIVE_PORT
-    /* PC: skip music entirely — music subsystem not initialized. */
-    mission_state = MISSION_STATE_0;
-    stageMusicID = stagenum;
-    return;
+    if (!portMissionMusicInitEnabled()) {
+        /* Historical native stub (default, byte-identical). */
+        mission_state = MISSION_STATE_0;
+        stageMusicID = stagenum;
+        return;
+    }
+    /* else: fall through to the retail init (opt-in). */
 #endif
     musicTrack1Stop();
     musicTrack2Stop();

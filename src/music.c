@@ -983,8 +983,16 @@ void musicSeqPlayerInit(void)
         /* Load track lengths */
         u32 maxTrackLength = 0;
         for (ui = 0; ui < NUM_MUSIC_TRACKS; ui++) {
-            g_musicTrackLength[ui] = g_musicDataTable->seqArray[ui].uncompressed_len;
-            g_musicTrackCompressedLength[ui] = g_musicDataTable->seqArray[ui].len;
+            /* seqArray is sized by the ROM's seqCount; never read past it when a
+             * malformed table declares fewer than NUM_MUSIC_TRACKS entries. Absent
+             * tracks become zero-length rather than an OOB read [AUDIT-0072]. */
+            if (ui < g_musicDataTable->seqCount) {
+                g_musicTrackLength[ui] = g_musicDataTable->seqArray[ui].uncompressed_len;
+                g_musicTrackCompressedLength[ui] = g_musicDataTable->seqArray[ui].len;
+            } else {
+                g_musicTrackLength[ui] = 0;
+                g_musicTrackCompressedLength[ui] = 0;
+            }
             if (g_musicTrackLength[ui] & 1) {
                 g_musicTrackLength[ui]++;
             }
@@ -1048,8 +1056,14 @@ void musicSeqPlayerInit(void)
     // Load track offsets and lengths once during initialization.
     for (ui = 0; ui < NUM_MUSIC_TRACKS; ui++)
     {
-        g_musicTrackLength[ui] = g_musicDataTable->seqArray[ui].uncompressed_len;
-        g_musicTrackCompressedLength[ui] = g_musicDataTable->seqArray[ui].len;
+        /* Clamp to the ROM's seqCount so a short table can't over-read [AUDIT-0072]. */
+        if (ui < g_musicDataTable->seqCount) {
+            g_musicTrackLength[ui] = g_musicDataTable->seqArray[ui].uncompressed_len;
+            g_musicTrackCompressedLength[ui] = g_musicDataTable->seqArray[ui].len;
+        } else {
+            g_musicTrackLength[ui] = 0;
+            g_musicTrackCompressedLength[ui] = 0;
+        }
 
         // Note that auSeqPlayerSetFile adjusts the len value, not offset.
         if (g_musicTrackLength[ui] & 1)
@@ -1158,6 +1172,10 @@ void musicTrack1Play(s32 track)
 #ifdef NATIVE_PORT
     {
         if (!g_musicDataTable || !g_musicXTrack1SeqData || g_musicXTrack1SeqDataCapacity == 0) return;
+        /* The requested track must index within the loaded sequence table; a
+         * malformed/short table (seqCount < track) would otherwise over-read
+         * seqArray below [AUDIT-0072]. */
+        if ((u32)g_musicXTrack1CurrentTrackNum >= g_musicDataTable->seqCount) return;
         u32 seqCapacity = g_musicXTrack1SeqDataCapacity;
         u32 copyLimit = seqCapacity > MUSIC_SEQ_PADDING_BYTES
             ? seqCapacity - MUSIC_SEQ_PADDING_BYTES
@@ -1213,7 +1231,12 @@ void musicTrack1Play(s32 track)
 
             temp_a0 = decompBuf + (t3 - trackSizeBytes);
             romCopy(temp_a0, romAddress, trackSizeBytes);
-            decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf);
+            if (decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf) == 0) {
+                /* Decompression failed (corrupt/truncated track): skip rather than
+                 * parse garbage into alCSeqNew, which faults [AUDIT-0071]. */
+                free(decompBuf);
+                return;
+            }
 
             /* Copy decompressed data to the game's seq data buffer */
             u32 copyLen = g_musicTrackLength[g_musicXTrack1CurrentTrackNum];
@@ -1452,6 +1475,9 @@ void musicTrack2Play(s32 track)
     portMusicTraceEvent("play", 2, track, g_musicXTrack2CurrentTrackNum, g_musicXTrack2SeqPlayer);
     g_musicXTrack2CurrentTrackNum = track;
 
+    /* Guard the seqArray index against a short/malformed sequence table [AUDIT-0072]. */
+    if (g_musicDataTable && (u32)g_musicXTrack2CurrentTrackNum >= g_musicDataTable->seqCount) return;
+
     if (alCSPGetState(g_musicXTrack2SeqPlayer) != AL_STOPPED)
     {
         alCSPStop(g_musicXTrack2SeqPlayer);
@@ -1481,7 +1507,12 @@ void musicTrack2Play(s32 track)
 
         temp_a0 = decompBuf + (t3 - trackSizeBytes);
         romCopy(temp_a0, romAddress, trackSizeBytes);
-        decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf);
+        if (decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf) == 0) {
+            /* Decompression failed (corrupt/truncated track): skip rather than
+             * parse garbage into alCSeqNew, which faults [AUDIT-0071]. */
+            free(decompBuf);
+            return;
+        }
 
         {
             u32 copyLen = g_musicTrackLength[g_musicXTrack2CurrentTrackNum];
@@ -1722,6 +1753,9 @@ void musicTrack3Play(s32 track)
     portMusicTraceEvent("play", 3, track, g_musicXTrack3CurrentTrackNum, g_musicXTrack3SeqPlayer);
     g_musicXTrack3CurrentTrackNum = track;
 
+    /* Guard the seqArray index against a short/malformed sequence table [AUDIT-0072]. */
+    if (g_musicDataTable && (u32)g_musicXTrack3CurrentTrackNum >= g_musicDataTable->seqCount) return;
+
     if (alCSPGetState(g_musicXTrack3SeqPlayer) != AL_STOPPED)
     {
         alCSPStop(g_musicXTrack3SeqPlayer);
@@ -1751,7 +1785,12 @@ void musicTrack3Play(s32 track)
 
         temp_a0 = decompBuf + (t3 - trackSizeBytes);
         romCopy(temp_a0, romAddress, trackSizeBytes);
-        decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf);
+        if (decompressdata(temp_a0, decompBuf, (struct huft *)huftBuf) == 0) {
+            /* Decompression failed (corrupt/truncated track): skip rather than
+             * parse garbage into alCSeqNew, which faults [AUDIT-0071]. */
+            free(decompBuf);
+            return;
+        }
 
         {
             u32 copyLen = g_musicTrackLength[g_musicXTrack3CurrentTrackNum];
