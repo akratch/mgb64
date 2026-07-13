@@ -4501,16 +4501,33 @@ static void gfx_sync_current_dimensions_from_window(void) {
      * factor preserves aspect_ratio (clamping each axis independently, or
      * clamping inside ensure_scene_target, would distort or crop). */
     {
-        int max_dim;
+        /* All backend accessors are declared up front so the selection chain
+         * below is a pure if / else-if / else with NO declaration between an
+         * `else` and the next `if` — a bare declaration there is not a valid
+         * `else` body and silently turns the following branches unconditional
+         * (a fall-through bug that ran the GL path — glGetIntegerv with no GL
+         * context — under WebGPU). */
+        extern int gfx_opengl_max_offscreen_dim(void);
 #ifdef __APPLE__
         extern bool gfx_backend_use_metal(void);
+        extern int gfx_metal_max_offscreen_dim(void);
+#endif
+#ifdef MGB64_WEBGPU_BACKEND
+        extern bool gfx_backend_use_webgpu(void);
+        extern int gfx_webgpu_max_offscreen_dim(void);
+#endif
+        int max_dim;
+#ifdef MGB64_WEBGPU_BACKEND
+        if (gfx_backend_use_webgpu()) {
+            max_dim = gfx_webgpu_max_offscreen_dim();
+        } else
+#endif
+#ifdef __APPLE__
         if (gfx_backend_use_metal()) {
-            extern int gfx_metal_max_offscreen_dim(void);
             max_dim = gfx_metal_max_offscreen_dim();
         } else
 #endif
         {
-            extern int gfx_opengl_max_offscreen_dim(void);
             max_dim = gfx_opengl_max_offscreen_dim();
         }
         int largest = scaled_w > scaled_h ? scaled_w : scaled_h;
@@ -21990,10 +22007,11 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
      * and glGetTexImage() would write past a `w * h * 4`-sized buffer (heap
      * overflow). Also GL-only: raw glGetTexImage() has no Metal-backend
      * equivalent/context. */
-    extern bool gfx_backend_use_metal(void); /* gfx_backend.c */
+    extern bool gfx_backend_use_metal(void);  /* gfx_backend.c */
+    extern bool gfx_backend_use_webgpu(void); /* gfx_backend.c (always defined; false unless webgpu) */
 #ifndef MGB64_PORTMASTER_GLES  /* glGetTexImage unavailable in GLES — GPU verify skipped */
     if ((texturenum == 1988) && getenv("GE007_VERIFY_GPU") && hd_rgba == NULL &&
-        !gfx_backend_use_metal()) {
+        !gfx_backend_use_metal() && !gfx_backend_use_webgpu()) {
         uint8_t *readback = (uint8_t *)malloc(rgba_bytes);
         if (readback) {
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, readback);
@@ -23840,9 +23858,16 @@ void gfx_process_n64_dl(const uint8_t *data) {
 /* ===== Public API ===== */
 
 extern struct GfxRenderingAPI gfx_opengl_api;
+/* Always available (gfx_backend.c defines it on every platform): true only when
+ * the GL backend owns the frame. The correct guard for GL-context-only paths. */
+extern bool gfx_backend_use_opengl(void);
 #ifdef __APPLE__
 extern struct GfxRenderingAPI gfx_metal_api;   /* native Metal backend (opt-in) */
 extern bool gfx_backend_use_metal(void);        /* gfx_backend.c */
+#endif
+#ifdef MGB64_WEBGPU_BACKEND
+extern struct GfxRenderingAPI gfx_webgpu_api;  /* cross-platform WebGPU backend (opt-in) */
+extern bool gfx_backend_use_webgpu(void);       /* gfx_backend.c */
 #endif
 
 /* Tables defined in gfx_ptr.h (declared extern there) */
@@ -23881,18 +23906,30 @@ static void gfx_sp_reset(void) {
 }
 
 void gfx_init(void) {
-#ifdef __APPLE__
-    gfx_rapi = gfx_backend_use_metal() ? &gfx_metal_api : &gfx_opengl_api;
-#else
-    gfx_rapi = &gfx_opengl_api;
+#ifdef MGB64_WEBGPU_BACKEND
+    if (gfx_backend_use_webgpu()) {
+        gfx_rapi = &gfx_webgpu_api;
+    } else
 #endif
-    gfx_rapi->init();
+    {
 #ifdef __APPLE__
+        gfx_rapi = gfx_backend_use_metal() ? &gfx_metal_api : &gfx_opengl_api;
+#else
+        gfx_rapi = &gfx_opengl_api;
+#endif
+    }
+    gfx_rapi->init();
     /* g_depth_clamp_enabled is a cross-backend invariance coupling: the CPU
      * clipper's GFX_CLIP_Z_SCALE (:219/:223) reads it, and OpenGL sets it inside
-     * gfx_opengl_init(). Metal's init does not run GL's init, so set it here or
-     * the near-frustum triangle admission — and thus the sim-state hash —
-     * silently diverges from the GL path. */
+     * gfx_opengl_init(). Backends that don't run GL's init (Metal, WebGPU) must
+     * set it here or the near-frustum triangle admission — and thus the
+     * sim-state hash — silently diverges from the GL path. */
+#ifdef MGB64_WEBGPU_BACKEND
+    if (gfx_backend_use_webgpu()) {
+        g_depth_clamp_enabled = true;
+    }
+#endif
+#ifdef __APPLE__
     if (gfx_backend_use_metal()) {
         g_depth_clamp_enabled = true;
     }
@@ -24213,6 +24250,12 @@ void gfx_run_dl(Gfx *dl) {
     }
     /* Set clear color BEFORE start_frame, which does the clear */
     {
+#ifdef MGB64_WEBGPU_BACKEND
+        if (gfx_backend_use_webgpu()) {
+            extern void gfx_webgpu_set_clear_color(float r, float g, float b);
+            gfx_webgpu_set_clear_color(clear_r, clear_g, clear_b);
+        } else
+#endif
 #ifdef __APPLE__
         if (gfx_backend_use_metal()) {
             extern void gfx_metal_set_clear_color(float r, float g, float b);
@@ -24254,14 +24297,13 @@ void gfx_run_dl(Gfx *dl) {
                 int sh = gfx_current_dimensions.height;
                 uint8_t *pixels = (uint8_t *)malloc(sw * sh * 3);
                 if (pixels) {
-#ifdef __APPLE__
-                    /* Metal has no GL context; route through the backend
+                    /* Metal/WebGPU have no GL context; route through the backend
                      * readback. GL path unchanged (byte-identical). */
-                    if (gfx_backend_use_metal() && gfx_rapi && gfx_rapi->read_framebuffer_rgb) {
+                    if (!gfx_backend_use_opengl() && gfx_rapi && gfx_rapi->read_framebuffer_rgb) {
                         gfx_rapi->read_framebuffer_rgb(0, 0, sw, sh, pixels);
-                    } else
-#endif
-                    glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+                    } else {
+                        glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+                    }
                     FILE *sf = fopen(spath, "wb");
                     if (sf) {
                         fprintf(sf, "P6\n%d %d\n255\n", sw, sh);
@@ -24282,10 +24324,9 @@ void gfx_run_dl(Gfx *dl) {
 #ifdef NATIVE_PORT
     /* GL draws the minimap here. Metal draws the same queued overlay triangles in
      * mtl_end_frame before the final present blit, so screenshots/readback include
-     * it without touching a GL context. */
-#ifdef __APPLE__
-    if (!gfx_backend_use_metal())
-#endif
+     * it without touching a GL context. WebGPU likewise has no GL context, so this
+     * GL-only draw must be gated on "GL is active", not merely "not Metal". */
+    if (gfx_backend_use_opengl())
         minimap_overlay_draw_queued_frames();
 #endif
     gfx_trace_glass_shard_coverage_frame_end();
@@ -24999,9 +25040,10 @@ unsigned int gfx_get_segment_mask(void) {
 void gfx_end_frame(void) {
     extern SDL_Window *g_sdlWindow;
     extern void platformOverlayRender(void);
-#ifdef __APPLE__
-    if (gfx_backend_use_metal()) return;  /* Metal presents its drawable in gfx_metal end_frame */
-#endif
+    /* Only the GL backend swaps here. Metal presents its drawable in
+     * mtl_end_frame; WebGPU presents via wgpuSurfacePresent in wgpu_end_frame.
+     * Neither has a GL context, so SDL_GL_SwapWindow below must be GL-only. */
+    if (!gfx_backend_use_opengl()) return;
     /* Draw the app shell's in-game overlay over the finished GL frame (no-op
      * when no overlay hooks are registered, e.g. the automation path). */
     platformOverlayRender();

@@ -251,8 +251,13 @@ void platformRumbleStopAll(void) {
 /* ===== Window state ===== */
 SDL_Window   *g_sdlWindow  = NULL;  /* non-static: fast3d needs access for swap/dimensions */
 static SDL_GLContext  g_glContext  = NULL;
+/* Backend selectors (fast3d/gfx_backend.h). Both are always defined — each
+ * returns false unless its backend is compiled in and selected — so they are
+ * declared unconditionally: the screenshot readback path compiles on non-Apple
+ * WebGPU builds and references both. */
+extern bool gfx_backend_use_metal(void);
+extern bool gfx_backend_use_webgpu(void);
 #ifdef __APPLE__
-extern bool gfx_backend_use_metal(void);  /* fast3d/gfx_backend.h */
 SDL_MetalView g_metalView = NULL;          /* non-static: gfx_metal reads its CAMetalLayer */
 #endif
 static int g_sdlQuit = 0;
@@ -819,7 +824,7 @@ void platformSaveScreenshot(void) {
 
     if (g_sdlWindow != NULL) {
 #ifdef __APPLE__
-        if (gfx_backend_use_metal()) {
+        if (gfx_backend_use_metal() || gfx_backend_use_webgpu()) {
             SDL_Metal_GetDrawableSize(g_sdlWindow, &src_w, &src_h);
         } else
 #endif
@@ -852,14 +857,16 @@ void platformSaveScreenshot(void) {
         return;
     }
 
-#ifdef __APPLE__
-    if (gfx_backend_use_metal()) {
-        /* Metal: blit-readback of the last composited scene texture (the
-         * backend returns GL-convention bottom-left RGB, so downstream BMP/VI
-         * handling is unchanged). */
+#if defined(__APPLE__) || defined(MGB64_WEBGPU_BACKEND)
+    if (gfx_backend_use_metal() || gfx_backend_use_webgpu()) {
+        /* Metal/WebGPU: readback of the last composited scene via the backend
+         * (returns GL-convention bottom-left RGB, so downstream BMP/VI handling
+         * is unchanged). There is no GL context, so the glReadPixels path below
+         * must be skipped. The WebGPU readback is stubbed until Task 5 and
+         * returns false — the graceful "readback failed" path fires. */
         extern bool gfx_backend_read_framebuffer_rgb(int, int, int, int, unsigned char *);
         if (!gfx_backend_read_framebuffer_rgb(0, 0, src_w, src_h, source_pixels)) {
-            fprintf(stderr, "[metal] screenshot readback failed\n");
+            fprintf(stderr, "[gfx] screenshot readback failed\n");
             free(source_pixels);
             free(pixels);
             return;
@@ -2877,7 +2884,10 @@ int platformInitSDL(void) {
         int window_y;
         Uint32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 #ifdef __APPLE__
-        if (gfx_backend_use_metal()) {
+        /* Both the native Metal backend and the WebGPU backend (which drives
+         * Metal through wgpu-native) render into a CAMetalLayer, so the window
+         * must be a Metal window, not a GL one. */
+        if (gfx_backend_use_metal() || gfx_backend_use_webgpu()) {
             window_flags = SDL_WINDOW_METAL | SDL_WINDOW_RESIZABLE;
         }
 #endif
@@ -2908,7 +2918,10 @@ int platformInitSDL(void) {
     }
 
 #ifdef __APPLE__
-    if (gfx_backend_use_metal()) {
+    /* WebGPU shares the Metal-view path: platformGetMetalLayer() hands the
+     * created view's CAMetalLayer to wgpu-native for the WGPUSurface. Neither
+     * the Metal nor the WebGPU backend wants a GL context. */
+    if (gfx_backend_use_metal() || gfx_backend_use_webgpu()) {
         g_metalView = SDL_Metal_CreateView(g_sdlWindow);
         if (!g_metalView) {
             fprintf(stderr, "[SDL] Metal view creation failed: %s\n", SDL_GetError());
@@ -2979,6 +2992,12 @@ int platformInitSDL(void) {
     }
 
     g_lastFrameTime = SDL_GetTicks();
+#ifdef MGB64_WEBGPU_BACKEND
+    if (gfx_backend_use_webgpu()) {
+        /* No GL context exists — glGetString() would crash. */
+        printf("[SDL] Window created (WebGPU / wgpu-native)\n");
+    } else
+#endif
 #ifdef __APPLE__
     if (gfx_backend_use_metal()) {
         printf("[SDL] Window created (native Metal)\n");

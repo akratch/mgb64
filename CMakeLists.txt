@@ -1408,6 +1408,16 @@ if(APPLE)
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
+# Cross-platform WebGPU (wgpu-native) backend — opt-in at build time
+# (MGB64_WEBGPU_BACKEND) AND at runtime (GE007_RENDERER=webgpu). Compiled into
+# the game only when the option is on, keeping the default build byte-identical
+# (no wgpu symbols) until the deliberate default flip. The `webgpu` INTERFACE
+# target (include dir + pinned prebuilt lib + platform frameworks) is defined by
+# cmake/webgpu.cmake; it is linked into the engine targets below.
+if(MGB64_WEBGPU_BACKEND)
+    list(APPEND FAST3D_SOURCES src/platform/fast3d/gfx_webgpu.c)
+endif()
+
 # glad OpenGL loader — not needed on macOS (uses framework) or GLES (SDL handles it)
 if(NOT APPLE AND NOT MGB64_PORTMASTER_GLES)
     set(GLAD_SOURCES lib/glad/src/glad.c)
@@ -1505,6 +1515,17 @@ endif()
 
 if(PORT_SOUNDPLAYER_REAL)
     target_compile_definitions(ge007 PRIVATE PORT_SOUNDPLAYER_REAL)
+endif()
+
+# WebGPU backend: gate the code (MGB64_WEBGPU_BACKEND) and link the pinned
+# prebuilt (the `webgpu` INTERFACE target from cmake/webgpu.cmake). Only when the
+# option is on, so the default build links no wgpu symbols (byte-identical).
+if(MGB64_WEBGPU_BACKEND)
+    target_compile_definitions(ge007 PRIVATE MGB64_WEBGPU_BACKEND)
+    # Plain signature to match the other target_link_libraries(ge007 ...) calls
+    # (CMake forbids mixing plain and keyword forms on one target). The `webgpu`
+    # INTERFACE target's include dirs + frameworks still propagate transitively.
+    target_link_libraries(ge007 webgpu)
 endif()
 
 target_include_directories(ge007 PRIVATE
@@ -1856,6 +1877,14 @@ if(MACOS_APP_BUNDLE AND APPLE)
     )
     if(PORT_SOUNDPLAYER_REAL)
         target_compile_definitions(ge007_lib PRIVATE PORT_SOUNDPLAYER_REAL)
+    endif()
+
+    # WebGPU backend in the .app static-lib path (propagates the pinned prebuilt
+    # + frameworks as usage requirements to the final Swift-shell link).
+    if(MGB64_WEBGPU_BACKEND)
+        target_compile_definitions(ge007_lib PRIVATE MGB64_WEBGPU_BACKEND)
+        # Plain signature to match the other ge007_lib link calls.
+        target_link_libraries(ge007_lib webgpu)
     endif()
 
     target_include_directories(ge007_lib PRIVATE

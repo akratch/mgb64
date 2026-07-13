@@ -22,16 +22,17 @@
 
 ---
 
-## Task 1: Backend skeleton + surface + clear (renders into the MGB64 window)
+## Task 1: Backend skeleton + surface + clear (renders into the MGB64 window) — DONE
 
 **Files:** Create `src/platform/fast3d/gfx_webgpu.c`; modify `gfx_backend.c`/`.h` (a `GE007_RENDERER=webgpu` selector `gfx_backend_use_webgpu()`), `gfx_pc.c` (select `gfx_webgpu_api`), `CMakeLists.txt` (compile + link `webgpu` into `ge007` only when `MGB64_WEBGPU_BACKEND`).
 
 **Interfaces:** Produces `struct GfxRenderingAPI gfx_webgpu_api;` selected when `GE007_RENDERER=webgpu`. Consumes the SDL window native handle for `WGPUSurface` (metal layer via `SDL_Metal_CreateView`/`SDL_SysWMinfo` on macOS, HWND on Windows, X11/Wayland on Linux — the `wgpu.h` `wgpuInstanceCreateSurface` + platform `WGPUSurfaceSourceMetalLayer`/`...WindowsHWND`/`...XlibWindow`).
 
-- [ ] Init: instance/adapter/device (spike code), `WGPUSurface` from the SDL window, configure the swapchain (`wgpuSurfaceConfigure`, BGRA8/preferred format, size = drawable).
-- [ ] `start_frame`/`end_frame`: acquire the surface texture, a render pass that clears to the charcoal color, submit, `wgpuSurfacePresent`. `on_resize` reconfigures. Stub the rest.
-- [ ] **Validate:** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam --screenshot-frame 30 --screenshot-exit` shows a cleared frame + clean exit; ASan clean; tapes byte-exact; `webgpu_spike` still green.
-- [ ] Commit.
+- [x] Init: instance/adapter/device (spike code), `WGPUSurface` from the SDL window, configure the swapchain (`wgpuSurfaceConfigure`, BGRA8/preferred format, size = `gfx_current_dimensions`, lazy-(re)configure in `start_frame`).
+- [x] `start_frame`/`end_frame`: acquire the surface texture, a render pass that clears to the charcoal color, submit, `wgpuSurfacePresent`. `on_resize` forces reconfigure. Rest stubbed (safe: shader cache returns stable non-NULL programs, textures return ids, state/draw are no-ops).
+- [x] **Cross-backend guard fix (`gfx_backend_use_opengl()`):** GL-context-only paths in the shared interpreter were gated on `!gfx_backend_use_metal()`, so a WebGPU session (also no GL context) fell into `glGetIntegerv`/`SDL_GL_SwapWindow`/`minimap_overlay_draw_queued_frames`/`glReadPixels` and crashed. Added `gfx_backend_use_opengl()` (= `!metal && !webgpu`) in `gfx_backend.c/.h` and routed those sites through it. **Also fixed a C fall-through:** a bare `extern` declaration placed directly after an `else` (from the `#ifdef __APPLE__` block) is not a valid `else` body — it silently made the following metal/opengl branches unconditional. Hoisted all `extern`s above the `if/else` chain in the `max_offscreen_dim` selector.
+- [x] **Validate:** `GE007_RENDERER=webgpu build-webgpu/ge007 --level dam --no-ui` boots to a cleared frame + stable game loop + clean exit (no crash, no wgpu validation errors); default `build/ge007` has **zero** real-WebGPU symbols (only the always-false `gfx_backend_use_webgpu` stub); `tape_regression.sh --no-build` byte-exact (7/7); `webgpu_spike` green. (ASan-clean boot deferred — wgpu-native is a non-instrumented prebuilt; will run a dedicated ASan pass at a later task.)
+- [x] Commit.
 
 ## Task 2: Textures + samplers
 
