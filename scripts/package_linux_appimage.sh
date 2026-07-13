@@ -23,6 +23,19 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -x "$binary" ]] || { echo "ERROR: binary not found/executable: $binary" >&2; exit 1; }
 
+# appimagetool is a build-time EXECUTABLE dependency, so it is pinned to an
+# immutable release and verified by SHA-256 (fail closed on mismatch) rather than
+# fetched from the moving `continuous` alias and run unverified [AUDIT-0037].
+APPIMAGETOOL_VERSION="1.9.1"
+APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+  else echo ""; fi
+}
+
 dist="dist"; mkdir -p "$dist"
 work="$(mktemp -d)"
 appdir="$work/MGB64.AppDir"
@@ -82,12 +95,34 @@ echo "wrote $dist/mgb64-linux-$version.tar.gz"
 tool="$work/appimagetool"
 if command -v appimagetool >/dev/null 2>&1; then
   tool="$(command -v appimagetool)"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q -O "$tool" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
-    && chmod +x "$tool" || tool=""
 else
-  tool=""
+  # Fetch the pinned appimagetool. A download failure is best-effort (the .tar.gz
+  # still ships), but a DIGEST MISMATCH fails closed -- we never run an unverified
+  # or tampered tool [AUDIT-0037].
+  fetched=""
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$tool" "$APPIMAGETOOL_URL" && fetched=1 || fetched=""
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$tool" "$APPIMAGETOOL_URL" && fetched=1 || fetched=""
+  fi
+  if [[ -n "$fetched" && -f "$tool" ]]; then
+    got="$(sha256_of "$tool")"
+    if [[ -z "$got" ]]; then
+      echo "ERROR: no sha256 tool available to verify appimagetool; refusing to run it." >&2
+      exit 1
+    elif [[ "$got" != "$APPIMAGETOOL_SHA256" ]]; then
+      echo "ERROR: appimagetool ${APPIMAGETOOL_VERSION} digest mismatch:" >&2
+      echo "       got      ${got}" >&2
+      echo "       expected ${APPIMAGETOOL_SHA256}" >&2
+      rm -f "$tool"
+      exit 1
+    fi
+    chmod +x "$tool"
+    echo "appimagetool ${APPIMAGETOOL_VERSION} verified (sha256 ${APPIMAGETOOL_SHA256:0:12}...)"
+  else
+    echo "WARN: appimagetool download unavailable; producing .tar.gz only." >&2
+    tool=""
+  fi
 fi
 if [[ -n "$tool" ]]; then
   ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" "$dist/mgb64-linux-$version.AppImage" \

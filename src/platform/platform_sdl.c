@@ -800,8 +800,14 @@ void platformSetScreenshotLabel(const char *label) {
     g_screenshotLabel = out > 0 ? g_screenshotLabelStorage : NULL;
 }
 
+/* Set to 1 whenever the most recent screenshot save did not fully persist a valid
+ * BMP (alloc, readback, open, write, or close failure). Read by the auto-exit path
+ * so an automation capture that silently failed exits nonzero [AUDIT-0043]. */
+static int s_lastScreenshotFailed = 0;
+
 void platformSaveScreenshot(void) {
     int w = SCREENSHOT_W, h = SCREENSHOT_H;
+    s_lastScreenshotFailed = 1;  /* pessimistic: cleared only on full success below */
     int src_w = w;
     int src_h = h;
     int row_size;
@@ -938,6 +944,7 @@ void platformSaveScreenshot(void) {
     free(pixels);
     if (write_ok) {
         printf("[SDL] Screenshot saved: %s\n", filename);
+        s_lastScreenshotFailed = 0;  /* full success */
     } else {
         fprintf(stderr, "[SDL] Failed to write screenshot %s (short write or I/O error); removing truncated file.\n",
                 filename);
@@ -1252,6 +1259,11 @@ static void platformFinishAutoScreenshotIfRequested(void) {
                    g_crashRecoveryCount);
             platformShutdownSDL();
             exit(3);
+        }
+        if (s_lastScreenshotFailed) {
+            fprintf(stderr, "[GE007-PC] Auto-screenshot did NOT persist a valid file; exiting with error.\n");
+            platformShutdownSDL();
+            exit(4);  /* automation must see a failed capture as failure [AUDIT-0043] */
         }
         printf("[GE007-PC] Auto-screenshot complete, exiting.\n");
         platformShutdownSDL();

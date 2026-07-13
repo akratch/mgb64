@@ -106,10 +106,12 @@ int main(int argc, char **argv) {
 
     // Boot the engine into the shell's window: adopt the window, then run the
     // shared engine boot path. Blocks until the game exits.
-    auto play = [&](const MgbBootConfig &cfg) {
+    // Returns the engine's exit status so callers can honor it [AUDIT-0035]:
+    // a failed boot (bad/missing ROM, init failure) must not become app exit 0.
+    auto play = [&](const MgbBootConfig &cfg) -> int {
         platformSetHostWindow(host.window(), host.glContext());
         Overlay_install(host.window(), argv[0]);  // in-game overlay (F1)
-        mgb64_engine_boot(&cfg);
+        return mgb64_engine_boot(&cfg);
     };
 
     // Validation/CI: immediately boot into the shell window (with
@@ -120,9 +122,9 @@ int main(int argc, char **argv) {
         // pollutes the user's eeprom/ini or the byte-identity harness.
         MgbBootConfig cfg = {nullptr, std::getenv("MGB64_APP_SAVEDIR"), -1, -1, 0, 0, -1};
         cfg.level_slug = std::getenv("MGB64_APP_AUTOPLAY_LEVEL");  // exercises level boot
-        play(cfg);
+        int rc = play(cfg);
         host.shutdown();
-        return 0;
+        return rc;
     }
 
     // Headless smoke path (also used by CI in Task 11): render a fixed number
@@ -152,9 +154,9 @@ int main(int argc, char **argv) {
     if (std::getenv("MGB64_PORTMASTER")) {
         MgbBootConfig cfg = {std::getenv("MGB64_ROM"), std::getenv("MGB64_APP_SAVEDIR"),
                              -1, -1, 0, 0, -1, nullptr, 0};
-        play(cfg);
+        int rc = play(cfg);
         host.shutdown();
-        return 0;
+        return rc;
     }
 
     // Quiet, once-per-session check for a newer GitHub release on a background
@@ -172,6 +174,7 @@ int main(int argc, char **argv) {
     host.applyLauncherFullscreen(mgb_config_get_int("UI.LauncherFullscreen", 0));
 
     bool running = true;
+    int exitCode = 0;  // a failed interactive Play boot propagates to process exit
     while (running) {
         if (host.pumpAndShouldQuit()) break;
         // RX.2: apply the live UI.Scale before drawing (idempotent no-op when
@@ -183,11 +186,11 @@ int main(int argc, char **argv) {
         if (action.type == LauncherActionType::Quit) {
             running = false;
         } else if (action.type == LauncherActionType::Play) {
-            play(action.boot);  // blocks; game renders into this window
+            exitCode = play(action.boot);  // blocks; game renders into this window
             running = false;    // Task 9 adds return-to-launcher (re-exec)
         }
     }
     UpdateCheck_quiesce();  // a check still in flight must not log past teardown
     host.shutdown();
-    return 0;
+    return exitCode;  // 0 on a clean quit; the engine's status on a failed Play
 }
