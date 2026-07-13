@@ -599,28 +599,37 @@ static void wgpu_end_frame(void) {
         wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
 
         /* Draw the app shell's in-game overlay (F1 menu) on top of the presented
-         * scene: open a Load render pass on the surface texture and hand it to
-         * the overlay via s_overlay_pass. No-op when no overlay hooks are
-         * registered (standalone --level boot) — the pass loads+stores unchanged. */
+         * scene. Only open the surface render pass when the overlay is actually
+         * visible (platformOverlayWantsInput): a Load+Store pass over the full
+         * surface is real bandwidth, so standalone boots (no hooks → 0) and
+         * closed-overlay gameplay must not pay for an empty pass every frame. The
+         * hook still runs in both cases so its per-frame logic (e.g. the headless
+         * open/close test tick) ticks; when no pass is open the overlay's draw is
+         * skipped (gfx_webgpu_current_overlay_pass() returns NULL). */
         extern void platformOverlayRender(void);
-        WGPUTextureView surf_view = wgpuTextureCreateView(st.texture, NULL);
-        if (surf_view != NULL) {
-            WGPURenderPassColorAttachment oa = {0};
-            oa.view = surf_view;
-            oa.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-            oa.loadOp = WGPULoadOp_Load;      /* preserve the blitted scene */
-            oa.storeOp = WGPUStoreOp_Store;
-            WGPURenderPassDescriptor orp = {0};
-            orp.colorAttachmentCount = 1;
-            orp.colorAttachments = &oa;
-            s_overlay_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &orp);
-            s_overlay_w = (int)s_scene_w;
-            s_overlay_h = (int)s_scene_h;
-            platformOverlayRender();
-            wgpuRenderPassEncoderEnd(s_overlay_pass);
-            wgpuRenderPassEncoderRelease(s_overlay_pass);
-            s_overlay_pass = NULL;
-            wgpuTextureViewRelease(surf_view);
+        extern int  platformOverlayWantsInput(void);
+        if (platformOverlayWantsInput()) {
+            WGPUTextureView surf_view = wgpuTextureCreateView(st.texture, NULL);
+            if (surf_view != NULL) {
+                WGPURenderPassColorAttachment oa = {0};
+                oa.view = surf_view;
+                oa.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+                oa.loadOp = WGPULoadOp_Load;      /* preserve the blitted scene */
+                oa.storeOp = WGPUStoreOp_Store;
+                WGPURenderPassDescriptor orp = {0};
+                orp.colorAttachmentCount = 1;
+                orp.colorAttachments = &oa;
+                s_overlay_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &orp);
+                s_overlay_w = (int)s_scene_w;
+                s_overlay_h = (int)s_scene_h;
+                platformOverlayRender();
+                wgpuRenderPassEncoderEnd(s_overlay_pass);
+                wgpuRenderPassEncoderRelease(s_overlay_pass);
+                s_overlay_pass = NULL;
+                wgpuTextureViewRelease(surf_view);
+            }
+        } else {
+            platformOverlayRender();   /* per-frame logic only; no pass, no draw */
         }
     }
 
