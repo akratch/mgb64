@@ -181,6 +181,30 @@ This is the strategic payoff — it's not just deduplication:
    of forked backend + collapsing the shader fork.
 6. **Then build the AAA post-FX on compute** — the reason we did this — once, everywhere.
 
+## 7b. CRITICAL FINDING (2026-07-13, during bgfx Task 0) — bgfx is the WRONG fit
+
+Fast3D **generates and compiles shaders at RUNTIME**, one per N64 color-combiner ID:
+`gfx_opengl_create_and_load_new_shader` string-builds GLSL and `glCompileShader`s it
+live; `mtl_create_and_load_new_shader` builds MSL and `newLibraryWithSource`s it live.
+The shader pool is **dynamic and unbounded** (`gfx_opengl.c` reallocs it; "EXCEEDS old
+fixed pool of 256").
+
+**bgfx has no runtime shader compilation** — it loads only *offline* `shaderc`-compiled
+binaries. Making bgfx work would require pre-compiling the entire (dynamic, 256+)
+combiner-permutation set offline and embedding it — fragile (a missed permutation = a
+missing draw; the remaster's modern meshes add more) and it bolts a capture/codegen step
+onto the build. That is a **heavy, awkward swap** — which fails the owner's "only if bgfx
+isn't a heavy swap" condition.
+
+**Revised recommendation: WebGPU (via Dawn or wgpu-native).** WebGPU supports **runtime**
+shader-module creation (`wgpuDeviceCreateShaderModule` from WGSL/SPIR-V at draw-time),
+which matches Fast3D's dynamic combiner model exactly — the same way GL/Metal compile
+live today — while still giving the single cross-platform backend (native Metal on macOS,
+D3D12 on Windows, Vulkan on Linux, GL/Vulkan on handhelds) and compute for the AAA post-FX.
+This makes WebGPU both the *most modern* and the *correct-fit* choice; bgfx's only edge
+(maturity/simplicity) is outweighed by the shader-model mismatch. The `2026-07-13-bgfx-backend`
+plan is superseded pending the owner's go-ahead to re-target it at WebGPU.
+
 ## 7. Open questions for the owner
 
 - **bgfx vs WebGPU/Dawn:** ship-it-pragmatic (bgfx) vs most-modern-future (WebGPU). This
