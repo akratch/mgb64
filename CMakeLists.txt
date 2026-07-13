@@ -1415,7 +1415,9 @@ endif()
 # target (include dir + pinned prebuilt lib + platform frameworks) is defined by
 # cmake/webgpu.cmake; it is linked into the engine targets below.
 if(MGB64_WEBGPU_BACKEND)
-    list(APPEND FAST3D_SOURCES src/platform/fast3d/gfx_webgpu.c)
+    list(APPEND FAST3D_SOURCES
+        src/platform/fast3d/gfx_webgpu.c
+        src/platform/fast3d/gfx_webgpu_shader.c)
 endif()
 
 # glad OpenGL loader — not needed on macOS (uses framework) or GLES (SDL handles it)

@@ -47,8 +47,22 @@
 **Files:** Create `src/platform/fast3d/gfx_webgpu_shader.c` (emit vs+fs WGSL from `shader_id0/shader_id1`, mirroring `gfx_opengl.c:~880-1030`); modify `gfx_webgpu.c` (`create_and_load_new_shader`/`lookup_shader`/`load_shader`/`shader_get_info`/`draw_triangles`).
 **Interfaces:** Runtime `wgpuDeviceCreateShaderModule` per combiner id (spike-proven), a `WGPURenderPipeline` cache keyed by (shader_id, blend, depth) since WebGPU bakes state into pipelines, a `WGPUVertexLayout` matching the `buf_vbo` interleave, bind group(s) for texture(s)+uniforms; `draw_triangles` uploads a transient VB + submits.
 
-- [ ] Port the combiner→shader builder to WGSL (same mux logic as GL). Map the fixed `buf_vbo` layout to a `WGPUVertexBufferLayout`. Uniforms (fog, noise, matrices) via a uniform buffer + bind group.
-- [ ] **Validate:** Dam renders recognizable textured geometry on `GE007_RENDERER=webgpu`; tapes byte-exact; commit.
+> **De-risking outcome (must-read):** wgpu-native exposes a GLSL frontend
+> (`WGPUShaderSourceGLSL`), so reusing `gfx_opengl.c`'s emitted GLSL verbatim was
+> evaluated first. **It is NOT viable:** naga rejects `#version 330 core`
+> (`InvalidVersion(330)`) and, worse, wgpu-native's default uncaptured-error
+> handler **panics and aborts the process** on a rejected module — unshippable.
+> T3 therefore hand-ports the emitter to WGSL, where we own every `@location`,
+> `@group`/`@binding`, and expression. The vertex layout is a deterministic
+> CCFeatures walk (aVtxPos@0 then diag/worldpos/shade/texcoord/clamp/mask/fog/
+> inputs, same order as the GL `in` decls) → one `WGPUVertexBufferLayout`; the
+> Metal backend's `mtl_build_vertex_descriptor` + `mtl_pso_for` are the direct
+> template (both bake blend/depth/format into the pipeline like WebGPU).
+
+- [x] Ported the combiner→shader builder to WGSL in `gfx_webgpu_shader.c` (`shader_item_to_str`/`append_formula` reproduced in WGSL syntax; core combiner: 1-/2-cycle, tex0/tex1 sample, shade/prim/env inputs, fog, alpha, texture-edge cutout). The option-flag EFFECTS (clamp/mask/n64-3point/sun-shadow/dfdx/diag/frame-noise) are deferred to T4, but their vertex ATTRIBUTES are still walked so the stride stays exact.
+- [x] CCFeatures VBO walk → `WGPUVertexBufferLayout`; textures+samplers (Task 2 per-tile bindings) into a per-draw bind group with a 1×1 white fallback; render-pipeline cache keyed by (shader, blend); per-frame bump vertex buffer; `set_blend_mode` → `WGPUBlendState` (opaque/alpha/modulate). Installed a device uncaptured-error callback so a bad shader **logs, never aborts** (wgpu-native's default panics).
+- [x] **Offscreen architecture (also seeds T5):** the game renders into an offscreen BGRA8 scene target, then `end_frame` copies it to the surface for present. This decouples rendering from window visibility — a hidden/**Occluded** window (wgpu-native status `0x30001`, e.g. `GE007_BACKGROUND` headless) has no drawable, so a direct-to-surface render drew nothing; the offscreen target renders regardless and is read back for capture.
+- [x] **Validate:** Dam renders recognizable textured geometry on `GE007_RENDERER=webgpu` — confirmed via a `GE007_WEBGPU_DUMP_FRAME` texture readback (terrain, dam wall, lit walkway, hazard barriers, PP7 model, HUD; 12.5k distinct colors, not a blank clear). Tapes 7/7 byte-exact; default binary has zero real-WebGPU symbols. Commit. (Depth-buffering, viewport/scissor, exact blend + the deferred option effects → T4 parity.)
 
 ## Task 4: Depth / viewport / scissor / blend → visual parity
 

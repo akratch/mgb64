@@ -35,6 +35,7 @@
 #include <webgpu/wgpu.h>   /* wgpuDevicePoll + native extensions */
 
 #include "gfx_rendering_api.h"
+#include "gfx_webgpu_shader.h"   /* WGSL combiner emitter (Task 3) */
 
 /* gfx_current_dimensions is the frontend render resolution the viewports and
  * T&L are computed against (gfx_pc.c). Declared here exactly as gfx_metal.mm
@@ -65,15 +66,32 @@ static bool              s_ready    = false;   /* device + surface both live */
 /* Configured swapchain size; 0 forces a (re)configure on the next start_frame. */
 static uint32_t s_cfg_w = 0, s_cfg_h = 0;
 
+/* Offscreen scene target: the game renders here (not straight to the surface),
+ * so rendering is independent of window visibility (a hidden/occluded window has
+ * no drawable) and the frame can be read back (screenshots, Task 5). BGRA8 to
+ * match the surface so end_frame presents with a plain texture-to-texture copy.
+ * Re-created when the render resolution changes. */
+static WGPUTexture           s_scene_tex  = NULL;
+static WGPUTextureView       s_scene_view = NULL;
+static uint32_t              s_scene_w = 0, s_scene_h = 0;
+
 /* Per-frame objects, valid only between start_frame and end_frame. */
-static WGPUTexture           s_frame_tex  = NULL;
-static WGPUTextureView       s_frame_view = NULL;
 static WGPUCommandEncoder    s_encoder    = NULL;
 static WGPURenderPassEncoder s_pass       = NULL;
 static bool                  s_frame_open = false;
 
 /* Clear color, pushed by gfx_pc.c before start_frame (see gfx_webgpu_set_clear_color). */
 static double s_clear_r = 0.0, s_clear_g = 0.0, s_clear_b = 0.0;
+
+/* Draw resources (Task 3): a 1x1 white fallback texture + a nearest sampler for
+ * used-but-unuploaded texture slots, and one large vertex buffer bump-allocated
+ * per frame (reset in start_frame; consumed by draw_triangles). */
+static WGPUTexture     s_white_tex = NULL;
+static WGPUTextureView s_white_view = NULL;
+static WGPUSampler     s_default_sampler = NULL;
+#define WGPU_VBUF_CAP (16u * 1024u * 1024u)
+static WGPUBuffer s_vbuf = NULL;
+static uint32_t   s_vbuf_off = 0;
 
 /* ------------------------------------------------------------------------
  * Async request helpers (wgpu-native fires these during processEvents), mirroring
@@ -90,6 +108,17 @@ static void on_device(WGPURequestDeviceStatus s, WGPUDevice d, WGPUStringView m,
 
 static WGPUStringView wgpu_sv(const char *s) {
     WGPUStringView v; v.data = s; v.length = s ? strlen(s) : 0; return v;
+}
+
+/* Log device errors instead of letting wgpu-native's default uncaptured-error
+ * handler panic and abort the process — a malformed shader or a bad draw must
+ * degrade to a logged, skipped frame, never crash the game. */
+static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
+                            WGPUStringView msg, void *u1, void *u2) {
+    (void)device; (void)u1; (void)u2;
+    fprintf(stderr, "[webgpu] device error (type=%d): %.*s\n",
+            (int)type, (int)msg.length, msg.data ? msg.data : "");
+    fflush(stderr);
 }
 
 /* ------------------------------------------------------------------------
@@ -144,7 +173,12 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     WGPUSurfaceConfiguration cfg = {0};
     cfg.device = s_device;
     cfg.format = s_surface_format;
-    cfg.usage = WGPUTextureUsage_RenderAttachment;
+    /* The scene is rendered offscreen and copied here at present, so the surface
+     * only needs to be a copy destination (plus RenderAttachment, which surfaces
+     * require). If a platform disallows CopyDst, wgpuSurfaceConfigure raises a
+     * device error that on_device_error logs (never aborts) and present is
+     * skipped — offscreen rendering + readback still work. */
+    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst;
     cfg.width = w;
     cfg.height = h;
     cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
@@ -203,6 +237,7 @@ static void wgpu_init(void) {
     dcb.userdata1 = &dreq;
     WGPUDeviceDescriptor ddesc = {0};
     ddesc.label = wgpu_sv("mgb64-device");
+    ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
     wgpuAdapterRequestDevice(s_adapter, &ddesc, dcb);
     for (int i = 0; !dreq.done && i < 1000; ++i) wgpuInstanceProcessEvents(s_instance);
     if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
@@ -227,6 +262,7 @@ static void wgpu_on_resize(void) {
 
 static void wgpu_start_frame(void) {
     s_frame_open = false;
+    s_vbuf_off = 0;   /* reset the per-frame vertex bump allocator */
     if (!s_ready) {
         return;
     }
@@ -242,28 +278,29 @@ static void wgpu_start_frame(void) {
     if (rw != s_cfg_w || rh != s_cfg_h) {
         wgpu_configure_surface(rw, rh);
     }
-
-    WGPUSurfaceTexture st = {0};
-    wgpuSurfaceGetCurrentTexture(s_surface, &st);
-    if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
-        st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
-        /* Outdated/Lost/Timeout: drop the texture, reconfigure, skip the frame. */
-        if (st.texture != NULL) wgpuTextureRelease(st.texture);
-        wgpu_configure_surface(rw, rh);
-        return;
+    /* (Re)create the offscreen scene target at the render resolution. */
+    if (s_scene_view == NULL || s_scene_w != rw || s_scene_h != rh) {
+        if (s_scene_view != NULL) { wgpuTextureViewRelease(s_scene_view); s_scene_view = NULL; }
+        if (s_scene_tex != NULL)  { wgpuTextureRelease(s_scene_tex);      s_scene_tex = NULL; }
+        WGPUTextureDescriptor td = {0};
+        td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc |
+                   WGPUTextureUsage_TextureBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size.width = rw; td.size.height = rh; td.size.depthOrArrayLayers = 1;
+        td.format = s_surface_format;   /* BGRA8 — matches the surface for the present copy */
+        td.mipLevelCount = 1; td.sampleCount = 1;
+        s_scene_tex = wgpuDeviceCreateTexture(s_device, &td);
+        s_scene_view = s_scene_tex ? wgpuTextureCreateView(s_scene_tex, NULL) : NULL;
+        s_scene_w = rw; s_scene_h = rh;
     }
-    s_frame_tex = st.texture;
-    s_frame_view = wgpuTextureCreateView(s_frame_tex, NULL);
-    if (s_frame_view == NULL) {
-        wgpuTextureRelease(s_frame_tex);
-        s_frame_tex = NULL;
+    if (s_scene_view == NULL) {
         return;
     }
 
     s_encoder = wgpuDeviceCreateCommandEncoder(s_device, NULL);
 
     WGPURenderPassColorAttachment att = {0};
-    att.view = s_frame_view;
+    att.view = s_scene_view;
     att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;   /* required for a 2D color target */
     att.loadOp = WGPULoadOp_Clear;
     att.storeOp = WGPUStoreOp_Store;
@@ -275,7 +312,55 @@ static void wgpu_start_frame(void) {
     rp.colorAttachmentCount = 1;
     rp.colorAttachments = &att;
     s_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
-    s_frame_open = true;   /* Task 1: the pass only clears; draws arrive in Task 3 */
+    s_frame_open = true;
+}
+
+typedef struct { int done; WGPUMapAsyncStatus status; } WgpuMapReq;
+static void on_map(WGPUMapAsyncStatus s, WGPUStringView m, void *u1, void *u2) {
+    (void)m; (void)u2; WgpuMapReq *r = (WgpuMapReq *)u1; r->status = s; r->done = 1;
+}
+
+/* GE007_WEBGPU_DUMP_FRAME=<n> writes presented frame n to a PPM (debug/validation
+ * seed for the Task 5 readback). Returns the target frame, or -1 if unset. */
+static int wgpu_dump_target_frame(void) {
+    static int cached = -2;
+    if (cached == -2) {
+        const char *e = getenv("GE007_WEBGPU_DUMP_FRAME");
+        cached = e ? atoi(e) : -1;
+    }
+    return cached;
+}
+
+/* Map `buf` (bytesPerRow=bpr, BGRA8) and write a w*h RGB PPM to `path`. */
+static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h, const char *path) {
+    size_t size = (size_t)bpr * h;
+    WgpuMapReq mr = {0};
+    WGPUBufferMapCallbackInfo ci = {0};
+    ci.mode = WGPUCallbackMode_AllowProcessEvents;
+    ci.callback = on_map;
+    ci.userdata1 = &mr;
+    wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, size, ci);
+    for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(s_device, true, NULL);
+    if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
+        fprintf(stderr, "[webgpu] frame dump map failed (status=%d)\n", (int)mr.status);
+        return;
+    }
+    const uint8_t *px = (const uint8_t *)wgpuBufferGetConstMappedRange(buf, 0, size);
+    FILE *f = px ? fopen(path, "wb") : NULL;
+    if (f != NULL) {
+        fprintf(f, "P6\n%u %u\n255\n", w, h);
+        for (uint32_t y = 0; y < h; y++) {
+            const uint8_t *row = px + (size_t)y * bpr;
+            for (uint32_t x = 0; x < w; x++) {
+                const uint8_t *p = row + (size_t)x * 4;   /* BGRA8 */
+                uint8_t rgb[3] = { p[2], p[1], p[0] };
+                fwrite(rgb, 1, 3, f);
+            }
+        }
+        fclose(f);
+        fprintf(stderr, "[webgpu] wrote frame dump %s (%ux%u)\n", path, w, h);
+    }
+    wgpuBufferUnmap(buf);
 }
 
 static void wgpu_end_frame(void) {
@@ -287,18 +372,66 @@ static void wgpu_end_frame(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
+    /* Optional debug frame dump: copy the offscreen scene into a mappable buffer
+     * (works even when the window is hidden, unlike a surface readback). */
+    static int frame_no = -1;
+    frame_no++;
+    WGPUBuffer dump_buf = NULL;
+    uint32_t dump_bpr = 0;
+    if (frame_no == wgpu_dump_target_frame() && s_scene_w > 0 && s_scene_h > 0) {
+        dump_bpr = ((s_scene_w * 4u + 255u) / 256u) * 256u;   /* 256-align for CopyTextureToBuffer */
+        WGPUBufferDescriptor bd = {0};
+        bd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
+        bd.size = (uint64_t)dump_bpr * s_scene_h;
+        dump_buf = wgpuDeviceCreateBuffer(s_device, &bd);
+        if (dump_buf != NULL) {
+            WGPUTexelCopyTextureInfo src = {0};
+            src.texture = s_scene_tex; src.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferInfo dst = {0};
+            dst.buffer = dump_buf;
+            dst.layout.bytesPerRow = dump_bpr;
+            dst.layout.rowsPerImage = s_scene_h;
+            WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
+            wgpuCommandEncoderCopyTextureToBuffer(s_encoder, &src, &dst, &ext);
+        }
+    }
+
+    /* Present: copy the scene into the window's surface texture (same format +
+     * size) and present it. A hidden/occluded window has no drawable — that's
+     * fine, the offscreen frame still rendered (and dumped/read back). */
+    WGPUSurfaceTexture st = {0};
+    wgpuSurfaceGetCurrentTexture(s_surface, &st);
+    bool present_ok = st.texture != NULL &&
+        (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+         st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
+    if (present_ok) {
+        WGPUTexelCopyTextureInfo cs = {0};
+        cs.texture = s_scene_tex; cs.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo cd = {0};
+        cd.texture = st.texture; cd.aspect = WGPUTextureAspect_All;
+        WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
+        wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
+    }
+
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(s_encoder, NULL);
     wgpuQueueSubmit(s_queue, 1, &cmd);
     wgpuCommandBufferRelease(cmd);
     wgpuCommandEncoderRelease(s_encoder);
     s_encoder = NULL;
 
-    wgpuSurfacePresent(s_surface);
+    if (dump_buf != NULL) {
+        char path[128];
+        snprintf(path, sizeof(path), "/tmp/webgpu_frame_%d.ppm", frame_no);
+        wgpu_write_ppm(dump_buf, dump_bpr, s_scene_w, s_scene_h, path);
+        wgpuBufferRelease(dump_buf);
+    }
 
-    wgpuTextureViewRelease(s_frame_view);
-    s_frame_view = NULL;
-    wgpuTextureRelease(s_frame_tex);
-    s_frame_tex = NULL;
+    if (present_ok) {
+        wgpuSurfacePresent(s_surface);
+    }
+    if (st.texture != NULL) {
+        wgpuTextureRelease(st.texture);
+    }
     s_frame_open = false;
 }
 
@@ -307,74 +440,229 @@ static void wgpu_finish_render(void) {
 }
 
 /* ------------------------------------------------------------------------
- * Vtable: shaders (safe stubs — real WGSL emitter is Task 3)
+ * Vtable: shaders + render pipelines (Task 3)
  *
  * gfx_pc.c owns the shader-pointer lifecycle: it calls lookup_shader, and on a
- * miss create_and_load_new_shader, then load_shader + shader_get_info. The
- * pointers must be stable and non-NULL. A tiny by-value cache keyed on the
- * combiner id satisfies that without emitting any real pipeline yet; draws are
- * no-ops in Task 1, so num_inputs/used_textures may report empty.
+ * miss create_and_load_new_shader, then load_shader + shader_get_info + draw.
+ * Each ShaderProgram holds the compiled WGSL module, the derived vertex layout,
+ * the bind-group + pipeline layouts, and a small cache of WGPURenderPipelines
+ * keyed by dynamic state (WebGPU bakes blend/depth/format into the pipeline, so
+ * the GL immediate setters collapse into this lazy lookup — same shape as the
+ * Metal backend's mtl_pso_for).
  * ---------------------------------------------------------------------- */
+struct WgpuPipeEntry { uint32_t key; WGPURenderPipeline pipe; };
+
 struct ShaderProgram {
     uint64_t shader_id0;
     uint32_t shader_id1;
-    uint8_t  num_inputs;
-    bool     used_textures[2];
+    struct WgpuShaderInfo info;
+    WGPUShaderModule     module;
+    WGPUVertexAttribute  vattrs[24];
+    WGPUBindGroupLayout  bgl;       /* NULL when the combiner samples no textures */
+    WGPUPipelineLayout   playout;
+    struct WgpuPipeEntry pipes[16];
+    int npipes;
 };
 
-#define WGPU_SHADER_CACHE_MAX 512
-static struct ShaderProgram s_shader_cache[WGPU_SHADER_CACHE_MAX];
-static int s_shader_cache_count = 0;
+#define WGPU_SHADER_MAX 1024
+static struct ShaderProgram s_shaders[WGPU_SHADER_MAX];
+static int s_shader_count = 0;
+
+/* Currently loaded shader + dynamic blend state (set by load_shader /
+ * set_blend_mode, read by draw_triangles). */
+static struct ShaderProgram *s_cur_shader = NULL;
+static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
 
 static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t shader_id1) {
-    for (int i = 0; i < s_shader_cache_count; ++i) {
-        if (s_shader_cache[i].shader_id0 == shader_id0 &&
-            s_shader_cache[i].shader_id1 == shader_id1) {
-            return &s_shader_cache[i];
+    for (int i = 0; i < s_shader_count; ++i) {
+        if (s_shaders[i].shader_id0 == shader_id0 && s_shaders[i].shader_id1 == shader_id1) {
+            return &s_shaders[i];
         }
     }
     return NULL;
 }
 
+/* Build the bind-group layout for a combiner: (tex,sampler) pairs for each used
+ * texture at bindings (0,1) and (2,3). NULL when no textures are sampled. */
+static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
+    WGPUBindGroupLayoutEntry ents[4];
+    int ne = 0;
+    for (int t = 0; t < 2; t++) {
+        if (!info->used_textures[t]) continue;
+        WGPUBindGroupLayoutEntry te = {0};
+        te.binding = (uint32_t)(t * 2);
+        te.visibility = WGPUShaderStage_Fragment;
+        te.texture.sampleType = WGPUTextureSampleType_Float;
+        te.texture.viewDimension = WGPUTextureViewDimension_2D;
+        ents[ne++] = te;
+        WGPUBindGroupLayoutEntry se = {0};
+        se.binding = (uint32_t)(t * 2 + 1);
+        se.visibility = WGPUShaderStage_Fragment;
+        se.sampler.type = WGPUSamplerBindingType_Filtering;
+        ents[ne++] = se;
+    }
+    if (ne == 0) {
+        return NULL;
+    }
+    WGPUBindGroupLayoutDescriptor d = {0};
+    d.entryCount = (size_t)ne;
+    d.entries = ents;
+    return wgpuDeviceCreateBindGroupLayout(s_device, &d);
+}
+
 static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0, uint32_t shader_id1) {
     struct ShaderProgram *prg = wgpu_lookup_shader(shader_id0, shader_id1);
     if (prg != NULL) {
+        s_cur_shader = prg;
         return prg;
     }
-    int idx = s_shader_cache_count;
-    if (idx >= WGPU_SHADER_CACHE_MAX) {
+    if (s_shader_count >= WGPU_SHADER_MAX) {
         static bool warned = false;
-        if (!warned) {
-            fprintf(stderr, "[webgpu] shader cache full (%d) — reusing slot 0\n", WGPU_SHADER_CACHE_MAX);
-            warned = true;
-        }
-        idx = 0;   /* never return NULL; gfx_pc.c dereferences the result */
-    } else {
-        s_shader_cache_count++;
+        if (!warned) { fprintf(stderr, "[webgpu] shader table full (%d)\n", WGPU_SHADER_MAX); warned = true; }
+        return &s_shaders[0];   /* never NULL; gfx_pc.c dereferences the result */
     }
-    prg = &s_shader_cache[idx];
+    prg = &s_shaders[s_shader_count];
+    memset(prg, 0, sizeof(*prg));
     prg->shader_id0 = shader_id0;
     prg->shader_id1 = shader_id1;
-    prg->num_inputs = 0;
-    prg->used_textures[0] = false;
-    prg->used_textures[1] = false;
+
+    char *wgsl = gfx_webgpu_build_wgsl(shader_id0, shader_id1, &prg->info);
+    if (wgsl == NULL || !s_ready) {
+        free(wgsl);
+        s_shader_count++;
+        s_cur_shader = prg;
+        return prg;   /* inert program; draw guards on prg->module */
+    }
+
+    WGPUShaderSourceWGSL src = {0};
+    src.chain.sType = WGPUSType_ShaderSourceWGSL;
+    src.code = wgpu_sv(wgsl);
+    WGPUShaderModuleDescriptor smd = {0};
+    smd.nextInChain = (WGPUChainedStruct *)&src;
+    prg->module = wgpuDeviceCreateShaderModule(s_device, &smd);
+    free(wgsl);
+
+    /* Vertex attributes for the pipeline's WGPUVertexBufferLayout. */
+    for (int i = 0; i < prg->info.num_attrs; i++) {
+        int sz = prg->info.attrs[i].size;
+        prg->vattrs[i].format = sz == 1 ? WGPUVertexFormat_Float32
+                              : sz == 2 ? WGPUVertexFormat_Float32x2
+                              : sz == 3 ? WGPUVertexFormat_Float32x3
+                                        : WGPUVertexFormat_Float32x4;
+        prg->vattrs[i].offset = (uint64_t)prg->info.attrs[i].offset * sizeof(float);
+        prg->vattrs[i].shaderLocation = (uint32_t)prg->info.attrs[i].location;
+    }
+
+    prg->bgl = wgpu_make_bgl(&prg->info);
+    WGPUPipelineLayoutDescriptor pld = {0};
+    if (prg->bgl != NULL) {
+        pld.bindGroupLayoutCount = 1;
+        pld.bindGroupLayouts = &prg->bgl;
+    }
+    prg->playout = wgpuDeviceCreatePipelineLayout(s_device, &pld);
+
+    s_shader_count++;
+    s_cur_shader = prg;
     return prg;
 }
 
-static void wgpu_load_shader(struct ShaderProgram *new_prg) { (void)new_prg; }
-static void wgpu_unload_shader(struct ShaderProgram *old_prg) { (void)old_prg; }
+static void wgpu_load_shader(struct ShaderProgram *new_prg) { s_cur_shader = new_prg; }
+static void wgpu_unload_shader(struct ShaderProgram *old_prg) {
+    (void)old_prg;
+    s_cur_shader = NULL;
+}
 
 static void wgpu_shader_get_info(struct ShaderProgram *prg, uint8_t *num_inputs, bool used_textures[2]) {
     if (prg != NULL) {
-        if (num_inputs != NULL) *num_inputs = prg->num_inputs;
+        if (num_inputs != NULL) *num_inputs = (uint8_t)prg->info.num_inputs;
         if (used_textures != NULL) {
-            used_textures[0] = prg->used_textures[0];
-            used_textures[1] = prg->used_textures[1];
+            used_textures[0] = prg->info.used_textures[0];
+            used_textures[1] = prg->info.used_textures[1];
         }
     } else {
         if (num_inputs != NULL) *num_inputs = 0;
         if (used_textures != NULL) { used_textures[0] = false; used_textures[1] = false; }
     }
+}
+
+/* Map a GfxBlendMode to a WGPUBlendState. Task 3 covers opaque / standard alpha
+ * / multiplicative; the coverage/stencil/RDP-memory variants approximate to
+ * alpha blending here and get their exact treatment in Task 4. Returns false for
+ * opaque (no blend state attached). */
+static bool wgpu_blend_state(enum GfxBlendMode mode, WGPUBlendState *out) {
+    memset(out, 0, sizeof(*out));
+    switch (mode) {
+        case GFX_BLEND_DISABLED:
+            return false;
+        case GFX_BLEND_MODULATE:
+            out->color.operation = WGPUBlendOperation_Add;
+            out->color.srcFactor = WGPUBlendFactor_Dst;
+            out->color.dstFactor = WGPUBlendFactor_Zero;
+            out->alpha.operation = WGPUBlendOperation_Add;
+            out->alpha.srcFactor = WGPUBlendFactor_Dst;
+            out->alpha.dstFactor = WGPUBlendFactor_Zero;
+            return true;
+        default: /* ALPHA + coverage/stencil/memory variants -> standard alpha */
+            out->color.operation = WGPUBlendOperation_Add;
+            out->color.srcFactor = WGPUBlendFactor_SrcAlpha;
+            out->color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+            out->alpha.operation = WGPUBlendOperation_Add;
+            out->alpha.srcFactor = WGPUBlendFactor_One;
+            out->alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+            return true;
+    }
+}
+
+/* Lazily build + cache the render pipeline for (shader, blend). */
+static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxBlendMode blend) {
+    if (prg->module == NULL) {
+        return NULL;
+    }
+    uint32_t key = (uint32_t)blend;
+    for (int i = 0; i < prg->npipes; i++) {
+        if (prg->pipes[i].key == key) return prg->pipes[i].pipe;
+    }
+
+    WGPUVertexBufferLayout vbl = {0};
+    vbl.stepMode = WGPUVertexStepMode_Vertex;
+    vbl.arrayStride = (uint64_t)prg->info.num_floats * sizeof(float);
+    vbl.attributeCount = (size_t)prg->info.num_attrs;
+    vbl.attributes = prg->vattrs;
+
+    WGPUBlendState blendState;
+    bool has_blend = wgpu_blend_state(blend, &blendState);
+    WGPUColorTargetState color = {0};
+    color.format = s_surface_format;
+    color.writeMask = WGPUColorWriteMask_All;
+    color.blend = has_blend ? &blendState : NULL;
+
+    WGPUFragmentState fs = {0};
+    fs.module = prg->module;
+    fs.entryPoint = wgpu_sv("fs_main");
+    fs.targetCount = 1;
+    fs.targets = &color;
+
+    WGPURenderPipelineDescriptor pd = {0};
+    pd.layout = prg->playout;
+    pd.vertex.module = prg->module;
+    pd.vertex.entryPoint = wgpu_sv("vs_main");
+    pd.vertex.bufferCount = 1;
+    pd.vertex.buffers = &vbl;
+    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd.primitive.frontFace = WGPUFrontFace_CCW;
+    pd.primitive.cullMode = WGPUCullMode_None;   /* N64 backface handled on CPU */
+    pd.multisample.count = 1;
+    pd.multisample.mask = 0xFFFFFFFFu;
+    pd.fragment = &fs;
+    /* No depth-stencil in Task 3 (submission-order draw); Task 4 adds it. */
+
+    WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
+    if (pipe != NULL && prg->npipes < (int)(sizeof(prg->pipes) / sizeof(prg->pipes[0]))) {
+        prg->pipes[prg->npipes].key = key;
+        prg->pipes[prg->npipes].pipe = pipe;
+        prg->npipes++;
+    }
+    return pipe;
 }
 
 /* ------------------------------------------------------------------------
@@ -580,11 +868,104 @@ static void wgpu_set_viewport(int x, int y, int width, int height) {
 static void wgpu_set_scissor(int x, int y, int width, int height) {
     (void)x; (void)y; (void)width; (void)height;
 }
-static void wgpu_set_blend_mode(enum GfxBlendMode mode) { (void)mode; }
+static void wgpu_set_blend_mode(enum GfxBlendMode mode) { s_cur_blend = mode; }
+
+/* Lazily create the draw fallbacks (1x1 white texture, nearest sampler) + the
+ * per-frame bump vertex buffer (declared with the frame state above). Each draw
+ * appends its buf_vbo at a fresh offset so all draws in the frame's single
+ * render pass read distinct data (queue writes are ordered before submit). */
+static void wgpu_ensure_draw_resources(void) {
+    if (s_white_view == NULL) {
+        WGPUTextureDescriptor td = {0};
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size.width = 1; td.size.height = 1; td.size.depthOrArrayLayers = 1;
+        td.format = WGPUTextureFormat_RGBA8Unorm;
+        td.mipLevelCount = 1; td.sampleCount = 1;
+        s_white_tex = wgpuDeviceCreateTexture(s_device, &td);
+        if (s_white_tex != NULL) {
+            uint8_t white[4] = {255, 255, 255, 255};
+            WGPUTexelCopyTextureInfo dst = {0};
+            dst.texture = s_white_tex; dst.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferLayout lay = {0};
+            lay.bytesPerRow = 4; lay.rowsPerImage = 1;
+            WGPUExtent3D ext = {1, 1, 1};
+            wgpuQueueWriteTexture(s_queue, &dst, white, 4, &lay, &ext);
+            s_white_view = wgpuTextureCreateView(s_white_tex, NULL);
+        }
+    }
+    if (s_default_sampler == NULL) {
+        WGPUSamplerDescriptor sd = {0};
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_Repeat;
+        sd.magFilter = sd.minFilter = WGPUFilterMode_Nearest;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.maxAnisotropy = 1;
+        s_default_sampler = wgpuDeviceCreateSampler(s_device, &sd);
+    }
+    if (s_vbuf == NULL) {
+        WGPUBufferDescriptor bd = {0};
+        bd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+        bd.size = WGPU_VBUF_CAP;
+        s_vbuf = wgpuDeviceCreateBuffer(s_device, &bd);
+    }
+}
 
 static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    (void)buf_vbo; (void)buf_vbo_len; (void)buf_vbo_num_tris;
-    /* Geometry submission is Task 3 (WGSL combiner emitter + transient VB). */
+    if (!s_frame_open || s_cur_shader == NULL || s_cur_shader->module == NULL ||
+        buf_vbo == NULL || buf_vbo_len == 0 || buf_vbo_num_tris == 0) {
+        return;
+    }
+    wgpu_ensure_draw_resources();
+    if (s_vbuf == NULL) {
+        return;
+    }
+    WGPURenderPipeline pipe = wgpu_pipeline_for(s_cur_shader, s_cur_blend);
+    if (pipe == NULL) {
+        return;
+    }
+
+    /* Bump-allocate this batch's vertex data. */
+    uint32_t bytes = (uint32_t)(buf_vbo_len * sizeof(float));
+    if ((uint64_t)s_vbuf_off + bytes > WGPU_VBUF_CAP) {
+        static bool warned = false;
+        if (!warned) { fprintf(stderr, "[webgpu] per-frame vertex buffer full — dropping draws\n"); warned = true; }
+        return;
+    }
+    uint32_t voff = s_vbuf_off;
+    wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, buf_vbo, bytes);
+    s_vbuf_off += (bytes + 3u) & ~3u;   /* keep 4-byte alignment for the next offset */
+
+    /* Per-draw bind group: each used texture's live view + sampler, falling back
+     * to a 1x1 white texture / nearest sampler when unset. */
+    WGPUBindGroup bg = NULL;
+    if (s_cur_shader->bgl != NULL) {
+        WGPUBindGroupEntry ents[4];
+        int ne = 0;
+        for (int t = 0; t < 2; t++) {
+            if (!s_cur_shader->info.used_textures[t]) continue;
+            struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[t]);
+            WGPUTextureView view = (e != NULL && e->view != NULL) ? e->view : s_white_view;
+            WGPUSampler samp = s_bound_sampler[t] != NULL ? s_bound_sampler[t] : s_default_sampler;
+            WGPUBindGroupEntry te = {0}; te.binding = (uint32_t)(t * 2);     te.textureView = view; ents[ne++] = te;
+            WGPUBindGroupEntry se = {0}; se.binding = (uint32_t)(t * 2 + 1); se.sampler = samp;      ents[ne++] = se;
+        }
+        WGPUBindGroupDescriptor bd = {0};
+        bd.layout = s_cur_shader->bgl;
+        bd.entryCount = (size_t)ne;
+        bd.entries = ents;
+        bg = wgpuDeviceCreateBindGroup(s_device, &bd);
+    }
+
+    wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
+    if (bg != NULL) {
+        wgpuRenderPassEncoderSetBindGroup(s_pass, 0, bg, 0, NULL);
+    }
+    wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, s_vbuf, voff, bytes);
+    wgpuRenderPassEncoderDraw(s_pass, (uint32_t)(3 * buf_vbo_num_tris), 1, 0, 0);
+
+    if (bg != NULL) {
+        wgpuBindGroupRelease(bg);   /* the encoder retains it until submit */
+    }
 }
 
 static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
