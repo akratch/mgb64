@@ -1,11 +1,14 @@
-// app_host.h — portable app-shell host: owns the SDL window + GL context + ImGui.
+// app_host.h — portable app-shell host: owns the SDL window + render context + ImGui.
 //
 // The AppHost is the cross-platform equivalent of the macOS Swift AppDelegate:
-// it creates the window and rendering context, drives ImGui, and (in later
-// tasks) hands the window to the engine via platformSetHostWindow() when the
-// user starts a game. It requests the SAME GL attributes the engine's
-// platform_sdl.c uses, so the engine's fast3d renderer works correctly when it
-// adopts this context.
+// it creates the window and rendering context, drives ImGui, and hands the
+// window (+ device/surface) to the engine when the user starts a game.
+//
+// It picks the backend at init() by gfx_backend_use_webgpu(): the default is
+// WebGPU (window + wgpu device/surface, launcher UI via gfx_webgpu_imgui), and
+// GE007_RENDERER=gl falls back to a GL window + context + imgui_impl_opengl3.
+// Either way the engine adopts the same objects (platformSetHostWindow +
+// platformSetHostWebGpu), so the launcher and game render into one window.
 #ifndef MGB64_APP_HOST_H
 #define MGB64_APP_HOST_H
 
@@ -54,12 +57,55 @@ public:
     int drawableWidth()  const;
     int drawableHeight() const;
 
+    // True when the app shell is running on WebGPU (vs. the GL fallback). Set at
+    // init(). The engine adopts GL or WebGPU accordingly.
+    bool usingWebGpu() const { return useWebGpu_; }
+
+    // WebGPU host objects (opaque WGPU* as void*, 0 when on GL), for the game to
+    // adopt via platformSetHostWebGpu(). Valid after a successful WebGPU init().
+    void *wgpuInstance() const { return wgpuInstance_; }
+    void *wgpuAdapter()  const { return wgpuAdapter_; }
+    void *wgpuDevice()   const { return wgpuDevice_; }
+    void *wgpuQueue()    const { return wgpuQueue_; }
+    void *wgpuSurface()  const { return wgpuSurface_; }
+    int   wgpuFormat()   const { return wgpuFormat_; }
+
 private:
+    // Backend-specific init helpers (init() dispatches to one).
+    bool initWebGpu(const char *title, int width, int height);
+    bool initGL(const char *title, int width, int height);
+    // Drawable (pixel) size, backend-aware (GL vs Metal/native drawable).
+    void drawableSize(int *w, int *h) const;
+    // (Re)configure the WebGPU surface to the given pixel size. No-op on GL.
+    void configureWgpuSurface(int w, int h);
+    // (Re)create the offscreen scene target at the given pixel size if needed.
+    void ensureWgpuSceneTarget(int w, int h);
+    // Backend-specific frame present (endFrame dispatches to one).
+    void endFrameWebGpu(const char *captureBmpPath);
+    void endFrameGL(const char *captureBmpPath);
+
     SDL_Window   *window_ = nullptr;
     SDL_GLContext gl_     = nullptr;
     bool imguiReady_      = false;
     bool sdlOwned_        = false;  // did we SDL_Init (vs. reuse an existing init)?
     std::string droppedFile_;      // last SDL_DROPFILE path, consumed by takeDroppedFile()
+
+    // WebGPU path (selected at init by gfx_backend_use_webgpu()).
+    bool  useWebGpu_    = false;
+    void *metalView_    = nullptr;  // SDL_MetalView backing the surface layer (macOS)
+    void *wgpuInstance_ = nullptr;
+    void *wgpuAdapter_  = nullptr;
+    void *wgpuDevice_   = nullptr;
+    void *wgpuQueue_    = nullptr;
+    void *wgpuSurface_  = nullptr;
+    int   wgpuFormat_   = 0;
+    unsigned cfgW_ = 0, cfgH_ = 0;  // last-configured surface pixel size
+    // Offscreen scene target: the launcher UI renders here (window-independent),
+    // then is blitted to the surface for present and read back for capture — the
+    // same decoupling gfx_webgpu.c uses so a hidden/occluded window still renders.
+    void *sceneTex_  = nullptr;
+    void *sceneView_ = nullptr;
+    unsigned sceneW_ = 0, sceneH_ = 0;
 };
 
 #endif  // MGB64_APP_HOST_H

@@ -57,6 +57,9 @@ extern void *platformGetMetalLayer(void);
 extern int platformWebGpuWindowInfo(void *sdl_window, void **out1, void **out2,
                                     unsigned long long *out_win);
 #endif
+/* The SDL_Window the engine renders into (platform_sdl.c); NULL before window
+ * creation. The app shell passes its own window to the bring-up helper instead. */
+extern void *platformGetSdlWindow(void);
 
 /* ------------------------------------------------------------------------
  * Backend state
@@ -218,22 +221,13 @@ WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
 #endif
 }
 
-/* The engine's own surface, from the platform window it renders into. */
-static WGPUSurface wgpu_create_surface(void) {
-    void *layer = NULL;
-#ifdef __APPLE__
-    layer = platformGetMetalLayer();
-#endif
-    extern void *platformGetSdlWindow(void);
-    return gfx_webgpu_create_surface(s_instance, layer, platformGetSdlWindow());
-}
-
 /* Pick the swapchain format: prefer BGRA8Unorm (the near-universal surface
  * format and what CAMetalLayer natively presents), else the surface's first
- * advertised format. */
-static WGPUTextureFormat wgpu_choose_format(void) {
+ * advertised format. Parameterized so the shared bring-up helper can use it
+ * before the s_surface/s_adapter statics are assigned. */
+static WGPUTextureFormat wgpu_choose_format(WGPUSurface surface, WGPUAdapter adapter) {
     WGPUSurfaceCapabilities caps = {0};
-    if (wgpuSurfaceGetCapabilities(s_surface, s_adapter, &caps) != WGPUStatus_Success ||
+    if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus_Success ||
         caps.formatCount == 0) {
         wgpuSurfaceCapabilitiesFreeMembers(caps);
         return WGPUTextureFormat_BGRA8Unorm;   /* safe default */
@@ -271,6 +265,78 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     s_cfg_h = h;
 }
 
+/* Full WebGPU bring-up for a native window handle: instance -> surface ->
+ * adapter -> device -> queue -> surface format, mirroring the validated spike
+ * (tests/test_webgpu_spike.c). On success returns true with every out-param set
+ * (the caller owns the returned objects); on any failure returns false, the
+ * out-params untouched, and the caller treats the backend as inert. Shared by
+ * the engine's own wgpu_init AND the app shell (AppHost, via gfx_webgpu.h) so
+ * the request sequence + error callback live in exactly one place. */
+bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
+                        WGPUInstance *out_instance, WGPUAdapter *out_adapter,
+                        WGPUDevice *out_device, WGPUQueue *out_queue,
+                        WGPUSurface *out_surface, int *out_format) {
+    WGPUInstance instance = wgpuCreateInstance(NULL);
+    if (instance == NULL) {
+        fprintf(stderr, "[webgpu] wgpuCreateInstance failed\n");
+        return false;
+    }
+
+    /* Surface first, so it can be passed as the adapter's compatibleSurface. */
+    WGPUSurface surface = gfx_webgpu_create_surface(instance, metal_layer, sdl_window);
+    if (surface == NULL) {
+        fprintf(stderr, "[webgpu] surface creation failed — backend inert\n");
+        return false;
+    }
+
+    AdapterReq areq = {0};
+    WGPURequestAdapterCallbackInfo acb = {0};
+    acb.mode = WGPUCallbackMode_AllowProcessEvents;
+    acb.callback = on_adapter;
+    acb.userdata1 = &areq;
+    WGPURequestAdapterOptions aopts = {0};
+    aopts.compatibleSurface = surface;
+    aopts.powerPreference = WGPUPowerPreference_HighPerformance;
+    wgpuInstanceRequestAdapter(instance, &aopts, acb);
+    for (int i = 0; !areq.done && i < 1000; ++i) wgpuInstanceProcessEvents(instance);
+    if (!areq.done || areq.status != WGPURequestAdapterStatus_Success || areq.adapter == NULL) {
+        fprintf(stderr, "[webgpu] adapter request failed (status=%d)\n", (int)areq.status);
+        return false;
+    }
+    WGPUAdapter adapter = areq.adapter;
+
+    WGPUAdapterInfo info = {0};
+    wgpuAdapterGetInfo(adapter, &info);
+    fprintf(stderr, "[webgpu] adapter backend=%d device=%.*s\n",
+            (int)info.backendType, (int)info.device.length,
+            info.device.data ? info.device.data : "");
+    wgpuAdapterInfoFreeMembers(info);
+
+    DeviceReq dreq = {0};
+    WGPURequestDeviceCallbackInfo dcb = {0};
+    dcb.mode = WGPUCallbackMode_AllowProcessEvents;
+    dcb.callback = on_device;
+    dcb.userdata1 = &dreq;
+    WGPUDeviceDescriptor ddesc = {0};
+    ddesc.label = wgpu_sv("mgb64-device");
+    ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
+    wgpuAdapterRequestDevice(adapter, &ddesc, dcb);
+    for (int i = 0; !dreq.done && i < 1000; ++i) wgpuInstanceProcessEvents(instance);
+    if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
+        fprintf(stderr, "[webgpu] device request failed (status=%d)\n", (int)dreq.status);
+        return false;
+    }
+    WGPUDevice device = dreq.device;
+
+    *out_instance = instance;
+    *out_adapter  = adapter;
+    *out_device   = device;
+    *out_queue    = wgpuDeviceGetQueue(device);
+    *out_surface  = surface;
+    *out_format   = (int)wgpu_choose_format(surface, adapter);
+    return true;
+}
+
 /* ------------------------------------------------------------------------
  * Vtable: init / resize / frame lifecycle
  * ---------------------------------------------------------------------- */
@@ -300,60 +366,17 @@ static void wgpu_init(void) {
     }
 
     s_owns_device = true;
-    s_instance = wgpuCreateInstance(NULL);
-    if (s_instance == NULL) {
-        fprintf(stderr, "[webgpu] wgpuCreateInstance failed\n");
-        return;
+    void *layer = NULL;
+#ifdef __APPLE__
+    layer = platformGetMetalLayer();
+#endif
+    int fmt = 0;
+    if (!gfx_webgpu_bringup(layer, platformGetSdlWindow(),
+                            &s_instance, &s_adapter, &s_device, &s_queue,
+                            &s_surface, &fmt)) {
+        return;   /* helper logged the specific failure; backend stays inert */
     }
-
-    /* Surface first, so it can be passed as the adapter's compatibleSurface. */
-    s_surface = wgpu_create_surface();
-    if (s_surface == NULL) {
-        fprintf(stderr, "[webgpu] surface creation failed — backend inert\n");
-        return;
-    }
-
-    AdapterReq areq = {0};
-    WGPURequestAdapterCallbackInfo acb = {0};
-    acb.mode = WGPUCallbackMode_AllowProcessEvents;
-    acb.callback = on_adapter;
-    acb.userdata1 = &areq;
-    WGPURequestAdapterOptions aopts = {0};
-    aopts.compatibleSurface = s_surface;
-    aopts.powerPreference = WGPUPowerPreference_HighPerformance;
-    wgpuInstanceRequestAdapter(s_instance, &aopts, acb);
-    for (int i = 0; !areq.done && i < 1000; ++i) wgpuInstanceProcessEvents(s_instance);
-    if (!areq.done || areq.status != WGPURequestAdapterStatus_Success || areq.adapter == NULL) {
-        fprintf(stderr, "[webgpu] adapter request failed (status=%d)\n", (int)areq.status);
-        return;
-    }
-    s_adapter = areq.adapter;
-
-    WGPUAdapterInfo info = {0};
-    wgpuAdapterGetInfo(s_adapter, &info);
-    fprintf(stderr, "[webgpu] adapter backend=%d device=%.*s\n",
-            (int)info.backendType, (int)info.device.length,
-            info.device.data ? info.device.data : "");
-    wgpuAdapterInfoFreeMembers(info);
-
-    DeviceReq dreq = {0};
-    WGPURequestDeviceCallbackInfo dcb = {0};
-    dcb.mode = WGPUCallbackMode_AllowProcessEvents;
-    dcb.callback = on_device;
-    dcb.userdata1 = &dreq;
-    WGPUDeviceDescriptor ddesc = {0};
-    ddesc.label = wgpu_sv("mgb64-device");
-    ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
-    wgpuAdapterRequestDevice(s_adapter, &ddesc, dcb);
-    for (int i = 0; !dreq.done && i < 1000; ++i) wgpuInstanceProcessEvents(s_instance);
-    if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
-        fprintf(stderr, "[webgpu] device request failed (status=%d)\n", (int)dreq.status);
-        return;
-    }
-    s_device = dreq.device;
-    s_queue = wgpuDeviceGetQueue(s_device);
-
-    s_surface_format = wgpu_choose_format();
+    s_surface_format = (WGPUTextureFormat)fmt;
     s_ready = true;
     fprintf(stderr, "[webgpu] backend initialized (surface format=%d)\n", (int)s_surface_format);
 }

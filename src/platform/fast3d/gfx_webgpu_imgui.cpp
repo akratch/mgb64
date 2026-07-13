@@ -1,6 +1,12 @@
 /*
  * gfx_webgpu_imgui.cpp — minimal Dear ImGui renderer on WebGPU (see the header).
- * v29 API, ImGui legacy font-atlas path. Compiled C++, C ABI.
+ * v29 API, ImGui 1.92 dynamic-texture model (ImGuiBackendFlags_RendererHasTextures).
+ * Compiled C++, C ABI.
+ *
+ * ImGui 1.92 grows the font atlas on demand (glyphs are baked the first frame
+ * they are used), so a backend MUST honor ImTextureData create/update/destroy
+ * requests each frame — a one-time atlas upload drops every glyph added after
+ * init (em dash, middle dot, …). This mirrors imgui_impl_opengl3's texture path.
  */
 #include "gfx_webgpu_imgui.h"
 
@@ -27,9 +33,6 @@ WGPUPipelineLayout  s_pl = nullptr;
 WGPUBuffer          s_ubuf = nullptr;   /* 16-float ortho */
 WGPUSampler         s_sampler = nullptr;
 WGPUBindGroup       s_bg0 = nullptr;
-
-WGPUTexture     s_font_tex = nullptr;
-WGPUTextureView s_font_view = nullptr;
 
 /* Growable per-frame vertex/index buffers. */
 WGPUBuffer s_vbuf = nullptr; size_t s_vbuf_cap = 0;
@@ -76,36 +79,67 @@ WGPUBindGroup image_bind_group(WGPUTextureView view) {
     return bg;
 }
 
-bool build_font() {
-    ImGuiIO &io = ImGui::GetIO();
-    unsigned char *pixels = nullptr;
-    int w = 0, h = 0;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
-    if (pixels == nullptr || w <= 0 || h <= 0) {
-        return false;
+/* Honor one ImTextureData create/update/destroy request. TexID stores the
+ * WGPUTextureView (referenced by draw commands); BackendUserData stores the
+ * owning WGPUTexture so destroy can release both. Mirrors the GL backend. */
+void update_texture(ImTextureData *tex) {
+    if (tex->Status == ImTextureStatus_WantCreate) {
+        IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        WGPUTextureDescriptor td = {};
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size.width = (uint32_t)tex->Width; td.size.height = (uint32_t)tex->Height;
+        td.size.depthOrArrayLayers = 1;
+        td.format = WGPUTextureFormat_RGBA8Unorm;
+        td.mipLevelCount = 1; td.sampleCount = 1;
+        WGPUTexture wtex = wgpuDeviceCreateTexture(s_device, &td);
+        if (wtex == nullptr) return;
+
+        WGPUTexelCopyTextureInfo dst = {};
+        dst.texture = wtex; dst.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout lay = {};
+        lay.bytesPerRow = (uint32_t)tex->Width * 4u; lay.rowsPerImage = (uint32_t)tex->Height;
+        WGPUExtent3D ext = { (uint32_t)tex->Width, (uint32_t)tex->Height, 1 };
+        wgpuQueueWriteTexture(s_queue, &dst, tex->GetPixels(),
+                              (size_t)tex->Width * tex->Height * 4u, &lay, &ext);
+
+        WGPUTextureView view = wgpuTextureCreateView(wtex, nullptr);
+        tex->BackendUserData = wtex;
+        tex->SetTexID((ImTextureID)(intptr_t)view);
+        tex->SetStatus(ImTextureStatus_OK);
+    } else if (tex->Status == ImTextureStatus_WantUpdates) {
+        WGPUTexture wtex = (WGPUTexture)tex->BackendUserData;
+        if (wtex == nullptr) return;
+        static std::vector<unsigned char> tmp;
+        for (const ImTextureRect &r : tex->Updates) {
+            // Copy the sub-rect into a contiguous staging block (its source rows
+            // are Width*4 apart in the atlas) so bytesPerRow is exactly r.w*4.
+            tmp.resize((size_t)r.w * r.h * 4u);
+            for (int y = 0; y < r.h; ++y) {
+                std::memcpy(tmp.data() + (size_t)y * r.w * 4u,
+                            tex->GetPixelsAt(r.x, r.y + y), (size_t)r.w * 4u);
+            }
+            WGPUTexelCopyTextureInfo dst = {};
+            dst.texture = wtex; dst.aspect = WGPUTextureAspect_All;
+            dst.origin.x = (uint32_t)r.x; dst.origin.y = (uint32_t)r.y;
+            WGPUTexelCopyBufferLayout lay = {};
+            lay.bytesPerRow = (uint32_t)r.w * 4u; lay.rowsPerImage = (uint32_t)r.h;
+            WGPUExtent3D ext = { (uint32_t)r.w, (uint32_t)r.h, 1 };
+            wgpuQueueWriteTexture(s_queue, &dst, tmp.data(), tmp.size(), &lay, &ext);
+        }
+        tex->SetStatus(ImTextureStatus_OK);
+    } else if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames > 0) {
+        WGPUTextureView view = (WGPUTextureView)(intptr_t)tex->TexID;
+        WGPUTexture wtex = (WGPUTexture)tex->BackendUserData;
+        if (view != nullptr && view == s_img_bg_key) {
+            wgpuBindGroupRelease(s_img_bg); s_img_bg = nullptr; s_img_bg_key = nullptr;
+        }
+        if (view != nullptr) wgpuTextureViewRelease(view);
+        if (wtex != nullptr) wgpuTextureRelease(wtex);
+        tex->SetTexID(ImTextureID_Invalid);
+        tex->BackendUserData = nullptr;
+        tex->SetStatus(ImTextureStatus_Destroyed);
     }
-    WGPUTextureDescriptor td = {};
-    td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
-    td.dimension = WGPUTextureDimension_2D;
-    td.size.width = (uint32_t)w; td.size.height = (uint32_t)h; td.size.depthOrArrayLayers = 1;
-    td.format = WGPUTextureFormat_RGBA8Unorm;
-    td.mipLevelCount = 1; td.sampleCount = 1;
-    s_font_tex = wgpuDeviceCreateTexture(s_device, &td);
-    if (s_font_tex == nullptr) return false;
-
-    WGPUTexelCopyTextureInfo dst = {};
-    dst.texture = s_font_tex; dst.aspect = WGPUTextureAspect_All;
-    WGPUTexelCopyBufferLayout lay = {};
-    lay.bytesPerRow = (uint32_t)w * 4u; lay.rowsPerImage = (uint32_t)h;
-    WGPUExtent3D ext = { (uint32_t)w, (uint32_t)h, 1 };
-    wgpuQueueWriteTexture(s_queue, &dst, pixels, (size_t)w * h * 4u, &lay, &ext);
-
-    s_font_view = wgpuTextureCreateView(s_font_tex, nullptr);
-    if (s_font_view == nullptr) return false;
-    /* Legacy path: the font atlas is the one ImGui texture; hand our view to
-     * ImGui as its ImTextureID so draw commands reference it. */
-    io.Fonts->SetTexID((ImTextureID)(intptr_t)s_font_view);
-    return true;
 }
 
 void clamp_rect(int *x, int *y, int *w, int *h, int maxw, int maxh) {
@@ -126,9 +160,12 @@ extern "C" bool gfx_webgpu_imgui_init(void *device, void *queue, int surface_for
     s_format = (WGPUTextureFormat)surface_format;
     if (s_device == nullptr || s_queue == nullptr) return false;
 
-    /* ImGui legacy texture path: do NOT advertise RendererHasTextures. */
     ImGuiIO &io = ImGui::GetIO();
     io.BackendRendererName = "gfx_webgpu_imgui";
+    // We honor ImGuiPlatformIO::Textures[] each frame (dynamic font atlas) and
+    // use per-draw-command vertex offsets.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
     WGPUShaderSourceWGSL src = {};
     src.chain.sType = WGPUSType_ShaderSourceWGSL;
@@ -214,14 +251,22 @@ extern "C" bool gfx_webgpu_imgui_init(void *device, void *queue, int surface_for
     s_pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
     if (s_pipe == nullptr) return false;
 
-    return build_font();
+    return true;
 }
 
-extern "C" void gfx_webgpu_imgui_new_frame(void) { /* legacy path: nothing to do */ }
+extern "C" void gfx_webgpu_imgui_new_frame(void) { /* texture updates run in render */ }
 
 extern "C" void gfx_webgpu_imgui_render(ImDrawData *draw_data, void *render_pass_encoder,
                                         int fb_width, int fb_height) {
     if (draw_data == nullptr || render_pass_encoder == nullptr || s_pipe == nullptr) return;
+
+    /* Honor dynamic font-atlas texture requests before drawing (grow-on-demand). */
+    if (draw_data->Textures != nullptr) {
+        for (ImTextureData *tex : *draw_data->Textures) {
+            if (tex->Status != ImTextureStatus_OK) update_texture(tex);
+        }
+    }
+
     if (draw_data->TotalVtxCount <= 0 || fb_width <= 0 || fb_height <= 0) return;
     WGPURenderPassEncoder pass = (WGPURenderPassEncoder)render_pass_encoder;
 
@@ -285,23 +330,30 @@ extern "C" void gfx_webgpu_imgui_render(ImDrawData *draw_data, void *render_pass
     wgpuRenderPassEncoderSetIndexBuffer(pass, s_ibuf, ifmt, 0, WGPU_WHOLE_SIZE);
 
     ImVec2 clip_off = draw_data->DisplayPos;
+    /* ImGui clip rects are in DisplayPos/DisplaySize (logical) space; scale to
+     * the pixel framebuffer for the scissor (high-DPI: FramebufferScale = 2 on
+     * a Retina/2x drawable). Mirrors every upstream imgui_impl backend. */
+    ImVec2 clip_scale = draw_data->FramebufferScale;
+    if (clip_scale.x <= 0.0f) clip_scale.x = 1.0f;
+    if (clip_scale.y <= 0.0f) clip_scale.y = 1.0f;
     uint32_t global_vtx = 0, global_idx = 0;
     for (int n = 0; n < draw_data->CmdListsCount; n++) {
         const ImDrawList *cl = draw_data->CmdLists[n];
         for (int c = 0; c < cl->CmdBuffer.Size; c++) {
             const ImDrawCmd *cmd = &cl->CmdBuffer[c];
             if (cmd->UserCallback != nullptr) continue;   /* launcher uses none */
-            int cx = (int)(cmd->ClipRect.x - clip_off.x);
-            int cy = (int)(cmd->ClipRect.y - clip_off.y);
-            int cw = (int)(cmd->ClipRect.z - cmd->ClipRect.x);
-            int ch = (int)(cmd->ClipRect.w - cmd->ClipRect.y);
+            int cx = (int)((cmd->ClipRect.x - clip_off.x) * clip_scale.x);
+            int cy = (int)((cmd->ClipRect.y - clip_off.y) * clip_scale.y);
+            int cw = (int)((cmd->ClipRect.z - cmd->ClipRect.x) * clip_scale.x);
+            int ch = (int)((cmd->ClipRect.w - cmd->ClipRect.y) * clip_scale.y);
             clamp_rect(&cx, &cy, &cw, &ch, fb_width, fb_height);
             if (cw <= 0 || ch <= 0) continue;
-            wgpuRenderPassEncoderSetScissorRect(pass, (uint32_t)cx, (uint32_t)cy, (uint32_t)cw, (uint32_t)ch);
             WGPUTextureView view = (WGPUTextureView)(intptr_t)cmd->GetTexID();
-            if (view == nullptr) view = s_font_view;
+            if (view == nullptr) continue;   /* no texture bound: skip */
             WGPUBindGroup bg = image_bind_group(view);
-            if (bg) wgpuRenderPassEncoderSetBindGroup(pass, 1, bg, 0, nullptr);
+            if (bg == nullptr) continue;
+            wgpuRenderPassEncoderSetScissorRect(pass, (uint32_t)cx, (uint32_t)cy, (uint32_t)cw, (uint32_t)ch);
+            wgpuRenderPassEncoderSetBindGroup(pass, 1, bg, 0, nullptr);
             wgpuRenderPassEncoderDrawIndexed(pass, cmd->ElemCount, 1,
                                              cmd->IdxOffset + global_idx,
                                              (int32_t)(cmd->VtxOffset + global_vtx), 0);
@@ -312,9 +364,23 @@ extern "C" void gfx_webgpu_imgui_render(ImDrawData *draw_data, void *render_pass
 }
 
 extern "C" void gfx_webgpu_imgui_shutdown(void) {
+    // Release every backend-owned atlas texture (ImGui still owns the ImTextureData).
+    ImGuiContext *ctx = ImGui::GetCurrentContext();
+    if (ctx != nullptr) {
+        for (ImTextureData *tex : ImGui::GetPlatformIO().Textures) {
+            if (tex->BackendUserData != nullptr) {
+                WGPUTextureView view = (WGPUTextureView)(intptr_t)tex->TexID;
+                WGPUTexture wtex = (WGPUTexture)tex->BackendUserData;
+                if (view != nullptr) wgpuTextureViewRelease(view);
+                if (wtex != nullptr) wgpuTextureRelease(wtex);
+                tex->SetTexID(ImTextureID_Invalid);
+                tex->BackendUserData = nullptr;
+                tex->SetStatus(ImTextureStatus_Destroyed);
+            }
+        }
+        ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
+    }
     if (s_img_bg) { wgpuBindGroupRelease(s_img_bg); s_img_bg = nullptr; s_img_bg_key = nullptr; }
-    if (s_font_view) { wgpuTextureViewRelease(s_font_view); s_font_view = nullptr; }
-    if (s_font_tex) { wgpuTextureRelease(s_font_tex); s_font_tex = nullptr; }
     if (s_vbuf) { wgpuBufferRelease(s_vbuf); s_vbuf = nullptr; s_vbuf_cap = 0; }
     if (s_ibuf) { wgpuBufferRelease(s_ibuf); s_ibuf = nullptr; s_ibuf_cap = 0; }
     if (s_bg0) { wgpuBindGroupRelease(s_bg0); s_bg0 = nullptr; }

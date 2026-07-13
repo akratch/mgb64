@@ -7,10 +7,10 @@
  * v29's exact API and the same pipeline/bind-group patterns as gfx_webgpu.c.
  *
  * Shared by the C++ app shell (AppHost launcher UI) and the C in-game F1 overlay
- * (ui_overlay.cpp) — one ImGui context, one renderer. Uses ImGui's LEGACY font
- * atlas path (does NOT set ImGuiBackendFlags_RendererHasTextures): the launcher +
- * overlay never allocate dynamic textures, so a single font-atlas texture built
- * once at init is sufficient.
+ * (ui_overlay.cpp) — one ImGui context, one renderer. Implements ImGui 1.92's
+ * dynamic-texture model (ImGuiBackendFlags_RendererHasTextures): the font atlas
+ * grows glyphs on demand, so the renderer honors ImTextureData create/update/
+ * destroy requests each frame (a one-time upload would drop later-added glyphs).
  *
  * Compiled as C++ (it consumes ImGui's ImDrawData) but exposes a C ABI.
  * Only meaningful when MGB64_WEBGPU_BACKEND.

@@ -20,6 +20,15 @@
 #  include <glad/glad.h>
 #endif
 
+#ifdef MGB64_WEBGPU_BACKEND
+#  include <webgpu/webgpu.h>
+#  include <webgpu/wgpu.h>   /* wgpuDevicePoll */
+#  include "gfx_webgpu.h"
+#  include "gfx_webgpu_imgui.h"
+// Backend selector (engine, gfx_backend.c) — resolved at link into ge007.
+extern "C" bool gfx_backend_use_webgpu(void);
+#endif
+
 // The GLSL version string handed to the ImGui GL3 backend. Matches the engine's
 // "#version 330 core" shaders; valid on the macOS 4.1-core context too.
 static const char *kGlslVersion = "#version 330 core";
@@ -33,6 +42,19 @@ bool AppHost::init(const char *title, int width, int height) {
         sdlOwned_ = true;
     }
 
+#ifdef MGB64_WEBGPU_BACKEND
+    // Default: WebGPU end to end. GE007_RENDERER=gl (or metal) falls back to GL
+    // so the launcher and game share a GL window (gfx_backend_force_opengl in the
+    // engine keeps the adopted-window path GL-only in that case).
+    useWebGpu_ = gfx_backend_use_webgpu();
+    if (useWebGpu_) {
+        return initWebGpu(title, width, height);
+    }
+#endif
+    return initGL(title, width, height);
+}
+
+bool AppHost::initGL(const char *title, int width, int height) {
     // Request the SAME GL context attributes the engine uses (platform_sdl.c).
 #if defined(MGB64_PORTMASTER_GLES)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -91,8 +113,104 @@ bool AppHost::init(const char *title, int width, int height) {
         return false;
     }
     imguiReady_ = true;
+    std::fprintf(stderr, "[app] host: OpenGL\n");
     return true;
 }
+
+#ifdef MGB64_WEBGPU_BACKEND
+bool AppHost::initWebGpu(const char *title, int width, int height) {
+    Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN;
+#if defined(__APPLE__)
+    flags |= SDL_WINDOW_METAL;   // wgpu-native wraps the CAMetalLayer as its surface
+#endif
+    window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                               width, height, flags);
+    if (!window_) {
+        std::fprintf(stderr, "[app] SDL_CreateWindow (WebGPU) failed: %s\n", SDL_GetError());
+        return false;
+    }
+
+    void *layer = nullptr;
+#if defined(__APPLE__)
+    metalView_ = SDL_Metal_CreateView(window_);
+    if (!metalView_) {
+        std::fprintf(stderr, "[app] SDL_Metal_CreateView failed: %s\n", SDL_GetError());
+        return false;
+    }
+    layer = SDL_Metal_GetLayer((SDL_MetalView)metalView_);
+#endif
+
+    WGPUInstance inst = nullptr; WGPUAdapter adapter = nullptr; WGPUDevice device = nullptr;
+    WGPUQueue queue = nullptr; WGPUSurface surface = nullptr; int fmt = 0;
+    if (!gfx_webgpu_bringup(layer, window_, &inst, &adapter, &device, &queue, &surface, &fmt)) {
+        std::fprintf(stderr, "[app] WebGPU bring-up failed\n");
+        return false;
+    }
+    wgpuInstance_ = inst; wgpuAdapter_ = adapter; wgpuDevice_ = device;
+    wgpuQueue_ = queue; wgpuSurface_ = surface; wgpuFormat_ = fmt;
+
+    int dw = 0, dh = 0;
+    drawableSize(&dw, &dh);
+    configureWgpuSurface(dw, dh);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    AppTheme::setup(framebufferScale());   // build fonts BEFORE gfx_webgpu_imgui_init
+    if (!ImGui_ImplSDL2_InitForOther(window_)) {
+        std::fprintf(stderr, "[app] ImGui_ImplSDL2_InitForOther failed\n");
+        return false;
+    }
+    if (!gfx_webgpu_imgui_init(device, queue, fmt)) {
+        std::fprintf(stderr, "[app] gfx_webgpu_imgui_init failed\n");
+        return false;
+    }
+    imguiReady_ = true;
+    std::fprintf(stderr, "[app] host: WebGPU (%dx%d drawable, format=%d)\n", dw, dh, fmt);
+    return true;
+}
+
+void AppHost::configureWgpuSurface(int w, int h) {
+    if (!useWebGpu_ || wgpuSurface_ == nullptr || wgpuDevice_ == nullptr || w <= 0 || h <= 0) {
+        return;
+    }
+    WGPUSurfaceConfiguration cfg = {};
+    cfg.device = (WGPUDevice)wgpuDevice_;
+    cfg.format = (WGPUTextureFormat)wgpuFormat_;
+    // The UI renders to an offscreen scene target and is copied here at present,
+    // so the surface only needs to be a copy destination (+ the mandatory
+    // RenderAttachment). Matches gfx_webgpu.c's surface usage.
+    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst;
+    cfg.width = (uint32_t)w;
+    cfg.height = (uint32_t)h;
+    cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
+    cfg.presentMode = WGPUPresentMode_Fifo;   // vsync; matches the GL swap interval
+    wgpuSurfaceConfigure((WGPUSurface)wgpuSurface_, &cfg);
+    cfgW_ = (unsigned)w;
+    cfgH_ = (unsigned)h;
+}
+
+void AppHost::ensureWgpuSceneTarget(int w, int h) {
+    if (!useWebGpu_ || wgpuDevice_ == nullptr || w <= 0 || h <= 0) return;
+    if (sceneTex_ != nullptr && sceneW_ == (unsigned)w && sceneH_ == (unsigned)h) return;
+    if (sceneView_ != nullptr) { wgpuTextureViewRelease((WGPUTextureView)sceneView_); sceneView_ = nullptr; }
+    if (sceneTex_ != nullptr)  { wgpuTextureRelease((WGPUTexture)sceneTex_); sceneTex_ = nullptr; }
+    WGPUTextureDescriptor td = {};
+    td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size.width = (uint32_t)w; td.size.height = (uint32_t)h; td.size.depthOrArrayLayers = 1;
+    td.format = (WGPUTextureFormat)wgpuFormat_;   // match the surface for the present copy
+    td.mipLevelCount = 1; td.sampleCount = 1;
+    WGPUTexture tex = wgpuDeviceCreateTexture((WGPUDevice)wgpuDevice_, &td);
+    if (tex == nullptr) return;
+    sceneTex_ = tex;
+    sceneView_ = wgpuTextureCreateView(tex, nullptr);
+    sceneW_ = (unsigned)w; sceneH_ = (unsigned)h;
+}
+#endif  // MGB64_WEBGPU_BACKEND
 
 // Auto heuristic for UI.LauncherFullscreen=auto: fill the display when it looks
 // like a handheld panel — physically small (high reported DPI) or low-resolution
@@ -140,6 +258,27 @@ bool AppHost::applyLauncherFullscreen(int mode) {
 }
 
 void AppHost::beginFrame() {
+#ifdef MGB64_WEBGPU_BACKEND
+    if (useWebGpu_) {
+        // The frame is cleared by the render pass in endFrameWebGpu.
+        gfx_webgpu_imgui_new_frame();
+        ImGui_ImplSDL2_NewFrame();
+        // imgui_impl_sdl2 uses SDL_GL_GetDrawableSize for the framebuffer scale,
+        // which returns the LOGICAL size for our Metal/native window (no GL
+        // drawable) → scale (1,1). Set the true high-DPI scale from the actual
+        // drawable so geometry fills the target and scissors land in pixels.
+        ImGuiIO &io = ImGui::GetIO();
+        int lw = 0, lh = 0, dw = 0, dh = 0;
+        SDL_GetWindowSize(window_, &lw, &lh);
+        drawableSize(&dw, &dh);
+        if (lw > 0 && lh > 0) {
+            io.DisplaySize = ImVec2((float)lw, (float)lh);
+            io.DisplayFramebufferScale = ImVec2((float)dw / (float)lw, (float)dh / (float)lh);
+        }
+        ImGui::NewFrame();
+        return;
+    }
+#endif
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -195,7 +334,160 @@ static void writeBackbufferBmp(const char *path, int w, int h) {
     std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
 }
 
-void AppHost::endFrame(const char *captureBmpPath) {
+#ifdef MGB64_WEBGPU_BACKEND
+namespace {
+struct WgpuMapReq { int done; WGPUMapAsyncStatus status; };
+void on_map(WGPUMapAsyncStatus s, WGPUStringView m, void *u1, void *u2) {
+    (void)m; (void)u2;
+    WgpuMapReq *r = (WgpuMapReq *)u1; r->status = s; r->done = 1;
+}
+
+// Write a mapped BGRA8 readback buffer (row stride `bpr`, top-down) as a 24-bit
+// BMP. BMP rows are bottom-up, so the source rows are emitted in reverse.
+void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
+                  WGPUDevice device) {
+    if (w <= 0 || h <= 0) return;
+    size_t size = (size_t)bpr * (uint32_t)h;
+    WgpuMapReq mr = {0, (WGPUMapAsyncStatus)0};
+    WGPUBufferMapCallbackInfo ci = {};
+    ci.mode = WGPUCallbackMode_AllowProcessEvents;
+    ci.callback = on_map;
+    ci.userdata1 = &mr;
+    wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, size, ci);
+    for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(device, true, nullptr);
+    if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
+        std::fprintf(stderr, "[app] capture map failed (status=%d)\n", (int)mr.status);
+        return;
+    }
+    const uint8_t *px = (const uint8_t *)wgpuBufferGetConstMappedRange(buf, 0, size);
+    FILE *f = px ? std::fopen(path, "wb") : nullptr;
+    if (f != nullptr) {
+        const int rowBytes = w * 3;
+        const int pad = (4 - (rowBytes % 4)) % 4;
+        const size_t imgSize = (size_t)(rowBytes + pad) * (size_t)h;
+        const size_t fileSize = 54 + imgSize;
+        uint8_t hdr[54] = {0};
+        hdr[0] = 'B'; hdr[1] = 'M';
+        hdr[2] = fileSize & 0xFF; hdr[3] = (fileSize >> 8) & 0xFF;
+        hdr[4] = (fileSize >> 16) & 0xFF; hdr[5] = (fileSize >> 24) & 0xFF;
+        hdr[10] = 54; hdr[14] = 40;
+        hdr[18] = w & 0xFF; hdr[19] = (w >> 8) & 0xFF;
+        hdr[20] = (w >> 16) & 0xFF; hdr[21] = (w >> 24) & 0xFF;
+        hdr[22] = h & 0xFF; hdr[23] = (h >> 8) & 0xFF;
+        hdr[24] = (h >> 16) & 0xFF; hdr[25] = (h >> 24) & 0xFF;
+        hdr[26] = 1; hdr[28] = 24;
+        hdr[34] = imgSize & 0xFF; hdr[35] = (imgSize >> 8) & 0xFF;
+        hdr[36] = (imgSize >> 16) & 0xFF; hdr[37] = (imgSize >> 24) & 0xFF;
+        std::fwrite(hdr, 1, 54, f);
+        std::vector<uint8_t> row(rowBytes + pad, 0);
+        for (int y = h - 1; y >= 0; --y) {   // BMP bottom-up
+            const uint8_t *srow = px + (size_t)y * bpr;
+            for (int x = 0; x < w; ++x) {     // BGRA -> BGR (drop alpha)
+                row[x * 3 + 0] = srow[x * 4 + 0];
+                row[x * 3 + 1] = srow[x * 4 + 1];
+                row[x * 3 + 2] = srow[x * 4 + 2];
+            }
+            std::fwrite(row.data(), 1, rowBytes + pad, f);
+        }
+        std::fclose(f);
+        std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
+    }
+    wgpuBufferUnmap(buf);
+}
+}  // namespace
+
+void AppHost::endFrameWebGpu(const char *captureBmpPath) {
+    ImGui::Render();
+
+    int w = 0, h = 0;
+    drawableSize(&w, &h);
+    if (w <= 0 || h <= 0) return;
+    ensureWgpuSceneTarget(w, h);
+    if (sceneTex_ == nullptr || sceneView_ == nullptr) return;
+
+    WGPUSurface surface = (WGPUSurface)wgpuSurface_;
+    WGPUDevice device = (WGPUDevice)wgpuDevice_;
+    WGPUQueue queue = (WGPUQueue)wgpuQueue_;
+
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(device, nullptr);
+
+    // 1) Render the UI into the offscreen scene target (window-independent).
+    WGPURenderPassColorAttachment ca = {};
+    ca.view = (WGPUTextureView)sceneView_;
+    ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    ca.loadOp = WGPULoadOp_Clear;
+    ca.storeOp = WGPUStoreOp_Store;
+    ca.clearValue.r = 0.06; ca.clearValue.g = 0.07; ca.clearValue.b = 0.09; ca.clearValue.a = 1.0;
+    WGPURenderPassDescriptor rp = {};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &ca;
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
+    gfx_webgpu_imgui_render(ImGui::GetDrawData(), pass, w, h);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+
+    // 2) Present: copy the scene into the window's surface texture (if the window
+    // has a drawable — a hidden/occluded one does not, which is fine, the frame
+    // still rendered offscreen and can be captured).
+    if ((unsigned)w != cfgW_ || (unsigned)h != cfgH_) {
+        configureWgpuSurface(w, h);
+    }
+    WGPUSurfaceTexture st = {};
+    wgpuSurfaceGetCurrentTexture(surface, &st);
+    bool present_ok = st.texture != nullptr &&
+        (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+         st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
+    if (present_ok) {
+        WGPUTexelCopyTextureInfo cs = {};
+        cs.texture = (WGPUTexture)sceneTex_; cs.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyTextureInfo cd = {};
+        cd.texture = st.texture; cd.aspect = WGPUTextureAspect_All;
+        WGPUExtent3D ext = { (uint32_t)w, (uint32_t)h, 1 };
+        wgpuCommandEncoderCopyTextureToTexture(enc, &cs, &cd, &ext);
+    }
+
+    // 3) Optional capture (design review / CI): read the OFFSCREEN scene back —
+    // window-independent, so it works even when the window has no drawable.
+    WGPUBuffer capBuf = nullptr;
+    uint32_t capBpr = 0;
+    if (captureBmpPath) {
+        capBpr = ((uint32_t)w * 4u + 255u) / 256u * 256u;   // 256-align for CopyTextureToBuffer
+        WGPUBufferDescriptor bd = {};
+        bd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
+        bd.size = (uint64_t)capBpr * (uint32_t)h;
+        capBuf = wgpuDeviceCreateBuffer(device, &bd);
+        if (capBuf != nullptr) {
+            WGPUTexelCopyTextureInfo src = {};
+            src.texture = (WGPUTexture)sceneTex_; src.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferInfo dst = {};
+            dst.buffer = capBuf;
+            dst.layout.bytesPerRow = capBpr;
+            dst.layout.rowsPerImage = (uint32_t)h;
+            WGPUExtent3D ext = { (uint32_t)w, (uint32_t)h, 1 };
+            wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &ext);
+        }
+    }
+
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
+    wgpuQueueSubmit(queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(enc);
+
+    if (capBuf != nullptr) {
+        writeWgpuBmp(capBuf, capBpr, w, h, captureBmpPath, device);
+        wgpuBufferRelease(capBuf);
+    }
+
+    if (present_ok) {
+        wgpuSurfacePresent(surface);
+    }
+    if (st.texture != nullptr) {
+        wgpuTextureRelease(st.texture);
+    }
+}
+#endif  // MGB64_WEBGPU_BACKEND
+
+void AppHost::endFrameGL(const char *captureBmpPath) {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (captureBmpPath) {
@@ -204,11 +496,36 @@ void AppHost::endFrame(const char *captureBmpPath) {
     SDL_GL_SwapWindow(window_);
 }
 
+void AppHost::endFrame(const char *captureBmpPath) {
+#ifdef MGB64_WEBGPU_BACKEND
+    if (useWebGpu_) { endFrameWebGpu(captureBmpPath); return; }
+#endif
+    endFrameGL(captureBmpPath);
+}
+
+void AppHost::drawableSize(int *w, int *h) const {
+    *w = 0; *h = 0;
+    if (!window_) return;
+#ifdef MGB64_WEBGPU_BACKEND
+    if (useWebGpu_) {
+#  if defined(__APPLE__)
+        SDL_Metal_GetDrawableSize(window_, w, h);
+#  elif SDL_VERSION_ATLEAST(2, 26, 0)
+        SDL_GetWindowSizeInPixels(window_, w, h);
+#  else
+        SDL_GetWindowSize(window_, w, h);
+#  endif
+        return;
+    }
+#endif
+    SDL_GL_GetDrawableSize(window_, w, h);
+}
+
 float AppHost::framebufferScale() const {
     int lw = 0, lh = 0, dw = 0, dh = 0;
     if (window_) {
         SDL_GetWindowSize(window_, &lw, &lh);
-        SDL_GL_GetDrawableSize(window_, &dw, &dh);
+        drawableSize(&dw, &dh);
     }
     return (lw > 0) ? (float)dw / (float)lw : 1.0f;
 }
@@ -234,13 +551,13 @@ bool AppHost::pumpAndShouldQuit() {
 
 int AppHost::drawableWidth() const {
     int w = 0, h = 0;
-    if (window_) SDL_GL_GetDrawableSize(window_, &w, &h);
+    drawableSize(&w, &h);
     return w;
 }
 
 int AppHost::drawableHeight() const {
     int w = 0, h = 0;
-    if (window_) SDL_GL_GetDrawableSize(window_, &w, &h);
+    drawableSize(&w, &h);
     return h;
 }
 
@@ -252,11 +569,29 @@ std::string AppHost::takeDroppedFile() {
 
 void AppHost::shutdown() {
     if (imguiReady_) {
-        ImGui_ImplOpenGL3_Shutdown();
+#ifdef MGB64_WEBGPU_BACKEND
+        if (useWebGpu_) {
+            gfx_webgpu_imgui_shutdown();
+        } else
+#endif
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
         ImGui_ImplSDL2_Shutdown();
         ImGui::DestroyContext();
         imguiReady_ = false;
     }
+#ifdef MGB64_WEBGPU_BACKEND
+    // Our own offscreen scene target is safe to release (nothing else references it).
+    if (sceneView_) { wgpuTextureViewRelease((WGPUTextureView)sceneView_); sceneView_ = nullptr; }
+    if (sceneTex_)  { wgpuTextureRelease((WGPUTexture)sceneTex_); sceneTex_ = nullptr; }
+    // The engine adopts our device/surface and does not own them; the launcher's
+    // objects are process-lived. Release only the metal view here (destroying it
+    // before SDL_DestroyWindow avoids a dangling layer). The wgpu objects are
+    // left to process teardown (a single shared device; freeing under an active
+    // game adoption would be a use-after-free).
+    if (metalView_) { SDL_Metal_DestroyView((SDL_MetalView)metalView_); metalView_ = nullptr; }
+#endif
     if (gl_) { SDL_GL_DeleteContext(gl_); gl_ = nullptr; }
     if (window_) { SDL_DestroyWindow(window_); window_ = nullptr; }
     if (sdlOwned_) { SDL_Quit(); sdlOwned_ = false; }
