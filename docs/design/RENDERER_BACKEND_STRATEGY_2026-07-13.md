@@ -203,7 +203,28 @@ live today — while still giving the single cross-platform backend (native Meta
 D3D12 on Windows, Vulkan on Linux, GL/Vulkan on handhelds) and compute for the AAA post-FX.
 This makes WebGPU both the *most modern* and the *correct-fit* choice; bgfx's only edge
 (maturity/simplicity) is outweighed by the shader-model mismatch. The `2026-07-13-bgfx-backend`
-plan is superseded pending the owner's go-ahead to re-target it at WebGPU.
+plan is superseded; the WebGPU plan is `2026-07-13-webgpu-backend.md`.
+
+### 7c. SPIKE VALIDATED (2026-07-13) — WebGPU proven viable end-to-end
+
+The de-risking spike (`tests/test_webgpu_spike.c`, ctest `webgpu_spike`, gated behind
+`MGB64_WEBGPU_BACKEND`) **passes headlessly**, converting the two big unknowns into facts:
+
+- **Dependency + platform:** the pinned, SHA-256-verified **wgpu-native v29.0.1.1** prebuilt
+  links and initializes; on this host WebGPU brings up **backend = Metal** (Apple M3 Max) —
+  native, no Apple-GL translation-layer hang, no deprecated API.
+- **Runtime shaders (the decisive capability):** a WGSL shader **compiles at runtime**
+  (`wgpuDeviceCreateShaderModule`) — exactly what Fast3D's dynamic combiner path needs and
+  what bgfx could not do.
+- **Full pipeline correctness:** a triangle renders to an offscreen RGBA8 target; a
+  texture→buffer copy + map reads the pixels back; the center is the green triangle
+  `(38,217,89)` and the corner is the clear color `(13,13,18)` — both asserted.
+- **Handheld unknown closed:** wgpu-native ships prebuilts for macOS (arm64/x64), Windows
+  (x64-MinGW), Linux x64 **and linux-aarch64** — the PortMaster/ARM target is covered by an
+  existing, pinned binary (device-run confirmation still owner-side, but the lib exists).
+
+The default `ge007` build is byte-identical (no wgpu symbols; 7 tapes byte-exact). **Verdict:
+proceed with the full migration.** Effort/risk are now measured, not guessed.
 
 ## 7. Open questions for the owner
 
