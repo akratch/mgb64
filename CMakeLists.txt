@@ -1749,6 +1749,16 @@ if(MGB64_APP)
         src/app
         lib/glad/include
     )
+    # WebGPU launcher path: the app lib gets the in-house ImGui-on-WebGPU renderer
+    # (gfx_webgpu_imgui) + the wgpu headers/lib, so the launcher UI + F1 overlay
+    # can render through WebGPU. src/platform/fast3d is safe on the app include
+    # path (fast3d seam headers only; NOT the engine's math.h shim in include/).
+    if(MGB64_WEBGPU_BACKEND)
+        target_sources(mgb64_app PRIVATE src/platform/fast3d/gfx_webgpu_imgui.cpp)
+        target_include_directories(mgb64_app PRIVATE src/platform/fast3d)
+        target_compile_definitions(mgb64_app PRIVATE MGB64_WEBGPU_BACKEND)
+        target_link_libraries(mgb64_app PUBLIC webgpu)
+    endif()
     if(SDL2_FOUND)
         target_link_libraries(mgb64_app PUBLIC SDL2::SDL2)
     elseif(SDL2_LIBRARIES)
