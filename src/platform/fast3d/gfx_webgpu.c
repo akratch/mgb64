@@ -1333,6 +1333,244 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     return true;
 }
 
+/* ------------------------------------------------------------------------
+ * Optional: draw_modern_mesh (Task 6 — scene decor, G_MODERNMESH).
+ *
+ * A full-fidelity mesh (float32 pos/nrm/uv + rgba8, u32 indices, RGBA8 texture)
+ * drawn into the live scene pass, transformed by the interpreter's MP matrix
+ * with the N64 fog curve. Ports gfx_metal.mm's decor shader + cache. Renders
+ * scene decoration, which is a no-op on the GL default (AUDIT-0001); needs
+ * Video.SceneDecor=1. Per-mesh GPU resources are cached by mesh_id (ids are
+ * monotonic/never reused, so a full evict at capacity is safe).
+ * ---------------------------------------------------------------------- */
+static const char *kModernWGSL =
+    "struct DVin { @location(0) pos : vec3<f32>, @location(1) nrm : vec3<f32>, @location(2) uv : vec2<f32>, @location(3) col : vec4<f32> };\n"
+    "struct DU { mvp : mat4x4<f32>, fog : vec4<f32>, fogMul : f32, fogOffset : f32, fogOn : f32, pad : f32 };\n"
+    "@group(0) @binding(0) var<uniform> u : DU;\n"
+    "@group(0) @binding(1) var dtex : texture_2d<f32>;\n"
+    "@group(0) @binding(2) var dsmp : sampler;\n"
+    "struct DOut { @builtin(position) position : vec4<f32>, @location(0) uv : vec2<f32>, @location(1) col : vec4<f32>, @location(2) fogA : f32 };\n"
+    "@vertex fn vs_main(in : DVin) -> DOut {\n"
+    "  var clip = u.mvp * vec4<f32>(in.pos, 1.0);\n"
+    "  var fogA = 0.0;\n"
+    "  if (u.fogOn > 0.5) {\n"
+    "    var ww = clip.w;\n"
+    "    if (abs(ww) < 0.001) { ww = 0.001; }\n"
+    "    let winv = 1.0 / ww;\n"
+    "    let coord = select(clip.z * winv, clip.z * 32767.0, winv < 0.0);\n"
+    "    fogA = clamp(coord * u.fogMul + u.fogOffset, 0.0, 255.0) / 255.0;\n"
+    "  }\n"
+    "  var o : DOut;\n"
+    "  clip.z = (clip.z + clip.w) * 0.5;\n"   /* GL-clip -> WebGPU 0..1, like Metal */
+    "  o.position = clip; o.uv = in.uv; o.col = in.col; o.fogA = fogA;\n"
+    "  return o;\n}\n"
+    "fn decorShade(o : DOut, t : vec4<f32>) -> vec4<f32> {\n"
+    "  var c = t.rgb * o.col.rgb;\n"
+    "  c = mix(c, vec3<f32>(0.88, 0.91, 0.96), o.col.a);\n"   /* snow cover in vertex alpha */
+    "  c = mix(c, u.fog.rgb, o.fogA);\n"
+    "  return vec4<f32>(c, t.a);\n}\n"
+    "@fragment fn fs_opaque(in : DOut) -> @location(0) vec4<f32> {\n"
+    "  let c = decorShade(in, textureSample(dtex, dsmp, in.uv));\n"
+    "  return vec4<f32>(c.rgb, 1.0);\n}\n"
+    "@fragment fn fs_cutout(in : DOut) -> @location(0) vec4<f32> {\n"
+    "  let t = textureSample(dtex, dsmp, in.uv);\n"
+    "  if (t.a < 0.45) { discard; }\n"
+    "  let c = decorShade(in, t);\n"
+    "  return vec4<f32>(c.rgb, 1.0);\n}\n";
+
+static WGPUShaderModule    s_modern_mod = NULL;
+static WGPUBindGroupLayout s_modern_bgl = NULL;
+static WGPUPipelineLayout  s_modern_pl = NULL;
+static WGPURenderPipeline  s_modern_pipe[2] = {NULL, NULL};   /* [cutout] */
+static WGPUSampler         s_modern_sampler = NULL;
+
+struct WgpuModernEntry {
+    uint32_t mesh_id;
+    WGPUBuffer vbuf, ibuf;
+    WGPUTexture tex;
+    WGPUTextureView view;
+    uint32_t idx_count;
+};
+static struct WgpuModernEntry s_modern_cache[64];
+static int s_modern_count = 0;
+
+static WGPURenderPipeline wgpu_modern_pipe(int cutout) {
+    if (s_modern_pipe[cutout] != NULL) {
+        return s_modern_pipe[cutout];
+    }
+    if (s_modern_mod == NULL) {
+        WGPUShaderSourceWGSL src = {0};
+        src.chain.sType = WGPUSType_ShaderSourceWGSL;
+        src.code = wgpu_sv(kModernWGSL);
+        WGPUShaderModuleDescriptor smd = {0};
+        smd.nextInChain = (WGPUChainedStruct *)&src;
+        s_modern_mod = wgpuDeviceCreateShaderModule(s_device, &smd);
+        if (s_modern_mod == NULL) return NULL;
+
+        WGPUBindGroupLayoutEntry e[3] = {0};
+        e[0].binding = 0; e[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        e[0].buffer.type = WGPUBufferBindingType_Uniform; e[0].buffer.minBindingSize = 96;
+        e[1].binding = 1; e[1].visibility = WGPUShaderStage_Fragment;
+        e[1].texture.sampleType = WGPUTextureSampleType_Float; e[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+        e[2].binding = 2; e[2].visibility = WGPUShaderStage_Fragment;
+        e[2].sampler.type = WGPUSamplerBindingType_Filtering;
+        WGPUBindGroupLayoutDescriptor bgld = {0};
+        bgld.entryCount = 3; bgld.entries = e;
+        s_modern_bgl = wgpuDeviceCreateBindGroupLayout(s_device, &bgld);
+        WGPUPipelineLayoutDescriptor pld = {0};
+        pld.bindGroupLayoutCount = 1; pld.bindGroupLayouts = &s_modern_bgl;
+        s_modern_pl = wgpuDeviceCreatePipelineLayout(s_device, &pld);
+    }
+
+    WGPUVertexAttribute a[4] = {0};
+    a[0].format = WGPUVertexFormat_Float32x3; a[0].offset = 0;  a[0].shaderLocation = 0;
+    a[1].format = WGPUVertexFormat_Float32x3; a[1].offset = 12; a[1].shaderLocation = 1;
+    a[2].format = WGPUVertexFormat_Float32x2; a[2].offset = 24; a[2].shaderLocation = 2;
+    a[3].format = WGPUVertexFormat_Unorm8x4;  a[3].offset = 32; a[3].shaderLocation = 3;
+    WGPUVertexBufferLayout vbl = {0};
+    vbl.stepMode = WGPUVertexStepMode_Vertex;
+    vbl.arrayStride = 36;
+    vbl.attributeCount = 4;
+    vbl.attributes = a;
+
+    WGPUColorTargetState color = {0};
+    color.format = s_surface_format;
+    color.writeMask = WGPUColorWriteMask_All;   /* opaque (frag outputs a=1) */
+    WGPUFragmentState fs = {0};
+    fs.module = s_modern_mod;
+    fs.entryPoint = wgpu_sv(cutout ? "fs_cutout" : "fs_opaque");
+    fs.targetCount = 1; fs.targets = &color;
+
+    WGPUDepthStencilState ds = {0};
+    ds.format = WGPU_DEPTH_FORMAT;
+    ds.depthCompare = WGPUCompareFunction_LessEqual;
+    ds.depthWriteEnabled = WGPUOptionalBool_True;
+    ds.stencilFront.compare = WGPUCompareFunction_Always;
+    ds.stencilFront.failOp = WGPUStencilOperation_Keep;
+    ds.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+    ds.stencilFront.passOp = WGPUStencilOperation_Keep;
+    ds.stencilBack = ds.stencilFront;
+
+    WGPURenderPipelineDescriptor pd = {0};
+    pd.layout = s_modern_pl;
+    pd.vertex.module = s_modern_mod; pd.vertex.entryPoint = wgpu_sv("vs_main");
+    pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd.primitive.frontFace = WGPUFrontFace_CCW;
+    pd.primitive.cullMode = WGPUCullMode_None;   /* cutout cards are two-sided */
+    pd.depthStencil = &ds;
+    pd.multisample.count = 1; pd.multisample.mask = 0xFFFFFFFFu;
+    pd.fragment = &fs;
+    s_modern_pipe[cutout] = wgpuDeviceCreateRenderPipeline(s_device, &pd);
+    return s_modern_pipe[cutout];
+}
+
+static struct WgpuModernEntry *wgpu_modern_resources(struct GfxModernMesh *mesh) {
+    for (int i = 0; i < s_modern_count; i++) {
+        if (s_modern_cache[i].mesh_id == mesh->mesh_id) return &s_modern_cache[i];
+    }
+    if (s_modern_count >= (int)(sizeof(s_modern_cache) / sizeof(s_modern_cache[0]))) {
+        /* Level churn: ids never repeat, so releasing everything is safe. */
+        for (int i = 0; i < s_modern_count; i++) {
+            if (s_modern_cache[i].view) wgpuTextureViewRelease(s_modern_cache[i].view);
+            if (s_modern_cache[i].tex)  wgpuTextureRelease(s_modern_cache[i].tex);
+            if (s_modern_cache[i].vbuf) wgpuBufferRelease(s_modern_cache[i].vbuf);
+            if (s_modern_cache[i].ibuf) wgpuBufferRelease(s_modern_cache[i].ibuf);
+        }
+        s_modern_count = 0;
+    }
+
+    uint32_t vbytes = mesh->vtx_count * 36u;
+    uint32_t ibytes = mesh->idx_count * 4u;
+    WGPUBufferDescriptor vd = {0};
+    vd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst; vd.size = vbytes;
+    WGPUBuffer vb = wgpuDeviceCreateBuffer(s_device, &vd);
+    WGPUBufferDescriptor id = {0};
+    id.usage = WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst; id.size = ibytes;
+    WGPUBuffer ib = wgpuDeviceCreateBuffer(s_device, &id);
+    if (vb == NULL || ib == NULL) { if (vb) wgpuBufferRelease(vb); if (ib) wgpuBufferRelease(ib); return NULL; }
+    wgpuQueueWriteBuffer(s_queue, vb, 0, mesh->vtx, vbytes);
+    wgpuQueueWriteBuffer(s_queue, ib, 0, mesh->idx, ibytes);
+
+    WGPUTextureDescriptor td = {0};
+    td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size.width = (uint32_t)mesh->tex_w; td.size.height = (uint32_t)mesh->tex_h; td.size.depthOrArrayLayers = 1;
+    td.format = WGPUTextureFormat_RGBA8Unorm;
+    td.mipLevelCount = 1; td.sampleCount = 1;   /* single-level (no mip gen) */
+    WGPUTexture tex = wgpuDeviceCreateTexture(s_device, &td);
+    if (tex == NULL) { wgpuBufferRelease(vb); wgpuBufferRelease(ib); return NULL; }
+    WGPUTexelCopyTextureInfo dst = {0};
+    dst.texture = tex; dst.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferLayout lay = {0};
+    lay.bytesPerRow = (uint32_t)mesh->tex_w * 4u; lay.rowsPerImage = (uint32_t)mesh->tex_h;
+    WGPUExtent3D ext = { (uint32_t)mesh->tex_w, (uint32_t)mesh->tex_h, 1 };
+    wgpuQueueWriteTexture(s_queue, &dst, mesh->tex_rgba, (size_t)mesh->tex_w * mesh->tex_h * 4u, &lay, &ext);
+
+    struct WgpuModernEntry *e = &s_modern_cache[s_modern_count++];
+    e->mesh_id = mesh->mesh_id;
+    e->vbuf = vb; e->ibuf = ib; e->tex = tex;
+    e->view = wgpuTextureCreateView(tex, NULL);
+    e->idx_count = mesh->idx_count;
+    return e;
+}
+
+static void wgpu_draw_modern_mesh(struct GfxModernMesh *mesh, const float mvp[4][4],
+                                  const float fog_color[3], float fog_mul,
+                                  float fog_offset, int fog_enabled) {
+    if (!s_ready || !s_frame_open || s_pass == NULL || mesh == NULL ||
+        mesh->vtx == NULL || mesh->idx == NULL || mesh->tex_rgba == NULL ||
+        mesh->tex_w <= 0 || mesh->tex_h <= 0) {
+        return;
+    }
+    int cutout = mesh->cutout ? 1 : 0;
+    WGPURenderPipeline pipe = wgpu_modern_pipe(cutout);
+    if (pipe == NULL) return;
+    struct WgpuModernEntry *res = wgpu_modern_resources(mesh);
+    if (res == NULL) return;
+
+    if (s_modern_sampler == NULL) {
+        WGPUSamplerDescriptor sd = {0};
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_Repeat;
+        sd.magFilter = sd.minFilter = WGPUFilterMode_Linear;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;   /* single-level */
+        sd.maxAnisotropy = 1;
+        s_modern_sampler = wgpuDeviceCreateSampler(s_device, &sd);
+    }
+
+    /* Uniform (96 bytes): row-major MP memcpy'd into the mat4x4 (columns == MP
+     * rows, so u.mvp * v == the CPU row-vector T&L), fog params. */
+    float u[24];
+    memset(u, 0, sizeof(u));
+    memcpy(u, mvp, 16 * sizeof(float));
+    u[16] = fog_color[0]; u[17] = fog_color[1]; u[18] = fog_color[2]; u[19] = 0.0f;
+    u[20] = fog_mul; u[21] = fog_offset; u[22] = fog_enabled ? 1.0f : 0.0f; u[23] = 0.0f;
+
+    WGPUBufferDescriptor ubd = {0};
+    ubd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    ubd.size = sizeof(u);
+    WGPUBuffer ubuf = wgpuDeviceCreateBuffer(s_device, &ubd);
+    if (ubuf == NULL) return;
+    wgpuQueueWriteBuffer(s_queue, ubuf, 0, u, sizeof(u));
+
+    WGPUBindGroupEntry be[3] = {0};
+    be[0].binding = 0; be[0].buffer = ubuf; be[0].size = sizeof(u);
+    be[1].binding = 1; be[1].textureView = res->view;
+    be[2].binding = 2; be[2].sampler = s_modern_sampler;
+    WGPUBindGroupDescriptor bgd = {0};
+    bgd.layout = s_modern_bgl; bgd.entryCount = 3; bgd.entries = be;
+    WGPUBindGroup bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
+
+    wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
+    wgpuRenderPassEncoderSetBindGroup(s_pass, 0, bg, 0, NULL);
+    wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, res->vbuf, 0, mesh->vtx_count * 36u);
+    wgpuRenderPassEncoderSetIndexBuffer(s_pass, res->ibuf, WGPUIndexFormat_Uint32, 0, mesh->idx_count * 4u);
+    wgpuRenderPassEncoderDrawIndexed(s_pass, res->idx_count, 1, 0, 0, 0);
+
+    wgpuBindGroupRelease(bg);
+    wgpuBufferRelease(ubuf);   /* the encoder retains referenced resources until submit */
+}
+
 /* WebGPU clip space is 0..1 (like Metal/D3D, unlike GL's -1..1). Reported to the
  * CPU clipper (gfx_pc.c GFX_CLIP_Z_SCALE); paired with g_depth_clamp_enabled set
  * in gfx_init() for the WebGPU path. */
@@ -1377,5 +1615,5 @@ struct GfxRenderingAPI gfx_webgpu_api = {
     wgpu_start_frame,
     wgpu_end_frame,
     wgpu_finish_render,
-    NULL,   /* draw_modern_mesh — optional, implemented in Task 6 */
+    wgpu_draw_modern_mesh,   /* Task 6: scene decor (G_MODERNMESH) */
 };

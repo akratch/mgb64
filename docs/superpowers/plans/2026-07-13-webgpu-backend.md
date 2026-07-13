@@ -83,8 +83,8 @@
 **Files:** `gfx_webgpu.c` (+ WGSL for the modern-mesh path).
 **Interfaces:** the optional `draw_modern_mesh` matching the Metal contract (cache keyed by `mesh->mesh_id`, MVP + N64 fog curve, alpha-cutout two-sided). Renders scene decor — which is a no-op on the GL default today (AUDIT-0001).
 
-- [ ] Implement + release on level change.
-- [ ] **Validate:** `Video.SceneDecor=1` renders decor on Surface1 (webgpu); parity vs Metal decor. Commit.
+- [x] Implemented: WGSL decor shader (MVP transform + N64 fog curve + snow-cover vertex-alpha mix + alpha-cutout), a per-mesh GPU-resource cache keyed by `mesh_id` (evict-all at capacity — ids never repeat), two pipelines (opaque/cutout, two-sided), drawn indexed into the live scene pass. The vtable's last NULL slot is now filled.
+- [x] **Validate:** `Video.SceneDecor=1` on Surface1 (webgpu) renders the snow-covered pine-tree decor (snow tint + fog + correct depth) + the minimap — **decor the GL default cannot render (AUDIT-0001)**. No device errors; default binary + normal boot unaffected (SceneDecor off = not called). Commit. (Single-level textures — mipmap generation is a later refinement.)
 
 ## Task 7: Cross-platform bring-up (Windows MinGW + Linux + handheld)
 
