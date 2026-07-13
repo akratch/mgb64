@@ -50,6 +50,10 @@ extern struct GfxDimensions gfx_current_dimensions;
  * as a WGPUSurface. HWND/X11/Wayland handles arrive in Task 7. */
 #ifdef __APPLE__
 extern void *platformGetMetalLayer(void);
+#else
+/* platform_sdl.c: native window handles for non-macOS surface creation.
+ * Returns a windowing-system tag (2=Win32, 3=X11, 4=Wayland; 0=unknown). */
+extern int platformWebGpuWindowInfo(void **out1, void **out2, unsigned long long *out_win);
 #endif
 
 /* ------------------------------------------------------------------------
@@ -143,6 +147,8 @@ static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
  * Surface creation (platform-specific window -> WGPUSurface)
  * ---------------------------------------------------------------------- */
 static WGPUSurface wgpu_create_surface(void) {
+    WGPUSurfaceDescriptor sd = {0};
+    sd.label = wgpu_sv("mgb64-surface");
 #ifdef __APPLE__
     void *layer = platformGetMetalLayer();
     if (layer == NULL) {
@@ -152,13 +158,35 @@ static WGPUSurface wgpu_create_surface(void) {
     WGPUSurfaceSourceMetalLayer ml = {0};
     ml.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
     ml.layer = layer;
-    WGPUSurfaceDescriptor sd = {0};
     sd.nextInChain = (WGPUChainedStruct *)&ml;
-    sd.label = wgpu_sv("mgb64-surface");
     return wgpuInstanceCreateSurface(s_instance, &sd);
 #else
-    /* HWND (WGPUSurfaceSourceWindowsHWND) / X11 / Wayland land in Task 7. */
-    fprintf(stderr, "[webgpu] surface creation on this platform is Task 7 (not yet wired)\n");
+    void *h1 = NULL, *h2 = NULL;
+    unsigned long long win = 0;
+    int sys = platformWebGpuWindowInfo(&h1, &h2, &win);
+    if (sys == 2) {   /* Win32 */
+        WGPUSurfaceSourceWindowsHWND w = {0};
+        w.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
+        w.hinstance = h2;
+        w.hwnd = h1;
+        sd.nextInChain = (WGPUChainedStruct *)&w;
+        return wgpuInstanceCreateSurface(s_instance, &sd);
+    } else if (sys == 3) {   /* X11 */
+        WGPUSurfaceSourceXlibWindow x = {0};
+        x.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
+        x.display = h1;
+        x.window = (uint64_t)win;
+        sd.nextInChain = (WGPUChainedStruct *)&x;
+        return wgpuInstanceCreateSurface(s_instance, &sd);
+    } else if (sys == 4) {   /* Wayland */
+        WGPUSurfaceSourceWaylandSurface wl = {0};
+        wl.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
+        wl.display = h1;
+        wl.surface = h2;
+        sd.nextInChain = (WGPUChainedStruct *)&wl;
+        return wgpuInstanceCreateSurface(s_instance, &sd);
+    }
+    fprintf(stderr, "[webgpu] unsupported windowing system (tag=%d) — no surface\n", sys);
     return NULL;
 #endif
 }

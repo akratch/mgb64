@@ -2931,6 +2931,14 @@ int platformInitSDL(void) {
         }
     } else
 #endif
+#ifdef MGB64_WEBGPU_BACKEND
+    /* On non-macOS, WebGPU creates its WGPUSurface directly from the native
+     * window (HWND/X11/Wayland) and needs no GL context. (On macOS the Metal
+     * branch above already handled it.) */
+    if (gfx_backend_use_webgpu()) {
+        /* no GL context */
+    } else
+#endif
     {
         g_glContext = SDL_GL_CreateContext(g_sdlWindow);
         if (!g_glContext) {
@@ -2973,9 +2981,12 @@ int platformInitSDL(void) {
         platformApplyWindowMode();
     }
 
-    /* Load OpenGL function pointers via glad (desktop only; GLES resolves via SDL) */
+    /* Load OpenGL function pointers via glad (desktop only; GLES resolves via SDL;
+     * skipped for WebGPU, which has no GL context). */
 #if !defined(__APPLE__) && !defined(MGB64_PORTMASTER_GLES)
-    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+    if (gfx_backend_use_webgpu()) {
+        /* no GL functions to load */
+    } else if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
         fprintf(stderr, "[SDL] Failed to load OpenGL functions via glad\n");
         SDL_GL_DeleteContext(g_glContext);
         SDL_DestroyWindow(g_sdlWindow);
@@ -3046,6 +3057,50 @@ void *platformGetMetalLayer(void) {
     return g_metalView ? SDL_Metal_GetLayer(g_metalView) : NULL;
 }
 #endif
+
+#ifdef MGB64_WEBGPU_BACKEND
+#include <SDL_syswm.h>
+/* Native window handles for gfx_webgpu.c's cross-platform WGPUSurface creation
+ * (Task 7). macOS goes through platformGetMetalLayer instead. Return value tags
+ * the windowing system: 2 = Win32 (out1=HWND, out2=HINSTANCE), 3 = X11
+ * (out1=Display*, out_win=Window), 4 = Wayland (out1=wl_display*,
+ * out2=wl_surface*); 0 = unknown/unsupported. */
+int platformWebGpuWindowInfo(void **out1, void **out2, unsigned long long *out_win) {
+    if (out1) *out1 = NULL;
+    if (out2) *out2 = NULL;
+    if (out_win) *out_win = 0;
+    if (g_sdlWindow == NULL) {
+        return 0;
+    }
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(g_sdlWindow, &info)) {
+        return 0;
+    }
+    switch (info.subsystem) {
+#if defined(SDL_VIDEO_DRIVER_WINDOWS)
+        case SDL_SYSWM_WINDOWS:
+            if (out1) *out1 = (void *)info.info.win.window;      /* HWND */
+            if (out2) *out2 = (void *)info.info.win.hinstance;   /* HINSTANCE */
+            return 2;
+#endif
+#if defined(SDL_VIDEO_DRIVER_X11)
+        case SDL_SYSWM_X11:
+            if (out1) *out1 = (void *)info.info.x11.display;
+            if (out_win) *out_win = (unsigned long long)info.info.x11.window;
+            return 3;
+#endif
+#if defined(SDL_VIDEO_DRIVER_WAYLAND)
+        case SDL_SYSWM_WAYLAND:
+            if (out1) *out1 = (void *)info.info.wl.display;
+            if (out2) *out2 = (void *)info.info.wl.surface;
+            return 4;
+#endif
+        default:
+            return 0;
+    }
+}
+#endif /* MGB64_WEBGPU_BACKEND */
 
 /**
  * Process SDL events and check for quit.

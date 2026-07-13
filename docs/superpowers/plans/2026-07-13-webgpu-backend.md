@@ -87,11 +87,12 @@
 
 ## Task 7: Cross-platform bring-up (Windows MinGW + Linux + handheld)
 
-**Files:** `CMakeLists.txt`/`cmake/webgpu.cmake` (surface source per platform), `tools/mingw_cross_check.sh` (webgpu lane).
+**Files:** `gfx_webgpu.c` (surface source per platform), `platform_sdl.c` (`platformWebGpuWindowInfo` via `SDL_GetWindowWMInfo`), `cmake/webgpu.cmake` (per-platform prebuilt + link libs, already present from T0).
 
-- [ ] MinGW: link the windows-x64-gnu prebuilt; `WGPUSurfaceSourceWindowsHWND`. Validate `ge007.exe` links + the spike cross-builds.
-- [ ] Linux + handheld (linux-aarch64 prebuilt): confirm the backend builds; owner device-run of the spike + a boot on the actual PortMaster target (the one remaining unknown).
-- [ ] Commit per platform as green.
+- [x] `wgpu_create_surface` now branches by windowing system: macOS `WGPUSurfaceSourceMetalLayer` (existing), Win32 `WGPUSurfaceSourceWindowsHWND`, X11 `WGPUSurfaceSourceXlibWindow`, Wayland `WGPUSurfaceSourceWaylandSurface`, fed by `platformWebGpuWindowInfo()` (SDL_syswm). Non-macOS WebGPU skips GL-context + glad (creates its surface from the native window).
+- [x] **MinGW cross-build VALIDATED:** `cmake -DMGB64_WEBGPU_BACKEND=ON` with `cmake/mingw-w64-x86_64.cmake` compiles `gfx_webgpu.c` + `gfx_webgpu_shader.c` and **links `ge007.exe`** (38 MB, WebGPU symbols present) against the windows-x86_64-gnu prebuilt + its d3d12/dxgi/system libs. The Win32 surface path is compile+link-proven (run-validation needs owner Windows hardware).
+- [ ] Linux + handheld (linux-x86_64 / linux-aarch64 prebuilts): code + cmake ready (X11/Wayland via the same accessor); needs an owner build + device-run on the actual PortMaster target (the one remaining unknown — no Linux/ARM here).
+- [x] Commit (Windows green; Linux/handheld code-ready).
 
 ## Task 8: Owner gameplay validation → flip default → retire GL/Metal
 
