@@ -420,9 +420,13 @@ static int portEnsureDlColTableCapacity(int needed)
     grown = realloc(s_dlColTable, sizeof(*grown) * newCapacity);
 
     if (grown == NULL) {
-        fprintf(stderr,
-                "[PORT] failed to grow DLCOLLISION rwdata table from %d to %d entries\n",
-                s_dlColTableCapacity, newCapacity);
+        static int warned = 0;
+        if (!warned) {
+            fprintf(stderr,
+                    "[PORT] failed to grow DLCOLLISION rwdata table from %d to %d entries\n",
+                    s_dlColTableCapacity, newCapacity);
+            warned = 1;
+        }
         return 0;
     }
 
@@ -483,8 +487,12 @@ static int portEnsureNodeToggleCapacity(int needed)
     }
     grown = realloc(s_nodeToggleOverrideTable, sizeof(*grown) * newCapacity);
     if (grown == NULL) {
-        fprintf(stderr, "[PORT] failed to grow node-toggle-override table from %d to %d\n",
-                s_nodeToggleOverrideCapacity, newCapacity);
+        static int warned = 0;
+        if (!warned) {
+            fprintf(stderr, "[PORT] failed to grow node-toggle-override table from %d to %d\n",
+                    s_nodeToggleOverrideCapacity, newCapacity);
+            warned = 1;
+        }
         return 0;
     }
     s_nodeToggleOverrideTable = grown;
@@ -505,8 +513,12 @@ static int portEnsureNodeSuppressCapacity(int needed)
     }
     grown = realloc(s_nodeRenderSuppressTable, sizeof(*grown) * newCapacity);
     if (grown == NULL) {
-        fprintf(stderr, "[PORT] failed to grow node-render-suppress table from %d to %d\n",
-                s_nodeRenderSuppressCapacity, newCapacity);
+        static int warned = 0;
+        if (!warned) {
+            fprintf(stderr, "[PORT] failed to grow node-render-suppress table from %d to %d\n",
+                    s_nodeRenderSuppressCapacity, newCapacity);
+            warned = 1;
+        }
         return 0;
     }
     s_nodeRenderSuppressTable = grown;

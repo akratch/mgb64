@@ -59,7 +59,7 @@ void portAudioRegisterConfig(void) {}
 
 void platformRegisterConfig(void) {}
 
-void savedirInit(const char *savedir_override) { (void)savedir_override; }
+int savedirInit(const char *savedir_override) { (void)savedir_override; return 0; }
 const char *savedirPath(const char *filename) { (void)filename; return "/dev/null"; }
 const char *savedirGet(void) { return "/tmp/"; }
 

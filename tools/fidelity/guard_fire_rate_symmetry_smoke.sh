@@ -89,10 +89,13 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 for v in d.get("variants", []):
     if v.get("name") == "fire_rate_optout":
-        print(v["sim_state_hash"]); sys.exit(0)
-sys.exit("missing fire_rate_optout variant")
+        h = v.get("sim_state_hash")
+        if not h:
+            sys.exit("fire_rate_optout variant is missing sim_state_hash")
+        print(h); sys.exit(0)
+sys.exit("no fire_rate_optout variant present")
 PY
-)" || { echo "guard-fire-rate-symmetry: FAIL — tape baseline $EXP has no fire_rate_optout variant (AUDIT-0020 single-source anchor missing)" >&2; exit 2; }
+)" || { echo "guard-fire-rate-symmetry: FAIL — could not read the fire_rate_optout anchor from $EXP (AUDIT-0020 single source); see message above" >&2; exit 2; }
 
 ENVV=(SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1
       GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1)

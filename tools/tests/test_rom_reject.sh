@@ -45,7 +45,8 @@ mkfile() {
 # Zero-filled: header magic 00 00 -> rejected at the N64-magic gate.
 ZERO="$TMP/zero.z64"; mkfile "$ZERO"
 # Valid N64 magic (80 37 12 40) but a non-GoldenEye title at 0x20 -> rejected at
-# the title gate. Title "NOTAREALGAMEXXXXXXXX" (0x20..0x33).
+# the title gate. The hex below is the ASCII title "NOTAREAGAME" + padding X's
+# (any non-"GOLDENEYE" title exercises the gate; the exact bytes don't matter).
 WRONG="$TMP/wrongtitle.z64"
 mkfile "$WRONG" "0:80371240" "32:4e4f544152454147414d4558585858585858"
 

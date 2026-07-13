@@ -457,8 +457,14 @@ int game_init(const char *rom_path, const char *save_dir) {
 #endif
     signal(SIGABRT, bridgeCrashHandler);
 
-    /* Phase 1: Save directory */
-    savedirInit(save_dir);
+    /* Phase 1: Save directory. An explicit override that can't be created or
+     * written is a fatal error, not something to accept and then lose every save
+     * against (AUDIT-0054) — mirror main_pc.c/main_app.cpp and abort. */
+    if (savedirInit(save_dir) != 0) {
+        fprintf(stderr, "[GameBridge] Save directory '%s' is unusable; aborting.\n",
+                save_dir ? save_dir : "(auto)");
+        return -1;
+    }
 
     /* Phase 2: Config system */
     platformRegisterConfig();

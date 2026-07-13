@@ -72,7 +72,10 @@ void inputBindingForceDefaults(int on) { g_force = on; }
  * untouched. */
 static void bindings_atomic_write(const char *path, const char *label,
                                   void (*writer)(FILE *)) {
-    char tmp[1024];
+    /* +8 so a near-1024-char save-dir path can't truncate the ".tmp" suffix into
+     * `path` itself (which would defeat atomicity) — matches config_pc.c /
+     * eeprom_save_to_file, which size their temp name the same way. */
+    char tmp[1024 + 8];
     FILE *f;
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
     f = fopen(tmp, "w");

@@ -85,11 +85,15 @@ if [ "${1:-}" = "--record" ]; then
     # can't leave a variant anchor stale. Prints the fresh hashes to update
     # alongside sim_state_hash.
     if [ -e "$EXP" ]; then
+        # Apply the tape's replay_env too, so a tape with BOTH a replay_env and
+        # variants records each variant under the exact env the gate verifies it
+        # against (else a false mismatch at gate time).
+        rec_replay_env="$(json_get "$EXP" replay_env)"
         while IFS=$'\t' read -r vname vhash venv; do
             [ -z "$vname" ] && continue
             vdir="$(mktemp -d)"
             # shellcheck disable=SC2086
-            ( cd "$vdir" && env "${ENVV[@]}" $venv "$BIN" --rom "$ROM" --savedir "$vdir/sd" \
+            ( cd "$vdir" && env "${ENVV[@]}" $rec_replay_env $venv "$BIN" --rom "$ROM" --savedir "$vdir/sd" \
                 --level "$LEVEL" --deterministic --play-tape "$TAPE" \
                 --sim-state-hash-out "$vdir/v.json" >"$vdir/log" 2>&1 ) \
                 && vH="$(hash_of "$vdir/v.json")" || vH="RECORD-FAILED"
@@ -130,11 +134,13 @@ for tape in "${tapes[@]}"; do
     replay_env="$(json_get "$exp" replay_env)"
 
     dir="$(mktemp -d)"
+    rc=0
+    # `|| rc=$?` (not a bare subshell then `rc=$?`) so `set -e` doesn't abort the
+    # whole gate on a failing replay before we can report it and check the rest.
     # shellcheck disable=SC2086
     ( cd "$dir" && env "${ENVV[@]}" $replay_env "$BIN" --rom "$ROM" --savedir "$dir/sd" \
         --level "$level" --deterministic --play-tape "$tape" \
-        --sim-state-hash-out "$dir/rep.json" >"$dir/log" 2>&1 )
-    rc=$?
+        --sim-state-hash-out "$dir/rep.json" >"$dir/log" 2>&1 ) || rc=$?
     got="$(hash_of "$dir/rep.json" 2>/dev/null || true)"
     if [ $rc -ne 0 ]; then
         echo "tape-regression: FAIL $name — replay exited $rc (see below)" >&2
@@ -154,14 +160,22 @@ for tape in "${tapes[@]}"; do
     # a default-world rebaseline that shifts a variant anchor reddens here too, so a
     # variant (e.g. the fire-rate opt-out consumed by guard_fire_rate_symmetry_smoke)
     # can't silently drift. Isolation-assuming like the default replays above.
+    # Capture the variant list up front and fail CLOSED if it can't be parsed —
+    # otherwise a malformed variants[] would make the loop iterate zero times and
+    # the gate would pass without verifying any variant (fail-open).
+    variants_tsv=""
+    variants_tsv="$(variants_of "$exp")" || {
+        echo "tape-regression: FAIL $name — could not parse variants[] in $exp" >&2
+        fail=1
+    }
     while IFS=$'\t' read -r vname vhash venv; do
         [ -z "$vname" ] && continue
         vdir="$(mktemp -d)"
+        vrc=0
         # shellcheck disable=SC2086
         ( cd "$vdir" && env "${ENVV[@]}" $replay_env $venv "$BIN" --rom "$ROM" --savedir "$vdir/sd" \
             --level "$level" --deterministic --play-tape "$tape" \
-            --sim-state-hash-out "$vdir/rep.json" >"$vdir/log" 2>&1 )
-        vrc=$?
+            --sim-state-hash-out "$vdir/rep.json" >"$vdir/log" 2>&1 ) || vrc=$?
         vgot="$(hash_of "$vdir/rep.json" 2>/dev/null || true)"
         if [ $vrc -ne 0 ]; then
             echo "tape-regression: FAIL $name variant '$vname' — replay exited $vrc" >&2
@@ -173,7 +187,7 @@ for tape in "${tapes[@]}"; do
             fail=1
         fi
         rm -rf "$vdir"
-    done < <(variants_of "$exp")
+    done <<< "$variants_tsv"
 done
 
 if [ $fail -ne 0 ]; then
