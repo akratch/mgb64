@@ -37,6 +37,14 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
                         WGPUDevice *out_device, WGPUQueue *out_queue,
                         WGPUSurface *out_surface, int *out_format);
 
+/* The in-game F1 overlay (ui_overlay.cpp) draws into the surface render pass
+ * wgpu_end_frame opens just before present. gfx_webgpu_current_overlay_pass()
+ * returns that WGPURenderPassEncoder (as void*, NULL when none is open) to pass
+ * to gfx_webgpu_imgui_render; gfx_webgpu_current_overlay_size() returns its
+ * pixel size for the ImGui framebuffer scale + scissor clamp. */
+void *gfx_webgpu_current_overlay_pass(void);
+void  gfx_webgpu_current_overlay_size(int *w, int *h);
+
 #ifdef __cplusplus
 }
 #endif

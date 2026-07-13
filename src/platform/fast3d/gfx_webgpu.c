@@ -106,6 +106,21 @@ static WGPUCommandEncoder    s_encoder    = NULL;
 static WGPURenderPassEncoder s_pass       = NULL;
 static bool                  s_frame_open = false;
 
+/* The app-shell F1 overlay renders into this render pass on the surface texture,
+ * opened by wgpu_end_frame just before present. Non-NULL only during the
+ * platformOverlayRender() call; the overlay reads it via the getters below. */
+static WGPURenderPassEncoder s_overlay_pass = NULL;
+static int s_overlay_w = 0, s_overlay_h = 0;
+
+/* Exposed to the app shell's F1 overlay (ui_overlay.cpp) so it can draw ImGui
+ * into the current surface pass via gfx_webgpu_imgui_render. NULL when no overlay
+ * pass is open. Declared in gfx_webgpu.h. */
+void *gfx_webgpu_current_overlay_pass(void) { return (void *)s_overlay_pass; }
+void  gfx_webgpu_current_overlay_size(int *w, int *h) {
+    if (w) *w = s_overlay_w;
+    if (h) *h = s_overlay_h;
+}
+
 /* Clear color, pushed by gfx_pc.c before start_frame (see gfx_webgpu_set_clear_color). */
 static double s_clear_r = 0.0, s_clear_g = 0.0, s_clear_b = 0.0;
 
@@ -255,7 +270,9 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
      * require). If a platform disallows CopyDst, wgpuSurfaceConfigure raises a
      * device error that on_device_error logs (never aborts) and present is
      * skipped — offscreen rendering + readback still work. */
-    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst;
+    /* CopyDst receives the scene blit; CopySrc lets GE007_WEBGPU_DUMP_SURFACE read
+     * the presented frame (scene + overlay) back for validation. */
+    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst | WGPUTextureUsage_CopySrc;
     cfg.width = w;
     cfg.height = h;
     cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
@@ -480,6 +497,17 @@ static int wgpu_dump_target_frame(void) {
     return cached;
 }
 
+/* GE007_WEBGPU_DUMP_SURFACE=<n> writes the PRESENTED surface (scene + F1 overlay)
+ * for frame n to a PPM — the scene dump above is overlay-free (pre-blit). */
+static int wgpu_dump_surface_frame(void) {
+    static int cached = -2;
+    if (cached == -2) {
+        const char *e = getenv("GE007_WEBGPU_DUMP_SURFACE");
+        cached = e ? atoi(e) : -1;
+    }
+    return cached;
+}
+
 /* Map `buf` (bytesPerRow=bpr, BGRA8) and write a w*h RGB PPM to `path`. */
 static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h, const char *path) {
     size_t size = (size_t)bpr * h;
@@ -569,6 +597,53 @@ static void wgpu_end_frame(void) {
         cd.texture = st.texture; cd.aspect = WGPUTextureAspect_All;
         WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
         wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
+
+        /* Draw the app shell's in-game overlay (F1 menu) on top of the presented
+         * scene: open a Load render pass on the surface texture and hand it to
+         * the overlay via s_overlay_pass. No-op when no overlay hooks are
+         * registered (standalone --level boot) — the pass loads+stores unchanged. */
+        extern void platformOverlayRender(void);
+        WGPUTextureView surf_view = wgpuTextureCreateView(st.texture, NULL);
+        if (surf_view != NULL) {
+            WGPURenderPassColorAttachment oa = {0};
+            oa.view = surf_view;
+            oa.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+            oa.loadOp = WGPULoadOp_Load;      /* preserve the blitted scene */
+            oa.storeOp = WGPUStoreOp_Store;
+            WGPURenderPassDescriptor orp = {0};
+            orp.colorAttachmentCount = 1;
+            orp.colorAttachments = &oa;
+            s_overlay_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &orp);
+            s_overlay_w = (int)s_scene_w;
+            s_overlay_h = (int)s_scene_h;
+            platformOverlayRender();
+            wgpuRenderPassEncoderEnd(s_overlay_pass);
+            wgpuRenderPassEncoderRelease(s_overlay_pass);
+            s_overlay_pass = NULL;
+            wgpuTextureViewRelease(surf_view);
+        }
+    }
+
+    /* Optional surface dump: the presented frame (scene + overlay), unlike the
+     * scene dump above which is overlay-free. Requires the surface CopySrc usage. */
+    WGPUBuffer surf_dump_buf = NULL;
+    uint32_t surf_dump_bpr = 0;
+    if (present_ok && frame_no == wgpu_dump_surface_frame() && s_cfg_w > 0 && s_cfg_h > 0) {
+        surf_dump_bpr = ((s_cfg_w * 4u + 255u) / 256u) * 256u;
+        WGPUBufferDescriptor bd = {0};
+        bd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
+        bd.size = (uint64_t)surf_dump_bpr * s_cfg_h;
+        surf_dump_buf = wgpuDeviceCreateBuffer(s_device, &bd);
+        if (surf_dump_buf != NULL) {
+            WGPUTexelCopyTextureInfo src = {0};
+            src.texture = st.texture; src.aspect = WGPUTextureAspect_All;
+            WGPUTexelCopyBufferInfo dst = {0};
+            dst.buffer = surf_dump_buf;
+            dst.layout.bytesPerRow = surf_dump_bpr;
+            dst.layout.rowsPerImage = s_cfg_h;
+            WGPUExtent3D ext = { s_cfg_w, s_cfg_h, 1 };
+            wgpuCommandEncoderCopyTextureToBuffer(s_encoder, &src, &dst, &ext);
+        }
     }
 
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(s_encoder, NULL);
@@ -582,6 +657,12 @@ static void wgpu_end_frame(void) {
         snprintf(path, sizeof(path), "/tmp/webgpu_frame_%d.ppm", frame_no);
         wgpu_write_ppm(dump_buf, dump_bpr, s_scene_w, s_scene_h, path);
         wgpuBufferRelease(dump_buf);
+    }
+    if (surf_dump_buf != NULL) {
+        char path[128];
+        snprintf(path, sizeof(path), "/tmp/webgpu_surface_%d.ppm", frame_no);
+        wgpu_write_ppm(surf_dump_buf, surf_dump_bpr, s_cfg_w, s_cfg_h, path);
+        wgpuBufferRelease(surf_dump_buf);
     }
 
     if (present_ok) {

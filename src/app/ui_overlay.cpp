@@ -10,6 +10,16 @@
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_opengl3.h"
 
+#ifdef MGB64_WEBGPU_BACKEND
+#include "gfx_webgpu_imgui.h"
+// Render-backend seam (engine) + the surface overlay pass (gfx_webgpu.c),
+// resolved at link into ge007. The overlay renders through whichever the
+// active backend is.
+extern "C" bool  gfx_backend_use_webgpu(void);
+extern "C" void *gfx_webgpu_current_overlay_pass(void);
+extern "C" void  gfx_webgpu_current_overlay_size(int *w, int *h);
+#endif
+
 #include <SDL.h>
 
 #include <cstdio>
@@ -193,9 +203,31 @@ void onRender() {
     overlayTestFrameTick();
     if (!g_open) return;
 
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
+#ifdef MGB64_WEBGPU_BACKEND
+    const bool wgpu = gfx_backend_use_webgpu();
+    if (wgpu) {
+        gfx_webgpu_imgui_new_frame();
+        ImGui_ImplSDL2_NewFrame();
+        // Metal window: imgui_impl_sdl2's SDL_GL_GetDrawableSize returns logical,
+        // so set the true high-DPI scale from the surface size (== drawable) —
+        // same fix as AppHost. DisplaySize stays logical so the panel lays out at
+        // point sizes and geometry fills the surface.
+        ImGuiIO &io = ImGui::GetIO();
+        int sw = 0, sh = 0, lw = 0, lh = 0;
+        gfx_webgpu_current_overlay_size(&sw, &sh);
+        if (g_window) SDL_GetWindowSize(g_window, &lw, &lh);
+        if (lw > 0 && lh > 0 && sw > 0 && sh > 0) {
+            io.DisplaySize = ImVec2((float)lw, (float)lh);
+            io.DisplayFramebufferScale = ImVec2((float)sw / (float)lw, (float)sh / (float)lh);
+        }
+        ImGui::NewFrame();
+    } else
+#endif
+    {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+    }
 
     // RX.2: apply the live UI.Scale so the in-game overlay is readable on a
     // handheld too (idempotent no-op when unchanged).
@@ -312,7 +344,19 @@ void onRender() {
     ImGui::End();
 
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#ifdef MGB64_WEBGPU_BACKEND
+    if (wgpu) {
+        void *pass = gfx_webgpu_current_overlay_pass();
+        int sw = 0, sh = 0;
+        gfx_webgpu_current_overlay_size(&sw, &sh);
+        if (pass != nullptr) {
+            gfx_webgpu_imgui_render(ImGui::GetDrawData(), pass, sw, sh);
+        }
+    } else
+#endif
+    {
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
 }
 
 }  // namespace
