@@ -313,7 +313,11 @@ void mpCalculateAwards(s32 arg0)
     s32 prev_player_num;
     s32 duration;
 
-    struct AwardMetrics metrics[4];
+    /* Zero all four slots: only active players are populated below, but every
+     * slot's .num_* fields are read by value in the mpFindMax* award scan, so the
+     * inactive slots would otherwise feed indeterminate stack values into a 2-/3-
+     * player match [AUDIT-0004]. Active entries are still computed unchanged. */
+    struct AwardMetrics metrics[4] = {0};
 
     player_count = getPlayerCount();
     duration = getMissiontimer();

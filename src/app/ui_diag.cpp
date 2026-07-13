@@ -56,10 +56,14 @@ void writeSysinfo(const std::string &path, const LauncherState &s) {
     const char *glver = (const char *)glGetString(GL_VERSION);
     f << "gl-renderer: " << (rend ? rend : "?") << "\n";
     f << "gl-version: " << (glver ? glver : "?") << "\n";
-    // ROM: metadata ONLY (never bytes); path redacted to filename.
+    // ROM: metadata ONLY (never bytes); path redacted to filename. Scan for BOTH
+    // separators so a Windows "C:\Users\<name>\rom.z64" path is not leaked whole
+    // (strrchr('/') alone left the full drive path, incl. the account name)
+    // [AUDIT-0048].
     if (s.romPath[0]) {
-        const char *fn = std::strrchr(s.romPath, '/');
-        fn = fn ? fn + 1 : s.romPath;
+        const char *fn = s.romPath;
+        for (const char *p = s.romPath; *p; ++p)
+            if (*p == '/' || *p == '\\') fn = p + 1;
         f << "rom-file: " << fn << "\n";
         f << "rom-region: " << s.romInfo.region << "\n";
         f << "rom-byteorder: " << s.romInfo.byte_order << "\n";

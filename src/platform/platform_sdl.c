@@ -385,7 +385,7 @@ s32 g_pcRemasterFX = 0;
 s32 g_pcTonemap = 1;             /* remaster default: on (gentle filmic highlight rolloff for a cinematic look) */
 s32 g_pcRemasterFX = 1;          /* MASTER faithful switch: 0 = bypass ALL remaster post-FX (grade/tonemap/bloom/vignette/sharpen/dither/FXAA) for the original look. HD textures + SSAA (fidelity, not look) stay via their own settings. */
 #endif
-s32 g_pcFpsOverlay = 1;          /* T11: app-level FPS/frame-time/1%-low overlay. Deliberately NOT in the --faithful/--faithful-hd preset tables (a HUD debug widget, not part of the original LOOK), so neither preset touches it. Force-suppressed (zero DL bytes) under --deterministic / GE007_BACKGROUND / --screenshot-frame sessions regardless of this setting — see src/game/pc_fps_overlay.c. */
+s32 g_pcFpsOverlay = 1;          /* T11: app-level FPS/frame-time/1%-low overlay. Pinned to 0 by the --faithful/--faithful-hd presets [AUDIT-0010] (a HUD debug widget, not part of the original LOOK); the normal/remaster default is on. Force-suppressed (zero DL bytes) under --deterministic / GE007_BACKGROUND / --screenshot-frame sessions regardless of this setting — see src/game/pc_fps_overlay.c. */
 char g_pcTexturePack[1024] = ""; /* Video.TexturePack: dir of an HD texture pack (textures/tok####.png). Empty = off (stock, byte-identical). */
 f32 g_pcGradeLevelSat = 1.0f;    /* renderer-internal: per-level saturation mult (identity until set by table) */
 f32 g_pcGradeLevelCon = 1.0f;    /* renderer-internal: per-level contrast mult */
@@ -1905,7 +1905,9 @@ void platformRegisterConfig(void)
                          SETTING_SCOPE_LIVE, "GE007_FRAME_CAP",
                          "--config-override Video.FrameCap=VALUE",
                          "Frame cap",
-                         "Frame pacing cap: 30, 60, or display.");
+                         "Frame pacing cap: 30 or 60. 'display' is currently a 60 Hz compatibility "
+                         "alias (the sim runs at a fixed 60 Hz; true high-refresh presentation needs "
+                         "the render-interpolation path, not yet enabled), so it behaves like 60.");
     settingsRegisterInt("Video.FpsOverlay", &g_pcFpsOverlay, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_FPS_OVERLAY",
                         "--config-override Video.FpsOverlay=VALUE",
@@ -2256,7 +2258,7 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_FPS_TOGGLE_KEY",
                         "--config-override Input.FpsToggleKey=VALUE",
                         "FPS key",
-                        "SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741899).");
+                        "SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741891).");
 
     /* Full-auto fire-rate authenticity (FID-0056). ON (default, owner decision
      * 2026-07-10) = automatics fire at the faithful N64 per-frame cadence
@@ -2383,7 +2385,8 @@ void platformRegisterConfig(void)
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_OBJECTIVES",
                         "--config-override Input.MinimapObjectives=VALUE",
                         "Minimap objectives",
-                        "Reserved for objective pins on the minimap. Not yet implemented -- no effect currently.");
+                        "Show objective location pins on the tactical minimap so you can see where "
+                        "your current mission objectives are. On by default.");
     settingsRegisterInt("Input.MinimapEnemyFireReveal", &g_pcMinimapEnemyFireReveal, 1, 0, 1,
                         SETTING_SCOPE_LIVE, "GE007_MINIMAP_ENEMY_FIRE_REVEAL",
                         "--config-override Input.MinimapEnemyFireReveal=VALUE",
@@ -2477,7 +2480,6 @@ void platformRegisterConfig(void)
     settingsMarkAdvanced("Video.WindowX");
     settingsMarkAdvanced("Video.WindowY");
     /* Minimap dev/accessibility + renderer internals. */
-    settingsMarkAdvanced("Input.MinimapObjectives");    /* unimplemented layer */
     settingsMarkAdvanced("Input.MinimapShowAllEnemies");
     settingsMarkAdvanced("Input.MinimapSharpOverlay");
     /* ADS deep tuning (11). Player-facing: Input.AdsEnabled (master),
@@ -2513,6 +2515,7 @@ static const struct {
     const char *value;
 } s_faithfulPreset[] = {
     { "Video.RemasterFX",            "0" },      /* bypass the whole post-FX stack */
+    { "Video.FpsOverlay",            "0" },      /* [AUDIT-0010] no non-original HUD */
     { "Video.RenderScale",           "1" },      /* native res (no supersampling)  */
     { "Video.MSAA",                  "0" },
     { "Video.TexturePack",           "" },       /* stock textures (no HD pack)    */
@@ -2609,6 +2612,7 @@ static const struct {
     const char *value;
 } s_faithfulHdPreset[] = {
     { "Video.RemasterFX",            "0" },      /* faithful look: post-FX bypass  */
+    { "Video.FpsOverlay",            "0" },      /* [AUDIT-0010] no non-original HUD */
     { "Video.RenderScale",           "2" },      /* 2x SSAA supersampling          */
     { "Video.MSAA",                  "0" },
     /* Video.TexturePack intentionally NOT pinned — supply your own HD pack. */

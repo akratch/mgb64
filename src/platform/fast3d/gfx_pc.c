@@ -24021,7 +24021,15 @@ static void gfx_diag_screenshot_series_capture_if_due(void)
             return;
         }
 
-        glReadPixels(0, 0, sw, sh, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+        /* Backend-neutral readback: raw glReadPixels crashes under Metal (no GL
+         * context) [AUDIT-0003]. This routes GL->glReadPixels, Metal->blit. A
+         * readback failure writes no (partial) file. */
+        if (!gfx_backend_read_framebuffer_rgb(0, 0, sw, sh, pixels)) {
+            fprintf(stderr, "[SCREENSHOT-SERIES] frame=%d failed=readback\n", g_frame_count_diag);
+            fflush(stderr);
+            free(pixels);
+            return;
+        }
 
         path_len = snprintf(path, sizeof(path), "%s/%s_f%06d.ppm",
                             dir, prefix, g_frame_count_diag);

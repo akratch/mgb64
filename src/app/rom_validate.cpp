@@ -60,11 +60,14 @@ extern "C" RomInfo mgb_validate_rom(const char *path) {
     long size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
 
-    // GoldenEye is a 16 MB cart; accept the standard N64 size range.
-    if (size < 4 * 1024 * 1024 || size > 64 * 1024 * 1024) {
+    // GoldenEye 007 is a 12 MB (96 Mbit) cartridge in every region (U/E/J). The
+    // engine boot rejects anything else (rom_io.c GE007_ROM_SIZE_BYTES == 0xC00000),
+    // so require the exact size here too rather than mark an unbootable image
+    // "Ready to play" [AUDIT-0045].
+    if (size != 0xC00000) {
         std::fclose(f);
         std::snprintf(info.message, sizeof(info.message),
-                      "Unexpected size: %.1f MB (expected ~16 MB).",
+                      "Unexpected size: %.2f MB (GoldenEye 007 is exactly 12 MB).",
                       (double)size / (1024.0 * 1024.0));
         return info;
     }

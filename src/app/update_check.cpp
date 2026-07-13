@@ -247,6 +247,9 @@ void UpdateCheck_start(int argc, char **argv) {
     if (t) {
         SDL_DetachThread(t);
     } else {
+        // [AUDIT-0044] mark the check finished so the UI leaves "Checking..." and
+        // falls through to the offline/unavailable state instead of hanging.
+        SDL_AtomicSet(&s_done, 1);
         std::fprintf(stderr, "[update] SDL_CreateThread failed: %s\n", SDL_GetError());
     }
 }

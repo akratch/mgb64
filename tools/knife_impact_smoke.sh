@@ -38,14 +38,16 @@ FIRE_SPEC="110:240"
 FRAMES=300
 
 usage() {
-    cat <<'USAGE'
+    # Unquoted heredoc so option defaults interpolate from the real variables
+    # (e.g. --warp-distance) rather than drifting from a hardcoded literal [AUDIT-0021].
+    cat <<USAGE
 Usage: tools/knife_impact_smoke.sh [options]
 
 Options:
   --level N            raw LEVELID (default: 33 = Dam)
   --chrnum C           guard to warp in front of Bond (default: 0)
   --warp-frame N       frame to warp the guard (default: 60)
-  --warp-distance D    warp distance in front of Bond (default: 120)
+  --warp-distance D    warp distance in front of Bond (default: ${WARP_DISTANCE})
   --give-frame N       frame to add knife + ammo (default: 70)
   --equip-frame N      frame to equip the throwing knife (default: 85)
   --fire-spec F:L      AUTO_FIRE window frame:len (default: 110:240)

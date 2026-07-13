@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1061 flags** found across the source.
+**1062 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -456,7 +456,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_FORCE_WORLD_ATTRS` | ? |  | 1 |  |
 | `GE007_FOV_Y` | float | 50.0f | 1 | Gameplay vertical field of view in degrees (45-105). 60 is the original feel; higher widens peripheral view. |
 | `GE007_FPS_OVERLAY` | int | 1 | 1 | Small top-right overlay showing the current FPS, frame time (ms), and 1%-low FPS. 0 = off. (Automatically hidden during benchmark and screenshot runs.) |
-| `GE007_FPS_TOGGLE_KEY` | int | SDLK_F10 | 1 | SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741899). |
+| `GE007_FPS_TOGGLE_KEY` | int | SDLK_F10 | 1 | SDL keycode that toggles the FPS overlay without opening the menu (default F10 = 1073741891). |
 | `GE007_FP_GADGET_YAW_DEG` | ? |  | 1 |  |
 | `GE007_FP_GLAUNCH_PITCH_DEG` | ? |  | 1 |  |
 | `GE007_FP_GLAUNCH_ROLL_DEG` | ? |  | 1 |  |
@@ -480,7 +480,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_FP_WEAPON_PITCH_DEG` | ? |  | 1 |  |
 | `GE007_FP_WEAPON_ROLL_DEG` | ? |  | 1 |  |
 | `GE007_FP_WEAPON_YAW_DEG` | ? |  | 1 |  |
-| `GE007_FRAME_CAP` | enum | PLATFORM_FRAME_CAP_60 | 1 | Frame pacing cap: 30, 60, or display. |
+| `GE007_FRAME_CAP` | enum | PLATFORM_FRAME_CAP_60 | 1 | Frame pacing cap: 30 or 60. 'display' is currently a 60 Hz compatibility alias (the sim runs at a fixed 60 Hz; true high-refresh presentation needs the render-interpolation path, not yet enabled), so it behaves like 60. |
 | `GE007_FULLSCREEN_HEIGHT` | int | 0 | 1 | Exclusive fullscreen mode height; 0 uses SDL/default. |
 | `GE007_FULLSCREEN_REFRESH` | int | 0 | 1 | Exclusive fullscreen refresh rate in Hz; 0 accepts any/default. |
 | `GE007_FULLSCREEN_WIDTH` | int | 0 | 1 | Exclusive fullscreen mode width; 0 uses SDL/default. |
@@ -539,12 +539,13 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_MINIMAP_ENABLED` | int | 1 | 1 | Draw the modern tactical minimap during single-player gameplay (0 = off). |
 | `GE007_MINIMAP_ENEMY_FIRE_REVEAL` | int | 1 | 1 | Briefly reveal guards on the minimap when they fire audible unsuppressed weapons (0 = off). |
 | `GE007_MINIMAP_MODE` | int | 0 | 1 | 0 = local tactical north-up; 1 = floor overview north-up; 2 = local rotating player-up. |
-| `GE007_MINIMAP_OBJECTIVES` | int | 1 | 1 | Reserved for objective pins on the minimap. Not yet implemented -- no effect currently. |
+| `GE007_MINIMAP_OBJECTIVES` | int | 1 | 1 | Show objective location pins on the tactical minimap so you can see where your current mission objectives are. On by default. |
 | `GE007_MINIMAP_OPACITY` | float | 0.85f | 1 | Alpha for the modern minimap overlay. |
 | `GE007_MINIMAP_OVERLAY_DUMP` | ? |  | 1 |  |
 | `GE007_MINIMAP_SHARP_OVERLAY` | int | 1 | 1 | Draw the minimap after the retro output filter for a crisp modern overlay (0 = disable first-pass renderer). |
 | `GE007_MINIMAP_SHOW_ALL_ENEMIES` | int | 0 | 1 | Debug/accessibility assist that reveals all recorded enemy fire events, including suppressed shots. |
 | `GE007_MINIMAP_SIZE` | float | 1.0f | 1 | Scale for the modern minimap overlay. |
+| `GE007_MISSION_MUSIC_INIT` | presence | unset | 1 | Run the retail mission-music state-machine initializer on the native port instead of the historical stub. Default off: the real init consumes sim RNG at level start (determinism shift, needs a tape re-baseline) and its audio path is not yet gameplay-verified [AUDIT-0073]. |
 | `GE007_MIXER_POLE_FC_XOR_MASK` | ? |  | 1 |  |
 | `GE007_MODERN_CROSSHAIR` | int | 1 | 1 | Always-on crisp dot+ticks hip-fire reticle instead of the textured crosshair (0 = off). |
 | `GE007_MONITOR_TRACE` | ? |  | 2 |  |
