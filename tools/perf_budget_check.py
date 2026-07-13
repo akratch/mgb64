@@ -13,11 +13,23 @@ Levels missing from the CSV, or with a non-numeric measurement (NA), are
 reported and treated as a hard failure unless --allow-missing is given (a level
 that will not direct-boot in this environment should be excluded explicitly).
 
+Two policies, kept distinct (AUDIT-0019): the PORTABLE gate (default) enforces
+only machine-independent contracts -- the 60 fps absolute floor plus data
+presence -- so a valid build never fails merely for not matching another
+machine's cold baseline. A --baseline delta is ADVISORY here (printed, never
+failing). Relative REGRESSION detection is opt-in via --regression and only
+enforces deltas when the caller's --fingerprint matches the baseline's
+'# fingerprint:' line; a missing/mismatched fingerprint SKIPS the relative check
+(clear message) and never yields a regression verdict. The absolute floor is a
+hard failure in every mode.
+
 Usage:
   tools/perf_budget_check.py CENSUS.csv
   tools/perf_budget_check.py CENSUS.csv --hard-ms 16.6 --target-ms 8.3
   tools/perf_budget_check.py CENSUS.csv --strict          # target failures fail too
-  tools/perf_budget_check.py CENSUS.csv --baseline B.csv  # also flag regressions vs baseline
+  tools/perf_budget_check.py CENSUS.csv --baseline B.csv  # advisory deltas vs baseline
+  tools/perf_budget_check.py CENSUS.csv --baseline B.csv --regression \
+      --fingerprint "Apple M3 Max | ..."                  # enforce deltas (host-matched)
   tools/perf_budget_check.py CENSUS.csv --allow-missing caverns,cradle
 
 Exit codes: 0 = all budgets met; 1 = a hard failure; 2 = usage/IO error.
@@ -55,20 +67,67 @@ def load_census(path):
     return rows
 
 
+def load_fingerprint(path):
+    """Return the baseline's '# fingerprint: ...' value (host/renderer/build the
+    baseline was recorded on), or '' if it has none. Read from the leading
+    comment block only, so it never collides with data rows."""
+    if not path:
+        return ""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                s = line.strip()
+                if not s:
+                    continue
+                if not s.startswith("#"):
+                    break  # header comments ended; no fingerprint
+                body = s.lstrip("#").strip()
+                if body.lower().startswith("fingerprint:"):
+                    return body.split(":", 1)[1].strip()
+    except OSError:
+        return ""
+    return ""
+
+
 def main():
     ap = argparse.ArgumentParser(description="Enforce MGB64 per-level frame-time budgets.")
     ap.add_argument("census", help="census CSV from tools/perf_census.sh")
     ap.add_argument("--hard-ms", type=float, default=16.6, help="hard-fail budget (default 16.6 = 60fps)")
     ap.add_argument("--target-ms", type=float, default=8.3, help="target budget (default 8.3 = 120fps)")
     ap.add_argument("--strict", action="store_true", help="treat target misses as failures too")
-    ap.add_argument("--baseline", help="optional baseline CSV; flag >15%% regressions")
+    ap.add_argument("--baseline", help="optional baseline CSV; deltas are ADVISORY unless --regression")
     ap.add_argument("--regress-frac", type=float, default=0.15, help="regression threshold vs baseline (default 0.15)")
+    ap.add_argument("--regression", action="store_true",
+                    help="ENFORCE baseline deltas as failures (requires a --fingerprint matching the "
+                         "baseline's '# fingerprint:' line); without it, deltas are advisory only")
+    ap.add_argument("--fingerprint", default="",
+                    help="this host's environment fingerprint; must match the baseline's for --regression to enforce")
     ap.add_argument("--allow-missing", default="", help="comma-separated levels allowed to be absent/NA")
     args = ap.parse_args()
 
     allow_missing = {s.strip() for s in args.allow_missing.split(",") if s.strip()}
     census = load_census(args.census)
     baseline = load_census(args.baseline) if args.baseline else {}
+    baseline_fp = load_fingerprint(args.baseline)
+
+    # Decide whether relative deltas are ENFORCED (fail the gate) or advisory.
+    # Enforcement requires an explicit --regression AND a fingerprint that matches
+    # the baseline's recorded host, so a cold cross-machine baseline can never
+    # turn host variance into a false code-regression verdict (AUDIT-0019).
+    enforce_regression = False
+    regression_skip = ""
+    if args.regression:
+        if not baseline:
+            regression_skip = "no --baseline provided"
+        elif not baseline_fp:
+            regression_skip = "baseline CSV has no '# fingerprint:' line"
+        elif not args.fingerprint.strip():
+            regression_skip = "no --fingerprint given for this host"
+        elif args.fingerprint.strip() != baseline_fp:
+            regression_skip = (f"fingerprint mismatch (host='{args.fingerprint.strip()}' "
+                               f"!= baseline='{baseline_fp}')")
+        else:
+            enforce_regression = True
 
     hard_failures, target_warns, missing, regressions = [], [], [], []
 
@@ -98,7 +157,9 @@ def main():
     print(f"budgets: hard-fail > {args.hard_ms} ms ({1000/args.hard_ms:.0f} fps), "
           f"target > {args.target_ms} ms ({1000/args.target_ms:.0f} fps)")
 
-    failed = bool(hard_failures) or bool(missing) or bool(regressions)
+    failed = bool(hard_failures) or bool(missing)
+    if enforce_regression and regressions:
+        failed = True
     if args.strict and target_warns:
         failed = True
 
@@ -106,8 +167,17 @@ def main():
         print(f"HARD FAIL: {', '.join(hard_failures)} below 60fps floor", file=sys.stderr)
     if missing:
         print(f"MISSING: {', '.join(missing)} (use --allow-missing to exclude)", file=sys.stderr)
+    if args.regression and not enforce_regression:
+        print(f"RELATIVE CHECK SKIPPED: {regression_skip}; the portable absolute-floor gate "
+              f"still applies (baseline deltas shown are advisory).", file=sys.stderr)
     if regressions:
-        print(f"REGRESSION: {', '.join(regressions)} exceeded baseline by >{args.regress_frac*100:.0f}%", file=sys.stderr)
+        if enforce_regression:
+            print(f"REGRESSION: {', '.join(regressions)} exceeded baseline by "
+                  f">{args.regress_frac*100:.0f}% (enforced, host-matched)", file=sys.stderr)
+        else:
+            print(f"note: {', '.join(regressions)} exceed baseline by >{args.regress_frac*100:.0f}% "
+                  f"(ADVISORY — machine/thermal-relative, not a gate failure; use --regression on a "
+                  f"fingerprint-matched host to enforce)", file=sys.stderr)
     if target_warns:
         sev = "FAIL" if args.strict else "WARN"
         print(f"{sev}: {', '.join(target_warns)} above target ({args.target_ms}ms/120fps)",

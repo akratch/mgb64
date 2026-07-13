@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - valid builds can fail release validation for host load rather than code |
 | Priority | P1 |
 | Area | Validation / performance regression gate |
@@ -10,6 +10,31 @@
 | Confidence | High |
 | Origin | Newly standardized by this audit |
 | Affected configurations | Every `port_perf_budget_smoke` run outside the exact baseline host and cold-run conditions |
+
+## Resolution
+
+Fixed 2026-07-13. Split the two conflated policies:
+
+- **Portable gate (default)** — `perf_budget_check.py` now hard-fails only on
+  the machine-independent contracts: the 60 fps absolute floor and data presence
+  (missing/NA rows). A `--baseline` delta is ADVISORY (printed with a
+  "machine/thermal-relative, not a gate failure" note), so a build clearing every
+  absolute budget passes even when it does not match another machine's cold
+  baseline. `perf_budget_smoke.sh` (the CTest lane) runs this default.
+- **Relative regression (opt-in)** — enforced only under `--regression` AND when
+  `--fingerprint` matches the baseline's new `# fingerprint:` line
+  (`Apple M3 Max | macOS OpenGL-over-Metal | -O3 Release | default settings`). A
+  missing or mismatched fingerprint prints `RELATIVE CHECK SKIPPED: …` and falls
+  back to the absolute-floor verdict — never a false regression. The absolute
+  floor stays a hard failure in every mode; `--strict` still fails target misses.
+
+`perf_budget_smoke.sh` gained pass-through `--regression`/`--fingerprint` flags.
+
+Verification: a permanent ROM-free unittest (`tools/tests/test_perf_budget_check.py`,
+CTest `perf_budget_check_unittest`, 10 cases) pins absolute pass/fail,
+missing/allow-missing, portable-pass-despite-delta, regression-enforced-on-match,
+skip-on-mismatch, skip-on-absent-fingerprint, floor-hard-in-regression-mode, and
+strict-target behavior. All pass.
 
 ## Summary
 

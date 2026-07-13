@@ -31,6 +31,8 @@ HARD_MS="16.6"
 TARGET_MS="8.3"
 STRICT=0
 ALLOW_MISSING=""
+REGRESSION=0
+FINGERPRINT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,6 +44,12 @@ while [[ $# -gt 0 ]]; do
         --hard-ms) HARD_MS="$2"; shift 2 ;;
         --target-ms) TARGET_MS="$2"; shift 2 ;;
         --strict) STRICT=1; shift ;;
+        # Opt into relative regression enforcement (AUDIT-0019). The default lane
+        # is the PORTABLE absolute-floor gate; --regression enforces >15% deltas
+        # vs the committed baseline, but only when --fingerprint matches the
+        # baseline's recorded host (else the checker skips the relative check).
+        --regression) REGRESSION=1; shift ;;
+        --fingerprint) FINGERPRINT="$2"; shift 2 ;;
         --allow-missing) ALLOW_MISSING="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 2 ;;
     esac
@@ -69,8 +77,13 @@ echo "[perf-budget] running census (binary=$BINARY)..."
 # perf_census.sh honors BIN + CENSUS_OUT; ROM is auto-discovered next to the repo.
 BIN="$BINARY" CENSUS_OUT="$CSV" bash tools/perf_census.sh ${LEVELS:+$LEVELS}
 
+# The default (CTest) lane is the PORTABLE gate: the 60fps absolute floor + data
+# presence. The baseline is passed for ADVISORY delta reporting only; the checker
+# does not fail on a delta unless --regression is given with a matching
+# --fingerprint (AUDIT-0019 — host variance must not read as a code regression).
 CHECK_ARGS=(--hard-ms "$HARD_MS" --target-ms "$TARGET_MS" --baseline baselines/perf_census_baseline.csv)
 [[ "$STRICT" -eq 1 ]] && CHECK_ARGS+=(--strict)
+[[ "$REGRESSION" -eq 1 ]] && CHECK_ARGS+=(--regression --fingerprint "$FINGERPRINT")
 [[ -n "$ALLOW_MISSING" ]] && CHECK_ARGS+=(--allow-missing "$ALLOW_MISSING")
 
 echo "[perf-budget] checking budgets..."

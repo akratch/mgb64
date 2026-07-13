@@ -274,6 +274,21 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
     )
+    # AUDIT-0019 perf-gate two-policy contract (ROM-free): the portable
+    # absolute-floor gate must pass a host-variance delta vs another machine's
+    # cold baseline, while relative regression only enforces under --regression
+    # with a matching --fingerprint (mismatch/absent -> skip, never a false
+    # regression verdict); the 60fps floor + data presence stay hard in every mode.
+    add_test(
+        NAME perf_budget_check_unittest
+        COMMAND python3 -m unittest tools.tests.test_perf_budget_check
+    )
+    set_tests_properties(
+        perf_budget_check_unittest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 60
+    )
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
