@@ -50,6 +50,21 @@ geometry, textures, depth ordering, lighting, and HUD match.
    the GL default doesn't render it either (AUDIT-0001), so not needed for
    GL-parity — it would be a "further" enhancement.
 
+## Known limitation: the launcher app runs GL, not WebGPU
+
+The MGB64_APP launcher owns a **GL** SDL window (its ImGui UI renders via GL) and
+hands it to the game (adopted, one shared window). WebGPU/Metal need a
+CAMetalLayer, which that GL window has none of — so the game **forces GL** on the
+adopted window (`gfx_backend_force_opengl()` in `platform_sdl.c`, committed
+`ed9eab8`). Without this the WebGPU default went "backend inert" → a black frame
+while audio/sim ran (the launcher→Play regression, now fixed).
+
+Consequence: the shipped `.app` uses WebGPU only for **direct/standalone** boots
+(`./ge007 --level ...`), and GL when launched through the launcher. To make the
+launcher app itself use WebGPU, its window + ImGui rendering must be ported to a
+Metal/WebGPU surface — a follow-up, best folded into the GL/Metal-retirement
+phase in ADR-0001.
+
 ## Cross-platform verification done (2026-07-13, Docker + MinGW)
 
 | Platform | Build | Runtime WebGPU path |
