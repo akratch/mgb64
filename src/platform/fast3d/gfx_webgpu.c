@@ -438,6 +438,15 @@ static void wgpu_end_frame(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
+    /* Minimap / radar overlay: a 2D screen-space pass into the scene target after
+     * the geometry (the GL path draws it in gfx_end_frame, Metal in mtl_end_frame;
+     * gfx_end_frame skips it for non-GL backends). Reads Input.MinimapEnabled +
+     * the frame queue internally; no-op when disabled/empty. */
+    {
+        extern void minimap_overlay_draw_queued_frames_webgpu(int fb_width, int fb_height);
+        minimap_overlay_draw_queued_frames_webgpu((int)s_scene_w, (int)s_scene_h);
+    }
+
     /* Optional debug frame dump: copy the offscreen scene into a mappable buffer
      * (works even when the window is hidden, unlike a surface readback). */
     static int frame_no = -1;
@@ -1091,6 +1100,162 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     if (bg != NULL) {
         wgpuBindGroupRelease(bg);   /* the encoder retains it until submit */
     }
+}
+
+/* ------------------------------------------------------------------------
+ * Minimap / radar overlay (T4b) — a 2D screen-space pass into the scene target
+ * after the main geometry, mirroring the GL (minimap_overlay.c direct draws) and
+ * Metal (gfx_metal_draw_minimap_overlay) paths. Vertices are MinimapOverlayVertex
+ * {x,y (pixels), r,g,b,a} (stride 24); the shader maps pixels -> NDC with a
+ * screen-size uniform. Called from wgpu_end_frame after the main render pass.
+ * ---------------------------------------------------------------------- */
+static WGPURenderPipeline s_mm_pipe = NULL;
+static WGPUBindGroupLayout s_mm_bgl = NULL;
+static WGPUBindGroup s_mm_bg = NULL;
+static WGPUBuffer s_mm_ubuf = NULL;
+
+static const char *kMinimapWGSL =
+    "struct MMIn { @location(0) pos : vec2<f32>, @location(1) color : vec4<f32> };\n"
+    "struct MMOut { @builtin(position) clip : vec4<f32>, @location(0) color : vec4<f32> };\n"
+    "struct MMU { screen : vec2<f32>, pad : vec2<f32> };\n"
+    "@group(0) @binding(0) var<uniform> mmu : MMU;\n"
+    "@vertex fn vs_main(in : MMIn) -> MMOut {\n"
+    "  var o : MMOut;\n"
+    "  let ndc = vec2<f32>((in.pos.x / mmu.screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / mmu.screen.y) * 2.0);\n"
+    "  o.clip = vec4<f32>(ndc, 0.0, 1.0);\n"
+    "  o.color = in.color;\n"
+    "  return o;\n}\n"
+    "@fragment fn fs_main(in : MMOut) -> @location(0) vec4<f32> { return in.color; }\n";
+
+static bool wgpu_ensure_minimap(void) {
+    if (s_mm_pipe != NULL) {
+        return true;
+    }
+    if (!s_ready) {
+        return false;
+    }
+    WGPUShaderSourceWGSL src = {0};
+    src.chain.sType = WGPUSType_ShaderSourceWGSL;
+    src.code = wgpu_sv(kMinimapWGSL);
+    WGPUShaderModuleDescriptor smd = {0};
+    smd.nextInChain = (WGPUChainedStruct *)&src;
+    WGPUShaderModule mod = wgpuDeviceCreateShaderModule(s_device, &smd);
+    if (mod == NULL) {
+        return false;
+    }
+
+    WGPUBindGroupLayoutEntry ue = {0};
+    ue.binding = 0;
+    ue.visibility = WGPUShaderStage_Vertex;
+    ue.buffer.type = WGPUBufferBindingType_Uniform;
+    ue.buffer.minBindingSize = 16;
+    WGPUBindGroupLayoutDescriptor bgld = {0};
+    bgld.entryCount = 1;
+    bgld.entries = &ue;
+    s_mm_bgl = wgpuDeviceCreateBindGroupLayout(s_device, &bgld);
+
+    WGPUBufferDescriptor ubd = {0};
+    ubd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    ubd.size = 16;
+    s_mm_ubuf = wgpuDeviceCreateBuffer(s_device, &ubd);
+
+    WGPUBindGroupEntry bge = {0};
+    bge.binding = 0;
+    bge.buffer = s_mm_ubuf;
+    bge.size = 16;
+    WGPUBindGroupDescriptor bgd = {0};
+    bgd.layout = s_mm_bgl;
+    bgd.entryCount = 1;
+    bgd.entries = &bge;
+    s_mm_bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
+
+    WGPUPipelineLayoutDescriptor pld = {0};
+    pld.bindGroupLayoutCount = 1;
+    pld.bindGroupLayouts = &s_mm_bgl;
+    WGPUPipelineLayout pl = wgpuDeviceCreatePipelineLayout(s_device, &pld);
+
+    WGPUVertexAttribute attrs[2] = {0};
+    attrs[0].format = WGPUVertexFormat_Float32x2; attrs[0].offset = 0;  attrs[0].shaderLocation = 0;
+    attrs[1].format = WGPUVertexFormat_Float32x4; attrs[1].offset = 8;  attrs[1].shaderLocation = 1;
+    WGPUVertexBufferLayout vbl = {0};
+    vbl.stepMode = WGPUVertexStepMode_Vertex;
+    vbl.arrayStride = 24;   /* MinimapOverlayVertex: 6 floats */
+    vbl.attributeCount = 2;
+    vbl.attributes = attrs;
+
+    WGPUBlendState blend = {0};   /* standard alpha (the overlay is translucent) */
+    blend.color.operation = WGPUBlendOperation_Add;
+    blend.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blend.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blend.alpha.operation = WGPUBlendOperation_Add;
+    blend.alpha.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blend.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    WGPUColorTargetState color = {0};
+    color.format = s_surface_format;
+    color.writeMask = WGPUColorWriteMask_All;
+    color.blend = &blend;
+
+    WGPUFragmentState fs = {0};
+    fs.module = mod; fs.entryPoint = wgpu_sv("fs_main");
+    fs.targetCount = 1; fs.targets = &color;
+    WGPURenderPipelineDescriptor pd = {0};
+    pd.layout = pl;
+    pd.vertex.module = mod; pd.vertex.entryPoint = wgpu_sv("vs_main");
+    pd.vertex.bufferCount = 1; pd.vertex.buffers = &vbl;
+    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd.primitive.frontFace = WGPUFrontFace_CCW;
+    pd.primitive.cullMode = WGPUCullMode_None;
+    pd.multisample.count = 1; pd.multisample.mask = 0xFFFFFFFFu;
+    pd.fragment = &fs;   /* no depth-stencil: 2D overlay pass has no depth attachment */
+    s_mm_pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
+
+    wgpuPipelineLayoutRelease(pl);
+    wgpuShaderModuleRelease(mod);
+    return s_mm_pipe != NULL;
+}
+
+/* Called by minimap_overlay.c's flush. Returns nonzero on success (matching the
+ * Metal hook's convention). Draws the queued overlay vertices into the scene
+ * target in a fresh load-op render pass, using the still-open frame encoder. */
+int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
+                                    int fb_width, int fb_height,
+                                    int scissor_enabled, int scissor_x, int scissor_y,
+                                    int scissor_w, int scissor_h) {
+    (void)scissor_enabled; (void)scissor_x; (void)scissor_y; (void)scissor_w; (void)scissor_h;
+    if (!s_ready || s_encoder == NULL || s_scene_view == NULL || s_vbuf == NULL ||
+        vertices == NULL || vertex_count == 0 || fb_width <= 0 || fb_height <= 0) {
+        return 0;
+    }
+    if (!wgpu_ensure_minimap()) {
+        return 0;
+    }
+    uint32_t bytes = (uint32_t)(vertex_count * 24u);
+    if ((uint64_t)s_vbuf_off + bytes > WGPU_VBUF_CAP) {
+        return 0;
+    }
+    uint32_t voff = s_vbuf_off;
+    wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, vertices, bytes);
+    s_vbuf_off += (bytes + 3u) & ~3u;
+
+    float u[4] = { (float)fb_width, (float)fb_height, 0.0f, 0.0f };
+    wgpuQueueWriteBuffer(s_queue, s_mm_ubuf, 0, u, sizeof(u));
+
+    WGPURenderPassColorAttachment att = {0};
+    att.view = s_scene_view;
+    att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    att.loadOp = WGPULoadOp_Load;    /* preserve the rendered scene */
+    att.storeOp = WGPUStoreOp_Store;
+    WGPURenderPassDescriptor rp = {0};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &att;
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
+    wgpuRenderPassEncoderSetPipeline(pass, s_mm_pipe);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, s_mm_bg, 0, NULL);
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s_vbuf, voff, bytes);
+    wgpuRenderPassEncoderDraw(pass, (uint32_t)vertex_count, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    return 1;
 }
 
 /* Task 5: read back the last-rendered offscreen scene as GL-convention

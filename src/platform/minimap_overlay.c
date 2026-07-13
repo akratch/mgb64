@@ -50,6 +50,17 @@ extern int gfx_metal_draw_minimap_overlay(const void *vertices,
                                           int scissor_w,
                                           int scissor_h);
 #endif
+#ifdef MGB64_WEBGPU_BACKEND
+extern int gfx_webgpu_draw_minimap_overlay(const void *vertices,
+                                           size_t vertex_count,
+                                           int fb_width,
+                                           int fb_height,
+                                           int scissor_enabled,
+                                           int scissor_x,
+                                           int scissor_y,
+                                           int scissor_w,
+                                           int scissor_h);
+#endif
 
 typedef struct MinimapOverlayLayout {
     float x;
@@ -104,6 +115,7 @@ static size_t s_minimap_vertex_count;
 static u32 s_minimap_trace_draw_calls;
 static u32 s_minimap_trace_vertices_flushed;
 static int s_minimap_overlay_metal_backend;
+static int s_minimap_overlay_webgpu_backend;
 static int s_minimap_overlay_submit_failed;
 static int s_minimap_overlay_fb_width;
 static int s_minimap_overlay_fb_height;
@@ -354,6 +366,29 @@ static void minimap_overlay_flush(void)
         return;
     }
 
+    if (s_minimap_overlay_webgpu_backend) {
+#ifdef MGB64_WEBGPU_BACKEND
+        if (!gfx_webgpu_draw_minimap_overlay(s_minimap_vertices,
+                                             s_minimap_vertex_count,
+                                             s_minimap_overlay_fb_width,
+                                             s_minimap_overlay_fb_height,
+                                             s_minimap_overlay_scissor_enabled,
+                                             s_minimap_overlay_scissor_x,
+                                             s_minimap_overlay_scissor_y,
+                                             s_minimap_overlay_scissor_w,
+                                             s_minimap_overlay_scissor_h)) {
+            s_minimap_overlay_submit_failed = 1;
+        } else {
+            s_minimap_trace_draw_calls++;
+            s_minimap_trace_vertices_flushed += (u32)s_minimap_vertex_count;
+        }
+#else
+        s_minimap_overlay_submit_failed = 1;
+#endif
+        s_minimap_vertex_count = 0;
+        return;
+    }
+
     glBindVertexArray(s_minimap_vao);
     glBindBuffer(GL_ARRAY_BUFFER, s_minimap_vbo);
     glBufferData(GL_ARRAY_BUFFER,
@@ -369,7 +404,9 @@ static void minimap_overlay_flush(void)
 static void minimap_overlay_disable_scissor(void)
 {
     minimap_overlay_flush();
-    if (s_minimap_overlay_metal_backend) {
+    if (s_minimap_overlay_metal_backend || s_minimap_overlay_webgpu_backend) {
+        /* No GL context on Metal/WebGPU — scissor is state-only, applied by the
+         * backend draw hook. */
         s_minimap_overlay_scissor_enabled = 0;
         return;
     }
@@ -600,7 +637,7 @@ static void minimap_overlay_set_scissor_rect(float x,
     if (y1 < y0) y1 = y0;
 
     minimap_overlay_flush();
-    if (s_minimap_overlay_metal_backend) {
+    if (s_minimap_overlay_metal_backend || s_minimap_overlay_webgpu_backend) {
         s_minimap_overlay_scissor_enabled = 1;
         s_minimap_overlay_scissor_x = x0;
         s_minimap_overlay_scissor_y = y0;
@@ -1898,6 +1935,90 @@ void minimap_overlay_draw_queued_frames_metal(int fb_width, int fb_height)
 
     minimap_overlay_flush();
     s_minimap_overlay_metal_backend = 0;
+    s_minimap_overlay_scissor_enabled = 0;
+    minimap_clear_frame_queue();
+    trace_summary.status = s_minimap_overlay_submit_failed
+                               ? "submit_failed"
+                               : (trace_summary.drawn_frames > 0 ? "drawn" : "no_drawn_frames");
+    trace_summary.draw_calls = s_minimap_trace_draw_calls;
+    trace_summary.vertices_flushed = s_minimap_trace_vertices_flushed;
+    minimap_overlay_dump_summary(&trace_summary);
+}
+#endif
+
+#ifdef MGB64_WEBGPU_BACKEND
+/* WebGPU minimap draw entry — mirrors the Metal path: build the overlay
+ * geometry (shared with the GL path) then flush it through the WebGPU backend's
+ * gfx_webgpu_draw_minimap_overlay hook (a 2D screen-space pass into the scene
+ * target). Called from wgpu_end_frame with the scene dimensions. */
+void minimap_overlay_draw_queued_frames_webgpu(int fb_width, int fb_height)
+{
+    const MinimapLevelCache *cache = minimap_get_level_cache();
+    const MinimapFrameQueue *queue = minimap_get_frame_queue();
+    MinimapOverlayTraceSummary trace_summary;
+    u32 i;
+
+    memset(&trace_summary, 0, sizeof(trace_summary));
+    trace_summary.status = "no_queue";
+    trace_summary.cache_ready = (cache != NULL && cache->ready) ? 1 : 0;
+    trace_summary.cache_poly_count = cache != NULL ? cache->poly_count : 0;
+    trace_summary.cache_overflow_count = cache != NULL ? cache->overflow_count : 0;
+    s_minimap_trace_draw_calls = 0;
+    s_minimap_trace_vertices_flushed = 0;
+    s_minimap_overlay_webgpu_backend = 0;
+    s_minimap_overlay_submit_failed = 0;
+
+    if (queue == NULL || queue->count == 0) {
+        minimap_overlay_dump_summary(&trace_summary);
+        return;
+    }
+    trace_summary.queued_frames = queue->count;
+    for (i = 0; i < queue->count; i++) {
+        trace_summary.objective_pins += queue->frames[i].objective_count;
+        trace_summary.enemy_pins += queue->frames[i].enemy_count;
+    }
+
+    if (!minimap_is_enabled() || cache == NULL || !cache->ready) {
+        minimap_clear_frame_queue();
+        trace_summary.status = "disabled_or_not_ready";
+        minimap_overlay_dump_summary(&trace_summary);
+        return;
+    }
+
+    if (fb_width <= 0) {
+        fb_width = (int)gfx_current_dimensions.width;
+    }
+    if (fb_height <= 0) {
+        fb_height = (int)gfx_current_dimensions.height;
+    }
+    if (fb_width <= 0 || fb_height <= 0) {
+        minimap_clear_frame_queue();
+        trace_summary.status = "invalid_framebuffer";
+        minimap_overlay_dump_summary(&trace_summary);
+        return;
+    }
+    trace_summary.fb_width = fb_width;
+    trace_summary.fb_height = fb_height;
+
+    s_minimap_overlay_webgpu_backend = 1;
+    s_minimap_overlay_fb_width = fb_width;
+    s_minimap_overlay_fb_height = fb_height;
+    s_minimap_overlay_scissor_enabled = 0;
+    s_minimap_overlay_scissor_x = 0;
+    s_minimap_overlay_scissor_y = 0;
+    s_minimap_overlay_scissor_w = fb_width;
+    s_minimap_overlay_scissor_h = fb_height;
+
+    for (i = 0; i < queue->count; i++) {
+        if (minimap_overlay_draw_frame(cache, &queue->frames[i], fb_width, fb_height)) {
+            trace_summary.drawn_frames++;
+        } else {
+            trace_summary.layout_failures++;
+        }
+    }
+
+    minimap_overlay_flush();
+    s_minimap_overlay_webgpu_backend = 0;
     s_minimap_overlay_scissor_enabled = 0;
     minimap_clear_frame_queue();
     trace_summary.status = s_minimap_overlay_submit_failed
