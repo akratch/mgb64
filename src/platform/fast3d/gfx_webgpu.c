@@ -35,6 +35,7 @@
 #include <webgpu/wgpu.h>   /* wgpuDevicePoll + native extensions */
 
 #include "gfx_rendering_api.h"
+#include "gfx_webgpu.h"          /* public surface helper (shared with AppHost) */
 #include "gfx_webgpu_shader.h"   /* WGSL combiner emitter (Task 3) */
 
 /* gfx_current_dimensions is the frontend render resolution the viewports and
@@ -53,7 +54,8 @@ extern void *platformGetMetalLayer(void);
 #else
 /* platform_sdl.c: native window handles for non-macOS surface creation.
  * Returns a windowing-system tag (2=Win32, 3=X11, 4=Wayland; 0=unknown). */
-extern int platformWebGpuWindowInfo(void **out1, void **out2, unsigned long long *out_win);
+extern int platformWebGpuWindowInfo(void *sdl_window, void **out1, void **out2,
+                                    unsigned long long *out_win);
 #endif
 
 /* ------------------------------------------------------------------------
@@ -145,50 +147,71 @@ static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
 
 /* ------------------------------------------------------------------------
  * Surface creation (platform-specific window -> WGPUSurface)
+ *
+ * Parameterized by the native handle so BOTH the engine (standalone) and the
+ * app shell (AppHost, which owns the window/layer before the game adopts it)
+ * create surfaces the same way. macOS uses `metal_layer` (a CAMetalLayer);
+ * every other platform uses `sdl_window` (resolved to HWND/X11/Wayland by
+ * platformWebGpuWindowInfo). Declared in gfx_webgpu.h.
  * ---------------------------------------------------------------------- */
-static WGPUSurface wgpu_create_surface(void) {
+WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
+                                      void *sdl_window) {
+    if (instance == NULL) {
+        return NULL;
+    }
     WGPUSurfaceDescriptor sd = {0};
     sd.label = wgpu_sv("mgb64-surface");
 #ifdef __APPLE__
-    void *layer = platformGetMetalLayer();
-    if (layer == NULL) {
-        fprintf(stderr, "[webgpu] no CAMetalLayer from platform — cannot create surface\n");
+    (void)sdl_window;
+    if (metal_layer == NULL) {
+        fprintf(stderr, "[webgpu] no CAMetalLayer — cannot create surface\n");
         return NULL;
     }
     WGPUSurfaceSourceMetalLayer ml = {0};
     ml.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
-    ml.layer = layer;
+    ml.layer = metal_layer;
     sd.nextInChain = (WGPUChainedStruct *)&ml;
-    return wgpuInstanceCreateSurface(s_instance, &sd);
+    return wgpuInstanceCreateSurface(instance, &sd);
 #else
+    (void)metal_layer;
     void *h1 = NULL, *h2 = NULL;
     unsigned long long win = 0;
-    int sys = platformWebGpuWindowInfo(&h1, &h2, &win);
+    int sys = platformWebGpuWindowInfo(sdl_window, &h1, &h2, &win);
     if (sys == 2) {   /* Win32 */
         WGPUSurfaceSourceWindowsHWND w = {0};
         w.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
         w.hinstance = h2;
         w.hwnd = h1;
         sd.nextInChain = (WGPUChainedStruct *)&w;
-        return wgpuInstanceCreateSurface(s_instance, &sd);
+        return wgpuInstanceCreateSurface(instance, &sd);
     } else if (sys == 3) {   /* X11 */
         WGPUSurfaceSourceXlibWindow x = {0};
         x.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
         x.display = h1;
         x.window = (uint64_t)win;
         sd.nextInChain = (WGPUChainedStruct *)&x;
-        return wgpuInstanceCreateSurface(s_instance, &sd);
+        return wgpuInstanceCreateSurface(instance, &sd);
     } else if (sys == 4) {   /* Wayland */
         WGPUSurfaceSourceWaylandSurface wl = {0};
         wl.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
         wl.display = h1;
         wl.surface = h2;
         sd.nextInChain = (WGPUChainedStruct *)&wl;
-        return wgpuInstanceCreateSurface(s_instance, &sd);
+        return wgpuInstanceCreateSurface(instance, &sd);
     }
     fprintf(stderr, "[webgpu] unsupported windowing system (tag=%d) — no surface\n", sys);
     return NULL;
 #endif
+}
+
+/* The engine's own surface, from the platform window it renders into. */
+static WGPUSurface wgpu_create_surface(void) {
+    void *layer = NULL;
+#ifdef __APPLE__
+    layer = platformGetMetalLayer();
+#endif
+    extern void *platformGetSdlWindow(void);
+    return gfx_webgpu_create_surface(s_instance, layer, platformGetSdlWindow());
 }
 
 /* Pick the swapchain format: prefer BGRA8Unorm (the near-universal surface

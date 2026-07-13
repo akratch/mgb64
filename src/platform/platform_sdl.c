@@ -3064,23 +3064,33 @@ void *platformGetMetalLayer(void) {
 }
 #endif
 
+/* The SDL_Window the engine renders into (as void*), for backends that need the
+ * native window handle. The app shell passes its own window explicitly instead;
+ * this is the standalone-engine default. NULL before window creation. */
+void *platformGetSdlWindow(void) {
+    return (void *)g_sdlWindow;
+}
+
 #ifdef MGB64_WEBGPU_BACKEND
 #include <SDL_syswm.h>
-/* Native window handles for gfx_webgpu.c's cross-platform WGPUSurface creation
- * (Task 7). macOS goes through platformGetMetalLayer instead. Return value tags
- * the windowing system: 2 = Win32 (out1=HWND, out2=HINSTANCE), 3 = X11
- * (out1=Display*, out_win=Window), 4 = Wayland (out1=wl_display*,
- * out2=wl_surface*); 0 = unknown/unsupported. */
-int platformWebGpuWindowInfo(void **out1, void **out2, unsigned long long *out_win) {
+/* Native window handles for gfx_webgpu.c's cross-platform WGPUSurface creation.
+ * `sdl_window` (a SDL_Window*, as void*) is the window to resolve; NULL falls
+ * back to the engine's g_sdlWindow. macOS goes through platformGetMetalLayer
+ * instead. Return value tags the windowing system: 2 = Win32 (out1=HWND,
+ * out2=HINSTANCE), 3 = X11 (out1=Display*, out_win=Window), 4 = Wayland
+ * (out1=wl_display*, out2=wl_surface*); 0 = unknown/unsupported. */
+int platformWebGpuWindowInfo(void *sdl_window, void **out1, void **out2,
+                             unsigned long long *out_win) {
     if (out1) *out1 = NULL;
     if (out2) *out2 = NULL;
     if (out_win) *out_win = 0;
-    if (g_sdlWindow == NULL) {
+    SDL_Window *win = sdl_window ? (SDL_Window *)sdl_window : g_sdlWindow;
+    if (win == NULL) {
         return 0;
     }
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(g_sdlWindow, &info)) {
+    if (!SDL_GetWindowWMInfo(win, &info)) {
         return 0;
     }
     switch (info.subsystem) {
