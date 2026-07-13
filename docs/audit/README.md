@@ -111,6 +111,9 @@ Priority levels:
 | [AUDIT-0068](issues/AUDIT-0068-audio-queue-failures-counted-as-accepted.md) | S3 | P2 | Source and API-contract proven | Audio queue failures are counted as accepted output |
 | [AUDIT-0069](issues/AUDIT-0069-audio-capture-falsely-reports-complete.md) | S4 | P2 | Fault injected | PCM capture reports complete after a short write |
 | [AUDIT-0070](issues/AUDIT-0070-gatekeeper-assessment-is-nonfatal.md) | S3 | P1 | Source proven | Gatekeeper rejection is nonfatal to the signing pipeline |
+| [AUDIT-0071](issues/AUDIT-0071-music-decompression-failure-ignored.md) | S3 | P2 | Fault injected | Music track decompression failure is ignored before sequence parsing |
+| [AUDIT-0072](issues/AUDIT-0072-music-seq-table-fixed-bound-overread.md) | S3 | P2 | Fault injected | Music sequence table is read past its allocation with a fixed bound |
+| [AUDIT-0073](issues/AUDIT-0073-native-mission-music-init-bypassed.md) | S3 | P2 | Source proven | Native mission-music initializer is bypassed by a stale guard |
 
 ## Evidence Handling
 
