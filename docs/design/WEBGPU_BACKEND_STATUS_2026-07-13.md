@@ -50,6 +50,21 @@ geometry, textures, depth ordering, lighting, and HUD match.
    the GL default doesn't render it either (AUDIT-0001), so not needed for
    GL-parity — it would be a "further" enhancement.
 
+## Cross-platform verification done (2026-07-13, Docker + MinGW)
+
+| Platform | Build | Runtime WebGPU path |
+|----------|-------|---------------------|
+| **macOS (arm64)** | ✅ full game | ✅ renders Dam + decor, all 3 backends, determinism byte-exact, default→WebGPU |
+| **Windows (MinGW x86_64)** | ✅ `ge007.exe` links (windows-gnu prebuilt + d3d12/dxgi libs) | ⏳ owner run |
+| **Linux x86_64** | ✅ spike (linux-x86_64 prebuilt) | ✅ **spike PASS under Vulkan/llvmpipe** (init + runtime WGSL + offscreen readback) |
+| **Linux aarch64 (PortMaster arch)** | ✅ `ge007` compiles+links (linux-aarch64 prebuilt) | ✅ **spike PASS under Vulkan/llvmpipe**; Mali `panfrost_icd` present for real HW |
+
+The Linux runs use a container with Mesa's software Vulkan (lavapipe/llvmpipe)
+under Xvfb — no GPU needed to prove the code path. Real handhelds use the Mali
+`panfrost` Vulkan driver (ICD present in the base image). The one thing software
+Vulkan can't prove is real-hardware driver quirks + performance → the owner
+device-run below.
+
 ## Owner validation checklist (per platform)
 
 Build: `cmake -B build-webgpu -DMGB64_WEBGPU_BACKEND=ON . && cmake --build build-webgpu --target ge007`
