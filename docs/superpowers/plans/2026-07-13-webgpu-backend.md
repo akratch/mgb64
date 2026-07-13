@@ -69,16 +69,13 @@
 **Files:** `gfx_webgpu.c`.
 **Interfaces:** `set_depth_mode` (depth-stencil state + N64 zmode/decal), `set_viewport`/`set_scissor` (`wgpuRenderPassEncoderSetViewport/SetScissorRect`), `set_blend_mode` (map the 7 `GfxBlendMode` → `WGPUBlendState`), `z_is_from_0_to_1` → true (WebGPU clip 0..1, like Metal). Note: WebGPU bakes blend+depth into the pipeline, so these feed the pipeline cache key (Task 3).
 
-- [ ] Implement; feed into the pipeline key + render-pass state.
+- [x] **4a (done):** Depth24Plus attachment + `set_depth_mode` → pipeline depth-stencil (LessEqual/Always, write gating, ZMODE_DEC decal bias), fed into the pipeline cache key. `set_viewport`/`set_scissor` applied per draw, Y-flipped to top-left + clamped. Validated on Dam: correct depth ordering + letterbox. An A/B vs the GL reference (render-scale 1) shows **near-parity** — same geometry/textures/depth/lighting/HUD.
+- [ ] **4b (remaining):** exact blend-mode mapping (the coverage/stencil/RDP-memory variants currently approximate to alpha); the deferred T3 shader-option EFFECTS (shader-side clamp, tile mask, n64 3-point filter, sun-shadow, dfdx sun, diag paths, frame-varying noise) toward pixel parity; the GL-only minimap/overlay draw (A/B gap) via a WebGPU overlay path.
 - [ ] **Validate:** `renderer_parity_capture.sh` + `startup_visual_parity_capture.sh` (webgpu vs GL) within tolerance on Dam, Surface1, and a translucency-heavy scene. ASan clean; tapes byte-exact; commit.
 
-## Task 5: `read_framebuffer_rgb` + `finish_render`
+## Task 5: `read_framebuffer_rgb` + `finish_render` — DONE (core)
 
-**Files:** `gfx_webgpu.c`.
-**Interfaces:** texture→buffer copy + map readback (spike-proven), GL-convention bottom-left RGB, matching the Metal path so `platformSaveScreenshot` + the parity/oracle tooling work on WebGPU.
-
-- [ ] Implement; wire into the slot.
-- [ ] **Validate:** a `--screenshot-frame N --screenshot-exit` webgpu boot writes a correct BMP; the parity harness runs end-to-end on webgpu. Commit.
+- [x] `read_framebuffer_rgb` copies the offscreen BGRA8 scene into a mappable buffer and returns GL-convention bottom-left RGB (vertical flip + BGRA→RGB). Validated: `--screenshot-frame 120 --screenshot-exit` on `GE007_RENDERER=webgpu` writes a correct native-640×480 BMP (right-side-up, correct colors) — the standard `platformSaveScreenshot` + parity/oracle tooling now runs on WebGPU. `GE007_WEBGPU_DUMP_FRAME` provides a direct PPM dump. (`finish_render` GPU-drain: no-op needed — the readback submits + polls itself.)
 
 ## Task 6: `draw_modern_mesh` (scene decor — closes AUDIT-0001)
 

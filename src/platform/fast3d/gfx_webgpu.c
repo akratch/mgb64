@@ -1060,9 +1060,79 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     }
 }
 
+/* Task 5: read back the last-rendered offscreen scene as GL-convention
+ * bottom-left RGB (so platformSaveScreenshot + the parity/oracle tooling work on
+ * WebGPU identically to GL/Metal). Copies the whole BGRA8 scene into a mappable
+ * buffer, then extracts the requested rect with a vertical flip + BGRA->RGB.
+ * Synchronous (submit + poll-map) — only the screenshot/parity path calls it. */
 static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
-    (void)x; (void)y; (void)width; (void)height; (void)rgb_out;
-    return false;   /* texture->buffer readback is Task 5 */
+    if (!s_ready || s_scene_tex == NULL || rgb_out == NULL ||
+        width <= 0 || height <= 0 || s_scene_w == 0 || s_scene_h == 0) {
+        return false;
+    }
+    uint32_t bpr = ((s_scene_w * 4u + 255u) / 256u) * 256u;   /* 256-align */
+    size_t buf_size = (size_t)bpr * s_scene_h;
+    WGPUBufferDescriptor bd = {0};
+    bd.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
+    bd.size = buf_size;
+    WGPUBuffer buf = wgpuDeviceCreateBuffer(s_device, &bd);
+    if (buf == NULL) {
+        return false;
+    }
+
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(s_device, NULL);
+    WGPUTexelCopyTextureInfo src = {0};
+    src.texture = s_scene_tex; src.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferInfo dst = {0};
+    dst.buffer = buf;
+    dst.layout.bytesPerRow = bpr;
+    dst.layout.rowsPerImage = s_scene_h;
+    WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
+    wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &ext);
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, NULL);
+    wgpuQueueSubmit(s_queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(enc);
+
+    WgpuMapReq mr = {0};
+    WGPUBufferMapCallbackInfo ci = {0};
+    ci.mode = WGPUCallbackMode_AllowProcessEvents;
+    ci.callback = on_map;
+    ci.userdata1 = &mr;
+    wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, buf_size, ci);
+    for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(s_device, true, NULL);
+    if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
+        wgpuBufferRelease(buf);
+        return false;
+    }
+    const uint8_t *px = (const uint8_t *)wgpuBufferGetConstMappedRange(buf, 0, buf_size);
+    if (px == NULL) {
+        wgpuBufferUnmap(buf);
+        wgpuBufferRelease(buf);
+        return false;
+    }
+    /* rgb_out is width*height RGB, bottom-left origin (GL convention). The scene
+     * is top-left, so scene row (H-1 - (y+row)) maps to output row `row`. */
+    for (int row = 0; row < height; row++) {
+        int scene_y = (int)s_scene_h - 1 - (y + row);
+        uint8_t *out = rgb_out + (size_t)row * width * 3;
+        if (scene_y < 0 || scene_y >= (int)s_scene_h) {
+            memset(out, 0, (size_t)width * 3);
+            continue;
+        }
+        const uint8_t *srow = px + (size_t)scene_y * bpr;
+        for (int col = 0; col < width; col++) {
+            int sx = x + col;
+            if (sx < 0 || sx >= (int)s_scene_w) { out[col*3] = out[col*3+1] = out[col*3+2] = 0; continue; }
+            const uint8_t *p = srow + (size_t)sx * 4;   /* BGRA8 */
+            out[col*3+0] = p[2];
+            out[col*3+1] = p[1];
+            out[col*3+2] = p[0];
+        }
+    }
+    wgpuBufferUnmap(buf);
+    wgpuBufferRelease(buf);
+    return true;
 }
 
 /* WebGPU clip space is 0..1 (like Metal/D3D, unlike GL's -1..1). Reported to the
