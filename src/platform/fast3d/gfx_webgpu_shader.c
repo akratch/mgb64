@@ -264,13 +264,57 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
           "  return fract(sin(dot(floor(p), vec2<f32>(12.9898, 78.233))) * 43758.5453);\n}\n");
     }
 
+    /* Shader-side tile mask (N64 mask-wrap): emit the helpers when any texture
+     * axis uses it. Ports gfx_opengl.c n64TileMaskAxis/n64TileMaskUv; GLSL mod()
+     * = floor-based remainder, so n64mod() must too (WGSL % truncates). */
+    bool uses_mask = cc.tile_mask[0][0] || cc.tile_mask[0][1] ||
+                     cc.tile_mask[1][0] || cc.tile_mask[1][1];
+    if (uses_mask) {
+        P("fn n64mod(x : f32, y : f32) -> f32 { return x - y * floor(x / y); }\n");
+        P("fn n64TileMaskAxis(texelCoord : f32, maskPeriod : f32) -> f32 {\n"
+          "  let extent = abs(maskPeriod);\n"
+          "  if (extent <= 0.5) { return texelCoord; }\n"
+          "  var coord = n64mod(texelCoord, select(extent, extent * 2.0, maskPeriod < 0.0));\n"
+          "  if (maskPeriod < 0.0 && coord >= extent) { coord = extent * 2.0 - coord; }\n"
+          "  return coord;\n}\n");
+        P("fn n64TileMaskUv(uv : vec2<f32>, texSize : vec2<f32>, maskS : f32, maskT : f32) -> vec2<f32> {\n"
+          "  var tc = uv * texSize;\n"
+          "  tc.x = n64TileMaskAxis(tc.x, maskS);\n"
+          "  tc.y = n64TileMaskAxis(tc.y, maskT);\n"
+          "  return tc / texSize;\n}\n");
+    }
+
     /* Fragment shader */
     P("@fragment fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\n");
-    if (cc.used_textures[0]) {
-        P("  let texVal0 : vec4<f32> = textureSample(uTex0, uSamp0, in.vTexCoord0);\n");
-    }
-    if (cc.used_textures[1]) {
-        P("  let texVal1 : vec4<f32> = textureSample(uTex1, uSamp1, in.vTexCoord1);\n");
+    for (int i = 0; i < 2; i++) {
+        if (!cc.used_textures[i]) continue;
+        const char *tex = i == 0 ? "uTex0" : "uTex1";
+        const char *samp = i == 0 ? "uSamp0" : "uSamp1";
+        bool clamp_s = cc.clamp[i][0], clamp_t = cc.clamp[i][1];
+        bool mask_s = cc.tile_mask[i][0], mask_t = cc.tile_mask[i][1];
+        /* texSize only when clamp/mask needs it (textureDimensions). */
+        if (clamp_s || clamp_t || mask_s || mask_t) {
+            P("  let texSize%d = vec2<f32>(textureDimensions(%s));\n", i, tex);
+        }
+        /* Shader-side UV clamp to the live tile window (gfx_opengl.c :1189-1203). */
+        P("  var stc%d = in.vTexCoord%d;\n", i, i);
+        if (clamp_s && clamp_t) {
+            P("  stc%d = clamp(in.vTexCoord%d, vec2<f32>(0.5) / texSize%d, vec2<f32>(in.vTexClampS%d, in.vTexClampT%d));\n",
+              i, i, i, i, i);
+        } else if (clamp_s) {
+            P("  stc%d.x = clamp(in.vTexCoord%d.x, 0.5 / texSize%d.x, in.vTexClampS%d);\n", i, i, i, i);
+        } else if (clamp_t) {
+            P("  stc%d.y = clamp(in.vTexCoord%d.y, 0.5 / texSize%d.y, in.vTexClampT%d);\n", i, i, i, i);
+        }
+        /* Sample: mask-wrap the UV if masked, else straight sample. */
+        if (mask_s || mask_t) {
+            const char *ms = mask_s ? (i == 0 ? "in.vTexMaskS0" : "in.vTexMaskS1") : "0.0";
+            const char *mt = mask_t ? (i == 0 ? "in.vTexMaskT0" : "in.vTexMaskT1") : "0.0";
+            P("  let texVal%d : vec4<f32> = textureSample(%s, %s, n64TileMaskUv(stc%d, texSize%d, %s, %s));\n",
+              i, tex, samp, i, i, ms, mt);
+        } else {
+            P("  let texVal%d : vec4<f32> = textureSample(%s, %s, stc%d);\n", i, tex, samp, i);
+        }
     }
 
     P("  var texel : vec4<f32>;\n");

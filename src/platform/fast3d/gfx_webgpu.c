@@ -623,32 +623,37 @@ static void wgpu_shader_get_info(struct ShaderProgram *prg, uint8_t *num_inputs,
     }
 }
 
-/* Map a GfxBlendMode to a WGPUBlendState. Task 3 covers opaque / standard alpha
- * / multiplicative; the coverage/stencil/RDP-memory variants approximate to
- * alpha blending here and get their exact treatment in Task 4. Returns false for
- * opaque (no blend state attached). */
+/* Map a GfxBlendMode to a WGPUBlendState, matching gfx_opengl_set_blend_mode's
+ * default (diag mode 0) exactly. glBlendFunc applies the same (src,dst) factors
+ * to BOTH the color and alpha channels, so both components use identical factors
+ * here. Returns false for the opaque modes (no blend state attached):
+ *   - DISABLED, and the two RDP-memory modes (GL disables HW blend for those —
+ *     their blending is shader-side framebuffer sampling, a diag path not yet
+ *     ported; the opaque HW state still matches GL).
+ *   - MODULATE -> (DST_COLOR, ZERO)  = src*dst.
+ *   - ALPHA / ALPHA_COVERAGE / ALPHA_CVG_WRAP_STENCIL -> (SRC_ALPHA, 1-SRC_ALPHA). */
 static bool wgpu_blend_state(enum GfxBlendMode mode, WGPUBlendState *out) {
     memset(out, 0, sizeof(*out));
-    switch (mode) {
-        case GFX_BLEND_DISABLED:
-            return false;
-        case GFX_BLEND_MODULATE:
-            out->color.operation = WGPUBlendOperation_Add;
-            out->color.srcFactor = WGPUBlendFactor_Dst;
-            out->color.dstFactor = WGPUBlendFactor_Zero;
-            out->alpha.operation = WGPUBlendOperation_Add;
-            out->alpha.srcFactor = WGPUBlendFactor_Dst;
-            out->alpha.dstFactor = WGPUBlendFactor_Zero;
-            return true;
-        default: /* ALPHA + coverage/stencil/memory variants -> standard alpha */
-            out->color.operation = WGPUBlendOperation_Add;
-            out->color.srcFactor = WGPUBlendFactor_SrcAlpha;
-            out->color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
-            out->alpha.operation = WGPUBlendOperation_Add;
-            out->alpha.srcFactor = WGPUBlendFactor_One;
-            out->alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
-            return true;
+    if (mode == GFX_BLEND_DISABLED ||
+        mode == GFX_BLEND_ALPHA_RDP_MEMORY ||
+        mode == GFX_BLEND_ALPHA_RDP_CVG_MEMORY) {
+        return false;   /* opaque */
     }
+    WGPUBlendFactor src, dst;
+    if (mode == GFX_BLEND_MODULATE) {
+        src = WGPUBlendFactor_Dst;      /* GL_DST_COLOR */
+        dst = WGPUBlendFactor_Zero;     /* GL_ZERO */
+    } else {                            /* ALPHA + coverage/stencil variants */
+        src = WGPUBlendFactor_SrcAlpha;
+        dst = WGPUBlendFactor_OneMinusSrcAlpha;
+    }
+    out->color.operation = WGPUBlendOperation_Add;
+    out->color.srcFactor = src;
+    out->color.dstFactor = dst;
+    out->alpha.operation = WGPUBlendOperation_Add;
+    out->alpha.srcFactor = src;
+    out->alpha.dstFactor = dst;
+    return true;
 }
 
 /* Lazily build + cache the render pipeline for the current (shader, blend, depth)
