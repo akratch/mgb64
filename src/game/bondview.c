@@ -9103,6 +9103,19 @@ void bondviewCalcUpdatePlayerCollision(struct coord3d *offset, s32 allow_scoot)
                 }
             }
 
+            if (linked_tile_count == 0)
+            {
+                /* Terminal/isolated tile with no navigation links (reachable on
+                 * shipped Cradle/Aztec stage data): cannot pick a hop. Restore the
+                 * pre-move collision position/tile and stop the recovery walk
+                 * rather than take a remainder by zero [AUDIT-0002]. Guard is
+                 * before the RNG call, so linked tiles keep their exact one call
+                 * per hop and trajectories are unchanged. */
+                g_CurrentPlayer->field_488.collision_position = rollback_collision_position;
+                g_CurrentPlayer->field_488.current_tile_ptr = rollback_tile;
+                break;
+            }
+
             temp_a3 = randomGetNext() % (u32)linked_tile_count;
 
             for (i=0, linked_tile_count = 0; i<(((s16) stan->tail.half >> 0xC) & 0xF); i++)

@@ -34805,6 +34805,12 @@ void objDestroySupportedObjects(PropRecord* tableprop, s32 playernum)
     s32 sp44;
     u8 room;
 
+    /* A prop with no table object or no STAN tile has no room anchor for the
+     * room-local support scan; skip it rather than dereference a null stan
+     * [AUDIT-0006]. The caller still runs the destroyed object's own fall logic. */
+    if (!tableprop || !tableprop->obj || !tableprop->stan) {
+        return;
+    }
     tableobj = tableprop->obj;
     room = tableprop->stan->room;
 
@@ -34815,7 +34821,7 @@ void objDestroySupportedObjects(PropRecord* tableprop, s32 playernum)
         prop = get_ptr_obj_pos_list_current_entry();
         while (prop)
         {
-            if (((prop->type == PROP_TYPE_OBJ) || (prop->type == PROP_TYPE_WEAPON)) && (prop->stan->room == room))
+            if (((prop->type == PROP_TYPE_OBJ) || (prop->type == PROP_TYPE_WEAPON)) && prop->stan && (prop->stan->room == room))
             {
                 obj = prop->obj;
                 if ((tableobj->runtime_pos.y < obj->runtime_pos.y)
