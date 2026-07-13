@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S1 - mutable build-time executable can compromise release artifacts |
 | Priority | P1 |
 | Area | Release supply chain / Linux AppImage packaging |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Linux release jobs without a preinstalled `appimagetool` |
+
+## Resolution
+
+Fixed (already resolved) — scripts/package_linux_appimage.sh pins APPIMAGETOOL_VERSION=1.9.1 (not the mutable `continuous` alias), fetches the pinned URL, and verifies APPIMAGETOOL_SHA256 before chmod+run (refuses on a missing sha256 tool or digest mismatch). release.yml has no separate unpinned download. Verified 2026-07-13.
 
 ## Summary
 
