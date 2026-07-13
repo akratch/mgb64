@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a valid combat parity fix is reported red by stale duplicate baseline data |
 | Priority | P1 |
 | Area | Fidelity validation / guard fire-rate symmetry |
@@ -10,6 +10,33 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | `port_guard_fire_rate_symmetry_smoke` on the current default world state |
+
+## Resolution
+
+Fixed 2026-07-13. Confirmed the finding reproduces (CADENCE 9==3×3 passed, but
+the opt-out byte-identity failed against the stale hardcoded `4dc07b71623b315c`;
+the true current opt-out hash is `ea95db4614bcd952`, which had drifted since
+FID-0066 as `dam_forward_30s` was re-baselined for FID-0014/0046/0117). The
+opt-out hash was reproduced across 6 isolated runs (`ea95db4614bcd952`; the
+transient `dfc6435d…`/`87fe72d2…` values seen mid-investigation were
+process-contention artifacts, not the isolated result).
+
+Root cause (two unsynchronized baseline owners) fixed structurally:
+
+- The opt-out hash now lives as a `variants[]` entry (`fire_rate_optout`, with
+  its explicit `env` map and provenance) in the tape's structured baseline
+  `baselines/tapes/dam_forward_30s.expected.json` — the single source of truth.
+- `tools/fidelity/guard_fire_rate_symmetry_smoke.sh` reads it from there and
+  fails closed (exit 2) if the variant is absent; the duplicate literal is gone.
+  The cadence ratio remains an independent assertion.
+- `tools/fidelity/tape_regression.sh` (the generic runner) now also **verifies**
+  every declared variant in its gate, so a default-world rebaseline that shifts
+  the opt-out hash reddens the generic lane too (fail-closed against silent
+  drift), and its `--record` path **replays and prints** each declared variant's
+  fresh hash so rebaselines regenerate variants atomically with the default.
+
+Validated: guard lane PASS (cadence + byte-identity); the full tape gate PASSES
+all 7 tapes plus `dam_forward_30s variant 'fire_rate_optout' (ea95db4614bcd952)`.
 
 ## Summary
 

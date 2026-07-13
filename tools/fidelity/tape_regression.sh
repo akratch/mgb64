@@ -48,6 +48,21 @@ hash_of() {  # $1=sim-state-hash json -> 16-hex sim hash
     grep -o '[0-9a-f]\{16\}' "$1" | head -1
 }
 
+# Declared env-variants of a tape (AUDIT-0020): each is a named replay of the
+# SAME tape under an extra deterministic env (e.g. an opt-out flag) with its own
+# expected sim-state hash — the single source of truth other lanes consume
+# instead of duplicating the literal. Emits one TSV line per variant:
+#   name<TAB>expected_hash<TAB>KEY=VAL KEY=VAL...
+variants_of() {  # $1=expected.json
+    python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for v in d.get("variants", []):
+    env = " ".join(f"{k}={val}" for k, val in v.get("env", {}).items())
+    print("\t".join([v.get("name", ""), v.get("sim_state_hash", ""), env]))
+PY
+}
+
 # ---- Record mode: refresh a tape + its baseline ----
 if [ "${1:-}" = "--record" ]; then
     NAME="${2:?usage: --record NAME LEVEL \"ENV=script ...\" [end_timer]}"
@@ -65,6 +80,23 @@ if [ "${1:-}" = "--record" ]; then
         echo "tape-regression: record run failed (see $dir/log)"; sed -n '$p' "$dir/log"; exit 1; }
     H="$(hash_of "$dir/rec.json")"
     echo "tape-regression: recorded $TAPE (hash=$H). Update $EXP manually with hash $H."
+    # Atomically regenerate declared env-variant hashes (AUDIT-0020): replay the
+    # freshly-recorded tape under each variant's env so a default-world rebaseline
+    # can't leave a variant anchor stale. Prints the fresh hashes to update
+    # alongside sim_state_hash.
+    if [ -e "$EXP" ]; then
+        while IFS=$'\t' read -r vname vhash venv; do
+            [ -z "$vname" ] && continue
+            vdir="$(mktemp -d)"
+            # shellcheck disable=SC2086
+            ( cd "$vdir" && env "${ENVV[@]}" $venv "$BIN" --rom "$ROM" --savedir "$vdir/sd" \
+                --level "$LEVEL" --deterministic --play-tape "$TAPE" \
+                --sim-state-hash-out "$vdir/v.json" >"$vdir/log" 2>&1 ) \
+                && vH="$(hash_of "$vdir/v.json")" || vH="RECORD-FAILED"
+            echo "tape-regression:   variant '$vname' (env: ${venv:-none}) -> hash $vH  (update $EXP variants[].sim_state_hash)"
+            rm -rf "$vdir"
+        done < <(variants_of "$EXP")
+    fi
     exit 0
 fi
 
@@ -117,6 +149,31 @@ for tape in "${tapes[@]}"; do
         fail=1
     fi
     rm -rf "$dir"
+
+    # Verify declared env-variant hashes against the SAME single source (AUDIT-0020):
+    # a default-world rebaseline that shifts a variant anchor reddens here too, so a
+    # variant (e.g. the fire-rate opt-out consumed by guard_fire_rate_symmetry_smoke)
+    # can't silently drift. Isolation-assuming like the default replays above.
+    while IFS=$'\t' read -r vname vhash venv; do
+        [ -z "$vname" ] && continue
+        vdir="$(mktemp -d)"
+        # shellcheck disable=SC2086
+        ( cd "$vdir" && env "${ENVV[@]}" $replay_env $venv "$BIN" --rom "$ROM" --savedir "$vdir/sd" \
+            --level "$level" --deterministic --play-tape "$tape" \
+            --sim-state-hash-out "$vdir/rep.json" >"$vdir/log" 2>&1 )
+        vrc=$?
+        vgot="$(hash_of "$vdir/rep.json" 2>/dev/null || true)"
+        if [ $vrc -ne 0 ]; then
+            echo "tape-regression: FAIL $name variant '$vname' — replay exited $vrc" >&2
+            fail=1
+        elif [ "$vgot" = "$vhash" ]; then
+            echo "tape-regression: PASS $name variant '$vname' (hash=$vgot)"
+        else
+            echo "tape-regression: FAIL $name variant '$vname' — hash $vgot != expected $vhash" >&2
+            fail=1
+        fi
+        rm -rf "$vdir"
+    done < <(variants_of "$exp")
 done
 
 if [ $fail -ne 0 ]; then

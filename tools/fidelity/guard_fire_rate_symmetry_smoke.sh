@@ -44,16 +44,14 @@ TIMEOUT_SECONDS=180
 TAPE_NAME="dam_forward_30s"
 GUARD_CHRNUM=6              # the KF7 guard that sustains full-auto in this tape
 FRAME_COST=3               # Input.FireRateN64FrameCost default (Dam ~20fps combat)
-# Recorded legacy / opt-out sim-state hash for dam_forward_30s. This is the
-# byte-identity anchor for GE007_FIRE_RATE_AUTHENTIC=0 — the pre-FID-0066
-# fire-rate cadence on the CURRENT default baseline world. Re-based 2026-07-11
-# (95944e2282a48178 -> 4dc07b71623b315c) for FID-0014: the faithful
-# WAYMODE_MAGIC patrol semantics (default ON) shift offscreen patroller
-# positions in every Dam replay, so the fire-rate opt-out hash moved with the
-# world; the FID-0066 contract itself (ON interval == FRAME_COST x OFF
-# interval, OFF == this anchor) is unchanged. See
-# docs/fidelity/derivations/FID-0014-patrol-magic.md.
-OPTOUT_HASH="4dc07b71623b315c"
+# The byte-identity anchor for GE007_FIRE_RATE_AUTHENTIC=0 (the pre-FID-0066
+# fire-rate cadence on the CURRENT default world) is NOT hardcoded here anymore
+# (AUDIT-0020: a duplicate literal drifted every time the dam_forward_30s
+# default hash was re-baselined for an unrelated default-world change). It lives
+# as the "fire_rate_optout" variant in the tape's structured baseline
+# (baselines/tapes/<tape>.expected.json), the single source of truth that
+# tape_regression.sh --record regenerates atomically with the default hash. Read
+# below, once $EXP is known; fail closed if the variant is absent.
 
 usage() { sed -n '2,33p' "$0"; exit 0; }
 while [[ $# -gt 0 ]]; do
@@ -82,6 +80,19 @@ import json, sys
 print(json.load(open(sys.argv[1]))["level"])
 PY
 )"
+
+# Opt-out byte-identity anchor from the tape's structured baseline (single source
+# of truth — AUDIT-0020). Fail closed if the variant is absent so a missing
+# anchor can never be read as a pass.
+OPTOUT_HASH="$(python3 - "$EXP" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for v in d.get("variants", []):
+    if v.get("name") == "fire_rate_optout":
+        print(v["sim_state_hash"]); sys.exit(0)
+sys.exit("missing fire_rate_optout variant")
+PY
+)" || { echo "guard-fire-rate-symmetry: FAIL — tape baseline $EXP has no fire_rate_optout variant (AUDIT-0020 single-source anchor missing)" >&2; exit 2; }
 
 ENVV=(SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1
       GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1)
