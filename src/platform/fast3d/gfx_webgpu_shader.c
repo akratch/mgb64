@@ -265,11 +265,13 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
     }
 
     /* Shader-side tile mask (N64 mask-wrap): emit the helpers when any texture
-     * axis uses it. Ports gfx_opengl.c n64TileMaskAxis/n64TileMaskUv; GLSL mod()
-     * = floor-based remainder, so n64mod() must too (WGSL % truncates). */
+     * axis uses it OR the N64 3-point filter needs them (its taps are mask-wrapped
+     * — mask 0 is identity). Ports gfx_opengl.c n64TileMaskAxis/n64TileMaskUv;
+     * GLSL mod() = floor-based remainder, so n64mod() must too (WGSL % truncates). */
+    bool needs_filter = cc.n64_filter[0] || cc.n64_filter[1];
     bool uses_mask = cc.tile_mask[0][0] || cc.tile_mask[0][1] ||
                      cc.tile_mask[1][0] || cc.tile_mask[1][1];
-    if (uses_mask) {
+    if (uses_mask || needs_filter) {
         P("fn n64mod(x : f32, y : f32) -> f32 { return x - y * floor(x / y); }\n");
         P("fn n64TileMaskAxis(texelCoord : f32, maskPeriod : f32) -> f32 {\n"
           "  let extent = abs(maskPeriod);\n"
@@ -284,6 +286,21 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
           "  return tc / texSize;\n}\n");
     }
 
+    /* N64 3-point ("always 3-point" variant of gfx_opengl.c n64TextureFilter):
+     * the RDP's characteristic triangular filter instead of GL bilinear. Uses
+     * explicit-LOD sampling so it is valid in any control flow; taps are
+     * mask-wrapped (mask 0 = identity). */
+    if (needs_filter) {
+        P("fn n64Filter3(t : texture_2d<f32>, s : sampler, uv : vec2<f32>, texSize : vec2<f32>, maskS : f32, maskT : f32) -> vec4<f32> {\n"
+          "  var offset = fract(uv * texSize - vec2<f32>(0.5));\n"
+          "  offset = offset - step(1.0, offset.x + offset.y);\n"
+          "  let baseUv = uv - offset / texSize;\n"
+          "  let c0 = textureSampleLevel(t, s, n64TileMaskUv(baseUv, texSize, maskS, maskT), 0.0);\n"
+          "  let c1 = textureSampleLevel(t, s, n64TileMaskUv(baseUv + vec2<f32>(sign(offset.x), 0.0) / texSize, texSize, maskS, maskT), 0.0);\n"
+          "  let c2 = textureSampleLevel(t, s, n64TileMaskUv(baseUv + vec2<f32>(0.0, sign(offset.y)) / texSize, texSize, maskS, maskT), 0.0);\n"
+          "  return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);\n}\n");
+    }
+
     /* Fragment shader */
     P("@fragment fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\n");
     for (int i = 0; i < 2; i++) {
@@ -292,8 +309,9 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         const char *samp = i == 0 ? "uSamp0" : "uSamp1";
         bool clamp_s = cc.clamp[i][0], clamp_t = cc.clamp[i][1];
         bool mask_s = cc.tile_mask[i][0], mask_t = cc.tile_mask[i][1];
-        /* texSize only when clamp/mask needs it (textureDimensions). */
-        if (clamp_s || clamp_t || mask_s || mask_t) {
+        bool filt = cc.n64_filter[i];
+        /* texSize when clamp/mask/filter needs it (textureDimensions). */
+        if (clamp_s || clamp_t || mask_s || mask_t || filt) {
             P("  let texSize%d = vec2<f32>(textureDimensions(%s));\n", i, tex);
         }
         /* Shader-side UV clamp to the live tile window (gfx_opengl.c :1189-1203). */
@@ -306,10 +324,14 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         } else if (clamp_t) {
             P("  stc%d.y = clamp(in.vTexCoord%d.y, 0.5 / texSize%d.y, in.vTexClampT%d);\n", i, i, i, i);
         }
-        /* Sample: mask-wrap the UV if masked, else straight sample. */
-        if (mask_s || mask_t) {
-            const char *ms = mask_s ? (i == 0 ? "in.vTexMaskS0" : "in.vTexMaskS1") : "0.0";
-            const char *mt = mask_t ? (i == 0 ? "in.vTexMaskT0" : "in.vTexMaskT1") : "0.0";
+        /* Sample: N64 3-point filter if the tile requests it, else mask-wrapped
+         * or straight bilinear. */
+        const char *ms = mask_s ? (i == 0 ? "in.vTexMaskS0" : "in.vTexMaskS1") : "0.0";
+        const char *mt = mask_t ? (i == 0 ? "in.vTexMaskT0" : "in.vTexMaskT1") : "0.0";
+        if (filt) {
+            P("  let texVal%d : vec4<f32> = n64Filter3(%s, %s, stc%d, texSize%d, %s, %s);\n",
+              i, tex, samp, i, i, ms, mt);
+        } else if (mask_s || mask_t) {
             P("  let texVal%d : vec4<f32> = textureSample(%s, %s, n64TileMaskUv(stc%d, texSize%d, %s, %s));\n",
               i, tex, samp, i, i, ms, mt);
         } else {
