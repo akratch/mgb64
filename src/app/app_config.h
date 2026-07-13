@@ -11,7 +11,10 @@
 namespace AppConfig {
 
 void load();
-void save();
+// Persist prefs atomically. Returns false (old file left intact) if there is no
+// writable pref path or the write/replace fails [AUDIT-0039]. Callers may ignore
+// the result, but it is available to surface a save failure.
+bool save();
 std::string get(const std::string &key, const std::string &fallback = "");
 void set(const std::string &key, const std::string &value);
 

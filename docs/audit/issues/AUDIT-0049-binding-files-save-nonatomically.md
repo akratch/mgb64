@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - rebinding state can be lost or partially persisted without UI feedback |
 | Priority | P2 |
 | Area | Input bindings / persistence |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Keyboard or gamepad binding saves interrupted or denied by the filesystem |
+
+## Resolution
+
+Fixed 2026-07-13. `inputBindingSave`/`gamepadBindingSave` (input_bindings.c) previously `fopen(path,"w")` truncated the live file, wrote via unchecked `fprintf`, and `fclose`d unchecked — a crash or full disk mid-write left the bindings truncated/lost. Both now route through a shared `bindings_atomic_write` helper: write to `<file>.tmp`, verify the stream (`ferror`/`fflush`), check `fclose`, then `rename` over the live file — the temp+rename pattern already proven in `configSave`/`eeprom_save_to_file`. On any failure the live file is left intact and the temp removed. Builds clean; the binding-file format and load path are unchanged.
 
 ## Summary
 

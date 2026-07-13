@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - launcher preferences can be partially lost without feedback |
 | Priority | P2 |
 | Area | App shell / launcher preference persistence |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Launcher preference writes interrupted or denied by the filesystem |
+
+## Resolution
+
+Fixed 2026-07-13. `AppConfig::save()` (app_config.cpp) previously opened the prefs file with a truncating `std::ofstream`, checked only the initial open, and returned void — a mid-write failure silently truncated `mgb64_app.ini`, and `prefsFilePath()` fell back to a bare CWD-relative name when `SDL_GetPrefPath` returned null (lost for a .app with CWD=/). Now: `prefsFilePath()` returns empty on a null pref path and `save()` treats that as an error (no CWD fallback); `save()` writes to `<file>.tmp`, checks the stream after flush/close, atomically replaces via `MoveFileExA`/`rename` (mirroring config_pc.c `replaceConfigFile`), and returns bool. Callers may surface the failure. Validated by the existing test_app_config save/load round-trip (still passes).
 
 ## Summary
 

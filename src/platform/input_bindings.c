@@ -65,20 +65,52 @@ void inputBindingResetDefaults(void) {
 
 void inputBindingForceDefaults(int on) { g_force = on; }
 
-void inputBindingSave(void) {
-    ensureInit();
-    /* Route through savedirPath() like ge007.ini (config_pc.c): a double-clicked
-     * .app has CWD=/, so a CWD-relative file silently fails to persist (review
-     * F3). Warn loudly on failure instead of returning silently. */
-    const char *path = savedirPath("ge007_bindings.ini");
-    FILE *f = fopen(path, "w");
+/* Atomically persist bindings to `path`: write to path.tmp via `writer`, verify
+ * the stream, flush, close, then rename over the live file — so a crash or full
+ * disk mid-write can never truncate the existing bindings (AUDIT-0049). Mirrors
+ * configSave()/eeprom_save_to_file(). Warns on failure; the live file is left
+ * untouched. */
+static void bindings_atomic_write(const char *path, const char *label,
+                                  void (*writer)(FILE *)) {
+    char tmp[1024];
+    FILE *f;
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    f = fopen(tmp, "w");
     if (!f) {
-        fprintf(stderr, "[INPUT] Failed to save keyboard bindings to %s: %s\n", path, strerror(errno));
+        fprintf(stderr, "[INPUT] Failed to save %s to %s: %s\n", label, tmp, strerror(errno));
         return;
     }
+    writer(f);
+    if (ferror(f) || fflush(f) != 0) {
+        fprintf(stderr, "[INPUT] Failed writing %s to %s: %s\n", label, tmp, strerror(errno));
+        fclose(f);
+        remove(tmp);
+        return;
+    }
+    if (fclose(f) != 0) {
+        fprintf(stderr, "[INPUT] Failed closing %s (%s): %s\n", label, tmp, strerror(errno));
+        remove(tmp);
+        return;
+    }
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "[INPUT] Failed publishing %s to %s: %s\n", label, path, strerror(errno));
+        remove(tmp);
+    }
+}
+
+static void write_kb_bindings(FILE *f) {
     fprintf(f, "# MGB64 input bindings (action=SDL_scancode)\n");
     for (int i = 0; i < IB_COUNT; i++) fprintf(f, "%s=%d\n", kName[i], g_binding[i]);
-    fclose(f);
+}
+
+void inputBindingSave(void) {
+    char path[1024];
+    ensureInit();
+    /* Route through savedirPath() like ge007.ini (config_pc.c): a double-clicked
+     * .app has CWD=/, so a CWD-relative file silently fails to persist (review F3).
+     * Copy the static savedirPath buffer before appending ".tmp". */
+    snprintf(path, sizeof(path), "%s", savedirPath("ge007_bindings.ini"));
+    bindings_atomic_write(path, "keyboard bindings", write_kb_bindings);
 }
 
 void inputBindingLoad(void) {
@@ -250,22 +282,21 @@ int gamepadBindingActive(void *handle, GamepadAction a) {
     return SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)v) ? 1 : 0;
 }
 
-void gamepadBindingSave(void) {
-    gpEnsureInit();
-    /* Route through savedirPath() like ge007.ini so rebinds persist for the
-     * packaged-app audience MC.3 targets (review F3: a .app has CWD=/, so the
-     * old CWD-relative file was silently lost on relaunch). */
-    const char *path = savedirPath("ge007_gp_bindings.ini");
-    FILE *f = fopen(path, "w");
+static void write_gp_bindings(FILE *f) {
     int i;
-    if (!f) {
-        fprintf(stderr, "[INPUT] Failed to save gamepad bindings to %s: %s\n", path, strerror(errno));
-        return;
-    }
     fprintf(f, "# MGB64 gamepad bindings (action=encoded: button index, or %d+axis for LT/RT, %d=none)\n",
             GB_AXIS_BASE, GB_NONE);
     for (i = 0; i < GB_COUNT; i++) fprintf(f, "%s=%d\n", kGpName[i], g_gpBind[i]);
-    fclose(f);
+}
+
+void gamepadBindingSave(void) {
+    char path[1024];
+    gpEnsureInit();
+    /* Route through savedirPath() like ge007.ini so rebinds persist for the
+     * packaged-app audience (review F3: a .app has CWD=/, so the old CWD-relative
+     * file was silently lost on relaunch). Atomic temp+rename (AUDIT-0049). */
+    snprintf(path, sizeof(path), "%s", savedirPath("ge007_gp_bindings.ini"));
+    bindings_atomic_write(path, "gamepad bindings", write_gp_bindings);
 }
 
 void gamepadBindingLoad(void) {
