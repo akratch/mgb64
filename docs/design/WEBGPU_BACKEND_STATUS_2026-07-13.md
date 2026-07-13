@@ -50,20 +50,31 @@ geometry, textures, depth ordering, lighting, and HUD match.
    the GL default doesn't render it either (AUDIT-0001), so not needed for
    GL-parity — it would be a "further" enhancement.
 
-## Known limitation: the launcher app runs GL, not WebGPU
+## Launcher WebGPU unification — DONE (2026-07-13)
 
-The MGB64_APP launcher owns a **GL** SDL window (its ImGui UI renders via GL) and
-hands it to the game (adopted, one shared window). WebGPU/Metal need a
-CAMetalLayer, which that GL window has none of — so the game **forces GL** on the
-adopted window (`gfx_backend_force_opengl()` in `platform_sdl.c`, committed
-`ed9eab8`). Without this the WebGPU default went "backend inert" → a black frame
-while audio/sim ran (the launcher→Play regression, now fixed).
+Originally the MGB64_APP launcher owned a **GL** window and the game **forced GL**
+on the adopted window (`gfx_backend_force_opengl()`, `ed9eab8`), so the shipped
+`.app` ran WebGPU only for direct/standalone boots. That limitation is **retired**:
+the launcher app now renders **end to end on WebGPU** — launcher UI, game, and F1
+overlay on one shared WebGPU device/surface.
 
-Consequence: the shipped `.app` uses WebGPU only for **direct/standalone** boots
-(`./ge007 --level ...`), and GL when launched through the launcher. To make the
-launcher app itself use WebGPU, its window + ImGui rendering must be ported to a
-Metal/WebGPU surface — a follow-up, best folded into the GL/Metal-retirement
-phase in ADR-0001.
+- `AppHost` creates a Metal/native window + its own wgpu device/surface via the
+  shared `gfx_webgpu_bringup()` and renders the launcher UI through `gfx_webgpu_imgui`
+  (our ImGui renderer on wgpu-native v29, ImGui 1.92 dynamic-texture model).
+- The game adopts the launcher's device/surface (`platformSetHostWebGpu` →
+  `wgpu_init` host handoff); the adoption path no longer forces GL.
+- The F1 overlay draws into a surface render pass opened by `wgpu_end_frame`.
+- `GE007_RENDERER=gl` still yields a fully working GL app (runtime UI-renderer
+  selection); `force_opengl` remains only as that GL fallback.
+  `MGB64_WEBGPU_BACKEND=OFF` builds a GL-only app with no wgpu dependency.
+
+Plan + validation: `docs/superpowers/plans/2026-07-13-launcher-webgpu-unification.md`
+(7 tasks, all complete; launcher + Dam + overlay captured on WebGPU, GL fallback,
+ctest 84/84, tapes 7/7 byte-exact, MinGW links, Docker Linux x64 builds).
+
+**Follow-up polish (non-blocking):** live `UI.Scale` changes re-bake the ImGui
+font atlas — the dynamic-texture path handles the re-upload, so this is covered;
+no known launcher-path visual gaps remain.
 
 ## Cross-platform verification done (2026-07-13, Docker + MinGW)
 

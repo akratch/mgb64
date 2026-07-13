@@ -110,8 +110,17 @@ tree.
 
 1. Owner gameplay validation on Windows + the real PortMaster device (per the
    release doctrine) before a public release ships WebGPU-default.
-2. After a proving release: delete `gfx_opengl.c` + `gfx_metal.mm` + the
+2. ~~Launcher runs GL, only direct boots use WebGPU~~ **DONE (2026-07-13):**
+   the launcher app now renders end to end on WebGPU (launcher UI + game + F1
+   overlay on one shared device/surface); `force_opengl` is only the
+   `GE007_RENDERER=gl` fallback. `AppHost` builds its own device/surface via
+   `gfx_webgpu_bringup`, the game adopts it (`platformSetHostWebGpu`), and the
+   overlay renders through `gfx_webgpu_imgui` (our ImGui-on-wgpu-native-v29
+   renderer, ImGui 1.92 dynamic-texture model). Plan + validation:
+   `docs/superpowers/plans/2026-07-13-launcher-webgpu-unification.md`.
+3. After a proving release: delete `gfx_opengl.c` + `gfx_metal.mm` + the
    GLSL/MSL forks (~8k LOC), collapse the shader fork, make
-   `MGB64_WEBGPU_BACKEND` non-optional.
-3. Minor parity polish (tracked in the status doc): mipmap generation for decor
+   `MGB64_WEBGPU_BACKEND` non-optional. (Now unblocked — no GL-only app path
+   remains except the deliberate `GE007_RENDERER=gl` fallback.)
+4. Minor parity polish (tracked in the status doc): mipmap generation for decor
    textures; the rare sun-shadow/dfdx/diag shader-option effects.

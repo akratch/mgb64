@@ -52,36 +52,37 @@ runtime fallbacks.
   `mgb64-webgpu-linux-x64` (amd64).
 
 ### Late fix (2026-07-13, commit `ed9eab8`) — launcher→Play black screen
-The default flip broke the **launcher→Play** flow: the MGB64_APP launcher owns a
-GL window and hands it to the game, but WebGPU can't render into a GL window →
-"backend inert" → black frame (audio/sim ran). Fixed with
-`gfx_backend_force_opengl()`, called in the app-shell window-adoption path
-(`platform_sdl.c`). **Consequence / known limitation:** the launcher app runs
-**GL**, not WebGPU; only direct `./ge007 --level` boots use WebGPU. Porting the
-launcher to a Metal/WebGPU surface is a follow-up (fold into GL/Metal retirement).
+The default flip first broke the **launcher→Play** flow: the MGB64_APP launcher
+owned a GL window and handed it to the game, but WebGPU can't render into a GL
+window → "backend inert" → black frame (audio/sim ran). The stopgap was
+`gfx_backend_force_opengl()` in the app-shell adoption path (the launcher ran
+**GL**). **This is now superseded** by the launcher WebGPU unification below —
+`force_opengl` remains only as the `GE007_RENDERER=gl` fallback.
+
+### Launcher WebGPU unification — DONE (2026-07-13, commits `0b59264`..`acb8c80`)
+The launcher app now renders **end to end on WebGPU** by default: the launcher
+UI, the game, and the F1 overlay all run on one shared WebGPU device/surface.
+`AppHost` creates a Metal/native window + its own wgpu device/surface (via the
+shared `gfx_webgpu_bringup`), renders the launcher UI through an in-house ImGui
+renderer (`gfx_webgpu_imgui`, ImGui 1.92 dynamic-texture model), and hands the
+device/surface to the game (`platformSetHostWebGpu` → `gfx_webgpu.c` adopts it,
+no `force_opengl`). The F1 overlay draws into a surface render pass opened by
+`wgpu_end_frame`. `GE007_RENDERER=gl` still gives a fully working GL app
+(runtime UI-renderer selection); `MGB64_WEBGPU_BACKEND=OFF` builds a GL-only app.
+Validated: launcher + Dam + F1 overlay captured on WebGPU; GL fallback; ctest
+84/84; tapes 7/7 byte-exact; MinGW `ge007.exe` links; Docker Linux x64 builds.
+Plan: `docs/superpowers/plans/2026-07-13-launcher-webgpu-unification.md` (all
+7 tasks complete).
 
 ### What is NOT done (owner-gated, do not do unilaterally)
 1. **Owner gameplay validation** on a real Windows box and the actual PortMaster
    device. Software Vulkan proves the code path, not real-driver quirks or
    on-device framerate. This is the release-doctrine gate ([[mgb64-internal-external-doctrine]]).
-2. **Launcher WebGPU unification (IN FLIGHT — scoped, planned, Task 1 done).**
-   Makes the launcher app render end-to-end on WebGPU (launcher UI + game + F1
-   overlay on one shared WebGPU device/surface), retiring the launcher-runs-GL
-   limitation. Approved design: `docs/superpowers/specs/2026-07-13-launcher-webgpu-unification-design.md`;
-   task plan: `docs/superpowers/plans/2026-07-13-launcher-webgpu-unification.md`.
-   **Done:** the de-risking spike (upstream `imgui_impl_wgpu` is version-skewed
-   from our pinned v29 → we write our own) + **Task 1**: `gfx_webgpu_imgui`
-   (`src/platform/fast3d/gfx_webgpu_imgui.{cpp,h}`, commit `fab11d2`) — an ImGui
-   renderer on wgpu-native v29, compile-validated standalone + in `mgb64_app`.
-   **Remaining (Tasks 2–7):** the surface-helper refactor, the host device/
-   surface handoff + `gfx_webgpu.c` adoption, the AppHost WebGPU window+device +
-   WebGPU launcher UI, the game adoption (removing `force_opengl` from the
-   adoption path), the F1 overlay on WebGPU, and runtime GL/WebGPU UI selection.
-   These are a **sequencing-sensitive** integration (macOS metal-view/layer +
-   surface ownership between AppHost-creates-first and the game's adoption) that
-   needs runtime iteration on the launcher — see the RESUME NOTE at the top of
-   the plan doc for the exact ordering.
-3. **After that proves out:** delete `gfx_opengl.c` + `gfx_metal.mm` + the
+2. **Launcher WebGPU unification — DONE** (see the section above). The launcher
+   app renders end to end on WebGPU; `force_opengl` is now only the
+   `GE007_RENDERER=gl` fallback.
+3. **After the launcher unification (now done) proves out on real hardware:**
+   delete `gfx_opengl.c` + `gfx_metal.mm` + the
    GLSL/MSL forks (~8k LOC), collapse the shader fork, make
    `MGB64_WEBGPU_BACKEND` non-optional. (Sequenced in the ADR.)
 4. **Minor parity polish** (tracked in the status doc): mipmap generation for
