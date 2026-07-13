@@ -73,7 +73,10 @@ static uint32_t s_cfg_w = 0, s_cfg_h = 0;
  * Re-created when the render resolution changes. */
 static WGPUTexture           s_scene_tex  = NULL;
 static WGPUTextureView       s_scene_view = NULL;
+static WGPUTexture           s_depth_tex  = NULL;
+static WGPUTextureView       s_depth_view = NULL;
 static uint32_t              s_scene_w = 0, s_scene_h = 0;
+#define WGPU_DEPTH_FORMAT WGPUTextureFormat_Depth24Plus
 
 /* Per-frame objects, valid only between start_frame and end_frame. */
 static WGPUCommandEncoder    s_encoder    = NULL;
@@ -92,6 +95,21 @@ static WGPUSampler     s_default_sampler = NULL;
 #define WGPU_VBUF_CAP (16u * 1024u * 1024u)
 static WGPUBuffer s_vbuf = NULL;
 static uint32_t   s_vbuf_off = 0;
+
+/* Dynamic depth / viewport / scissor state (Task 4). WebGPU bakes depth into the
+ * pipeline, so the depth fields feed the pipeline cache key; viewport/scissor are
+ * render-pass encoder state applied per draw. */
+static bool     s_depth_test = false, s_depth_update = false, s_depth_compare = false;
+static uint16_t s_zmode = 0;
+static int s_vp_x = 0, s_vp_y = 0, s_vp_w = 0, s_vp_h = 0;
+static int s_sc_x = 0, s_sc_y = 0, s_sc_w = 0, s_sc_h = 0;
+static bool s_sc_set = false;
+
+/* ZMODE_DEC decal (gfx_opengl.c / gfx_metal.mm): coplanar decals get a negative
+ * polygon offset so they win the depth test against the surface they overlay. */
+static bool wgpu_depth_is_decal(void) {
+    return s_zmode == 0xc00 && s_depth_test && s_depth_compare;
+}
 
 /* ------------------------------------------------------------------------
  * Async request helpers (wgpu-native fires these during processEvents), mirroring
@@ -263,6 +281,7 @@ static void wgpu_on_resize(void) {
 static void wgpu_start_frame(void) {
     s_frame_open = false;
     s_vbuf_off = 0;   /* reset the per-frame vertex bump allocator */
+    s_sc_set = false; /* scissor is re-established by gfx_pc each frame */
     if (!s_ready) {
         return;
     }
@@ -278,10 +297,12 @@ static void wgpu_start_frame(void) {
     if (rw != s_cfg_w || rh != s_cfg_h) {
         wgpu_configure_surface(rw, rh);
     }
-    /* (Re)create the offscreen scene target at the render resolution. */
+    /* (Re)create the offscreen scene target + depth buffer at the render res. */
     if (s_scene_view == NULL || s_scene_w != rw || s_scene_h != rh) {
         if (s_scene_view != NULL) { wgpuTextureViewRelease(s_scene_view); s_scene_view = NULL; }
         if (s_scene_tex != NULL)  { wgpuTextureRelease(s_scene_tex);      s_scene_tex = NULL; }
+        if (s_depth_view != NULL) { wgpuTextureViewRelease(s_depth_view); s_depth_view = NULL; }
+        if (s_depth_tex != NULL)  { wgpuTextureRelease(s_depth_tex);      s_depth_tex = NULL; }
         WGPUTextureDescriptor td = {0};
         td.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc |
                    WGPUTextureUsage_TextureBinding;
@@ -291,9 +312,19 @@ static void wgpu_start_frame(void) {
         td.mipLevelCount = 1; td.sampleCount = 1;
         s_scene_tex = wgpuDeviceCreateTexture(s_device, &td);
         s_scene_view = s_scene_tex ? wgpuTextureCreateView(s_scene_tex, NULL) : NULL;
+
+        WGPUTextureDescriptor dd = {0};
+        dd.usage = WGPUTextureUsage_RenderAttachment;
+        dd.dimension = WGPUTextureDimension_2D;
+        dd.size.width = rw; dd.size.height = rh; dd.size.depthOrArrayLayers = 1;
+        dd.format = WGPU_DEPTH_FORMAT;
+        dd.mipLevelCount = 1; dd.sampleCount = 1;
+        s_depth_tex = wgpuDeviceCreateTexture(s_device, &dd);
+        s_depth_view = s_depth_tex ? wgpuTextureCreateView(s_depth_tex, NULL) : NULL;
+
         s_scene_w = rw; s_scene_h = rh;
     }
-    if (s_scene_view == NULL) {
+    if (s_scene_view == NULL || s_depth_view == NULL) {
         return;
     }
 
@@ -308,9 +339,16 @@ static void wgpu_start_frame(void) {
     att.clearValue.g = s_clear_g;
     att.clearValue.b = s_clear_b;
     att.clearValue.a = 1.0;
+    WGPURenderPassDepthStencilAttachment depth = {0};
+    depth.view = s_depth_view;
+    depth.depthLoadOp = WGPULoadOp_Clear;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    depth.depthClearValue = 1.0f;   /* 1.0 = far, with WebGPU's 0..1 clip (0 = near) */
+
     WGPURenderPassDescriptor rp = {0};
     rp.colorAttachmentCount = 1;
     rp.colorAttachments = &att;
+    rp.depthStencilAttachment = &depth;
     s_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
     s_frame_open = true;
 }
@@ -613,12 +651,18 @@ static bool wgpu_blend_state(enum GfxBlendMode mode, WGPUBlendState *out) {
     }
 }
 
-/* Lazily build + cache the render pipeline for (shader, blend). */
+/* Lazily build + cache the render pipeline for the current (shader, blend, depth)
+ * dynamic state — WebGPU bakes all of it into the pipeline (mtl_pso_for shape). */
 static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxBlendMode blend) {
     if (prg->module == NULL) {
         return NULL;
     }
-    uint32_t key = (uint32_t)blend;
+    bool decal = wgpu_depth_is_decal();
+    uint32_t key = (uint32_t)blend
+                 | ((uint32_t)(s_depth_test ? 1 : 0)    << 4)
+                 | ((uint32_t)(s_depth_update ? 1 : 0)  << 5)
+                 | ((uint32_t)(s_depth_compare ? 1 : 0) << 6)
+                 | ((uint32_t)(decal ? 1 : 0)           << 7);
     for (int i = 0; i < prg->npipes; i++) {
         if (prg->pipes[i].key == key) return prg->pipes[i].pipe;
     }
@@ -642,6 +686,27 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
     fs.targetCount = 1;
     fs.targets = &color;
 
+    /* Depth: LessEqual when the N64 mode tests+compares (0..1 clip, 0 = near),
+     * else Always; write when it tests+updates. Decal gets a small negative bias
+     * so coplanar overlays win the test (mirrors GL glPolygonOffset(-2,-2)). */
+    WGPUDepthStencilState ds = {0};
+    ds.format = WGPU_DEPTH_FORMAT;
+    ds.depthCompare = (s_depth_test && s_depth_compare) ? WGPUCompareFunction_LessEqual
+                                                        : WGPUCompareFunction_Always;
+    ds.depthWriteEnabled = (s_depth_test && s_depth_update)
+                               ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+    if (decal) {
+        ds.depthBias = -2;
+        ds.depthBiasSlopeScale = -2.0f;
+    }
+    /* Depth-only format: stencil faces must be their default (Always/Keep) with
+     * zero masks, or WebGPU rejects the pipeline. */
+    ds.stencilFront.compare = WGPUCompareFunction_Always;
+    ds.stencilFront.failOp = WGPUStencilOperation_Keep;
+    ds.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+    ds.stencilFront.passOp = WGPUStencilOperation_Keep;
+    ds.stencilBack = ds.stencilFront;
+
     WGPURenderPipelineDescriptor pd = {0};
     pd.layout = prg->playout;
     pd.vertex.module = prg->module;
@@ -651,10 +716,10 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
     pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
     pd.primitive.frontFace = WGPUFrontFace_CCW;
     pd.primitive.cullMode = WGPUCullMode_None;   /* N64 backface handled on CPU */
+    pd.depthStencil = &ds;
     pd.multisample.count = 1;
     pd.multisample.mask = 0xFFFFFFFFu;
     pd.fragment = &fs;
-    /* No depth-stencil in Task 3 (submission-order draw); Task 4 adds it. */
 
     WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
     if (pipe != NULL && prg->npipes < (int)(sizeof(prg->pipes) / sizeof(prg->pipes[0]))) {
@@ -860,13 +925,17 @@ static void wgpu_set_sampler_parameters(int tile, bool linear_filter, uint32_t c
  * ---------------------------------------------------------------------- */
 static void wgpu_set_depth_mode(bool depth_test, bool depth_update, bool depth_compare,
                                 bool depth_source_prim, uint16_t zmode) {
-    (void)depth_test; (void)depth_update; (void)depth_compare; (void)depth_source_prim; (void)zmode;
+    (void)depth_source_prim;
+    s_depth_test = depth_test;
+    s_depth_update = depth_update;
+    s_depth_compare = depth_compare;
+    s_zmode = zmode;
 }
 static void wgpu_set_viewport(int x, int y, int width, int height) {
-    (void)x; (void)y; (void)width; (void)height;
+    s_vp_x = x; s_vp_y = y; s_vp_w = width; s_vp_h = height;
 }
 static void wgpu_set_scissor(int x, int y, int width, int height) {
-    (void)x; (void)y; (void)width; (void)height;
+    s_sc_x = x; s_sc_y = y; s_sc_w = width; s_sc_h = height; s_sc_set = true;
 }
 static void wgpu_set_blend_mode(enum GfxBlendMode mode) { s_cur_blend = mode; }
 
@@ -954,6 +1023,29 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         bd.entryCount = (size_t)ne;
         bd.entries = ents;
         bg = wgpuDeviceCreateBindGroup(s_device, &bd);
+    }
+
+    /* Viewport + scissor, Y-flipped to WebGPU's top-left origin (GL/gfx_pc emit
+     * bottom-left), clamped to the scene bounds (WebGPU rejects out-of-range
+     * rects). Mirrors mtl_draw_triangles' originY = fb_h - (y + h). */
+    if (s_vp_w > 0 && s_vp_h > 0) {
+        float vy = (float)((int)s_scene_h - (s_vp_y + s_vp_h));
+        wgpuRenderPassEncoderSetViewport(s_pass, (float)s_vp_x, vy,
+                                         (float)s_vp_w, (float)s_vp_h, 0.0f, 1.0f);
+    }
+    {
+        int sx = s_sc_set ? s_sc_x : 0;
+        int sw = s_sc_set ? s_sc_w : (int)s_scene_w;
+        int sh = s_sc_set ? s_sc_h : (int)s_scene_h;
+        int sy = s_sc_set ? ((int)s_scene_h - (s_sc_y + s_sc_h)) : 0;
+        if (sx < 0) { sw += sx; sx = 0; }
+        if (sy < 0) { sh += sy; sy = 0; }
+        if (sw < 0) sw = 0;
+        if (sh < 0) sh = 0;
+        if (sx + sw > (int)s_scene_w) sw = (int)s_scene_w - sx;
+        if (sy + sh > (int)s_scene_h) sh = (int)s_scene_h - sy;
+        wgpuRenderPassEncoderSetScissorRect(s_pass, (uint32_t)sx, (uint32_t)sy,
+                                            (uint32_t)sw, (uint32_t)sh);
     }
 
     wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
