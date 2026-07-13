@@ -421,9 +421,11 @@ void bossMainloop(void)
 #ifdef NATIVE_PORT
         extern void portClearAllHeads(void);
         extern void portClearAllDlCol(void);
+        extern void portClearAllNodeOverrides(void);
         extern void portWatchdogLoadBegin(void);
         portClearAllHeads();
-        portClearAllDlCol();   /* FID-0122: drop stale DLCOLLISION runtime pointers */
+        portClearAllDlCol();          /* FID-0122: drop stale DLCOLLISION runtime pointers */
+        portClearAllNodeOverrides();  /* FID-0122 class: drop stale node render overrides */
         /* Stage (re)load ahead: lvlStageLoad below legitimately blocks the
          * main loop for seconds — suppress the stall watchdog until the
          * frame loop is re-entered. */

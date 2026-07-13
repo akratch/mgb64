@@ -441,18 +441,24 @@ void portClearAllDlCol(void)
     s_dlColTableCount = 0;
 }
 
-#define PORT_NODE_TOGGLE_OVERRIDE_TABLE_SIZE 128
-#define PORT_NODE_RENDER_SUPPRESS_TABLE_SIZE 128
-
+/* FID-0122 class: like s_dlColTable, these per-node render-override side tables
+ * were fixed 128-entry arrays that SILENTLY dropped on overflow, and their
+ * per-model cleanup (portClear*ForModel) is only wired for weapon hand models
+ * (gun.c) — frontend model overrides (front.c) are never cleared and there is no
+ * per-stage reset, so entries can accumulate/go stale and a dropped override
+ * leaves a node at the wrong visibility. Lower impact than the DLCOLLISION case
+ * (a visual glitch, not a fallback to wrong geometry), but the same defect
+ * shape. Fixed the same way: doubling-realloc growth (never silently drops) +
+ * portClearAllNodeOverrides() at stage (re)load. */
 struct PortNodeToggleOverrideEntry {
     Model *model;
     s32 rel_off;
     s32 visible;
 };
 
-static struct PortNodeToggleOverrideEntry
-    s_nodeToggleOverrideTable[PORT_NODE_TOGGLE_OVERRIDE_TABLE_SIZE];
+static struct PortNodeToggleOverrideEntry *s_nodeToggleOverrideTable = NULL;
 static int s_nodeToggleOverrideCount = 0;
+static int s_nodeToggleOverrideCapacity = 0;
 
 struct PortNodeRenderSuppressEntry {
     Model *model;
@@ -460,9 +466,62 @@ struct PortNodeRenderSuppressEntry {
     s32 suppress;
 };
 
-static struct PortNodeRenderSuppressEntry
-    s_nodeRenderSuppressTable[PORT_NODE_RENDER_SUPPRESS_TABLE_SIZE];
+static struct PortNodeRenderSuppressEntry *s_nodeRenderSuppressTable = NULL;
 static int s_nodeRenderSuppressCount = 0;
+static int s_nodeRenderSuppressCapacity = 0;
+
+static int portEnsureNodeToggleCapacity(int needed)
+{
+    struct PortNodeToggleOverrideEntry *grown;
+    int newCapacity;
+    if (needed <= s_nodeToggleOverrideCapacity) {
+        return 1;
+    }
+    newCapacity = s_nodeToggleOverrideCapacity > 0 ? s_nodeToggleOverrideCapacity : 128;
+    while (newCapacity < needed) {
+        newCapacity *= 2;
+    }
+    grown = realloc(s_nodeToggleOverrideTable, sizeof(*grown) * newCapacity);
+    if (grown == NULL) {
+        fprintf(stderr, "[PORT] failed to grow node-toggle-override table from %d to %d\n",
+                s_nodeToggleOverrideCapacity, newCapacity);
+        return 0;
+    }
+    s_nodeToggleOverrideTable = grown;
+    s_nodeToggleOverrideCapacity = newCapacity;
+    return 1;
+}
+
+static int portEnsureNodeSuppressCapacity(int needed)
+{
+    struct PortNodeRenderSuppressEntry *grown;
+    int newCapacity;
+    if (needed <= s_nodeRenderSuppressCapacity) {
+        return 1;
+    }
+    newCapacity = s_nodeRenderSuppressCapacity > 0 ? s_nodeRenderSuppressCapacity : 128;
+    while (newCapacity < needed) {
+        newCapacity *= 2;
+    }
+    grown = realloc(s_nodeRenderSuppressTable, sizeof(*grown) * newCapacity);
+    if (grown == NULL) {
+        fprintf(stderr, "[PORT] failed to grow node-render-suppress table from %d to %d\n",
+                s_nodeRenderSuppressCapacity, newCapacity);
+        return 0;
+    }
+    s_nodeRenderSuppressTable = grown;
+    s_nodeRenderSuppressCapacity = newCapacity;
+    return 1;
+}
+
+/* Drop all node render overrides at stage (re)load — the per-model cleanup only
+ * covers weapon models, so this prevents stale frontend/prop overrides from
+ * lingering and matching a reused Model* in the next stage. */
+void portClearAllNodeOverrides(void)
+{
+    s_nodeToggleOverrideCount = 0;
+    s_nodeRenderSuppressCount = 0;
+}
 
 static const char *modelGetHeaderDebugName(ModelFileHeader *obj);
 
@@ -482,12 +541,13 @@ void portSetNodeToggleOverride(Model *model, s32 rel_off, s32 visible)
         }
     }
 
-    if (s_nodeToggleOverrideCount < PORT_NODE_TOGGLE_OVERRIDE_TABLE_SIZE) {
-        s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].model = model;
-        s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].rel_off = rel_off;
-        s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].visible = visible;
-        s_nodeToggleOverrideCount++;
+    if (!portEnsureNodeToggleCapacity(s_nodeToggleOverrideCount + 1)) {
+        return;   /* OOM already diagnosed */
     }
+    s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].model = model;
+    s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].rel_off = rel_off;
+    s_nodeToggleOverrideTable[s_nodeToggleOverrideCount].visible = visible;
+    s_nodeToggleOverrideCount++;
 }
 
 void portClearNodeToggleOverridesForModel(Model *model)
@@ -526,12 +586,13 @@ void portSetNodeRenderSuppress(Model *model, s32 rel_off, s32 suppress)
         }
     }
 
-    if (s_nodeRenderSuppressCount < PORT_NODE_RENDER_SUPPRESS_TABLE_SIZE) {
-        s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].model = model;
-        s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].rel_off = rel_off;
-        s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].suppress = suppress;
-        s_nodeRenderSuppressCount++;
+    if (!portEnsureNodeSuppressCapacity(s_nodeRenderSuppressCount + 1)) {
+        return;   /* OOM already diagnosed */
     }
+    s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].model = model;
+    s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].rel_off = rel_off;
+    s_nodeRenderSuppressTable[s_nodeRenderSuppressCount].suppress = suppress;
+    s_nodeRenderSuppressCount++;
 }
 
 void portClearNodeRenderSuppressForModel(Model *model)
