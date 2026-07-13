@@ -120,10 +120,11 @@ run_attempt() {
     local lvl="$1"
     local log="$OUT_DIR/level_${lvl}.log"
     local hits=0
+    local proc_rc=0
 
     rm -f "$log"
 
-    if ! (
+    (
         cd "$OUT_DIR"
         env -u GE007_DEBUG \
             SDL_AUDIODRIVER="${GE007_VALIDATION_SDL_AUDIODRIVER:-dummy}" \
@@ -145,8 +146,9 @@ run_attempt() {
             --screenshot-frame "$FRAMES" \
             --screenshot-label "asan_${lvl}_$$" \
             --screenshot-exit
-    ) >"$log" 2>&1; then
-        echo "    process: NONZERO EXIT"
+    ) >"$log" 2>&1 || proc_rc=$?
+    if [[ "$proc_rc" -ne 0 ]]; then
+        echo "    process: NONZERO EXIT (rc=$proc_rc)"
     else
         echo "    process: clean exit"
     fi
@@ -158,6 +160,17 @@ run_attempt() {
         echo "    sanitizer: FINDINGS ($hits)"
         grep -nE 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' "$log" | head -8 | sed 's/^/      /'
         printf '%s\treport\t%s\n' "$lvl" "$hits" >>"$SUMMARY_FILE"
+        return 1
+    fi
+
+    # AUDIT-0012: a nonzero process exit with no sanitizer banner (crash without a
+    # banner, timeout, loader/linker failure, unusable binary, bad-CLI regression)
+    # is still a FAILED run — the requested gameplay interval never certified
+    # clean. Do not record it as clean.
+    if [[ "$proc_rc" -ne 0 ]]; then
+        echo "    sanitizer: NO BANNER but process failed (rc=$proc_rc) — run did not complete"
+        tail -8 "$log" | sed 's/^/      /'
+        printf '%s\tprocfail\t%s\n' "$lvl" "$proc_rc" >>"$SUMMARY_FILE"
         return 1
     fi
 

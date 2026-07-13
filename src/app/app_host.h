@@ -35,7 +35,9 @@ public:
     // Render ImGui draw data and present the frame. If captureBmpPath is
     // non-null, the finished frame is saved as a 24-bit BMP before the swap
     // (used by the headless smoke / design review / CI).
-    void endFrame(const char *captureBmpPath = nullptr);
+    // Returns false only when a capture was requested (captureBmpPath != null)
+    // and its BMP was not fully written (AUDIT-0046). True otherwise.
+    bool endFrame(const char *captureBmpPath = nullptr);
 
     // Framebuffer/logical ratio (2.0 on Retina). Valid after init().
     float framebufferScale() const;
@@ -81,8 +83,8 @@ private:
     // (Re)create the offscreen scene target at the given pixel size if needed.
     void ensureWgpuSceneTarget(int w, int h);
     // Backend-specific frame present (endFrame dispatches to one).
-    void endFrameWebGpu(const char *captureBmpPath);
-    void endFrameGL(const char *captureBmpPath);
+    bool endFrameWebGpu(const char *captureBmpPath);
+    bool endFrameGL(const char *captureBmpPath);
 
     SDL_Window   *window_ = nullptr;
     SDL_GLContext gl_     = nullptr;

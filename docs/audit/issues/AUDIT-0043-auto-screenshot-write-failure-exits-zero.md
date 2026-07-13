@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - capture automation reports success without producing its artifact |
 | Priority | P1 |
 | Area | Screenshot automation / process status |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | `--screenshot-exit` when BMP creation or writing fails |
+
+## Resolution
+
+Fixed (already resolved by the pre-release hardening) — platformSaveScreenshot tracks write_ok, s_lastScreenshotFailed is pessimistic-set and cleared only on full success, and platformFinishAutoScreenshotIfRequested exit(4)s on failure (verified 2026-07-13).
 
 ## Summary
 

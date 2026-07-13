@@ -291,8 +291,10 @@ void AppHost::beginFrame() {
 
 // Save the current GL back buffer as a bottom-up 24-bit BMP. GL reads
 // bottom-to-top, which matches BMP row order, so no vertical flip is needed.
-static void writeBackbufferBmp(const char *path, int w, int h) {
-    if (w <= 0 || h <= 0) return;
+// Returns true only if the BMP was fully written (AUDIT-0046: a smoke capture
+// must not report success without its image).
+static bool writeBackbufferBmp(const char *path, int w, int h) {
+    if (w <= 0 || h <= 0) return false;
     std::vector<uint8_t> rgb((size_t)w * h * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
@@ -303,7 +305,7 @@ static void writeBackbufferBmp(const char *path, int w, int h) {
     const size_t fileSize = 54 + imgSize;
 
     FILE *f = std::fopen(path, "wb");
-    if (!f) { std::fprintf(stderr, "[app] could not open %s\n", path); return; }
+    if (!f) { std::fprintf(stderr, "[app] could not open %s\n", path); return false; }
     uint8_t hdr[54] = {0};
     hdr[0] = 'B'; hdr[1] = 'M';
     hdr[2] = fileSize & 0xFF; hdr[3] = (fileSize >> 8) & 0xFF;
@@ -318,7 +320,7 @@ static void writeBackbufferBmp(const char *path, int w, int h) {
     hdr[28] = 24;                       // bpp
     hdr[34] = imgSize & 0xFF; hdr[35] = (imgSize >> 8) & 0xFF;
     hdr[36] = (imgSize >> 16) & 0xFF; hdr[37] = (imgSize >> 24) & 0xFF;
-    std::fwrite(hdr, 1, 54, f);
+    bool ok = (std::fwrite(hdr, 1, 54, f) == 54);
 
     std::vector<uint8_t> row(rowBytes + pad, 0);
     for (int y = 0; y < h; ++y) {
@@ -328,10 +330,16 @@ static void writeBackbufferBmp(const char *path, int w, int h) {
             row[x * 3 + 1] = src[x * 3 + 1];
             row[x * 3 + 2] = src[x * 3 + 0];
         }
-        std::fwrite(row.data(), 1, rowBytes + pad, f);
+        if (std::fwrite(row.data(), 1, rowBytes + pad, f) != (size_t)(rowBytes + pad)) ok = false;
     }
-    std::fclose(f);
-    std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
+    if (std::fclose(f) != 0) ok = false;
+    if (ok) {
+        std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
+    } else {
+        std::fprintf(stderr, "[app] FAILED to write %s (short write/IO error); removing\n", path);
+        std::remove(path);
+    }
+    return ok;
 }
 
 #ifdef MGB64_WEBGPU_BACKEND
@@ -346,9 +354,10 @@ void on_map(WGPUMapAsyncStatus s, WGPUStringView m, void *u1, void *u2) {
 // BMP. `bgra` selects the source channel order (BGRA8 — the near-universal
 // surface format — vs RGBA8). BMP rows are bottom-up, so source rows are emitted
 // in reverse; BMP pixels are B,G,R.
-void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
+// Returns true only if the BMP was fully written (AUDIT-0046).
+bool writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
                   WGPUDevice device, bool bgra) {
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) return false;
     size_t size = (size_t)bpr * (uint32_t)h;
     WgpuMapReq mr = {0, (WGPUMapAsyncStatus)0};
     WGPUBufferMapCallbackInfo ci = {};
@@ -359,10 +368,11 @@ void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
     for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(device, true, nullptr);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         std::fprintf(stderr, "[app] capture map failed (status=%d)\n", (int)mr.status);
-        return;
+        return false;
     }
     const uint8_t *px = (const uint8_t *)wgpuBufferGetConstMappedRange(buf, 0, size);
     FILE *f = px ? std::fopen(path, "wb") : nullptr;
+    bool ok = false;
     if (f != nullptr) {
         const int rowBytes = w * 3;
         const int pad = (4 - (rowBytes % 4)) % 4;
@@ -380,7 +390,7 @@ void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
         hdr[26] = 1; hdr[28] = 24;
         hdr[34] = imgSize & 0xFF; hdr[35] = (imgSize >> 8) & 0xFF;
         hdr[36] = (imgSize >> 16) & 0xFF; hdr[37] = (imgSize >> 24) & 0xFF;
-        std::fwrite(hdr, 1, 54, f);
+        ok = (std::fwrite(hdr, 1, 54, f) == 54);
         std::vector<uint8_t> row(rowBytes + pad, 0);
         for (int y = h - 1; y >= 0; --y) {   // BMP bottom-up
             const uint8_t *srow = px + (size_t)y * bpr;
@@ -389,23 +399,31 @@ void writeWgpuBmp(WGPUBuffer buf, uint32_t bpr, int w, int h, const char *path,
                 row[x * 3 + 1] = srow[x * 4 + 1];                            // G
                 row[x * 3 + 2] = bgra ? srow[x * 4 + 2] : srow[x * 4 + 0];  // R
             }
-            std::fwrite(row.data(), 1, rowBytes + pad, f);
+            if (std::fwrite(row.data(), 1, rowBytes + pad, f) != (size_t)(rowBytes + pad)) ok = false;
         }
-        std::fclose(f);
-        std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
+        if (std::fclose(f) != 0) ok = false;
+        if (ok) {
+            std::fprintf(stderr, "[app] wrote %s (%dx%d)\n", path, w, h);
+        } else {
+            std::fprintf(stderr, "[app] FAILED to write %s (short write/IO error); removing\n", path);
+            std::remove(path);
+        }
+    } else {
+        std::fprintf(stderr, "[app] could not open %s\n", path);
     }
     wgpuBufferUnmap(buf);
+    return ok;
 }
 }  // namespace
 
-void AppHost::endFrameWebGpu(const char *captureBmpPath) {
+bool AppHost::endFrameWebGpu(const char *captureBmpPath) {
     ImGui::Render();
 
     int w = 0, h = 0;
     drawableSize(&w, &h);
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) return captureBmpPath == nullptr;   // couldn't capture
     ensureWgpuSceneTarget(w, h);
-    if (sceneTex_ == nullptr || sceneView_ == nullptr) return;
+    if (sceneTex_ == nullptr || sceneView_ == nullptr) return captureBmpPath == nullptr;
 
     WGPUSurface surface = (WGPUSurface)wgpuSurface_;
     WGPUDevice device = (WGPUDevice)wgpuDevice_;
@@ -475,11 +493,14 @@ void AppHost::endFrameWebGpu(const char *captureBmpPath) {
     wgpuCommandBufferRelease(cmd);
     wgpuCommandEncoderRelease(enc);
 
+    bool captureOk = (captureBmpPath == nullptr);
     if (capBuf != nullptr) {
         const bool bgra = ((WGPUTextureFormat)wgpuFormat_ == WGPUTextureFormat_BGRA8Unorm ||
                            (WGPUTextureFormat)wgpuFormat_ == WGPUTextureFormat_BGRA8UnormSrgb);
-        writeWgpuBmp(capBuf, capBpr, w, h, captureBmpPath, device, bgra);
+        captureOk = writeWgpuBmp(capBuf, capBpr, w, h, captureBmpPath, device, bgra);
         wgpuBufferRelease(capBuf);
+    } else if (captureBmpPath != nullptr) {
+        captureOk = false;   // requested a capture but the readback buffer alloc failed
     }
 
     if (present_ok) {
@@ -488,23 +509,28 @@ void AppHost::endFrameWebGpu(const char *captureBmpPath) {
     if (st.texture != nullptr) {
         wgpuTextureRelease(st.texture);
     }
+    return captureOk;
 }
 #endif  // MGB64_WEBGPU_BACKEND
 
-void AppHost::endFrameGL(const char *captureBmpPath) {
+bool AppHost::endFrameGL(const char *captureBmpPath) {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    bool captureOk = true;
     if (captureBmpPath) {
-        writeBackbufferBmp(captureBmpPath, drawableWidth(), drawableHeight());
+        captureOk = writeBackbufferBmp(captureBmpPath, drawableWidth(), drawableHeight());
     }
     SDL_GL_SwapWindow(window_);
+    return captureOk;
 }
 
-void AppHost::endFrame(const char *captureBmpPath) {
+// Returns true when no capture was requested, or the requested BMP was fully
+// written; false when a requested capture failed (AUDIT-0046).
+bool AppHost::endFrame(const char *captureBmpPath) {
 #ifdef MGB64_WEBGPU_BACKEND
-    if (useWebGpu_) { endFrameWebGpu(captureBmpPath); return; }
+    if (useWebGpu_) { return endFrameWebGpu(captureBmpPath); }
 #endif
-    endFrameGL(captureBmpPath);
+    return endFrameGL(captureBmpPath);
 }
 
 void AppHost::drawableSize(int *w, int *h) const {

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - release evidence can be falsely green after a fatal process failure |
 | Priority | P1 |
 | Area | Validation / sanitizer harness |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Every `tools/asan_smoke.sh --gate` run |
+
+## Resolution
+
+Fixed 2026-07-13 — run_attempt now captures the process exit code and fails the stage (return 1 -> gate nonzero) on a nonzero exit with no sanitizer banner. Fault-injected: a binary that exits 1 now makes --gate exit nonzero.
 
 ## Summary
 

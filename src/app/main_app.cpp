@@ -144,15 +144,23 @@ int main(int argc, char **argv) {
         if (frames < 1) frames = 1;
         const char *shot = std::getenv("MGB64_APP_SMOKE_SHOT");
         bool sawQuit = false;
+        bool captureOk = true;
         for (int i = 0; i < frames; ++i) {
             if (host.pumpAndShouldQuit()) sawQuit = true;  // drain, don't exit
             host.beginFrame();
             launcher.draw(host);
-            host.endFrame((i == frames - 1) ? shot : nullptr);
+            bool ok = host.endFrame((i == frames - 1) ? shot : nullptr);
+            if (i == frames - 1) captureOk = ok;
         }
         std::printf("[app] smoke: rendered %d frames, drawable %dx%d, sawQuit=%d\n",
                     frames, host.drawableWidth(), host.drawableHeight(), sawQuit ? 1 : 0);
         host.shutdown();
+        // AUDIT-0046: a requested capture that was not written must fail the run,
+        // so a design-review/CI smoke can't pass without its image.
+        if (shot && shot[0] && !captureOk) {
+            std::fprintf(stderr, "[app] smoke: requested capture %s was not produced\n", shot);
+            return 1;
+        }
         return 0;
     }
 

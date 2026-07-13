@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - launch and validation failures are reported to callers as success |
 | Priority | P1 |
 | Area | App shell / process status propagation |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Interactive Play, app autoplay, and app-shell PortMaster boot paths |
+
+## Resolution
+
+Fixed (already resolved by the post-boot UX work) — main_app.cpp play() returns mgb64_engine_boot()'s status and every caller propagates it to the process exit (verified 2026-07-13).
 
 ## Summary
 

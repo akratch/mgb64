@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - launcher visual validation succeeds without its requested image |
 | Priority | P2 |
 | Area | App shell / UI smoke capture |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | `MGB64_APP_SMOKE_SHOT` when the BMP cannot be written |
+
+## Resolution
+
+Fixed 2026-07-13 — writeBackbufferBmp/writeWgpuBmp return a checked bool (fopen/fwrite/fclose), AppHost::endFrame propagates it, and the smoke path returns nonzero when a requested MGB64_APP_SMOKE_SHOT was not written. Fault-injected: a read-only capture dir now exits 1 with no image.
 
 ## Summary
 
