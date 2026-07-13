@@ -258,10 +258,49 @@ static uintptr_t pc_gfx_range_end;
 static uintptr_t pc_vtx_range_start;
 static uintptr_t pc_vtx_range_end;
 
-/* Extra PC DL regions for heap-allocated display lists (player struct, etc.) */
-#define MAX_EXTRA_PC_DL_REGIONS 16
-static struct { uintptr_t start, end; } s_extra_pc_dl[MAX_EXTRA_PC_DL_REGIONS];
+/* Shared {start,end} address-range registry backing the guard/weapon/extra-PC
+ * DL and guard-matrix tables below. Each grows by doubling realloc so a
+ * registration is NEVER silently dropped on overflow (the FID-0122 defect
+ * class: a dropped/missed region makes the renderer pick the wrong matrix
+ * order — garbage guard geometry — or misclassify a DL address). Mirrors
+ * gfx_reserve_visibility_scaled_matrix_region. Returns false only on OOM, in
+ * which case the caller skips the insert (degrading to the prior fixed cap
+ * rather than crashing). */
+typedef struct { uintptr_t start, end; } GfxAddrRegion;
+
+static bool gfx_reserve_addr_region(GfxAddrRegion **regions, int count,
+                                    int *capacity, int initial,
+                                    int *warned, const char *label) {
+    GfxAddrRegion *grown;
+    int new_capacity;
+    if (count < *capacity) {
+        return true;
+    }
+    new_capacity = *capacity > 0 ? *capacity * 2 : initial;
+    grown = (GfxAddrRegion *)realloc(*regions, (size_t)new_capacity * sizeof(**regions));
+    if (grown == NULL) {
+        if (!*warned) {
+            fprintf(stderr, "[GFX] failed to grow %s DL-region registry beyond %d entries\n",
+                    label, *capacity);
+            *warned = 1;
+        }
+        return false;
+    }
+    *regions = grown;
+    *capacity = new_capacity;
+    return true;
+}
+
+/* Extra PC DL regions for heap-allocated display lists (player struct, etc.).
+ * Registrants are mostly stable static/global DL buffers (bondview HUD bars,
+ * image-bank lists), re-registered each frame; grown so it never drops, but
+ * deliberately NOT reset per stage — stable addresses mean no ABA staleness,
+ * and a reset could lose an entry that isn't re-registered after a load. */
+#define INITIAL_EXTRA_PC_DL_REGIONS 16
+static GfxAddrRegion *s_extra_pc_dl = NULL;
 static int s_extra_pc_dl_count = 0;
+static int s_extra_pc_dl_capacity = 0;
+static int s_extra_pc_dl_alloc_warned = 0;
 
 #define MAX_EXTRA_PC_VTX_REGIONS 64
 static struct {
@@ -281,12 +320,11 @@ static int n64_dl_region_count = 0;
 /* Weapon DL region tracking — separate from general N64 regions.
  * Set by gun.c via gfx_register_weapon_dl_region, used to detect when
  * we are executing inside a weapon model's N64 binary display list. */
-#define MAX_WEAPON_DL_REGIONS 4
-static struct {
-    uintptr_t start;
-    uintptr_t end;
-} weapon_dl_regions[MAX_WEAPON_DL_REGIONS];
+#define INITIAL_WEAPON_DL_REGIONS 4
+static GfxAddrRegion *weapon_dl_regions = NULL;
 static int weapon_dl_region_count = 0;
+static int weapon_dl_region_capacity = 0;
+static int weapon_dl_region_alloc_warned = 0;
 
 /* Execution-context: true when the current N64 DL PC is inside a weapon region */
 static bool g_executing_weapon_dl = false;
@@ -294,12 +332,11 @@ static bool g_executing_weapon_dl = false;
 /* Guard/chrprop DL region tracking — mirrors weapon pattern.
  * Guard DLs registered via objecthandler_2.c model loading are tracked
  * separately so gfx_update_mp_matrix can use P×MV for guard execution. */
-#define MAX_GUARD_DL_REGIONS 64
-static struct {
-    uintptr_t start;
-    uintptr_t end;
-} guard_dl_regions[MAX_GUARD_DL_REGIONS];
+#define INITIAL_GUARD_DL_REGIONS 64
+static GfxAddrRegion *guard_dl_regions = NULL;
 static int guard_dl_region_count = 0;
+static int guard_dl_region_capacity = 0;
+static int guard_dl_region_alloc_warned = 0;
 static bool g_executing_guard_dl = false;
 
 struct TextureHashmapNode;
@@ -309,12 +346,11 @@ static void gfx_trace_texture_bytes(const char *stage, int slot, int td);
 static bool gfx_is_eye_intro_strip_material(uint8_t tile_desc);
 static bool gfx_is_eye_intro_diag_material(void);
 
-#define MAX_GUARD_MATRIX_REGIONS 256
-static struct {
-    uintptr_t start;
-    uintptr_t end;
-} guard_matrix_regions[MAX_GUARD_MATRIX_REGIONS];
+#define INITIAL_GUARD_MATRIX_REGIONS 256
+static GfxAddrRegion *guard_matrix_regions = NULL;
 static int guard_matrix_region_count = 0;
+static int guard_matrix_region_capacity = 0;
+static int guard_matrix_region_alloc_warned = 0;
 
 typedef struct {
     uintptr_t start;
@@ -345,7 +381,9 @@ void gfx_register_guard_dl_region(void *addr, size_t size) {
             return;
         }
     }
-    if (guard_dl_region_count < MAX_GUARD_DL_REGIONS) {
+    if (gfx_reserve_addr_region(&guard_dl_regions, guard_dl_region_count,
+                                &guard_dl_region_capacity, INITIAL_GUARD_DL_REGIONS,
+                                &guard_dl_region_alloc_warned, "guard")) {
         guard_dl_regions[guard_dl_region_count].start = s;
         guard_dl_regions[guard_dl_region_count].end = e;
         guard_dl_region_count++;
@@ -361,7 +399,9 @@ void gfx_register_guard_matrix_region(void *addr, size_t size) {
             return;
         }
     }
-    if (guard_matrix_region_count < MAX_GUARD_MATRIX_REGIONS) {
+    if (gfx_reserve_addr_region(&guard_matrix_regions, guard_matrix_region_count,
+                                &guard_matrix_region_capacity, INITIAL_GUARD_MATRIX_REGIONS,
+                                &guard_matrix_region_alloc_warned, "guard-matrix")) {
         guard_matrix_regions[guard_matrix_region_count].start = s;
         guard_matrix_regions[guard_matrix_region_count].end = e;
         guard_matrix_region_count++;
@@ -704,7 +744,9 @@ void gfx_register_weapon_dl_region(void *addr, size_t size) {
             return;
         }
     }
-    if (weapon_dl_region_count < MAX_WEAPON_DL_REGIONS) {
+    if (gfx_reserve_addr_region(&weapon_dl_regions, weapon_dl_region_count,
+                                &weapon_dl_region_capacity, INITIAL_WEAPON_DL_REGIONS,
+                                &weapon_dl_region_alloc_warned, "weapon")) {
         weapon_dl_regions[weapon_dl_region_count].start = s;
         weapon_dl_regions[weapon_dl_region_count].end = e;
         weapon_dl_region_count++;
@@ -25108,6 +25150,17 @@ void gfx_clear_n64_dl_regions(void) {
     n64_dl_region_count = 0;
     extra_pc_vtx_region_count = 0;
     memset(extra_pc_vtx_regions, 0, sizeof(extra_pc_vtx_regions));
+    /* FID-0122 class: drop stale guard/weapon DL + guard-matrix regions from
+     * the prior stage so a freed heap address (obj->n64_filedata,
+     * model->render_pos) reused by non-guard data can't cause a false P×MV
+     * hit. Safe here (stage teardown, from lvlStageLoad): chr.c/gun.c
+     * re-register these every frame during render — NOT in gfx_sp_reset, which
+     * runs mid-frame after registration (see the note there). Keeps the
+     * allocations; only the counts reset. s_extra_pc_dl is intentionally NOT
+     * reset (stable static addresses, may not be re-registered post-load). */
+    guard_dl_region_count = 0;
+    guard_matrix_region_count = 0;
+    weapon_dl_region_count = 0;
     /* Delete settex GL textures before clearing metadata */
     for (int i = 0; i < settex_cache_count; i++) {
         if (settex_cache[i].valid && settex_cache[i].gl_tex_id != 0) {
@@ -25185,7 +25238,9 @@ void gfx_register_extra_pc_dl(void *addr, size_t size) {
         if (s_extra_pc_dl[i].start == s && s_extra_pc_dl[i].end == e)
             return; /* already registered */
     }
-    if (s_extra_pc_dl_count < MAX_EXTRA_PC_DL_REGIONS) {
+    if (gfx_reserve_addr_region(&s_extra_pc_dl, s_extra_pc_dl_count,
+                                &s_extra_pc_dl_capacity, INITIAL_EXTRA_PC_DL_REGIONS,
+                                &s_extra_pc_dl_alloc_warned, "extra-pc")) {
         s_extra_pc_dl[s_extra_pc_dl_count].start = s;
         s_extra_pc_dl[s_extra_pc_dl_count].end = e;
         s_extra_pc_dl_count++;

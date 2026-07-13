@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1064 flags** found across the source.
+**1065 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -824,6 +824,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_CAMERA_MTX_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_CHRNUM` | ? |  | 2 |  |
 | `GE007_TRACE_CHR_AUDIO` | ? |  | 4 |  |
+| `GE007_TRACE_CI_FALLBACK` | ? |  | 1 |  |
 | `GE007_TRACE_COLLISION` | ? |  | 8 |  |
 | `GE007_TRACE_COMBAT_SCAN` | ? |  | 1 |  |
 | `GE007_TRACE_DECOR` | ? |  | 3 |  |

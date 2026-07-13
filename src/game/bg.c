@@ -2653,9 +2653,17 @@ bg_portal_data_entry* g_BgPortals;
 /* PC: Portal entries are in big-endian ROM data with 32-bit offsets that can't
  * hold 64-bit pointers. This lookup table stores the real 64-bit pointers,
  * populated during load_bg_file. Access via bgGetPortalEntryPtr(). */
-#define BG_MAX_PORTALS 200
-static bg_portal_entry *g_BgPortalPtrs[BG_MAX_PORTALS];
+/* Grown to the level's actual portal count during load_bg_file. Was a fixed
+ * 200-entry cap on an originally-unbounded structure (the N64 path walks the
+ * list to a NULL terminator), so a level with >200 portals silently dropped
+ * room-visibility connections. FID-0122 class. Rebuilt each stage load, so the
+ * capacity only grows; BG_PORTALS_MAX is a runaway guard against unterminated
+ * or corrupt ROM data, not a real-content limit. */
+#define BG_PORTALS_INITIAL 256
+#define BG_PORTALS_MAX 65536
+static bg_portal_entry **g_BgPortalPtrs = NULL;
 static s32 g_NumBgPortals;
+static s32 g_BgPortalPtrsCapacity;
 
 static inline bg_portal_entry *bgGetPortalEntryPtr(s32 index) {
     if (index >= 0 && index < g_NumBgPortals) {
@@ -2667,7 +2675,6 @@ static inline bg_portal_entry *bgGetPortalEntryPtr(s32 index) {
 static inline s32 bgIsValidPortalIndex(s32 index) {
     return index >= 0
         && index < g_NumBgPortals
-        && index < BG_MAX_PORTALS
         && g_BgPortalPtrs[index] != NULL;
 }
 #endif
@@ -5238,11 +5245,36 @@ void load_bg_file(LEVEL_INDEX stagenum)
         s32 portalCount = 0;
         u8 *rawPortals = (u8 *)g_BgPortals;
 
-        /* Count portals: iterate 8-byte entries until first 4 bytes (offset) == 0 */
-        while (portalCount < BG_MAX_PORTALS) {
-            u32 rawOff = read_be32u(rawPortals + portalCount * 8);
-            if (rawOff == 0) break;
+        /* Count portals: iterate 8-byte entries until the first 4-byte offset
+         * is 0 (matches the N64 NULL-terminated walk). BG_PORTALS_MAX only
+         * guards against unterminated/corrupt data, not real content. */
+        while (portalCount < BG_PORTALS_MAX &&
+               read_be32u(rawPortals + portalCount * 8) != 0) {
             portalCount++;
+        }
+        if (portalCount >= BG_PORTALS_MAX) {
+            fprintf(stderr, "[BG] portal list hit %d-entry runaway guard "
+                    "(unterminated/corrupt data?)\n", BG_PORTALS_MAX);
+        }
+
+        /* Grow the pointer lookup table to the level's actual portal count so a
+         * large level never silently drops connections. Capacity only grows
+         * (rebuilt each stage); on OOM, clamp to what we can already hold. */
+        if (portalCount > g_BgPortalPtrsCapacity) {
+            s32 newCap = g_BgPortalPtrsCapacity > 0 ? g_BgPortalPtrsCapacity : BG_PORTALS_INITIAL;
+            while (newCap < portalCount) {
+                newCap *= 2;
+            }
+            bg_portal_entry **grown = (bg_portal_entry **)realloc(
+                g_BgPortalPtrs, (size_t)newCap * sizeof(*g_BgPortalPtrs));
+            if (grown == NULL) {
+                fprintf(stderr, "[BG] failed to grow portal table to %d entries "
+                        "(keeping %d)\n", portalCount, g_BgPortalPtrsCapacity);
+                portalCount = g_BgPortalPtrsCapacity;
+            } else {
+                g_BgPortalPtrs = grown;
+                g_BgPortalPtrsCapacity = newCap;
+            }
         }
         g_NumBgPortals = portalCount;
 
