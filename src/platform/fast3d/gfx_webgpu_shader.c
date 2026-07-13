@@ -20,6 +20,7 @@
 
 #include "gfx_cc.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,28 +85,44 @@ static const char *wgsl_item(uint32_t item, bool with_alpha, bool only_alpha,
 
 /* append_formula port: single / multiply / mix(lerp3) / lerp4, identical
  * structure to gfx_opengl.c append_formula. */
+/* Bounded snprintf-append: writes at *n into a `cap`-sized buffer and advances
+ * *n, clamping so an overflow can never underflow `cap - *n` (a huge size_t) or
+ * write past the buffer on a subsequent call. Combiners are bounded well under
+ * the buffer sizes, so this is defensive insurance, not a live path. */
+static void bappend(char *buf, size_t cap, size_t *n, const char *fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+static void bappend(char *buf, size_t cap, size_t *n, const char *fmt, ...) {
+    if (*n >= cap) { return; }
+    va_list ap;
+    va_start(ap, fmt);
+    int w = vsnprintf(buf + *n, cap - *n, fmt, ap);
+    va_end(ap);
+    if (w > 0) { *n += (size_t)w; }
+    if (*n >= cap) { *n = cap - 1; }
+}
+
 static void wgsl_formula(char *buf, size_t cap, size_t *n, uint8_t c[2][4],
                          bool do_single, bool do_multiply, bool do_mix,
                          bool with_alpha, bool only_alpha, bool opt_alpha) {
     int oa = only_alpha ? 1 : 0;
     if (do_single) {
-        *n += (size_t)snprintf(buf + *n, cap - *n, "%s",
-                               wgsl_item(c[oa][3], with_alpha, only_alpha, opt_alpha, false));
+        bappend(buf, cap, n, "%s",
+                wgsl_item(c[oa][3], with_alpha, only_alpha, opt_alpha, false));
     } else if (do_multiply) {
-        *n += (size_t)snprintf(buf + *n, cap - *n, "%s * %s",
-                               wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
-                               wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true));
+        bappend(buf, cap, n, "%s * %s",
+                wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
+                wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true));
     } else if (do_mix) {
-        *n += (size_t)snprintf(buf + *n, cap - *n, "mix(%s, %s, %s)",
-                               wgsl_item(c[oa][1], with_alpha, only_alpha, opt_alpha, false),
-                               wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
-                               wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true));
+        bappend(buf, cap, n, "mix(%s, %s, %s)",
+                wgsl_item(c[oa][1], with_alpha, only_alpha, opt_alpha, false),
+                wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
+                wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true));
     } else {
-        *n += (size_t)snprintf(buf + *n, cap - *n, "(%s - %s) * %s + %s",
-                               wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
-                               wgsl_item(c[oa][1], with_alpha, only_alpha, opt_alpha, false),
-                               wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true),
-                               wgsl_item(c[oa][3], with_alpha, only_alpha, opt_alpha, false));
+        bappend(buf, cap, n, "(%s - %s) * %s + %s",
+                wgsl_item(c[oa][0], with_alpha, only_alpha, opt_alpha, false),
+                wgsl_item(c[oa][1], with_alpha, only_alpha, opt_alpha, false),
+                wgsl_item(c[oa][2], with_alpha, only_alpha, opt_alpha, true),
+                wgsl_item(c[oa][3], with_alpha, only_alpha, opt_alpha, false));
     }
 }
 
@@ -142,26 +159,25 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
  * field. `sz` floats at the current running offset. */
 #define ATTR_IN(name, sz)                                                        \
     do {                                                                         \
+        if (na >= (int)(sizeof(info->attrs) / sizeof(info->attrs[0]))) break;    \
         info->attrs[na].location = loc_in;                                       \
         info->attrs[na].size = (sz);                                             \
         info->attrs[na].offset = off;                                            \
         na++;                                                                    \
-        in_n += (size_t)snprintf(vsin + in_n, sizeof(vsin) - in_n,               \
-                                 "  @location(%d) %s : %s,\n",                    \
-                                 loc_in, (name), type_str(sz));                  \
+        bappend(vsin, sizeof(vsin), &in_n, "  @location(%d) %s : %s,\n",         \
+                loc_in, (name), type_str(sz));                                   \
         loc_in++;                                                                \
-        off += (sz);                                                             \
+        off += (sz);                                                            \
     } while (0)
 
 /* Emit a VsOut varying + its vs_main passthrough for an attribute named
  * a<Field> -> v<Field>. */
 #define VARY(field, sz, interp)                                                  \
     do {                                                                         \
-        out_n += (size_t)snprintf(vsout + out_n, sizeof(vsout) - out_n,          \
-                                  "  @location(%d)%s v%s : %s,\n",                \
-                                  loc_out, (interp), (field), type_str(sz));     \
-        body_n += (size_t)snprintf(vsbody + body_n, sizeof(vsbody) - body_n,     \
-                                   "  out.v%s = in.a%s;\n", (field), (field));    \
+        bappend(vsout, sizeof(vsout), &out_n, "  @location(%d)%s v%s : %s,\n",   \
+                loc_out, (interp), (field), type_str(sz));                       \
+        bappend(vsbody, sizeof(vsbody), &body_n, "  out.v%s = in.a%s;\n",        \
+                (field), (field));                                               \
         loc_out++;                                                               \
     } while (0)
 
@@ -227,7 +243,7 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         return NULL;
     }
     size_t n = 0;
-#define P(...) do { n += (size_t)snprintf(out + n, MODULE_CAP - n, __VA_ARGS__); } while (0)
+#define P(...) bappend(out, MODULE_CAP, &n, __VA_ARGS__)
 
     /* Structs */
     P("struct VsIn {\n%s};\n", vsin);

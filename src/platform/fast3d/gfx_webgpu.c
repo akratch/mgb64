@@ -535,9 +535,14 @@ struct ShaderProgram {
     WGPUVertexAttribute  vattrs[24];
     WGPUBindGroupLayout  bgl;       /* NULL when the combiner samples no textures */
     WGPUPipelineLayout   playout;
-    struct WgpuPipeEntry pipes[16];
+    /* Pipeline cache keyed by dynamic (blend|depth) state. Sized well above the
+     * realistic combo count per combiner (a handful); the round-robin eviction
+     * in wgpu_pipeline_for is a never-leak backstop for the theoretical maximum. */
+    struct WgpuPipeEntry pipes[32];
     int npipes;
+    int pipe_evict;   /* round-robin slot for the (never-hit) overflow case */
 };
+#define WGPU_PIPE_CACHE 32
 
 #define WGPU_SHADER_MAX 1024
 static struct ShaderProgram s_shaders[WGPU_SHADER_MAX];
@@ -547,6 +552,11 @@ static int s_shader_count = 0;
  * set_blend_mode, read by draw_triangles). */
 static struct ShaderProgram *s_cur_shader = NULL;
 static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
+
+/* Single-entry draw bind-group cache (see wgpu_draw_triangles): the cache owns
+ * the ref; key is {bgl, view0, samp0, view1, samp1} pointers. */
+static WGPUBindGroup s_bg_cache = NULL;
+static const void   *s_bg_key[5] = {0};
 
 static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t shader_id1) {
     for (int i = 0; i < s_shader_count; ++i) {
@@ -764,10 +774,23 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
     pd.fragment = &fs;
 
     WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
-    if (pipe != NULL && prg->npipes < (int)(sizeof(prg->pipes) / sizeof(prg->pipes[0]))) {
-        prg->pipes[prg->npipes].key = key;
-        prg->pipes[prg->npipes].pipe = pipe;
-        prg->npipes++;
+    if (pipe != NULL) {
+        int slot;
+        if (prg->npipes < WGPU_PIPE_CACHE) {
+            slot = prg->npipes++;
+        } else {
+            /* Never expected (a combiner uses a handful of blend|depth combos),
+             * but the backstop must not leak: evict a slot round-robin. The
+             * render pass retains any pipeline already bound this frame, so
+             * releasing the app-side handle here is safe. */
+            slot = prg->pipe_evict;
+            prg->pipe_evict = (prg->pipe_evict + 1) % WGPU_PIPE_CACHE;
+            if (prg->pipes[slot].pipe != NULL) {
+                wgpuRenderPipelineRelease(prg->pipes[slot].pipe);
+            }
+        }
+        prg->pipes[slot].key = key;
+        prg->pipes[slot].pipe = pipe;
     }
     return pipe;
 }
@@ -945,12 +968,23 @@ static WGPUSampler wgpu_get_sampler(bool linear_filter, uint32_t cms, uint32_t c
     sd.lodMaxClamp = 0.0f;
     sd.maxAnisotropy = 1;
     WGPUSampler s = wgpuDeviceCreateSampler(s_device, &sd);
-    if (s != NULL && s_sampler_n < (int)(sizeof(s_samplers) / sizeof(s_samplers[0]))) {
+    if (s == NULL) {
+        return NULL;
+    }
+    if (s_sampler_n < (int)(sizeof(s_samplers) / sizeof(s_samplers[0]))) {
         s_samplers[s_sampler_n].linear = (int)linear_filter;
         s_samplers[s_sampler_n].cms = cms;
         s_samplers[s_sampler_n].cmt = cmt;
         s_samplers[s_sampler_n].sampler = s;
         s_sampler_n++;
+    } else {
+        /* Cache full (the N64 uses only a handful of filter/wrap combos, so this
+         * is not expected): release rather than leak, and reuse slot 0's sampler
+         * for this call so the draw still binds something valid. */
+        static bool warned = false;
+        if (!warned) { fprintf(stderr, "[webgpu] sampler cache full (%d)\n", s_sampler_n); warned = true; }
+        wgpuSamplerRelease(s);
+        return s_samplers[0].sampler;
     }
     return s;
 }
@@ -1021,6 +1055,21 @@ static void wgpu_ensure_draw_resources(void) {
     }
 }
 
+/* Clip a rect (x,y,w,h) to [0,maxw] x [0,maxh], zeroing degenerate extents.
+ * Order matters: shift for a negative origin first, bail to empty if the origin
+ * is at/past the far edge, THEN clip the extent to the bound, THEN a final
+ * non-negative clamp — so a containment adjustment can never re-introduce a
+ * negative extent that would cast to a ~4-billion uint32 in Set{Viewport,Scissor}. */
+static void wgpu_clamp_rect(int *x, int *y, int *w, int *h, int maxw, int maxh) {
+    if (*x < 0) { *w += *x; *x = 0; }
+    if (*y < 0) { *h += *y; *y = 0; }
+    if (*x >= maxw || *y >= maxh) { *w = 0; *h = 0; return; }
+    if (*x + *w > maxw) *w = maxw - *x;
+    if (*y + *h > maxh) *h = maxh - *y;
+    if (*w < 0) *w = 0;
+    if (*h < 0) *h = 0;
+}
+
 static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     if (!s_frame_open || s_cur_shader == NULL || s_cur_shader->module == NULL ||
         buf_vbo == NULL || buf_vbo_len == 0 || buf_vbo_num_tris == 0) {
@@ -1046,46 +1095,74 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, buf_vbo, bytes);
     s_vbuf_off += (bytes + 3u) & ~3u;   /* keep 4-byte alignment for the next offset */
 
-    /* Per-draw bind group: each used texture's live view + sampler, falling back
-     * to a 1x1 white texture / nearest sampler when unset. */
+    /* Bind group: each used texture's live view + sampler, falling back to a 1x1
+     * white texture / nearest sampler when unset. Cached single-entry keyed on
+     * the (layout, view, sampler) pointers: consecutive same-material draws (the
+     * common batched case) reuse it instead of allocating a new bind group every
+     * draw. The key is on POINTERS, so a deleted texture (its view becomes NULL ->
+     * the white fallback pointer) never spuriously matches a stale entry. */
     WGPUBindGroup bg = NULL;
     if (s_cur_shader->bgl != NULL) {
-        WGPUBindGroupEntry ents[4];
-        int ne = 0;
-        for (int t = 0; t < 2; t++) {
-            if (!s_cur_shader->info.used_textures[t]) continue;
-            struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[t]);
-            WGPUTextureView view = (e != NULL && e->view != NULL) ? e->view : s_white_view;
-            WGPUSampler samp = s_bound_sampler[t] != NULL ? s_bound_sampler[t] : s_default_sampler;
-            WGPUBindGroupEntry te = {0}; te.binding = (uint32_t)(t * 2);     te.textureView = view; ents[ne++] = te;
-            WGPUBindGroupEntry se = {0}; se.binding = (uint32_t)(t * 2 + 1); se.sampler = samp;      ents[ne++] = se;
+        WGPUTextureView v0 = s_white_view, v1 = s_white_view;
+        WGPUSampler     m0 = s_default_sampler, m1 = s_default_sampler;
+        if (s_cur_shader->info.used_textures[0]) {
+            struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[0]);
+            if (e != NULL && e->view != NULL) v0 = e->view;
+            if (s_bound_sampler[0] != NULL) m0 = s_bound_sampler[0];
         }
-        WGPUBindGroupDescriptor bd = {0};
-        bd.layout = s_cur_shader->bgl;
-        bd.entryCount = (size_t)ne;
-        bd.entries = ents;
-        bg = wgpuDeviceCreateBindGroup(s_device, &bd);
+        if (s_cur_shader->info.used_textures[1]) {
+            struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[1]);
+            if (e != NULL && e->view != NULL) v1 = e->view;
+            if (s_bound_sampler[1] != NULL) m1 = s_bound_sampler[1];
+        }
+        const void *key[5] = { s_cur_shader->bgl, v0, m0, v1, m1 };
+        if (s_bg_cache != NULL && memcmp(key, s_bg_key, sizeof(key)) == 0) {
+            bg = s_bg_cache;   /* hit: reuse, no alloc/free this draw */
+        } else {
+            WGPUBindGroupEntry ents[4];
+            int ne = 0;
+            for (int t = 0; t < 2; t++) {
+                if (!s_cur_shader->info.used_textures[t]) continue;
+                WGPUBindGroupEntry te = {0}; te.binding = (uint32_t)(t * 2);
+                te.textureView = t == 0 ? v0 : v1; ents[ne++] = te;
+                WGPUBindGroupEntry se = {0}; se.binding = (uint32_t)(t * 2 + 1);
+                se.sampler = t == 0 ? m0 : m1; ents[ne++] = se;
+            }
+            WGPUBindGroupDescriptor bd = {0};
+            bd.layout = s_cur_shader->bgl;
+            bd.entryCount = (size_t)ne;
+            bd.entries = ents;
+            bg = wgpuDeviceCreateBindGroup(s_device, &bd);
+            if (bg != NULL) {
+                if (s_bg_cache != NULL) wgpuBindGroupRelease(s_bg_cache);
+                s_bg_cache = bg;   /* the cache owns the ref now */
+                memcpy(s_bg_key, key, sizeof(key));
+            }
+        }
     }
 
     /* Viewport + scissor, Y-flipped to WebGPU's top-left origin (GL/gfx_pc emit
-     * bottom-left), clamped to the scene bounds (WebGPU rejects out-of-range
-     * rects). Mirrors mtl_draw_triangles' originY = fb_h - (y + h). */
-    if (s_vp_w > 0 && s_vp_h > 0) {
-        float vy = (float)((int)s_scene_h - (s_vp_y + s_vp_h));
-        wgpuRenderPassEncoderSetViewport(s_pass, (float)s_vp_x, vy,
-                                         (float)s_vp_w, (float)s_vp_h, 0.0f, 1.0f);
+     * bottom-left; mirrors mtl_draw_triangles' originY = fb_h - (y + h)). BOTH
+     * must be clamped to the scene bounds: WebGPU *validates* setViewport/
+     * setScissorRect containment and a single out-of-range rect invalidates the
+     * whole command buffer (black frame), whereas GL/Metal silently clip — so the
+     * game may legitimately hand us a viewport/scissor extending past the target
+     * (widescreen / split-screen). `wgpu_clamp_rect` clips a Y-flipped rect to
+     * [0,W]x[0,H], zeroing degenerate extents. */
+    {
+        int vx = s_vp_x, vy = (int)s_scene_h - (s_vp_y + s_vp_h), vw = s_vp_w, vh = s_vp_h;
+        wgpu_clamp_rect(&vx, &vy, &vw, &vh, (int)s_scene_w, (int)s_scene_h);
+        if (vw > 0 && vh > 0) {
+            wgpuRenderPassEncoderSetViewport(s_pass, (float)vx, (float)vy,
+                                             (float)vw, (float)vh, 0.0f, 1.0f);
+        }
     }
     {
         int sx = s_sc_set ? s_sc_x : 0;
         int sw = s_sc_set ? s_sc_w : (int)s_scene_w;
         int sh = s_sc_set ? s_sc_h : (int)s_scene_h;
         int sy = s_sc_set ? ((int)s_scene_h - (s_sc_y + s_sc_h)) : 0;
-        if (sx < 0) { sw += sx; sx = 0; }
-        if (sy < 0) { sh += sy; sy = 0; }
-        if (sw < 0) sw = 0;
-        if (sh < 0) sh = 0;
-        if (sx + sw > (int)s_scene_w) sw = (int)s_scene_w - sx;
-        if (sy + sh > (int)s_scene_h) sh = (int)s_scene_h - sy;
+        wgpu_clamp_rect(&sx, &sy, &sw, &sh, (int)s_scene_w, (int)s_scene_h);
         wgpuRenderPassEncoderSetScissorRect(s_pass, (uint32_t)sx, (uint32_t)sy,
                                             (uint32_t)sw, (uint32_t)sh);
     }
@@ -1096,10 +1173,8 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     }
     wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, s_vbuf, voff, bytes);
     wgpuRenderPassEncoderDraw(s_pass, (uint32_t)(3 * buf_vbo_num_tris), 1, 0, 0);
-
-    if (bg != NULL) {
-        wgpuBindGroupRelease(bg);   /* the encoder retains it until submit */
-    }
+    /* bg is owned by s_bg_cache (retained across draws); the render pass holds
+     * its own reference until submit, so we never release it here. */
 }
 
 /* ------------------------------------------------------------------------
