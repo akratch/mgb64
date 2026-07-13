@@ -394,7 +394,7 @@ s32 osPiStartDma(OSIoMesg *mb, s32 pri, s32 direction, u32 devAddr,
     extern u8  *g_romData;
     extern u32  g_romSize;
     (void)mb; (void)pri;
-    if (direction == OS_READ && g_romData && devAddr + size <= g_romSize && dramAddr) {
+    if (direction == OS_READ && g_romData && size <= g_romSize && devAddr <= g_romSize - size && dramAddr) {
         memcpy(dramAddr, g_romData + devAddr, size);
     }
     /* Send completion message so osRecvMesg callers don't hang */
@@ -6651,7 +6651,11 @@ s32 osEepromLongRead(OSMesgQueue *mq, u8 address, u8 *buffer, s32 nbytes) {
     (void)mq;
     eeprom_load_from_file();
     offset = (s32)address * EEPROM_BLOCK_SIZE;
-    if (offset + nbytes > EEPROM_FILE_SIZE) nbytes = EEPROM_FILE_SIZE - offset;
+    /* [AUDIT-0042] validate the block offset and clamp the length with subtraction
+     * so the range check cannot signed-overflow (offset + nbytes was UB). An
+     * out-of-range block is a no-op leaving the persisted image unchanged. */
+    if (offset < 0 || offset >= EEPROM_FILE_SIZE) return 0;
+    if (nbytes > EEPROM_FILE_SIZE - offset) nbytes = EEPROM_FILE_SIZE - offset;
     if (nbytes > 0 && buffer) memcpy(buffer, s_eeprom_data + offset, nbytes);
     return 0;
 }
@@ -6661,7 +6665,11 @@ s32 osEepromLongWrite(OSMesgQueue *mq, u8 address, u8 *buffer, s32 nbytes) {
     (void)mq;
     eeprom_load_from_file();
     offset = (s32)address * EEPROM_BLOCK_SIZE;
-    if (offset + nbytes > EEPROM_FILE_SIZE) nbytes = EEPROM_FILE_SIZE - offset;
+    /* [AUDIT-0042] validate the block offset and clamp the length with subtraction
+     * so the range check cannot signed-overflow (offset + nbytes was UB). An
+     * out-of-range block is a no-op leaving the persisted image unchanged. */
+    if (offset < 0 || offset >= EEPROM_FILE_SIZE) return 0;
+    if (nbytes > EEPROM_FILE_SIZE - offset) nbytes = EEPROM_FILE_SIZE - offset;
     if (nbytes > 0 && buffer) {
         memcpy(s_eeprom_data + offset, buffer, nbytes);
         if (eeprom_save_to_file() != 0) return -1;
@@ -7211,7 +7219,7 @@ void osCreateViManager(OSPri pri) { (void)pri; }
 s32 osPiRawStartDma(s32 direction, u32 devAddr, void *dramAddr, u32 size) {
     extern u8  *g_romData;
     extern u32  g_romSize;
-    if (direction == OS_READ && g_romData && devAddr + size <= g_romSize && dramAddr) {
+    if (direction == OS_READ && g_romData && size <= g_romSize && devAddr <= g_romSize - size && dramAddr) {
         memcpy(dramAddr, g_romData + devAddr, size);
     }
     return 0;

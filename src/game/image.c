@@ -2902,13 +2902,19 @@ s32 texInflateLookupFromBuffer(u8 *src, s32 width, s32 height, u8 *dst, u8 *look
     dst16 = (u16 *)dst;
     dst8 = (u8 *)dst;
 
+    /* [AUDIT-0007] Initialize BOTH cursors. Every format branch advances src8 and
+     * src16 at each row end, but only the width-matching one is dereferenced.
+     * Defining the inactive cursor removes the undefined pointer arithmetic
+     * without changing output: it is advanced but never read. */
     if (numcolours <= 256)
     {
         src8 = (u8 *)src;
+        src16 = (u16 *)src;
     }
     else
     {
         src16 = (u16 *)src;
+        src8 = (u8 *)src;
     }
 
     switch (format)
