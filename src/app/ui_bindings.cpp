@@ -8,31 +8,85 @@
 #include "imgui.h"
 #include <SDL.h>
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
 namespace {
 
-// A keyboard action shares its key with another action (scancode 0 = unbound,
-// never a conflict). Used to flag silent last-writer-wins rebinds.
+// Status line shown under the tables after a rebind attempt (e.g. a rejected
+// conflict, naming the current owner). Cleared on the next successful bind.
+char g_bindMsg[192] = {0};
+void setBindMsg(const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    std::vsnprintf(g_bindMsg, sizeof(g_bindMsg), fmt, ap);
+    va_end(ap);
+}
+
+// --- Reserved inputs: hardcoded (non-rebindable) in-game roles (see stubs.c).
+// Binding a gameplay action onto one would silently double-act, so the Controls
+// UI rejects the capture and flags any existing collision [AUDIT-0050/0051/0025].
+struct ReservedKey { int sc; const char *role; };
+const ReservedKey kReservedKeys[] = {
+    {SDL_SCANCODE_F, "Reload"},      {SDL_SCANCODE_BACKSPACE, "Reload"},
+    {SDL_SCANCODE_LEFT, "Lean L"},   {SDL_SCANCODE_RIGHT, "Lean R"},
+    {SDL_SCANCODE_I, "Aim up"},      {SDL_SCANCODE_K, "Aim down"},
+    {SDL_SCANCODE_J, "Aim left"},    {SDL_SCANCODE_L, "Aim right"},
+    {SDL_SCANCODE_RETURN, "Accept"}, {SDL_SCANCODE_SPACE, "Accept"},
+    {SDL_SCANCODE_TAB, "Watch"},     {SDL_SCANCODE_ESCAPE, "Watch"},
+};
+const char *keyReservedRole(int sc) {
+    for (const ReservedKey &r : kReservedKeys) if (r.sc == sc) return r.role;
+    return nullptr;
+}
+// The rebindable keyboard action (other than `exclude`) currently on `sc`, or -1.
+int keyOwner(int sc, int exclude, const char **outLabel) {
+    if (sc == 0) return -1;
+    int n = inputBindingCount();
+    for (int j = 0; j < n; ++j) {
+        if (j == exclude) continue;
+        if (inputBindingScancode((InputAction)j) == sc) {
+            if (outLabel) *outLabel = inputActionLabel((InputAction)j);
+            return j;
+        }
+    }
+    return -1;
+}
+// A keyboard action collides with a reserved key OR another action.
 bool keyConflicts(int i, int n) {
     int sc = inputBindingScancode((InputAction)i);
     if (sc == 0) return false;
+    if (keyReservedRole(sc)) return true;
     for (int j = 0; j < n; ++j)
         if (j != i && inputBindingScancode((InputAction)j) == sc) return true;
     return false;
 }
 
-// A gamepad action shares its button/trigger with another. We compare the human
-// binding name (two actions on the same input render the same name).
-bool padConflicts(int i, int n) {
-    const char *name = gamepadBindingName((GamepadAction)i);
-    if (!name || !name[0]) return false;
-    for (int j = 0; j < n; ++j) {
-        if (j == i) continue;
-        const char *other = gamepadBindingName((GamepadAction)j);
-        if (other && std::strcmp(other, name) == 0) return true;
+// Reserved gamepad buttons (encoded values are plain SDL button indices): X is a
+// fixed alternate Reload; the overlay-toggle button and Guide are system inputs.
+const char *padReservedRole(int encoded) {
+    if (encoded == SDL_CONTROLLER_BUTTON_X) return "Reload";
+    if (encoded == Overlay_gamepadToggleButton()) return "Menu";
+    if (encoded == SDL_CONTROLLER_BUTTON_GUIDE) return "Guide";
+    return nullptr;
+}
+// The gamepad action (other than `exclude`) currently on encoded input `enc`, or -1.
+int padOwner(int enc, int exclude, const char **outLabel) {
+    for (int j = 0; j < gamepadBindingCount(); ++j) {
+        if (j == exclude) continue;
+        if (gamepadBindingEncoded((GamepadAction)j) == enc) {
+            if (outLabel) *outLabel = gamepadActionLabel((GamepadAction)j);
+            return j;
+        }
     }
+    return -1;
+}
+// A gamepad action collides with a reserved button OR another action.
+bool padConflicts(int i, int n) {
+    int enc = gamepadBindingEncoded((GamepadAction)i);
+    if (padReservedRole(enc)) return true;
+    for (int j = 0; j < n; ++j)
+        if (j != i && gamepadBindingEncoded((GamepadAction)j) == enc) return true;
     return false;
 }
 
@@ -65,8 +119,24 @@ void drawKeyboardTable() {
         } else {
             for (int sc = 4; sc < SDL_NUM_SCANCODES; ++sc) {
                 if (ks[sc]) {
-                    inputBindingSet((InputAction)capturing, sc);
-                    inputBindingSave();
+                    // Move-or-reject policy: reject a reserved key or one already
+                    // owned by another action (naming the owner) rather than create
+                    // a silent double-action [AUDIT-0050/0051].
+                    const char *role = keyReservedRole(sc);
+                    const char *ownerLabel = nullptr;
+                    int owner = keyOwner(sc, capturing, &ownerLabel);
+                    const char *kn = SDL_GetScancodeName((SDL_Scancode)sc);
+                    const char *keyName = (kn && kn[0]) ? kn : "That key";
+                    if (role) {
+                        setBindMsg("%s is reserved for %s and can't be rebound.", keyName, role);
+                    } else if (owner >= 0) {
+                        setBindMsg("%s is already used by \"%s\" \xE2\x80\x94 rebind that action first.",
+                                   keyName, ownerLabel);
+                    } else {
+                        inputBindingSet((InputAction)capturing, sc);
+                        inputBindingSave();
+                        g_bindMsg[0] = '\0';
+                    }
                     capturing = -1;
                     break;
                 }
@@ -104,7 +174,7 @@ void drawKeyboardTable() {
             if (conflict) {
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("This key is also bound to another action \xE2\x80\x94 the last one set wins in-game.");
+                    ImGui::SetTooltip("Shares an input with a reserved role or another action (e.g. from an older config) \xE2\x80\x94 rebind it to a free key.");
             }
             if (cap) ui::PopPrimaryButtonColors();
             ImGui::PopID();
@@ -160,15 +230,27 @@ void drawGamepadTable() {
                 gamepadBindingSave(); capturing = -1; committedThisFrame = true;
             } else {
                 for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
-                    // Reserved buttons are not capturable: the overlay toggle
-                    // (binding Fire = toggle would soft-lock into overlay
-                    // ping-pong via the input gate) and Guide (OS/Steam/Xbox
-                    // overlay button). Presses are simply ignored mid-capture.
+                    // The overlay-toggle button and Guide fire their own system
+                    // role; never capture them (a Fire=toggle bind would ping-pong
+                    // the overlay). Presses are ignored mid-capture.
                     if (b == Overlay_gamepadToggleButton() || b == SDL_CONTROLLER_BUTTON_GUIDE)
                         continue;
                     if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) {
-                        gamepadBindingSetButton((GamepadAction)capturing, b);
-                        gamepadBindingSave(); capturing = -1; committedThisFrame = true;
+                        // Reject X (a fixed alternate Reload) or a button already
+                        // owned by another action, naming it [AUDIT-0050/0051/0025].
+                        const char *ownerLabel = nullptr;
+                        int owner = padOwner(b, capturing, &ownerLabel);
+                        if (b == SDL_CONTROLLER_BUTTON_X) {
+                            setBindMsg("X is a fixed alternate Reload and can't be rebound.");
+                        } else if (owner >= 0) {
+                            setBindMsg("That button is already used by \"%s\" \xE2\x80\x94 rebind that action first.",
+                                       ownerLabel);
+                        } else {
+                            gamepadBindingSetButton((GamepadAction)capturing, b);
+                            gamepadBindingSave();
+                            g_bindMsg[0] = '\0';
+                        }
+                        capturing = -1; committedThisFrame = true;
                         break;
                     }
                 }
@@ -206,7 +288,7 @@ void drawGamepadTable() {
             if (conflict) {
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("This button is also bound to another action \xE2\x80\x94 the last one set wins in-game.");
+                    ImGui::SetTooltip("Shares an input with a reserved role or another action (e.g. from an older config) \xE2\x80\x94 rebind it to a free button.");
             }
             if (cap) ui::PopPrimaryButtonColors();
             ImGui::PopID();
@@ -253,5 +335,13 @@ void BindingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
+    }
+
+    // Reject/status line from the last rebind attempt (naming the conflicting owner).
+    if (g_bindMsg[0]) {
+        ui::Gap(ui::kGapS);
+        ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::bad());
+        ImGui::TextWrapped("%s", g_bindMsg);
+        ImGui::PopStyleColor();
     }
 }

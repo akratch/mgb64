@@ -62,6 +62,7 @@ typedef enum {
 int         gamepadBindingCount(void);               // == GB_COUNT
 const char *gamepadActionLabel(GamepadAction a);
 const char *gamepadBindingName(GamepadAction a);     // human name of current binding
+int         gamepadBindingEncoded(GamepadAction a);  // raw encoded binding (button idx / GB_AXIS_BASE+axis / GB_NONE) for conflict checks
 void        gamepadBindingSetButton(GamepadAction a, int sdl_button);  // capture: a button
 void        gamepadBindingSetTrigger(GamepadAction a, int sdl_axis);   // capture: LT/RT
 void        gamepadBindingResetDefaults(void);

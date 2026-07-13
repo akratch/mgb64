@@ -228,6 +228,15 @@ void gamepadBindingResetDefaults(void) {
 
 void gamepadBindingForceDefaults(int on) { g_gpForce = on; }
 
+/* Raw encoded binding for conflict/ownership checks in the Controls UI: a button
+ * index 0..MAX-1, GB_AXIS_BASE+axis for LT/RT, or GB_NONE. Callers compare these
+ * for equality; a plain SDL button index (e.g. X == 2) can be compared directly. */
+int gamepadBindingEncoded(GamepadAction a) {
+    gpEnsureInit();
+    if (a < 0 || a >= GB_COUNT) return GB_NONE;
+    return g_gpForce ? kGpDefault[a] : g_gpBind[a];
+}
+
 int gamepadBindingActive(void *handle, GamepadAction a) {
     SDL_GameController *gc = (SDL_GameController *)handle;
     int v;
