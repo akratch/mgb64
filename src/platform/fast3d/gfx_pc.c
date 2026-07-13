@@ -21748,7 +21748,22 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
                 }
             }
         } else {
-            /* No palette — fallback to grayscale I8 */
+            /* No palette — fallback to grayscale I8. This fires SILENTLY, so a CI
+             * texture whose TLUT only reached rdp.palette[] (runtime G_LOADTLUT,
+             * never texStorePalette'd) renders near-white — the FID-0122 Dam
+             * security-door / guard-face / alarm class. Log the offending
+             * texturenum (GE007_TRACE_CI_FALLBACK or GE007_VERBOSE) so the bug is
+             * detectable in captures and the regression can assert against it. */
+            static int trace_ci_fb = -1;
+            if (trace_ci_fb < 0) {
+                trace_ci_fb = (getenv("GE007_TRACE_CI_FALLBACK") != NULL || g_diag_verbose > 0) ? 1 : 0;
+            }
+            if (trace_ci_fb) {
+                printf("[CI-GRAYSCALE-FALLBACK] texnum=%d fmt=%d sz=%d %dx%d lutmode=%d "
+                       "(No palette registered -> renders grayscale/white)\n",
+                       texturenum, fmt, sz, w, h, tex->lutmodeindex);
+                fflush(stdout);
+            }
             const u8 *data = tex_data;
             for (int i = 0; i < texel_count; i++) {
                 uint8_t v = data[i];

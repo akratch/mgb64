@@ -158,9 +158,14 @@ if grep -qF "[GFX-DL]" "$LOG"; then
     grep -F "[GFX-DL]" "$LOG" | head -20 | sed 's/^/  /' >&2
     exit 1
 fi
-if grep -Eq "No palette|fallback to grayscale" "$LOG"; then
-    echo "FAIL: paletted texture fell back to grayscale" >&2
-    grep -En "No palette|fallback to grayscale" "$LOG" | head -20 | sed 's/^/  /' >&2
+# The CI grayscale fallback (gfx_pc.c) fires SILENTLY on a paletted texture whose
+# TLUT was never registered — the FID-0122 guard-face/alarm/door class. The
+# capture runs with GE007_VERBOSE=1, which arms the [CI-GRAYSCALE-FALLBACK] log,
+# so any occurrence is a real regression. (The older "No palette" strings were
+# code comments only and never matched — kept here for belt-and-suspenders.)
+if grep -Eq "CI-GRAYSCALE-FALLBACK|No palette|fallback to grayscale" "$LOG"; then
+    echo "FAIL: a paletted (CI) texture fell back to grayscale (unregistered TLUT)" >&2
+    grep -En "CI-GRAYSCALE-FALLBACK|No palette|fallback to grayscale" "$LOG" | head -20 | sed 's/^/  /' >&2
     exit 1
 fi
 if [[ ! -s "$TRACE" ]]; then
