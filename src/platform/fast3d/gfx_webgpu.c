@@ -68,6 +68,20 @@ static WGPUQueue         s_queue    = NULL;
 static WGPUSurface       s_surface  = NULL;
 static WGPUTextureFormat s_surface_format = WGPUTextureFormat_Undefined;
 static bool              s_ready    = false;   /* device + surface both live */
+/* When the app shell owns the device/surface (launcher → game handoff), the
+ * engine adopts them and must NOT release them at teardown. False = we created
+ * them ourselves (standalone --level boot) and own their lifetime. */
+static bool              s_owns_device = false;
+
+/* Host WebGPU handoff (src/platform/host_window.c). Present only when the app
+ * shell created a device/queue/surface and registered them before boot. */
+extern int   platformHasHostWebGpu(void);
+extern void *platformHostWgpuInstance(void);
+extern void *platformHostWgpuAdapter(void);
+extern void *platformHostWgpuDevice(void);
+extern void *platformHostWgpuQueue(void);
+extern void *platformHostWgpuSurface(void);
+extern int   platformHostWgpuSurfaceFormat(void);
 
 /* Configured swapchain size; 0 forces a (re)configure on the next start_frame. */
 static uint32_t s_cfg_w = 0, s_cfg_h = 0;
@@ -263,6 +277,29 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
 static void wgpu_init(void) {
     s_ready = false;
 
+    /* App-shell handoff: the launcher already stood up the WebGPU device and
+     * surface for its own UI; adopt them wholesale so the game and launcher
+     * share one device/surface (no second present target, no ownership war).
+     * We do NOT own these objects — teardown must leave them to the shell. */
+    if (platformHasHostWebGpu()) {
+        s_instance       = (WGPUInstance)platformHostWgpuInstance();
+        s_adapter        = (WGPUAdapter)platformHostWgpuAdapter();
+        s_device         = (WGPUDevice)platformHostWgpuDevice();
+        s_queue          = (WGPUQueue)platformHostWgpuQueue();
+        s_surface        = (WGPUSurface)platformHostWgpuSurface();
+        s_surface_format = (WGPUTextureFormat)platformHostWgpuSurfaceFormat();
+        s_owns_device    = false;
+        if (s_device == NULL || s_queue == NULL || s_surface == NULL) {
+            fprintf(stderr, "[webgpu] host handoff incomplete — backend inert\n");
+            return;
+        }
+        s_ready = true;
+        fprintf(stderr, "[webgpu] adopted host device/surface (format=%d)\n",
+                (int)s_surface_format);
+        return;
+    }
+
+    s_owns_device = true;
     s_instance = wgpuCreateInstance(NULL);
     if (s_instance == NULL) {
         fprintf(stderr, "[webgpu] wgpuCreateInstance failed\n");

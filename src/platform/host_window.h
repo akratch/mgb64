@@ -23,6 +23,22 @@ int platformHasHostWindow(void);
 void *platformHostWindow(void);      // SDL_Window*
 void *platformHostGLContext(void);   // SDL_GLContext
 
+// Register (or clear) the app shell's WebGPU objects so the engine adopts them
+// instead of creating its own device/surface. Call before the engine boot,
+// after platformSetHostWindow. All handles are opaque (WGPU* as void*);
+// surface_format is the WGPUTextureFormat the surface is configured with.
+// A host WebGPU is considered present only when device+queue+surface are set.
+void platformSetHostWebGpu(void *instance, void *adapter, void *device,
+                           void *queue, void *surface, int surface_format);
+
+int   platformHasHostWebGpu(void);          // 1 if a host WebGPU is registered
+void *platformHostWgpuInstance(void);       // WGPUInstance
+void *platformHostWgpuAdapter(void);        // WGPUAdapter
+void *platformHostWgpuDevice(void);         // WGPUDevice
+void *platformHostWgpuQueue(void);          // WGPUQueue
+void *platformHostWgpuSurface(void);        // WGPUSurface
+int   platformHostWgpuSurfaceFormat(void);  // WGPUTextureFormat
+
 #ifdef __cplusplus
 }
 #endif

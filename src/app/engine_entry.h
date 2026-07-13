@@ -17,6 +17,14 @@ int mgb64_headless_main(int argc, char **argv);
 // booting the engine.
 void platformSetHostWindow(void *sdl_window, void *gl_context);
 
+// Register the shell's WebGPU objects (instance/adapter/device/queue/surface +
+// the surface's WGPUTextureFormat, all opaque as void*/int) so the engine
+// adopts them instead of creating its own. Call after platformSetHostWindow,
+// before booting the engine. See src/platform/host_window.h.
+void platformSetHostWebGpu(void *instance, void *adapter, void *device,
+                           void *queue, void *surface, int surface_format);
+int  platformHasHostWebGpu(void);
+
 // Boot configuration for the launcher -> game handoff. Optional fields use
 // -1 / 0 / NULL to mean "default".
 typedef struct {
