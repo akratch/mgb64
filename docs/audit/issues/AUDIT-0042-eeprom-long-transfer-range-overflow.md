@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - invalid transfer lengths can trigger undefined or out-of-bounds access |
 | Priority | P2 |
 | Area | N64 platform stubs / EEPROM API |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Invalid direct calls to `osEepromLongRead` or `osEepromLongWrite` |
+
+## Resolution
+
+Verified already fixed (commit `b76b8dc8`, 2026-07-13, with an explicit `[AUDIT-0042]` comment). `osEepromLongRead`/`osEepromLongWrite` (stubs.c) bound via subtraction — `if (nbytes > EEPROM_FILE_SIZE - offset) nbytes = ...` after an `offset >= EEPROM_FILE_SIZE` guard — eliminating the signed-overflow UB; null buffer / non-positive length copy nothing. Status flipped by a verification sweep.
 
 ## Summary
 

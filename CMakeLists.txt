@@ -289,6 +289,16 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 60
     )
+    # AUDIT-0005 engine ROM-loader reject gate (ROM-free, binary-dependent —
+    # self-skips if no ge007 is built): a wrong 12 MB file (bad N64 magic, or
+    # valid magic but non-GoldenEye title) must exit nonzero with "Refusing to
+    # boot" BEFORE any SDL/audio/file-table-patch work. Fixtures are synthetic
+    # sparse 12 MB files with crafted headers — no copyrighted ROM bytes.
+    add_test(
+        NAME port_rom_reject_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_rom_reject.sh"
+    )
+    set_tests_properties(port_rom_reject_guard PROPERTIES TIMEOUT 120)
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a corrupt or truncated compressed music track produces a hard crash instead of a handled skip |
 | Priority | P2 |
 | Area | Audio / music track decompression |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Native port, any level whose stage music decompresses a damaged track |
+
+## Resolution
+
+Verified already fixed (commit `e51d12ef`, 2026-07-13). All three reachable NATIVE_PORT paths (`music.c:1234/1510/1788`) check `decompressdata(...) == 0` and free+return on failure. The three bare-statement sites are stock N64-reference tails after the `#ifdef NATIVE_PORT ... return; #endif` blocks — unreachable in the port. Status flipped by a verification sweep; the field was stale.
 
 ## Summary
 

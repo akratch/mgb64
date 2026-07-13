@@ -3,7 +3,7 @@
 // Unlike GameBridge.c's validator (macOS CommonCrypto SHA1), this is fully
 // portable: it inspects only the 64-byte N64 header (byte order, internal
 // title, country code), so it works identically on macOS/Windows/Linux and
-// doesn't read the whole 16 MB ROM. Region comes from the header country code.
+// doesn't read the whole 12 MB ROM. Region comes from the header country code.
 #ifndef MGB64_ROM_VALIDATE_H
 #define MGB64_ROM_VALIDATE_H
 

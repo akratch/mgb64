@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - integer overflow can turn an invalid DMA into an out-of-bounds read |
 | Priority | P2 |
 | Area | N64 platform stubs / ROM DMA |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Standardized from the prior monolithic audit and reconfirmed in current source |
 | Affected configurations | Direct callers of `osPiStartDma` or `osPiRawStartDma` with invalid ranges |
+
+## Resolution
+
+Verified already fixed (commit `b76b8dc8`, 2026-07-13). `osPiStartDma`/`osPiRawStartDma` (stubs.c) use the non-wrapping predicate `size <= g_romSize && devAddr <= g_romSize - size` (size checked first, so no underflow), rejecting the `devAddr+size` overflow case before the memcpy. Status flipped by a verification sweep; the field was stale.
 
 ## Summary
 

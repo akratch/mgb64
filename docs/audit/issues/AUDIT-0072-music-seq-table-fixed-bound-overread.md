@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a music sequence-table header with fewer entries than the fixed track count causes an out-of-bounds read and crash |
 | Priority | P2 |
 | Area | Audio / music sequence-table parsing |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Native port, any ROM whose music sequence-table count is below `NUM_MUSIC_TRACKS` |
+
+## Resolution
+
+Verified already fixed (commit `e51d12ef`, 2026-07-13, `[AUDIT-0072]` comment). The length-load loops (`music.c:985-995` and the `#else` `:1057-1066`) are bounded by `min(seqCount, NUM_MUSIC_TRACKS)` with remaining slots zero-filled, and the per-track play paths guard `CurrentTrackNum >= seqCount`. A short/zero header no longer over-reads. Status flipped by a verification sweep; the field was stale.
 
 ## Summary
 

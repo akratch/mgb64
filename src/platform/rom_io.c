@@ -97,9 +97,51 @@ int platformInitRom(const char *path) {
             g_romData[i] = d; g_romData[i+1] = c;
             g_romData[i+2] = b; g_romData[i+3] = a;
         }
-    } else if (g_romData[0] != 0x80 || g_romData[1] != 0x37) {
-        fprintf(stderr, "[ROM] Warning: unrecognized ROM header: %02x %02x %02x %02x\n",
-                g_romData[0], g_romData[1], g_romData[2], g_romData[3]);
+    }
+
+    /* After byte-order normalization the header must be the N64 big-endian magic
+     * (80 37 12 40). A 12 MB file that is not an N64 ROM at all (e.g. a zero-
+     * filled or corrupt image) previously slipped through with only a warning,
+     * then had the hardcoded US file-table offsets patched onto it and faulted in
+     * resource decompression at frame 0. Reject here — before platformPatchFileTable,
+     * SDL, audio, or the renderer run — so a wrong file exits cleanly (AUDIT-0005). */
+    if (g_romData[0] != 0x80 || g_romData[1] != 0x37 ||
+        g_romData[2] != 0x12 || g_romData[3] != 0x40) {
+        fprintf(stderr,
+                "[ROM] %s is not a big-endian N64 ROM (header %02x %02x %02x %02x, "
+                "expected 80 37 12 40). Refusing to boot.\n",
+                path, g_romData[0], g_romData[1], g_romData[2], g_romData[3]);
+        free(g_romData);
+        g_romData = NULL;
+        g_romSize = 0;
+        return -1;
+    }
+
+    /* The internal cartridge title must be GoldenEye. A valid 12 MB N64 ROM of a
+     * DIFFERENT game would otherwise get GoldenEye's US file offsets patched onto
+     * it and crash the same way. Scan the 0x20..0x34 title window (as
+     * looksLikeGoldeneyeRom does) to tolerate regional title placement. */
+    {
+        int is_goldeneye = 0;
+        for (int i = 0x20; i + 9 <= 0x34; i++) {
+            if (memcmp(&g_romData[i], "GOLDENEYE", 9) == 0) {
+                is_goldeneye = 1;
+                break;
+            }
+        }
+        if (!is_goldeneye) {
+            char title[21];
+            memcpy(title, &g_romData[0x20], 20);
+            title[20] = '\0';
+            fprintf(stderr,
+                    "[ROM] %s internal title is \"%s\" — not a GoldenEye 007 ROM. "
+                    "Refusing to boot.\n",
+                    path, title);
+            free(g_romData);
+            g_romData = NULL;
+            g_romSize = 0;
+            return -1;
+        }
     }
 
     printf("[ROM] Loaded %u bytes (%.1f MB) from %s\n",

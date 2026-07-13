@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S2 - data-dependent object-destruction crash |
 | Priority | P2 |
 | Area | Gameplay / objects / destruction |
@@ -10,6 +10,10 @@
 | Confidence | High for the unsafe path; medium for ordinary-play frequency |
 | Origin | Newly confirmed on 2026-07-12 |
 | Affected configurations | Destruction of a top-level object without STAN, or scans containing a STAN-less object/weapon |
+
+## Resolution
+
+Verified already fixed (commit `4b500b14`, 2026-07-13). `chrobjhandler.c` guards `!tableprop || !tableprop->obj || !tableprop->stan` before dereferencing `tableprop->stan->room`, and requires `prop->stan != NULL` before the room compare in the scan — satisfying the Required End State. Status flipped by a verification sweep; the field was stale.
 
 ## Summary
 

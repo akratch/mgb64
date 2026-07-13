@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S2 - deterministic startup crash on rejected input class |
 | Priority | P2 |
 | Area | Platform / ROM loading / startup |
@@ -10,6 +10,39 @@
 | Confidence | High |
 | Origin | Standardized from renderer audit finding 64; runtime reconfirmed 2026-07-12 |
 | Affected configurations | Explicit `--rom` on all native platforms; wrong-region or corrupt same-size images |
+
+## Resolution
+
+Fixed 2026-07-13. `platformInitRom` (`src/platform/rom_io.c`) previously accepted
+any 12 MB file whose only failure was header magic — it printed a *warning* and
+returned success, so a zero-filled/corrupt/wrong-game image sailed through, had
+the hardcoded US file-table offsets patched onto garbage, opened the window +
+audio device, and faulted in language-resource decompression at frame 0.
+
+After byte-order normalization the loader now hard-rejects (frees the buffer,
+returns -1) two classes, before `platformPatchFileTable`/SDL/audio/renderer run
+(`main_pc.c` bails on the nonzero return):
+
+1. **Not an N64 ROM** — the header is not the big-endian magic `80 37 12 40`.
+   This rejects the documented zero-filled reproduction (magic `00 00`).
+2. **Wrong game** — the internal cartridge title does not contain `GOLDENEYE`
+   (scanned over the `0x20..0x34` window, mirroring `looksLikeGoldeneyeRom`).
+
+The app-shell picker's size/message half was already handled under AUDIT-0045
+(`src/app/rom_validate.cpp` requires exactly `0xC00000`); the stale "16 MB"
+comment in `rom_validate.h` is corrected here too.
+
+Validated: the real US ROM boots to gameplay (frame 60 screenshot, exit 0); a
+synthetic zero-filled 12 MB file and a valid-magic/wrong-title file each exit
+nonzero with "Refusing to boot" and never reach SDL. Pinned by a permanent
+ROM-free regression guard `tools/tests/test_rom_reject.sh`
+(CTest `port_rom_reject_guard`).
+
+**Deferred (separate, lower-risk enhancement):** full US-region SHA-1 gating
+(reject valid EU/JP GoldenEye images, which would still get US offsets patched).
+The magic+title gate fully resolves the S2 crash class in this report; region
+gating needs a decision on the port's multi-region support and a ROM-free
+hash-provider seam, tracked as follow-up.
 
 ## Summary
 
