@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S2 - data-dependent crash or undefined behavior |
 | Priority | P2 |
 | Area | Gameplay / collision / navigation |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed on 2026-07-12 |
 | Affected configurations | Native builds when out-of-bounds recovery starts from a linkless valid tile |
+
+## Resolution
+
+Fixed (already resolved) — bondview.c:9106 guards `if (linked_tile_count == 0)` before the `randomGetNext() % linked_tile_count` at :9119, restoring the pre-move collision position/tile and stopping the recovery walk (guard is before the RNG call, so linked tiles keep exact per-hop RNG parity). Cites [AUDIT-0002]. Verified 2026-07-13.
 
 ## Summary
 
