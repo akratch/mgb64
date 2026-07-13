@@ -5,6 +5,10 @@ The fidelity ledger remains authoritative for retail-versus-port parity findings
 these records cover native backend behavior, robustness, and correctness defects
 that do not already have an equivalent standalone ledger entry.
 
+For a recommended fix order across all findings, see
+[PRIORITIZATION.md](PRIORITIZATION.md) (ranked by priority, severity, and
+evidence, with theme clusters and a full ranked table).
+
 ## Issue Format
 
 Every issue uses the same fields and sections:
