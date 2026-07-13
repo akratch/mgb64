@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - promised automation isolation and embedded save routing are ineffective |
 | Priority | P1 |
 | Area | App shell / embedded engine initialization |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | App autoplay or embedded boots supplying `MgbBootConfig.save_dir` |
+
+## Resolution
+
+Fixed 2026-07-13. `mgb_config_init()` (via config_schema.c) calls `savedirInit(NULL)`, freezing the save-dir singleton to the engine default before the app shell's autoplay/PortMaster branches provide MGB64_APP_SAVEDIR — so the later engine-boot `savedirInit(override)` was a no-op (s_initialized already set). Fix: `main_app.cpp` now seeds `savedirInit(getenv("MGB64_APP_SAVEDIR"))` BEFORE `mgb_config_init()`; a NULL/unset env keeps normal auto-selection, and an unusable override fails fast (returns non-zero -> abort, via the AUDIT-0054 status contract). savedirInit is idempotent, so the subsequent engine-boot call with the same dir is a consistent no-op. (The bare engine also honors the env as a --savedir fallback — see AUDIT-0033.)
 
 ## Summary
 

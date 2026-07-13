@@ -21,6 +21,11 @@
 #include <cstdlib>
 #include <cstring>
 
+// savedirInit lives in the C engine (src/platform/savedir.c). Declared here so
+// the app shell can seed the save-dir singleton with its override BEFORE
+// mgb_config_init() freezes it to the engine default (AUDIT-0034).
+extern "C" int savedirInit(const char *savedir_override);
+
 // Headless validation harness for the update check: runs the real gated check
 // (curl subprocess + tag parse + semver compare) once and prints the outcome,
 // then exits — no window. Drives the mock via GE007_UPDATE_CHECK_URL and the
@@ -96,6 +101,20 @@ int main(int argc, char **argv) {
     AppHost host;
     if (!host.init("MGB64", 1280, 800)) {
         return 1;
+    }
+
+    // Seed the save-dir singleton with the app-shell override BEFORE
+    // mgb_config_init() freezes it to the engine default, so autoplay/PortMaster
+    // boots that pass MGB64_APP_SAVEDIR actually persist there (AUDIT-0034).
+    // A NULL/unset env keeps the engine's normal auto-selection; an unusable
+    // override fails fast rather than losing every save (AUDIT-0054).
+    if (const char *envSave = std::getenv("MGB64_APP_SAVEDIR")) {
+        if (envSave[0] && savedirInit(envSave) != 0) {
+            std::fprintf(stderr,
+                         "[app] MGB64_APP_SAVEDIR '%s' is not usable; aborting.\n", envSave);
+            host.shutdown();
+            return 1;
+        }
     }
 
     // Register + load the engine config so the launcher's settings panel can

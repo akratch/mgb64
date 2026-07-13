@@ -981,7 +981,14 @@ int main(int argc, char **argv)
             saveDirOverride = envSaveDir;
         }
     }
-    savedirInit(saveDirOverride);
+    /* An explicit/env --savedir that can't be created or written is a fatal user
+     * error, not something to accept and then fail every save against
+     * (AUDIT-0054). Exit nonzero before touching config/eeprom. */
+    if (savedirInit(saveDirOverride) != 0) {
+        fprintf(stderr, "[GE007-PC] Save directory '%s' is unusable; aborting.\n",
+                saveDirOverride ? saveDirOverride : "(auto)");
+        return 1;
+    }
 
     /* Phase 1b: Config system — register settings, then load ge007.ini */
     platformRegisterConfig();

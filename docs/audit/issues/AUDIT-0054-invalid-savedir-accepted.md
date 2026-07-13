@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a session can start while configuration and progress cannot persist |
 | Priority | P1 |
 | Area | Save-directory initialization / startup |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Invalid, uncreatable, or unwritable `--savedir` paths |
+
+## Resolution
+
+Fixed 2026-07-13. `savedirInit` (savedir.c) previously called `ensure_dir` for an explicit override but ignored the result, printed "Using override" unconditionally, did no write probe, and was `void` — so `--savedir /dev/null/x` printed success and then failed every save, exit 0. Now `savedirInit` returns int: for an explicit override it verifies `ensure_dir(dir) && dir_writable(dir)` and returns -1 (leaving s_initialized clear for a corrected retry) with a clear `[SAVEDIR] ERROR` on failure, printing "Using override" only on success. The auto-selection paths always return 0 (they have a CWD fallback). The engine (`main_pc.c`) and app shell (`main_app.cpp`) exit nonzero on failure. Validated: `--savedir /dev/null/nope` exits 1 with the error and never boots; a valid `--savedir` still boots. config_staging/app_config ctests still pass.
 
 ## Summary
 

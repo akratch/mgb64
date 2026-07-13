@@ -84,10 +84,14 @@ static int ensure_dir(const char *path) {
 #endif
 }
 
-void savedirInit(const char *savedir_override)
+/* Returns 0 when the save directory is resolved, -1 only when an EXPLICIT
+ * override was requested but is unusable (uncreatable / not writable) — a user
+ * error the caller must surface instead of silently losing every save
+ * (AUDIT-0054). The auto-selection paths (override NULL) always resolve (they
+ * have a CWD fallback) and return 0. Idempotent: a second call is a no-op. */
+int savedirInit(const char *savedir_override)
 {
-    if (s_initialized) return;
-    s_initialized = 1;
+    if (s_initialized) return 0;
 
     /* Priority 1: explicit override */
     if (savedir_override && savedir_override[0]) {
@@ -100,16 +104,31 @@ void savedirInit(const char *savedir_override)
                 s_saveDir[len + 1] = '\0';
             }
         }
-        ensure_dir(s_saveDir);
+        /* An EXPLICIT override must actually be usable — an unwritable or
+         * uncreatable path is a user error, not something to accept silently and
+         * then fail every save against (AUDIT-0054). Verify create + write, and
+         * fail closed so the caller can exit nonzero rather than "succeed" while
+         * printing "Using override" + "save failed". Do NOT set s_initialized on
+         * failure, so a corrected retry can re-run. */
+        if (!ensure_dir(s_saveDir) || !dir_writable(s_saveDir)) {
+            fprintf(stderr,
+                    "[SAVEDIR] ERROR: save directory '%s' cannot be created or is not "
+                    "writable; refusing to continue (saves would be lost).\n", s_saveDir);
+            s_saveDir[0] = '\0';
+            return -1;
+        }
+        s_initialized = 1;
         printf("[SAVEDIR] Using override: %s\n", s_saveDir);
-        return;
+        return 0;
     }
+
+    s_initialized = 1;
 
     /* Priority 2: CWD if save files already exist (portable mode) */
     if (file_exists("ge007_eeprom.bin") || file_exists("ge007.ini")) {
         s_saveDir[0] = '\0'; /* empty = CWD-relative */
         printf("[SAVEDIR] Using CWD (existing save files found)\n");
-        return;
+        return 0;
     }
 
 #ifdef _WIN32
@@ -126,7 +145,7 @@ void savedirInit(const char *savedir_override)
             if (ensure_dir(candidate)) {
                 snprintf(s_saveDir, SAVEDIR_MAX_PATH, "%s", candidate);
                 printf("[SAVEDIR] Using %s\n", s_saveDir);
-                return;
+                return 0;
             }
         }
     }
@@ -136,7 +155,7 @@ void savedirInit(const char *savedir_override)
     if (dir_writable(".")) {
         s_saveDir[0] = '\0'; /* empty = CWD-relative */
         printf("[SAVEDIR] Using CWD\n");
-        return;
+        return 0;
     }
 
     /* Priority 5: $HOME/.ge007/ (POSIX), or %USERPROFILE%\.ge007\ as a
@@ -148,7 +167,7 @@ void savedirInit(const char *savedir_override)
             snprintf(s_saveDir, SAVEDIR_MAX_PATH, "%s/%s/", home, SAVEDIR_NAME);
             if (ensure_dir(s_saveDir)) {
                 printf("[SAVEDIR] Using %s\n", s_saveDir);
-                return;
+                return 0;
             }
         }
     }
@@ -156,6 +175,7 @@ void savedirInit(const char *savedir_override)
     /* Fallback: CWD (may fail on writes, but best we can do) */
     s_saveDir[0] = '\0';
     printf("[SAVEDIR] Falling back to CWD\n");
+    return 0;
 }
 
 const char *savedirPath(const char *filename)

@@ -13,8 +13,11 @@
  * Initialize the save directory path.
  * Call once during startup, after command-line parsing.
  * If savedir_override is non-NULL, it is used directly.
+ * Returns 0 on success; -1 only when an EXPLICIT override is unusable
+ * (uncreatable / not writable) — the caller must surface that (AUDIT-0054).
+ * The auto-selection paths always return 0. Idempotent after the first call.
  */
-void savedirInit(const char *savedir_override);
+int savedirInit(const char *savedir_override);
 
 /**
  * Build a full path to a file in the save directory.
