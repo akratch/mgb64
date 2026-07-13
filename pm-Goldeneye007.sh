@@ -32,6 +32,10 @@ export MGB64_APP_SAVEDIR="$CONFDIR"
 $GPTOKEYB "ge007" &
 pm_platform_helper "$GAMEDIR/ge007"
 
-./ge007 --rom "$GAMEDIR/baserom.u.z64"
+# Route saves into conf/ explicitly. The shipped handheld target is the bare
+# engine (MGB64_APP=OFF), which does not read MGB64_APP_SAVEDIR, and this script
+# cd's to $GAMEDIR — so without --savedir the eeprom/ini would land beside the
+# binary instead of the persisted conf dir (AUDIT-0033).
+./ge007 --rom "$GAMEDIR/baserom.u.z64" --savedir "$CONFDIR"
 
 pm_finish

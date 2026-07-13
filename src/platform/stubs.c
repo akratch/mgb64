@@ -6555,23 +6555,42 @@ static int s_eeprom_loaded = 0;
 
 static void eeprom_load_from_file(void) {
     FILE *f;
+    char path[1024];
     if (s_eeprom_loaded) return;
     s_eeprom_loaded = 1;
     memset(s_eeprom_data, 0, EEPROM_FILE_SIZE);
-    f = fopen(savedirPath(EEPROM_FILENAME), "rb");
+    snprintf(path, sizeof(path), "%s", savedirPath(EEPROM_FILENAME));
+    f = fopen(path, "rb");
     if (f) {
         size_t read_count = fread(s_eeprom_data, 1, EEPROM_FILE_SIZE, f);
         if (read_count != EEPROM_FILE_SIZE) {
-            /* Truncated/corrupt save: the memset above already zeroed the
-             * buffer, so this silently degrades to a blank EEPROM instead of
-             * loading a partial one -- warn so the user knows their save
-             * didn't actually load. */
+            int was_error = ferror(f);
+            /* Truncated/corrupt save: fread left a PARTIAL real prefix in the
+             * buffer (the pre-read memset only zeroed the untouched suffix), so
+             * re-zero here to actually degrade to blank. Otherwise the stale
+             * partial prefix stays live and eeprom_save_to_file() would write it
+             * back over the original -- silent half-save corruption (AUDIT-0041). */
+            memset(s_eeprom_data, 0, EEPROM_FILE_SIZE);
+            fclose(f);
+            /* Preserve the original so a later save can't silently overwrite a
+             * potentially-recoverable file. Best-effort. */
+            {
+                char bak[1024 + 8];
+                snprintf(bak, sizeof(bak), "%s.corrupt", path);
+                if (rename(path, bak) != 0) {
+                    fprintf(stderr,
+                            "[GE007-PC] (could not preserve corrupt EEPROM as %s: %s)\n",
+                            bak, strerror(errno));
+                }
+            }
             fprintf(stderr,
-                    "[GE007-PC] WARNING: EEPROM save file is truncated (read %zu of %d bytes); "
-                    "treating as blank.\n",
-                    read_count, EEPROM_FILE_SIZE);
+                    "[GE007-PC] WARNING: EEPROM save file is %s (read %zu of %d bytes); "
+                    "treating as blank; original preserved as %s.corrupt.\n",
+                    was_error ? "unreadable" : "truncated",
+                    read_count, EEPROM_FILE_SIZE, EEPROM_FILENAME);
+        } else {
+            fclose(f);
         }
-        fclose(f);
     }
 }
 

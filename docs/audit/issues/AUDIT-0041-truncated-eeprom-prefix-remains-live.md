@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - corrupt save data is partially activated instead of rejected |
 | Priority | P1 |
 | Area | Save persistence / EEPROM recovery |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | Any `ge007_eeprom.bin` shorter than 2048 bytes |
+
+## Resolution
+
+Fixed 2026-07-13. `eeprom_load_from_file` (stubs.c) on a short read now re-`memset`s the buffer to zero — the pre-read memset only zeroed the untouched suffix, so `fread` left a PARTIAL real prefix live that would be written back over the original by `eeprom_save_to_file`. It also distinguishes `ferror` from a truncated file in the warning and renames the original to `ge007_eeprom.bin.corrupt` (best-effort) so a later save can't silently overwrite a recoverable file. Validated on a boot-to-menu with a 10-byte eeprom: warns `read 10 of 2048`, preserves `.corrupt`, and the game writes a fresh valid 2048-byte EEPROM (no stale prefix).
 
 ## Summary
 

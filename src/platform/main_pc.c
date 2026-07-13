@@ -971,7 +971,16 @@ int main(int argc, char **argv)
         romPath = findRomFile();
     }
 
-    /* Phase 1: Initialize save directory (before anything that reads/writes files) */
+    /* Phase 1: Initialize save directory (before anything that reads/writes files).
+     * Fall back to MGB64_APP_SAVEDIR when no explicit --savedir was given, so the
+     * bare engine honors the same save-dir contract the app shell / PortMaster
+     * launcher export (AUDIT-0033) — an explicit --savedir still wins. */
+    if (!saveDirOverride) {
+        const char *envSaveDir = getenv("MGB64_APP_SAVEDIR");
+        if (envSaveDir && envSaveDir[0]) {
+            saveDirOverride = envSaveDir;
+        }
+    }
     savedirInit(saveDirOverride);
 
     /* Phase 1b: Config system — register settings, then load ge007.ini */

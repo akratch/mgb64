@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - handheld saves and configuration miss the designated persistent directory |
 | Priority | P1 |
 | Area | PortMaster launcher / save persistence |
@@ -10,6 +10,10 @@
 | Confidence | High |
 | Origin | Newly confirmed by this audit |
 | Affected configurations | PortMaster's engine-only `MGB64_APP=OFF` build |
+
+## Resolution
+
+Fixed 2026-07-13. Two-layer fix: (1) the PortMaster launcher `pm-Goldeneye007.sh` now passes `--savedir "$CONFDIR"` (it cd's to $GAMEDIR, so without it the eeprom/ini landed beside the binary, not the persisted conf dir); (2) `main_pc.c` now falls back to `MGB64_APP_SAVEDIR` when no explicit `--savedir` is given, so the bare engine (MGB64_APP=OFF, the shipped handheld target) honors the same save-dir contract the launcher already exports — an explicit `--savedir` still wins. Validated: `MGB64_APP_SAVEDIR=$tmp ge007 --rom …` (no --savedir, from a scratch CWD) prints `[SAVEDIR] Using override: $tmp` and writes ge007.ini there, not the CWD.
 
 ## Summary
 
