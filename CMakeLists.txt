@@ -86,6 +86,24 @@ option(MGB64_APP "Build the in-process ImGui app shell (portable launcher + over
 # Swaps glad+OpenGL3.3 for GLES3.2, changes shader version to 320 es,
 # and forces 640x480 fullscreen. Implies MGB64_PORTMASTER.
 option(MGB64_PORTMASTER_GLES "Build for PortMaster/ARM GLES3 (R36S etc.)" OFF)
+
+# WebGPU (wgpu-native) — experimental single cross-platform render backend that
+# will replace the GL+Metal fork (see docs/design/RENDERER_BACKEND_STRATEGY_*).
+# OFF by default: does not touch the shipping GL/Metal build. cmake/webgpu.cmake
+# downloads + SHA-256-verifies the pinned per-platform wgpu-native prebuilt.
+option(MGB64_WEBGPU_BACKEND "Build the experimental WebGPU (wgpu-native) render backend" OFF)
+include(cmake/webgpu.cmake)
+
+# WebGPU spike: a headless, self-validating proof that the backend works — it
+# initializes WebGPU, compiles a WGSL shader AT RUNTIME (the capability that made
+# WebGPU the right fit vs bgfx), renders a triangle to an offscreen target, reads
+# the pixels back, and ASSERTS the triangle is present. Registered as a ctest.
+if(MGB64_WEBGPU_BACKEND)
+    add_executable(test_webgpu_spike tests/test_webgpu_spike.c)
+    target_link_libraries(test_webgpu_spike PRIVATE webgpu)
+    target_compile_features(test_webgpu_spike PRIVATE c_std_11)
+    add_test(NAME webgpu_spike COMMAND test_webgpu_spike)
+endif()
 # -mno-ms-bitfields is an x86-family flag (it disables a layout that only
 # exists there); ARM/RISC-V compilers reject it outright.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86|X86|x86)$")
