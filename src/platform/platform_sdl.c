@@ -2865,23 +2865,41 @@ int platformInitSDL(void) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
     if (platformHasHostWindow()) {
-        /* MGB64_APP shell owns the SDL window + GL context; adopt them so the
-         * launcher and the game render into one window. The window/context are
-         * GL (the app shell is GL-only), so force the GL backend: this adopted
-         * window has no CAMetalLayer, so WebGPU/Metal cannot render into it
-         * (without this the WebGPU default goes "backend inert" -> a black frame
-         * while audio/sim run — the launcher->Play regression). WebGPU remains
-         * the default for engine-owned (standalone / direct --level) boots. */
-        gfx_backend_force_opengl();
+        /* MGB64_APP shell owns the SDL window; adopt it so the launcher and the
+         * game render into one window. */
         g_sdlWindow = (SDL_Window *)platformHostWindow();
-        g_glContext = (SDL_GLContext)platformHostGLContext();
-        if (!g_sdlWindow || !g_glContext) {
-            fprintf(stderr, "[SDL] Host window/context adoption failed\n");
+        if (!g_sdlWindow) {
+            fprintf(stderr, "[SDL] Host window adoption failed\n");
             return -1;
         }
-        SDL_GL_MakeCurrent(g_sdlWindow, g_glContext);
-        printf("[SDL] Adopted app-shell window/context (%p / %p)\n",
-               (void *)g_sdlWindow, (void *)g_glContext);
+#ifdef MGB64_WEBGPU_BACKEND
+        if (platformHasHostWebGpu()) {
+            /* WebGPU shell: the launcher already stood up the wgpu device +
+             * surface for THIS window; the game's wgpu_init adopts them (host
+             * handoff). No GL context and no metal view here — the launcher owns
+             * the surface it created from its own Metal view. WebGPU stays the
+             * backend (no force_opengl). */
+            g_glContext = NULL;
+            printf("[SDL] Adopted app-shell window + WebGPU device/surface (%p)\n",
+                   (void *)g_sdlWindow);
+        } else
+#endif
+        {
+            /* GL shell (GE007_RENDERER=gl): adopt the GL context and force the GL
+             * backend — this window has no CAMetalLayer, so WebGPU/Metal cannot
+             * render into it (without this the WebGPU default goes "backend
+             * inert" -> a black frame while audio/sim run: the launcher->Play
+             * regression). WebGPU stays the default for engine-owned boots. */
+            gfx_backend_force_opengl();
+            g_glContext = (SDL_GLContext)platformHostGLContext();
+            if (!g_glContext) {
+                fprintf(stderr, "[SDL] Host GL context adoption failed\n");
+                return -1;
+            }
+            SDL_GL_MakeCurrent(g_sdlWindow, g_glContext);
+            printf("[SDL] Adopted app-shell window/context (%p / %p)\n",
+                   (void *)g_sdlWindow, (void *)g_glContext);
+        }
     } else {
     {
         int diag_disable_highdpi = platformEnvFlagEnabled("GE007_DIAG_DISABLE_HIGHDPI");

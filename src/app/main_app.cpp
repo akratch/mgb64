@@ -110,6 +110,14 @@ int main(int argc, char **argv) {
     // a failed boot (bad/missing ROM, init failure) must not become app exit 0.
     auto play = [&](const MgbBootConfig &cfg) -> int {
         platformSetHostWindow(host.window(), host.glContext());
+        // On WebGPU, hand the launcher's device/surface to the engine so the game
+        // renders into the SAME window+surface (no force_opengl fallback). On GL,
+        // no WebGPU host is registered and the adoption path forces GL as before.
+        if (host.usingWebGpu()) {
+            platformSetHostWebGpu(host.wgpuInstance(), host.wgpuAdapter(),
+                                  host.wgpuDevice(), host.wgpuQueue(),
+                                  host.wgpuSurface(), host.wgpuFormat());
+        }
         Overlay_install(host.window(), argv[0]);  // in-game overlay (F1)
         return mgb64_engine_boot(&cfg);
     };
