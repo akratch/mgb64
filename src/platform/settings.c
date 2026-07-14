@@ -276,6 +276,36 @@ void settingsMarkCliOverride(const char *key)
     }
 }
 
+SettingOverrideSource settingsGetOverrideSource(const char *key)
+{
+    const Setting *setting = settingsFindMutable(key);
+
+    return setting != NULL ? setting->override_source : SETTING_OVERRIDE_NONE;
+}
+
+void settingsSetOverrideSource(const char *key, SettingOverrideSource source)
+{
+    Setting *setting = settingsFindMutable(key);
+
+    if (setting != NULL) {
+        setting->override_source = source;
+    }
+}
+
+/* A durable edit (in-game Apply / --config-set / a plain UI write) supersedes any
+ * transient env override for persistence purposes (AUDIT-0055): the config writer
+ * serializes the durable on-disk shadow for a key still flagged
+ * SETTING_OVERRIDE_ENV, so an edit must drop that flag or it would be silently
+ * discarded in favor of the shadow. configSetValue() -- the single mutation choke
+ * point -- calls this after every successful set; the transient appliers (env /
+ * faithful / remaster / --config-override) re-stamp their own source immediately
+ * afterward, and the staging live-preview snapshots+restores the source around its
+ * transient writes, so only genuine durable edits land as SETTING_OVERRIDE_NONE. */
+void settingsNoteDurableEdit(const char *key)
+{
+    settingsSetOverrideSource(key, SETTING_OVERRIDE_NONE);
+}
+
 void settingsMarkAdvanced(const char *key)
 {
     Setting *setting = settingsFindMutable(key);
@@ -341,6 +371,12 @@ void settingsResetAllToDefaults(void)
 
     for (i = 0; i < s_numSettings; i++) {
         Setting *setting = &s_settings[i];
+
+        /* A reset-to-defaults is a durable action: it must persist the defaults,
+         * so clear any transient override marking (AUDIT-0055). Otherwise a key
+         * still flagged SETTING_OVERRIDE_ENV would serialize its pre-reset shadow
+         * instead of the freshly-reset default. */
+        setting->override_source = SETTING_OVERRIDE_NONE;
 
         switch (setting->type) {
             case SETTING_TYPE_INT:

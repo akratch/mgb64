@@ -30,6 +30,15 @@ typedef enum {
     CFG_STRING
 } ConfigType;
 
+/* Persisted-value shadow buffer (AUDIT-0055). Holds the exact serialized durable
+ * on-disk value captured at load, so a save under an active transient env override
+ * writes the shadow instead of the live env value (omitting the key would delete
+ * it in the full-file rewrite). Sized to the longest registered string setting
+ * (Video.TexturePack / Video.SceneDecorDir are 1024-byte buffers) so a long HD
+ * texture-pack path round-trips without truncation; numeric/enum values are far
+ * shorter. */
+#define CONFIG_PERSIST_MAX 1024
+
 typedef struct {
     char key[CONFIG_MAX_KEYNAME + 1]; /* "Section.Key" */
     s32 seclen;                       /* length of section prefix */
@@ -43,6 +52,8 @@ typedef struct {
     const ConfigEnumOption *enum_options;
     s32 enum_count;
     size_t string_capacity;
+    char persisted[CONFIG_PERSIST_MAX]; /* durable on-disk shadow (see above) */
+    s32 has_persisted;                  /* 1 once the shadow has been captured */
 } ConfigEntry;
 
 #define CONFIG_MAX_UNKNOWN_SETTINGS 128
@@ -176,9 +187,17 @@ void configRegisterString(const char *key, char *var, size_t capacity)
 
 /* ===== Set from string (INI parsing) ===== */
 
-static s32 setFromString(const char *key, const char *val)
+/* Set a registered key from a string. Returns 1 if the key EXISTS (0 if not),
+ * matching the historical contract callers rely on. *out_applied (optional)
+ * reports whether the value was actually STORED (1) versus rejected with the
+ * previous value kept (0) -- a NaN float or an unrecognized enum token is a
+ * known key whose value is rejected. configSetValue uses this to avoid treating
+ * a rejected edit as a durable edit (AUDIT-0055). */
+static s32 setFromStringEx(const char *key, const char *val, s32 *out_applied)
 {
     ConfigEntry *e = findEntry(key);
+    s32 applied = 0;
+    if (out_applied) *out_applied = 0;
     if (!e) return 0;
 
     switch (e->type) {
@@ -186,6 +205,7 @@ static s32 setFromString(const char *key, const char *val)
             s32 v = (s32)strtol(val, NULL, 0);
             if (e->min_s32 < e->max_s32) v = clampInt(v, e->min_s32, e->max_s32);
             *(s32 *)e->ptr = v;
+            applied = 1;
         } break;
         case CFG_F32: {
             f32 v = strtof(val, NULL);
@@ -204,11 +224,13 @@ static s32 setFromString(const char *key, const char *val)
             }
             if (e->min_f32 < e->max_f32) v = clampFloat(v, e->min_f32, e->max_f32);
             *(f32 *)e->ptr = v;
+            applied = 1;
         } break;
         case CFG_U32: {
             u32 v = (u32)strtoul(val, NULL, 0);
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             *(u32 *)e->ptr = v;
+            applied = 1;
         } break;
         case CFG_ENUM: {
             s32 found = 0;
@@ -217,6 +239,7 @@ static s32 setFromString(const char *key, const char *val)
                     strcasecmp(e->enum_options[i].token, val) == 0) {
                     *(s32 *)e->ptr = e->enum_options[i].value;
                     found = 1;
+                    applied = 1;
                     break;
                 }
             }
@@ -243,6 +266,7 @@ static s32 setFromString(const char *key, const char *val)
                         if (e->enum_options[i].value == (s32)numeric) {
                             *(s32 *)e->ptr = (s32)numeric;
                             matched = 1;
+                            applied = 1;
                             break;
                         }
                     }
@@ -266,12 +290,19 @@ static s32 setFromString(const char *key, const char *val)
                 for (char *p = dst; *p; p++) {
                     if (*p == '\n' || *p == '\r') *p = ' ';
                 }
+                applied = 1;
             }
         } break;
         default: break;
     }
 
+    if (out_applied) *out_applied = applied;
     return 1;
+}
+
+static s32 setFromString(const char *key, const char *val)
+{
+    return setFromStringEx(key, val, NULL);
 }
 
 /* ===== Load ===== */
@@ -437,35 +468,29 @@ static void saveEntryMetadataComment(ConfigEntry *e, FILE *f) {
             range);
 }
 
-static void saveEntry(ConfigEntry *e, FILE *f) {
-    const char *keyName = e->key + e->seclen + (e->seclen > 0 ? 1 : 0);
-    /* Transient env overrides (GE007_*) apply to this launch only and must NOT be
-     * persisted -- otherwise a one-off e.g. GE007_TEXTURE_PACK=... would silently
-     * stick on every later launch. Omit them so the saved config keeps the user's
-     * own (menu/file) value; on reload an absent key falls back to its default.
-     * CLI --config-override is intentionally still saved (config-pinning). */
-    {
-        const Setting *st = settingsFind(e->key);
-        if (st != NULL && st->override_source == SETTING_OVERRIDE_ENV) {
-            return;
-        }
-    }
-    saveEntryMetadataComment(e, f);
+/* Serialize an entry's live value to the exact token the ini stores: numeric
+ * types clamped to range, an enum as its token when known (else the raw backing
+ * number), a string verbatim. Shared by saveEntry (the live save path) and the
+ * load-time shadow capture, so a captured shadow is byte-identical to what a
+ * normal save of the same value would have written. */
+static void formatEntryValue(const ConfigEntry *e, char *out, size_t out_size) {
+    if (out_size == 0) return;
+    out[0] = '\0';
     switch (e->type) {
         case CFG_S32: {
             s32 v = *(s32 *)e->ptr;
             if (e->min_s32 < e->max_s32) v = clampInt(v, e->min_s32, e->max_s32);
-            fprintf(f, "%s=%d\n", keyName, v);
+            snprintf(out, out_size, "%d", v);
         } break;
         case CFG_F32: {
             f32 v = *(f32 *)e->ptr;
             if (e->min_f32 < e->max_f32) v = clampFloat(v, e->min_f32, e->max_f32);
-            fprintf(f, "%s=%g\n", keyName, (double)v);
+            snprintf(out, out_size, "%g", (double)v);
         } break;
         case CFG_U32: {
             u32 v = *(u32 *)e->ptr;
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
-            fprintf(f, "%s=%u\n", keyName, v);
+            snprintf(out, out_size, "%u", v);
         } break;
         case CFG_ENUM: {
             s32 v = *(s32 *)e->ptr;
@@ -476,17 +501,46 @@ static void saveEntry(ConfigEntry *e, FILE *f) {
                     break;
                 }
             }
-            if (token) {
-                fprintf(f, "%s=%s\n", keyName, token);
-            } else {
-                fprintf(f, "%s=%d\n", keyName, v);
-            }
+            if (token) snprintf(out, out_size, "%s", token);
+            else       snprintf(out, out_size, "%d", v);
         } break;
         case CFG_STRING:
-            fprintf(f, "%s=%s\n", keyName, e->ptr ? (char *)e->ptr : "");
+            snprintf(out, out_size, "%s", e->ptr ? (char *)e->ptr : "");
             break;
         default: break;
     }
+}
+
+static void saveEntry(ConfigEntry *e, FILE *f) {
+    const char *keyName = e->key + e->seclen + (e->seclen > 0 ? 1 : 0);
+    char valbuf[CONFIG_PERSIST_MAX];
+
+    saveEntryMetadataComment(e, f);
+
+    /* Transient env overrides (GE007_*) apply to this launch only and must NOT be
+     * persisted -- a one-off e.g. GE007_TEXTURE_PACK=... must not stick on every
+     * later launch. But configSave() rewrites the WHOLE file atomically, so simply
+     * OMITTING an env-overridden key deletes it and the next launch falls back to
+     * the compiled default (AUDIT-0055). Instead serialize the durable on-disk
+     * value captured at load (the shadow), so the user's saved value survives
+     * untouched and removing the env var reveals it exactly.
+     *
+     * A durable edit (configSetValue -> settingsNoteDurableEdit: in-game Apply,
+     * --config-set, a plain UI write) clears the ENV marking, so an explicit change
+     * to an env-overridden key persists its new value through the live path below.
+     * CLI --config-override stays SETTING_OVERRIDE_CLI and is intentionally still
+     * saved via the live path (config-pinning); only SETTING_OVERRIDE_ENV takes
+     * the shadow. */
+    {
+        const Setting *st = settingsFind(e->key);
+        if (st != NULL && st->override_source == SETTING_OVERRIDE_ENV && e->has_persisted) {
+            fprintf(f, "%s=%s\n", keyName, e->persisted);
+            return;
+        }
+    }
+
+    formatEntryValue(e, valbuf, sizeof(valbuf));
+    fprintf(f, "%s=%s\n", keyName, valbuf);
 }
 
 static const char *configKeyName(const char *key, s32 seclen) {
@@ -623,11 +677,31 @@ s32 configSave(void)
 
 s32 configSetValue(const char *key, const char *value)
 {
+    s32 applied = 0;
+
     if (!key || !value) {
         return 0;
     }
 
-    return setFromString(key, value);
+    if (!setFromStringEx(key, value, &applied)) {
+        return 0; /* unknown key -- contract preserved for callers */
+    }
+
+    /* A value that was actually APPLIED through this single mutation choke point is
+     * a durable edit (in-game Apply, --config-set, a plain UI write): drop any
+     * transient override marking so the edit persists its new value at save rather
+     * than being replaced by the durable shadow (AUDIT-0055). A value that was
+     * REJECTED (a NaN float or an unrecognized enum token keeps the previous value)
+     * is NOT a durable edit -- clearing the marking there would persist the live
+     * transient (env) value instead of the shadow. The transient appliers
+     * (settingsApplyEnvOverrides / faithful/remaster presets / --config-override)
+     * re-stamp their own source immediately after calling this, and the staging
+     * live-preview snapshots+restores the source around its transient writes, so
+     * only genuine applied durable edits end up SETTING_OVERRIDE_NONE. */
+    if (applied) {
+        settingsNoteDurableEdit(key);
+    }
+    return 1;
 }
 
 /* ===== Public Lookup ===== */
@@ -662,5 +736,16 @@ void configInit(void)
     } else {
         printf("[CONFIG] No config file found, writing defaults.\n");
         configSave();
+    }
+
+    /* AUDIT-0055: snapshot each key's durable value NOW -- after load (or after
+     * writing defaults), and BEFORE any caller applies a transient env/CLI/preset
+     * override -- so a later save under an active env override serializes this
+     * shadow instead of deleting the key. All settings are registered before
+     * configInit(), so every entry gets a shadow. */
+    for (s32 i = 0; i < s_numEntries; i++) {
+        formatEntryValue(&s_entries[i], s_entries[i].persisted,
+                         sizeof(s_entries[i].persisted));
+        s_entries[i].has_persisted = 1;
     }
 }

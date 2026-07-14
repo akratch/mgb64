@@ -84,6 +84,17 @@ const char *settingsOverrideSourceName(SettingOverrideSource source);
 const char *settingsEnumTokenForValue(const Setting *setting, s32 value);
 void settingsFormatEnumOptions(const Setting *setting, char *out, size_t out_size);
 void settingsMarkCliOverride(const char *key);
+/* Read/write a setting's active override source. Used by the config writer to
+ * decide whether to serialize the durable on-disk shadow (env-overridden keys)
+ * and by the staging live-preview to snapshot+restore the source around its
+ * transient writes (AUDIT-0055). Get returns SETTING_OVERRIDE_NONE for an
+ * unknown key; Set is a no-op for one. */
+SettingOverrideSource settingsGetOverrideSource(const char *key);
+void settingsSetOverrideSource(const char *key, SettingOverrideSource source);
+/* Mark a key as durably edited (clears its override source to NONE). Called by
+ * configSetValue after every successful set so an explicit UI/--config-set edit
+ * to an env-overridden key persists rather than being replaced by the shadow. */
+void settingsNoteDurableEdit(const char *key);
 /* Tag an already-registered setting as advanced (dev/diagnostic). Called right
  * after the settingsRegister* site. Hidden from the launcher's player tabs;
  * env/CLI overrides still apply. No-op if the key is unknown. */

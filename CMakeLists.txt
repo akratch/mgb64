@@ -299,6 +299,19 @@ if(BUILD_TESTING)
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_rom_reject.sh"
     )
     set_tests_properties(port_rom_reject_guard PROPERTIES TIMEOUT 120)
+    # AUDIT-0055 end-to-end config-persistence matrix through the real binary
+    # (ROM-free: only touches --config-set/--dump-config/--faithful, never ROM
+    # startup). Two-launch env-override shadow, render-scale clamp, faithful
+    # preset, and full round-trip/reset/unknown-key preservation. Binary-dependent
+    # — self-skips (exit 77) when no ge007 is built.
+    add_test(
+        NAME port_config_roundtrip
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/config_roundtrip_check.py"
+    )
+    set_tests_properties(port_config_roundtrip PROPERTIES
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile
@@ -1865,6 +1878,21 @@ if(MGB64_APP)
         target_include_directories(test_config_staging PRIVATE
             src/app src/platform include include/PR .)
         add_test(NAME config_staging COMMAND test_config_staging)
+
+        # AUDIT-0055: a transient GE007_* env override must never erase/alter the
+        # persisted config value. Two-launch persistence matrix (all five setting
+        # types) plus the staging live-preview containment, driven through the real
+        # configInit/env-override/configSave/reload lifecycle against a temp
+        # savedir. ROM-free; same registry+config link set as config_staging.
+        add_executable(test_config_env_shadow
+            tests/test_config_env_shadow.c
+            src/platform/config_schema.c
+            src/platform/config_pc.c
+            src/platform/settings.c
+            src/platform/savedir.c)
+        target_include_directories(test_config_env_shadow PRIVATE
+            src/app src/platform include include/PR .)
+        add_test(NAME config_env_shadow COMMAND test_config_env_shadow)
 
         # Pure tag-parse + semver-compare logic for the update check (no SDL, no
         # network): update_check_core.cpp is SDL-free precisely so this links tiny.

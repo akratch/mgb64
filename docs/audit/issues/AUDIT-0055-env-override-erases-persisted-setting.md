@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a one-run override permanently discards the user's saved value |
 | Priority | P1 |
 | Area | Configuration persistence / transient overrides |
@@ -83,3 +83,61 @@ paths and assert exact values and override-source diagnostics.
 ## Related Work
 
 - AUDIT-0036 requires the UI to distinguish durable save outcomes.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend` by giving each config key a **persisted-value
+shadow** so a full-file save never has to omit (and thereby delete) an
+env-overridden key.
+
+- `src/platform/config_pc.c`:
+  - `ConfigEntry` gains a `persisted[CONFIG_PERSIST_MAX=1024]` shadow + a
+    `has_persisted` flag. The per-type value serialization is factored out of
+    `saveEntry` into `formatEntryValue()` so the shadow is byte-identical to a
+    normal save of the same value.
+  - `configInit()` captures the shadow for every registered entry **after** load
+    (or after writing defaults) and **before** any caller applies a transient
+    override — the durable on-disk value.
+  - `saveEntry()` now serializes the **shadow** (not the live value) for keys
+    whose `Setting.override_source == SETTING_OVERRIDE_ENV`, instead of omitting
+    them. The user's saved value survives the atomic rewrite untouched; removing
+    the env var reveals it exactly.
+  - `configSetValue()` — the single mutation choke point — calls
+    `settingsNoteDurableEdit()` only when the value was actually **applied**
+    (via `setFromStringEx`'s new `applied` out-param), so an explicit UI /
+    `--config-set` edit to an env-overridden key drops the ENV marking and
+    persists its new value (not the shadow, not the env value). A *rejected*
+    value (a NaN float, an unrecognized enum token — which keep the previous
+    value) is not a durable edit and must not clear the marking, or it would
+    persist the live env value instead of the shadow.
+- `src/platform/settings.c` / `.h`: `settingsGetOverrideSource`,
+  `settingsSetOverrideSource`, `settingsNoteDurableEdit`; and
+  `settingsResetAllToDefaults()` now clears every override source (a
+  `--reset-config` persists defaults, not the pre-reset shadow).
+- `src/platform/config_schema.c`: the staging **live-preview** snapshots the
+  override source on preview-on and restores it on preview-off, so a
+  previewed-then-discarded env key does not leak its env value on a later save.
+
+CLI `--config-override` keeps `SETTING_OVERRIDE_CLI` and is still saved via the
+live path (config-pinning, unchanged); `--faithful`/`--remaster` remain
+save-suppressed. All five setting types share the policy.
+
+**Verification:**
+- New ROM-free unit test `tests/test_config_env_shadow.c` (ctest
+  `config_env_shadow`): a two-launch persistence matrix over int/uint/float/enum/
+  string, the staging live-preview containment, a durable-edit-under-env case, a
+  rejected-edit-under-env case (NaN float / unknown enum token must keep the
+  shadow), and a `settingsResetAllToDefaults`-under-env case (reset persists the
+  default, not the shadow), all driven through the real `configInit →
+  settingsApplyEnvOverrides → configSetValue → configSave → reload` lifecycle
+  against a temp savedir. Failed (11 assertions) before the fix, passes after.
+- The diff was reviewed by an adversarial multi-lens agent pass; the two
+  confirmed findings (a rejected `--config-set` clearing the ENV marking, and the
+  reset-clears-overrides line lacking coverage) are the `applied`-guard and the
+  reset-under-env test above.
+- `tools/config_roundtrip_check.py` gains
+  `assert_env_override_preserves_persisted()` (the report's exact two-launch
+  scenario for a float, an int and an enum through the real binary) and is now a
+  registered self-skipping ctest `port_config_roundtrip`.
+- Full `ctest` green (87/87 in build-webgpu); both configs build clean; 7/7
+  fidelity tapes byte-exact (sim-neutral).

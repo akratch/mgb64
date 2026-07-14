@@ -69,10 +69,17 @@ Number=42
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
+    # Probe the webgpu build first (the default backend), then the GL build, so
+    # the tool works from either build tree without an explicit --binary.
+    default_binary = next(
+        (str(p) for p in (repo_root / "build-webgpu" / "ge007",
+                          repo_root / "build" / "ge007") if p.is_file()),
+        str(repo_root / "build" / "ge007"),
+    )
     parser.add_argument(
         "--binary",
-        default=str(repo_root / "build" / "ge007"),
-        help="native binary to inspect (default: build/ge007)",
+        default=default_binary,
+        help="native binary to inspect (default: build-webgpu/ge007 or build/ge007)",
     )
     return parser.parse_args()
 
@@ -262,14 +269,98 @@ def assert_faithful_preset(binary: Path) -> None:
             )
 
 
+def assert_env_override_preserves_persisted(binary: Path) -> None:
+    """AUDIT-0055: a transient GE007_* override must never erase or change the
+    persisted value across a full-file save. --config-set/--reset-config/clean
+    shutdown all atomically rewrite the whole ini, so the old writer's "omit
+    env-overridden keys" was deletion, not preservation. This drives the full
+    two-launch matrix through the real main_pc.c lifecycle for a float, an int,
+    and an enum, plus the durable-edit-under-active-override precedence case."""
+    with tempfile.TemporaryDirectory(prefix="mgb64_env_shadow_") as temp:
+        savedir = Path(temp)
+        config_path = savedir / "ge007.ini"
+
+        # Launch 1 -- the user persists durable values.
+        run_binary(
+            binary, savedir,
+            "--config-set", "Video.FovY=70",
+            "--config-set", "Video.WindowWidth=1234",
+            "--config-set", "Video.WindowMode=borderless",
+        )
+        seeded = parse_dump(config_path.read_text(encoding="utf-8"))
+        assert_values(
+            seeded,
+            {"Video.FovY": "70", "Video.WindowWidth": "1234", "Video.WindowMode": "borderless"},
+            "L1 durable seed",
+        )
+
+        # Launch 2 -- transient env overrides active while an UNRELATED key is
+        # saved (the report's scenario). The env values must not reach disk; the
+        # durable values must survive; the unrelated edit must persist.
+        run_binary(
+            binary, savedir,
+            "--config-set", "Audio.MasterVolume=0.9",
+            env_extra={
+                "GE007_FOV_Y": "60",
+                "GE007_WINDOW_WIDTH": "800",
+                "GE007_WINDOW_MODE": "windowed",
+            },
+        )
+        after = parse_dump(config_path.read_text(encoding="utf-8"))
+        assert_values(
+            after,
+            {
+                "Video.FovY": "70",
+                "Video.WindowWidth": "1234",
+                "Video.WindowMode": "borderless",
+                "Audio.MasterVolume": "0.9",
+            },
+            "L2 save under active env override preserves durable + persists unrelated",
+        )
+
+        # Launch 3 -- env removed: the exact durable values are revealed.
+        restored = parse_dump(run_binary(binary, savedir, "--dump-config"))
+        assert_values(
+            restored,
+            {"Video.FovY": "70", "Video.WindowWidth": "1234", "Video.WindowMode": "borderless"},
+            "L3 env removed restores exact durable values",
+        )
+
+        # Durable edit to an actively env-overridden key persists the edit (not the
+        # shadow, not the env value, and not silently omitted).
+        run_binary(
+            binary, savedir,
+            "--config-set", "Video.FovY=80",
+            env_extra={"GE007_FOV_Y": "60"},
+        )
+        edited = parse_dump(config_path.read_text(encoding="utf-8"))
+        assert_values(edited, {"Video.FovY": "80"}, "durable --config-set under active env persists the edit")
+
+        # --reset-config under an active env override must persist the DEFAULT, not
+        # the durable shadow and not the env value (reset clears the transient
+        # marking). Video.FovY registered default is 50.
+        run_binary(binary, savedir, "--reset-config", env_extra={"GE007_FOV_Y": "60"})
+        after_reset = parse_dump(config_path.read_text(encoding="utf-8"))
+        assert_values(
+            after_reset,
+            {"Video.FovY": "50"},
+            "reset under active env persists default, not shadow/env",
+        )
+        assert_no_tmp(savedir)
+
+
 def main() -> int:
     args = parse_args()
     binary = Path(args.binary).resolve()
     if not binary.is_file():
-        raise SystemExit(f"FAIL: native binary not found: {binary}")
+        # Binary-dependent lane: skip cleanly (ctest SKIP_RETURN_CODE) when no
+        # native binary has been built, like the other binary-dependent gates.
+        print(f"SKIP: native binary not found (build ge007 first): {binary}")
+        return 77
 
     assert_render_scale_min_clamp(binary)
     assert_faithful_preset(binary)
+    assert_env_override_preserves_persisted(binary)
 
     with tempfile.TemporaryDirectory(prefix="mgb64_config_roundtrip_") as temp:
         savedir = Path(temp)
@@ -574,7 +665,7 @@ def main() -> int:
         reset = parse_dump(run_binary(binary, savedir, "--dump-config"))
         assert_values(reset, DEFAULTS, "reset dump")
 
-    print("PASS: config round-trip, reset, unknown-key preservation")
+    print("PASS: config round-trip, reset, unknown-key preservation, env-override shadow")
     return 0
 
 

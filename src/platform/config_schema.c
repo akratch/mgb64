@@ -30,6 +30,13 @@ static s32 s_stagingActive = 0;
 static char s_previewKey[96] = {0};
 static char s_previewBackup[64] = {0};
 static s32  s_previewActive = 0;
+/* The previewed key's override source, snapshotted on preview-on and restored on
+ * preview-off. A preview is a transient live write through configSetValue, which
+ * clears the override marking (durable-edit semantics); without restoring it, a
+ * previewed-then-reverted env-overridden key would lose its SETTING_OVERRIDE_ENV
+ * flag and a later save would persist the reverted env value instead of the
+ * durable shadow (AUDIT-0055). */
+static SettingOverrideSource s_previewBackupSource = SETTING_OVERRIDE_NONE;
 
 static StagedEntry *stagedFind(const char *key) {
     for (s32 i = 0; i < s_stagedCount; i++) {
@@ -100,12 +107,14 @@ void configStagingPreview(const char *key, int on) {
         s = settingsFind(key);
         if (!s) return;
         liveValueToString(s, s_previewBackup, sizeof(s_previewBackup));
+        s_previewBackupSource = settingsGetOverrideSource(key);  /* preserve across the transient write */
         snprintf(s_previewKey, sizeof(s_previewKey), "%s", key);
         s_previewActive = 1;
         configSetValue(key, sv);                  /* engine feels the staged value */
     } else {
         if (!s_previewActive || strcmp(s_previewKey, key) != 0) return;
         configSetValue(key, s_previewBackup);     /* restore the live value */
+        settingsSetOverrideSource(key, s_previewBackupSource);  /* ...and its override marking */
         s_previewActive = 0;
         s_previewKey[0] = '\0';
     }
