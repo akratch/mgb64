@@ -26,12 +26,19 @@ OUT_DIR="/tmp/mgb64_knife_impact_$$"
 LEVEL=33
 CHRNUM=0
 WARP_FRAME=60
-# FID-0066: 120 -> 90. Under the faithful default guard fire cadence
-# (Input.FireRateAuthentic=1) the warped guard's fire/anim schedule shifts and
-# the 120-unit throw deterministically missed (0 hit events -> false-red). At 90
-# the knife lands on chr 0 under BOTH flag states (default ON: hit frame 258;
-# legacy GE007_FIRE_RATE_AUTHENTIC=0: hit frame 192), keeping crash-branch coverage.
-WARP_DISTANCE=90
+# FID-0066: 120 -> 90. FID-0117 (AUDIT-0018): 90 -> 100. This warp distance is a
+# timing- and position-sensitive emergent collision, so a simulation correction can
+# silently turn crash-branch coverage into a miss. FID-0066 dropped 120 -> 90 so the
+# throw landed under the faithful fire cadence (Input.FireRateAuthentic=1). FID-0117
+# then corrected the guard root-motion seed-flag read (model.c:7710, unk01 not unk02),
+# shifting the point-blank-warped guard's on-transition trajectory so that at 90 the
+# throw deterministically MISSED under the retail default (0 hit events -> false-red:
+# process exits 0 but the sp58C throwknife branch never runs). At 100 the knife lands
+# an accepted hit on chr 0 part 11 at frame 258 under the retail default, under
+# GE007_NO_ANIMFRAME2_ROOTFLAG_FIX=1 (FID-0117 opt-out; frame 258), and under legacy
+# GE007_FIRE_RATE_AUTHENTIC=0 (frame 192), keeping crash-branch coverage. Do NOT
+# recover a hit by disabling FID-0117 -- that would validate the wrong simulation.
+WARP_DISTANCE=100
 GIVE_FRAME=70
 EQUIP_FRAME=85
 FIRE_SPEC="110:240"

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - the crash regression lane no longer exercises its crash-prone branch |
 | Priority | P1 |
 | Area | Validation / throwing-knife impact smoke |
@@ -109,3 +109,25 @@ branch, then run the complete validation suite.
 - AUDIT-0017 covers four campaign routes missed by the same fixture-impact
   inventory.
 - AUDIT-0021 covers the script's independently stale command help.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend` by rebaselining `tools/knife_impact_smoke.sh`
+`WARP_DISTANCE` 90 -> 100 and rewriting the rationale comment to record the
+FID-0117 provenance (a root-motion seed-flag correction shifted the point-blank
+guard's on-transition trajectory, so the 90-unit throw began to miss under the
+retail default while still exiting 0 — a false-red where the sp58C crash branch
+never runs).
+
+Empirically verified here (ROM-gated smoke, `build/ge007`):
+
+- **d=90, retail default:** knife MISSES (0 accepted hits) → smoke FAILs. This is
+  the regression the audit describes.
+- **d=100, retail default:** accepted hit on chr 0 part 11 at **frame 258** → PASS.
+- **d=100, `GE007_NO_ANIMFRAME2_ROOTFLAG_FIX=1`** (FID-0117 opt-out): hit at
+  frame 258 → PASS.
+- **d=100, `GE007_FIRE_RATE_AUTHENTIC=0`** (legacy cadence): hit at frame 192 → PASS.
+
+The primary process-survival + accepted-hit assertions are unchanged; the fix
+restores crash-branch coverage across all three deterministic states without
+disabling FID-0117 (which would validate the wrong simulation).
