@@ -11,6 +11,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <limits.h>
+#include <float.h>
 #include "config_pc.h"
 #include "settings.h"
 #include "savedir.h"
@@ -57,7 +58,9 @@ typedef struct {
 } ConfigEntry;
 
 #define CONFIG_MAX_UNKNOWN_SETTINGS 128
-#define CONFIG_MAX_VALUE_LENGTH 384
+/* AUDIT-0056: sized to the longest registered string value (1024) so a long
+ * forward-compatible value from a newer build round-trips without truncation. */
+#define CONFIG_MAX_VALUE_LENGTH 1024
 
 typedef struct {
     char key[CONFIG_MAX_KEYNAME + 1];   /* "Section.Key" */
@@ -98,6 +101,51 @@ static char *trimWhitespace(char *s) {
     return s;
 }
 
+/* AUDIT-0011: strict scalar parsers. Return 1 and set *out only for a
+ * fully-consumed, in-range, finite value; return 0 (caller keeps the previous
+ * value) for nonnumeric text ("abc"), a valid prefix with trailing junk
+ * ("12xyz"), an empty string, overflow (ERANGE), a negative for an unsigned
+ * setting, or a non-finite float (NaN / +/-inf). Trailing whitespace is
+ * tolerated since some callers pass untrimmed CLI/env strings. */
+static int parseStrictLong(const char *s, long *out) {
+    char *end = NULL;
+    long v;
+    errno = 0;
+    v = strtol(s, &end, 0);
+    if (end == s) return 0;
+    while (isspace((unsigned char)*end)) end++;
+    if (*end != '\0' || errno == ERANGE) return 0;
+    *out = v;
+    return 1;
+}
+static int parseStrictULong(const char *s, unsigned long *out) {
+    char *end = NULL;
+    unsigned long v;
+    const char *p = s;
+    errno = 0;
+    while (isspace((unsigned char)*p)) p++;
+    if (*p == '-') return 0;            /* reject negatives (strtoul would wrap) */
+    v = strtoul(s, &end, 0);
+    if (end == s) return 0;
+    while (isspace((unsigned char)*end)) end++;
+    if (*end != '\0' || errno == ERANGE) return 0;
+    *out = v;
+    return 1;
+}
+static int parseStrictFloat(const char *s, float *out) {
+    char *end = NULL;
+    float v;
+    errno = 0;
+    v = strtof(s, &end);
+    if (end == s) return 0;
+    while (isspace((unsigned char)*end)) end++;
+    if (*end != '\0') return 0;
+    if (v != v) return 0;                       /* NaN */
+    if (v > FLT_MAX || v < -FLT_MAX) return 0;  /* +/-inf */
+    *out = v;
+    return 1;
+}
+
 static ConfigEntry *findEntry(const char *key) {
     for (s32 i = 0; i < s_numEntries; i++) {
         if (strcasecmp(s_entries[i].key, key) == 0)
@@ -132,7 +180,19 @@ static void rememberUnknownEntry(const char *key, const char *value) {
     ConfigUnknownEntry *e = findUnknownEntry(key);
 
     if (!e) {
-        if (s_numUnknownEntries >= CONFIG_MAX_UNKNOWN_SETTINGS) return;
+        if (s_numUnknownEntries >= CONFIG_MAX_UNKNOWN_SETTINGS) {
+            /* AUDIT-0056: don't silently drop forward-compatible keys -- warn once
+             * so the loss (a save would erase these) is observable. */
+            static int warned = 0;
+            if (!warned) {
+                warned = 1;
+                fprintf(stderr,
+                        "[config] WARNING: more than %d unknown/forward-compatible keys; "
+                        "'%s' and any further unknown keys will NOT be preserved on save.\n",
+                        CONFIG_MAX_UNKNOWN_SETTINGS, key);
+            }
+            return;
+        }
         e = &s_unknownEntries[s_numUnknownEntries++];
         memset(e, 0, sizeof(*e));
         snprintf(e->key, sizeof(e->key), "%s", key);
@@ -140,6 +200,12 @@ static void rememberUnknownEntry(const char *key, const char *value) {
         e->seclen = dot ? (s32)(dot - e->key) : 0;
     }
 
+    /* AUDIT-0056: surface value truncation rather than silently clipping. */
+    if (strlen(value) > CONFIG_MAX_VALUE_LENGTH) {
+        fprintf(stderr,
+                "[config] WARNING: unknown key '%s' value exceeds %d bytes and will be "
+                "truncated on save.\n", key, CONFIG_MAX_VALUE_LENGTH);
+    }
     snprintf(e->value, sizeof(e->value), "%s", value);
 }
 
@@ -202,21 +268,30 @@ static s32 setFromStringEx(const char *key, const char *val, s32 *out_applied)
 
     switch (e->type) {
         case CFG_S32: {
-            s32 v = (s32)strtol(val, NULL, 0);
+            /* AUDIT-0011: only a fully-consumed, in-range integer is accepted;
+             * "abc"/"12xyz"/""/overflow keep the previous value (like the
+             * CFG_F32 non-finite case). */
+            long lv;
+            s32 v;
+            if (!parseStrictLong(val, &lv) || lv < INT_MIN || lv > INT_MAX) {
+                fprintf(stderr,
+                        "[config] WARNING: '%s=%s' is not a valid integer; keeping previous value.\n",
+                        key, val);
+                break;
+            }
+            v = (s32)lv;
             if (e->min_s32 < e->max_s32) v = clampInt(v, e->min_s32, e->max_s32);
             *(s32 *)e->ptr = v;
             applied = 1;
         } break;
         case CFG_F32: {
-            f32 v = strtof(val, NULL);
-            if (v != v) {
-                /* strtof() happily parses the literal "nan". Clamping NaN to
-                 * the range floor would be silently wrong for settings whose
-                 * floor is a "muted"/"off" value (e.g. Audio.MasterVolume's
-                 * floor is 0.0) -- so reject the NaN outright and keep
-                 * whatever value the setting already had (its compiled-in
-                 * default, or an earlier valid override), rather than storing
-                 * NaN or clamping to an unrelated sentinel. */
+            /* AUDIT-0011: require a fully-consumed FINITE number. strtof() happily
+             * parses "nan"/"inf" and would clamp them to a range edge (silently
+             * wrong for settings whose floor is a "muted"/"off" value, e.g.
+             * Audio.MasterVolume floor 0.0); a valid prefix + junk ("1.5x") is
+             * also rejected. Keep the previous value on rejection. */
+            f32 v;
+            if (!parseStrictFloat(val, &v)) {
                 fprintf(stderr,
                         "[config] WARNING: '%s=%s' is not a finite number; keeping previous value.\n",
                         key, val);
@@ -227,7 +302,16 @@ static s32 setFromStringEx(const char *key, const char *val, s32 *out_applied)
             applied = 1;
         } break;
         case CFG_U32: {
-            u32 v = (u32)strtoul(val, NULL, 0);
+            /* AUDIT-0011: fully-consumed non-negative integer only. */
+            unsigned long uv;
+            u32 v;
+            if (!parseStrictULong(val, &uv) || uv > UINT_MAX) {
+                fprintf(stderr,
+                        "[config] WARNING: '%s=%s' is not a valid unsigned integer; keeping previous value.\n",
+                        key, val);
+                break;
+            }
+            v = (u32)uv;
             if (e->min_u32 < e->max_u32) v = clampUInt(v, e->min_u32, e->max_u32);
             *(u32 *)e->ptr = v;
             applied = 1;
@@ -258,10 +342,12 @@ static s32 setFromStringEx(const char *key, const char *val, s32 *out_applied)
                  * there is no sane "nearest", so an unmatched value is rejected
                  * outright and the previous value is kept, matching the CFG_F32
                  * NaN-rejection philosophy just above. */
-                char *end = NULL;
-                long numeric = strtol(val, &end, 0);
+                long numeric;
                 s32 matched = 0;
-                if (end != val) { /* strtol actually consumed a number */
+                /* AUDIT-0011: require the numeric fallback to be fully consumed
+                 * (parseStrictLong), so "2xyz" is rejected rather than silently
+                 * accepted as 2. */
+                if (parseStrictLong(val, &numeric)) {
                     for (s32 i = 0; i < e->enum_count; i++) {
                         if (e->enum_options[i].value == (s32)numeric) {
                             *(s32 *)e->ptr = (s32)numeric;

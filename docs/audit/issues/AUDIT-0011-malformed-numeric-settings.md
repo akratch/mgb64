@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - user configuration is silently changed to unintended values |
 | Priority | P2 |
 | Area | Configuration / command-line validation |
@@ -126,3 +126,7 @@ values and that `--config-set` never persists rejected text or a coerced value.
   covers valid values and range clamping but no malformed strings.
 - The enum branch already rejects unknown tokens and unmatched numeric values;
   it should use the same full-consumption rule as the scalar branches.
+
+## Resolution
+
+setFromStringEx (src/platform/config_pc.c) now uses strict scalar parsers (parseStrictLong/ULong/Float): a value is accepted only if it is fully consumed (trailing whitespace tolerated), in range, and finite. Nonnumeric text ('abc'), a valid prefix with junk ('12xyz'/'2xyz' for enums), an empty string, ERANGE overflow, a negative for an unsigned setting, and NaN/+/-inf floats are rejected and the previous value is kept (with a `[config] WARNING`). This composes with AUDIT-0055's `applied` flag: a rejected value is not a durable edit, so it neither clears an env override nor is counted as an active CLI override. Covered by tests/test_config_env_shadow.c (Phase 5). Valid configs are unaffected (configSave writes canonical numeric forms); 7/7 tapes byte-exact, config round-trip green.

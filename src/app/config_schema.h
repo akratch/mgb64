@@ -40,6 +40,10 @@ typedef struct {
 // idempotently (settingsFindOrAdd) and reloads ge007.ini.
 void mgb_config_init(void);      // savedir + register + load ge007.ini
 int  mgb_config_save(void);      // write ge007.ini
+// Resolved absolute path of the engine config file (ge007.ini) in the active save
+// directory. Returns a pointer to a static buffer (copy before reuse). Use this to
+// locate the REAL file instead of guessing a CWD-relative name (AUDIT-0047).
+const char *mgb_config_path(void);
 
 // Enumeration.
 int  mgb_config_count(void);

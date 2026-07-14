@@ -4,6 +4,7 @@
 #include "app_version.h"
 #include "diag_log.h"
 #include "ui_common.h"
+#include "config_schema.h"   // mgb_config_path (AUDIT-0047)
 
 #include "imgui.h"
 #include <SDL.h>
@@ -89,7 +90,13 @@ std::string exportDiagnostics(const LauncherState &s) {
     std::string logp = DiagLog_path();
     if (!logp.empty()) copyIfExists(logp, "mgb64.log");
     copyIfExists(fs::path(base) / "mgb64.prev.log", "mgb64.prev.log");
-    copyIfExists("ge007.ini", "ge007.ini");  // engine writes it to the cwd/savedir
+    // AUDIT-0047: export the engine config from its RESOLVED save-directory path,
+    // not a guessed CWD-relative name (a packaged .app has CWD=/, and --savedir
+    // moves it elsewhere), so the real ge007.ini is actually included.
+    {
+        const char *cfg = mgb_config_path();
+        if (cfg && cfg[0]) copyIfExists(fs::path(cfg), "ge007.ini");
+    }
     copyIfExists(fs::path(base) / "mgb64_app.ini", "mgb64_app.ini");
     writeSysinfo((out / "sysinfo.txt").string(), s);
     return out.string();

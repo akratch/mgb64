@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S4 - settings presented as saved can be lost at the next launch |
 | Priority | P2 |
 | Area | Settings UI / configuration persistence |
@@ -73,3 +73,7 @@ behavior.
 ## Related Work
 
 - AUDIT-0026 covers value truncation before this persistence boundary.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+Lower-priority UI-feedback polish (S4). The engine save path already reports success/failure correctly (configSave returns 0 on open/close/replace failure) and honors configSetSaveSuppressed for read-only --faithful/--remaster sessions; the gap is purely surfacing saved-vs-suppressed-vs-failed in the ImGui settings panel, which requires interactive UI validation not available headlessly. Deferred behind the higher-severity correctness/robustness backlog.

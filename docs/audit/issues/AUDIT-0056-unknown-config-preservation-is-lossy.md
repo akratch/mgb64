@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - older builds can silently erase settings they do not recognize |
 | Priority | P3 |
 | Area | Configuration parser / forward compatibility |
@@ -70,3 +70,7 @@ allocation/capacity failure and verify the original file remains untouched.
 ## Related Work
 
 - AUDIT-0039 and AUDIT-0049 cover atomicity of other preference stores.
+
+## Resolution
+
+config_pc.c's unknown/forward-compatible-key preservation no longer fails silently: rememberUnknownEntry warns once when the 128-entry cap is exceeded (keys beyond it would be dropped on save) and warns when a value exceeds the per-value length. CONFIG_MAX_VALUE_LENGTH is raised 384->1024 to match the longest registered string value, so a long future value round-trips without truncation. (A fully-dynamic store is out of scope; the loss is now observable rather than silent.)

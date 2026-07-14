@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - support bundle can silently omit the configuration needed to diagnose it |
 | Priority | P2 |
 | Area | App shell / diagnostics export |
@@ -78,3 +78,7 @@ files.
 - AUDIT-0033 and AUDIT-0034 cover incorrect save-directory selection before
   export.
 - AUDIT-0048 covers path redaction inside the same bundle.
+
+## Resolution
+
+The launcher diagnostics export guessed a CWD-relative 'ge007.ini' (a packaged .app has CWD=/, and --savedir moves the file). A new mgb_config_path() (config_schema.c/.h) returns the engine's RESOLVED savedirPath(ge007.ini); src/app/ui_diag.cpp exports from that path, so the real config is actually included in the diagnostics bundle.

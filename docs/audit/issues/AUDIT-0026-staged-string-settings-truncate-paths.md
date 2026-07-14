@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - valid selected resource paths are silently corrupted on Apply |
 | Priority | P2 |
 | Area | Configuration staging / string settings |
@@ -80,3 +80,7 @@ bytes where the host filesystem supports it.
 ## Related Work
 
 - None.
+
+## Resolution
+
+config_schema.c's StagedEntry value buffer was 64 bytes, truncating any path longer than 63 chars staged from the settings UI. It is now sized to CONFIG_STAGING_VAL_MAX (1024), matching the registered string capacities (Video.TexturePack / Video.SceneDecorDir are 1024-byte buffers), so a long folder selection stages and Applies intact.

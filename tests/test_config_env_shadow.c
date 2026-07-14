@@ -241,6 +241,24 @@ int main(void) {
     CHECK("phase4: reset does NOT persist env 11",      !fileHas("IntVal=11"));
     unsetenv("GE007_TEST_INT");
 
+    /* ================================================================= *
+     * Phase 5 -- AUDIT-0011: a malformed numeric value is rejected (previous
+     * value kept), not silently coerced to 0 / a truncated prefix / a clamped
+     * infinity. Valid values still apply.
+     * ================================================================= */
+    g_int = 42; g_uint = 42; g_float = 4.2f;
+    configSetValue("Test.IntVal",   "abc");     CHECK("0011 int 'abc' rejected",         g_int == 42);
+    configSetValue("Test.IntVal",   "12xyz");   CHECK("0011 int trailing junk rejected", g_int == 42);
+    configSetValue("Test.IntVal",   "");        CHECK("0011 int empty rejected",         g_int == 42);
+    configSetValue("Test.UintVal",  "-5");      CHECK("0011 uint negative rejected",     g_uint == 42);
+    configSetValue("Test.UintVal",  "1.5");     CHECK("0011 uint non-integer rejected",  g_uint == 42);
+    configSetValue("Test.FloatVal", "inf");     CHECK("0011 float inf rejected",         feq(g_float, 4.2f));
+    configSetValue("Test.FloatVal", "1.5abc");  CHECK("0011 float trailing junk rejected", feq(g_float, 4.2f));
+    /* valid values are still applied */
+    configSetValue("Test.IntVal",   "7");       CHECK("0011 int valid applied",   g_int == 7);
+    configSetValue("Test.UintVal",  "9");       CHECK("0011 uint valid applied",  g_uint == 9);
+    configSetValue("Test.FloatVal", "0.5");     CHECK("0011 float valid applied", feq(g_float, 0.5f));
+
     if (g_fails == 0) { printf("PASS: all config_env_shadow cases\n"); return 0; }
     printf("%d failure(s)\n", g_fails);
     return 1;

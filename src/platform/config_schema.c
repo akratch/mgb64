@@ -21,7 +21,12 @@ extern void portAudioRegisterConfig(void);
  * only reached on Apply and Preview. CONFIG_MAX_SETTINGS (128) bounds how many
  * distinct keys can be staged, so this store never overflows in practice. */
 #define CONFIG_STAGING_MAX CONFIG_MAX_SETTINGS
-typedef struct { char key[96]; char val[64]; } StagedEntry;
+/* AUDIT-0026: the staged value must hold the largest registered string setting
+ * (Video.TexturePack / Video.SceneDecorDir are 1024-byte path buffers), not just
+ * short numeric/enum text -- otherwise a long folder pick is silently truncated
+ * and the damaged path is committed on Apply. */
+#define CONFIG_STAGING_VAL_MAX 1024
+typedef struct { char key[96]; char val[CONFIG_STAGING_VAL_MAX]; } StagedEntry;
 static StagedEntry s_staged[CONFIG_STAGING_MAX];
 static s32 s_stagedCount = 0;
 static s32 s_stagingActive = 0;
@@ -160,6 +165,14 @@ void mgb_config_init(void) {
 }
 
 int mgb_config_save(void) { return (int)configSave(); }
+
+const char *mgb_config_path(void) {
+    /* savedirPath returns its own static buffer; copy so the caller isn't racing
+     * the next savedirPath() user (AUDIT-0047). */
+    static char s_cfgPath[1024];
+    snprintf(s_cfgPath, sizeof(s_cfgPath), "%s", savedirPath(CONFIG_FILENAME));
+    return s_cfgPath;
+}
 
 int mgb_config_count(void) { return (int)settingsCount(); }
 
