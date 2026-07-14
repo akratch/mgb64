@@ -772,6 +772,19 @@ if(BUILD_TESTING)
     target_include_directories(test_projectile_endpoint_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME projectile_endpoint_clamp COMMAND test_projectile_endpoint_clamp)
 
+    # Auto-aim target divisor + score — ROM-free unit test (AUDIT-0008): the pure
+    # helpers factored out of sub_GAME_7F03D188 so the width divisor is always
+    # defined (the vertical-only path no longer divides by an uninitialized stack
+    # slot) while the autoaim_x-on divisor/score arithmetic stays byte-identical
+    # to retail. Fails if the divisor operand order or the three-branch score
+    # formula drifts.
+    add_executable(test_autoaim_score
+        "${CMAKE_SOURCE_DIR}/tests/test_autoaim_score.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/autoaim_score.c"
+    )
+    target_include_directories(test_autoaim_score PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME autoaim_score COMMAND test_autoaim_score)
+
     # sub_GAME_7F0AF20C roomset filter — ROM-free unit test (FID-0079): retail
     # reads the roomset as u8 room bytes (0xFF-terminated, <=4 entries; ASM
     # src/game/stan.c:1063-1086), the port cast to s32* and never matched, so

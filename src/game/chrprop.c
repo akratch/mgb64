@@ -38,6 +38,7 @@
 #include "ge_debug.h"
 #include "platform/hull_vertex_clamp.h"  /* FID-0096 bbox-hull vertex count */
 #include "platform/bg_impact_guard.h"    /* FID-0097 bg-only bullet-impact gate */
+#include "platform/autoaim_score.h"      /* AUDIT-0008 autoaim divisor + score */
 #include "platform/mp_respawn_tail.h"    /* FID-0103 object-respawn tail decision */
 #include "platform/port_env.h"           /* FID-0103 negative-control flag */
 #ifdef NATIVE_PORT
@@ -6582,17 +6583,18 @@ f32 sub_GAME_7F03D188(PropRecord *prop, coord3d *arg1, f32 *arg2, f32 *arg3, f32
         sp8c[0] = floorFloat(sp8c[0]);
         sp84[0] = ceilFloat(sp84[0]);
 
+        /* AUDIT-0008: compute the width-based score divisor unconditionally so the
+         * vertical-only (autoaim_x off) scoring path can no longer divide by an
+         * uninitialized stack value. In the autoaim_x-on paths this is the exact
+         * same value the inner block used -- sp4c can only become TRUE there,
+         * after this assignment -- so X-only / X+Y target selection stays
+         * byte-identical to retail. */
+        sp48 = autoaimTargetDivisor(sp8c[0], sp84[0], getPlayerCount() == 1, difficulty);
+
         if (redirect_get_BONDdata_autoaim_x())
         {
             if (sp8c[0] <= right && left <= sp84[0])
             {
-                sp48 = (sp84[0] - sp8c[0]) * 1.5f;
-
-                if (getPlayerCount() == 1)
-                {
-                    sp48 = sp48 * difficulty;
-                }
-
                 sp4c = getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth() >= (sp8c[0] + sp84[0]) * 0.5f - sp48
                     && getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth() <= (sp8c[0] + sp84[0]) * 0.5f + sp48
                     && left <= spa0[0]
@@ -6628,7 +6630,12 @@ f32 sub_GAME_7F03D188(PropRecord *prop, coord3d *arg1, f32 *arg2, f32 *arg3, f32
 
                     arg4[1] = value;
 
-                    if (redirect_get_BONDdata_autoaim_x())
+                    /* AUDIT-0008: always define the horizontal output coordinate.
+                     * In the autoaim_x-on paths this is the same clamp retail
+                     * applies; in the vertical-only path the caller never consumes
+                     * it (chrpropUpdateAutoaimTarget guards the X auto-aim update on
+                     * autoaim_x), so writing it is sim-neutral and removes the
+                     * uninitialized read of the caller's sp6C.x / sp9C.x. */
                     {
                         f32 value = spa0[0];
 
@@ -6644,19 +6651,9 @@ f32 sub_GAME_7F03D188(PropRecord *prop, coord3d *arg1, f32 *arg2, f32 *arg3, f32
                         arg4[0] = value;
                     }
 
-                    if (getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth() >= sp8c[0]
-                            && getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth() <= sp84[0])
-                    {
-                        result = 1;
-                    }
-                    else if (getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth() >= sp8c[0])
-                    {
-                        result = 1 - ((getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth()) - sp84[0]) / sp48;
-                    }
-                    else
-                    {
-                        result = 1 - (sp8c[0] - (getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth())) / sp48;
-                    }
+                    result = autoaimTargetScore(
+                        getPlayer_c_screenleft() + 0.5f * getPlayer_c_screenwidth(),
+                        sp8c[0], sp84[0], sp48);
                 }
             }
 

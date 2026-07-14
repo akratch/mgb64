@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - undefined target scoring in a supported debug configuration |
 | Priority | P3 |
 | Area | Gameplay / targeting / auto-aim |
@@ -108,3 +108,37 @@ values, then compare the defined configurations with the retail US oracle.
 This is not the same as renderer visibility influencing target eligibility.
 That broader parity behavior belongs in the fidelity ledger; this report is the
 local native undefined state after a candidate has entered scoring.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend`. In `sub_GAME_7F03D188` (src/game/chrprop.c) two
+horizontal-only values were populated only under the `autoaim_x` branch: the
+width-based score divisor `sp48` and the horizontal output coordinate `arg4[0]`.
+With `autoaim_x` OFF but `autoaim_y` ON, the shared eligibility gate could pass,
+then the returned score divided by an **uninitialized** `sp48` (indeterminate
+candidate ranking) and the caller copied an uninitialized `arg4[0]`.
+
+- The width divisor is now computed **unconditionally** before the `autoaim_x`
+  branch via the new pure helper `autoaimTargetDivisor` (src/platform/autoaim_score.c).
+  In every `autoaim_x`-on path this is the exact same value the inner block used
+  (`sp4c` can only become TRUE there, after the assignment), so X-only / X+Y
+  selection is unchanged; the vertical-only path now gets a deterministic native
+  policy (the same divisor) in place of retail's undefined stack read.
+- `arg4[0]` is written **unconditionally** (same clamp retail applies on the
+  `autoaim_x`-on path). In the vertical-only path the value is provably dead: the
+  caller `chrpropUpdateAutoaimTarget` guards the X auto-aim update on `autoaim_x`,
+  and the copied `sp9C.x` is read only at a dead `if (sp9C.x > 1.0f);` empty
+  statement and inside an `if (autoaim_x)` block — neither reachable/observable in
+  the Y-only config — so defining it is sim-neutral and removes the UB read.
+- The three-branch score is routed through the byte-faithful `autoaimTargetScore`
+  (operand order preserved; `center` is a pure getter expression identical across
+  evaluations).
+
+Guarded by the ROM-free ctest `autoaim_score` (tests/test_autoaim_score.c) over
+the extracted divisor + three-branch score. **Byte-identity of the reachable
+(`autoaim_x`-on) paths is proven empirically: all 7 input tapes — including the
+combat tapes `dam_combat_guard6` and `dam_ak47_sustained` that exercise auto-aim
+during play — replay byte-exact with hashes unchanged.** The vertical-only
+selection cannot be byte-matched to retail (retail divides by an uninitialized
+stack slot there, so there is no defined oracle); the documented native policy is
+sanctioned by the Required End State.
