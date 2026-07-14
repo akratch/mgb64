@@ -761,6 +761,18 @@ if(BUILD_TESTING)
     target_include_directories(test_stan_roomset PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME stan_roomset COMMAND test_stan_roomset)
 
+    # Low-32 GBI pointer registry — ROM-free unit test (AUDIT-0009): the
+    # open-addressed table must never silently evict a live mapping (whole-table
+    # lossless insert), must tombstone (not zero) on range-invalidation so a
+    # mid-chain delete never hides a later live mapping, and must fail closed on
+    # an ambiguous same-low-32 collision. Header-only static-inline logic, so the
+    # test owns the table + telemetry definitions and links no engine TU.
+    add_executable(test_gfx_ptr_registry
+        "${CMAKE_SOURCE_DIR}/tests/test_gfx_ptr_registry.c"
+    )
+    target_include_directories(test_gfx_ptr_registry PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME gfx_ptr_registry COMMAND test_gfx_ptr_registry)
+
     # maybe_detonate_object gate/armour/salvage helpers — ROM-free unit test
     # (FID-0074): retail ASM src/game/chrobjhandler.c:38029-38459. Guards all
     # five divergences on both flag sides (D2 armour polarity, D3 unarmed-gate

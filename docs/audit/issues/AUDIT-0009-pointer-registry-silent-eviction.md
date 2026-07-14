@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - latent dropped draw or unresolved native address |
 | Priority | P3 |
 | Area | Rendering / 64-bit address resolution |
@@ -121,3 +121,36 @@ render-health telemetry with rate-limited diagnostics on any failure.
 - The older headline overstated wrong-buffer frequency. The directly proven
   actionable defects are silent four-slot eviction, broken deletion chains, and
   undetected identical low-32 ambiguity.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend` by converting the low-32 registry
+(`src/platform/gfx_ptr.h`) from a bounded 4-slot probe window to proper
+open addressing with an explicit per-slot state array
+(`gfx_ptr_state[]`, `EMPTY`/`OCCUPIED`/`TOMBSTONE`; defined + reset next to the
+tables in `src/platform/fast3d/gfx_pc.c`):
+
+- **`gfx_ptr_store` is now lossless.** It probes the whole table, reuses the
+  first `EMPTY`/`TOMBSTONE` slot but scans to a genuine `EMPTY` terminator so an
+  existing key is always matched first. It never evicts: an identical duplicate
+  is a stable no-op, an *ambiguous* same-low-32 collision (same key, different
+  full pointer) fails closed keeping the incumbent (`gfx_ptr_ambiguous++`), and a
+  100%-occupied table refuses the insert (`gfx_ptr_full_fails++`) instead of
+  silently overwriting slot 0.
+- **`gfx_ptr_invalidate_range` tombstones** (state `TOMBSTONE`) instead of
+  zeroing, so a deletion at the head/middle of a probe chain no longer truncates
+  it and hides a still-live mapping stored later in the chain.
+- **`gfx_ptr_resolve`** skips tombstones and non-matching occupied slots,
+  stopping only at a real `EMPTY` terminator.
+- Render-health telemetry (`gfx_ptr_ambiguous`/`gfx_ptr_full_fails`/
+  `gfx_ptr_max_probe`) surfaces any degeneration; it never gates the sim.
+
+Guarded by the ROM-free unit test `tests/test_gfx_ptr_registry.c` (ctest
+`gfx_ptr_registry`): five same-bucket registrations survive, head- and
+middle-of-chain deletions keep later mappings resolvable, duplicate stores are
+stable, a tombstoned slot is reusable, the probe window wraps past the top of
+the table, and an ambiguous same-low-32 collision fails closed. The test fails
+(5 checks) against the pre-fix header, proving it bites. The 7 input-tape
+sim-hash baselines stay byte-exact (registry is render-only, sim-neutral). The
+longer-term migration of native `Gfx` producers to full `uintptr_t` fields
+remains a separate, larger item.

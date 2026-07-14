@@ -23931,6 +23931,11 @@ extern bool gfx_backend_use_webgpu(void);       /* gfx_backend.c */
 uintptr_t gfx_segment_table[16];
 uint32_t  gfx_ptr_keys[GFX_PTR_TABLE_SIZE];
 uintptr_t gfx_ptr_vals[GFX_PTR_TABLE_SIZE];
+uint8_t   gfx_ptr_state[GFX_PTR_TABLE_SIZE];
+/* AUDIT-0009 render-health telemetry (see gfx_ptr.h). */
+uint32_t  gfx_ptr_ambiguous;
+uint32_t  gfx_ptr_full_fails;
+uint32_t  gfx_ptr_max_probe;
 
 static void gfx_sp_reset(void) {
     rsp.modelview_matrix_stack_size = 1;
@@ -24000,6 +24005,7 @@ void gfx_init(void) {
     memset(gfx_segment_table, 0, sizeof(gfx_segment_table));
     memset(gfx_ptr_keys, 0, sizeof(gfx_ptr_keys));
     memset(gfx_ptr_vals, 0, sizeof(gfx_ptr_vals));
+    memset(gfx_ptr_state, 0, sizeof(gfx_ptr_state));  /* EMPTY==0 (AUDIT-0009) */
     memset(extra_pc_vtx_regions, 0, sizeof(extra_pc_vtx_regions));
     extra_pc_vtx_region_count = 0;
     pc_vtx_range_start = 0;
