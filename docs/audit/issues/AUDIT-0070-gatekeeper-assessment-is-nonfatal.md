@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a signed release can be declared complete after the end-user launch gate rejects it |
 | Priority | P1 |
 | Area | macOS release / signing and notarization |
@@ -69,3 +69,7 @@ Record assessment output alongside the artifact hashes used by publication.
 
 - AUDIT-0052 covers binding release assets to the verified source commit.
 - AUDIT-0059 covers incomplete runtime-library bundling before signing.
+
+## Resolution
+
+macos/Scripts/sign_and_notarize.sh fails closed on the two Gatekeeper-relevant checks when notarizing: a non-'accepted' notarization result and a failed `spctl --assess` now `die` (no "Signing Complete" banner) instead of warning and continuing. A new `--allow-spctl-fail` flag opts out for local signing. Owner validates on the next signed release (requires the signing identity).

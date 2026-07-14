@@ -39,11 +39,16 @@ step() {
 # Parse arguments
 # ---------------------------------------------------------------------------
 SKIP_NOTARIZE=false
+# AUDIT-0070: when notarizing, a rejected notarization or a failed Gatekeeper
+# (spctl) assessment means the artifact is NOT distributable -- fail closed rather
+# than print "Signing Complete". --allow-spctl-fail opts out for local/dev signing.
+ALLOW_SPCTL_FAIL=false
 APP_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --skip-notarize) SKIP_NOTARIZE=true; shift ;;
+        --skip-notarize)    SKIP_NOTARIZE=true; shift ;;
+        --allow-spctl-fail) ALLOW_SPCTL_FAIL=true; shift ;;
         -*)              die "Unknown option: $1" ;;
         *)
             if [[ -z "${APP_PATH}" ]]; then
@@ -56,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${APP_PATH}" ]]; then
-    die "Usage: $0 <path-to.app> [--skip-notarize]"
+    die "Usage: $0 <path-to.app> [--skip-notarize] [--allow-spctl-fail]"
 fi
 
 if [[ ! -d "${APP_PATH}" ]]; then
@@ -218,8 +223,12 @@ else
     # Check if notarization was accepted
     if echo "${SUBMISSION_OUTPUT}" | grep -qi "accepted"; then
         info "Notarization accepted."
+    elif [[ "${ALLOW_SPCTL_FAIL}" == true ]]; then
+        warn "Notarization may not have been accepted (allowed by --allow-spctl-fail)."
     else
-        warn "Notarization may not have been accepted. Review the output above."
+        # AUDIT-0070: a non-accepted notarization must not proceed to a "Signing
+        # Complete" banner -- the bundle would be rejected by Gatekeeper for users.
+        die "Notarization was not accepted; the bundle is NOT distributable. Review the output above (or pass --allow-spctl-fail for a local build)."
     fi
 
     # Clean up the zip
@@ -236,11 +245,15 @@ else
     # Verify with Gatekeeper
     step 6 "Verify with Gatekeeper (spctl)"
 
-    spctl --assess --type execute --verbose=2 "${APP_PATH}" \
-        || {
-            warn "spctl assessment did not pass. This may be expected on some systems."
-            warn "The app is still notarized and will work for end users."
-        }
+    if spctl --assess --type execute --verbose=2 "${APP_PATH}"; then
+        info "Gatekeeper (spctl) assessment passed."
+    elif [[ "${ALLOW_SPCTL_FAIL}" == true ]]; then
+        warn "spctl assessment did not pass (allowed by --allow-spctl-fail)."
+    else
+        # AUDIT-0070: Gatekeeper rejection means end users will be blocked from
+        # launching the app -- fail the signing pipeline instead of masking it.
+        die "spctl assessment FAILED: Gatekeeper would reject this bundle; it is NOT distributable. (Pass --allow-spctl-fail for a local build.)"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

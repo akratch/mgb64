@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - green portable packages may fail on systems without developer SDL installs |
 | Priority | P1 |
 | Area | Release packaging / runtime dependencies |
@@ -73,3 +73,7 @@ without package-manager SDL.
 
 - AUDIT-0058 covers missing AppImage output rather than a broken produced image.
 - AUDIT-0052 binds validated final packages to the release commit.
+
+## Resolution
+
+scripts/package_linux_appimage.sh fails closed when the linked SDL2 runtime cannot be resolved/bundled (a release artifact that omits its SDL2 won't launch on a clean machine), unless `--dev` is passed for a local developer package. Mirrors the fail-closed digest gate already added for AUDIT-0037.

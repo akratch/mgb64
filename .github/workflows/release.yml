@@ -38,7 +38,8 @@ jobs:
             libdbus-1-dev file wget
       - name: Build the app (MGB64_APP=ON, Release)
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DMGB64_APP=ON -DPORT_VALIDATION_TESTS=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DMGB64_APP=ON -DPORT_VALIDATION_TESTS=OFF \
+            -DMGB64_VERSION="${{ github.event.inputs.version }}"
           cmake --build build --target ge007 -j
       - name: Package AppImage + tar.gz
         run: ./scripts/package_linux_appimage.sh --binary build/ge007 --version "${{ github.event.inputs.version }}"

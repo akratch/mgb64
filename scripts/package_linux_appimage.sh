@@ -13,11 +13,17 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 binary="build/ge007"
 version="dev"
+# AUDIT-0058/0059: release packaging is STRICT by default -- a missing bundled
+# SDL2 runtime or a missing AppImage is a hard failure, so a release can't ship a
+# broken/incomplete artifact while the job reports success. --dev relaxes both to
+# warn-and-continue for local "developer package" builds.
+dev=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --binary) binary="$2"; shift 2 ;;
     --version) version="$2"; shift 2 ;;
-    -h|--help) echo "Usage: $0 [--binary PATH] [--version VER]"; exit 0 ;;
+    --dev) dev=true; shift ;;
+    -h|--help) echo "Usage: $0 [--binary PATH] [--version VER] [--dev]"; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -52,8 +58,14 @@ sdl="$(ldd "$binary" | awk '/libSDL2/{print $3; exit}')"
 if [[ -n "${sdl:-}" && -f "$sdl" ]]; then
   cp -L "$sdl" "$appdir/usr/lib/"
   echo "bundled SDL2: $(basename "$sdl")"
+elif [[ "$dev" == true ]]; then
+  echo "WARN: could not resolve SDL2 to bundle; the developer package needs a system SDL2." >&2
 else
-  echo "WARN: could not resolve SDL2 to bundle; the AppImage will need a system SDL2." >&2
+  # AUDIT-0059: a release artifact that silently omits its SDL2 runtime fails to
+  # launch on a clean machine. Fail closed unless --dev.
+  echo "ERROR: could not resolve a bundled SDL2 from '$binary' (ldd). A release" >&2
+  echo "       package must include its runtime; re-run with --dev for a local build." >&2
+  exit 1
 fi
 
 # AppRun launcher.
@@ -124,12 +136,26 @@ else
     tool=""
   fi
 fi
+appimage_made=false
 if [[ -n "$tool" ]]; then
-  ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" "$dist/mgb64-linux-$version.AppImage" \
-    && echo "wrote $dist/mgb64-linux-$version.AppImage" \
-    || echo "WARN: AppImage build failed; the .tar.gz is still available." >&2
-else
-  echo "WARN: appimagetool unavailable; produced .tar.gz only." >&2
+  if ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" "$dist/mgb64-linux-$version.AppImage"; then
+    echo "wrote $dist/mgb64-linux-$version.AppImage"
+    appimage_made=true
+  else
+    echo "WARN: AppImage build failed." >&2
+  fi
+fi
+if [[ "$appimage_made" != true ]]; then
+  if [[ "$dev" == true ]]; then
+    echo "WARN: no AppImage produced; developer package is .tar.gz only." >&2
+  else
+    # AUDIT-0058: a release job must not report success without the AppImage. The
+    # .tar.gz alone is a developer artifact, not a release deliverable.
+    echo "ERROR: no AppImage produced (appimagetool unavailable or its build failed);" >&2
+    echo "       refusing to complete the release package. Re-run with --dev for tar-only." >&2
+    rm -rf "$work"
+    exit 1
+  fi
 fi
 
 rm -rf "$work"

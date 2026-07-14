@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - failed handheld launches can finish with a misleading script status |
 | Priority | P2 |
 | Area | PortMaster launcher / failure handling |
@@ -73,3 +73,7 @@ cleanup failure, and space-containing paths, asserting order and final status.
 ## Related Work
 
 - AUDIT-0033 covers the same launcher's ineffective save-directory argument.
+
+## Resolution
+
+pm-Goldeneye007.sh quotes the sourced control file (`source "$controlfolder/control.txt"`) and fails loudly if the game dir or binary is missing: `cd "$GAMEDIR" || exit 1` and an `[ -x "$GAMEDIR/ge007" ]` guard, so a missing game directory/binary is reported instead of silently running ./ge007 against the wrong CWD.

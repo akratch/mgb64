@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - clean rebuilds can silently reuse stale generated assets |
 | Priority | P2 |
 | Area | Build tooling / cleanup |
@@ -108,3 +108,7 @@ real `make nuke` plus clean rebuild in a disposable checkout.
   the quoted-glob no-op. Retain a behavioral fixture even after lint is clean.
 - This affects the legacy matching/decomp build path, not CMake's native-port
   object cleanup directly.
+
+## Resolution
+
+scripts/make/clean_nuke.sh no longer quotes the asset globs (which prevented shell expansion, so `rm -f` looked for a literal '*.bin' and -f swallowed the miss, leaving every generated binary). It now enumerates each asset directory with `find <dir> -maxdepth 1 -type f -name '*.bin' -delete` (quoted dir paths, missing dirs skipped). bash -n + shellcheck clean.

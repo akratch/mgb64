@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a promised primary Linux artifact can be absent from a green release job |
 | Priority | P1 |
 | Area | Linux packaging / release gate |
@@ -69,3 +69,7 @@ workflow logic against each and assert final status plus exact artifact set.
 
 - AUDIT-0037 requires the downloaded AppImage tool to be immutable and verified.
 - AUDIT-0052 requires complete platform artifacts in the release manifest.
+
+## Resolution
+
+scripts/package_linux_appimage.sh is now STRICT by default: if appimagetool is unavailable or the AppImage build fails, the job exits nonzero instead of reporting success with only a .tar.gz. `--dev` relaxes this to a labeled "developer package" (tar-only warn-and-continue). release.yml invokes it without --dev, so a release fails closed. bash -n + shellcheck clean; end-to-end validation is on the owner's next release.

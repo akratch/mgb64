@@ -24,7 +24,20 @@ echo "deleting bin / rsp / asp"
 rm -r -f -d bin/
 rm -r -f -d assets/images/split/
 
-# delete binary files according to current source control directory structure.
-# fixes issues if directory structure changes ...
+# delete generated .bin assets according to the current directory structure.
+# AUDIT-0014: the previous `rm -f "assets/.../*.bin"` QUOTED each glob, so the
+# shell never expanded it -- rm looked for a literal file named "*.bin" (which
+# never exists) and -f silently swallowed the error, leaving every generated
+# binary in place. Enumerate each directory with find so the globs expand safely
+# (quoted dir paths tolerate spaces, and a missing dir is skipped, not an error).
 echo "deleting assets"
-rm -r -f "assets/music/*.bin" "assets/obseg/bg/*.bin" "assets/obseg/brief/*.bin" "assets/obseg/chr/*.bin" "assets/obseg/gun/*.bin" "assets/obseg/prop/*.bin" "assets/obseg/setup/*.bin" "assets/obseg/setup/e/*.bin" "assets/obseg/setup/u/*.bin" "assets/obseg/setup/j/*.bin" "assets/obseg/stan/*.bin" "assets/obseg/text/*.bin" "assets/obseg/text/e/*.bin" "assets/obseg/text/u/*.bin" "assets/obseg/text/j/*.bin" "assets/ramrom/*.bin" "assets/ramrom/e/*.bin" "assets/ramrom/u/*.bin" "assets/ramrom/j/*.bin"
+for d in \
+    assets/music \
+    assets/obseg/bg assets/obseg/brief assets/obseg/chr assets/obseg/gun \
+    assets/obseg/prop \
+    assets/obseg/setup assets/obseg/setup/e assets/obseg/setup/u assets/obseg/setup/j \
+    assets/obseg/stan \
+    assets/obseg/text assets/obseg/text/e assets/obseg/text/u assets/obseg/text/j \
+    assets/ramrom assets/ramrom/e assets/ramrom/u assets/ramrom/j; do
+    [ -d "$d" ] && find "$d" -maxdepth 1 -type f -name '*.bin' -delete
+done

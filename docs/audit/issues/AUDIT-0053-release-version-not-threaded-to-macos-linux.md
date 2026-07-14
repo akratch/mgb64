@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - shipped binaries and bundle metadata misidentify their version |
 | Priority | P1 |
 | Area | Release packaging / product version |
@@ -77,3 +77,7 @@ gate that compares each result with the tag and rejects `0.0.0-dev`.
 
 - AUDIT-0052 requires the version to be part of the artifact provenance
   manifest.
+
+## Resolution
+
+The release version now flows into the Linux and macOS builds: release.yml's Linux configure passes `-DMGB64_VERSION` (mirroring the Windows job); macos/Scripts/build_gl_app.sh gains `--version VER`, passes `-DMGB64_VERSION`, and stamps CFBundleShortVersionString/CFBundleVersion with an Apple-legal version (strip leading 'v', keep the N.N.N numeric prefix, fall back to 0.0.0). CMake already consumes MGB64_VERSION (CMakeLists.txt:33). Owner validates the embedded version on the next release run.
