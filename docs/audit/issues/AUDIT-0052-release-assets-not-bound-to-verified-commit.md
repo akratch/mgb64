@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed (enforced commit-binding; cryptographic attestation owner-gated) |
 | Severity | S1 - stale or substituted binaries can be published under a verified tag |
 | Priority | P1 |
 | Area | Release provenance / publication |
@@ -78,3 +78,46 @@ then independently verify downloaded release assets against the manifest.
 
 - AUDIT-0037 covers an unpinned executable inside the Linux artifact build.
 - AUDIT-0053 covers mismatched compiled product versions.
+
+## Resolution
+
+Split into the automatable, enforceable core (done + validated here) and a
+cryptographic-attestation layer that is owner-gated by construction.
+
+**Enforced commit-binding (automatable — landed on `feat/webgpu-backend`).**
+The commit→artifact link is no longer a printed caveat; it is a structural,
+fail-closed check:
+
+- `scripts/release/stamp_provenance.sh` writes a `<asset>.provenance.json`
+  sidecar for each release asset recording its sha256 + the source commit
+  (`GITHUB_SHA` in CI, `git rev-parse HEAD` locally) + builder/run identity.
+  Invoked from the macOS packaging step in `scripts/release.sh` and the Linux +
+  Windows jobs in `.github/workflows/release.yml`. python-free (printf JSON) so
+  it runs under msys2.
+- `scripts/release/verify_provenance.sh` runs at publish time (replacing the old
+  `PROVENANCE CAVEAT` reminder in `release.sh`): every `dist/mgb64-*-<version>.*`
+  asset must carry a sidecar whose recorded sha256 matches the file on disk and
+  whose `commit == git rev-parse HEAD` and `version ==` the release. It **exits 1
+  and refuses to publish** on any missing sidecar, extra/renamed unstamped asset,
+  orphan sidecar, modified asset, wrong sha, wrong commit, or wrong version, and
+  on success emits `mgb64-SHA256SUMS-<version>.txt` + `mgb64-manifest-<version>.json`
+  that ship with the release for user-side verification.
+
+Guarded by the ROM-free ctest `release_provenance_guard`
+(`tools/tests/test_release_provenance.sh`, **13/13**): a fully commit-bound set is
+accepted (checksums + manifest emitted, re-verify ignores the generated outputs)
+while wrong-commit, wrong-version, modified-asset, missing-sidecar,
+extra-unstamped-asset, and orphan-sidecar are each rejected with exit 1.
+
+**Owner-gated remainder (not automatable here, documented).** A *cryptographically
+signed* manifest / SLSA build-provenance attestation (e.g. cosign/minisign over
+`manifest.json`, or `actions/attest-build-provenance` needing `id-token: write` +
+owner authorization) should be added behind an explicit owner flag/secret — e.g.
+a future `--attest`/`--sign-manifest` on `release.sh` requiring
+`MGB64_MANIFEST_SIGNING_KEY` and failing closed when absent — leaving the
+checksummed, commit-bound manifest as the enforceable contract until then.
+(Apple Developer ID notarization is already covered by the owner-gated `--sign`
+path.) The CI producer path (runs only on a GitHub Actions runner) and the
+end-to-end publish (needs `gh`, a pushed tag, gameplay attestation, a real
+release trigger) were validated here only at the logic + `bash -n` / YAML level;
+they must be exercised by the owner on the next real release run.

@@ -230,6 +230,18 @@ if(BUILD_TESTING)
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_pre_push_hook.sh"
     )
     set_tests_properties(pre_push_leak_guard PROPERTIES TIMEOUT 120)
+    # (AUDIT-0052) Release-provenance binding: commit-stamped per-asset sidecars
+    # (scripts/release/stamp_provenance.sh) + the fail-closed verifier
+    # (scripts/release/verify_provenance.sh) that binds every dist/ asset digest
+    # to the verified source commit before upload. ROM-free: builds fixture dist/
+    # trees in a tempdir and proves only a fully commit-bound set is accepted
+    # while wrong-sha / wrong-commit / wrong-version / modified / missing-sidecar /
+    # extra-unstamped / orphan-sidecar are all rejected.
+    add_test(
+        NAME release_provenance_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_release_provenance.sh"
+    )
+    set_tests_properties(release_provenance_guard PROPERTIES TIMEOUT 120)
     # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
     add_test(
         NAME combat_oracle_contract

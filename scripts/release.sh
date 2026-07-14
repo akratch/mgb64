@@ -102,6 +102,11 @@ if [[ "$skip_macos" -eq 0 ]]; then
   fi
   ( cd build-macos-app && ditto -c -k --sequesterRsrc --keepParent MGB64.app \
       "$OLDPWD/$dist/mgb64-macos-$version.zip" )
+  # (AUDIT-0052) Bind the local macOS asset to this commit: write its provenance
+  # stamp (commit == git HEAD, builder == local-darwin) so the publish-time
+  # verify_provenance.sh can prove it was built from the verified source.
+  "$(git rev-parse --show-toplevel)/scripts/release/stamp_provenance.sh" \
+    "$dist/mgb64-macos-$version.zip" "$version"
   echo "[release] macOS asset: dist/mgb64-macos-$version.zip"
 fi
 
@@ -157,9 +162,27 @@ if [[ "$publish" -eq 1 ]]; then
     first-launch step in the release notes.
   - PortMaster/GLES lane must be green (release CI "PortMaster GLES compile check",
     or: tools/portmaster_build_check.sh).
-  - PROVENANCE CAVEAT: dist/ assets are matched by version glob, not cryptographically
-    bound to the verified commit (${head_sha}); build them from this same HEAD.
 GATE
+
+  # (AUDIT-0052) Provenance binding -- STRUCTURAL, not a printed caveat. Every
+  # dist/ asset must carry a provenance stamp (written at build time by
+  # scripts/release/stamp_provenance.sh: the macOS step above, and the Linux/
+  # Windows release-CI jobs) whose recorded sha256 matches the file on disk and
+  # whose commit == this HEAD and version == this release. verify_provenance.sh
+  # fails CLOSED on any missing, extra/renamed, orphan, modified, wrong-sha, or
+  # wrong-version asset, and emits the SHA256SUMS + manifest.json that ship with
+  # the release for user-side verification.
+  full_sha="$(git rev-parse HEAD)"
+  checksums="$dist/mgb64-SHA256SUMS-$version.txt"
+  manifest="$dist/mgb64-manifest-$version.json"
+  if ! "$(git rev-parse --show-toplevel)/scripts/release/verify_provenance.sh" \
+        --dist "$dist" --version "$version" --commit "$full_sha" \
+        --out-checksums "$checksums" --out-manifest "$manifest"; then
+    echo "ERROR: release provenance verification failed (HEAD ${head_sha}) --" >&2
+    echo "       refusing to publish. Rebuild every asset from THIS commit so each" >&2
+    echo "       carries a matching provenance stamp (see the FAIL lines above)." >&2
+    exit 1
+  fi
 
   mapfile -t assets < <(ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null)
   [[ ${#assets[@]} -gt 0 ]] || { echo "ERROR: no dist/ assets for version $version." >&2; exit 1; }
