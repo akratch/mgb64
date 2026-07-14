@@ -111,3 +111,10 @@ bytes). The app links and the full-engine build is green; this is launcher/UI
 state, disjoint from the hashed simulation. The one remaining acceptance item —
 an end-to-end POSIX launcher re-exec smoke driving the graphical launcher — needs
 an interactive UI session and is left for owner verification.
+
+**Adversarial-review hardening:** the ownership record also stores the value the
+launcher last *applied*; a removed key is only unset/restored when the LIVE env
+still equals that applied value. So a key the user changed externally since (e.g.
+a fresh relaunch that inherited a new shell `export`) is left untouched (ownership
+dropped) rather than clobbered — closing a data-loss corner the first pass had.
+Covered by test `env_ownership` case F.

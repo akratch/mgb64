@@ -4,11 +4,16 @@
 // toggle re-enabled or an advanced override deleted after a Return-to-Launcher
 // re-exec cannot survive as a stale inherited variable. Pins the pure core
 // (env_ownership.cpp): hatch ops, advanced parse, claim/restore/unset lifecycle,
-// external original-value restoration, idempotency, and the record round-trip.
-// ROM-free, SDL-free: links only env_ownership.cpp.
+// external original-value restoration, applied-value guard (never clobber a value
+// changed externally since the launcher set it), idempotency, and the record
+// round-trip. ROM-free, SDL-free: links only env_ownership.cpp.
+//
+// No assert(): the ctest build is Release/-DNDEBUG, so failures are counted and
+// returned nonzero from main().
 #include "env_ownership.h"
 
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -21,17 +26,7 @@ static int g_fails = 0;
     if (!(cond)) { std::printf("FAIL: %s\n", (name)); ++g_fails; } \
 } while (0)
 
-// Fake process environment for reconcile()'s lookupEnv callback.
-struct FakeEnv {
-    std::map<std::string, std::string> vars;
-    std::optional<std::string> operator()(const std::string &k) const {
-        auto it = vars.find(k);
-        if (it == vars.end()) return std::nullopt;
-        return it->second;
-    }
-};
-
-// Apply ops onto a fake process env so we can assert what the spawned engine
+// Apply ops onto a fake process-env map so we can assert what the spawned engine
 // would getenv().
 static void applyOps(std::map<std::string, std::string> &env,
                      const std::vector<EnvOp> &ops) {
@@ -46,6 +41,15 @@ static bool has(const std::map<std::string, std::string> &e, const std::string &
 static std::string val(const std::map<std::string, std::string> &e, const std::string &k) {
     auto it = e.find(k);
     return it == e.end() ? std::string("<unset>") : it->second;
+}
+// reconcile()'s lookupEnv over a LIVE process-env map — the same state applyOps
+// mutates, so reconcile sees the effect of prior ops exactly as getenv() would.
+static std::function<std::optional<std::string>(const std::string &)>
+liveEnv(const std::map<std::string, std::string> &m) {
+    return [&m](const std::string &k) -> std::optional<std::string> {
+        auto it = m.find(k);
+        return it == m.end() ? std::nullopt : std::optional<std::string>(it->second);
+    };
 }
 
 int main(void) {
@@ -89,64 +93,93 @@ int main(void) {
         CHECK("parse: non-prefix dropped", d.find("NOTGE007") == d.end());
         CHECK("parse: no-'=' dropped", d.find("GE007_NOEQ") == d.end());
     }
-    // ---- C: claim then remove -> unset (originally absent). -----------------
+    // ---- C: claim then remove -> unset (originally absent, still our value). -
     {
-        FakeEnv env;
-        std::map<std::string, std::string> proc;
-        Reconciliation r1 = reconcile(parseAdvanced("GE007_A=1\n"), "", env);
+        std::map<std::string, std::string> proc;  // live env == lookup source
+        auto look = liveEnv(proc);
+        Reconciliation r1 = reconcile(parseAdvanced("GE007_A=1\n"), "", look);
         applyOps(proc, r1.ops);
         CHECK("claim: A set to 1", val(proc, "GE007_A") == "1");
-        Reconciliation r2 = reconcile(parseAdvanced(""), r1.record, env);
+        Reconciliation r2 = reconcile(parseAdvanced(""), r1.record, look);
         applyOps(proc, r2.ops);
         CHECK("remove: A unset (was absent)", !has(proc, "GE007_A"));
         CHECK("remove: record empty", decodeRecord(r2.record).empty());
     }
     // ---- D: external value overridden then removed -> RESTORED, not deleted. -
     {
-        FakeEnv env;
-        env.vars["GE007_EXT"] = "external";
         std::map<std::string, std::string> proc;
         proc["GE007_EXT"] = "external";
-        Reconciliation r1 = reconcile(parseAdvanced("GE007_EXT=override\n"), "", env);
+        auto look = liveEnv(proc);
+        Reconciliation r1 = reconcile(parseAdvanced("GE007_EXT=override\n"), "", look);
         applyOps(proc, r1.ops);
         CHECK("ext: overridden", val(proc, "GE007_EXT") == "override");
         auto own = decodeRecord(r1.record);
         CHECK("ext: original captured", own.count("GE007_EXT") &&
-              own["GE007_EXT"].first && own["GE007_EXT"].second == "external");
-        Reconciliation r2 = reconcile(parseAdvanced(""), r1.record, env);
+              own["GE007_EXT"].hadExternal && own["GE007_EXT"].external == "external");
+        Reconciliation r2 = reconcile(parseAdvanced(""), r1.record, look);
         applyOps(proc, r2.ops);
         CHECK("ext: restored to external", val(proc, "GE007_EXT") == "external");
     }
     // ---- E: idempotency + value change keeps captured original. --------------
     {
-        FakeEnv env;
-        env.vars["GE007_K"] = "orig";
-        Reconciliation r1 = reconcile(parseAdvanced("GE007_K=v1\n"), "", env);
-        Reconciliation r2 = reconcile(parseAdvanced("GE007_K=v1\n"), r1.record, env);
+        std::map<std::string, std::string> proc;
+        proc["GE007_K"] = "orig";
+        auto look = liveEnv(proc);
+        Reconciliation r1 = reconcile(parseAdvanced("GE007_K=v1\n"), "", look);
+        applyOps(proc, r1.ops);
+        Reconciliation r2 = reconcile(parseAdvanced("GE007_K=v1\n"), r1.record, look);
         CHECK("idem: record stable", r1.record == r2.record);
-        Reconciliation r3 = reconcile(parseAdvanced("GE007_K=v2\n"), r2.record, env);
+        Reconciliation r3 = reconcile(parseAdvanced("GE007_K=v2\n"), r2.record, look);
         auto own = decodeRecord(r3.record);
         CHECK("idem: original preserved across value change",
-              own["GE007_K"].first && own["GE007_K"].second == "orig");
+              own["GE007_K"].hadExternal && own["GE007_K"].external == "orig");
         std::string setv = "<none>";
         for (const auto &op : r3.ops)
             if (op.key == "GE007_K" && op.set) setv = op.value;
         CHECK("idem: value updated to v2", setv == "v2");
     }
-    // ---- F: record round-trip with tricky bytes. ----------------------------
+    // ---- F: fresh relaunch must NOT clobber a value changed externally since.
+    //         (AUDIT-0022 adversarial-review finding: the persisted "external
+    //          absent" record is stale across a fresh relaunch that inherited a
+    //          new shell value; the launcher-set value we recorded is gone, so a
+    //          removal must leave the live external value alone.) --------------
     {
-        std::map<std::string, std::pair<bool, std::string>> owned;
-        owned["GE007_A"] = {false, ""};
-        owned["GE007_B"] = {true, "val=with=eq and \\ backslash"};
-        owned["GE007_C"] = {true, std::string("ctrl\x1e\x1f" "bytes")};
+        // Session 1: shell has no GE007_FOO; user adds GE007_FOO=1. applied="1".
+        std::map<std::string, std::string> proc1;
+        auto look1 = liveEnv(proc1);
+        Reconciliation s1 = reconcile(parseAdvanced("GE007_FOO=1\n"), "", look1);
+        applyOps(proc1, s1.ops);
+        std::string record = s1.record;
+
+        // Session 2 (fresh relaunch): the user has since `export GE007_FOO=bar` in
+        // their shell, so the new process inherits GE007_FOO=bar. They delete the
+        // advanced line. cur("bar") != applied("1") -> leave it, drop ownership.
+        std::map<std::string, std::string> proc2;
+        proc2["GE007_FOO"] = "bar";
+        auto look2 = liveEnv(proc2);
+        Reconciliation s2 = reconcile(parseAdvanced(""), record, look2);
+        applyOps(proc2, s2.ops);
+        CHECK("relaunch: external shell value not clobbered", val(proc2, "GE007_FOO") == "bar");
+        CHECK("relaunch: ownership dropped", decodeRecord(s2.record).empty());
+    }
+    // ---- G: record round-trip with tricky bytes across all three fields. -----
+    {
+        std::map<std::string, EnvOwned> owned;
+        owned["GE007_A"] = EnvOwned{false, "", "applied_a"};
+        owned["GE007_B"] = EnvOwned{true, "val=with=eq and \\ backslash", "b_applied"};
+        owned["GE007_C"] = EnvOwned{true, std::string("ctrl\x1e\x1f" "bytes"),
+                                    std::string("app\x1f\x1e" "2")};
         std::string enc = encodeRecord(owned);
         auto dec = decodeRecord(enc);
         CHECK("rt: size", dec.size() == 3);
-        CHECK("rt: A absent-marker", !dec["GE007_A"].first && dec["GE007_A"].second == "");
-        CHECK("rt: B value", dec["GE007_B"].first &&
-              dec["GE007_B"].second == "val=with=eq and \\ backslash");
-        CHECK("rt: C control bytes", dec["GE007_C"].first &&
-              dec["GE007_C"].second == std::string("ctrl\x1e\x1f" "bytes"));
+        CHECK("rt: A fields", !dec["GE007_A"].hadExternal &&
+              dec["GE007_A"].external == "" && dec["GE007_A"].applied == "applied_a");
+        CHECK("rt: B fields", dec["GE007_B"].hadExternal &&
+              dec["GE007_B"].external == "val=with=eq and \\ backslash" &&
+              dec["GE007_B"].applied == "b_applied");
+        CHECK("rt: C control bytes", dec["GE007_C"].hadExternal &&
+              dec["GE007_C"].external == std::string("ctrl\x1e\x1f" "bytes") &&
+              dec["GE007_C"].applied == std::string("app\x1f\x1e" "2"));
     }
 
     if (g_fails == 0) { std::printf("PASS: all env_ownership cases\n"); return 0; }

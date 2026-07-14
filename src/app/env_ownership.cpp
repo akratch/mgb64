@@ -91,23 +91,28 @@ Reconciliation reconcile(
     const std::map<std::string, std::string> &desired,
     const std::string &priorRecord,
     const std::function<std::optional<std::string>(const std::string &)> &lookupEnv) {
-    std::map<std::string, std::pair<bool, std::string>> owned =
-        decodeRecord(priorRecord);
-    std::map<std::string, std::pair<bool, std::string>> newOwned;
+    std::map<std::string, EnvOwned> owned = decodeRecord(priorRecord);
+    std::map<std::string, EnvOwned> newOwned;
     Reconciliation r;
 
-    // 1. Keys we owned before but no longer want: restore the captured original
-    //    external value, or unset if none existed. (Do this before setting the
-    //    current keys.)
+    // 1. Keys we owned before but no longer want. Only unset/restore if the LIVE
+    //    value is still exactly the one we applied; otherwise it was changed or
+    //    re-provided externally since we set it (e.g. a fresh relaunch inheriting a
+    //    new shell value), and clobbering it would be data loss — so leave it and
+    //    drop ownership. (Do this before setting the current keys.)
     for (const auto &e : owned) {
         if (desired.find(e.first) == desired.end()) {
-            if (e.second.first) {
-                r.ops.push_back({e.first, true, e.second.second});
-            } else {
-                r.ops.push_back({e.first, false, std::string()});
+            std::optional<std::string> cur = lookupEnv(e.first);
+            if (cur.has_value() && *cur == e.second.applied) {
+                if (e.second.hadExternal) {
+                    r.ops.push_back({e.first, true, e.second.external});  // restore original
+                } else {
+                    r.ops.push_back({e.first, false, std::string()});      // we introduced it; remove
+                }
             }
+            // else: externally changed/removed -> leave it, drop ownership.
         } else {
-            newOwned[e.first] = e.second;  // still owned: keep original capture
+            newOwned[e.first] = e.second;  // still owned: keep original capture (applied refreshed below)
         }
     }
 
@@ -116,36 +121,42 @@ Reconciliation reconcile(
     for (const auto &d : desired) {
         if (owned.find(d.first) == owned.end()) {
             std::optional<std::string> cur = lookupEnv(d.first);
-            newOwned[d.first] = {cur.has_value(),
-                                 cur.has_value() ? *cur : std::string()};
+            EnvOwned o;
+            o.hadExternal = cur.has_value();
+            o.external = cur.has_value() ? *cur : std::string();
+            o.applied = d.second;
+            newOwned[d.first] = o;
         }
     }
 
-    // 3. Set every desired key to its current value (idempotent on re-apply).
+    // 3. Set every desired key to its current value (idempotent on re-apply), and
+    //    record it as the applied value so a later removal can tell our value from
+    //    a subsequent external change.
     for (const auto &d : desired) {
         r.ops.push_back({d.first, true, d.second});
+        newOwned[d.first].applied = d.second;
     }
 
     r.record = encodeRecord(newOwned);
     return r;
 }
 
-std::string encodeRecord(
-    const std::map<std::string, std::pair<bool, std::string>> &owned) {
+std::string encodeRecord(const std::map<std::string, EnvOwned> &owned) {
     std::string out;
     for (const auto &e : owned) {
-        out += e.second.first ? '1' : '0';
+        out += e.second.hadExternal ? '1' : '0';
         out += esc(e.first);
         out += '\x1f';
-        out += esc(e.second.second);
+        out += esc(e.second.external);
+        out += '\x1f';
+        out += esc(e.second.applied);
         out += '\x1e';
     }
     return out;
 }
 
-std::map<std::string, std::pair<bool, std::string>> decodeRecord(
-    const std::string &rec) {
-    std::map<std::string, std::pair<bool, std::string>> out;
+std::map<std::string, EnvOwned> decodeRecord(const std::string &rec) {
+    std::map<std::string, EnvOwned> out;
     std::size_t i = 0;
     while (i < rec.size()) {
         std::size_t rs = rec.find('\x1e', i);
@@ -154,11 +165,24 @@ std::map<std::string, std::pair<bool, std::string>> decodeRecord(
         i = rs + 1;
         if (entry.empty()) continue;
         bool had = entry[0] == '1';
-        std::size_t us = entry.find('\x1f', 1);
-        if (us == std::string::npos) continue;
-        std::string k = unesc(entry.substr(1, us - 1));
-        std::string v = unesc(entry.substr(us + 1));
-        if (!k.empty()) out[k] = {had, v};
+        std::size_t us1 = entry.find('\x1f', 1);
+        if (us1 == std::string::npos) continue;
+        std::size_t us2 = entry.find('\x1f', us1 + 1);
+        std::string k = unesc(entry.substr(1, us1 - 1));
+        EnvOwned o;
+        o.hadExternal = had;
+        if (us2 == std::string::npos) {
+            // Backward-compat with an old 2-field record (no applied): treat the
+            // single value as the captured external, applied unknown (empty). A
+            // removal then no-ops unless the live value is also empty — fail-safe
+            // (never clobbers an external value across the format upgrade).
+            o.external = unesc(entry.substr(us1 + 1));
+            o.applied = std::string();
+        } else {
+            o.external = unesc(entry.substr(us1 + 1, us2 - us1 - 1));
+            o.applied = unesc(entry.substr(us2 + 1));
+        }
+        if (!k.empty()) out[k] = o;
     }
     return out;
 }

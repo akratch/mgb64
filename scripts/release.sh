@@ -184,7 +184,11 @@ GATE
     exit 1
   fi
 
-  mapfile -t assets < <(ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null)
+  # Publish the real binaries plus the generated SHA256SUMS + manifest.json, but
+  # NOT the per-asset .provenance.json sidecars (AUDIT-0052): those are the
+  # internal build inputs verify_provenance.sh consolidated into manifest.json,
+  # so shipping the raw sidecars would just clutter the public release.
+  mapfile -t assets < <(ls -1 "$dist"/mgb64-*-"$version".* 2>/dev/null | grep -v '\.provenance\.json$')
   [[ ${#assets[@]} -gt 0 ]] || { echo "ERROR: no dist/ assets for version $version." >&2; exit 1; }
 
   tag="$version"; extra=()

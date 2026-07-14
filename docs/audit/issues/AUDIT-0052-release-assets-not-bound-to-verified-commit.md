@@ -101,7 +101,10 @@ fail-closed check:
   and refuses to publish** on any missing sidecar, extra/renamed unstamped asset,
   orphan sidecar, modified asset, wrong sha, wrong commit, or wrong version, and
   on success emits `mgb64-SHA256SUMS-<version>.txt` + `mgb64-manifest-<version>.json`
-  that ship with the release for user-side verification.
+  that ship with the release for user-side verification. (Adversarial-review
+  follow-up: `release.sh`'s publish glob now excludes the internal
+  `*.provenance.json` sidecars, so only the real binaries + SHA256SUMS + manifest
+  are uploaded to the public release, not the raw per-asset sidecars.)
 
 Guarded by the ROM-free ctest `release_provenance_guard`
 (`tools/tests/test_release_provenance.sh`, **13/13**): a fully commit-bound set is

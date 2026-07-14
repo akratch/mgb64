@@ -25,15 +25,26 @@ struct Reconciliation {
     std::string        record;  // new ownership record to persist
 };
 
+// One launcher-owned key's ownership state, persisted across a re-exec / relaunch.
+//   hadExternal : an external value existed when the launcher first claimed the key
+//   external    : that captured external value (to restore on removal)
+//   applied     : the value the launcher last set the key to — a removed key is only
+//                 unset/restored when the LIVE env still equals this, so a value the
+//                 user changed externally since (e.g. a fresh relaunch inheriting a new
+//                 shell value) is never clobbered.
+struct EnvOwned {
+    bool        hadExternal;
+    std::string external;
+    std::string applied;
+};
+
 Reconciliation reconcile(
     const std::map<std::string, std::string> &desired,
     const std::string &priorRecord,
     const std::function<std::optional<std::string>(const std::string &)> &lookupEnv);
 
-std::string encodeRecord(
-    const std::map<std::string, std::pair<bool, std::string>> &owned);
-std::map<std::string, std::pair<bool, std::string>> decodeRecord(
-    const std::string &rec);
+std::string encodeRecord(const std::map<std::string, EnvOwned> &owned);
+std::map<std::string, EnvOwned> decodeRecord(const std::string &rec);
 
 }  // namespace EnvOwnership
 
