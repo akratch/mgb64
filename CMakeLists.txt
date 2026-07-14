@@ -736,6 +736,19 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_bullet_type PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_bullet_type COMMAND test_weapon_bullet_type)
 
+    # Weapon equip/reload SFX cue tables — ROM-free unit test (AUDIT-0028): the
+    # resolver must reproduce retail jpt_80054194 (equip) / jpt_80054294 (reload)
+    # entry-for-entry, including the < ITEM_BLACKBOX(62) bound (so GOLDENEYEKEY(61)
+    # is table-silent, not the audible else-branch) and the != ITEM_TOKEN post-table
+    # gun cue. The test re-encodes both tables independently so a co-edited array
+    # can't mask a divergence.
+    add_executable(test_weapon_action_sfx
+        "${CMAKE_SOURCE_DIR}/tests/test_weapon_action_sfx.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/weapon_action_sfx.c"
+    )
+    target_include_directories(test_weapon_action_sfx PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME weapon_action_sfx COMMAND test_weapon_action_sfx)
+
     # Sticky-projectile deposit-motion endpoint pull-back — ROM-free unit test
     # (FID-0065): retail clamps the collision endpoint + impact to bg_hit-0.1*travel
     # ONLY on a wall hit (result==0), measured from arg2; the port inverted the

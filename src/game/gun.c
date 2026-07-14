@@ -38,6 +38,7 @@
 #include "platform/model_convert.h"
 #include "platform/audio_pc.h"
 #include "platform/weapon_bullet_type.h"
+#include "platform/weapon_action_sfx.h"     /* AUDIT-0028 equip/reload SFX cue tables */
 #include "platform/fire_rate_authentic.h"
 #include "platform/fp_weapon_perspnorm.h"     /* FID-0077 */
 #include "platform/watch_ammo_switchstate.h"  /* FID-0084 */
@@ -19226,40 +19227,23 @@ after_state_6_7:
                 if (*(s32 *)((u8 *)g_CurrentPlayer) != 1) {
                     if (Gun_hand_without_item(hand)) {
                         if (!g_PlayerInvincible) {
-                            if (weapon_id < ITEM_GOLDENEYEKEY) {
-                                // Play weapon switch sound based on weapon type
-                                // Third jump table (jpt_80054194)
-                                switch (weapon_id) {
-                                case ITEM_UNARMED:
-                                case ITEM_FIST:
-                                    break;
-                                case ITEM_KNIFE:
-                                case ITEM_THROWKNIFE:
-                                    sndPlaySfx(g_musicSfxBufferPtr, 233, NULL);
-                                    break;
-                                case ITEM_LASER:
-                                    sndPlaySfx(g_musicSfxBufferPtr, 242, NULL);
-                                    break;
-                                case ITEM_GRENADE:
-                                case ITEM_TIMEDMINE:
-                                case ITEM_PROXIMITYMINE:
-                                    sndPlaySfx(g_musicSfxBufferPtr, 235, NULL);
-                                    break;
-                                case ITEM_ROCKETLAUNCH:
-                                case ITEM_REMOTEMINE:
-                                case ITEM_TRIGGER:
-                                case ITEM_TASER:
-                                case ITEM_BOMBCASE:
-                                case ITEM_BOMBDEFUSER:
-                                case ITEM_MICROCAMERA:
-                                case ITEM_EXPLOSIVEFLOPPY:
-                                    break;
-                                default:
-                                    sndPlaySfx(g_musicSfxBufferPtr, 232, NULL);
-                                    break;
+                            /* AUDIT-0028: the ROM-free resolver in
+                             * src/platform/weapon_action_sfx.c re-declares the item
+                             * boundaries as local literals; pin them here where
+                             * bondconstants.h is in scope so enum drift can't desync
+                             * the cue tables from jpt_80054194 / jpt_80054294. */
+                            _Static_assert(ITEM_BLACKBOX == 62 && ITEM_TOKEN == 88 &&
+                                               ITEM_GRENADE == 26 && ITEM_REMOTEMINE == 29 &&
+                                               ITEM_GOLDENEYEKEY == 61,
+                                           "weapon_action_sfx.c cue tables out of sync with bondconstants.h ITEM_IDS");
+                            {
+                                /* AUDIT-0028: resolve the equip cue entry-for-entry
+                                 * from jpt_80054194 (retail bound weapon_id < 0x3e).
+                                 * 0 == weapon_switchstyle_NONE -> silence, no sndPlaySfx. */
+                                u16 equip_cue = portWeaponEquipCue(weapon_id);
+                                if (equip_cue != 0) {
+                                    sndPlaySfx(g_musicSfxBufferPtr, (s16)equip_cue, NULL);
                                 }
-                            } else if (weapon_id != ITEM_TOKEN) {
-                                sndPlaySfx(g_musicSfxBufferPtr, 232, NULL);
                             }
                         }
                     }
@@ -19370,32 +19354,14 @@ state9_has_ammo:
             if (*(s32 *)((u8 *)g_CurrentPlayer) != 1) {
                 if (Gun_hand_without_item(hand)) {
                     if (!g_PlayerInvincible) {
-                        if (weapon_id < ITEM_GOLDENEYEKEY) {
-                            // Fourth jump table (jpt_80054294) - reload sounds
-                            switch (weapon_id) {
-                            case ITEM_UNARMED:
-                            case ITEM_FIST:
-                            case ITEM_KNIFE:
-                            case ITEM_THROWKNIFE:
-                            case ITEM_LASER:
-                            case ITEM_WATCHLASER:
-                            case ITEM_GRENADE:
-                            case ITEM_TIMEDMINE:
-                            case ITEM_PROXIMITYMINE:
-                            case ITEM_REMOTEMINE:
-                            case ITEM_TRIGGER:
-                            case ITEM_TASER:
-                            case ITEM_BOMBCASE:
-                            case ITEM_BOMBDEFUSER:
-                            case ITEM_MICROCAMERA:
-                            case ITEM_EXPLOSIVEFLOPPY:
-                                break;
-                            default:
-                                sndPlaySfx(g_musicSfxBufferPtr, 50, NULL);
-                                break;
+                        {
+                            /* AUDIT-0028: resolve the reload cue entry-for-entry
+                             * from jpt_80054294 (retail bound weapon_id < 0x3e).
+                             * 0 == weapon_reload_none_sfx -> silence, no sndPlaySfx. */
+                            u16 reload_cue = portWeaponReloadCue(weapon_id);
+                            if (reload_cue != 0) {
+                                sndPlaySfx(g_musicSfxBufferPtr, (s16)reload_cue, NULL);
                             }
-                        } else if (weapon_id != ITEM_TOKEN) {
-                            sndPlaySfx(g_musicSfxBufferPtr, 50, NULL);
                         }
                     }
                 }

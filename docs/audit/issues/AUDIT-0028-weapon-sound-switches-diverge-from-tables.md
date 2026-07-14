@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - common weapon actions play incorrect or missing cosmetic cues |
 | Priority | P2 |
 | Area | Gameplay audio / weapon-state fidelity |
@@ -80,3 +80,37 @@ checking cue ID and frame while confirming unchanged simulation hashes.
 
 - [`RENDERER_SIM_AUDIT_2026-07-06.md`](../../RENDERER_SIM_AUDIT_2026-07-06.md)
   first recorded the mismatched switches.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend` by replacing the two hand-grouped equip (state 8)
+and reload (state 11) SFX switches in `src/game/gun.c` with a pure, ROM-free
+resolver (`src/platform/weapon_action_sfx.{c,h}`) that reproduces the retail jump
+tables `jpt_80054194` (equip) and `jpt_80054294` (reload) **entry-for-entry**
+(indices 0..61, index == `ITEM_IDS` ordinal). Cue ids are taken from the retail
+`sndPlaySfx` bodies in the same file: equip `weapon_switchstyle_NONE`=silent /
+`knife`=233 / `gun`=232 / `F2`=242 / `mine`=235; reload none=silent / gun=50.
+
+Two divergence classes are corrected:
+
+- **Per-index mis-grouping.** The old name-grouped switches diverged from retail
+  at 12 equip indices and 8 reload indices — e.g. `GRENADE` played the mine cue
+  (235) where retail is silent; `REMOTEMINE` was silent where retail plays the
+  mine cue (235); `ROCKETLAUNCH`/`BOMBDEFUSER`/`EXPLOSIVEFLOPPY` were silent
+  where retail plays the gun cue; `WATCHLASER`/`CAMERA`/`TANKSHELLS`/`PLASTIQUE`/
+  `BUG` played the gun cue where retail is silent.
+- **Off-by-one bound.** Retail dispatches the table for `weapon_id < 0x3e`
+  (`< ITEM_BLACKBOX`, 62), so `ITEM_GOLDENEYEKEY` (61) is table-silent. The old
+  guard `weapon_id < ITEM_GOLDENEYEKEY` (61) wrongly routed index 61 to the
+  audible `else` branch (232 equip / 50 reload). The resolver restores the
+  `< ITEM_BLACKBOX` bound and preserves the retail post-table branch
+  (`weapon_id != ITEM_TOKEN` → gun; `ITEM_TOKEN` → silent). A `_Static_assert` at
+  the call site pins `ITEM_BLACKBOX`/`ITEM_TOKEN`/`ITEM_GRENADE`/`ITEM_REMOTEMINE`/
+  `ITEM_GOLDENEYEKEY` so `ITEM_IDS` drift can't silently desync the tables.
+
+Guarded by the ROM-free unit test `tests/test_weapon_action_sfx.c` (ctest
+`weapon_action_sfx`), which re-encodes both tables independently (so a co-edited
+array can't mask a divergence) and asserts each named divergence plus the
+boundary cases. Verified by a three-way byte match (retail jump tables ⇄ resolver
+⇄ test). Audio is disjoint from the hashed simulation state, so the 7 input-tape
+baselines stay byte-exact.
