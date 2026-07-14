@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - the advertised diagnostic is unavailable on standard Windows installs |
 | Priority | P2 |
 | Area | Diagnostics / cross-platform paths |
@@ -64,3 +64,7 @@ writable and does not depend on POSIX filesystem layout.
 
 - AUDIT-0067 covers false success after the dump file has opened.
 - AUDIT-0047 covers incorrect path selection in diagnostics export.
+
+## Resolution
+
+`debugDumpExecute` (src/platform/debug_dump.c) no longer hardcodes `/tmp`; it writes `ge007_dump_%04d.txt` under the resolved save directory via `savedirPath()` (copied immediately into `s_dumpPath` since the helper returns a static buffer), matching `stall_watchdog.c`/`config_pc.c`. Portable to Windows/handhelds with no writable `/tmp`.

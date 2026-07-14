@@ -3293,6 +3293,16 @@ void platformPollEvents(void) {
                  * that slot; other players keep their stable mapping. */
                 platformClosePadByInstance(event.cdevice.which);
                 break;
+            case SDL_AUDIODEVICEREMOVED: {
+                /* AUDIT-0068: if our opened output device is unplugged, stop
+                 * queueing to the dead handle. event.adevice.which is the
+                 * SDL_AudioDeviceID for an opened device. */
+                extern void osAiNotifyDeviceRemoved(unsigned int which);
+                if (!event.adevice.iscapture) {
+                    osAiNotifyDeviceRemoved(event.adevice.which);
+                }
+                break;
+            }
             case SDL_MOUSEMOTION:
                 if (g_mouseGrabbed) {
                     if (g_pcDebugFlyCamera) {

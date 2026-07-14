@@ -485,9 +485,17 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
              * regression baselines. Validation runs care about bit-stability
              * more than live queue resilience. */
             if (queued < limit) {
-                SDL_QueueAudio(s_aiDev, buf, size);
-                s_aiStats.accepted_bytes = size;
-                s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                /* AUDIT-0068: credit acceptance only if the queue call actually
+                 * succeeded; a failed SDL_QueueAudio is a dropped buffer, not
+                 * accepted output. (Under the deterministic dummy driver the call
+                 * always succeeds, so baselines are unchanged.) */
+                if (SDL_QueueAudio(s_aiDev, buf, size) == 0) {
+                    s_aiStats.accepted_bytes = size;
+                    s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                } else {
+                    s_aiDroppedBuffers++;
+                    s_aiStats.dropped_bytes += size;
+                }
             } else {
                 s_aiDroppedBuffers++;
                 s_aiStats.dropped_bytes += size;
@@ -498,9 +506,14 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
              * full frame and then trip a drop on the following callback under
              * normal host jitter. */
             if (queued <= queue_limit && size <= (queue_limit - queued)) {
-                SDL_QueueAudio(s_aiDev, buf, size);
-                s_aiStats.accepted_bytes = size;
-                s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                /* AUDIT-0068: only count bytes SDL actually accepted. */
+                if (SDL_QueueAudio(s_aiDev, buf, size) == 0) {
+                    s_aiStats.accepted_bytes = size;
+                    s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                } else {
+                    s_aiDroppedBuffers++;
+                    s_aiStats.dropped_bytes += size;
+                }
             } else {
                 s_aiDroppedBuffers++;
                 s_aiStats.dropped_bytes += size;
@@ -517,6 +530,18 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
         portAudioDump(buf, size);
     }
     return 0;
+}
+
+/* AUDIT-0068: on SDL_AUDIODEVICEREMOVED for our opened device, invalidate the
+ * cached device so osAiSetNextBuffer stops queueing to a dead handle (its guard
+ * is `s_aiOpen`). Called from the SDL event loop. `which` is the SDL_AudioDeviceID
+ * SDL reports for a removed opened device. Automatic re-open/recovery is a
+ * separate (hardware-dependent) follow-up. */
+void osAiNotifyDeviceRemoved(unsigned int which) {
+    if (s_aiOpen && (SDL_AudioDeviceID)which == s_aiDev) {
+        s_aiOpen = 0;
+        fprintf(stderr, "[AUDIO] output device %u removed; audio output stopped\n", which);
+    }
 }
 u32 osAiGetLength(void) {
     /* In deterministic mode, return 0 so frame sizing is identical across

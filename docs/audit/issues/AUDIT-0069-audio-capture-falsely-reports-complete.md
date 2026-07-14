@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - fidelity captures can be truncated while the diagnostic claims completion |
 | Priority | P2 |
 | Area | Audio diagnostics / output integrity |
@@ -67,3 +67,7 @@ comparison tools only after the capture validator passes.
 
 - AUDIT-0067 covers guard-state text dumps.
 - AUDIT-0043 covers screenshot capture failure status.
+
+## Resolution
+
+`portAudioDumpTo` (src/platform/port_trace.c) now fails closed: a failed `fopen` for an explicitly-requested `GE007_AUDIO_DUMP`/`GE007_MUSIC_AUDIO_DUMP` capture is logged (not silently skipped); a short `fwrite` aborts the capture, logs the errno, and closes the file rather than counting a partial frame; and "dump complete" is announced only when the final `fclose` succeeds. Diagnostic-only path; sim-neutral.

@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdint.h>
+#include <errno.h>
+#include "savedir.h"     /* savedirPath — write dumps in the save dir, not /tmp */
 #include "../bondtypes.h"
 #include "../bondconstants.h"
 #include "../game/chrai.h"
@@ -40,7 +42,7 @@ extern u8 bondviewGetCurrentPlayersRoom(void);
 /* Dump state */
 static int s_dumpRequested = 0;
 static int s_dumpCount = 0;
-static char s_dumpPath[256] = "";
+static char s_dumpPath[1024] = "";  /* sized to the savedir contract (AUDIT-0066) */
 static int s_overlayTimer = 0;
 
 static int debugDumpEnvFlag(const char *name) {
@@ -258,7 +260,15 @@ void debugDumpExecute(void) {
     if (!s_dumpRequested) return;
     s_dumpRequested = 0;
 
-    snprintf(s_dumpPath, sizeof(s_dumpPath), "/tmp/ge007_dump_%04d.txt", s_dumpCount++);
+    /* AUDIT-0066: write dumps into the resolved save directory (portable across
+     * Windows/consoles), not a hardcoded POSIX /tmp. savedirPath() returns a
+     * static, non-thread-safe buffer, so copy it into s_dumpPath immediately
+     * (mirrors stall_watchdog.c). */
+    {
+        char fn[64];
+        snprintf(fn, sizeof(fn), "ge007_dump_%04d.txt", s_dumpCount++);
+        snprintf(s_dumpPath, sizeof(s_dumpPath), "%s", savedirPath(fn));
+    }
     FILE *fp = fopen(s_dumpPath, "w");
     if (!fp) {
         snprintf(s_dumpPath, sizeof(s_dumpPath), "DUMP FAILED (fopen)");
@@ -494,7 +504,34 @@ void debugDumpExecute(void) {
     }
 
     fprintf(fp, "\n=== END DUMP ===\n");
-    fclose(fp);
+
+    /* AUDIT-0067: never report a dump as saved after a failed write/flush/close.
+     * Detect accumulated buffered-write errors (ferror) and the final close,
+     * delete the partial file, and surface the failure instead of "DUMP SAVED". */
+    {
+        int writeErr = ferror(fp);
+        int closeErr = (fclose(fp) != 0);
+        if (writeErr || closeErr) {
+            /* errno is only meaningful for the close failure (ferror does not set
+             * it, and a clean fclose leaves it stale). */
+            int e = closeErr ? errno : 0;
+            remove(s_dumpPath);
+            if (e) {
+                fprintf(stderr, "[DUMP] FAILED to write %s at frame %d: %s\n",
+                        s_dumpPath, g_frame_count_diag, strerror(e));
+            } else {
+                fprintf(stderr, "[DUMP] FAILED to write %s at frame %d (stream write error)\n",
+                        s_dumpPath, g_frame_count_diag);
+            }
+            snprintf(s_dumpPath, sizeof(s_dumpPath), "DUMP FAILED (write/close)");
+            s_overlayTimer = 180;
+            {
+                extern void platformSetWindowTitle(const char *title);
+                platformSetWindowTitle("GE007 - DUMP FAILED (write error)");
+            }
+            return;
+        }
+    }
 
     fprintf(stderr, "[DUMP] Wrote %s at frame %d\n", s_dumpPath, g_frame_count_diag);
     s_overlayTimer = 180; /* Show overlay for ~3 seconds at 60fps */

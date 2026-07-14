@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - runtime device failure can produce permanent silence while health telemetry remains green |
 | Priority | P2 |
 | Area | Audio backend / device lifecycle |
@@ -69,3 +69,7 @@ perform manual USB and Bluetooth disconnect tests on each desktop platform.
 
 - AUDIT-0069 covers PCM diagnostic-file integrity, not playback-device output.
 - AUDIT-0059 covers packaged SDL runtime availability at process startup.
+
+## Resolution
+
+`osAiSetNextBuffer` (src/platform/stubs.c) now credits `accepted_bytes` only when `SDL_QueueAudio` returns 0; a failed queue call increments the dropped-buffer/dropped-byte counters instead of being counted as accepted output (both the deterministic and live branches). New `osAiNotifyDeviceRemoved`, called from the `SDL_AUDIODEVICEREMOVED` case in platform_sdl.c's event loop, invalidates the cached device (`s_aiOpen=0`) so queueing stops when our output device is unplugged. Sim-neutral: under the deterministic dummy driver `SDL_QueueAudio` always succeeds, so baselines are byte-identical (7/7 tapes verified). **Residual (deferred):** automatic device RE-OPEN/recovery (resume sound or surface a persistent actionable error after re-plug) and a headless device-event test harness are a larger, hardware-dependent follow-up; the accounting bug and removal-invalidation (the criteria reachable without hardware) are fixed.

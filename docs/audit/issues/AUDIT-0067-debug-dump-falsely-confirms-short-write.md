@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - a diagnostic collected during failure analysis can be incomplete despite a success message |
 | Priority | P2 |
 | Area | Diagnostics / output integrity |
@@ -63,3 +63,7 @@ the UI, log, file cleanup, and automation result agree.
 
 - AUDIT-0066 covers the Windows-incompatible default path.
 - AUDIT-0069 covers the same false-completion pattern in PCM capture.
+
+## Resolution
+
+`debugDumpExecute` now checks `ferror(fp)` (accumulated buffered-write failures) and the `fclose` return before reporting success. On failure it deletes the partial file (`remove`), logs the errno to stderr, sets a "DUMP FAILED (write/close)" overlay + window title, and returns WITHOUT the "DUMP SAVED" confirmation. A truncated/failed dump is no longer confirmed as complete.

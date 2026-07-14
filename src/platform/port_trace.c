@@ -8707,6 +8707,11 @@ static void portAudioDumpTo(AudioDumpState *state, const char *envname,
             if (state->file) {
                 fprintf(stderr, "[TRACE] %s PCM dump -> %s (%d frames)\n",
                         label, path, state->limit);
+            } else {
+                /* AUDIT-0069: an explicitly-requested capture that can't open its
+                 * file must be reported, not silently skipped. */
+                fprintf(stderr, "[TRACE] %s PCM dump FAILED to open %s: %s\n",
+                        label, path, strerror(errno));
             }
         }
         if (!state->file) return;
@@ -8715,13 +8720,26 @@ static void portAudioDumpTo(AudioDumpState *state, const char *envname,
     if (state->frames >= state->limit) return;
     if (!buf || size == 0) return;
 
-    fwrite(buf, 1, size, state->file);
-    state->frames++;
-    if (state->frames == state->limit) {
+    /* AUDIT-0069: a short write must abort the capture and be reported, not
+     * counted as a completed frame. */
+    if (fwrite(buf, 1, size, state->file) != size) {
+        fprintf(stderr, "[TRACE] %s PCM dump write failed after %d frame(s): %s\n",
+                label, state->frames, strerror(errno));
         fclose(state->file);
         state->file = NULL;
-        fprintf(stderr, "[TRACE] %s dump complete (%d frames)\n",
-                label, state->limit);
+        return;
+    }
+    state->frames++;
+    if (state->frames == state->limit) {
+        /* Only announce completion if the final flush/close actually succeeded. */
+        if (fclose(state->file) != 0) {
+            fprintf(stderr, "[TRACE] %s PCM dump close failed after %d frame(s): %s\n",
+                    label, state->frames, strerror(errno));
+        } else {
+            fprintf(stderr, "[TRACE] %s dump complete (%d frames)\n",
+                    label, state->limit);
+        }
+        state->file = NULL;
     }
 }
 
