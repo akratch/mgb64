@@ -1,12 +1,14 @@
 // ui_modes.cpp — Modes & Toggles: visual preset, gameplay hatches, expert env.
 #include "ui_launcher.h"
 #include "app_config.h"
+#include "env_ownership.h"
 #include "ui_common.h"
 
 #include "imgui.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 namespace {
@@ -16,6 +18,14 @@ void portableSetenv(const char *k, const char *v) {
     _putenv_s(k, v);
 #else
     setenv(k, v, 1);
+#endif
+}
+
+void portableUnsetenv(const char *k) {
+#if defined(_WIN32)
+    _putenv_s(k, "");  // empty value removes the variable on Windows
+#else
+    unsetenv(k);
 #endif
 }
 
@@ -41,28 +51,39 @@ void ModesPanel_ensureInit(LauncherState &s) {
 }
 
 void applyModeEnv(const LauncherState &s) {
-    // Convenience hatches default ON in the engine, so only set the env when the
-    // user turned them OFF (otherwise leave the engine default untouched).
-    if (!s.shootOutLights) portableSetenv("GE007_SHOOT_OUT_LIGHTS", "0");
-    if (!s.autoAim) portableSetenv("GE007_AUTO_AIM", "0");
+    // The launcher is AUTHORITATIVE over the GE007_* keys it owns: Return to
+    // Launcher re-execs (ui_overlay.cpp) and the child inherits this environment,
+    // so an append-only store would let a re-enabled toggle or a deleted advanced
+    // override survive silently (AUDIT-0022). Emit an explicit op for every owned
+    // key each apply, and reconcile the advanced box against a persisted record so
+    // removed keys are unset/restored — never left stale.
 
-    // Advanced: parse KEY=VALUE lines and setenv each GE007_* pair.
-    std::string text(s.advancedEnv);
-    size_t i = 0;
-    while (i < text.size()) {
-        size_t nl = text.find('\n', i);
-        std::string line = text.substr(i, nl == std::string::npos ? std::string::npos : nl - i);
-        i = (nl == std::string::npos) ? text.size() : nl + 1;
-        size_t a = line.find_first_not_of(" \t\r");
-        if (a == std::string::npos) continue;
-        size_t b = line.find_last_not_of(" \t\r");
-        line = line.substr(a, b - a + 1);
-        if (line.empty() || line[0] == '#') continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        if (k.rfind("GE007_", 0) == 0) portableSetenv(k.c_str(), v.c_str());
+    // Hatches: OFF => "0"; ON => unset (engine default ON; and GE007_AUTO_AIM is a
+    // scripted-input frame pattern in the engine, so unset is the only sim-safe
+    // "on" — setting "1" would forge input).
+    for (const EnvOwnership::EnvOp &op : EnvOwnership::hatchOps(s.shootOutLights, s.autoAim)) {
+        if (op.set) portableSetenv(op.key.c_str(), op.value.c_str());
+        else        portableUnsetenv(op.key.c_str());
     }
+
+    // Advanced expert overrides: reconcile the current KEY=VALUE lines against the
+    // keys the launcher owned last time (persisted across the re-exec in the app
+    // prefs). A key dropped from the box is unset, or restored to the external
+    // value it displaced when first claimed.
+    std::map<std::string, std::string> desired = EnvOwnership::parseAdvanced(s.advancedEnv);
+    EnvOwnership::Reconciliation rec = EnvOwnership::reconcile(
+        desired, AppConfig::get("advanced_env_owned", ""),
+        [](const std::string &k) -> std::optional<std::string> {
+            const char *v = std::getenv(k.c_str());
+            if (v == nullptr) return std::nullopt;
+            return std::string(v);
+        });
+    for (const EnvOwnership::EnvOp &op : rec.ops) {
+        if (op.set) portableSetenv(op.key.c_str(), op.value.c_str());
+        else        portableUnsetenv(op.key.c_str());
+    }
+    AppConfig::set("advanced_env_owned", rec.record);
+    AppConfig::save();
 }
 
 void ModesPanel_draw(LauncherState &s, LauncherAction &out) {

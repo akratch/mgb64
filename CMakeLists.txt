@@ -1903,6 +1903,19 @@ if(MGB64_APP)
         target_compile_features(test_app_config PRIVATE cxx_std_17)
         add_test(NAME app_config COMMAND test_app_config)
 
+        # Launcher env-ownership authoritative reconciliation — ROM-free/SDL-free
+        # unit test (AUDIT-0022): the pure core that makes applyModeEnv authoritative
+        # over launcher-owned GE007_* keys so a re-enabled hatch or a deleted advanced
+        # override is unset/restored across the Return-to-Launcher re-exec instead of
+        # surviving stale. Covers hatch ON=>unset / OFF=>"0", advanced parse parity,
+        # external-value capture+restore, idempotency, and the record round-trip.
+        add_executable(test_env_ownership
+            tests/test_env_ownership.cpp
+            src/app/env_ownership.cpp)
+        target_include_directories(test_env_ownership PRIVATE src/app)
+        target_compile_features(test_env_ownership PRIVATE cxx_std_17)
+        add_test(NAME env_ownership COMMAND test_env_ownership)
+
         # Settings staging layer (post-boot UX): mid-game edits stay on a working
         # copy until Apply. Links only the registry + config layers (no SDL), with
         # the engine include dirs so <ultra64.h> resolves for the C sources.
