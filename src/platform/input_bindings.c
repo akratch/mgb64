@@ -1,6 +1,9 @@
 // input_bindings.c — rebindable keyboard registry. Defaults are byte-identical
 // to the previously-hardcoded map in stubs.c. See input_actions.h.
 #include "../app/input_actions.h"
+#include "../app/config_schema.h"  /* mgb_config_get_int: live Input.MenuToggleButton (AUDIT-0025) */
+#include "binding_conflict.h"       /* GB_NONE / GB_AXIS_BASE + bindingOwnerOf (AUDIT-0050) */
+#include "gp_reserved.h"            /* gpButtonReserved / gpMenuConflict (AUDIT-0025) */
 #include "savedir.h"
 
 #include <SDL.h>
@@ -147,8 +150,8 @@ void inputBindingLoad(void) {
  * or GB_AXIS_BASE + axis for a trigger axis (LT/RT), or GB_NONE for unbound.
  * The encoding stays internal to this file + the consumer (stubs.c reads it via
  * gamepadBindingActive), so input_actions.h needs no SDL dependency. */
-#define GB_NONE       (-1)
-#define GB_AXIS_BASE  1000
+/* GB_NONE / GB_AXIS_BASE now live in binding_conflict.h (shared with the
+ * Controls UI + the conflict unit test); only the deadzone stays local. */
 #define GB_TRIG_THRESH 8000   /* == GAMEPAD_DEADZONE in stubs.c */
 
 static const int kGpDefault[GB_COUNT] = {
@@ -205,18 +208,27 @@ static void gpEnsureInit(void) {
     }
 }
 
+/* The gamepad button that opens the in-game overlay, read LIVE from config
+ * (Input.MenuToggleButton, default Back). Overlay_gamepadToggleButton() in
+ * ui_overlay.cpp is the app-side twin; both resolve the same value so binding
+ * validation, startup reconciliation and the overlay agree on one owner
+ * (AUDIT-0025). */
+static int gpMenuButton(void) {
+    return mgb_config_get_int("Input.MenuToggleButton", SDL_CONTROLLER_BUTTON_BACK);
+}
+
 static int gpValid(int v) {
     if (v == GB_NONE) return 1;
     if (v >= GB_AXIS_BASE)
         return (v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERLEFT ||
                 v == GB_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
     /* Reject the reserved buttons from a hand-edited ini, matching the capture-
-     * scan exclusion (ui_bindings.cpp:132): BACK == the overlay toggle
-     * (Overlay_gamepadToggleButton, single source of truth in ui_overlay.h) —
-     * binding a game action to it reproduces the overlay/fire double-role the
-     * F4 commit prevented in the UI — and GUIDE is the OS/Steam overlay button
-     * (review F5). */
-    if (v == SDL_CONTROLLER_BUTTON_BACK || v == SDL_CONTROLLER_BUTTON_GUIDE)
+     * scan exclusion (ui_bindings.cpp:236): the CONFIGURED overlay-toggle button
+     * (Input.MenuToggleButton, not a hardcoded Back — a rebind of the menu button
+     * must move this reservation with it, AUDIT-0025) reproduces the overlay/fire
+     * double-role the F4 commit prevented in the UI; GUIDE is the OS/Steam overlay
+     * button (review F5). */
+    if (gpButtonReserved(v, gpMenuButton(), SDL_CONTROLLER_BUTTON_GUIDE))
         return 0;
     return (v >= 0 && v < SDL_CONTROLLER_BUTTON_MAX);
 }
@@ -272,6 +284,25 @@ int gamepadBindingEncoded(GamepadAction a) {
     return g_gpForce ? kGpDefault[a] : g_gpBind[a];
 }
 
+/* Encoded value a trigger axis (LT/RT) binds to — the single source the Controls
+ * UI uses for its trigger conflict check, so it never hardcodes GB_AXIS_BASE.
+ * GB_NONE for a non-trigger axis. Mirrors the encoding in gamepadBindingSetTrigger. */
+int gamepadTriggerEncoded(int sdl_axis) {
+    if (sdl_axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ||
+        sdl_axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
+        return GB_AXIS_BASE + sdl_axis;
+    return GB_NONE;
+}
+
+/* Action currently bound to encoded input `enc` other than `exclude`, or -1 —
+ * the reverse owner map the Controls UI consults to reject a duplicate capture
+ * for buttons AND triggers alike (AUDIT-0050). Respects force-defaults exactly
+ * like gamepadBindingEncoded so the UI and runtime agree. */
+int gamepadBindingOwnerOf(int enc, int exclude) {
+    gpEnsureInit();
+    return bindingOwnerOf(g_gpForce ? kGpDefault : g_gpBind, GB_COUNT, enc, exclude);
+}
+
 int gamepadBindingActive(void *handle, GamepadAction a) {
     SDL_GameController *gc = (SDL_GameController *)handle;
     int v;
@@ -302,26 +333,59 @@ void gamepadBindingSave(void) {
     bindings_atomic_write(path, "gamepad bindings", write_gp_bindings);
 }
 
-void gamepadBindingLoad(void) {
+/* Menu-wins reconciliation (AUDIT-0025): clear any gameplay binding — including a
+ * stock default like Jump=A once the menu button is moved to A — whose encoded
+ * value collides with the CONFIGURED overlay-toggle button, so a single press can
+ * never both open the overlay and fire a game action. The system button wins; the
+ * freed action reads "None" in the Controls UI for the user to rebind. Runs on
+ * every load (below) so a hand-edited ini AND the untouched defaults get the same
+ * policy. Sim-neutral: gamepad bindings are host input mapping, never sim/tape
+ * state. Returns the number of bindings cleared. */
+int gamepadBindingReconcileMenu(void) {
+    int menu, i, cleared = 0;
     gpEnsureInit();
-    /* Gamepad file is new (no pre-F3 CWD file to migrate). */
-    FILE *f = fopen(savedirPath("ge007_gp_bindings.ini"), "r");
-    char line[128];
-    if (!f) return;
-    while (fgets(line, sizeof(line), f)) {
-        char *eq;
-        int v, i;
-        if (line[0] == '#') continue;
-        eq = strchr(line, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        v = atoi(eq + 1);
-        for (i = 0; i < GB_COUNT; i++) {
-            if (strcmp(line, kGpName[i]) == 0) {
-                if (gpValid(v)) g_gpBind[i] = v;
-                break;
-            }
+    menu = gpMenuButton();
+    for (i = 0; i < GB_COUNT; i++) {
+        if (gpMenuConflict(g_gpBind[i], menu, SDL_CONTROLLER_BUTTON_MAX)) {
+            fprintf(stderr,
+                    "[INPUT] Gamepad action '%s' was bound to the menu button (%s); "
+                    "clearing it so the overlay toggle isn't a double-action "
+                    "(AUDIT-0025). Rebind it in Controls.\n",
+                    kGpName[i], gpEncodedName(menu));
+            g_gpBind[i] = GB_NONE;
+            cleared++;
         }
     }
-    fclose(f);
+    return cleared;
+}
+
+void gamepadBindingLoad(void) {
+    FILE *f;
+    gpEnsureInit();
+    /* Gamepad file is new (no pre-F3 CWD file to migrate). */
+    f = fopen(savedirPath("ge007_gp_bindings.ini"), "r");
+    if (f) {
+        char line[128];
+        while (fgets(line, sizeof(line), f)) {
+            char *eq;
+            int v, i;
+            if (line[0] == '#') continue;
+            eq = strchr(line, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            v = atoi(eq + 1);
+            for (i = 0; i < GB_COUNT; i++) {
+                if (strcmp(line, kGpName[i]) == 0) {
+                    if (gpValid(v)) g_gpBind[i] = v;
+                    break;
+                }
+            }
+        }
+        fclose(f);
+    }
+    /* Reconcile AFTER load so a stock default (e.g. Jump=A when the menu button is
+     * moved to A — gpValid gates only file values, never the untouched defaults)
+     * and any surviving file value are both held to the menu-wins rule
+     * (AUDIT-0025). */
+    gamepadBindingReconcileMenu();
 }

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed (core; runtime-apply + UI feedback owner-verifiable) |
 | Severity | S3 - a valid UI setting can conflict with gameplay and disrupt input |
 | Priority | P2 |
 | Area | Gamepad binding validation / overlay input |
@@ -79,3 +79,35 @@ physical button has exactly one owner per input context.
 ## Related Work
 
 - AUDIT-0024 requires a usable capture UI for these system actions.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend`. System bindings (the overlay/OS-reserved buttons)
+and gameplay gamepad bindings live in two validation domains; `gpValid` reserved
+a hardcoded Back and nothing reconciled the two, so a configured
+`Input.MenuToggleButton` change (or a stock default like Jump=A once the menu
+button is moved to A) could silently double-act as both the overlay toggle and a
+game action.
+
+- New pure, SDL-free predicates `src/platform/gp_reserved.{h,c}`
+  (`gpButtonReserved`, `gpMenuConflict`) — SDL enum values passed in by the caller.
+- `input_bindings.c` gains `gpMenuButton()` (reads `Input.MenuToggleButton` LIVE
+  via `mgb_config_get_int`, default Back — the twin of `ui_overlay.cpp`'s
+  `Overlay_gamepadToggleButton`), and `gpValid` now rejects the **configured**
+  menu button (via `gpButtonReserved`) instead of a hardcoded Back, so an INI
+  load uses the same dynamic reserved rule as capture.
+- New `gamepadBindingReconcileMenu()` clears any gameplay binding whose encoded
+  value equals the configured menu button (system button wins; freed action reads
+  "None"), logging each cleared action. `gamepadBindingLoad()` calls it **after**
+  load so both a hand-edited INI and the untouched stock defaults (which `gpValid`
+  never gates) are held to the menu-wins rule.
+
+Guarded by the ROM-free ctest `gamepad_menu_conflict`
+(tests/test_gamepad_menu_conflict.c) over the pure predicates: a button equal to
+the configured menu button (or Guide) is reserved; None/axis/out-of-range menu
+values reserve nothing; `gpMenuConflict` flags exactly a button-encoded binding
+equal to a real menu button and never an axis/None/OOB value. Full engine + app
+build links; sim-neutral (host input mapping, force-defaults path untouched → 7
+tapes byte-exact). The remaining acceptance items — making a *runtime* menu-button
+change reconcile live and surfacing the cleared-action UI feedback — need an
+interactive UI session and are left for owner verification.

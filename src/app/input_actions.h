@@ -63,12 +63,18 @@ int         gamepadBindingCount(void);               // == GB_COUNT
 const char *gamepadActionLabel(GamepadAction a);
 const char *gamepadBindingName(GamepadAction a);     // human name of current binding
 int         gamepadBindingEncoded(GamepadAction a);  // raw encoded binding (button idx / GB_AXIS_BASE+axis / GB_NONE) for conflict checks
+int         gamepadTriggerEncoded(int sdl_axis);     // encoded value a trigger axis (LT/RT) binds to, for UI conflict checks (AUDIT-0050)
+int         gamepadBindingOwnerOf(int encoded, int exclude);  // action bound to `encoded` other than `exclude`, or -1 (AUDIT-0050)
 void        gamepadBindingSetButton(GamepadAction a, int sdl_button);  // capture: a button
 void        gamepadBindingSetTrigger(GamepadAction a, int sdl_axis);   // capture: LT/RT
 void        gamepadBindingResetDefaults(void);
 void        gamepadBindingLoad(void);                // from ge007_gp_bindings.ini
 void        gamepadBindingSave(void);
 void        gamepadBindingForceDefaults(int on);     // automation/deterministic
+// Menu-wins reconciliation (AUDIT-0025): clear any gameplay binding that collides
+// with the configured overlay-toggle button (Input.MenuToggleButton). Called by
+// gamepadBindingLoad(); returns the number of bindings cleared.
+int         gamepadBindingReconcileMenu(void);
 // Consumer: is action a currently active on controller gc (opaque
 // SDL_GameController*)? Button pressed, or trigger past the deadzone. Returns 0
 // for a NULL/absent controller. Implemented where SDL is available.

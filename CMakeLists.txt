@@ -798,6 +798,30 @@ if(BUILD_TESTING)
     target_include_directories(test_gfx_ptr_registry PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME gfx_ptr_registry COMMAND test_gfx_ptr_registry)
 
+    # Duplicate gamepad-binding conflict policy — ROM-free/SDL-free unit test
+    # (AUDIT-0050): the shared ownership primitive bindingOwnerOf() that the
+    # Controls UI move-or-reject path routes through, covering BUTTON and TRIGGER
+    # encodings alike (the trigger capture branch previously skipped the owner
+    # check and silently double-bound). Compiles only the pure binding_conflict.c TU.
+    add_executable(test_binding_conflict
+        "${CMAKE_SOURCE_DIR}/tests/test_binding_conflict.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/binding_conflict.c"
+    )
+    target_include_directories(test_binding_conflict PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME binding_conflict COMMAND test_binding_conflict)
+
+    # Gamepad menu-button cross-domain conflict — ROM-free unit test (AUDIT-0025):
+    # the overlay opens on the CONFIGURED Input.MenuToggleButton, so gpValid must
+    # reserve that button (not a hardcoded Back) and a menu-wins reconciliation
+    # must clear any gameplay binding (including the stock Jump=A default) that
+    # equals it. Compiles only the pure gp_reserved.c predicates (no SDL/config).
+    add_executable(test_gamepad_menu_conflict
+        "${CMAKE_SOURCE_DIR}/tests/test_gamepad_menu_conflict.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/gp_reserved.c"
+    )
+    target_include_directories(test_gamepad_menu_conflict PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME gamepad_menu_conflict COMMAND test_gamepad_menu_conflict)
+
     # maybe_detonate_object gate/armour/salvage helpers — ROM-free unit test
     # (FID-0074): retail ASM src/game/chrobjhandler.c:38029-38459. Guards all
     # five divergences on both flag sides (D2 armour polarity, D3 unarmed-gate

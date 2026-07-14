@@ -70,16 +70,13 @@ const char *padReservedRole(int encoded) {
     if (encoded == SDL_CONTROLLER_BUTTON_GUIDE) return "Guide";
     return nullptr;
 }
-// The gamepad action (other than `exclude`) currently on encoded input `enc`, or -1.
+// The gamepad action (other than `exclude`) currently on encoded input `enc`, or
+// -1. Delegates to the shared SDL-free ownership primitive (unit-tested) so the
+// button AND trigger reject paths share one owner map [AUDIT-0050].
 int padOwner(int enc, int exclude, const char **outLabel) {
-    for (int j = 0; j < gamepadBindingCount(); ++j) {
-        if (j == exclude) continue;
-        if (gamepadBindingEncoded((GamepadAction)j) == enc) {
-            if (outLabel) *outLabel = gamepadActionLabel((GamepadAction)j);
-            return j;
-        }
-    }
-    return -1;
+    int owner = gamepadBindingOwnerOf(enc, exclude);
+    if (owner >= 0 && outLabel) *outLabel = gamepadActionLabel((GamepadAction)owner);
+    return owner;
 }
 // A gamepad action collides with a reserved button OR another action.
 bool padConflicts(int i, int n) {
@@ -223,11 +220,32 @@ void drawGamepadTable() {
             if (waitRelease) {
                 if (!anyDown && !trigDown) waitRelease = false;
             } else if (rt > 8000) {
-                gamepadBindingSetTrigger((GamepadAction)capturing, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-                gamepadBindingSave(); capturing = -1; committedThisFrame = true;
+                // Same move-or-reject policy as the button branch: a trigger
+                // already owned by another action is rejected (naming it) rather
+                // than silently double-acting in-game [AUDIT-0050].
+                const char *ownerLabel = nullptr;
+                int owner = padOwner(gamepadTriggerEncoded(SDL_CONTROLLER_AXIS_TRIGGERRIGHT),
+                                     capturing, &ownerLabel);
+                if (owner >= 0) {
+                    setBindMsg("The Right Trigger is already used by \"%s\" \xE2\x80\x94 rebind that action first.",
+                               ownerLabel);
+                } else {
+                    gamepadBindingSetTrigger((GamepadAction)capturing, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                    gamepadBindingSave(); g_bindMsg[0] = '\0';
+                }
+                capturing = -1; committedThisFrame = true;
             } else if (lt > 8000) {
-                gamepadBindingSetTrigger((GamepadAction)capturing, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-                gamepadBindingSave(); capturing = -1; committedThisFrame = true;
+                const char *ownerLabel = nullptr;
+                int owner = padOwner(gamepadTriggerEncoded(SDL_CONTROLLER_AXIS_TRIGGERLEFT),
+                                     capturing, &ownerLabel);
+                if (owner >= 0) {
+                    setBindMsg("The Left Trigger is already used by \"%s\" \xE2\x80\x94 rebind that action first.",
+                               ownerLabel);
+                } else {
+                    gamepadBindingSetTrigger((GamepadAction)capturing, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+                    gamepadBindingSave(); g_bindMsg[0] = '\0';
+                }
+                capturing = -1; committedThisFrame = true;
             } else {
                 for (b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
                     // The overlay-toggle button and Guide fire their own system

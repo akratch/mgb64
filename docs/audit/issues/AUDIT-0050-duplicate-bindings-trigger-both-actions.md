@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a permitted binding conflict produces unintended simultaneous game actions |
 | Priority | P2 |
 | Area | Input bindings / conflict semantics |
@@ -74,3 +74,30 @@ input mapper and assert exactly the intended N64 control bits or edge actions.
 
 - AUDIT-0025 covers conflicts between the system menu button and gameplay.
 - AUDIT-0051 covers hidden fixed-alternate conflicts.
+
+## Resolution
+
+Fixed on `feat/webgpu-backend`. The Controls panel's move-or-reject
+duplicate-binding policy (added in 2f4805d) was applied to the keyboard and
+gamepad-button capture branches but **not** to the two gamepad TRIGGER-capture
+branches (`src/app/ui_bindings.cpp`), which called `gamepadBindingSetTrigger` +
+`gamepadBindingSave` unconditionally — so a trigger already owned by another
+action silently double-acted in-game.
+
+- New SDL-free primitive `src/platform/binding_conflict.{h,c}` (`bindingOwnerOf`)
+  operating on the raw encoded-binding array; `GB_NONE`/`GB_AXIS_BASE` moved here
+  as the single source shared by the runtime, the UI, and the test.
+- `input_bindings.c` exports `gamepadTriggerEncoded(sdl_axis)` (so the UI never
+  hardcodes the trigger encoding) and `gamepadBindingOwnerOf(enc, exclude)`
+  (respecting force-defaults like `gamepadBindingEncoded`).
+- `padOwner` (ui_bindings.cpp) now delegates to `gamepadBindingOwnerOf`, and both
+  trigger-capture branches apply the same reject-if-owned policy as the button
+  branch (naming the owner, no set/save on conflict).
+
+Guarded by the ROM-free/SDL-free ctest `binding_conflict`
+(tests/test_binding_conflict.c): `bindingOwnerOf` finds button and trigger owners,
+treats `GB_NONE` as never-conflicting, honours `exclude`, and confirms trigger
+(≥ `GB_AXIS_BASE`) and button (< `GB_AXIS_BASE`) encodings never alias. Full
+engine + app build links; gamepad bindings are host input mapping (force-defaults
+uses `kGpDefault`, untouched), so the 7 input tapes stay byte-exact. The
+interactive on-screen reject-message verification is left for owner UI validation.
