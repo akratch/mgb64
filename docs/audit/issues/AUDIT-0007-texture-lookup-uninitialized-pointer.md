@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - undefined behavior on a normal asset-load path |
 | Priority | P2 |
 | Area | Assets / texture decompression |
@@ -123,3 +123,7 @@ the pixels or compressed source bytes.
 This is separate from texture-ID bounds and allocation-size hardening already
 implemented in the native loader. Those guards validate which asset and output
 size are used; they do not define the inactive local pointer in this helper.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `b76b8dc` (ledger Status was stale). `texInflateLookupFromBuffer` (image.c:2883) now initializes BOTH src8 and src16 in both branches of the numcolours test; no uninitialized source cursor is advanced.

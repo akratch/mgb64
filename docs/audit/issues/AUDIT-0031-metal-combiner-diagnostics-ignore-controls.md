@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S4 - backend A/B diagnostics silently test different shader behavior |
 | Priority | P3 |
 | Area | Fast3D diagnostics / Metal shader generation |
@@ -79,3 +79,7 @@ shader source in a backend contract test.
 
 - [`RENDERER_SIM_AUDIT_2026-07-06.md`](../../RENDERER_SIM_AUDIT_2026-07-06.md)
   originally recorded the missing quantization and hardcoded-value findings.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+Metal fallback-only; the combiner-diagnostic knobs are GL/Metal-specific and out of scope for the default WebGPU backend.

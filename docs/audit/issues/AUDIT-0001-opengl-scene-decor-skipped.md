@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S2 - promised feature unavailable |
 | Priority | P2 |
 | Area | Rendering / OpenGL / scene decoration |
@@ -121,3 +121,7 @@ per-frame uploads.
   [`10-asset-replacement-architecture.md`](../../design/remaster-aaa/10-asset-replacement-architecture.md).
 - This is not a retail parity defect when scene decor is off; it is a native
   feature/backend contract defect.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+WebGPU is the default renderer (gfx_backend.c) and draws scene decor; OpenGL is an explicit opt-in fallback (`GE007_RENDERER=gl`) and Video.SceneDecor is an opt-in remaster feature, so this is a narrow non-default intersection. Candidate future hardening: warn once when SceneDecor is requested on the GL backend.

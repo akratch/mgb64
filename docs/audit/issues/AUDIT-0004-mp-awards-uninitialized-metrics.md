@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - native C undefined behavior in match results |
 | Priority | P3 |
 | Area | Gameplay / multiplayer / awards |
@@ -102,3 +102,7 @@ MemorySanitizer where supported, and retain static analysis as a CI check.
 can change later comparisons for fractional values. That separate behavior
 requires retail US assembly adjudication before it can be classified as a port
 defect and is intentionally not folded into this report.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). `struct AwardMetrics metrics[4]` is now zero-initialized (mp_watch.c:320), so inactive award slots are defined before the max/compare helpers read them.

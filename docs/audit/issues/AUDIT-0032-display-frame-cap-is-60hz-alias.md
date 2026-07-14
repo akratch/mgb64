@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - a selectable display-rate mode cannot deliver display-rate rendering |
 | Priority | P3 |
 | Area | Frame pacing / high-refresh presentation |
@@ -79,3 +79,7 @@ and camera-cut/teleport visual captures on both render backends.
 
 - [`UNCAPPED_FPS_PLAN.md`](../../design/UNCAPPED_FPS_PLAN.md) contains the
   implementation milestones and invariants for this work.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). Video.FrameCap is now labeled a 60 Hz compatibility alias (platform_sdl.c:1916) — the report's accepted interim resolution pending render interpolation.

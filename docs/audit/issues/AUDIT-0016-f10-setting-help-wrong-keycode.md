@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - incorrect player-facing configuration guidance |
 | Priority | P3 |
 | Area | Input settings / documentation |
@@ -103,3 +103,7 @@ there is no stale `1073741899` occurrence.
   the decimal annotation added during implementation.
 - [AUDIT-0011](AUDIT-0011-malformed-numeric-settings.md) separately covers
   validation of hand-entered numeric setting values.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). The F10 help now advertises the correct SDL keycode 1073741891 (platform_sdl.c:2269).

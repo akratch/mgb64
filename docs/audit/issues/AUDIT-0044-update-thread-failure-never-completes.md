@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - a recoverable launcher service failure leaves permanent busy state |
 | Priority | P3 |
 | Area | App shell / update check |
@@ -66,3 +66,7 @@ automation, and create-failure state transitions. Assert `started`, `done`,
 ## Related Work
 
 - None.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). The update-thread create-failure branch now publishes the terminal UI state (SDL_AtomicSet(s_done,1)) so the UI leaves 'Checking…' (update_check.cpp:246).

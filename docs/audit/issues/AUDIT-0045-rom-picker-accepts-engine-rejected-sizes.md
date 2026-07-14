@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - the launcher authorizes inputs the engine cannot boot safely |
 | Priority | P1 |
 | Area | Launcher / ROM validation contract |
@@ -79,3 +79,7 @@ assert identical decisions before a short boot of each accepted region.
   dereferences.
 - AUDIT-0035 requires the app to propagate an engine rejection if one still
   reaches boot.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). rom_validate.cpp:67 now gates on the exact 12 MB size the engine accepts, matching the loader; oversized/undersized files are no longer marked Ready.

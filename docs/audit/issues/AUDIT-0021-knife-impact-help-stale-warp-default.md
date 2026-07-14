@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - diagnostic help gives an incorrect reproduction parameter |
 | Priority | P3 |
 | Area | Validation tooling / command help |
@@ -66,3 +66,7 @@ explicit different value, confirming the printed command summary.
 
 - AUDIT-0018 requires recalibrating the actual fixture after FID-0117 and owns
   selection of the final default value.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). knife_impact_smoke.sh uses an unquoted heredoc so the usage text interpolates the real WARP_DISTANCE default (90) instead of a drifting literal.

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S3 - the retail mission-music state machine is never initialized on the native port, degrading dynamic background/X-track behavior |
 | Priority | P2 |
 | Area | Audio / mission-music state machine (native port fidelity) |
@@ -84,3 +84,7 @@ without dynamic music.
 
 - AUDIT-0071 covers the ignored decompression status in the music loader.
 - AUDIT-0072 covers the sequence-table over-read in the same loader.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+By design: the retail native mission-music init is now behind an opt-in flag (`portMissionMusicInitEnabled`); the default is the historical byte-identical stub, so the guard is deliberate, not stale.

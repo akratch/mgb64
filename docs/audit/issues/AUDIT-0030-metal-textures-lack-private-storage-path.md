@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S4 - potential discrete-GPU sampling inefficiency without measured regression |
 | Priority | P3 |
 | Area | Metal renderer / texture residency |
@@ -75,3 +75,7 @@ device.
 
 - [`RENDERER_SIM_AUDIT_2026-07-06.md`](../../RENDERER_SIM_AUDIT_2026-07-06.md)
   originally raised the device-local texture opportunity.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+Metal fallback-only (non-default); a discrete-GPU private-storage upload optimization with no correctness impact on the default WebGPU path.

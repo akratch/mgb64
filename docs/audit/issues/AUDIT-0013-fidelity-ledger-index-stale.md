@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - authoritative fidelity reporting is incomplete and its freshness gate is red |
 | Priority | P1 |
 | Area | Fidelity ledger / generated documentation |
@@ -113,3 +113,7 @@ each successful operation.
 - The release-readiness test ran before the dedicated freshness test in this
   checkout and did not surface the stale index, so the dedicated CTest remains
   necessary unless release readiness explicitly incorporates it.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `2c2df9b` (ledger Status was stale). LEDGER.md now indexes all 129 FID records (incl. FID-0122..0130); `ledger.py render --check` passes and a CMake lane (fidelity_ledger_index_current) guards it.

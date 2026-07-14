@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - implemented player functionality is mislabeled and hidden |
 | Priority | P2 |
 | Area | Minimap / settings discoverability |
@@ -74,3 +74,7 @@ the player-facing settings placement.
 ## Related Work
 
 - None.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). The minimap-objectives help no longer claims 'no effect'; the setting is wired (default on) and drives objective pins (minimap.c:694).

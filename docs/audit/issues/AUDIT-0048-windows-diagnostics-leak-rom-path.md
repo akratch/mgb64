@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - support bundle violates its path-redaction privacy contract |
 | Priority | P1 |
 | Area | Diagnostics export / privacy |
@@ -72,3 +72,7 @@ and assert none occur while the expected filename and ROM metadata do.
 ## Related Work
 
 - AUDIT-0047 covers missing configuration and error reporting in the exporter.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). The diagnostics-export redaction scans for both '/' and '\\' separators (ui_diag.cpp:63), so the Windows full ROM path is no longer leaked.

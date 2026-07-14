@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S4 - visible preset-contract violation |
 | Priority | P2 |
 | Area | Presentation / launch presets |
@@ -101,3 +101,7 @@ no widget draw.
   [`RENDERER_SIM_AUDIT_2026-07-06.md` finding 29](../../RENDERER_SIM_AUDIT_2026-07-06.md).
 - Existing owner-decision entry:
   [`BACKLOG_v0.4.0.md`](../../BACKLOG_v0.4.0.md).
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `6c1a23d` (ledger Status was stale). Both faithful presets pin `Video.FpsOverlay=0` (platform_sdl.c:2526, :2623), so the non-original overlay is off under --faithful/--faithful-hd.

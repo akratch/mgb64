@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - apparently conflict-free rebinds can trigger a hidden second action |
 | Priority | P2 |
 | Area | Input bindings / fixed controls |
@@ -77,3 +77,7 @@ edge actions in frontend and gameplay contexts.
 - AUDIT-0050 covers duplicate configurable actions and the incorrect
   last-writer message.
 - AUDIT-0024 covers missing capture UI for system hotkeys.
+
+## Resolution <!-- triage-2026-07-14 -->
+
+Verified already fixed in commit `2f4805d` (ledger Status was stale). kReservedKeys/padReserved now enumerate every fixed physical-input claim and conflict detection consults them (ui_bindings.cpp:29+).

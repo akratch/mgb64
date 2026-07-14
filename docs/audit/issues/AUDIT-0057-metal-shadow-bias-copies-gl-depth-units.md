@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S4 - opt-in sun-shadow acne or detachment can differ by backend |
 | Priority | P3 |
 | Area | Metal renderer / sun-shadow depth bias |
@@ -85,3 +85,7 @@ Apple GPUs.
 
 - [`RENDERER_SIM_AUDIT_2026-07-06.md`](../../RENDERER_SIM_AUDIT_2026-07-06.md)
   originally recorded this uncalibrated format divergence.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+Metal fallback-only shadow-bias parity; the copied GL depth-bias literals affect only the non-default Metal backend.

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Deferred |
 | Severity | S4 - an opt-in quality mode can bleed AO across depth silhouettes |
 | Priority | P3 |
 | Area | Metal renderer / SSAO composite |
@@ -80,3 +80,7 @@ both on and off.
 
 - [`RENDERER_SIM_AUDIT_2026-07-06.md`](../../RENDERER_SIM_AUDIT_2026-07-06.md)
   first recorded this quality defect.
+
+## Deferral (verify-before-fixing triage 2026-07-14) <!-- triage-2026-07-14 -->
+
+Metal is a deprecated macOS-only fallback now that WebGPU is the default backend; this half-res SSAO-upsample quality item does not affect the shipped default path.
