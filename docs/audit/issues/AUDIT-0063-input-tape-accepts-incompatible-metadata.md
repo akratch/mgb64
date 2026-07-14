@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a replay can run under session semantics different from its recorded header |
 | Priority | P2 |
 | Area | Input tape / replay validity |
@@ -69,3 +69,7 @@ prove no playback hook is installed on rejection.
 
 - AUDIT-0064 covers unreadable tapes falling back to ordinary input.
 - AUDIT-0065 covers allocation before validating the file extent.
+
+## Resolution
+
+The `--play-tape` install path now preflights the tape's session metadata after the seed/level checks: difficulty (`header.difficulty` vs the run's difficulty), `tick_hz` (vs `GE7TAPE_TICK_HZ`), `flags` (must be 0 — no flag semantics are implemented), and `controller_count` (must be in `1..num_players`). A mismatch exits 2 rather than replaying the stream against an incompatible sim. Verified: replaying a diff=0 tape under `--difficulty 2` exits 2; the 7 baseline tapes (diff=0, `DIFFICULTY_AGENT`=0, controllers=1) still replay byte-exact.

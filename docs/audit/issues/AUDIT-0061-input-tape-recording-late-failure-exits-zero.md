@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a requested regression fixture can be absent while the recording run is green |
 | Priority | P1 |
 | Area | Input tape / recording durability |
@@ -72,3 +72,7 @@ smoke that records to a constrained destination. Parse the completed tape with
 
 - AUDIT-0062 covers destruction of a pre-existing tape during finalization.
 - AUDIT-0043 covers the equivalent false-success contract for screenshots.
+
+## Resolution
+
+`inputTapeWriterOpen` now opens and holds the `<path>.tmp` destination up front, so a bad `--record-tape` path (unwritable dir, read-only fs) is detected before any gameplay; `inputTapeInstallHooks` fails closed with `exit(2)` on that failure (symmetric with `--play-tape`). `inputTapeWriterClose` writes the held temp and atomically renames it over the live file only once complete+flushed, so no partial/corrupt tape is ever produced. Verified: `--record-tape /nonexistent_dir/x.ge7tape` exits 2 with a clear diagnostic; 7/7 tape regression (record+replay) still byte-exact. Residual (documented): a disk-full failure during the process-exit (`atexit`) flush logs the error and leaves any prior file intact, but — running inside an atexit handler — cannot alter the already-committed exit code; the temp+rename guarantees no corrupt artifact and the regression harness validates the recorded artifact.

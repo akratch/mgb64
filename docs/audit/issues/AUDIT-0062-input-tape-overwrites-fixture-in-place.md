@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a failed rerecord can destroy a known-good regression fixture |
 | Priority | P2 |
 | Area | Input tape / atomic persistence |
@@ -66,3 +66,7 @@ confirm the destination is either the complete old tape or complete new tape.
 
 - AUDIT-0061 covers late failure and the incorrect process status.
 - AUDIT-0049 covers non-atomic keyboard and gamepad binding saves.
+
+## Resolution
+
+`inputTapeWriterClose` no longer truncates the live destination in place. The writer holds a `<path>.tmp` handle (opened at `inputTapeWriterOpen`), writes header+records there, checks `ferror`/`fflush`/`fclose`, and only `rename`s it over the live file on full success; any failure `remove`s the temp and leaves the existing tape untouched. Mirrors the atomic temp+rename writer in `input_bindings.c` (AUDIT-0049) / `config_pc.c`. Covered by `tests/test_input_tape.c` (no leftover `.tmp`, byte-exact roundtrip).

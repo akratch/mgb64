@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a requested deterministic replay can become an uncontrolled live-input run |
 | Priority | P1 |
 | Area | Input tape / failure propagation |
@@ -68,3 +68,7 @@ the first gameplay input sample is consumed.
 
 - AUDIT-0063 covers structurally readable but semantically incompatible tapes.
 - AUDIT-0035 covers the app shell masking engine boot failures.
+
+## Resolution
+
+In `inputTapeInstallHooks`, a `--play-tape` that is missing/unreadable/short/malformed (`inputTapeRead` returns NULL) now `exit(2)`s instead of setting a flag and silently continuing on live/ordinary input. Symmetric with the adjacent seed/level/metadata validation failures. Verified: `--play-tape <missing>` exits 2 with a clear diagnostic.

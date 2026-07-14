@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - a tiny malformed tape can request roughly 320 MiB before rejection |
 | Priority | P2 |
 | Area | Input tape / malformed-file robustness |
@@ -67,3 +67,7 @@ small constant memory bound. Fuzz the reader with allocation limits enabled.
 
 - AUDIT-0063 covers validation of semantic header fields.
 - AUDIT-0064 covers propagation of reader failure into engine status.
+
+## Resolution
+
+`inputTapeRead` now verifies the file's actual size equals `header_bytes + tick_count*reclen` BEFORE allocating from the (untrusted) `tick_count`, so a header claiming `tick_count=16M` on a truncated file no longer forces a ~336 MB allocation — the file is rejected first. A short body or trailing garbage is rejected as corrupt. Overflow-safe (`num_players<=4`, `tick_count<=16M`). Covered by `tests/test_input_tape.c` (over-sized and under-sized rejection); the test was also converted off `assert()` (compiled out under the Release `-DNDEBUG` ctest build, which had made it vacuous).
