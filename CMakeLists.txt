@@ -861,6 +861,22 @@ if(BUILD_TESTING)
     target_include_directories(test_gamepad_menu_conflict PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME gamepad_menu_conflict COMMAND test_gamepad_menu_conflict)
 
+    # Screenshot-series cadence + write contract — ROM-free/GPU-free unit test
+    # (AUDIT-0003 remainder): the AFTER_FRAME/EVERY/LIMIT/room accounting and the
+    # P6 write (filename pattern, bottom-to-top row flip, write-only-on-durable-
+    # file contract, written counter) were extracted from a static function in
+    # the 25k-line gfx_pc.c into screenshot_series.c, which now takes a readback
+    # function pointer. A mock readback (deterministic pixels; controllable
+    # success/failure) exercises cadence, room filter, flip/size, and failure
+    # handling with no GL/Metal/WebGPU context. Compiles only the pure
+    # screenshot_series.c TU.
+    add_executable(test_screenshot_series
+        "${CMAKE_SOURCE_DIR}/tests/test_screenshot_series.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/fast3d/screenshot_series.c"
+    )
+    target_include_directories(test_screenshot_series PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/fast3d")
+    add_test(NAME screenshot_series COMMAND test_screenshot_series)
+
     # System-hotkey predicates + gamepad button-name reader — ROM-free/SDL-free
     # unit test (AUDIT-0024 core): sysKeyValid bounds a keycode to SDL's keycode
     # range, sysKeyMutualConflict enforces menu-toggle != fps-toggle (both are
@@ -1557,6 +1573,7 @@ list(APPEND PLATFORM_SOURCES "${CMAKE_SOURCE_DIR}/src/app/cli_stage_tables.c")
 # Fast3D display list interpreter (replaces old gfx_pc.c)
 set(FAST3D_SOURCES
     src/platform/fast3d/gfx_pc.c
+    src/platform/fast3d/screenshot_series.c
     src/platform/fast3d/gfx_opengl.c
     src/platform/fast3d/gfx_cc.c
     src/platform/fast3d/gfx_backend.c

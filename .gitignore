@@ -96,6 +96,10 @@ ref_before_*
 diag_*
 # ...but keep the app's diagnostics source (diag_* is for root-level dump files).
 !src/app/diag_log.h
+# ...and the extracted screenshot-series source (screenshot_* is for root-level
+# PPM/dump files, not this AUDIT-0003 diagnostic TU).
+!src/platform/fast3d/screenshot_series.c
+!src/platform/fast3d/screenshot_series.h
 !src/app/diag_log.cpp
 # (re-allow project-authored images by exception if ever needed, e.g.:)
 # !docs/img/*.png

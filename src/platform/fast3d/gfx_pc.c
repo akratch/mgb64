@@ -48,6 +48,7 @@
 #include "unk_0A1DA0.h"
 #include "vi.h"
 #include "minimap_overlay.h"
+#include "screenshot_series.h"
 
 /* GoldenEye uses base GBI. DO NOT define F3DEX_GBI_2 or F3DEX_GBI. */
 
@@ -24033,138 +24034,35 @@ bool gfx_backend_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     return gfx_rapi->read_framebuffer_rgb(x, y, width, height, rgb_out);
 }
 
+/* Readback adapter handed to the extracted screenshot_series TU: routes the
+ * backend-neutral read (GL->glReadPixels, Metal->blit, WebGPU->scene-tex copy)
+ * [AUDIT-0003]. The ctx is unused — the backend is process-global state. */
+static bool gfx_screenshot_series_readback_adapter(int x, int y, int width,
+                                                   int height, uint8_t *rgb_out,
+                                                   void *ctx)
+{
+    (void)ctx;
+    return gfx_backend_read_framebuffer_rgb(x, y, width, height, rgb_out);
+}
+
+/* Thin wrapper over the extracted, unit-tested cadence/write logic
+ * (screenshot_series.c). Gathers width/height/frame/room and passes the real
+ * backend readback adapter; the env parse (once), AFTER_FRAME/EVERY/LIMIT/room
+ * accounting, filename pattern, bottom-to-top flip, no-partial-file handling,
+ * and written counter all live in the extracted TU. The state is a
+ * function-local static so the env parse runs exactly once per process, matching
+ * the pre-extraction behavior. */
 static void gfx_diag_screenshot_series_capture_if_due(void)
 {
-    static int initialized = 0;
-    static int enabled = 0;
-    static int after_frame = 0;
-    static int every = 30;
-    static int limit = 240;
-    static int written = 0;
-    static const char *dir = NULL;
-    static const char *prefix = NULL;
-    static const char *room_spec = NULL;
+    static screenshot_series_state s_series_state;
 
-    if (!initialized) {
-        const char *env;
-
-        initialized = 1;
-        dir = getenv("GE007_SCREENSHOT_SERIES_DIR");
-        enabled = (dir != NULL && dir[0] != '\0' && strcmp(dir, "0") != 0);
-        prefix = getenv("GE007_SCREENSHOT_SERIES_PREFIX");
-        if (prefix == NULL || prefix[0] == '\0') {
-            prefix = "capture";
-        }
-        room_spec = getenv("GE007_SCREENSHOT_SERIES_ROOM");
-        if (room_spec != NULL && (room_spec[0] == '\0' ||
-                                  (room_spec[0] == '0' && room_spec[1] == '\0'))) {
-            room_spec = NULL;
-        }
-
-        env = getenv("GE007_SCREENSHOT_SERIES_AFTER_FRAME");
-        after_frame = env ? atoi(env) : 0;
-        if (after_frame < 0) {
-            after_frame = 0;
-        }
-
-        env = getenv("GE007_SCREENSHOT_SERIES_EVERY");
-        every = env ? atoi(env) : 30;
-        if (every < 1) {
-            every = 1;
-        }
-
-        env = getenv("GE007_SCREENSHOT_SERIES_LIMIT");
-        limit = env ? atoi(env) : 240;
-        if (limit < 0) {
-            limit = 0;
-        }
-
-        if (enabled) {
-            fprintf(stderr,
-                    "[SCREENSHOT-SERIES] enabled dir=\"%s\" prefix=\"%s\" "
-                    "after=%d every=%d limit=%d room=\"%s\"\n",
-                    dir, prefix, after_frame, every, limit,
-                    room_spec != NULL ? room_spec : "*");
-            fflush(stderr);
-        }
-    }
-
-    if (!enabled ||
-        g_frame_count_diag < after_frame ||
-        (room_spec != NULL &&
-         !gfx_diag_u64_matches_list(room_spec, (uint64_t)g_BgCurrentRoom)) ||
-        (limit > 0 && written >= limit) ||
-        ((g_frame_count_diag - after_frame) % every) != 0) {
-        return;
-    }
-
-    {
-        int sw = gfx_current_dimensions.width;
-        int sh = gfx_current_dimensions.height;
-        size_t pixel_bytes;
-        uint8_t *pixels;
-        char path[1024];
-        int path_len;
-        FILE *sf;
-
-        if (sw <= 0 || sh <= 0) {
-            return;
-        }
-
-        pixel_bytes = (size_t)sw * (size_t)sh * 3;
-        pixels = (uint8_t *)malloc(pixel_bytes);
-        if (pixels == NULL) {
-            fprintf(stderr,
-                    "[SCREENSHOT-SERIES] frame=%d failed=malloc bytes=%zu\n",
-                    g_frame_count_diag, pixel_bytes);
-            fflush(stderr);
-            return;
-        }
-
-        /* Backend-neutral readback: raw glReadPixels crashes under Metal (no GL
-         * context) [AUDIT-0003]. This routes GL->glReadPixels, Metal->blit. A
-         * readback failure writes no (partial) file. */
-        if (!gfx_backend_read_framebuffer_rgb(0, 0, sw, sh, pixels)) {
-            fprintf(stderr, "[SCREENSHOT-SERIES] frame=%d failed=readback\n", g_frame_count_diag);
-            fflush(stderr);
-            free(pixels);
-            return;
-        }
-
-        path_len = snprintf(path, sizeof(path), "%s/%s_f%06d.ppm",
-                            dir, prefix, g_frame_count_diag);
-        if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
-            fprintf(stderr,
-                    "[SCREENSHOT-SERIES] frame=%d failed=path_too_long\n",
-                    g_frame_count_diag);
-            fflush(stderr);
-            free(pixels);
-            return;
-        }
-
-        sf = fopen(path, "wb");
-        if (sf == NULL) {
-            fprintf(stderr,
-                    "[SCREENSHOT-SERIES] frame=%d failed=fopen path=\"%s\"\n",
-                    g_frame_count_diag, path);
-            fflush(stderr);
-            free(pixels);
-            return;
-        }
-
-        fprintf(sf, "P6\n%d %d\n255\n", sw, sh);
-        for (int row = sh - 1; row >= 0; row--) {
-            fwrite(pixels + (size_t)row * (size_t)sw * 3, 1, (size_t)sw * 3, sf);
-        }
-        fclose(sf);
-        free(pixels);
-
-        written++;
-        fprintf(stderr,
-                "[SCREENSHOT-SERIES] frame=%d room=%d path=\"%s\" size=[%d,%d] index=%d\n",
-                g_frame_count_diag, g_BgCurrentRoom, path, sw, sh, written);
-        fflush(stderr);
-    }
+    screenshot_series_capture_if_due(&s_series_state,
+                                     g_frame_count_diag,
+                                     (uint64_t)g_BgCurrentRoom,
+                                     gfx_current_dimensions.width,
+                                     gfx_current_dimensions.height,
+                                     gfx_screenshot_series_readback_adapter,
+                                     NULL);
 }
 
 void gfx_run_dl(Gfx *dl) {
@@ -24343,7 +24241,6 @@ void gfx_run_dl(Gfx *dl) {
     /* W1.E3.T1 diag: report this frame's fully-captured ring occupancy. */
     gfx_shadow_ring_diag();
     gfx_room_xlu_deferred_draw_pending();
-    gfx_diag_screenshot_series_capture_if_due();
     {
         extern volatile int g_gfxRecoveryActive;
         g_gfxRecoveryActive = 0;
@@ -24392,6 +24289,14 @@ void gfx_run_dl(Gfx *dl) {
     if (gfx_backend_use_opengl())
         minimap_overlay_draw_queued_frames();
 #endif
+    /* [AUDIT-0003] Capture AFTER end_frame() composition + the minimap draw, so
+     * the readback contains output post-FX and the minimap, not the raw pre-
+     * composition scene. Accepted trade-off: this runs after the recovery-gate
+     * clear above; the capture path already fail-closes on a readback error and
+     * writes no partial file. Cadence keys on g_frame_count_diag/g_BgCurrentRoom,
+     * both stable across end_frame within this gfx_run_dl call, so the move does
+     * not change capture cadence. */
+    gfx_diag_screenshot_series_capture_if_due();
     gfx_trace_glass_shard_coverage_frame_end();
     gfx_native_sky_queue_reset();
     visibility_scaled_matrix_region_count = 0;

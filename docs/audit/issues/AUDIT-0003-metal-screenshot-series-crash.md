@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Fixed (crash; capture-composition + visual-diff verification remain — see HARNESS_STRATEGY.md Phase C) |
+| Status | Fixed (crash + capture-composition call-site move + backend-mock cadence/write ctest all landed; sole remaining tail is owner-only Metal 5-frame series verification) |
 | Severity | S2 - deterministic backend crash |
 | Priority | P2 |
 | Area | Rendering / capture / Metal |
@@ -23,25 +23,39 @@ blit, WebGPU -> scene-texture copy), called from the series-capture path at
 without writing a partial file (:24127-24132). Native Metal no longer crashes
 on a scheduled series capture.
 
-**Still outstanding** (tracked as HARNESS_STRATEGY.md Phase C / C1, not a new
-issue):
+**Call-site move — DONE** (HARNESS_STRATEGY.md Phase C / C1). The series capture
+call was moved out of the mid-`gfx_run_dl` position (formerly before
+`gfx_rapi->end_frame()` and the OpenGL minimap draw) to immediately **after** the
+`#ifdef NATIVE_PORT` minimap block, just before
+`gfx_trace_glass_shard_coverage_frame_end()`, guarded by an `[AUDIT-0003]`
+comment. Every backend now reads back the fully composited frame (output post-FX
++ minimap), not a pre-composition one. Cadence keys on
+`g_frame_count_diag`/`g_BgCurrentRoom`, both stable across `end_frame()` within
+one `gfx_run_dl` call, so the move does not change capture cadence (verified: a
+before/after WebGPU capture at the same frame differs only by the added
+composition). Accepted trade-off noted in the comment: the readback now runs
+after the recovery-gate clear, but the path already fail-closes on a readback
+error and writes no partial file.
 
-- **Call-site move.** The series capture is still invoked at
-  `gfx_pc.c:24346`, **before** `gfx_rapi->end_frame()` (:24386) and before the
-  OpenGL minimap draw (:24392-24393, `#ifdef NATIVE_PORT`). It needs to move
-  to immediately after the minimap block (before
-  `gfx_trace_glass_shard_coverage_frame_end()` at :24395) so every backend
-  captures the fully composited frame (post-FX + minimap), not a
-  pre-composition one. This no longer crashes; it is a composition-correctness
-  gap.
-- **Backend-mock cadence/failure test.** No test yet covers the
-  `AFTER_FRAME`/`EVERY`/`LIMIT`/room-filter accounting or the
-  write-only-on-durable-file contract; this needs extracting the
-  cadence/accounting logic into a small ROM-free/GPU-free TU that takes a
-  readback function pointer, mocked in a new ctest.
-- **Owner verification.** A Metal 5-frame series run producing exactly five
-  valid, nonblank, correctly oriented P6 PPMs remains owner-only (no Metal
-  runtime available on this host).
+**Backend-mock cadence/failure test — DONE.** The cadence/accounting logic and
+the P6 write were extracted from the static `gfx_diag_screenshot_series_capture_if_due()`
+in `gfx_pc.c` into a dedicated ROM-free/GPU-free TU
+(`src/platform/fast3d/screenshot_series.{h,c}`) that takes a readback function
+pointer; the `gfx_pc.c` function is now a thin wrapper passing the real
+`gfx_backend_read_framebuffer_rgb` adapter. New ctest `screenshot_series`
+(`tests/test_screenshot_series.c`) mocks the readback and asserts exact
+`AFTER_FRAME`/`EVERY`/`LIMIT` cadence, the room filter, the written-only-on-
+durable-file contract (valid P6 header, expected byte size, vertical flip applied),
+that a failed readback writes no file and does not block later frames, and that
+readback is not invoked once the limit is reached.
+
+**Still outstanding — owner-only:** a native-Metal 5-frame series run producing
+exactly five valid, nonblank, correctly oriented P6 PPMs (no Metal runtime on
+this host). This is the sole remaining verification tail. The GL runtime
+composition proof could not be captured headlessly on this macOS host either:
+GL-over-Metal stalls at frame 0 (the documented SSAO GL-over-Metal hang, a
+pre-existing fallback-backend issue unrelated to this change). WebGPU is the
+default backend and its composition proof passed.
 
 The Summary/Evidence/Reproduction/Root-Cause sections below describe the
 pre-fix state (kept for record); Required End State / Acceptance Criteria /
