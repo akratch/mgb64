@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1065 flags** found across the source.
+**1068 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -272,9 +272,11 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DIAG_CONVERT_K4K5` | ? |  | 2 |  |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP` | ? |  | 2 |  |
 | `GE007_DIAG_DISABLE_SHADER_TILE_MASK` | ? |  | 2 |  |
+| `GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER` | ? |  | 1 |  |
 | `GE007_DIAG_IA8_CHANNEL_MODE` | ? |  | 2 |  |
 | `GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER` | ? |  | 2 |  |
 | `GE007_DIAG_LOD_FRACTION` | ? |  | 1 |  |
+| `GE007_DIAG_MENU_SCREENSHOT_MENU` | ? |  | 1 |  |
 | `GE007_DIAG_N64_FILTER_ALWAYS_3POINT` | ? |  | 1 |  |
 | `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD` | ? |  | 1 |  |
 | `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD` | ? |  | 1 |  |
@@ -780,6 +782,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SUPPRESS_DAMAGE_FLASH` | ? |  | 1 |  |
 | `GE007_SYNTHETIC_WALK_MOVEMENT` | ? |  | 1 |  |
 | `GE007_SYNTHETIC_WALK_SCALE` | ? |  | 1 |  |
+| `GE007_SYNTH_FRAME_PATTERN` | ? |  | 1 |  |
 | `GE007_TANK_AIM_TRACE` | ? |  | 1 |  |
 | `GE007_TEXTURE_PACK` | string |  | 1 | Folder containing an HD texture pack you built from your own ROM. Empty = off (original N64 textures). |
 | `GE007_TEXT_AUDIT` | ? |  | 1 |  |

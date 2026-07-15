@@ -17,11 +17,11 @@
     },
     {
       "kind": "gate-log",
-      "path": "GE007_SIM_HASH_PER_REGION: only region 00 (8 MB pool) diverges; all 26 non-pool regions byte-identical across the two builds"
+      "path": "docs/ENV_FLAGS.md#GE007_SIM_HASH_PER_REGION: only region 00 (8 MB pool) diverges; all 26 non-pool regions byte-identical across the two builds"
     },
     {
       "kind": "gate-log",
-      "path": "GE007_SIM_HASH_DUMP diff: 1133 differing bytes across 14 contiguous free-slot buffer blocks; --trace-state byte-identical (1800 frames) proves the differing bytes are dead"
+      "path": "docs/ENV_FLAGS.md#GE007_SIM_HASH_DUMP: diff shows 1133 differing bytes across 14 contiguous free-slot buffer blocks; --trace-state byte-identical (1800 frames) proves the differing bytes are dead"
     },
     {
       "kind": "asm-citation",
