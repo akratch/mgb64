@@ -1,9 +1,12 @@
-// ui_bindings.cpp — Controls panel: press-to-rebind keyboard AND gamepad actions.
+// ui_bindings.cpp — Controls panel: press-to-rebind keyboard AND gamepad actions,
+// plus the three system hotkeys (AUDIT-0024).
 #include "ui_launcher.h"
 #include "app_theme.h"   // AppTheme::bad() — conflict tint
 #include "input_actions.h"
+#include "config_schema.h"  // system-hotkey config keys (AUDIT-0024)
 #include "ui_common.h"
 #include "ui_overlay.h"  // Overlay_gamepadToggleButton: reserved, not capturable
+#include "../platform/sys_hotkey.h"  // sysKeyValid / sysKeyMutualConflict / gamepadButtonName
 
 #include "imgui.h"
 #include <SDL.h>
@@ -324,6 +327,172 @@ void drawGamepadTable() {
     if (!gc) ui::TextSubtle("No gamepad detected — connect a controller to rebind.");
 }
 
+// --- System hotkeys (AUDIT-0024) ---------------------------------------------
+// The overlay-open key, the FPS-overlay key (both SDL KEYCODES — a DIFFERENT
+// namespace from the gameplay SCANCODE table above) and the overlay-open gamepad
+// button. Previously only editable as billion-range Settings sliders; now
+// press-to-bind rows that mirror the gameplay-row UX. Keycode discipline: these
+// config keys store SDL KEYCODES end-to-end (captured scancode -> keycode via
+// SDL_GetKeyFromScancode, displayed via SDL_GetKeyName) — never a scancode.
+struct SysKeyRow { const char *label; const char *cfgKey; int defKeycode; };
+const SysKeyRow kSysKeyRows[] = {
+    {"Open Menu",   "Input.MenuToggleKey", SDLK_F1},   // default F1
+    {"FPS Overlay", "Input.FpsToggleKey",  SDLK_F10},  // default F10
+};
+
+// Persist a system-hotkey int. In the launcher (no staging session) each Controls
+// edit persists immediately, mirroring inputBindingSave() for the gameplay rows;
+// under a staging session (defensive — Controls is a launcher-only panel today)
+// the value stages and the owning Apply persists it.
+void sysPersistInt(const char *key, int value) {
+    mgb_config_set_int(key, value);
+    if (!configStagingActive()) mgb_config_save();
+}
+
+void drawSystemTable() {
+    static int  capturingKey = -1;   // index into kSysKeyRows awaiting a key, or -1
+    static bool capturingPad = false; // pad row awaiting a button
+    static bool padWaitRelease = false; // debounce the A-press that armed the pad row
+
+    bool committedThisFrame = false;
+
+    // --- keyboard capture poll (menu / fps keys) ---
+    if (capturingKey >= 0) {
+        const Uint8 *ks = SDL_GetKeyboardState(NULL);
+        if (ks[SDL_SCANCODE_ESCAPE]) {
+            capturingKey = -1;  // Esc cancels
+        } else {
+            for (int sc = 4; sc < SDL_NUM_SCANCODES; ++sc) {
+                if (!ks[sc]) continue;
+                // Namespace conversion: the poll yields a SCANCODE, but these keys
+                // are stored as KEYCODES — convert before validating/storing.
+                int kc = (int)SDL_GetKeyFromScancode((SDL_Scancode)sc);
+                const char *kn = SDL_GetKeyName((SDL_Keycode)kc);
+                const char *keyName = (kn && kn[0]) ? kn : "That key";
+                const SysKeyRow &row = kSysKeyRows[capturingKey];
+                const SysKeyRow &other = kSysKeyRows[capturingKey == 0 ? 1 : 0];
+                int otherKc = mgb_config_get_int(other.cfgKey, other.defKeycode);
+                if (!sysKeyValid(kc)) {
+                    setBindMsg("%s can't be used as a system hotkey.", keyName);
+                } else if (sysKeyMutualConflict(kc, otherKc)) {
+                    setBindMsg("%s is already the %s hotkey \xE2\x80\x94 rebind that action first.",
+                               keyName, other.label);
+                } else {
+                    sysPersistInt(row.cfgKey, kc);
+                    g_bindMsg[0] = '\0';
+                }
+                capturingKey = -1;
+                break;
+            }
+        }
+    }
+
+    // --- gamepad capture poll (menu button; buttons only) ---
+    if (capturingPad) {
+        const Uint8 *ks = SDL_GetKeyboardState(NULL);
+        SDL_GameController *gc = appController();
+        if (ks[SDL_SCANCODE_ESCAPE]) {
+            capturingPad = false;
+        } else if (!gc) {
+            // No pad attached — leave the row armed.
+        } else {
+            bool anyDown = false;
+            for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
+                if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) anyDown = true;
+            if (padWaitRelease) {
+                if (!anyDown) padWaitRelease = false;  // ignore the A that armed the row
+            } else {
+                for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
+                    // Guide is an OS/system button (often swallowed) — never bind
+                    // the menu toggle onto it.
+                    if (b == SDL_CONTROLLER_BUTTON_GUIDE) continue;
+                    if (SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b)) {
+                        sysPersistInt("Input.MenuToggleButton", b);
+                        // Menu-wins reconcile (AUDIT-0025): clear any gameplay
+                        // binding now colliding with the new menu button, then
+                        // persist the cleared gameplay bindings.
+                        if (gamepadBindingReconcileMenu() > 0) gamepadBindingSave();
+                        g_bindMsg[0] = '\0';
+                        capturingPad = false; committedThisFrame = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    SDL_GameController *gc = appController();
+
+    if (ImGui::BeginTable("##sysbinds", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+        ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+
+        // Two keyboard rows (keycodes).
+        for (int r = 0; r < 2; ++r) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(kSysKeyRows[r].label);
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::PushID(2000 + r);  // distinct from keyboard(0..)/gamepad(1000..) IDs
+            bool cap = (capturingKey == r);
+            char label[64];
+            if (cap) {
+                std::snprintf(label, sizeof(label), "Press a key...");
+            } else {
+                int kc = mgb_config_get_int(kSysKeyRows[r].cfgKey, kSysKeyRows[r].defKeycode);
+                const char *kn = SDL_GetKeyName((SDL_Keycode)kc);
+                std::snprintf(label, sizeof(label), "%s", (kn && kn[0]) ? kn : "?");
+            }
+            if (cap) ui::PushPrimaryButtonColors();
+            if (ImGui::Button(label, ImVec2(220.0f, 0.0f))) capturingKey = cap ? -1 : r;
+            if (cap) ui::PopPrimaryButtonColors();
+            ImGui::PopID();
+        }
+
+        // Gamepad menu-button row (button index -> human name).
+        {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Menu Button (Gamepad)");
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::PushID(2100);
+            bool cap = capturingPad;
+            char label[64];
+            if (cap) {
+                std::snprintf(label, sizeof(label), "Press a button...");
+            } else {
+                int bi = mgb_config_get_int("Input.MenuToggleButton", SDL_CONTROLLER_BUTTON_BACK);
+                const char *bn = gamepadButtonName(bi);
+                std::snprintf(label, sizeof(label), "%s", (bn && bn[0]) ? bn : "?");
+            }
+            if (cap) ui::PushPrimaryButtonColors();
+            if (ImGui::Button(label, ImVec2(220.0f, 0.0f)) && !committedThisFrame) {
+                if (cap) { capturingPad = false; }
+                else     { capturingPad = true; padWaitRelease = true; }
+            }
+            if (cap) ui::PopPrimaryButtonColors();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    ui::Gap(ui::kGapM);
+    if (ImGui::Button("Reset System Hotkeys to Defaults", ImVec2(260.0f, 36.0f))) {
+        mgb_config_set_int("Input.MenuToggleKey", SDLK_F1);
+        mgb_config_set_int("Input.FpsToggleKey", SDLK_F10);
+        mgb_config_set_int("Input.MenuToggleButton", SDL_CONTROLLER_BUTTON_BACK);
+        if (!configStagingActive()) mgb_config_save();
+        if (gamepadBindingReconcileMenu() > 0) gamepadBindingSave();
+        capturingKey = -1; capturingPad = false; g_bindMsg[0] = '\0';
+    }
+
+    if (!gc) ui::TextSubtle("No gamepad detected — the Menu Button row needs a controller to rebind.");
+}
+
 }  // namespace
 
 void BindingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
@@ -350,6 +519,15 @@ void BindingsPanel_draw(LauncherState & /*s*/, LauncherAction & /*out*/) {
                            "moved to the Right-Stick click.");
             ui::TextSubtle("Player 2\xE2\x80\x93" "4 pads use fixed defaults (multiplayer rebinding "
                            "is out of scope).");
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("System")) {
+            ui::Gap(ui::kGapS);
+            drawSystemTable();
+            ui::Gap(ui::kGapM);
+            ui::TextSubtle("Open Menu and FPS Overlay are keyboard hotkeys (F1 / F10 by default); "
+                           "the Menu Button opens the same overlay on a gamepad (View/Back by "
+                           "default). Press a key or button to rebind; Esc cancels.");
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

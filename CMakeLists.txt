@@ -891,6 +891,23 @@ if(BUILD_TESTING)
     target_include_directories(test_sys_hotkey PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME sys_hotkey COMMAND test_sys_hotkey)
 
+    # Settings save-status chooser — ROM-free/SDL-free/ImGui-free unit test
+    # (AUDIT-0036 pure slice): saveStatusMessage maps the MgbConfigSaveResult
+    # tri-state (OK / SUPPRESSED / FAILED) to the exact status line surfaced under
+    # Apply/Save, and saveStatusIsFailure flags ONLY FAILED (so an intentional
+    # faithful-mode SUPPRESSED no-write is not mistaken for an error and does not
+    # trigger Retry / keep-overlay-open). Compiles only the pure save_status.c TU;
+    # depends solely on the engine-free MgbConfigSaveResult enum in
+    # src/app/config_schema.h.
+    add_executable(test_save_status
+        "${CMAKE_SOURCE_DIR}/tests/test_save_status.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/save_status.c"
+    )
+    target_include_directories(test_save_status PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/platform"
+        "${CMAKE_SOURCE_DIR}/src/app")
+    add_test(NAME save_status COMMAND test_save_status)
+
     # maybe_detonate_object gate/armour/salvage helpers — ROM-free unit test
     # (FID-0074): retail ASM src/game/chrobjhandler.c:38029-38459. Guards all
     # five divergences on both flag sides (D2 armour polarity, D3 unarmed-gate

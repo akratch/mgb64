@@ -5,6 +5,7 @@
 #include "engine_entry.h"   // AppOverlayHooks, platformSetOverlayHooks
 #include "ui_common.h"
 #include "ui_settings.h"
+#include "../platform/save_status.h"  // saveStatusIsFailure (AUDIT-0036)
 
 #include "imgui.h"
 #include "backends/imgui_impl_sdl2.h"
@@ -49,6 +50,28 @@ LastInputDevice g_lastInputDevice = DEV_KBM;
 
 void setOpen(bool open) {
     if (open == g_open) return;
+
+    if (!open) {
+        // Closing the overlay is a "resume": don't silently lose in-progress
+        // settings edits — commit any open staging session. (Cancel already
+        // discarded + ended its session, so this only fires when the user
+        // resumes with unsaved edits.)
+        if (configStagingActive()) {
+            MgbConfigSaveResult r = configStagingApply();
+            Settings_reportSaveResult(r);  // surface it as the panel status line
+            if (saveStatusIsFailure(r)) {
+                // A persistence FAILURE must not be silently swallowed by the
+                // resume (AUDIT-0036): keep the overlay open on the Settings panel
+                // so the user sees the error + Retry. Apply already committed the
+                // edits to the live globals, so re-open a staging session to keep
+                // them editable / retryable, and abort the close.
+                g_showSettings = true;
+                configStagingBegin();
+                return;
+            }
+        }
+    }
+
     g_open = open;
     g_confirm = 0;
     if (g_open) {
@@ -56,12 +79,7 @@ void setOpen(bool open) {
         g_prevRelMouse = (SDL_GetRelativeMouseMode() == SDL_TRUE);
         SDL_SetRelativeMouseMode(SDL_FALSE);  // free the cursor for the overlay
     } else {
-        // Closing the overlay is a "resume": don't silently lose in-progress
-        // settings edits — commit any open staging session. (Cancel already
-        // discarded + ended its session, so this only fires when the user
-        // resumes with unsaved edits.) Reset the Settings panel so reopening
-        // the overlay starts fresh.
-        if (configStagingActive()) configStagingApply();
+        // Reset the Settings panel so reopening the overlay starts fresh.
         g_showSettings = false;
         SDL_SetRelativeMouseMode(g_prevRelMouse ? SDL_TRUE : SDL_FALSE);
     }

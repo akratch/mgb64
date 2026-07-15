@@ -3,6 +3,7 @@
 #include "config_schema.h"
 #include "ui_common.h"
 #include "app_theme.h"
+#include "../platform/save_status.h"  // saveStatusMessage/IsFailure (AUDIT-0036)
 
 #include "imgui.h"
 #include "nfd.h"
@@ -11,6 +12,17 @@
 #include <cstring>
 
 namespace {
+
+// Last config-save outcome to surface as a status line under the Apply / Save
+// buttons (AUDIT-0036). Held across frames until the next staged edit or Cancel
+// clears it, so a stale "Saved" never lingers after the user changes something.
+bool                g_haveSaveStatus = false;
+MgbConfigSaveResult g_saveStatus = MGB_CONFIG_SAVE_OK;
+
+// Record a save outcome for the status line.
+void noteSaveResult(MgbConfigSaveResult r) { g_saveStatus = r; g_haveSaveStatus = true; }
+// A staged edit (or Cancel) invalidates the last save status.
+void clearSaveStatus() { g_haveSaveStatus = false; }
 
 // String settings (e.g. Video.TexturePack): show the current path read-only
 // plus a native folder picker and a Clear (= stock). Fixes the old "(unsupported
@@ -27,7 +39,7 @@ void drawStringEntry(const MgbCfgEntry &e, const char *label) {
         if (NFD_Init() == NFD_OKAY) {
             nfdu8char_t *out = nullptr;
             if (NFD_PickFolderU8(&out, buf[0] ? buf : nullptr) == NFD_OKAY && out) {
-                mgb_config_set_string(e.key, out);
+                mgb_config_set_string(e.key, out); clearSaveStatus();
                 NFD_FreePathU8(out);
             }
             NFD_Quit();
@@ -35,7 +47,7 @@ void drawStringEntry(const MgbCfgEntry &e, const char *label) {
     }
     if (buf[0]) {
         ImGui::SameLine();
-        if (ImGui::Button("Clear")) mgb_config_set_string(e.key, "");
+        if (ImGui::Button("Clear")) { mgb_config_set_string(e.key, ""); clearSaveStatus(); }
     }
 }
 
@@ -86,19 +98,21 @@ void drawEntry(const MgbCfgEntry &e) {
         case MGB_CFG_UINT:
             if (e.min_val == 0.0f && e.max_val == 1.0f) {
                 bool b = e.cur_int != 0;
-                if (ImGui::Checkbox(label, &b)) mgb_config_set_int(e.key, b ? 1 : 0);
+                if (ImGui::Checkbox(label, &b)) { mgb_config_set_int(e.key, b ? 1 : 0); clearSaveStatus(); }
             } else {
                 int v = e.cur_int;
                 ImGui::SetNextItemWidth(ui::kControlWidth());
-                if (ImGui::SliderInt(label, &v, (int)e.min_val, (int)e.max_val))
-                    mgb_config_set_int(e.key, v);
+                if (ImGui::SliderInt(label, &v, (int)e.min_val, (int)e.max_val)) {
+                    mgb_config_set_int(e.key, v); clearSaveStatus();
+                }
             }
             break;
         case MGB_CFG_FLOAT: {
             float v = e.cur_float;
             ImGui::SetNextItemWidth(ui::kControlWidth());
-            if (ImGui::SliderFloat(label, &v, e.min_val, e.max_val, "%.2f"))
-                mgb_config_set_float(e.key, v);
+            if (ImGui::SliderFloat(label, &v, e.min_val, e.max_val, "%.2f")) {
+                mgb_config_set_float(e.key, v); clearSaveStatus();
+            }
             if (configStagingActive() && isPreviewable(e.key)) drawPreviewToggle(e);
             break;
         }
@@ -109,7 +123,7 @@ void drawEntry(const MgbCfgEntry &e) {
                 for (int i = 0; i < e.enum_count; ++i) {
                     const char *t = mgb_config_enum_token(e.key, i);
                     bool sel = (i == e.cur_enum_index);
-                    if (ImGui::Selectable(t, sel)) mgb_config_set_enum(e.key, i);
+                    if (ImGui::Selectable(t, sel)) { mgb_config_set_enum(e.key, i); clearSaveStatus(); }
                     if (sel) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
@@ -141,6 +155,16 @@ void drawEntry(const MgbCfgEntry &e) {
     ImGui::PopID();
 }
 
+// The three system-hotkey settings (AUDIT-0024) are SDL keycodes / a controller
+// button index — meaningless as billion-range SliderInts. They are edited ONLY as
+// press-to-bind rows in Controls (ui_bindings.cpp "System" tab), so the generic
+// Settings registry skips them (they stay loadable/persistable via the same keys).
+bool isSystemHotkeyKey(const char *key) {
+    return std::strcmp(key, "Input.MenuToggleKey") == 0 ||
+           std::strcmp(key, "Input.FpsToggleKey") == 0 ||
+           std::strcmp(key, "Input.MenuToggleButton") == 0;
+}
+
 // Draw every entry of one section belonging to the given tier (advanced or not),
 // in registry order.
 void drawSection(const char *sec, bool advanced) {
@@ -150,6 +174,7 @@ void drawSection(const char *sec, bool advanced) {
         if (!mgb_config_get(i, &e)) continue;
         if (std::strcmp(e.section, sec) != 0) continue;
         if ((e.advanced != 0) != advanced) continue;
+        if (isSystemHotkeyKey(e.key)) continue;  // edited in Controls (press-to-bind)
         drawEntry(e);
     }
 }
@@ -175,6 +200,7 @@ void resetSectionToDefaults(const char *sec) {
         if (std::strcmp(e.section, sec) != 0) continue;
         mgb_config_reset_default(e.key);
     }
+    clearSaveStatus();  // a section reset is a staged change; drop the stale status
 }
 
 // Per-tab "Reset to defaults" footer with a confirm popup — high value for pad
@@ -219,7 +245,10 @@ SettingsResult Settings_draw() {
     if (configStagingActive()) {
         if (ui::PrimaryButton("Apply", ImVec2(120, 36))) {
             g_previewKey[0] = '\0';           // preview folds into the commit
-            configStagingApply();
+            // Surface the persist outcome (AUDIT-0036): Apply commits staged ->
+            // live globals AND writes ge007.ini; a write failure (or a faithful
+            // no-write) must no longer masquerade as a clean save.
+            noteSaveResult(configStagingApply());
             result = SETTINGS_APPLIED;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep these changes and save to ge007.ini");
@@ -227,16 +256,34 @@ SettingsResult Settings_draw() {
         if (ImGui::Button("Cancel", ImVec2(120, 36))) {
             g_previewKey[0] = '\0';
             configStagingDiscard();
+            clearSaveStatus();
             result = SETTINGS_CANCELLED;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Discard these changes");
         ImGui::SameLine();
         ui::TextSubtle("Changes are held until Apply — the game keeps running on the current values.");
     } else {
-        if (ui::PrimaryButton("Save Settings", ImVec2(150, 36))) mgb_config_save();
+        if (ui::PrimaryButton("Save Settings", ImVec2(150, 36))) noteSaveResult(mgb_config_save_result());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Persist to ge007.ini");
         ImGui::SameLine();
         ui::TextSubtle("Live settings apply instantly; \"restart\" settings apply next launch.");
+    }
+
+    // Save-status line (AUDIT-0036): concise outcome under the buttons. FAILED is
+    // tinted + gets a Retry that re-attempts the write WITHOUT discarding edits
+    // (Apply already committed them to the live globals; a plain re-save persists
+    // the current values). SUPPRESSED explains the faithful/remaster no-persist.
+    if (g_haveSaveStatus) {
+        ui::Gap(ui::kGapS);
+        const bool fail = saveStatusIsFailure(g_saveStatus) != 0;
+        if (fail) ImGui::PushStyleColor(ImGuiCol_Text, AppTheme::bad());
+        ImGui::TextWrapped("%s", saveStatusMessage(g_saveStatus));
+        if (fail) {
+            ImGui::PopStyleColor();
+            if (ImGui::Button("Retry", ImVec2(120, 28))) noteSaveResult(mgb_config_save_result());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Try saving again — your changes are kept either way");
+        }
     }
     ui::Gap(ui::kGapS);
 
@@ -271,3 +318,5 @@ SettingsResult Settings_draw() {
 
     return result;
 }
+
+void Settings_reportSaveResult(MgbConfigSaveResult r) { noteSaveResult(r); }
