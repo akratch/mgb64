@@ -1976,6 +1976,18 @@ if(MGB64_APP)
         target_compile_features(test_launch_intent PRIVATE cxx_std_17)
         add_test(NAME launch_intent COMMAND test_launch_intent)
 
+        # Pure seed of a parsed LaunchIntent onto LauncherState (AUDIT-0060 E1).
+        # launch_seed.cpp + LauncherState (ui_launcher.h -> engine_entry.h +
+        # rom_validate.h, both plain C headers) are ImGui-/SDL-/ROM-free, so this
+        # links tiny — no engine include dirs, no cli_stage_tables. ROM validation
+        # + ensureInit ordering live in Launcher::seed and are covered process-side.
+        add_executable(test_launcher_seed
+            tests/test_launcher_seed.cpp
+            src/app/launch_seed.cpp)
+        target_include_directories(test_launcher_seed PRIVATE src/app)
+        target_compile_features(test_launcher_seed PRIVATE cxx_std_17)
+        add_test(NAME launcher_seed COMMAND test_launcher_seed)
+
         add_executable(test_rom_validate
             tests/test_rom_validate.cpp
             src/app/rom_validate.cpp)

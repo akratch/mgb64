@@ -11,6 +11,7 @@
 #include "config_schema.h"
 #include "diag_log.h"
 #include "engine_entry.h"
+#include "launch_intent.h"
 #include "ui_launcher.h"
 #include "ui_overlay.h"
 #include "update_check.h"
@@ -20,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 // savedirInit lives in the C engine (src/platform/savedir.c). Declared here so
 // the app shell can seed the save-dir singleton with its override BEFORE
@@ -89,6 +91,30 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // AUDIT-0060: parse the interactive launch flags that arg_triage routes to
+    // the launcher (--rom/--level/--mission/--difficulty/presets/--multiplayer/
+    // --players/--savedir) and seed them into launcher state, so a documented
+    // direct-launch command actually takes effect instead of being silently
+    // dropped in favor of remembered/default UI choices. Automation and --no-ui
+    // invocations returned above, so only interactive argv reaches here. An
+    // invalid flag or unusable ROM fails fast with an actionable stderr message
+    // and a nonzero exit BEFORE any window/device is created (no UI flash). This
+    // runs before DiagLog_install so the error lands on the real stderr, not the
+    // tee'd in-app log.
+    Launcher launcher;
+    {
+        LaunchIntent intent;
+        std::string intentErr;
+        if (!parseLaunchIntent(argc, argv, intent, intentErr)) {
+            std::fprintf(stderr, "[app] %s\n", intentErr.c_str());
+            return 2;
+        }
+        if (!launcher.seed(intent, intentErr)) {
+            std::fprintf(stderr, "[app] %s\n", intentErr.c_str());
+            return 2;
+        }
+    }
+
     // Tee stdout/stderr to the in-app console + mgb64.log BEFORE host.init, so
     // its fatal init diagnostics ([app] SDL_Init/CreateWindow/... failed) are
     // captured even under the GUI subsystem (-mwindows), where there is no
@@ -121,7 +147,7 @@ int main(int argc, char **argv) {
     // enumerate + edit it before a game boots. Idempotent with the engine boot.
     mgb_config_init();
 
-    Launcher launcher;
+    // (Launcher constructed + seeded above, before window creation — AUDIT-0060.)
 
     // Boot the engine into the shell's window: adopt the window, then run the
     // shared engine boot path. Blocks until the game exits.

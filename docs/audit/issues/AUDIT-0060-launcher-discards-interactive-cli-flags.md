@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed (parser + launcher seed wired; automated parse/reject + pure seed coverage green; interactive Play-click screenshot smoke owner-verifiable) |
 | Severity | S3 - documented direct-launch choices are silently ignored by the default build |
 | Priority | P1 |
 | Area | App shell / command-line handoff |
@@ -79,6 +79,47 @@ Add table-driven launch-intent parsing tests and app-smoke screenshots for ROM,
 level/mission, difficulty, each preset, multiplayer players/stage/scenario,
 savedir, positional ROM, invalid values, and remembered-state precedence. Use
 a bridge spy to assert the exact argv passed to `mgb64_headless_main` after Play.
+
+## Resolution
+
+Two-phase fix under HARNESS_STRATEGY §8:
+
+- **e97662a (Phase B)** landed the pure, presence-tracked `parseLaunchIntent`
+  (`src/app/launch_intent.{h,cpp}`) plus the single-sourced CLI stage/difficulty
+  tables (`src/app/cli_stage_tables.{h,c}`), with resolution/validation parity
+  against the headless `src/platform/main_pc.c`. ctest `launch_intent` covers it.
+
+- **This change (E1)** wires the parser into the launcher:
+  - `src/app/main_app.cpp` now calls `parseLaunchIntent` on the interactive path
+    (after `arg_triage` routes automation/`--no-ui` to the unchanged headless
+    engine) and, on any invalid flag or unusable ROM, prints an actionable
+    stderr message naming the offending argument and exits nonzero **before any
+    window/device is created** — no UI flash.
+  - New `Launcher::seed` (`src/app/ui_launcher.cpp`) runs the panel `*_ensureInit`
+    loaders first (so absent fields keep remembered prefs), then overrides only
+    the CLI-present fields via the pure `applyLaunchIntent`
+    (`src/app/launch_seed.cpp`), setting each panel's `*Initialized` flag so the
+    lazy draw-time init cannot clobber the CLI value. A CLI `--rom` is validated
+    with `mgb_validate_rom` and honored exactly (scan/default-independent).
+  - `LauncherState` gained a `savedir` field; `fillBoot` forwards it into
+    `MgbBootConfig.save_dir`, which `mgb64_engine_boot` already synthesizes as
+    `--savedir` at Play — closing the savedir plumbing gap.
+  - `ui_launch.cpp` difficulty model extended to 0..3 (adds `007`) so a CLI
+    `--difficulty 007` round-trips instead of reading out of bounds.
+
+Seeded-field → MgbBootConfig trace: `rom_path`→romPath→`rom_path`;
+`level.mission`→launchLevelIndex→`level_slug`; `difficulty`→launchDifficulty→
+`difficulty`; `preset`→modePreset→`preset`; `multiplayer`/`players`→
+launchMultiplayer/launchPlayers→`multiplayer`/`players`; `savedir`→savedir→
+`save_dir`.
+
+Coverage: pure ctest `launcher_seed` (per-field override-only-when-present +
+flag discipline); `launch_intent` + `arg_triage` remain green; process-level
+headless checks confirm unknown flag / unknown level / bad difficulty /
+unmodeled flag / unusable ROM each exit nonzero with an arg-naming message and
+no window, while a valid parse proceeds into the UI (smoke exit 0) and the
+no-arg path is unchanged. The end-to-end Play-click boot-argv screenshot smoke
+(Verification Plan) needs a display and is owner-verifiable.
 
 ## Related Work
 

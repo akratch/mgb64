@@ -1,6 +1,7 @@
 // ui_launcher.cpp — launcher shell: brand + table-driven nav rail + router.
 // Individual panels live in ui_rom.cpp / ui_launch.cpp / ui_settings.cpp.
 #include "ui_launcher.h"
+#include "launch_intent.h"
 #include "app_host.h"
 #include "app_theme.h"
 #include "app_version.h"
@@ -186,6 +187,41 @@ void drawUpdateBanner() {
 }
 
 }  // namespace
+
+bool Launcher::seed(const LaunchIntent &intent, std::string &err) {
+    // No CLI launch flags supplied => leave the no-arg path byte-identical: don't
+    // pre-load prefs or validate anything, just let draw()'s lazy init run.
+    const bool any = intent.rom_path || intent.level || intent.difficulty ||
+                     intent.preset || intent.multiplayer || intent.players ||
+                     intent.savedir;
+    if (!any) return true;
+
+    // ensureInit-first: load ALL remembered prefs (and set the *Initialized flags)
+    // BEFORE overriding present fields. The flags are per-PANEL, not per-field, so
+    // if we set launchInitialized for a CLI --level but never loaded the remembered
+    // difficulty, that sibling pref would be lost. Loading first, then overriding,
+    // preserves the acceptance criterion: present CLI fields win, absent fields
+    // keep their remembered values. draw()'s later ensureInit calls are no-ops.
+    RomPanel_ensureInit(state_);
+    LaunchPanel_ensureInit(state_);
+    ModesPanel_ensureInit(state_);
+
+    applyLaunchIntent(state_, intent);
+
+    // A CLI ROM path outside the scan/default locations must be honored exactly,
+    // and an unusable one is a launch-time error (not a silent fallback to a
+    // remembered ROM). Validate with the same portable header check the ROM panel
+    // uses; applyLaunchIntent already marked romInitialized so draw() won't reload.
+    if (intent.rom_path) {
+        state_.romInfo = mgb_validate_rom(state_.romPath);
+        if (!state_.romInfo.valid) {
+            err = std::string("--rom '") + state_.romPath + "' is not a usable ROM: " +
+                  state_.romInfo.message;
+            return false;
+        }
+    }
+    return true;
+}
 
 LauncherAction Launcher::draw(AppHost &host) {
     LauncherAction action;

@@ -27,11 +27,15 @@ void saveLaunch(const LauncherState &s) {
 // a private duplicate of that list (AUDIT-0060 / HARNESS_STRATEGY B1). The combo
 // shows kPcStartStages[i] at index i+1 (index 0 = "Boot to menu"), and there are
 // kPcStartStagesCount of them. Difficulty display names remain launcher-local.
-const char *kDifficulties[] = {"Agent", "Secret Agent", "00 Agent"};
+// 0=Agent .. 3=007, matching the engine DIFFICULTY_* enum so a CLI --difficulty
+// 007 (AUDIT-0060) round-trips through the launcher instead of reading OOB here.
+const char *kDifficulties[] = {"Agent", "Secret Agent", "00 Agent", "007"};
 }  // namespace
 
 void fillBoot(const LauncherState &s, MgbBootConfig &b) {
     b.preset = s.modePreset;
+    // AUDIT-0060: forward a CLI --savedir override (empty => engine default).
+    b.save_dir = s.savedir[0] ? s.savedir : nullptr;
     if (s.launchMultiplayer) {
         b.multiplayer = 1;
         b.players = s.launchPlayers;
@@ -87,7 +91,7 @@ void LaunchPanel_ensureInit(LauncherState &s) {
     s.launchPlayers = std::atoi(AppConfig::get("launch_players", "2").c_str());
     // Clamp to valid ranges in case the ini was hand-edited.
     if (s.launchLevelIndex < 0 || s.launchLevelIndex > kPcStartStagesCount) s.launchLevelIndex = 0;
-    if (s.launchDifficulty < 0 || s.launchDifficulty > 2) s.launchDifficulty = 0;
+    if (s.launchDifficulty < 0 || s.launchDifficulty > 3) s.launchDifficulty = 0;
     if (s.launchPlayers < 2 || s.launchPlayers > 4) s.launchPlayers = 2;
 }
 
