@@ -31,8 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <webgpu/webgpu.h>
-#include <webgpu/wgpu.h>   /* wgpuDevicePoll + native extensions */
+#include "gfx_webgpu_compat.h"   /* dialect seam: webgpu.h/wgpu.h, pump, waits, surface */
 
 #include "gfx_rendering_api.h"
 #include "gfx_webgpu.h"          /* public surface helper (shared with AppHost) */
@@ -178,23 +177,42 @@ static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
 }
 
 /* ------------------------------------------------------------------------
- * Surface creation (platform-specific window -> WGPUSurface)
+ * Surface creation (platform-specific window -> WGPUSurface) — the dialect seam.
  *
- * Parameterized by the native handle so BOTH the engine (standalone) and the
- * app shell (AppHost, which owns the window/layer before the game adopts it)
- * create surfaces the same way. macOS uses `metal_layer` (a CAMetalLayer);
- * every other platform uses `sdl_window` (resolved to HWND/X11/Wayland by
- * platformWebGpuWindowInfo). Declared in gfx_webgpu.h.
+ * The ONLY inline `#ifdef __EMSCRIPTEN__` permitted in this file (seam rule,
+ * Task W7): the wgpu-native surface-source structs (MetalLayer / Win32 / X11 /
+ * Wayland) exist only in wgpu-native's webgpu.h, so they must stay on the
+ * native side of this fork; the browser builds a canvas-selector surface.
+ *
+ * Native path is parameterized by the platform handle so BOTH the engine
+ * (standalone) and the app shell (AppHost, which owns the window/layer before
+ * the game adopts it) create surfaces the same way. macOS uses `metal_layer`
+ * (a CAMetalLayer); every other native platform uses `window` (resolved to
+ * HWND/X11/Wayland by platformWebGpuWindowInfo). Browser ignores both handles
+ * (the page owns exactly one canvas). Declared in gfx_webgpu_compat.h.
+ *
+ * Verified against the emdawnwebgpu port's webgpu.h at build time; keep
+ * "#mgb64-canvas" in sync with web/index.html (W5).
  * ---------------------------------------------------------------------- */
-WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
-                                      void *sdl_window) {
+WGPUSurface wgpuCompatCreateSurface(WGPUInstance instance, void *metal_layer,
+                                    struct SDL_Window *window) {
     if (instance == NULL) {
         return NULL;
     }
+#ifdef __EMSCRIPTEN__
+    (void)metal_layer;
+    (void)window;   /* the page owns exactly one canvas */
+    WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvas = {0};
+    canvas.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
+    canvas.selector = (WGPUStringView){ "#mgb64-canvas", WGPU_STRLEN };
+    WGPUSurfaceDescriptor desc = {0};
+    desc.nextInChain = &canvas.chain;
+    return wgpuInstanceCreateSurface(instance, &desc);
+#else
     WGPUSurfaceDescriptor sd = {0};
     sd.label = wgpu_sv("mgb64-surface");
 #ifdef __APPLE__
-    (void)sdl_window;
+    (void)window;
     if (metal_layer == NULL) {
         fprintf(stderr, "[webgpu] no CAMetalLayer — cannot create surface\n");
         return NULL;
@@ -208,7 +226,7 @@ WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
     (void)metal_layer;
     void *h1 = NULL, *h2 = NULL;
     unsigned long long win = 0;
-    int sys = platformWebGpuWindowInfo(sdl_window, &h1, &h2, &win);
+    int sys = platformWebGpuWindowInfo((void *)window, &h1, &h2, &win);
     if (sys == 2) {   /* Win32 */
         WGPUSurfaceSourceWindowsHWND w = {0};
         w.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
@@ -233,7 +251,8 @@ WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
     }
     fprintf(stderr, "[webgpu] unsupported windowing system (tag=%d) — no surface\n", sys);
     return NULL;
-#endif
+#endif  /* __APPLE__ */
+#endif  /* __EMSCRIPTEN__ */
 }
 
 /* Pick the swapchain format: prefer BGRA8Unorm (the near-universal surface
@@ -307,8 +326,9 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
         return false;
     }
 
-    /* Surface first, so it can be passed as the adapter's compatibleSurface. */
-    WGPUSurface surface = gfx_webgpu_create_surface(instance, metal_layer, sdl_window);
+    /* Surface first, so it can be passed as the adapter's compatibleSurface.
+     * Routed through the dialect seam (native window vs browser canvas). */
+    WGPUSurface surface = wgpuCompatCreateSurface(instance, metal_layer, sdl_window);
     if (surface == NULL) {
         fprintf(stderr, "[webgpu] surface creation failed — backend inert\n");
         return false;
@@ -323,7 +343,7 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     aopts.compatibleSurface = surface;
     aopts.powerPreference = WGPUPowerPreference_HighPerformance;
     wgpuInstanceRequestAdapter(instance, &aopts, acb);
-    for (int i = 0; !areq.done && i < 1000; ++i) wgpuInstanceProcessEvents(instance);
+    WGPU_COMPAT_WAIT(areq.done, instance, NULL, 1000);
     if (!areq.done || areq.status != WGPURequestAdapterStatus_Success || areq.adapter == NULL) {
         fprintf(stderr, "[webgpu] adapter request failed (status=%d)\n", (int)areq.status);
         return false;
@@ -346,7 +366,7 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     ddesc.label = wgpu_sv("mgb64-device");
     ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
     wgpuAdapterRequestDevice(adapter, &ddesc, dcb);
-    for (int i = 0; !dreq.done && i < 1000; ++i) wgpuInstanceProcessEvents(instance);
+    WGPU_COMPAT_WAIT(dreq.done, instance, NULL, 1000);
     if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
         fprintf(stderr, "[webgpu] device request failed (status=%d)\n", (int)dreq.status);
         return false;
@@ -525,7 +545,7 @@ static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h,
     ci.callback = on_map;
     ci.userdata1 = &mr;
     wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, size, ci);
-    for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(s_device, true, NULL);
+    WGPU_COMPAT_WAIT(mr.done, NULL, s_device, 100000);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         fprintf(stderr, "[webgpu] frame dump map failed (status=%d)\n", (int)mr.status);
         return;
@@ -1556,7 +1576,7 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     ci.callback = on_map;
     ci.userdata1 = &mr;
     wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, buf_size, ci);
-    for (int i = 0; !mr.done && i < 100000; ++i) wgpuDevicePoll(s_device, true, NULL);
+    WGPU_COMPAT_WAIT(mr.done, NULL, s_device, 100000);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         wgpuBufferRelease(buf);
         return false;

@@ -17,13 +17,10 @@
 extern "C" {
 #endif
 
-/* Create a WGPUSurface for a native window. macOS uses `metal_layer` (a
- * CAMetalLayer*, e.g. from platformGetMetalLayer or SDL_Metal_GetLayer) and
- * ignores `sdl_window`; every other platform ignores `metal_layer` and resolves
- * `sdl_window` (a SDL_Window*) to its HWND/X11/Wayland handle. Returns NULL on
- * failure (null instance, missing handle, unsupported windowing system). */
-WGPUSurface gfx_webgpu_create_surface(WGPUInstance instance, void *metal_layer,
-                                      void *sdl_window);
+/* Surface creation moved to the dialect seam wgpuCompatCreateSurface()
+ * (gfx_webgpu_compat.h): native window descriptors on desktop, the
+ * #mgb64-canvas selector in the browser. gfx_webgpu_bringup() calls it
+ * internally; external callers use bringup (below). */
 
 /* Full WebGPU bring-up for a native window handle: instance -> surface ->
  * adapter -> device -> queue -> surface format. `metal_layer` is used on macOS
