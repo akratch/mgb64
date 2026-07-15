@@ -26,7 +26,15 @@ flag.
 ## Evidence
 
 CTest test 76, `port_campaign_route_smoke`, ran 34 routes. Thirty passed and
-these four failed under the default simulation:
+these four failed under the default simulation (scope of this issue):
+
+**Count reconcile (2026-07-14):** the gate currently shows 29 passed / 5
+failed, not 30/4 — a 5th, unrelated failure (`bunker1_datathief_equipment_contract`)
+was introduced later by AUDIT-0066's dump-path relocation (`8df8b82`) leaving
+that route's fixture asserting the old `/tmp/` log pattern. That failure is
+not root-motion staleness and is **not** part of this issue's scope; it is
+tracked and fixed under AUDIT-0066. The four routes below remain the complete
+AUDIT-0017 scope.
 
 | Route | Default result | FID-0117 opt-out result |
 | --- | --- | --- |

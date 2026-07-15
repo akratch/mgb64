@@ -113,7 +113,9 @@ already contained.
 
 **Malformed-input crashes and UB (engine/assets)**
 - AUDIT-0001 OpenGL silently skips all scene-decor meshes (S2)
-- AUDIT-0003 Screenshot series calls OpenGL under Metal and crashes (S2)
+- AUDIT-0003 Screenshot series called OpenGL under Metal and crashed — crash
+  fixed (6c1a23d); capture-composition call-site move + backend-mock
+  verification remain (S2)
 - AUDIT-0005 CLI accepts a wrong 12 MB ROM and crashes during boot (S2)
 - AUDIT-0002 OOB recovery divides by zero on linkless STAN tiles (S2)
 - AUDIT-0006 Supported-object destruction dereferences nullable STAN pointers (S2)
@@ -240,7 +242,7 @@ table is the authoritative 73-row list.
 | 24 | AUDIT-0048 | S3 | P1 | Source proven | Windows diagnostics export leaks the full ROM path |
 | 25 | AUDIT-0005 | S2 | P2 | Runtime reproduced | CLI accepts a wrong 12 MB ROM and crashes during boot |
 | 26 | AUDIT-0001 | S2 | P2 | Runtime reproduced | OpenGL silently skips all scene-decor meshes |
-| 27 | AUDIT-0003 | S2 | P2 | Runtime reproduced | Screenshot series calls OpenGL under Metal and crashes |
+| 27 | AUDIT-0003 | S2 | P2 | Runtime reproduced | Screenshot series called OpenGL under Metal and crashed — crash fixed (6c1a23d); capture-composition move + backend-mock verification remain |
 | 28 | AUDIT-0006 | S2 | P2 | Analyzer and source proven | Supported-object destruction dereferences nullable STAN pointers |
 | 29 | AUDIT-0002 | S2 | P2 | Shipped data reachable | OOB recovery divides by zero on linkless STAN tiles |
 | 30 | AUDIT-0071 | S3 | P2 | Fault injected | Music track decompression failure is ignored before sequence parsing |
