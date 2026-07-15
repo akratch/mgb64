@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MGB64 — browser demo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="gate">
+  <h1>MGB64</h1>
+  <p id="gate-msg">Checking your browser…</p>
+  <div id="rom-ui" hidden>
+    <p>Select your GoldenEye 007 (U) ROM (<code>.z64</code>, 12&nbsp;MB). It is stored
+       <strong>only in this browser</strong> and never uploaded.</p>
+    <input type="file" id="rom-input" accept=".z64,.v64,.n64,.rom">
+    <p id="rom-status"></p>
+    <button id="play" disabled>Click to Play</button>
+    <button id="forget" hidden>Forget stored ROM</button>
+  </div>
+</main>
+<canvas id="mgb64-canvas" width="1280" height="960" hidden></canvas>
+<script src="mgb64-shell.js"></script>
+</body>
+</html>

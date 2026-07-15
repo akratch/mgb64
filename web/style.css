@@ -1,0 +1,58 @@
+:root { color-scheme: dark; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0b0d;
+  color: #e8e8e8;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#gate {
+  max-width: 40rem;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  line-height: 1.5;
+}
+
+#gate h1 {
+  font-size: 1.5rem;
+  letter-spacing: 0.02em;
+}
+
+#gate code {
+  background: #1c1c20;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+}
+
+#rom-ui button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0.5rem 0.5rem 0;
+  background: #2a2a30;
+  color: inherit;
+  border: 1px solid #3a3a42;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+#rom-ui button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#rom-status {
+  min-height: 1.25rem;
+  color: #9ad0ff;
+}
+
+#mgb64-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+#mgb64-canvas[hidden] {
+  display: none;
+}
