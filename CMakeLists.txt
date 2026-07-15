@@ -1546,6 +1546,14 @@ file(GLOB PLATFORM_SOURCES CONFIGURE_DEPENDS src/platform/*.c)
 # native audio backend is audio_pc.c.
 list(FILTER PLATFORM_SOURCES EXCLUDE REGEX "audio_ring\\.c$")
 
+# Single-sourced CLI stage/difficulty/MP tables (AUDIT-0060): moved verbatim out
+# of main_pc.c so the launcher's launch_intent parser and ui_launch.cpp share
+# them. Lives in src/app/ but compiles with the engine (it needs bondconstants.h
+# for the enum values, and main_pc.c/decor_native.c need its symbols even with
+# MGB64_APP=OFF). mgb64_app's references resolve at the final ge007 link against
+# this single copy — the .cpp-only APP_SOURCES glob never picks it up.
+list(APPEND PLATFORM_SOURCES "${CMAKE_SOURCE_DIR}/src/app/cli_stage_tables.c")
+
 # Fast3D display list interpreter (replaces old gfx_pc.c)
 set(FAST3D_SOURCES
     src/platform/fast3d/gfx_pc.c
@@ -1949,6 +1957,24 @@ if(MGB64_APP)
         target_include_directories(test_arg_triage PRIVATE src/app)
         target_compile_features(test_arg_triage PRIVATE cxx_std_17)
         add_test(NAME arg_triage COMMAND test_arg_triage)
+
+        # Pure argv -> LaunchIntent parser (AUDIT-0060 core), ROM-/SDL-free.
+        # Links the single-sourced stage tables directly. The engine include
+        # dirs are needed ONLY by cli_stage_tables.c (bondconstants.h enum
+        # values) and are scoped to that one source: include/ carries the C
+        # decomp's math.h shim, which shadows <math.h> and breaks C++ system
+        # headers, so it must never reach the C++ TUs (same hazard the
+        # mgb64_app block documents).
+        add_executable(test_launch_intent
+            tests/test_launch_intent.cpp
+            src/app/launch_intent.cpp
+            src/app/cli_stage_tables.c)
+        target_include_directories(test_launch_intent PRIVATE src/app)
+        set_source_files_properties(src/app/cli_stage_tables.c PROPERTIES
+            INCLUDE_DIRECTORIES
+            "${CMAKE_SOURCE_DIR}/include;${CMAKE_SOURCE_DIR}/include/PR;${CMAKE_SOURCE_DIR}/src;${CMAKE_SOURCE_DIR}/src/platform;${CMAKE_SOURCE_DIR}")
+        target_compile_features(test_launch_intent PRIVATE cxx_std_17)
+        add_test(NAME launch_intent COMMAND test_launch_intent)
 
         add_executable(test_rom_validate
             tests/test_rom_validate.cpp
