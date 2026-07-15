@@ -13,6 +13,9 @@
 #include <math.h>
 #include <string.h>
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
 #elif defined(__APPLE__)
@@ -3619,11 +3622,19 @@ void platformFrameSync(void) {
         Uint64 wait_begin = pace_now;
         while (pace_now < g_paceDeadline) {
             double rem_ms = (double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq;
+#ifdef __EMSCRIPTEN__
+            /* The browser paces frames; SDL_Delay would block the JS event loop.
+             * emscripten_sleep() unwinds via Asyncify: timers fire, WebGPU
+             * callbacks resolve, rAF proceeds. 0ms = yield only. This also covers
+             * the stubs.c osRecvMesg spin, which reaches here via platformFrameSync. */
+            emscripten_sleep(rem_ms > 0.0 ? (unsigned)rem_ms : 0);
+#else
             if (rem_ms > 2.5) {
                 SDL_Delay((u32)(rem_ms - 2.0));  /* coarse sleep, ~2ms precise tail */
             } else {
                 SDL_Delay(0);                    /* yield-spin the final stretch */
             }
+#endif
             pace_now = SDL_GetPerformanceCounter();
         }
         perf_delay_ms = (u32)((double)(pace_now - wait_begin) * 1000.0 / (double)freq);

@@ -282,6 +282,14 @@ u32 randomGetNext(void) {
     u64 next_call_count = s_pcRandomGetNextCallCount + 1;
     pcRandomMaybeApplyCallSeedEvent(next_call_count);
     u64 before_seed = g_randomSeed;
+#ifdef __EMSCRIPTEN__
+    /* Asyncify + __builtin_return_address(N) needs -sUSE_OFFSET_CONVERTER, which
+     * aborts every frame here (randomGetNext runs constantly). The caller/parent
+     * pointers feed only the PC-side random *trace* diagnostic — sim-irrelevant.
+     * Null them out on wasm; the seed math above is untouched. */
+    void *caller = NULL;
+    void *parent = NULL;
+#else
     void *caller = __builtin_return_address(0);
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -295,6 +303,7 @@ u32 randomGetNext(void) {
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
 #endif
 #endif
 

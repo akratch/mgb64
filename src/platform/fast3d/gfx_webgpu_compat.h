@@ -18,8 +18,15 @@
   #include <webgpu/webgpu.h>          /* emdawnwebgpu: modern unified header */
   #include <emscripten/emscripten.h>
   #include <emscripten/html5.h>
-  /* Browser: yield to the event loop so pending WebGPU callbacks resolve.  */
-  #define WGPU_COMPAT_PUMP(instance, device) emscripten_sleep(1)
+  /* Browser: yield to the event loop so the JS-side promise resolves, THEN
+   * drain the future queue so AllowProcessEvents callbacks actually dispatch.
+   * emscripten_sleep() alone resolves the promise but never fires the C
+   * callback (it only runs during ProcessEvents), so both steps are required. */
+  #define WGPU_COMPAT_PUMP(instance, device)                    \
+      do {                                                      \
+          emscripten_sleep(1);                                  \
+          if (instance) wgpuInstanceProcessEvents((instance));  \
+      } while (0)
 #else
   #include <webgpu/webgpu.h>
   #include <webgpu/wgpu.h>            /* wgpu-native extensions             */
