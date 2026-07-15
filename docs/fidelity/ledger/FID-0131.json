@@ -1,0 +1,47 @@
+{
+  "id": "FID-0131",
+  "title": "Dam (LEVELID 33) tape sim-state hashes are build-environment (toolchain/link-layout) sensitive via dead pool bytes",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "verified",
+  "suspect": [
+    "src/platform/sim_state_hash_registry.c:28 (pool region)",
+    "level 33 Dam transient file-load scratch in bump-allocated stage buffers"
+  ],
+  "repro": "Replay baselines/tapes/dam_forward_30s.ge7tape under the determinism envelope with two binaries built by different toolchains/link-layouts of the SAME source: the --sim-state-hash values differ (prior 33f29cf9d50267c2 vs current 8ce67f5a6df69ef0) while the 1800-frame --trace-state is byte-identical.",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "tools/fidelity/tape_regression.sh (dam_forward_30s / dam_ak47_sustained / dam_combat_guard6 diverged vs stale baselines)"
+    },
+    {
+      "kind": "gate-log",
+      "path": "GE007_SIM_HASH_PER_REGION: only region 00 (8 MB pool) diverges; all 26 non-pool regions byte-identical across the two builds"
+    },
+    {
+      "kind": "gate-log",
+      "path": "GE007_SIM_HASH_DUMP diff: 1133 differing bytes across 14 contiguous free-slot buffer blocks; --trace-state byte-identical (1800 frames) proves the differing bytes are dead"
+    },
+    {
+      "kind": "asm-citation",
+      "path": "docs/fidelity/ledger/FID-0046.json (same partial-init dead-pool-byte class; effect buffers already zero-inited, this is the residual multi-buffer set)"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-15T00:00:00Z",
+      "from": "",
+      "to": "root-caused",
+      "evidence": "GE007_SIM_HASH_PER_REGION + GE007_SIM_HASH_DUMP two-build diff (prior-toolchain 33f29cf9 vs current 8ce67f5a) with byte-identical --trace-state",
+      "note": "The four Dam tape baselines (dam_forward_30s, dam_ak47_sustained, dam_combat_guard6, + the dam_forward fire_rate_optout variant) diverged from their recorded values with no sim-code change (the recording commit 78d76c6 also reproduces the CURRENT value 8ce67f5a on today's toolchain; the recorded 33f29cf9 is unreachable at its own commit today). Root cause: the --sim-state-hash pool region (sim_state_hash_registry.c region 00, the 8 MB s_pcPool arena) includes build-layout-sensitive dead/uninitialized bytes -- the FID-0046 class -- that the Dam's transient file-load scratch leaves non-zero in bump-allocated stage buffers the game never reads. A binary built at the prior toolchain and the current build replay dam_forward_30s with a BYTE-IDENTICAL 1800-frame --trace-state; only region 00 differs (all 26 non-pool regions identical), and within it exactly 1133 bytes across 14 free-slot buffer blocks differ -> gameplay unchanged, only the dead-memory fingerprint moved. Confirmed generic (not Dam-only render/lighting): other levels stay byte-exact because their file-load scratch is build-insensitive in the hashed range. Combat tapes are more exposed than the plain walk (explosion/effect activity touches more partially-init buffers): dam_combat_guard6 shifts on any relink even with zero src/game change (proven -- c1c035d..HEAD touched only launcher/config/fixtures)."
+    },
+    {
+      "ts": "2026-07-15T00:00:00Z",
+      "from": "root-caused",
+      "to": "verified",
+      "evidence": "tools/fidelity/tape_regression.sh re-baseline of the 4 Dam anchors on the current toolchain",
+      "note": "Durable code fix (zero-init or exclude the dead region, mirroring FID-0046's initexplosioncasing zero-init) is BLOCKED: the dead bytes are not one Dam-only buffer but ~14 generic bump-allocated stage buffers used on every level, so an allocation-site zero-init would also change non-Dam tape hashes (fails the narrowness requirement -- confirmed the divergence is in the shared pool arena, not a Dam-specific structure). A whole-stage-bank memset at reset would be over-broad and cannot be proven sim-neutral for all levels (read-before-write bytes that are build-STABLE would not appear in the two-build diff). Per the no-guess rule, resolved by rebaseline-only: re-recorded the 4 Dam anchors to the current toolchain's deterministic values (dam_forward_30s 8ce67f5a6df69ef0 + variant fire_rate_optout 5d8b8a0ecd40de24; dam_combat_guard6 2a8e724cbc435737; dam_ak47_sustained default 79483d38390b21e5 + fire_rate_authentic_off de395833d3531046). ON!=OFF preserved on the ak47 tape (fire-rate divisor still exercised). ACCEPTED LIMITATION: a pure rebaseline holds on this toolchain/link-layout but drifts again on any relink; the durable fix remains open pending a narrower Dam-specific pinning method."
+    }
+  ]
+}
