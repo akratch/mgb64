@@ -35,20 +35,26 @@ symbols and stays byte-identical** until the deliberate flip.
 An A/B vs the GL reference (render-scale 1, Dam) shows **near-parity**:
 geometry, textures, depth ordering, lighting, and HUD match.
 
-## Remaining before pixel-parity (tracked)
+## Pixel-parity gaps — CLOSED at HEAD (update 2026-07-15)
 
-1. **Minimap / radar overlay** — `minimap_overlay.c` draws it via a per-backend
-   path (GL direct calls; Metal has its own pipeline). WebGPU needs an
-   equivalent overlay draw path. Currently absent on WebGPU (the one clear A/B
-   gap).
-2. **N64 3-point texture filter** — surfaces with `SHADER_OPT_TEXELn_N64_FILTER`
-   currently sample with the standard bilinear sampler; the exact 3-point filter
-   (needs the `uN64FilterScale` uniform) is not yet ported. Subtle.
-3. **Exact translucency edge cases** — the coverage / RDP-memory blend variants
-   approximate to alpha; the framebuffer-sampling shader paths are not ported.
-4. **`draw_modern_mesh`** (Task 6) — scene decor (`Video.SceneDecor`). Optional;
-   the GL default doesn't render it either (AUDIT-0001), so not needed for
-   GL-parity — it would be a "further" enhancement.
+All four gaps this section originally tracked are closed on the branch tip
+(verified against HEAD `822d1c9`). WebGPU parity is now BETTER than this doc's
+original body implied — it is at or above GL parity.
+
+1. **Minimap / radar overlay — CLOSED (`b389f0d`).** WebGPU now has a full
+   overlay draw path: `gfx_webgpu_draw_minimap_overlay`
+   (`src/platform/minimap_overlay.c:54,371,1952`).
+2. **N64 3-point texture filter — CLOSED.** The RDP triangular filter is emitted
+   for tiles requesting it: `n64Filter3(...)` in
+   `src/platform/fast3d/gfx_webgpu_shader.c` (~:305,:343), replacing the plain
+   bilinear fallback.
+3. **Exact translucency edge cases — CLOSED (no outstanding gap).** No TODO/FIXME
+   translucency markers remain in `gfx_webgpu.c` (the only residual diagnostic is
+   an unsupported-windowing-system message at `:234`); the blend paths are at
+   GL-parity.
+4. **`draw_modern_mesh` / scene decor — CLOSED (`56406b6`, closes AUDIT-0001).**
+   WebGPU renders `Video.SceneDecor`; this is a "further" enhancement beyond
+   GL-parity (the GL default never rendered it), delivered on WebGPU.
 
 ## Launcher WebGPU unification — DONE (2026-07-13)
 
@@ -125,7 +131,10 @@ The default is now WebGPU, done as a small, reversible change:
    baseline) — the flip is sim-invariant.**
 
 Remaining (owner cross-platform validation): Windows/Linux/PortMaster gameplay
-runs. After a proving release, delete `gfx_opengl.c` + `gfx_metal.mm` + the
-GLSL/MSL forks (~8k LOC), collapse the shader fork, and make
-`MGB64_WEBGPU_BACKEND` non-optional. See `docs/design/adr/` for the decision
-record.
+runs. After a proving release, the fallbacks are retired in two phases — see
+**`docs/BACKEND_DEPRECATION_PLAN.md`** for the durable plan. Key correction to the
+"~8k LOC" figure: `gfx_metal.mm` (~3977 LOC) is independently deletable in
+**Phase M**, but `gfx_opengl.c` (~4177 LOC) is **shared with the PortMaster GLES
+build** (`#ifdef MGB64_PORTMASTER_GLES` branches) and cannot be deleted in
+**Phase G** unless WebGPU is proven on real handheld hardware and PortMaster
+moves off GLES. See `docs/design/adr/` for the decision record.

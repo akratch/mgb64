@@ -10,6 +10,28 @@ packaged, or published (bring-your-own-ROM).
 
 ---
 
+## Renderer
+
+The shipped binary renders on **WebGPU** (wgpu-native) by default on every
+platform — it maps to Metal on macOS, D3D12 on Windows, and Vulkan on
+Linux/handhelds under the hood. Two legacy backends remain as **release-supported
+runtime fallbacks** and are selectable without a rebuild:
+
+- `GE007_RENDERER=gl` (or `opengl`) — OpenGL.
+- `GE007_RENDERER=metal` — native Metal (macOS only; also used by `--remaster`).
+- `-DMGB64_WEBGPU_BACKEND=OFF` at build time — a GL/Metal-only binary with no
+  wgpu dependency.
+
+These fallbacks are **supported for the current release line as escape hatches**;
+they are scheduled for staged removal only after WebGPU proves out in a shipped
+release. The retirement plan (Phase M: Metal; Phase G: desktop GL, kept alive on
+handhelds via the shared `gfx_opengl.c`/GLES path) is
+`docs/BACKEND_DEPRECATION_PLAN.md`. Until those phases complete, the fallback env
+vars above are documented, release-supported behavior. `RELEASE_NOTES.md` should
+name WebGPU as the default renderer and mention the fallback env vars.
+
+---
+
 ## The model: hybrid local + free CI
 
 Public repos get free GitHub Actions runners, so cost is not a factor — the only
@@ -319,9 +341,44 @@ ever needed — routine work is just PRs (above).
 - [ ] `scripts/release_preflight.sh` passes (clean tree, warning-clean build, ROM-free tests, asset-free).
 - [ ] Strict **full-coverage** verify green for the release commit: `GE007_VERIFY_STRICT=1 tools/fidelity/verify_all.sh` (no `--tier`; the gate rejects a tier-limited report).
 - [ ] PortMaster/GLES lane green (release CI "PortMaster GLES compile check", or `tools/portmaster_build_check.sh`).
+- [ ] **`windows-validate.yml` dispatched and GREEN on the release commit.** This
+      is the "Windows RUNS" execution gate (import-table guard + headless
+      execution smoke + ROM-free CTest on a real windows-latest kernel). It is
+      `workflow_dispatch`-only and does not auto-run — dispatch it against the
+      release commit and confirm green *before* cutting.
 - [ ] Windows + Linux CI artifacts downloaded into `dist/`.
 - [ ] Owner gameplay verification done on **macOS AND Windows**.
 - [ ] Public git tag pushed **first**, only via `scripts/publish_public.sh --tag <v> --confirm-gameplay "macos=…,windows=…" --yes`.
 - [ ] `scripts/release.sh --version <v> --repo <r> --confirm-gameplay "macos=…,windows=…" --publish` (guard chain + gameplay gate run; macOS built locally; assets attached to the already-pushed tag via `--verify-tag`).
-- [ ] `RELEASE_NOTES.md` updated, including the macOS unsigned right-click → Open note (Apple signing deferred).
+- [ ] `RELEASE_NOTES.md` updated, including WebGPU as the default renderer (+ fallback env vars) and the macOS unsigned right-click → Open note (Apple signing deferred).
 - [ ] README Download links resolve (macOS asset present on `/releases/latest`).
+
+### Owner-gated tail (first production release)
+
+These are the irreducible owner/hardware/credential steps. Cross-reference the
+authoritative handoff detail in `docs/audit/HARNESS_STRATEGY.md` §8 E5 rather than
+re-deriving it; this list is the release-facing summary.
+
+- [ ] **Owner gameplay attestation on macOS AND Windows** (`--confirm-gameplay`,
+      structurally enforced by the publish gate — see "The publish gate" above).
+      Also the deprecation-Phase-M precondition on macOS.
+- [ ] **`windows-validate.yml` dispatched green** on the release commit (see the
+      main checklist above; it had never been dispatched at audit time).
+- [ ] **Manifest signing key (minisign).** `minisign -G` the long-term keypair on
+      the owner's Mac; replace the marked placeholder
+      `scripts/release/mgb64-release-pubkey.txt` with the real public key (commit
+      it); run the first signed release with `--sign-manifest`. minisign 0.12 is
+      installed; the placeholder pubkey + fail-closed `--sign-manifest` scaffold
+      landed by design in the pipeline — the owner mints the real key at the first
+      signed release. Unsigned releases ship fine until then (plain SHA256SUMS).
+- [ ] **Disposable-repo publish test.** Before the first real publish, run the
+      guarded publish path end-to-end against a throwaway repo to prove the
+      pipeline (tag → guard chain → `gh release create --verify-tag` → asset
+      attach + signing) — it has been statically validated only, never executed.
+- [ ] **PortMaster hardware validation.** Real Mali/panfrost handheld WebGPU
+      gameplay run (tape byte-exact + parity within tolerance). This is the
+      "last real unknown" and **gates deprecation Phase G** (retiring the shared
+      `gfx_opengl.c`/GLES path) — see `docs/BACKEND_DEPRECATION_PLAN.md`.
+- [ ] **Apple signing/notarization decision.** Developer-ID `--sign` is on record
+      as **deferred**; unsigned macOS ships with the right-click → Open note. Make
+      (or re-affirm) the enrollment decision.

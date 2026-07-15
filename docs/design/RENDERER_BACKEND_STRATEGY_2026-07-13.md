@@ -1,9 +1,21 @@
 # Renderer Backend Strategy — one modern backend everywhere
 
-**Date:** 2026-07-13
+**Date:** 2026-07-13 (status updated 2026-07-15)
 **Question:** which cross-platform graphics framework should MGB64 converge on so we
 ship *one* backend on every platform (no GL+Metal fork), how heavy is the lift, and
 what does it unlock for the AAA remaster?
+
+> **STATUS UPDATE (2026-07-15).** This doc's §1 body describes the *pre-migration*
+> state (OpenGL default everywhere, Metal opt-in). That is now historical. The
+> decision below was executed: **WebGPU (wgpu-native) is the DEFAULT backend on
+> every platform at HEAD**; GL and Metal are runtime fallbacks
+> (`GE007_RENDERER=gl|metal`, `-DMGB64_WEBGPU_BACKEND=OFF`). WebGPU parity is at or
+> above GL parity — all four pixel-parity gaps that
+> `WEBGPU_BACKEND_STATUS_2026-07-13.md` tracked are closed at HEAD. The fallback
+> retirement (§6 steps 5) is planned in two phases in
+> **`docs/BACKEND_DEPRECATION_PLAN.md`** (Phase M: Metal, independently deletable;
+> Phase G: desktop GL, blocked on the shared `gfx_opengl.c` / PortMaster GLES
+> coupling). Read the §1 table below as "where we started," not "where we are."
 
 ## TL;DR
 
@@ -177,8 +189,12 @@ This is the strategic payoff — it's not just deduplication:
    Metal uses today) so it's validated in the real app with zero default-risk.
 4. **Flip default** once the visual-regression suite is green on all platforms + owner
    gameplay sign-off on each (macOS, Windows, handheld).
-5. **Retire GL + Metal** after a release of the new default proving out, deleting ~8k LOC
-   of forked backend + collapsing the shader fork.
+5. **Retire GL + Metal** after a release of the new default proving out, deleting the
+   forked backend + collapsing the shader fork. This is now planned in two phases
+   (Metal is independently deletable; desktop GL is blocked by the shared
+   `gfx_opengl.c` / PortMaster GLES coupling) — see
+   **`docs/BACKEND_DEPRECATION_PLAN.md`**. The "~8k LOC" figure conflates the two:
+   ~3977 LOC Metal (Phase M) + ~4177 LOC GL (Phase G, handheld-gated).
 6. **Then build the AAA post-FX on compute** — the reason we did this — once, everywhere.
 
 ## 7b. CRITICAL FINDING (2026-07-13, during bgfx Task 0) — bgfx is the WRONG fit
