@@ -2381,6 +2381,119 @@ static bool gfx_opengl_read_framebuffer_rgb(int x, int y, int width, int height,
     return err == GL_NO_ERROR;
 }
 
+/* ---------------------------------------------------------------------------
+ * AUDIT-0040: defined-frame screenshot capture for the GLES handheld path.
+ *
+ * Desktop GL reads the front buffer (glReadBuffer(GL_FRONT)) because the manual
+ * BMP capture runs after the previous frame's swap, when the back buffer is
+ * undefined. GLES has no GL_FRONT for the default framebuffer, so that path read
+ * the stale/undefined back buffer. The fix: while the composited final frame is
+ * still bound to the default framebuffer — after gfx_rapi->end_frame() resolve +
+ * output VI filter + the minimap draw, and BEFORE the swap in gfx_end_frame —
+ * stash it into a persistent RGB buffer that platformSaveScreenshot consumes.
+ * glReadPixels on the bound default framebuffer BEFORE the swap is defined in
+ * GLES3 (unlike a post-swap back-buffer read), so this is GLES-safe.
+ *
+ * Only invoked when a screenshot is pending (see gfx_run_dl) — zero cost on the
+ * common no-capture path — so the readback runs at most once per captured frame.
+ * ------------------------------------------------------------------------- */
+static uint8_t *g_capture_frame_buf = NULL;
+static int g_capture_frame_w = 0;
+static int g_capture_frame_h = 0;
+static bool g_capture_frame_valid = false;
+
+void gfx_opengl_capture_default_framebuffer(void) {
+    extern SDL_Window *g_sdlWindow;
+    int w = 0, h = 0;
+    GLint saved_read_fbo = 0;
+    GLint saved_read_buffer = GL_BACK;
+    GLint saved_pack_alignment = 4;
+    GLboolean saved_scissor = GL_FALSE;
+
+    g_capture_frame_valid = false;
+
+    if (g_sdlWindow != NULL) {
+        SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
+    }
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    if (g_capture_frame_buf == NULL || w != g_capture_frame_w || h != g_capture_frame_h) {
+        uint8_t *nb = (uint8_t *)realloc(g_capture_frame_buf, (size_t)w * (size_t)h * 3U);
+        if (nb == NULL) {
+            return;
+        }
+        g_capture_frame_buf = nb;
+        g_capture_frame_w = w;
+        g_capture_frame_h = h;
+    }
+
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &saved_read_fbo);
+    glGetIntegerv(GL_READ_BUFFER, &saved_read_buffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &saved_pack_alignment);
+    saved_scissor = glIsEnabled(GL_SCISSOR_TEST);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glReadBuffer(GL_BACK); /* default-framebuffer back buffer, pre-swap: defined in GLES3 */
+    glDisable(GL_SCISSOR_TEST);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, g_capture_frame_buf);
+    GLenum err = glGetError();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)saved_read_fbo);
+    glReadBuffer((GLenum)saved_read_buffer);
+    glPixelStorei(GL_PACK_ALIGNMENT, saved_pack_alignment);
+    if (saved_scissor) {
+        glEnable(GL_SCISSOR_TEST);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
+
+    g_capture_frame_valid = (err == GL_NO_ERROR);
+}
+
+/* Return the most recently stashed default-framebuffer capture (bottom-up RGB,
+ * GL convention — same as glReadPixels/the front-buffer path, so downstream BMP
+ * handling is unchanged). Returns false if no valid frame is stashed. */
+bool gfx_opengl_get_captured_frame(int *out_w, int *out_h, const uint8_t **out_px) {
+    if (!g_capture_frame_valid || g_capture_frame_buf == NULL) {
+        return false;
+    }
+    if (out_w) *out_w = g_capture_frame_w;
+    if (out_h) *out_h = g_capture_frame_h;
+    if (out_px) *out_px = g_capture_frame_buf;
+    return true;
+}
+
+/* AUDIT-0040 verification harness (GE007_SYNTH_FRAME_PATTERN): overwrite the
+ * whole default framebuffer with a solid color that deterministically encodes a
+ * per-presented-frame counter (R=(n>>16)&255, G=(n>>8)&255, B=n&255). Drawn on
+ * the GL/GLES path after composition so every capture route (desktop GL front
+ * buffer, GLES stash above) reads it, letting a ROM-free harness prove the
+ * capture reflects THIS frame and not a stale one. Env-gated by the caller;
+ * inert (never invoked) by default. */
+void gfx_opengl_draw_synth_frame(unsigned int n) {
+    GLboolean saved_scissor = glIsEnabled(GL_SCISSOR_TEST);
+    GLfloat r = (GLfloat)((n >> 16) & 0xFFu) / 255.0f;
+    GLfloat g = (GLfloat)((n >> 8) & 0xFFu) / 255.0f;
+    GLfloat b = (GLfloat)(n & 0xFFu) / 255.0f;
+
+    /* Fill the composited scene region of the default framebuffer with the
+     * counter color. The final present may letterbox the scene inside the
+     * drawable (as it does for the real game frame — the bars are genuine
+     * presented pixels, not a capture artifact), so the harness decodes from the
+     * scene region rather than assuming a full-drawable fill. */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(r, g, b, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (saved_scissor) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+}
+
 /* Largest square offscreen dimension this GL context can allocate.  The scene
  * color attachment is a TEXTURE (GL_MAX_TEXTURE_SIZE) while the depth and MSAA
  * attachments are RENDERBUFFERS (GL_MAX_RENDERBUFFER_SIZE); they share one FBO,

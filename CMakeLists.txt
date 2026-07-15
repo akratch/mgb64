@@ -350,6 +350,26 @@ if(BUILD_TESTING)
         TIMEOUT 120
         SKIP_RETURN_CODE 77
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    # AUDIT-0040 synthetic frame-counter screenshot harness: proves the manual/
+    # auto BMP capture path reads the DEFINED frame currently presented, not a
+    # stale one. GE007_SYNTH_FRAME_PATTERN fills each composited frame with a
+    # solid color encoding a per-presented-frame counter; the harness boots N
+    # consecutive --screenshot-frame captures under desktop GL, decodes the
+    # counter from each BMP, and asserts uniform-scene + distinct + strictly
+    # increasing values. Desktop GL exercises the same decode plumbing the owner
+    # runs on the MGB64_PORTMASTER_GLES device (where the fix under test is the
+    # pre-swap stash gfx_opengl_capture_default_framebuffer -> platformSaveScreenshot).
+    # ROM-gated + binary-dependent: self-skips (exit 125) when no ROM/binary.
+    add_test(
+        NAME port_synth_frame_screenshot
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/synth_frame_screenshot_harness.sh"
+            --no-build --start-frame 40 --count 3
+    )
+    set_tests_properties(port_synth_frame_screenshot PROPERTIES
+        TIMEOUT 300
+        SKIP_RETURN_CODE 125
+        LABELS "screenshot"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(
         NAME port_public_python_tool_syntax
         COMMAND python3 -m py_compile

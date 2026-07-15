@@ -811,6 +811,36 @@ void platformSetScreenshotLabel(const char *label) {
  * so an automation capture that silently failed exits nonzero [AUDIT-0043]. */
 static int s_lastScreenshotFailed = 0;
 
+/* [AUDIT-0040] "Is a screenshot pending for the frame currently being composited?"
+ * Queried from gfx_run_dl (GLES only) to decide whether to stash the composited
+ * default framebuffer BEFORE the swap. It is a deliberate SUPERSET of the actual
+ * capture conditions consumed in platformFrameSync: over-arming only costs an
+ * extra pre-swap readback (the freshest stash is always the one consumed, so a
+ * few early stashes are harmless), while under-arming would miss the target
+ * frame. Proximity windows keep automation runs from reading back every frame
+ * from boot. Side-effect-free: it must NOT call the display-cast/menu due-state
+ * machines (those consume delay state); instead it latches on their env presence.
+ * Defined unconditionally (compiles in every config) but only called on GLES. */
+int platformScreenshotCapturePendingForGles(void) {
+    extern s32 g_GlobalTimer;
+    static int diag_latch = -1;
+
+    if (g_screenshotRequested) {
+        return 1;
+    }
+    if (g_autoScreenshotFrame >= 0 && g_frameSyncCallCount + 3 >= g_autoScreenshotFrame) {
+        return 1;
+    }
+    if (g_autoScreenshotGameTimer >= 0 && g_GlobalTimer + 3 >= g_autoScreenshotGameTimer) {
+        return 1;
+    }
+    if (diag_latch < 0) {
+        diag_latch = (getenv("GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER") != NULL ||
+                      getenv("GE007_DIAG_MENU_SCREENSHOT_MENU") != NULL) ? 1 : 0;
+    }
+    return diag_latch;
+}
+
 void platformSaveScreenshot(void) {
     int w = SCREENSHOT_W, h = SCREENSHOT_H;
     s_lastScreenshotFailed = 1;  /* pessimistic: cleared only on full success below */
@@ -875,18 +905,42 @@ void platformSaveScreenshot(void) {
     } else
 #endif
     {
+#ifdef MGB64_PORTMASTER_GLES
+        /* [AUDIT-0040] GLES has no readable GL_FRONT for the default framebuffer,
+         * and the back buffer is undefined here (post-swap). Instead of reading the
+         * stale back buffer, consume the composited final frame that gfx_run_dl
+         * stashed BEFORE the swap (gfx_opengl_capture_default_framebuffer). Same
+         * bottom-up RGB convention as the front-buffer path below, so the BMP flip
+         * downstream is unchanged. Fail closed (leave s_lastScreenshotFailed=1) if
+         * no valid frame was stashed — never emit a stale/garbage image. */
+        {
+            extern bool gfx_opengl_get_captured_frame(int *, int *, const unsigned char **);
+            int cap_w = 0, cap_h = 0;
+            const unsigned char *cap_px = NULL;
+            if (!gfx_opengl_get_captured_frame(&cap_w, &cap_h, &cap_px) || cap_px == NULL) {
+                fprintf(stderr, "[gfx] GLES screenshot: no composited frame stashed (capture skipped)\n");
+                free(source_pixels);
+                free(pixels);
+                return;
+            }
+            if (cap_w != src_w || cap_h != src_h) {
+                fprintf(stderr, "[gfx] GLES screenshot: stashed frame %dx%d != drawable %dx%d\n",
+                        cap_w, cap_h, src_w, src_h);
+                free(source_pixels);
+                free(pixels);
+                return;
+            }
+            memcpy(source_pixels, cap_px, (size_t)src_w * (size_t)src_h * 3);
+        }
+#else
         /* Read from the FRONT buffer: this runs at the top of platformFrameSync,
          * BEFORE the current frame's swap (handled later in gfx_end_frame). The BACK
          * buffer is undefined right after the previous frame's SDL_GL_SwapWindow, so a
          * default-read-buffer (GL_BACK) glReadPixels here captures stale/garbage pixels
          * — corrupting every parity/oracle/contact-sheet capture. GL_FRONT holds the
-         * last fully-presented frame (deterministic). Restore GL_BACK after.
-         * ponytail: GL_FRONT is unavailable in GLES; screenshot reads back buffer (stale). */
-#ifndef MGB64_PORTMASTER_GLES
+         * last fully-presented frame (deterministic). Restore GL_BACK after. */
         glReadBuffer(GL_FRONT);
-#endif
         glReadPixels(0, 0, src_w, src_h, GL_RGB, GL_UNSIGNED_BYTE, source_pixels);
-#ifndef MGB64_PORTMASTER_GLES
         glReadBuffer(GL_BACK);
 #endif
     }

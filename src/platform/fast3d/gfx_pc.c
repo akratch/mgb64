@@ -24288,6 +24288,22 @@ void gfx_run_dl(Gfx *dl) {
      * GL-only draw must be gated on "GL is active", not merely "not Metal". */
     if (gfx_backend_use_opengl())
         minimap_overlay_draw_queued_frames();
+    /* [AUDIT-0040] Synthetic frame-counter overlay (GE007_SYNTH_FRAME_PATTERN):
+     * env-gated, inert by default. After composition + minimap, overwrite the
+     * default framebuffer with a solid color encoding g_frame_count_diag (the
+     * per-presented-frame counter incremented at the top of this gfx_run_dl).
+     * Both the desktop GL front-buffer capture and the GLES pre-swap stash below
+     * then read it, so a ROM-free harness can prove the capture reflects THIS
+     * frame rather than a stale one. GL/GLES only (no WebGPU context here). */
+    {
+        static int synth_pattern = -1;
+        if (synth_pattern < 0)
+            synth_pattern = getenv("GE007_SYNTH_FRAME_PATTERN") ? 1 : 0;
+        if (synth_pattern && gfx_backend_use_opengl()) {
+            extern void gfx_opengl_draw_synth_frame(unsigned int);
+            gfx_opengl_draw_synth_frame((unsigned int)g_frame_count_diag);
+        }
+    }
 #endif
     /* [AUDIT-0003] Capture AFTER end_frame() composition + the minimap draw, so
      * the readback contains output post-FX and the minimap, not the raw pre-
@@ -24297,6 +24313,21 @@ void gfx_run_dl(Gfx *dl) {
      * both stable across end_frame within this gfx_run_dl call, so the move does
      * not change capture cadence. */
     gfx_diag_screenshot_series_capture_if_due();
+#if defined(MGB64_PORTMASTER_GLES) && defined(NATIVE_PORT)
+    /* [AUDIT-0040] GLES cannot read the front buffer (GL_FRONT is unavailable for
+     * the default framebuffer) and the back buffer is undefined after the swap,
+     * so the manual/auto BMP path read stale/garbage pixels. Stash the composited
+     * final frame here — after end_frame() composition + minimap + any synth
+     * overlay, and BEFORE the swap in gfx_end_frame — for platformSaveScreenshot
+     * to consume. Armed-only (predicate below), so zero cost when no capture is
+     * pending. Compiled out on desktop GL, which keeps its front-buffer path. */
+    if (gfx_backend_use_opengl()) {
+        extern int platformScreenshotCapturePendingForGles(void);
+        extern void gfx_opengl_capture_default_framebuffer(void);
+        if (platformScreenshotCapturePendingForGles())
+            gfx_opengl_capture_default_framebuffer();
+    }
+#endif
     gfx_trace_glass_shard_coverage_frame_end();
     gfx_native_sky_queue_reset();
     visibility_scaled_matrix_region_count = 0;
