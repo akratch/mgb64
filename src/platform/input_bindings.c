@@ -186,7 +186,13 @@ static const char *kGpLabel[GB_COUNT] = {
 /* Pretty names for EVERY SDL button index (SDL_CONTROLLER_BUTTON_MAX == 21 in
  * SDL 2.32): the capture scan and gpValid() accept 15..20 (Share/paddles/
  * touchpad — Elite/Ally-class hardware), so a NULL here would feed
- * snprintf("%s", NULL) — UB. Keep this table exhaustive. */
+ * snprintf("%s", NULL) — UB. Keep this table exhaustive.
+ * SYNC: sys_hotkey.c mirrors these strings (kGpButtonNameMirror, read by the
+ * SDL-free gamepadButtonName() accessor) so the name table is unit-testable
+ * without pulling <SDL.h> in through this TU — keep the two in sync on any SDL
+ * button-enum bump. tests/test_sys_hotkey.c pins all 21 mirror entries, but
+ * that guard is mirror-side only: edits HERE are invisible to the test, so
+ * this comment is the guard — update the mirror + test when editing. */
 static const char *kGpButtonName[SDL_CONTROLLER_BUTTON_MAX] = {
     "A", "B", "X", "Y", "Back", "Guide", "Start",
     "Left Stick Click", "Right Stick Click",

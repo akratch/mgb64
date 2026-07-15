@@ -861,6 +861,20 @@ if(BUILD_TESTING)
     target_include_directories(test_gamepad_menu_conflict PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME gamepad_menu_conflict COMMAND test_gamepad_menu_conflict)
 
+    # System-hotkey predicates + gamepad button-name reader — ROM-free/SDL-free
+    # unit test (AUDIT-0024 core): sysKeyValid bounds a keycode to SDL's keycode
+    # range, sysKeyMutualConflict enforces menu-toggle != fps-toggle (both are
+    # keycodes), and gamepadButtonName is the bounds-checked reader over the
+    # button-name table (mirrored in sys_hotkey.c to stay off <SDL.h>). Compiles
+    # only the pure sys_hotkey.c TU. Cross-namespace keyboard conflict needs
+    # SDL_GetScancodeFromKey and is intentionally left out of this pure core.
+    add_executable(test_sys_hotkey
+        "${CMAKE_SOURCE_DIR}/tests/test_sys_hotkey.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/sys_hotkey.c"
+    )
+    target_include_directories(test_sys_hotkey PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME sys_hotkey COMMAND test_sys_hotkey)
+
     # maybe_detonate_object gate/armour/salvage helpers — ROM-free unit test
     # (FID-0074): retail ASM src/game/chrobjhandler.c:38029-38459. Guards all
     # five divergences on both flag sides (D2 armour polarity, D3 unarmed-gate
