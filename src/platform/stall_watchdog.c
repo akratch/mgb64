@@ -55,7 +55,6 @@ extern char **environ;
 #endif
 
 #include "../bondtypes.h"
-#include "../bondconstants.h"
 #include "../game/chrai.h"
 #include "port_env.h"
 #include "savedir.h"

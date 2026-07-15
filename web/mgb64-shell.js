@@ -36,12 +36,21 @@ async function loadStoredRom() {
   } catch { return null; }
 }
 
+// Returns true on success. Storing is a convenience (persist across visits),
+// not a requirement — callers must still let the user boot from the in-memory
+// bytes even when this fails (e.g. OPFS quota exceeded).
 async function storeRom(bytes) {
-  const dir = await opfsRoot();
-  const fh = await dir.getFileHandle(ROM_OPFS_NAME, { create: true });
-  const w = await fh.createWritable();
-  await w.write(bytes); await w.close();
-  try { await navigator.storage.persist(); } catch {}
+  try {
+    const dir = await opfsRoot();
+    const fh = await dir.getFileHandle(ROM_OPFS_NAME, { create: true });
+    const w = await fh.createWritable();
+    await w.write(bytes); await w.close();
+    try { await navigator.storage.persist(); } catch {}
+    return true;
+  } catch (e) {
+    console.error("[shell] storeRom failed:", e);
+    return false;
+  }
 }
 
 async function forgetRom() {
@@ -76,7 +85,10 @@ function loadEngineFactory() {
   return _enginePromise;
 }
 
+let booted = false;
 async function boot(romBytes) {
+  if (booted) return;
+  booted = true;
   $("gate").hidden = true;
   const canvas = $("mgb64-canvas"); canvas.hidden = false;
   // Non-streaming instantiate: GitHub Pages may serve .wasm with a wrong MIME.
@@ -104,9 +116,20 @@ async function boot(romBytes) {
     const f = ev.target.files[0]; if (!f) return;
     if (f.size !== ROM_SIZE) { $("rom-status").textContent = `Wrong size (${f.size} bytes) — expected exactly 12 MB.`; return; }
     rom = new Uint8Array(await f.arrayBuffer());
-    await storeRom(rom); showReady();
+    const stored = await storeRom(rom);
+    if (stored) {
+      showReady();
+    } else {
+      // Persistence failed (e.g. OPFS quota) — booting from the in-memory
+      // bytes still works, so still enable Play.
+      $("rom-status").textContent = "Couldn't store the ROM in browser storage (quota?). You can still pick it again next visit.";
+      $("play").disabled = false;
+    }
   });
   $("forget").addEventListener("click", async () => { await forgetRom(); location.reload(); });
   // Boot on click — the user gesture unlocks WebAudio.
-  $("play").addEventListener("click", () => boot(rom).catch(e => { $("gate").hidden = false; $("gate-msg").textContent = "Boot failed: " + e; }));
+  $("play").addEventListener("click", () => {
+    $("play").disabled = true;
+    boot(rom).catch(e => { $("gate").hidden = false; $("gate-msg").textContent = "Boot failed: " + e; });
+  });
 })();

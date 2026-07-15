@@ -812,6 +812,32 @@ if(BUILD_TESTING)
     target_include_directories(test_weapon_action_sfx PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME weapon_action_sfx COMMAND test_weapon_action_sfx)
 
+    # Audio CUSTOM-FX param table shape/values — ROM-free unit test (audit
+    # backlog W3.5 review recommendation): links the real audi_port.c and
+    # reads s_portAudioCustomFxParams through a test-only accessor so a
+    # silent edit to the table's shape or interior constants is caught.
+    # audi_port.c's audio-thread/DMA/mixer externs are link-only stubbed in
+    # test_audio_fx_params_stubs.c (never called by this test).
+    add_executable(test_audio_fx_params
+        "${CMAKE_SOURCE_DIR}/tests/test_audio_fx_params.c"
+        "${CMAKE_SOURCE_DIR}/tests/test_audio_fx_params_stubs.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/audi_port.c"
+    )
+    # The global add_definitions() (CMakeLists:1578-ish) runs after this
+    # block, so NATIVE_PORT (audi_port.c's compile gate) is applied
+    # explicitly here, mirroring test_struct_layout above.
+    target_compile_definitions(test_audio_fx_params PRIVATE
+        NONMATCHING NATIVE_PORT PORT_FIXME_STUBS _LANGUAGE_C
+        VERSION_US LANG_US REFRESH_NTSC LEFTOVERDEBUG
+        LEFTOVERSPECTRUM BUGFIX_R0 BYTEMATCH SDL_MAIN_HANDLED)
+    target_include_directories(test_audio_fx_params PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/include/PR"
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/platform"
+    )
+    add_test(NAME audio_fx_params COMMAND test_audio_fx_params)
+
     # Sticky-projectile deposit-motion endpoint pull-back — ROM-free unit test
     # (FID-0065): retail clamps the collision endpoint + impact to bg_hit-0.1*travel
     # ONLY on a wall hit (result==0), measured from arg2; the port inverted the

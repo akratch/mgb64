@@ -22,6 +22,9 @@
    * drain the future queue so AllowProcessEvents callbacks actually dispatch.
    * emscripten_sleep() alone resolves the promise but never fires the C
    * callback (it only runs during ProcessEvents), so both steps are required. */
+  /* NOTE: `device` is accepted for call-site symmetry with the native pump
+   * below but is otherwise unused/discarded here without being evaluated —
+   * call sites must not pass a side-effecting expression for it. */
   #define WGPU_COMPAT_PUMP(instance, device)                    \
       do {                                                      \
           emscripten_sleep(1);                                  \

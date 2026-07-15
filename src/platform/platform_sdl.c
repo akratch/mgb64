@@ -3626,7 +3626,10 @@ void platformFrameSync(void) {
             /* The browser paces frames; SDL_Delay would block the JS event loop.
              * emscripten_sleep() unwinds via Asyncify: timers fire, WebGPU
              * callbacks resolve, rAF proceeds. 0ms = yield only. This also covers
-             * the stubs.c osRecvMesg spin, which reaches here via platformFrameSync. */
+             * the stubs.c osRecvMesg spin, which reaches here via platformFrameSync.
+             * Sub-1ms remainders truncate to 0 here (unsigned cast), so the tail
+             * end of the wait is a yield-only spin bounded by rAF pacing, not a
+             * true sub-ms sleep. */
             emscripten_sleep(rem_ms > 0.0 ? (unsigned)rem_ms : 0);
 #else
             if (rem_ms > 2.5) {

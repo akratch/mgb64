@@ -2,7 +2,6 @@
 #include <memp.h>
 #include <vi.h>
 #include "textrelated.h"
-#include "bondtypes.h"
 #include "game/lvl_text.h"
 #ifdef NATIVE_PORT
 #include "../platform/byteswap.h"
@@ -405,7 +404,8 @@ void setTextOverlapCorrection(s32 flag) {
 #ifdef NONMATCHING
 #ifdef NATIVE_PORT
 /**
- * NATIVE_PORT: Clean rewrite of load_font_tables for 64-bit PC.
+ * NATIVE_PORT: Clean rewrite of load_font_tables for the native PC port
+ * (LP64 and ILP32).
  *
  * The N64 font binary has 24-byte fontchar entries where the pixeldata
  * field is a 4-byte offset. On 64-bit PC, struct fontchar is 32 bytes

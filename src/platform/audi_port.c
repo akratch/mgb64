@@ -56,6 +56,16 @@ static s32 s_portAudioCustomFxParams[PORT_AUDIO_CUSTOM_FX_SECTION_COUNT * 8 + 2]
     0,     148 PORT_AUDIO_FX_MS,  13000, -13000,      0,   0x017C,   0xA,  0x4500
 };
 
+/* Test-only accessor for tests/test_audio_fx_params.c (AUDIT-backlog W3.5):
+ * exposes the file-local s_portAudioCustomFxParams table's shape/values
+ * without changing its storage class. Not called by production code. */
+const s32 *portAudioTestGetCustomFxParams(s32 *out_len) {
+    if (out_len) {
+        *out_len = (s32)(sizeof(s_portAudioCustomFxParams) / sizeof(s_portAudioCustomFxParams[0]));
+    }
+    return s_portAudioCustomFxParams;
+}
+
 typedef struct {
     ALLink node;
     int    startAddr;
