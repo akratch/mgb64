@@ -242,6 +242,18 @@ if(BUILD_TESTING)
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_release_provenance.sh"
     )
     set_tests_properties(release_provenance_guard PROPERTIES TIMEOUT 120)
+    # (AUDIT-0015) Hashtable-generator fail-closed gate: scripts/make/build_hashtable.sh
+    # must emit oracle-exact `md5,section,path` rows for u/j/e fixtures and exit
+    # nonzero leaving NO completed CSV on every failure path (unsupported/missing
+    # version, missing build dir, empty required class, extractor failure incl. a
+    # silent no-output objcopy, checksum failure, unwritable destination). ROM-free
+    # and MIPS-toolchain-free: PATH-shimmed fake objcopy + independently computed
+    # digest oracle; the generator runs under BOTH /bin/bash 3.2 and the PATH bash.
+    add_test(
+        NAME build_hashtable_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_build_hashtable.sh"
+    )
+    set_tests_properties(build_hashtable_guard PROPERTIES TIMEOUT 120)
     # Combat/floor oracle (FID-0032) schema + comparator contract (ROM-free).
     add_test(
         NAME combat_oracle_contract

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Open |
+| Status | Fixed |
 | Severity | S3 - matching/checksum evidence can be silently invalid |
 | Priority | P2 |
 | Area | Matching build / checksum tooling |
@@ -127,6 +127,53 @@ reference implementation. Add negative fixtures for each required failure and
 run them under macOS Bash 3.2 plus the supported Linux Bash. Retain the harmless
 tool-shim test to prove a failed extraction can never produce a successful
 final artifact.
+
+## Resolution
+
+Fixed 2026-07-15 by a fail-closed rewrite of
+[`scripts/make/build_hashtable.sh`](../../../scripts/make/build_hashtable.sh),
+verified test-first (the new harness was run against the pre-fix script and
+recorded 42 failures across both host bashes before the rewrite; 76/76 pass
+after).
+
+Defects fixed (all five reproduced on this host pre-fix):
+
+1. Bash-4-only `${OPTARG,,}` version parse broke under macOS `/bin/bash`
+   3.2.57 ("bad substitution" without aborting, `COUNTRY_CODE` left empty).
+2. Default filename referenced undefined `version` → `full_hashtable_.csv`.
+3. Seven object loops iterated literal unmatched `*.o` globs.
+4. `objcopy`/`md5sum` results were never status-checked (no `set -e`).
+5. Output was created before inputs were proven and the final `rm -f` made
+   every failure path exit zero (false success).
+
+Fix approach: portable `tr`-based `-v` normalization into one canonical
+`COUNTRY_CODE` with `exit 2` on unsupported/missing versions before any output
+path is touched; default filename derived from the validated code;
+`set -euo pipefail`; per-class glob + existence check requiring at least one
+object per required class (no literal-glob iteration; spaces in paths
+preserved); every objcopy invocation status-checked plus an explicit
+no-output-produced check (defeats a `/usr/bin/true`-style stub extractor);
+every md5sum status-checked; rows staged in a temp file in the destination
+directory, validated per row (32-hex digest, `.section`, non-empty
+non-wildcard/comma-free path) at emission and again as a whole file, then
+published via same-directory atomic `mv` only after full validation; a
+directory `-o` destination is rejected; all failure paths exit nonzero and a
+trap removes the staged temp so no completed CSV is left behind. The
+`md5,section,path` row format is byte-identical to the original
+(`scripts/test_files.sh` and the explicit `-o` wrappers work unchanged).
+
+Verification: new ctest `build_hashtable_guard`
+([`tools/tests/test_build_hashtable.sh`](../../../tools/tests/test_build_hashtable.sh)),
+ROM- and toolchain-free via a PATH-shimmed fake `mips-linux-gnu-objcopy` and an
+independently computed digest oracle (`md5 -q`, not the script's `md5sum`). It
+covers the oracle-exact positive fixtures for `u`/`j`/`e` (explicit `-o`,
+default filenames, `US` alias, filename-with-space) and all required negative
+cases -- unsupported version (exit 2), missing version/zero args (exit 2),
+missing build dir, empty required class, extractor exit-1, extractor silent
+no-output (the original repro), checksum failure, unwritable destination --
+each asserting nonzero exit and no completed CSV or temp litter. The generator
+is executed under BOTH `/bin/bash` 3.2.57 and the PATH bash inside the test,
+and `shellcheck` is clean on the rewritten script.
 
 ## Related Work
 

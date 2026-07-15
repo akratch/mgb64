@@ -61,7 +61,7 @@ All 73 audit findings, regardless of lifecycle state. Status is extracted from e
 | [AUDIT-0012](issues/AUDIT-0012-sanitizer-gate-ignores-process-failure.md) | Fixed | S3 | P1 | Fault injected | Sanitizer gate certifies nonzero process exits as clean |
 | [AUDIT-0013](issues/AUDIT-0013-fidelity-ledger-index-stale.md) | Fixed | S3 | P1 | Test reproduced | Fidelity ledger index omits nine authoritative records |
 | [AUDIT-0014](issues/AUDIT-0014-nuke-cleanup-quotes-asset-globs.md) | Fixed | S4 | P2 | Runtime reproduced | Nuke cleanup quotes asset globs and leaves generated binaries |
-| [AUDIT-0015](issues/AUDIT-0015-hashtable-generator-false-success.md) | Open | S3 | P2 | Fault injected | Hashtable generator emits invalid output and exits zero on failure |
+| [AUDIT-0015](issues/AUDIT-0015-hashtable-generator-false-success.md) | Fixed | S3 | P2 | Fault injected | Hashtable generator emits invalid output and exits zero on failure |
 | [AUDIT-0016](issues/AUDIT-0016-f10-setting-help-wrong-keycode.md) | Fixed | S4 | P3 | Runtime reproduced | FPS-toggle help publishes the wrong SDL keycode for F10 |
 | [AUDIT-0017](issues/AUDIT-0017-campaign-routes-stale-after-root-motion-fix.md) | Open | S3 | P1 | A/B reproduced | Four campaign routes still encode pre-FID-0117 root motion |
 | [AUDIT-0018](issues/AUDIT-0018-knife-impact-fixture-stale-after-root-motion-fix.md) | Fixed | S3 | P1 | A/B reproduced | Knife-impact fixture misses after the retail root-motion fix |
