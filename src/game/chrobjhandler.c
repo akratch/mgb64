@@ -28449,10 +28449,17 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
         gSPMatrix(gdl++, osVirtualToPhysical(model->render_pos), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW | G_MTX_FLOAT_PORT);
 #ifdef NATIVE_PORT
         gSPSegment(gdl++, SPSEGMENT_MODEL_VTX, osVirtualToPhysical(packed_vertices));
+        /* Reference the vertices by their registered host pointer rather than
+         * the bare segment token 0x04000000: on an ILP32 target (wasm32) a bare
+         * 32-bit token is indistinguishable from a host pointer, so the DL-word
+         * pointer registry must see a real pointer here. osVirtualToPhysical()
+         * returns the identity pointer and registers it; on LP64 this resolves
+         * to exactly the same address as the segment-4 token did (byte-identical). */
+        gSPVertex(gdl++, osVirtualToPhysical(packed_vertices), 4, 0);
 #else
         gSPSegment(gdl++, SPSEGMENT_MODEL_VTX, osVirtualToPhysical(vertices));
-#endif
         gSPVertex(gdl++, 0x04000000, 4, 0);
+#endif
         gDPTri2(gdl++, 0, 1, 2, 0, 2, 3);
         gSPEndDisplayList(gdl++);
 
@@ -32135,6 +32142,7 @@ after_type_checks:
         gdl++;
         saved->words.w0 = 0x01030040 | (bondviewGetField10E0GbiFlags() << 16);
         saved->words.w1 = (uintptr_t)get_BONDdata_field_10E0();
+        GFX_DL_REGISTER_PTR(saved->words.w1); /* wasm32: record host ptr for DL resolve */
     }
 
     mrData->gdl = gdl;
@@ -32161,6 +32169,7 @@ after_type_checks:
         gdl++;
         saved->words.w0 = 0x01030040;
         saved->words.w1 = (uintptr_t)currentPlayerGetProjectionMatrix();
+        GFX_DL_REGISTER_PTR(saved->words.w1); /* wasm32: record host ptr for DL resolve */
     }
 
     mrData->gdl = gdl;

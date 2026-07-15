@@ -2269,6 +2269,7 @@ Gfx *sub_GAME_7F0A3330(Gfx *gdl, void *arg1, s32 arg2) {
 #ifdef NATIVE_PORT
             gdl->words.w0 = 0x04300040;
             gdl->words.w1 = addr;
+            GFX_DL_REGISTER_PTR(gdl->words.w1); /* wasm32: record host ptr for DL resolve */
             gdl++;
 #else
             cmd = (u32 *)gdl;
@@ -3282,6 +3283,7 @@ Gfx *sub_GAME_7F0A3978(Gfx *gdl, void *arg1, s32 unused_arg2, s32 arg3) {
         do {
             gdl->words.w0 = 0x04300040;
             gdl->words.w1 = (uintptr_t)arg1;
+            GFX_DL_REGISTER_PTR(gdl->words.w1); /* wasm32: record host ptr for DL resolve */
             gdl++;
 
             gdl->words.w0 = 0xB1000032;

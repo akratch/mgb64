@@ -75,6 +75,9 @@ static inline void gfx_diag_write_stderr(const char *msg, int len)
 #include "gfx_ptr.h"
 
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>   /* emscripten_get_canvas_element_size (browser dimensions) */
+#endif
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
 #elif defined(__APPLE__)
@@ -1330,6 +1333,41 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
         *static_texture_has_lods_out = false;
     }
 
+#if UINTPTR_MAX == 0xffffffffu
+    /* ILP32 (wasm32): raw_addr is a bare 32-bit token/pointer, so the LP64
+     * high-bit test is always "token". Resolve registry-first (a recorded host
+     * pointer wins over a colliding segment nibble), then fall back to segment
+     * resolution and the loaded-texture-pointer table. Mirrors the LP64 arm
+     * below for every value class; the else-branch (direct 64-bit pointer)
+     * cannot occur on a 32-bit target. */
+    {
+        uint32_t token = (uint32_t)raw_addr;
+
+        if ((token & GE007_IMAGESEG_TOKEN_MASK) == GE007_IMAGESEG_TOKEN_PREFIX) {
+            return gfx_resolve_static_game_texture(token & GE007_IMAGESEG_TOKEN_ID_MASK,
+                                                   cache_key_out,
+                                                   is_static_game_texture_out,
+                                                   static_texture_has_lods_out);
+        }
+
+        addr = gfx_ptr_resolve(token);
+        if (addr == NULL) {
+            addr = gfx_resolve_addr(token);
+        }
+        if (addr == NULL) {
+            addr = gfx_resolve_loaded_texture_pointer_token(token, cache_key_out);
+        }
+    }
+
+    if (addr != NULL) {
+        return addr;
+    }
+
+    return gfx_resolve_static_game_texture((uint32_t)raw_addr,
+                                           cache_key_out,
+                                           is_static_game_texture_out,
+                                           static_texture_has_lods_out);
+#else
     if ((raw_addr >> 32) == 0) {
         uint32_t token = (uint32_t)raw_addr;
 
@@ -1360,6 +1398,7 @@ static void *gfx_resolve_texture_image_token(uintptr_t raw_addr,
     }
 
     return NULL;
+#endif
 }
 
 /* GE007_TEX_ONLY: force combiner to raw TEXEL0 output (no shade/fog/env) */
@@ -4529,7 +4568,29 @@ static void gfx_sync_current_dimensions_from_window(void) {
 
     if (g_sdlWindow != NULL) {
         SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
+        /* SDL_GL_GetDrawableSize queries the GL drawable; on a non-GL window it
+         * can report 0x0 (the emscripten WebGPU/canvas path). Fall back to the
+         * logical window size. Native GL/Metal windows return a valid drawable
+         * above, so this fallback does not change native behaviour. */
+        if (w <= 0 || h <= 0) {
+            SDL_GetWindowSize(g_sdlWindow, &w, &h);
+        }
     }
+#ifdef __EMSCRIPTEN__
+    /* The emscripten WebGPU window is a canvas, not a GL/window-managed surface,
+     * so SDL reports 0x0 for both drawable and window size. Read the canvas
+     * element directly (the WebGPU backend binds the same "#mgb64-canvas"
+     * selector) so gfx_current_dimensions is established and the backend frame
+     * can open. Browser-only; never compiled into the native build. */
+    if (w <= 0 || h <= 0) {
+        int cw = 0, ch = 0;
+        if (emscripten_get_canvas_element_size("#mgb64-canvas", &cw, &ch) == 0 &&
+            cw > 0 && ch > 0) {
+            w = cw;
+            h = ch;
+        }
+    }
+#endif
 
     if (w <= 0 || h <= 0) {
         return;
@@ -22164,7 +22225,68 @@ extern volatile uintptr_t g_lastDlW1;
  * the top nibble is a valid segment index (1-15), resolve as segment address.
  * Otherwise, treat as a direct 64-bit pointer.
  */
+/* On LP64 a DL word carrying a host pointer has non-zero high 32 bits, so
+ * ((w1 >> 32) == 0) means "32-bit N64 token". On an ILP32 target uintptr_t is
+ * 32-bit: the shift is degenerate and every value is 32-bit, so the token test
+ * is unconditionally true. GFX_W1_IS_32BIT encodes that per-width so the LP64
+ * expression is preserved exactly while the wasm build avoids a shift-by-width
+ * warning. */
+#if UINTPTR_MAX == 0xffffffffu
+#define GFX_W1_IS_32BIT(w1) (1)
+#else
+#define GFX_W1_IS_32BIT(w1) (((w1) >> 32) == 0)
+#endif
+
 static inline void *seg_addr(uintptr_t w1) {
+#if UINTPTR_MAX == 0xffffffffu
+    /* ILP32 (wasm32): host pointers and N64 segment tokens are both bare 32-bit
+     * values, so the LP64 high-bit discriminator collapses. Disambiguate via
+     * the pointer registry, which records every host pointer written into a DL
+     * word (osVirtualToPhysical / GFX_DL_REGISTER_PTR):
+     *   - registry hit                       -> host pointer (return it);
+     *   - miss, nibble 1-15, segment live    -> segment token (resolve it);
+     *   - miss, nibble 1-15, segment unset   -> unresolvable token (NULL, as LP64);
+     *   - miss, nibble 0                      -> low host pointer (e.g. static
+     *                                            data) that carries no segment,
+     *                                            return it directly.
+     * This is provably equivalent to the LP64 arm for every value class the
+     * translator sees; the LP64 arm below is unchanged. */
+    uint32_t v = (uint32_t)w1;
+    if (v == 0) {
+        return NULL;
+    }
+    {
+        void *reg = gfx_ptr_resolve(v);
+        if (reg != NULL) {
+            return reg;
+        }
+    }
+    {
+        uint32_t seg = (v >> 24) & 0x0F;
+        if (seg != 0) {
+            if (gfx_segment_table[seg] != 0) {
+                return (void *)(gfx_segment_table[seg] + (v & 0x00FFFFFF));
+            }
+            {
+                static int seg_warn = 0;
+                if (seg_warn < 5) {
+                    seg_warn++;
+                    fprintf(stderr,
+                            "[SEG_ADDR] unresolvable 32-bit addr 0x%08X (seg=%u base=NULL) frame=%d cmd=%p op=0x%02X w0=0x%08X w1=0x%08X\n",
+                            v, seg,
+                            g_frame_count_diag,
+                            (void *)g_diag_current_cmd_addr,
+                            g_lastDlOpcode,
+                            g_lastDlW0,
+                            (uint32_t)g_lastDlW1);
+                }
+            }
+            return NULL;
+        }
+    }
+    /* nibble 0: low host pointer with no segment component. */
+    return (void *)(uintptr_t)v;
+#else
     /* Check if it's a 32-bit segment address (upper 32 bits zero, top nibble 1-F) */
     if ((w1 >> 32) == 0 && w1 != 0) {
         uint32_t seg = ((uint32_t)w1 >> 24) & 0x0F;
@@ -22193,6 +22315,7 @@ static inline void *seg_addr(uintptr_t w1) {
     }
     /* Full 64-bit pointer or zero — use directly */
     return (void *)w1;
+#endif
 }
 
 /* ===== PC display list interpreter (native Gfx structs) ===== */
@@ -22447,7 +22570,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                     && g_frame_count_diag >= 490
                     && g_frame_count_diag <= 495
                     && (gfx_is_boot_logo_addr((uintptr_t)dl_addr)
-                        || ((((uintptr_t)cmd->words.w1) >> 32) == 0
+                        || (GFX_W1_IS_32BIT((uintptr_t)cmd->words.w1)
                             && ((((uint32_t)cmd->words.w1 >> 24) & 0x0F) == SPSEGMENT_GETITLE)))) {
                     fprintf(stderr,
                             "[BOOT-GDL-PC] frame=%d cmd=%p raw_w1=0x%08X resolved=%p seg2=%p is_n64=%d is_pc=%d depth=%d\n",
@@ -22617,7 +22740,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
             {
                 uint32_t settimg_token = (uint32_t)cmd->words.w1;
                 if (settex_active &&
-                    (cmd->words.w1 >> 32) == 0 &&
+                    GFX_W1_IS_32BIT(cmd->words.w1) &&
                     settex_texturenum >= 0 &&
                     settimg_token == (uint32_t)settex_texturenum) {
                     rdp.texture_to_load.skip_load_via_settex = true;
@@ -22640,7 +22763,7 @@ static void gfx_run_dl_pc(Gfx *cmd) {
                         break;
                     }
                     if (settex_active &&
-                        (cmd->words.w1 >> 32) == 0 &&
+                        GFX_W1_IS_32BIT(cmd->words.w1) &&
                         settex_texturenum >= 0 &&
                         settimg_token == (uint32_t)settex_texturenum) {
                         rdp.texture_to_load.skip_load_via_settex = true;

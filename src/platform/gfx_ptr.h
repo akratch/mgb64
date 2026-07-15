@@ -153,4 +153,33 @@ static inline void *gfx_resolve_addr(uint32_t addr) {
     return NULL;
 }
 
+/* ILP32 (wasm32) display-list pointer registration.
+ *
+ * On LP64 the GBI translator distinguishes a runtime host pointer from an N64
+ * segment token by the pointer's high 32 bits (a token is a bare 32-bit value).
+ * On a 32-bit target both are 32-bit and that test collapses, so every host
+ * pointer that is written into a DL word must be recorded in the pointer
+ * registry; the translator then treats a registry hit as a host pointer and a
+ * miss (with a live segment nibble) as a segment token (see seg_addr /
+ * gfx_resolve_texture_image_token). Most DL-word pointers already register via
+ * osVirtualToPhysical(); this macro covers the remaining hand-built DL sites
+ * that assign words.w1 directly.
+ *
+ * The >0x00FFFFFF guard mirrors osVirtualToPhysical(): values at or below the
+ * 24-bit N64 segment range are low host pointers (nibble 0, e.g. static data)
+ * that the translator resolves directly, so they need no registry entry.
+ *
+ * No-op on LP64: the native path stays byte-identical. */
+#if UINTPTR_MAX == 0xffffffffu
+#define GFX_DL_REGISTER_PTR(v)                                          \
+    do {                                                               \
+        uintptr_t gfx_dl_reg_p_ = (uintptr_t)(v);                      \
+        if (gfx_dl_reg_p_ > 0x00FFFFFFu) {                             \
+            gfx_ptr_store((const void *)gfx_dl_reg_p_);                \
+        }                                                              \
+    } while (0)
+#else
+#define GFX_DL_REGISTER_PTR(v) ((void)0)
+#endif
+
 #endif /* GFX_PTR_H */

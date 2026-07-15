@@ -17596,6 +17596,7 @@ Gfx *sub_GAME_7F087E74(Gfx *gdl) {
 
     gdl[0].words.w0 = 0x01030040;
     gdl[0].words.w1 = (uintptr_t)perspMtx;
+    GFX_DL_REGISTER_PTR(gdl[0].words.w1); /* wasm32: record host ptr for DL resolve */
     a7 = gdl + 1;
     a7[0].words.w0 = 0xBC00000E;
     a7[0].words.w1 = perspNorm;

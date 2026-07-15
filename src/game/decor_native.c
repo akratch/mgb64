@@ -202,6 +202,7 @@ Gfx *decorRender(Gfx *gdl) {
                                       G_MTX_FLOAT_PORT);
                         gdl->words.w0 = ((uint32_t)G_MODERNMESH) << 24;
                         gdl->words.w1 = (uintptr_t)&m->mmesh[k];
+                        GFX_DL_REGISTER_PTR(gdl->words.w1); /* wasm32: record host ptr for DL resolve */
                         gdl++;
                     }
                 }
@@ -253,6 +254,7 @@ Gfx *decorRender(Gfx *gdl) {
                          * shim returns u32 -- it would truncate a 64-bit
                          * heap pointer (static dyn-pool buffers dodge this;
                          * malloc'd decor blocks do not). */
+                        GFX_DL_REGISTER_PTR(bt->verts); /* wasm32: record host ptr for DL resolve */
                         gSPVertex(gdl++, bt->verts, bt->vcount, 0);
                         for (t = 0; t + 1 < bt->tcount; t += 2) {
                             gSP2Triangles(gdl++, bt->tris[t][0], bt->tris[t][1],

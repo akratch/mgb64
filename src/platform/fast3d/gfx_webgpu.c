@@ -705,7 +705,13 @@ static void wgpu_end_frame(void) {
     }
 
     if (present_ok) {
+#ifndef __EMSCRIPTEN__
+        /* Native wgpu-native presents the surface explicitly. In the browser
+         * the canvas is presented automatically when the frame's JS task yields
+         * (via requestAnimationFrame); emscripten's WebGPU binding aborts on an
+         * explicit wgpuSurfacePresent, so skip it there. */
         wgpuSurfacePresent(s_surface);
+#endif
     }
     if (st.texture != NULL) {
         wgpuTextureRelease(st.texture);

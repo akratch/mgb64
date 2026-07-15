@@ -68,6 +68,7 @@ extern long long int aspMainDataEnd[];
                      _SHIFTL(((n)-1)<<4|(v0), 16, 8) |           \
                      _SHIFTL(sizeof(Vtx)*(n), 0, 16));           \
     _g->words.w1 = (uintptr_t)(v);                 \
+    GFX_DL_REGISTER_PTR(_g->words.w1);                          \
 }
 
 /* Override gSPMatrix — store matrix pointer
@@ -81,6 +82,7 @@ extern long long int aspMainDataEnd[];
                      _SHIFTL((param), 16, 8) |                   \
                      _SHIFTL(sizeof(Mtx), 0, 16));               \
     _g->words.w1 = _mptr;                                        \
+    GFX_DL_REGISTER_PTR(_mptr);                                 \
 }
 
 /* Override gSPDisplayList — store sub-DL pointer
@@ -91,6 +93,7 @@ extern long long int aspMainDataEnd[];
     _g->words.w0 = (_SHIFTL(G_DL, 24, 8) |                      \
                      _SHIFTL(G_DL_PUSH, 16, 8));                 \
     _g->words.w1 = (uintptr_t)(dl);                \
+    GFX_DL_REGISTER_PTR(_g->words.w1);                          \
 }
 
 /* Override gSPBranchList — store branch pointer
@@ -101,6 +104,7 @@ extern long long int aspMainDataEnd[];
     _g->words.w0 = (_SHIFTL(G_DL, 24, 8) |                      \
                      _SHIFTL(G_DL_NOPUSH, 16, 8));               \
     _g->words.w1 = (uintptr_t)(dl);                \
+    GFX_DL_REGISTER_PTR(_g->words.w1);                          \
 }
 
 /* Override gDPSetTextureImage — store texture address */
@@ -112,6 +116,7 @@ extern long long int aspMainDataEnd[];
                      _SHIFTL(siz, 19, 2) |                       \
                      _SHIFTL((width)-1, 0, 12));                 \
     _g->words.w1 = (uintptr_t)(img);               \
+    GFX_DL_REGISTER_PTR(_g->words.w1);                          \
 }
 
 /* Override gSPViewport — store viewport pointer
@@ -123,6 +128,7 @@ extern long long int aspMainDataEnd[];
                      _SHIFTL(G_MV_VIEWPORT, 16, 8) |             \
                      _SHIFTL(sizeof(Vp), 0, 16));                \
     _g->words.w1 = (uintptr_t)(v);                 \
+    GFX_DL_REGISTER_PTR(_g->words.w1);                          \
 }
 
 #endif /* _PLATFORM_GBI_H_ */

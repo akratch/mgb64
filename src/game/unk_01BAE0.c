@@ -80,6 +80,7 @@ Gfx *sub_GAME_7F01BFF8(Gfx *gdl, Vtx *vertexList, s32 numVertices)
     {
         j = ((numVertices >= 0x11) ? 0x10 : numVertices);
 
+        GFX_DL_REGISTER_PTR(vertexList); /* wasm32: record host ptr for DL resolve */
         gSPVertex(gdl++, vertexList, j, 0);
 
         vertexList += 14;

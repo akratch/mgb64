@@ -6426,7 +6426,11 @@ Gfx *frontRenderCharacterPortrait(Gfx *DL, s32 arg1, s32 arg2, s32 arg3, s32 arg
     gSPMatrix(DL++, OS_PHYSICAL_TO_K0(spD0), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
 
 #ifdef NATIVE_PORT
-    gSPVertex(DL++, frontPackVerticesForGBI(spCC, 16), 16, 0);
+    {
+        Vtx *fpv = frontPackVerticesForGBI(spCC, 16);
+        GFX_DL_REGISTER_PTR(fpv); /* wasm32: record host ptr for DL resolve */
+        gSPVertex(DL++, fpv, 16, 0);
+    }
 #else
     gSPVertex(DL++, spCC, 16, 0);
 #endif

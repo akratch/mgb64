@@ -1409,6 +1409,7 @@ Gfx* spectrum_draw_screen(Gfx* gdl) {
     /* Load palette via TLUT */
     gdl->words.w0 = 0xFD100000;
     gdl->words.w1 = (uintptr_t)spec_palette;
+    GFX_DL_REGISTER_PTR(gdl->words.w1); /* wasm32: record host ptr for DL resolve */
     gdl++;
 
     gdl->words.w0 = 0xF5000300;
@@ -1467,6 +1468,7 @@ Gfx* spectrum_draw_screen(Gfx* gdl) {
             /* gDPSetTextureImage - tile data */
             gdl->words.w0 = 0xFD100000;
             gdl->words.w1 = (uintptr_t)(ptr_6000alloc + dram_offset);
+            GFX_DL_REGISTER_PTR(gdl->words.w1); /* wasm32: record host ptr for DL resolve */
             gdl++;
 
             /* gDPSetTile */

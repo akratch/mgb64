@@ -2783,6 +2783,7 @@ Gfx *sub_GAME_7F0ADDAC(Gfx *gdl, s32 *x, s32 *y, struct fontchar *fontchar,
         _g = gdl++;
         _g->words.w0 = 0xFD900000;
         _g->words.w1 = (uintptr_t)fontchar->pixeldata;
+        GFX_DL_REGISTER_PTR(_g->words.w1); /* wasm32: record host ptr for DL resolve */
 
         _g = gdl++;
         _g->words.w0 = 0xF5900000;
@@ -2849,6 +2850,7 @@ Gfx *sub_GAME_7F0ADDAC(Gfx *gdl, s32 *x, s32 *y, struct fontchar *fontchar,
             _g = gdl++;
             _g->words.w0 = 0xFD100000;
             _g->words.w1 = (uintptr_t)D_80040EBC;
+            GFX_DL_REGISTER_PTR(_g->words.w1); /* wasm32: record host ptr for DL resolve */
 
             _g = gdl++;
             _g->words.w0 = 0xE8000000;
@@ -2874,6 +2876,7 @@ Gfx *sub_GAME_7F0ADDAC(Gfx *gdl, s32 *x, s32 *y, struct fontchar *fontchar,
             _g = gdl++;
             _g->words.w0 = 0xFD100000;
             _g->words.w1 = (uintptr_t)&D_80040EDC;
+            GFX_DL_REGISTER_PTR(_g->words.w1); /* wasm32: record host ptr for DL resolve */
 
             _g = gdl++;
             _g->words.w0 = 0xE8000000;
@@ -2900,6 +2903,7 @@ Gfx *sub_GAME_7F0ADDAC(Gfx *gdl, s32 *x, s32 *y, struct fontchar *fontchar,
         _g = gdl++;
         _g->words.w0 = 0xFD500000;
         _g->words.w1 = (uintptr_t)fontchar->pixeldata;
+        GFX_DL_REGISTER_PTR(_g->words.w1); /* wasm32: record host ptr for DL resolve */
 
         _g = gdl++;
         _g->words.w0 = 0xF5500000;
