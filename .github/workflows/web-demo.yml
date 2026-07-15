@@ -1,0 +1,45 @@
+name: web-demo
+on:
+  workflow_dispatch: {}          # owner-triggered only (guarded-publish doctrine)
+permissions:
+  contents: read
+  pages: write                   # scoped to the Pages deployment only
+  id-token: write                # required by deploy-pages OIDC; grants nothing else
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with: { version: "4.0.10" }
+      - run: EMSDK_DIR="$EMSDK" tools/web/build_web.sh
+      - name: Size budget (fail-closed)
+        run: |
+          sz=$(stat -c%s dist/web/ge007_web.wasm)
+          echo "wasm size: $sz bytes"
+          test "$sz" -lt 41943040   # 40 MiB hard ceiling (Pages file limit is 100 MiB)
+      - name: ROM-absence guard
+        # The engine wasm legitimately contains the literal "GOLDENEYE" (the
+        # ROM-validation compare string), so string-grep would false-positive.
+        # Instead: fail if any artifact starts with the .z64 magic (80 37 12 40)
+        # or is an unexpected file — the site ships exactly 5 known files.
+        run: |
+          set -euo pipefail
+          for f in dist/web/*; do
+            magic=$(head -c4 "$f" | od -An -tx1 | tr -d ' \n')
+            if [ "$magic" = "80371240" ]; then echo "ROM content in artifact: $f"; exit 1; fi
+            case "$(basename "$f")" in
+              index.html|mgb64-shell.js|style.css|ge007_web.js|ge007_web.wasm) ;;
+              *) echo "unexpected file in artifact: $f"; exit 1 ;;
+            esac
+          done
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist/web }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: "${{ steps.deployment.outputs.page_url }}" }
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
