@@ -4568,29 +4568,27 @@ static void gfx_sync_current_dimensions_from_window(void) {
 
     if (g_sdlWindow != NULL) {
         SDL_GL_GetDrawableSize(g_sdlWindow, &w, &h);
-        /* SDL_GL_GetDrawableSize queries the GL drawable; on a non-GL window it
-         * can report 0x0 (the emscripten WebGPU/canvas path). Fall back to the
-         * logical window size. Native GL/Metal windows return a valid drawable
-         * above, so this fallback does not change native behaviour. */
+#ifdef __EMSCRIPTEN__
+        /* SDL_GL_GetDrawableSize queries the GL drawable; the emscripten WebGPU
+         * window is a canvas, not a GL surface, so SDL reports 0x0 for both the
+         * drawable and the logical window size. Fall back to the window size,
+         * then read the canvas element directly (the WebGPU backend binds the
+         * same "#mgb64-canvas" selector) so gfx_current_dimensions is
+         * established and the backend frame can open. Both fallbacks are
+         * browser-only: native compiles the exact pre-W3.6 path. */
         if (w <= 0 || h <= 0) {
             SDL_GetWindowSize(g_sdlWindow, &w, &h);
         }
-    }
-#ifdef __EMSCRIPTEN__
-    /* The emscripten WebGPU window is a canvas, not a GL/window-managed surface,
-     * so SDL reports 0x0 for both drawable and window size. Read the canvas
-     * element directly (the WebGPU backend binds the same "#mgb64-canvas"
-     * selector) so gfx_current_dimensions is established and the backend frame
-     * can open. Browser-only; never compiled into the native build. */
-    if (w <= 0 || h <= 0) {
-        int cw = 0, ch = 0;
-        if (emscripten_get_canvas_element_size("#mgb64-canvas", &cw, &ch) == 0 &&
-            cw > 0 && ch > 0) {
-            w = cw;
-            h = ch;
+        if (w <= 0 || h <= 0) {
+            int cw = 0, ch = 0;
+            if (emscripten_get_canvas_element_size("#mgb64-canvas", &cw, &ch) == 0 &&
+                cw > 0 && ch > 0) {
+                w = cw;
+                h = ch;
+            }
         }
-    }
 #endif
+    }
 
     if (w <= 0 || h <= 0) {
         return;
@@ -22237,6 +22235,14 @@ extern volatile uintptr_t g_lastDlW1;
 #define GFX_W1_IS_32BIT(w1) (((w1) >> 32) == 0)
 #endif
 
+#if UINTPTR_MAX == 0xffffffffu
+/* ILP32 watch telemetry: tokens that missed the pointer registry and resolved
+ * through a live segment. Genuine segment tokens land here by design; a rising
+ * count paired with wrong visuals points at an unregistered host pointer
+ * (insertion-coverage gap). Never gates sim (style of gfx_ptr_ambiguous). */
+static uint32_t gfx_seg_resolve_after_registry_miss = 0;
+#endif
+
 static inline void *seg_addr(uintptr_t w1) {
 #if UINTPTR_MAX == 0xffffffffu
     /* ILP32 (wasm32): host pointers and N64 segment tokens are both bare 32-bit
@@ -22265,6 +22271,24 @@ static inline void *seg_addr(uintptr_t w1) {
         uint32_t seg = (v >> 24) & 0x0F;
         if (seg != 0) {
             if (gfx_segment_table[seg] != 0) {
+                /* Registry miss + live segment: resolved as a segment token.
+                 * Correct for genuine tokens — but if an UNREGISTERED host
+                 * pointer lands here (an insertion-coverage gap), it silently
+                 * aliases into the segment's memory as garbage draws. Count
+                 * every hit and warn on the first few so a future coverage gap
+                 * surfaces as diagnosable noise, not silent bad geometry
+                 * (mirrors the gfx_ptr_* telemetry; ILP32-only). */
+                gfx_seg_resolve_after_registry_miss++;
+                {
+                    static int seg_hit_warn = 0;
+                    if (seg_hit_warn < 5) {
+                        seg_hit_warn++;
+                        fprintf(stderr,
+                                "[SEG_ADDR-ILP32] registry-miss token 0x%08X resolved via segment %u (count=%u) frame=%d op=0x%02X — genuine token, or an unregistered host pointer (coverage gap)\n",
+                                v, seg, gfx_seg_resolve_after_registry_miss,
+                                g_frame_count_diag, g_lastDlOpcode);
+                    }
+                }
                 return (void *)(gfx_segment_table[seg] + (v & 0x00FFFFFF));
             }
             {

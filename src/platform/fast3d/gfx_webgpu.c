@@ -705,13 +705,11 @@ static void wgpu_end_frame(void) {
     }
 
     if (present_ok) {
-#ifndef __EMSCRIPTEN__
-        /* Native wgpu-native presents the surface explicitly. In the browser
-         * the canvas is presented automatically when the frame's JS task yields
-         * (via requestAnimationFrame); emscripten's WebGPU binding aborts on an
-         * explicit wgpuSurfacePresent, so skip it there. */
-        wgpuSurfacePresent(s_surface);
-#endif
+        /* Dialect seam (gfx_webgpu_compat.h): native presents explicitly via
+         * wgpuSurfacePresent; the browser canvas auto-presents when the frame's
+         * JS task yields (requestAnimationFrame), and emscripten's binding
+         * aborts on an explicit present — so the browser side is a no-op. */
+        WGPU_COMPAT_PRESENT(s_surface);
     }
     if (st.texture != NULL) {
         wgpuTextureRelease(st.texture);

@@ -34,7 +34,15 @@ extern uintptr_t gfx_segment_table[16];
 /* Pointer table — open-addressed hash of truncated→full mappings.
  * gfx_ptr_state[] records each slot's EMPTY/OCCUPIED/TOMBSTONE status so a
  * deletion mid-probe-chain can tombstone (not zero) the slot, keeping later
- * live mappings reachable, and so store never silently evicts (AUDIT-0009). */
+ * live mappings reachable, and so store never silently evicts (AUDIT-0009).
+ *
+ * ILP32 (wasm32) longevity watch-item: on 32-bit targets every DL host pointer
+ * registers here (GFX_DL_REGISTER_PTR / osVirtualToPhysical) and there is no
+ * per-frame reset — only the texture-arena range invalidation deletes entries.
+ * Dynamic-pool pointers recur at the same addresses (bump allocators), so
+ * steady-state occupancy is bounded in practice, but a long wasm session with
+ * churning heap allocations accumulates entries; watch gfx_ptr_full_fails /
+ * gfx_ptr_max_probe if browser soak tests degrade (W4/W5). */
 extern uint32_t  gfx_ptr_keys[GFX_PTR_TABLE_SIZE];
 extern uintptr_t gfx_ptr_vals[GFX_PTR_TABLE_SIZE];
 extern uint8_t   gfx_ptr_state[GFX_PTR_TABLE_SIZE];

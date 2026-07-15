@@ -27,6 +27,10 @@
           emscripten_sleep(1);                                  \
           if (instance) wgpuInstanceProcessEvents((instance));  \
       } while (0)
+  /* Browser: the canvas is presented automatically when the frame's JS task
+   * yields (via requestAnimationFrame); emscripten's WebGPU binding ABORTS on
+   * an explicit wgpuSurfacePresent, so presenting is a no-op here. */
+  #define WGPU_COMPAT_PRESENT(surface) ((void)(surface))
 #else
   #include <webgpu/webgpu.h>
   #include <webgpu/wgpu.h>            /* wgpu-native extensions             */
@@ -36,6 +40,8 @@
           if (device)        wgpuDevicePoll((device), true, NULL); \
           else if (instance) wgpuInstanceProcessEvents((instance)); \
       } while (0)
+  /* Native: wgpu-native presents the surface explicitly. */
+  #define WGPU_COMPAT_PRESENT(surface) wgpuSurfacePresent((surface))
 #endif
 
 /* Loop until `cond` is nonzero or max_iters pumps elapse. Identical shape to
