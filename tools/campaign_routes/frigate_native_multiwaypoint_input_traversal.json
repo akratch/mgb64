@@ -4,7 +4,7 @@
   "level": 26,
   "frames": 900,
   "route_class": "input_traversal",
-  "description": "Frigate native multi-waypoint traversal from stock spawn. Bond drives from the stern spawn through the pad-150 exterior cluster and across later authored deck pads using only controller input.",
+  "description": "Frigate native multi-waypoint traversal from stock spawn. Bond drives from the stern spawn through the pad-150 exterior cluster and across later authored deck pads using only controller input. FID-0117 (commit 78d76c6) corrected root-motion seeding in modelSetAnimFrame2WithChrStuff (unk01 vs legacy unk02). On 2026-07-15 (AUDIT-0017) this route was re-fit. Root-cause: the corrected root motion shifts Bond's far-deck pass EARLIER, not shorter — under the retail-correct sim Bond's global closest approach to pad 145 is 23.70u at frame 644 (BETTER than the 23.96u@653 legacy opt-out control), but the stale far_deck_pad_145 window (frame_at_or_after 653) began its scan 9 frames after Bond had already swept past the pad, reporting an artifactual 100.95u overshoot. The deck-push choreography is unchanged and intact (inputs NOT touched): held-input re-timing experiments (push start 260->269 and duration 520->511) reproduced the identical ~23.7u closest-approach while perturbing the upstream chain (start 269 broke midship_push@460 at 1077.72<1100), confirming the failure is a pure window-timing artifact, not a choreography regression. FIX = frame_at_or_after 653->640 on far_deck_pad_145 only (a small cushion before the recaptured 644 closest-approach frame; the horiz<=85 pass-band spans ~f641-651). max_horizontal 85u KEPT (reachable at 23.70u -- no radius widen). No distance FLOORS re-fit: the early pad chain (176/153/152/151/150/149/144/60) and both far position milestones far_deck_push@653 (2391 vs 2250) and late_far_deck_reach@877 (2865 vs 2800) still pass with margin under the corrected sim; min_horizontal_delta 2800 (achieved 2865) unchanged.",
   "env": {
     "GE007_TRACE_FLOW_ONLY": 1
   },
@@ -82,7 +82,7 @@
       },
       {
         "name": "far_deck_pad_145",
-        "frame_at_or_after": 653,
+        "frame_at_or_after": 640,
         "target": {"kind": "pad", "pad": 145},
         "max_horizontal_distance": 85.0
       }
