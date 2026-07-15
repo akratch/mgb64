@@ -20,6 +20,7 @@ repo=""
 skip_macos=0
 universal=0
 sign=0
+sign_manifest=0
 skip_notarize=0
 gameplay=""
 
@@ -49,6 +50,16 @@ Usage: scripts/release.sh [options]
                     environment (see docs/RELEASING.md).
   --skip-notarize   With --sign, sign only (skip the notarization submission).
                     Useful for a quick local check of the signing identity.
+  --sign-manifest   (AUDIT-0052) minisign-sign the generated release manifest +
+                    SHA256SUMS at publish time, producing the .minisig files
+                    users verify with scripts/release/verify_release.sh.
+                    Requires MGB64_MANIFEST_SIGNING_KEY (path to the minisign
+                    secret key, which never leaves the owner's machine) and the
+                    minisign binary; fails fast if either is missing. Optional
+                    MGB64_MANIFEST_PASSPHRASE supplies the key passphrase
+                    non-interactively. See docs/RELEASING.md "First signed
+                    release". Without this flag nothing is signed (unchanged
+                    behavior).
 USAGE
 }
 while [[ $# -gt 0 ]]; do
@@ -61,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --skip-macos) skip_macos=1; shift ;;
     --universal) universal=1; shift ;;
     --sign) sign=1; shift ;;
+    --sign-manifest) sign_manifest=1; shift ;;
     --skip-notarize) skip_notarize=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
@@ -75,6 +87,19 @@ if [[ "$sign" -eq 1 ]]; then
     : "${APPLE_TEAM_ID:?--sign requires APPLE_TEAM_ID, or pass --skip-notarize}"
     : "${APPLE_APP_PASSWORD:?--sign requires APPLE_APP_PASSWORD, or pass --skip-notarize}"
   fi
+fi
+# (AUDIT-0052 signing layer) Fail fast on missing manifest-signing prerequisites,
+# before the (slow) build below. Without --sign-manifest this block is inert.
+if [[ "$sign_manifest" -eq 1 ]]; then
+  : "${MGB64_MANIFEST_SIGNING_KEY:?--sign-manifest requires MGB64_MANIFEST_SIGNING_KEY (path to the minisign secret key; see docs/RELEASING.md First signed release)}"
+  if [[ ! -f "$MGB64_MANIFEST_SIGNING_KEY" ]]; then
+    echo "ERROR: --sign-manifest: MGB64_MANIFEST_SIGNING_KEY names a missing file: $MGB64_MANIFEST_SIGNING_KEY" >&2
+    exit 1
+  fi
+  command -v minisign >/dev/null 2>&1 || {
+    echo "ERROR: --sign-manifest requires the minisign binary (brew install minisign)." >&2
+    exit 1
+  }
 fi
 
 dist="dist"; mkdir -p "$dist"
@@ -182,6 +207,30 @@ GATE
     echo "       refusing to publish. Rebuild every asset from THIS commit so each" >&2
     echo "       carries a matching provenance stamp (see the FAIL lines above)." >&2
     exit 1
+  fi
+
+  # (AUDIT-0052 signing layer, owner-gated) Sign the commit-bound manifest AND
+  # the SHA256SUMS with the release minisign key so users can verify either one
+  # (verify_release.sh checks both). The key lives only on the owner's machine
+  # (that is why minisign, not CI-side attestation, was chosen). The .minisig
+  # outputs match the publish glob below, so they ship with the release.
+  if [[ "$sign_manifest" -eq 1 ]]; then
+    echo "[release] signing manifest + SHA256SUMS (minisign)..."
+    for f in "$manifest" "$checksums"; do
+      rm -f "$f.minisig"
+      if [[ -n "${MGB64_MANIFEST_PASSPHRASE:-}" ]]; then
+        # Non-interactive: minisign reads the passphrase from stdin. The value is
+        # piped, never echoed and never placed on a command line.
+        printf '%s\n' "$MGB64_MANIFEST_PASSPHRASE" | \
+          minisign -S -s "$MGB64_MANIFEST_SIGNING_KEY" \
+            -t "mgb64 $version commit $full_sha" -m "$f"
+      else
+        minisign -S -s "$MGB64_MANIFEST_SIGNING_KEY" \
+          -t "mgb64 $version commit $full_sha" -m "$f"
+      fi
+      [[ -f "$f.minisig" ]] || { echo "ERROR: minisign produced no signature for $f -- refusing to publish." >&2; exit 1; }
+    done
+    echo "[release] signed: $manifest.minisig + $checksums.minisig"
   fi
 
   # Publish the real binaries plus the generated SHA256SUMS + manifest.json, but

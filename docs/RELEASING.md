@@ -206,6 +206,62 @@ The README's **Download** table links to `/releases/latest`, so a rolling
 
 ---
 
+## Verifying a download (users)
+
+Every published release carries a commit-bound `mgb64-manifest-<version>.json`
+and `mgb64-SHA256SUMS-<version>.txt`. Once releases are signed (see below),
+both also ship a minisign signature (`.minisig`). To verify a download, put the
+assets + manifest + SHA256SUMS + `.minisig` files in one folder and run:
+
+```sh
+# needs minisign (brew install minisign / apt install minisign)
+scripts/release/verify_release.sh <download-folder> \
+  -P scripts/release/mgb64-release-pubkey.txt      # or -P "RW...keystring"
+```
+
+It fails closed at every step: signature check on the manifest, signature check
+on the SHA256SUMS, then a sha256 check of every listed asset, and finally
+prints the bound source commit — compare it with the tag's target commit on
+the release page. The release public key lives at
+`scripts/release/mgb64-release-pubkey.txt`. **Note:** until the first signed
+release that file is a marked placeholder and the verifier refuses to run
+against it (there is nothing to verify yet — use the plain SHA256SUMS).
+
+## First signed release (owner)
+
+The manifest-signing key is minisign, minted and kept **only on the owner's
+Mac** — deliberately no CI secret, no `id-token` permission change (same
+posture as Apple signing above). One-time setup:
+
+```sh
+brew install minisign
+minisign -G -p mgb64-release.pub -s ~/.minisign/mgb64-release.key
+# choose a passphrase; the secret key never leaves this machine
+```
+
+Then:
+
+1. Replace the placeholder `scripts/release/mgb64-release-pubkey.txt` with the
+   generated `mgb64-release.pub` contents (commit it — it is public).
+2. Export the key path (and optionally the passphrase for non-interactive
+   signing; it is piped to minisign's stdin, never echoed):
+   ```sh
+   export MGB64_MANIFEST_SIGNING_KEY="$HOME/.minisign/mgb64-release.key"
+   export MGB64_MANIFEST_PASSPHRASE="..."   # optional; else minisign prompts
+   ```
+3. Add `--sign-manifest` to the publish command:
+   ```sh
+   scripts/release.sh --version vX.Y.Z --repo akratch/mgb64 \
+     --confirm-gameplay "macos=…,windows=…" --sign --sign-manifest --publish
+   ```
+   It fails fast (before the build) if `MGB64_MANIFEST_SIGNING_KEY` or the
+   minisign binary is missing, signs `mgb64-manifest-<v>.json` and
+   `mgb64-SHA256SUMS-<v>.txt` after the provenance gate passes, and attaches
+   both `.minisig` files to the release. Without the flag the release is
+   byte-identical to today's (unsigned) flow.
+
+---
+
 ## The repository model (historical note)
 
 > **Superseded — read `docs/WORKFLOW.md` for the current model.** The project used

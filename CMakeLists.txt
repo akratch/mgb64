@@ -242,6 +242,20 @@ if(BUILD_TESTING)
         COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_release_provenance.sh"
     )
     set_tests_properties(release_provenance_guard PROPERTIES TIMEOUT 120)
+    # (AUDIT-0052 signing layer) Manifest-signing scaffold: the user-side
+    # verifier (scripts/release/verify_release.sh) + the fail-fast
+    # release.sh --sign-manifest gate. ROM-free and secret-free: generates an
+    # EPHEMERAL minisign keypair in a tempdir, signs a fixture manifest +
+    # SHA256SUMS, and proves the verifier accepts only the intact signed set
+    # while tampered manifest / checksums / asset, the committed PLACEHOLDER
+    # pubkey, and a missing minisign binary are all rejected fail-closed, and
+    # that --sign-manifest without MGB64_MANIFEST_SIGNING_KEY fails fast before
+    # any build. Skips cleanly when minisign is not installed.
+    add_test(
+        NAME manifest_signing_guard
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/tests/test_manifest_signing.sh"
+    )
+    set_tests_properties(manifest_signing_guard PROPERTIES TIMEOUT 120)
     # (AUDIT-0015) Hashtable-generator fail-closed gate: scripts/make/build_hashtable.sh
     # must emit oracle-exact `md5,section,path` rows for u/j/e fixtures and exit
     # nonzero leaving NO completed CSV on every failure path (unsupported/missing

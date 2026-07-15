@@ -112,15 +112,39 @@ accepted (checksums + manifest emitted, re-verify ignores the generated outputs)
 while wrong-commit, wrong-version, modified-asset, missing-sidecar,
 extra-unstamped-asset, and orphan-sidecar are each rejected with exit 1.
 
-**Owner-gated remainder (not automatable here, documented).** A *cryptographically
-signed* manifest / SLSA build-provenance attestation (e.g. cosign/minisign over
-`manifest.json`, or `actions/attest-build-provenance` needing `id-token: write` +
-owner authorization) should be added behind an explicit owner flag/secret — e.g.
-a future `--attest`/`--sign-manifest` on `release.sh` requiring
-`MGB64_MANIFEST_SIGNING_KEY` and failing closed when absent — leaving the
-checksummed, commit-bound manifest as the enforceable contract until then.
-(Apple Developer ID notarization is already covered by the owner-gated `--sign`
-path.) The CI producer path (runs only on a GitHub Actions runner) and the
-end-to-end publish (needs `gh`, a pushed tag, gameplay attestation, a real
-release trigger) were validated here only at the logic + `bash -n` / YAML level;
-they must be exercised by the owner on the next real release run.
+**Signing scaffold (landed on `feat/webgpu-backend` — inert until the owner
+mints the key).** The cryptographic-attestation layer is now built, fail-closed,
+and secret-free; minisign was chosen (over cosign / `actions/attest-build-provenance`)
+precisely because it needs **no CI-permission change** — the secret key is
+minted and kept only on the owner's Mac, same posture as the Apple `--sign`
+path:
+
+- `release.sh --sign-manifest`: fails fast **before the build** unless
+  `MGB64_MANIFEST_SIGNING_KEY` names an existing minisign secret key and the
+  minisign binary is present (mirrors the `--sign` fail-fast). After the
+  provenance gate emits them, it minisign-signs `mgb64-manifest-<v>.json` AND
+  `mgb64-SHA256SUMS-<v>.txt` (trusted comment binds version + commit; optional
+  `MGB64_MANIFEST_PASSPHRASE` is piped to stdin, never echoed); both `.minisig`
+  files join the publish set while the `.provenance.json` sidecar exclusion
+  stays intact. **Without the flag: zero behavior change.**
+- `scripts/release/verify_release.sh`: the user-side verifier (bash 3.2-safe,
+  `sha256sum`/`shasum` portable). Verifies both signatures, checks every listed
+  asset digest, prints the bound commit for comparison with the tag target.
+  Fails closed on: missing minisign, bad/missing signature, digest mismatch,
+  and — via a marker check — the committed **placeholder** public key at
+  `scripts/release/mgb64-release-pubkey.txt` (refused with an actionable
+  message until the real key is committed).
+- Guarded by the ROM-free, secret-free ctest `manifest_signing_guard`
+  (`tools/tests/test_manifest_signing.sh`, **12/12**): an EPHEMERAL tempdir
+  keypair signs a fixture release; accepted intact, rejected on tampered
+  manifest / tampered SHA256SUMS / tampered asset / placeholder pubkey /
+  missing minisign; `--sign-manifest` without the key env fails fast while the
+  same invocation without the flag stays a clean no-op.
+- Owner + user runbooks: docs/RELEASING.md "Verifying a download (users)" and
+  "First signed release (owner)".
+
+**Remaining owner work (the only remainder):** mint the keypair on the owner
+Mac (`minisign -G`), commit the real public key over the placeholder in
+`scripts/release/mgb64-release-pubkey.txt`, and run the next release with
+`--sign --sign-manifest` (plus the already-documented real-release exercise of
+the CI producer + publish path).
