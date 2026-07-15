@@ -213,7 +213,7 @@ static void crashWriteDlTexDiag(void) {
 }
 
 static void crashHandler(int sig) {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     /* If we're in DL processing and recovery is available, skip this frame.
      * POSIX-only: longjmp'ing out of a Windows signal handler unwinds across
      * the CRT's SEH dispatch frame, which is undefined behavior there (the
@@ -286,7 +286,7 @@ static LONG WINAPI crashSehFilter(EXCEPTION_POINTERS *info) {
 }
 #endif /* _WIN32 */
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 /* Alternate signal stack: without sigaltstack()+SA_ONSTACK, a SIGSEGV caused
  * by a stack overflow re-faults immediately on handler entry (no stack space
  * left to push a frame) and the process dies silently with none of
@@ -325,7 +325,12 @@ static void installCrashSignalHandler(int sig) {
     sigemptyset(&sa.sa_mask);
     sigaction(sig, &sa, NULL);
 }
-#endif /* !_WIN32 */
+#elif defined(__EMSCRIPTEN__)
+/* No POSIX signals in wasm; crash recovery is the browser tab itself. The
+ * altstack/sigaction machinery above is a native crash-diagnostic layer with
+ * no analog (and no runtime backing) under single-threaded Emscripten. */
+static void installCrashSignalHandler(int sig) { (void)sig; }
+#endif /* !_WIN32 && !__EMSCRIPTEN__ */
 
 /* Game entry — defined in boss.c */
 extern void bossEntry(void);
@@ -496,7 +501,7 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
     if (!getenv("GE007_NO_CRASH_HANDLER")) {  /* leave signals raw for debuggers */
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
         stack_t ss;
         ss.ss_sp = s_crashAltStack;
         ss.ss_size = PORT_ALTSTACK_SIZE;
@@ -528,12 +533,16 @@ int main(int argc, char **argv)
         installCrashSignalHandler(SIGBUS);
 #endif
         installCrashSignalHandler(SIGABRT);
-#else
+#elif defined(_WIN32)
         /* Hardware faults go through the SEH filter (see crashSehFilter);
          * abort() never raises an SEH exception, so keep a signal handler
          * for SIGABRT (assert failures, CRT aborts). */
         SetUnhandledExceptionFilter(crashSehFilter);
         signal(SIGABRT, crashHandler);
+#else
+        /* __EMSCRIPTEN__: no POSIX signal delivery and no SEH; a wasm trap
+         * unwinds to the JS host, which surfaces it in the devtools console.
+         * Nothing to install — the browser tab is the crash boundary. */
 #endif
     }
 

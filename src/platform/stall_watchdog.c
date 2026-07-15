@@ -366,6 +366,15 @@ static int watchdogThreadMain(void *arg) {
 void portWatchdogInit(void) {
     SDL_Thread *thread;
 
+#ifdef __EMSCRIPTEN__
+    /* The stall watchdog is a native diagnostic: a background thread
+     * (SDL_CreateThread, no -pthread under single-threaded wasm) that on a
+     * stall shells out via posix_spawn(/usr/bin/sample). Neither has a wasm
+     * runtime backing — both fail at runtime. In the browser the tab's own
+     * devtools/hang detection is the equivalent. */
+    (void)thread;
+    return;
+#else
     if (port_env_bool("GE007_NO_WATCHDOG", 0,
             "disable the sim stall watchdog (heartbeat monitor + stall dump + breadcrumb ring)")) {
         return;
@@ -397,6 +406,7 @@ void portWatchdogInit(void) {
     }
     SDL_DetachThread(thread);
     s_armed = 1;
+#endif /* __EMSCRIPTEN__ */
 }
 
 void portWatchdogLoadBegin(void) {

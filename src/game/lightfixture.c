@@ -2,6 +2,10 @@
 #include "lightfixture.h"
 #include "bg.h"
 #include "unk_0A1DA0.h"
+/* getRoomPositionScaledByIndex is void-returning (unk_0BC530.c); without this
+ * header lightfixture.c saw an implicit int-returning declaration — harmless
+ * on native (return unused) but a wasm function-signature mismatch. */
+#include "unk_0BC530.h"
 #include <bondconstants.h>
 #include <assets/image_externs.h>
 #include <PR/gbi.h>

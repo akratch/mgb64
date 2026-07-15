@@ -6875,8 +6875,18 @@ s32 getTileRoom(StandTile *tile)
 }
 
 
+#ifdef __EMSCRIPTEN__
+/* True definition (bg.c) is `f32 sub_GAME_7F0B4F9C(s32)`. The deliberately-
+ * "incorrect" s32-return declaration below is a decomp asm-match artifact for
+ * sub_GAME_7F0B2FE0 (which has NO callers — it is dead code). Native keeps it
+ * for fidelity; on native the return-type UB is never observed. wasm, however,
+ * type-checks the call against the real f32 definition and traps, so use the
+ * true prototype here. Behaviour-neutral: sub_GAME_7F0B2FE0 is never called. */
+extern f32 sub_GAME_7F0B4F9C(s32 arg0);
+#else
 //incorrect here so that both this and sub_GAME_7F0B4F9C match
 extern s32 sub_GAME_7F0B4F9C(u8 arg0) ;
+#endif
 
 s32 sub_GAME_7F0B2FE0(StandTile *tile)
 {

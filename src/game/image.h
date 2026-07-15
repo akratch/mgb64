@@ -99,6 +99,11 @@ void texLoad(u32 *updateword, struct texpool *pool);
 void texInitPool(struct texpool *arg0, u8 *arg1, s32 arg2);
 void texLoadFromTextureNum(s32 texturenum, struct texpool *arg1);
 void texLoadFromModelFileHeader(ModelFileHeader* arg0, struct texpool* arg1);
+/* Definition in image.c returns void; image_bank.c called it through an
+ * implicit int-returning declaration (prototype drift). The return value is
+ * never used, so this is behaviour-neutral on native, but the implicit
+ * declaration is a function-signature trap under wasm. */
+void texLoadFromDisplayList(Gfx *gdl, struct texpool *arg1);
 
 #ifdef NATIVE_PORT
 /* Grow-on-demand arena backing the main texture pool (see image.c). */

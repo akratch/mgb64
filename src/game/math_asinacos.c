@@ -1,4 +1,7 @@
 #include <ultra64.h>
+/* Pulls in the __EMSCRIPTEN__ acos/asin rename so the definitions below carry
+ * the same (wasm-only) symbol names as their callers. No-op on native. */
+#include "math_asinacos.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
