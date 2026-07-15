@@ -372,7 +372,19 @@ void amCreateAudioManager(ALSynConfig *alconf) {
     if (getenv("GE007_DISABLE_NATIVE_REVERB") != NULL) {
         alconf->fxType = AL_FX_NONE;
         alconf->params = NULL;
-    } else if (alconf->fxType == AL_FX_CUSTOM && alconf->params == NULL) {
+    } else if (alconf->fxType == AL_FX_CUSTOM) {
+        /* The sole caller (musicSeqPlayerInit, music.c) never assigns
+         * ALSynConfig.params — decomp-faithful, as retail relied on a zeroed
+         * stack for that slot. The port owns the CUSTOM FX table, so bind it
+         * unconditionally rather than trusting the caller's uninitialized field.
+         *
+         * Native (LP64): the slot reads NULL, so the old `params == NULL` guard
+         * already substituted s_portAudioCustomFxParams — this change is inert.
+         * wasm32 (ILP32): the narrower ALSynConfig layout leaves the params slot
+         * holding stack garbage (observed 0x1). The old `== NULL` guard skipped
+         * substitution, so native_fx_params_for_config() later returned 0x1 and
+         * alFxNew dereferenced address 1 (params[0]) -> first-frame segfault.
+         * Binding unconditionally fixes wasm and preserves the native result. */
         alconf->params = s_portAudioCustomFxParams;
     }
     g_portAudioFxType = alconf->fxType;

@@ -479,7 +479,17 @@ void load_font_tables(void) {
     /* Gothic font */
     s32 gothic_size = 0x24B0;
     u8 *gothic_raw = (u8 *)mempAllocBytesInBank(gothic_size, MEMPOOL_STAGE);
-    romCopy(gothic_raw, &_fontbankgothicSegmentRomStart, gothic_size);
+    /* Pass the ROM offset by VALUE (ROM_OFFSET dereferences the segment stub),
+     * not the symbol's address. romCopy()/resolveRomOffset() disambiguates a raw
+     * offset from a segment-variable pointer by `addr < g_romSize`; on wasm32
+     * (ILP32) the static-data address of &_fontbankgothicSegmentRomStart (~0x8e48c)
+     * is itself below g_romSize, so the `&sym` form was misread as a raw offset
+     * (0x8e48c) instead of being dereferenced to the real offset (0x2e63f0),
+     * loading garbage font data -> pc_convert_font OOB on the first frame. On
+     * native (LP64) the address is far above g_romSize, so both forms resolved
+     * identically: this matches the ROM_OFFSET convention already used everywhere
+     * else in the port (music.c, initanitable.c) and is byte-identical on native. */
+    romCopy(gothic_raw, ROM_OFFSET(_fontbankgothicSegmentRomStart), gothic_size);
 
     struct font *gothic = (struct font *)mempAllocBytesInBank(sizeof(struct font), MEMPOOL_STAGE);
     struct fontchar *gothic_chars;
@@ -493,7 +503,7 @@ void load_font_tables(void) {
     /* Zurich Bold font */
     s32 zurich_size = 0x3540;
     u8 *zurich_raw = (u8 *)mempAllocBytesInBank(zurich_size, MEMPOOL_STAGE);
-    romCopy(zurich_raw, &_fontzurichboldSegmentRomStart, zurich_size);
+    romCopy(zurich_raw, ROM_OFFSET(_fontzurichboldSegmentRomStart), zurich_size);
 
     struct font *zurich = (struct font *)mempAllocBytesInBank(sizeof(struct font), MEMPOOL_STAGE);
     struct fontchar *zurich_chars;
