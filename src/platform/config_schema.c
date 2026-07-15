@@ -131,7 +131,7 @@ void configStagingDiscard(void) {
     s_stagingActive = 0;
 }
 
-void configStagingApply(void) {
+MgbConfigSaveResult configStagingApply(void) {
     s32 i;
     if (s_previewActive) {                         /* undo the preview so we commit cleanly */
         configSetValue(s_previewKey, s_previewBackup);
@@ -143,7 +143,9 @@ void configStagingApply(void) {
         configSetValue(s_staged[i].key, s_staged[i].val);
     }
     s_stagedCount = 0;
-    configSave();
+    /* Thread the persist outcome up to the app (AUDIT-0036): OK / SUPPRESSED /
+     * FAILED, instead of dropping the old void configSave(). */
+    return (MgbConfigSaveResult)configSaveResult();
 }
 
 /* Resolve a staged enum token to its s32 value; returns fallback if not found. */
@@ -165,6 +167,18 @@ void mgb_config_init(void) {
 }
 
 int mgb_config_save(void) { return (int)configSave(); }
+
+/* The app-facing MgbConfigSaveResult must stay numerically identical to the
+ * engine's ConfigSaveResult so the casts here (and in configStagingApply) are a
+ * pure re-typing across the engine-free header boundary (AUDIT-0036). */
+_Static_assert((int)MGB_CONFIG_SAVE_OK == (int)CONFIG_SAVE_OK &&
+               (int)MGB_CONFIG_SAVE_SUPPRESSED == (int)CONFIG_SAVE_SUPPRESSED &&
+               (int)MGB_CONFIG_SAVE_FAILED == (int)CONFIG_SAVE_FAILED,
+               "MgbConfigSaveResult must mirror ConfigSaveResult 1:1");
+
+MgbConfigSaveResult mgb_config_save_result(void) {
+    return (MgbConfigSaveResult)configSaveResult();
+}
 
 const char *mgb_config_path(void) {
     /* savedirPath returns its own static buffer; copy so the caller isn't racing

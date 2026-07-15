@@ -682,7 +682,7 @@ void configSetSaveSuppressed(s32 suppressed)
     s_configSaveSuppressed = suppressed ? 1 : 0;
 }
 
-s32 configSave(void)
+ConfigSaveResult configSaveResult(void)
 {
     /* Sized to the savedir contract (SAVEDIR_MAX_PATH = 1024), not PATH_MAX:
      * Windows <limits.h> defines PATH_MAX as 260, which would truncate a long
@@ -692,7 +692,8 @@ s32 configSave(void)
     char tmp_path[1024 + 8];
 
     if (s_configSaveSuppressed) {
-        return 1; /* faithful session: ge007.ini intentionally left untouched */
+        /* faithful session: ge007.ini intentionally left untouched */
+        return CONFIG_SAVE_SUPPRESSED;
     }
     u8 unknown_written[CONFIG_MAX_UNKNOWN_SETTINGS] = {0};
     const char *saved_path = savedirPath(CONFIG_FILENAME);
@@ -702,7 +703,7 @@ s32 configSave(void)
     FILE *f = fopen(tmp_path, "w");
     if (!f) {
         printf("[CONFIG] Failed to save %s: %s\n", tmp_path, strerror(errno));
-        return 0;
+        return CONFIG_SAVE_FAILED;
     }
 
     fprintf(f, "# MGB64 -- N64 game engine port -- configuration\n");
@@ -740,25 +741,33 @@ s32 configSave(void)
     if (fclose(f) != 0) {
         printf("[CONFIG] Failed to finish writing %s: %s\n", tmp_path, strerror(errno));
         remove(tmp_path);
-        return 0;
+        return CONFIG_SAVE_FAILED;
     }
 
 #ifdef _WIN32
     if (replaceConfigFile(tmp_path, path) != 0) {
         printf("[CONFIG] Failed to replace %s: Windows error %lu\n", path, (unsigned long)GetLastError());
         remove(tmp_path);
-        return 0;
+        return CONFIG_SAVE_FAILED;
     }
 #else
     if (replaceConfigFile(tmp_path, path) != 0) {
         printf("[CONFIG] Failed to replace %s: %s\n", path, strerror(errno));
         remove(tmp_path);
-        return 0;
+        return CONFIG_SAVE_FAILED;
     }
 #endif
 
     printf("[CONFIG] Saved %s\n", path);
-    return 1;
+    return CONFIG_SAVE_OK;
+}
+
+s32 configSave(void)
+{
+    /* 0/1 wrapper preserving every existing caller's contract: an intentional
+     * faithful-mode no-op still reads as "saved" (1); only a real write failure
+     * returns 0. */
+    return (configSaveResult() == CONFIG_SAVE_FAILED) ? 0 : 1;
 }
 
 s32 configSetValue(const char *key, const char *value)

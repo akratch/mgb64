@@ -2021,6 +2021,21 @@ if(MGB64_APP)
             src/app src/platform include include/PR .)
         add_test(NAME config_env_shadow COMMAND test_config_env_shadow)
 
+        # AUDIT-0036 core: the config-save boundary must report OK / SUPPRESSED /
+        # FAILED (configSaveResult), and the 0/1 configSave()/mgb_config_save()
+        # wrappers plus the tri-state thread-up (configStagingApply /
+        # mgb_config_save_result) must keep their contracts. ROM-free; same
+        # registry+config link set as config_staging / config_env_shadow.
+        add_executable(test_config_save_result
+            tests/test_config_save_result.c
+            src/platform/config_schema.c
+            src/platform/config_pc.c
+            src/platform/settings.c
+            src/platform/savedir.c)
+        target_include_directories(test_config_save_result PRIVATE
+            src/app src/platform include include/PR .)
+        add_test(NAME config_save_result COMMAND test_config_save_result)
+
         # Pure tag-parse + semver-compare logic for the update check (no SDL, no
         # network): update_check_core.cpp is SDL-free precisely so this links tiny.
         add_executable(test_update_check

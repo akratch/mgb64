@@ -40,7 +40,21 @@ void configRegisterString(const char *key, char *var, size_t capacity);
 /* Load settings from ge007.ini (in savedir). Call after all registrations. */
 void configInit(void);
 
-/* Save current values to ge007.ini. Returns 1 on success. */
+/* Tri-state outcome of a config save (AUDIT-0036), so callers (and the settings
+ * UI) can tell an intentional faithful-mode no-op apart from a real write failure
+ * — the two were previously indistinguishable at the configSave() 0/1 boundary. */
+typedef enum ConfigSaveResult {
+    CONFIG_SAVE_OK = 0,       /* values written to ge007.ini */
+    CONFIG_SAVE_SUPPRESSED,   /* faithful session: intentionally NOT written */
+    CONFIG_SAVE_FAILED        /* fopen / fclose / atomic-replace error */
+} ConfigSaveResult;
+
+/* Save current values to ge007.ini, reporting the tri-state outcome above. */
+ConfigSaveResult configSaveResult(void);
+
+/* Thin 0/1 wrapper over configSaveResult() preserving the historical contract
+ * (shutdown save, in-game menu, --config-set/--reset-config nonzero-on-failure):
+ * OK|SUPPRESSED -> 1, FAILED -> 0. Returns 1 on success or intentional no-op. */
 s32 configSave(void);
 
 /* When suppressed (set by a `--faithful` launch), configSave() becomes a no-op so

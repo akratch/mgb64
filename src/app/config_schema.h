@@ -36,10 +36,22 @@ typedef struct {
     int   advanced;     // 1 = dev/diagnostic (hide behind "Advanced" disclosure)
 } MgbCfgEntry;
 
+// Save outcome (AUDIT-0036), mirroring the engine's ConfigSaveResult 1:1 so the
+// settings UI can tell an intentional faithful-mode no-op (SUPPRESSED) apart from
+// a real write failure (FAILED). Kept engine-free (plain enum, no ConfigSaveResult
+// leak) so app code never pulls the engine headers; config_schema.c static-asserts
+// the value mapping.
+typedef enum MgbConfigSaveResult {
+    MGB_CONFIG_SAVE_OK         = 0,  // written to ge007.ini
+    MGB_CONFIG_SAVE_SUPPRESSED = 1,  // faithful session: intentionally not written
+    MGB_CONFIG_SAVE_FAILED     = 2   // write failed
+} MgbConfigSaveResult;
+
 // Lifecycle. Safe to call once at app startup; the engine boot re-registers
 // idempotently (settingsFindOrAdd) and reloads ge007.ini.
 void mgb_config_init(void);      // savedir + register + load ge007.ini
-int  mgb_config_save(void);      // write ge007.ini
+int  mgb_config_save(void);      // write ge007.ini; 1 unless the write failed (compat)
+MgbConfigSaveResult mgb_config_save_result(void);  // same save, tri-state outcome
 // Resolved absolute path of the engine config file (ge007.ini) in the active save
 // directory. Returns a pointer to a static buffer (copy before reuse). Use this to
 // locate the REAL file instead of guessing a CWD-relative name (AUDIT-0047).
@@ -84,7 +96,10 @@ void mgb_config_reset_default(const char *key);
 // engine/CLI/ini-load paths are unaffected. Not engaged under --deterministic
 // (the app shell isn't present in headless automation).
 void configStagingBegin(void);    // start a session (drops any prior staged copy)
-void configStagingApply(void);    // commit staged -> live globals + persist, then end the session
+// commit staged -> live globals + persist, then end the session; returns the
+// save outcome (AUDIT-0036) so the UI can surface a persist failure. Existing
+// callers may discard the value (unchanged 0/1-agnostic call sites keep working).
+MgbConfigSaveResult configStagingApply(void);
 void configStagingDiscard(void);  // drop the staged copy (live untouched), end the session
 int  configStagingActive(void);   // 1 while a session is open
 
