@@ -4,7 +4,7 @@
   "level": 9,
   "frames": 820,
   "route_class": "input_interaction",
-  "description": "Bunker 1 stock-spawn controller route that opens the first corridor door, collects a next-room object, reaches second door object 138, and opens it through real input without warp, force, item injection, or stage-state automation. NOTE (FID-0066): this route pins GE007_FIRE_RATE_AUTHENTIC=0 (legacy fire cadence). Under the faithful default the guard combat stream shifts and a guard deterministically stands in door 138's sweep at the scripted press (collision-blocked, finish-open never reached) - correct door mechanics, unlucky AI positioning. The pin keeps this contract covering door/collect mechanics; guard fire-rate coverage lives in tools/fidelity/guard_fire_rate_symmetry_smoke.sh.",
+  "description": "Bunker 1 stock-spawn controller route that opens the first corridor door, collects a next-room object, reaches second door object 138, and opens it through real input without warp, force, item injection, or stage-state automation. NOTE (FID-0066): this route pins GE007_FIRE_RATE_AUTHENTIC=0 (legacy fire cadence). Under the faithful default the guard combat stream shifts and a guard deterministically stands in door 138's sweep at the scripted press (collision-blocked, finish-open never reached) - correct door mechanics, unlucky AI positioning. The pin keeps this contract covering door/collect mechanics; guard fire-rate coverage lives in tools/fidelity/guard_fire_rate_symmetry_smoke.sh. NOTE (FID-0117, re-fit 2026-07-15): after the root-motion seeding fix (commit 78d76c6) Bond is no longer nudged out of door 138's sweep by the blocked door's push animation, so the door stayed collision-blocked at his press spot (z~2932, inside the second leaf's sweep) and finish-open never fired. Re-authored: added second_door_clear_sweep (back) after the open press so Bond backs away from the door plane (x -1189.7 -> beyond the ~-1196 slab-clearance edge), letting the already-latched state-1 door displace and finish (finish-open now fires deterministically at frame 606; displace count 124 >= 30). The 5-frame back-step coasts Bond to rest ~(-1232, 2943), so post_second_door_stability_position min_abs_x_delta was re-fit 170 -> 146 (achieved 148.9 from spawn x=-1381.4, ~2% determinism margin); all pad radii, log-count assertions, and the survival milestone are unchanged.",
   "env": {
     "GE007_TRACE_FLOW_ONLY": 1,
     "GE007_DOOR_TRACE": 1,
@@ -72,6 +72,14 @@
       "duration": 6,
       "inputs": [
         "b"
+      ]
+    },
+    {
+      "name": "second_door_clear_sweep",
+      "start": 555,
+      "duration": 5,
+      "inputs": [
+        "back"
       ]
     }
   ],
@@ -199,7 +207,7 @@
         "name": "post_second_door_stability_position",
         "frame_at_or_after": 760,
         "min_horizontal_delta": 560.0,
-        "min_abs_x_delta": 170.0,
+        "min_abs_x_delta": 146.0,
         "min_abs_z_delta": 560.0
       }
     ],
