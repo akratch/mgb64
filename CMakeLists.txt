@@ -133,7 +133,12 @@ if(MSVC)
 endif()
 
 # --- Platform detection ---
-if(APPLE)
+if(EMSCRIPTEN)
+    # Web build: SDL2 and WebGPU are supplied by Emscripten ports at
+    # compile/link time (-sUSE_SDL=2 / --use-port=emdawnwebgpu), not by
+    # find_package. No system GL either (the WebGPU backend is the only
+    # renderer under wasm). Nothing to discover here.
+elseif(APPLE)
     find_library(OPENGL_LIB OpenGL)
     # SDL2 via Homebrew or framework
     find_package(SDL2 QUIET)
@@ -1899,6 +1904,10 @@ elseif(MGB64_PORTMASTER_GLES)
         ${CMAKE_DL_LIBS}
     )
     target_compile_definitions(ge007 PRIVATE MGB64_PORTMASTER_GLES MGB64_PORTMASTER)
+elseif(EMSCRIPTEN)
+    # Web build links the wasm engine as `ge007_web` (below); the native `ge007`
+    # target is never built under wasm, so it gets no platform libraries here
+    # (OpenGL::GL / SDL2::SDL2 don't exist under the Emscripten toolchain).
 else()
     target_link_libraries(ge007
         OpenGL::GL
@@ -1908,6 +1917,61 @@ else()
         # separate libdl on older distros.
         ${CMAKE_DL_LIBS}
     )
+endif()
+
+if(EMSCRIPTEN)
+    # Web build: engine only (the HTML page is the launcher). Single-threaded,
+    # Asyncify-driven frame loop, MEMFS+IDBFS filesystem. Everything here is
+    # additive — native configs never enter this branch. The source variables
+    # (${GAME_SOURCES} etc.) are the exact list the native `ge007` target is
+    # built from above (:1715); the app shell (mgb64_app) is a separate library
+    # and is never in this list, so no app source enters the wasm binary.
+    set(MGB64_APP OFF CACHE BOOL "" FORCE)          # no ImGui launcher in v1 web
+    set(MGB64_WEBGPU_BACKEND ON CACHE BOOL "" FORCE)
+    add_executable(ge007_web
+        ${GAME_SOURCES}
+        ${SYSTEM_SOURCES}
+        ${ASSET_SOURCES}
+        ${PLATFORM_SOURCES}
+        ${FAST3D_SOURCES}
+        ${GLAD_SOURCES}
+        ${LIBULTRA_AUDIO_SOURCES}
+        ${LIBULTRARE_AUDIO_SOURCES}
+    )
+    target_link_libraries(ge007_web PRIVATE webgpu)
+    target_compile_definitions(ge007_web PRIVATE NATIVE_PORT MGB64_WEBGPU_BACKEND)
+    # Mirror ge007's include search path (:1755) so the shared engine sources
+    # resolve identically (notably the source-root "." for assets/images.def).
+    target_include_directories(ge007_web PRIVATE
+        include
+        include/PR
+        src
+        src/game
+        src/platform
+        src/platform/fast3d
+        src/libultra/audio
+        assets
+        lib/glad/include
+        lib/stb
+        lib/cgltf
+        .
+    )
+    target_link_options(ge007_web PRIVATE
+        "-sUSE_SDL=2"
+        "-sASYNCIFY"
+        "-sASYNCIFY_STACK_SIZE=65536"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sINITIAL_MEMORY=268435456"      # 256 MiB: 12 MB ROM + 8 MB sim pool + GPU staging + headroom
+        "-sSTACK_SIZE=2097152"
+        "-sMODULARIZE=1"
+        "-sEXPORT_NAME=createMGB64"
+        "-sINVOKE_RUN=0"                  # shell seeds FS first, then callMain
+        "-sEXIT_RUNTIME=0"
+        "-sEXPORTED_RUNTIME_METHODS=callMain,FS,IDBFS"
+        "-lidbfs.js"
+        "-sENVIRONMENT=web"
+    )
+    target_compile_options(ge007_web PRIVATE "-sUSE_SDL=2" "-msimd128")
 endif()
 
 # ===========================================================================

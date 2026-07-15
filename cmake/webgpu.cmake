@@ -13,6 +13,19 @@
 #
 # Exposes: INTERFACE target `webgpu` (include dir + static lib + system deps).
 
+# --- Emscripten: browser WebGPU via the emdawnwebgpu port; no native prebuilt ---
+# The FATAL_ERROR "unsupported platform" below must never be reached under
+# Emscripten, and no wgpu-native prebuilt exists for wasm — so short-circuit
+# here with an INTERFACE target backed by the port instead.
+if(EMSCRIPTEN)
+    add_library(webgpu INTERFACE)
+    # emdawnwebgpu supplies the modern unified webgpu.h (same webgpu-headers
+    # lineage as wgpu-native v29) implemented over the browser's WebGPU API.
+    target_compile_options(webgpu INTERFACE "--use-port=emdawnwebgpu")
+    target_link_options(webgpu INTERFACE "--use-port=emdawnwebgpu")
+    return()
+endif()
+
 if(NOT MGB64_WEBGPU_BACKEND)
     return()
 endif()
