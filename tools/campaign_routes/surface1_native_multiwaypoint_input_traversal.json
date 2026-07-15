@@ -4,7 +4,7 @@
   "level": 36,
   "frames": 950,
   "route_class": "input_traversal",
-  "description": "Surface 1 native-only multi-waypoint traversal from the stock spawn. This extends the snowfield route with sustained controller-driven movement toward later authored pads without warp, force, item pickup, or stage-state automation.",
+  "description": "Surface 1 native-only multi-waypoint traversal from the stock spawn. This extends the snowfield route with sustained controller-driven movement toward later authored pads without warp, force, item pickup, or stage-state automation. FID-0117 (commit 78d76c6) corrected root-motion seeding in modelSetAnimFrame2WithChrStuff (unk01 vs legacy unk02); identical held-stick inputs now cover less ground, so on 2026-07-15 the distance FLOORS were re-fit (~2% margin below the retail-correct achieved trajectory) without touching inputs or pad-proximity radii: top min_horizontal_delta 7500->6780; mid_snowfield_reach 4200->3840 / 4000->3670 (abs_z 1000 left, still passing); late_snowfield_reach 7300->6610 / 6900->6330 / 2300->1900; post_input_snowfield_rest 7500->6780 / 7000->6470 / 2400->2020. early_snowfield_push and snowfield_turnout floors unchanged (pre-divergence, still passing); setup_target pads 80/79/77 unchanged and verified still passing.",
   "env": {
     "GE007_TRACE_FLOW_ONLY": 1
   },
@@ -20,7 +20,7 @@
     "require_input_automation": true,
     "no_direct_state_automation": true,
     "min_moving_records": 820,
-    "min_horizontal_delta": 7500.0,
+    "min_horizontal_delta": 6780.0,
     "setup_target_milestones": [
       {
         "name": "snowfield_near_setup_pad_80",
@@ -64,23 +64,23 @@
       {
         "name": "mid_snowfield_reach",
         "frame_at_or_after": 600,
-        "min_horizontal_delta": 4200.0,
-        "min_abs_x_delta": 4000.0,
+        "min_horizontal_delta": 3840.0,
+        "min_abs_x_delta": 3670.0,
         "min_abs_z_delta": 1000.0
       },
       {
         "name": "late_snowfield_reach",
         "frame_at_or_after": 900,
-        "min_horizontal_delta": 7300.0,
-        "min_abs_x_delta": 6900.0,
-        "min_abs_z_delta": 2300.0
+        "min_horizontal_delta": 6610.0,
+        "min_abs_x_delta": 6330.0,
+        "min_abs_z_delta": 1900.0
       },
       {
         "name": "post_input_snowfield_rest",
         "frame_at_or_after": 949,
-        "min_horizontal_delta": 7500.0,
-        "min_abs_x_delta": 7000.0,
-        "min_abs_z_delta": 2400.0
+        "min_horizontal_delta": 6780.0,
+        "min_abs_x_delta": 6470.0,
+        "min_abs_z_delta": 2020.0
       }
     ]
   }
