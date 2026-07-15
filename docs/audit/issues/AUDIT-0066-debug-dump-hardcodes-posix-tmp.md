@@ -68,3 +68,14 @@ writable and does not depend on POSIX filesystem layout.
 ## Resolution
 
 `debugDumpExecute` (src/platform/debug_dump.c) no longer hardcodes `/tmp`; it writes `ge007_dump_%04d.txt` under the resolved save directory via `savedirPath()` (copied immediately into `s_dumpPath` since the helper returns a static buffer), matching `stall_watchdog.c`/`config_pc.c`. Portable to Windows/handhelds with no writable `/tmp`.
+
+**Follow-up (2026-07-14, AUDIT-0018-class fixture staleness):** this fix left
+`tools/campaign_routes/bunker1_datathief_equipment_contract.json`'s
+`required_log_patterns` asserting the old literal
+`"[DUMP] Wrote /tmp/ge007_dump_"`, which the savedir-relocated log line
+(`[DUMP] Wrote <savedir>/ge007_dump_0000.txt ...`) never contains — this was
+the 5th (unrelated) failure in the campaign-route gate that AUDIT-0017 counted
+against root-motion staleness. Fixed separately by replacing the pattern with
+the path-agnostic two-element array `["[DUMP] Wrote ", "ge007_dump_"]`; see
+AUDIT-0017 for the count reconcile. Same class as AUDIT-0018: a landed fix
+left a downstream fixture stale.

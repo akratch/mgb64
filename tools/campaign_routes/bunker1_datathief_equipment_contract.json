@@ -23,7 +23,8 @@
     "no_render_failures": true,
     "no_front_failure": true,
     "required_log_patterns": [
-      "[DUMP] Wrote /tmp/ge007_dump_"
+      "[DUMP] Wrote ",
+      "ge007_dump_"
     ],
     "state_milestones": [
       {

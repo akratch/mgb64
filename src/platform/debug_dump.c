@@ -2,7 +2,8 @@
  * debug_dump.c — Guard state frame dump tool.
  *
  * Press ` (backtick) during gameplay to write a comprehensive snapshot
- * of all guard/chr state to /tmp/ge007_dump_NNNN.txt.
+ * of all guard/chr state to ge007_dump_NNNN.txt in the save directory
+ * (see savedirPath(), AUDIT-0066 — no longer a hardcoded /tmp path).
  * An on-screen overlay confirms the dump was captured.
  */
 #include <stdio.h>

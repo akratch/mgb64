@@ -722,7 +722,10 @@ GE007_AUTO_EXIT_FRAME=520 \
   > /tmp/bunker_datathief.log 2>&1
 
 rg -n 'DUMP|CRASH|Signal|ANIM_FRAME[0-9_]*_GUARD|BHEAD_INVALID' \
-  /tmp/bunker_datathief.log /tmp/ge007_dump_*.txt
+  /tmp/bunker_datathief.log ./ge007_dump_*.txt
+# AUDIT-0066: dumps now land in the save directory (savedirPath(), see
+# savedir.c), not a hardcoded /tmp path. Without --savedir this is CWD (if
+# writable) or $HOME/.ge007/ -- adjust the glob above if yours resolves there.
 ```
 
 The expected result is: `playability_smoke.sh` passes movement for level `9`;
