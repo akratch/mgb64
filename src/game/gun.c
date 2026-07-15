@@ -140,10 +140,24 @@ static int portNoWeaponStatsRecoilFix(void)
 /* FID-0123: lock the native WeaponStats layout. ptr_cartridge_struct (a pointer) at 0x28 grows
  * 4->8B, shifting the recoil fields +4: RecoilSpeed 0x44->0x48, RecoilBack 0x48->0x4C, RecoilUp
  * 0x4C->0x50. So the legacy raw reads at N64 0x48/0x4C hit RecoilSpeed(as f32~=0)/RecoilBack. */
+/* ptr_cartridge_struct is 8-byte aligned and follows a u16 that ends exactly on
+ * a 4-byte-but-8-aligned boundary (0x28), so its start offset is 0x28 on BOTH
+ * pointer widths — the width-independent half of the lock. The recoil fields that
+ * FOLLOW the pointer shift by its width: on LP64 the 8B pointer pushes
+ * RecoilSpeed to 0x48; on ILP32 (wasm32) the 4B pointer collapses them back to
+ * the retail N64 offsets (RecoilSpeed 0x44, RecoilBack 0x48, RecoilUp 0x4C) — the
+ * exact legacy offsets the FID-0123 fix was compensating for. Native LP64 asserts
+ * are byte-identical to before. */
 _Static_assert(offsetof(WeaponStats, ptr_cartridge_struct) == 0x28, "WeaponStats ptr_cartridge_struct drifted from 0x28");
+#if __SIZEOF_POINTER__ == 8
 _Static_assert(offsetof(WeaponStats, RecoilSpeed) == 0x48, "WeaponStats RecoilSpeed drifted from native 0x48 (FID-0123)");
 _Static_assert(offsetof(WeaponStats, RecoilBack) == 0x4C, "WeaponStats RecoilBack drifted from native 0x4C (FID-0123)");
 _Static_assert(offsetof(WeaponStats, RecoilUp) == 0x50, "WeaponStats RecoilUp drifted from native 0x50 (FID-0123)");
+#else
+_Static_assert(offsetof(WeaponStats, RecoilSpeed) == 0x44, "WeaponStats RecoilSpeed drifted from retail N64 0x44 (ILP32, FID-0123)");
+_Static_assert(offsetof(WeaponStats, RecoilBack) == 0x48, "WeaponStats RecoilBack drifted from retail N64 0x48 (ILP32, FID-0123)");
+_Static_assert(offsetof(WeaponStats, RecoilUp) == 0x4C, "WeaponStats RecoilUp drifted from retail N64 0x4C (ILP32, FID-0123)");
+#endif
 
 static int portNoGrenadeTimerOffsetFix(void)
 {

@@ -24770,9 +24770,20 @@ static int portNoMpWalkAnimWeaponnumFix(void)
 
 /* FID-0129: lock weaponnum's post-growth offset so the named-field read above
  * can't silently drift. N64 0x80; the +0x10 ObjectRecord growth moves it to
- * 0x90 on the 64-bit port. */
+ * 0x90 on the 64-bit port.
+ *
+ * Pointer width splits the lock: on LP64 the inherited ObjectRecord's runtime
+ * pointers are 8B, growing the base +0x10 so weaponnum lands at 0x90. On ILP32
+ * (wasm32) those pointers are 4B again — exactly the retail N64 width — so the
+ * growth collapses and weaponnum returns to the retail 0x80. Both locks are
+ * enforced; the native LP64 assert is byte-identical to before. */
+#if __SIZEOF_POINTER__ == 8
 _Static_assert(offsetof(WeaponObjRecord, weaponnum) == 0x90,
                "WeaponObjRecord.weaponnum offset drifted from locked 0x90");
+#else
+_Static_assert(offsetof(WeaponObjRecord, weaponnum) == 0x80,
+               "WeaponObjRecord.weaponnum offset drifted from retail N64 0x80 (ILP32)");
+#endif
 
 s32 playerTickBeams(PropRecord *prop) {
     struct player *player;

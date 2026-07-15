@@ -1971,7 +1971,43 @@ if(EMSCRIPTEN)
         "-lidbfs.js"
         "-sENVIRONMENT=web"
     )
-    target_compile_options(ge007_web PRIVATE "-sUSE_SDL=2" "-msimd128")
+    # Layout-critical + warning flags: the wasm engine compiles the SAME decomp
+    # game TUs as native ge007 (:1783), so it needs the identical parse-affecting
+    # flags. Chief among them: -fms-extensions, which enables the anonymous
+    # nested-struct member the `inherits struct` idiom (bondtypes.h:42) relies on
+    # for field inheritance (ObjectRecord.type/state, DoorRecord.obj, ...). Without
+    # it every inherited-field access is a "no member named" error. The warning
+    # suppressions mirror ge007 so the shared sources compile identically; emcc is
+    # Clang-based, so the Clang-only block (:1820) applies too (-ferror-limit=0,
+    # -Wno-microsoft-anon-tag). -mno-ms-bitfields is intentionally OMITTED: it is an
+    # x86-Windows layout toggle; wasm already uses the SysV/Itanium layout the port
+    # requires (same as macOS/Linux, where the flag is a documented no-op).
+    target_compile_options(ge007_web PRIVATE
+        "-sUSE_SDL=2"
+        "-msimd128"
+        -Wall
+        -Wno-unused-variable
+        -Wno-unused-function
+        -Wno-unused-but-set-variable
+        -Wno-missing-braces
+        -Wno-parentheses
+        -Wno-unknown-pragmas
+        -Wno-implicit-function-declaration
+        -Wno-missing-declarations
+        -Wno-int-conversion
+        -Wno-incompatible-pointer-types
+        -Wno-empty-body
+        -Wno-switch
+        -fms-extensions
+        -fno-strict-aliasing
+        -Wno-macro-redefined
+        -Wno-initializer-overrides
+        -Wno-flexible-array-extensions
+        -Wno-gnu-flexible-array-initializer
+        -Wno-invalid-token-paste
+        -Wno-microsoft-anon-tag
+        -ferror-limit=0
+    )
 endif()
 
 # ===========================================================================
