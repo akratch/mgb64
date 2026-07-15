@@ -11,6 +11,10 @@ runbook), `docs/design/adr/0001-webgpu-render-backend.md` (decision record),
 `docs/RELEASING.md` (owner release checklist). File:line references below are
 against HEAD `822d1c9`; re-check them before executing a phase.
 
+**Web build note:** the browser build (`docs/WEB.md`) depends only on the
+WebGPU backend (`emdawnwebgpu` under Emscripten) — it has no GL or Metal code
+path at all. Neither Phase M nor Phase G below affects it.
+
 ---
 
 ## 1. Current state

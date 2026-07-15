@@ -30,6 +30,9 @@ handhelds via the shared `gfx_opengl.c`/GLES path) is
 vars above are documented, release-supported behavior. `RELEASE_NOTES.md` should
 name WebGPU as the default renderer and mention the fallback env vars.
 
+The browser build (GitHub Pages demo) depends only on this WebGPU renderer —
+see [WEB.md](WEB.md) for the full user/developer/deploy flow.
+
 ---
 
 ## The model: hybrid local + free CI
@@ -375,6 +378,15 @@ re-deriving it; this list is the release-facing summary.
       guarded publish path end-to-end against a throwaway repo to prove the
       pipeline (tag → guard chain → `gh release create --verify-tag` → asset
       attach + signing) — it has been statically validated only, never executed.
+- [ ] **Enable GitHub Pages once**: Settings → Pages → Source →
+      **GitHub Actions**. One-time repo setting; required before `web-demo.yml`
+      can deploy anything.
+- [ ] **Dispatch `web-demo.yml`** (`workflow_dispatch`-only, owner-triggered)
+      and confirm the build + size-budget + ROM-absence guard jobs are green.
+- [ ] **Verify the live Pages page on Chrome and Safari 26 with a real ROM**:
+      pick the ROM, confirm it boots, play briefly, reload and confirm the
+      stored ROM is picked back up, and confirm a save persists across a
+      reload (see WEB.md's storage/quota notes for what "persists" means).
 - [ ] **PortMaster hardware validation.** Real Mali/panfrost handheld WebGPU
       gameplay run (tape byte-exact + parity within tolerance). This is the
       "last real unknown" and **gates deprecation Phase G** (retiring the shared
