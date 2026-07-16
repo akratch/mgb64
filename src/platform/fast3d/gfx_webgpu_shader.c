@@ -406,3 +406,163 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
 #undef VARY
     return out;
 }
+
+/* ------------------------------------------------------------------------
+ * Output-VI-filter post-FX pass (fullscreen triangle).
+ *
+ * A faithful WGSL port of gfx_opengl.c's output-filter fragment shader
+ * (gfx_opengl_ensure_output_filter_program, :3196-3447). The math — the FXAA
+ * kernel, CAS sharpen weights, the filmic tonemap curve, the grade
+ * (brightness/contrast/saturation/tint), gamma, vignette falloff, Bayer dither,
+ * and RGB555 quantize — is transcribed line-for-line; only the surrounding GLSL
+ * scaffolding differs. As in GL, FXAA and CAS sharpen sample the RAW scene
+ * texture for their neighbour taps (`sampleDst` == a point fetch of uTex), so
+ * this is a single uber-pass, not a chain. Effect order matches GL exactly:
+ *   sample -> FXAA -> bloom -> colorScale/bias -> [brightness/contrast/
+ *   saturation/tint/tonemap] -> gamma -> vignette -> CAS sharpen -> dither ->
+ *   RGB555.
+ *
+ * WebGPU renders the scene offscreen at the surface resolution, so src == dst
+ * (filterMode 0 / passthrough); the GL VI-filter rescale/aspect-fit modes are a
+ * diag-only feature and are not ported. SSAO is omitted (default-off; would need
+ * a sampleable depth target). Both texture reads use textureSampleLevel so the
+ * in-branch FXAA/bloom/sharpen samples stay valid under WGSL's uniformity rules.
+ * `fragPos` is @builtin(position) (top-left origin, matching the scene texture
+ * layout and the CopyTextureToTexture present it replaces), so no V-flip. */
+const char *gfx_webgpu_postfx_wgsl(void) {
+    return
+    "struct Post {\n"
+    "  srcSize : vec2<f32>, dstSize : vec2<f32>,\n"
+    "  colorScale : f32, colorBias : f32, gamma : f32, saturation : f32,\n"
+    "  contrast : f32, brightness : f32, vignette : f32, sharpen : f32,\n"
+    "  bloomThreshold : f32, bloomIntensity : f32, levelSat : f32, levelCon : f32,\n"
+    "  colorTint : vec3<f32>,\n"
+    "  applyPost : i32, dither : i32, bloom : i32, fxaa : i32,\n"
+    "  tonemap : i32, rgb555 : i32, fbH : i32, pad0 : i32,\n"
+    "};\n"
+    "@group(0) @binding(0) var<uniform> u : Post;\n"
+    "@group(0) @binding(1) var uTex : texture_2d<f32>;\n"
+    "@group(0) @binding(2) var uSampN : sampler;\n"   /* nearest + clamp (sampleDst / neighbour taps) */
+    "@group(0) @binding(3) var uSampL : sampler;\n"   /* linear + clamp (bloom) */
+    "struct VOut { @builtin(position) pos : vec4<f32> };\n"
+    "@vertex fn vs_main(@builtin(vertex_index) vid : u32) -> VOut {\n"
+    "  var kPos = array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0), vec2<f32>(3.0,-1.0), vec2<f32>(-1.0,3.0));\n"
+    "  var o : VOut;\n"
+    "  o.pos = vec4<f32>(kPos[vid], 0.0, 1.0);\n"
+    "  return o;\n}\n"
+    "fn bayer4(idx : i32) -> f32 {\n"
+    "  var b = array<f32,16>(\n"
+    "     0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,\n"
+    "    12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,\n"
+    "     3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,\n"
+    "    15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0);\n"
+    "  return b[idx];\n}\n"
+    /* sampleDst: GL's filterMode-0 point fetch. src==dst so uv=fc/dstSize with a
+     * nearest+clamp sampler reproduces texelFetch(floor(fc)). */
+    "fn sampleDst(fc : vec2<f32>) -> vec4<f32> {\n"
+    "  return textureSampleLevel(uTex, uSampN, fc / u.dstSize, 0.0);\n}\n"
+    "fn fxLuma(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }\n"
+    "fn fxaa(fc : vec2<f32>, rgbM : vec3<f32>) -> vec3<f32> {\n"
+    "  let lM = fxLuma(rgbM);\n"
+    "  let lN = fxLuma(sampleDst(fc + vec2<f32>( 0.0,-1.0)).rgb);\n"
+    "  let lS = fxLuma(sampleDst(fc + vec2<f32>( 0.0, 1.0)).rgb);\n"
+    "  let lW = fxLuma(sampleDst(fc + vec2<f32>(-1.0, 0.0)).rgb);\n"
+    "  let lE = fxLuma(sampleDst(fc + vec2<f32>( 1.0, 0.0)).rgb);\n"
+    "  let lNW = fxLuma(sampleDst(fc + vec2<f32>(-1.0,-1.0)).rgb);\n"
+    "  let lNE = fxLuma(sampleDst(fc + vec2<f32>( 1.0,-1.0)).rgb);\n"
+    "  let lSW = fxLuma(sampleDst(fc + vec2<f32>(-1.0, 1.0)).rgb);\n"
+    "  let lSE = fxLuma(sampleDst(fc + vec2<f32>( 1.0, 1.0)).rgb);\n"
+    "  let lMin = min(lM, min(min(lN,lS), min(lW,lE)));\n"
+    "  let lMax = max(lM, max(max(lN,lS), max(lW,lE)));\n"
+    "  let rng = lMax - lMin;\n"
+    "  if (rng < max(0.0625, lMax * 0.125)) { return rgbM; }\n"
+    "  var dir : vec2<f32>;\n"
+    "  dir.x = -((lNW + lNE) - (lSW + lSE));\n"
+    "  dir.y =  ((lNW + lSW) - (lNE + lSE));\n"
+    "  let dirReduce = max((lNW+lNE+lSW+lSE) * 0.03125, 0.0078125);\n"
+    "  let rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+    "  dir = clamp(dir * rcpDirMin, vec2<f32>(-8.0), vec2<f32>(8.0));\n"
+    "  let rgbA = 0.5 * (\n"
+    "      sampleDst(fc + dir * (1.0/3.0 - 0.5)).rgb +\n"
+    "      sampleDst(fc + dir * (2.0/3.0 - 0.5)).rgb);\n"
+    "  let rgbB = rgbA * 0.5 + 0.25 * (\n"
+    "      sampleDst(fc + dir * -0.5).rgb +\n"
+    "      sampleDst(fc + dir *  0.5).rgb);\n"
+    "  let lB = fxLuma(rgbB);\n"
+    "  if (lB < lMin || lB > lMax) { return rgbA; }\n"
+    "  return rgbB;\n}\n"
+    "fn casSharpen(fc : vec2<f32>, rgbC : vec3<f32>) -> vec3<f32> {\n"
+    "  let n = sampleDst(fc + vec2<f32>( 0.0,-1.0)).rgb;\n"
+    "  let s = sampleDst(fc + vec2<f32>( 0.0, 1.0)).rgb;\n"
+    "  let w = sampleDst(fc + vec2<f32>(-1.0, 0.0)).rgb;\n"
+    "  let e = sampleDst(fc + vec2<f32>( 1.0, 0.0)).rgb;\n"
+    "  let mn = min(rgbC, min(min(n,s), min(w,e)));\n"
+    "  let mx = max(rgbC, max(max(n,s), max(w,e)));\n"
+    "  var amp = clamp(min(mn, 1.0 - mx) / max(mx, vec3<f32>(0.0001)), vec3<f32>(0.0), vec3<f32>(1.0));\n"
+    "  amp = sqrt(amp);\n"
+    "  let peak = -0.125 - 0.075 * u.sharpen;\n"
+    "  let wgt = amp * peak;\n"
+    "  let sum = rgbC + (n + s + w + e) * wgt;\n"
+    "  let rcpW = 1.0 / (1.0 + 4.0 * wgt);\n"
+    "  let outc = clamp(sum * rcpW, mn, mx);\n"
+    "  return mix(rgbC, outc, clamp(u.sharpen, 0.0, 1.0));\n}\n"
+    "@fragment fn fs_main(in : VOut) -> @location(0) vec4<f32> {\n"
+    "  let fc = in.pos.xy;\n"
+    "  let uv = fc / u.dstSize;\n"
+    "  var color = sampleDst(fc);\n"
+    "  if (u.applyPost == 1 && u.fxaa == 1) { color = vec4<f32>(fxaa(fc, color.rgb), color.a); }\n"
+    "  if (u.applyPost == 1 && u.bloom == 1) {\n"
+    "    let texel = 1.0 / u.srcSize;\n"
+    "    var bloom = vec3<f32>(0.0);\n"
+    "    var wsum = 0.0;\n"
+    "    for (var y = -3; y <= 3; y = y + 1) {\n"
+    "    for (var x = -3; x <= 3; x = x + 1) {\n"
+    "      let o = vec2<f32>(f32(x), f32(y)) * texel * 2.0;\n"
+    "      let sp = textureSampleLevel(uTex, uSampL, uv + o, 0.0).rgb;\n"
+    "      let l = dot(sp, vec3<f32>(0.299, 0.587, 0.114));\n"
+    "      let b = max(l - u.bloomThreshold, 0.0) / max(1.0 - u.bloomThreshold, 0.001);\n"
+    "      let wv = exp(-f32(x*x + y*y) / 6.0);\n"
+    "      bloom = bloom + sp * b * wv; wsum = wsum + wv;\n"
+    "    }}\n"
+    "    bloom = bloom / max(wsum, 0.001);\n"
+    "    color = vec4<f32>(clamp(color.rgb + bloom * u.bloomIntensity, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);\n"
+    "  }\n"
+    "  var rgb = clamp(color.rgb * u.colorScale + vec3<f32>(u.colorBias / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));\n"
+    "  if (u.applyPost == 1) {\n"
+    "    rgb = rgb + vec3<f32>(u.brightness);\n"
+    "    let con = u.contrast * u.levelCon;\n"
+    "    rgb = (rgb - vec3<f32>(0.5)) * con + vec3<f32>(0.5);\n"
+    "    let luma = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));\n"
+    "    let sat = u.saturation * u.levelSat;\n"
+    "    rgb = mix(vec3<f32>(luma), rgb, sat);\n"
+    "    rgb = rgb * u.colorTint;\n"
+    "    if (u.tonemap == 1) {\n"
+    "      var t = rgb / (rgb * 0.45 + vec3<f32>(0.62));\n"
+    "      t = pow(t, vec3<f32>(0.90));\n"
+    "      rgb = mix(rgb, t, 0.5);\n"
+    "    }\n"
+    "    rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n"
+    "  }\n"
+    "  rgb = pow(rgb, vec3<f32>(1.0 / max(u.gamma, 0.001)));\n"
+    "  if (u.applyPost == 1 && u.vignette > 0.0) {\n"
+    "    let vc = uv - vec2<f32>(0.5);\n"
+    "    let d = dot(vc, vc) * 2.0;\n"
+    "    let vig = 1.0 - u.vignette * smoothstep(0.3, 1.0, d);\n"
+    "    rgb = rgb * vig;\n"
+    "  }\n"
+    "  if (u.applyPost == 1 && u.sharpen > 0.0) { rgb = casSharpen(fc, rgb); }\n"
+    "  if (u.applyPost == 1 && u.dither == 1) {\n"
+    "    let dp = vec2<i32>(fc) & vec2<i32>(3);\n"
+    "    let t = bayer4(dp.y * 4 + dp.x) - 0.5;\n"
+    "    rgb = clamp(rgb + vec3<f32>(t / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));\n"
+    "  }\n"
+    "  if (u.rgb555 != 0) {\n"
+    "    var threshold = 0.5;\n"
+    "    if (u.rgb555 == 2) {\n"
+    "      let dp = vec2<i32>(fc) & vec2<i32>(3);\n"
+    "      threshold = threshold + bayer4(dp.y * 4 + dp.x) - 0.5;\n"
+    "    }\n"
+    "    rgb = clamp(floor(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 31.0 + threshold) / 31.0, vec3<f32>(0.0), vec3<f32>(1.0));\n"
+    "  }\n"
+    "  return vec4<f32>(rgb, color.a);\n}\n";
+}

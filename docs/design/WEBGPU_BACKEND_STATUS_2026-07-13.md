@@ -31,15 +31,54 @@ symbols and stays byte-identical** until the deliberate flip.
 | Exact blend modes + shader-side UV clamp + N64 tile-mask | ✅ |
 | Cross-platform surface (Win32/X11/Wayland) | ✅ code; **MinGW `ge007.exe` links** |
 | Isolation: default binary byte-identical, 7/7 determinism tapes byte-exact | ✅ every task |
+| Output post-FX (FXAA / CAS sharpen / filmic tonemap / grade / vignette / bloom / dither) | ✅ **CLOSED 2026-07-16** |
 
 An A/B vs the GL reference (render-scale 1, Dam) shows **near-parity**:
 geometry, textures, depth ordering, lighting, and HUD match.
 
+## Output post-FX parity gap — DISCOVERED 2026-07-16, CLOSED same day
+
+The 2026-07-16 parity investigation (`scratchpad/sdd/task-parity-report.md`) found
+a **Category-B backend defect** this doc's earlier "at or above GL parity" summary
+had missed and wrongly implied closed: `wgpu_end_frame` presented the raw scene
+via a bare `CopyTextureToTexture`, running **none** of the output-VI-filter chain
+that GL (`gfx_opengl.c:3196+`, 39 refs) and Metal (`gfx_metal.mm:2128+` "Phase 4",
+34 refs) apply. All five remaster-default post-FX — FXAA, CAS sharpen, filmic
+tonemap, per-level color grade, vignette (plus default-on bloom/dither) — were
+silently dropped on WebGPU.
+
+**CLOSED** by the output post-FX pass (commit — see below): a fullscreen-triangle
+uber-shader (`gfx_webgpu_postfx_wgsl`) that resolves `s_scene_tex → s_post_tex`
+between scene render and present, a faithful line-for-line WGSL port of GL's
+output-filter fragment shader (same FXAA kernel, CAS weights, tonemap curve, grade
+math, vignette falloff, Bayer/RGB555). Gating mirrors GL exactly (`uApplyPost ==
+g_pcRemasterFX`, each effect on its own `g_pc*`), so **faithful mode
+(`Video.RemasterFX=0`) keeps the plain copy, byte-identical to before**. The
+minimap is composited **after** the filter (not tonemapped), matching GL/Metal
+ordering; readback/screenshot capture the post-FX'd frame (AUDIT-0003 contract).
+SSAO is the one deliberately-omitted stage (default-off; needs a sampleable depth
+target — a future enhancement, not a default-look gap).
+
+Parity evidence (Dam frame 90, render-scale 1, GL vs WebGPU; wgpu-native runs on
+Metal here so this is an API-precision floor comparable to the documented GL↔Metal
+~3% tolerance):
+- **Post-FX magnitude matches GL:** the faithful→remaster per-pixel delta is
+  mean **15.22** on WebGPU vs **15.03** on GL (p50 17 vs 16, p99 37 vs 38) — the
+  filter lands at the same strength.
+- **GL-vs-WebGPU is dominated by cross-API LSB precision:** faithful mean **1.14**
+  (p50 0, 95% ≤ 8); remaster mean **2.59** (p50 1, 95% ≤ 9) — sharpen/FXAA
+  amplify the precision floor slightly, no structural difference.
+- Native: full build both configs, 7/7 tapes byte-exact, aperture+screenshot
+  ctests pass. Browser: `ge007_web` rebuilt, headless boot clean — Dawn (strict
+  WGSL validator) accepts the pipeline, zero shader/validation errors. Perf: jungle
+  holds 60 fps, per-frame work 4.4 ms (unchanged vs the plain-copy path).
+
 ## Pixel-parity gaps — CLOSED at HEAD (update 2026-07-15)
 
 All four gaps this section originally tracked are closed on the branch tip
-(verified against HEAD `822d1c9`). WebGPU parity is now BETTER than this doc's
-original body implied — it is at or above GL parity.
+(verified against HEAD `822d1c9`). With the output post-FX pass above also closed
+(2026-07-16), WebGPU is now genuinely at GL parity for the default remaster look
+(SSAO the sole default-off residual).
 
 1. **Minimap / radar overlay — CLOSED (`b389f0d`).** WebGPU now has a full
    overlay draw path: `gfx_webgpu_draw_minimap_overlay`

@@ -39,4 +39,13 @@ struct WgpuShaderInfo {
 char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
                             struct WgpuShaderInfo *info);
 
+/* Static WGSL for the output-VI-filter post-FX pass (fullscreen triangle). A
+ * faithful port of gfx_opengl.c's output-filter fragment shader (FXAA / bloom /
+ * color-grade / filmic tonemap / gamma / vignette / CAS sharpen / Bayer dither /
+ * RGB555). Runs between the offscreen scene resolve and the surface present in
+ * gfx_webgpu.c; SSAO is intentionally omitted (needs a sampleable depth target,
+ * default-off — see WEBGPU_BACKEND_STATUS). Returned as a NUL-terminated string
+ * literal (no allocation). */
+const char *gfx_webgpu_postfx_wgsl(void);
+
 #endif /* GFX_WEBGPU_SHADER_H */

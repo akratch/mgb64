@@ -36,6 +36,7 @@
 #include "gfx_rendering_api.h"
 #include "gfx_webgpu.h"          /* public surface helper (shared with AppHost) */
 #include "gfx_webgpu_shader.h"   /* WGSL combiner emitter (Task 3) */
+#include "gfx_uniforms.h"        /* g_pc* render/post-FX uniform state (shared w/ GL/Metal) */
 
 /* gfx_current_dimensions is the frontend render resolution the viewports and
  * T&L are computed against (gfx_pc.c). Declared here exactly as gfx_metal.mm
@@ -99,6 +100,19 @@ static WGPUTexture           s_depth_tex  = NULL;
 static WGPUTextureView       s_depth_view = NULL;
 static uint32_t              s_scene_w = 0, s_scene_h = 0;
 #define WGPU_DEPTH_FORMAT WGPUTextureFormat_Depth24Plus
+
+/* Output post-FX target: the scene (s_scene_tex) is resolved through the
+ * fullscreen output-VI-filter pass into here, and THIS is what gets presented /
+ * read back / has the minimap drawn on top — mirroring GL's default-FB composite
+ * and Metal's s_final_color. Only allocated/used when the filter is active; a
+ * faithful (RemasterFX-off, gamma 1.0) frame keeps the plain scene->surface copy.
+ * Same BGRA8 format + size as the scene target. */
+static WGPUTexture           s_post_tex   = NULL;
+static WGPUTextureView       s_post_view  = NULL;
+/* The target the minimap overlay + the present copy + readback read from this
+ * frame: s_post_view when the filter ran, else s_scene_view. Set in end_frame. */
+static WGPUTextureView       s_present_target_view = NULL;
+static WGPUTexture           s_present_target_tex  = NULL;
 
 /* Per-frame objects, valid only between start_frame and end_frame. */
 static WGPUCommandEncoder    s_encoder    = NULL;
@@ -478,6 +492,20 @@ static void wgpu_start_frame(void) {
         s_depth_tex = wgpuDeviceCreateTexture(s_device, &dd);
         s_depth_view = s_depth_tex ? wgpuTextureCreateView(s_depth_tex, NULL) : NULL;
 
+        /* Output post-FX target (same format/size as the scene). RenderAttachment
+         * so the filter pass writes it; CopySrc so present/readback/dump copy it. */
+        if (s_post_view != NULL) { wgpuTextureViewRelease(s_post_view); s_post_view = NULL; }
+        if (s_post_tex != NULL)  { wgpuTextureRelease(s_post_tex);      s_post_tex = NULL; }
+        WGPUTextureDescriptor pt = {0};
+        pt.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc |
+                   WGPUTextureUsage_TextureBinding;
+        pt.dimension = WGPUTextureDimension_2D;
+        pt.size.width = rw; pt.size.height = rh; pt.size.depthOrArrayLayers = 1;
+        pt.format = s_surface_format;
+        pt.mipLevelCount = 1; pt.sampleCount = 1;
+        s_post_tex = wgpuDeviceCreateTexture(s_device, &pt);
+        s_post_view = s_post_tex ? wgpuTextureCreateView(s_post_tex, NULL) : NULL;
+
         s_scene_w = rw; s_scene_h = rh;
     }
     if (s_scene_view == NULL || s_depth_view == NULL) {
@@ -569,6 +597,202 @@ static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h,
     wgpuBufferUnmap(buf);
 }
 
+/* ------------------------------------------------------------------------
+ * Output-VI-filter post-FX pass (FXAA / bloom / grade / tonemap / gamma /
+ * vignette / CAS sharpen / dither / RGB555). A fullscreen-triangle pass that
+ * resolves s_scene_tex -> s_post_tex, faithfully porting gfx_opengl.c's output
+ * filter (see gfx_webgpu_postfx_wgsl). Gating mirrors GL exactly: uApplyPost ==
+ * g_pcRemasterFX, each effect further gated on its own g_pc* setting. SSAO is
+ * omitted (default-off; needs a sampleable depth target — WEBGPU_BACKEND_STATUS).
+ * ---------------------------------------------------------------------- */
+typedef struct {
+    float srcSize[2];
+    float dstSize[2];
+    float colorScale, colorBias, gamma, saturation;
+    float contrast, brightness, vignette, sharpen;
+    float bloomThreshold, bloomIntensity, levelSat, levelCon;
+    float colorTint[3];
+    int32_t applyPost;
+    int32_t dither, bloom, fxaa;
+    int32_t tonemap, rgb555, fbH, pad0;
+    int32_t pad1;   /* pad the C struct up to the WGSL's 16-byte-rounded 112 bytes */
+} WgpuPostU;
+
+static WGPURenderPipeline  s_post_pipe = NULL;
+static WGPUBindGroupLayout s_post_bgl  = NULL;
+static WGPUBuffer          s_post_ubuf = NULL;
+static WGPUSampler         s_post_sampN = NULL;   /* nearest + clamp */
+static WGPUSampler         s_post_sampL = NULL;   /* linear + clamp */
+static WGPUBindGroup       s_post_bg = NULL;
+static WGPUTextureView     s_post_bg_view = NULL; /* scene view the bind group binds */
+
+static float wgpu_clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/* True when the output filter changes any pixel — i.e. the master remaster
+ * switch is on, or a non-identity display gamma is set. When false, end_frame
+ * keeps the plain scene->surface copy so faithful frames stay byte-identical to
+ * the pre-post-FX backend (and the tape/aperture gates). Mirrors the spirit of
+ * gfx_opengl_output_color_adjust_active (the diag colorScale/bias/rgb555 knobs
+ * are GL-file statics, not ported — they are off by default). */
+static bool wgpu_postfx_active(void) {
+    float gamma = wgpu_clampf(g_pcVideoGamma, 0.5f, 2.5f);
+    if (gamma < 0.999f || gamma > 1.001f) {
+        return true;
+    }
+    return g_pcRemasterFX != 0;
+}
+
+static bool wgpu_ensure_postfx(void) {
+    if (s_post_pipe != NULL) {
+        return true;
+    }
+    if (!s_ready) {
+        return false;
+    }
+    WGPUShaderSourceWGSL src = {0};
+    src.chain.sType = WGPUSType_ShaderSourceWGSL;
+    src.code = wgpu_sv(gfx_webgpu_postfx_wgsl());
+    WGPUShaderModuleDescriptor smd = {0};
+    smd.nextInChain = (WGPUChainedStruct *)&src;
+    WGPUShaderModule mod = wgpuDeviceCreateShaderModule(s_device, &smd);
+    if (mod == NULL) {
+        return false;
+    }
+
+    /* group 0: uniform(0), scene texture(1), nearest sampler(2), linear sampler(3). */
+    WGPUBindGroupLayoutEntry e[4] = {0};
+    e[0].binding = 0; e[0].visibility = WGPUShaderStage_Fragment;
+    e[0].buffer.type = WGPUBufferBindingType_Uniform;
+    e[0].buffer.minBindingSize = sizeof(WgpuPostU);
+    e[1].binding = 1; e[1].visibility = WGPUShaderStage_Fragment;
+    e[1].texture.sampleType = WGPUTextureSampleType_Float;
+    e[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+    e[2].binding = 2; e[2].visibility = WGPUShaderStage_Fragment;
+    e[2].sampler.type = WGPUSamplerBindingType_Filtering;
+    e[3].binding = 3; e[3].visibility = WGPUShaderStage_Fragment;
+    e[3].sampler.type = WGPUSamplerBindingType_Filtering;
+    WGPUBindGroupLayoutDescriptor bgld = {0};
+    bgld.entryCount = 4;
+    bgld.entries = e;
+    s_post_bgl = wgpuDeviceCreateBindGroupLayout(s_device, &bgld);
+
+    WGPUBufferDescriptor ubd = {0};
+    ubd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    ubd.size = sizeof(WgpuPostU);
+    s_post_ubuf = wgpuDeviceCreateBuffer(s_device, &ubd);
+
+    WGPUSamplerDescriptor sn = {0};
+    sn.addressModeU = sn.addressModeV = sn.addressModeW = WGPUAddressMode_ClampToEdge;
+    sn.magFilter = sn.minFilter = WGPUFilterMode_Nearest;
+    sn.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+    sn.maxAnisotropy = 1;
+    s_post_sampN = wgpuDeviceCreateSampler(s_device, &sn);
+    WGPUSamplerDescriptor sl = sn;
+    sl.magFilter = sl.minFilter = WGPUFilterMode_Linear;
+    s_post_sampL = wgpuDeviceCreateSampler(s_device, &sl);
+
+    WGPUPipelineLayoutDescriptor pld = {0};
+    pld.bindGroupLayoutCount = 1;
+    pld.bindGroupLayouts = &s_post_bgl;
+    WGPUPipelineLayout pl = wgpuDeviceCreatePipelineLayout(s_device, &pld);
+
+    WGPUColorTargetState color = {0};
+    color.format = s_surface_format;
+    color.writeMask = WGPUColorWriteMask_All;   /* opaque overwrite; no blend */
+    WGPUFragmentState fs = {0};
+    fs.module = mod; fs.entryPoint = wgpu_sv("fs_main");
+    fs.targetCount = 1; fs.targets = &color;
+    WGPURenderPipelineDescriptor pd = {0};
+    pd.layout = pl;
+    pd.vertex.module = mod; pd.vertex.entryPoint = wgpu_sv("vs_main");
+    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd.primitive.frontFace = WGPUFrontFace_CCW;
+    pd.primitive.cullMode = WGPUCullMode_None;
+    pd.multisample.count = 1; pd.multisample.mask = 0xFFFFFFFFu;
+    pd.fragment = &fs;   /* no depth-stencil: fullscreen resolve has no depth */
+    s_post_pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
+
+    wgpuPipelineLayoutRelease(pl);
+    wgpuShaderModuleRelease(mod);
+    return s_post_pipe != NULL && s_post_ubuf != NULL && s_post_sampN != NULL &&
+           s_post_sampL != NULL;
+}
+
+/* Run the output filter: s_scene_tex -> s_post_tex, using the still-open frame
+ * encoder. Returns true if the post target now holds the filtered frame. */
+static bool wgpu_run_postfx(void) {
+    if (!wgpu_ensure_postfx() || s_encoder == NULL || s_scene_view == NULL ||
+        s_post_view == NULL || s_scene_w == 0 || s_scene_h == 0) {
+        return false;
+    }
+
+    int gp = g_pcGradePresets ? 1 : 0;
+    int apply_post = g_pcRemasterFX ? 1 : 0;
+    WgpuPostU u = {0};
+    u.srcSize[0] = (float)s_scene_w; u.srcSize[1] = (float)s_scene_h;
+    u.dstSize[0] = (float)s_scene_w; u.dstSize[1] = (float)s_scene_h;
+    u.colorScale = 1.0f;   /* GE007_DIAG_OUTPUT_FILTER_COLOR knobs not ported (diag-only) */
+    u.colorBias  = 0.0f;
+    u.gamma = wgpu_clampf(g_pcVideoGamma, 0.5f, 2.5f);
+    u.saturation = wgpu_clampf(g_pcVideoSaturation, 0.0f, 2.0f);
+    u.contrast   = wgpu_clampf(g_pcVideoContrast, 0.5f, 2.0f);
+    u.brightness = wgpu_clampf(g_pcVideoBrightness, -0.5f, 0.5f);
+    u.vignette   = wgpu_clampf(g_pcVignette, 0.0f, 1.0f);
+    u.sharpen    = apply_post ? wgpu_clampf(g_pcSharpen, 0.0f, 1.0f) : 0.0f;
+    u.bloomThreshold = g_pcBloomThreshold;
+    u.bloomIntensity = g_pcBloomIntensity;
+    u.levelSat = gp ? g_pcGradeLevelSat : 1.0f;
+    u.levelCon = gp ? g_pcGradeLevelCon : 1.0f;
+    u.colorTint[0] = gp ? g_pcGradeLevelTintR : 1.0f;
+    u.colorTint[1] = gp ? g_pcGradeLevelTintG : 1.0f;
+    u.colorTint[2] = gp ? g_pcGradeLevelTintB : 1.0f;
+    u.applyPost = apply_post;
+    u.dither = g_pcOutputDither ? 1 : 0;
+    u.bloom = g_pcBloom ? 1 : 0;
+    u.fxaa = (apply_post && g_pcFxaa) ? 1 : 0;
+    u.tonemap = (apply_post && g_pcTonemap) ? 1 : 0;
+    u.rgb555 = 0;   /* GE007_DIAG_OUTPUT_RGB555 not ported (diag-only, default off) */
+    u.fbH = (int32_t)s_scene_h;
+    wgpuQueueWriteBuffer(s_queue, s_post_ubuf, 0, &u, sizeof(u));
+
+    /* (Re)build the bind group when the scene view changes (resolution change). */
+    if (s_post_bg == NULL || s_post_bg_view != s_scene_view) {
+        if (s_post_bg != NULL) { wgpuBindGroupRelease(s_post_bg); s_post_bg = NULL; }
+        WGPUBindGroupEntry be[4] = {0};
+        be[0].binding = 0; be[0].buffer = s_post_ubuf; be[0].size = sizeof(WgpuPostU);
+        be[1].binding = 1; be[1].textureView = s_scene_view;
+        be[2].binding = 2; be[2].sampler = s_post_sampN;
+        be[3].binding = 3; be[3].sampler = s_post_sampL;
+        WGPUBindGroupDescriptor bgd = {0};
+        bgd.layout = s_post_bgl;
+        bgd.entryCount = 4;
+        bgd.entries = be;
+        s_post_bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
+        s_post_bg_view = s_scene_view;
+    }
+    if (s_post_bg == NULL) {
+        return false;
+    }
+
+    WGPURenderPassColorAttachment att = {0};
+    att.view = s_post_view;
+    att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    att.loadOp = WGPULoadOp_Clear;   /* fullscreen triangle covers all pixels */
+    att.storeOp = WGPUStoreOp_Store;
+    WGPURenderPassDescriptor rp = {0};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &att;
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
+    wgpuRenderPassEncoderSetPipeline(pass, s_post_pipe);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, s_post_bg, 0, NULL);
+    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    return true;
+}
+
 static void wgpu_end_frame(void) {
     if (!s_frame_open) {
         /* start_frame bailed (not ready / no texture) — nothing to submit. */
@@ -578,8 +802,22 @@ static void wgpu_end_frame(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
-    /* Minimap / radar overlay: a 2D screen-space pass into the scene target after
-     * the geometry (the GL path draws it in gfx_end_frame, Metal in mtl_end_frame;
+    /* Output post-FX: resolve the raw scene through the VI filter into s_post_tex.
+     * When active, THAT becomes the frame that is minimap-composited, presented and
+     * read back — matching GL (output filter into the default FB, THEN the minimap
+     * on top) and Metal (s_final_color, THEN minimap). A faithful frame (filter
+     * inactive) keeps the raw scene as the present source, byte-identical to the
+     * pre-post-FX copy. The minimap is drawn AFTER the filter so it is not
+     * tonemapped/graded, exactly as on GL/Metal. */
+    s_present_target_tex  = s_scene_tex;
+    s_present_target_view = s_scene_view;
+    if (wgpu_postfx_active() && wgpu_run_postfx()) {
+        s_present_target_tex  = s_post_tex;
+        s_present_target_view = s_post_view;
+    }
+
+    /* Minimap / radar overlay: a 2D screen-space pass into the present target after
+     * the post-FX (the GL path draws it in gfx_end_frame, Metal in mtl_end_frame;
      * gfx_end_frame skips it for non-GL backends). Reads Input.MinimapEnabled +
      * the frame queue internally; no-op when disabled/empty. */
     {
@@ -587,8 +825,9 @@ static void wgpu_end_frame(void) {
         minimap_overlay_draw_queued_frames_webgpu((int)s_scene_w, (int)s_scene_h);
     }
 
-    /* Optional debug frame dump: copy the offscreen scene into a mappable buffer
-     * (works even when the window is hidden, unlike a surface readback). */
+    /* Optional debug frame dump: copy the presented frame (post-FX + minimap) into
+     * a mappable buffer (works even when the window is hidden, unlike a surface
+     * readback). */
     static int frame_no = -1;
     frame_no++;
     WGPUBuffer dump_buf = NULL;
@@ -601,7 +840,7 @@ static void wgpu_end_frame(void) {
         dump_buf = wgpuDeviceCreateBuffer(s_device, &bd);
         if (dump_buf != NULL) {
             WGPUTexelCopyTextureInfo src = {0};
-            src.texture = s_scene_tex; src.aspect = WGPUTextureAspect_All;
+            src.texture = s_present_target_tex; src.aspect = WGPUTextureAspect_All;
             WGPUTexelCopyBufferInfo dst = {0};
             dst.buffer = dump_buf;
             dst.layout.bytesPerRow = dump_bpr;
@@ -621,7 +860,7 @@ static void wgpu_end_frame(void) {
          st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
     if (present_ok) {
         WGPUTexelCopyTextureInfo cs = {0};
-        cs.texture = s_scene_tex; cs.aspect = WGPUTextureAspect_All;
+        cs.texture = s_present_target_tex; cs.aspect = WGPUTextureAspect_All;
         WGPUTexelCopyTextureInfo cd = {0};
         cd.texture = st.texture; cd.aspect = WGPUTextureAspect_All;
         WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
@@ -1511,6 +1750,11 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
     if (!wgpu_ensure_minimap()) {
         return 0;
     }
+    /* Draw onto the present target (post-FX result when the filter ran, else the
+     * raw scene) so the minimap sits on top of the graded frame — not tonemapped —
+     * matching GL/Metal. s_present_target_view is set in wgpu_end_frame before this
+     * hook fires; fall back to the scene view defensively. */
+    WGPUTextureView mm_target = s_present_target_view ? s_present_target_view : s_scene_view;
     uint32_t bytes = (uint32_t)(vertex_count * 24u);
     if ((uint64_t)s_vbuf_off + bytes > WGPU_VBUF_CAP) {
         return 0;
@@ -1523,9 +1767,9 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
     wgpuQueueWriteBuffer(s_queue, s_mm_ubuf, 0, u, sizeof(u));
 
     WGPURenderPassColorAttachment att = {0};
-    att.view = s_scene_view;
+    att.view = mm_target;
     att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-    att.loadOp = WGPULoadOp_Load;    /* preserve the rendered scene */
+    att.loadOp = WGPULoadOp_Load;    /* preserve the (post-FX) frame underneath */
     att.storeOp = WGPUStoreOp_Store;
     WGPURenderPassDescriptor rp = {0};
     rp.colorAttachmentCount = 1;
@@ -1546,7 +1790,12 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
  * buffer, then extracts the requested rect with a vertical flip + BGRA->RGB.
  * Synchronous (submit + poll-map) — only the screenshot/parity path calls it. */
 static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
-    if (!s_ready || s_scene_tex == NULL || rgb_out == NULL ||
+    /* Read the presented frame — the post-FX result (+ minimap) when the filter
+     * ran this frame, else the raw scene — so screenshots/parity/oracle tooling
+     * see the composited output, exactly as GL captures the post-FX'd default FB
+     * (AUDIT-0003). s_present_target_tex persists past end_frame's submit. */
+    WGPUTexture rb_tex = s_present_target_tex ? s_present_target_tex : s_scene_tex;
+    if (!s_ready || rb_tex == NULL || rgb_out == NULL ||
         width <= 0 || height <= 0 || s_scene_w == 0 || s_scene_h == 0) {
         return false;
     }
@@ -1562,7 +1811,7 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
 
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(s_device, NULL);
     WGPUTexelCopyTextureInfo src = {0};
-    src.texture = s_scene_tex; src.aspect = WGPUTextureAspect_All;
+    src.texture = rb_tex; src.aspect = WGPUTextureAspect_All;
     WGPUTexelCopyBufferInfo dst = {0};
     dst.buffer = buf;
     dst.layout.bytesPerRow = bpr;
