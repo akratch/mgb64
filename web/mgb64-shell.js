@@ -60,7 +60,7 @@ async function forgetRom() {
 
 function gate() {
   if (!("gpu" in navigator))
-    return "This demo needs WebGPU (Chrome/Edge 113+, Safari 26+, Firefox on Windows). Your browser doesn't support it yet.";
+    return "This demo needs WebGPU (Chrome/Edge 113+, Safari 26+, Firefox 141+ on Windows). Your browser doesn't support it yet.";
   if (!("storage" in navigator) || !navigator.storage.getDirectory)
     return "This demo needs Origin-Private File System storage, which your browser doesn't support.";
   return null;
