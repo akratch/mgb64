@@ -71,6 +71,10 @@ static WGPUQueue         s_queue    = NULL;
 static WGPUSurface       s_surface  = NULL;
 static WGPUTextureFormat s_surface_format = WGPUTextureFormat_Undefined;
 static bool              s_ready    = false;   /* device + surface both live */
+/* WEB-025: set true by the device-lost callback (GPU process restart / driver
+ * reset). Latches s_ready=false so every frame-path guard skips work; the JS
+ * shell shows a "device lost — reload" panel. Full re-init is out of scope. */
+static volatile bool     s_device_lost = false;
 /* When the app shell owns the device/surface (launcher → game handoff), the
  * engine adopts them and must NOT release them at teardown. False = we created
  * them ourselves (standalone --level boot) and own their lifetime. */
@@ -158,7 +162,16 @@ static WGPUSampler     s_snap_sampler = NULL;   /* nearest + clamp-to-edge */
 #define WGPU_DIAG_UBO_RING 8
 static WGPUBuffer s_diag_ubo[WGPU_DIAG_UBO_RING];
 static float      s_diag_ubo_val[WGPU_DIAG_UBO_RING][4];
-static int        s_diag_ubo_used = 0;   /* slots written this frame */
+static int        s_diag_ubo_used = 0;   /* slots written this frame (ring + overflow) */
+/* WEB-051: overflow buffers for the exotic frame that needs > WGPU_DIAG_UBO_RING
+ * distinct viewport values. GROW rather than reuse the last ring slot: because
+ * wgpuQueueWriteBuffer runs before the command buffer, reusing an occupied slot
+ * would retroactively rewrite an earlier draw's viewport. Created lazily, reused
+ * across frames (only s_diag_ubo_used resets); the common path never touches
+ * these. */
+struct WgpuDiagUbo { WGPUBuffer buf; float val[4]; };
+static struct WgpuDiagUbo *s_diag_ubo_ext = NULL;
+static int                 s_diag_ubo_ext_cap = 0;
 
 /* Clear color, pushed by gfx_pc.c before start_frame (see gfx_webgpu_set_clear_color). */
 static double s_clear_r = 0.0, s_clear_g = 0.0, s_clear_b = 0.0;
@@ -214,6 +227,27 @@ static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
     fprintf(stderr, "[webgpu] device error (type=%d): %.*s\n",
             (int)type, (int)msg.length, msg.data ? msg.data : "");
     fflush(stderr);
+}
+
+/* WEB-025: the GPU device was lost (process restart, driver reset, TDR). Latch
+ * the lost flag + clear s_ready so every frame path becomes a clean no-op, and
+ * surface a human-readable panel to the JS shell instead of a permanently frozen
+ * canvas. Reason "Destroyed" is our own teardown releasing the device, NOT a
+ * failure — stay silent for it. Full re-init is deliberately out of scope. */
+static void on_device_lost(WGPUDevice const *device, WGPUDeviceLostReason reason,
+                           WGPUStringView msg, void *u1, void *u2) {
+    (void)device; (void)u1; (void)u2;
+    if (reason == WGPUDeviceLostReason_Destroyed) {
+        return;
+    }
+    fprintf(stderr, "[webgpu] device lost (reason=%d): %.*s\n",
+            (int)reason, (int)msg.length, msg.data ? msg.data : "");
+    fflush(stderr);
+    s_device_lost = true;
+    s_ready = false;
+    WGPU_COMPAT_REPORT_FAILURE(
+        "The graphics device was lost — reload the page to continue from your "
+        "last auto-save.");
 }
 
 /* ------------------------------------------------------------------------
@@ -295,26 +329,66 @@ WGPUSurface wgpuCompatCreateSurface(WGPUInstance instance, void *metal_layer,
 #endif  /* __EMSCRIPTEN__ */
 }
 
-/* Pick the swapchain format: prefer BGRA8Unorm (the near-universal surface
- * format and what CAMetalLayer natively presents), else the surface's first
- * advertised format. Parameterized so the shared bring-up helper can use it
- * before the s_surface/s_adapter statics are assigned. */
+/* Pick the swapchain format. WEB-049: the browser takes caps.formats[0] — the
+ * platform's own preferred canvas format, in preference order — so an Android
+ * GPU that prefers RGBA8 is not forced through a per-present BGRA8 swizzle.
+ * Native keeps the long-standing BGRA8-preferring scan (the dialect flag lives
+ * in gfx_webgpu_compat.h, so this file stays free of inline __EMSCRIPTEN__): the
+ * offscreen scene target adopts s_surface_format and the readback swizzle keys
+ * off it, so keeping the native choice pinned to BGRA8 keeps every recorded
+ * baseline byte-identical (Metal already advertises BGRA8 first). Both dialects
+ * fall back to BGRA8 only when the surface advertises no formats at all.
+ * Parameterized so the shared bring-up helper can use it before the
+ * s_surface/s_adapter statics are assigned. */
 static WGPUTextureFormat wgpu_choose_format(WGPUSurface surface, WGPUAdapter adapter) {
     WGPUSurfaceCapabilities caps = {0};
     if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus_Success ||
         caps.formatCount == 0) {
         wgpuSurfaceCapabilitiesFreeMembers(caps);
-        return WGPUTextureFormat_BGRA8Unorm;   /* safe default */
+        return WGPUTextureFormat_BGRA8Unorm;   /* safe default (formatCount==0) */
     }
-    WGPUTextureFormat chosen = caps.formats[0];
-    for (size_t i = 0; i < caps.formatCount; ++i) {
-        if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm) {
-            chosen = WGPUTextureFormat_BGRA8Unorm;
-            break;
+    WGPUTextureFormat chosen = caps.formats[0];   /* platform-preferred */
+    if (!WGPU_COMPAT_PREFER_FIRST_SURFACE_FORMAT) {
+        for (size_t i = 0; i < caps.formatCount; ++i) {
+            if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm) {
+                chosen = WGPUTextureFormat_BGRA8Unorm;
+                break;
+            }
         }
     }
     wgpuSurfaceCapabilitiesFreeMembers(caps);
     return chosen;
+}
+
+/* WEB-049: choose the surface composite-alpha mode. Prefer an explicit Opaque
+ * over Auto — on the browser Auto can resolve to premultiplied alpha, which
+ * bleeds the page through wherever a frame's alpha carries sub-1 coverage (the
+ * fence/glass RDP memory-blend surfaces). Opaque tells the compositor to ignore
+ * frame alpha. Fall back to Auto only when the surface does not advertise Opaque
+ * (Auto is guaranteed valid). Cached: the capability query runs once. Uses the
+ * s_surface/s_adapter statics, so it is called from wgpu_configure_surface after
+ * bring-up has assigned them (both the standalone and host-handoff paths do). */
+static WGPUCompositeAlphaMode wgpu_choose_alpha_mode(void) {
+    static int resolved = 0;
+    static WGPUCompositeAlphaMode mode = WGPUCompositeAlphaMode_Auto;
+    if (resolved) {
+        return mode;
+    }
+    resolved = 1;
+    if (s_surface == NULL || s_adapter == NULL) {
+        return mode;   /* Auto — caps unavailable */
+    }
+    WGPUSurfaceCapabilities caps = {0};
+    if (wgpuSurfaceGetCapabilities(s_surface, s_adapter, &caps) == WGPUStatus_Success) {
+        for (size_t i = 0; i < caps.alphaModeCount; ++i) {
+            if (caps.alphaModes[i] == WGPUCompositeAlphaMode_Opaque) {
+                mode = WGPUCompositeAlphaMode_Opaque;
+                break;
+            }
+        }
+    }
+    wgpuSurfaceCapabilitiesFreeMembers(caps);
+    return mode;
 }
 
 /* Whether an 8-bit color target stores B,G,R,A (vs R,G,B,A) — so the readback
@@ -342,7 +416,7 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst | WGPUTextureUsage_CopySrc;
     cfg.width = w;
     cfg.height = h;
-    cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
+    cfg.alphaMode = wgpu_choose_alpha_mode();   /* WEB-049: Opaque when advertised, else Auto */
     cfg.presentMode = WGPUPresentMode_Fifo;   /* vsync; matches the default GL/Metal swap */
     wgpuSurfaceConfigure(s_surface, &cfg);
     s_cfg_w = w;
@@ -360,21 +434,38 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
                         WGPUInstance *out_instance, WGPUAdapter *out_adapter,
                         WGPUDevice *out_device, WGPUQueue *out_queue,
                         WGPUSurface *out_surface, int *out_format) {
-    WGPUInstance instance = wgpuCreateInstance(NULL);
+    /* WEB-026: acquire in order (instance -> surface -> adapter), tracking each
+     * handle so any failure path releases what it acquired (goto fail) instead
+     * of leaking. All three start NULL so a NULL-guarded cleanup is safe from
+     * every early exit. */
+    WGPUInstance instance = NULL;
+    WGPUSurface  surface  = NULL;
+    WGPUAdapter  adapter  = NULL;
+
+    instance = wgpuCreateInstance(NULL);
     if (instance == NULL) {
         fprintf(stderr, "[webgpu] wgpuCreateInstance failed\n");
-        return false;
+        return false;   /* nothing acquired yet */
     }
 
     /* Surface first, so it can be passed as the adapter's compatibleSurface.
      * Routed through the dialect seam (native window vs browser canvas). */
-    WGPUSurface surface = wgpuCompatCreateSurface(instance, metal_layer, sdl_window);
+    surface = wgpuCompatCreateSurface(instance, metal_layer, sdl_window);
     if (surface == NULL) {
         fprintf(stderr, "[webgpu] surface creation failed — backend inert\n");
-        return false;
+        goto fail;
     }
 
-    AdapterReq areq = {0};
+    /* WEB-026: the request-result structs are STATIC, not stack locals. On a
+     * timed-out bring-up the WGPU_COMPAT_WAIT loop returns while the request is
+     * still pending; when the callback finally resolves it writes its result
+     * through the userdata pointer. A stack local would be a dead frame by then
+     * (silent wasm-stack corruption on exactly the slow machines where bring-up
+     * times out); a file-scope static is always a live, harmless landing site.
+     * Reset before each use. Bring-up runs once per process (single caller), so
+     * the shared statics are never re-entered. */
+    static AdapterReq areq;
+    areq = (AdapterReq){0};
     WGPURequestAdapterCallbackInfo acb = {0};
     acb.mode = WGPUCallbackMode_AllowProcessEvents;
     acb.callback = on_adapter;
@@ -383,12 +474,12 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     aopts.compatibleSurface = surface;
     aopts.powerPreference = WGPUPowerPreference_HighPerformance;
     wgpuInstanceRequestAdapter(instance, &aopts, acb);
-    WGPU_COMPAT_WAIT(areq.done, instance, NULL, 1000);
+    WGPU_COMPAT_WAIT(areq.done, instance, NULL, WGPU_COMPAT_BRINGUP_WAIT_ITERS);
     if (!areq.done || areq.status != WGPURequestAdapterStatus_Success || areq.adapter == NULL) {
         fprintf(stderr, "[webgpu] adapter request failed (status=%d)\n", (int)areq.status);
-        return false;
+        goto fail;
     }
-    WGPUAdapter adapter = areq.adapter;
+    adapter = areq.adapter;
 
     WGPUAdapterInfo info = {0};
     wgpuAdapterGetInfo(adapter, &info);
@@ -397,7 +488,7 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
             info.device.data ? info.device.data : "");
     wgpuAdapterInfoFreeMembers(info);
 
-    DeviceReq dreq = {0};
+    static DeviceReq dreq;   /* WEB-026: static — see the adapter-request note above. */
     WGPURequestDeviceCallbackInfo dcb = {0};
     dcb.mode = WGPUCallbackMode_AllowProcessEvents;
     dcb.callback = on_device;
@@ -421,11 +512,31 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     ddesc.label = wgpu_sv("mgb64-device");
     ddesc.requiredLimits = &required_limits;
     ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
+    /* WEB-025: register the device-lost callback at creation so a later GPU loss
+     * (process restart / driver reset) surfaces a reload panel instead of a
+     * frozen canvas. AllowSpontaneous: it may fire at any time, not only inside
+     * a ProcessEvents pump. */
+    ddesc.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
+    ddesc.deviceLostCallbackInfo.callback = on_device_lost;
+    dreq = (DeviceReq){0};
     wgpuAdapterRequestDevice(adapter, &ddesc, dcb);
-    WGPU_COMPAT_WAIT(dreq.done, instance, NULL, 1000);
+    WGPU_COMPAT_WAIT(dreq.done, instance, NULL, WGPU_COMPAT_BRINGUP_WAIT_ITERS);
     if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
-        fprintf(stderr, "[webgpu] device request failed (status=%d)\n", (int)dreq.status);
-        return false;
+        /* WEB-015/WEB-026: a blocklisted or limited adapter can reject the raised
+         * maxTextureDimension2D. Retry once with library-default limits so device
+         * creation still succeeds (at the 8192 default cap; s_max_tex_dim stays
+         * at its floor). Covers native wgpu-native and web alike. */
+        fprintf(stderr, "[webgpu] device request failed (status=%d); retrying with default limits\n",
+                (int)dreq.status);
+        ddesc.requiredLimits = NULL;
+        dreq = (DeviceReq){0};
+        wgpuAdapterRequestDevice(adapter, &ddesc, dcb);
+        WGPU_COMPAT_WAIT(dreq.done, instance, NULL, WGPU_COMPAT_BRINGUP_WAIT_ITERS);
+        if (!dreq.done || dreq.status != WGPURequestDeviceStatus_Success || dreq.device == NULL) {
+            fprintf(stderr, "[webgpu] device request failed after default-limits retry (status=%d)\n",
+                    (int)dreq.status);
+            goto fail;
+        }
     }
     WGPUDevice device = dreq.device;
 
@@ -448,6 +559,14 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     *out_surface  = surface;
     *out_format   = (int)wgpu_choose_format(surface, adapter);
     return true;
+
+    /* WEB-026: release everything acquired so far on any failure (the P3 leak
+     * fold-in). NULL-guarded, so it is safe from every early exit above. */
+fail:
+    if (adapter  != NULL) wgpuAdapterRelease(adapter);
+    if (surface  != NULL) wgpuSurfaceRelease(surface);
+    if (instance != NULL) wgpuInstanceRelease(instance);
+    return false;
 }
 
 /* ------------------------------------------------------------------------
@@ -645,7 +764,11 @@ static int wgpu_dump_surface_frame(void) {
 /* Map `buf` (bytesPerRow=bpr, BGRA8) and write a w*h RGB PPM to `path`. */
 static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h, const char *path) {
     size_t size = (size_t)bpr * h;
-    WgpuMapReq mr = {0};
+    /* WEB-026: static so a timed-out map's late-resolving callback lands on live
+     * storage, not a dead stack frame. Single-threaded + synchronous, so no two
+     * maps are ever in flight; reset per call. */
+    static WgpuMapReq mr;
+    mr = (WgpuMapReq){0};
     WGPUBufferMapCallbackInfo ci = {0};
     ci.mode = WGPUCallbackMode_AllowProcessEvents;
     ci.callback = on_map;
@@ -1253,6 +1376,28 @@ static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0
         prg->vattrs[i].shaderLocation = (uint32_t)prg->info.attrs[i].location;
     }
 
+    /* WEB-028 (diagnostic half): WebGPU guarantees only 16 vertex attributes and
+     * 16 inter-stage (varying) variables; a maximal N64 combiner's CCFeatures
+     * walk can emit more, and pipeline creation would then fail with a
+     * console-only validation error and a silently-skipped batch (missing
+     * geometry). Every VsIn attribute except clip position becomes a VsOut
+     * varying, so varyings == num_attrs - 1 exactly (gfx_webgpu_shader.c). Log
+     * once per shader id (this creation path runs once per id) so a real
+     * crossing is diagnosable. The packing fix is deferred. */
+    {
+        int n_attrs = prg->info.num_attrs;
+        int n_vary  = n_attrs > 0 ? n_attrs - 1 : 0;
+        if (n_attrs > 16 || n_vary > 16) {
+            fprintf(stderr,
+                    "[webgpu] combiner exceeds WebGPU attribute/varying limit "
+                    "(attrs=%d, varyings=%d, max 16) shader id=%016llx/%08x — "
+                    "pipeline may fail and skip this batch\n",
+                    n_attrs, n_vary,
+                    (unsigned long long)shader_id0, (unsigned)shader_id1);
+            fflush(stderr);
+        }
+    }
+
     prg->bgl = wgpu_make_bgl(&prg->info);
     WGPUPipelineLayoutDescriptor pld = {0};
     if (prg->bgl != NULL) {
@@ -1531,7 +1676,31 @@ static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height
     if (e == NULL) {
         return false;
     }
-    /* Re-upload into an existing id: drop the old GPU resources first. */
+
+    /* The copy descriptor is identical for the in-place and recreate paths. */
+    WGPUTexelCopyTextureInfo dst = {0};
+    dst.mipLevel = 0;
+    dst.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferLayout layout = {0};
+    layout.offset = 0;
+    layout.bytesPerRow = (uint32_t)width * 4u;
+    layout.rowsPerImage = (uint32_t)height;
+    WGPUExtent3D ext = { (uint32_t)width, (uint32_t)height, 1 };
+    const size_t bytes = (size_t)width * (size_t)height * 4u;
+
+    /* WEB-053: a re-upload whose dimensions match the live texture (the format
+     * is always RGBA8Unorm here) writes into the existing texture in place
+     * instead of destroy+recreate. Keeps the WGPUTexture AND its view — so any
+     * cached draw bind groups that reference the view stay valid and warm —
+     * eliminating per-frame texture churn for animated/streamed surfaces. */
+    if (e->tex != NULL && e->view != NULL && e->w == width && e->h == height) {
+        dst.texture = e->tex;
+        wgpuQueueWriteTexture(s_queue, &dst, rgba32_buf, bytes, &layout, &ext);
+        return true;
+    }
+
+    /* Dimensions changed (or first upload into this id): drop the old GPU
+     * resources and (re)create the texture at the new size. */
     if (e->view != NULL) { wgpuTextureViewRelease(e->view); e->view = NULL; }
     if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
 
@@ -1546,18 +1715,11 @@ static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height
     td.sampleCount = 1;
     e->tex = wgpuDeviceCreateTexture(s_device, &td);
     if (e->tex == NULL) {
+        e->w = e->h = 0;
         return false;
     }
-    WGPUTexelCopyTextureInfo dst = {0};
     dst.texture = e->tex;
-    dst.mipLevel = 0;
-    dst.aspect = WGPUTextureAspect_All;
-    WGPUTexelCopyBufferLayout layout = {0};
-    layout.offset = 0;
-    layout.bytesPerRow = (uint32_t)width * 4u;
-    layout.rowsPerImage = (uint32_t)height;
-    WGPUExtent3D ext = { (uint32_t)width, (uint32_t)height, 1 };
-    wgpuQueueWriteTexture(s_queue, &dst, rgba32_buf, (size_t)width * (size_t)height * 4u, &layout, &ext);
+    wgpuQueueWriteTexture(s_queue, &dst, rgba32_buf, bytes, &layout, &ext);
 
     e->view = wgpuTextureCreateView(e->tex, NULL);
     e->w = width;
@@ -1802,33 +1964,76 @@ static bool wgpu_snapshot_scene_for_memory_blend(const float *buf_vbo,
     return s_pass != NULL;
 }
 
+/* Create a lazily-allocated 16-byte uniform buffer (or return the existing one).
+ * Shared by the ring and overflow slots. */
+static WGPUBuffer wgpu_diag_ubo_alloc(WGPUBuffer existing) {
+    if (existing != NULL) {
+        return existing;
+    }
+    WGPUBufferDescriptor bd = {0};
+    bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    bd.size = 16;
+    return wgpuDeviceCreateBuffer(s_device, &bd);
+}
+
 /* Fetch (or write) a 16-byte viewport UBO for the coverage-wrap shader. The
  * value is the GL-convention viewport exactly as gfx_opengl.c uploads it
- * (uDiagViewport = glGetIntegerv(GL_VIEWPORT) = bottom-up origin). */
+ * (uDiagViewport = glGetIntegerv(GL_VIEWPORT) = bottom-up origin).
+ *
+ * WEB-051: every distinct value this frame gets its own buffer. The common path
+ * (<= WGPU_DIAG_UBO_RING distinct viewports; usually 1) is allocation-free. On
+ * overflow we GROW a heap array of extra buffers instead of overwriting an
+ * occupied slot — wgpuQueueWriteBuffer runs before the command buffer, so
+ * reusing a slot already referenced by an earlier draw would retroactively
+ * rewrite that draw's viewport. */
 static WGPUBuffer wgpu_diag_viewport_ubo(void) {
     float vp[4] = { (float)s_vp_x, (float)s_vp_y, (float)s_vp_w, (float)s_vp_h };
+    /* Dedup against everything written this frame (ring first, then overflow). */
     for (int i = 0; i < s_diag_ubo_used; i++) {
-        if (memcmp(s_diag_ubo_val[i], vp, sizeof(vp)) == 0 && s_diag_ubo[i] != NULL) {
-            return s_diag_ubo[i];
+        if (i < WGPU_DIAG_UBO_RING) {
+            if (s_diag_ubo[i] != NULL && memcmp(s_diag_ubo_val[i], vp, sizeof(vp)) == 0) {
+                return s_diag_ubo[i];
+            }
+        } else {
+            int j = i - WGPU_DIAG_UBO_RING;
+            if (s_diag_ubo_ext[j].buf != NULL &&
+                memcmp(s_diag_ubo_ext[j].val, vp, sizeof(vp)) == 0) {
+                return s_diag_ubo_ext[j].buf;
+            }
         }
     }
-    int slot = s_diag_ubo_used < WGPU_DIAG_UBO_RING ? s_diag_ubo_used
-                                                    : WGPU_DIAG_UBO_RING - 1;
-    if (s_diag_ubo[slot] == NULL) {
-        WGPUBufferDescriptor bd = {0};
-        bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        bd.size = 16;
-        s_diag_ubo[slot] = wgpuDeviceCreateBuffer(s_device, &bd);
-        if (s_diag_ubo[slot] == NULL) {
-            return NULL;
-        }
-    }
-    wgpuQueueWriteBuffer(s_queue, s_diag_ubo[slot], 0, vp, sizeof(vp));
-    memcpy(s_diag_ubo_val[slot], vp, sizeof(vp));
+
+    WGPUBuffer *pbuf;
+    float      *pval;
     if (s_diag_ubo_used < WGPU_DIAG_UBO_RING) {
-        s_diag_ubo_used++;
+        pbuf = &s_diag_ubo[s_diag_ubo_used];
+        pval = s_diag_ubo_val[s_diag_ubo_used];
+    } else {
+        int j = s_diag_ubo_used - WGPU_DIAG_UBO_RING;
+        if (j >= s_diag_ubo_ext_cap) {
+            int ncap = s_diag_ubo_ext_cap ? s_diag_ubo_ext_cap * 2 : WGPU_DIAG_UBO_RING;
+            struct WgpuDiagUbo *n =
+                (struct WgpuDiagUbo *)realloc(s_diag_ubo_ext, (size_t)ncap * sizeof(*n));
+            if (n == NULL) {
+                return NULL;   /* grow failed: skip the viewport UBO this draw */
+            }
+            memset(n + s_diag_ubo_ext_cap, 0,
+                   (size_t)(ncap - s_diag_ubo_ext_cap) * sizeof(*n));
+            s_diag_ubo_ext = n;
+            s_diag_ubo_ext_cap = ncap;
+        }
+        pbuf = &s_diag_ubo_ext[j].buf;
+        pval = s_diag_ubo_ext[j].val;
     }
-    return s_diag_ubo[slot];
+
+    *pbuf = wgpu_diag_ubo_alloc(*pbuf);
+    if (*pbuf == NULL) {
+        return NULL;
+    }
+    wgpuQueueWriteBuffer(s_queue, *pbuf, 0, vp, sizeof(vp));
+    memcpy(pval, vp, sizeof(vp));
+    s_diag_ubo_used++;
+    return *pbuf;
 }
 
 /* Clip a rect (x,y,w,h) to [0,maxw] x [0,maxh], zeroing degenerate extents.
@@ -2231,7 +2436,10 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     wgpuCommandBufferRelease(cmd);
     wgpuCommandEncoderRelease(enc);
 
-    WgpuMapReq mr = {0};
+    /* WEB-026: static so a timed-out map's late callback lands on live storage,
+     * not this frame's dead stack. Synchronous single-threaded call; reset here. */
+    static WgpuMapReq mr;
+    mr = (WgpuMapReq){0};
     WGPUBufferMapCallbackInfo ci = {0};
     ci.mode = WGPUCallbackMode_AllowProcessEvents;
     ci.callback = on_map;

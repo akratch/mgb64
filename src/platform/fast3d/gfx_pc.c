@@ -4634,8 +4634,23 @@ static void gfx_sync_current_dimensions_from_window(void) {
             double cssw = 0.0, cssh = 0.0;
             if (emscripten_get_element_css_size("#canvas", &cssw, &cssh) == 0 &&
                 cssw >= 1.0 && cssh >= 1.0) {
-                w = (int)(cssw + 0.5);
-                h = (int)(cssh + 0.5);
+                /* WEB-020: CSS size is layout (device-independent) pixels; scale
+                 * by the device pixel ratio so the resolution base is *physical*
+                 * device pixels, matching desktop where the drawable size is
+                 * already physical. Without this, "RenderScale 2 SSAA" on a DPR-2
+                 * display is really 0x supersampling, and RenderScale 1 renders
+                 * at half device resolution (a blurry upscale). Safe against the
+                 * feedback-runaway documented above: the CSS box size is
+                 * independent of canvas.width, and DPR is a stable display
+                 * property (not derived from the backing store), so multiplying
+                 * it in cannot spiral; the offscreen max-dim clamp (WEB-015)
+                 * below bounds the product. Guard a NaN/non-positive DPR. */
+                double dpr = emscripten_get_device_pixel_ratio();
+                if (!(dpr > 0.0)) {
+                    dpr = 1.0;
+                }
+                w = (int)(cssw * dpr + 0.5);
+                h = (int)(cssh * dpr + 0.5);
             }
         }
 #endif
@@ -24309,6 +24324,16 @@ void gfx_run_dl(Gfx *dl) {
             if (getenv("GE007_ENABLE_RECOVERY") != NULL) {
                 fprintf(stderr, "[GFX] GE007_ENABLE_RECOVERY is unsupported on Windows (SEH longjmp UB); ignoring\n");
             }
+#elif defined(__EMSCRIPTEN__)
+            /* WEB-058: the browser has no POSIX signal delivery, so the SIGSEGV
+             * handler that would siglongjmp back to g_gfxRecoveryJmp can never
+             * fire (a wasm trap aborts the module outright). Arming sigsetjmp
+             * here is dead weight; force the gate shut, mirroring the Windows
+             * arm, and note it if the env is set. */
+            recovery_enabled = 0;
+            if (getenv("GE007_ENABLE_RECOVERY") != NULL) {
+                fprintf(stderr, "[GFX] GE007_ENABLE_RECOVERY is unsupported (no signal delivery), ignoring\n");
+            }
 #else
             recovery_enabled = (getenv("GE007_ENABLE_RECOVERY") != NULL) ? 1 : 0;
 #endif
@@ -25309,6 +25334,37 @@ restart:
 }
 
 void gfx_clear_n64_dl_regions(void) {
+    /* WEB-038: surface the gfx_ptr / segment registry telemetry once per stage
+     * load (lvlStageLoad -> gfx_clear_n64_dl_regions). The five counters are
+     * written all over the translator but were never read anywhere — invisible
+     * on wasm32, the one target the ILP32 seg counters exist for (the shell
+     * cannot set GE007_DEBUG). Unconditional (NOT GE007_DEBUG-gated) and
+     * rate-limited to one line per stage load, but printed ONLY when a counter
+     * is nonzero so a healthy run stays silent. The two segment counters exist
+     * only on ILP32; the three gfx_ptr_* counters exist on every width. */
+    {
+#if UINTPTR_MAX == 0xffffffffu
+        uint32_t seg_miss  = gfx_seg_resolve_after_registry_miss;
+        uint32_t seg_unres = gfx_seg_unresolvable_count;
+#else
+        uint32_t seg_miss = 0, seg_unres = 0;
+#endif
+        /* gfx_ptr_max_probe is context in the printed line, NOT a trigger:
+         * it's reliably nonzero on native (every DL pointer probes the table),
+         * and triggering on it would print at every native stage transition —
+         * violating the clean-console standard for a healthy run. The four
+         * trigger counters are all zero in healthy play on every width. */
+        if (seg_miss || seg_unres || gfx_ptr_full_fails ||
+            gfx_ptr_ambiguous) {
+            fprintf(stderr,
+                    "[gfx-telemetry] seg_resolve_after_miss=%u seg_unresolvable=%u "
+                    "ptr_full_fails=%u ptr_ambiguous=%u ptr_max_probe=%u\n",
+                    seg_miss, seg_unres, gfx_ptr_full_fails,
+                    gfx_ptr_ambiguous, gfx_ptr_max_probe);
+            fflush(stderr);
+        }
+    }
+
     n64_dl_region_count = 0;
     extra_pc_vtx_region_count = 0;
     memset(extra_pc_vtx_regions, 0, sizeof(extra_pc_vtx_regions));

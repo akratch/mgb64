@@ -12,8 +12,14 @@
 
 #include "imgui.h"
 
-#include <webgpu/webgpu.h>
-#include <webgpu/wgpu.h>
+/* WEB-055: route WebGPU through the single dialect seam instead of including
+ * <webgpu/webgpu.h> + <webgpu/wgpu.h> directly — this was the only translation
+ * unit bypassing gfx_webgpu_compat.h, and it fails to compile the moment the
+ * overlay ships on web (emdawnwebgpu has no <webgpu/wgpu.h>). The compat header
+ * pulls in webgpu.h + wgpu.h on native (this file is only built when
+ * MGB64_APP=ON) and the emdawnwebgpu unified header on the browser. */
+/* Seam rule: WebGPU types deliberately route through the compat header. */
+#include "gfx_webgpu_compat.h" // IWYU pragma: keep
 
 #include <cstring>
 #include <cstdint>

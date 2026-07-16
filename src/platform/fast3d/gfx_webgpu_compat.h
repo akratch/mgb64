@@ -34,6 +34,16 @@
    * yields (via requestAnimationFrame); emscripten's WebGPU binding ABORTS on
    * an explicit wgpuSurfacePresent, so presenting is a no-op here. */
   #define WGPU_COMPAT_PRESENT(surface) ((void)(surface))
+  /* WEB-026: one-time bring-up waits (adapter + device) get a bigger budget on
+   * the browser, where cold-start adapter enumeration under Asyncify (each pump
+   * is a ~4ms setTimeout-clamped emscripten_sleep) can exceed the native budget
+   * on exactly the slow machines where bring-up is fragile. Native drives
+   * wgpu-native's poll synchronously, so 1000 is already generous there. */
+  #define WGPU_COMPAT_BRINGUP_WAIT_ITERS 10000
+  /* WEB-049: on the browser take the surface's platform-preferred format
+   * (caps.formats[0]) rather than forcing BGRA8 where the platform prefers
+   * RGBA8 — that mismatch costs a per-present swizzle on some Android GPUs. */
+  #define WGPU_COMPAT_PREFER_FIRST_SURFACE_FORMAT 1
 #else
   #include <webgpu/webgpu.h>
   #include <webgpu/wgpu.h>            /* wgpu-native extensions             */
@@ -45,6 +55,13 @@
       } while (0)
   /* Native: wgpu-native presents the surface explicitly. */
   #define WGPU_COMPAT_PRESENT(surface) wgpuSurfacePresent((surface))
+  /* WEB-026: native bring-up waits drive wgpuDevicePoll synchronously — 1000
+   * pumps is already generous; keep it unchanged so native timing is untouched. */
+  #define WGPU_COMPAT_BRINGUP_WAIT_ITERS 1000
+  /* WEB-049: native keeps the long-standing BGRA8-preferring surface-format
+   * scan so the offscreen scene target format and readback swizzle stay
+   * byte-identical to every recorded baseline (Metal already prefers BGRA8). */
+  #define WGPU_COMPAT_PREFER_FIRST_SURFACE_FORMAT 0
 #endif
 
 /* WEB-003 / WEB-010 / WEB-025: hand a human-readable bring-up/device-lost
