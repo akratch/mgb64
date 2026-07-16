@@ -1,4 +1,8 @@
 #include <ultra64.h>
+/* <ultra64.h> -> <math.h> and math_asinfacosf.h both carry the WEB-056
+ * __EMSCRIPTEN__ rename, so the acosf/asinf definitions below are emitted as
+ * ge007_acosf/ge007_asinf on wasm (matching every caller) and unchanged on
+ * native. See <math.h> for the rationale. */
 #include "math_asinacos.h"
 #include "math_asinfacosf.h"
 

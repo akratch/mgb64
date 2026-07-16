@@ -5,6 +5,9 @@
 
 #include <ultra64.h>
 #include <math.h>
+/* WEB-056: <math.h> / math_atan2f.h carry the __EMSCRIPTEN__ rename, so this
+ * definition is emitted as ge007_atan2f on wasm; the internal acosf call below
+ * likewise becomes ge007_acosf (the game's faithful copy). Native unchanged. */
 #include "math_asinfacosf.h"
 #include "math_atan2f.h"
 

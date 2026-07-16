@@ -1,6 +1,41 @@
 #ifndef _MATH_EXT_H_
 #define _MATH_EXT_H_
 
+/* wasm libm de-shadowing (WEB-056). The port defines a few libm float entry
+ * points itself as faithful N64-precision approximations: acosf/asinf
+ * (math_asinfacosf.c, routed through the game's s16 acos/asin table) and atan2f
+ * (math_atan2f.c, the retail formulation). On native this is harmless — the
+ * engine and SDL/libm are separate dynamically-linked images, so each binds its
+ * own acosf/asinf/atan2f. Under wasm EVERYTHING statically links into ONE
+ * module, and these strong game symbols then also satisfy SDL's *internal* libm
+ * references: SDL's audio resamplers and controller math would silently swap
+ * musl's implementations for the N64 table approximations. Rename the game's
+ * copies to ge007_-prefixed symbols for the wasm build only. Game translation
+ * units keep calling the faithful N64 versions under the new names, while SDL
+ * and musl resolve plain acosf/asinf/atan2f to musl's own (more correct for
+ * SDL); the game's own call graph is unchanged, only the symbol name.
+ *
+ * This macro must be visible to BOTH each definition TU (math_asinfacosf.c,
+ * math_atan2f.c) and every caller, so it lives in the one header the entire
+ * engine funnels through: <ultra64.h> includes <math.h> (this file), so any TU
+ * that includes either — which every acosf/asinf/atan2f caller does, always
+ * before the narrower math_asinfacosf.h / math_atan2f.h — carries the rename.
+ * Native never defines __EMSCRIPTEN__, so the preprocessor path (and thus every
+ * native object's symbol table) is byte-identical to before.
+ *
+ * NOT renamed here: sinf/cosf. Unlike the three above, the port does NOT compile
+ * a game-side sinf/cosf — src/libultra/gu/sinf.c and cosf.c exist but are never
+ * added to any build target, so `nm` shows them UNDEFINED in the engine and they
+ * already resolve to libm/musl on both native and web. There is no shadow to
+ * break, and renaming their callers would only leave ge007_sinf/ge007_cosf
+ * undefined at link. See sinf.c / cosf.c for the dormant (arms only if that
+ * source is ever wired into the build) companion guard. */
+#ifdef __EMSCRIPTEN__
+#define acosf  ge007_acosf
+#define asinf  ge007_asinf
+#define atan2f ge007_atan2f
+#endif
+
 #ifdef NATIVE_PORT
 float sqrtf(float);
 double sqrt(double);
