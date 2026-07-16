@@ -49,6 +49,10 @@ float floorf(float);
 double floor(double);
 float ceilf(float);
 double ceil(double);
+/* Final-review follow-up: platform_sdl.c's web mouse-unscale calls lroundf;
+ * this shadow header wins the include path there, so declare it (previously
+ * only clang's builtin recovery supplied the correct `long (float)` type). */
+long lroundf(float);
 float atan2f(float, float);
 float acosf(float);
 float asinf(float);

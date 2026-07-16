@@ -298,7 +298,9 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
      * group(0) @binding(7), added to the bind-group layout ONLY for noise-using
      * combiners (info->uses_noise) and written once per frame — so noise-free
      * pipelines keep their exact bindings and there is no per-draw uniform. Exact
-     * bits differ from GL (GL uses its own rand constants) but the static->animated
+     * bits may differ from GL only via the backend's sin() implementation — the
+     * hash constants (12.9898/78.233/37.719, 143758.5453) and cell quantize are
+     * identical to gfx_opengl.c's random() — but the static->animated
      * behaviour matches, which is the requirement. `in.clip_pos.xy` is the WGSL
      * @builtin(position) (top-left origin) — GL's gl_FragCoord is bottom-left, so
      * the cell grid is vertically mirrored; imperceptible for per-frame static. */
