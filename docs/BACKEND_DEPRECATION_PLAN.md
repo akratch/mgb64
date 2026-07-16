@@ -60,10 +60,15 @@ is the first and cleanest deletion.
   (`WEBGPU_BACKEND_STATUS_2026-07-13.md:94-111`). macOS is the developed platform
   and is already marked "full game" there — the gate is a signed attestation on a
   shipped release, not new engineering.
-- **`--remaster` post-FX delivered on WebGPU first.** `--remaster` currently
-  routes SSAO/post-FX to Metal. Metal cannot be deleted until the remaster
-  post-FX path runs on WebGPU, or `--remaster` regresses. This is the one Phase-M
-  engineering dependency, not just an attestation.
+- **`--remaster` post-FX delivered on WebGPU first. — MET (2026-07-16).** The
+  remaster output post-FX (FXAA/CAS/tonemap/grade/vignette/bloom/dither) landed on
+  WebGPU (commit `487a4b3`), and **SSAO — the one effect that would otherwise be
+  *lost* on Metal deletion — now runs on WebGPU too** (planar v1, `gfx_webgpu_postfx_wgsl`;
+  see `WEBGPU_BACKEND_STATUS_2026-07-13.md` "SSAO — CLOSED 2026-07-16"). GL's SSAO
+  hangs on macOS GL-over-Metal, so before this Metal was the *only* backend with
+  working SSAO; that dependency is now discharged. No remaster capability is lost
+  when `gfx_metal.mm` is deleted. This was the one Phase-M engineering dependency;
+  what remains is the owner attestation, not new engineering.
 
 ### Deletion scope (enumerated)
 

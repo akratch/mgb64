@@ -32,6 +32,7 @@ symbols and stays byte-identical** until the deliberate flip.
 | Cross-platform surface (Win32/X11/Wayland) | ✅ code; **MinGW `ge007.exe` links** |
 | Isolation: default binary byte-identical, 7/7 determinism tapes byte-exact | ✅ every task |
 | Output post-FX (FXAA / CAS sharpen / filmic tonemap / grade / vignette / bloom / dither) | ✅ **CLOSED 2026-07-16** |
+| SSAO (planar v1) — the last Metal-deletion capability gap | ✅ **CLOSED 2026-07-16** (see below) |
 
 An A/B vs the GL reference (render-scale 1, Dam) shows **near-parity**:
 geometry, textures, depth ordering, lighting, and HUD match.
@@ -56,8 +57,36 @@ g_pcRemasterFX`, each effect on its own `g_pc*`), so **faithful mode
 (`Video.RemasterFX=0`) keeps the plain copy, byte-identical to before**. The
 minimap is composited **after** the filter (not tonemapped), matching GL/Metal
 ordering; readback/screenshot capture the post-FX'd frame (AUDIT-0003 contract).
-SSAO is the one deliberately-omitted stage (default-off; needs a sampleable depth
-target — a future enhancement, not a default-look gap).
+
+## SSAO — CLOSED 2026-07-16 (`feat(gfx): WebGPU SSAO`, final Metal-deletion capability gap)
+
+SSAO was the last effect Metal had and WebGPU did not — the one capability that
+would be *lost* when the Metal backend is deleted (GL's SSAO hangs on macOS
+GL-over-Metal; only Metal's worked). **CLOSED** by folding GL's **planar v1**
+kernel into the post-FX uber-shader (`gfx_webgpu_postfx_wgsl`), a term-for-term
+port of `gfx_opengl.c:3346-3374` (8 directions × 2 steps, the `2d-1` window→NDC
+`ssaoLinZ`, the 1.5%–12% scale-invariant contact thresholds). AO is applied right
+after the scene sample and **before FXAA**, matching GL's `fs_main` order.
+
+**Depth strategy — direct Depth24Plus sampling (no r32float copy).** The scene
+depth target already exists; the only change is adding `TextureUsage_TextureBinding`
+to it (inert — changes no rendered pixel) and binding it as a `texture_depth_2d`
+(sampleType `Depth`) with a NonFiltering nearest/clamp sampler. Depth24Plus is
+spec-sampleable on both wgpu-native and Dawn, so the portable r32float depth-copy
+fallback was **not needed**. One dialect gotcha the strict naga validator caught
+(and Dawn/Tint enforce identically): `textureSampleLevel` on a depth texture takes
+an **`i32`** level, not `0.0` — the port uses `0`. The per-frame `g_pc_ssao_proj_*`
+reset (mirroring `gfx_opengl.c:4182` / `gfx_metal.mm:2036`) was added to
+`wgpu_start_frame`. Video.SsaoMode=hemisphere (v2) is Metal-only; like GL, WebGPU
+falls back to planar v1 with a one-time note.
+
+**Gating — default-off, inert.** SSAO requires `g_pcRemasterFX && Video.Ssao != 0
+&& proj_b != 0` (exactly GL's gate; WebGPU is never MSAA so that limit is moot).
+With `Video.Ssao=0` (default), the SSAO branch is skipped and captures are
+**byte-identical** to the pre-change binary (Dam f90 md5 `ac77ff03…` == pristine
+HEAD). Enabling it darkens creases/corners of geometry while leaving sky
+(depth ≈ 1) and pure-black untouched — verified on Dam and Jungle. Perf: Jungle
+(heaviest) holds **60.0 fps** with SSAO on, zero wall-time delta vs off.
 
 Parity evidence (Dam frame 90, render-scale 1, GL vs WebGPU; wgpu-native runs on
 Metal here so this is an API-precision floor comparable to the documented GL↔Metal
@@ -80,8 +109,8 @@ Metal here so this is an API-precision floor comparable to the documented GL↔M
 
 All four gaps this section originally tracked are closed on the branch tip
 (verified against HEAD `822d1c9`). With the output post-FX pass above also closed
-(2026-07-16), WebGPU is now genuinely at GL parity for the default remaster look
-(SSAO the sole default-off residual).
+(2026-07-16), plus SSAO closed the same day, WebGPU is now genuinely at GL/Metal
+parity for the full remaster feature set — no capability is lost on Metal deletion.
 
 1. **Minimap / radar overlay — CLOSED (`b389f0d`).** WebGPU now has a full
    overlay draw path: `gfx_webgpu_draw_minimap_overlay`

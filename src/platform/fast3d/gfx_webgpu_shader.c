@@ -424,8 +424,9 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
  *
  * WebGPU renders the scene offscreen at the surface resolution, so src == dst
  * (filterMode 0 = bilinear sampleDst, exact at integer taps); the GL VI-filter
- * rescale/aspect-fit modes are a diag-only feature and are not ported. SSAO is
- * omitted (default-off; would need a sampleable depth target). All texture reads
+ * rescale/aspect-fit modes are a diag-only feature and are not ported. SSAO
+ * (planar v1) samples the scene depth target (@binding(4), default-off via
+ * Video.Ssao) and darkens before FXAA, matching GL's fs_main order. All texture reads
  * use textureSampleLevel so the in-branch FXAA/bloom/sharpen samples stay valid
  * under WGSL's uniformity rules. `fragPos` is @builtin(position) (top-left
  * origin, matching the scene texture layout and the CopyTextureToTexture present
@@ -451,12 +452,16 @@ const char *gfx_webgpu_postfx_wgsl(void) {
     "  bloomThreshold : f32, bloomIntensity : f32, levelSat : f32, levelCon : f32,\n"
     "  colorTint : vec3<f32>,\n"
     "  applyPost : i32, dither : i32, bloom : i32, fxaa : i32,\n"
-    "  tonemap : i32, rgb555 : i32, fbH : i32, pad0 : i32,\n"
+    "  tonemap : i32, rgb555 : i32, fbH : i32, ssao : i32,\n"
+    "  ssaoRadius : f32, ssaoIntensity : f32, ssaoAspect : f32, ssaoProjA : f32,\n"
+    "  ssaoProjB : f32,\n"
     "};\n"
     "@group(0) @binding(0) var<uniform> u : Post;\n"
     "@group(0) @binding(1) var uTex : texture_2d<f32>;\n"
     "@group(0) @binding(2) var uSampN : sampler;\n"   /* nearest + clamp (unused; kept so the bind group layout is stable) */
     "@group(0) @binding(3) var uSampL : sampler;\n"   /* linear + clamp (sampleDst + bloom — GL filterMode-0 is bilinear) */
+    "@group(0) @binding(4) var uDepthTex : texture_depth_2d;\n"   /* scene depth (SSAO) */
+    "@group(0) @binding(5) var uSampD : sampler;\n"   /* nearest + clamp, non-filtering (depth reads) */
     "struct VOut { @builtin(position) pos : vec4<f32> };\n"
     "@vertex fn vs_main(@builtin(vertex_index) vid : u32) -> VOut {\n"
     "  var kPos = array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0), vec2<f32>(3.0,-1.0), vec2<f32>(-1.0,3.0));\n"
@@ -522,10 +527,43 @@ const char *gfx_webgpu_postfx_wgsl(void) {
     "  let rcpW = 1.0 / (1.0 + 4.0 * wgt);\n"
     "  let outc = clamp(sum * rcpW, mn, mx);\n"
     "  return mix(rgbC, outc, clamp(u.sharpen, 0.0, 1.0));\n}\n"
+    /* Screen-space ambient occlusion from the scene depth texture — a term-for-term
+     * port of gfx_opengl.c:3346-3374 (planar v1). Works on raw (non-linear) window
+     * depth: a neighbour nearer than the centre by a scale-invariant margin is a
+     * contact occluder. ssaoLinZ reuses GL's 2d-1 window->NDC mapping verbatim; the
+     * depth read uses textureSampleLevel (explicit LOD, no derivative uniformity
+     * concern under WGSL's control-flow rules). Depth24Plus samples as the stored
+     * window-depth in [0,1], identical to GL's texture(uDepthTex,uv).r. */
+    "fn ssaoLinZ(d : f32) -> f32 { return u.ssaoProjB / (u.ssaoProjA + 2.0 * d - 1.0); }\n"
+    "fn ssaoAO(uv : vec2<f32>) -> f32 {\n"
+    "  var kSsaoDir = array<vec2<f32>,8>(\n"
+    "    vec2<f32>( 1.0, 0.0), vec2<f32>( 0.7071, 0.7071), vec2<f32>(0.0, 1.0), vec2<f32>(-0.7071, 0.7071),\n"
+    "    vec2<f32>(-1.0, 0.0), vec2<f32>(-0.7071,-0.7071), vec2<f32>(0.0,-1.0), vec2<f32>( 0.7071,-0.7071));\n"
+    "  let cd = textureSampleLevel(uDepthTex, uSampD, uv, 0);\n"
+    "  if (cd >= 0.99999) { return 0.0; }\n"
+    "  let cz = ssaoLinZ(cd);\n"
+    "  var occ = 0.0;\n"
+    "  for (var i = 0; i < 8; i = i + 1) {\n"
+    "    var dir = kSsaoDir[i];\n"
+    "    dir.x = dir.x / max(u.ssaoAspect, 0.001);\n"
+    "    for (var sp = 1; sp <= 2; sp = sp + 1) {\n"
+    "      let o = dir * u.ssaoRadius * f32(sp);\n"
+    "      let nz = ssaoLinZ(textureSampleLevel(uDepthTex, uSampD, uv + o, 0));\n"
+    "      let diff = cz - nz;\n"
+    "      if (diff > cz * 0.015 && diff < cz * 0.12) { occ = occ + 1.0 / f32(sp); }\n"
+    "    }\n"
+    "  }\n"
+    "  return occ / 12.0;\n}\n"
     "@fragment fn fs_main(in : VOut) -> @location(0) vec4<f32> {\n"
     "  let fc = in.pos.xy;\n"
     "  let uv = fc / u.dstSize;\n"
     "  var color = sampleDst(fc);\n"
+    /* SSAO folded in right after sampling, before FXAA/bloom/grade — matches GL's
+     * fs_main order (gfx_opengl.c:3377). Uses uv (== GL's vTexCoord). */
+    "  if (u.ssao == 1) {\n"
+    "    let ao = 1.0 - u.ssaoIntensity * ssaoAO(uv);\n"
+    "    color = vec4<f32>(color.rgb * clamp(ao, 0.0, 1.0), color.a);\n"
+    "  }\n"
     "  if (u.applyPost == 1 && u.fxaa == 1) { color = vec4<f32>(fxaa(fc, color.rgb), color.a); }\n"
     "  if (u.applyPost == 1 && u.bloom == 1) {\n"
     "    let texel = 1.0 / u.srcSize;\n"

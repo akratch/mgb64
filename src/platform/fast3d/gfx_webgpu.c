@@ -467,6 +467,15 @@ static void wgpu_start_frame(void) {
     if (rw != s_cfg_w || rh != s_cfg_h) {
         wgpu_configure_surface(rw, rh);
     }
+    /* Reset the SSAO scene-projection coefficients each frame (mirrors
+     * gfx_opengl.c:4182 and gfx_metal.mm:2036): the largest-far projection seen
+     * during this frame's draws (gfx_pc.c:16128) wins. Without the reset the
+     * `proj_b != 0` SSAO gate would latch on forever and menu/HUD frames that set
+     * no projection would still get AO. proj_a is set in lockstep with proj_b, so
+     * only proj_b/x/y are cleared — exactly as GL/Metal do. */
+    g_pc_ssao_proj_b = 0.0f;
+    g_pc_ssao_proj_x = 0.0f;
+    g_pc_ssao_proj_y = 0.0f;
     /* (Re)create the offscreen scene target + depth buffer at the render res. */
     if (s_scene_view == NULL || s_scene_w != rw || s_scene_h != rh) {
         if (s_scene_view != NULL) { wgpuTextureViewRelease(s_scene_view); s_scene_view = NULL; }
@@ -484,7 +493,11 @@ static void wgpu_start_frame(void) {
         s_scene_view = s_scene_tex ? wgpuTextureCreateView(s_scene_tex, NULL) : NULL;
 
         WGPUTextureDescriptor dd = {0};
-        dd.usage = WGPUTextureUsage_RenderAttachment;
+        /* TextureBinding: the SSAO post-FX pass samples this depth target as a
+         * texture_depth_2d (default-off; inert when Video.Ssao=0). Adding the usage
+         * flag does not change any rendered pixel — the scene pass output is
+         * unaffected, so faithful frames stay byte-identical. */
+        dd.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
         dd.dimension = WGPUTextureDimension_2D;
         dd.size.width = rw; dd.size.height = rh; dd.size.depthOrArrayLayers = 1;
         dd.format = WGPU_DEPTH_FORMAT;
@@ -602,8 +615,8 @@ static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h,
  * vignette / CAS sharpen / dither / RGB555). A fullscreen-triangle pass that
  * resolves s_scene_tex -> s_post_tex, faithfully porting gfx_opengl.c's output
  * filter (see gfx_webgpu_postfx_wgsl). Gating mirrors GL exactly: uApplyPost ==
- * g_pcRemasterFX, each effect further gated on its own g_pc* setting. SSAO is
- * omitted (default-off; needs a sampleable depth target — WEBGPU_BACKEND_STATUS).
+ * g_pcRemasterFX, each effect further gated on its own g_pc* setting. SSAO
+ * (planar v1) reads the sampleable scene depth target (default-off; Video.Ssao).
  * ---------------------------------------------------------------------- */
 typedef struct {
     float srcSize[2];
@@ -614,8 +627,10 @@ typedef struct {
     float colorTint[3];
     int32_t applyPost;
     int32_t dither, bloom, fxaa;
-    int32_t tonemap, rgb555, fbH, pad0;
-    int32_t pad1;   /* pad the C struct up to the WGSL's 16-byte-rounded 112 bytes */
+    int32_t tonemap, rgb555, fbH, ssao;
+    /* SSAO (planar v1) — ports gfx_opengl.c's uSsao* uniforms. */
+    float ssaoRadius, ssaoIntensity, ssaoAspect, ssaoProjA;
+    float ssaoProjB;   /* struct ends at 128 bytes — WGSL 16-byte-rounded, no trailing pad */
 } WgpuPostU;
 
 static WGPURenderPipeline  s_post_pipe = NULL;
@@ -661,8 +676,9 @@ static bool wgpu_ensure_postfx(void) {
         return false;
     }
 
-    /* group 0: uniform(0), scene texture(1), nearest sampler(2), linear sampler(3). */
-    WGPUBindGroupLayoutEntry e[4] = {0};
+    /* group 0: uniform(0), scene texture(1), nearest sampler(2), linear sampler(3),
+     * scene depth texture(4, for SSAO), non-filtering depth sampler(5). */
+    WGPUBindGroupLayoutEntry e[6] = {0};
     e[0].binding = 0; e[0].visibility = WGPUShaderStage_Fragment;
     e[0].buffer.type = WGPUBufferBindingType_Uniform;
     e[0].buffer.minBindingSize = sizeof(WgpuPostU);
@@ -673,8 +689,15 @@ static bool wgpu_ensure_postfx(void) {
     e[2].sampler.type = WGPUSamplerBindingType_Filtering;
     e[3].binding = 3; e[3].visibility = WGPUShaderStage_Fragment;
     e[3].sampler.type = WGPUSamplerBindingType_Filtering;
+    /* SSAO depth read: depth textures are unfilterable — sampleType Depth + a
+     * NonFiltering sampler (nearest/clamp, matching GL/Metal's depth sampler). */
+    e[4].binding = 4; e[4].visibility = WGPUShaderStage_Fragment;
+    e[4].texture.sampleType = WGPUTextureSampleType_Depth;
+    e[4].texture.viewDimension = WGPUTextureViewDimension_2D;
+    e[5].binding = 5; e[5].visibility = WGPUShaderStage_Fragment;
+    e[5].sampler.type = WGPUSamplerBindingType_NonFiltering;
     WGPUBindGroupLayoutDescriptor bgld = {0};
-    bgld.entryCount = 4;
+    bgld.entryCount = 6;
     bgld.entries = e;
     s_post_bgl = wgpuDeviceCreateBindGroupLayout(s_device, &bgld);
 
@@ -755,19 +778,47 @@ static bool wgpu_run_postfx(void) {
     u.tonemap = (apply_post && g_pcTonemap) ? 1 : 0;
     u.rgb555 = 0;   /* GE007_DIAG_OUTPUT_RGB555 not ported (diag-only, default off) */
     u.fbH = (int32_t)s_scene_h;
+    /* SSAO (planar v1) — gate + uniforms mirror gfx_opengl.c:3561-3579 exactly.
+     * apply_post already == g_pcRemasterFX (the remaster-master gate), so SSAO is a
+     * remaster effect; proj_b != 0 means a scene projection was captured this frame
+     * (menu/HUD frames leave it 0 -> no AO). WebGPU is never MSAA, so the GL/Metal
+     * "SSAO off under MSAA" limit does not apply. Video.SsaoMode=hemisphere (v2) is
+     * a Metal-only effect; like GL, WebGPU falls back to planar v1 with a one-time
+     * note. */
+    int ssao_on = (apply_post && g_pcSsao != 0 && g_pc_ssao_proj_b != 0.0f) ? 1 : 0;
+    if (ssao_on && g_pcSsaoMode == 2) {
+        static int warned_ssao_mode;
+        if (!warned_ssao_mode) {
+            fprintf(stderr, "[webgpu] Video.SsaoMode=hemisphere is a Metal-only effect; "
+                            "WebGPU falls back to planar SSAO v1.\n");
+            warned_ssao_mode = 1;
+        }
+    }
+    u.ssao = ssao_on;
+    u.ssaoRadius = g_pcSsaoRadius * 0.02f;   /* radius key -> UV offset scale (load-bearing) */
+    u.ssaoIntensity = g_pcSsaoIntensity;
+    u.ssaoAspect = s_scene_h > 0 ? (float)s_scene_w / (float)s_scene_h : 1.0f;
+    u.ssaoProjA = g_pc_ssao_proj_a;
+    u.ssaoProjB = g_pc_ssao_proj_b;
     wgpuQueueWriteBuffer(s_queue, s_post_ubuf, 0, &u, sizeof(u));
 
     /* (Re)build the bind group when the scene view changes (resolution change). */
     if (s_post_bg == NULL || s_post_bg_view != s_scene_view) {
         if (s_post_bg != NULL) { wgpuBindGroupRelease(s_post_bg); s_post_bg = NULL; }
-        WGPUBindGroupEntry be[4] = {0};
+        WGPUBindGroupEntry be[6] = {0};
         be[0].binding = 0; be[0].buffer = s_post_ubuf; be[0].size = sizeof(WgpuPostU);
         be[1].binding = 1; be[1].textureView = s_scene_view;
         be[2].binding = 2; be[2].sampler = s_post_sampN;
         be[3].binding = 3; be[3].sampler = s_post_sampL;
+        /* SSAO depth: bound unconditionally (the shader only reads it when u.ssao==1,
+         * so faithful/SSAO-off frames are unaffected). s_depth_view is recreated in
+         * lockstep with s_scene_view, so the same rebuild trigger covers it. The
+         * nearest/clamp s_post_sampN doubles as the NonFiltering depth sampler. */
+        be[4].binding = 4; be[4].textureView = s_depth_view;
+        be[5].binding = 5; be[5].sampler = s_post_sampN;
         WGPUBindGroupDescriptor bgd = {0};
         bgd.layout = s_post_bgl;
-        bgd.entryCount = 4;
+        bgd.entryCount = 6;
         bgd.entries = be;
         s_post_bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
         s_post_bg_view = s_scene_view;
