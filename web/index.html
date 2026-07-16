@@ -24,7 +24,10 @@
   Keyboard defaults + action labels: src/platform/input_bindings.c (kDefault / kLabel).
   Extra hardcoded keys (Use=F, Crouch=C/Ctrl, weapon wheel, Watch=Esc/Tab, Mute=M):
     src/platform/platform_sdl.c (the SDL_KEYDOWN handler + the "H" help block).
-  System hotkeys: F1 menu + F10 FPS overlay: src/app/ui_overlay.cpp (135/142).
+  NOTE (WEB-001): the F1 settings overlay and F10 FPS-toggle exist only in the
+    native app (src/app/ui_overlay.cpp) — MGB64_APP is OFF on web, so there is no
+    overlay here, and the F1/F2/F3–F12 engine debug keys are gated behind
+    GE007_DEV_HOTKEYS (default OFF). Do NOT re-advertise F-keys on this page.
   Gamepad defaults: src/platform/input_bindings.c (kGpDefault / kGpLabel).
   If any binding is rebound in code, update the .controls table below to match.
 -->
@@ -76,8 +79,9 @@
         </div>
 
         <p class="overlay-note">
-          In game: <kbd>F1</kbd> menu · <kbd>F10</kbd> FPS · <kbd>Esc</kbd>
-          release mouse &amp; open Watch. Click the canvas to capture the mouse.
+          In game: <kbd>Esc</kbd> / <kbd>Tab</kbd> release mouse &amp; open the
+          Watch · <kbd>M</kbd> mute · <kbd>H</kbd> help. Click the canvas to
+          capture the mouse. An FPS overlay is on by default.
         </p>
       </section>
 
@@ -110,10 +114,9 @@
                 <h3>System</h3>
                 <dl>
                   <dt>Watch / pause</dt><dd><kbd>Esc</kbd> / <kbd>Tab</kbd></dd>
-                  <dt>Settings menu</dt><dd><kbd>F1</kbd></dd>
-                  <dt>FPS overlay</dt><dd><kbd>F10</kbd></dd>
                   <dt>Mute audio</dt><dd><kbd>M</kbd></dd>
-                  <dt>Fullscreen</dt><dd>Browser <kbd>F11</kbd></dd>
+                  <dt>Help (to console)</dt><dd><kbd>H</kbd></dd>
+                  <dt>FPS overlay</dt><dd>On by default</dd>
                 </dl>
               </section>
               <section>
@@ -127,8 +130,9 @@
                   <dt>Jump</dt><dd>A</dd>
                   <dt>Reload / Use</dt><dd>B</dd>
                   <dt>Next weapon</dt><dd>Y</dd>
+                  <dt>Prev weapon</dt><dd>R3 (right-stick click)</dd>
+                  <dt>Crouch</dt><dd>L3 (left-stick click)</dd>
                   <dt>Watch / pause</dt><dd>Start</dd>
-                  <dt>Settings menu</dt><dd>Back / View</dd>
                 </dl>
               </section>
             </div>
@@ -152,8 +156,8 @@
                 the desktop launcher).</li>
               <li><strong>Lights shoot out</strong> consistently — the
                 shoot-out-lights hatch is on by default.</li>
-              <li><strong>A small FPS overlay</strong> sits in the top-right;
-                toggle it any time with <kbd>F10</kbd>.</li>
+              <li><strong>A small FPS overlay</strong> sits in the top-right,
+                on by default.</li>
             </ul>
 
             <h3>Browser &amp; privacy</h3>
@@ -188,7 +192,7 @@
 
 <!-- Unobtrusive in-game hint; mgb64-shell.js reveals it on boot (additive). -->
 <div id="overlay-hint" hidden aria-hidden="true">
-  <kbd>F1</kbd> menu · <kbd>F10</kbd> fps · <kbd>Esc</kbd> release mouse
+  <kbd>Esc</kbd> release mouse · <kbd>M</kbd> mute · <kbd>H</kbd> help
 </div>
 
 <canvas id="canvas" width="1280" height="960" hidden></canvas>

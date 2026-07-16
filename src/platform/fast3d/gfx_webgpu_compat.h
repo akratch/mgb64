@@ -47,6 +47,22 @@
   #define WGPU_COMPAT_PRESENT(surface) wgpuSurfacePresent((surface))
 #endif
 
+/* WEB-003 / WEB-010 / WEB-025: hand a human-readable bring-up/device-lost
+ * failure to the JS shell so the user sees a message instead of an inert black
+ * canvas. On web this routes to window.mgb64ShowError (mgb64-shell.js), which
+ * swaps the canvas for an error panel; on native it is a no-op (the failure is
+ * already logged to stderr). Kept in the seam so gfx_webgpu.c stays free of
+ * inline __EMSCRIPTEN__ guards. `msg` must be a C string. */
+#ifdef __EMSCRIPTEN__
+  #define WGPU_COMPAT_REPORT_FAILURE(msg)                                      \
+      EM_ASM({                                                                 \
+          if (typeof window !== 'undefined' && window.mgb64ShowError)          \
+              window.mgb64ShowError(UTF8ToString($0));                         \
+      }, (msg))
+#else
+  #define WGPU_COMPAT_REPORT_FAILURE(msg) ((void)(msg))
+#endif
+
 /* Loop until `cond` is nonzero or max_iters pumps elapse. Identical shape to
  * the existing spins; only the pump differs per dialect.                    */
 #define WGPU_COMPAT_WAIT(cond, instance, device, max_iters)                  \

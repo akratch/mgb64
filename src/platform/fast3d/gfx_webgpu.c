@@ -435,6 +435,9 @@ static void wgpu_init(void) {
         s_owns_device    = false;
         if (s_device == NULL || s_queue == NULL || s_surface == NULL) {
             fprintf(stderr, "[webgpu] host handoff incomplete — backend inert\n");
+            WGPU_COMPAT_REPORT_FAILURE(
+                "The graphics device could not be started (incomplete handoff). "
+                "Reload the page to try again.");
             return;
         }
         s_ready = true;
@@ -452,7 +455,14 @@ static void wgpu_init(void) {
     if (!gfx_webgpu_bringup(layer, platformGetSdlWindow(),
                             &s_instance, &s_adapter, &s_device, &s_queue,
                             &s_surface, &fmt)) {
-        return;   /* helper logged the specific failure; backend stays inert */
+        /* helper logged the specific failure; backend stays inert. Surface a
+         * human-readable message to the JS shell (WEB-003) so the user isn't
+         * left staring at a permanently black canvas. */
+        WGPU_COMPAT_REPORT_FAILURE(
+            "Your browser exposes WebGPU but no usable GPU device could be "
+            "created (it may be blocklisted, disabled, or unsupported). "
+            "The game can't render here.");
+        return;
     }
     s_surface_format = (WGPUTextureFormat)fmt;
     s_ready = true;
@@ -606,7 +616,12 @@ static void wgpu_write_ppm(WGPUBuffer buf, uint32_t bpr, uint32_t w, uint32_t h,
     ci.callback = on_map;
     ci.userdata1 = &mr;
     wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, size, ci);
-    WGPU_COMPAT_WAIT(mr.done, NULL, s_device, 100000);
+    /* WEB-004: pass s_instance (not NULL) so the browser pump can drive
+     * wgpuInstanceProcessEvents — the mapAsync callback ONLY fires during
+     * ProcessEvents, so a NULL instance froze the tab for minutes on web. On
+     * native the WAIT macro prefers the (non-NULL) device and calls
+     * wgpuDevicePoll exactly as before — byte-identical. */
+    WGPU_COMPAT_WAIT(mr.done, s_instance, s_device, 100000);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         fprintf(stderr, "[webgpu] frame dump map failed (status=%d)\n", (int)mr.status);
         return;
@@ -2164,7 +2179,12 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     ci.callback = on_map;
     ci.userdata1 = &mr;
     wgpuBufferMapAsync(buf, WGPUMapMode_Read, 0, buf_size, ci);
-    WGPU_COMPAT_WAIT(mr.done, NULL, s_device, 100000);
+    /* WEB-004: pass s_instance (not NULL) so the browser pump can drive
+     * wgpuInstanceProcessEvents — the mapAsync callback ONLY fires during
+     * ProcessEvents, so a NULL instance froze the tab for minutes on web. On
+     * native the WAIT macro prefers the (non-NULL) device and calls
+     * wgpuDevicePoll exactly as before — byte-identical. */
+    WGPU_COMPAT_WAIT(mr.done, s_instance, s_device, 100000);
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         wgpuBufferRelease(buf);
         return false;

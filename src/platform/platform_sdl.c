@@ -3208,6 +3208,26 @@ int platformWebGpuWindowInfo(void *sdl_window, void **out1, void **out2,
 }
 #endif /* MGB64_WEBGPU_BACKEND */
 
+/* WEB-001: the F1 fly-camera, F2 screenshot, and F3–F12 level-warp keys are
+ * developer tools, not player controls. They are inert unless GE007_DEV_HOTKEYS
+ * is set (default OFF on every platform). Rationale for gating on native too:
+ *   - On native the settings overlay (ui_overlay.cpp) already swallows F1 (menu
+ *     toggle) and consumes F10 (FPS toggle) before they reach this handler, so
+ *     these debug paths were only ever live on web (MGB64_APP OFF → no overlay).
+ *   - No test or tool drives them: screenshot ctests use the --screenshot-frame
+ *     CLI (not F2), and test_sys_hotkey.c only checks the F1/F10 *keycode*
+ *     predicates for the overlay's menu/FPS toggles, not warp/fly-cam behavior.
+ * Leaving them live on web let index.html's own instructions warp a real player
+ * mid-mission (F10→Surface 2) or freeze all input (F1 fly-cam). Cached once. */
+static int pcDevHotkeysEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("GE007_DEV_HOTKEYS");
+        cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 /**
  * Process SDL events and check for quit.
  */
@@ -3291,13 +3311,36 @@ void platformPollEvents(void) {
                     if (!event.key.repeat) {
                         g_pcCrouchToggle = 1;
                     }
-                } else if (event.key.keysym.sym == SDLK_F1) {
+                } else if (event.key.keysym.sym == SDLK_F1 && pcDevHotkeysEnabled()) {
                     g_pcDebugFlyCamera = !g_pcDebugFlyCamera;
-                    printf("[SDL] Fly camera %s (F1 toggle)\n",
+                    printf("[SDL] Fly camera %s (F1 toggle, GE007_DEV_HOTKEYS)\n",
                            g_pcDebugFlyCamera ? "ON" : "OFF — gameplay input active");
-                } else if (event.key.keysym.sym == SDLK_F2) {
+                } else if (event.key.keysym.sym == SDLK_F2 && pcDevHotkeysEnabled()) {
                     g_screenshotRequested = 1;
                 } else if (event.key.keysym.sym == SDLK_h && !event.key.repeat) {
+#ifdef __EMSCRIPTEN__
+                    /* WEB-001: web binary has no settings overlay (MGB64_APP OFF)
+                     * and no dev hotkeys — describe only what actually works. */
+                    printf("\n"
+                        "=== CONTROLS ===\n"
+                        "WASD        Move\n"
+                        "Mouse       Look (click canvas to capture)\n"
+                        "L Click     Fire\n"
+                        "R Click     Aim (hold)\n"
+                        "Scroll      Cycle weapon\n"
+                        "R           Reload\n"
+                        "F           Interact\n"
+                        "C / LCtrl   Crouch toggle\n"
+                        "Q / E       Lean L/R (aim mode)\n"
+                        "Esc / Tab   Watch menu (objectives, options, pause)\n"
+                        "M           Mute audio\n"
+                        "H           Show this help\n"
+                        "(FPS overlay is on by default in the top-right.)\n"
+                        "\n"
+                        "GAMEPAD: LT=Aim RT=Fire Y=Next weapon R3=Prev weapon L3=Crouch\n"
+                        "         Start=Watch\n"
+                        "================\n");
+#else
                     printf("\n"
                         "=== CONTROLS ===\n"
                         "WASD        Move\n"
@@ -3311,20 +3354,23 @@ void platformPollEvents(void) {
                         "Q / E       Lean L/R (aim mode)\n"
                         "Esc / Tab   Watch menu (objectives, options, pause)\n"
                         "F1          Settings overlay (MGB64)\n"
+                        "F10         FPS overlay toggle\n"
                         "M           Mute audio\n"
                         "H           Show this help\n"
                         "\n"
                         "GAMEPAD: LT=Aim RT=Fire Y=Next weapon R3=Prev weapon L3=Crouch\n"
                         "         Back/View=Overlay (settings)  Start=Watch\n"
                         "================\n");
+#endif
                 } else if (event.key.keysym.sym == SDLK_m && !event.key.repeat) {
                     /* M key: toggle audio mute on the unified queue device. */
                     platformToggleAudioMute("M key toggle");
                 } else if (event.key.keysym.sym == SDLK_BACKQUOTE) {
                     extern void debugDumpRequest(void);
                     debugDumpRequest();
-                } else if (event.key.keysym.sym >= SDLK_F3 && event.key.keysym.sym <= SDLK_F12) {
-                    /* F3-F12: Quick level switch.
+                } else if (event.key.keysym.sym >= SDLK_F3 && event.key.keysym.sym <= SDLK_F12
+                           && pcDevHotkeysEnabled()) {
+                    /* F3-F12: Quick level switch (dev tool, GE007_DEV_HOTKEYS).
                      * F3=Dam(33), F4=Facility(34), F5=Runway(35), F6=Surface(36),
                      * F7=Bunker1(9), F8=Silo(20), F9=Frigate(26), F10=Surface2(43),
                      * F11=Jungle(37), F12=Cradle(41) */
