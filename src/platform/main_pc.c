@@ -564,13 +564,16 @@ int main(int argc, char **argv)
             faithfulHd = 1;
         } else if (strcmp(argv[i], "--remaster") == 0) {
             remaster = 1;
-#ifdef __APPLE__
-            /* The full remaster enables SSAO, which op-hangs Apple's GL-over-Metal
-             * translator — so boot the native Metal backend. Set before gfx/SDL
-             * init (gfx_backend_use_metal caches getenv on first use, later). On
-             * non-Apple this is unnecessary (native GL runs SSAO fine). */
-            setenv("GE007_RENDERER", "metal", 1);
-#endif
+            /* Historically this pinned GE007_RENDERER=metal on Apple: the full
+             * remaster enables SSAO, which op-hangs Apple's GL-over-Metal
+             * translator, and Metal was the only backend with working SSAO.
+             * WebGPU (the default backend everywhere, including macOS) now
+             * carries the full remaster output post-FX chain and SSAO at
+             * verified GL parity (487a4b3/81344c4/935e4bc), so --remaster no
+             * longer needs to force a backend — it runs on whatever backend
+             * is already selected (WebGPU by default). Metal remains a valid
+             * explicit choice via GE007_RENDERER=metal until Phase M
+             * (docs/BACKEND_DEPRECATION_PLAN.md) removes it. */
         } else if (strcmp(argv[i], "--config-override") == 0 && i + 1 < argc) {
             if (configOverrideCount >= PC_MAX_CONFIG_SET_ARGS) {
                 fprintf(stderr, "[CONFIG] Too many --config-override values; max is %d.\n", PC_MAX_CONFIG_SET_ARGS);
@@ -863,26 +866,23 @@ int main(int argc, char **argv)
     }
     if (remaster) {
         /* --remaster: the full "immaculate" remaster in one switch — all post-FX
-         * on INCLUDING SSAO (which needs the native Metal backend, selected above
-         * on macOS). Applied transiently before env/CLI overrides so an explicit
-         * --config-override still wins; not persisted to ge007.ini. */
+         * on INCLUDING SSAO. Runs on whatever backend is already selected
+         * (WebGPU by default, everywhere including macOS — SSAO/post-FX reach
+         * verified GL parity there now; no backend pin needed, see
+         * docs/BACKEND_DEPRECATION_PLAN.md). Applied transiently before env/CLI
+         * overrides so an explicit --config-override still wins; not persisted
+         * to ge007.ini. */
         int n = platformApplyRemasterPreset();
         /* Read-only session (like --faithful): suppress every save path so the
          * launch-only preset is NEVER persisted. Critical — without this,
          * `--remaster --config-set ...` would write Video.Ssao=1 into ge007.ini,
-         * and a later plain (GL) launch on macOS would reload it and re-trigger
-         * the GL-over-Metal SSAO op-hang this whole backend exists to avoid. */
+         * and a later plain GL launch would reload it and re-trigger the
+         * GL-over-Metal SSAO op-hang the WebGPU/Metal path avoids. */
         configSetSaveSuppressed(1);
         printf("[CONFIG] --remaster: enabled %d remaster setting(s) (RemasterFX + SSAO + "
-               "bloom/FXAA/tonemap/grade/vignette/sharpen/dither, 2x SSAA)%s. "
+               "bloom/FXAA/tonemap/grade/vignette/sharpen/dither, 2x SSAA). "
                "Launch-only preset; env/--config-override still win. ge007.ini not modified.\n",
-               n,
-#ifdef __APPLE__
-               " on the native Metal backend"
-#else
-               ""
-#endif
-               );
+               n);
     }
     if (faithfulHd) {
         /* --faithful-hd: the faithful original look at 2x SSAA, HD-pack-ready

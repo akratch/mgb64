@@ -27,14 +27,13 @@ path at all. Neither Phase M nor Phase G below affects it.
 - **GL and Metal are runtime fallbacks, not the default:**
   - `GE007_RENDERER=gl` (or `opengl`) → OpenGL via `gfx_opengl.c`.
   - `GE007_RENDERER=metal` → native Metal via `gfx_metal.mm`
-    (`gfx_backend_use_metal()`, `gfx_backend.c:55-74`, macOS-only; **still
-    pinned by `--remaster`** on Apple today (`src/platform/main_pc.c:572`,
-    `setenv("GE007_RENDERER", "metal", 1)`) — a holdover from when SSAO/post-FX
-    were Metal-exclusive. That capability gap is now closed (WebGPU SSAO +
-    post-FX landed 2026-07-16), so the pin is no longer load-bearing, but the
-    code hasn't been retargeted yet; retargeting `main_pc.c:572` to
-    `"webgpu"` is enumerated below as a required Phase-M deletion-scope edit,
-    not a nice-to-have).
+    (`gfx_backend_use_metal()`, `gfx_backend.c:55-74`, macOS-only; **no longer
+    pinned by `--remaster`** — `main_pc.c:565-573` retired the
+    `setenv("GE007_RENDERER", "metal", 1)` pin (2026-07-16), since SSAO/post-FX
+    are no longer Metal-exclusive (WebGPU SSAO + post-FX landed 2026-07-16 at
+    GL parity). `--remaster` now simply runs on whatever backend is already
+    selected — WebGPU by default. Metal remains explicitly selectable via
+    `GE007_RENDERER=metal` until this Phase M deletion lands).
   - `-DMGB64_WEBGPU_BACKEND=OFF` builds a GL/Metal-only binary with no wgpu
     dependency (`CMakeLists.txt:94`).
 - **The GLES / desktop-GL coupling (the single most important constraint).**
@@ -77,6 +76,12 @@ is the first and cleanest deletion.
   was always Metal-exclusive and non-default, so WebGPU's planar-v1 SSAO reaches
   full GL parity, and GL never had v2 to begin with. This was the one Phase-M
   engineering dependency; what remains is the owner attestation, not new engineering.
+  **Retargeted early (2026-07-16):** `main_pc.c:565-573`'s `--remaster` Metal
+  pin has already been removed (not just scheduled) — `--remaster` now runs on
+  the default backend (WebGPU) with no `setenv`. The deletion-scope item below
+  that used to say "retarget `main_pc.c:572` to `webgpu`" is therefore already
+  done; what's left for Phase M is deleting `gfx_metal.mm` itself and its call
+  sites, not this env-pin edit.
 
 ### Deletion scope (enumerated)
 
@@ -114,12 +119,14 @@ is the first and cleanest deletion.
     `gfx_metal_draw_minimap_overlay` extern, the `s_minimap_overlay_metal_backend`
     state + all its uses (its caller in the deleted `gfx_metal.mm` means the
     extern is an **undefined-symbol link error** if the function is left behind).
-  - `main_pc.c` — `--remaster` does `setenv("GE007_RENDERER","metal")`
-    (`main_pc.c:572` at HEAD). This **must be retargeted to `"webgpu"`**, not just
-    left: as `"metal"` it only works by falling through to the WebGPU default by
-    accident. This is the concrete form of the Phase-M "--remaster post-FX on
-    WebGPU" precondition. Also `src/app/launch_intent.cpp` has a comment quoting
-    the old `metal` pin.
+  - `main_pc.c` — **already done (2026-07-16), not a remaining deletion-scope
+    item.** `--remaster`'s `setenv("GE007_RENDERER","metal")` pin
+    (was `main_pc.c:572`) has been removed outright rather than retargeted to
+    `"webgpu"`: not setting the env var at all is equivalent and simpler, and it
+    preserves a pre-set `GE007_RENDERER` override the same way "retarget to
+    webgpu" would have. This was the concrete form of the Phase-M "--remaster
+    post-FX on WebGPU" precondition. `src/app/launch_intent.cpp`'s comment
+    quoting the old `metal` pin has been updated to match.
 - `CMakeLists.txt` — anchors drifted; at HEAD: `:19-25` (Metal comment **+
   `enable_language(OBJCXX)` / `CMAKE_OBJCXX_STANDARD` — gfx_metal.mm is the ONLY
   `.mm`/OBJCXX TU, so remove the whole block**), `:91-95` (fallback comment),

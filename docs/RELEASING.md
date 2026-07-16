@@ -25,11 +25,11 @@ backends remain as **release-supported runtime fallbacks** and are selectable
 without a rebuild:
 
 - `GE007_RENDERER=gl` (or `opengl`) — OpenGL.
-- `GE007_RENDERER=metal` — native Metal (macOS only; `--remaster` still pins
-  this on Apple today (`src/platform/main_pc.c:572`) — a holdover from before
-  SSAO/post-FX landed on WebGPU (2026-07-16); the pin is no longer required
-  for capability reasons but hasn't been retargeted to `webgpu` yet, see
-  `docs/BACKEND_DEPRECATION_PLAN.md`).
+- `GE007_RENDERER=metal` — native Metal (macOS only; `--remaster` no longer
+  pins this on Apple — the pin was retired 2026-07-16 once SSAO/post-FX
+  landed on WebGPU at GL parity, see `docs/BACKEND_DEPRECATION_PLAN.md`.
+  `--remaster` now runs on whatever backend is selected, WebGPU by default;
+  `GE007_RENDERER=metal` is still explicitly selectable until Phase M).
 - `-DMGB64_WEBGPU_BACKEND=OFF` at build time — a GL/Metal-only binary with no
   wgpu dependency.
 

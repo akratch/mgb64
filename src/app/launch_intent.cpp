@@ -86,10 +86,11 @@ bool parseLaunchIntent(int argc, char **argv, LaunchIntent &out, std::string &er
             out.preset = 2;   // 2=faithful-hd
         } else if (std::strcmp(a, "--remaster") == 0) {
             out.preset = 3;   // 3=remaster
-            // NB (quirk): main_pc.c also setenv(GE007_RENDERER=metal) on __APPLE__
-            // for --remaster. That is an engine-boot side effect, not launcher
-            // intent; the launcher applies preset env at boot, so we only record
-            // the preset here.
+            // NB: main_pc.c no longer forces GE007_RENDERER=metal for --remaster
+            // (retired 2026-07-16 — WebGPU carries full remaster post-FX/SSAO at
+            // GL parity now, so --remaster runs on whatever backend is already
+            // selected, WebGPU by default). Nothing for the launcher to record
+            // here beyond the preset.
 
         } else if (std::strcmp(a, "--multiplayer") == 0) {
             out.multiplayer = true;
