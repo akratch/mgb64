@@ -1085,6 +1085,13 @@ static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
 struct WgpuBgEntry { const void *key[7]; WGPUBindGroup bg; };
 static struct WgpuBgEntry s_bg_cache_tab[WGPU_BG_CACHE];
 static uint32_t s_bg_cache_way = 0;  /* round-robin victim way on set overflow */
+/* WATCH ITEM: entries pin their WGPUBindGroup (and transitively the texture
+ * views/samplers baked into it) for the process lifetime — there is no
+ * device-teardown path that clears this table (bounded at 2048 live entries:
+ * WGPU_BG_CACHE * WGPU_BG_WAYS). Fine today because the process only ever
+ * owns one WGPUDevice; a future hot-reload / device-recreate path MUST flush
+ * s_bg_cache_tab (and release the pinned bind groups) first, or it will
+ * reference bind groups built against a destroyed device. */
 
 static uint32_t wgpu_bg_key_hash(const void *const key[7]) {
     uintptr_t h = 0x9e3779b9u;
@@ -1835,11 +1842,14 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     s_vbuf_off += (bytes + 3u) & ~3u;   /* keep 4-byte alignment for the next offset */
 
     /* Bind group: each used texture's live view + sampler, falling back to a 1x1
-     * white texture / nearest sampler when unset. Cached single-entry keyed on
-     * the (layout, view, sampler) pointers: consecutive same-material draws (the
-     * common batched case) reuse it instead of allocating a new bind group every
-     * draw. The key is on POINTERS, so a deleted texture (its view becomes NULL ->
-     * the white fallback pointer) never spuriously matches a stale entry. */
+     * white texture / nearest sampler when unset. Looked up in the 512-entry,
+     * 4-way set-associative bind-group cache (s_bg_cache_tab, defined above at
+     * the "Persistent draw bind-group cache" comment): a materials-worth of
+     * concurrent (view, sampler) combos all stay resident across frames, so
+     * this is a cache probe, not an allocation, on the common repeat-material
+     * path. The key is on POINTERS, so a deleted texture (its view becomes
+     * NULL -> the white fallback pointer) never spuriously matches a stale
+     * entry. */
     WGPUBindGroup bg = NULL;
     if (s_cur_shader->bgl != NULL) {
         WGPUTextureView v0 = s_white_view, v1 = s_white_view;

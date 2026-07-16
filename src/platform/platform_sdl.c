@@ -23,6 +23,13 @@
 EM_ASYNC_JS(void, platformWaitAnimationFrame, (void), {
     await new Promise((resolve) => requestAnimationFrame(resolve));
 });
+/* Cheap synchronous check ahead of the rAF wait below: a backgrounded tab
+ * never fires requestAnimationFrame (browsers suspend it to save power), so
+ * blocking on platformWaitAnimationFrame() while hidden would freeze the
+ * whole loop — including audio — until the tab regains focus. */
+EM_JS(int, platformTabHidden, (void), {
+    return document.hidden ? 1 : 0;
+});
 #endif
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
@@ -3682,12 +3689,33 @@ void platformFrameSync(void) {
          * unconditional-yield keeps the browser responsive even when a frame
          * overruns its budget. Stop once within 3ms of the deadline — another
          * whole-vsync wait would overshoot; finishing slightly early is phase
-         * lead, not drift, because the deadline is absolute. */
-        do {
-            platformWaitAnimationFrame();
+         * lead, not drift, because the deadline is absolute.
+         *
+         * Hidden-tab fallback: requestAnimationFrame never fires while the
+         * tab is backgrounded, so unconditionally waiting on it here would
+         * block the whole loop — including audio — until refocus, a
+         * regression vs. the old emscripten_sleep() pacer (which browsers
+         * throttle to the 1-4ms setTimeout clamp but never fully suspend).
+         * Check document.hidden per iteration (cheap, synchronous) and pick
+         * the wait primitive accordingly: visible stays on the display-synced
+         * rAF wait above; hidden falls back to throttled-but-alive
+         * emscripten_sleep so the sim clock and audio mixer keep ticking in
+         * the background. At least one wait call always runs per paced frame
+         * (the "ALWAYS yield" contract above), whichever primitive is picked
+         * on the first iteration. */
+        bool waited_once = false;
+        while (!waited_once ||
+               (pace_now < g_paceDeadline &&
+                ((double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq) > 3.0)) {
+            if (platformTabHidden()) {
+                double rem_ms = (double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq;
+                emscripten_sleep(rem_ms > 0.0 ? (unsigned)rem_ms : 0);
+            } else {
+                platformWaitAnimationFrame();
+            }
             pace_now = SDL_GetPerformanceCounter();
-        } while (pace_now < g_paceDeadline &&
-                 ((double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq) > 3.0);
+            waited_once = true;
+        }
 #else
         while (pace_now < g_paceDeadline) {
             double rem_ms = (double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq;
