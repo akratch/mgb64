@@ -40,16 +40,32 @@ residual = deploy); WEB-024 (bind-group cache proven ABA-safe by review);
 WEB-067 (owner-reported dead browser wheel = stale served build; path proven
 correct end-to-end — rebuild + hard-reload).
 
-**DEFERRED / OPEN** (need measurement, owner decision, or a future surface):
-WEB-016 (window-size sensitivity scale), WEB-018 (web input settings / overlay),
+**DEFERRED-ROUND LANDED 2026-07-16 late** (`5887388..b68a974`, all task-reviewed
++ composition-reviewed READY, tape 7/7 hashes == pre-round baseline):
+- `5887388` WEB-016 (per-axis unscale + fractional carry — review caught the
+  width-only Y-skew) + WEB-018-lite (shell sensitivity slider + invert-Y via
+  --config-override, localStorage-persisted)
+- `75c8741` WEB-043 (drift-gate ctest `web_controls_doc_drift` w/ F-key
+  regression lock incl. the web H-help arm; self-test 7 seeded drifts red)
+- `fd53bf3` WEB-056 (libm de-shadow: acosf/asinf/atan2f → ge007_* on wasm;
+  sinf/cosf proven never-linked — dormant guard; nm coverage proof)
+- `bdb5a3e` WEB-027 (animated noise, GL-identical constants) + WEB-050
+  (shader-slot eviction w/ release) + WEB-052 (modern-mesh dynamic-offset UBO
+  ring) + WEB-023-lite (viewport/scissor dedup)
+- `460d991` WEB-037 (gfx_ptr per-stage clear — kills stale-entry shadowing AND
+  tombstone accumulation; max-probe hoist; routes 6/6 quiet, tape byte-exact)
+- `b68a974` composition follow-ups (lroundf decl, noise comment)
+
+**STILL DEFERRED / OPEN**:
+WEB-018 full (in-game settings overlay on web — seam unblocked via WEB-055),
 WEB-021 residual (pass-split coalescing — measure on Apple GPU first), WEB-022
-(Asyncify bounding experiment), WEB-023 residual (per-frame writeBuffer batching,
-viewport/scissor dedup), WEB-027 (frame-varying noise), WEB-028 fix-half (attr
-packing), WEB-036 (ffp-contract — OWNER: requires native baseline re-record),
-WEB-037 (gfx_ptr lifecycle/tombstones), WEB-043 (controls-table drift gate),
-WEB-050 (shader LRU), WEB-052 (modern-mesh UBO ring), WEB-054 (pipeline
-prewarm), WEB-056 (libm shadowing into SDL). Deploy of all of this to Pages =
-owner-gated (`web-demo.yml` workflow_dispatch).
+(Asyncify bounding experiment — wants the browser tape lane as safety net),
+WEB-023 residual (per-frame writeBuffer batching), WEB-028 fix-half (attr
+packing — diagnostic in place, no combiner observed tripping 16), WEB-036
+(ffp-contract — OWNER: requires native baseline re-record), WEB-050b (eviction
+→ gfx_pc invalidation hook, only if WGPU_SHADER_MAX is ever lowered), WEB-054
+(pipeline prewarm). Deploy to Pages = owner-gated (`web-demo.yml`
+workflow_dispatch).
 
 **Verification at HEAD**: native build clean; renderer_parity + both apertures +
 sim_state_hash + campaign_route + input/config ctests green; tape gate 7/7
