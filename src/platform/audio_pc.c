@@ -25,7 +25,17 @@
 /* ===== Configuration ===== */
 #define PORT_AUDIO_RATE       22050
 #define PORT_AUDIO_CHANNELS   2
+/* WEB-012: native tunes 512 for a real-time CoreAudio/WASAPI thread. The browser
+ * has no such thread — SDL 2.32's emscripten driver is a deprecated MAIN-THREAD
+ * ScriptProcessorNode at the context rate (48 kHz → 512 frames ≈ 10.7 ms), a
+ * deadline any sim+encode frame routinely blows on wasm (heavy scenes, pipeline
+ * compiles, GC) → crackle. Default the buffer deeper on web (2048 ≈ +32 ms
+ * latency) where the extra headroom matters far more than the latency. */
+#ifdef __EMSCRIPTEN__
+#define PORT_AUDIO_SAMPLES    2048
+#else
 #define PORT_AUDIO_SAMPLES    512
+#endif
 #define PORT_MAX_VOICES       24
 #define PORT_MAX_SOUNDS       512
 
@@ -1078,6 +1088,25 @@ void portAudioInit(void)
         want.freq     = PORT_AUDIO_RATE;
         want.format   = AUDIO_S16SYS;
         want.channels = PORT_AUDIO_CHANNELS;
+#ifdef __EMSCRIPTEN__
+        /* WEB-012: an out-of-range or non-pow2 buffer makes the browser's
+         * createScriptProcessor throw IndexSizeError, which surfaces as a
+         * permanent "Boot failed" every visit (a persisted bad Audio.DeviceSamples
+         * bricks the site until storage is cleared — unrecoverable by the user).
+         * Snap the value to the nearest power of two in [256,2048] BEFORE
+         * SDL_OpenAudioDevice so no such value ever reaches the SPN. Native paths
+         * are untouched; only the web build has this brick failure mode. */
+        {
+            s32 req = s_audioDeviceSamples;
+            s32 clamped = 256;
+            while (clamped < 2048 && clamped * 2 <= req) clamped *= 2;
+            if (clamped != s_audioDeviceSamples) {
+                printf("[AUDIO] WEB-012: clamped Audio.DeviceSamples %d -> %d (pow2 in [256,2048])\n",
+                       s_audioDeviceSamples, clamped);
+                s_audioDeviceSamples = clamped;
+            }
+        }
+#endif
         want.samples  = (u16)s_audioDeviceSamples;
         want.callback = NULL; /* queue mode */
 

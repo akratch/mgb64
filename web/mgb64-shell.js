@@ -154,6 +154,9 @@ let _module = null;  // set once the engine module exists, for crash-path syncfs
 // only net once the game is running: show a message and make one last-ditch
 // attempt to flush saves so the user knows a reload preserves their auto-save.
 function handleCrash() {
+  // A clean engine exit (ROM rejection) is surfaced by handleExit, not here —
+  // don't mislabel it a crash if the ExitStatus also trips the global handlers.
+  if (_exitHandled) return;
   // Honest messaging: only promise an auto-save once at least one persist
   // actually succeeded (_savedOnce) — a crash before the first syncfs has no
   // save to come back to.
@@ -163,6 +166,78 @@ function handleCrash() {
   try { _module?.FS?.syncfs(false, () => {}); } catch {}
 }
 let _savedOnce = false;
+
+// WEB-002: keep the last engine stderr lines so a nonzero exit (the engine
+// refusing a wrong-content/PAL/J ROM in rom_io.c) can be shown to the user
+// instead of vanishing into devtools. Bounded ring — we only surface the tail.
+let _stderrTail = [];
+function recordStderr(text) {
+  console.error(text);
+  _stderrTail.push(String(text));
+  if (_stderrTail.length > 20) _stderrTail.shift();
+}
+
+// WEB-002: the engine's main() returns nonzero when rom_io.c refuses the ROM
+// (bad header, wrong game, or — after the US offsets are patched onto a PAL/J
+// cart that passed the title scan — a decompression fault at frame 0). Under
+// Asyncify callMain() unwinds at the first yield, so we learn the outcome via
+// onExit, not a return value. A nonzero exit is a REJECTION, not a crash: re-show
+// the gate with the reason + the last stderr lines + the Forget-stored-ROM
+// shortcut, because the bad file is already in OPFS and would re-poison every
+// future visit (the exact trap WEB-002 targets).
+let _exitHandled = false;
+function handleExit(code) {
+  if (code === 0 || _exitHandled) return;
+  _exitHandled = true;
+  booted = false;
+  hideFatal();
+  const canvas = $("canvas"); if (canvas) canvas.hidden = true;
+  const hint = $("overlay-hint"); if (hint) hint.hidden = true;
+  $("gate").hidden = false;
+  $("rom-ui").hidden = false;
+  const tail = _stderrTail.filter(Boolean).slice(-6).join("\n");
+  const msg = $("gate-msg");
+  msg.style.whiteSpace = "pre-wrap";
+  msg.textContent =
+    "The engine refused this ROM (exit " + code + "). It's likely the wrong " +
+    "game or region — GoldenEye 007 (USA) is required." +
+    (tail ? "\n\n" + tail : "");
+  // The bad ROM is stored in OPFS; make its removal one click away.
+  const forget = $("forget"); if (forget) forget.hidden = false;
+  const play = $("play"); if (play) play.disabled = false;
+}
+
+// WEB-002: instant client-side content check at pick time (no canonical ROM
+// hash exists in-repo to SHA-1 against, so we mirror rom_io.c's own header+title
+// gate on the picked bytes). Catches the common "12 MB non-GoldenEye file" case
+// up front — the black-screen-then-repoison trap — rather than after a full boot.
+// Returns null when the bytes look like a GoldenEye N64 ROM, else a reason string.
+function validateRomContent(bytes) {
+  if (!bytes || bytes.length < 0x40) return "That file is too small to be an N64 ROM.";
+  // Normalize just the header to big-endian (.z64) for the checks, mirroring
+  // rom_io.c's byteswap for .v64 (swap 2) / .n64 (swap 4).
+  const h = bytes.slice(0, 0x40);
+  if (h[0] === 0x37 && h[1] === 0x80) {
+    for (let i = 0; i + 1 < h.length; i += 2) { const t = h[i]; h[i] = h[i + 1]; h[i + 1] = t; }
+  } else if (h[0] === 0x40 && h[1] === 0x12) {
+    for (let i = 0; i + 3 < h.length; i += 4) {
+      const a = h[i], b = h[i + 1], c = h[i + 2], d = h[i + 3];
+      h[i] = d; h[i + 1] = c; h[i + 2] = b; h[i + 3] = a;
+    }
+  }
+  if (h[0] !== 0x80 || h[1] !== 0x37 || h[2] !== 0x12 || h[3] !== 0x40)
+    return "That file isn't an N64 ROM (bad header). Expected a GoldenEye 007 .z64/.v64/.n64 dump.";
+  // Internal cartridge title must contain "GOLDENEYE" (scan 0x20..0x34 as rom_io.c does).
+  const GE = [0x47, 0x4F, 0x4C, 0x44, 0x45, 0x4E, 0x45, 0x59, 0x45];
+  let isGE = false;
+  for (let i = 0x20; i + 9 <= 0x34 && !isGE; i++) {
+    isGE = true;
+    for (let j = 0; j < 9; j++) { if (h[i + j] !== GE[j]) { isGE = false; break; } }
+  }
+  if (!isGE)
+    return "That ROM isn't GoldenEye 007 (internal title mismatch). Please supply the GoldenEye 007 cartridge dump.";
+  return null;
+}
 
 async function boot(romBytes) {
   if (booted) return;
@@ -187,6 +262,10 @@ async function boot(romBytes) {
   const m = await createMGB64({
     canvas, wasmBinary, noInitialRun: true,
     onAbort: () => handleCrash(),
+    // WEB-002: capture engine stderr and the process exit code so a ROM the
+    // engine refuses surfaces to the user instead of a silent black canvas.
+    printErr: (t) => recordStderr(t),
+    onExit: (code) => handleExit(code),
   });
   _module = m;
   m.FS.mkdir("/rom"); m.FS.writeFile("/rom/baserom.z64", romBytes);
@@ -199,6 +278,26 @@ async function boot(romBytes) {
   // it can't fire on a boot-phase error already handled by boot().catch.
   addEventListener("error", handleCrash);
   addEventListener("unhandledrejection", handleCrash);
+  // WEB-008: Ctrl+W (crouch-forward, the most common FPS chord) and Cmd+W close
+  // the tab, and the browser won't let preventDefault stop it — the only lever
+  // is a beforeunload confirm. Arm it once booted so a mis-hit chord asks before
+  // discarding mission progress. (No custom string: modern browsers show their
+  // own generic prompt, but any non-empty returnValue triggers it.)
+  addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; });
+  // WEB-008: while fullscreen, best-effort Keyboard Lock so Ctrl+W / Cmd+W and
+  // other system chords route to the game instead of the browser. Silently a
+  // no-op where unsupported (Safari/Firefox) or not fullscreen — never throws.
+  const applyKeyboardLock = () => {
+    try {
+      if (document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) {
+        navigator.keyboard.lock(["KeyW", "KeyA", "KeyS", "KeyD",
+                                 "ControlLeft", "ControlRight", "Escape"]).catch(() => {});
+      } else if (navigator.keyboard && navigator.keyboard.unlock) {
+        navigator.keyboard.unlock();
+      }
+    } catch {}
+  };
+  document.addEventListener("fullscreenchange", applyKeyboardLock);
   const args = ["--rom", "/rom/baserom.z64", "--savedir", "/save"];
   const unlockAll = $("unlock-all");
   if (unlockAll && unlockAll.checked) args.push("--unlock-all-levels");
@@ -208,7 +307,17 @@ async function boot(romBytes) {
 (async () => {
   const err = await gate();
   if (err) { $("gate-msg").textContent = err; return; }
-  $("gate-msg").textContent = "";
+  // WEB-011: iOS/iPadOS Safari passes the WebGPU gate but the engine is
+  // keyboard/mouse/gamepad only (no pointer lock on iOS; touch = fire-only), so
+  // a phone user would invest a 12 MB upload before discovering they can't play.
+  // Warn a coarse-pointer / touch-primary device up front — but still allow boot
+  // (paired keyboards and controllers do exist). Not a gate refusal.
+  const touchPrimary =
+    (matchMedia && matchMedia("(pointer: coarse)").matches) &&
+    (navigator.maxTouchPoints || 0) > 0;
+  $("gate-msg").textContent = touchPrimary
+    ? "Heads up: this game needs a keyboard & mouse (or a gamepad). On a touch-only device you can look around but not move — pair a keyboard/controller for full control."
+    : "";
   $("rom-ui").hidden = false;
   let rom = await loadStoredRom();
   const showReady = () => { $("rom-status").textContent = "ROM ready (stored in this browser)."; $("play").disabled = false; $("forget").hidden = false; };
@@ -216,7 +325,12 @@ async function boot(romBytes) {
   $("rom-input").addEventListener("change", async (ev) => {
     const f = ev.target.files[0]; if (!f) return;
     if (f.size !== ROM_SIZE) { $("rom-status").textContent = `Wrong size (${f.size} bytes) — expected exactly 12 MB.`; return; }
-    rom = new Uint8Array(await f.arrayBuffer());
+    const picked = new Uint8Array(await f.arrayBuffer());
+    // WEB-002: reject wrong-content files at pick time so they never reach OPFS
+    // (an unrecognized 12 MB file, stored, would re-poison every future visit).
+    const bad = validateRomContent(picked);
+    if (bad) { $("rom-status").textContent = bad; return; }
+    rom = picked;
     const stored = await storeRom(rom);
     if (stored) {
       showReady();

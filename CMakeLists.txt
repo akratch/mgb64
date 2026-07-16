@@ -1966,6 +1966,14 @@ if(EMSCRIPTEN)
     )
     target_link_libraries(ge007_web PRIVATE webgpu)
     target_compile_definitions(ge007_web PRIVATE NATIVE_PORT MGB64_WEBGPU_BACKEND)
+    # WEB-006: compile snd.c's real ALSndPlayer path (matching ge007/:1767 and
+    # ge007_lib/:2307). Without it snd.h selects PORT_SND_STUBS (the directory-wide
+    # PORT_FIXME_STUBS applies), so the web build silently shipped the legacy stub
+    # sound player — an unlabeled native/web engine divergence in a "same engine"
+    # product. Gated so PORT_SOUNDPLAYER_REAL=OFF still turns it off everywhere.
+    if(PORT_SOUNDPLAYER_REAL)
+        target_compile_definitions(ge007_web PRIVATE PORT_SOUNDPLAYER_REAL)
+    endif()
     # Mirror ge007's include search path (:1755) so the shared engine sources
     # resolve identically (notably the source-root "." for assets/images.def).
     target_include_directories(ge007_web PRIVATE

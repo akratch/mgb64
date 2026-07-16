@@ -425,7 +425,17 @@ static int s_aiOpen;
 static u32 s_aiDroppedBuffers;
 static PortAiStats s_aiStats;
 
+/* WEB-013: the queue cap bounds how deep the occupancy controller may pre-fill.
+ * On web every level load / music decompress / WGPU_COMPAT_WAIT spin is a long
+ * synchronous stretch that produces no audio while the once-per-frame pump is
+ * stalled, so a 5-frame (167 ms) cap guarantees a hard gap on every transition.
+ * Raise it on web so the controller can buffer through those stalls; native
+ * keeps the tight cap (its real-time audio thread drains continuously). */
+#ifdef __EMSCRIPTEN__
+#define AI_QUEUE_LIMIT_FRAMES 12u
+#else
 #define AI_QUEUE_LIMIT_FRAMES 5u
+#endif
 #define AI_QUEUE_LIMIT_FRAMES_DETERMINISTIC 4u
 void portAiInit(void) {
     if (s_aiOpen) return;

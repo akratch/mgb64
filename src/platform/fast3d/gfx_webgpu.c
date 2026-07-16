@@ -75,6 +75,13 @@ static bool              s_ready    = false;   /* device + surface both live */
  * engine adopts them and must NOT release them at teardown. False = we created
  * them ourselves (standalone --level boot) and own their lifetime. */
 static bool              s_owns_device = false;
+/* WEB-015: the maxTextureDimension2D actually granted to the device. WebGPU's
+ * DEFAULT device limit is 8192, but most desktop GPUs support 16384; bring-up
+ * requests the adapter's real max and records the granted value here so the
+ * offscreen-dim query and the upload-size reject both reflect the true cap
+ * (not the 8192 default that clamped RenderScale 2 into resample blur). Stays
+ * at the guaranteed 8192 floor when bring-up is skipped (host-adopted device). */
+static uint32_t          s_max_tex_dim = 8192;
 
 /* Host WebGPU handoff (src/platform/host_window.c). Present only when the app
  * shell created a device/queue/surface and registered them before boot. */
@@ -395,8 +402,24 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     dcb.mode = WGPUCallbackMode_AllowProcessEvents;
     dcb.callback = on_device;
     dcb.userdata1 = &dreq;
+    /* WEB-015: raise maxTextureDimension2D from WebGPU's 8192 default to the
+     * adapter's real maximum. Query the adapter, ask the device for up to that
+     * in requiredLimits (all other fields stay UNDEFINED = library defaults), so
+     * large viewports at the default RenderScale 2 stop hitting the 8192 clamp.
+     * WGPU_LIMITS_INIT leaves every field UNDEFINED; a {0}-init would instead
+     * REQUIRE 0 for every limit and fail device creation. */
+    WGPULimits adapter_limits = WGPU_LIMITS_INIT;
+    uint32_t want_max_tex = 8192;
+    if (wgpuAdapterGetLimits(adapter, &adapter_limits) == WGPUStatus_Success &&
+        adapter_limits.maxTextureDimension2D > want_max_tex) {
+        want_max_tex = adapter_limits.maxTextureDimension2D;
+    }
+    WGPULimits required_limits = WGPU_LIMITS_INIT;
+    required_limits.maxTextureDimension2D = want_max_tex;
+
     WGPUDeviceDescriptor ddesc = {0};
     ddesc.label = wgpu_sv("mgb64-device");
+    ddesc.requiredLimits = &required_limits;
     ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
     wgpuAdapterRequestDevice(adapter, &ddesc, dcb);
     WGPU_COMPAT_WAIT(dreq.done, instance, NULL, 1000);
@@ -405,6 +428,18 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
         return false;
     }
     WGPUDevice device = dreq.device;
+
+    /* WEB-015: record the max texture dimension the device actually granted, so
+     * gfx_webgpu_max_offscreen_dim() and the upload reject use the true cap. */
+    {
+        WGPULimits granted = WGPU_LIMITS_INIT;
+        if (wgpuDeviceGetLimits(device, &granted) == WGPUStatus_Success &&
+            granted.maxTextureDimension2D >= 8192) {
+            s_max_tex_dim = granted.maxTextureDimension2D;
+        }
+        fprintf(stderr, "[webgpu] maxTextureDimension2D=%u (default 8192)\n",
+                (unsigned)s_max_tex_dim);
+    }
 
     *out_instance = instance;
     *out_adapter  = adapter;
@@ -1489,7 +1524,7 @@ static void wgpu_select_texture(int tile, uint32_t texture_id) {
 
 static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
     if (!s_ready || rgba32_buf == NULL || width <= 0 || height <= 0 ||
-        width > 8192 || height > 8192) {
+        (uint32_t)width > s_max_tex_dim || (uint32_t)height > s_max_tex_dim) {
         return false;
     }
     struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[s_active_tile]);
@@ -2092,13 +2127,32 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
                                     int fb_width, int fb_height,
                                     int scissor_enabled, int scissor_x, int scissor_y,
                                     int scissor_w, int scissor_h) {
-    (void)scissor_enabled; (void)scissor_x; (void)scissor_y; (void)scissor_w; (void)scissor_h;
     if (!s_ready || s_encoder == NULL || s_scene_view == NULL || s_vbuf == NULL ||
         vertices == NULL || vertex_count == 0 || fb_width <= 0 || fb_height <= 0) {
         return 0;
     }
     if (!wgpu_ensure_minimap()) {
         return 0;
+    }
+    /* WEB-014: honor the minimap clip rect. GL and Metal both apply it; WebGPU
+     * previously voided all five params, so minimap geometry the layout clips
+     * (lines/blips while moving or rotating) could draw outside the minimap
+     * window over the game view — on the default backend everywhere. Y-flip to
+     * WebGPU's top-left origin like Metal (sy = fb_h - (y+h)), clamp to the
+     * present-target pixel bounds (s_scene_w x s_scene_h), and skip a
+     * fully-clipped draw. Computed BEFORE the vbuf write so a clipped-away frame
+     * costs nothing (mirrors gfx_metal's early return). */
+    int mm_sc_x = 0, mm_sc_y = 0, mm_sc_w = 0, mm_sc_h = 0;
+    if (scissor_enabled) {
+        mm_sc_x = scissor_x;
+        mm_sc_y = fb_height - (scissor_y + scissor_h);
+        mm_sc_w = scissor_w;
+        mm_sc_h = scissor_h;
+        wgpu_clamp_rect(&mm_sc_x, &mm_sc_y, &mm_sc_w, &mm_sc_h,
+                        (int)s_scene_w, (int)s_scene_h);
+        if (mm_sc_w <= 0 || mm_sc_h <= 0) {
+            return 1;   /* wholly clipped — nothing to draw, not a failure */
+        }
     }
     /* Draw onto the present target (post-FX result when the filter ran, else the
      * raw scene) so the minimap sits on top of the graded frame — not tonemapped —
@@ -2126,6 +2180,10 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
     rp.colorAttachments = &att;
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
     wgpuRenderPassEncoderSetPipeline(pass, s_mm_pipe);
+    if (scissor_enabled) {   /* WEB-014: clip to the minimap window */
+        wgpuRenderPassEncoderSetScissorRect(pass, (uint32_t)mm_sc_x, (uint32_t)mm_sc_y,
+                                            (uint32_t)mm_sc_w, (uint32_t)mm_sc_h);
+    }
     wgpuRenderPassEncoderSetBindGroup(pass, 0, s_mm_bg, 0, NULL);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s_vbuf, voff, bytes);
     wgpuRenderPassEncoderDraw(pass, (uint32_t)vertex_count, 1, 0, 0);
@@ -2473,7 +2531,9 @@ void gfx_webgpu_set_clear_color(float r, float g, float b) {
 }
 
 int gfx_webgpu_max_offscreen_dim(void) {
-    return 8192;   /* WebGPU guaranteed minimum maxTextureDimension2D; refined in Task 4 */
+    /* WEB-015: the device's granted maxTextureDimension2D (adapter max, up from
+     * the 8192 WebGPU default), or the 8192 floor when bring-up was skipped. */
+    return (int)s_max_tex_dim;
 }
 
 /* ------------------------------------------------------------------------

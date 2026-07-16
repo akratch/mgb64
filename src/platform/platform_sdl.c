@@ -343,6 +343,16 @@ static int platformTraceRequested(void) {
 float g_pcCamX = 0.0f, g_pcCamY = 50.0f, g_pcCamZ = -400.0f;
 float g_pcCamYaw = 0.0f, g_pcCamPitch = 0.0f;
 static int g_mouseGrabbed = 0;
+#ifdef __EMSCRIPTEN__
+/* WEB-007: latch that turns 1 only once the browser has CONFIRMED pointer lock
+ * while we believe we're grabbed. A confirmed→unlocked transition is a genuine
+ * in-gameplay lock loss (the browser eats Esc as its exit-lock gesture and
+ * delivers no SDL keydown), which we treat as the Esc press. The latch avoids
+ * false-firing during the async acquisition window after a regrab-click (the
+ * b1525bf cooldown path requests lock but the browser grants it a few frames
+ * later — pointerLockElement is null meanwhile, yet that is not a lock LOSS). */
+static int g_pcWebLockConfirmed = 0;
+#endif
 int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1. */
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
@@ -3237,6 +3247,34 @@ static int pcDevHotkeysEnabled(void) {
  */
 void platformPollEvents(void) {
     SDL_Event event;
+#ifdef __EMSCRIPTEN__
+    /* WEB-007: reconcile our grab state with the browser's pointer-lock state
+     * once per frame. While locked, the browser consumes Esc as the exit-lock
+     * gesture and delivers NO SDL keydown, so the Esc handler below never runs:
+     * g_mouseGrabbed would stay 1, the watch wouldn't open (the page says it
+     * will), and the camera would keep turning with the freed cursor
+     * ("possessed camera") until a second Esc. Detect the confirmed-locked →
+     * unlocked transition and treat it exactly like the Esc-in-gameplay press.
+     * The confirm latch keeps this from firing during the async lock-acquisition
+     * window after a regrab-click, so it integrates with (doesn't fight) the
+     * b1525bf MOUSEBUTTONDOWN relock path below. */
+    if (g_mouseGrabbed) {
+        int locked = EM_ASM_INT({ return document.pointerLockElement ? 1 : 0; });
+        if (locked) {
+            g_pcWebLockConfirmed = 1;
+        } else if (g_pcWebLockConfirmed) {
+            /* Genuine in-gameplay lock loss (user's Esc, alt-tab, focus steal). */
+            g_pcEscapePressed = 1;          /* 1 = was in gameplay → START (watch) */
+            g_mouseGrabbed = 0;
+            g_pcWebLockConfirmed = 0;
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            g_mouseDeltaX = 0;              /* stop residual motion this frame */
+            g_mouseDeltaY = 0;
+        }
+    } else {
+        g_pcWebLockConfirmed = 0;
+    }
+#endif
     while (SDL_PollEvent(&event)) {
         /* Let the app overlay see every event; when it is capturing input,
          * swallow input events so they don't also drive the game. Capture the
