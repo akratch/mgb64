@@ -76,7 +76,7 @@ static inline void gfx_diag_write_stderr(const char *msg, int len)
 
 #include <SDL.h>
 #ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>   /* emscripten_get_canvas_element_size (browser dimensions) */
+#include <emscripten/html5.h>   /* emscripten_get_element_css_size (browser display dimensions) */
 #endif
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
@@ -4572,19 +4572,30 @@ static void gfx_sync_current_dimensions_from_window(void) {
         /* SDL_GL_GetDrawableSize queries the GL drawable; the emscripten WebGPU
          * window is a canvas, not a GL surface, so SDL reports 0x0 for both the
          * drawable and the logical window size. Fall back to the window size,
-         * then read the canvas element directly (the WebGPU backend binds the
-         * same "#mgb64-canvas" selector) so gfx_current_dimensions is
-         * established and the backend frame can open. Both fallbacks are
-         * browser-only: native compiles the exact pre-W3.6 path. */
+         * then read the canvas's CSS *display* size (the 100vw/100vh layout box)
+         * as the logical window resolution. Browser-only: native compiles the
+         * exact pre-W3.6 path. */
         if (w <= 0 || h <= 0) {
             SDL_GetWindowSize(g_sdlWindow, &w, &h);
         }
         if (w <= 0 || h <= 0) {
-            int cw = 0, ch = 0;
-            if (emscripten_get_canvas_element_size("#mgb64-canvas", &cw, &ch) == 0 &&
-                cw > 0 && ch > 0) {
-                w = cw;
-                h = ch;
+            /* CRITICAL: read the CSS display size, NOT
+             * emscripten_get_canvas_element_size(). The latter returns the canvas
+             * *backing store* (canvas.width/height), which the WebGPU backend
+             * itself overwrites every frame — emscripten's wgpuSurfaceConfigure
+             * sets canvas.width to the configured surface width, and we configure
+             * the surface to gfx_current_dimensions = window * RenderScale. Feeding
+             * that backing store back through the RenderScale multiply below is a
+             * positive-feedback runaway (1280 -> 2560 -> 5120 -> 10240, clamped at
+             * the 8192 GPU limit) that pins the scene target at 8192x6144 and
+             * forces a 4:3 backing store to stretch to the window's aspect. The CSS
+             * box size is independent of canvas.width, so it is a stable,
+             * distortion-free base that tracks the actual on-screen aspect. */
+            double cssw = 0.0, cssh = 0.0;
+            if (emscripten_get_element_css_size("#mgb64-canvas", &cssw, &cssh) == 0 &&
+                cssw >= 1.0 && cssh >= 1.0) {
+                w = (int)(cssw + 0.5);
+                h = (int)(cssh + 0.5);
             }
         }
 #endif
