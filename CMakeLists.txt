@@ -538,6 +538,21 @@ if(BUILD_TESTING)
         COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/check_settings_menu_model.py"
             --repo-root "${CMAKE_SOURCE_DIR}"
     )
+    # WEB-043: controls-documentation drift gate. Asserts web/index.html's
+    # controls surfaces (Controls <dl>, .overlay-note, #overlay-hint) still
+    # agree with the engine ground truth in src/platform/input_bindings.c
+    # (kDefault/kGpDefault) and src/platform/platform_sdl.c (KEYDOWN handler),
+    # and hard-locks the WEB-001 regression: F1/F2/F3-F12 dev keys (gated behind
+    # GE007_DEV_HOTKEYS) must never be re-advertised on the page. ROM-free,
+    # source-only. Exit 2 = structural parse failure; 1 = a documented drift.
+    add_test(
+        NAME web_controls_doc_drift
+        COMMAND python3 "${CMAKE_SOURCE_DIR}/tools/web/check_controls_doc.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(web_controls_doc_drift PROPERTIES
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     # Registry honesty: every add_port_validation_smoke(...) below must
     # reference a script that actually ships in tools/, so the advertised
     # validation-lane coverage cannot exceed what a fresh checkout can run.
