@@ -66,6 +66,13 @@ void applyModeEnv(const LauncherState &s) {
         else        portableUnsetenv(op.key.c_str());
     }
 
+    // Unlock-all-levels demo hatch (CLI-only, default OFF; engine default is
+    // locked). Authoritative like the hatches above (AUDIT-0022): emit an
+    // explicit op every apply — ON => "1", OFF => unset — so a Return-to-Launcher
+    // re-exec that inherits a stale "1" is cleared when the flag is not re-set.
+    if (s.unlockAllLevels) portableSetenv("GE007_UNLOCK_ALL_LEVELS", "1");
+    else                   portableUnsetenv("GE007_UNLOCK_ALL_LEVELS");
+
     // Advanced expert overrides: reconcile the current KEY=VALUE lines against the
     // keys the launcher owned last time (persisted across the re-exec in the app
     // prefs). A key dropped from the box is unset, or restored to the external

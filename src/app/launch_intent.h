@@ -38,6 +38,7 @@ struct LaunchIntent {
     std::optional<bool>        multiplayer; // --multiplayer / --players
     std::optional<int>         players;     // --players (2..4)
     std::optional<std::string> savedir;     // --savedir <path>
+    std::optional<bool>        unlockAllLevels; // --unlock-all-levels (demo hatch)
 };
 
 // Parse argv[1..argc) into `out` (argv[0], the program name, is skipped).

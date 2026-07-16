@@ -37,6 +37,7 @@ struct LauncherState {
     int     modePreset = 0;         // 0=Custom, 1=faithful, 2=faithful-hd, 3=remaster
     bool    shootOutLights = true;  // GE007_SHOOT_OUT_LIGHTS (engine default ON)
     bool    autoAim = true;         // GE007_AUTO_AIM (engine default ON)
+    bool    unlockAllLevels = false; // GE007_UNLOCK_ALL_LEVELS (demo hatch; CLI-only, default OFF)
     char    advancedEnv[2048] = {0};
     bool    modesInitialized = false;
 

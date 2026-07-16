@@ -251,6 +251,26 @@ int main() {
     }
 
     // -------------------------------------------------------------------
+    // --unlock-all-levels: present -> field true; absent -> absent (so the
+    // launcher-seed leaves the demo hatch OFF). Native CLI parity with the
+    // headless main_pc.c flag (AUDIT-0060).
+    // -------------------------------------------------------------------
+    {
+        LaunchIntent li = ok({"--unlock-all-levels"}, "unlock-all-levels");
+        checkBool("unlock.present", li.unlockAllLevels.has_value(), true);
+        checkBool("unlock.value", li.unlockAllLevels.value_or(false), true);
+        // A bare flag touches nothing else.
+        checkBool("unlock.level absent", li.level.has_value(), false);
+        checkBool("unlock.preset absent", li.preset.has_value(), false);
+    }
+    {
+        // Absent when not passed (empty parse already checked, but pin it beside
+        // a sibling flag so a stray default can't creep in).
+        LaunchIntent li = ok({"--faithful"}, "unlock absent w/ other flag");
+        checkBool("unlock.absent", li.unlockAllLevels.has_value(), false);
+    }
+
+    // -------------------------------------------------------------------
     // Unmodeled flags: explicitly rejected, err names the flag.
     // -------------------------------------------------------------------
     bad({"--stage-id", "5"},      "stage-id",      "--stage-id");

@@ -44,6 +44,12 @@ void applyLaunchIntent(LauncherState &s, const LaunchIntent &in) {
         s.modePreset = *in.preset;   // 1=faithful, 2=faithful-hd, 3=remaster
         s.modesInitialized = true;
     }
+    if (in.unlockAllLevels) {
+        // Demo hatch: menu availability only. applyModeEnv forwards this to
+        // GE007_UNLOCK_ALL_LEVELS at Play. No persisted pref / ensureInit, so no
+        // Initialized flag — the field defaults OFF and only the CLI sets it.
+        s.unlockAllLevels = *in.unlockAllLevels;
+    }
     if (in.savedir) {
         // No persisted savedir pref / ensureInit, so no Initialized flag: fillBoot
         // forwards this straight into MgbBootConfig.save_dir at Play.

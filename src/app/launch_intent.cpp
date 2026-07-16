@@ -92,6 +92,12 @@ bool parseLaunchIntent(int argc, char **argv, LaunchIntent &out, std::string &er
             // selected, WebGPU by default). Nothing for the launcher to record
             // here beyond the preset.
 
+        } else if (std::strcmp(a, "--unlock-all-levels") == 0) {
+            // Demo/showcase hatch (main_pc.c parity): mission-select shows every
+            // solo stage. Menu availability only — save file and sim untouched.
+            // The launcher-seed path forwards this to GE007_UNLOCK_ALL_LEVELS.
+            out.unlockAllLevels = true;
+
         } else if (std::strcmp(a, "--multiplayer") == 0) {
             out.multiplayer = true;
 
@@ -185,7 +191,7 @@ bool parseLaunchIntent(int argc, char **argv, LaunchIntent &out, std::string &er
             err = "unknown or unsupported option " + q(a) +
                   ". The launcher models --rom, --level, --mission, --difficulty, "
                   "--faithful, --faithful-hd, --remaster, --multiplayer, --players, "
-                  "--savedir. Automation/diagnostic flags are handled by the "
+                  "--savedir, --unlock-all-levels. Automation/diagnostic flags are handled by the "
                   "headless engine -- run with --no-ui.";
             return false;
         }

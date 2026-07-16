@@ -122,6 +122,17 @@ int main() {
         applyLaunchIntent(s, in);
         checkStr("savedir.savedir", s.savedir, "/custom/saves");
     }
+    {
+        // --unlock-all-levels demo hatch -> LauncherState.unlockAllLevels; sibling
+        // panels untouched (applyModeEnv forwards it to GE007_UNLOCK_ALL_LEVELS).
+        LaunchIntent in;
+        in.unlockAllLevels = true;
+        LauncherState s;
+        applyLaunchIntent(s, in);
+        checkBool("unlock.unlockAllLevels", s.unlockAllLevels, true);
+        checkBool("unlock.modesInitialized-untouched", s.modesInitialized, false);
+        checkBool("unlock.launchInitialized-untouched", s.launchInitialized, false);
+    }
 
     // --- Empty intent: nothing written, all flags stay false. ---
     {
@@ -133,6 +144,7 @@ int main() {
         s.launchMultiplayer = true;
         s.launchPlayers = 3;
         s.modePreset = 1;
+        s.unlockAllLevels = true;   // remembered/sentinel: absent field must not clear it
         std::snprintf(s.romPath, sizeof(s.romPath), "%s", "/remembered.z64");
         std::snprintf(s.savedir, sizeof(s.savedir), "%s", "/remembered/saves");
         applyLaunchIntent(s, in);
@@ -143,6 +155,7 @@ int main() {
         checkInt("empty.modePreset", s.modePreset, 1);
         checkStr("empty.romPath", s.romPath, "/remembered.z64");
         checkStr("empty.savedir", s.savedir, "/remembered/saves");
+        checkBool("empty.unlockAllLevels", s.unlockAllLevels, true);
         // No field present => no Initialized flag flipped.
         checkBool("empty.launchInitialized", s.launchInitialized, false);
         checkBool("empty.modesInitialized", s.modesInitialized, false);
