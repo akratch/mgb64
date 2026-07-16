@@ -77,4 +77,11 @@ void portAudioMixSfxIntoBuffer(s16 *out, s32 numSamples);
 void portAudioGetSfxMixStats(PortSfxMixStats *stats);
 void portAudioTraceSfxJson(const char *fmt, ...);
 
+/* WEB-045: live soft-mute. portAudioSetMuted() moves the ramp target (0/1);
+ * portAudioApplyMuteRamp() applies the per-sample-frame gain slew in place and
+ * is called from the AI queue path (stubs.c osAiSetNextBuffer) just before
+ * SDL_QueueAudio. No-op at unity, so the un-muted native path is byte-identical. */
+void portAudioSetMuted(int muted);
+void portAudioApplyMuteRamp(s16 *samples, s32 sampleFrames);
+
 #endif

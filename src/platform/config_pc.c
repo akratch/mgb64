@@ -770,6 +770,27 @@ s32 configSave(void)
     return (configSaveResult() == CONFIG_SAVE_FAILED) ? 0 : 1;
 }
 
+#ifdef __EMSCRIPTEN__
+/* WEB-059: the web build never reaches platformShutdownSDL's configSave() (no
+ * SDL_QUIT, EXIT_RUNTIME=0), so /save/ge007.ini would freeze after first boot.
+ * configSetValue — the single durable-mutation choke point — sets this flag, and
+ * platformFrameSync drains it on a coarse (~10 s) cadence via
+ * configWebSaveIfDirty(). Change-driven, so idle sessions never rewrite the ini.
+ * Native never consumes this flag (still saves once at shutdown). */
+static s32 s_webConfigDirty = 0;
+
+void configWebSaveIfDirty(void)
+{
+    if (!s_webConfigDirty) {
+        return;
+    }
+    /* Clear first: a suppressed (faithful-mode) or successful save both count as
+     * handled — a later genuine mutation re-sets the flag. */
+    s_webConfigDirty = 0;
+    configSave();
+}
+#endif
+
 s32 configSetValue(const char *key, const char *value)
 {
     s32 applied = 0;
@@ -795,6 +816,9 @@ s32 configSetValue(const char *key, const char *value)
      * only genuine applied durable edits end up SETTING_OVERRIDE_NONE. */
     if (applied) {
         settingsNoteDurableEdit(key);
+#ifdef __EMSCRIPTEN__
+        s_webConfigDirty = 1;  /* WEB-059: queue an opportunistic web save */
+#endif
     }
     return 1;
 }

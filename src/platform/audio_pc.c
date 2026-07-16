@@ -123,6 +123,20 @@ static f32               s_masterVolume = 1.0f;   /* Audio.MasterVolume (W6.E3.T
 static f32               s_musicBusVolume = 1.0f;  /* Audio.MusicVolume  (music bus, unity passthrough) */
 static f32               s_sfxBusVolume   = 1.0f;  /* Audio.SfxVolume    (SFX bus, unity passthrough)   */
 static s32               s_sfxMixLegacy = -1;      /* GE007_SFX_MIX_LEGACY=1: old nearest-neighbor/end-wrap SFX mix (audit §2.3/2.4 A/B) */
+static s32               s_traceWeaponAudio = -1;  /* WEB-048: GE007_TRACE_WEAPON_AUDIO cached once (mirror s_sfxMixLegacy) */
+/* WEB-045: soft-mute ramp state (Q15, 32768 = unity). Live mute attenuates the
+ * queued PCM in the AI queue path (portAudioApplyMuteRamp, called from
+ * osAiSetNextBuffer) instead of pausing the SDL device — the device keeps
+ * running so nothing stale survives to replay on unmute, and the on/off click
+ * becomes a short slew. s_muteGainQ15 follows s_muteTargetQ15 by one
+ * PORT_MUTE_RAMP_STEP per sample-frame (~5 ms full travel). Both are touched
+ * only on the main thread (queue mode: the callback mixer is dead, WEB-047), so
+ * no lock is needed. At gain==unity && target==unity the apply is a no-op, i.e.
+ * byte-identical to the un-muted native path. */
+#define PORT_MUTE_RAMP_SAMPLES ((PORT_AUDIO_RATE * 5) / 1000)  /* ~5 ms */
+#define PORT_MUTE_RAMP_STEP    (32768 / PORT_MUTE_RAMP_SAMPLES)
+static s32               s_muteTargetQ15 = 32768;  /* 0 = muted, 32768 = unity */
+static s32               s_muteGainQ15   = 32768;
 static s32               s_lastPlayedVoice = -1;
 static u32               s_audioDeviceBufferBytes;
 static s32               s_audioDeviceSamples = PORT_AUDIO_SAMPLES;
@@ -591,13 +605,16 @@ void portAudioParseBankFile(u8 *ctlData, u32 ctlSize, u32 tblRomOffset)
     s_sfxBankParsed = 1;
 }
 
-/* ===== SDL2 Audio Callback =====
+/* ===== SDL2 mixing helpers =====
  *
- * Mixes all active voices into the output buffer.
- * Called on the SDL audio thread — must be lock-free or hold s_audioMutex.
+ * NOTE (WEB-047): audio runs in QUEUE mode (want.callback == NULL) — the engine
+ * generates each frame's PCM synchronously (portAudioFrame → osAiSetNextBuffer →
+ * SDL_QueueAudio), and there is NO SDL audio-callback thread. The old
+ * audioCallback()/musicMixSamples() software mixer that fed a pull callback was
+ * unreachable and has been removed (audioCallback) / #if 0'd (musicMixSamples)
+ * so it can't mislead Asyncify-reentrancy reasoning. The live SFX mixer
+ * (portAudioMixActiveVoices) is still used by the queue path.
  */
-static void musicMixSamples(s16 *out, s32 numSamples); /* forward decl */
-
 static void portAudioSetVoicePanLocked(PortVoice *voice, f32 pan)
 {
     f32 panF;
@@ -949,23 +966,10 @@ static void portAudioMixActiveVoices(s16 *out, s32 numSamples, PortSfxFrameMixSt
     }
 }
 
-static void audioCallback(void *userdata, u8 *stream, int len)
-{
-    (void)userdata;
-    s32 numSamples = len / (sizeof(s16) * PORT_AUDIO_CHANNELS);
-    s16 *out = (s16 *)stream;
-
-    memset(stream, 0, (size_t)len);
-
-    SDL_LockMutex(s_audioMutex);
-
-    portAudioMixActiveVoices(out, numSamples, NULL);
-
-    /* Mix music */
-    musicMixSamples(out, numSamples);
-
-    SDL_UnlockMutex(s_audioMutex);
-}
+/* WEB-047: audioCallback() removed — it was the SDL pull-callback entry point,
+ * dead since the port switched to queue mode (want.callback == NULL). Its live
+ * half (portAudioMixActiveVoices) survives via the queue-side SFX mixer; its
+ * music half (musicMixSamples) is the legacy CSP software mixer, now #if 0'd. */
 
 /* Audio volume buses (W6.E3.T1, §4.3). Convert a 0..1 gain to Q15 (32768 =
  * unity). Consumers identity-bypass at >= 32768 so the default mix (all buses
@@ -985,6 +989,62 @@ static s32 portAudioVolumeToQ15(f32 v)
 s32 portAudioGetMasterVolumeQ15(void)   { return portAudioVolumeToQ15(s_masterVolume); }
 s32 portAudioGetMusicBusVolumeQ15(void) { return portAudioVolumeToQ15(s_musicBusVolume); }
 s32 portAudioGetSfxBusVolumeQ15(void)   { return portAudioVolumeToQ15(s_sfxBusVolume); }
+
+/* WEB-045: live soft-mute. portAudioSetMuted only moves the ramp target; the
+ * ramp is applied per sample-frame by portAudioApplyMuteRamp, called from the AI
+ * queue path (osAiSetNextBuffer) just before SDL_QueueAudio — the last point
+ * before the device, so every queued buffer is governed. This replaces the old
+ * SDL_PauseAudioDevice mute, which (a) clicked on the hard cut and (b) left up
+ * to one full queue (~167 ms) of pre-mute audio buffered that replayed as a
+ * stale burst on unmute. Keeping the device running drains that queue as
+ * (ramped) silence, so nothing stale survives. */
+void portAudioSetMuted(int muted)
+{
+    s_muteTargetQ15 = muted ? 0 : 32768;
+}
+
+void portAudioApplyMuteRamp(s16 *samples, s32 sampleFrames)
+{
+    s32 gain   = s_muteGainQ15;
+    s32 target = s_muteTargetQ15;
+    s32 i;
+
+    /* Settled at unity: byte-identical no-op (the common un-muted case, and the
+     * only state a deterministic run — which never toggles mute — ever sees). */
+    if (gain >= 32768 && target >= 32768) {
+        return;
+    }
+    if (samples == NULL || sampleFrames <= 0) {
+        return;
+    }
+
+    for (i = 0; i < sampleFrames; i++) {
+        if (gain < target) {
+            gain += PORT_MUTE_RAMP_STEP;
+            if (gain > target) gain = target;
+        } else if (gain > target) {
+            gain -= PORT_MUTE_RAMP_STEP;
+            if (gain < target) gain = target;
+        }
+        if (gain < 32768) {
+            /* Pure attenuation (gain <= unity): result magnitude <= input, so no
+             * s16 overflow — the cast is safe without a clamp. */
+            samples[i * 2]     = (s16)(((s32)samples[i * 2]     * gain) >> 15);
+            samples[i * 2 + 1] = (s16)(((s32)samples[i * 2 + 1] * gain) >> 15);
+        }
+    }
+    s_muteGainQ15 = gain;
+}
+
+/* WEB-048: cache GE007_TRACE_WEAPON_AUDIO once (mirror s_sfxMixLegacy) instead
+ * of a getenv() on every weapon-SFX play/mix in the per-frame path. */
+static int portTraceWeaponAudio(void)
+{
+    if (s_traceWeaponAudio < 0) {
+        s_traceWeaponAudio = (getenv("GE007_TRACE_WEAPON_AUDIO") != NULL) ? 1 : 0;
+    }
+    return s_traceWeaponAudio;
+}
 
 /* Register audio settings with the config system.
  * Called from main_pc.c before configInit(). */
@@ -1118,13 +1178,35 @@ void portAudioInit(void)
 
         {
             int start_muted = portAudioShouldStartMuted();
-            SDL_PauseAudioDevice(s_audioDevice, start_muted);
+            /* WEB-045: always START (unpause) the unified device; express the
+             * initial mute through the soft-mute ramp instead of leaving the
+             * device paused. This keeps the runtime M toggle symmetric — it only
+             * moves the ramp target and never has to un-pause a device — and
+             * avoids the paused-queue → stale-replay-on-first-unmute case. Snap
+             * the ramp gain at boot so there is no 5 ms fade-in. */
+            SDL_PauseAudioDevice(s_audioDevice, 0);
+            s_muteTargetQ15 = start_muted ? 0 : 32768;
+            s_muteGainQ15   = s_muteTargetQ15;
             if (start_muted) {
                 printf("[AUDIO] Starting MUTED (clear GE007_MUTE or set GE007_UNMUTE=1 to enable on boot)\n");
             }
         }
+#ifdef __EMSCRIPTEN__
+        /* WEB-046: on web the SDL emscripten backend does NOT open a device at
+         * this spec — it runs a main-thread ScriptProcessorNode at the browser
+         * AudioContext's own native rate (typically 44.1/48 kHz) and SDL
+         * resamples our stream into it. The figures below are the requested SDL
+         * spec, not the hardware device. */
+        printf("[AUDIO] Unified device: %d Hz, %d ch, %d buf (requested %d)\n"
+               "[AUDIO] (web: browser AudioContext runs at its own native rate; "
+               "SDL resamples this %d Hz stream via a main-thread "
+               "ScriptProcessorNode — figures above are the requested spec)\n",
+               have.freq, have.channels, have.samples, s_audioDeviceSamples,
+               have.freq);
+#else
         printf("[AUDIO] Unified device: %d Hz, %d ch, %d buf (requested %d)\n",
                have.freq, have.channels, have.samples, s_audioDeviceSamples);
+#endif
         s_audioDeviceBufferBytes = (u32)(have.samples * have.channels * (s32)sizeof(s16));
     }
 
@@ -1182,7 +1264,7 @@ static s32 portAudioPlaySoundDetailedInternal(s16 soundIndex,
         localParams = *params;
     }
 
-    if (getenv("GE007_TRACE_WEAPON_AUDIO") != NULL) {
+    if (portTraceWeaponAudio()) {
         s32 peak = 0;
         u32 inspect = smp->numSamples < 4096 ? smp->numSamples : 4096;
         for (u32 i = 0; i < inspect; i++) {
@@ -1409,7 +1491,7 @@ void portAudioMixSfxIntoBuffer(s16 *out, s32 numSamples)
         s_sfxMixStats.peakDeltaMax = frameStats.peakDelta;
     }
 
-    if (getenv("GE007_TRACE_WEAPON_AUDIO") != NULL) {
+    if (portTraceWeaponAudio()) {
         s32 maxVal = 0;
         for (s32 i = 0; i < numSamples * 2; i++) {
             s32 v = out[i];
@@ -2293,8 +2375,15 @@ static void musicSetTempo(u32 tempoUsPerQN)
                         / ((f64)s_seqTempo * (f64)PORT_AUDIO_RATE);
 }
 
-/* ===== Music Mixer (called from audio callback) ===== */
-
+/* ===== Legacy CSP software music mixer (DEAD — WEB-047) =====
+ *
+ * musicMixSamples() was the software CSP sequence mixer, called ONLY from the
+ * removed audioCallback() pull path (queue mode has no callback). It is retained
+ * under #if 0 for reference (its companion portMusicPlaySequence() below is the
+ * documented "fallback diagnostics" parser). Live music is driven by the N64
+ * sequence player (src/music.c → the libaudio synth in audi_port.c), whose
+ * output reaches the device through osAiSetNextBuffer — NOT this mixer. */
+#if 0
 static void musicMixSamples(s16 *out, s32 numSamples)
 {
     if (!s_musicPlaying || !s_seqEvents) return;
@@ -2391,6 +2480,7 @@ static void musicMixSamples(s16 *out, s32 numSamples)
         }
     }
 }
+#endif /* 0 — legacy CSP software music mixer (WEB-047) */
 
 /* ===== Public Music API ===== */
 

@@ -1501,11 +1501,16 @@ static void platformToggleAudioMute(const char *source)
     audio_dev = portAudioGetDevice();
     ai_dev = portAiGetDevice();
 
-    if (audio_dev) {
-        SDL_PauseAudioDevice(audio_dev, g_audioMuted);
-    }
-    if (ai_dev && ai_dev != audio_dev) {
-        SDL_PauseAudioDevice(ai_dev, g_audioMuted);
+    /* WEB-045: soft-mute via a queued-PCM gain ramp instead of pausing the
+     * device. SDL_PauseAudioDevice left up to one full queue (~167 ms) of
+     * pre-mute audio buffered, which replayed as a stale burst on unmute, and
+     * the hard cut clicked. Ramping the queued samples to/from silence while the
+     * device keeps running fixes both; the still-draining queue stays bounded by
+     * AI_QUEUE_LIMIT_FRAMES either way. audio_dev/ai_dev are kept only for the
+     * trace line below (they are the same unified device). */
+    {
+        extern void portAudioSetMuted(int muted);
+        portAudioSetMuted(g_audioMuted);
     }
 
     printf("[AUDIO] %s (%s)\n", g_audioMuted ? "MUTED" : "UNMUTED", source);
@@ -3345,11 +3350,17 @@ void platformPollEvents(void) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                         g_mouseGrabbed = 0;
                     } else {
-                        /* In menus: back (B_BUTTON) */
-                        g_pcEscapePressed = 2;  /* 2 = was in menus → B */
+                        /* Ungrabbed. WEB-042: don't assume "ungrabbed == menus"
+                         * (keyboard-only players are ungrabbed IN gameplay too).
+                         * stubs.c resolves 2 from real game state: B in the
+                         * title/frontend menus, START (pause) during a mission. */
+                        g_pcEscapePressed = 2;  /* 2 = ungrabbed → decided in stubs.c */
                     }
                 } else if (event.key.keysym.sym == SDLK_c ||
-                           event.key.keysym.sym == SDLK_LCTRL) {
+                           event.key.keysym.sym == SDLK_LCTRL ||
+                           event.key.keysym.sym == SDLK_RCTRL) {
+                    /* WEB-041: accept RCtrl for crouch too (keep C and LCtrl). A
+                     * full scancode-registry migration for crouch is out of scope. */
                     if (!event.key.repeat) {
                         g_pcCrouchToggle = 1;
                     }
@@ -3432,6 +3443,15 @@ void platformPollEvents(void) {
                 }
                 break;
             case SDL_MOUSEBUTTONDOWN:
+                /* WEB-044: SDL 2.32's emscripten backend already re-requests
+                 * pointer lock on the click that follows a lock loss, so the
+                 * grab-when-ungrabbed line below is largely redundant with SDL's
+                 * own regrab in the ordinary case. It is kept because SDL's
+                 * regrab does NOT cover the Chrome post-exit cooldown desync
+                 * (the __EMSCRIPTEN__ branch below) or the non-web/native grab —
+                 * so this stays the single game-level entry point that also arms
+                 * g_pcMouseRegrabFrame (WEB-017) to swallow the recapture click.
+                 * No behavior change here beyond what WEB-007 already landed. */
                 if (!g_disableInputGrab && !g_mouseGrabbed) {
                     SDL_SetRelativeMouseMode(SDL_TRUE);
                     g_mouseGrabbed = 1;
@@ -3730,6 +3750,20 @@ void platformFrameSync(void) {
 
     /* Fire any expired OS timers */
     platformCheckTimers();
+
+#ifdef __EMSCRIPTEN__
+    /* WEB-059: the web build never runs platformShutdownSDL (no SDL_QUIT,
+     * EXIT_RUNTIME=0), so configSave() at shutdown never fires and
+     * /save/ge007.ini would freeze after first boot. Flush opportunistically:
+     * ~every 10 s (600 frames @ 60 Hz) write the ini IFF a setting actually
+     * changed (configWebSaveIfDirty is a no-op otherwise). The shell's periodic
+     * FS.syncfs then persists it to IndexedDB. Native is unchanged — it still
+     * saves once at shutdown. */
+    if ((g_frameSyncCallCount % 600) == 0) {
+        extern void configWebSaveIfDirty(void);
+        configWebSaveIfDirty();
+    }
+#endif
 
     /* Frame pacing — hold the loop to the configured frame period.
      *

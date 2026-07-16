@@ -465,6 +465,17 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
     u32 live_frame_bytes = nominal_frame_bytes;
     u32 queue_limit;
 
+    /* WEB-045: soft-mute — attenuate the outgoing PCM in place (a ~5 ms ramp to
+     * or from silence) rather than pausing the device. Applied here, the last
+     * point before the SDL queue, so it governs every queued buffer AND the dump
+     * capture below. No-op at unity gain: byte-identical when un-muted, and inert
+     * under --deterministic (which never toggles mute). Stereo s16 => size/4
+     * sample-frames. */
+    if (buf && size >= 4) {
+        extern void portAudioApplyMuteRamp(s16 *samples, s32 sampleFrames);
+        portAudioApplyMuteRamp((s16 *)buf, (s32)(size / 4));
+    }
+
     /* Queue limit: drop frames only once backlog grows well beyond the
      * controller's 2-frame target. This is a safety net, not the normal path.
      * Use a conservative NTSC fallback until portAudioInit has established the
@@ -6426,22 +6437,47 @@ s32 osContGetReadData(OSContPad *data) {
         if (keys[inputBindingScancode(IB_LEFT)])    stick_x -= 80;
         if (keys[inputBindingScancode(IB_RIGHT)])   stick_x += 80;
 
-        if (!g_pcMouseRegrabFrame) {
-            Uint32 mouse = SDL_GetMouseState(NULL, NULL);
-            if (mouse & SDL_BUTTON(SDL_BUTTON_LEFT))   buttons |= Z_TRIG;
-            if (mouse & SDL_BUTTON(SDL_BUTTON_RIGHT))  buttons |= R_TRIG;
-            if (mouse & SDL_BUTTON(SDL_BUTTON_MIDDLE)) buttons |= B_BUTTON;
+        /* WEB-017: a pointer-lock recapture click spans 4-9 input polls, but the
+         * old g_pcMouseRegrabFrame flag suppressed exactly ONE — so the button,
+         * still physically held, discharged the weapon on the very next poll
+         * (alerting guards / wasting ammo on every recapture). Arm a
+         * wait-for-release latch on the regrab signal (mirrors the
+         * s_overlayReleaseLatch pattern above) and suppress the whole
+         * mouse->fire/aim/interact mapping until EVERY mouse button is observed
+         * up. */
+        static int s_mouseRegrabReleaseLatch = 0;
+        Uint32 mouse = SDL_GetMouseState(NULL, NULL);
+        const Uint32 anyMouseButton = SDL_BUTTON(SDL_BUTTON_LEFT) |
+                                      SDL_BUTTON(SDL_BUTTON_RIGHT) |
+                                      SDL_BUTTON(SDL_BUTTON_MIDDLE);
+        if (g_pcMouseRegrabFrame) {
+            s_mouseRegrabReleaseLatch = 1;
         }
+        if (s_mouseRegrabReleaseLatch) {
+            if (mouse & anyMouseButton) {
+                mouse = 0;                      /* still held from the recapture */
+            } else {
+                s_mouseRegrabReleaseLatch = 0;  /* all released: resume mapping */
+            }
+        }
+        if (mouse & SDL_BUTTON(SDL_BUTTON_LEFT))   buttons |= Z_TRIG;
+        if (mouse & SDL_BUTTON(SDL_BUTTON_RIGHT))  buttons |= R_TRIG;
+        if (mouse & SDL_BUTTON(SDL_BUTTON_MIDDLE)) buttons |= B_BUTTON;
     }
     g_pcMouseRegrabFrame = 0;
 
     /* Escape: pause (START) when in gameplay, back (B) when in menus.
-     * platform_sdl.c sets 1=was-grabbed (gameplay) or 2=was-ungrabbed (menus). */
+     * platform_sdl.c sets 1 = was-grabbed (definitely gameplay) or 2 = ungrabbed.
+     * WEB-042: value 2 used to hardcode B via the g_mouseGrabbed proxy, which is
+     * wrong for keyboard-only players (never grabbed => Esc could never pause a
+     * mission) and after browser lock churn. Decide from REAL game state instead:
+     * B backs out of the title/frontend menus, START pauses (opens the watch)
+     * during a mission. The grabbed path (1) is unchanged. */
     if (g_pcEscapePressed == 1) {
         buttons |= START_BUTTON;
         g_pcEscapePressed = 0;
     } else if (g_pcEscapePressed == 2) {
-        buttons |= B_BUTTON;
+        buttons |= frontend_input ? B_BUTTON : START_BUTTON;
         g_pcEscapePressed = 0;
     }
 
