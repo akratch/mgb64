@@ -3,22 +3,177 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>MGB64 — browser demo</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!--
+  CONTROLS ARE GROUNDED IN CODE — keep this page in sync with the engine.
+  Keyboard defaults + action labels: src/platform/input_bindings.c (kDefault / kLabel).
+  Extra hardcoded keys (Use=F, Crouch=C/Ctrl, weapon wheel, Watch=Esc/Tab, Mute=M):
+    src/platform/platform_sdl.c (the SDL_KEYDOWN handler + the "H" help block).
+  System hotkeys: F1 menu + F10 FPS overlay: src/app/ui_overlay.cpp (135/142).
+  Gamepad defaults: src/platform/input_bindings.c (kGpDefault / kGpLabel).
+  If any binding is rebound in code, update the .controls table below to match.
+-->
 <main id="gate">
-  <h1>MGB64</h1>
-  <p id="gate-msg">Checking your browser…</p>
-  <div id="rom-ui" hidden>
-    <p>Select your GoldenEye 007 (U) ROM (<code>.z64</code>, 12&nbsp;MB). It is stored
-       <strong>only in this browser</strong> and never uploaded.</p>
-    <input type="file" id="rom-input" accept=".z64,.v64,.n64,.rom">
-    <p id="rom-status"></p>
-    <button id="play" disabled>Click to Play</button>
-    <button id="forget" hidden>Forget stored ROM</button>
+  <div class="wrap">
+
+    <header class="hero">
+      <p class="eyebrow">Browser demo · WebGPU · runs entirely on your machine</p>
+      <h1>MGB64</h1>
+      <p class="tagline">
+        A native port of a classic 1997 N64 first-person shooter, compiled to
+        WebGPU and running in this tab. <strong>Bring your own ROM</strong> — the
+        site ships the engine only.
+      </p>
+    </header>
+
+    <!-- STATE 1: gate failure (WebGPU / OPFS unsupported). rom-ui stays hidden,
+         so only this line is shown. Populated by mgb64-shell.js. -->
+    <p id="gate-msg" class="status-line">Checking your browser…</p>
+
+    <!-- STATES 2 (picker) & 3 (ready): revealed once the capability gate passes.
+         mgb64-shell.js toggles #rom-status / #play.disabled / #forget.hidden. -->
+    <div id="rom-ui" hidden>
+
+      <section class="picker" aria-labelledby="picker-title">
+        <h2 id="picker-title">Load your ROM</h2>
+        <p class="picker-sub">
+          Select your <code>.z64</code> ROM (exactly 12&nbsp;MB). It is stored
+          <strong>only in this browser</strong> and is never uploaded — there is
+          no server to receive it.
+        </p>
+
+        <label class="file-field">
+          <span class="file-label">Choose ROM file</span>
+          <input type="file" id="rom-input" accept=".z64,.v64,.n64,.rom">
+        </label>
+
+        <p id="rom-status" role="status" aria-live="polite"></p>
+
+        <div class="actions">
+          <button id="play" class="btn btn-primary" disabled>▶ Play</button>
+          <button id="forget" class="btn btn-ghost" hidden>Forget stored ROM</button>
+        </div>
+
+        <p class="overlay-note">
+          In game: <kbd>F1</kbd> menu · <kbd>F10</kbd> FPS · <kbd>Esc</kbd>
+          release mouse &amp; open Watch. Click the canvas to capture the mouse.
+        </p>
+      </section>
+
+      <div class="fold">
+
+        <details class="disclosure">
+          <summary>Controls</summary>
+          <div class="disclosure-body">
+            <div class="controls">
+              <section>
+                <h3>Movement</h3>
+                <dl>
+                  <dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dd>
+                  <dt>Look</dt><dd>Mouse</dd>
+                  <dt>Crouch</dt><dd><kbd>C</kbd> / <kbd>Ctrl</kbd></dd>
+                  <dt>Lean (while aiming)</dt><dd><kbd>Q</kbd> / <kbd>E</kbd></dd>
+                </dl>
+              </section>
+              <section>
+                <h3>Combat</h3>
+                <dl>
+                  <dt>Fire</dt><dd>Left-click / <kbd>L&nbsp;Shift</kbd></dd>
+                  <dt>Aim (hold)</dt><dd>Right-click / <kbd>R&nbsp;Shift</kbd></dd>
+                  <dt>Reload</dt><dd><kbd>R</kbd></dd>
+                  <dt>Use / interact</dt><dd><kbd>F</kbd></dd>
+                  <dt>Switch weapon</dt><dd>Mouse wheel</dd>
+                </dl>
+              </section>
+              <section>
+                <h3>System</h3>
+                <dl>
+                  <dt>Watch / pause</dt><dd><kbd>Esc</kbd> / <kbd>Tab</kbd></dd>
+                  <dt>Settings menu</dt><dd><kbd>F1</kbd></dd>
+                  <dt>FPS overlay</dt><dd><kbd>F10</kbd></dd>
+                  <dt>Mute audio</dt><dd><kbd>M</kbd></dd>
+                  <dt>Fullscreen</dt><dd>Browser <kbd>F11</kbd></dd>
+                </dl>
+              </section>
+              <section>
+                <h3>Gamepad</h3>
+                <p class="gp-intro">
+                  Plug in an SDL-compatible controller — the browser exposes it
+                  and the engine maps it automatically. Defaults:
+                </p>
+                <dl>
+                  <dt>Fire / Aim</dt><dd>RT / LT</dd>
+                  <dt>Jump</dt><dd>A</dd>
+                  <dt>Reload / Use</dt><dd>B</dd>
+                  <dt>Next weapon</dt><dd>Y</dd>
+                  <dt>Watch / pause</dt><dd>Start</dd>
+                  <dt>Settings menu</dt><dd>Back / View</dd>
+                </dl>
+              </section>
+            </div>
+          </div>
+        </details>
+
+        <details class="disclosure">
+          <summary>About this demo</summary>
+          <div class="disclosure-body">
+            <p>
+              This is the same engine that ships as the desktop apps, compiled to
+              a single WebGPU/wasm binary. It runs the full solo campaign — pick a
+              ROM and play from the first mission.
+            </p>
+
+            <h3>What's different from the N64 original</h3>
+            <ul class="diff">
+              <li><strong>Mouse-and-keyboard aiming</strong> — free-look with the
+                mouse, instead of the original's single analog stick.</li>
+              <li><strong>Auto-aim assist is on</strong> by default (toggleable in
+                the desktop launcher).</li>
+              <li><strong>Lights shoot out</strong> consistently — the
+                shoot-out-lights hatch is on by default.</li>
+              <li><strong>A small FPS overlay</strong> sits in the top-right;
+                toggle it any time with <kbd>F10</kbd>.</li>
+            </ul>
+
+            <h3>Browser &amp; privacy</h3>
+            <ul class="diff">
+              <li>Needs <strong>WebGPU</strong>: Chrome / Edge 113+, Safari 26+,
+                or Firefox 141+ on Windows. There is no WebGL fallback — the page
+                tells you up front rather than running degraded.</li>
+              <li>Your ROM stays in your browser's <strong>Origin-Private File
+                System</strong>; it is never uploaded. <em>Forget stored ROM</em>
+                deletes that copy immediately.</li>
+              <li>Saves auto-persist to IndexedDB every few seconds and when the
+                tab closes — no manual save needed.</li>
+            </ul>
+          </div>
+        </details>
+
+        <nav class="links" aria-label="More">
+          <a class="link-card" href="https://github.com/akratch/mgb64/releases/latest">
+            <span class="link-title">Want the full experience?</span>
+            <span class="link-sub">Download the native app — macOS · Windows · Linux</span>
+          </a>
+          <a class="link-card" href="https://github.com/akratch/mgb64">
+            <span class="link-title">Project README</span>
+            <span class="link-sub">Source, build steps, and disclaimer</span>
+          </a>
+        </nav>
+
+      </div>
+    </div>
   </div>
 </main>
+
+<!-- Unobtrusive in-game hint; mgb64-shell.js reveals it on boot (additive). -->
+<div id="overlay-hint" hidden aria-hidden="true">
+  <kbd>F1</kbd> menu · <kbd>F10</kbd> fps · <kbd>Esc</kbd> release mouse
+</div>
+
 <canvas id="mgb64-canvas" width="1280" height="960" hidden></canvas>
 <script src="mgb64-shell.js"></script>
 </body>

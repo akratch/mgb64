@@ -91,6 +91,9 @@ async function boot(romBytes) {
   booted = true;
   $("gate").hidden = true;
   const canvas = $("mgb64-canvas"); canvas.hidden = false;
+  // Additive UI only: reveal the unobtrusive in-game hint (F1/F10/Esc). It
+  // self-fades via CSS and is purely cosmetic — no bearing on the boot contract.
+  const hint = $("overlay-hint"); if (hint) hint.hidden = false;
   // Non-streaming instantiate: GitHub Pages may serve .wasm with a wrong MIME.
   const wasmBinary = await (await fetch("ge007_web.wasm")).arrayBuffer();
   const createMGB64 = await loadEngineFactory();
