@@ -1070,10 +1070,30 @@ static int s_shader_count = 0;
 static struct ShaderProgram *s_cur_shader = NULL;
 static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
 
-/* Single-entry draw bind-group cache (see wgpu_draw_triangles): the cache owns
- * the ref; key is {bgl, view0, samp0, view1, samp1} pointers. */
-static WGPUBindGroup s_bg_cache = NULL;
-static const void   *s_bg_key[7] = {0};   /* {bgl,v0,m0,v1,m1,snapview,diag_ubo} */
+/* Persistent draw bind-group cache (see wgpu_draw_triangles). Keyed on the
+ * {bgl, view0, samp0, view1, samp1, snapview, diag_ubo} pointer tuple. The
+ * previous single-entry cache thrashed on every material change — a frame that
+ * cycles N materials created N bind groups per frame, and the resulting JS-side
+ * object churn (Dawn createBindGroup + object-table inserts, visible in browser
+ * CPU profiles) fed GC pauses that degraded 1% lows. Entries persist across
+ * frames (materials recur every frame) with round-robin eviction as the
+ * never-leak backstop. Stale texture views can never be looked up: a deleted
+ * texture's view pointer is replaced by the white-fallback pointer in the key,
+ * which misses and builds a fresh group. */
+#define WGPU_BG_CACHE 512            /* power of two; 4-way set-associative */
+#define WGPU_BG_WAYS  4
+struct WgpuBgEntry { const void *key[7]; WGPUBindGroup bg; };
+static struct WgpuBgEntry s_bg_cache_tab[WGPU_BG_CACHE];
+static uint32_t s_bg_cache_way = 0;  /* round-robin victim way on set overflow */
+
+static uint32_t wgpu_bg_key_hash(const void *const key[7]) {
+    uintptr_t h = 0x9e3779b9u;
+    for (int i = 0; i < 7; i++) {
+        h ^= (uintptr_t)key[i] >> 4;   /* pointers are >=16-aligned; drop zeros */
+        h *= 0x85ebca6bu;
+    }
+    return (uint32_t)(h ^ (h >> 16));
+}
 
 static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t shader_id1) {
     for (int i = 0; i < s_shader_count; ++i) {
@@ -1600,7 +1620,62 @@ static void wgpu_ensure_draw_resources(void) {
  * scissor, pipeline and bind group are re-applied per draw anyway. This is the
  * per-batch analogue of gfx_opengl.c's glCopyTexSubImage2D snapshot (one copy
  * per same-material XLU batch, PERFORMANCE_PLAN.md M1). */
-static bool wgpu_snapshot_scene_for_memory_blend(void) {
+/* Compute the batch's screen-space bounding rect (top-down texture coords,
+ * padded for the ±0.5px coverage taps) from the interleaved VBO's clip
+ * positions. Returns false when any vertex is un-projectable (w<=0) — the
+ * caller then copies the whole target. Ports the intent of gfx_opengl.c's
+ * gfx_opengl_compute_batch_snapshot_rect: bound the snapshot copy to the
+ * pixels the batch can actually sample instead of the full scene target
+ * (a full copy at fullscreen retina is tens of MB per glass/fence batch —
+ * a measured 1%-low contributor). */
+static bool wgpu_batch_snapshot_rect(const float *buf_vbo, size_t buf_vbo_len,
+                                     int stride_floats,
+                                     uint32_t *out_x, uint32_t *out_y,
+                                     uint32_t *out_w, uint32_t *out_h) {
+    if (buf_vbo == NULL || stride_floats < 4 || buf_vbo_len < (size_t)stride_floats) {
+        return false;
+    }
+    float min_px = 1e30f, max_px = -1e30f;
+    float min_gl = 1e30f, max_gl = -1e30f;   /* bottom-up pixel y */
+    for (size_t off = 0; off + 4 <= buf_vbo_len; off += (size_t)stride_floats) {
+        float w = buf_vbo[off + 3];
+        if (!(w > 0.0f)) {
+            return false;   /* behind the eye — bail to the full-target copy */
+        }
+        float ndc_x = buf_vbo[off + 0] / w;
+        float ndc_y = buf_vbo[off + 1] / w;
+        float px = (float)s_vp_x + (ndc_x + 1.0f) * 0.5f * (float)s_vp_w;
+        float py = (float)s_vp_y + (ndc_y + 1.0f) * 0.5f * (float)s_vp_h;
+        if (px < min_px) min_px = px;
+        if (px > max_px) max_px = px;
+        if (py < min_gl) min_gl = py;
+        if (py > max_gl) max_gl = py;
+    }
+    if (min_px > max_px || min_gl > max_gl) {
+        return false;
+    }
+    /* Pad for the 8-tap coverage offsets + rounding, flip to top-down, clamp. */
+    int x0 = (int)min_px - 2;
+    int x1 = (int)max_px + 3;
+    int y0 = (int)s_scene_h - ((int)max_gl + 3);   /* top-down top edge */
+    int y1 = (int)s_scene_h - ((int)min_gl - 2);   /* top-down bottom edge */
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)s_scene_w) x1 = (int)s_scene_w;
+    if (y1 > (int)s_scene_h) y1 = (int)s_scene_h;
+    if (x1 <= x0 || y1 <= y0) {
+        return false;   /* fully clipped — nothing the shader can sample */
+    }
+    *out_x = (uint32_t)x0;
+    *out_y = (uint32_t)y0;
+    *out_w = (uint32_t)(x1 - x0);
+    *out_h = (uint32_t)(y1 - y0);
+    return true;
+}
+
+static bool wgpu_snapshot_scene_for_memory_blend(const float *buf_vbo,
+                                                 size_t buf_vbo_len,
+                                                 int stride_floats) {
     if (s_encoder == NULL || s_pass == NULL || s_scene_tex == NULL ||
         s_scene_w == 0 || s_scene_h == 0) {
         return false;
@@ -1638,11 +1713,19 @@ static bool wgpu_snapshot_scene_for_memory_blend(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
+    /* Copy only the batch's padded screen rect when computable (same origin in
+     * src and dst keeps the snapshot 1:1 with the target, so the shader's
+     * fragcoord-based memoryUv stays valid); whole target as the fallback. */
+    uint32_t rx = 0, ry = 0, rw = s_scene_w, rh = s_scene_h;
+    (void)wgpu_batch_snapshot_rect(buf_vbo, buf_vbo_len, stride_floats,
+                                   &rx, &ry, &rw, &rh);
     WGPUTexelCopyTextureInfo cs = {0};
     cs.texture = s_scene_tex; cs.aspect = WGPUTextureAspect_All;
+    cs.origin.x = rx; cs.origin.y = ry;
     WGPUTexelCopyTextureInfo cd = {0};
     cd.texture = s_snap_tex; cd.aspect = WGPUTextureAspect_All;
-    WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
+    cd.origin.x = rx; cd.origin.y = ry;
+    WGPUExtent3D ext = { rw, rh, 1 };
     wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
 
     WGPURenderPassColorAttachment att = {0};
@@ -1728,7 +1811,8 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
                         s_cur_shader->info.diag_rdp_cvg_memory_blend;
     WGPUBuffer diag_ubo = NULL;
     if (rdp_mem_draw) {
-        if (!wgpu_snapshot_scene_for_memory_blend()) {
+        if (!wgpu_snapshot_scene_for_memory_blend(buf_vbo, buf_vbo_len,
+                                                  s_cur_shader->info.num_floats)) {
             return;
         }
         if (s_cur_shader->info.diag_rdp_cvg_memory_blend) {
@@ -1773,9 +1857,15 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         const void *key[7] = { s_cur_shader->bgl, v0, m0, v1, m1,
                                rdp_mem_draw ? (const void *)s_snap_view : NULL,
                                (const void *)diag_ubo };
-        if (s_bg_cache != NULL && memcmp(key, s_bg_key, sizeof(key)) == 0) {
-            bg = s_bg_cache;   /* hit: reuse, no alloc/free this draw */
-        } else {
+        uint32_t set_base = (wgpu_bg_key_hash(key) & (WGPU_BG_CACHE / WGPU_BG_WAYS - 1)) * WGPU_BG_WAYS;
+        for (int w = 0; w < WGPU_BG_WAYS; w++) {
+            struct WgpuBgEntry *e = &s_bg_cache_tab[set_base + w];
+            if (e->bg != NULL && memcmp(key, e->key, sizeof(key)) == 0) {
+                bg = e->bg;   /* hit: reuse, no alloc this draw */
+                break;
+            }
+        }
+        if (bg == NULL) {
             WGPUBindGroupEntry ents[7];
             int ne = 0;
             for (int t = 0; t < 2; t++) {
@@ -1801,9 +1891,23 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
             bd.entries = ents;
             bg = wgpuDeviceCreateBindGroup(s_device, &bd);
             if (bg != NULL) {
-                if (s_bg_cache != NULL) wgpuBindGroupRelease(s_bg_cache);
-                s_bg_cache = bg;   /* the cache owns the ref now */
-                memcpy(s_bg_key, key, sizeof(key));
+                /* Insert into the set: first empty way, else round-robin
+                 * eviction (the in-flight pass holds its own ref on any
+                 * evicted group until submit, so release here is safe). */
+                struct WgpuBgEntry *victim = NULL;
+                for (int w = 0; w < WGPU_BG_WAYS; w++) {
+                    if (s_bg_cache_tab[set_base + w].bg == NULL) {
+                        victim = &s_bg_cache_tab[set_base + w];
+                        break;
+                    }
+                }
+                if (victim == NULL) {
+                    victim = &s_bg_cache_tab[set_base + (s_bg_cache_way & (WGPU_BG_WAYS - 1))];
+                    s_bg_cache_way++;
+                    wgpuBindGroupRelease(victim->bg);
+                }
+                memcpy(victim->key, key, sizeof(victim->key));
+                victim->bg = bg;   /* the cache owns the ref */
             }
         }
     }
@@ -1840,7 +1944,7 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     }
     wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, s_vbuf, voff, bytes);
     wgpuRenderPassEncoderDraw(s_pass, (uint32_t)(3 * buf_vbo_num_tris), 1, 0, 0);
-    /* bg is owned by s_bg_cache (retained across draws); the render pass holds
+    /* bg is owned by the bind-group cache (retained across draws); the pass holds
      * its own reference until submit, so we never release it here. */
 }
 

@@ -15,6 +15,14 @@
 #include <SDL.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#include <emscripten/em_js.h>
+/* Block (via Asyncify) until the browser's next animation frame. The wake is
+ * display-synced — unlike emscripten_sleep()'s setTimeout, which Chrome clamps
+ * to 1-4ms granularity and which never aligns with vsync. Used by the frame
+ * pacer below; the rAF wake also lets pending WebGPU/timer callbacks run. */
+EM_ASYNC_JS(void, platformWaitAnimationFrame, (void), {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+});
 #endif
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
@@ -3334,11 +3342,50 @@ void platformPollEvents(void) {
                     g_mouseGrabbed = 1;
                     g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
                 }
+#ifdef __EMSCRIPTEN__
+                /* Browser pointer-lock resilience: Chrome enforces a ~1.25 s
+                 * cooldown after exiting pointer lock (its own Esc, or our Esc
+                 * handler) before a new request may succeed. A click inside the
+                 * cooldown makes SDL's requestPointerLock REJECT while SDL's
+                 * relative-mode state stays TRUE — so without this, every later
+                 * click is a no-op (g_mouseGrabbed==1, SDL thinks it's locked)
+                 * and the mouse is dead until another Esc round-trip. If the
+                 * document actually holds no pointer lock on a click while we
+                 * believe we're grabbed, force a fresh request by toggling
+                 * relative mode off->on (SDL early-outs on a same-state set). */
+                else if (!g_disableInputGrab && g_mouseGrabbed &&
+                         !EM_ASM_INT({ return document.pointerLockElement ? 1 : 0; })) {
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
+                }
+#endif
                 break;
             case SDL_MOUSEWHEEL: {
-                int wy = event.wheel.y;
-                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
-                g_mouseWheelY += wy;
+                /* Accumulate the FLOAT wheel delta and emit whole steps.
+                 * The integer wheel.y field truncates per event: browsers
+                 * (SDL emscripten scales DOM pixel deltas by 1/100) and macOS
+                 * trackpads deliver many small fractional deltas that all
+                 * truncate to 0 — the wheel felt dead/rough — while momentum
+                 * flicks burst. Carrying the fraction across events makes one
+                 * physical notch/step equal exactly one weapon-cycle step on
+                 * every input stack. (Menu/UI input only — tapes record
+                 * controller-level state, so replay hashes are unaffected.) */
+                static float s_wheelAccumY = 0.0f;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+                float wyf = event.wheel.preciseY;
+#else
+                float wyf = (float)event.wheel.y;
+#endif
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wyf = -wyf;
+                s_wheelAccumY += wyf;
+                {
+                    int steps = (int)s_wheelAccumY; /* trunc toward zero */
+                    if (steps != 0) {
+                        g_mouseWheelY += steps;
+                        s_wheelAccumY -= (float)steps;
+                    }
+                }
                 break;
             }
             case SDL_CONTROLLERDEVICEADDED:
@@ -3620,26 +3667,38 @@ void platformFrameSync(void) {
             g_paceDeadline = pace_now;
         }
         Uint64 wait_begin = pace_now;
+#ifdef __EMSCRIPTEN__
+        /* Browser pacing (1%-low fix): wait on requestAnimationFrame, not
+         * setTimeout. The previous emscripten_sleep() loop unwound through
+         * Asyncify into setTimeout, whose 1-4ms clamp on short/nested timers
+         * overshot the deadline by a different amount every frame — measured
+         * 1% lows of ~40-45 fps against a 60 fps average (visible hitching,
+         * rough input). A rAF wait is display-synced (16.7ms at 60Hz, 8.3ms on
+         * 120Hz ProMotion), so the loop lands on vsync edges with no timer
+         * clamp; the absolute deadline above still holds the 60Hz sim average
+         * on any refresh rate. ALWAYS yield at least one rAF per paced frame:
+         * this Asyncify unwind is the main loop's only yield point (it also
+         * services the stubs.c osRecvMesg spin via platformFrameSync), so an
+         * unconditional-yield keeps the browser responsive even when a frame
+         * overruns its budget. Stop once within 3ms of the deadline — another
+         * whole-vsync wait would overshoot; finishing slightly early is phase
+         * lead, not drift, because the deadline is absolute. */
+        do {
+            platformWaitAnimationFrame();
+            pace_now = SDL_GetPerformanceCounter();
+        } while (pace_now < g_paceDeadline &&
+                 ((double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq) > 3.0);
+#else
         while (pace_now < g_paceDeadline) {
             double rem_ms = (double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq;
-#ifdef __EMSCRIPTEN__
-            /* The browser paces frames; SDL_Delay would block the JS event loop.
-             * emscripten_sleep() unwinds via Asyncify: timers fire, WebGPU
-             * callbacks resolve, rAF proceeds. 0ms = yield only. This also covers
-             * the stubs.c osRecvMesg spin, which reaches here via platformFrameSync.
-             * Sub-1ms remainders truncate to 0 here (unsigned cast), so the tail
-             * end of the wait is a yield-only spin bounded by rAF pacing, not a
-             * true sub-ms sleep. */
-            emscripten_sleep(rem_ms > 0.0 ? (unsigned)rem_ms : 0);
-#else
             if (rem_ms > 2.5) {
                 SDL_Delay((u32)(rem_ms - 2.0));  /* coarse sleep, ~2ms precise tail */
             } else {
                 SDL_Delay(0);                    /* yield-spin the final stretch */
             }
-#endif
             pace_now = SDL_GetPerformanceCounter();
         }
+#endif
         perf_delay_ms = (u32)((double)(pace_now - wait_begin) * 1000.0 / (double)freq);
     }
     g_lastFrameTime = SDL_GetTicks();
