@@ -39,7 +39,7 @@ geometry, textures, depth ordering, lighting, and HUD match.
 
 ## Output post-FX parity gap — DISCOVERED 2026-07-16, CLOSED same day
 
-The 2026-07-16 parity investigation (`scratchpad/sdd/task-parity-report.md`) found
+The 2026-07-16 parity investigation found
 a **Category-B backend defect** this doc's earlier "at or above GL parity" summary
 had missed and wrongly implied closed: `wgpu_end_frame` presented the raw scene
 via a bare `CopyTextureToTexture`, running **none** of the output-VI-filter chain
@@ -104,6 +104,49 @@ Metal here so this is an API-precision floor comparable to the documented GL↔M
   ctests pass. Browser: `ge007_web` rebuilt, headless boot clean — Dawn (strict
   WGSL validator) accepts the pipeline, zero shader/validation errors. Perf: jungle
   holds 60 fps, per-frame work 4.4 ms (unchanged vs the plain-copy path).
+
+## Deprecation evidence base (2026-07-16)
+
+These two measurements are the quantitative basis for `docs/BACKEND_DEPRECATION_PLAN.md`:
+retiring GL/Metal loses no fidelity and regresses no performance.
+
+**Parity (Dam frame 90, render-scale 1, GL vs WebGPU; wgpu-native on Metal here, so
+an API-precision floor comparable to the documented GL↔Metal ~3% tolerance).**
+Per-pixel max-channel abs-diff:
+
+| comparison | mean | p50 | p95 | p99 | max | >5 |
+|---|---|---|---|---|---|---|
+| faithful (`RemasterFX=0`) | 1.14 | 0 | 8 | 20 | 226 | 6.9% |
+| remaster (`RemasterFX=1`, final) | **1.76** | 1 | 7 | 16 | 224 | **6.8%** |
+
+Remaster sits *at* the faithful cross-API floor (6.8% ≈ 6.9%) — the post-FX pass adds
+zero divergence beyond what the two APIs already differ by on an unfiltered frame.
+
+**Performance (all 20 levels, mean CPU `work_ms` via `tools/perf_census.sh`, 1280×720,
+180 frames after 80-frame warmup; same-host/same-session GL-vs-WebGPU, stock remaster
+config so both post-FX chains are active).** fps = 1000/ms:
+
+| level | GL fps | WebGPU fps | Δ% | | level | GL fps | WebGPU fps | Δ% |
+|---|---|---|---|---|---|---|---|---|
+| archives | 232 | 305 | +31.5% | | frigate | 157 | 201 | +28.0% |
+| aztec | 225 | 301 | +33.8% | | jungle | 139 | 241 | +73.4% |
+| bunker1 | 200 | 287 | +43.5% | | runway | 171 | 224 | +31.0% |
+| bunker2 | 235 | 500 | +112.8% | | silo | 225 | 338 | +50.2% |
+| caverns | 195 | 244 | +25.1% | | statue | 181 | 337 | +86.2% |
+| control | 144 | 153 | +6.2% | | streets | 187 | 242 | +29.4% |
+| cradle | 156 | 282 | +80.8% | | surface1 | 215 | 325 | +51.2% |
+| dam | 146 | 164 | +12.3% | | surface2 | 200 | 524 | +162.0% |
+| depot | 215 | 281 | +30.7% | | train | 261 | 465 | +78.2% |
+| egypt | 127 | 140 | +10.2% | | facility | 254 | 439 | +72.8% |
+
+**WebGPU ≥ GL on every level**, no exceptions, no flags. Slimmest margin +6.2% (control),
+median **+38.6%**, max +162.0% (surface2). WebGPU's worst level (egypt, 140 fps / 7.15 ms)
+clears the 120 fps target (8.3 ms) with headroom and the 60 fps hard floor (16.6 ms) by >2x.
+The new WebGPU post-FX pass costs no more than GL's output-filter chain (Dam: 6.32 ms with
+FX vs 6.42 ms without — within run variance). Metric is CPU-side `work_ms`, the same metric
+behind the historical 101–189 fps all-levels claim; single host (Apple Silicon, GL =
+OpenGL-over-Metal), machine-relative per AUDIT-0019, but the cross-backend comparison is
+same-host/same-session.
 
 ## Pixel-parity gaps — CLOSED at HEAD (update 2026-07-15)
 

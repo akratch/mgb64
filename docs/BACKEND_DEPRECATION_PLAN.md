@@ -66,9 +66,11 @@ is the first and cleanest deletion.
   *lost* on Metal deletion — now runs on WebGPU too** (planar v1, `gfx_webgpu_postfx_wgsl`;
   see `WEBGPU_BACKEND_STATUS_2026-07-13.md` "SSAO — CLOSED 2026-07-16"). GL's SSAO
   hangs on macOS GL-over-Metal, so before this Metal was the *only* backend with
-  working SSAO; that dependency is now discharged. No remaster capability is lost
-  when `gfx_metal.mm` is deleted. This was the one Phase-M engineering dependency;
-  what remains is the owner attestation, not new engineering.
+  working SSAO; that dependency is now discharged. **No capability GL had is lost
+  when `gfx_metal.mm` is deleted** — hemisphere-v2 SSAO (`Video.SsaoMode=hemisphere`)
+  was always Metal-exclusive and non-default, so WebGPU's planar-v1 SSAO reaches
+  full GL parity, and GL never had v2 to begin with. This was the one Phase-M
+  engineering dependency; what remains is the owner attestation, not new engineering.
 
 ### Deletion scope (enumerated)
 

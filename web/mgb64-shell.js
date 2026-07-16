@@ -2,23 +2,16 @@
 // Storage design: ROM bytes -> OPFS (persist once, reseed each visit);
 // saves/config -> IDBFS mounted at /save (FS.syncfs on a timer + pagehide).
 //
-// ADAPTATION (documented, see docs/superpowers/plans/2026-07-15-web-port.md
-// Task W5 vs. build reality): the plan's Step 2 loads the engine via
-// `const { default: createMGB64 } = await import("./ge007_web.js")`, which
-// assumes an ES module build. The actual CMakeLists.txt link options for
-// `ge007_web` (-sMODULARIZE=1 -sEXPORT_NAME=createMGB64, no -sEXPORT_ES6) emit
-// emscripten's default UMD-style factory: it ends with
+// Engine load: the `ge007_web` link options (-sMODULARIZE=1
+// -sEXPORT_NAME=createMGB64, no -sEXPORT_ES6) emit emscripten's default
+// UMD-style factory — it ends with
 // `if (typeof exports === 'object' ...) module.exports = createMGB64; ...`
 // and otherwise falls through to a bare `var createMGB64 = ...` in whatever
-// scope it is evaluated in. Verified directly against build-web/ge007_web.js
-// and against the W3.6 proof-of-render harness
-// (scratchpad/w3-smoke/harness_w36.html), which loads it as a plain classic
-// `<script src="ge007_web.js">` and reads the resulting `window.createMGB64`
-// global — there is no `export` statement for `import()` to bind to. This
-// shell therefore injects ge007_web.js as a classic script tag and reads the
-// global factory instead of using dynamic `import()`. Consequently
-// index.html also loads *this* file as a classic script (no
-// `type="module"`), since nothing else here needs ESM semantics.
+// scope it is evaluated in. There is no `export` statement for `import()` to
+// bind to, so this shell injects ge007_web.js as a classic script tag and
+// reads the resulting `window.createMGB64` global rather than using dynamic
+// `import()`. index.html therefore also loads *this* file as a classic script
+// (no `type="module"`), since nothing else here needs ESM semantics.
 const ROM_OPFS_NAME = "baserom.z64";
 const ROM_SIZE = 12 * 1024 * 1024;
 
