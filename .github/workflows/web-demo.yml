@@ -21,14 +21,33 @@ jobs:
           test "$sz" -lt 41943040   # 40 MiB hard ceiling (Pages file limit is 100 MiB)
       - name: ROM-absence guard
         # The engine wasm legitimately contains the literal "GOLDENEYE" (the
-        # ROM-validation compare string), so string-grep would false-positive.
-        # Instead: fail if any artifact starts with the .z64 magic (80 37 12 40)
-        # or is an unexpected file — the site ships exactly 5 known files.
+        # ROM-validation compare string), so a plain string-grep would
+        # false-positive. Instead we reject on the ROM HEADER MAGIC, checked in all
+        # three N64 byte orders at offset 0 (a ROM renamed onto a whitelisted name)
+        # AND scanned for the big-endian sequence anywhere in each artifact (ROM
+        # content appended/embedded inside the wasm under the 40 MiB budget). The
+        # site ships exactly 5 known files. Fast: 5 small files, grep -q short-circuits.
         run: |
           set -euo pipefail
+          # Big-endian .z64 header magic (80 37 12 40) — the on-disk form the engine
+          # loads and the byte sequence any embedded ROM content carries.
+          be_magic=$'\x80\x37\x12\x40'
           for f in dist/web/*; do
+            # (1) offset-0 header in any of the three byte orders: 80371240 = .z64
+            #     (big-endian), 37804012 = .v64 (byteswapped), 40123780 = .n64
+            #     (little-endian).
             magic=$(head -c4 "$f" | od -An -tx1 | tr -d ' \n')
-            if [ "$magic" = "80371240" ]; then echo "ROM content in artifact: $f"; exit 1; fi
+            case "$magic" in
+              80371240|37804012|40123780)
+                echo "ROM header (offset 0) in artifact: $f"; exit 1 ;;
+            esac
+            # (2) big-endian magic sequence ANYWHERE (binary-safe: -F fixed string,
+            #     -a treat-as-text, LC_ALL=C so 0x80 matches as one raw byte). grep
+            #     -q returns 1 on no-match, so it must stay inside the `if` (guarded).
+            if LC_ALL=C grep -qaF "$be_magic" "$f"; then
+              echo "ROM magic byte sequence found inside artifact: $f"; exit 1
+            fi
+            # (3) whitelist: exactly the 5 files the site ships, fail closed.
             case "$(basename "$f")" in
               index.html|mgb64-shell.js|style.css|ge007_web.js|ge007_web.wasm) ;;
               *) echo "unexpected file in artifact: $f"; exit 1 ;;

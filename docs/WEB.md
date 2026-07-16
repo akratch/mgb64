@@ -84,7 +84,7 @@ install commands above if it's missing.
 
 ```sh
 tools/web/build_web.sh            # Release (default)
-tools/web/build_web.sh --debug    # Debug (SAFE_HEAP/ASSERTIONS on)
+tools/web/build_web.sh --debug    # Debug (SAFE_HEAP=1 + ASSERTIONS=2 on)
 ```
 
 This configures an Emscripten-toolchain build in `build-web/` (kept separate

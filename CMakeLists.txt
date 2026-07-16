@@ -2004,6 +2004,14 @@ if(EMSCRIPTEN)
         "-sEXPORTED_RUNTIME_METHODS=callMain,FS,IDBFS"
         "-lidbfs.js"
         "-sENVIRONMENT=web"
+        # WEB-057: Debug-config-only web sanitizers, wired via generator
+        # expression so Release carries neither (both add real runtime cost).
+        # SAFE_HEAP is precisely the ILP32 out-of-bounds/misaligned-access tool
+        # this wasm32 decomp wants; ASSERTIONS=2 turns on emscripten's most
+        # verbose runtime checks. build_web.sh --debug drives CMAKE_BUILD_TYPE=Debug;
+        # keep docs/WEB.md's --debug line in sync with these flags.
+        "$<$<CONFIG:Debug>:-sSAFE_HEAP=1>"
+        "$<$<CONFIG:Debug>:-sASSERTIONS=2>"
     )
     # Layout-critical + warning flags: the wasm engine compiles the SAME decomp
     # game TUs as native ge007 (:1783), so it needs the identical parse-affecting
