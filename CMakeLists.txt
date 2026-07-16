@@ -553,6 +553,26 @@ if(BUILD_TESTING)
     set_tests_properties(web_controls_doc_drift PROPERTIES
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    # Headless-Chrome boot smoke for the browser build (the web regression net /
+    # Asyncify validation harness). Serves a PREBUILT dist/web on an ephemeral
+    # localhost port and drives system Chrome over CDP (--remote-debugging-pipe,
+    # zero npm deps) to inject a real ROM, click Play, and assert the WebGPU engine
+    # boots to a live, rendering state (canvas visible + stays visible, >=N rAF
+    # frames, non-black screenshot, no fatal/Boot-failed, no unexpected console
+    # errors). Self-skips (exit 125) when a runtime prerequisite is absent —
+    # dist/web, a 12 MB GoldenEye ROM, Chrome, or node — so a CI runner without
+    # those SKIPs instead of failing. Timing-fragile by nature (real GPU + browser),
+    # so it is tagged LABELS "web": exclude from the default lane with
+    # `ctest -LE web`, or run it alone with `ctest -R web_boot_smoke -V`.
+    add_test(
+        NAME web_boot_smoke
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/web/web_boot_smoke.sh"
+    )
+    set_tests_properties(web_boot_smoke PROPERTIES
+        TIMEOUT 120
+        SKIP_RETURN_CODE 125
+        LABELS "web"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     # Registry honesty: every add_port_validation_smoke(...) below must
     # reference a script that actually ships in tools/, so the advertised
     # validation-lane coverage cannot exceed what a fresh checkout can run.
