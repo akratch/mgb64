@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1069 flags** found across the source.
+**1070 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -264,6 +264,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DECOR_ONLY_PRIM` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_SPEEDFRAMES` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_STABLE_COUNT` | ? |  | 1 |  |
+| `GE007_DEV_HOTKEYS` | ? |  | 1 |  |
 | `GE007_DIAG_ALPHA_BLEND` | ? |  | 1 |  |
 | `GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC` | ? |  | 2 |  |
 | `GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX` | ? |  | 1 |  |

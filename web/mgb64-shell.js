@@ -114,6 +114,14 @@ function showFatal(msg) {
   panel.textContent = msg;
   panel.hidden = false;
 }
+// WEB-009 interplay: a fatal shown during a FAILED boot (onAbort/bring-up
+// failure) must not permanently cover the recovered gate UI — boot().catch
+// calls this to drop the panel and re-arm the latch so a retry can surface a
+// fresh failure.
+function hideFatal() {
+  _fatalShown = false;
+  const panel = $("fatal"); if (panel) panel.hidden = true;
+}
 // Exposed for the C bring-up/device-lost path (see gfx_webgpu_compat.h).
 window.mgb64ShowError = (msg) =>
   showFatal(msg || "The graphics device failed to start. Reload to try again.");
@@ -146,9 +154,15 @@ let _module = null;  // set once the engine module exists, for crash-path syncfs
 // only net once the game is running: show a message and make one last-ditch
 // attempt to flush saves so the user knows a reload preserves their auto-save.
 function handleCrash() {
-  showFatal("The game crashed — reload to continue from your last auto-save.");
+  // Honest messaging: only promise an auto-save once at least one persist
+  // actually succeeded (_savedOnce) — a crash before the first syncfs has no
+  // save to come back to.
+  showFatal(_savedOnce
+    ? "The game crashed — reload to continue from your last auto-save."
+    : "The game crashed — reload the page to try again.");
   try { _module?.FS?.syncfs(false, () => {}); } catch {}
 }
+let _savedOnce = false;
 
 async function boot(romBytes) {
   if (booted) return;
@@ -178,7 +192,7 @@ async function boot(romBytes) {
   m.FS.mkdir("/rom"); m.FS.writeFile("/rom/baserom.z64", romBytes);
   m.FS.mkdir("/save"); m.FS.mount(m.IDBFS, {}, "/save");
   await new Promise((res, rej) => m.FS.syncfs(true, (e) => e ? rej(e) : res()));
-  const persist = () => m.FS.syncfs(false, () => {});
+  const persist = () => m.FS.syncfs(false, (e) => { if (!e) _savedOnce = true; });
   setInterval(persist, 5000);
   addEventListener("pagehide", persist);
   // Arm the global crash net only now that the engine is actually running, so
@@ -223,6 +237,10 @@ async function boot(romBytes) {
       // the gate returns, and close the AudioContext SDL opened during factory
       // init (a ScriptProcessorNode keeps burning CPU otherwise).
       booted = false;
+      // If the failure surfaced as a fatal panel (onAbort/bring-up), drop it —
+      // otherwise it sits at z-index 9999 over the re-shown gate and the Play
+      // retry is unreachable; also re-arms the one-shot latch for the retry.
+      hideFatal();
       $("canvas").hidden = true;
       const hint = $("overlay-hint"); if (hint) hint.hidden = true;
       try { _module?.SDL2?.audioContext?.close(); } catch {}

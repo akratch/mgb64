@@ -3211,9 +3211,13 @@ int platformWebGpuWindowInfo(void *sdl_window, void **out1, void **out2,
 /* WEB-001: the F1 fly-camera, F2 screenshot, and F3–F12 level-warp keys are
  * developer tools, not player controls. They are inert unless GE007_DEV_HOTKEYS
  * is set (default OFF on every platform). Rationale for gating on native too:
- *   - On native the settings overlay (ui_overlay.cpp) already swallows F1 (menu
- *     toggle) and consumes F10 (FPS toggle) before they reach this handler, so
- *     these debug paths were only ever live on web (MGB64_APP OFF → no overlay).
+ *   - On native the settings overlay (ui_overlay.cpp) swallows F1 (its menu
+ *     toggle opens → platformOverlayWantsInput() → event skipped here), but its
+ *     F10 FPS-toggle branch returns WITHOUT setting g_open — the event was NOT
+ *     swallowed, so pre-gate native F10 DUAL-FIRED: it toggled the FPS overlay
+ *     AND warped to Surface 2 via the F3–F12 block below. This gate therefore
+ *     also fixes a real pre-existing native bug, not just the web exposure
+ *     (web additionally had NO overlay at all: MGB64_APP OFF).
  *   - No test or tool drives them: screenshot ctests use the --screenshot-frame
  *     CLI (not F2), and test_sys_hotkey.c only checks the F1/F10 *keycode*
  *     predicates for the overlay's menu/FPS toggles, not warp/fly-cam behavior.
