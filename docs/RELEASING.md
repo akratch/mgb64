@@ -16,13 +16,20 @@ packaged, or published (bring-your-own-ROM).
 
 ## Renderer
 
-The shipped binary renders on **WebGPU** (wgpu-native) by default on every
+Builds of this tree render on **WebGPU** (wgpu-native) by default on every
 platform — it maps to Metal on macOS, D3D12 on Windows, and Vulkan on
-Linux/handhelds under the hood. Two legacy backends remain as **release-supported
-runtime fallbacks** and are selectable without a rebuild:
+Linux/handhelds under the hood. **No published release contains WebGPU yet**
+(the flip landed on the unpushed `feat/webgpu-backend` branch); the next
+release is the proving release that ships it as the default. Two legacy
+backends remain as **release-supported runtime fallbacks** and are selectable
+without a rebuild:
 
 - `GE007_RENDERER=gl` (or `opengl`) — OpenGL.
-- `GE007_RENDERER=metal` — native Metal (macOS only; also used by `--remaster`).
+- `GE007_RENDERER=metal` — native Metal (macOS only; `--remaster` still pins
+  this on Apple today (`src/platform/main_pc.c:572`) — a holdover from before
+  SSAO/post-FX landed on WebGPU (2026-07-16); the pin is no longer required
+  for capability reasons but hasn't been retargeted to `webgpu` yet, see
+  `docs/BACKEND_DEPRECATION_PLAN.md`).
 - `-DMGB64_WEBGPU_BACKEND=OFF` at build time — a GL/Metal-only binary with no
   wgpu dependency.
 

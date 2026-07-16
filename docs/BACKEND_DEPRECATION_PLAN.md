@@ -9,7 +9,7 @@ preconditions are met.
 WebGPU), `docs/design/WEBGPU_BACKEND_STATUS_2026-07-13.md` (parity status + flip
 runbook), `docs/design/adr/0001-webgpu-render-backend.md` (decision record),
 `docs/RELEASING.md` (owner release checklist). File:line references below are
-against HEAD `822d1c9`; re-check them before executing a phase.
+against HEAD `23bca90`; re-check them before executing a phase.
 
 **Web build note:** the browser build (`docs/WEB.md`) depends only on the
 WebGPU backend (`emdawnwebgpu` under Emscripten) — it has no GL or Metal code
@@ -27,8 +27,14 @@ path at all. Neither Phase M nor Phase G below affects it.
 - **GL and Metal are runtime fallbacks, not the default:**
   - `GE007_RENDERER=gl` (or `opengl`) → OpenGL via `gfx_opengl.c`.
   - `GE007_RENDERER=metal` → native Metal via `gfx_metal.mm`
-    (`gfx_backend_use_metal()`, `gfx_backend.c:55-74`, macOS-only; still selected
-    by `--remaster` for SSAO/post-FX).
+    (`gfx_backend_use_metal()`, `gfx_backend.c:55-74`, macOS-only; **still
+    pinned by `--remaster`** on Apple today (`src/platform/main_pc.c:572`,
+    `setenv("GE007_RENDERER", "metal", 1)`) — a holdover from when SSAO/post-FX
+    were Metal-exclusive. That capability gap is now closed (WebGPU SSAO +
+    post-FX landed 2026-07-16), so the pin is no longer load-bearing, but the
+    code hasn't been retargeted yet; retargeting `main_pc.c:572` to
+    `"webgpu"` is enumerated below as a required Phase-M deletion-scope edit,
+    not a nice-to-have).
   - `-DMGB64_WEBGPU_BACKEND=OFF` builds a GL/Metal-only binary with no wgpu
     dependency (`CMakeLists.txt:94`).
 - **The GLES / desktop-GL coupling (the single most important constraint).**
@@ -80,8 +86,10 @@ is the first and cleanest deletion.
 > CMake refs, but the real deletion edits **five `src/` files with ~20 call
 > sites** that the grep checklist (which excludes `src/`) never surfaces. Total
 > deletion is **4861 lines removed / 132 inserted** (gfx_metal.mm is 3977 of the
-> removals). Line anchors below were against `822d1c9` and have drifted at HEAD
-> `487a4b3` — the corrected anchors are noted inline. The scope is:
+> removals). Line anchors below are current as of HEAD `23bca90` (verified: no
+> further drift since `487a4b3`, where the rehearsal above was measured) — the
+> corrected anchors are noted inline; re-check them before executing a phase.
+> The scope is:
 
 - `src/platform/fast3d/gfx_metal.mm` (3977 LOC) — delete.
 - `gfx_backend.c:55-74` (`gfx_backend_use_metal()`) — delete; simplify the

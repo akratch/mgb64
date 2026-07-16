@@ -15,9 +15,10 @@ See also: `docs/design/RENDERER_BACKEND_STRATEGY_2026-07-13.md` (why WebGPU),
 against the standard `webgpu.h` C API. A WGSL emitter generates the N64
 combiner shaders at runtime (the capability that ruled out bgfx). wgpu-native
 dispatches to Metal / D3D12 / Vulkan under the hood. Everything is gated behind
-the CMake option `MGB64_WEBGPU_BACKEND` (OFF by default) and the runtime
-selector `GE007_RENDERER=webgpu`, so **the shipping `ge007` links no wgpu
-symbols and stays byte-identical** until the deliberate flip.
+the CMake option `MGB64_WEBGPU_BACKEND` (**ON by default** since the
+2026-07-13 flip — see **§The flip** below) and the runtime selector
+`GE007_RENDERER=webgpu`. `-DMGB64_WEBGPU_BACKEND=OFF` builds a GL/Metal-only
+binary with no wgpu symbols, for the fallback path.
 
 ## Done (committed, validated on macOS)
 
@@ -121,6 +122,16 @@ Per-pixel max-channel abs-diff:
 
 Remaster sits *at* the faithful cross-API floor (6.8% ≈ 6.9%) — the post-FX pass adds
 zero divergence beyond what the two APIs already differ by on an unfiltered frame.
+
+**Browser vs native parity (2026-07-16 sweep, `ge007_web`/Dawn vs `ge007`/wgpu-native,
+Dam, matched frames).** Verdict: **content-identical at matched frames** — same
+geometry, textures, lighting, post-FX magnitude, and HUD; no missing draws, no
+shader-validation divergence. The only residual delta is **sub-glyph antialiasing**
+between wgpu-native (native Metal/Vulkan/D3D12 driver AA) and Dawn (browser
+WebGPU implementation's own text/edge AA), which shows up only at the pixel
+level around glyph and hard-edge boundaries — not a content or fidelity gap.
+Browser console stays clean across the sweep (no warnings/errors surfaced by
+Dawn's strict validator).
 
 **Performance (all 20 levels, mean CPU `work_ms` via `tools/perf_census.sh`, 1280×720,
 180 frames after 80-frame warmup; same-host/same-session GL-vs-WebGPU, stock remaster

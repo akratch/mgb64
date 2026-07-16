@@ -149,6 +149,30 @@ pointer can't collide with a 32-bit token).
   segment-table resolution for it — functionally survivable (per the design)
   but worth checking the `[SEG_ADDR-ILP32]` log line count if wasm rendering
   ever looks subtly wrong after a renderer-adjacent change.
+- **Fixed 2026-07-16 (`68afbc6`, review-hardened in `4494a63`): mission-load
+  crash class.** Two ILP32-only faults surfaced when actually loading a
+  mission (not just booting to menu):
+  1. A dynAllocate-pool host pointer (matrix/vertex/light/lookat/viewport/
+     sub-DL) missed the `gfx_ptr` registry and got mis-routed through a live
+     N64 segment to a garbage address, faulting in `gfx_sp_matrix`. Fixed by
+     resolving any address that falls inside the PC dynamic DL/VTX arenas
+     (`gfx_addr_is_pc_host_pool`, ranges tracked by `dyn.c`) directly as a
+     host pointer *before* segment-table lookup, closing the whole
+     dynAllocate* class at once (this also silently blanked the animated
+     menu/folder-select character models).
+  2. Boot logos (Rare/RareWare/Nintendo/N64) went missing because
+     `gfx_is_static_pc_dl`'s "near program base" 64MB window — valid on LP64,
+     where static data sits far from the heap — false-positived on wasm
+     (static rodata and heap share one linear memory), swallowing
+     heap-resident N64-registered ROM logo DLs into the host-endian PC
+     interpreter path. Fixed by treating any explicitly
+     `gfx_register_n64_dl_region`'d address as never-a-static-PC-DL on
+     ILP32 — the static-DL window guard now defers to the N64-DL registry
+     first.
+  Both fixes are width-guarded (LP64/native is untouched). `4494a63` also
+  makes the registry-miss/unresolvable-token counter unconditional (log line
+  stays `GE007_DEBUG`-gated) so a future coverage gap shows up in release
+  telemetry even without debug logging on.
 
 ### wasm size budget
 
@@ -217,3 +241,8 @@ deploy step.
   explicitly deferred (YAGNI) — see the plan's "Deferred" section. The W3/W5
   manual gates plus this task's native non-regression proof are the v1 bar;
   automate if/when the demo needs to be touched often enough to justify it.
+- **Resolved 2026-07-16**: the wasm32 mission-load crash class (dyn-pool
+  host-pointer seg-alias + static-DL window false-positive on boot logos) —
+  see "ILP32 (wasm32) notes" above (`68afbc6`, `4494a63`). Not an open item;
+  kept here for discoverability since it was the demo's only known
+  correctness-blocking crash.

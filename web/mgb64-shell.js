@@ -111,7 +111,7 @@ async function boot(romBytes) {
   m.FS.mkdir("/rom"); m.FS.writeFile("/rom/baserom.z64", romBytes);
   m.FS.mkdir("/save"); m.FS.mount(m.IDBFS, {}, "/save");
   await new Promise((res, rej) => m.FS.syncfs(true, (e) => e ? rej(e) : res()));
-  const persist = () => m.FS.syncfs(false, () => { console.log("[shell] syncfs"); });
+  const persist = () => m.FS.syncfs(false, () => {});
   setInterval(persist, 5000);
   addEventListener("pagehide", persist);
   m.callMain(["--rom", "/rom/baserom.z64", "--savedir", "/save"]);
