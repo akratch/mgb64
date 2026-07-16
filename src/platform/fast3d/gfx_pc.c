@@ -25365,6 +25365,17 @@ void gfx_clear_n64_dl_regions(void) {
         }
     }
 
+    /* WEB-037: reset the gfx_ptr host-pointer registry to boot conditions for the
+     * incoming stage. Placed AFTER the telemetry print above so those cumulative
+     * counters describe the stage that just ended (gfx_ptr_clear preserves them;
+     * it wipes only occupancy). Sound for the same reason as the FID-0122 region
+     * drops below — stage teardown, from lvlStageLoad, where every live pointer
+     * re-registers on the next stage's first render frame — and it closes the
+     * registry's own lifetime defects: stale freed entries that could shadow a
+     * later genuine segment token (registry-first resolve, the Dam-door class one
+     * level up) and monotonically accumulating tombstones. See gfx_ptr_clear(). */
+    gfx_ptr_clear();
+
     n64_dl_region_count = 0;
     extra_pc_vtx_region_count = 0;
     memset(extra_pc_vtx_regions, 0, sizeof(extra_pc_vtx_regions));

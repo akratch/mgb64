@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #define GFX_PTR_TABLE_BITS 16
 #define GFX_PTR_TABLE_SIZE (1 << GFX_PTR_TABLE_BITS)
@@ -52,6 +53,18 @@ extern uint32_t  gfx_ptr_ambiguous;   /* two live full ptrs shared one low-32 */
 extern uint32_t  gfx_ptr_full_fails;  /* insert refused: table 100% occupied */
 extern uint32_t  gfx_ptr_max_probe;   /* longest probe distance ever walked */
 
+/* Record an insert's probe-walk length into the cumulative max-probe high-water
+ * mark. Hoisted out of the insert body so EVERY insert path updates it: both the
+ * common EMPTY-terminated path and the full-table-scan path (a tombstone reused
+ * with no EMPTY terminator anywhere). That scan path is reached precisely when
+ * the table is aging/saturated, so leaving it un-recorded under-reported the
+ * probe depth exactly when it was worst (WEB-037 / AUDIT-0009). */
+static inline void gfx_ptr_note_probe(uint32_t walked) {
+    if (walked > gfx_ptr_max_probe) {
+        gfx_ptr_max_probe = walked;
+    }
+}
+
 static inline void gfx_ptr_store(const void *ptr) {
     uintptr_t full = (uintptr_t)ptr;
     uint32_t key = (uint32_t)full;
@@ -83,9 +96,7 @@ static inline void gfx_ptr_store(const void *ptr) {
             have_free = 1;
         }
         if (st == GFX_PTR_EMPTY) {
-            if (p > gfx_ptr_max_probe) {
-                gfx_ptr_max_probe = p;
-            }
+            gfx_ptr_note_probe(p);          /* slots walked to the free terminator */
             gfx_ptr_keys[free_idx] = key;
             gfx_ptr_vals[free_idx] = full;
             gfx_ptr_state[free_idx] = GFX_PTR_OCCUPIED;
@@ -96,6 +107,9 @@ static inline void gfx_ptr_store(const void *ptr) {
 
     /* Scanned every slot with no EMPTY terminator. */
     if (have_free) {
+        /* Walked the whole table (no EMPTY terminates the chain): a later resolve
+         * miss on this base would walk it in full too, so record the maximum. */
+        gfx_ptr_note_probe(GFX_PTR_TABLE_SIZE - 1u);
         gfx_ptr_keys[free_idx] = key;
         gfx_ptr_vals[free_idx] = full;
         gfx_ptr_state[free_idx] = GFX_PTR_OCCUPIED;
@@ -122,6 +136,41 @@ static inline void gfx_ptr_invalidate_range(uintptr_t lo, uintptr_t hi) {
             gfx_ptr_state[i] = GFX_PTR_TOMBSTONE;
         }
     }
+}
+
+/* Full occupancy reset: return every slot to EMPTY, reproducing the boot-time
+ * table (gfx_ptr_keys/vals/state are zero-initialised globals, so this is
+ * byte-for-byte the state the process started in). Call at stage teardown.
+ *
+ * Why a wholesale clear is safe — and semantically invisible on every width:
+ * the registry is a resolution CACHE, and every live host pointer re-registers
+ * within one frame of rendering because registration happens at DL submission
+ * (osVirtualToPhysical / GFX_DL_REGISTER_PTR) and the game rebuilds its display
+ * lists from scratch every frame. A per-stage clear therefore reproduces exactly
+ * the empty-table conditions that every stage load already survives at boot: the
+ * first frame of the next stage repopulates every entry it needs. The one class
+ * the registry caches for a whole session — texture tex->data pointers — has an
+ * independent, registry-less resolution backstop (the texture-arena low-32 scan,
+ * gfx_resolve_loaded_texture_pointer_token), so clearing cannot make a still-live
+ * texture unresolvable; the arena's own range-invalidation continues to guard the
+ * freed case (see gfx_ptr_invalidate_range / image.c texArenaFreeAll).
+ *
+ * One clear fixes two lifetime defects at once (WEB-037):
+ *   (a) evicts stale/freed entries whose low-32 token could otherwise shadow a
+ *       genuine later N64 segment token, resolving REGISTRY-FIRST into garbage —
+ *       the "stale registry" class, one level up from the Dam door-panel bug;
+ *   (b) drops accumulated TOMBSTONEs so miss-probe chains cannot lengthen
+ *       monotonically across a long (browser-soak) session.
+ *
+ * Resets ONLY occupancy (keys/vals/state). The cumulative diagnostic counters
+ * gfx_ptr_full_fails / gfx_ptr_ambiguous / gfx_ptr_max_probe are session-long
+ * render-health telemetry (AUDIT-0009) and are deliberately preserved so a soak
+ * run's high-water marks survive stage transitions rather than resetting to
+ * zero every level. */
+static inline void gfx_ptr_clear(void) {
+    memset(gfx_ptr_state, GFX_PTR_EMPTY, sizeof(gfx_ptr_state));
+    memset(gfx_ptr_keys, 0, sizeof(gfx_ptr_keys));
+    memset(gfx_ptr_vals, 0, sizeof(gfx_ptr_vals));
 }
 
 static inline void *gfx_ptr_resolve(uint32_t key) {
