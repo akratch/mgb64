@@ -5,6 +5,10 @@ packaged, and published. One portable codebase (`ge007` with `MGB64_APP=ON`)
 produces all three; per-platform binding details are in
 **[APP_ARCHITECTURE.md](APP_ARCHITECTURE.md)**.
 
+> **Operational sequence: see [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md)** — the
+> end-to-end, phase-by-phase runbook (native + GitHub Pages) that sequences the
+> checklists and scripts below into executable steps.
+
 Everything here is **asset-free** — no ROM or ROM-derived data is ever built,
 packaged, or published (bring-your-own-ROM).
 
