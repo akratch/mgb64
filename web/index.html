@@ -5,9 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>MGB64 — browser demo</title>
+<!-- Trademark-free green-crosshair favicon (standalone SVG) — silences the
+     /favicon.ico 404 with no external fetch beyond same-origin. -->
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- Decorative cinematic backdrop: reticle grid + phosphor bloom + scanlines.
+     Purely presentational, aria-hidden, pointer-events:none. -->
+<div class="bg-fx" aria-hidden="true">
+  <div class="bg-grid"></div>
+  <div class="bg-barrel"></div>
+  <div class="bg-scan"></div>
+</div>
 <!--
   CONTROLS ARE GROUNDED IN CODE — keep this page in sync with the engine.
   Keyboard defaults + action labels: src/platform/input_bindings.c (kDefault / kLabel).
@@ -21,8 +31,8 @@
   <div class="wrap">
 
     <header class="hero">
-      <p class="eyebrow">Browser demo · WebGPU · runs entirely on your machine</p>
-      <h1>MGB64</h1>
+      <p class="eyebrow"><span class="sig-dot" aria-hidden="true"></span>WebGPU · runs entirely on your machine</p>
+      <h1 class="wordmark" data-text="MGB64">MGB64</h1>
       <p class="tagline">
         A native port of a classic 1997 N64 first-person shooter, compiled to
         WebGPU and running in this tab. <strong>Bring your own ROM</strong> — the

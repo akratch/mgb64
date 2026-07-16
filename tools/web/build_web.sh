@@ -18,5 +18,5 @@ emcmake cmake -S "$ROOT" -B "$ROOT/build-web" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 cmake --build "$ROOT/build-web" -j8 --target ge007_web
 mkdir -p "$ROOT/dist/web"
 cp "$ROOT/build-web/ge007_web.js" "$ROOT/build-web/ge007_web.wasm" "$ROOT/dist/web/"
-cp "$ROOT"/web/index.html "$ROOT"/web/mgb64-shell.js "$ROOT"/web/style.css "$ROOT/dist/web/"
+cp "$ROOT"/web/index.html "$ROOT"/web/mgb64-shell.js "$ROOT"/web/style.css "$ROOT"/web/favicon.svg "$ROOT/dist/web/"
 echo "dist/web ready:"; ls -la "$ROOT/dist/web"

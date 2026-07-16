@@ -817,6 +817,46 @@ static bool gfx_addr_is_pc_dynamic_data_range(uintptr_t addr, size_t size) {
     return false;
 }
 
+#if UINTPTR_MAX == 0xffffffffu
+/* ILP32 (wasm32) host-pointer discriminator for seg_addr.
+ *
+ * The PC dynamic DL/VTX arenas (dyn.c: g_GfxBuffers / g_VtxBuffers, registered
+ * via gfx_set_pc_dl_range / gfx_set_pc_vtx_range) plus the heap-allocated
+ * extra-PC DL/VTX regions hold ONLY native-C-written display-list, matrix,
+ * vertex, light, lookat and viewport data. A value that lands inside one of
+ * these ranges is therefore a host pointer by construction — never an N64
+ * segment token — even when its top nibble happens to collide with a live
+ * segment (the dyn pools sit at heap nibble ~0x02, which aliases segment 2).
+ *
+ * This is the size-agnostic membership test seg_addr needs to resolve such a
+ * value directly instead of mis-routing it through the segment table. It closes
+ * the dynAllocate* insertion-coverage class wholesale (matrices via
+ * dynAllocateMatrix, vertices via dynAllocate7F0BD6C4, lights/lookats via
+ * dynAllocate7F0BD6F8, sub-DLs and viewports) rather than one macro/site at a
+ * time — the class that W3.6's per-site registration missed (the G_MOVEMEM
+ * light/viewport path and the runtime G_MTX path that faulted gfx_sp_matrix).
+ * LP64 never compiles this: there host/token discrimination is by high bits. */
+static bool gfx_addr_is_pc_host_pool(uintptr_t addr) {
+    if (pc_vtx_range_start != 0 && addr >= pc_vtx_range_start && addr < pc_vtx_range_end) {
+        return true;
+    }
+    if (pc_gfx_range_start != 0 && addr >= pc_gfx_range_start && addr < pc_gfx_range_end) {
+        return true;
+    }
+    for (int i = 0; i < extra_pc_vtx_region_count; i++) {
+        if (addr >= extra_pc_vtx_regions[i].start && addr < extra_pc_vtx_regions[i].end) {
+            return true;
+        }
+    }
+    for (int i = 0; i < s_extra_pc_dl_count; i++) {
+        if (addr >= s_extra_pc_dl[i].start && addr < s_extra_pc_dl[i].end) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
 static bool gfx_addr_is_n64_model_vertex_segment(uint32_t token, uintptr_t addr, size_t size) {
     uint32_t seg = (token >> 24) & 0x0F;
     uint32_t offset = token & 0x00FFFFFFu;
@@ -22278,6 +22318,16 @@ static inline void *seg_addr(uintptr_t w1) {
             return reg;
         }
     }
+    /* PC dynamic DL/VTX arena pointers are host pointers by construction (native
+     * C writes matrices/vertices/lights/lookats/viewports/sub-DLs there), even
+     * when their heap nibble collides with a live segment. Resolve them directly
+     * BEFORE the segment table so an unregistered dyn-pool pointer (an insertion-
+     * coverage gap) can never mis-resolve into segment memory as garbage — the
+     * fault that crashed gfx_sp_matrix at mission load and aliased dyn geometry
+     * in the menus. Identity-correct on ILP32 (full pointer == low 32 bits). */
+    if (gfx_addr_is_pc_host_pool(v)) {
+        return (void *)(uintptr_t)v;
+    }
     {
         uint32_t seg = (v >> 24) & 0x0F;
         if (seg != 0) {
@@ -22290,9 +22340,15 @@ static inline void *seg_addr(uintptr_t w1) {
                  * surfaces as diagnosable noise, not silent bad geometry
                  * (mirrors the gfx_ptr_* telemetry; ILP32-only). */
                 gfx_seg_resolve_after_registry_miss++;
-                {
+                /* Most hits here are GENUINE N64 segment tokens (e.g. SPSEGMENT_
+                 * MODEL_VTX geometry loaded every frame) that resolve identically
+                 * on LP64 — the warning is a coverage-gap DIAGNOSTIC, not an
+                 * error, so keep it behind GE007_DEBUG to avoid drowning a normal
+                 * run in benign noise. The counter above stays unconditional so a
+                 * real gap is still measurable via telemetry. */
+                if (gfx_runtime_debug_enabled()) {
                     static int seg_hit_warn = 0;
-                    if (seg_hit_warn < 5) {
+                    if (seg_hit_warn < 40) {
                         seg_hit_warn++;
                         fprintf(stderr,
                                 "[SEG_ADDR-ILP32] registry-miss token 0x%08X resolved via segment %u (count=%u) frame=%d op=0x%02X — genuine token, or an unregistered host pointer (coverage gap)\n",
@@ -22304,7 +22360,7 @@ static inline void *seg_addr(uintptr_t w1) {
             }
             {
                 static int seg_warn = 0;
-                if (seg_warn < 5) {
+                if (gfx_runtime_debug_enabled() && seg_warn < 40) {
                     seg_warn++;
                     fprintf(stderr,
                             "[SEG_ADDR] unresolvable 32-bit addr 0x%08X (seg=%u base=NULL) frame=%d cmd=%p op=0x%02X w0=0x%08X w1=0x%08X\n",
@@ -25390,6 +25446,24 @@ static void gfx_detect_static_range(void) {
 
 static bool gfx_is_static_pc_dl(uintptr_t addr) {
     if (s_static_dl_lo == 0) gfx_detect_static_range();
+#if UINTPTR_MAX == 0xffffffffu
+    /* ILP32 (wasm32): the 64MB "near the program base" window below assumes the
+     * executable's static/rodata segment is far from the malloc heap — true on
+     * LP64 (static data lives GBs from the heap), FALSE on wasm, where static
+     * data and the entire heap share one small linear memory. There the window
+     * also swallows heap-resident display lists that were EXPLICITLY registered
+     * as N64 binary data (romCopy'd logo/model segments via
+     * gfx_register_n64_dl_region). Misclassifying those as static PC DLs sends
+     * their big-endian N64 commands through the host-endian PC interpreter,
+     * which byte-swaps every word into garbage opcodes — the boot logos
+     * (Nintendo / Rare / N64) and other ROM DLs then render as skipped/blank
+     * draws. An explicit N64 registration is authoritative; never let the fuzzy
+     * static heuristic reclassify it. LP64 keeps the ranges disjoint, so this
+     * guard never triggers there (byte-identical native behaviour). */
+    if (gfx_addr_is_n64_data(addr)) {
+        return false;
+    }
+#endif
     return (addr >= s_static_dl_lo && addr < s_static_dl_hi);
 }
 
