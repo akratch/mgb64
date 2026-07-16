@@ -506,14 +506,37 @@ body:has(#canvas:not([hidden])) .bg-fx { display: none; }
   letter-spacing: 0.01em;
   pointer-events: none;
   backdrop-filter: blur(6px);
-  animation: hint-fade 6s var(--ease) forwards;
+  /* WEB-064: the hint is dismissed by mgb64-shell.js (armHintDismiss) for
+   * everyone. This transition is cosmetic only — auto-disabled under
+   * prefers-reduced-motion, where the JS timeout still hides the pill (the old
+   * CSS keyframe fade was the *only* removal path and it left reduced-motion
+   * users with a permanent pill). */
+  opacity: 1;
+  transition: opacity 600ms var(--ease);
 }
+#overlay-hint.hint-hidden { opacity: 0; }
 #overlay-hint[hidden] { display: none; }
 #overlay-hint kbd { border-bottom-width: 1px; }
-@keyframes hint-fade {
-  0%, 70% { opacity: 1; }
-  100% { opacity: 0; visibility: hidden; }
+
+/* WEB-029: persistent save-failure banner (revealed by mgb64-shell.js when
+ * FS.syncfs can't reach browser storage). Amber dossier-secondary = warning. */
+#save-banner {
+  position: fixed;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(92vw, 34rem);
+  padding: 0.5rem 1rem;
+  background: rgba(38, 24, 8, 0.92);
+  border: 1px solid var(--amber);
+  border-radius: 0.5rem;
+  color: #ffe6c2;
+  font-size: 0.82rem;
+  text-align: center;
+  backdrop-filter: blur(6px);
 }
+#save-banner[hidden] { display: none; }
 
 /* ------------------------------------------------------------ preferences */
 

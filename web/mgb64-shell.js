@@ -15,6 +15,16 @@
 const ROM_OPFS_NAME = "baserom.z64";
 const ROM_SIZE = 12 * 1024 * 1024;
 
+// WEB-032: cache-busting handshake between the glue script and the wasm. Pages
+// serves both with max-age, so around a redeploy a browser can pair cached glue
+// with fresh wasm (or vice versa) → cryptic "undefined"/CompileError breakage.
+// build_web.sh seds this placeholder to a short content hash in the STAGED dist
+// copy only; the untouched source keeps the literal. When substituted we suffix
+// ?v=HASH on BOTH the ge007_web.js <script> and the ge007_web.wasm fetch, so the
+// pair always matches. Dynamic injection keeps the dist at exactly 5 files.
+const BUILD = "__MGB64_BUILD__";
+const _verParam = BUILD.indexOf("__MGB64") === -1 ? ("?v=" + BUILD) : "";
+
 // Favicon (trademark-free crosshair in the page accent), generated at runtime
 // as a Blob URL. Deliberately NOT a tracked data: URI (contamination guard
 // forbids embedded data-URI payloads) and NOT a 6th dist file (the web-demo
@@ -134,7 +144,7 @@ function loadEngineFactory() {
   if (_enginePromise) return _enginePromise;
   _enginePromise = new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = "ge007_web.js";
+    s.src = "ge007_web.js" + _verParam;  // WEB-032: version-pin with the wasm
     s.onload = () => {
       if (window.createMGB64) resolve(window.createMGB64);
       else reject(new Error("ge007_web.js loaded but did not define createMGB64"));
@@ -145,8 +155,28 @@ function loadEngineFactory() {
   return _enginePromise;
 }
 
+// WEB-039 / WEB-033: fetch the wasm as a non-streaming instantiate binary (Pages
+// may serve .wasm with a wrong MIME). Kicked off when the gate passes so it runs
+// while the user reads the page and picks a ROM; boot() awaits the stored promise.
+let wasmPromise = null;
+function fetchWasm() {
+  return fetch("ge007_web.wasm" + _verParam).then((resp) => {
+    // WEB-033: without this an HTTP 404/500 becomes a cryptic
+    // "CompileError: expected magic word" instead of a clear download failure.
+    if (!resp.ok) throw new Error(`engine download failed (HTTP ${resp.status})`);
+    return resp.arrayBuffer();
+  });
+}
+
 let booted = false;
+let rom = null;      // WEB-062: hoisted to module scope so boot() can drop the 12 MB
+                     // closure copy after callMain (MEMFS then owns the only copy).
 let _module = null;  // set once the engine module exists, for crash-path syncfs/audio cleanup
+// WEB-002: the module-agnostic runtime registrations (persist timer, pagehide,
+// visibility/audio-resume, crash net, Alt keydown, beforeunload, fullscreenchange)
+// are armed exactly once. A re-boot after handleExit re-enters boot() and must not
+// stack a second interval or a duplicate of each listener.
+let _runtimeArmed = false;
 
 // WEB-010: crash surface. Asyncify makes callMain() return at the first stack
 // unwind (the rAF yield), so a mid-game wasm trap NEVER reaches boot().catch —
@@ -166,6 +196,93 @@ function handleCrash() {
   try { _module?.FS?.syncfs(false, () => {}); } catch {}
 }
 let _savedOnce = false;
+
+// WEB-029: hardened save persistence. emscripten's FS.syncfs is NOT reentrant —
+// starting a second syncfs while one is in flight can corrupt the IDB commit — so
+// an in-flight flag drops overlapping ticks. A failed persist (quota, IDB error)
+// used to vanish into a `() => {}` callback while the page kept promising
+// auto-save; now it raises a persistent banner, logs, and retries with capped
+// exponential backoff. _savedOnce semantics are unchanged (set only on success).
+let _syncInFlight = false;
+let _persistRetryTimer = null;
+let _persistBackoff = 0;
+function showSaveBanner() { const b = $("save-banner"); if (b) b.hidden = false; }
+function hideSaveBanner() { const b = $("save-banner"); if (b) b.hidden = true; }
+function schedulePersistRetry() {
+  if (_persistRetryTimer) return;                 // one retry armed at a time
+  _persistBackoff = Math.min(_persistBackoff ? _persistBackoff * 2 : 2000, 30000);
+  _persistRetryTimer = setTimeout(() => { _persistRetryTimer = null; persist(); }, _persistBackoff);
+}
+function persist() {
+  // WEB-002: read the CURRENT module at call time — a re-boot after handleExit
+  // swaps _module, and this single interval must follow it, not a captured ref.
+  const mm = _module;
+  if (!mm || _syncInFlight) return;
+  _syncInFlight = true;
+  try {
+    mm.FS.syncfs(false, (e) => {
+      _syncInFlight = false;
+      if (e) {
+        console.error("[shell] save persist failed:", e);
+        showSaveBanner();
+        schedulePersistRetry();
+      } else {
+        _savedOnce = true;
+        _persistBackoff = 0;
+        hideSaveBanner();
+      }
+    });
+  } catch (e) {
+    // Synchronous throw (FS torn down mid-call) — treat as a failed persist.
+    _syncInFlight = false;
+    console.error("[shell] save persist threw:", e);
+    showSaveBanner();
+    schedulePersistRetry();
+  }
+}
+
+// WEB-035: iOS interruptions (call/Siri/alarm), some BT route changes, and tab
+// backgrounding can suspend the WebAudio context; SDL kills its own resume timer
+// after the first success, so without this the game goes permanently silent. Any
+// user gesture or return-to-visible re-runs resume(). No-op until _module exists.
+function resumeAudio() {
+  const ctx = _module?.SDL2?.audioContext;
+  if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+}
+
+// WEB-031: two tabs on one origin share /save (IDBFS is last-write-wins per
+// timer), so the second silently clobbers the first's progress. Take an
+// exclusive Web Lock held for the whole session; a second tab can't acquire it
+// and refuses to boot (recoverable — Play re-arms, not fatal). Feature-detected;
+// if the API is missing or errors we don't block boot. _haveLock lets a WEB-009
+// retry in THIS tab re-enter without deadlocking on the lock we already hold.
+let _haveLock = false;
+function acquireSingleInstanceLock() {
+  return new Promise((resolve) => {
+    if (_haveLock) { resolve(true); return; }
+    if (!navigator.locks || !navigator.locks.request) { resolve(true); return; }
+    try {
+      navigator.locks.request("mgb64-game", { ifAvailable: true }, (lock) => {
+        if (!lock) { resolve(false); return; }    // another tab holds it
+        _haveLock = true;
+        resolve(true);
+        return new Promise(() => {});              // never resolves → hold for session lifetime
+      }).catch(() => resolve(true));
+    } catch { resolve(true); }
+  });
+}
+
+// WEB-064: dismiss the in-game hint from JS so it disappears for everyone,
+// including prefers-reduced-motion users (for whom the old CSS fade-out keyframe
+// was disabled, stranding the pill on screen forever). The CSS opacity
+// transition is cosmetic and auto-disabled under reduced motion — these timers
+// are the single source of truth for when the hint goes away.
+function armHintDismiss() {
+  const hint = $("overlay-hint");
+  if (!hint) return;
+  setTimeout(() => hint.classList.add("hint-hidden"), 5400);
+  setTimeout(() => { hint.hidden = true; }, 6000);
+}
 
 // WEB-002: keep the last engine stderr lines so a nonzero exit (the engine
 // refusing a wrong-content/PAL/J ROM in rom_io.c) can be shown to the user
@@ -241,24 +358,45 @@ function validateRomContent(bytes) {
 
 async function boot(romBytes) {
   if (booted) return;
+  // WEB-062 guard: after a rejected ROM (handleExit) `rom` is nulled below, so a
+  // stray re-Play would carry no bytes — send the user back to the picker cleanly
+  // rather than throwing an opaque "Boot failed".
+  if (!romBytes) {
+    $("gate-msg").textContent = "Pick your ROM to continue (or Forget the stored one).";
+    $("play").disabled = false;
+    return;
+  }
+  // WEB-031: refuse a second concurrent instance BEFORE tearing down the gate, so
+  // two tabs never last-write-wins clobber the shared /save. Recoverable, not
+  // fatal: re-arm Play and leave the gate up.
+  if (!(await acquireSingleInstanceLock())) {
+    $("gate-msg").textContent =
+      "MGB64 is already running in another tab. Close it (or reload this tab afterward) — two tabs share one browser save and would overwrite each other's progress.";
+    $("play").disabled = false;
+    return;
+  }
   booted = true;
-  $("gate").hidden = true;
-  const canvas = $("canvas"); canvas.hidden = false;
-  // WEB-040: aim is right-click; without this the browser context menu pops on
-  // every RMB whenever the pointer isn't locked.
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-  // Additive UI only: reveal the unobtrusive in-game hint. It self-fades via CSS
-  // and is purely cosmetic — no bearing on the boot contract.
-  const hint = $("overlay-hint"); if (hint) hint.hidden = false;
-  // Non-streaming instantiate: GitHub Pages may serve .wasm with a wrong MIME.
-  const resp = await fetch("ge007_web.wasm");
-  // WEB-033: without this an HTTP 404/500 becomes a cryptic
-  // "CompileError: expected magic word" instead of a clear download failure.
-  if (!resp.ok) throw new Error(`engine download failed (HTTP ${resp.status})`);
-  const wasmBinary = await resp.arrayBuffer();
-  const createMGB64 = await loadEngineFactory();
+  // WEB-002: a prior ROM rejection latched _exitHandled (handleExit cleared
+  // `booted` to let us return here). Clear the latch now that a fresh engine run
+  // is starting, or this boot's own onExit — and a later mid-game handleCrash —
+  // would be swallowed by the stale guard.
+  _exitHandled = false;
+  const canvas = $("canvas");
+  const status = $("gate-msg");
+  // WEB-039: keep the gate visible with staged progress until just before
+  // callMain, so a healthy slow boot (fetch/compile/syncfs) is distinguishable
+  // from the failure surfaces above instead of jumping straight to a black canvas.
+  status.textContent = "Downloading engine…";
+  // WEB-039: the wasm fetch + engine glue were kicked off when the gate passed;
+  // here we just await the already-in-flight promises in parallel. A fetch error
+  // (WEB-033) or script-load error still throws here and lands in boot().catch
+  // (WEB-009), preserving the transient-failure reset.
+  const [wasmBinary, createMGB64] = await Promise.all([
+    wasmPromise || fetchWasm(),
+    loadEngineFactory(),
+  ]);
   // WEB-010: onAbort catches emscripten aborts (assertion/OOM) that don't throw
-  // through JS; the window handlers catch the RuntimeError traps.
+  // through JS; the window handlers (armed below) catch the RuntimeError traps.
   const m = await createMGB64({
     canvas, wasmBinary, noInitialRun: true,
     onAbort: () => handleCrash(),
@@ -268,45 +406,103 @@ async function boot(romBytes) {
     onExit: (code) => handleExit(code),
   });
   _module = m;
+  status.textContent = "Preparing saves…";
   m.FS.mkdir("/rom"); m.FS.writeFile("/rom/baserom.z64", romBytes);
   m.FS.mkdir("/save"); m.FS.mount(m.IDBFS, {}, "/save");
   await new Promise((res, rej) => m.FS.syncfs(true, (e) => e ? rej(e) : res()));
-  const persist = () => m.FS.syncfs(false, (e) => { if (!e) _savedOnce = true; });
-  setInterval(persist, 5000);
-  addEventListener("pagehide", persist);
-  // Arm the global crash net only now that the engine is actually running, so
-  // it can't fire on a boot-phase error already handled by boot().catch.
-  addEventListener("error", handleCrash);
-  addEventListener("unhandledrejection", handleCrash);
-  // WEB-008: Ctrl+W (crouch-forward, the most common FPS chord) and Cmd+W close
-  // the tab, and the browser won't let preventDefault stop it — the only lever
-  // is a beforeunload confirm. Arm it once booted so a mis-hit chord asks before
-  // discarding mission progress. (No custom string: modern browsers show their
-  // own generic prompt, but any non-empty returnValue triggers it.)
-  addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; });
-  // WEB-008: while fullscreen, best-effort Keyboard Lock so Ctrl+W / Cmd+W and
-  // other system chords route to the game instead of the browser. Silently a
-  // no-op where unsupported (Safari/Firefox) or not fullscreen — never throws.
-  const applyKeyboardLock = () => {
-    try {
-      if (document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) {
-        navigator.keyboard.lock(["KeyW", "KeyA", "KeyS", "KeyD",
-                                 "ControlLeft", "ControlRight", "Escape"]).catch(() => {});
-      } else if (navigator.keyboard && navigator.keyboard.unlock) {
-        navigator.keyboard.unlock();
-      }
-    } catch {}
-  };
-  document.addEventListener("fullscreenchange", applyKeyboardLock);
+  // WEB-002: these runtime registrations are module-agnostic (they route through
+  // _module at call time, never a captured instance), so arm them exactly ONCE.
+  // A re-boot after handleExit re-enters boot() but must not stack a second
+  // interval or duplicate each listener. The crash-net arming point is unchanged
+  // — still after syncfs and before callMain — just made idempotent.
+  if (!_runtimeArmed) {
+    _runtimeArmed = true;
+    // WEB-029: guarded, self-healing persist on a timer + pagehide (see persist()).
+    setInterval(persist, 5000);
+    addEventListener("pagehide", persist);
+    // WEB-030: also flush when the tab is backgrounded — pagehide alone can miss a
+    // mobile process-kill, losing up to ~5 s (the mission-complete EEPROM window).
+    // WEB-035: and nudge a suspended AudioContext back when we return to visible.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") persist();
+      else resumeAudio();
+    });
+    // WEB-019 + WEB-035: capture-phase keydown. Alt is the N64 L trigger (stubs.c),
+    // but Alt+D focuses the address bar and a bare Alt opens Firefox's menu —
+    // either steals focus and drops every subsequent key mid-firefight.
+    // preventDefault kills the browser action; SDL still receives the key. Meta
+    // (Cmd) combos are left alone. Any keypress also counts as an audio-resume
+    // gesture.
+    // AltGr limitation: on Win/Linux international layouts AltGr sets altKey, so
+    // the L trigger can fire spuriously — accepted; pointer-locked gameplay has no
+    // text entry, so there is nothing for AltGr to compose here.
+    addEventListener("keydown", (e) => {
+      if (e.altKey && !e.metaKey) e.preventDefault();
+      resumeAudio();
+    }, true);
+    // WEB-035: a pointer press is a user gesture too (covers the Safari
+    // gesture-window case where the audio context is created after the click).
+    addEventListener("pointerdown", resumeAudio);
+    // WEB-010: arm the global crash net only now that the engine is actually
+    // running, so it can't fire on a boot-phase error already handled by
+    // boot().catch.
+    addEventListener("error", handleCrash);
+    addEventListener("unhandledrejection", handleCrash);
+    // WEB-008: Ctrl+W (crouch-forward, the most common FPS chord) and Cmd+W close
+    // the tab, and the browser won't let preventDefault stop it — the only lever
+    // is a beforeunload confirm. Arm it once booted so a mis-hit chord asks before
+    // discarding mission progress. (No custom string: modern browsers show their
+    // own generic prompt, but any non-empty returnValue triggers it.)
+    addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; });
+    // WEB-008: while fullscreen, best-effort Keyboard Lock so Ctrl+W / Cmd+W and
+    // other system chords route to the game instead of the browser. Silently a
+    // no-op where unsupported (Safari/Firefox) or not fullscreen — never throws.
+    const applyKeyboardLock = () => {
+      try {
+        if (document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) {
+          navigator.keyboard.lock(["KeyW", "KeyA", "KeyS", "KeyD",
+                                   "ControlLeft", "ControlRight", "Escape"]).catch(() => {});
+        } else if (navigator.keyboard && navigator.keyboard.unlock) {
+          navigator.keyboard.unlock();
+        }
+      } catch {}
+    };
+    document.addEventListener("fullscreenchange", applyKeyboardLock);
+  }
+  // WEB-039: reveal the game view only now — just before callMain.
+  status.textContent = "Starting…";
+  $("gate").hidden = true;
+  canvas.hidden = false;
+  // WEB-040: aim is right-click; without this the browser context menu pops on
+  // every RMB whenever the pointer isn't locked.
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  // Additive UI only: reveal the unobtrusive in-game hint (self-dismisses via
+  // armHintDismiss — WEB-064). Purely cosmetic; no bearing on the boot contract.
+  const hint = $("overlay-hint");
+  if (hint) { hint.hidden = false; armHintDismiss(); }
   const args = ["--rom", "/rom/baserom.z64", "--savedir", "/save"];
   const unlockAll = $("unlock-all");
   if (unlockAll && unlockAll.checked) args.push("--unlock-all-levels");
   m.callMain(args);
+  // WEB-062: MEMFS now holds its own /rom copy, so drop the 12 MB byte array the
+  // JS side was holding (both the local param and the module-scope reference) —
+  // frees a full ROM's worth of heap under mobile eviction pressure. Do NOT
+  // unlink the MEMFS copy; the engine reads it via --rom for the whole session.
+  romBytes = null;
+  rom = null;
 }
 
 (async () => {
   const err = await gate();
   if (err) { $("gate-msg").textContent = err; return; }
+  // WEB-039: the gate passed — start pulling the engine down NOW, in parallel
+  // with the user reading the page and picking a ROM, so Play-click only awaits
+  // work already in flight. Pre-attach benign catches so a failure here doesn't
+  // log as an "unhandled rejection"; boot()'s own await still throws and drives
+  // the WEB-009 reset.
+  loadEngineFactory().catch(() => {});   // memoized; boot() reuses _enginePromise
+  wasmPromise = fetchWasm();
+  wasmPromise.catch(() => {});
   // WEB-011: iOS/iPadOS Safari passes the WebGPU gate but the engine is
   // keyboard/mouse/gamepad only (no pointer lock on iOS; touch = fire-only), so
   // a phone user would invest a 12 MB upload before discovering they can't play.
@@ -319,17 +515,33 @@ async function boot(romBytes) {
     ? "Heads up: this game needs a keyboard & mouse (or a gamepad). On a touch-only device you can look around but not move — pair a keyboard/controller for full control."
     : "";
   $("rom-ui").hidden = false;
-  let rom = await loadStoredRom();
+  // WEB-066: restore + persist the unlock-all preference across visits.
+  const unlockAll = $("unlock-all");
+  if (unlockAll) {
+    try { unlockAll.checked = localStorage.getItem("mgb64-unlock-all") === "1"; } catch {}
+    unlockAll.addEventListener("change", () => {
+      try { localStorage.setItem("mgb64-unlock-all", unlockAll.checked ? "1" : "0"); } catch {}
+    });
+  }
+  rom = await loadStoredRom();
   const showReady = () => { $("rom-status").textContent = "ROM ready (stored in this browser)."; $("play").disabled = false; $("forget").hidden = false; };
   if (rom) showReady();
   $("rom-input").addEventListener("change", async (ev) => {
     const f = ev.target.files[0]; if (!f) return;
-    if (f.size !== ROM_SIZE) { $("rom-status").textContent = `Wrong size (${f.size} bytes) — expected exactly 12 MB.`; return; }
+    // WEB-063: a rejected pick must (a) not silently discard the ROM already
+    // loaded — say it's still active — and (b) clear the input so re-picking the
+    // SAME file re-fires 'change' (browsers suppress it for an identical value).
+    const kept = () => rom ? " Keeping the previously loaded ROM." : "";
+    if (f.size !== ROM_SIZE) {
+      $("rom-status").textContent = `Wrong size (${f.size} bytes) — expected exactly 12 MB.` + kept();
+      ev.target.value = "";
+      return;
+    }
     const picked = new Uint8Array(await f.arrayBuffer());
     // WEB-002: reject wrong-content files at pick time so they never reach OPFS
     // (an unrecognized 12 MB file, stored, would re-poison every future visit).
     const bad = validateRomContent(picked);
-    if (bad) { $("rom-status").textContent = bad; return; }
+    if (bad) { $("rom-status").textContent = bad + kept(); ev.target.value = ""; return; }
     rom = picked;
     const stored = await storeRom(rom);
     if (stored) {
@@ -351,6 +563,15 @@ async function boot(romBytes) {
       // the gate returns, and close the AudioContext SDL opened during factory
       // init (a ScriptProcessorNode keeps burning CPU otherwise).
       booted = false;
+      // WEB-039 preservation: the preloaded wasm promise may itself be the
+      // rejected one (a fetch blip). Drop it so the next Play re-fetches from
+      // scratch, keeping WEB-009's transient-retry semantics (the original boot()
+      // re-fetched on every call).
+      wasmPromise = null;
+      // WEB-009: mirror of the wasmPromise reset — a rejected engine load must not
+      // stay memoized. A transient ge007_web.js script-load blip would otherwise
+      // pin _enginePromise to that rejection and every Play retry would reject.
+      _enginePromise = null;
       // If the failure surfaced as a fatal panel (onAbort/bring-up), drop it —
       // otherwise it sits at z-index 9999 over the re-shown gate and the Play
       // retry is unreachable; also re-arms the one-shot latch for the retry.

@@ -45,8 +45,15 @@
     </header>
 
     <!-- STATE 1: gate failure (WebGPU / OPFS unsupported). rom-ui stays hidden,
-         so only this line is shown. Populated by mgb64-shell.js. -->
-    <p id="gate-msg" class="status-line">Checking your browser…</p>
+         so only this line is shown. Populated by mgb64-shell.js.
+         WEB-065: role/aria-live so capability refusals, boot progress, and "Boot
+         failed" are announced to screen readers (this line carries them all). -->
+    <p id="gate-msg" class="status-line" role="status" aria-live="polite">Checking your browser…</p>
+    <!-- WEB-065: the whole page is inert without JS (rom-ui stays [hidden], the
+         gate never updates past "Checking your browser…"). Say so plainly. -->
+    <noscript>
+      <p class="status-line">This demo needs JavaScript enabled to download and run the WebGPU engine.</p>
+    </noscript>
 
     <!-- STATES 2 (picker) & 3 (ready): revealed once the capability gate passes.
          mgb64-shell.js toggles #rom-status / #play.disabled / #forget.hidden. -->
@@ -96,7 +103,11 @@
                 <dl>
                   <dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dd>
                   <dt>Look</dt><dd>Mouse</dd>
-                  <dt>Crouch</dt><dd><kbd>C</kbd> / <kbd>Ctrl</kbd></dd>
+                  <!-- WEB-008: advertise C only. Ctrl also crouches in the
+                       engine, but pairing crouch-forward with W is Ctrl+W, which
+                       closes the browser tab (unpreventable) — don't lead users
+                       into it. -->
+                  <dt>Crouch</dt><dd><kbd>C</kbd></dd>
                   <dt>Lean (while aiming)</dt><dd><kbd>Q</kbd> / <kbd>E</kbd></dd>
                 </dl>
               </section>
@@ -193,6 +204,12 @@
 <!-- Unobtrusive in-game hint; mgb64-shell.js reveals it on boot (additive). -->
 <div id="overlay-hint" hidden aria-hidden="true">
   <kbd>Esc</kbd> release mouse · <kbd>M</kbd> mute · <kbd>H</kbd> help
+</div>
+
+<!-- WEB-029: mgb64-shell.js reveals this if FS.syncfs can't reach browser
+     storage, so the user isn't left trusting an auto-save that never lands. -->
+<div id="save-banner" role="status" aria-live="polite" hidden>
+  Couldn't save to browser storage — progress may not persist.
 </div>
 
 <canvas id="canvas" width="1280" height="960" hidden></canvas>
