@@ -22292,6 +22292,11 @@ extern volatile uintptr_t g_lastDlW1;
  * count paired with wrong visuals points at an unregistered host pointer
  * (insertion-coverage gap). Never gates sim (style of gfx_ptr_ambiguous). */
 static uint32_t gfx_seg_resolve_after_registry_miss = 0;
+/* Tokens with a segment nibble whose segment base is NULL — unresolvable on
+ * both widths (LP64 also returns NULL for these). Counted unconditionally so a
+ * release ILP32 build still surfaces a coverage gap in telemetry even though
+ * the per-hit stderr log below is gated behind GE007_DEBUG. */
+static uint32_t gfx_seg_unresolvable_count = 0;
 #endif
 
 static inline void *seg_addr(uintptr_t w1) {
@@ -22358,6 +22363,7 @@ static inline void *seg_addr(uintptr_t w1) {
                 }
                 return (void *)(gfx_segment_table[seg] + (v & 0x00FFFFFF));
             }
+            gfx_seg_unresolvable_count++;
             {
                 static int seg_warn = 0;
                 if (gfx_runtime_debug_enabled() && seg_warn < 40) {

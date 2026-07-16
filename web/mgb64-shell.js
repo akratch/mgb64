@@ -15,6 +15,23 @@
 const ROM_OPFS_NAME = "baserom.z64";
 const ROM_SIZE = 12 * 1024 * 1024;
 
+// Favicon (trademark-free crosshair in the page accent), generated at runtime
+// as a Blob URL. Deliberately NOT a tracked data: URI (contamination guard
+// forbids embedded data-URI payloads) and NOT a 6th dist file (the web-demo
+// workflow pins the Pages artifact to exactly 5 files). Kills /favicon.ico 404.
+(() => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    + '<g stroke="#5ce09a" stroke-width="2" fill="none">'
+    + '<circle cx="16" cy="16" r="9"/>'
+    + '<line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/>'
+    + '<line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/>'
+    + '</g><circle cx="16" cy="16" r="2.5" fill="#5ce09a"/></svg>';
+  const link = document.createElement("link");
+  link.rel = "icon";
+  link.href = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  document.head.appendChild(link);
+})();
+
 const $ = (id) => document.getElementById(id);
 
 async function opfsRoot() { return await navigator.storage.getDirectory(); }

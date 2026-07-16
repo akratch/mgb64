@@ -455,12 +455,21 @@ kbd {
 
 #mgb64-canvas {
   display: block;
+  /* Positioned + above the fixed .bg-fx backdrop (z-index 0): a plain static
+   * canvas would paint UNDER any positioned z-indexed sibling, leaving the
+   * user hearing the game behind the page background. */
+  position: relative;
+  z-index: 2;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
   background: #000;
 }
 #mgb64-canvas[hidden] { display: none; }
+/* Once the game canvas is live, drop the decorative backdrop entirely — no
+ * stray fixed layer, no wasted compositing behind the game. :has() is
+ * supported by every WebGPU-capable browser (the page gates on WebGPU). */
+body:has(#mgb64-canvas:not([hidden])) .bg-fx { display: none; }
 
 #overlay-hint {
   position: fixed;

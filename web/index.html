@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>MGB64 — browser demo</title>
-<!-- Trademark-free green-crosshair favicon (standalone SVG) — silences the
-     /favicon.ico 404 with no external fetch beyond same-origin. -->
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<!-- Favicon is injected at runtime by mgb64-shell.js as a Blob URL (trademark-
+     free green crosshair). Runtime-generated rather than a tracked data: URI or
+     a 6th dist file: the contamination guard forbids embedded data-URI payloads
+     and the web-demo workflow pins the artifact to exactly 5 files. -->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
