@@ -299,6 +299,36 @@ kbd {
 .option-row strong { color: var(--text); }
 .option-row:hover { color: var(--text); }
 
+/* WEB-018: mouse-sensitivity slider row — label + live value stacked over the
+   range input. Overrides the base .option-row's row layout / pointer cursor. */
+.option-slider {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  cursor: default;
+}
+.option-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+.range-val {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.option-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.option-slider input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

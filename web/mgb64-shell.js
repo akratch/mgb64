@@ -15,6 +15,17 @@
 const ROM_OPFS_NAME = "baserom.z64";
 const ROM_SIZE = 12 * 1024 * 1024;
 
+// WEB-018: web has no in-game settings overlay (MGB64_APP OFF) or editable ini,
+// so the shell exposes two input prefs (see index.html) and passes them as
+// --config-override Input.* args at boot. The sensitivity slider is a MULTIPLIER
+// of the engine's default mouse sensitivity (Input.MouseSensitivity default 0.15,
+// registered in platform_sdl.c), so 1.00× reproduces native feel and the slider
+// range 0.25×–3.00× maps to 0.0375–0.45 — well inside the registered 0.01–2.0
+// clamp. This factor is INDEPENDENT of WEB-016's browser-scaling normalization
+// (that undoes SDL's window-size-dependent coordinate rescale so feel matches
+// native; this is the user's separate preference); the two multiply.
+const MOUSE_SENS_DEFAULT = 0.15;
+
 // WEB-032: cache-busting handshake between the glue script and the wasm. Pages
 // serves both with max-age, so around a redeploy a browser can pair cached glue
 // with fresh wasm (or vice versa) → cryptic "undefined"/CompileError breakage.
@@ -498,6 +509,19 @@ async function boot(romBytes) {
   const args = ["--rom", "/rom/baserom.z64", "--savedir", "/save"];
   const unlockAll = $("unlock-all");
   if (unlockAll && unlockAll.checked) args.push("--unlock-all-levels");
+  // WEB-018: apply the shell input prefs via the engine's real CLI override
+  // mechanism (main_pc.c --config-override Section.Key=value; keys registered in
+  // platform_sdl.c). Passed ALWAYS, not only when non-default: the default slider
+  // (1.00× → Input.MouseSensitivity=0.15) and unchecked box (Input.InvertY=0) are
+  // the engine's own defaults, so a default boot stays byte-identical to before
+  // this feature, while unconditional passing keeps "what the control shows" ==
+  // "what the engine runs" with no default-omit branch to drift out of sync.
+  const sensEl = $("mouse-sens");
+  const mult = sensEl ? Number(sensEl.value) : 1;
+  const sens = MOUSE_SENS_DEFAULT * (Number.isFinite(mult) && mult > 0 ? mult : 1);
+  args.push("--config-override", "Input.MouseSensitivity=" + sens.toFixed(4));
+  const invEl = $("invert-y");
+  args.push("--config-override", "Input.InvertY=" + (invEl && invEl.checked ? "1" : "0"));
   m.callMain(args);
   // WEB-062: MEMFS now holds its own /rom copy, so drop the 12 MB byte array the
   // JS side was holding (both the local param and the module-scope reference) —
@@ -536,6 +560,33 @@ async function boot(romBytes) {
     try { unlockAll.checked = localStorage.getItem("mgb64-unlock-all") === "1"; } catch {}
     unlockAll.addEventListener("change", () => {
       try { localStorage.setItem("mgb64-unlock-all", unlockAll.checked ? "1" : "0"); } catch {}
+    });
+  }
+  // WEB-018: restore + persist the input prefs across visits (mirrors unlock-all).
+  // The <input type="range"> clamps a stale/out-of-bounds stored value to its
+  // min/max on assignment, and the engine re-clamps the derived override too, so
+  // a corrupt localStorage entry can never push sensitivity out of range.
+  const mouseSens = $("mouse-sens");
+  const mouseSensVal = $("mouse-sens-val");
+  if (mouseSens) {
+    const showSens = () => {
+      if (mouseSensVal) mouseSensVal.textContent = Number(mouseSens.value).toFixed(2) + "×";
+    };
+    try {
+      const saved = localStorage.getItem("mgb64-mouse-sens");
+      if (saved !== null) mouseSens.value = saved;
+    } catch {}
+    showSens();
+    mouseSens.addEventListener("input", () => {
+      showSens();
+      try { localStorage.setItem("mgb64-mouse-sens", mouseSens.value); } catch {}
+    });
+  }
+  const invertY = $("invert-y");
+  if (invertY) {
+    try { invertY.checked = localStorage.getItem("mgb64-invert-y") === "1"; } catch {}
+    invertY.addEventListener("change", () => {
+      try { localStorage.setItem("mgb64-invert-y", invertY.checked ? "1" : "0"); } catch {}
     });
   }
   rom = await loadStoredRom();

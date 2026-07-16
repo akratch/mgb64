@@ -16,6 +16,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
 #include <emscripten/em_js.h>
+#include <emscripten/html5.h>   /* WEB-016: emscripten_get_element_css_size (undo relative-motion rescale) */
 /* Block (via Asyncify) until the browser's next animation frame. The wake is
  * display-synced — unlike emscripten_sleep()'s setTimeout, which Chrome clamps
  * to 1-4ms granularity and which never aligns with vsync. Used by the frame
@@ -352,6 +353,23 @@ static int g_mouseGrabbed = 0;
  * b1525bf cooldown path requests lock but the browser grants it a few frames
  * later — pointerLockElement is null meanwhile, yet that is not a lock LOSS). */
 static int g_pcWebLockConfirmed = 0;
+/* WEB-016: per-frame cached factors that UNDO SDL's emscripten relative-motion
+ * rescale, ONE PER AXIS. SDL's emscripten backend scales the two axes
+ * INDEPENDENTLY before delivering event.motion.xrel/yrel:
+ *     xrel *= (SDL window_w / canvas css_w),  yrel *= (window_h / css_h).
+ * With the SDL window fixed at Video.WindowWidth×Height (1440×810) and the canvas
+ * CSS-pinned to the viewport, mouse-look feel changes with every browser resize
+ * and never matches native — and a single width-only unscale would leave Y feel
+ * aspect-dependent (~10% weak at 16:10, ~31% hot at 21:9). Undoing each axis with
+ * its OWN inverse makes one hardware count equal one game count on both axes:
+ *     X: (window_w/css_w)·(css_w/window_w) = 1
+ *     Y: (window_h/css_h)·(css_h/window_h) = 1
+ * Recomputed at most once per frame in platformPollEvents (never per motion
+ * event); 1.0 = identity until first read. INDEPENDENT of Input.MouseSensitivity:
+ * this normalizes the browser's coordinate scaling; MouseSensitivity is the user's
+ * separate feel preference applied later in lvl.c. The two multiply. */
+static float g_pcWebMouseUnscaleX = 1.0f;
+static float g_pcWebMouseUnscaleY = 1.0f;
 #endif
 int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1. */
 #define FLY_SPEED 50.0f
@@ -2742,6 +2760,44 @@ int platformApplyFaithfulHdPreset(void)
 void platformGetMouseDelta(int *dx, int *dy) {
     extern int g_freezeInput;
 
+#ifdef __EMSCRIPTEN__
+    /* WEB-016: undo SDL emscripten's window/CSS relative-motion rescale so
+     * mouse-look feel is window-size-independent and matches native. SDL scales
+     * the two axes INDEPENDENTLY (xrel *= window_w/css_w, yrel *= window_h/css_h),
+     * so each axis is undone by its OWN factor — X: (window_w/css_w)·(css_w/window_w)
+     * = 1; Y: (window_h/css_h)·(css_h/window_h) = 1 — a width-only unscale would
+     * leave Y aspect-dependent. Applied to the HARDWARE-accumulated delta only
+     * (g_mouseDelta*), never the scripted injection below (g_pcScriptedMouseDelta*),
+     * which is already in game units. The factors are refreshed once per frame in
+     * platformPollEvents.
+     *
+     * Fractional carry: the factors are generally non-integer, so multiplying an
+     * int delta and rounding drops the remainder every frame — sustained slow aim
+     * would undercount whenever a factor > 1. Carry the truncated fraction per axis
+     * into the next frame (residX/residY hold the rounding remainder, in [-0.5,0.5]);
+     * reset the residuals whenever ungrabbed so stale carry cannot fire on a
+     * recapture. */
+    {
+        static float residX = 0.0f, residY = 0.0f;
+        if (!g_mouseGrabbed) {
+            residX = 0.0f;
+            residY = 0.0f;
+        }
+        if (g_pcWebMouseUnscaleX != 1.0f || residX != 0.0f) {
+            float scaled = (float)g_mouseDeltaX * g_pcWebMouseUnscaleX + residX;
+            long out = lroundf(scaled);
+            residX = scaled - (float)out;
+            g_mouseDeltaX = (int)out;
+        }
+        if (g_pcWebMouseUnscaleY != 1.0f || residY != 0.0f) {
+            float scaled = (float)g_mouseDeltaY * g_pcWebMouseUnscaleY + residY;
+            long out = lroundf(scaled);
+            residY = scaled - (float)out;
+            g_mouseDeltaY = (int)out;
+        }
+    }
+#endif
+
     if (g_freezeInput) {
         *dx = g_pcScriptedMouseDeltaX;
         *dy = g_pcScriptedMouseDeltaY;
@@ -3278,6 +3334,29 @@ void platformPollEvents(void) {
         }
     } else {
         g_pcWebLockConfirmed = 0;
+    }
+    /* WEB-016: refresh the per-axis relative-motion unscale ONCE per frame here
+     * (this reconcile block already runs once per platformPollEvents), so the
+     * CSS-size query never happens per motion event. Applied to accumulated deltas
+     * in platformGetMouseDelta. Guarded per axis against a zero/absent window or
+     * CSS box: fall back to identity (1.0) rather than zeroing mouse-look. Do NOT
+     * touch the SDL window size — gfx sizing reads the CSS box independently
+     * (gfx_pc.c) and must not be disturbed. */
+    {
+        double cssw = 0.0, cssh = 0.0;
+        int winw = 0, winh = 0;
+        if (g_sdlWindow != NULL) {
+            SDL_GetWindowSize(g_sdlWindow, &winw, &winh);
+        }
+        if (emscripten_get_element_css_size("#canvas", &cssw, &cssh) == 0) {
+            g_pcWebMouseUnscaleX = (cssw >= 1.0 && winw >= 1)
+                ? (float)(cssw / (double)winw) : 1.0f;
+            g_pcWebMouseUnscaleY = (cssh >= 1.0 && winh >= 1)
+                ? (float)(cssh / (double)winh) : 1.0f;
+        } else {
+            g_pcWebMouseUnscaleX = 1.0f;
+            g_pcWebMouseUnscaleY = 1.0f;
+        }
     }
 #endif
     while (SDL_PollEvent(&event)) {

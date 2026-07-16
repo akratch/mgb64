@@ -80,6 +80,26 @@
           to any level (saves untouched)</span>
         </label>
 
+        <!-- WEB-018: web has no in-game settings overlay (MGB64_APP OFF) or
+             editable ini, so surface the two most-wanted input prefs here. The
+             shell appends them as --config-override Input.* args at boot and
+             persists them to localStorage like the unlock-all row above
+             (mgb64-shell.js). The slider is a MULTIPLIER of the engine's default
+             mouse sensitivity: 1.00× = native feel. -->
+        <div class="option-row option-slider">
+          <label class="option-label" for="mouse-sens">
+            <span>Mouse sensitivity</span>
+            <output id="mouse-sens-val" class="range-val">1.00&times;</output>
+          </label>
+          <input type="range" id="mouse-sens" min="0.25" max="3" step="0.05"
+                 value="1" aria-describedby="mouse-sens-val">
+        </div>
+
+        <label class="option-row">
+          <input type="checkbox" id="invert-y">
+          <span>Invert mouse <strong>Y</strong> axis — reverse look up/down</span>
+        </label>
+
         <div class="actions">
           <button id="play" class="btn btn-primary" disabled>▶ Play</button>
           <button id="forget" class="btn btn-ghost" hidden>Forget stored ROM</button>
