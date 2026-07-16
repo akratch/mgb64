@@ -423,12 +423,25 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
  *   RGB555.
  *
  * WebGPU renders the scene offscreen at the surface resolution, so src == dst
- * (filterMode 0 / passthrough); the GL VI-filter rescale/aspect-fit modes are a
- * diag-only feature and are not ported. SSAO is omitted (default-off; would need
- * a sampleable depth target). Both texture reads use textureSampleLevel so the
- * in-branch FXAA/bloom/sharpen samples stay valid under WGSL's uniformity rules.
- * `fragPos` is @builtin(position) (top-left origin, matching the scene texture
- * layout and the CopyTextureToTexture present it replaces), so no V-flip. */
+ * (filterMode 0 = bilinear sampleDst, exact at integer taps); the GL VI-filter
+ * rescale/aspect-fit modes are a diag-only feature and are not ported. SSAO is
+ * omitted (default-off; would need a sampleable depth target). All texture reads
+ * use textureSampleLevel so the in-branch FXAA/bloom/sharpen samples stay valid
+ * under WGSL's uniformity rules. `fragPos` is @builtin(position) (top-left
+ * origin, matching the scene texture layout and the CopyTextureToTexture present
+ * it replaces), so no V-flip.
+ *
+ * Two KNOWN, deliberate divergences from GL (both sub-LSB / arguably-more-correct):
+ * - Gamma: GL's runtime filter runs TWO chained passes (source -> low_tex with
+ *   applyPost=0, then low_tex -> screen with applyPost=1 — gfx_opengl.c:3766/
+ *   3791), and gamma sits OUTSIDE the applyPost gate, so a non-default
+ *   Video.Gamma is applied TWICE on GL (pow(1/g) squared). This single pass
+ *   applies it once — the setting's documented meaning. Identical at the default
+ *   gamma 1.0.
+ * - Bayer dither / RGB555 threshold: the 4x4 pattern indexes gl_FragCoord, whose
+ *   Y origin is bottom-left on GL and top-left here, so the pattern is
+ *   vertically mirrored. It is a +/-0.5-LSB ordered-dither offset — spatially
+ *   uniform noise, no visible or measurable difference. */
 const char *gfx_webgpu_postfx_wgsl(void) {
     return
     "struct Post {\n"
@@ -442,8 +455,8 @@ const char *gfx_webgpu_postfx_wgsl(void) {
     "};\n"
     "@group(0) @binding(0) var<uniform> u : Post;\n"
     "@group(0) @binding(1) var uTex : texture_2d<f32>;\n"
-    "@group(0) @binding(2) var uSampN : sampler;\n"   /* nearest + clamp (sampleDst / neighbour taps) */
-    "@group(0) @binding(3) var uSampL : sampler;\n"   /* linear + clamp (bloom) */
+    "@group(0) @binding(2) var uSampN : sampler;\n"   /* nearest + clamp (unused; kept so the bind group layout is stable) */
+    "@group(0) @binding(3) var uSampL : sampler;\n"   /* linear + clamp (sampleDst + bloom — GL filterMode-0 is bilinear) */
     "struct VOut { @builtin(position) pos : vec4<f32> };\n"
     "@vertex fn vs_main(@builtin(vertex_index) vid : u32) -> VOut {\n"
     "  var kPos = array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0), vec2<f32>(3.0,-1.0), vec2<f32>(-1.0,3.0));\n"
@@ -457,10 +470,13 @@ const char *gfx_webgpu_postfx_wgsl(void) {
     "     3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,\n"
     "    15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0);\n"
     "  return b[idx];\n}\n"
-    /* sampleDst: GL's filterMode-0 point fetch. src==dst so uv=fc/dstSize with a
-     * nearest+clamp sampler reproduces texelFetch(floor(fc)). */
+    /* sampleDst: GL's filterMode-0 path is sampleCpuBilinear (the runtime output
+     * pass draws with filter_mode=0 — gfx_opengl.c:3766/3791), so use the LINEAR
+     * clamp sampler: at src==dst the integer taps (centre, edge luma, CAS) land on
+     * exact texel centres (bilinear fraction 0 -> exact texel), while FXAA's
+     * fractional directional taps get the same bilinear blend GL computes. */
     "fn sampleDst(fc : vec2<f32>) -> vec4<f32> {\n"
-    "  return textureSampleLevel(uTex, uSampN, fc / u.dstSize, 0.0);\n}\n"
+    "  return textureSampleLevel(uTex, uSampL, fc / u.dstSize, 0.0);\n}\n"
     "fn fxLuma(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }\n"
     "fn fxaa(fc : vec2<f32>, rgbM : vec3<f32>) -> vec3<f32> {\n"
     "  let lM = fxLuma(rgbM);\n"
