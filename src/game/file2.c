@@ -644,6 +644,26 @@ bool fileIsFolderValid(s32 folder)
  * @param difficulty
  * @return 0, 1, or 3 (STAGESTATUS_LOCKED, STAGESTATUS_UNLOCKED, STAGESTATUS_COMPLETED)
  */
+#ifdef NATIVE_PORT
+/* GE007_UNLOCK_ALL_LEVELS: demo/showcase hatch — every solo mission (incl. the
+ * Aztec/Egypt bonus stages) reports UNLOCKED regardless of save progression.
+ * Menu-availability only: COMPLETED statuses (best times) still come from the
+ * real save, nothing is written to the save file, and the sim is untouched.
+ * Off by default; the web shell exposes it as the "all missions unlocked"
+ * toggle (--unlock-all-levels). */
+static int fileUnlockAllLevelsHatch(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        extern int port_env_bool(const char *name, int defval, const char *help);
+        cached = port_env_bool("GE007_UNLOCK_ALL_LEVELS", 0,
+            "report every solo mission as unlocked in the mission-select menus "
+            "(demo hatch; save data and sim untouched)");
+    }
+    return cached;
+}
+#endif
+
 STAGESTATUS fileIsStageUnlockedAtDifficulty(s32 foldernum, LEVEL_SOLO_SEQUENCE levelid, DIFFICULTY difficulty)
 {
     save_data* save;
@@ -661,6 +681,12 @@ STAGESTATUS fileIsStageUnlockedAtDifficulty(s32 foldernum, LEVEL_SOLO_SEQUENCE l
             {
                 return STAGESTATUS_COMPLETED; //found on first try, stage has been completed and a time saved.
             }
+#ifdef NATIVE_PORT
+            if (fileUnlockAllLevelsHatch())
+            {
+                return STAGESTATUS_UNLOCKED; /* not completed, but demo-unlocked */
+            }
+#endif
 
             if ((levelid == SP_LEVEL_AZTEC && difficulty < DIFFICULTY_SECRET) ||
                 (levelid == SP_LEVEL_EGYPT && difficulty < DIFFICULTY_00))

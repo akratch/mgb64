@@ -19,7 +19,7 @@ extern "C" {
 
 /* Surface creation moved to the dialect seam wgpuCompatCreateSurface()
  * (gfx_webgpu_compat.h): native window descriptors on desktop, the
- * #mgb64-canvas selector in the browser. gfx_webgpu_bringup() calls it
+ * #canvas selector in the browser. gfx_webgpu_bringup() calls it
  * internally; external callers use bringup (below). */
 
 /* Full WebGPU bring-up for a native window handle: instance -> surface ->

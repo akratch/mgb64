@@ -279,6 +279,26 @@ kbd {
 }
 #rom-status:empty { min-height: 0; margin: 0; }
 
+.option-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.9rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+}
+.option-row input[type="checkbox"] {
+  margin-top: 0.22rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.option-row strong { color: var(--text); }
+.option-row:hover { color: var(--text); }
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -453,7 +473,7 @@ kbd {
 
 /* ------------------------------------------------------------ in-game view */
 
-#mgb64-canvas {
+#canvas {
   display: block;
   /* Positioned + above the fixed .bg-fx backdrop (z-index 0): a plain static
    * canvas would paint UNDER any positioned z-indexed sibling, leaving the
@@ -465,11 +485,11 @@ kbd {
   height: 100dvh;
   background: #000;
 }
-#mgb64-canvas[hidden] { display: none; }
+#canvas[hidden] { display: none; }
 /* Once the game canvas is live, drop the decorative backdrop entirely — no
  * stray fixed layer, no wasted compositing behind the game. :has() is
  * supported by every WebGPU-capable browser (the page gates on WebGPU). */
-body:has(#mgb64-canvas:not([hidden])) .bg-fx { display: none; }
+body:has(#canvas:not([hidden])) .bg-fx { display: none; }
 
 #overlay-hint {
   position: fixed;

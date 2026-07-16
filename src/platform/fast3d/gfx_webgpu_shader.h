@@ -32,6 +32,15 @@ struct WgpuShaderInfo {
     bool used_textures[2];
     bool opt_alpha;
     bool opt_texture_edge;    /* alpha-cutout: discard below the RDP edge threshold */
+    /* RDP memory-blend emulation (glass / chain-link fence class — room XLU
+     * wrap-color-on-coverage surfaces, gfx_pc's default for that raw mode).
+     * The fragment samples a snapshot of the scene target ("memory color") and
+     * performs the N64 blender byte math in-shader, exactly like the GLSL arm
+     * in gfx_opengl.c (:1373/:1401). Bindings 4/5 = snapshot texture/sampler;
+     * the cvg variant additionally needs the GL-convention viewport via the
+     * @binding(6) uniform. HW blending stays disabled for these (shader blends). */
+    bool diag_rdp_memory_blend;      /* color-only memory blend (diag CC list) */
+    bool diag_rdp_cvg_memory_blend;  /* coverage-wrap memory blend (default)   */
 };
 
 /* Build the WGSL for a combiner id. Returns a heap-allocated NUL-terminated

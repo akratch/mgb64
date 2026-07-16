@@ -100,7 +100,7 @@ async function boot(romBytes) {
   if (booted) return;
   booted = true;
   $("gate").hidden = true;
-  const canvas = $("mgb64-canvas"); canvas.hidden = false;
+  const canvas = $("canvas"); canvas.hidden = false;
   // Additive UI only: reveal the unobtrusive in-game hint (F1/F10/Esc). It
   // self-fades via CSS and is purely cosmetic — no bearing on the boot contract.
   const hint = $("overlay-hint"); if (hint) hint.hidden = false;
@@ -114,7 +114,10 @@ async function boot(romBytes) {
   const persist = () => m.FS.syncfs(false, () => {});
   setInterval(persist, 5000);
   addEventListener("pagehide", persist);
-  m.callMain(["--rom", "/rom/baserom.z64", "--savedir", "/save"]);
+  const args = ["--rom", "/rom/baserom.z64", "--savedir", "/save"];
+  const unlockAll = $("unlock-all");
+  if (unlockAll && unlockAll.checked) args.push("--unlock-all-levels");
+  m.callMain(args);
 }
 
 (async () => {

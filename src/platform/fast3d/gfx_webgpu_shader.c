@@ -139,6 +139,11 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
     info->used_textures[1] = cc.used_textures[1];
     info->opt_alpha = cc.opt_alpha;
     info->opt_texture_edge = cc.opt_texture_edge;
+    /* RDP memory-blend emulation (glass / chain-link fence class). Gated on
+     * opt_alpha exactly like gfx_opengl.c (prg->diag_rdp_*_blend at :1609). */
+    info->diag_rdp_memory_blend = cc.opt_alpha && cc.diag_rdp_memory_blend;
+    info->diag_rdp_cvg_memory_blend = cc.opt_alpha && cc.diag_rdp_cvg_memory_blend;
+    bool rdp_mem = info->diag_rdp_memory_blend || info->diag_rdp_cvg_memory_blend;
 
     const char *interp_in  = cc.noperspective_inputs     ? " @interpolate(linear)" : "";
     const char *interp_uv  = cc.noperspective_texcoords  ? " @interpolate(linear)" : "";
@@ -267,6 +272,21 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         P("@group(0) @binding(2) var uTex1 : texture_2d<f32>;\n");
         P("@group(0) @binding(3) var uSamp1 : sampler;\n");
     }
+    /* RDP memory-blend bindings: scene snapshot ("memory color") at 4/5, and —
+     * for the coverage-wrap variant — the GL-convention (bottom-up) viewport
+     * uniform at 6 (GLSL uDiagViewport; gfx_opengl.c :1078). The snapshot covers
+     * the WHOLE scene target (not the GL viewport-rect copy), so memoryUv is
+     * simply fragcoord / textureDimensions with no origin uniform: WebGPU's
+     * top-down fragcoord and top-down texture v cancel exactly as GL's
+     * bottom-up/bottom-up pair does. */
+    if (rdp_mem) {
+        P("@group(0) @binding(4) var uSnap : texture_2d<f32>;\n");
+        P("@group(0) @binding(5) var uSnapSamp : sampler;\n");
+    }
+    if (info->diag_rdp_cvg_memory_blend) {
+        P("struct DiagU { vp : vec4<f32> };\n");
+        P("@group(0) @binding(6) var<uniform> uDiag : DiagU;\n");
+    }
 
     /* Position-hash noise stand-in (Task 4 replaces with the frame-varying
      * uniform form). Only emitted when a combiner slot reads SHADER_NOISE. */
@@ -317,8 +337,34 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
           "  return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);\n}\n");
     }
 
+    /* RDP coverage-wrap helpers (port of gfx_opengl.c diagEdge / diagInsideTri /
+     * diagCoverageSample, :1157-1170). fragGL is the GL-convention (bottom-up)
+     * fragment coordinate; the sub-pixel offsets are applied in that space so the
+     * 8-sample N64 coverage pattern matches the GLSL arm exactly. */
+    if (info->diag_rdp_cvg_memory_blend) {
+        P("fn diagEdge(a : vec2<f32>, b : vec2<f32>, p : vec2<f32>) -> f32 {\n"
+          "  return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);\n}\n");
+        P("fn diagInsideTri(p : vec2<f32>, a : vec2<f32>, b : vec2<f32>, c : vec2<f32>) -> f32 {\n"
+          "  let e0 = diagEdge(a, b, p);\n"
+          "  let e1 = diagEdge(b, c, p);\n"
+          "  let e2 = diagEdge(c, a, p);\n"
+          "  let hasNeg = (e0 < 0.0) || (e1 < 0.0) || (e2 < 0.0);\n"
+          "  let hasPos = (e0 > 0.0) || (e1 > 0.0) || (e2 > 0.0);\n"
+          "  return select(1.0, 0.0, hasNeg && hasPos);\n}\n");
+        P("fn diagCoverageSample(fragGL : vec2<f32>, pixelOffset : vec2<f32>, a : vec2<f32>, b : vec2<f32>, c : vec2<f32>) -> f32 {\n"
+          "  let p = ((fragGL + pixelOffset - uDiag.vp.xy) / uDiag.vp.zw) * 2.0 - vec2<f32>(1.0);\n"
+          "  return diagInsideTri(p, a, b, c);\n}\n");
+    }
+
     /* Fragment shader */
     P("@fragment fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\n");
+    /* Memory color: sampled up-front (uniform control flow; textureSampleLevel
+     * so it stays valid regardless of later discards). */
+    if (rdp_mem) {
+        P("  let snapSize = vec2<f32>(textureDimensions(uSnap));\n");
+        P("  let memoryUv = clamp(in.clip_pos.xy / snapSize, vec2<f32>(0.0), vec2<f32>(1.0));\n");
+        P("  let memoryColor = textureSampleLevel(uSnap, uSnapSamp, memoryUv, 0.0);\n");
+    }
     for (int i = 0; i < 2; i++) {
         if (!cc.used_textures[i]) continue;
         const char *tex = i == 0 ? "uTex0" : "uTex1";
@@ -395,6 +441,48 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
     /* Texture-edge alpha cutout (PD 0.19 threshold). */
     if (cc.opt_texture_edge && cc.opt_alpha) {
         P("  if (texel.a > 0.19) { texel.a = 1.0; } else { discard; }\n");
+    }
+    /* RDP memory-blend arms — byte-exact port of gfx_opengl.c :1373-1410.
+     * HW blending is disabled for these draws (wgpu_blend_state returns opaque);
+     * the shader performs the N64 blender math against the snapshot's memory
+     * color, and (cvg variant) the 8-sample coverage accumulate/wrap against the
+     * coverage stored in the framebuffer alpha channel. */
+    if (info->diag_rdp_cvg_memory_blend) {
+        P("  let fragGL = vec2<f32>(in.clip_pos.x, snapSize.y - in.clip_pos.y);\n");
+        P("  let diagTri0 = in.vDiagTri01.xy;\n");
+        P("  let diagTri1 = in.vDiagTri01.zw;\n");
+        P("  let diagTri2 = in.vDiagTri2;\n");
+        P("  var coverageCount = 0.0;\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>(-0.500, -0.375), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>( 0.000, -0.375), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>(-0.250, -0.125), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>( 0.250, -0.125), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>(-0.500,  0.125), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>( 0.000,  0.125), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>(-0.250,  0.375), diagTri0, diagTri1, diagTri2);\n");
+        P("  coverageCount += diagCoverageSample(fragGL, vec2<f32>( 0.250,  0.375), diagTri0, diagTri1, diagTri2);\n");
+        P("  if (coverageCount < 0.5) { discard; }\n");
+        P("  let memoryCoverage = floor(floor(clamp(memoryColor.a, 0.0, 1.0) * 255.0 + 0.5) / 32.0);\n");
+        P("  let coverageTotal = coverageCount + memoryCoverage;\n");
+        P("  let coverageWrap = step(8.0, coverageTotal);\n");
+        P("  let newCoverage = coverageTotal - 8.0 * floor(coverageTotal / 8.0);\n");
+        P("  let newCoverageAlpha = (newCoverage * 32.0) / 255.0;\n");
+        P("  let pixelAlphaByte = floor(clamp(texel.a, 0.0, 1.0) * 255.0 + 0.5);\n");
+        P("  let a0 = floor(pixelAlphaByte / 8.0);\n");
+        P("  let a1 = floor((255.0 - pixelAlphaByte) / 8.0);\n");
+        P("  let pixelByte = floor(clamp(texel.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));\n");
+        P("  let memoryByte = floor(clamp(memoryColor.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));\n");
+        P("  let blendedByte = floor((pixelByte * a0 + memoryByte * (a1 + 1.0)) / 32.0);\n");
+        P("  let outByte = mix(memoryByte, blendedByte, coverageWrap);\n");
+        P("  texel = vec4<f32>(clamp(outByte / 255.0, vec3<f32>(0.0), vec3<f32>(1.0)), newCoverageAlpha);\n");
+    } else if (info->diag_rdp_memory_blend) {
+        P("  let pixelAlphaByte = floor(clamp(texel.a, 0.0, 1.0) * 255.0 + 0.5);\n");
+        P("  let a0 = floor(pixelAlphaByte / 8.0);\n");
+        P("  let a1 = floor((255.0 - pixelAlphaByte) / 8.0);\n");
+        P("  let pixelByte = floor(clamp(texel.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));\n");
+        P("  let memoryByte = floor(clamp(memoryColor.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));\n");
+        P("  let blendedByte = floor((pixelByte * a0 + memoryByte * (a1 + 1.0)) / 32.0);\n");
+        P("  texel = vec4<f32>(clamp(blendedByte / 255.0, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);\n");
     }
     if (!cc.opt_alpha) {
         P("  texel.a = 1.0;\n");

@@ -134,6 +134,25 @@ void  gfx_webgpu_current_overlay_size(int *w, int *h) {
     if (h) *h = s_overlay_h;
 }
 
+/* RDP memory-blend ("glass / chain-link fence" class) snapshot resources.
+ * Before each draw whose shader samples the memory color, the open scene pass
+ * is split and the scene target is copied here — the WGSL then reads it as the
+ * N64 "memory color" (the WebGPU equivalent of gfx_opengl.c's per-batch
+ * glCopyTexSubImage2D snapshot, W3.6 fence/glass regression fix). */
+static WGPUTexture     s_snap_tex  = NULL;
+static WGPUTextureView s_snap_view = NULL;
+static uint32_t        s_snap_w = 0, s_snap_h = 0;
+static WGPUSampler     s_snap_sampler = NULL;   /* nearest + clamp-to-edge */
+/* Small per-frame ring of 16-byte viewport UBOs for the coverage-wrap shader
+ * (GL uDiagViewport). Distinct buffers per distinct value are required because
+ * wgpuQueueWriteBuffer executes before the command buffer — one buffer would
+ * retroactively apply the LAST viewport to every draw. In practice the scene
+ * viewport is constant within a frame, so slot 0 is reused. */
+#define WGPU_DIAG_UBO_RING 8
+static WGPUBuffer s_diag_ubo[WGPU_DIAG_UBO_RING];
+static float      s_diag_ubo_val[WGPU_DIAG_UBO_RING][4];
+static int        s_diag_ubo_used = 0;   /* slots written this frame */
+
 /* Clear color, pushed by gfx_pc.c before start_frame (see gfx_webgpu_set_clear_color). */
 static double s_clear_r = 0.0, s_clear_g = 0.0, s_clear_b = 0.0;
 
@@ -206,7 +225,7 @@ static void on_device_error(WGPUDevice const *device, WGPUErrorType type,
  * (the page owns exactly one canvas). Declared in gfx_webgpu_compat.h.
  *
  * Verified against the emdawnwebgpu port's webgpu.h at build time; keep
- * "#mgb64-canvas" in sync with web/index.html (W5).
+ * "#canvas" in sync with web/index.html (W5).
  * ---------------------------------------------------------------------- */
 WGPUSurface wgpuCompatCreateSurface(WGPUInstance instance, void *metal_layer,
                                     struct SDL_Window *window) {
@@ -218,7 +237,7 @@ WGPUSurface wgpuCompatCreateSurface(WGPUInstance instance, void *metal_layer,
     (void)window;   /* the page owns exactly one canvas */
     WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvas = {0};
     canvas.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
-    canvas.selector = (WGPUStringView){ "#mgb64-canvas", WGPU_STRLEN };
+    canvas.selector = (WGPUStringView){ "#canvas", WGPU_STRLEN };
     WGPUSurfaceDescriptor desc = {0};
     desc.nextInChain = &canvas.chain;
     return wgpuInstanceCreateSurface(instance, &desc);
@@ -452,6 +471,7 @@ static void wgpu_start_frame(void) {
     s_frame_open = false;
     s_vbuf_off = 0;   /* reset the per-frame vertex bump allocator */
     s_sc_set = false; /* scissor is re-established by gfx_pc each frame */
+    s_diag_ubo_used = 0; /* reset the per-frame viewport-UBO ring */
     if (!s_ready) {
         return;
     }
@@ -1053,7 +1073,7 @@ static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
 /* Single-entry draw bind-group cache (see wgpu_draw_triangles): the cache owns
  * the ref; key is {bgl, view0, samp0, view1, samp1} pointers. */
 static WGPUBindGroup s_bg_cache = NULL;
-static const void   *s_bg_key[5] = {0};
+static const void   *s_bg_key[7] = {0};   /* {bgl,v0,m0,v1,m1,snapview,diag_ubo} */
 
 static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t shader_id1) {
     for (int i = 0; i < s_shader_count; ++i) {
@@ -1067,7 +1087,7 @@ static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t sh
 /* Build the bind-group layout for a combiner: (tex,sampler) pairs for each used
  * texture at bindings (0,1) and (2,3). NULL when no textures are sampled. */
 static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
-    WGPUBindGroupLayoutEntry ents[4];
+    WGPUBindGroupLayoutEntry ents[7];
     int ne = 0;
     for (int t = 0; t < 2; t++) {
         if (!info->used_textures[t]) continue;
@@ -1082,6 +1102,27 @@ static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
         se.visibility = WGPUShaderStage_Fragment;
         se.sampler.type = WGPUSamplerBindingType_Filtering;
         ents[ne++] = se;
+    }
+    if (info->diag_rdp_memory_blend || info->diag_rdp_cvg_memory_blend) {
+        WGPUBindGroupLayoutEntry te = {0};
+        te.binding = 4;   /* scene snapshot ("memory color") */
+        te.visibility = WGPUShaderStage_Fragment;
+        te.texture.sampleType = WGPUTextureSampleType_Float;
+        te.texture.viewDimension = WGPUTextureViewDimension_2D;
+        ents[ne++] = te;
+        WGPUBindGroupLayoutEntry se = {0};
+        se.binding = 5;
+        se.visibility = WGPUShaderStage_Fragment;
+        se.sampler.type = WGPUSamplerBindingType_Filtering;
+        ents[ne++] = se;
+    }
+    if (info->diag_rdp_cvg_memory_blend) {
+        WGPUBindGroupLayoutEntry ue = {0};
+        ue.binding = 6;   /* GL-convention viewport (uDiagViewport) */
+        ue.visibility = WGPUShaderStage_Fragment;
+        ue.buffer.type = WGPUBufferBindingType_Uniform;
+        ue.buffer.minBindingSize = 16;
+        ents[ne++] = ue;
     }
     if (ne == 0) {
         return NULL;
@@ -1552,6 +1593,104 @@ static void wgpu_ensure_draw_resources(void) {
     }
 }
 
+/* RDP memory-blend support: split the open scene pass and copy the scene target
+ * into the snapshot texture so the next draw's shader can sample the current
+ * "memory color" (WebGPU cannot read the render target inside its own pass).
+ * The resumed pass Loads both color and depth — no state is lost; viewport,
+ * scissor, pipeline and bind group are re-applied per draw anyway. This is the
+ * per-batch analogue of gfx_opengl.c's glCopyTexSubImage2D snapshot (one copy
+ * per same-material XLU batch, PERFORMANCE_PLAN.md M1). */
+static bool wgpu_snapshot_scene_for_memory_blend(void) {
+    if (s_encoder == NULL || s_pass == NULL || s_scene_tex == NULL ||
+        s_scene_w == 0 || s_scene_h == 0) {
+        return false;
+    }
+    if (s_snap_view == NULL || s_snap_w != s_scene_w || s_snap_h != s_scene_h) {
+        if (s_snap_view != NULL) { wgpuTextureViewRelease(s_snap_view); s_snap_view = NULL; }
+        if (s_snap_tex != NULL)  { wgpuTextureRelease(s_snap_tex);      s_snap_tex = NULL; }
+        WGPUTextureDescriptor td = {0};
+        td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.size.width = s_scene_w; td.size.height = s_scene_h;
+        td.size.depthOrArrayLayers = 1;
+        td.format = s_surface_format;   /* must match the scene for T2T copy */
+        td.mipLevelCount = 1; td.sampleCount = 1;
+        s_snap_tex = wgpuDeviceCreateTexture(s_device, &td);
+        s_snap_view = s_snap_tex ? wgpuTextureCreateView(s_snap_tex, NULL) : NULL;
+        s_snap_w = s_scene_w; s_snap_h = s_scene_h;
+    }
+    if (s_snap_view == NULL) {
+        return false;
+    }
+    if (s_snap_sampler == NULL) {
+        WGPUSamplerDescriptor sd = {0};
+        sd.addressModeU = sd.addressModeV = sd.addressModeW = WGPUAddressMode_ClampToEdge;
+        sd.magFilter = sd.minFilter = WGPUFilterMode_Nearest;   /* GL snapshot is GL_NEAREST */
+        sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        sd.maxAnisotropy = 1;
+        s_snap_sampler = wgpuDeviceCreateSampler(s_device, &sd);
+        if (s_snap_sampler == NULL) {
+            return false;
+        }
+    }
+
+    wgpuRenderPassEncoderEnd(s_pass);
+    wgpuRenderPassEncoderRelease(s_pass);
+    s_pass = NULL;
+
+    WGPUTexelCopyTextureInfo cs = {0};
+    cs.texture = s_scene_tex; cs.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyTextureInfo cd = {0};
+    cd.texture = s_snap_tex; cd.aspect = WGPUTextureAspect_All;
+    WGPUExtent3D ext = { s_scene_w, s_scene_h, 1 };
+    wgpuCommandEncoderCopyTextureToTexture(s_encoder, &cs, &cd, &ext);
+
+    WGPURenderPassColorAttachment att = {0};
+    att.view = s_scene_view;
+    att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    att.loadOp = WGPULoadOp_Load;
+    att.storeOp = WGPUStoreOp_Store;
+    WGPURenderPassDepthStencilAttachment depth = {0};
+    depth.view = s_depth_view;
+    depth.depthLoadOp = WGPULoadOp_Load;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    WGPURenderPassDescriptor rp = {0};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &att;
+    rp.depthStencilAttachment = &depth;
+    s_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
+    return s_pass != NULL;
+}
+
+/* Fetch (or write) a 16-byte viewport UBO for the coverage-wrap shader. The
+ * value is the GL-convention viewport exactly as gfx_opengl.c uploads it
+ * (uDiagViewport = glGetIntegerv(GL_VIEWPORT) = bottom-up origin). */
+static WGPUBuffer wgpu_diag_viewport_ubo(void) {
+    float vp[4] = { (float)s_vp_x, (float)s_vp_y, (float)s_vp_w, (float)s_vp_h };
+    for (int i = 0; i < s_diag_ubo_used; i++) {
+        if (memcmp(s_diag_ubo_val[i], vp, sizeof(vp)) == 0 && s_diag_ubo[i] != NULL) {
+            return s_diag_ubo[i];
+        }
+    }
+    int slot = s_diag_ubo_used < WGPU_DIAG_UBO_RING ? s_diag_ubo_used
+                                                    : WGPU_DIAG_UBO_RING - 1;
+    if (s_diag_ubo[slot] == NULL) {
+        WGPUBufferDescriptor bd = {0};
+        bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        bd.size = 16;
+        s_diag_ubo[slot] = wgpuDeviceCreateBuffer(s_device, &bd);
+        if (s_diag_ubo[slot] == NULL) {
+            return NULL;
+        }
+    }
+    wgpuQueueWriteBuffer(s_queue, s_diag_ubo[slot], 0, vp, sizeof(vp));
+    memcpy(s_diag_ubo_val[slot], vp, sizeof(vp));
+    if (s_diag_ubo_used < WGPU_DIAG_UBO_RING) {
+        s_diag_ubo_used++;
+    }
+    return s_diag_ubo[slot];
+}
+
 /* Clip a rect (x,y,w,h) to [0,maxw] x [0,maxh], zeroing degenerate extents.
  * Order matters: shift for a negative origin first, bail to empty if the origin
  * is at/past the far edge, THEN clip the extent to the bound, THEN a final
@@ -1579,6 +1718,25 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     WGPURenderPipeline pipe = wgpu_pipeline_for(s_cur_shader, s_cur_blend);
     if (pipe == NULL) {
         return;
+    }
+
+    /* RDP memory-blend draw (glass / fence class): snapshot the scene so the
+     * shader can sample the current framebuffer as the N64 memory color. If the
+     * snapshot cannot be produced, skip the draw — an opaque mis-blend is worse
+     * than a dropped XLU batch. */
+    bool rdp_mem_draw = s_cur_shader->info.diag_rdp_memory_blend ||
+                        s_cur_shader->info.diag_rdp_cvg_memory_blend;
+    WGPUBuffer diag_ubo = NULL;
+    if (rdp_mem_draw) {
+        if (!wgpu_snapshot_scene_for_memory_blend()) {
+            return;
+        }
+        if (s_cur_shader->info.diag_rdp_cvg_memory_blend) {
+            diag_ubo = wgpu_diag_viewport_ubo();
+            if (diag_ubo == NULL) {
+                return;
+            }
+        }
     }
 
     /* Bump-allocate this batch's vertex data. */
@@ -1612,11 +1770,13 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
             if (e != NULL && e->view != NULL) v1 = e->view;
             if (s_bound_sampler[1] != NULL) m1 = s_bound_sampler[1];
         }
-        const void *key[5] = { s_cur_shader->bgl, v0, m0, v1, m1 };
+        const void *key[7] = { s_cur_shader->bgl, v0, m0, v1, m1,
+                               rdp_mem_draw ? (const void *)s_snap_view : NULL,
+                               (const void *)diag_ubo };
         if (s_bg_cache != NULL && memcmp(key, s_bg_key, sizeof(key)) == 0) {
             bg = s_bg_cache;   /* hit: reuse, no alloc/free this draw */
         } else {
-            WGPUBindGroupEntry ents[4];
+            WGPUBindGroupEntry ents[7];
             int ne = 0;
             for (int t = 0; t < 2; t++) {
                 if (!s_cur_shader->info.used_textures[t]) continue;
@@ -1624,6 +1784,16 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
                 te.textureView = t == 0 ? v0 : v1; ents[ne++] = te;
                 WGPUBindGroupEntry se = {0}; se.binding = (uint32_t)(t * 2 + 1);
                 se.sampler = t == 0 ? m0 : m1; ents[ne++] = se;
+            }
+            if (rdp_mem_draw) {
+                WGPUBindGroupEntry te = {0}; te.binding = 4;
+                te.textureView = s_snap_view; ents[ne++] = te;
+                WGPUBindGroupEntry se = {0}; se.binding = 5;
+                se.sampler = s_snap_sampler; ents[ne++] = se;
+            }
+            if (diag_ubo != NULL) {
+                WGPUBindGroupEntry ue = {0}; ue.binding = 6;
+                ue.buffer = diag_ubo; ue.size = 16; ents[ne++] = ue;
             }
             WGPUBindGroupDescriptor bd = {0};
             bd.layout = s_cur_shader->bgl;

@@ -58,7 +58,7 @@
 
 struct SDL_Window;
 /* Create a surface for the dialect: native window descriptors on desktop,
- * the #mgb64-canvas selector in the browser. Implemented in gfx_webgpu.c —
+ * the #canvas selector in the browser. Implemented in gfx_webgpu.c —
  * the desktop `#else` body holds the Metal-layer / Win32 / X11 / Wayland
  * descriptor code (wgpu-native types kept off the browser compile); the
  * browser body builds the canvas descriptor.

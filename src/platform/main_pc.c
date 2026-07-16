@@ -591,6 +591,11 @@ int main(int argc, char **argv)
             setenv("GE007_NO_INPUT_GRAB", "1", 1);
         } else if (strcmp(argv[i], "--no-input-grab") == 0) {
             setenv("GE007_NO_INPUT_GRAB", "1", 1);
+        } else if (strcmp(argv[i], "--unlock-all-levels") == 0) {
+            /* Demo/showcase: mission-select shows every solo stage (file2.c
+             * fileUnlockAllLevelsHatch). Menu availability only — the save
+             * file and sim are untouched. Exposed by the web shell toggle. */
+            setenv("GE007_UNLOCK_ALL_LEVELS", "1", 1);
         } else if (strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
             extern int g_autoScreenshotFrame;
             extern int g_screenshotFrameSessionActive;

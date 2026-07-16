@@ -64,6 +64,12 @@
 
         <p id="rom-status" role="status" aria-live="polite"></p>
 
+        <label class="option-row">
+          <input type="checkbox" id="unlock-all">
+          <span>Start with <strong>all missions unlocked</strong> — jump straight
+          to any level (saves untouched)</span>
+        </label>
+
         <div class="actions">
           <button id="play" class="btn btn-primary" disabled>▶ Play</button>
           <button id="forget" class="btn btn-ghost" hidden>Forget stored ROM</button>
@@ -185,7 +191,7 @@
   <kbd>F1</kbd> menu · <kbd>F10</kbd> fps · <kbd>Esc</kbd> release mouse
 </div>
 
-<canvas id="mgb64-canvas" width="1280" height="960" hidden></canvas>
+<canvas id="canvas" width="1280" height="960" hidden></canvas>
 <script src="mgb64-shell.js"></script>
 </body>
 </html>

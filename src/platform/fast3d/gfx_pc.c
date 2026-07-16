@@ -4632,7 +4632,7 @@ static void gfx_sync_current_dimensions_from_window(void) {
              * box size is independent of canvas.width, so it is a stable,
              * distortion-free base that tracks the actual on-screen aspect. */
             double cssw = 0.0, cssh = 0.0;
-            if (emscripten_get_element_css_size("#mgb64-canvas", &cssw, &cssh) == 0 &&
+            if (emscripten_get_element_css_size("#canvas", &cssw, &cssh) == 0 &&
                 cssw >= 1.0 && cssh >= 1.0) {
                 w = (int)(cssw + 0.5);
                 h = (int)(cssh + 0.5);

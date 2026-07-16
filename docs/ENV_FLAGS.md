@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1068 flags** found across the source.
+**1069 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -1045,6 +1045,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_Y` | ? |  | 1 |  |
 | `GE007_UI_SCALE` | float | 1.0f | 1 | Scales the launcher and in-game overlay text, padding and buttons. 1.0 = default; handhelds usually want ~1.25-1.5 for a readable 7-inch panel. Applies live. |
 | `GE007_UNCAP_FUZZ` | ? |  | 1 |  |
+| `GE007_UNLOCK_ALL_LEVELS` | bool | 0 | 1 | report every solo mission as unlocked in the mission-select menus (demo hatch; save data and sim untouched) |
 | `GE007_UNMUTE` | ? |  | 1 |  |
 | `GE007_UPDATE_CHECK` | int | 1 | 2 | At startup, quietly check for a newer version of MGB64 and show a dismissible banner if one is available. No personal data is sent. 0 = never check. |
 | `GE007_UPDATE_CHECK_URL` | ? |  | 1 |  |
