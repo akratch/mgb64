@@ -303,15 +303,23 @@ function recordStderr(text) {
 // shortcut, because the bad file is already in OPFS and would re-poison every
 // future visit (the exact trap WEB-002 targets).
 let _exitHandled = false;
+// Final-review F1: suppresses the beforeunload confirm around reloads WE issue
+// (the Forget-stored-ROM recovery flow) so recovery is never gated on a prompt.
+let _intentionalReload = false;
 function handleExit(code) {
   if (code === 0 || _exitHandled) return;
   _exitHandled = true;
   booted = false;
   hideFatal();
+  // Silence the dead module's ScriptProcessorNode (mirrors the WEB-009 catch).
+  try { _module?.SDL2?.audioContext?.close(); } catch {}
   const canvas = $("canvas"); if (canvas) canvas.hidden = true;
   const hint = $("overlay-hint"); if (hint) hint.hidden = true;
   $("gate").hidden = false;
   $("rom-ui").hidden = false;
+  // The stored ROM is the one that was just refused — don't let a stale
+  // "ROM ready" line contradict the rejection message beside it.
+  $("rom-status").textContent = "Stored ROM was rejected — Forget it or pick a different file.";
   const tail = _stderrTail.filter(Boolean).slice(-6).join("\n");
   const msg = $("gate-msg");
   msg.style.whiteSpace = "pre-wrap";
@@ -381,6 +389,7 @@ async function boot(romBytes) {
   // is starting, or this boot's own onExit — and a later mid-game handleCrash —
   // would be swallowed by the stale guard.
   _exitHandled = false;
+  _stderrTail = [];  // fresh tail per run — a later rejection must not show a mix of two runs' stderr
   const canvas = $("canvas");
   const status = $("gate-msg");
   // WEB-039: keep the gate visible with staged progress until just before
@@ -453,7 +462,13 @@ async function boot(romBytes) {
     // is a beforeunload confirm. Arm it once booted so a mis-hit chord asks before
     // discarding mission progress. (No custom string: modern browsers show their
     // own generic prompt, but any non-empty returnValue triggers it.)
-    addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; });
+    // Final-review F1: never confirm on our own programmatic reload (Forget
+    // flow) or while sitting at the gate after an engine rejection — the
+    // prompt would gate the recovery path the WEB-002 feature itself built.
+    addEventListener("beforeunload", (e) => {
+      if (_intentionalReload || _exitHandled) return;
+      e.preventDefault(); e.returnValue = "";
+    });
     // WEB-008: while fullscreen, best-effort Keyboard Lock so Ctrl+W / Cmd+W and
     // other system chords route to the game instead of the browser. Silently a
     // no-op where unsupported (Safari/Firefox) or not fullscreen — never throws.
@@ -553,7 +568,7 @@ async function boot(romBytes) {
       $("play").disabled = false;
     }
   });
-  $("forget").addEventListener("click", async () => { await forgetRom(); location.reload(); });
+  $("forget").addEventListener("click", async () => { _intentionalReload = true; await forgetRom(); location.reload(); });
   // Boot on click — the user gesture unlocks WebAudio.
   $("play").addEventListener("click", () => {
     $("play").disabled = true;

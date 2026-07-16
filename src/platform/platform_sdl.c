@@ -3456,6 +3456,13 @@ void platformPollEvents(void) {
                     SDL_SetRelativeMouseMode(SDL_TRUE);
                     g_mouseGrabbed = 1;
                     g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
+#ifdef __EMSCRIPTEN__
+                    /* Final-review F2: a regrab starts a fresh async lock
+                     * acquisition — a stale confirm from the PREVIOUS lock
+                     * must not combine with the not-yet-granted window to
+                     * fire a spurious synthetic Esc next frame. */
+                    g_pcWebLockConfirmed = 0;
+#endif
                 }
 #ifdef __EMSCRIPTEN__
                 /* Browser pointer-lock resilience: Chrome enforces a ~1.25 s
@@ -3473,6 +3480,7 @@ void platformPollEvents(void) {
                     SDL_SetRelativeMouseMode(SDL_FALSE);
                     SDL_SetRelativeMouseMode(SDL_TRUE);
                     g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
+                    g_pcWebLockConfirmed = 0; /* F2: stale confirm must not span relocks */
                 }
 #endif
                 break;

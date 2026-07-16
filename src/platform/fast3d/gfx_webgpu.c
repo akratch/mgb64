@@ -1692,7 +1692,15 @@ static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height
      * is always RGBA8Unorm here) writes into the existing texture in place
      * instead of destroy+recreate. Keeps the WGPUTexture AND its view — so any
      * cached draw bind groups that reference the view stay valid and warm —
-     * eliminating per-frame texture churn for animated/streamed surfaces. */
+     * eliminating per-frame texture churn for animated/streamed surfaces.
+     * ORDERING INVARIANT (final-review F3): wgpuQueueWriteTexture executes
+     * BEFORE the frame's command buffer, so a same-id re-upload issued after
+     * an earlier draw in the SAME frame would retroactively swap that draw's
+     * texels (the old destroy+recreate path pinned the old texture via the
+     * bind group and was safe by construction). Currently unreachable — the
+     * TMEM cache hits on unchanged content and eviction deletes rather than
+     * recycles ids — but any future caching change that re-uploads a drawn-
+     * this-frame id must go back to recreate (or defer the write). */
     if (e->tex != NULL && e->view != NULL && e->w == width && e->h == height) {
         dst.texture = e->tex;
         wgpuQueueWriteTexture(s_queue, &dst, rgba32_buf, bytes, &layout, &ext);

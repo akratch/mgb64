@@ -21,6 +21,47 @@ scheduling · P3 = polish/hygiene.
 
 ---
 
+## Status ledger (reconciled 2026-07-16 EOD — authoritative over per-item text)
+
+**LANDED** (commit · items):
+- `ae1084f` wave-1 — WEB-001, 003, 004, 009, 010, 033, 040
+- `f17d6a9` wave-2 (adopted) — WEB-002, 006, 007, 008(js), 011, 012, 013, 014, 015
+- `3c3ffc0` batch A — WEB-008(page), 019, 029, 030, 031, 032(shell), 035, 039,
+  062(shell), 063, 064, 065, 066
+- `b27a538` batch DE — WEB-017, 041, 042, 044, 045, 046, 047, 048, 059
+- `7c2d742` batch B — WEB-032(build), 034, 057, 060, 061
+- `fc47a7f` batch C — WEB-020, 025, 026(+limits retry), 028(diagnostic half),
+  038, 049, 051, 053, 055, 058
+- final-review follow-ups (same day) — beforeunload/recovery interaction,
+  pointer-lock confirm-latch relock reset, WEB-053 ordering-invariant comment.
+
+**CLOSED WITHOUT CODE**: WEB-005 (pacer landed pre-program in b1525bf/73eb35e;
+residual = deploy); WEB-024 (bind-group cache proven ABA-safe by review);
+WEB-067 (owner-reported dead browser wheel = stale served build; path proven
+correct end-to-end — rebuild + hard-reload).
+
+**DEFERRED / OPEN** (need measurement, owner decision, or a future surface):
+WEB-016 (window-size sensitivity scale), WEB-018 (web input settings / overlay),
+WEB-021 residual (pass-split coalescing — measure on Apple GPU first), WEB-022
+(Asyncify bounding experiment), WEB-023 residual (per-frame writeBuffer batching,
+viewport/scissor dedup), WEB-027 (frame-varying noise), WEB-028 fix-half (attr
+packing), WEB-036 (ffp-contract — OWNER: requires native baseline re-record),
+WEB-037 (gfx_ptr lifecycle/tombstones), WEB-043 (controls-table drift gate),
+WEB-050 (shader LRU), WEB-052 (modern-mesh UBO ring), WEB-054 (pipeline
+prewarm), WEB-056 (libm shadowing into SDL). Deploy of all of this to Pages =
+owner-gated (`web-demo.yml` workflow_dispatch).
+
+**Verification at HEAD**: native build clean; renderer_parity + both apertures +
+sim_state_hash + campaign_route + input/config ctests green; tape gate 7/7
+byte-exact (quiet machine, exit-0); web Release build clean (5-file dist, wasm
+~3.99 MB, magic-scan clean, version stamp live); Debug SAFE_HEAP genex proven
+under emcmake. Final whole-branch review: READY-WITH-FOLLOWUPS → follow-ups
+landed same day. Owner checklist: browser smoke (mute ramp by ear, pointer-lock
+feel, device-lost panel, DPR>1 sharpness, two-tab lock refusal, wheel after
+rebuild), then redeploy.
+
+---
+
 ## P0 — trap/blocker class
 
 ### WEB-001 [P0] Debug hotkeys are live on web and the page tells users to press them
