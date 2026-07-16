@@ -67,20 +67,62 @@ is the first and cleanest deletion.
 
 ### Deletion scope (enumerated)
 
+> **Rehearsal correction (2026-07-16).** A full worktree rehearsal (commit
+> `8373ac6`, DO-NOT-MERGE) found the original scope below drastically
+> under-counted the deletion: it named only `gfx_metal.mm`, the selector, and the
+> CMake refs, but the real deletion edits **five `src/` files with ~20 call
+> sites** that the grep checklist (which excludes `src/`) never surfaces. Total
+> deletion is **4861 lines removed / 132 inserted** (gfx_metal.mm is 3977 of the
+> removals). Line anchors below were against `822d1c9` and have drifted at HEAD
+> `487a4b3` — the corrected anchors are noted inline. The scope is:
+
 - `src/platform/fast3d/gfx_metal.mm` (3977 LOC) — delete.
 - `gfx_backend.c:55-74` (`gfx_backend_use_metal()`) — delete; simplify the
-  selector to WebGPU-or-GL.
-- `CMakeLists.txt:19-21` (Metal comment block), `:93-95` (fallback comment),
-  `:1566-1570` (Metal TU + ARC flags), `:1800` (`-framework Metal`) — remove.
-- `CMakeLists.txt:1321` `port_metal_shadow_clamp_regression` (FID-0019) — remove.
-  Note `CMakeLists.txt:935` `port_metal_msaa_sample_count` (FID-0018) is a pure
-  helper test — **it survives** unless `gfx_msaa_util.c/.h` is Metal-only (verify
-  WebGPU does not reuse it before removing).
-- Env-flag rows for Metal-only flags in `docs/ENV_FLAGS.md`:
-  `GE007_METAL_CAPTURE`, `GE007_METAL_DEBUG_VP`, `GE007_METAL_DUMP_SHADERS`,
-  `GE007_METAL_GPU_TRACE`, `GE007_NO_METAL_MSAA`,
-  `GE007_NO_METAL_SHADOW_DEPTH_CLAMP`, `GE007_NO_METAL_SHADOW_DUMMY_DEPTH`,
-  `GE007_SMAA` (Metal-only), and the Metal branch of `GE007_SSAO_MODE`.
+  selector to WebGPU-or-GL. **Also delete its declaration in `gfx_backend.h`**
+  and update the `use_opengl()`/`force_opengl()` doc comments (they reference
+  `use_metal`).
+- **`src/` call sites the original scope omitted (all MUST be edited or the build
+  fails to link):**
+  - `platform_sdl.c` (~8 sites): the `extern gfx_backend_use_metal` decl; the
+    `use_metal() || use_webgpu()` screenshot/drawable-size/window-flag/metal-view
+    conditions (drop the `use_metal()` disjunct → `use_webgpu()`); the
+    `gfx_metal_set_vsync` block; the `Video.Smaa` advanced-gate; the
+    "native Metal" window-created print. **MUST-STAY:** `g_metalView`,
+    `SDL_Metal_CreateView`, `platformGetMetalLayer()`, `SDL_WINDOW_METAL` — these
+    are **co-load-bearing for WebGPU on macOS** (wgpu-native renders into the same
+    CAMetalLayer). Deleting them because they say "Metal" breaks WebGPU.
+  - `gfx_pc.c` (~7 sites): `gfx_metal_api`/`use_metal` externs; the `gfx_init`
+    rapi ternary; the depth-clamp block; the clear-color block; the
+    offscreen-dim block; the GPU-verify `!use_metal()` guard.
+  - `minimap_overlay.c` + `minimap_overlay.h`: the whole
+    `minimap_overlay_draw_queued_frames_metal` function, the
+    `gfx_metal_draw_minimap_overlay` extern, the `s_minimap_overlay_metal_backend`
+    state + all its uses (its caller in the deleted `gfx_metal.mm` means the
+    extern is an **undefined-symbol link error** if the function is left behind).
+  - `main_pc.c` — `--remaster` does `setenv("GE007_RENDERER","metal")`
+    (`main_pc.c:572` at HEAD). This **must be retargeted to `"webgpu"`**, not just
+    left: as `"metal"` it only works by falling through to the WebGPU default by
+    accident. This is the concrete form of the Phase-M "--remaster post-FX on
+    WebGPU" precondition. Also `src/app/launch_intent.cpp` has a comment quoting
+    the old `metal` pin.
+- `CMakeLists.txt` — anchors drifted; at HEAD: `:19-25` (Metal comment **+
+  `enable_language(OBJCXX)` / `CMAKE_OBJCXX_STANDARD` — gfx_metal.mm is the ONLY
+  `.mm`/OBJCXX TU, so remove the whole block**), `:91-95` (fallback comment),
+  `:1651-1657` (Metal TU + ARC flags), `:1885` (`-framework Metal` — safe to drop:
+  `cmake/webgpu.cmake:85` already links Metal for wgpu-native; keep QuartzCore +
+  Foundation), `:1405` `port_metal_shadow_clamp_regression`.
+- `CMakeLists.txt:1024` `port_metal_msaa_sample_count` (FID-0018): **verified
+  Metal-only** — `gfx_msaa_util.c/.h` is referenced ONLY by the (now-deleted)
+  `gfx_metal.mm` and its test. It is now **dead code**, but it is pure/self-
+  contained and **its unit test still builds and passes**, so the rehearsal
+  **kept it** (removing it is optional cleanup, not required for the build). The
+  original "it survives" was correct for the build; note it is now dead.
+- Env-flag rows for Metal-only flags in `docs/ENV_FLAGS.md`: these are **auto-
+  generated** — do NOT hand-edit; run `python3 tools/gen_env_reference.py --out
+  docs/ENV_FLAGS.md`. The `GE007_METAL*`/`GE007_NO_METAL*` rows vanish with
+  gfx_metal.mm; `GE007_SMAA` + `GE007_SSAO_MODE` stay (still registered in
+  platform_sdl.c) but their now-inert help text must be updated at the source
+  (platform_sdl.c) before regenerating.
 
 ### Audit items that close
 
@@ -105,9 +147,13 @@ though it is already independently closed on the WebGPU path (`56406b6`,
 - Metal-only tools become fully obsolete: `tools/ssao_gate.sh` (4×
   `GE007_RENDERER=metal`), `tools/metal_shadow_clamp_regression.sh` (2×),
   `tools/metal/README.md`.
-- Metal-pinned lanes must be retargeted to `webgpu`: `tools/perf_census.sh:71,80`,
-  `tools/gpu_budget_gate.sh:58`, `tools/w1_interaction_matrix.sh:28`,
-  `tools/texpack/pack_qa.sh:15,101,156`, `tools/ammo_hud_smoke.sh:175`.
+- Metal-pinned lanes: `tools/w1_interaction_matrix.sh:28`,
+  `tools/texpack/pack_qa.sh`, `tools/ammo_hud_smoke.sh` run `gl`+`metal` compare
+  legs that can become `gl`+`webgpu` (a judgement call — it changes what they
+  compare). **But `tools/perf_census.sh:71,80` and `tools/gpu_budget_gate.sh:58`
+  CANNOT be mechanically retargeted** — their lane is `GE007_METAL_GPU_TRACE`,
+  which has no WebGPU equivalent (rehearsal finding; see the deletion-day
+  checklist's "NOT mechanical" note).
 - Docs to correct: `docs/VISUAL_MODES.md` (SSAO-on-Metal rows),
   `docs/INSTRUMENTATION.md`, `RELEASE_NOTES.md:262`, the `docs/design/remaster-aaa/**`
   plan set (heavy Metal assumptions), and `FID-0019.json`.
@@ -214,19 +260,56 @@ than trusting this list.
 ### Phase M (Metal) deletion-day
 
 ```sh
-# Metal renderer selections + Metal-only flags that must be removed/retargeted:
+# 1. LINK-CRITICAL: src/ call sites + symbols. The original checklist OMITTED
+#    src/ entirely (it only grepped tools/scripts/docs/.github). This is the set
+#    that must ALL be edited or the build fails to link — grep it FIRST:
+grep -rn 'gfx_backend_use_metal\|gfx_metal_api\|gfx_metal_\|GE007_RENDERER.*metal\|metal_backend' src/
+#    Expected live-symbol hits to clear: gfx_backend.c/.h, gfx_pc.c,
+#    platform_sdl.c, minimap_overlay.c/.h, main_pc.c. After the edit, the ONLY
+#    residual 'gfx_metal' hits in src/ are documentary comments (gfx_webgpu.c /
+#    gfx_opengl.c port-attribution, PROVENANCE.md, gfx_msaa_util.h) — those are
+#    accurate history and STAY. Confirm zero live refs with:
+grep -rn 'gfx_backend_use_metal\|gfx_metal_api' src/    # must be empty post-edit
+#    DO NOT delete the SDL Metal-view infra (g_metalView / SDL_Metal_CreateView /
+#    platformGetMetalLayer / SDL_WINDOW_METAL) — WebGPU on macOS needs it.
+
+# 2. Tools/docs selections + Metal-only flags:
 grep -rn 'GE007_RENDERER=metal\|RENDERER=metal' tools/ scripts/ docs/ .github/
 grep -rn 'GE007_METAL\|GE007_NO_METAL\|GE007_SMAA\|Metal-only' docs/ENV_FLAGS.md docs/VISUAL_MODES.md docs/INSTRUMENTATION.md
-grep -rn 'gfx_metal\|-framework Metal\|MGB64_.*METAL\|port_metal_shadow_clamp' CMakeLists.txt
+grep -rn 'gfx_metal\|-framework Metal\|MGB64_.*METAL\|port_metal_shadow_clamp\|enable_language(OBJCXX' CMakeLists.txt
 grep -rln 'metal' tools/ssao_gate.sh tools/metal_shadow_clamp_regression.sh tools/metal/
 ```
-Update: retarget `perf_census.sh`, `gpu_budget_gate.sh`, `w1_interaction_matrix.sh`,
-`texpack/pack_qa.sh`, `ammo_hud_smoke.sh` to `GE007_RENDERER=webgpu`; delete
-`ssao_gate.sh`, `metal_shadow_clamp_regression.sh`, `tools/metal/`; drop
-`port_metal_shadow_clamp_regression` from `CMakeLists.txt`; correct
-`RELEASE_NOTES.md:262`, `docs/VISUAL_MODES.md`, `docs/INSTRUMENTATION.md`,
-`docs/design/remaster-aaa/**`, `FID-0019.json`, and the Metal `docs/ENV_FLAGS.md`
-rows; move AUDIT-0029/0030/0031/0057 to Closed.
+Delete `ssao_gate.sh`, `metal_shadow_clamp_regression.sh`, `tools/metal/`; drop
+`port_metal_shadow_clamp_regression` + `enable_language(OBJCXX)` from
+`CMakeLists.txt`; correct `RELEASE_NOTES.md`, `docs/VISUAL_MODES.md`,
+`docs/RELEASING.md`, `docs/INSTRUMENTATION.md`; move AUDIT-0029/0030/0031/0057
+to Closed.
+
+**GATING unit tests (these go RED mid-deletion — the original checklist did not
+flag them; all three are in the ROM-free `ctest -E port_` set):**
+- `env_reference_current` → run `python3 tools/gen_env_reference.py --out
+  docs/ENV_FLAGS.md` after updating the inert Metal/SMAA/SSAO help text in
+  `platform_sdl.c`.
+- `fidelity_ledger_valid` → `FID-0019.json` has evidence
+  `ctest:port_metal_shadow_clamp_regression` (now an invalid path). Transition it
+  to **`waived`** — and a waived entry REQUIRES a `waiver` object with both
+  `reason` and `retest` (validator: "waived without waiver.retest"), plus a
+  history entry `from:"fix-in-progress" to:"waived"`.
+- `fidelity_ledger_index_current` → after the FID-0019 status change, run
+  `python3 tools/fidelity/ledger.py render` to regenerate `docs/fidelity/LEDGER.md`.
+
+**NOT mechanical — keep OUT of the deletion commit (rehearsal findings):**
+- `perf_census.sh` / `gpu_budget_gate.sh` cannot be `s/metal/webgpu/`-retargeted:
+  their lane is `GE007_METAL_GPU_TRACE`, a Metal-backend-only instrumentation flag
+  with **no WebGPU equivalent**. A naive swap yields a silently-inert lane; a real
+  WebGPU GPU-timing hook is separate work. (`w1_interaction_matrix.sh`,
+  `ammo_hud_smoke.sh`, `texpack/pack_qa.sh` run `gl`+`metal` compare lanes — those
+  CAN become `gl`+`webgpu`, but that changes what they compare and is a judgement
+  call, not a rename.)
+- `docs/design/remaster-aaa/**`, `docs/design/*.md`, `RENDERER_SIM_AUDIT_*` carry
+  ~30+ structural Metal references across archival planning/design docs. These are
+  a large editorial revision, not a mechanical edit, and should be a **separate
+  doc-hygiene pass** — do not let them bloat or gate the one-commit deletion.
 
 ### Phase G (desktop-GL) deletion-day
 
