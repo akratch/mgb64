@@ -65,9 +65,12 @@ Metal here so this is an API-precision floor comparable to the documented GL↔M
 - **Post-FX magnitude matches GL:** the faithful→remaster per-pixel delta is
   mean **15.22** on WebGPU vs **15.03** on GL (p50 17 vs 16, p99 37 vs 38) — the
   filter lands at the same strength.
-- **GL-vs-WebGPU is dominated by cross-API LSB precision:** faithful mean **1.14**
-  (p50 0, 95% ≤ 8); remaster mean **2.59** (p50 1, 95% ≤ 9) — sharpen/FXAA
-  amplify the precision floor slightly, no structural difference.
+- **GL-vs-WebGPU sits at the cross-API LSB precision floor:** faithful mean
+  **1.14** (p50 0, 95% ≤ 8); remaster mean **1.76**, >5-diff 6.8% — equal to the
+  faithful floor (6.9%), i.e. the post-FX pass adds zero divergence of its own.
+  (The initial port measured 2.59 — a review fix (`81344c4`) switched FXAA's
+  fractional directional taps to bilinear, matching GL's filterMode-0
+  `sampleCpuBilinear`.)
 - Native: full build both configs, 7/7 tapes byte-exact, aperture+screenshot
   ctests pass. Browser: `ge007_web` rebuilt, headless boot clean — Dawn (strict
   WGSL validator) accepts the pipeline, zero shader/validation errors. Perf: jungle
