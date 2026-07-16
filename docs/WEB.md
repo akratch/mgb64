@@ -174,6 +174,32 @@ pointer can't collide with a 32-bit token).
   stays `GE007_DEBUG`-gated) so a future coverage gap shows up in release
   telemetry even without debug logging on.
 
+### Sim-hash lineage (WEB-036 ruling)
+
+**The wasm sim is a separate hash lineage from native.** Native arm64 Release
+contracts eligible float expressions to FMA (`-ffp-contract=on` is the clang
+default and the target has `fmadd`); core wasm has no scalar FMA instruction,
+so identical C can round differently on long float chains. The repo's own
+sim-state-hash lanes are documented as FP-contraction-sensitive, and all
+recorded baselines are native.
+
+Considered and REJECTED: pinning `-ffp-contract=off` on both targets. That
+would (a) cost native FP performance across the whole sim (FMA disabled) and
+(b) force re-recording every recorded baseline — all to buy a cross-target
+bit-equality that no player observes (the browser sim is internally
+deterministic and self-consistent; only a native-recorded tape replayed in the
+browser would notice).
+
+Consequences of the ruling:
+- Never assert a native-recorded sim hash against a browser run (or vice
+  versa). Tape *inputs* are portable; hash *baselines* are per-lineage.
+- A future browser tape lane records its own `.expected` hashes via the
+  headless smoke harness. Divergence *within* the web lineage is a real
+  regression; divergence *across* lineages is expected physics.
+- If cross-target bit-equality ever becomes a requirement (e.g. cross-platform
+  netplay), revisit with a measured `-ffp-contract=off` perf cost and a
+  one-time baseline re-record — an owner decision.
+
 ### wasm size budget
 
 CI enforces a **40 MiB hard ceiling** on `dist/web/ge007_web.wasm` (GitHub
