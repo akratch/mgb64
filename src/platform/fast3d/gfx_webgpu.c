@@ -186,6 +186,32 @@ static WGPUSampler     s_default_sampler = NULL;
 static WGPUBuffer s_vbuf = NULL;
 static uint32_t   s_vbuf_off = 0;
 
+/* WEB-027: one small uniform (frame counter + render height) shared by every
+ * combiner that reads SHADER_NOISE. Bound at group(0) @binding(7) ONLY for those
+ * pipelines (info->uses_noise). Written ONCE per frame (wgpu_update_noise_ubo,
+ * from start_frame) — never per draw — so N64 static/fizz animates each frame the
+ * way the GL backend's frame_count uniform does. */
+static WGPUBuffer s_noise_ubo   = NULL;
+static uint32_t   s_noise_frame = 0;
+
+/* WEB-052: modern-mesh (scene decor) uniform ring. One persistent uniform buffer
+ * holding a ring of 256-byte-aligned slots (the WebGPU minUniformBufferOffset-
+ * Alignment guarantee); each decor draw writes its 96-byte uniform into a FRESH
+ * slot and binds it with a dynamic offset, so the per-mesh bind group is cached
+ * (in WgpuModernEntry) and reused across frames instead of allocating a UBO + a
+ * bind group per draw. The ring is reset per frame (s_modern_ubo_used = 0 in
+ * start_frame) and GROWN on overflow — never reusing a slot already written this
+ * frame, because wgpuQueueWriteBuffer pre-executes the command buffer (the same
+ * retroactive-rewrite hazard the diag ring and WEB-053 guard). Growing recreates
+ * the buffer, so cached bind groups carry a generation stamp (bg_gen) and rebuild
+ * against the new buffer on first reuse. */
+#define WGPU_MODERN_UBO_ALIGN 256u
+#define WGPU_MODERN_UBO_INIT  64
+static WGPUBuffer s_modern_ubo      = NULL;
+static int        s_modern_ubo_cap  = 0;   /* slots in s_modern_ubo */
+static int        s_modern_ubo_used = 0;   /* slots consumed this frame */
+static uint32_t   s_modern_ubo_gen  = 0;   /* bumped on (re)create; stamps cached bgs */
+
 /* Dynamic depth / viewport / scissor state (Task 4). WebGPU bakes depth into the
  * pipeline, so the depth fields feed the pipeline cache key; viewport/scissor are
  * render-pass encoder state applied per draw. */
@@ -194,6 +220,23 @@ static uint16_t s_zmode = 0;
 static int s_vp_x = 0, s_vp_y = 0, s_vp_w = 0, s_vp_h = 0;
 static int s_sc_x = 0, s_sc_y = 0, s_sc_w = 0, s_sc_h = 0;
 static bool s_sc_set = false;
+
+/* WEB-023-lite: the viewport/scissor rect LAST APPLIED to the current render-pass
+ * encoder, so wgpu_draw_triangles can skip re-emitting an unchanged rect (gfx_pc
+ * re-sets the same viewport+scissor for every draw in a run — hundreds of
+ * redundant Set calls per frame). These track the FINAL (Y-flipped, clamped)
+ * values actually handed to the encoder. Render-pass state does NOT carry across
+ * passes, so wgpu_reset_pass_dynamic_state() MUST clear the "applied" flags at
+ * every pass begin (start_frame + the memory-blend split-resume). */
+static bool s_vp_applied = false;
+static int  s_vp_ax = 0, s_vp_ay = 0, s_vp_aw = 0, s_vp_ah = 0;
+static bool s_sc_applied = false;
+static int  s_sc_ax = 0, s_sc_ay = 0, s_sc_aw = 0, s_sc_ah = 0;
+
+static void wgpu_reset_pass_dynamic_state(void) {
+    s_vp_applied = false;
+    s_sc_applied = false;
+}
 
 /* ZMODE_DEC decal (gfx_opengl.c / gfx_metal.mm): coplanar decals get a negative
  * polygon offset so they win the depth test against the surface they overlay. */
@@ -631,11 +674,36 @@ static void wgpu_on_resize(void) {
     s_cfg_h = 0;
 }
 
+/* WEB-027: create (once) + refresh (once per frame) the noise uniform. Carries
+ * {frame_count, window_height} for the SHADER_NOISE hash. Written from
+ * start_frame so it is updated exactly once per frame, not per draw. */
+static void wgpu_update_noise_ubo(void) {
+    if (!s_ready) {
+        return;
+    }
+    if (s_noise_ubo == NULL) {
+        WGPUBufferDescriptor bd = {0};
+        bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        bd.size = 16;
+        s_noise_ubo = wgpuDeviceCreateBuffer(s_device, &bd);
+        if (s_noise_ubo == NULL) {
+            return;   /* alloc failure: noise draws degrade (bind group build skips) */
+        }
+    }
+    s_noise_frame++;
+    /* frame counter + render height (GL uploads current_height; here s_scene_h is
+     * the render resolution the fragment coords are computed against). */
+    float params[4] = { (float)s_noise_frame, (float)s_scene_h, 0.0f, 0.0f };
+    wgpuQueueWriteBuffer(s_queue, s_noise_ubo, 0, params, sizeof(params));
+}
+
 static void wgpu_start_frame(void) {
     s_frame_open = false;
     s_vbuf_off = 0;   /* reset the per-frame vertex bump allocator */
     s_sc_set = false; /* scissor is re-established by gfx_pc each frame */
     s_diag_ubo_used = 0; /* reset the per-frame viewport-UBO ring */
+    s_modern_ubo_used = 0; /* WEB-052: reset the per-frame modern-mesh UBO ring */
+    wgpu_reset_pass_dynamic_state(); /* WEB-023-lite: fresh pass = no rect applied yet */
     if (!s_ready) {
         return;
     }
@@ -708,6 +776,10 @@ static void wgpu_start_frame(void) {
     if (s_scene_view == NULL || s_depth_view == NULL) {
         return;
     }
+
+    /* WEB-027: advance + upload the per-frame noise uniform now that s_scene_h is
+     * established, before any draw builds a bind group that references it. */
+    wgpu_update_noise_ubo();
 
     s_encoder = wgpuDeviceCreateCommandEncoder(s_device, NULL);
 
@@ -1237,6 +1309,7 @@ struct ShaderProgram {
 #define WGPU_SHADER_MAX 1024
 static struct ShaderProgram s_shaders[WGPU_SHADER_MAX];
 static int s_shader_count = 0;
+static int s_shader_evict = 0;   /* WEB-050: round-robin victim once the table is full */
 
 /* Currently loaded shader + dynamic blend state (set by load_shader /
  * set_blend_mode, read by draw_triangles). */
@@ -1287,7 +1360,7 @@ static struct ShaderProgram *wgpu_lookup_shader(uint64_t shader_id0, uint32_t sh
 /* Build the bind-group layout for a combiner: (tex,sampler) pairs for each used
  * texture at bindings (0,1) and (2,3). NULL when no textures are sampled. */
 static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
-    WGPUBindGroupLayoutEntry ents[7];
+    WGPUBindGroupLayoutEntry ents[8];   /* 2 tex + 2 samp + snap tex/samp + diag + noise */
     int ne = 0;
     for (int t = 0; t < 2; t++) {
         if (!info->used_textures[t]) continue;
@@ -1324,6 +1397,16 @@ static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
         ue.buffer.minBindingSize = 16;
         ents[ne++] = ue;
     }
+    /* WEB-027: per-frame noise uniform, only for combiners that read SHADER_NOISE
+     * (keeps noise-free pipelines at their exact prior binding set). */
+    if (info->uses_noise) {
+        WGPUBindGroupLayoutEntry ne_ent = {0};
+        ne_ent.binding = 7;   /* uNoise (frame counter + render height) */
+        ne_ent.visibility = WGPUShaderStage_Fragment;
+        ne_ent.buffer.type = WGPUBufferBindingType_Uniform;
+        ne_ent.buffer.minBindingSize = 16;
+        ents[ne++] = ne_ent;
+    }
     if (ne == 0) {
         return NULL;
     }
@@ -1333,18 +1416,55 @@ static WGPUBindGroupLayout wgpu_make_bgl(const struct WgpuShaderInfo *info) {
     return wgpuDeviceCreateBindGroupLayout(s_device, &d);
 }
 
+/* WEB-050: release a shader slot's GPU objects (module, cached pipelines, layouts)
+ * so the slot can be recompiled into a different combiner instead of leaking. */
+static void wgpu_release_shader_gpu(struct ShaderProgram *prg) {
+    for (int i = 0; i < prg->npipes; i++) {
+        if (prg->pipes[i].pipe != NULL) {
+            wgpuRenderPipelineRelease(prg->pipes[i].pipe);
+            prg->pipes[i].pipe = NULL;
+        }
+    }
+    prg->npipes = 0;
+    prg->pipe_evict = 0;
+    if (prg->playout != NULL) { wgpuPipelineLayoutRelease(prg->playout); prg->playout = NULL; }
+    if (prg->bgl != NULL)     { wgpuBindGroupLayoutRelease(prg->bgl);    prg->bgl = NULL; }
+    if (prg->module != NULL)  { wgpuShaderModuleRelease(prg->module);    prg->module = NULL; }
+}
+
 static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0, uint32_t shader_id1) {
     struct ShaderProgram *prg = wgpu_lookup_shader(shader_id0, shader_id1);
     if (prg != NULL) {
         s_cur_shader = prg;
         return prg;
     }
+    /* WEB-050: the table holds WGPU_SHADER_MAX distinct combiners. It is never
+     * expected to fill (the whole game uses far fewer), but the old backstop
+     * aliased slot 0 forever — new materials silently rendered with slot 0's
+     * combiner (the silent-wrong class the DLCOL sweep hunted). Instead, evict a
+     * slot round-robin (the pipeline cache's backstop philosophy): release its
+     * GPU objects and recompile the new combiner into it. NOTE: gfx_pc caches a
+     * ShaderProgram* per ColorCombiner, so at >WGPU_SHADER_MAX LIVE combiners the
+     * victim's cached pointer would then read a different combiner's shader — but
+     * that regime is equally unreachable and strictly no worse than (and no longer
+     * leaks like) the slot-0 alias. The bind-group cache keys on bgl pointers and
+     * is intentionally left untouched here (protected); its entries pin strong
+     * refs so no released layout dangles under a live entry. */
+    bool evicting = false;
     if (s_shader_count >= WGPU_SHADER_MAX) {
         static bool warned = false;
-        if (!warned) { fprintf(stderr, "[webgpu] shader table full (%d)\n", WGPU_SHADER_MAX); warned = true; }
-        return &s_shaders[0];   /* never NULL; gfx_pc.c dereferences the result */
+        if (!warned) {
+            fprintf(stderr, "[webgpu] shader table full (%d) — evicting round-robin\n",
+                    WGPU_SHADER_MAX);
+            warned = true;
+        }
+        prg = &s_shaders[s_shader_evict];
+        s_shader_evict = (s_shader_evict + 1) % WGPU_SHADER_MAX;
+        wgpu_release_shader_gpu(prg);
+        evicting = true;
+    } else {
+        prg = &s_shaders[s_shader_count];
     }
-    prg = &s_shaders[s_shader_count];
     memset(prg, 0, sizeof(*prg));
     prg->shader_id0 = shader_id0;
     prg->shader_id1 = shader_id1;
@@ -1352,7 +1472,7 @@ static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0
     char *wgsl = gfx_webgpu_build_wgsl(shader_id0, shader_id1, &prg->info);
     if (wgsl == NULL || !s_ready) {
         free(wgsl);
-        s_shader_count++;
+        if (!evicting) s_shader_count++;
         s_cur_shader = prg;
         return prg;   /* inert program; draw guards on prg->module */
     }
@@ -1406,7 +1526,7 @@ static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0
     }
     prg->playout = wgpuDeviceCreatePipelineLayout(s_device, &pld);
 
-    s_shader_count++;
+    if (!evicting) s_shader_count++;   /* WEB-050: eviction reuses a slot, no growth */
     s_cur_shader = prg;
     return prg;
 }
@@ -1969,6 +2089,9 @@ static bool wgpu_snapshot_scene_for_memory_blend(const float *buf_vbo,
     rp.colorAttachments = &att;
     rp.depthStencilAttachment = &depth;
     s_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
+    /* WEB-023-lite: a NEW pass encoder inherits none of the previous pass's
+     * viewport/scissor — the next draw must re-apply, so clear the dedup flags. */
+    wgpu_reset_pass_dynamic_state();
     return s_pass != NULL;
 }
 
@@ -2139,7 +2262,7 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
             }
         }
         if (bg == NULL) {
-            WGPUBindGroupEntry ents[7];
+            WGPUBindGroupEntry ents[8];
             int ne = 0;
             for (int t = 0; t < 2; t++) {
                 if (!s_cur_shader->info.used_textures[t]) continue;
@@ -2157,6 +2280,23 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
             if (diag_ubo != NULL) {
                 WGPUBindGroupEntry ue = {0}; ue.binding = 6;
                 ue.buffer = diag_ubo; ue.size = 16; ents[ne++] = ue;
+            }
+            /* WEB-027: the shared per-frame noise uniform (binding 7). The bgl
+             * carries this entry only for noise combiners, so a noise shader with
+             * no textures still has a non-NULL bgl and reaches this build. The UBO
+             * is one global buffer, so it adds no discriminating state to the cache
+             * key (the bgl pointer already distinguishes noise shaders). */
+            if (s_cur_shader->info.uses_noise) {
+                /* Review hardening: a noise BGL REQUIRES entry 7 — building the
+                 * group without it yields an ERROR OBJECT (not NULL) that the
+                 * cache would retain and every later draw would trip over.
+                 * Mirror the diag-UBO pattern: no UBO (16-byte alloc failed ≈
+                 * device lost) → drop the draw instead of poisoning the cache. */
+                if (s_noise_ubo == NULL) {
+                    return;
+                }
+                WGPUBindGroupEntry ue = {0}; ue.binding = 7;
+                ue.buffer = s_noise_ubo; ue.size = 16; ents[ne++] = ue;
             }
             WGPUBindGroupDescriptor bd = {0};
             bd.layout = s_cur_shader->bgl;
@@ -2197,8 +2337,15 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         int vx = s_vp_x, vy = (int)s_scene_h - (s_vp_y + s_vp_h), vw = s_vp_w, vh = s_vp_h;
         wgpu_clamp_rect(&vx, &vy, &vw, &vh, (int)s_scene_w, (int)s_scene_h);
         if (vw > 0 && vh > 0) {
-            wgpuRenderPassEncoderSetViewport(s_pass, (float)vx, (float)vy,
-                                             (float)vw, (float)vh, 0.0f, 1.0f);
+            /* WEB-023-lite: skip the Set when the (clamped, Y-flipped) rect is
+             * unchanged from the last one applied to this pass encoder. */
+            if (!s_vp_applied || vx != s_vp_ax || vy != s_vp_ay ||
+                vw != s_vp_aw || vh != s_vp_ah) {
+                wgpuRenderPassEncoderSetViewport(s_pass, (float)vx, (float)vy,
+                                                 (float)vw, (float)vh, 0.0f, 1.0f);
+                s_vp_applied = true;
+                s_vp_ax = vx; s_vp_ay = vy; s_vp_aw = vw; s_vp_ah = vh;
+            }
         }
     }
     {
@@ -2207,8 +2354,15 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         int sh = s_sc_set ? s_sc_h : (int)s_scene_h;
         int sy = s_sc_set ? ((int)s_scene_h - (s_sc_y + s_sc_h)) : 0;
         wgpu_clamp_rect(&sx, &sy, &sw, &sh, (int)s_scene_w, (int)s_scene_h);
-        wgpuRenderPassEncoderSetScissorRect(s_pass, (uint32_t)sx, (uint32_t)sy,
-                                            (uint32_t)sw, (uint32_t)sh);
+        /* WEB-023-lite: skip the redundant SetScissorRect (gfx_pc re-emits the
+         * same rect every draw). Trackers are reset at each pass begin. */
+        if (!s_sc_applied || sx != s_sc_ax || sy != s_sc_ay ||
+            sw != s_sc_aw || sh != s_sc_ah) {
+            wgpuRenderPassEncoderSetScissorRect(s_pass, (uint32_t)sx, (uint32_t)sy,
+                                                (uint32_t)sw, (uint32_t)sh);
+            s_sc_applied = true;
+            s_sc_ax = sx; s_sc_ay = sy; s_sc_aw = sw; s_sc_ah = sh;
+        }
     }
 
     wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
@@ -2551,6 +2705,12 @@ struct WgpuModernEntry {
     WGPUTexture tex;
     WGPUTextureView view;
     uint32_t idx_count;
+    /* WEB-052: bind group cached across frames (references the shared dynamic-
+     * offset UBO ring + this mesh's texture/sampler). bg_gen stamps the ring
+     * buffer generation it was built against, so a ring grow (buffer recreate)
+     * forces a rebuild. */
+    WGPUBindGroup bg;
+    uint32_t bg_gen;
 };
 static struct WgpuModernEntry s_modern_cache[64];
 static int s_modern_count = 0;
@@ -2571,6 +2731,7 @@ static WGPURenderPipeline wgpu_modern_pipe(int cutout) {
         WGPUBindGroupLayoutEntry e[3] = {0};
         e[0].binding = 0; e[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
         e[0].buffer.type = WGPUBufferBindingType_Uniform; e[0].buffer.minBindingSize = 96;
+        e[0].buffer.hasDynamicOffset = true;   /* WEB-052: ring slot via dynamic offset */
         e[1].binding = 1; e[1].visibility = WGPUShaderStage_Fragment;
         e[1].texture.sampleType = WGPUTextureSampleType_Float; e[1].texture.viewDimension = WGPUTextureViewDimension_2D;
         e[2].binding = 2; e[2].visibility = WGPUShaderStage_Fragment;
@@ -2633,6 +2794,7 @@ static struct WgpuModernEntry *wgpu_modern_resources(struct GfxModernMesh *mesh)
     if (s_modern_count >= (int)(sizeof(s_modern_cache) / sizeof(s_modern_cache[0]))) {
         /* Level churn: ids never repeat, so releasing everything is safe. */
         for (int i = 0; i < s_modern_count; i++) {
+            if (s_modern_cache[i].bg)   wgpuBindGroupRelease(s_modern_cache[i].bg);
             if (s_modern_cache[i].view) wgpuTextureViewRelease(s_modern_cache[i].view);
             if (s_modern_cache[i].tex)  wgpuTextureRelease(s_modern_cache[i].tex);
             if (s_modern_cache[i].vbuf) wgpuBufferRelease(s_modern_cache[i].vbuf);
@@ -2673,7 +2835,39 @@ static struct WgpuModernEntry *wgpu_modern_resources(struct GfxModernMesh *mesh)
     e->vbuf = vb; e->ibuf = ib; e->tex = tex;
     e->view = wgpuTextureCreateView(tex, NULL);
     e->idx_count = mesh->idx_count;
+    e->bg = NULL; e->bg_gen = 0;   /* WEB-052: built lazily on first draw */
     return e;
+}
+
+/* WEB-052: ensure the ring UBO holds at least `need_slots` 256-byte slots. Grows
+ * (recreates) the buffer at need; a grow bumps the generation so cached per-mesh
+ * bind groups (which reference the old buffer) rebuild against the new one. Never
+ * shrinks the buffer within a frame — a slot already written this frame stays
+ * referenced by an earlier draw's dynamic-offset bind. */
+static bool wgpu_modern_ubo_reserve(int need_slots) {
+    if (s_modern_ubo != NULL && need_slots <= s_modern_ubo_cap) {
+        return true;
+    }
+    int ncap = s_modern_ubo_cap ? s_modern_ubo_cap : WGPU_MODERN_UBO_INIT;
+    while (ncap < need_slots) {
+        ncap *= 2;
+    }
+    WGPUBufferDescriptor bd = {0};
+    bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    bd.size = (uint64_t)ncap * WGPU_MODERN_UBO_ALIGN;
+    WGPUBuffer nb = wgpuDeviceCreateBuffer(s_device, &bd);
+    if (nb == NULL) {
+        return false;
+    }
+    /* Release the app-side handle to the old buffer: any bind group/encoder from
+     * earlier this frame retains its own strong ref until submit, so this is safe. */
+    if (s_modern_ubo != NULL) {
+        wgpuBufferRelease(s_modern_ubo);
+    }
+    s_modern_ubo = nb;
+    s_modern_ubo_cap = ncap;
+    s_modern_ubo_gen++;
+    return true;
 }
 
 static void wgpu_draw_modern_mesh(struct GfxModernMesh *mesh, const float mvp[4][4],
@@ -2707,29 +2901,42 @@ static void wgpu_draw_modern_mesh(struct GfxModernMesh *mesh, const float mvp[4]
     u[16] = fog_color[0]; u[17] = fog_color[1]; u[18] = fog_color[2]; u[19] = 0.0f;
     u[20] = fog_mul; u[21] = fog_offset; u[22] = fog_enabled ? 1.0f : 0.0f; u[23] = 0.0f;
 
-    WGPUBufferDescriptor ubd = {0};
-    ubd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    ubd.size = sizeof(u);
-    WGPUBuffer ubuf = wgpuDeviceCreateBuffer(s_device, &ubd);
-    if (ubuf == NULL) return;
-    wgpuQueueWriteBuffer(s_queue, ubuf, 0, u, sizeof(u));
+    /* WEB-052: claim a FRESH ring slot (never a slot already written this frame),
+     * write the uniform there, and bind it via a dynamic offset — instead of
+     * allocating a one-off UBO + bind group per draw. */
+    if (!wgpu_modern_ubo_reserve(s_modern_ubo_used + 1)) {
+        return;
+    }
+    int slot = s_modern_ubo_used++;
+    uint32_t dyn_off = (uint32_t)slot * WGPU_MODERN_UBO_ALIGN;
+    wgpuQueueWriteBuffer(s_queue, s_modern_ubo, dyn_off, u, sizeof(u));
 
-    WGPUBindGroupEntry be[3] = {0};
-    be[0].binding = 0; be[0].buffer = ubuf; be[0].size = sizeof(u);
-    be[1].binding = 1; be[1].textureView = res->view;
-    be[2].binding = 2; be[2].sampler = s_modern_sampler;
-    WGPUBindGroupDescriptor bgd = {0};
-    bgd.layout = s_modern_bgl; bgd.entryCount = 3; bgd.entries = be;
-    WGPUBindGroup bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
+    /* Per-mesh bind group, cached across frames. Rebuild it only when absent or
+     * built against a stale ring buffer (a grow bumped s_modern_ubo_gen). Its
+     * uniform binding covers ONE slot at offset 0; the actual slot is selected by
+     * the dynamic offset passed to SetBindGroup below. */
+    if (res->bg == NULL || res->bg_gen != s_modern_ubo_gen) {
+        if (res->bg != NULL) { wgpuBindGroupRelease(res->bg); res->bg = NULL; }
+        WGPUBindGroupEntry be[3] = {0};
+        be[0].binding = 0; be[0].buffer = s_modern_ubo; be[0].offset = 0; be[0].size = sizeof(u);
+        be[1].binding = 1; be[1].textureView = res->view;
+        be[2].binding = 2; be[2].sampler = s_modern_sampler;
+        WGPUBindGroupDescriptor bgd = {0};
+        bgd.layout = s_modern_bgl; bgd.entryCount = 3; bgd.entries = be;
+        res->bg = wgpuDeviceCreateBindGroup(s_device, &bgd);
+        res->bg_gen = s_modern_ubo_gen;
+        if (res->bg == NULL) {
+            return;
+        }
+    }
 
     wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
-    wgpuRenderPassEncoderSetBindGroup(s_pass, 0, bg, 0, NULL);
+    wgpuRenderPassEncoderSetBindGroup(s_pass, 0, res->bg, 1, &dyn_off);
     wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, res->vbuf, 0, mesh->vtx_count * 36u);
     wgpuRenderPassEncoderSetIndexBuffer(s_pass, res->ibuf, WGPUIndexFormat_Uint32, 0, mesh->idx_count * 4u);
     wgpuRenderPassEncoderDrawIndexed(s_pass, res->idx_count, 1, 0, 0, 0);
-
-    wgpuBindGroupRelease(bg);
-    wgpuBufferRelease(ubuf);   /* the encoder retains referenced resources until submit */
+    /* res->bg is owned by the mesh cache; the ring UBO persists — nothing to
+     * release here (the encoder retains referenced resources until submit). */
 }
 
 /* WebGPU clip space is 0..1 (like Metal/D3D, unlike GL's -1..1). Reported to the

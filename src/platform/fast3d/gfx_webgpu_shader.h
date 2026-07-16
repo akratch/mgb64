@@ -32,6 +32,10 @@ struct WgpuShaderInfo {
     bool used_textures[2];
     bool opt_alpha;
     bool opt_texture_edge;    /* alpha-cutout: discard below the RDP edge threshold */
+    /* WEB-027: this combiner reads SHADER_NOISE, so its pipeline gets ONE extra
+     * uniform (group 0, @binding(7): the per-frame noise counter). Set only for
+     * noise-using combiners so noise-free pipelines keep their exact bindings. */
+    bool uses_noise;
     /* RDP memory-blend emulation (glass / chain-link fence class — room XLU
      * wrap-color-on-coverage surfaces, gfx_pc's default for that raw mode).
      * The fragment samples a snapshot of the scene target ("memory color") and

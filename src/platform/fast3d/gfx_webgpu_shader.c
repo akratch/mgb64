@@ -12,9 +12,10 @@
  * covers the vast majority of scene geometry ("recognizable textured geometry").
  * The option flags that only ADD fragment effects (n64 3-point filter, tile
  * mask, shader-side clamp, sun-shadow PCF, per-pixel dfdx sun, the diag_*
- * paths, frame-varying noise) are deferred to Task 4 (parity); their VERTEX
+ * paths) are deferred to Task 4 (parity); their VERTEX
  * ATTRIBUTES are still walked here so the stride stays exact, and their varyings
  * are still passed through — only the fragment EFFECT is omitted for now.
+ * WEB-027 landed frame-varying noise (group 0 @binding(7) per-frame uniform).
  */
 #include "gfx_webgpu_shader.h"
 
@@ -288,16 +289,33 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         P("@group(0) @binding(6) var<uniform> uDiag : DiagU;\n");
     }
 
-    /* Position-hash noise stand-in (Task 4 replaces with the frame-varying
-     * uniform form). Only emitted when a combiner slot reads SHADER_NOISE. */
+    /* WEB-027: frame-varying noise (N64 static / fizz). Only emitted when a
+     * combiner slot reads SHADER_NOISE. A term-for-term port of gfx_opengl.c's
+     * random()/frame_count path (:806/1151): quantize the fragment coord to
+     * N64-row cells (floor(fragcoord * 240/window_height)), fold the per-frame
+     * counter in as the hash's third component, then the same sin-dot-fract hash.
+     * The frame counter + render height ride in a SINGLE small uniform at
+     * group(0) @binding(7), added to the bind-group layout ONLY for noise-using
+     * combiners (info->uses_noise) and written once per frame — so noise-free
+     * pipelines keep their exact bindings and there is no per-draw uniform. Exact
+     * bits differ from GL (GL uses its own rand constants) but the static->animated
+     * behaviour matches, which is the requirement. `in.clip_pos.xy` is the WGSL
+     * @builtin(position) (top-left origin) — GL's gl_FragCoord is bottom-left, so
+     * the cell grid is vertically mirrored; imperceptible for per-frame static. */
     bool needs_noise = false;
     for (int ci = 0; ci < 2 && !needs_noise; ci++)
         for (int cj = 0; cj < 2 && !needs_noise; cj++)
             for (int ck = 0; ck < 4 && !needs_noise; ck++)
                 if (cc.c[ci][cj][ck] == SHADER_NOISE) needs_noise = true;
+    info->uses_noise = needs_noise;
     if (needs_noise) {
+        P("struct NoiseU { params : vec4<f32> };\n");   /* x = frame_count, y = window_height */
+        P("@group(0) @binding(7) var<uniform> uNoise : NoiseU;\n");
         P("fn wgpu_noise(p : vec2<f32>) -> f32 {\n"
-          "  return fract(sin(dot(floor(p), vec2<f32>(12.9898, 78.233))) * 43758.5453);\n}\n");
+          "  let cell = floor(p * (240.0 / max(uNoise.params.y, 1.0)));\n"
+          "  let value = vec3<f32>(cell, uNoise.params.x);\n"
+          "  let r = dot(sin(value), vec3<f32>(12.9898, 78.233, 37.719));\n"
+          "  return fract(sin(r) * 143758.5453);\n}\n");
     }
 
     /* Shader-side tile mask (N64 mask-wrap): emit the helpers when any texture
