@@ -50,6 +50,19 @@ Native perf on the M3 Max dev box is dominated by run-to-run census noise
 binds, so they were validated by correctness gates + mechanism, not by a native
 census delta on this hardware.
 
+## Execution status — Wave 2 (2026-07-18, on `main`)
+
+Jank killers, after a full adversarial code review of Wave 1 (4-agent panel:
+**no correctness bugs**, plus review-fix polish — accurate audio-queue telemetry,
+a native drop-cap-safe `Audio.QueueTargetFrames` max, and doc/comment fixes).
+
+| ID | Status | Commit | Note |
+|----|--------|--------|------|
+| PERF-035 | **LANDED** | `d0bad20` | web load-yields (time-gated `emscripten_sleep(0)`) + pre-teardown audio prefill; hard no-op on native + deterministic; web_boot_smoke green |
+| PERF-034 | **REJECTED** | `ea08b1a` | LTO inflated wasm +25% (Asyncify interaction); closure fails on SDL2's legacy `allocate`/`ALLOC_NORMAL`. Revisit with PERF-031 |
+| PERF-005 | **DESIGNED — deferred** | — | full implementation design vetted (Option B: async pipeline create, gated to sync under `g_deterministic` so byte-exact gates stay green; recommended web-only slice). Deferred from this session for focused execution — the async-completion drain needs empirical web-build iteration. Ready to implement. |
+| PERF-004 | not started | — | folds into PERF-006 (hot-path reorder); do together |
+
 ## Index
 
 | ID | Title | Scope | Impact | Effort |
@@ -206,7 +219,7 @@ dispatch time instead of comparing per triangle.
 lifeline for the parity program — must keep identical semantics when enabled); perf
 census; screenshot suite.
 
-## PERF-005 — Shader/pipeline prewarm + async creation  `M · High(web)/Med(native)`  *(tracked: WEB-054)*
+## PERF-005 — Shader/pipeline prewarm + async creation  `M · High(web)/Med(native)`  *(tracked: WEB-054)*   — 📐 **DESIGNED, deferred** (see Wave 2 status; Option B async-create, deterministic-gated, web-only slice recommended)
 
 **Problem.** The first time gfx_pc meets a new combiner, the backend builds WGSL, creates
 the shader module, and creates the render pipeline synchronously *inside the draw call*.
@@ -620,7 +633,7 @@ combination) — if it misbehaves, take closure alone. *(Both failed as above.)*
 **Validation.** Tape gate, `web_boot_smoke`, wasm size budget gate (expect a drop),
 full-mission soak.
 
-## PERF-035 — Level-load yields + audio prefill  `M · Med`
+## PERF-035 — Level-load yields + audio prefill  `M · Med`   — ✅ **LANDED `d0bad20`**
 
 **Problem.** `lvlStageLoad` legitimately blocks the main loop for seconds (the code
 suppresses the stall watchdog around it, `boss.c:429-433`). On web that means a frozen
