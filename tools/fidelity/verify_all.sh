@@ -193,6 +193,37 @@ gate_skip_reason() {
             return
         fi
     fi
+    # S2 pixel gate vacuity pre-check (2026-07-17, DAM_PARITY_DEEP_DIVE §7.1): a
+    # --gate sweep with no gate:true pixel checkpoint carrying a cached stock PPM
+    # sweeps ZERO checkpoints — "no unexplained clusters" is then meaningless, and
+    # the lane sat silently green on exactly this for every prior gate run. The
+    # cache is ares-derived (licensing-bound prerequisite), so pre-classify as a
+    # charter-rule-9 skip: the verdict degrades instead of green-washing.
+    if [[ "$cmd" == *sense_pixel_sweep.sh*--gate* ]]; then
+        local eligible
+        eligible="$(python3 - <<'PY'
+import glob, json, os
+count = 0
+for path in glob.glob("tools/rom_oracle_routes/*.json"):
+    try:
+        route = json.load(open(path))
+    except (OSError, ValueError):
+        continue
+    if not route.get("gate"):
+        continue
+    if not route.get("native_screenshot_game_timer"):
+        continue
+    name = os.path.basename(path)[:-5]
+    if glob.glob("build/oracle_cache/%s/*/stock_%s.ppm" % (name, name)):
+        count += 1
+print(count)
+PY
+)"
+        if [[ "${eligible:-0}" == "0" ]]; then
+            printf 'missing-gate-pixel-coverage: no gate:true pixel checkpoint with a cached stock PPM (S2 gate would be vacuous)\n'
+            return
+        fi
+    fi
     printf ''
 }
 

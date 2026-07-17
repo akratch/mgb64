@@ -48,11 +48,17 @@ GATE=0
 SELF_TEST=0
 ONLY_ROUTE=""
 VI_DEBLUR=0
+STRICT_COVERAGE=0
+LANE_ERROR=0
 
 usage() {
     cat <<'USAGE'
 Usage: tools/fidelity/sense_pixel_sweep.sh [options]
   --gate            ratchet mode: only "gate":true routes, exit 1 on unexplained
+  --strict-coverage gate mode: exit 3 when ZERO gate checkpoints were swept
+                    (vacuous coverage is not a pass; the verify manifest sets
+                    this — verify_all pre-classifies the condition as a SKIP so
+                    the ratchet reports degraded instead of silently green)
   --route NAME      restrict the sweep to a single route
   --self-test       prove the pixel pipeline on synthetic images (no ROM/ares)
   --vi-deblur       apply the N64 VI horizontal-AA approximation during normalize
@@ -73,6 +79,7 @@ USAGE
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --gate) GATE=1; shift ;;
+        --strict-coverage) STRICT_COVERAGE=1; shift ;;
         --route) ONLY_ROUTE="$2"; shift 2 ;;
         --self-test) SELF_TEST=1; shift ;;
         --vi-deblur) VI_DEBLUR=1; shift ;;
@@ -161,7 +168,7 @@ if [[ "$SELF_TEST" == "1" ]]; then
         local ares="$1" label="$2"
         local nd="${OUT_DIR}/${label}"; mkdir -p "$nd"
         python3 tools/fidelity/pixel_normalize.py --native "$syn/native.png" \
-            --ares "$ares" --out-dir "$nd" "${NORMALIZE_FLAGS[@]}" >/dev/null
+            --ares "$ares" --out-dir "$nd" ${NORMALIZE_FLAGS[@]+"${NORMALIZE_FLAGS[@]}"} >/dev/null
         python3 tools/fidelity/pixel_diff.py --native "$nd/native.png" \
             --ares "$nd/ares_normalized.png" --out "$nd/verdict.json" \
             --viz "$nd/diff.png" >/dev/null
@@ -308,8 +315,11 @@ run_route() {
     fi
 
     local nd="${OUT_DIR}/${route}"; mkdir -p "$nd"
+    # bash 3.2 (macOS /bin/bash) aborts on "${arr[@]}" of an EMPTY array under
+    # set -u — and the abort unwinds only this function, so the lane used to
+    # crash mid-route and still exit 0 (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.5).
     python3 tools/fidelity/pixel_normalize.py --native "$native_bmp" --ares "$stock" \
-        --out-dir "$nd" "${NORMALIZE_FLAGS[@]}" >"${OUT_DIR}/${route}_norm.log" 2>&1 || {
+        --out-dir "$nd" ${NORMALIZE_FLAGS[@]+"${NORMALIZE_FLAGS[@]}"} >"${OUT_DIR}/${route}_norm.log" 2>&1 || {
             note_route_skip "${route}: normalize failed"; return 0; }
     python3 tools/fidelity/pixel_diff.py --native "$nd/native.png" \
         --ares "$nd/ares_normalized.png" --out "$nd/verdict.json" --viz "$nd/diff.png" \
@@ -324,13 +334,33 @@ run_route() {
 }
 
 for rj in "${ROUTES_DIR}"/*.json; do
-    run_route "$rj"
+    # A route that aborts (rather than note_route_skip-ing) is a lane defect,
+    # not a clean skip — record it and fail the lane at the end (fail-closed).
+    if ! run_route "$rj"; then
+        note_route_skip "$(basename "$rj" .json): route processing ABORTED (lane defect)"
+        LANE_ERROR=1
+    fi
 done
+
+SWEPT_COUNT=$(find "$CAND_DIR" -name '*.json' 2>/dev/null | wc -l | tr -d ' ' || true)
 
 harvest_and_report "$([[ $GATE == 1 ]] && echo gate || echo sense)" "$ROUTE_SKIPS"
 
+if [[ "$LANE_ERROR" == "1" ]]; then
+    echo "sense_pixel_sweep: LANE ERROR — a route aborted mid-processing (see skips)" >&2
+    exit 1
+fi
 if [[ "$GATE" == "1" && "$DIVERGED" == "1" ]]; then
     echo "sense_pixel_sweep: GATE FAIL — gate checkpoint(s) have unexplained clusters" >&2
     exit 1
+fi
+if [[ "$GATE" == "1" && "$SWEPT_COUNT" == "0" ]]; then
+    # Vacuous gate: nothing was actually compared, so "no unexplained clusters"
+    # is meaningless. This was silently green for every gate run until
+    # 2026-07-17 (empty stock cache AND zero gate:true pixel routes).
+    echo "sense_pixel_sweep: GATE-VACUOUS — 0 gate checkpoints swept (no gate:true route with a cached stock PPM); coverage absent" >&2
+    if [[ "$STRICT_COVERAGE" == "1" ]]; then
+        exit 3
+    fi
 fi
 exit 0
