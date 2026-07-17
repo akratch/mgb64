@@ -166,17 +166,59 @@ function loadEngineFactory() {
   return _enginePromise;
 }
 
-// WEB-039 / WEB-033: fetch the wasm as a non-streaming instantiate binary (Pages
-// may serve .wasm with a wrong MIME). Kicked off when the gate passes so it runs
-// while the user reads the page and picks a ROM; boot() awaits the stored promise.
+// WEB-039 / WEB-033: stream the wasm straight into compilation. The old path
+// buffered the whole binary to an ArrayBuffer and handed it over as `wasmBinary`,
+// so compile could not start until the last byte landed — the stated reason was a
+// fear that Pages misserves .wasm's MIME, but Pages actually sends
+// `application/wasm`. Now Module.instantiateWasm (see boot()) feeds
+// WebAssembly.instantiateStreaming a live Response so download and compile
+// overlap; hosts that DO misserve the MIME (or lack instantiateStreaming, or are
+// a plain local dev server) are covered by the arrayBuffer fallback below.
+// fetchWasm() therefore yields the Response itself, not the bytes, and is kicked
+// off BEFORE the gate so the download overlaps requestAdapter().
 let wasmPromise = null;
 function fetchWasm() {
   return fetch("ge007_web.wasm" + _verParam).then((resp) => {
     // WEB-033: without this an HTTP 404/500 becomes a cryptic
     // "CompileError: expected magic word" instead of a clear download failure.
     if (!resp.ok) throw new Error(`engine download failed (HTTP ${resp.status})`);
-    return resp.arrayBuffer();
+    return resp;
   });
+}
+
+// Emscripten Module.instantiateWasm hook. Contract: begin instantiation, return
+// {} synchronously, and call successCallback(instance, module) once ready. We
+// stream from the in-flight Response (wasmPromise, kicked off before the gate),
+// lazily starting a fetch if a WEB-009 retry cleared it. `onError` reject-routes
+// an ASYNC instantiation failure back into boot()'s await — Emscripten does NOT
+// surface a rejected instantiateWasm on its own (an uncaught failure would just
+// hang the factory), and boot() must still see a fetch blip to drive the WEB-009
+// transient-reset the same way the old `await wasmBinary` fetch error did.
+function makeInstantiateWasm(onError) {
+  return (imports, successCallback) => {
+    const streamable = wasmPromise || (wasmPromise = fetchWasm());
+    // Fallback for hosts lacking instantiateStreaming or misserving the .wasm MIME
+    // (and local dev servers). instantiateStreaming has already drained the
+    // Response body, so re-fetch fresh bytes rather than reusing it. WEB-033 is
+    // re-checked inside fetchWasm(), so a 404 still surfaces as the clear download
+    // error (not a compile error). Logged at log-level (NOT console.error/warn) —
+    // an expected degrade the boot smoke's console gate tolerates.
+    const fallback = (reason) => {
+      console.log("[shell] wasm streaming unavailable (" + reason + ") — using arrayBuffer instantiate");
+      return fetchWasm()
+        .then((resp) => resp.arrayBuffer())
+        .then((bytes) => WebAssembly.instantiate(bytes, imports))
+        .then(({ instance, module }) => successCallback(instance, module));
+    };
+    if (typeof WebAssembly.instantiateStreaming !== "function") {
+      fallback("no instantiateStreaming").catch(onError);
+    } else {
+      WebAssembly.instantiateStreaming(streamable, imports)
+        .then(({ instance, module }) => successCallback(instance, module))
+        .catch((e) => fallback(e).catch(onError));
+    }
+    return {};
+  };
 }
 
 let booted = false;
@@ -407,24 +449,33 @@ async function boot(romBytes) {
   // callMain, so a healthy slow boot (fetch/compile/syncfs) is distinguishable
   // from the failure surfaces above instead of jumping straight to a black canvas.
   status.textContent = "Downloading engine…";
-  // WEB-039: the wasm fetch + engine glue were kicked off when the gate passed;
-  // here we just await the already-in-flight promises in parallel. A fetch error
-  // (WEB-033) or script-load error still throws here and lands in boot().catch
-  // (WEB-009), preserving the transient-failure reset.
-  const [wasmBinary, createMGB64] = await Promise.all([
-    wasmPromise || fetchWasm(),
-    loadEngineFactory(),
-  ]);
+  // WEB-039: the wasm fetch + engine glue were kicked off before the gate; here we
+  // just await the glue factory (the wasm itself streams in via instantiateWasm,
+  // no separate buffered `wasmBinary` await). A script-load error still throws here
+  // and lands in boot().catch (WEB-009), preserving the transient-failure reset.
+  const createMGB64 = await loadEngineFactory();
+  // WEB-039: instantiateWasm streams the wasm straight into compilation. Because
+  // Emscripten never surfaces a rejected instantiateWasm, route any async
+  // instantiation failure (a fetch blip, or a bad MIME whose fallback also fails)
+  // into this reject so the `await` below sees it — the same place the old
+  // `await wasmBinary` fetch error (WEB-033) landed, still driving WEB-009.
+  let onInstantiateError;
+  const instantiateFailed = new Promise((_, rej) => { onInstantiateError = rej; });
   // WEB-010: onAbort catches emscripten aborts (assertion/OOM) that don't throw
   // through JS; the window handlers (armed below) catch the RuntimeError traps.
-  const m = await createMGB64({
-    canvas, wasmBinary, noInitialRun: true,
-    onAbort: () => handleCrash(),
-    // WEB-002: capture engine stderr and the process exit code so a ROM the
-    // engine refuses surfaces to the user instead of a silent black canvas.
-    printErr: (t) => recordStderr(t),
-    onExit: (code) => handleExit(code),
-  });
+  const m = await Promise.race([
+    createMGB64({
+      canvas, noInitialRun: true,
+      // WEB-039: stream + compile the wasm instead of buffering it to wasmBinary.
+      instantiateWasm: makeInstantiateWasm(onInstantiateError),
+      onAbort: () => handleCrash(),
+      // WEB-002: capture engine stderr and the process exit code so a ROM the
+      // engine refuses surfaces to the user instead of a silent black canvas.
+      printErr: (t) => recordStderr(t),
+      onExit: (code) => handleExit(code),
+    }),
+    instantiateFailed,   // only ever rejects — routes an instantiateWasm failure here
+  ]);
   _module = m;
   status.textContent = "Preparing saves…";
   m.FS.mkdir("/rom"); m.FS.writeFile("/rom/baserom.z64", romBytes);
@@ -542,16 +593,18 @@ async function boot(romBytes) {
 }
 
 (async () => {
-  const err = await gate();
-  if (err) { $("gate-msg").textContent = err; return; }
-  // WEB-039: the gate passed — start pulling the engine down NOW, in parallel
-  // with the user reading the page and picking a ROM, so Play-click only awaits
-  // work already in flight. Pre-attach benign catches so a failure here doesn't
-  // log as an "unhandled rejection"; boot()'s own await still throws and drives
-  // the WEB-009 reset.
+  // WEB-039: start pulling the engine down NOW — BEFORE the async WebGPU gate — so
+  // the wasm download overlaps requestAdapter() (the two were serialized before,
+  // the fetch waiting on the adapter). instantiateWasm streams from this shared
+  // Response promise at boot; the glue script prefetches alongside it. Pre-attach
+  // benign catches so an early network failure doesn't log as an "unhandled
+  // rejection" before boot() consumes it — instantiateWasm / boot() still see and
+  // surface the real error (WEB-033 → boot().catch → WEB-009 reset).
   loadEngineFactory().catch(() => {});   // memoized; boot() reuses _enginePromise
   wasmPromise = fetchWasm();
   wasmPromise.catch(() => {});
+  const err = await gate();
+  if (err) { $("gate-msg").textContent = err; return; }
   // WEB-011: iOS/iPadOS Safari passes the WebGPU gate but the engine is
   // keyboard/mouse/gamepad only (no pointer lock on iOS; touch = fire-only), so
   // a phone user would invest a 12 MB upload before discovering they can't play.
