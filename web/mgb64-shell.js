@@ -522,6 +522,16 @@ async function boot(romBytes) {
   args.push("--config-override", "Input.MouseSensitivity=" + sens.toFixed(4));
   const invEl = $("invert-y");
   args.push("--config-override", "Input.InvertY=" + (invEl && invEl.checked ? "1" : "0"));
+  // Faithful HUD defaults for the web demo (owner ruling 2026-07-17): the N64
+  // aim reticle only appears while aiming — no modern hip-fire crosshair, no
+  // hit-marker flashes, no on-target tint — and there is no radar/minimap.
+  // These four are the HUD entries of the engine's --faithful preset
+  // (platform_sdl.c s_faithfulPreset); the rest of that preset (post-FX,
+  // RenderScale, FOV) deliberately stays at remaster defaults on web.
+  args.push("--config-override", "Input.ModernCrosshair=0");
+  args.push("--config-override", "Input.HitMarkers=0");
+  args.push("--config-override", "Input.ReticleTargetFeedback=0");
+  args.push("--config-override", "Input.MinimapEnabled=0");
   m.callMain(args);
   // WEB-062: MEMFS now holds its own /rom copy, so drop the 12 MB byte array the
   // JS side was holding (both the local param and the module-scope reference) —
