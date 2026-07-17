@@ -185,6 +185,21 @@ static WGPUSampler     s_default_sampler = NULL;
 #define WGPU_VBUF_CAP (16u * 1024u * 1024u)
 static WGPUBuffer s_vbuf = NULL;
 static uint32_t   s_vbuf_off = 0;
+/* WEB-023 (residual): CPU-side shadow of the per-frame vertex buffer. Every scene
+ * draw (wgpu_draw_triangles) and the minimap overlay memcpy their batch into this
+ * shadow at the bump offset instead of issuing a per-batch wgpuQueueWriteBuffer
+ * (~100-200 of them a frame — one wasm↔JS crossing + one queue-write command each).
+ * The accumulated range [0, s_vbuf_off) is uploaded ONCE in wgpu_end_frame just
+ * before submit: queue writes execute before the command buffer (the WEB-053
+ * ordering guarantee), so a single pre-submit upload of everything this frame's
+ * draws referenced lands exactly what each draw's SetVertexBuffer(voff, bytes)
+ * reads — byte-identical to the old per-batch writes, one crossing instead of many.
+ * Sized to the same 16MB cap as s_vbuf and allocated in lockstep with it; calloc so
+ * the inter-batch alignment padding (bump-skipped, never read) is defined. If the
+ * malloc fails the writers fall back to per-batch writeBuffer, so a low-memory host
+ * still renders — just without the batching win. Persistent like s_vbuf (never
+ * freed; the backend has no teardown that releases s_vbuf). */
+static uint8_t   *s_vbuf_shadow = NULL;
 
 /* WEB-027: one small uniform (frame counter + render height) shared by every
  * combiner that reads SHADER_NOISE. Bound at group(0) @binding(7) ONLY for those
@@ -1240,6 +1255,21 @@ static void wgpu_end_frame(void) {
         }
     }
 
+    /* WEB-023 (residual): ONE vertex upload per frame. Every scene draw and the
+     * minimap overlay memcpy'd their batch into s_vbuf_shadow at its bump offset;
+     * push the whole referenced range [0, s_vbuf_off) to the GPU in a SINGLE
+     * wgpuQueueWriteBuffer here — replacing the ~100-200 per-batch writes (each a
+     * wasm↔JS crossing + a queue command). Queue writes execute before this command
+     * buffer (WEB-053), so every draw's SetVertexBuffer(voff, bytes) reads exactly
+     * the bytes staged for it, byte-identical to the old per-batch scheme. Covers the
+     * hidden-drawable frame too: no present, but the offscreen scene still drew and
+     * is submitted right below. s_vbuf_off is kept 4-byte aligned by the bump, so the
+     * size is a valid queue-write size; skipped when the shadow is absent (writers
+     * fell back to per-batch writes) or the frame drew no geometry (s_vbuf_off == 0). */
+    if (s_vbuf != NULL && s_vbuf_shadow != NULL && s_vbuf_off > 0) {
+        wgpuQueueWriteBuffer(s_queue, s_vbuf, 0, s_vbuf_shadow, s_vbuf_off);
+    }
+
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(s_encoder, NULL);
     wgpuQueueSubmit(s_queue, 1, &cmd);
     wgpuCommandBufferRelease(cmd);
@@ -1323,14 +1353,67 @@ static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
  * object churn (Dawn createBindGroup + object-table inserts, visible in browser
  * CPU profiles) fed GC pauses that degraded 1% lows. Entries persist across
  * frames (materials recur every frame) with round-robin eviction as the
- * never-leak backstop. Stale texture views can never be looked up: a deleted
- * texture's view pointer is replaced by the white-fallback pointer in the key,
- * which misses and builds a fresh group. */
+ * never-leak backstop.
+ *
+ * WEB-068: the key is a RAW POINTER tuple, so a cached entry MUST be invalidated
+ * when a texture view it references is released — see wgpu_bg_cache_invalidate_view
+ * below. The original design note here claimed "stale views can never be looked up:
+ * a deleted texture's view pointer is replaced by the white fallback in the key,
+ * which misses." That reasoning only covers the CURRENT draw's freshly-built key; it
+ * missed that STALE entries built by earlier draws outlive the texture and keep its
+ * raw view pointer. wgpuTextureViewRelease frees the C-handle ADDRESS for reuse while
+ * the cached bind group keeps the underlying object alive (a strong ref) — so a later
+ * texture whose new view lands at the recycled address FALSE-MATCHED a stale entry and
+ * the draw sampled the OLD texture (proven natively: menu glyphs rendered as other
+ * glyphs, "Select"→"Гissi2A"). A classic ABA on the handle address, which is the key. */
 #define WGPU_BG_CACHE 512            /* power of two; 4-way set-associative */
 #define WGPU_BG_WAYS  4
 struct WgpuBgEntry { const void *key[7]; WGPUBindGroup bg; };
 static struct WgpuBgEntry s_bg_cache_tab[WGPU_BG_CACHE];
 static uint32_t s_bg_cache_way = 0;  /* round-robin victim way on set overflow */
+
+/* WEB-068: drop every cached draw bind group that references `view` before its
+ * C-handle is released, so a future view reusing the freed address cannot false-match
+ * a stale entry. The view can occupy key slots 1 (view0), 3 (view1) and 5 (snapshot
+ * "memory color"); the sampler slots (2, 4), the bgl (0) and the diag UBO (6) hold
+ * objects that are never released for the process lifetime, so they cannot ABA. Called
+ * from every wgpuTextureViewRelease of a draw-reachable view (texture delete, in-place
+ * re-upload recreate, snapshot resize). O(512) per release — trivial next to the
+ * release + GPU free, and releases are rare vs the hundreds of cache HITS per frame. */
+static void wgpu_bg_cache_invalidate_view(WGPUTextureView view) {
+    if (view == NULL) {
+        return;
+    }
+    const void *v = (const void *)view;
+    for (int i = 0; i < WGPU_BG_CACHE; i++) {
+        struct WgpuBgEntry *e = &s_bg_cache_tab[i];
+        if (e->bg != NULL &&
+            (e->key[1] == v || e->key[3] == v || e->key[5] == v)) {
+            wgpuBindGroupRelease(e->bg);
+            e->bg = NULL;
+            memset(e->key, 0, sizeof(e->key));
+        }
+    }
+}
+/* WEB-068 defense-in-depth: same purge for a bind-group LAYOUT about to be
+ * released (key slot 0). Only reachable from WEB-050 shader eviction, itself an
+ * unreachable >WGPU_SHADER_MAX regime — but a released bgl handle recycled under
+ * a stale key is the exact ABA class the view fix closes, so close it here too
+ * rather than re-litigate if the regime is ever entered. */
+static void wgpu_bg_cache_invalidate_bgl(WGPUBindGroupLayout bgl) {
+    if (bgl == NULL) {
+        return;
+    }
+    const void *v = (const void *)bgl;
+    for (int i = 0; i < WGPU_BG_CACHE; i++) {
+        struct WgpuBgEntry *e = &s_bg_cache_tab[i];
+        if (e->bg != NULL && e->key[0] == v) {
+            wgpuBindGroupRelease(e->bg);
+            e->bg = NULL;
+            memset(e->key, 0, sizeof(e->key));
+        }
+    }
+}
 /* WATCH ITEM: entries pin their WGPUBindGroup (and transitively the texture
  * views/samplers baked into it) for the process lifetime — there is no
  * device-teardown path that clears this table (bounded at 2048 live entries:
@@ -1428,7 +1511,11 @@ static void wgpu_release_shader_gpu(struct ShaderProgram *prg) {
     prg->npipes = 0;
     prg->pipe_evict = 0;
     if (prg->playout != NULL) { wgpuPipelineLayoutRelease(prg->playout); prg->playout = NULL; }
-    if (prg->bgl != NULL)     { wgpuBindGroupLayoutRelease(prg->bgl);    prg->bgl = NULL; }
+    if (prg->bgl != NULL) {
+        wgpu_bg_cache_invalidate_bgl(prg->bgl);   /* WEB-068: purge stale key-slot-0 refs first */
+        wgpuBindGroupLayoutRelease(prg->bgl);
+        prg->bgl = NULL;
+    }
     if (prg->module != NULL)  { wgpuShaderModuleRelease(prg->module);    prg->module = NULL; }
 }
 
@@ -1447,9 +1534,10 @@ static struct ShaderProgram *wgpu_create_and_load_new_shader(uint64_t shader_id0
      * ShaderProgram* per ColorCombiner, so at >WGPU_SHADER_MAX LIVE combiners the
      * victim's cached pointer would then read a different combiner's shader — but
      * that regime is equally unreachable and strictly no worse than (and no longer
-     * leaks like) the slot-0 alias. The bind-group cache keys on bgl pointers and
-     * is intentionally left untouched here (protected); its entries pin strong
-     * refs so no released layout dangles under a live entry. */
+     * leaks like) the slot-0 alias. The bind-group cache keys on bgl POINTER
+     * VALUES: pinned strong refs keep the released layout's OBJECT alive but not
+     * its handle ADDRESS unique (the WEB-068 lesson), so eviction purges matching
+     * cache entries via wgpu_bg_cache_invalidate_bgl before releasing the bgl. */
     bool evicting = false;
     if (s_shader_count >= WGPU_SHADER_MAX) {
         static bool warned = false;
@@ -1764,7 +1852,10 @@ static void wgpu_delete_texture(uint32_t texture_id) {
     if (e == NULL) {
         return;
     }
-    if (e->view != NULL) { wgpuTextureViewRelease(e->view); e->view = NULL; }
+    if (e->view != NULL) {
+        wgpu_bg_cache_invalidate_view(e->view);   /* WEB-068: purge stale cache refs first */
+        wgpuTextureViewRelease(e->view); e->view = NULL;
+    }
     if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
     e->used = false;
     if (s_tex_free_n >= s_tex_free_cap) {
@@ -1829,7 +1920,10 @@ static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height
 
     /* Dimensions changed (or first upload into this id): drop the old GPU
      * resources and (re)create the texture at the new size. */
-    if (e->view != NULL) { wgpuTextureViewRelease(e->view); e->view = NULL; }
+    if (e->view != NULL) {
+        wgpu_bg_cache_invalidate_view(e->view);   /* WEB-068: purge stale cache refs first */
+        wgpuTextureViewRelease(e->view); e->view = NULL;
+    }
     if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
 
     WGPUTextureDescriptor td = {0};
@@ -1957,6 +2051,23 @@ static void wgpu_ensure_draw_resources(void) {
         bd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
         bd.size = WGPU_VBUF_CAP;
         s_vbuf = wgpuDeviceCreateBuffer(s_device, &bd);
+        /* WEB-023: shadow the vertex buffer CPU-side (calloc → padding gaps defined).
+         * NULL is tolerated — wgpu_vbuf_stage falls back to per-batch writeBuffer. */
+        if (s_vbuf != NULL && s_vbuf_shadow == NULL) {
+            s_vbuf_shadow = (uint8_t *)calloc(1, WGPU_VBUF_CAP);
+        }
+    }
+}
+
+/* WEB-023: stage a batch's vertex bytes into the CPU shadow (uploaded once in
+ * wgpu_end_frame). Falls back to an immediate per-batch queue write when the shadow
+ * malloc failed. voff/bytes are already validated against WGPU_VBUF_CAP by the
+ * caller's bump-allocator guard, so the memcpy is in-bounds. */
+static void wgpu_vbuf_stage(uint32_t voff, const void *src, uint32_t bytes) {
+    if (s_vbuf_shadow != NULL) {
+        memcpy(s_vbuf_shadow + voff, src, bytes);
+    } else {
+        wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, src, bytes);
     }
 }
 
@@ -2028,7 +2139,10 @@ static bool wgpu_snapshot_scene_for_memory_blend(const float *buf_vbo,
         return false;
     }
     if (s_snap_view == NULL || s_snap_w != s_scene_w || s_snap_h != s_scene_h) {
-        if (s_snap_view != NULL) { wgpuTextureViewRelease(s_snap_view); s_snap_view = NULL; }
+        if (s_snap_view != NULL) {
+            wgpu_bg_cache_invalidate_view(s_snap_view);   /* WEB-068: snapshot lives in key slot 5 */
+            wgpuTextureViewRelease(s_snap_view); s_snap_view = NULL;
+        }
         if (s_snap_tex != NULL)  { wgpuTextureRelease(s_snap_tex);      s_snap_tex = NULL; }
         WGPUTextureDescriptor td = {0};
         td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
@@ -2224,7 +2338,7 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         return;
     }
     uint32_t voff = s_vbuf_off;
-    wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, buf_vbo, bytes);
+    wgpu_vbuf_stage(voff, buf_vbo, bytes);   /* WEB-023: stage; one upload in end_frame */
     s_vbuf_off += (bytes + 3u) & ~3u;   /* keep 4-byte alignment for the next offset */
 
     /* Bind group: each used texture's live view + sampler, falling back to a 1x1
@@ -2233,9 +2347,11 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
      * the "Persistent draw bind-group cache" comment): a materials-worth of
      * concurrent (view, sampler) combos all stay resident across frames, so
      * this is a cache probe, not an allocation, on the common repeat-material
-     * path. The key is on POINTERS, so a deleted texture (its view becomes
-     * NULL -> the white fallback pointer) never spuriously matches a stale
-     * entry. */
+     * path. The key is on POINTER VALUES — safe only because every view/bgl
+     * release purges matching entries first (wgpu_bg_cache_invalidate_view /
+     * _bgl, the WEB-068 fix): a NEW object allocated at a RECYCLED handle
+     * address would otherwise false-match a stale entry and sample the old
+     * texture (the menu-glyph corruption class). */
     WGPUBindGroup bg = NULL;
     if (s_cur_shader->bgl != NULL) {
         WGPUTextureView v0 = s_white_view, v1 = s_white_view;
@@ -2531,7 +2647,7 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
         return 0;
     }
     uint32_t voff = s_vbuf_off;
-    wgpuQueueWriteBuffer(s_queue, s_vbuf, voff, vertices, bytes);
+    wgpu_vbuf_stage(voff, vertices, bytes);   /* WEB-023: stage; one upload in end_frame */
     s_vbuf_off += (bytes + 3u) & ~3u;
 
     float u[4] = { (float)fb_width, (float)fb_height, 0.0f, 0.0f };
