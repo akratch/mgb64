@@ -1093,9 +1093,18 @@ void portAudioRegisterConfig(void)
      * controller (audi_port.c). Backing storage lives in audi_port.c (the
      * consumer); registered here with the rest of the Audio.* surface. LIVE
      * (re-read each audio frame). Default 1.5 = the historical fixed target and
-     * is byte-identical: (s32)(n*1.5f) == n + n/2 for all integer n. */
+     * is byte-identical: (s32)(n*1.5f) == n + n/2 for all integer n.
+     * Max is platform-aware: the equilibrium queue settles near the target, so
+     * it must stay clear of the AI drop cap (stubs.c AI_QUEUE_LIMIT_FRAMES) —
+     * 12 frames on web (room for the full range) but only 5 native, where a
+     * target near 4 would trip routine drops. Keep >=2 frames of native headroom. */
+#ifdef __EMSCRIPTEN__
+    const f32 queueTargetMax = 4.0f;
+#else
+    const f32 queueTargetMax = 3.0f;
+#endif
     settingsRegisterFloat("Audio.QueueTargetFrames", &g_portAudioQueueTargetFrames,
-                          1.5f, 0.5f, 4.0f,
+                          1.5f, 0.5f, queueTargetMax,
                           SETTING_SCOPE_LIVE, "GE007_AUDIO_QUEUE_TARGET",
                           "--config-override Audio.QueueTargetFrames=VALUE",
                           "Audio queue target",
@@ -1105,9 +1114,11 @@ void portAudioRegisterConfig(void)
      * launcher's "Advanced (expert)" disclosure (env/CLI overrides unaffected).
      * DeviceSamples = latency-vs-glitch buffer tuning; OutputFilterAlpha = the
      * internal Q15 coefficient for the OutputFilter toggle (which stays
-     * player-facing). Volumes stay player-facing. */
+     * player-facing); QueueTargetFrames = the same latency-vs-absorption class
+     * of low-level tuning as DeviceSamples. Volumes stay player-facing. */
     settingsMarkAdvanced("Audio.DeviceSamples");
     settingsMarkAdvanced("Audio.OutputFilterAlpha");
+    settingsMarkAdvanced("Audio.QueueTargetFrames");
 }
 
 int portAudioShouldStartMuted(void)

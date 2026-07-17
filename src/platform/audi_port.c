@@ -489,7 +489,11 @@ void portAudioFrame(void) {
         info->frameSamples = (s16)portAudioAlign16((u32)info->frameSamples);
     }
 
-    target_bytes = (g_FrameSize + (g_FrameSize / 2)) * 4;
+    /* PERF-010: telemetry target mirrors the controller's actual target
+     * (Audio.QueueTargetFrames), not a hardcoded 1.5, so the trace's target=/
+     * soft= columns stay accurate when the knob is tuned. Byte-identical at the
+     * 1.5 default. Diagnostic only — not part of the synthesized output. */
+    target_bytes = (u32)((f32)g_FrameSize * g_portAudioQueueTargetFrames) * 4;
 
     alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
                  &g_CommandLength, info->data, info->frameSamples);
