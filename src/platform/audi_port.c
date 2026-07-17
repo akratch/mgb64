@@ -20,6 +20,10 @@
 
 /* libaudio.h is now ungated, all types available via ultra64.h */
 extern int g_deterministic;
+/* PERF-035: predicate exposed by stubs.c — true while the SDL AI queue sits
+ * below the same 12-frame web cap osAiSetNextBuffer enforces. Used by the
+ * pre-load prefill so it fills to (but never past) the cap. */
+extern int osAiQueueBelowLimit(void);
 
 #define OUTPUT_RATE                    0x5622
 #ifdef REFRESH_PAL
@@ -440,6 +444,25 @@ void amCreateAudioManager(ALSynConfig *alconf) {
 
 void amStartAudioThread(void) {
     /* No thread on port — audio runs synchronously via portAudioFrame() */
+}
+
+/* PERF-035: pre-load audio prefill. Fills the SDL AI queue to its web cap so
+ * the first ~200ms of a stage load has audio while the main thread is busy.
+ * Drives portAudioFrame() in a bounded loop — SAFE here ONLY because it runs
+ * BEFORE the stage pool is reset (ChrRecord slots still valid, so the FID-0089
+ * voice-dispose write-back targets live memory). HARD no-op on native and under
+ * --deterministic (tape gate byte-identical); the 16-iteration ceiling is only a
+ * runaway guard, the queue-cap predicate is what prevents overshoot. */
+void portAudioPrefillQueue(void) {
+#ifdef __EMSCRIPTEN__
+    if (g_deterministic) return;
+    if (!g_portAudioReady) return;
+    int i = 0;
+    while (i < 16 && osAiQueueBelowLimit()) {
+        portAudioFrame();
+        i++;
+    }
+#endif
 }
 
 void portAudioFrame(void) {

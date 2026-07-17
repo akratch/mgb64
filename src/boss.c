@@ -423,9 +423,16 @@ void bossMainloop(void)
         extern void portClearAllDlCol(void);
         extern void portClearAllNodeOverrides(void);
         extern void portWatchdogLoadBegin(void);
+        extern void portAudioPrefillQueue(void);
         portClearAllHeads();
         portClearAllDlCol();          /* FID-0122: drop stale DLCOLLISION runtime pointers */
         portClearAllNodeOverrides();  /* FID-0122 class: drop stale node render overrides */
+        /* PERF-035: prefill the audio queue to the web cap BEFORE the stage-pool
+         * teardown below (mempResetBank/memaReset) so the load has ~200ms of
+         * audio. Ordering is load-bearing: prefill drives portAudioFrame while
+         * ChrRecord slots are still live (FID-0089). HARD no-op on native and
+         * under --deterministic. */
+        portAudioPrefillQueue();
         /* Stage (re)load ahead: lvlStageLoad below legitimately blocks the
          * main loop for seconds — suppress the stall watchdog until the
          * frame loop is re-entered. */
@@ -511,8 +518,10 @@ void bossMainloop(void)
         dynInitMemory();
         joyCheckStatusThreadSafe();
         lvlStageLoad(g_StageNum);
+        portLoadYield();  /* PERF-035: unwind the event loop after the stage load */
         viInitBuffers();
         debmenuInit();
+        portLoadYield();  /* PERF-035: unwind after VI/debug-menu init */
 #ifdef NATIVE_PORT
         /* Reset frame timer before first waitForNextFrame to avoid huge delta
          * from init time being counted as elapsed game frames */

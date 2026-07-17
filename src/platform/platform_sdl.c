@@ -33,6 +33,26 @@ EM_JS(int, platformTabHidden, (void), {
     return document.hidden ? 1 : 0;
 });
 #endif
+
+/* PERF-035: cooperative yield at load boundaries. Time-gated so liberal
+ * placement is free when phases are fast; only unwinds to the event loop when a
+ * phase ran long, bounding the browser long-task span. HARD no-op on native and
+ * under --deterministic (tape gate byte-identical). Uses a BARE emscripten_sleep(0)
+ * (unwinds to the JS event loop, resets the long-task timer, lets DOM listeners
+ * run) — NOT WGPU_COMPAT_PUMP, which would fire WebGPU futures mid-load and
+ * disturb the renderer state texReset is rebuilding. */
+void portLoadYield(void) {
+#ifdef __EMSCRIPTEN__
+    extern int g_deterministic;
+    if (g_deterministic) return;
+    static double s_lastYieldMs = 0.0;
+    double now = emscripten_get_now();
+    if (now - s_lastYieldMs < 50.0) return;   /* budget ~50ms */
+    s_lastYieldMs = now;
+    emscripten_sleep(0);
+#endif
+}
+
 #ifdef MGB64_PORTMASTER_GLES
 #include <GLES3/gl32.h>
 #elif defined(__APPLE__)

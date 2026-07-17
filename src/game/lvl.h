@@ -61,6 +61,12 @@ void lvlUnloadStageTextData(void);
 DIFFICULTY lvlGetSelectedDifficulty(void);
 void lvlStageLoad(s32 stage);
 
+/* PERF-035: cooperative event-loop yield at load boundaries (web only).
+ * Defined in platform/platform_sdl.c; HARD no-op on native and under
+ * --deterministic. Declared here because boss.c/lvl.c/bg.c — the level-load
+ * call sites — all already include this header. */
+void portLoadYield(void);
+
 void lvlSetMpTime(s32 arg0);
 void lvlSetMpPoint(s32 arg0);
 void lvlSetControlsLockedFlag(s32 arg0);

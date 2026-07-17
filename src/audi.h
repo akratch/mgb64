@@ -18,6 +18,11 @@ typedef struct PortAiStats {
 } PortAiStats;
 
 void portAudioFrame(void);
+/* PERF-035: pre-load audio prefill — fill the SDL AI queue to the web cap
+ * BEFORE stage-pool teardown so the load has ~200ms of audio. HARD no-op on
+ * native and under --deterministic. Must be called while ChrRecord slots are
+ * still live (before mempResetBank/memaReset), see FID-0089. */
+void portAudioPrefillQueue(void);
 u32 portAudioGetFrameSize(void);
 u32 portAiGetDroppedBufferCount(void);
 void portAiGetStats(PortAiStats *stats);

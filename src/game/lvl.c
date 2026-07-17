@@ -711,6 +711,7 @@ void lvlStageLoad(s32 stage)
         }
 
         load_bg_file(g_CurrentStageToLoad);
+        portLoadYield();  /* PERF-035: BG/stan load is a long phase */
 #ifdef NATIVE_PORT
         minimap_build_level_cache((LEVEL_INDEX)g_CurrentStageToLoad);
 #endif
@@ -721,6 +722,7 @@ void lvlStageLoad(s32 stage)
         init_watch_at_start_of_stage(stage);
 
         sub_GAME_7F0C11FC(stage);
+        portLoadYield();  /* PERF-035 */
         for (i=0; i<4; i++)
         {
             s32 s3;
@@ -789,13 +791,17 @@ void lvlStageLoad(s32 stage)
     reinit_between_menus();
     init_sound_effects_registers();
     init_guards();
+    portLoadYield();  /* PERF-035: guard init is heavy */
     bodiesReset(stage);
+    portLoadYield();  /* PERF-035 */
     proplvreset2(stage);
+    portLoadYield();  /* PERF-035: prop reset is heavy */
 #ifdef NATIVE_PORT
     minimap_setup_ready();
 #endif
     alloc_explosion_smoke_casing_scorch_impact_buffers();
     alloc_shattered_window_pieces();
+    portLoadYield();  /* PERF-035: after the alloc block */
     sub_GAME_7F007290();
     initCheatTextBuffer();
 

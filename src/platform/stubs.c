@@ -562,6 +562,24 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
     return 0;
 }
 
+/* PERF-035: predicate for portAudioPrefillQueue (audi_port.c). Reports whether
+ * the AI queue sits below the same per-frame cap osAiSetNextBuffer enforces,
+ * without duplicating AI_QUEUE_LIMIT_FRAMES at the call site. Mirrors the
+ * queue_limit computation above (nominal frame bytes * cap). Web-only in
+ * practice — the prefill is gated on __EMSCRIPTEN__ + !g_deterministic — but the
+ * predicate is harmless on native (returns 0 when no device is open). */
+int osAiQueueBelowLimit(void) {
+    u32 live_frame_bytes;
+    u32 queue_limit;
+    if (!s_aiOpen) return 0;
+    live_frame_bytes = portAudioGetFrameSize() * 4;
+    if (live_frame_bytes == 0) {
+        live_frame_bytes = 2944;
+    }
+    queue_limit = live_frame_bytes * AI_QUEUE_LIMIT_FRAMES;
+    return SDL_GetQueuedAudioSize(s_aiDev) < queue_limit;
+}
+
 /* AUDIT-0068: on SDL_AUDIODEVICEREMOVED for our opened device, invalidate the
  * cached device so osAiSetNextBuffer stops queueing to a dead handle (its guard
  * is `s_aiOpen`). Called from the SDL event loop. `which` is the SDL_AudioDeviceID

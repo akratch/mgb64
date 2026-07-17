@@ -5131,12 +5131,14 @@ void load_bg_file(LEVEL_INDEX stagenum)
     obLoadBGFileBytesAtOffset(
         (u8 *)levelinfotable[levelentry_index].bg_seg_filename,
         (u8 *)ptr_bg_data, 0, s0_size);
+    portLoadYield();  /* PERF-035: BG file decompress/reload is a long phase */
 
     // Load stan (collision) file
     gptr_stan = (intptr_t)_fileNameLoadToBank(
         (char *)levelinfotable[levelentry_index].bg_stan_filename, 2, 0, 4);
     stanDetermineEOF((struct StanPrefixRecord *)gptr_stan, 0, (intptr_t)gptr_stan);
     stanLoadFile((struct StanPrefixRecord *)gptr_stan);
+    portLoadYield();  /* PERF-035: stan (collision) load is a long phase */
 
     // Set level scale and related values
     sub_GAME_7F0B4810(levelinfotable[levelentry_index].levelscale);
