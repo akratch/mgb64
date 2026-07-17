@@ -40,6 +40,13 @@ typedef struct PortSfxMixStats_s {
 extern s32 g_portAudioOutputFilter;       /* Audio.OutputFilter: 0/1, default 0     */
 extern s32 g_portAudioOutputFilterAlpha;  /* Audio.OutputFilterAlpha: Q15 one-pole   */
 
+/* PERF-010: audio queue occupancy target, in audio frames. Default 1.5 is
+ * byte-identical to the historical fixed target; exposed so platforms/users can
+ * trade latency for stall-absorption. A higher web default (more absorption for
+ * the main-thread SPN path) would go behind an __EMSCRIPTEN__ guard on both the
+ * definition and the registration once validated on a real browser. */
+extern f32 g_portAudioQueueTargetFrames;  /* Audio.QueueTargetFrames: occupancy target in frames, default 1.5 */
+
 void portAudioRegisterConfig(void);
 void portAudioInit(void);
 void portAudioShutdown(void);

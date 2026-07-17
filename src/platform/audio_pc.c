@@ -1089,6 +1089,17 @@ void portAudioRegisterConfig(void)
                         "--config-override Audio.OutputFilterAlpha=VALUE",
                         "Output filter alpha",
                         "Q15 one-pole coefficient for Audio.OutputFilter (higher = brighter/less filtering).");
+    /* PERF-010: audio-queue occupancy target for the non-deterministic frame-size
+     * controller (audi_port.c). Backing storage lives in audi_port.c (the
+     * consumer); registered here with the rest of the Audio.* surface. LIVE
+     * (re-read each audio frame). Default 1.5 = the historical fixed target and
+     * is byte-identical: (s32)(n*1.5f) == n + n/2 for all integer n. */
+    settingsRegisterFloat("Audio.QueueTargetFrames", &g_portAudioQueueTargetFrames,
+                          1.5f, 0.5f, 4.0f,
+                          SETTING_SCOPE_LIVE, "GE007_AUDIO_QUEUE_TARGET",
+                          "--config-override Audio.QueueTargetFrames=VALUE",
+                          "Audio queue target",
+                          "Target audio-queue occupancy in frames; higher = more stall absorption but more latency; 1.5 = default.");
 
     /* RX.1 settings curation: dev/diagnostic audio knobs hidden behind the
      * launcher's "Advanced (expert)" disclosure (env/CLI overrides unaffected).

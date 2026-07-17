@@ -118,6 +118,12 @@ static s32       g_LibaudioLowPassEnabled;      /* legacy env cache (-1 = unread
 s32 g_portAudioOutputFilter      = 0;
 s32 g_portAudioOutputFilterAlpha = PORT_AUDIO_OUTPUT_FILTER_ALPHA_DEFAULT;
 
+/* PERF-010: audio-queue occupancy target (audio frames). Registered as the LIVE
+ * Audio.QueueTargetFrames in audio_pc.c; re-read each audio frame by the
+ * non-deterministic occupancy controller in portAudioFrame(). Default 1.5 is
+ * byte-identical to the historical fixed target. */
+f32 g_portAudioQueueTargetFrames = 1.5f;
+
 static u32 portAudioAlign16(u32 samples) {
     return samples & ~0xfU;
 }
@@ -464,7 +470,11 @@ void portAudioFrame(void) {
         } else {
             const u32 queued_bytes = osAiGetLength();
             const s32 queued_samples = (s32)(queued_bytes >> 2);  /* stereo s16 -> sample frames */
-            const s32 target_samples = (s32)(g_FrameSize + (g_FrameSize / 2));
+            /* PERF-010: tunable via Audio.QueueTargetFrames (LIVE). At the 1.5
+             * default this is byte-identical to the old fixed target:
+             * (s32)(n * 1.5f) == n + n/2 for every integer n >= 0, since 1.5f*n
+             * is exactly (3n)/2 in float and truncates to floor(3n/2). */
+            const s32 target_samples = (s32)((f32)g_FrameSize * g_portAudioQueueTargetFrames);
             const s32 full_samples = (s32)g_FrameSize;
             const s32 min_samples = (s32)portAudioAlign16(g_FrameSize / 2);
             const s32 max_samples = (s32)portAudioAlign16(g_MaxFrameSize);
