@@ -136,8 +136,14 @@ The `dam_glass_visual_probe` pair (security-hut interior, game-timer 1190) passe
 
 Ranked by per-frame Dam exposure × severity. FID anchors re-verified against current source this session (several ledger line anchors had drifted; corrected ones noted).
 
-### 4.1 Backend defect: DAM-R1 WebGPU sky/backdrop seam (P1)
-GL-clean, WebGPU-wrong over-bright sky patch (intro swirl f190 + gameplay walkway). Predecessor evidence + this session's HEAD A/B. Since WebGPU is the default backend, this is the **most user-visible open Dam renderer item**. Not yet ledgered — should be filed as a new FID (renderer, port-defect, WebGPU). Discriminators: `GE007_TINT_SKY=1`, `GE007_RENDERER=gl`, `GE007_WEBGPU_DUMP_SURFACE`.
+### 4.1 Backend defect: DAM-R1 WebGPU sky/backdrop seam (P1) — root cause NARROWED (2026-07-17 evening)
+Instrumented characterization on HEAD (intro establishing frame 190, faithful config):
+- **The strip is sky-pass pixels — proven**: under `GE007_TINT_SKY=1` the strip renders magenta (bbox x283-484, y20-24).
+- **Both backends show a sky gap there** — GL has a *short* strip (x286-339, 49 px), WebGPU widens it ~3× (x283-484, 92 px). So a real geometry gap exists at the cliff's near-horizontal top-edge silhouette (likely faithful, DAM-R3/train-sky-leak class — needs a stock establishing-frame capture for ground truth); **the WebGPU defect is the widening**.
+- **Not a global shift**: per-column cross-correlation dy=0 everywhere; the divergence is local to rows 19-24 in the sliver span (GL renders cliff from y=19 where WebGPU shows sky through y=24).
+- Both backends pass identical CPU-computed clip X/Y through (`clip_pos = in.aVtxPos` / `gl_Position = aVtxPos`) — vertex precision is shared, so the divergence is **rasterization-convention-level**. Top candidate: the WebGPU pass rasterizes Y-mirrored relative to GL (the backend Y-flips at the viewport seam, `gfx_webgpu.c:242`), which mirrors top-left edge-ownership for near-horizontal edges — exactly a grazing-silhouette coverage divergence.
+- **Next instruments**: `GE007_WEBGPU_DUMP_SURFACE` pre/post-flip dump vs the GL frame at f190; ares stock capture of the establishing shot (ground truth for how much sky retail shows); if edge-rule mirroring confirms, the fix is to render the scene pass in GL-matching Y orientation and flip at present (or nudge the projection so silhouette ties resolve identically).
+Not yet ledgered — file as a new FID (renderer, port-defect, WebGPU) with this evidence. Discriminator artifacts: `dam_sweep/damr1_{webgpu,gl,tint}.png`.
 
 ### 4.2 Glass cluster (P1 family)
 - **FID-0001** (root-caused): center-glass (pad10092) framebuffer-memory blend not stock-exact. Native emulates RDP memory-color/coverage blending by snapshot-and-sample (`gfx_pc.c:5391-5476` gate; WGSL byte-model `gfx_webgpu_shader.c:465-506`); residual per `RENDERING_REGRESSION_NOTES.md#13` — the footprint-LOD fix corrected source sampling only. Fix path (L): MG.1 per-draw diag instrumentation → confirm/kill exact-CC hypotheses → ROI pixel oracle vs ares (`glass_pad10092_impact_visual_regression.sh`, currently unwired).
@@ -187,7 +193,7 @@ Draw path: `process_monitor_animation_microcode` (`chrobjhandler.c:28020`, = PD 
 
 Setup-side data from the same trace **clears the converter for image selection**: the hut's 4-screen `MULTI_MONITOR` (obj 336) reads `ImageNums=48,48,48,48` = `monAnim30GreySolid` (a solid-grey screen — correct-looking setup data), and the singles read `image=5` (GreenTextUp). The **floor-level detachment of screens remains a separate open defect** (owner/part transform; native `monitorFindDrawableNode`/switch-node resolution at `chrobjhandler.c:963` diverges from retail's raw `Switches[n]` — next trace target), and per-object attribution of which quad belongs to obj 335 vs 336 needs one more instrumented look.
 
-**Separate second defect:** two of the three monitor *screens* draw at floor level with no CRT bodies — screen sub-draw detached from owner/part transform; `PROPDEF_MULTI_MONITOR` conversion imports only `ImageNums` where the single-`MONITOR` path imports `OwnerOffset`/`OwnerPart` (`prop.c:2122-2140`). Needs its own trace of `monitorFindDrawableNode`/switch-node resolution (`chrobjhandler.c:963`, native diverges from retail's raw `Switches[n]` here). Both defects together are the FID-0036 "MULTI_MONITOR untested" risk case materializing — candidate new FID entries.
+**Separate second defect — reframed by post-fix tracing (2026-07-17 evening):** the byte-order fix landed (`fb59c95`, text restored on all visible screens, WebGPU+GL verified; ctest `palette_decode`). The remaining defect is now precisely characterized: `GE007_MONITOR_TRACE` on the fixed build shows **zero `kind=multi_monitor` dispatch records** — `process_monitor_animation_microcode` never runs for the hut's 4-screen `PROPDEF_MULTI_MONITOR` (obj 336), so the desk CRT screens retail shows are **entirely absent** on native; and all 1080 monitor draws are `Ptv1Z` **singles** — the "floor screens" are the obj-75 single monitors drawing their screen quad without a CRT body. Next discriminators: the multi dispatch's early-outs are trace-blind (the `monitorTracePrintf` sits inside the `draw != NULL` success branch, `chrobjhandler.c:31944-31960`) — add NULL/flags-gate trace lines to distinguish `!(mrData->flags & 1)` skip vs `modelGetSwitchNodeSafe`/`monitorFindDrawableNode` returning NULL; and dump the Ptv1 model node walk to see whether the CRT-body draw node is skipped natively. FID-0036's MULTI_MONITOR risk case remains the umbrella — candidate new FID entries for both halves.
 
 ## 5. Simulation gaps on Dam — consolidated & ranked
 
@@ -240,6 +246,17 @@ Raw-cast tail FID-0130/0125 (triaged, MP-leaning); FID-0112 projectile room-sour
 > jitter; ctest `movement_comparator_align_unittest`); §7.1–7.3 LANDED (`f65a96b` pixel
 > gate fail-closed + bash-3.2 fix + `--strict-coverage`; `2416ad6` faithful-HUD pins in
 > all seven visual-probe routes, minimap out of parity frames).
+>
+> **Progress (2026-07-17 evening, chunk 2):** item 3 LANDED (`0e6346f` — E1 confirmed
+> onset-only [MATCH with `GE007_INTRO_PHASE3_ONSET=56`]; comparator
+> `--bond-anim-onset-tolerance` event alignment, route tolerance 30, real pair +
+> full capture path both MATCH; trailing-revert divergences preserved). Item 4
+> HEADLINE LANDED (`fb59c95` — IA16 TLUT byte-order fix in the run-dl CI import;
+> Dam monitor text restored on WebGPU + GL; ctest `palette_decode`; residual
+> reframed in §4.7: multi-monitor never dispatches + singles lack CRT bodies).
+> Item 2 root cause NARROWED (§4.1: sky-pass proven via tint, local top-edge
+> rasterization divergence quantified, Y-mirror edge-ownership candidate; fix
+> needs surface dumps + stock ground truth).
 
 | # | Item | Surface | Effort | Verifying instrument |
 |---|---|---|---|---|
