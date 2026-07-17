@@ -40,6 +40,15 @@
           emscripten_sleep(1);                                  \
           if (instance) wgpuInstanceProcessEvents((instance));  \
       } while (0)
+  /* PERF-005: drain outstanding async render-pipeline creations so their
+   * AllowSpontaneous callbacks actually dispatch. Called once per frame in
+   * wgpu_end_frame, and ONLY when a create is in flight (s_pending_pipelines>0)
+   * — a no-op otherwise, so a steady state never touches unrelated futures.
+   * Unlike WGPU_COMPAT_PUMP this does not yield to the event loop (no
+   * emscripten_sleep): end_frame is not an Asyncify unwind point, and the
+   * spontaneous callbacks only need a ProcessEvents dispatch here. */
+  #define WGPU_COMPAT_DRAIN(instance)                           \
+      do { if (instance) wgpuInstanceProcessEvents((instance)); } while (0)
   /* Browser: the canvas is presented automatically when the frame's JS task
    * yields (via requestAnimationFrame); emscripten's WebGPU binding ABORTS on
    * an explicit wgpuSurfacePresent, so presenting is a no-op here. */
@@ -63,6 +72,11 @@
           if (device)        wgpuDevicePoll((device), true, NULL); \
           else if (instance) wgpuInstanceProcessEvents((instance)); \
       } while (0)
+  /* PERF-005: native never creates pipelines asynchronously (wgpu_pipeline_for
+   * always takes the synchronous path off-web), so the completion drain is a
+   * no-op — a pipeline is ready the moment wgpuDeviceCreateRenderPipeline
+   * returns. Keeps wgpu_end_frame free of an inline __EMSCRIPTEN__ guard. */
+  #define WGPU_COMPAT_DRAIN(instance) ((void)(instance))
   /* Native: wgpu-native presents the surface explicitly. */
   #define WGPU_COMPAT_PRESENT(surface) wgpuSurfacePresent((surface))
   /* WEB-026: native bring-up waits drive wgpuDevicePoll synchronously — 1000

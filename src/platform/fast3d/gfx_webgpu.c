@@ -241,6 +241,14 @@ static bool s_sc_set = false;
  * (g_depth_clamp_enabled invariance; DAM-R1). */
 static bool s_unclipped_depth_supported = false;
 
+/* PERF-005: count of async render-pipeline creations currently in flight. Bumped
+ * when wgpu_pipeline_for kicks an async create (web-live only), dropped in the
+ * on_pipeline_ready callback. wgpu_end_frame drains the future queue only while
+ * this is > 0. Declared unconditionally: on native it stays pinned at 0 (nothing
+ * ever increments it — the async kick is #ifdef __EMSCRIPTEN__), so the end-frame
+ * drain check is a permanently-dead branch there and native behavior is unchanged. */
+static int s_pending_pipelines = 0;
+
 /* WEB-023-lite: the viewport/scissor rect LAST APPLIED to the current render-pass
  * encoder, so wgpu_draw_triangles can skip re-emitting an unchanged rect (gfx_pc
  * re-sets the same viewport+scissor for every draw in a run — hundreds of
@@ -316,10 +324,15 @@ static void on_device_lost(WGPUDevice const *device, WGPUDeviceLostReason reason
 /* ------------------------------------------------------------------------
  * Surface creation (platform-specific window -> WGPUSurface) — the dialect seam.
  *
- * The ONLY inline `#ifdef __EMSCRIPTEN__` permitted in this file (seam rule,
+ * One of only two inline `#ifdef __EMSCRIPTEN__` sites in this file (seam rule,
  * Task W7): the wgpu-native surface-source structs (MetalLayer / Win32 / X11 /
  * Wayland) exist only in wgpu-native's webgpu.h, so they must stay on the
  * native side of this fork; the browser builds a canvas-selector surface.
+ * (The other is PERF-005's async-pipeline block at wgpu_pipeline_for /
+ * on_pipeline_ready: it must be absent from the native TU so native stays
+ * byte-for-byte HEAD, and the async create/callback API has no native test
+ * coverage. Its per-frame completion drain lives in the compat seam as
+ * WGPU_COMPAT_DRAIN.)
  *
  * Native path is parameterized by the platform handle so BOTH the engine
  * (standalone) and the app shell (AppHost, which owns the window/layer before
@@ -1324,6 +1337,19 @@ static void wgpu_end_frame(void) {
     if (st.texture != NULL) {
         wgpuTextureRelease(st.texture);
     }
+
+    /* PERF-005: drain async pipeline completions. emdawnwebgpu fires the
+     * AllowSpontaneous callbacks on its own event loop, but pumping
+     * ProcessEvents once per frame while creates are outstanding guarantees a
+     * landed pipeline becomes serve-able promptly (bounded pop-in). Guarded on
+     * s_pending_pipelines > 0 so the steady state (nothing in flight) is a pure
+     * no-op that never dispatches unrelated futures — and so native, where the
+     * counter is permanently 0 and WGPU_COMPAT_DRAIN expands to a no-op, is
+     * wholly untouched. */
+    if (s_pending_pipelines > 0) {
+        WGPU_COMPAT_DRAIN(s_instance);
+    }
+
     s_frame_open = false;
 }
 
@@ -1342,7 +1368,18 @@ static void wgpu_finish_render(void) {
  * the GL immediate setters collapse into this lazy lookup — same shape as the
  * Metal backend's mtl_pso_for).
  * ---------------------------------------------------------------------- */
-struct WgpuPipeEntry { uint32_t key; WGPURenderPipeline pipe; };
+/* PERF-005: on web-live the pipeline is created asynchronously (see
+ * wgpu_pipeline_for), so a cache slot carries a lifecycle state. EMPTY is 0 so
+ * the zero-initialized s_shaders table starts every slot EMPTY. Native (and web
+ * under --deterministic) only ever stores READY — the sync path never produces a
+ * PENDING/FAILED entry, so its lookup behavior is identical to before PERF-005. */
+enum WgpuPipeState {
+    WGPU_PIPE_EMPTY = 0,   /* unused slot                                   */
+    WGPU_PIPE_PENDING,     /* async create in flight (web-live only)        */
+    WGPU_PIPE_READY,       /* pipe is valid and serve-able                  */
+    WGPU_PIPE_FAILED       /* async create failed; keep skipping (no re-kick) */
+};
+struct WgpuPipeEntry { uint32_t key; WGPURenderPipeline pipe; uint8_t state; };
 
 struct ShaderProgram {
     uint64_t shader_id0;
@@ -1696,8 +1733,178 @@ static bool wgpu_blend_state(enum GfxBlendMode mode, WGPUBlendState *out) {
     return true;
 }
 
+/* Scratch backing store for the pointer members of a WGPURenderPipelineDescriptor.
+ * The descriptor holds raw pointers into these sub-structs, so they must outlive
+ * the create call — the caller keeps one on its stack and hands it to
+ * wgpu_fill_pipeline_desc by pointer (WebGPU consumes both synchronously). */
+struct WgpuPipeScratch {
+    WGPUVertexBufferLayout vbl;
+    WGPUBlendState         blend;
+    WGPUColorTargetState   color;
+    WGPUFragmentState      fs;
+    WGPUDepthStencilState  ds;
+};
+
+/* PERF-005: assemble the render-pipeline descriptor for `prg` at the explicit
+ * 8-bit dynamic-state `key`, DECODING it (not reading the s_depth_* globals) so
+ * the synchronous and asynchronous create paths build a BIT-IDENTICAL descriptor.
+ * That identity is the #1 correctness guard: an async pipeline that differs from
+ * what the draw would have built synchronously is a silent render divergence.
+ * Everything else the descriptor reads (s_surface_format, s_unclipped_depth_supported,
+ * prg->module/vattrs/info/playout) is stable config, identical on both paths.
+ *
+ * Key layout (see wgpu_pipeline_for): blend = bits 0-3, depth_test = bit 4,
+ * depth_update = bit 5, depth_compare = bit 6, decal = bit 7. */
+static void wgpu_fill_pipeline_desc(struct ShaderProgram *prg, uint32_t key,
+                                    WGPURenderPipelineDescriptor *pd,
+                                    struct WgpuPipeScratch *sc) {
+    enum GfxBlendMode blend = (enum GfxBlendMode)(key & 0xF);
+    bool depth_test    = (key >> 4) & 1;
+    bool depth_update  = (key >> 5) & 1;
+    bool depth_compare = (key >> 6) & 1;
+    bool decal         = (key >> 7) & 1;
+
+    memset(sc, 0, sizeof(*sc));
+
+    sc->vbl.stepMode = WGPUVertexStepMode_Vertex;
+    sc->vbl.arrayStride = (uint64_t)prg->info.num_floats * sizeof(float);
+    sc->vbl.attributeCount = (size_t)prg->info.num_attrs;
+    sc->vbl.attributes = prg->vattrs;
+
+    bool has_blend = wgpu_blend_state(blend, &sc->blend);
+    sc->color.format = s_surface_format;
+    sc->color.writeMask = WGPUColorWriteMask_All;
+    sc->color.blend = has_blend ? &sc->blend : NULL;
+
+    sc->fs.module = prg->module;
+    sc->fs.entryPoint = wgpu_sv("fs_main");
+    sc->fs.targetCount = 1;
+    sc->fs.targets = &sc->color;
+
+    /* Depth: LessEqual when the N64 mode tests+compares (0..1 clip, 0 = near),
+     * else Always; write when it tests+updates. Decal gets a small negative bias
+     * so coplanar overlays win the test (mirrors GL glPolygonOffset(-2,-2)). */
+    sc->ds.format = WGPU_DEPTH_FORMAT;
+    sc->ds.depthCompare = (depth_test && depth_compare) ? WGPUCompareFunction_LessEqual
+                                                        : WGPUCompareFunction_Always;
+    sc->ds.depthWriteEnabled = (depth_test && depth_update)
+                                   ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+    if (decal) {
+        sc->ds.depthBias = -2;
+        sc->ds.depthBiasSlopeScale = -2.0f;
+    }
+    /* Depth-only format: stencil faces must be their default (Always/Keep) with
+     * zero masks, or WebGPU rejects the pipeline. */
+    sc->ds.stencilFront.compare = WGPUCompareFunction_Always;
+    sc->ds.stencilFront.failOp = WGPUStencilOperation_Keep;
+    sc->ds.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+    sc->ds.stencilFront.passOp = WGPUStencilOperation_Keep;
+    sc->ds.stencilBack = sc->ds.stencilFront;
+
+    memset(pd, 0, sizeof(*pd));
+    pd->layout = prg->playout;
+    pd->vertex.module = prg->module;
+    pd->vertex.entryPoint = wgpu_sv("vs_main");
+    pd->vertex.bufferCount = 1;
+    pd->vertex.buffers = &sc->vbl;
+    pd->primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd->primitive.frontFace = WGPUFrontFace_CCW;
+    pd->primitive.cullMode = WGPUCullMode_None;   /* N64 backface handled on CPU */
+    pd->primitive.unclippedDepth = s_unclipped_depth_supported ? WGPU_TRUE : WGPU_FALSE;
+    pd->depthStencil = &sc->ds;
+    pd->multisample.count = 1;
+    pd->multisample.mask = 0xFFFFFFFFu;
+    pd->fragment = &sc->fs;
+}
+
+/* Reserve a pipeline-cache slot for a new key: append while the cache has room,
+ * else round-robin evict (the never-hit backstop — a combiner uses a handful of
+ * blend|depth combos, far under WGPU_PIPE_CACHE). Releasing the evicted slot's
+ * pipe is safe: the render pass retains any pipeline already bound this frame.
+ * Caller fills key/pipe/state. */
+static int wgpu_pipe_reserve_slot(struct ShaderProgram *prg) {
+    int slot;
+    if (prg->npipes < WGPU_PIPE_CACHE) {
+        slot = prg->npipes++;
+    } else {
+        slot = prg->pipe_evict;
+        prg->pipe_evict = (prg->pipe_evict + 1) % WGPU_PIPE_CACHE;
+        if (prg->pipes[slot].pipe != NULL) {
+            wgpuRenderPipelineRelease(prg->pipes[slot].pipe);
+        }
+    }
+    return slot;
+}
+
+#ifdef __EMSCRIPTEN__
+/* PERF-005: async render-pipeline completion (web-live only; see the seam-rule
+ * note at wgpuCompatCreateSurface for why this block is #ifdef'd rather than in
+ * the compat header — it touches file-static cache state). Recovers prg=u1 and
+ * key=u2, locates the PENDING slot the kick reserved, and installs the pipeline
+ * (READY) or marks the slot FAILED. Fires during the wgpu_end_frame ProcessEvents
+ * drain. The whole apparatus is compiled OUT on native, where the synchronous
+ * path makes a pipeline ready the instant it is created. */
+static void on_pipeline_ready(WGPUCreatePipelineAsyncStatus status,
+                              WGPURenderPipeline pipeline,
+                              WGPUStringView message,
+                              void *u1, void *u2) {
+    struct ShaderProgram *prg = (struct ShaderProgram *)u1;
+    uint32_t key = (uint32_t)(uintptr_t)u2;
+    if (s_pending_pipelines > 0) {
+        s_pending_pipelines--;
+    }
+    /* Find the PENDING slot this create was kicked for. At most one PENDING entry
+     * per key exists: the kick reserves it, and every later draw with the same key
+     * finds it in the lookup and returns NULL without re-kicking. */
+    struct WgpuPipeEntry *e = NULL;
+    for (int i = 0; i < prg->npipes; i++) {
+        if (prg->pipes[i].key == key && prg->pipes[i].state == WGPU_PIPE_PENDING) {
+            e = &prg->pipes[i];
+            break;
+        }
+    }
+    if (e == NULL) {
+        /* Slot evicted before the compile finished — unreachable in practice
+         * (per-combiner combos << WGPU_PIPE_CACHE). Release the orphan pipeline so
+         * it cannot leak. */
+        if (pipeline != NULL) {
+            wgpuRenderPipelineRelease(pipeline);
+        }
+        return;
+    }
+    if (status == WGPUCreatePipelineAsyncStatus_Success && pipeline != NULL) {
+        e->pipe = pipeline;
+        e->state = WGPU_PIPE_READY;
+    } else {
+        /* Stays FAILED: the lookup keeps returning NULL for this key, so a create
+         * that already failed is never re-kicked (avoids a per-draw create storm).
+         * A failed create means an invalid descriptor, which would fail
+         * synchronously too — pop-in is the only available outcome. */
+        e->pipe = NULL;
+        e->state = WGPU_PIPE_FAILED;
+        static int s_pipe_fail_logged = 0;
+        if (s_pipe_fail_logged < 8) {
+            s_pipe_fail_logged++;
+            fprintf(stderr,
+                    "[webgpu] async pipeline create failed (key=0x%02x status=%d): %.*s\n",
+                    (unsigned)key, (int)status,
+                    (int)message.length, message.data ? message.data : "");
+        }
+    }
+}
+#endif  /* __EMSCRIPTEN__ */
+
 /* Lazily build + cache the render pipeline for the current (shader, blend, depth)
- * dynamic state — WebGPU bakes all of it into the pipeline (mtl_pso_for shape). */
+ * dynamic state — WebGPU bakes all of it into the pipeline (mtl_pso_for shape).
+ *
+ * PERF-005: the descriptor half is factored into wgpu_fill_pipeline_desc so the
+ * sync and async create paths build a bit-identical descriptor. On web-live
+ * (non-deterministic) a cache miss kicks an async create and returns NULL —
+ * wgpu_draw_triangles skips the batch this frame (transient pop-in) until the
+ * pipeline lands, eliminating the first-sight synchronous compile hitch. Native,
+ * and web under --deterministic, keep the synchronous create so every byte-exact
+ * gate (parity/screenshot/tape, all --deterministic) stays on the identical HEAD
+ * path. */
 static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxBlendMode blend) {
     if (prg->module == NULL) {
         return NULL;
@@ -1709,82 +1916,59 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
                  | ((uint32_t)(s_depth_compare ? 1 : 0) << 6)
                  | ((uint32_t)(decal ? 1 : 0)           << 7);
     for (int i = 0; i < prg->npipes; i++) {
-        if (prg->pipes[i].key == key) return prg->pipes[i].pipe;
+        if (prg->pipes[i].key == key) {
+            struct WgpuPipeEntry *e = &prg->pipes[i];
+            if (e->state == WGPU_PIPE_READY) {
+                return e->pipe;
+            }
+            /* PENDING (async create in flight) or FAILED: skip the batch this
+             * frame. Returning here — rather than falling through to the miss
+             * path — is what prevents re-kicking a create for a key already in
+             * flight (or one that failed). Native never stores a non-READY entry,
+             * so it never reaches this and its behavior is unchanged from HEAD. */
+            return NULL;
+        }
     }
 
-    WGPUVertexBufferLayout vbl = {0};
-    vbl.stepMode = WGPUVertexStepMode_Vertex;
-    vbl.arrayStride = (uint64_t)prg->info.num_floats * sizeof(float);
-    vbl.attributeCount = (size_t)prg->info.num_attrs;
-    vbl.attributes = prg->vattrs;
+    /* Cache miss. Build the descriptor ONCE via the shared helper; both the sync
+     * and async paths below submit this exact descriptor. */
+    struct WgpuPipeScratch sc;
+    WGPURenderPipelineDescriptor pd;
+    wgpu_fill_pipeline_desc(prg, key, &pd, &sc);
 
-    WGPUBlendState blendState;
-    bool has_blend = wgpu_blend_state(blend, &blendState);
-    WGPUColorTargetState color = {0};
-    color.format = s_surface_format;
-    color.writeMask = WGPUColorWriteMask_All;
-    color.blend = has_blend ? &blendState : NULL;
-
-    WGPUFragmentState fs = {0};
-    fs.module = prg->module;
-    fs.entryPoint = wgpu_sv("fs_main");
-    fs.targetCount = 1;
-    fs.targets = &color;
-
-    /* Depth: LessEqual when the N64 mode tests+compares (0..1 clip, 0 = near),
-     * else Always; write when it tests+updates. Decal gets a small negative bias
-     * so coplanar overlays win the test (mirrors GL glPolygonOffset(-2,-2)). */
-    WGPUDepthStencilState ds = {0};
-    ds.format = WGPU_DEPTH_FORMAT;
-    ds.depthCompare = (s_depth_test && s_depth_compare) ? WGPUCompareFunction_LessEqual
-                                                        : WGPUCompareFunction_Always;
-    ds.depthWriteEnabled = (s_depth_test && s_depth_update)
-                               ? WGPUOptionalBool_True : WGPUOptionalBool_False;
-    if (decal) {
-        ds.depthBias = -2;
-        ds.depthBiasSlopeScale = -2.0f;
+#ifdef __EMSCRIPTEN__
+    /* Web-live async path — gated OFF under --deterministic so every recorded
+     * gate stays on the synchronous path. Native never compiles this block (the
+     * async create/callback API has no native test coverage), so native is always
+     * synchronous and byte-for-byte HEAD. Reserve a PENDING slot FIRST so
+     * subsequent draws for this key hit the lookup above and do NOT re-kick, then
+     * fire the async create and skip this batch this frame. */
+    extern int g_deterministic;
+    if (!g_deterministic) {
+        int slot = wgpu_pipe_reserve_slot(prg);
+        prg->pipes[slot].key = key;
+        prg->pipes[slot].pipe = NULL;
+        prg->pipes[slot].state = WGPU_PIPE_PENDING;
+        s_pending_pipelines++;
+        WGPUCreateRenderPipelineAsyncCallbackInfo cb = {0};
+        cb.mode = WGPUCallbackMode_AllowSpontaneous;
+        cb.callback = on_pipeline_ready;
+        cb.userdata1 = prg;
+        cb.userdata2 = (void *)(uintptr_t)key;
+        wgpuDeviceCreateRenderPipelineAsync(s_device, &pd, cb);
+        return NULL;
     }
-    /* Depth-only format: stencil faces must be their default (Always/Keep) with
-     * zero masks, or WebGPU rejects the pipeline. */
-    ds.stencilFront.compare = WGPUCompareFunction_Always;
-    ds.stencilFront.failOp = WGPUStencilOperation_Keep;
-    ds.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
-    ds.stencilFront.passOp = WGPUStencilOperation_Keep;
-    ds.stencilBack = ds.stencilFront;
+#endif
 
-    WGPURenderPipelineDescriptor pd = {0};
-    pd.layout = prg->playout;
-    pd.vertex.module = prg->module;
-    pd.vertex.entryPoint = wgpu_sv("vs_main");
-    pd.vertex.bufferCount = 1;
-    pd.vertex.buffers = &vbl;
-    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-    pd.primitive.frontFace = WGPUFrontFace_CCW;
-    pd.primitive.cullMode = WGPUCullMode_None;   /* N64 backface handled on CPU */
-    pd.primitive.unclippedDepth = s_unclipped_depth_supported ? WGPU_TRUE : WGPU_FALSE;
-    pd.depthStencil = &ds;
-    pd.multisample.count = 1;
-    pd.multisample.mask = 0xFFFFFFFFu;
-    pd.fragment = &fs;
-
+    /* Synchronous create: native always; web under --deterministic. Identical to
+     * the pre-PERF-005 behavior (a failed create stores nothing and is retried on
+     * the next draw), now stamping the entry's state READY. */
     WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
     if (pipe != NULL) {
-        int slot;
-        if (prg->npipes < WGPU_PIPE_CACHE) {
-            slot = prg->npipes++;
-        } else {
-            /* Never expected (a combiner uses a handful of blend|depth combos),
-             * but the backstop must not leak: evict a slot round-robin. The
-             * render pass retains any pipeline already bound this frame, so
-             * releasing the app-side handle here is safe. */
-            slot = prg->pipe_evict;
-            prg->pipe_evict = (prg->pipe_evict + 1) % WGPU_PIPE_CACHE;
-            if (prg->pipes[slot].pipe != NULL) {
-                wgpuRenderPipelineRelease(prg->pipes[slot].pipe);
-            }
-        }
+        int slot = wgpu_pipe_reserve_slot(prg);
         prg->pipes[slot].key = key;
         prg->pipes[slot].pipe = pipe;
+        prg->pipes[slot].state = WGPU_PIPE_READY;
     }
     return pipe;
 }
