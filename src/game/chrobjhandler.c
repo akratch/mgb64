@@ -31907,6 +31907,32 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
             MonitorObjRecord *monitor = (MonitorObjRecord *)obj;
             ModelNode *monitor_switch0 = modelGetSwitchNodeSafe(model->obj, 0);
             ModelNode *monitor_draw0 = monitorFindDrawableNode(monitor_switch0, 0);
+            /* One-shot Ptv1 node-tree dump (§4.7 CRT-body residual): which nodes
+             * exist besides the screen's DLCOLLISION node, and where is the body? */
+            {
+                static int s_monitorTreeDumped = 0;
+                if (!s_monitorTreeDumped && monitorTraceEnabled()) {
+                    ModelNode *stack[64];
+                    int depth_stack[64];
+                    int sp = 0;
+                    s_monitorTreeDumped = 1;
+                    if (model->obj->RootNode != NULL) {
+                        stack[sp] = model->obj->RootNode;
+                        depth_stack[sp] = 0;
+                        sp++;
+                    }
+                    while (sp > 0) {
+                        ModelNode *n = stack[--sp];
+                        int depth = depth_stack[sp];
+                        monitorTracePrintf("kind=tree name=%s depth=%d node=%p op=0x%04x%s",
+                                           (model->obj->debugName) ? model->obj->debugName : "?",
+                                           depth, (void *)n, n->Opcode,
+                                           (n == monitor_switch0) ? " <== screen-node" : "");
+                        if (n->Next != NULL && sp < 64) { stack[sp] = n->Next; depth_stack[sp] = depth; sp++; }
+                        if (n->Child != NULL && sp < 64) { stack[sp] = n->Child; depth_stack[sp] = depth + 1; sp++; }
+                    }
+                }
+            }
             if (monitor_draw0 != NULL)
             {
                 monitorTracePrintf(
