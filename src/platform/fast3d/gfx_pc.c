@@ -34,6 +34,7 @@
 
 #include "gfx_pc.h"
 #include "gfx_cc.h"
+#include "gfx_palette.h"
 #include "gfx_rendering_api.h"
 #include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
 #include "gfx_screen_config.h"
@@ -14887,23 +14888,11 @@ static bool gfx_ensure_tex_decode_buf(size_t needed)
 
 static inline void gfx_palette_to_rgba32(uint16_t palentry, uint8_t *rgba32_buf)
 {
-    if (rdp.palette_fmt == G_TT_IA16) {
-        uint8_t intensity = palentry & 0xFF;
-        uint8_t alpha = palentry >> 8;
-        rgba32_buf[0] = intensity;
-        rgba32_buf[1] = intensity;
-        rgba32_buf[2] = intensity;
-        rgba32_buf[3] = alpha;
-    } else {
-        uint8_t a = palentry & 1;
-        uint8_t r = palentry >> 11;
-        uint8_t g = (palentry >> 6) & 0x1F;
-        uint8_t b = (palentry >> 1) & 0x1F;
-        rgba32_buf[0] = SCALE_5_8(r);
-        rgba32_buf[1] = SCALE_5_8(g);
-        rgba32_buf[2] = SCALE_5_8(b);
-        rgba32_buf[3] = a ? 255 : 0;
-    }
+    /* Decode lives in gfx_palette.h so tests/test_palette_decode.c can pin the
+     * IA16 byte order (I high, A low — the run-dl path shipped byte-swapped,
+     * collapsing IA16-palette CI textures to flat shade; DAM_PARITY_DEEP_DIVE
+     * 2026-07-17 §4.7, Dam monitor screens). */
+    gfx_palette_entry_to_rgba32(palentry, rdp.palette_fmt == G_TT_IA16, rgba32_buf);
 }
 
 static bool import_texture_rgba16(int tile, int td) {

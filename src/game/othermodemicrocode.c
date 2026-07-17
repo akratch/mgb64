@@ -622,7 +622,7 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
 	                    "[TEXSELECT] gt=%d entry=%p src=%s[%d] tag=%s img=%u resolved_img=%u "
 	                    "table_wh=%ux%u table_level=%u "
 	                    "table_fmt=%u table_depth=%u arg2=%u arg3=%d ulst=%u "
-	                    "tex=%p texnum=%u tex_wh=%ux%u tex_maxlod=%u tex_fmt=%u "
+	                    "tex=%p texnum=%u tex_wh=%ux%u tex_maxlod=%u tex_fmt=%u tex_lutmode=%u "
 	                    "tex_depth=%u special=%u data=%p\n",
 	                    g_GlobalTimer,
 	                    (void *)tconfig,
@@ -645,6 +645,7 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
                     tex != NULL ? tex->height : 0,
                     tex != NULL ? tex->maxlod : 0,
                     tex != NULL ? tex->gbiformat : 0,
+                    tex != NULL ? tex->lutmodeindex : 0,
                     tex != NULL ? tex->depth : 0,
                     tex != NULL ? tex->unk0c_02 : 0,
                     tex != NULL ? tex->data : NULL);

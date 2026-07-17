@@ -1205,6 +1205,17 @@ if(BUILD_TESTING)
     target_include_directories(test_glass_shot_depth PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME glass_shot_depth COMMAND test_glass_shot_depth)
 
+    # IA16/RGBA16 TLUT decode — ROM-free unit test (DAM_PARITY_DEEP_DIVE
+    # 2026-07-17 §4.7): pins N64 IA16 byte order (intensity HIGH byte, alpha
+    # LOW byte) in the run-dl CI import decode. The shipped decoder was
+    # byte-swapped, so opaque-dark IA16 palette entries decoded white-with-
+    # alpha-0 and IA16-palette CI textures (Dam monitor text screens) rendered
+    # as flat vertex shade. A revert of the byte order reddens this.
+    add_executable(test_palette_decode
+        "${CMAKE_SOURCE_DIR}/tests/test_palette_decode.c"
+    )
+    add_test(NAME palette_decode COMMAND test_palette_decode)
+
     # Spectrum easter-egg SETTILE tile field — ROM-free unit test (FID-0107):
     # spectrum_draw_screen must emit SETTILE w1 = 0x07000000 (tile 7 = G_TX_LOADTILE)
     # so both SETTILEs configure the tile their LOADTLUT/LOADBLOCK load into. The
