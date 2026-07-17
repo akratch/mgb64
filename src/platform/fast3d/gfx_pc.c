@@ -16460,6 +16460,18 @@ static int gfx_trace_vtx_source_enabled(void) {
            gfx_trace_settex_material_cc_verts_enabled();
 }
 
+/* Gate for the per-vertex dbg_* provenance payload. MUST remain a superset of
+ * every dbg_* consumer's enabling condition, else a diagnostic silently reads
+ * stale fields. Consumers: settex-material-cc + guard-pathology provenance
+ * (gfx_trace_vtx_source_enabled), effect-tri transform-context trace
+ * (gfx_effect_tri_trace_is_enabled), and the eye-bind shade trace
+ * (g_diag_trace_eye_bind, NOT covered by the first two). */
+static int gfx_vtx_dbg_capture_enabled(void) {
+    return gfx_trace_vtx_source_enabled() ||
+           gfx_effect_tri_trace_is_enabled() ||
+           g_diag_trace_eye_bind > 0;
+}
+
 static bool gfx_trace_rejects_for_tri(const struct LoadedVertex *v1,
                                       const struct LoadedVertex *v2,
                                       const struct LoadedVertex *v3) {
@@ -17115,33 +17127,39 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
             d->room_id = -1;
             d->src_addr = 0;
         }
-        d->dbg_vtx_load_seq = vtx_load_seq;
-        d->dbg_vtx_cmd_addr = g_diag_current_cmd_addr;
-        d->dbg_mtx_cmd_addr = mtx_cmd_addr;
-        d->dbg_mtx_source_addr = mtx_source_addr;
-        d->dbg_slot_idx = (uint8_t)dest_index;
-        d->dbg_load_dest_idx = (uint8_t)dest_index_base;
-        d->dbg_load_count = (uint8_t)n_vertices;
-        d->dbg_vtx_decode_mode = decode_mode;
-        d->dbg_mtx_params = mtx_params;
-        d->dbg_mtx_stack_pos = mtx_stack_pos;
-        d->dbg_guard_mtx_slot = (int16_t)guard_mtx_slot;
-        d->dbg_mv_row3[0] = mv[3][0];
-        d->dbg_mv_row3[1] = mv[3][1];
-        d->dbg_mv_row3[2] = mv[3][2];
-        d->dbg_mv_row3[3] = mv[3][3];
-        d->dbg_mv_diag[0] = mv[0][0];
-        d->dbg_mv_diag[1] = mv[1][1];
-        d->dbg_mv_diag[2] = mv[2][2];
-        d->dbg_mv_diag[3] = mv[3][3];
-        d->dbg_mp_col2[0] = rsp.MP_matrix[0][2];
-        d->dbg_mp_col2[1] = rsp.MP_matrix[1][2];
-        d->dbg_mp_col2[2] = rsp.MP_matrix[2][2];
-        d->dbg_mp_col2[3] = rsp.MP_matrix[3][2];
-        d->dbg_mp_col3[0] = rsp.MP_matrix[0][3];
-        d->dbg_mp_col3[1] = rsp.MP_matrix[1][3];
-        d->dbg_mp_col3[2] = rsp.MP_matrix[2][3];
-        d->dbg_mp_col3[3] = rsp.MP_matrix[3][3];
+        /* PERF-002: skip the whole dbg_* payload (16 matrix reads + ~24 writes
+         * per vertex) when no consumer is live. Skip, not zero: every reader is
+         * itself gated by a flag inside gfx_vtx_dbg_capture_enabled(), so no one
+         * reads these fields when the gate is false. */
+        if (gfx_vtx_dbg_capture_enabled()) {
+            d->dbg_vtx_load_seq = vtx_load_seq;
+            d->dbg_vtx_cmd_addr = g_diag_current_cmd_addr;
+            d->dbg_mtx_cmd_addr = mtx_cmd_addr;
+            d->dbg_mtx_source_addr = mtx_source_addr;
+            d->dbg_slot_idx = (uint8_t)dest_index;
+            d->dbg_load_dest_idx = (uint8_t)dest_index_base;
+            d->dbg_load_count = (uint8_t)n_vertices;
+            d->dbg_vtx_decode_mode = decode_mode;
+            d->dbg_mtx_params = mtx_params;
+            d->dbg_mtx_stack_pos = mtx_stack_pos;
+            d->dbg_guard_mtx_slot = (int16_t)guard_mtx_slot;
+            d->dbg_mv_row3[0] = mv[3][0];
+            d->dbg_mv_row3[1] = mv[3][1];
+            d->dbg_mv_row3[2] = mv[3][2];
+            d->dbg_mv_row3[3] = mv[3][3];
+            d->dbg_mv_diag[0] = mv[0][0];
+            d->dbg_mv_diag[1] = mv[1][1];
+            d->dbg_mv_diag[2] = mv[2][2];
+            d->dbg_mv_diag[3] = mv[3][3];
+            d->dbg_mp_col2[0] = rsp.MP_matrix[0][2];
+            d->dbg_mp_col2[1] = rsp.MP_matrix[1][2];
+            d->dbg_mp_col2[2] = rsp.MP_matrix[2][2];
+            d->dbg_mp_col2[3] = rsp.MP_matrix[3][2];
+            d->dbg_mp_col3[0] = rsp.MP_matrix[0][3];
+            d->dbg_mp_col3[1] = rsp.MP_matrix[1][3];
+            d->dbg_mp_col3[2] = rsp.MP_matrix[2][3];
+            d->dbg_mp_col3[3] = rsp.MP_matrix[3][3];
+        }
 
         if (rsp.geometry_mode & G_LIGHTING) {
             if (rsp.lights_changed) {
