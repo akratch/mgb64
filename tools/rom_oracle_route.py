@@ -803,6 +803,11 @@ def validate_route(route: dict[str, Any]) -> None:
             errors.append(f"intro route compare_align is unsupported: {compare_align}")
         if compare_profile not in ("path", "scalar", "state", "full"):
             errors.append(f"intro route compare_profile is unsupported: {compare_profile}")
+        # Phase-3 onset event alignment (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3):
+        # positive timer-unit tolerance, only meaningful with compare_bond_anim.
+        route_positive_float(route, "compare_bond_anim_onset_tolerance")
+        if route.get("compare_bond_anim_onset_tolerance") is not None and not route.get("compare_bond_anim"):
+            errors.append("compare_bond_anim_onset_tolerance requires compare_bond_anim")
     elif compare_kind == "visual":
         if compare_align not in ("global", "frame", "index"):
             errors.append(f"visual route compare_align is unsupported: {compare_align}")

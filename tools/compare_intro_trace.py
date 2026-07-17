@@ -90,6 +90,11 @@ BOND_ANIM_FIELDS = (
     ("intro.bond_anim.gunhand", "exact"),
 )
 
+# The fields absorbed inside the phase-3 onset window when
+# --bond-anim-onset-tolerance is active (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3):
+# everything that flips 1:1 with the ACT_STAND -> ACT_ANIM transition.
+BOND_ONSET_WINDOW_FIELDS = frozenset(field for field, _ in BOND_ANIM_FIELDS)
+
 
 def load_jsonl(path: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
@@ -568,6 +573,113 @@ def parse_exclude_fields(spec: str) -> set[str]:
     return fields
 
 
+def apply_bond_anim_onset_alignment(
+    pairs: list[tuple[Any, dict[str, Any], dict[str, Any]]],
+    tolerance: float,
+) -> tuple[set[int], dict[str, Any], list[Divergence]]:
+    """Phase-3 onset event alignment (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3).
+
+    Retail fires the intro phase-3 animation from an RNG-jittered AI
+    sleep-wake boundary; native (D43) fires the SAME animation at a fixed
+    swirl timer. The camera path stays tick-exact, so per-timer alignment is
+    right for every other field — but the bond-anim family flips at each
+    side's own onset, and every pair between the two onsets diverges on all
+    of it. This helper finds each side's first ACT_ANIM (bond_action == 3)
+    pair, absorbs bond-family mismatches ONLY inside the [min, max) onset
+    window, and gates the onset timer delta by `tolerance` (same swirl
+    segment required). Pairs after both onsets — e.g. one side reverting to
+    ACT_STAND at swirl end — are NOT absorbed: those are real divergences.
+    """
+    def action_of(record: dict[str, Any]) -> int | None:
+        return parse_int(get_path(record, "intro.bond_action"))
+
+    base_idx: int | None = None
+    test_idx: int | None = None
+    for index, (_key, base, test) in enumerate(pairs):
+        if base_idx is None and action_of(base) == 3:
+            base_idx = index
+        if test_idx is None and action_of(test) == 3:
+            test_idx = index
+        if base_idx is not None and test_idx is not None:
+            break
+
+    metrics: dict[str, Any] = {"tolerance": tolerance}
+    divergences: list[Divergence] = []
+    absorbed: set[int] = set()
+
+    if base_idx is None or test_idx is None:
+        # Zero or one side reaches phase 3 inside the compared window: nothing
+        # to event-align; the ordinary field comparison judges the mismatch.
+        metrics["delta"] = None
+        metrics["baseline_onset"] = None if base_idx is None else str(pairs[base_idx][0])
+        metrics["test_onset"] = None if test_idx is None else str(pairs[test_idx][0])
+        return absorbed, metrics, divergences
+
+    low, high = min(base_idx, test_idx), max(base_idx, test_idx)
+    for index in range(low, high):
+        base_action = action_of(pairs[index][1])
+        test_action = action_of(pairs[index][2])
+        if base_action != test_action and {base_action, test_action} <= {1, 3}:
+            absorbed.add(index)
+
+    def onset_info(index: int, record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": str(pairs[index][0]),
+            "segment": parse_int(get_path(record, "intro.setup.swirl.current.index")),
+            "timer": parse_float(get_path(record, "intro.timer")),
+        }
+
+    base_info = onset_info(base_idx, pairs[base_idx][1])
+    test_info = onset_info(test_idx, pairs[test_idx][2])
+    metrics["baseline_onset"] = base_info
+    metrics["test_onset"] = test_info
+    metrics["absorbed_pairs"] = len(absorbed)
+
+    mode = parse_int(pairs[base_idx][1].get("cam"))
+    if base_info["segment"] != test_info["segment"]:
+        metrics["delta"] = None
+        divergences.append(
+            Divergence(
+                message=(
+                    f"bond_anim phase-3 onset segments differ: baseline {base_info['key']}"
+                    f" vs test {test_info['key']}"
+                ),
+                field="intro.bond_anim.onset",
+                mode=mode,
+            )
+        )
+    elif base_info["timer"] is None or test_info["timer"] is None:
+        metrics["delta"] = None
+        divergences.append(
+            Divergence(
+                message=(
+                    f"bond_anim phase-3 onset timer missing: baseline {base_info['key']}"
+                    f" vs test {test_info['key']}"
+                ),
+                field="intro.bond_anim.onset",
+                mode=mode,
+            )
+        )
+    else:
+        delta = abs(base_info["timer"] - test_info["timer"])
+        metrics["delta"] = delta
+        if delta > tolerance:
+            divergences.append(
+                Divergence(
+                    message=(
+                        f"bond_anim phase-3 onset delta {delta:.2f} > tolerance"
+                        f" {tolerance:.2f} (baseline {base_info['key']},"
+                        f" test {test_info['key']})"
+                    ),
+                    field="intro.bond_anim.onset",
+                    mode=mode,
+                    delta=delta,
+                )
+            )
+
+    return absorbed, metrics, divergences
+
+
 def compare_pairs(
     pairs: list[tuple[Any, dict[str, Any], dict[str, Any]]],
     specs: list[tuple[str, str]],
@@ -575,16 +687,22 @@ def compare_pairs(
     direction_tolerance: float,
     scalar_tolerance: float,
     anim_tolerance: float,
+    absorbed_indices: set[int] | None = None,
+    absorbed_fields: frozenset[str] = BOND_ONSET_WINDOW_FIELDS,
 ) -> tuple[list[Divergence], dict[str, float]]:
     """Evaluate every aligned pair against every field spec -- full window,
     no early return. `--max-divergences` is a reporting cap applied by the
-    caller, not an evaluation cap."""
+    caller, not an evaluation cap. Pairs listed in `absorbed_indices` skip the
+    `absorbed_fields` family (phase-3 onset-window event alignment)."""
     divergences: list[Divergence] = []
     max_abs: dict[str, float] = {}
 
-    for key, base, test in pairs:
+    for pair_index, (key, base, test) in enumerate(pairs):
         mode = parse_int(base.get("cam"))
+        pair_absorbed = absorbed_indices is not None and pair_index in absorbed_indices
         for field, kind in specs:
+            if pair_absorbed and field in absorbed_fields:
+                continue
             if kind in ("vector", "direction"):
                 base_vec = parse_vector(get_path(base, field))
                 test_vec = parse_vector(get_path(test, field))
@@ -714,6 +832,18 @@ def main() -> int:
     parser.add_argument("--direction-tolerance", type=float, default=0.005)
     parser.add_argument("--scalar-tolerance", type=float, default=0.05)
     parser.add_argument("--anim-tolerance", type=float, default=0.02)
+    parser.add_argument(
+        "--bond-anim-onset-tolerance",
+        type=float,
+        default=None,
+        help=(
+            "event-align the phase-3 bond animation onset: absorb bond-anim "
+            "mismatches between the two sides' first ACT_ANIM records and fail "
+            "only if the onset timer delta exceeds this tolerance (retail fires "
+            "phase 3 from an RNG-jittered AI wake, so the onset is scheduling-"
+            "dependent; DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3)"
+        ),
+    )
     parser.add_argument("--compare-state", action="store_true")
     parser.add_argument("--compare-selected-camera", action="store_true")
     parser.add_argument("--compare-setup", action="store_true")
@@ -918,6 +1048,14 @@ def main() -> int:
         args.compare_bond_anim,
         parse_exclude_fields(args.exclude_fields),
     )
+    absorbed_indices: set[int] | None = None
+    onset_metrics: dict[str, Any] | None = None
+    onset_divergences: list[Divergence] = []
+    if args.bond_anim_onset_tolerance is not None:
+        absorbed_indices, onset_metrics, onset_divergences = (
+            apply_bond_anim_onset_alignment(pairs, args.bond_anim_onset_tolerance)
+        )
+
     divergences, max_abs = compare_pairs(
         pairs,
         specs,
@@ -925,7 +1063,11 @@ def main() -> int:
         args.direction_tolerance,
         args.scalar_tolerance,
         args.anim_tolerance,
+        absorbed_indices=absorbed_indices,
     )
+    divergences.extend(onset_divergences)
+    if onset_metrics is not None:
+        common_metrics["bond_anim_onset"] = onset_metrics
 
     test_mode_counts = Counter(parse_int(record.get("cam")) for record in test)
     divergences.extend(mode_duration_divergences(dict(test_mode_counts), args.expect_mode_durations))

@@ -279,5 +279,115 @@ class VerdictJsonTest(unittest.TestCase):
             self.assertEqual(metrics["per_mode_aligned_counts"].get("3"), 2)
 
 
+def bond_swirl_record(seg: int, timer: float, action: int) -> dict:
+    """A mode-3 swirl record carrying the bond-anim family.
+
+    Phase 2 (action 1) = the 48f idle loop; phase 3 (action 3) = the 150f
+    weapon-draw pose. Camera/path fields are identical on both sides so only
+    the bond family can diverge. `frame` is held at 0.0 on both sides — the
+    real capture's post-onset frame lead is the D41 waiver's job, not this
+    feature's.
+    """
+    record = swirl_record()
+    phase3 = action == 3
+    record["intro"] = {
+        "timer": timer,
+        "setup": {"swirl": {"current": {"index": seg}}},
+        "bond_action": action,
+        "bond_anim": {
+            "valid": 1,
+            "frames": 150 if phase3 else 48,
+            "hash": "0x79F92FB064997857" if phase3 else "0x06028BC2EF592635",
+            "entry_offset": 31420 if phase3 else 33144,
+            "bits_offset": 31444 if phase3 else 33168,
+            "frame": 0.0,
+            "end": 96.0 if phase3 else 47.0,
+            "speed": 0.5 if phase3 else 0.25,
+            "abs_speed": 0.5 if phase3 else 0.25,
+            "looping": 0 if phase3 else 1,
+            "gunhand": 0,
+        },
+    }
+    return record
+
+
+def bond_trace(onset_timer: float, revert_timer: float | None = None) -> list[dict]:
+    """Mode-3 segment, timers 1..90: phase 2 until onset, phase 3 after —
+    optionally reverting to phase 2 at revert_timer (the swirl-end regression)."""
+    records = []
+    for t in range(1, 91):
+        action = 3 if t >= onset_timer else 1
+        if revert_timer is not None and t >= revert_timer:
+            action = 1
+        records.append(bond_swirl_record(4, float(t), action))
+    return records
+
+
+class BondAnimOnsetToleranceTest(unittest.TestCase):
+    """DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3: retail fires phase 3 from an
+    RNG-jittered AI sleep-wake boundary while native (D43) fires it at a fixed
+    swirl timer, so the phase-3 ONSET varies between captures while the
+    animation itself matches. --bond-anim-onset-tolerance absorbs bond-family
+    mismatches ONLY inside the window between the two sides' onsets and gates
+    the onset delta; trailing phase mismatches (e.g. native's swirl-end revert
+    to ACT_STAND) stay real divergences."""
+
+    def _run(self, baseline: list[dict], test: list[dict], extra: list[str]):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tmp_path = Path(tmp.name)
+        baseline_path = tmp_path / "baseline.jsonl"
+        test_path = tmp_path / "test.jsonl"
+        json_out = tmp_path / "out.json"
+        write_jsonl(baseline_path, baseline)
+        write_jsonl(test_path, test)
+        result = run_cli(
+            [
+                "--align", "per-mode",
+                "--profile", "path",
+                "--camera-modes", "swirl",
+                "--compare-bond-anim",
+                "--json-out", str(json_out),
+                *extra,
+                str(baseline_path),
+                str(test_path),
+            ]
+        )
+        metrics = json.loads(json_out.read_text()) if json_out.exists() else None
+        return result, metrics
+
+    def test_onset_within_tolerance_matches(self):
+        result, metrics = self._run(
+            bond_trace(onset_timer=57), bond_trace(onset_timer=41),
+            ["--bond-anim-onset-tolerance", "20"],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        onset = metrics.get("bond_anim_onset")
+        self.assertIsNotNone(onset, metrics)
+        self.assertAlmostEqual(onset["delta"], 16.0, places=3)
+
+    def test_onset_beyond_tolerance_fails(self):
+        result, _ = self._run(
+            bond_trace(onset_timer=57), bond_trace(onset_timer=41),
+            ["--bond-anim-onset-tolerance", "10"],
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("phase-3 onset delta", result.stdout)
+
+    def test_feature_off_preserves_old_behavior(self):
+        result, _ = self._run(
+            bond_trace(onset_timer=57), bond_trace(onset_timer=41), [],
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_trailing_revert_still_fails(self):
+        result, _ = self._run(
+            bond_trace(onset_timer=41),
+            bond_trace(onset_timer=41, revert_timer=80),
+            ["--bond-anim-onset-tolerance", "20"],
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
