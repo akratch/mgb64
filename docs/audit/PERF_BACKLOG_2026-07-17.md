@@ -60,7 +60,7 @@ a native drop-cap-safe `Audio.QueueTargetFrames` max, and doc/comment fixes).
 |----|--------|--------|------|
 | PERF-035 | **LANDED** | `d0bad20` | web load-yields (time-gated `emscripten_sleep(0)`) + pre-teardown audio prefill; hard no-op on native + deterministic; web_boot_smoke green |
 | PERF-034 | **REJECTED** | `ea08b1a` | LTO inflated wasm +25% (Asyncify interaction); closure fails on SDL2's legacy `allocate`/`ALLOC_NORMAL`. Revisit with PERF-031 |
-| PERF-005 | **DESIGNED — deferred** | — | full implementation design vetted (Option B: async pipeline create, gated to sync under `g_deterministic` so byte-exact gates stay green; recommended web-only slice). Deferred from this session for focused execution — the async-completion drain needs empirical web-build iteration. Ready to implement. |
+| PERF-005 | **LANDED** | `4db633e` | async pipeline create (Option B, web-only slice) gated to sync under `g_deterministic`/native; parity + sim_state byte-exact; web_boot_smoke green with the async path active (pipelines complete in warmup, non-black, no errors) |
 | PERF-004 | not started | — | folds into PERF-006 (hot-path reorder); do together |
 
 ## Index
@@ -219,7 +219,7 @@ dispatch time instead of comparing per triangle.
 lifeline for the parity program — must keep identical semantics when enabled); perf
 census; screenshot suite.
 
-## PERF-005 — Shader/pipeline prewarm + async creation  `M · High(web)/Med(native)`  *(tracked: WEB-054)*   — 📐 **DESIGNED, deferred** (see Wave 2 status; Option B async-create, deterministic-gated, web-only slice recommended)
+## PERF-005 — Shader/pipeline prewarm + async creation  `M · High(web)/Med(native)`  *(tracked: WEB-054)*   — ✅ **LANDED `4db633e`** (Option B async-create, web-only slice, deterministic-gated; design in `docs/design/PERF_005_ASYNC_PIPELINE_DESIGN.md`)
 
 **Problem.** The first time gfx_pc meets a new combiner, the backend builds WGSL, creates
 the shader module, and creates the render pipeline synchronously *inside the draw call*.
