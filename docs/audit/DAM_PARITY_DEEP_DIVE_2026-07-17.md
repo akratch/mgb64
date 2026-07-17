@@ -10,14 +10,15 @@ Companion docs: fidelity ledger `docs/fidelity/LEDGER.md` (FID-*), `docs/audit/D
 
 ## 0. Executive summary
 
-Dam is the best-instrumented level in the port (the only one with oracle routes), and after the 2026-07 fix waves its **remaining gaps concentrate in six areas**:
+Dam is the best-instrumented level in the port (the only one with oracle routes), and after the 2026-07 fix waves its **remaining gaps concentrate in seven areas**:
 
 1. **Guard-AI/combat divergence cluster (sim, P1)** — live and re-confirmed on today's build with a tick-aligned both-sides capture: the PRNG *call-count phase* desyncs from combat onset (`rng_seed` diverged on 114/114 aligned ticks), dragging guard anim phase, positions, actiontype, and perception timing with it (FID-0054/0055/0063). Root cause is known (per-tick `randomGetNext()` call-count differences, not PRNG math); the fix path runs through FID-0011/0012/0014-residual chrTickBeams semantics.
 2. **Glass rendering cluster (renderer, P1)** — the center-glass framebuffer-memory blend (FID-0001) is still not stock-exact; the exact per-triangle snapshot A/B (`GE007_XLU_SNAPSHOT_MODE=pertri`) exists **only on the GL fallback — the default WebGPU backend silently ignores it** (FID-0002, newly confirmed this session, `gfx_webgpu.c:2313-2331`); shatter/opacity/crack parity (FID-0004) has *nothing* validated yet.
 3. **Non-retail renderer defaults active on every Dam frame** — three of them **unledgered until today**: a global G_FOG force-inject/strip in `gfx_sp_geometry_mode` (`gfx_pc.c:20148-20176`), the sky-backdrop depth special case, and the room-XLU coverage-memory gate; plus the ledgered scissor/XLU-sort/portal-clip trio (FID-0118/0041) and the WebGPU-only DAM-R1 sky seam from the predecessor hunt.
 4. **Collision-primitive fidelity (sim, latent-but-hot)** — `intersectLineTriangle` (24.3% decomp match, every bullet) and the ray-vs-OBB float-division rewrite (doors/props) carry boundary-flip divergence classes on every Dam shot (FID-0099/0116). Conversely FID-0102 (waypoint groupNum stub) was **defused this session by ROM-byte proof** across all 21 retail setups.
-5. **Dam intro divergence beyond waivers (sim/renderer)** — fresh capture shows native Bond switching to the wrong swirl animation (action 1→3, 48f loop@0.25 → 150f one-shot@0.5) at t≈42s with a byte-clean camera path — 54 unwaived divergences (FID-0029 family, plausibly post-FID-0117 fallout).
+5. **Dam intro divergence beyond waivers (sim) — root-caused this session**: both sides play the same phase-3 weapon-draw animation; only the *onset* differs. Native fires it at D43's hardcoded swirl timer (seg 4, t=40.0) while retail fires it from an RNG-jittered AI sleep-wake boundary (t=57.05 today, ≈41.05 when D43 was tuned). D43 replicated a point-sample of a scheduling-dependent event as a fixed timer — the D36 waiver removal was premature; FID-0117 exonerated (§3.3).
 6. **The instruments themselves** — three harness defects found live this session: the S2 pixel ratchet has been **vacuously green** (empty stock cache ⇒ 0 checkpoints swept ⇒ "pass"); the movement comparator on combat routes still carries the FID-0062 frame-vs-tick skew (it manufactured a false "sprint-speed regression" that cost a bisect to disprove); and visual-oracle routes don't pin the faithful-HUD config keys, so the port-only minimap contaminates every parity frame.
+7. **Monitor screens (NEW, root-caused to one hop this session)** — Dam's security-hut/alcove monitor screens render flat green instead of retail's animated green text. Trace-proven: the monitor animation machinery is healthy; the defect is the PC texture pool **not honoring retail's format-reinterpretation** (IMAGE_MONITOR_TEXT drawn through an I8 tile while the pool decodes it as its catalogued CI4) — a **generalized class** affecting any DL that re-tiles a texture under a different format (§4.7). A second, separate defect detaches two screens from their owner transform (floor-level quads).
 
 **The generalized wins** (§6) are: comparator tick-alignment everywhere, camera-registered pixel checkpoints (FID-0115), faithful-HUD route pins, the non-retail-default census flag-by-flag, the raw-offset-cast static sweep completion, and content-bound proofs for silent static tables.
 
@@ -32,8 +33,9 @@ Dam is the best-instrumented level in the port (the only one with oracle routes)
 | Renderer defaults | ⚠️ non-retail by design + 3 unledgered | G_FOG force, sky-depth, CVG gate, scissor, XLU sort, portal clip |
 | Backend parity (WebGPU vs GL) | ❌ DAM-R1 sky seam | WebGPU-only over-bright sky/backdrop (predecessor hunt, unresolved) |
 | Intro (camera) | ✅ camera path exact | swirl/selected-camera digests match |
-| Intro (Bond anim) | ❌ wrong anim from t≈42s | 54 unwaived divergences, new evidence |
+| Intro (Bond anim) | ⚠️ onset-scheduling divergence | same anim both sides; D43 fixed-onset vs retail AI-wake grid (root-caused §3.3) |
 | HUD | ⚠️ known divergences | ammo icon anchor/flip (FID-0067), health-bar GBI (FID-0080), minimap-in-parity-frames |
+| Monitor screens | ❌ flat green + detached quads | format-reinterpretation dropped by texture pool; owner-transform detach (§4.7) |
 | Collision primitives | ⚠️ boundary classes | FID-0099/0116 live; FID-0102/0119/0120/0121 defused/latent |
 | Audio | ⚠️ unmeasured | FID-0025/0026/0027 open, blocked on route coverage |
 | Instruments | ⚠️ three defects found | vacuous pixel gate, movement-comparator skew, HUD contamination |
@@ -99,19 +101,16 @@ The sprint mechanic itself is **at parity**: `speedforwards = clamp(±1) × 1.08
 
 **Reading:** the sim-side story is unchanged from the 07-10/11 analyses but now re-proven on HEAD with correct alignment: **one systemic driver (PRNG call-count phase, FID-0063) plus the chrTickBeams/patrol semantics cluster (FID-0011/0012/0014-residual)** explain the guard divergences; there is no evidence of a *new* sim regression on Dam. `guards.present` needs a re-measure once the comparator emits per-guard presence stats excluding synthetic pairs.
 
-### 3.3 Dam intro: Bond plays the wrong swirl animation from t≈42s (NEW unwaived evidence)
+### 3.3 Dam intro: phase-3 animation *onset* diverges — D43's fixed-onset replication is the defect (ROOT-CAUSED this session)
 
-`dam_intro_swirl_bond_anim` both-sides: camera is **byte-exact** (`selected_camera`/`path`/swirl-setup digests match; all cam field maxes 0.0 outside existing D31/D35 waivers), but from `mode3:s4:t42.05` onward (all sampled t through 47.05+):
+`dam_intro_swirl_bond_anim` both-sides: camera **byte-exact** (`selected_camera`/`path`/swirl digests match), 54 divergences unwaived by the D-ledger from `mode3:s4:t42.05`. Initial read ("native plays the wrong animation") was **corrected by the root-cause lane**: both sides play the *same* three-phase intro sequence — ACT_BONDINTRO → ACT_STAND 48f idle loop (entry 33144) → ACT_ANIM phase-3 weapon-draw pose `ANIM_aim_one_handed_weapon_left_right` (anim 99, entry 31420, played 0..96 @0.5, hold-last). **Only the phase-3 onset differs**:
 
-| Field | stock | native |
-|---|---|---|
-| `bond_action` | 1 | 3 |
-| anim frames/end | 48 / 47 (looping) | 150 / 96 (one-shot) |
-| anim hash | `0x06028BC2EF592635` | `0x79F92FB064997857` |
-| entry/bits offset | 33144/33168 | 31420/31444 |
-| speed / abs_speed | 0.25 | 0.50 |
+- **Native**: D43's `bondviewMaybeDriveIntroPhase3()` (`src/game/bondview.c:7072-7144`, default ON, opt-out `GE007_NO_INTRO_PHASE3`) fires at a **hardcoded** swirl coordinate — `intro_camera_index ≥ 4 && transition_timer ≥ 40.0`. Proven by the native log line `intro phase-3: anim=99 end=96 fired at swirl seg=4 timer=40.05`.
+- **Stock**: the Bond-cinema chr's **AI list** fires `PlayAnimation` at an **RNG-jittered AI sleep-wake boundary** (`chrlv.c:11478` sleep decrement; ACT_STAND re-arms `sleep = randomGetNext()%5 + 14` at `chrlv.c:6554` — a 14–18-tick wake grid whose phase accumulates from boot history). Today it fired at **t=57.05**; the 2026-07-08 capture D43 was tuned against fired at ≈41.05.
 
-Native Bond leaves the idle loop and plays a different, faster, non-looping animation late in swirl segment 4. 54 divergences unwaived by the D-ledger (D32/D35/D41 waivers all still hold for their own fields). **Suspects:** the intro Bond action dispatcher around swirl segment transitions, and the FID-0117 root-motion-flag seeding fix (which already invalidated four campaign-route fixtures — AUDIT-0017); FID-0029's "retests pending post-D43" is exactly this lane. **Repro:** `tools/movement_oracle_capture.sh --route dam_intro_swirl_bond_anim --no-build --ares-bin <ares>`; comparator output in the session evidence dir. **Fix shape:** root-cause the action-1→3 transition trigger (M); this is the top *new* sim-parity lead from the sweep.
+The 54 unwaived divergences are exactly the 6 aligned keys in the lead window (s4 t42.05→t55.05) × 9 `intro.bond_anim` fields; **after stock's onset the sides agree** on every compared anim field except the D41-waived ~8-frame lead. So: **this is the D36 family regressing because D43 replicated a point-sample of a scheduling-dependent event as a fixed timer — not a new class, and FID-0117 is NOT implicated** (root-motion accumulation only; also the failing fields measure the stock side, which native code cannot touch).
+
+**Confirm/refute (cheapest first):** (E1) rerun native with `GE007_INTRO_PHASE3_ONSET=56` → predict all 54 vanish; (E2) double stock capture → measures onset stability; (E3) `tools/aiParse.c` on the Dam setup to name the AI wait preceding `PlayAnimation` (native `[AI_TICK]` log under `GE007_DEBUG=1`); (E4) `GE007_NO_ANIMFRAME2_ROOTFLAG_FIX=1` → predict no change. **Fix options** (fidelity order): reinstate the 9 scoped D36 `intro.bond_anim.*:mode3` waivers; teach the comparator phase-3 *event alignment* with an onset tolerance (~2 sleep periods); or mechanism-faithful — execute the Bond-cinema AI list during frozen-camera intros so native's onset is wake-grid-driven (noting even that cannot tick-match any single stock capture). Latent extra: native reverts to ACT_STAND at swirl end (icam 7 t=45.00) while stock holds ACT_ANIM — currently uncaught, will surface with a longer stock capture.
 
 ### 3.4 Glass checkpoint frames — what the eyes say beyond the numbers
 
@@ -124,11 +123,12 @@ The `dam_glass_visual_probe` pair (security-hut interior, game-timer 1190) passe
 
 ### 3.5 Registered monitor probe, pixel-lane verdict, DAM-R1 A/B
 
-*(results below from the final probe queue — see evidence dir for images)*
-
-- **Pixel lane (`sense_pixel_sweep --route dam_glass_visual_probe`)**: PENDING-IN-SESSION — see `sense_pixel_*.json` newest report; cache is now seeded so the lane actually sweeps (see §7.1).
-- **Registered monitor probe**: PENDING-IN-SESSION.
-- **DAM-R1 GL vs WebGPU @ intro f190**: PENDING-IN-SESSION.
+- **DAM-R1 reproduces on HEAD**: intro establishing frame 190, identical faithful config both backends — the WebGPU frame shows a **blue sky sliver leaking at the top-center frame edge** that the GL frame does not render. The predecessor hunt's P1 WebGPU-only sky/backdrop defect is alive on the default backend. Evidence: `dam_sweep/damr1_{webgpu,gl}.bmp`. (Secondary observation: the GL frame is visibly softer than WebGPU under the same config — worth a filtering-parity look when DAM-R1 is fixed.)
+- **Monitor defect confirmed and sharpened** (registered probe, faithful-HUD pins, minimap off): the guard-side desk monitor renders a **flat-green screen with no text texture**; two further monitor **screens render as bare green quads at floor level with no CRT bodies** — the screen sub-draw is detached from its owner/part transform. Converter asymmetry is the prime suspect: `PROPDEF_MONITOR` imports `OwnerOffset`/`OwnerPart`/`ImageNum` (`prop.c:2122-2129`) but `PROPDEF_MULTI_MONITOR` imports *only* `ImageNums` and memsets the rest (`prop.c:2134-2140`). Evidence: `dam_sweep/monitor_probe_registered.bmp` vs `glass_probe2/stock.png`. (Root-cause lane report folded in at §4.7.)
+- **Center glass pane is present on native** — FID-0001 is a blend-exactness question, not a missing-pane question.
+- **Ammo-total text color diverges**: native renders the total count green where stock renders white (both fresh frames) — small HUD divergence adjacent to FID-0067's anchor/flip findings.
+- **Pixel lane crashed on its first real-route run**: `sense_pixel_sweep.sh` line 311 `NORMALIZE_FLAGS[@]: unbound variable` — empty-array expansion under `set -u` on macOS `/bin/bash` 3.2 (the `#!/bin/bash` shebang), **and the lane still exited 0**. The gate-mode self-test never exercises the real-route path, so this crash was invisible. Two fixes: `${NORMALIZE_FLAGS[@]+"${NORMALIZE_FLAGS[@]}"}` (or bash≥4 shebang), and a nonzero exit on route-loop crash.
+- **Pixel lane verdict (rerun under bash 5, cache seeded)**: the lane now sweeps for real — `sense_pixel_20260717T081843Z.json`: **2 unexplained clusters, worst bbox [0,20,640,440] (frame-spanning), mean_delta 33.45** — the same viewpoint-registration signature FID-0115 recorded (97576/34.1 on 07-14); all other clusters auto-attributed to documented approximation classes. Conclusion unchanged: camera registration (FID-0115) is the sole blocker between this lane and a real per-checkpoint renderer verdict on Dam.
 
 ---
 
@@ -172,6 +172,23 @@ Ammo icon anchor/flip visible in the fresh Dam frames (§3.4); health/armour-bar
 
 ---
 
+### 4.7 Monitor screens: flat-green, texture term constant (ROOT-CAUSE NARROWED this session)
+
+Pixel measurement of the registered probe pins the mechanism: the two floor-level screens measure **exactly (0,128,0)** — `COLOR_BARELYGREENOPAQUE`, the `MONRGBA` target of the `monAnim05GreenTextUp` command list (`chrobjhandler.c:1716`, color at `chrai.h:162`) — and the desk CRT measures constant (0,80,0). So the monitor *interpreter, color integrators, DLCOL runtime registration (FID-0122 machinery) and quad transform all work*; only the **TEXEL0 term is spatially constant**. Dam's green-text screens are an I8 intensity texture (`monitorimages[29]` = IMGTEXT, `assets/GlobalImageTable.c:592+`) modulated by the green vertex shade via `G_CC_MODULATEI` (`othermodemicrocode.c:735-737`); the text detail is *entirely* the texel term.
+
+Draw path: `process_monitor_animation_microcode` (`chrobjhandler.c:28020`, = PD `tvscreenRender`) builds the quad + ST from `width*(xmid±xscale/2)*32`, `texSelect` emits SETTIMG with the native IMAGESEG token resolved lazily mid-DL (`gfx_pc.c:1299` → `texLoadFromTextureNum` → `import_texture_i8` `gfx_pc.c:15329`). No `[TEX-UPLOAD-FAIL]`/`[TEXLOAD][RENDER-HEALTH]` in any probe log — whatever fails, fails silently.
+
+**Ranked hypotheses:** **H1** — per-vertex ST spread degenerates (scroll/scale integrator or the fast3d texcoord path for this GBI sequence collapses UVs to a single texel; uniquely explains *two different* constant greens — different screens freeze on different texels); **H2** — WebGPU white-fallback bind (1×1 white substitute, `gfx_webgpu.c:2345-2357`) — the WEB-068 bind-group-ABA class, plausible because monitorimages are lazily loaded (not in `texPreloadRuntimeImageEntries`), but doesn't explain (0,80,0); **H3** — SETTIMG token resolves NULL mid-DL, stale texture stays bound (weakest; would trip counters). Converter, blank-pool fallback and DLCOL exhaustion are **ruled out** (§3.5; blank-pool always logs and has no defined color).
+
+**Discriminating experiments — all three RUN this session, verdict reached:**
+1. `GE007_RENDERER=gl` A/B at the registered checkpoint: **GL renders the identical flat-green screens (and identical floor-level detachment) ⇒ H2 (WebGPU bind fallback) REFUTED** — backend-independent (`dam_sweep/monitor_probe_gl.bmp`).
+2. `GE007_MONITOR_TRACE=1`: `monitor_cmd` records are **healthy** — `raw_tconfig=0x1d → idx=29` (IMGTEXT ✓), `rgba=0,128,0,255` ✓, `scale=1.000,1.000`, `mid` scrolling 0.494→0.488→0.481 per frame ⇒ **H1 (integrator/ST degeneration) REFUTED at the record level**.
+3. `GE007_TRACE_TEXSELECT=1`, `tag=monitor` rows: **`table_fmt=4` (G_IM_FMT_I, 8b — what the monitor image table declares) but the pool texture reports `tex_fmt=2 tex_depth=0` (G_IM_FMT_CI, 4b)** for texnum 2224 (IMAGE_MONITOR_TEXT). **Root cause (one hop from proven): the retail *format-reinterpretation* trick — drawing a CI-stored texture through an I8 tile (raw-TMEM-bytes semantics) — is not honored by the PC decode-at-load texture pool**, which decodes per its catalogued format; the text intensity pattern never reaches the `G_CC_MODULATEI` combiner, leaving the flat MONRGBA green. Fix shape (M): make the static-game-texture import path honor the *tile's* fmt/siz over the table entry when they disagree (true TMEM reinterpretation semantics), or pre-decode dual-format variants for reinterpreted images; verify with the registered ROI diff. **Generalized class:** any retail DL that re-tiles a texture under a different format diverges the same way — worth a one-shot log on fmt-mismatch between tile and pool entry to census the whole game.
+
+Setup-side data from the same trace **clears the converter for image selection**: the hut's 4-screen `MULTI_MONITOR` (obj 336) reads `ImageNums=48,48,48,48` = `monAnim30GreySolid` (a solid-grey screen — correct-looking setup data), and the singles read `image=5` (GreenTextUp). The **floor-level detachment of screens remains a separate open defect** (owner/part transform; native `monitorFindDrawableNode`/switch-node resolution at `chrobjhandler.c:963` diverges from retail's raw `Switches[n]` — next trace target), and per-object attribution of which quad belongs to obj 335 vs 336 needs one more instrumented look.
+
+**Separate second defect:** two of the three monitor *screens* draw at floor level with no CRT bodies — screen sub-draw detached from owner/part transform; `PROPDEF_MULTI_MONITOR` conversion imports only `ImageNums` where the single-`MONITOR` path imports `OwnerOffset`/`OwnerPart` (`prop.c:2122-2140`). Needs its own trace of `monitorFindDrawableNode`/switch-node resolution (`chrobjhandler.c:963`, native diverges from retail's raw `Switches[n]` here). Both defects together are the FID-0036 "MULTI_MONITOR untested" risk case materializing — candidate new FID entries.
+
 ## 5. Simulation gaps on Dam — consolidated & ranked
 
 ### 5.1 The guard-AI divergence engine (P1): FID-0063 → 0054/0055
@@ -201,6 +218,7 @@ Raw-cast tail FID-0130/0125 (triaged, MP-leaning); FID-0112 projectile room-sour
 5. **Camera-registered pixel checkpoints (FID-0115)** — the single unlock for per-stage renderer parity verdicts on all 20 stages. The registered-probe recipe used this session (`GE007_AUTO_FACE_COORD_SCRIPT` at stock coords) is the pattern; routes should carry stock-matched face coords natively.
 6. **Faithful-HUD pins for all visual-oracle routes** — 4 config keys; removes systematic non-retail pixels from every checkpoint (§3.4.3).
 7. **Hot-primitive dual-run oracles** — the FID-0099/0116 corpus-ctest pattern (replay randomized inputs through old/new/reference implementations) generalizes to every low-match NATIVE_PORT reimpl of a sim primitive.
+8. **Texture format-reinterpretation census (from §4.7)** — retail DLs may re-tile a texture under a format different from its catalogued one (raw-TMEM-bytes semantics); the PC decode-at-load pool silently substitutes the catalogued decode. One-shot log on tile-vs-pool fmt mismatch would census every affected material game-wide; the Dam monitor text screens are the first confirmed member.
 
 ---
 
@@ -222,7 +240,7 @@ Raw-cast tail FID-0130/0125 (triaged, MP-leaning); FID-0112 projectile room-sour
 | 1 | Fix movement-comparator tick alignment (§3.1) | harness | S | dam_combat_guard6 movement lane goes green against live ares |
 | 2 | File + fix DAM-R1 WebGPU sky seam | renderer | M | GL-vs-WebGPU screenshot A/B @ intro f190; pixel lane once registered |
 | 3 | Root-cause intro bond_action 1→3 (§3.3) | sim | M | `dam_intro_swirl_bond_anim` unwaived count → 0 |
-| 4 | Confirm/fix MULTI_MONITOR flat-green (§3.4.1) | renderer/converter | S-M | registered monitor probe ROI diff; new ctest on converter case |
+| 4 | Fix monitor-screen format reinterpretation + owner-transform detach (§4.7) | renderer | M | registered monitor-ROI diff shows text; fmt-mismatch census log clean |
 | 5 | Camera-register the pixel checkpoints (FID-0115) | harness | M | criterion-2 per-stage verdict unlocked (all 20 stages) |
 | 6 | chrTickBeams semantics + PRNG phase (FID-0011/0012/0063) | sim | L | tick-aligned combat census divergence counts → waiver-classified floor |
 | 7 | Pertri snapshot on WebGPU + batch-split fix (FID-0002) | renderer | S+M | GL-pertri vs WebGPU diff on pad10092/10001 |
