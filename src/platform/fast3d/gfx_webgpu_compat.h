@@ -18,6 +18,16 @@
   #include <webgpu/webgpu.h>          /* emdawnwebgpu: modern unified header */
   #include <emscripten/emscripten.h>
   #include <emscripten/html5.h>
+  /* emdawnwebgpu's webgpu.h omits the WGPU_TRUE/WGPU_FALSE convenience macros
+   * that wgpu-native's header provides. WGPUBool is a uint32_t on both dialects,
+   * so define them here at the seam — keeps gfx_webgpu.c dialect-agnostic (the
+   * depth-clip-control unclippedDepth assignments use them). */
+  #ifndef WGPU_TRUE
+  #define WGPU_TRUE ((WGPUBool)1)
+  #endif
+  #ifndef WGPU_FALSE
+  #define WGPU_FALSE ((WGPUBool)0)
+  #endif
   /* Browser: yield to the event loop so the JS-side promise resolves, THEN
    * drain the future queue so AllowProcessEvents callbacks actually dispatch.
    * emscripten_sleep() alone resolves the promise but never fires the C
