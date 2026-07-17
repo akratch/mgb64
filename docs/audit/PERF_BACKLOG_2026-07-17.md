@@ -596,16 +596,26 @@ noise.
 **Validation.** Full-mission web soak without a grow-related hitch at level load
 (pre-grow before `lvlStageLoad` if one shows up), `web_boot_smoke`.
 
-## PERF-034 — LTO + closure on the web link  `S-M · Low-Med`
+## PERF-034 — LTO + closure on the web link  `S-M · Low-Med`   — ❌ **MEASURED & REJECTED** (both halves fail on this toolchain)
 
-**Problem.** The web link (verified in `build-web/.../link.txt`) carries `-O3` only: no
-`-flto`, no `--closure 1`, default allocator. Wasm LTO typically yields 10–20% size and
-small speed wins — worth the most on an Asyncify-inflated binary — and closure roughly
-halves the 236 KB glue JS.
+**Outcome (2026-07-17):** attempted and rejected — neither half is a clean win here.
+- **`-flto` INFLATED the wasm ~25%** (4,010,596 → 5,039,510 B) instead of shrinking it.
+  Whole-program `-sASYNCIFY` (no ONLY/ADD list) must instrument every call site LTO's
+  cross-module inlining exposes, so the Asyncify scaffolding grows faster than LTO
+  trims. `web_boot_smoke` stayed green (correct, just bigger) — but bigger download is
+  the opposite of the goal. This is the exact Asyncify × LTO pathology PERF-031 flags.
+- **`--closure=1` (ADVANCED) fails the build outright**: `JSC_UNDEFINED_VARIABLE` on
+  SDL2's legacy message-box `ASM_CONST` (`allocate(intArrayFromString(reply),"i8",
+  ALLOC_NORMAL)`) — `allocate`/`ALLOC_NORMAL` are runtime APIs modern emscripten
+  removed; they survive only as dead inline JS in SDL2's Emscripten backend, which
+  closure resolves statically and rejects.
+- **Revisit** only after PERF-031 narrows the Asyncify set (which should also flip LTO
+  from a loss to a win) and after the SDL2/closure `allocate` issue is patched (externs
+  or an upstream SDL fix). Reverted; a CMakeLists comment records the finding.
 
-**Fix.** Release-config only: add `-flto` (compile + link) and `--closure 1` (link).
-Validate the Asyncify × LTO interaction explicitly (known-fiddly combination) —
-if it misbehaves, take closure alone.
+**Original plan (for reference).** Release-config only: add `-flto` (compile + link) and
+`--closure 1` (link). Validate the Asyncify × LTO interaction explicitly (known-fiddly
+combination) — if it misbehaves, take closure alone. *(Both failed as above.)*
 
 **Validation.** Tape gate, `web_boot_smoke`, wasm size budget gate (expect a drop),
 full-mission soak.

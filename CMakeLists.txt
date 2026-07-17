@@ -2080,6 +2080,13 @@ if(EMSCRIPTEN)
         # keep docs/WEB.md's --debug line in sync with these flags.
         "$<$<CONFIG:Debug>:-sSAFE_HEAP=1>"
         "$<$<CONFIG:Debug>:-sASSERTIONS=2>"
+        # PERF-034 (LTO + closure) was MEASURED AND REJECTED — see
+        # docs/audit/PERF_BACKLOG_2026-07-17.md. -flto inflated the wasm ~25%
+        # (4.01 -> 5.04 MB): whole-program Asyncify must instrument LTO's extra
+        # inlined call sites. --closure=1 (ADVANCED) fails the build outright on
+        # SDL2's legacy message-box ASM_CONST (allocate()/ALLOC_NORMAL, runtime
+        # APIs modern emscripten removed). Neither is a clean win here; revisit
+        # only alongside PERF-031 (Asyncify narrowing) and an SDL2/closure fix.
     )
     # Layout-critical + warning flags: the wasm engine compiles the SAME decomp
     # game TUs as native ge007 (:1783), so it needs the identical parse-affecting
