@@ -19,6 +19,37 @@ web-only, so it leads Tier B instead.
   `web_boot_smoke` + wasm size budget (web). House rule: >2% frame-time regression fails
   review (`docs/BACKLOG_v0.4.0.md:55`).
 
+## Execution status — Wave 1 (2026-07-17, branch `perf/wave1-quick-wins`)
+
+Wave 1 (universal quick wins + the S-effort web/native items) executed end to
+end. Every landed item was validated against its gates (render parity /
+sim-state / settex / env-ref / web boot smoke as applicable) with no
+regressions; `port_renderer_parity_smoke` stayed byte-identical across all the
+render-path changes.
+
+| ID | Status | Commit | Note |
+|----|--------|--------|------|
+| PERF-002 | **LANDED** | `fb3322f` | dbg_* gate is a strict superset of every consumer (incl. `g_diag_trace_eye_bind`); render byte-identical |
+| PERF-003 | **LANDED** | `755621f` | slot+1 direct index, re-verify safety net, evict-reindex, lockstep clears; behavior-identical |
+| PERF-050 | **LANDED** | `7207971` | nanosleep tail on macOS/Linux; Windows keeps the original spin; sim-neutral |
+| PERF-030 | **LANDED** | `639cffc` | web joins the PortMaster native-res carve-out; native unchanged; web boot verified |
+| PERF-010 | **LANDED** | `e79d871` | `Audio.QueueTargetFrames` LIVE setting; default 1.5 byte-identical; control surface only (auto-derivation deferred) |
+| PERF-032 | **LANDED** | `ba69d94` | `instantiateWasm` streaming + pre-gate fetch; WEB-031/032/033 preserved; boot smoke green |
+| PERF-033 | **LANDED** | `0091980` | INITIAL_MEMORY 256→128 MiB + 512 MiB ceiling; boot smoke green |
+| PERF-061 | **LANDED** | `8fb4393` | ENV_FLAGS drift reconciled (`GE007_WEBGPU_TRACE_VIEWPORT` — `env_reference_current` was red on `main`) |
+| PERF-001 | **DEFERRED** | — | a provably-correct flush-skip needs a non-mutating cache resolve (all 14 key fields, incl. CI palette-addr); that resolve/bind split *is* PERF-006, so it folds into that wave rather than shipping a risky standalone batching change |
+
+Not a backlog item but a blocker found and fixed en route: **`fix(webgpu)
+57c3638`** — `f694eab` (depth-clamp) used wgpu-native's `WGPU_TRUE`/`WGPU_FALSE`
+macros, which the emdawnwebgpu header lacks, so the **web build was broken on
+`main`** (native compiled; the next web deploy would have failed). Defined at
+the compat seam; web build + `web_boot_smoke` green again.
+
+Native perf on the M3 Max dev box is dominated by run-to-run census noise
+(±20% at 200–550 fps); these micro-opts target min-spec native + wasm where CPU
+binds, so they were validated by correctness gates + mechanism, not by a native
+census delta on this hardware.
+
 ## Index
 
 | ID | Title | Scope | Impact | Effort |
@@ -57,7 +88,7 @@ web-only, so it leads Tier B instead.
 
 # Tier A — Universal (native + browser)
 
-## PERF-001 — Skip redundant texture-rebind flushes  `S · Med-High`
+## PERF-001 — Skip redundant texture-rebind flushes  `S · Med-High`   — ⏸ **DEFERRED → PERF-006** (see status table; a safe skip needs the resolve/bind split that is PERF-006)
 
 **Problem.** Batch count is the dominant driver of backend cost (per-draw overhead ×
 wasm↔JS crossings on web). `gfx_pc.c` breaks a batch every time `textures_changed[ti]` is
@@ -91,7 +122,7 @@ gfx_bind_texture(tile, node->texture_id);
 **Validation.** Screenshot oracle suite (any batching bug is visible), perf census with
 batch-count delta (add a `GE007_PERF_TRACE` counter for flushes if not present).
 
-## PERF-002 — Gate per-vertex debug payload writes  `S · Med`
+## PERF-002 — Gate per-vertex debug payload writes  `S · Med`   — ✅ **LANDED `fb3322f`**
 
 **Problem.** The vertex loop stores ~96 bytes of diagnostic payload per vertex,
 unconditionally — including 16 matrix floats — roughly doubling the loop's memory traffic.
@@ -119,7 +150,7 @@ Optionally move `dbg_*` to a parallel array so `LoadedVertex` shrinks toward a c
 **Validation.** Build with each diag env flag on and confirm traces still populate;
 perf census.
 
-## PERF-003 — SETTEX cache: linear scan → direct map  `S · Med`
+## PERF-003 — SETTEX cache: linear scan → direct map  `S · Med`   — ✅ **LANDED `755621f`**
 
 **Problem.** `G_SETTEX` is issued per material for most world/prop textures. The cache
 lookup is a linear scan of up to `SETTEX_CACHE_SIZE=2048` entries at ~56 B stride — with a
@@ -327,7 +358,7 @@ the dirty-flag must cover *every* input (`camGetWorldToScreenMtxf`, aim-bone cal
 state). Validate against the screenshot oracle suite on guard-dense scenes and the intro
 cinematics (D35/D43 lineage).
 
-## PERF-010 — Adaptive audio queue target  `S · Med`  *(both: latency + stall absorption)*
+## PERF-010 — Adaptive audio queue target  `S · Med`  *(both: latency + stall absorption)*   — ✅ **LANDED `e79d871`** (control surface only; auto-derivation deferred)
 
 **Problem.** The audio occupancy controller targets a fixed 1.5 audio frames (~50 ms at
 22050 Hz). That single number is simultaneously (a) the entire stall-absorption budget —
@@ -456,7 +487,7 @@ neighboring work.
 
 # Tier B — Web-only
 
-## PERF-030 — Web RenderScale default  `S · Highest single web win`
+## PERF-030 — Web RenderScale default  `S · Highest single web win`   — ✅ **LANDED `639cffc`**
 
 **Problem.** The browser build inherits the desktop remaster default `RenderScale = 2`
 (2× supersampling) on top of CSS-size × devicePixelRatio — and the WebGPU *surface
@@ -515,7 +546,7 @@ land this with before/after `work_ms` from `GE007_PERF_TRACE`.
 manual soak (an Asyncify list that's too narrow crashes loudly at the missed suspend
 point — test all paths: boot, level load, screenshot, hidden-tab).
 
-## PERF-032 — Streaming wasm instantiation + earlier fetch  `S · Med`
+## PERF-032 — Streaming wasm instantiation + earlier fetch  `S · Med`   — ✅ **LANDED `ba69d94`**
 
 **Problem.** The shell downloads the entire wasm to an ArrayBuffer and hands it to
 Emscripten as `wasmBinary` — so compilation starts only after the full 1.38 MB (wire)
@@ -543,7 +574,7 @@ the 4 MB binary copy from memory too (it currently coexists with the compiled mo
 **Validation.** `web_boot_smoke`, throttled-network boot timing, the WEB-033 error-path
 check (404 must still surface cleanly).
 
-## PERF-033 — INITIAL_MEMORY 256 MiB → measured (~128 MiB)  `S · Med (reach)`
+## PERF-033 — INITIAL_MEMORY 256 MiB → measured (~128 MiB)  `S · Med (reach)`   — ✅ **LANDED `0091980`**
 
 **Problem.** The web link commits 256 MiB of WebAssembly.Memory at boot. The comment's
 own itemization (12 MB ROM + 8 MB sim pool + staging) lands nowhere near 256, growth is
@@ -667,7 +698,7 @@ PERF-030/031/035 — those remove most of the pressure that makes SPN audible.
 
 # Tier C — Native-only
 
-## PERF-050 — Pacer spin-tail → real sleep  `S · High (thermals/battery)`
+## PERF-050 — Pacer spin-tail → real sleep  `S · High (thermals/battery)`   — ✅ **LANDED `7207971`**
 
 **Problem.** The frame pacer coarse-sleeps to within ~2–2.5 ms of the deadline, then
 `SDL_Delay(0)` yield-spins the rest — ~12–15% of a core, continuously, on every native
@@ -753,10 +784,12 @@ burn the full synth for silence, across every CI lane, every day. Fix: when mute
 dump/trace consumer is registered, skip synthesis and queue silence-sized frames;
 auto-detected so `GE007_AUDIO_DUMP` and deterministic baselines are untouched.
 
-## PERF-061 — Ledger reconciliation  `S · docs only`
+## PERF-061 — Ledger reconciliation  `S · docs only`   — ◑ **PARTIAL `8fb4393`** (ENV_FLAGS drift fixed; the WEB_BACKLOG/PERFORMANCE_PLAN entries below remain)
 
-- WEB-062's build half (INITIAL_MEMORY drop → PERF-033) is in neither LANDED nor
-  STILL-DEFERRED in `docs/WEB_BACKLOG.md`.
+- ✅ **Done (`8fb4393`)**: the source↔`docs/ENV_FLAGS.md` invariant — `GE007_WEBGPU_TRACE_VIEWPORT`
+  had drifted, leaving the `env_reference_current` ctest red on `main`; regenerated.
+- WEB-062's build half (INITIAL_MEMORY drop → PERF-033, now LANDED `0091980`) is in neither
+  LANDED nor STILL-DEFERRED in `docs/WEB_BACKLOG.md`.
 - WEB-012's AudioWorklet long-term half (→ PERF-039) is absent from STILL DEFERRED.
 - WEB-039 dropped streaming instantiation on a now-disproven MIME assumption (→ PERF-032).
 - `docs/design/PERFORMANCE_PLAN.md` header still says "not yet implemented" though M1/M2
