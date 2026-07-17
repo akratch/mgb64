@@ -3537,6 +3537,18 @@ static int color_combiner_pool_size;
 static int color_combiner_pool_cap;
 static struct ColorCombiner *gfx_color_combiner_prev; /* reset on realloc-move */
 
+/* PERF-013: O(1) lookup keyed on (cc_id, cc_options) replacing the linear pool
+ * scan. Open-addressing hash table, power-of-2, linear-probe. Each slot stores
+ * (pool_index + 1) so a zeroed table already means "empty" (slot 0 is a valid
+ * pool index, hence the +1 sentinel). The table stores POOL SLOTS, not
+ * pointers, so a realloc that relocates the pool leaves every entry valid; it
+ * only needs rebuilding when the table itself must grow. Sized to >= 2*pool_cap
+ * so the load factor stays <= 0.5 and probing always terminates. cc_index==NULL
+ * (never allocated, or an allocation failed) makes the lookup fall back to the
+ * linear scan, so a missing/failed index can only cost time, never correctness. */
+static int32_t *cc_index;
+static int cc_index_mask; /* table_size - 1 (table_size is a power of two) */
+
 static struct RSP {
     float modelview_matrix_stack[11][4][4];
     uint8_t modelview_matrix_stack_size;
@@ -14714,15 +14726,93 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint64_t cc_id, uint32_t
     }
 }
 
+/* PERF-013 combiner-index helpers. See the cc_index declaration for the scheme. */
+static inline uint32_t gfx_cc_index_hash(uint64_t cc_id, uint32_t cc_options) {
+    uint64_t h = cc_id * 0x9E3779B97F4A7C15ULL;
+    h ^= (uint64_t)cc_options * 0xC2B2AE3D27D4EB4FULL;
+    h ^= h >> 32;
+    return (uint32_t)h;
+}
+
+/* Return the pool slot for (cc_id, cc_options), or -1 if absent. Falls back to
+ * the linear scan when the index isn't allocated (pool empty / alloc failed). */
+static int gfx_cc_index_find(uint64_t cc_id, uint32_t cc_options) {
+    if (cc_index == NULL) {
+        for (int i = 0; i < color_combiner_pool_size; i++) {
+            if (color_combiner_pool[i].cc_id == cc_id && color_combiner_pool[i].cc_options == cc_options) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    uint32_t h = gfx_cc_index_hash(cc_id, cc_options) & (uint32_t)cc_index_mask;
+    for (;;) {
+        int32_t entry = cc_index[h];
+        if (entry == 0) {
+            return -1; /* empty slot terminates the probe: key not present */
+        }
+        int idx = entry - 1;
+        /* Full-key compare (not just the hash) so a collision probes onward. */
+        if (color_combiner_pool[idx].cc_id == cc_id && color_combiner_pool[idx].cc_options == cc_options) {
+            return idx;
+        }
+        h = (h + 1) & (uint32_t)cc_index_mask;
+    }
+}
+
+/* Record that pool slot `slot` holds (cc_id, cc_options). No-op without a table
+ * (find() then falls back to the linear scan). Load factor is kept <= 0.5 by
+ * gfx_cc_index_rebuild, so a free slot always exists and the probe terminates. */
+static void gfx_cc_index_insert(uint64_t cc_id, uint32_t cc_options, int slot) {
+    if (cc_index == NULL) {
+        return;
+    }
+    uint32_t h = gfx_cc_index_hash(cc_id, cc_options) & (uint32_t)cc_index_mask;
+    while (cc_index[h] != 0) {
+        h = (h + 1) & (uint32_t)cc_index_mask;
+    }
+    cc_index[h] = slot + 1;
+}
+
+/* (Re)allocate the table sized to >= 2*pool_cap (min 512) and reinsert every
+ * live entry. Called after the pool grows (base may have moved, but slot indices
+ * are preserved, so reinserting reproduces the exact same slot mapping). On
+ * allocation failure the index is dropped and find() degrades to a linear scan. */
+static void gfx_cc_index_rebuild(void) {
+    int want = color_combiner_pool_cap * 2;
+    if (want < 512) {
+        want = 512;
+    }
+    int size = 1;
+    while (size < want) {
+        size <<= 1;
+    }
+    int32_t *tbl = (int32_t *)calloc((size_t)size, sizeof(int32_t));
+    if (tbl == NULL) {
+        free(cc_index);
+        cc_index = NULL;
+        cc_index_mask = 0;
+        return;
+    }
+    free(cc_index);
+    cc_index = tbl;
+    cc_index_mask = size - 1;
+    for (int i = 0; i < color_combiner_pool_size; i++) {
+        gfx_cc_index_insert(color_combiner_pool[i].cc_id, color_combiner_pool[i].cc_options, i);
+    }
+}
+
 static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint64_t cc_id, uint32_t cc_options) {
     struct ColorCombiner *prev_combiner = gfx_color_combiner_prev;
     if (prev_combiner != NULL && prev_combiner->cc_id == cc_id && prev_combiner->cc_options == cc_options) {
         return prev_combiner;
     }
-    for (int i = 0; i < color_combiner_pool_size; i++) {
-        if (color_combiner_pool[i].cc_id == cc_id && color_combiner_pool[i].cc_options == cc_options) {
-            return gfx_color_combiner_prev = &color_combiner_pool[i];
-        }
+    /* PERF-013: O(1) hashed lookup in place of the linear pool scan. Returns the
+     * unique entry for the key (inserts happen only on a miss, so the pool never
+     * holds duplicate keys and this matches the old scan's first-match exactly). */
+    int found = gfx_cc_index_find(cc_id, cc_options);
+    if (found >= 0) {
+        return gfx_color_combiner_prev = &color_combiner_pool[found];
     }
     gfx_flush();
     if (color_combiner_pool_size >= color_combiner_pool_cap) {
@@ -14746,17 +14836,26 @@ static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint64_t cc_id,
             }
             color_combiner_pool = grown;
             color_combiner_pool_cap = new_cap;
+            /* PERF-013: resize the index to the new cap and reinsert live entries
+             * (slot indices are unchanged by the realloc, so this is exact). */
+            gfx_cc_index_rebuild();
         } else if (color_combiner_pool_size > 0) {
             /* Out of memory: fall back to the legacy behaviour (reuse slot 0).
              * Regenerable cache, so this is correct, just cache-thrashing. */
             color_combiner_pool_size = 0;
             gfx_color_combiner_prev = NULL;
+            /* PERF-013: the scan window resets to empty; clear the index too. */
+            if (cc_index != NULL) {
+                memset(cc_index, 0, ((size_t)cc_index_mask + 1) * sizeof(int32_t));
+            }
         } else {
             return NULL; /* cannot even allocate the first block */
         }
     }
-    struct ColorCombiner *comb = &color_combiner_pool[color_combiner_pool_size++];
+    int slot = color_combiner_pool_size++;
+    struct ColorCombiner *comb = &color_combiner_pool[slot];
     gfx_generate_cc(comb, cc_id, cc_options);
+    gfx_cc_index_insert(cc_id, cc_options, slot); /* PERF-013: maintain in lockstep */
     return gfx_color_combiner_prev = comb;
 }
 
@@ -24379,6 +24478,11 @@ void gfx_init(void) {
      * reused across the session; just drop the entries and the 1-entry cache. */
     color_combiner_pool_size = 0;
     gfx_color_combiner_prev = NULL;
+    /* PERF-013: index clears in lockstep with the pool (the backing table is
+     * reused; its size still matches the retained cap). */
+    if (cc_index != NULL) {
+        memset(cc_index, 0, ((size_t)cc_index_mask + 1) * sizeof(int32_t));
+    }
     n64_dl_region_count = 0;
 }
 
