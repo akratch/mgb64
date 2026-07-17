@@ -538,6 +538,17 @@ void chraiUpdateOnscreenPropCount(void)
     prop = get_ptr_obj_pos_list_current_entry();
     for (; prop != NULL; prop = prop->prev)
     {
+#ifdef NATIVE_PORT
+        /* DAM_PARITY_DEEP_DIVE §4.7 residual: the Dam multi-monitor props spawn
+         * but never render — log their gate flags on the onscreen walk. */
+        if (prop->type == PROP_TYPE_OBJ && prop->obj != NULL &&
+            prop->obj->type == PROPDEF_MULTI_MONITOR) {
+            chrpropTracePrintf("mm-walk prop=%p pad=%d flags=0x%02x model=%p modelobj=%p",
+                               (void *)prop, prop->obj->pad, (unsigned int)prop->flags,
+                               (void *)prop->obj->model,
+                               (void *)(prop->obj->model != NULL ? prop->obj->model->obj : NULL));
+        }
+#endif
         if ((prop->flags & (PROPFLAG_ENABLED | PROPFLAG_ONSCREEN)) == (PROPFLAG_ENABLED | PROPFLAG_ONSCREEN))
         {
             g_OnScreenPropList[count] = prop;

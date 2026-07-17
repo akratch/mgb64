@@ -1223,6 +1223,17 @@ void setupMultiMonitor(s32 stageID, MultiMonitorObjRecord* monitor, s32 cmdindex
 #endif
 
     domakedefaultobj(stageID, (struct ObjectRecord *)monitor, cmdindex);
+
+#ifdef NATIVE_PORT
+    monitorTracePrintf(
+        "kind=multi_monitor_spawned obj=%d pad=%d prop=%p model=%p modelnum=%d state=0x%04x",
+        monitor->obj,
+        monitor->pad,
+        (void *)monitor->prop,
+        (void *)monitor->model,
+        monitor->obj,
+        (unsigned int)monitor->state);
+#endif
 }
 
 void sub_GAME_7F00324C(struct BoundPadRecord *arg0, s32 *arg1, s32 *arg2, struct coord3d *arg3, struct coord3d *arg4)

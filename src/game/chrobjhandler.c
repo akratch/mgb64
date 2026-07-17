@@ -11115,6 +11115,18 @@ s32 object_interaction(struct PropRecord *arg0)
         }
     }
 
+#ifdef NATIVE_PORT
+    if (obj->type == PROPDEF_MULTI_MONITOR)
+    {
+        monitorTracePrintf(
+            "kind=multi_monitor_vis obj=%d pad=%d verdict=%d rtbits=0x%08x flags2=0x%08x instsize=%f pos=(%.1f,%.1f,%.1f)",
+            obj->obj, obj->pad, var_v1_5,
+            (unsigned int)obj->runtime_bitflags,
+            (unsigned int)obj->flags2,
+            getinstsize(model),
+            obj->runtime_pos.x, obj->runtime_pos.y, obj->runtime_pos.z);
+    }
+#endif
     // mips2c line 1926
     if (var_v1_5 != 0)
     {
@@ -31920,8 +31932,19 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
     }
     else if (type == PROPDEF_MULTI_MONITOR)
     {
+#ifdef NATIVE_PORT
+        /* Failure-branch visibility (DAM_PARITY_DEEP_DIVE §4.7 residual): the
+         * success-path traces below never fired on Dam, so log the early-outs. */
+        monitorTracePrintf(
+            "kind=multi_monitor_enter obj=%d mrflags=0x%08x flags=0x%08x flags2=0x%08x",
+            obj->obj, (unsigned int)mrData->flags,
+            (unsigned int)obj->flags, (unsigned int)obj->flags2);
+#endif
         if (!(mrData->flags & 1))
         {
+#ifdef NATIVE_PORT
+            monitorTracePrintf("kind=multi_monitor_skip obj=%d reason=mrflags_bit0", obj->obj);
+#endif
             goto after_type_checks;
         }
 
@@ -31944,6 +31967,13 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
         {
             ModelNode *monitor_switch0 = modelGetSwitchNodeSafe(model->obj, 0);
             ModelNode *monitor_draw0 = monitorFindDrawableNode(monitor_switch0, 0);
+            if (monitor_draw0 == NULL)
+            {
+                monitorTracePrintf(
+                    "kind=multi_monitor_nodraw obj=%d slot=0 switch=%p switch_op=0x%04x",
+                    obj->obj, (void *)monitor_switch0,
+                    monitor_switch0 != NULL ? monitor_switch0->Opcode : 0);
+            }
             if (monitor_draw0 != NULL)
             {
                 monitorTracePrintf(
