@@ -1045,6 +1045,19 @@ static struct {
 } settex_cache[SETTEX_CACHE_SIZE];
 static int settex_cache_count = 0;
 
+/* PERF-003: direct texturenum -> slot map, replacing the linear cache scan.
+ * Slot+1 convention: stored 0 == absent, stored s+1 == slot s. A zero-init
+ * static (and the existing memset(...,0,...) full-clears) therefore already
+ * means "empty" — no separate init, and the clear sites stay natural.
+ * The lookup ALWAYS re-verifies settex_cache[slot].valid && .texturenum before
+ * trusting a probe: that re-verify is the correctness net, so a stale index
+ * degrades to a harmless miss (re-decode), never a wrong texture. Guarded by
+ * (uint32_t)texturenum < MAX_TEXTURES on every access (texturenum = w1 & 0xFFF
+ * can reach 4095, past MAX_TEXTURES); out-of-range falls back to linear scan. */
+static int16_t settex_index[MAX_TEXTURES];
+_Static_assert(SETTEX_CACHE_SIZE <= INT16_MAX,
+               "settex_index slot+1 convention must fit in int16_t");
+
 struct SetTexTileState {
     bool valid;
     uint8_t fmt, siz;
@@ -21740,8 +21753,24 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
         return;
     }
 
-    /* Check cache — restore ALL texture metadata, not just the GL ID */
-    for (int i = 0; i < settex_cache_count; i++) {
+    /* Check cache — restore ALL texture metadata, not just the GL ID.
+     * PERF-003: probe the direct index first (O(1)); re-verify the slot before
+     * trusting it so a stale index is just a miss. Out-of-range texturenum
+     * (>= MAX_TEXTURES) can't be indexed, so scan the whole cache defensively. */
+    int scan_lo = 0;
+    int scan_hi = settex_cache_count;
+    if ((uint32_t)texturenum < MAX_TEXTURES) {
+        int probe = (int)settex_index[texturenum] - 1;
+        if (probe >= 0 && probe < settex_cache_count &&
+            settex_cache[probe].valid &&
+            settex_cache[probe].texturenum == (uint32_t)texturenum) {
+            scan_lo = probe;          /* verified hit — restore from this slot */
+            scan_hi = probe + 1;
+        } else {
+            scan_hi = 0;              /* verified miss — skip straight to load */
+        }
+    }
+    for (int i = scan_lo; i < scan_hi; i++) {
         if (settex_cache[i].valid && settex_cache[i].texturenum == (uint32_t)texturenum) {
             settex_active = true;
             settex_gl_tex_id = settex_cache[i].gl_tex_id;
@@ -22244,8 +22273,19 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
                 gfx_rapi->delete_texture(settex_cache[0].gl_tex_id);
             }
             free(settex_cache[0].rgba);
+            /* PERF-003: drop the evicted entry's index, then (after the shift)
+             * re-point every survivor — each moved down one slot. */
+            if ((uint32_t)settex_cache[0].texturenum < MAX_TEXTURES) {
+                settex_index[settex_cache[0].texturenum] = 0;
+            }
             memmove(&settex_cache[0], &settex_cache[1],
                     (SETTEX_CACHE_SIZE - 1) * sizeof(settex_cache[0]));
+            for (int i = 0; i < SETTEX_CACHE_SIZE - 1; i++) {
+                if (settex_cache[i].valid &&
+                    (uint32_t)settex_cache[i].texturenum < MAX_TEXTURES) {
+                    settex_index[settex_cache[i].texturenum] = (int16_t)(i + 1);
+                }
+            }
             slot = SETTEX_CACHE_SIZE - 1;
         }
         settex_cache[slot].texturenum = texturenum;
@@ -22262,6 +22302,10 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
         settex_cache[slot].rgba_w = sample_rgba != NULL ? (uint32_t)w : 0;
         settex_cache[slot].rgba_h = sample_rgba != NULL ? (uint32_t)h : 0;
         settex_cache[slot].valid = true;
+        /* PERF-003: publish this slot into the direct index (slot+1 convention). */
+        if ((uint32_t)texturenum < MAX_TEXTURES) {
+            settex_index[texturenum] = (int16_t)(slot + 1);
+        }
     }
 
     settex_active = true;
@@ -24254,6 +24298,7 @@ void gfx_init(void) {
     pc_vtx_range_start = 0;
     pc_vtx_range_end = 0;
     memset(settex_cache, 0, sizeof(settex_cache));
+    memset(settex_index, 0, sizeof(settex_index));  /* PERF-003: index clears in lockstep */
     settex_cache_count = 0;
     settex_rgba_pixels = NULL;
     settex_rgba_w = 0;
@@ -25406,6 +25451,7 @@ void gfx_clear_n64_dl_regions(void) {
     }
     settex_cache_count = 0;
     memset(settex_cache, 0, sizeof(settex_cache));
+    memset(settex_index, 0, sizeof(settex_index));  /* PERF-003: index clears in lockstep */
     settex_rgba_pixels = NULL;
     settex_rgba_w = 0;
     settex_rgba_h = 0;
@@ -25432,6 +25478,7 @@ void gfx_clear_texture_cache(void) {
     }
     settex_cache_count = 0;
     memset(settex_cache, 0, sizeof(settex_cache));
+    memset(settex_index, 0, sizeof(settex_index));  /* PERF-003: index clears in lockstep */
     settex_rgba_pixels = NULL;
     settex_rgba_w = 0;
     settex_rgba_h = 0;
