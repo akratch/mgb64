@@ -117,6 +117,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("compare_require_active", False)
     if field == "compare_require_hash_match":
         return route.get("compare_require_hash_match", False)
+    if field == "compare_bond_anim_onset_tolerance":
+        return route.get("compare_bond_anim_onset_tolerance", "")
     if field == "compare_first_active_tolerance":
         return route.get("compare_first_active_tolerance", "")
     if field == "compare_max_active_tolerance":
