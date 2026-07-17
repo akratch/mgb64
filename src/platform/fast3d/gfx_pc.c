@@ -16485,6 +16485,38 @@ static int gfx_vtx_dbg_capture_enabled(void) {
            g_diag_trace_eye_bind > 0;
 }
 
+/* Master gate for the per-triangle skip/tint/focus diagnostic block at the head
+ * of gfx_emit_loaded_triangle (PERF-004 part 1). It MUST remain a strict SUPERSET
+ * of every latch that can make one of those gates non-false: each skip_by_,
+ * tint_by_, or debug_by_room_mode gate is `flag > 0 && ...`, and focus_match (via
+ * gfx_diag_focus_matches) fires only under the three GE007_DEBUG_ latches below.
+ * If any latch here is dropped, its diagnostic silently stops working; if any new
+ * per-triangle diagnostic gate is added there, its latch MUST be added here.
+ * (env is parsed by gfx_check_diag_env() at gfx_run_dl entry, so all flags are
+ * post-parse (>=0) by the time a triangle is emitted.) */
+static int g_any_diag_active(void) {
+    return g_diag_skip_cmd_range_enabled > 0 ||
+           g_diag_skip_room_cmd_range_enabled > 0 ||
+           g_diag_skip_room_mode_enabled > 0 ||
+           g_diag_skip_room_dl_enabled > 0 ||
+           g_diag_skip_raw_mode_enabled > 0 ||
+           g_diag_skip_tex_enabled > 0 ||
+           g_diag_skip_sky > 0 ||
+           g_diag_only_cmd_range_enabled > 0 ||
+           g_diag_only_room_cmd_range_enabled > 0 ||
+           g_diag_only_room_mode_enabled > 0 ||
+           g_diag_tint_room_cmd_range_enabled > 0 ||
+           g_diag_tint_room_mode_enabled > 0 ||
+           g_diag_tint_room_dl_enabled > 0 ||
+           g_diag_tint_raw_mode_enabled > 0 ||
+           g_diag_tint_tex_enabled > 0 ||
+           g_diag_tint_sky > 0 ||
+           g_diag_debug_room_mode_enabled > 0 ||
+           g_diag_debug_cmd_range_enabled > 0 ||
+           g_diag_debug_room_cmd_range_enabled > 0 ||
+           g_diag_debug_dl_room >= 0;
+}
+
 static bool gfx_trace_rejects_for_tri(const struct LoadedVertex *v1,
                                       const struct LoadedVertex *v2,
                                       const struct LoadedVertex *v3) {
@@ -17409,103 +17441,137 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     const char *dl_which = NULL;
     int dl_room = -1;
     uintptr_t cmd_offset = 0;
+    /* Room-cmd attribution stays UNGATED: dl_room/dl_which/has_cmd_offset/
+     * cmd_offset feed NON-diagnostic rendering downstream (buf_vbo_tri_room[],
+     * room water-alpha suppression, XLU cvg-memory gating, and the postclip
+     * shard/cull/seam tests below), so they must be computed every triangle.
+     * (Collapsing this lookup is PERF-004 part 3 / PERF-006, out of scope here.) */
     bool has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
                                                    &dl_room, &dl_which,
                                                    NULL, &cmd_offset);
-    bool focus_match = gfx_diag_focus_matches(g_diag_current_cmd_addr, dl_room);
-    bool skip_by_range = g_diag_skip_cmd_range_enabled > 0 &&
-                         gfx_addr_in_cmd_range(g_diag_current_cmd_addr,
-                                               g_diag_skip_cmd_min,
-                                               g_diag_skip_cmd_max);
-    bool skip_by_room_offset = g_diag_skip_room_cmd_range_enabled > 0 &&
-                               has_cmd_offset &&
-                               dl_room == g_diag_skip_room_cmd_room &&
-                               gfx_addr_in_cmd_range(cmd_offset,
-                                                     g_diag_skip_room_cmd_min,
-                                                     g_diag_skip_room_cmd_max);
-    bool debug_by_room_mode = g_diag_debug_room_mode_enabled > 0 &&
-                              dl_room == g_diag_debug_room_mode_room &&
-                              (gfx_mode_in_range(rdp.other_mode_l_raw,
-                                                 g_diag_debug_room_mode_min,
-                                                 g_diag_debug_room_mode_max) ||
-                               gfx_mode_in_range(rdp.other_mode_l,
-                                                 g_diag_debug_room_mode_min,
-                                                 g_diag_debug_room_mode_max));
-    bool tint_by_room_offset = g_diag_tint_room_cmd_range_enabled > 0 &&
-                               has_cmd_offset &&
-                               dl_room == g_diag_tint_room_cmd_room &&
-                               gfx_addr_in_cmd_range(cmd_offset,
-                                                     g_diag_tint_room_cmd_min,
-                                                     g_diag_tint_room_cmd_max);
-    bool tint_by_room_mode = g_diag_tint_room_mode_enabled > 0 &&
-                             dl_room == g_diag_tint_room_mode_room &&
-                             (gfx_mode_in_range(rdp.other_mode_l_raw,
-                                                g_diag_tint_room_mode_min,
-                                                g_diag_tint_room_mode_max) ||
-                              gfx_mode_in_range(rdp.other_mode_l,
-                                                g_diag_tint_room_mode_min,
-                                                g_diag_tint_room_mode_max));
-    bool tint_by_room_dl = g_diag_tint_room_dl_enabled > 0 &&
-                           dl_room >= 0 &&
-                           dl_which != NULL &&
-                           ((g_diag_tint_room_dl_kind & 1) && strcmp(dl_which, "primary") == 0 ||
-                            (g_diag_tint_room_dl_kind & 2) && strcmp(dl_which, "secondary") == 0);
-    bool tint_by_raw_mode = g_diag_tint_raw_mode_enabled > 0 &&
-                            gfx_mode_in_range(rdp.other_mode_l_raw,
-                                              g_diag_tint_raw_mode_min,
-                                              g_diag_tint_raw_mode_max);
-    bool tint_by_tex = g_diag_tint_tex_enabled > 0 &&
-                       settex_active &&
-                       settex_texturenum >= 0 &&
-                       gfx_mode_in_range((uint32_t)settex_texturenum,
-                                         g_diag_tint_tex_min,
-                                         g_diag_tint_tex_max);
-    bool tint_by_sky = g_diag_tint_sky > 0 && g_sky_tri_mode;
-    bool tint_match = tint_by_room_offset || tint_by_room_mode;
-    tint_match = tint_match || tint_by_room_dl || tint_by_raw_mode || tint_by_tex || tint_by_sky;
-    bool skip_by_only = g_diag_only_cmd_range_enabled > 0 &&
-                        !gfx_addr_in_cmd_range(g_diag_current_cmd_addr,
-                                               g_diag_only_cmd_min,
-                                               g_diag_only_cmd_max);
-    bool skip_by_room_mode = g_diag_skip_room_mode_enabled > 0 &&
-                             dl_room == g_diag_skip_room_mode_room &&
-                             (gfx_mode_in_range(rdp.other_mode_l_raw,
-                                                g_diag_skip_room_mode_min,
-                                                g_diag_skip_room_mode_max) ||
-                              gfx_mode_in_range(rdp.other_mode_l,
-                                                g_diag_skip_room_mode_min,
-                                                g_diag_skip_room_mode_max));
-    bool skip_by_room_dl = g_diag_skip_room_dl_enabled > 0 &&
-                           dl_room >= 0 &&
-                           dl_which != NULL &&
-                           (((g_diag_skip_room_dl_kind & 1) && strcmp(dl_which, "primary") == 0) ||
-                            ((g_diag_skip_room_dl_kind & 2) && strcmp(dl_which, "secondary") == 0));
-    bool skip_by_raw_mode = g_diag_skip_raw_mode_enabled > 0 &&
-                            gfx_mode_in_range(rdp.other_mode_l_raw,
-                                              g_diag_skip_raw_mode_min,
-                                              g_diag_skip_raw_mode_max);
-    bool skip_by_tex = g_diag_skip_tex_enabled > 0 &&
-                       settex_active &&
-                       settex_texturenum >= 0 &&
-                       gfx_mode_in_range((uint32_t)settex_texturenum,
-                                         g_diag_skip_tex_min,
-                                         g_diag_skip_tex_max);
-    bool skip_by_sky = g_diag_skip_sky > 0 && g_sky_tri_mode;
-    bool skip_by_only_room_offset = g_diag_only_room_cmd_range_enabled > 0 &&
-                                    (!has_cmd_offset ||
-                                     dl_room != g_diag_only_room_cmd_room ||
-                                     !gfx_addr_in_cmd_range(cmd_offset,
-                                                            g_diag_only_room_cmd_min,
-                                                            g_diag_only_room_cmd_max));
-    bool skip_by_only_room_mode = g_diag_only_room_mode_enabled > 0 &&
-                                  (dl_room != g_diag_only_room_mode_room ||
-                                   !(gfx_mode_in_range(rdp.other_mode_l_raw,
-                                                       g_diag_only_room_mode_min,
-                                                       g_diag_only_room_mode_max) ||
-                                     gfx_mode_in_range(rdp.other_mode_l,
-                                                       g_diag_only_room_mode_min,
-                                                       g_diag_only_room_mode_max)));
-    focus_match = focus_match || debug_by_room_mode;
+    /* PERF-004 (part 1): the skip/tint/focus gates below are PURE-diagnostic —
+     * each is false unless its GE007_* latch is on, and every downstream consumer
+     * (the skip early-return, tint_match's material overrides, and the focus_match
+     * trace calls) is a no-op when its local is the diagnostics-off default (all
+     * false here). So compute the whole block only when a diagnostic is live;
+     * otherwise hold the defaults and render byte-identically. The gate,
+     * g_any_diag_active(), MUST stay a strict SUPERSET of every latch used below
+     * (see its definition) or a diagnostic would read a stale default. */
+    bool focus_match = false;
+    bool skip_by_range = false;
+    bool skip_by_room_offset = false;
+    bool debug_by_room_mode = false;
+    bool tint_by_room_offset = false;
+    bool tint_by_room_mode = false;
+    bool tint_by_room_dl = false;
+    bool tint_by_raw_mode = false;
+    bool tint_by_tex = false;
+    bool tint_by_sky = false;
+    bool tint_match = false;
+    bool skip_by_only = false;
+    bool skip_by_room_mode = false;
+    bool skip_by_room_dl = false;
+    bool skip_by_raw_mode = false;
+    bool skip_by_tex = false;
+    bool skip_by_sky = false;
+    bool skip_by_only_room_offset = false;
+    bool skip_by_only_room_mode = false;
+    if (g_any_diag_active()) {
+        focus_match = gfx_diag_focus_matches(g_diag_current_cmd_addr, dl_room);
+        skip_by_range = g_diag_skip_cmd_range_enabled > 0 &&
+                             gfx_addr_in_cmd_range(g_diag_current_cmd_addr,
+                                                   g_diag_skip_cmd_min,
+                                                   g_diag_skip_cmd_max);
+        skip_by_room_offset = g_diag_skip_room_cmd_range_enabled > 0 &&
+                                   has_cmd_offset &&
+                                   dl_room == g_diag_skip_room_cmd_room &&
+                                   gfx_addr_in_cmd_range(cmd_offset,
+                                                         g_diag_skip_room_cmd_min,
+                                                         g_diag_skip_room_cmd_max);
+        debug_by_room_mode = g_diag_debug_room_mode_enabled > 0 &&
+                                  dl_room == g_diag_debug_room_mode_room &&
+                                  (gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                     g_diag_debug_room_mode_min,
+                                                     g_diag_debug_room_mode_max) ||
+                                   gfx_mode_in_range(rdp.other_mode_l,
+                                                     g_diag_debug_room_mode_min,
+                                                     g_diag_debug_room_mode_max));
+        tint_by_room_offset = g_diag_tint_room_cmd_range_enabled > 0 &&
+                                   has_cmd_offset &&
+                                   dl_room == g_diag_tint_room_cmd_room &&
+                                   gfx_addr_in_cmd_range(cmd_offset,
+                                                         g_diag_tint_room_cmd_min,
+                                                         g_diag_tint_room_cmd_max);
+        tint_by_room_mode = g_diag_tint_room_mode_enabled > 0 &&
+                                 dl_room == g_diag_tint_room_mode_room &&
+                                 (gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                    g_diag_tint_room_mode_min,
+                                                    g_diag_tint_room_mode_max) ||
+                                  gfx_mode_in_range(rdp.other_mode_l,
+                                                    g_diag_tint_room_mode_min,
+                                                    g_diag_tint_room_mode_max));
+        tint_by_room_dl = g_diag_tint_room_dl_enabled > 0 &&
+                               dl_room >= 0 &&
+                               dl_which != NULL &&
+                               ((g_diag_tint_room_dl_kind & 1) && strcmp(dl_which, "primary") == 0 ||
+                                (g_diag_tint_room_dl_kind & 2) && strcmp(dl_which, "secondary") == 0);
+        tint_by_raw_mode = g_diag_tint_raw_mode_enabled > 0 &&
+                                gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                  g_diag_tint_raw_mode_min,
+                                                  g_diag_tint_raw_mode_max);
+        tint_by_tex = g_diag_tint_tex_enabled > 0 &&
+                           settex_active &&
+                           settex_texturenum >= 0 &&
+                           gfx_mode_in_range((uint32_t)settex_texturenum,
+                                             g_diag_tint_tex_min,
+                                             g_diag_tint_tex_max);
+        tint_by_sky = g_diag_tint_sky > 0 && g_sky_tri_mode;
+        tint_match = tint_by_room_offset || tint_by_room_mode;
+        tint_match = tint_match || tint_by_room_dl || tint_by_raw_mode || tint_by_tex || tint_by_sky;
+        skip_by_only = g_diag_only_cmd_range_enabled > 0 &&
+                            !gfx_addr_in_cmd_range(g_diag_current_cmd_addr,
+                                                   g_diag_only_cmd_min,
+                                                   g_diag_only_cmd_max);
+        skip_by_room_mode = g_diag_skip_room_mode_enabled > 0 &&
+                                 dl_room == g_diag_skip_room_mode_room &&
+                                 (gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                    g_diag_skip_room_mode_min,
+                                                    g_diag_skip_room_mode_max) ||
+                                  gfx_mode_in_range(rdp.other_mode_l,
+                                                    g_diag_skip_room_mode_min,
+                                                    g_diag_skip_room_mode_max));
+        skip_by_room_dl = g_diag_skip_room_dl_enabled > 0 &&
+                               dl_room >= 0 &&
+                               dl_which != NULL &&
+                               (((g_diag_skip_room_dl_kind & 1) && strcmp(dl_which, "primary") == 0) ||
+                                ((g_diag_skip_room_dl_kind & 2) && strcmp(dl_which, "secondary") == 0));
+        skip_by_raw_mode = g_diag_skip_raw_mode_enabled > 0 &&
+                                gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                  g_diag_skip_raw_mode_min,
+                                                  g_diag_skip_raw_mode_max);
+        skip_by_tex = g_diag_skip_tex_enabled > 0 &&
+                           settex_active &&
+                           settex_texturenum >= 0 &&
+                           gfx_mode_in_range((uint32_t)settex_texturenum,
+                                             g_diag_skip_tex_min,
+                                             g_diag_skip_tex_max);
+        skip_by_sky = g_diag_skip_sky > 0 && g_sky_tri_mode;
+        skip_by_only_room_offset = g_diag_only_room_cmd_range_enabled > 0 &&
+                                        (!has_cmd_offset ||
+                                         dl_room != g_diag_only_room_cmd_room ||
+                                         !gfx_addr_in_cmd_range(cmd_offset,
+                                                                g_diag_only_room_cmd_min,
+                                                                g_diag_only_room_cmd_max));
+        skip_by_only_room_mode = g_diag_only_room_mode_enabled > 0 &&
+                                      (dl_room != g_diag_only_room_mode_room ||
+                                       !(gfx_mode_in_range(rdp.other_mode_l_raw,
+                                                           g_diag_only_room_mode_min,
+                                                           g_diag_only_room_mode_max) ||
+                                         gfx_mode_in_range(rdp.other_mode_l,
+                                                           g_diag_only_room_mode_min,
+                                                           g_diag_only_room_mode_max)));
+        focus_match = focus_match || debug_by_room_mode;
+    }
     float ndc_width = ndc_metrics.max_x - ndc_metrics.min_x;
     float ndc_height = ndc_metrics.max_y - ndc_metrics.min_y;
     bool emitted_large_coverage = ndc_metrics_ok &&
