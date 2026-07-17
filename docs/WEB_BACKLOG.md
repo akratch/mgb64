@@ -56,6 +56,26 @@ correct end-to-end — rebuild + hard-reload).
   tombstone accumulation; max-probe hoist; routes 6/6 quiet, tape byte-exact)
 - `b68a974` composition follow-ups (lroundf decl, noise comment)
 
+**RELEASE CLOSE-OUT 2026-07-17** (`5d06bdd..b845955`): WEB-036 ruled (separate
+hash lineage, WEB.md); `b621f74` boot-smoke harness (ctest `web_boot_smoke`);
+`d820ff1` WEB-068 menu-glyph P0 (bind-group cache handle-reuse ABA — the
+WEB-024 finding vindicated; fixed with view/BGL-release invalidation, 10/10
+deterministic-clean repro) + WEB-023 residual (one vertex writeBuffer/frame,
+~20% native Dam CPU); `b845955` faithful HUD web defaults (reticle
+only-while-aiming, no minimap — HUD half of --faithful). Owner confirmed the
+glyph fix and the faithful HUD in-browser.
+
+**DEFERRED POST-RELEASE — Dam parity program** (hunt report:
+docs/audit/DAM_PARITY_HUNT_2026-07-17.md):
+- **DAM-R1** (P1, confirmed, WebGPU-ONLY — GL-clean A/B): over-bright
+  sky/backdrop seam at portal boundaries (intro flyby + walkway); backend
+  blend/fog mechanism untraced. THE top post-release fix.
+- **DAM-R2** (P2, suspected, same-wrong both backends): establishing-shot
+  distant shore missing — T25/T13b admission residual; stock verdict pending.
+- Un-swept: outro/bungee cinematic, interior rooms ~30-60, stock ares capture.
+- Negative result: literal water-through-geometry NOT reproducible — reservoir
+  water occludes correctly everywhere inspected on both backends.
+
 **STILL DEFERRED / OPEN**:
 WEB-018 full (in-game settings overlay on web — seam unblocked via WEB-055),
 WEB-021 residual (pass-split coalescing — measure on Apple GPU first), WEB-022

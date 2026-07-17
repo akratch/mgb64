@@ -252,23 +252,44 @@ deploy step.
 
 ## Known items
 
-- **RenderScale blocky artifacting** (flagged during W3.6): under the browser
-  WebGPU backend, the RenderScale-driven offscreen scene target can be
-  clamped against the GPU's max-texture-dimension limit (observed:
-  8192×6144), producing visible blocky artifacting relative to native. This
-  is a backend polish item, not a correctness or sim-fidelity issue — content
-  renders and is recognizable — and is left for future work rather than
-  blocking the demo.
 - **Firefox on Linux/Android is unsupported** — WebGPU isn't shipped there
   yet. The capability gate declines gracefully rather than attempting a
   broken run; there is no fallback renderer by design (see "Browser support"
   above).
-- Automated browser gates (a headless Playwright smoke, for instance) are
-  explicitly deferred (YAGNI) — see the plan's "Deferred" section. The W3/W5
-  manual gates plus this task's native non-regression proof are the v1 bar;
-  automate if/when the demo needs to be touched often enough to justify it.
-- **Resolved 2026-07-16**: the wasm32 mission-load crash class (dyn-pool
-  host-pointer seg-alias + static-DL window false-positive on boot logos) —
-  see "ILP32 (wasm32) notes" above (`68afbc6`, `4494a63`). Not an open item;
-  kept here for discoverability since it was the demo's only known
-  correctness-blocking crash.
+- **DAM-R1 (top post-release item)**: an over-bright rectangular sky/backdrop
+  seam at portal boundaries on Dam (intro swirl ~frame 190 + gameplay from the
+  dam walkway) — **WebGPU-only** (GL renders it correctly; decisive frame A/B
+  captured), survives the camera-seed-walk / xlu-cvg / sky-depth toggles, so
+  it's a backend blend/fog defect with mechanism not yet traced. Likely what
+  reads as "water/sky bleeding through" in play. Repro + evidence + resume
+  commands: docs/audit/DAM_PARITY_HUNT_2026-07-17.md.
+- **Dam legacy parity residuals (deferred, owner-acknowledged)**: the
+  establishing-shot distant-shore drop (DAM-R2, same on every backend — the
+  M3.4/T25 room-admission family, stock-N64 verdict pending) and the
+  un-swept interior/outro areas. Adjudication bar = stock capture (if the
+  hardware shows it, it's faithful). Same hunt document. Notably the literal
+  "water through geometry" could NOT be reproduced — reservoir water occludes
+  correctly on both backends everywhere inspected.
+- Deferred engineering items (measurement- or surface-gated) are enumerated
+  with owners in docs/WEB_BACKLOG.md's status ledger: in-game settings overlay
+  on web (WEB-018-full), Asyncify bounding experiment (WEB-022), pass-split
+  coalescing (WEB-021res), combiner attr packing (WEB-028, armed diagnostic),
+  shader-eviction gfx_pc hook (WEB-050b, conditional), pipeline prewarm
+  (WEB-054). The wasm sim-hash lineage ruling (WEB-036) is documented above.
+
+### Resolved (kept for discoverability)
+
+- **RenderScale blocky artifacting** — root cause was the WebGPU DEFAULT
+  device limit (8192) plus a hardcoded cap, not hardware: fixed by requesting
+  the adapter's real maxTextureDimension2D (verified live: 16384 granted).
+- **Menu glyph corruption** ("SELECT"→"SYLYCT") — bind-group cache
+  handle-reuse ABA, fixed with cache invalidation on view/BGL release
+  (`d820ff1`); the deterministic menu frame-dump repro is the regression
+  check.
+- **Automated browser gate** — no longer deferred: `ctest web_boot_smoke`
+  (headless-Chrome, zero-dependency CDP) walks gate → ROM → boot → live
+  frames → non-black screenshot → clean console. SKIPs without dist/ROM/
+  Chrome; LABELS web.
+- The wasm32 mission-load crash class (dyn-pool host-pointer seg-alias +
+  static-DL window false-positive on boot logos) — see "ILP32 (wasm32) notes"
+  above (`68afbc6`, `4494a63`).

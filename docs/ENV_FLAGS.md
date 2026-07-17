@@ -414,7 +414,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_ENABLE_AUDIO` | ? |  | 1 |  |
 | `GE007_ENABLE_LEVEL_INTRO` | ? |  | 1 |  |
 | `GE007_ENABLE_LIBAUDIO_LOWPASS` | ? |  | 1 |  |
-| `GE007_ENABLE_RECOVERY` | ? |  | 2 |  |
+| `GE007_ENABLE_RECOVERY` | ? |  | 3 |  |
 | `GE007_ENV_NORMALS_DIAG` | ? |  | 1 |  |
 | `GE007_ENV_RELIGHT_BLEND` | float | 0.6f | 1 | Strength of the smooth-normal relight: 0 keeps the baked luma, 1 fully replaces it with the recomputed Lambert (seam fix vs authored mood dial). |
 | `GE007_ENV_SMOOTH_NORMALS` | int | 0 | 1 | Relight static room surfaces with CPU-averaged, position-merged smooth normals against the level sun to erase per-quad baked-lighting seams. 0 = off (identity). |
@@ -1042,7 +1042,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_VISIBILITY` | ? |  | 1 |  |
 | `GE007_TRACE_VIS_SUPPLEMENT` | ? |  | 1 |  |
 | `GE007_TRACE_WATCH_PAGE_MTX` | ? |  | 1 |  |
-| `GE007_TRACE_WEAPON_AUDIO` | ? |  | 4 |  |
+| `GE007_TRACE_WEAPON_AUDIO` | ? |  | 3 |  |
 | `GE007_TRACE_Y` | ? |  | 1 |  |
 | `GE007_UI_SCALE` | float | 1.0f | 1 | Scales the launcher and in-game overlay text, padding and buttons. 1.0 = default; handhelds usually want ~1.25-1.5 for a readable 7-inch panel. Applies live. |
 | `GE007_UNCAP_FUZZ` | ? |  | 1 |  |
