@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>     /* nanosleep for the native pacer's sub-ms sleep tail */
 #include <SDL.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
@@ -3926,13 +3927,25 @@ void platformFrameSync(void) {
             waited_once = true;
         }
 #else
+        /* Absolute deadline held: recompute rem_ms every iteration, never round
+         * the whole remainder to integer ms (that beat-hitches — the bug this
+         * pacer was built to avoid). Sleep for real down to the last ~0.5ms
+         * instead of burning a core with SDL_Delay(0) the whole tail. */
         while (pace_now < g_paceDeadline) {
             double rem_ms = (double)(g_paceDeadline - pace_now) * 1000.0 / (double)freq;
             if (rem_ms > 2.5) {
                 SDL_Delay((u32)(rem_ms - 2.0));  /* coarse sleep, ~2ms precise tail */
+#if defined(__APPLE__) || defined(__linux__)
+            } else if (rem_ms > 0.5) {
+                nanosleep(&(struct timespec){0, 500000L}, NULL);  /* 0.5ms real sleep, not a core burn */
             } else {
-                SDL_Delay(0);                    /* yield-spin the final stretch */
+                SDL_Delay(0);                    /* final <0.5ms: yield-spin for deadline precision */
             }
+#else
+            } else {
+                SDL_Delay(0);                    /* Windows: keep the original yield-spin (nanosleep res unreliable) */
+            }
+#endif
             pace_now = SDL_GetPerformanceCounter();
         }
 #endif
