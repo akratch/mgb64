@@ -577,8 +577,10 @@ async function boot(romBytes) {
   // aim reticle only appears while aiming — no modern hip-fire crosshair, no
   // hit-marker flashes, no on-target tint — and there is no radar/minimap.
   // These four are the HUD entries of the engine's --faithful preset
-  // (platform_sdl.c s_faithfulPreset); the rest of that preset (post-FX,
-  // RenderScale, FOV) deliberately stays at remaster defaults on web.
+  // (platform_sdl.c s_faithfulPreset); the rest of that preset (post-FX, FOV)
+  // deliberately stays at remaster defaults on web. RenderScale is the exception:
+  // PERF-030 defaults it to native res (1.0) on web — 2x SSAA over CSS x DPR is a
+  // ~5x pixel load the compositor would just downscale.
   args.push("--config-override", "Input.ModernCrosshair=0");
   args.push("--config-override", "Input.HitMarkers=0");
   args.push("--config-override", "Input.ReticleTargetFeedback=0");

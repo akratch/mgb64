@@ -17127,6 +17127,12 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         short U = v->tc[0] * rsp.texture_scaling_factor.s >> 16;
         short V = v->tc[1] * rsp.texture_scaling_factor.t >> 16;
 
+        /* ob/room_id/src_addr use a 2-term gate; the dbg_* block below uses the
+         * 3-term gfx_vtx_dbg_capture_enabled() (adds g_diag_trace_eye_bind).
+         * Intentional: today's eye-bind trace only reads src_addr==0, which this
+         * else-branch already guarantees. A FUTURE diagnostic that reads
+         * ob/room_id/src_addr under g_diag_trace_eye_bind alone would see zeros —
+         * widen this gate to match if you add one. */
         if (gfx_trace_vtx_source_enabled() || gfx_effect_tri_trace_is_enabled()) {
             d->ob[0] = v->ob[0];
             d->ob[1] = v->ob[1];
