@@ -465,12 +465,25 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
     u32 live_frame_bytes = nominal_frame_bytes;
     u32 queue_limit;
 
+    /* GE007_AUDIO_DUMP taps the SYNTHESIZED signal, so it must run BEFORE the
+     * WEB-045 mute ramp mutates the buffer: the dump exists for native-vs-web /
+     * baseline RMS analysis, and the old pause-based mute never touched it —
+     * soft-mute zeroing the tap blinded tools/regression_test.sh's audio lane
+     * on all 20 levels (release-verify catch, 2026-07-17). Device output is
+     * still governed by the ramp below. */
+    if (s_audioDumpEnabled < 0)
+        s_audioDumpEnabled = (getenv("GE007_AUDIO_DUMP") != NULL) ? 1 : 0;
+    if (s_audioDumpEnabled && buf && size > 0) {
+        extern void portAudioDump(const void *buf, unsigned int size);
+        portAudioDump(buf, size);
+    }
+
     /* WEB-045: soft-mute — attenuate the outgoing PCM in place (a ~5 ms ramp to
      * or from silence) rather than pausing the device. Applied here, the last
-     * point before the SDL queue, so it governs every queued buffer AND the dump
-     * capture below. No-op at unity gain: byte-identical when un-muted, and inert
-     * under --deterministic (which never toggles mute). Stereo s16 => size/4
-     * sample-frames. */
+     * point before the SDL queue, so it governs every queued buffer (but NOT
+     * the diagnostic dump tap above). No-op at unity gain: byte-identical when
+     * un-muted, and inert under --deterministic (which never toggles mute).
+     * Stereo s16 => size/4 sample-frames. */
     if (buf && size >= 4) {
         extern void portAudioApplyMuteRamp(s16 *samples, s32 sampleFrames);
         portAudioApplyMuteRamp((s16 *)buf, (s32)(size / 4));
@@ -544,12 +557,8 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
         s_aiStats.queue_limit_bytes = effective_limit;
         s_aiStats.dropped_buffers = s_aiDroppedBuffers;
     }
-    if (s_audioDumpEnabled < 0)
-        s_audioDumpEnabled = (getenv("GE007_AUDIO_DUMP") != NULL) ? 1 : 0;
-    if (s_audioDumpEnabled) {
-        extern void portAudioDump(const void *buf, unsigned int size);
-        portAudioDump(buf, size);
-    }
+    /* Dump tap moved ABOVE the mute ramp (see the WEB-045 block) so the
+     * diagnostic capture records the synthesized signal even while muted. */
     return 0;
 }
 

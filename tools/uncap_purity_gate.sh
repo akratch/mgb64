@@ -135,7 +135,13 @@ for lvl in $LEVELS; do
             continue
         fi
         fuzz_canon="$(canon "$fuzz_json")"
-        [ "$base_canon" != "$fuzz_canon" ] && diverged="$diverged $seed:$fuzz_canon"
+        if [ "$base_canon" != "$fuzz_canon" ]; then
+            # Record the seed only; canons carry whitespace and word-splitting
+            # them in the report loop exploded one divergence into dozens of
+            # garbage "seed" lines (2026-07-17 verify). Keep the fuzz json for
+            # the report loop to re-canon.
+            diverged="$diverged $seed"
+        fi
     done
 
     if [ -z "$diverged" ]; then
@@ -160,9 +166,9 @@ for lvl in $LEVELS; do
     lvl_ok=0
     fail=1
     for d in $diverged; do
-        echo "  level $lvl seed ${d%%:*}: FAIL — render-only frames perturbed sim state (vanilla stable)"
+        echo "  level $lvl seed $d: FAIL — render-only frames perturbed sim state (vanilla stable)"
         echo "      vanilla: $base_canon"
-        echo "      fuzzed:  ${d#*:}"
+        echo "      fuzzed:  $(canon "$TMP/fuzz_${lvl}_${d}.json")"
     done
 done
 
