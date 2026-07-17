@@ -236,6 +236,11 @@ static int s_vp_x = 0, s_vp_y = 0, s_vp_w = 0, s_vp_h = 0;
 static int s_sc_x = 0, s_sc_y = 0, s_sc_w = 0, s_sc_h = 0;
 static bool s_sc_set = false;
 
+/* depth-clip-control granted at device creation: 3D pipelines set
+ * unclippedDepth so far-plane-crossing geometry depth-clamps like GL/Metal
+ * (g_depth_clamp_enabled invariance; DAM-R1). */
+static bool s_unclipped_depth_supported = false;
+
 /* WEB-023-lite: the viewport/scissor rect LAST APPLIED to the current render-pass
  * encoder, so wgpu_draw_triangles can skip re-emitting an unchanged rect (gfx_pc
  * re-sets the same viewport+scissor for every draw in a run — hundreds of
@@ -569,6 +574,25 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
     WGPUDeviceDescriptor ddesc = {0};
     ddesc.label = wgpu_sv("mgb64-device");
     ddesc.requiredLimits = &required_limits;
+    /* DAM-R1 root cause (DAM_PARITY_DEEP_DIVE 2026-07-17 §4.1): gfx_init sets
+     * g_depth_clamp_enabled=true for this backend (sim-hash invariance — the CPU
+     * clipper then passes far-plane-crossing triangles through, exactly like the
+     * GL/Metal depth-clamp paths), but WebGPU's DEFAULT primitive state clips
+     * depth — so distant horizon geometry silently vanished (sky slivers over
+     * the Dam cliffs; any far terrain on any level). Make the claim honest:
+     * request depth-clip-control and set unclippedDepth on the 3D pipelines. */
+    WGPUFeatureName required_features[1];
+    s_unclipped_depth_supported = wgpuAdapterHasFeature(adapter, WGPUFeatureName_DepthClipControl) != 0;
+    if (s_unclipped_depth_supported) {
+        required_features[0] = WGPUFeatureName_DepthClipControl;
+        ddesc.requiredFeatures = required_features;
+        ddesc.requiredFeatureCount = 1;
+    } else {
+        fprintf(stderr,
+                "[webgpu] adapter lacks depth-clip-control: far-plane-crossing "
+                "geometry will be CLIPPED (GL depth-clamps it) — expect missing "
+                "far terrain (DAM-R1 class)\n");
+    }
     ddesc.uncapturedErrorCallbackInfo.callback = on_device_error;
     /* WEB-025: register the device-lost callback at creation so a later GPU loss
      * (process restart / driver reset) surfaces a reload panel instead of a
@@ -1013,6 +1037,7 @@ static bool wgpu_ensure_postfx(void) {
     pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
     pd.primitive.frontFace = WGPUFrontFace_CCW;
     pd.primitive.cullMode = WGPUCullMode_None;
+    pd.primitive.unclippedDepth = s_unclipped_depth_supported ? WGPU_TRUE : WGPU_FALSE;
     pd.multisample.count = 1; pd.multisample.mask = 0xFFFFFFFFu;
     pd.fragment = &fs;   /* no depth-stencil: fullscreen resolve has no depth */
     s_post_pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
@@ -1736,6 +1761,7 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
     pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
     pd.primitive.frontFace = WGPUFrontFace_CCW;
     pd.primitive.cullMode = WGPUCullMode_None;   /* N64 backface handled on CPU */
+    pd.primitive.unclippedDepth = s_unclipped_depth_supported ? WGPU_TRUE : WGPU_FALSE;
     pd.depthStencil = &ds;
     pd.multisample.count = 1;
     pd.multisample.mask = 0xFFFFFFFFu;
@@ -2451,6 +2477,28 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
      * [0,W]x[0,H], zeroing degenerate extents. */
     {
         int vx = s_vp_x, vy = (int)s_scene_h - (s_vp_y + s_vp_h), vw = s_vp_w, vh = s_vp_h;
+        /* DAM-R1 instrumentation: clamping an out-of-range viewport ALTERS the
+         * viewport transform (GL keeps the transform and clips pixels), shifting
+         * geometry near the trimmed edge. Log every rect the clamp changes. */
+        {
+            static int s_vp_trace = -1;
+            if (s_vp_trace < 0) {
+                s_vp_trace = getenv("GE007_WEBGPU_TRACE_VIEWPORT") != NULL ? 1 : 0;
+            }
+            if (s_vp_trace &&
+                (vx < 0 || vy < 0 ||
+                 vx + vw > (int)s_scene_w || vy + vh > (int)s_scene_h)) {
+                static int s_vp_trace_count = 0;
+                if (s_vp_trace_count < 64) {
+                    s_vp_trace_count++;
+                    fprintf(stderr,
+                            "[WGPU-VP] out-of-range viewport pre-clamp: raw=(%d,%d %dx%d) "
+                            "flipped=(%d,%d %dx%d) scene=%ux%u\n",
+                            s_vp_x, s_vp_y, s_vp_w, s_vp_h,
+                            vx, vy, vw, vh, s_scene_w, s_scene_h);
+                }
+            }
+        }
         wgpu_clamp_rect(&vx, &vy, &vw, &vh, (int)s_scene_w, (int)s_scene_h);
         if (vw > 0 && vh > 0) {
             /* WEB-023-lite: skip the Set when the (clamped, Y-flipped) rect is
@@ -2594,6 +2642,7 @@ static bool wgpu_ensure_minimap(void) {
     pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
     pd.primitive.frontFace = WGPUFrontFace_CCW;
     pd.primitive.cullMode = WGPUCullMode_None;
+    pd.primitive.unclippedDepth = s_unclipped_depth_supported ? WGPU_TRUE : WGPU_FALSE;
     pd.multisample.count = 1; pd.multisample.mask = 0xFFFFFFFFu;
     pd.fragment = &fs;   /* no depth-stencil: 2D overlay pass has no depth attachment */
     s_mm_pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);
