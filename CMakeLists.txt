@@ -2056,7 +2056,14 @@ if(EMSCRIPTEN)
         "-sASYNCIFY"
         "-sASYNCIFY_STACK_SIZE=65536"
         "-sALLOW_MEMORY_GROWTH=1"
-        "-sINITIAL_MEMORY=268435456"      # 256 MiB: 12 MB ROM + 8 MB sim pool + GPU staging + headroom
+        # PERF-033: real high-water is ~30 MB (12 MB ROM + 8 MB sim pool + GPU
+        # staging), so 256 MiB was a large upfront commit that raised boot-failure
+        # and tab-eviction odds on the marginal devices (iOS Safari, low-RAM
+        # Android/Chromebooks) broad playability targets. Drop the initial commit
+        # to 128 MiB (still ~4x real usage) and let growth absorb any overflow;
+        # MAXIMUM_MEMORY documents the 512 MiB ceiling.
+        "-sINITIAL_MEMORY=134217728"      # 128 MiB
+        "-sMAXIMUM_MEMORY=536870912"      # 512 MiB ceiling for ALLOW_MEMORY_GROWTH
         "-sSTACK_SIZE=2097152"
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=createMGB64"
