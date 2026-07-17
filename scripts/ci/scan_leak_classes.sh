@@ -99,15 +99,37 @@ report() {  # header  git-output
   fail=1
 }
 
-# (1) diff content: private paths + credentials + proprietary notice.
-c_ps="$(git log --no-walk "${commits[@]}" -G"$path_secret_notice" \
-        --pretty='format:%h %s' --name-only -- . "${guard_excludes[@]}" 2>/dev/null || true)"
-report "private path / credential / proprietary text in a pushed diff" "$c_ps"
+# Content scans are ADDED-lines-only (2026-07-17): `git log -G` matches added
+# AND removed lines, which blocked the one commit class doctrine WANTS pushed —
+# a scrub that deletes already-public leak text (its removal diff necessarily
+# quotes the text it removes; e.g. the personal-email scrub 28839aa). "Never
+# leak going forward" means what a push ADDS to the public remote; removals
+# introduce nothing new there. Commit MESSAGES are still scanned in full below.
+# Emits the same shape as the old -G scan: "<h> <subject>" then hit files.
+scan_added_lines() {  # $1=pattern, then pathspec excludes...
+  local pattern="$1"; shift
+  local out="" c files
+  for c in "${commits[@]}"; do
+    files="$(git show --format= --unified=0 "$c" -- . "$@" 2>/dev/null |
+      PAT="$pattern" awk '
+        /^\+\+\+ b\// { f = substr($0, 7); next }
+        /^\+/ && !/^\+\+\+/ {
+          if (substr($0, 2) ~ ENVIRON["PAT"] && !(f in seen)) { seen[f] = 1; print f }
+        }')"
+    if [ -n "$files" ]; then
+      out+="$(git log --no-walk -1 --pretty='format:%h %s' "$c")"$'\n'"$files"$'\n'
+    fi
+  done
+  printf '%s' "$out"
+}
 
-# (2) diff content: personal email (excluding license/notice files).
-c_em="$(git log --no-walk "${commits[@]}" -G"$personal_email" \
-        --pretty='format:%h %s' --name-only -- . "${guard_excludes[@]}" "${license_excludes[@]}" 2>/dev/null || true)"
-report "personal email address in a pushed diff" "$c_em"
+# (1) diff content (added lines): private paths + credentials + proprietary notice.
+c_ps="$(scan_added_lines "$path_secret_notice" "${guard_excludes[@]}")"
+report "private path / credential / proprietary text added by a pushed diff" "$c_ps"
+
+# (2) diff content (added lines): personal email (excluding license/notice files).
+c_em="$(scan_added_lines "$personal_email" "${guard_excludes[@]}" "${license_excludes[@]}")"
+report "personal email address added by a pushed diff" "$c_em"
 
 # (3) commit messages: all classes (trailers never match -- see header).
 all_pattern="(${private_path}|${secret}|${sdk_notice}|${personal_email})"
