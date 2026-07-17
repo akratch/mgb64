@@ -376,10 +376,15 @@ int g_pcDebugFlyCamera = 0;  /* 0 = gameplay camera, 1 = fly cam. Toggle with F1
 #define FLY_SPEED 50.0f
 #define MOUSE_SENSITIVITY 0.003f
 f32 g_pcVideoGamma = 1.0f;
-#ifdef MGB64_PORTMASTER_GLES
-f32 g_pcRenderScale = 1.0f;   /* R36S: native res — 2x SSAA renders at 1280x960 on a Mali-G31 */
+/* PERF-030: web (WebGPU surface sized at CSS x devicePixelRatio) joins handheld
+ * GLES in defaulting to native res. On a DPR>1 canvas, 2x SSAA is a ~5x pixel
+ * load the compositor then downscales, and a DPR>1 canvas is already effectively
+ * supersampled for 320x240 content. Users with GPU headroom raise it via
+ * Video.RenderScale (--config-override). */
+#if defined(MGB64_PORTMASTER_GLES) || defined(__EMSCRIPTEN__)
+f32 g_pcRenderScale = 1.0f;   /* native res: R36S 2x SSAA = 1280x960 on a Mali-G31; web canvas is already CSS x DPR */
 #else
-f32 g_pcRenderScale = 2.0f;   /* remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
+f32 g_pcRenderScale = 2.0f;   /* desktop remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
 #endif
 s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
 f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
