@@ -261,9 +261,27 @@ static int  s_vp_ax = 0, s_vp_ay = 0, s_vp_aw = 0, s_vp_ah = 0;
 static bool s_sc_applied = false;
 static int  s_sc_ax = 0, s_sc_ay = 0, s_sc_aw = 0, s_sc_ah = 0;
 
+/* PERF-014: the render pipeline and group(0) bind group LAST APPLIED to the
+ * current render-pass encoder (s_pass), so wgpu_draw_triangles can skip the
+ * redundant SetPipeline/SetBindGroup that gfx_pc's per-draw-group material
+ * re-setup emits (consecutive draws in a run frequently repeat the same
+ * pipeline+bind group; on web each Set is a wasm↔JS crossing, ~100-200/frame).
+ * NULL is the "nothing applied yet" sentinel. Like the viewport/scissor trackers
+ * these are render-pass encoder state that does NOT carry across passes, so
+ * wgpu_reset_pass_dynamic_state() clears them at every s_pass begin — otherwise
+ * the first draw of a new pass would wrongly skip a needed SetPipeline. Note:
+ * wgpu_draw_modern_mesh also writes s_pass's pipeline/bind group DIRECTLY,
+ * interleaved with the triangle draws in the same scene pass and bypassing this
+ * dedup, so it updates these trackers to keep the next wgpu_draw_triangles honest
+ * (see there). */
+static WGPURenderPipeline s_pipe_applied = NULL;
+static WGPUBindGroup      s_bg_applied   = NULL;
+
 static void wgpu_reset_pass_dynamic_state(void) {
     s_vp_applied = false;
     s_sc_applied = false;
+    s_pipe_applied = NULL;   /* PERF-014: fresh pass = no pipeline bound */
+    s_bg_applied   = NULL;   /* PERF-014: fresh pass = no bind group bound */
 }
 
 /* ZMODE_DEC decal (gfx_opengl.c / gfx_metal.mm): coplanar decals get a negative
@@ -2713,9 +2731,21 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
         }
     }
 
-    wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
-    if (bg != NULL) {
+    /* PERF-014: skip the SetPipeline/SetBindGroup when unchanged from the last
+     * draw applied to this pass encoder. gfx_pc re-issues full material setup per
+     * draw group, so consecutive draws frequently repeat the same pipeline+bind
+     * group; on web each redundant Set is a wasm↔JS crossing. The trackers are
+     * reset to NULL at every s_pass begin (wgpu_reset_pass_dynamic_state), so the
+     * first draw of a pass always issues both. `pipe` is non-NULL here — the
+     * PERF-005 early-out above (wgpu_pipeline_for == NULL → return) ran before this
+     * point, so a pending/failed pipeline never reaches, nor poisons, the tracker. */
+    if (pipe != s_pipe_applied) {
+        wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
+        s_pipe_applied = pipe;
+    }
+    if (bg != NULL && bg != s_bg_applied) {
         wgpuRenderPassEncoderSetBindGroup(s_pass, 0, bg, 0, NULL);
+        s_bg_applied = bg;
     }
     wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, s_vbuf, voff, bytes);
     wgpuRenderPassEncoderDraw(s_pass, (uint32_t)(3 * buf_vbo_num_tris), 1, 0, 0);
@@ -3281,6 +3311,15 @@ static void wgpu_draw_modern_mesh(struct GfxModernMesh *mesh, const float mvp[4]
 
     wgpuRenderPassEncoderSetPipeline(s_pass, pipe);
     wgpuRenderPassEncoderSetBindGroup(s_pass, 0, res->bg, 1, &dyn_off);
+    /* PERF-014: this draw wrote s_pass's pipeline/bind group directly, bypassing
+     * wgpu_draw_triangles' dedup while sharing the same scene pass. Keep the
+     * trackers honest so the next wgpu_draw_triangles cannot wrongly skip a needed
+     * re-bind: `pipe` IS now the bound pipeline (record it, so a following triangle
+     * draw with the same pipeline can still skip); res->bg was bound WITH a dynamic
+     * offset, so force the next triangle draw to re-issue its group(0) bind (NULL
+     * sentinel) rather than record a handle a different dynamic offset could alias. */
+    s_pipe_applied = pipe;
+    s_bg_applied   = NULL;
     wgpuRenderPassEncoderSetVertexBuffer(s_pass, 0, res->vbuf, 0, mesh->vtx_count * 36u);
     wgpuRenderPassEncoderSetIndexBuffer(s_pass, res->ibuf, WGPUIndexFormat_Uint32, 0, mesh->idx_count * 4u);
     wgpuRenderPassEncoderDrawIndexed(s_pass, res->idx_count, 1, 0, 0, 0);
