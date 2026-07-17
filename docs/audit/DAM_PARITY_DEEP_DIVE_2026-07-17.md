@@ -235,6 +235,12 @@ Raw-cast tail FID-0130/0125 (triaged, MP-leaning); FID-0112 projectile room-sour
 
 ## 8. Prioritized close-out plan for Dam
 
+> **Progress (2026-07-17, same day):** item 1 LANDED (`1cf7aa4` — `--align move-global`,
+> real-pair 29/120→2/84 with the residual being genuine FID-0082 ±1-tick sprint-onset
+> jitter; ctest `movement_comparator_align_unittest`); §7.1–7.3 LANDED (`f65a96b` pixel
+> gate fail-closed + bash-3.2 fix + `--strict-coverage`; `2416ad6` faithful-HUD pins in
+> all seven visual-probe routes, minimap out of parity frames).
+
 | # | Item | Surface | Effort | Verifying instrument |
 |---|---|---|---|---|
 | 1 | Fix movement-comparator tick alignment (§3.1) | harness | S | dam_combat_guard6 movement lane goes green against live ares |
