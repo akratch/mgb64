@@ -61,7 +61,7 @@ a native drop-cap-safe `Audio.QueueTargetFrames` max, and doc/comment fixes).
 | PERF-035 | **LANDED** | `d0bad20` | web load-yields (time-gated `emscripten_sleep(0)`) + pre-teardown audio prefill; hard no-op on native + deterministic; web_boot_smoke green |
 | PERF-034 | **REJECTED** | `ea08b1a` | LTO inflated wasm +25% (Asyncify interaction); closure fails on SDL2's legacy `allocate`/`ALLOC_NORMAL`. Revisit with PERF-031 |
 | PERF-005 | **LANDED** | `4db633e` | async pipeline create (Option B, web-only slice) gated to sync under `g_deterministic`/native; parity + sim_state byte-exact; web_boot_smoke green with the async path active (pipelines complete in warmup, non-black, no errors) |
-| PERF-004 | not started | — | folds into PERF-006 (hot-path reorder); do together |
+| PERF-004 | **LANDED (part 1)** | `f88d7f2` | `g_any_diag_active()` master flag gates the ~19 dead per-triangle skip/tint/focus booleans (byte-identical when diags off, proven by parity + diag spot-check). Part 2 (cull-before-diag) + part 3 (room-cmd attribution) fold into PERF-006 |
 
 ## Index
 
@@ -184,7 +184,7 @@ index on insert/evict. O(1) per command, no behavior change.
 **Validation.** Screenshot suite; the settex diagnostics (`gfx_log_settex_event`) make
 hit/miss behavior easy to A/B.
 
-## PERF-004 — Hoist per-triangle diagnostic gates; cull before diagnostics  `M · Med-High`
+## PERF-004 — Hoist per-triangle diagnostic gates; cull before diagnostics  `M · Med-High`   — ◑ **PART 1 LANDED `f88d7f2`** (master-flag gate; parts 2+3 → PERF-006)
 
 **Problem.** Every emitted triangle evaluates ~35 diagnostic gate booleans — including a
 room-command attribution lookup and focus matching — *before* clip rejection and backface
