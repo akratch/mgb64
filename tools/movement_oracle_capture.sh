@@ -290,9 +290,9 @@ case "$COMPARE_KIND" in
 esac
 if [[ "$COMPARE_KIND" == "movement" ]]; then
     case "$COMPARE_ALIGN" in
-        global|frame|index|move|gameplay-frame) ;;
+        global|frame|index|move|move-global|gameplay-frame) ;;
         *)
-            echo "FAIL: movement --align must be global, frame, index, move, or gameplay-frame: $COMPARE_ALIGN" >&2
+            echo "FAIL: movement --align must be global, frame, index, move, move-global, or gameplay-frame: $COMPARE_ALIGN" >&2
             exit 2
             ;;
     esac

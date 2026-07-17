@@ -302,6 +302,21 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             TIMEOUT 30
     )
+    # Movement-lane twin of the FID-0062 lane (DAM_PARITY_DEEP_DIVE 2026-07-17
+    # §3.1, ROM-free): --align move-global dedupes to the last record per
+    # move.global and pairs onset-rebased sim-ticks, so the native per-frame vs
+    # stock per-tick cadence mismatch no longer manufactures divergences (the
+    # false "sprint regression"). Fail-on-revert: index pairing reddens this.
+    add_test(
+        NAME movement_comparator_align_unittest
+        COMMAND python3 -m unittest tools.tests.test_compare_movement_trace
+    )
+    set_tests_properties(
+        movement_comparator_align_unittest
+        PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30
+    )
     # FID-0063 RNG call-count phase lane (ROM-free): pins the PRNG stepper
     # (bit-exact to src/random.c randomGetNext, golden vectors from the C body)
     # and the per-tick call-count extraction (segment gate at g_GlobalTimer

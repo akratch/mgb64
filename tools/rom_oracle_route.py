@@ -794,7 +794,7 @@ def validate_route(route: dict[str, Any]) -> None:
     if compare_kind not in ("movement", "intro", "visual", "glass"):
         errors.append(f"route compare_kind must be movement, intro, visual, or glass: {compare_kind}")
     elif compare_kind == "movement":
-        if compare_align not in ("global", "frame", "index", "move", "gameplay-frame"):
+        if compare_align not in ("global", "frame", "index", "move", "move-global", "gameplay-frame"):
             errors.append(f"movement route compare_align is unsupported: {compare_align}")
         if compare_profile not in ("full", "dynamics", "scalar-speed", "timing"):
             errors.append(f"movement route compare_profile is unsupported: {compare_profile}")

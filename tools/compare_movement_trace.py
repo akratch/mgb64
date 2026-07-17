@@ -309,6 +309,36 @@ def align_records(
             (i, baseline[baseline_start + i], test[test_start + i])
             for i in range(max(0, count))
         ]
+    if mode == "move-global":
+        # Onset-rebased sim-tick pairing (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.1;
+        # movement-lane twin of compare_combat_trace --align tick / FID-0062).
+        # The two emitters run at different record cadences (native: one record
+        # per rendered frame, move.global advancing by speedframes; stock: one
+        # or more records per tick), so index pairing from onset skews the
+        # timelines. Instead: keep the LAST record per move.global (end-of-tick
+        # state), rebase each side's global to its first MOVING record (the
+        # stock counter includes the menu boot), and pair on the rebased tick.
+        def rebased_by_tick(records: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+            by_global: dict[int, dict[str, Any]] = {}
+            for record in records:
+                tick = record.get("move", {}).get("global")
+                if isinstance(tick, int):
+                    by_global[tick] = record
+            ordered = [by_global[tick] for tick in sorted(by_global)]
+            start = first_moving_index(ordered, motion_threshold)
+            if not ordered:
+                return {}
+            onset = ordered[start].get("move", {}).get("global", 0)
+            return {
+                tick - onset: record
+                for tick, record in by_global.items()
+                if tick >= onset
+            }
+
+        baseline_by_tick = rebased_by_tick(baseline)
+        test_by_tick = rebased_by_tick(test)
+        shared = sorted(set(baseline_by_tick) & set(test_by_tick))
+        return [(tick, baseline_by_tick[tick], test_by_tick[tick]) for tick in shared]
 
     def key_for(record: dict[str, Any]) -> Any:
         move = record.get("move", {})
@@ -673,7 +703,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", help="baseline JSONL trace, usually ROM/emulator")
     parser.add_argument("test", help="test JSONL trace, usually native")
-    parser.add_argument("--align", choices=["global", "frame", "index", "move", "gameplay-frame"], default="global")
+    parser.add_argument(
+        "--align",
+        choices=["global", "frame", "index", "move", "move-global", "gameplay-frame"],
+        default="global",
+    )
     parser.add_argument(
         "--profile",
         choices=["full", "dynamics", "scalar-speed", "timing"],
