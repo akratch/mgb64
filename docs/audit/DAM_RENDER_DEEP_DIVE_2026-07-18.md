@@ -28,6 +28,43 @@ those require a stock-N64 (ares) capture before any change ships.
 
 ---
 
+## ⚠️ CORRECTION 2026-07-18 (post-audit, implementation session): DAM-R1b REFUTED — enum-namespace confusion
+
+**DAM-R1b (the "sRGB surface double-encode", ranked #1 below) is WRONG and has been
+experimentally refuted.** The finding rests on reading the web console's `surface
+format=23` in **wgpu-native's** `WGPUTextureFormat` enum (where `23 = 0x17 =
+RGBA8UnormSrgb`). But the web build links **emdawnwebgpu (Dawn)**, whose enum numbers
+the same formats differently: `BGRA8Unorm = 0x17 = 23`, `RGBA8UnormSrgb = 0x13 = 19`.
+So the browser's `format=23` is **Dawn `BGRA8Unorm` — LINEAR**, the *same kind* of
+format as native's `format=27` (wgpu-native `BGRA8Unorm = 0x1B = 27`). Native and web
+both render into a linear BGRA8 surface; there is **no sRGB attachment and no
+gamma-encode-on-store** anywhere. The "23 vs 27" the audit cited is just the two
+libraries' different integer for the identical format.
+
+**Experimental proof (this session):** implemented the proposed fix in full — a
+non-sRGB `s_scene_format` for the scene target + all render pipelines + a non-sRGB
+present-copy view + surface `viewFormats` (native byte-identical, parity gate green) —
+and it changed the web output by **0** (Dam sky `(65,90,130)` before vs `(68,93,131)`
+after; ground unchanged). Then forced the *surface* itself non-sRGB via
+`wgpu_choose_format` — also 0 effect (both are already `BGRA8Unorm`, so
+`wgpu_nonsrgb_format` is correctly identity). Both experiments reverted.
+
+**Status of the residual over-bright:** the ~7-11 level/channel web-vs-native lift I
+measured on the *3D scene* (and the audit's ~20 on the sky) is real in the CDP
+screenshot but is **NOT an sRGB encode** — mechanism unknown. Leading remaining
+hypotheses: (a) a CDP `Page.captureScreenshot` / canvas color-management artifact that
+is not what a human viewer sees (the 2D gun-barrel blood overlay pixel-MATCHES native
+at (147,·,·), suggesting 2D content is faithful); (b) a genuine but subtle
+Dawn-vs-wgpu-native 3D fog/lighting difference. Distinguishing needs the *actual
+rendered canvas* compared to native by eye, not a CDP capture. **Do not ship the sRGB
+fix.** DAM-R1a (native reproduces nothing) still stands; DAM-R1 overall remains
+"native = clean; web = a small unexplained 3D-scene lift, non-sRGB."
+
+**Lesson:** never interpret a raw WebGPU enum integer without pinning the enum's
+library namespace — wgpu-native and Dawn disagree on `WGPUTextureFormat` values.
+
+---
+
 ## Executive summary — ranked findings
 
 | # | id | area | sev | conf | backends | one-liner |
