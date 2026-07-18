@@ -330,7 +330,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DIAG_XLU_COVERAGE_STENCIL_INCREMENT` | ? |  | 1 |  |
 | `GE007_DIAG_XLU_COVERAGE_WRAP_THIN_CC` | ? |  | 2 |  |
 | `GE007_DIAG_XLU_COVERAGE_WRAP_THIN_RATE` | ? |  | 1 |  |
-| `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC` | ? |  | 4 |  |
+| `GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC` | ? |  | 5 |  |
 | `GE007_DIAG_XLU_RDP_MEMORY_BLEND_CC` | ? |  | 3 |  |
 | `GE007_DIAG_ZMODE_DEC_LESS` | ? |  | 1 |  |
 | `GE007_DIAG_ZMODE_DEC_NO_POLY_OFFSET` | ? |  | 1 |  |
@@ -355,7 +355,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DISABLE_RDP_CVG_SNAPSHOT_RECTS` | ? |  | 1 |  |
 | `GE007_DISABLE_RENDER_CAMERA_CLEARANCE` | ? |  | 1 |  |
 | `GE007_DISABLE_ROOM_POINT_FILTER` | ? |  | 2 |  |
-| `GE007_DISABLE_ROOM_XLU_CVG_MEMORY` | ? |  | 3 |  |
+| `GE007_DISABLE_ROOM_XLU_CVG_MEMORY` | ? |  | 4 |  |
 | `GE007_DISABLE_ROOM_XLU_DEFER` | ? |  | 1 |  |
 | `GE007_DISABLE_ROOM_XLU_SORT` | ? |  | 2 |  |
 | `GE007_DISABLE_SCORCH_MARKS` | ? |  | 1 |  |
@@ -699,7 +699,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_RETRO_FILTER` | enum | PLATFORM_RETRO_FILTER_AUTO | 1 | N64-style output smoothing filter that softens hard pixel edges: auto, off, or on. |
 | `GE007_ROOM_ALPHA_AS_TEXEDGE` | ? |  | 1 |  |
 | `GE007_ROOM_XLU_AS_OPAQUE` | ? |  | 1 |  |
-| `GE007_ROOM_XLU_CVG_MEMORY` | ? |  | 3 |  |
+| `GE007_ROOM_XLU_CVG_MEMORY` | ? |  | 4 |  |
 | `GE007_RUMBLE` | int | 1 | 1 | Controller vibration on the game's faithful Rumble Pak events (weapon fire, taking damage). Needs a physical pad; no effect on keyboard/mouse. |
 | `GE007_RUMBLE_INTENSITY` | int | 100 | 1 | Vibration strength as a percentage (0-100). 0 is the same as Rumble off. |
 | `GE007_SATURATION` | float | 1.15f | 1 | Output color saturation. 1.0 leaves colors unchanged. |
