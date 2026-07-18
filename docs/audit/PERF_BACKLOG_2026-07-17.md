@@ -101,7 +101,26 @@ PERF-005b×008 composition, both cache indexes, PERF-035 re-entry).
 statement, not a proof — headless captures don't exercise gameplay alpha fades.
 Hence W4.0.
 
-### Wave 4 backlog (ranked; review-informed)
+### Wave 4 — EXECUTED 2026-07-18 (all on `main`)
+
+| # | Status | Commit | Result |
+|---|--------|--------|--------|
+| W4.0 | **DONE (standing gate)** | — | combat-tape + `GE007_PERF006_VERIFY`: 7/7 byte-exact, 0 mismatches |
+| W4.1 | **LANDED** | `0abbd19` | `webcap.mjs` + `web_frame_probe` ctest (flood detector proven non-vacuous) + `?arg=` passthrough |
+| W4.2 | **LANDED** | `0933304` | **PERF-031: wasm 4,020,482 → 3,118,775 B (−22.4%)** via IGNORE_INDIRECT + explicit ADD spine (the `main`-owns-the-inlined-`gfx_rapi->init`-edge discovery). PERF-034 LTO re-attempted: **+28% even narrowed → rejected again with data** |
+| W4.3 | **LANDED** | `0398729` | record/replay pipeline prewarm (savedir manifest, works on web IDBFS); shaders buildable at load (pure id decode) → FULL scope; proof: warm run "warmed 28, built 28" before first draw |
+| W4.4 | **LANDED** | `ad1350b` | cache-first SW, atomic hash-keyed generations, offline boot proven end-to-end; dist is now SIX files |
+| W4.5 | **LANDED** | `730a218` (015/016) + `329d428` (019/020/051) + `3729376` (037/038/060/021) | all Tier-3 items; PERF-017 verified done-on-web by PERF-005's FAILED state |
+| W4.6 | **DEFERRED (fresh session)** | — | native audio-synthesis thread: L-effort threading + FID-0089 lifecycle split + thread-sanitizer validation — needs dedicated focus, not a wave tail |
+| W4.7 | **LANDED** | `55b1331` | WEB_BACKLOG / PERFORMANCE_PLAN / PRIORITIZATION reconciled |
+
+Remaining in the perf program after Wave 4: **PERF-052 (W4.6)**, PERF-039
+(AudioWorklet — now unlockable: the SW ships, so the coi-serviceworker COOP/COEP
+path is available), PERF-012 pt2 / PERF-007 (deferred with data — revisit only
+with new evidence or TBDR hardware), PERF-004 pt2/3 + PERF-001 + PERF-018
+(fold-ins now largely subsumed by the PERF-006 split), WEB-023 residual.
+
+### Wave 4 backlog (original ranking; review-informed)
 
 | # | Item | Effort | Rationale |
 |---|------|--------|-----------|
