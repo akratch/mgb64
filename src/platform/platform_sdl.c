@@ -491,6 +491,10 @@ s32 g_pcFxaa = 1;                /* remaster default: on (sprite/alpha/HUD edge 
 s32 g_pcSmaa = 0;                /* W3.E4: subpixel morphological AA (Metal-only); default OFF. When on, replaces FXAA on the output pass (mutually exclusive). --remaster keeps FXAA until the ◆ preset decision (E4.T3). */
 f32 g_pcSharpen = 0.15f;          /* remaster default: mild CAS sharpen (no-op at 0; pairs with SSAA) */
 f32 g_pcFogDensity = 1.0f;
+s32 g_pcSmoothSky = 0;           /* R5 Video.SmoothSky: default OFF (faithful). When on, skip the N64 5-bit
+                                  * (& 0xf8) sky-colour quantization in fog.c so the full 8-bit interpolated
+                                  * sky reaches the renderer and the output dither smooths the gradient.
+                                  * Cosmetic, draw-only; default OFF keeps the masks -> byte-identical. */
 s32 g_pcEnvSmoothNormals = 0;    /* W1.E1: default OFF (identity-first; flip on at the E1 taste checkpoint) */
 f32 g_pcEnvRelightBlend = 0.6f;  /* W1.E1: 0 = keep baked luma, 1 = full Lambert replace; the seam-vs-mood dial */
 s32 g_pcSunShadow = 0;           /* W1.E3: default OFF (identity-first). Capture-and-replay sun shadow map (§4.5). */
@@ -2362,6 +2366,13 @@ void platformRegisterConfig(void)
                           "--config-override Video.FogDensity=VALUE",
                           "Fog density",
                           "Cosmetic haze thickness multiplier. 1.0 leaves fog unchanged; AI sight range is unaffected.");
+    settingsRegisterInt("Video.SmoothSky", &g_pcSmoothSky, 0, 0, 1,
+                        SETTING_SCOPE_LIVE, "GE007_SMOOTH_SKY",
+                        "--config-override Video.SmoothSky=VALUE",
+                        "Smooth sky",
+                        "Skip the N64's 5-bit-per-channel sky-colour quantization so the interpolated sky "
+                        "renders as a smooth gradient (output dither hides any residual banding). "
+                        "0 = the original banded N64 sky (byte-identical); 1 = smooth.");
     settingsRegisterString("Video.TexturePack", g_pcTexturePack, sizeof(g_pcTexturePack), "",
                            SETTING_SCOPE_RESTART, "GE007_TEXTURE_PACK",
                            "--config-override Video.TexturePack=PATH",
@@ -2721,6 +2732,12 @@ static const struct {
     { "Input.GamepadFpsScale",       "0" },      /* per-frame look (vanilla)       */
     { "Input.MinimapEnabled",        "0" },      /* tactical minimap/radar off     */
     { "Audio.OutputFilter",          "0" },      /* faithful raw 22050 synth output */
+    /* Beyond-1:1 sky/fog wins are remaster departures NOT covered by RemasterFX
+     * (they act pre-combiner / on the environment, not in the post-FX stack), so
+     * pin them back to their faithful/default values here. Both equal the
+     * registered defaults -> byte-identical. */
+    { "Video.FogDensity",            "1.0" },    /* R1: original N64 fog thickness  */
+    { "Video.SmoothSky",             "0" },      /* R5: original N64 5-bit sky band */
 };
 
 int platformApplyFaithfulPreset(void)
@@ -2772,6 +2789,13 @@ static const struct {
     { "Video.Gamma",         "1" },
     { "Video.SsaoRadius",    "0.5" },
     { "Video.SsaoIntensity", "1.0" },
+    /* Beyond-1:1 remaster wins (DAM_RENDER_DEEP_DIVE §F, ship-first trio). Both are
+     * cosmetic/draw-only and identity at their faithful default, so they live only in
+     * the remaster preset — the bare defaults and --faithful/--faithful-hd stay
+     * byte-identical. */
+    { "Video.FogDensity",    "0.6" },  /* R1: recede the outdoor fog wall so the reservoir reads
+                                        * as real distance (AI sight range is unaffected).       */
+    { "Video.SmoothSky",     "1" },    /* R5: smooth sky gradient (skip the N64 5-bit quantize). */
 };
 
 int platformApplyRemasterPreset(void)
@@ -2817,6 +2841,8 @@ static const struct {
     { "Input.GamepadRadialDeadzone", "0" },
     { "Input.GamepadFpsScale",       "0" },
     { "Input.MinimapEnabled",        "0" },
+    { "Video.FogDensity",            "1.0" },    /* R1: original N64 fog thickness (see --faithful note) */
+    { "Video.SmoothSky",             "0" },      /* R5: original N64 5-bit sky band                      */
 };
 
 int platformApplyFaithfulHdPreset(void)

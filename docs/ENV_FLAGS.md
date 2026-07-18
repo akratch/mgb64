@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1077 flags** found across the source.
+**1078 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -756,6 +756,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SKY_SCREENSPACE` | ? |  | 2 |  |
 | `GE007_SKY_UV_SCALE` | ? |  | 1 |  |
 | `GE007_SMAA` | int | 0 | 1 | Sharper edge anti-aliasing than FXAA; replaces FXAA when on. 0 = off. Metal renderer only -- no effect on the OpenGL build. |
+| `GE007_SMOOTH_SKY` | int | 0 | 1 | Skip the N64's 5-bit-per-channel sky-colour quantization so the interpolated sky renders as a smooth gradient (output dither hides any residual banding). 0 = the original banded N64 sky (byte-identical); 1 = smooth. |
 | `GE007_SND_ALLOW_LEGACY_OVERLAP` | ? |  | 1 |  |
 | `GE007_SORT_ROOM_XLU` | ? |  | 2 |  |
 | `GE007_SORT_ROOM_XLU_DEFER` | ? |  | 1 |  |

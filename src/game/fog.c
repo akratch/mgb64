@@ -16,6 +16,7 @@ extern s32 getPlayerCount(void);
 #endif
 
 extern s32 g_pcGradePresets;
+extern s32 g_pcSmoothSky;   /* R5 Video.SmoothSky: 1 = skip the 5-bit sky-colour quantization below (default 0 = faithful) */
 extern f32 g_pcGradeLevelSat;
 extern f32 g_pcGradeLevelCon;
 extern f32 g_pcGradeLevelTintR;
@@ -687,9 +688,20 @@ void fogSwitchToSolosky2(f32 arg0)
         (f32)g_EnvironmentMainp->Sky.Blue
         + (arg0 * ((f32)g_EnvironmentAltp->Sky.Blue - (f32)g_EnvironmentMainp->Sky.Blue));
 
-    static_envr.Sky.Red &= 0xf8;
-    static_envr.Sky.Green &= 0xf8;
-    static_envr.Sky.Blue &= 0xf8;
+    /* R5 Video.SmoothSky (opt-in, default OFF = faithful): the N64 RDP carries the
+     * interpolated sky colour at only 5 bits per channel, so the port reproduces that
+     * by masking off the low 3 bits (& 0xf8) -> the characteristic banded sky. When
+     * Video.SmoothSky is on, skip the quantization so the full 8-bit interpolated
+     * colour reaches fogLoadCurrentEnvironment and the existing output dither finishes
+     * the gradient. Default OFF -> the masks run -> byte-identical to the original. */
+#ifdef NATIVE_PORT
+    if (!g_pcSmoothSky)
+#endif
+    {
+        static_envr.Sky.Red &= 0xf8;
+        static_envr.Sky.Green &= 0xf8;
+        static_envr.Sky.Blue &= 0xf8;
+    }
 
     fogLoadCurrentEnvironment(&static_envr);
 }
