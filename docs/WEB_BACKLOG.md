@@ -103,17 +103,22 @@ items reconciled here):
 - **W4.1 `0abbd19`**: browser regression lane (`web_frame_probe` ctest —
   frame-completeness under CPU throttle + movement; the net WEB-022 wanted).
 
+**WAVE-4 CLOSE 2026-07-18**: **WEB-022 LANDED** `0933304` (PERF-031: Asyncify
+narrowed via IGNORE_INDIRECT + explicit ADD spine — wasm 4.02→3.12 MB, −22.4%);
+**WEB-054 prewarm half LANDED** `0398729` (record/replay manifest, full scope —
+shaders buildable at load); PERF-036 SW `ad1350b` (offline + instant repeat
+visits; dist is SIX files now); browser lane `web_frame_probe` standing.
+
 **STILL DEFERRED / OPEN**:
 WEB-018 full (in-game settings overlay on web — seam unblocked via WEB-055),
-WEB-022 (Asyncify narrowing — regression net now EXISTS per W4.1; landing in
-progress as PERF-031/W4.2), WEB-023 residual (per-frame writeBuffer batching),
+WEB-023 residual (per-frame writeBuffer batching),
 WEB-028 fix-half (attr packing — diagnostic in place, no combiner observed
 tripping 16), WEB-036 (ffp-contract — OWNER: requires native baseline
 re-record), WEB-050b (eviction → gfx_pc invalidation hook, only if
-WGPU_SHADER_MAX is ever lowered), WEB-054 prewarm half (→ W4.3 in
-PERF_BACKLOG), WEB-012 worklet half (→ PERF-039, gated on COOP/COEP via
-PERF-036's coi-serviceworker path). Deploy to Pages = owner-gated
-(`web-demo.yml` workflow_dispatch).
+WGPU_SHADER_MAX is ever lowered), WEB-012 worklet half (→ PERF-039, gated on
+COOP/COEP via PERF-036's coi-serviceworker path — the SW now ships, so the
+path is available). Deploy to Pages = owner-gated (`web-demo.yml`
+workflow_dispatch).
 
 **Verification at HEAD**: native build clean; renderer_parity + both apertures +
 sim_state_hash + campaign_route + input/config ctests green; tape gate 7/7
