@@ -2808,6 +2808,113 @@ static struct {
     int free_tex_count;
 } gfx_texture_cache;
 
+/* PERF-012: exact palette-address presence index (fast-reject for TLUT invalidation).
+ *
+ * gfx_dp_load_tlut invalidates the texture cache by palette pointer with two
+ * gfx_texture_cache_delete_by_palette_addr() calls, each a full O(1024) pool
+ * sweep. Measured on CI-palette-heavy scenes (Dam ~12 LOADTLUT/frame, Facility
+ * ~4/frame), the large majority of those sweeps match NO node and delete
+ * nothing — pure wasted scan.
+ *
+ * This index counts, per palette pointer, how many live cache-node slots
+ * (palette_addr0 / palette_addr1) reference it. When the count is zero, no live
+ * node uses that address, so the sweep is provably a no-op and is skipped.
+ * Skipping a sweep that would delete nothing is byte-identical BY CONSTRUCTION
+ * — the pool, hash chains, LRU and GL textures are all untouched either way.
+ * A node's palette_addr0/1 are assigned once at insert and cleared once at
+ * removal (never mutated in place while in_use), so the ++/-- bookkeeping below
+ * is exact.
+ *
+ * Safety: open-addressed, keyed on the raw pointer. A used slot is never reset
+ * to "empty" except by a full cache clear, so probe chains stay intact (a
+ * drained address keeps its tag with count 0, and re-activates if the same
+ * pointer returns — including malloc address reuse). If the table ever cannot
+ * hold a new address (probe overflow / saturation) the index marks itself
+ * UNRELIABLE and every present() query returns true, i.e. it silently reverts
+ * to the original always-sweep behaviour. The index can therefore only ever
+ * save time, never skip a delete that was needed. */
+#define PAL_REF_TABLE_SIZE 4096   /* power of two, > 2 * TEXTURE_CACHE_MAX_SIZE */
+#define PAL_REF_MAX_PROBE  64
+static struct {
+    const uint8_t *addr;   /* NULL == never used (probe-chain terminator) */
+    uint32_t count;        /* live slots referencing addr; 0 == drained tombstone */
+} pal_ref_table[PAL_REF_TABLE_SIZE];
+static bool pal_ref_reliable = true;
+
+static inline size_t pal_ref_hash(const uint8_t *addr) {
+    uintptr_t p = (uintptr_t)addr;
+    p ^= p >> 20;
+    p *= (uintptr_t)0x9E3779B97F4A7C15ull;
+    p ^= p >> 32;
+    return (size_t)(p & (PAL_REF_TABLE_SIZE - 1));
+}
+
+static void pal_ref_reset(void) {
+    memset(pal_ref_table, 0, sizeof(pal_ref_table));
+    pal_ref_reliable = true;
+}
+
+/* Register one live slot referencing addr. */
+static void pal_ref_add(const uint8_t *addr) {
+    if (addr == NULL || !pal_ref_reliable) {
+        return;
+    }
+    size_t h = pal_ref_hash(addr);
+    for (int probe = 0; probe < PAL_REF_MAX_PROBE; probe++) {
+        size_t i = (h + (size_t)probe) & (PAL_REF_TABLE_SIZE - 1);
+        if (pal_ref_table[i].addr == addr) {   /* existing (live or tombstone) */
+            pal_ref_table[i].count++;
+            return;
+        }
+        if (pal_ref_table[i].addr == NULL) {   /* fresh slot */
+            pal_ref_table[i].addr = addr;
+            pal_ref_table[i].count = 1;
+            return;
+        }
+    }
+    /* Cannot record this address exactly — disable the skip optimisation so
+     * every invalidation falls back to the full sweep (always correct). */
+    pal_ref_reliable = false;
+}
+
+/* Deregister one live slot referencing addr. */
+static void pal_ref_remove(const uint8_t *addr) {
+    if (addr == NULL || !pal_ref_reliable) {
+        return;
+    }
+    size_t h = pal_ref_hash(addr);
+    for (int probe = 0; probe < PAL_REF_MAX_PROBE; probe++) {
+        size_t i = (h + (size_t)probe) & (PAL_REF_TABLE_SIZE - 1);
+        if (pal_ref_table[i].addr == addr) {
+            if (pal_ref_table[i].count > 0) {
+                pal_ref_table[i].count--;
+            }
+            return;                            /* keep the tag as a tombstone */
+        }
+        if (pal_ref_table[i].addr == NULL) {
+            return;                            /* not found — nothing to do */
+        }
+    }
+}
+
+/* True unless the address is provably referenced by zero live node slots. */
+static bool pal_ref_present(const uint8_t *addr) {
+    if (addr == NULL || !pal_ref_reliable) {
+        return true;                           /* conservative → full sweep */
+    }
+    size_t h = pal_ref_hash(addr);
+    for (int probe = 0; probe < PAL_REF_MAX_PROBE; probe++) {
+        size_t i = (h + (size_t)probe) & (PAL_REF_TABLE_SIZE - 1);
+        if (pal_ref_table[i].addr == addr) {
+            return pal_ref_table[i].count > 0;
+        }
+        if (pal_ref_table[i].addr == NULL) {
+            return false;                      /* never inserted → no live slot */
+        }
+    }
+    return true;                               /* probe overran → be safe */
+}
+
 static void tex_lru_remove(int idx) {
     struct TextureHashmapNode *n = &gfx_texture_cache.pool[idx];
     if (n->lru_prev >= 0)
@@ -2834,6 +2941,7 @@ static void tex_lru_push_front(int idx) {
 
 static void tex_cache_init(void) {
     memset(&gfx_texture_cache, 0, sizeof(gfx_texture_cache));
+    pal_ref_reset();  /* PERF-012: palette-presence index clears with the cache */
     gfx_texture_cache.lru_head = -1;
     gfx_texture_cache.lru_tail = -1;
     for (int i = 0; i < TEXTURE_CACHE_MAX_SIZE; i++) {
@@ -2918,6 +3026,8 @@ static void tex_cache_evict_lru(void) {
     victim->tile_height = 0;
     victim->palette_index = 0;
     victim->palette_lut_mode = 0;
+    pal_ref_remove(victim->palette_addr0);  /* PERF-012 */
+    pal_ref_remove(victim->palette_addr1);  /* PERF-012 */
     victim->palette_addr0 = NULL;
     victim->palette_addr1 = NULL;
     victim->texture_id = 0;
@@ -2969,6 +3079,8 @@ static void gfx_texture_cache_delete_matching(bool (*match_fn)(const struct Text
         node->full_image_line_size_bytes = 0;
         node->tile_width = 0;
         node->tile_height = 0;
+        pal_ref_remove(node->palette_addr0);  /* PERF-012 */
+        pal_ref_remove(node->palette_addr1);  /* PERF-012 */
         node->palette_addr0 = NULL;
         node->palette_addr1 = NULL;
         node->texture_id = 0;
@@ -3011,6 +3123,13 @@ static void gfx_texture_cache_delete_by_palette_addr(const uint8_t *palette_addr
         return;
     }
 
+    /* PERF-012: skip the full pool sweep when no live node references this
+     * palette pointer. Provably a no-op in that case (nothing would match), so
+     * the result is byte-identical to running the sweep. */
+    if (!pal_ref_present(palette_addr)) {
+        return;
+    }
+
     gfx_texture_cache_delete_matching(gfx_texture_cache_match_palette_addr,
                                       0, palette_addr);
 }
@@ -3041,6 +3160,8 @@ static void gfx_texture_cache_discard_node(struct TextureHashmapNode *node) {
     node->full_image_line_size_bytes = 0;
     node->tile_width = 0;
     node->tile_height = 0;
+    pal_ref_remove(node->palette_addr0);  /* PERF-012 */
+    pal_ref_remove(node->palette_addr1);  /* PERF-012 */
     node->palette_addr0 = NULL;
     node->palette_addr1 = NULL;
     node->texture_id = 0;
@@ -14943,6 +15064,8 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
     new_node->tile_height = tile_height;
     new_node->palette_addr0 = palette_addr0;
     new_node->palette_addr1 = palette_addr1;
+    pal_ref_add(palette_addr0);  /* PERF-012: track palette-pointer presence */
+    pal_ref_add(palette_addr1);  /* PERF-012 */
     new_node->palette_index = palette_index;
     new_node->palette_lut_mode = palette_lut_mode;
     new_node->cms = 0;
