@@ -40,6 +40,7 @@
 #include "gfx_screen_config.h"
 #include "gfx_room_normals.h"
 #include "texture_pack.h"
+#include "settex_cache_key.h"   /* TMEM-2: settex cache key discriminator (shared with test) */
 #include "bg.h"
 #include "fog.h"
 #include "front.h"
@@ -1069,6 +1070,16 @@ static struct {
     uint32_t gl_tex_id;
     float    tex_w, tex_h;
     uint32_t fmt, siz;
+    /* TMEM-2: the (fmt, siz, palette) the cached RGBA was actually decoded from.
+     * The lookup requires these to match the current decode identity, so the
+     * same texturenum re-drawn through a different palette (a runtime G_LOADTLUT
+     * re-stores its TLUT) is a MISS and re-decodes instead of returning the
+     * first palette's colours. fmt/siz are stable per texturenum (ROM header),
+     * so keying on them is inert today and byte-identical; pal_key is the live
+     * discriminator. lutmode_key records the CI decode branch (IA16 vs RGBA16)
+     * for completeness — also stable per texturenum. */
+    uintptr_t pal_key;    /* palette pointer identity (0 for non-CI) */
+    uint8_t  lutmode_key; /* lutmodeindex used to decode (CI only) */
     uint8_t  maxlod;
     uint8_t  unk0c_02;
     uint8_t  cms, cmt;
@@ -1090,6 +1101,10 @@ static int settex_cache_count = 0;
 static int16_t settex_index[MAX_TEXTURES];
 _Static_assert(SETTEX_CACHE_SIZE <= INT16_MAX,
                "settex_index slot+1 convention must fit in int16_t");
+/* TMEM-2: keep the ROM-free key discriminator's CI constant pinned to the GBI
+ * value gfx_pc.c decodes against, so settex_cache_key.h cannot drift. */
+_Static_assert(G_IM_FMT_CI == GFX_SETTEX_KEY_FMT_CI,
+               "settex_cache_key.h GFX_SETTEX_KEY_FMT_CI must equal G_IM_FMT_CI");
 
 struct SetTexTileState {
     bool valid;
@@ -22530,6 +22545,18 @@ static void gfx_sp_set_other_mode(uint32_t shift, uint32_t num_bits, uint64_t mo
 
 /* ===== G_SETTEX handler (Rare's texture-by-number system) ===== */
 
+/* TMEM-2: identity of the palette a texturenum currently decodes against.
+ * texGetPalette() is a side-effect-free lookup that returns the stored TLUT
+ * pointer (which encodes both palette address and the resolved 4-bit bank) for
+ * CI textures and NULL for everything else, so the returned pointer alone is the
+ * palette key — 0 for non-CI. It is stable per texturenum unless a runtime
+ * G_LOADTLUT re-stores the palette, which is exactly the aliasing case the
+ * settex cache must re-decode for. */
+static uintptr_t gfx_settex_palette_key(int texturenum) {
+    s32 ncolours = 0;
+    return (uintptr_t)texGetPalette(texturenum, &ncolours);
+}
+
 static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     s_material_dirty = true;  /* PERF-006 §3.1: settex_active/gl_tex_id/tex_w/h/texturenum/tile_state (G_SETTEX) */
     int texturenum = w1 & 0xFFF;
@@ -22569,6 +22596,19 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
     }
     for (int i = scan_lo; i < scan_hi; i++) {
         if (settex_cache[i].valid && settex_cache[i].texturenum == (uint32_t)texturenum) {
+            /* TMEM-2: a CI texturenum re-drawn against a different TLUT must
+             * re-decode against the new palette, not return the first decode's
+             * colours. Non-CI entries carry no palette and always hit, so their
+             * lookup is unchanged / byte-identical. gfx_settex_cache_key_hit()
+             * is the shared, unit-tested discriminator (settex_cache_key.h). The
+             * palette key is derived only for CI entries so the O(palette) scan
+             * is not paid on the common non-CI hit. */
+            if (settex_cache[i].fmt == G_IM_FMT_CI &&
+                !gfx_settex_cache_key_hit(settex_cache[i].fmt,
+                                          settex_cache[i].pal_key,
+                                          gfx_settex_palette_key(texturenum))) {
+                continue;  /* palette changed -> miss, fall through to reload */
+            }
             settex_active = true;
             settex_gl_tex_id = settex_cache[i].gl_tex_id;
             settex_tex_w = settex_cache[i].tex_w;
@@ -23057,8 +23097,32 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
 
     /* Cache it — store FULL metadata */
     {
-        int slot;
-        if (settex_cache_count < SETTEX_CACHE_SIZE) {
+        int slot = -1;
+        /* TMEM-2: if this texturenum already occupies a slot, overwrite it in
+         * place. This path is reached only on a genuine re-decode (the lookup
+         * missed despite a live slot — e.g. its palette changed), so a first
+         * load never takes it and stays byte-identical. Reusing the slot keeps
+         * the cache at one entry per texturenum (settex_index stays 1:1) and
+         * releases the superseded GL texture + rgba instead of leaking them.
+         * Flush first for the same reason eviction does: buf_vbo may hold
+         * triangles recorded against the old texture. */
+        if ((uint32_t)texturenum < MAX_TEXTURES) {
+            int existing = (int)settex_index[texturenum] - 1;
+            if (existing >= 0 && existing < settex_cache_count &&
+                settex_cache[existing].valid &&
+                settex_cache[existing].texturenum == (uint32_t)texturenum) {
+                gfx_flush();
+                if (settex_cache[existing].gl_tex_id != 0) {
+                    gfx_invalidate_settex_gl_texture(settex_cache[existing].gl_tex_id);
+                    gfx_rapi->delete_texture(settex_cache[existing].gl_tex_id);
+                }
+                free(settex_cache[existing].rgba);
+                slot = existing;
+            }
+        }
+        if (slot >= 0) {
+            /* reuse existing slot for this texturenum (in-place re-decode) */
+        } else if (settex_cache_count < SETTEX_CACHE_SIZE) {
             slot = settex_cache_count++;
         } else {
             /* Cache full — evict oldest entry (slot 0), shift down.
@@ -23091,6 +23155,11 @@ static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
         settex_cache[slot].tex_h = (float)h;
         settex_cache[slot].fmt = fmt;
         settex_cache[slot].siz = sz;
+        /* TMEM-2: record the palette identity the RGBA was decoded from (the
+         * pointer texGetPalette resolved above; 0 for non-CI), so a later draw
+         * of this texturenum against a different TLUT is a cache miss. */
+        settex_cache[slot].pal_key = (uintptr_t)ci_palette;
+        settex_cache[slot].lutmode_key = (uint8_t)tex->lutmodeindex;
         settex_cache[slot].maxlod = tex->maxlod;
         settex_cache[slot].unk0c_02 = tex->unk0c_02 ? 1 : 0;
         settex_cache[slot].cms = 0;

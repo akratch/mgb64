@@ -1245,6 +1245,19 @@ if(BUILD_TESTING)
     target_include_directories(test_spectrum_settile PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME spectrum_settile COMMAND test_spectrum_settile)
 
+    # G_SETTEX texture-cache key discriminator — ROM-free unit test (TMEM-2,
+    # DAM_RENDER_DEEP_DIVE 2026-07-18): the settex cache was keyed on the texture
+    # number alone, so a CI texture re-drawn against a different TLUT returned the
+    # first palette's decode. gfx_settex_cache_key_hit() (the header gfx_pc.c uses
+    # in the cache lookup) requires CI entries to match the live palette identity;
+    # non-CI entries ignore it and stay byte-identical. A revert of the palette
+    # component reddens the changed-palette / grayscale-fallback cases.
+    add_executable(test_settex_cache_key
+        "${CMAKE_SOURCE_DIR}/tests/test_settex_cache_key.c"
+    )
+    target_include_directories(test_settex_cache_key PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
+    add_test(NAME settex_cache_key COMMAND test_settex_cache_key)
+
     # Setup padnames/boundpadnames re-layout — ROM-free unit test (FID-0037):
     # the setup file's padnames (header word 8) / boundpadnames (word 9) tables are
     # big-endian 32-bit file-local offset arrays, zero-terminated, each pointing at
