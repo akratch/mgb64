@@ -28,6 +28,32 @@ those require a stock-N64 (ares) capture before any change ships.
 
 ---
 
+## Implementation status (2026-07-18, same-day execution session)
+
+Every actionable finding was either landed, refuted, or deferred-with-evidence:
+
+| finding | status | commit / note |
+|---|---|---|
+| DAM-R1a (native over-bright) | **REFUTED / closed** | camera phase-skew, not shading (`d0d6152`) |
+| DAM-R1b (sRGB surface) | **REFUTED** | enum-namespace confusion — web fmt 23 = Dawn BGRA8Unorm (linear); full fix implemented → 0 web effect → reverted (`bb4a824`). Residual ~10-lvl CDP-capture artifact, not a render bug |
+| BLEND-1 (coverage-alpha writeMask) | **LANDED** | `d10866a` — cvg pixels now match GL (26→≤3), non-cvg byte-identical |
+| AC-3 (G_AC_DITHER dissolve) | **LANDED** | `f1cc65f` — WGSL now emits the dissolve like GL/Metal |
+| DAM-R1c (room_water_alpha_suppress) | **LANDED** | `f1cc65f` — ported to WGSL |
+| TMEM-2 (settex cache key) | **LANDED** | `37dd559` — palette-identity key, byte-identical |
+| R1 (FogDensity remaster default) | **LANDED** | `262c4cf` — 0.6 in remaster preset, faithful pinned 1.0 |
+| R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
+| TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
+| TMEM-1 (format reinterpretation) | **DEFERRED (evidence)** | no valid settex-path signal; real home = texSelect/cataloging; needs stock-ares monitor capture |
+| DAM-R2 (R-01/R-02 authored PVS) | **DEFERRED** | needs stock-ares capture at INTRO_CAMERA_INDEX=4 |
+| R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
+| FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
+
+The one blocking dependency for the deferred faithfulness items remains a **stock-N64
+(ares) Dam capture set** (§G) — run the ares binary alone. PERF-013/014/015/016
+audited clean; the perf program (Wave 4) is separately complete.
+
+---
+
 ## ⚠️ CORRECTION 2026-07-18 (post-audit, implementation session): DAM-R1b REFUTED — enum-namespace confusion
 
 **DAM-R1b (the "sRGB surface double-encode", ranked #1 below) is WRONG and has been
