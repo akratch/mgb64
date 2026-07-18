@@ -1417,10 +1417,17 @@ static s32 sndStateIsLive(const ALSoundState *state)
 #ifdef NATIVE_PORT
 s32 sndStateIsOwnedBySlot(ALSoundState *state, ALSoundState **slot)
 {
-    return slot != NULL
+    /* PERF-052 ADDED BRACKET: sim-side ownership poll (chrobjClearStaleSoundSlot)
+     * reads playingState/state->state while the synth worker's handler may be
+     * mutating them (TSAN-caught pair vs sndHandleEvent). See the canonical
+     * PERF-052 bracket note at sndPlaySfxInternal's tail. No-op single-threaded. */
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
+    s32 owned = slot != NULL
         && *slot == state
         && sndStateIsLive(state)
         && state->state == (ALSoundState *)slot;
+    osSetIntMask(mask);
+    return owned;
 }
 #endif
 
@@ -3145,12 +3152,20 @@ void sndSetPriority(ALSoundState *state, u8 priority)
  */
 u8 sndGetPlayingState(ALSoundState *state)
 {
+    /* PERF-052 ADDED BRACKET: the FID-0089-adjacent liveness poll (SE-buffer
+     * checks from sim code) reads playingState, which the synth worker's
+     * handler writes. Same class as the TSAN-caught sndStateIsOwnedBySlot pair;
+     * see the canonical PERF-052 note at sndPlaySfxInternal's tail. */
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
+    u8 playing = AL_STOPPED;
+
     if (sndStateInPool(state))
     {
-        return state->playingState;
+        playing = state->playingState;
     }
 
-    return AL_STOPPED;
+    osSetIntMask(mask);
+    return playing;
 }
 
 #ifdef DEBUG
@@ -3387,9 +3402,14 @@ static ALSoundState *sndPlaySfxInternal(struct ALBankAlt_s *soundBank, s16 sound
 void sndDeactivate(ALSoundState *state)
 {
     ALSndpEvent evt;
+    /* PERF-052 ADDED BRACKET: liveness read + unk3e write on an event-visible
+     * state from sim code, concurrent with the worker's handler. Same class as
+     * the TSAN-caught pairs; see the note at sndPlaySfxInternal's tail. */
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
 
     if (!sndStateIsLive(state))
     {
+        osSetIntMask(mask);
         return;
     }
 
@@ -3399,6 +3419,8 @@ void sndDeactivate(ALSoundState *state)
     state->unk3e = (s8) (state->unk3e & (~(s16)(0x10)));
 
     alEvtqPostEvent(&g_sndPlayerPtr->evtq, (ALEvent *)&evt, 0);
+
+    osSetIntMask(mask);
 }
 
 /**
@@ -3471,8 +3493,24 @@ void sndDeactivateAllSfxByFlag_3(void)
 void sndCreatePostEvent(ALSoundState *state, s16 eventType, s32 arg2)
 {
     ALSndpEvent evt;
+    OSIntMask mask;
+    s32 live;
 
-    if (!sndStateIsLive(state))
+    /* PERF-052 ADDED BRACKET (read-only form): sim code posts volume/pan events
+     * every frame (bondview tank engine, chrai slots, chrobj props), and the
+     * liveness gate reads state->playingState — which the synth worker's
+     * sndHandleEvent writes under the same lock. Same class as the TSAN-caught
+     * sndStateIsOwnedBySlot pair. Only the READ is bracketed: the ALSndpEvent
+     * build + alEvtqPostEvent below already take the lock internally
+     * (alEvtqPostEvent brackets its own queue splice), and that event is memcpy'd
+     * WHOLE into the queue, so it is left codegen-adjacent and untouched to keep
+     * the committed tape baselines byte-exact. No-op single-threaded (osSetIntMask
+     * is the historical return-0 unless the worker exists). */
+    mask = osSetIntMask(OS_IM_NONE);
+    live = sndStateIsLive(state);
+    osSetIntMask(mask);
+
+    if (!live)
     {
         if (state != NULL)
         {
@@ -3560,20 +3598,35 @@ void sndSetSfxSlotVolume(u8 sfxIndex, u16 volume)
     g_sndSfxSlotNaturalVolume[sfxIndex] = volume;
     g_sndSfxSlotVolume[sfxIndex] = (s16) ((f32) volume * g_sndSfxVolumeScale);
 
-    for (i = 0; i < s_sndPlayerStateCount; i++)
+    /* PERF-052 ADDED BRACKET: this pool walk polls sndStateIsLive(item) (reads
+     * item->playingState / item->sound) for every state while the synth worker's
+     * sndHandleEvent mutates those same fields. Menu/watch volume changes
+     * (front.c, watch.c) run this while the worker is live. Same class as the
+     * sibling pool walk sndDeactivateAllSfxByFlag, which already brackets — so we
+     * mirror it exactly (the per-item ALSndpEvent build + alEvtqPostEvent live
+     * inside the section, as they do there, which is proven tape-neutral). The
+     * volume-array writes above are main-thread-only (the worker never reads
+     * g_sndSfxSlotVolume), so they stay outside. No-op single-threaded. */
     {
-        item = &((ALSoundState *)g_sndPlayerPtr->sndState)[i];
+        OSIntMask mask = osSetIntMask(OS_IM_NONE);
 
-        if (sndStateIsLive(item))
+        for (i = 0; i < s_sndPlayerStateCount; i++)
         {
-            if (sndKeyMapUsesSfxSlot(item->sound->keyMap, sfxIndex))
-            {
-                evt.common.type = AL_SNDP_RELEASE_EVT;
-                evt.common.state = item;
+            item = &((ALSoundState *)g_sndPlayerPtr->sndState)[i];
 
-                alEvtqPostEvent(&g_sndPlayerPtr->evtq, (ALEvent *)&evt, 0);
+            if (sndStateIsLive(item))
+            {
+                if (sndKeyMapUsesSfxSlot(item->sound->keyMap, sfxIndex))
+                {
+                    evt.common.type = AL_SNDP_RELEASE_EVT;
+                    evt.common.state = item;
+
+                    alEvtqPostEvent(&g_sndPlayerPtr->evtq, (ALEvent *)&evt, 0);
+                }
             }
         }
+
+        osSetIntMask(mask);
     }
 }
 
@@ -3599,7 +3652,19 @@ void sndClearPositionHint(void) {
 }
 
 void sndSetStatePosition(ALSoundState *state, f32 x, f32 y, f32 z) {
+    /* PERF-052 ADDED BRACKET: sndApplyStatePositionPan polls sndStateIsLive and
+     * then re-reads state->playingState (== AL_PLAYING gate) — both worker-written
+     * — before writing state->pan and posting a pan event. Sim code drives this
+     * every frame for positional SFX (chrai slots, chrobj emitters), concurrent
+     * with the synth worker's sndHandleEvent. Bracket the whole call: the pan
+     * math (portAudioComputeSpatialMix) is lock-free and the nested
+     * sndCreatePostEvent re-enters the recursive lock harmlessly; sndSetStatePosition
+     * builds no on-stack event of its own, so it is tape-neutral. The other caller
+     * of sndApplyStatePositionPan (sndApplyPositionHint, from sndSetupSound) acts on
+     * a not-yet-event-visible state and is left unbracketed. No-op single-threaded. */
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
     sndApplyStatePositionPan(state, x, y, z, 1);
+    osSetIntMask(mask);
 }
 
 void sndClearStatePosition(ALSoundState *state) {
