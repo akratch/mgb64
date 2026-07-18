@@ -198,7 +198,89 @@ void osSetEventMesg(OSEvent e, OSMesgQueue *mq, OSMesg msg) {
 }
 
 OSIntMask osGetIntMask(void) { return 0; }
+
+/* ===== PERF-052: reified interrupt-mask mutual exclusion ============= *
+ *
+ * On the N64 every libaudio critical section is bracketed with
+ *     mask = osSetIntMask(OS_IM_NONE);  ...  osSetIntMask(mask);
+ * which disables interrupts so the game thread and the interrupt-driven
+ * audio thread cannot touch shared libaudio state at the same time. When
+ * the port flattened audio onto one thread this became a pure no-op
+ * (osSetIntMask returned 0), which was correct because there was only one
+ * thread.
+ *
+ * PERF-052 (opt-in, native-only) restores the original two-thread structure:
+ * a dedicated worker runs the synth (alAudioFrame) while the main thread does
+ * everything else. That reintroduces exactly the cross-thread contention the
+ * brackets were written to guard, so we REIFY the brackets as a real recursive
+ * lock — the code's own intended mutual exclusion, made real again.
+ *
+ * Protocol (only engaged while the synth worker exists, i.e.
+ * g_audioSynthLockActive != 0):
+ *   - osSetIntMask(OS_IM_NONE)  -> acquire the lock, return PORT_SYNTH_LOCK_TOKEN
+ *   - osSetIntMask(TOKEN)       -> release the lock (the caller's paired restore)
+ *   - osSetIntMask(anything else) -> not a lock op (e.g. sched.c's OS_IM_VI
+ *                                    VI-mode swap): mirror the legacy no-op,
+ *                                    return 0, touch no lock state. The caller's
+ *                                    matching restore then passes that 0 back
+ *                                    here and also no-ops, so its bracket stays
+ *                                    balanced.
+ * The token is never inspected by any caller — the save/restore idiom only ever
+ * feeds it straight back to osSetIntMask — so returning a sentinel is safe. It
+ * is deliberately NOT a real OS_IM_* mask (all of which have low byte 0x01).
+ *
+ * The mutex is RECURSIVE because bracketed helpers nest on one thread (e.g.
+ * snd.c sndDeactivateAllSfxByFlag brackets, then calls alEvtqPostEvent which
+ * brackets again). A recursive mutex makes the reified brackets compose exactly
+ * as the original per-thread interrupt mask did.
+ *
+ * When g_audioSynthLockActive == 0 (the default: no worker, single thread, and
+ * every web build) osSetIntMask is the exact historical no-op — one predicted-
+ * not-taken branch, no lock, returns 0 — so the default path stays
+ * byte-identical with zero measurable overhead. */
+int g_audioSynthLockActive = 0;
+
+#define PORT_SYNTH_LOCK_TOKEN ((OSIntMask)0x5A4C4B00u) /* 'ZLK\0' — not a mask */
+
+#ifndef __EMSCRIPTEN__
+#include <pthread.h>
+static pthread_mutex_t s_synthLock;
+static int             s_synthLockReady = 0;
+
+/* Called (once, on the main thread) from portAudioSynthWorkerStart before the
+ * worker exists and before g_audioSynthLockActive is set — so the recursive
+ * mutex is fully constructed before any thread can reach the acquire path. */
+void portSynthLockInit(void) {
+    if (!s_synthLockReady) {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&s_synthLock, &attr);
+        pthread_mutexattr_destroy(&attr);
+        s_synthLockReady = 1;
+    }
+}
+
+OSIntMask osSetIntMask(OSIntMask mask) {
+    if (g_audioSynthLockActive) {
+        if (mask == OS_IM_NONE) {
+            pthread_mutex_lock(&s_synthLock);
+            return PORT_SYNTH_LOCK_TOKEN;
+        }
+        if (mask == PORT_SYNTH_LOCK_TOKEN) {
+            pthread_mutex_unlock(&s_synthLock);
+            return 0;
+        }
+        /* Non-lock mask (OS_IM_VI etc.): legacy no-op. */
+        return 0;
+    }
+    (void)mask;
+    return 0; /* default single-thread path: exact historical behavior */
+}
+#else
+void portSynthLockInit(void) { }
 OSIntMask osSetIntMask(OSIntMask mask) { (void)mask; return 0; }
+#endif
 
 /* ===== Deterministic mode ===== */
 int g_deterministic = 0;

@@ -21,6 +21,38 @@ void portAudioTraceSfxJson(const char *fmt, ...)
 }
 #endif
 
+/* PERF-052: frame stamp for this file's audio-trace lines (the timer argument
+ * every portAudioTraceSfxJson call passes). g_GlobalTimer is a MAIN-THREAD
+ * global (written by lvlManageMpGame each tick); with the opt-in audio-synth
+ * worker enabled, the sndPlayerVoiceHandler subtree (sndHandleEvent,
+ * sndDisposeSound, sndPlaySfxInternal, ...) runs on the worker, and evaluating
+ * g_GlobalTimer as a trace argument there — even with tracing disabled, the
+ * argument is still read — races the main thread's tick write. Every trace
+ * stamp therefore goes through this expression: on the worker
+ * (g_sndOnSynthWorker, thread-local, set only on that thread) it reads the
+ * snapshot the main thread took at job-kick time under the job mutex
+ * (audio_pc.c g_sndSynthFrameStamp), so the worker never touches the live
+ * timer; everywhere else it is exactly the old g_GlobalTimer read. Stamp value
+ * is identical either way — the timer cannot advance while the job it stamps
+ * is in flight.
+ *
+ * DELIBERATELY a macro over plain variable reads, NOT a helper function: an
+ * earlier draft used a cross-TU accessor call, and that call's codegen changed
+ * the stack frames of these event-posting functions — whose on-stack
+ * ALSndpEvent unions alEvtqPostEvent memcpy's WHOLE into the event queue,
+ * unassigned bytes included. The committed tape baselines encode those
+ * incidental bytes (audio reaches the sim hash via the FID-0089 voice
+ * write-backs), so the call version deterministically flipped the Dam tape
+ * hashes; this read-only expression form leaves them byte-identical. */
+#ifdef NATIVE_PORT
+extern __thread int g_sndOnSynthWorker; /* audio_pc.c: 1 only on the worker    */
+extern s32 g_sndSynthFrameStamp;        /* audio_pc.c: kick-time timer snapshot */
+#define sndTraceFrameStamp() \
+    (g_sndOnSynthWorker ? g_sndSynthFrameStamp : g_GlobalTimer)
+#else
+#define sndTraceFrameStamp() (g_GlobalTimer)
+#endif
+
 /**
  * EU .data, offset from start of data_seg : 0x3620
 */
@@ -596,7 +628,7 @@ static void sndStubReleaseStateMeta(SndStubStateMeta *meta) {
         portAudioTraceSfxJson(
             "{\"event\":\"snd_owner_clear\",\"frame\":%d,\"state\":\"%p\",\"owner\":\"%p\","
             "\"path\":\"stub\"}",
-            g_GlobalTimer,
+            sndTraceFrameStamp(),
             (void *)&meta->state,
             (void *)meta->ownerSlot);
         *meta->ownerSlot = NULL;
@@ -724,7 +756,7 @@ void sndCreatePostEvent(ALSoundState *state, s16 eventType, s32 arg2) {
                 portAudioTraceSfxJson(
                     "{\"event\":\"post_event\",\"frame\":%d,\"type\":%d,\"state\":\"%p\",\"sound\":%d,\"value\":%d,"
                     "\"computed_volume\":%.6f,\"has_position\":%d,\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"auth_mix\":%d}",
-                    g_GlobalTimer,
+                    sndTraceFrameStamp(),
                     (int)eventType,
                     (void *)state,
                     meta->soundIndex,
@@ -746,7 +778,7 @@ void sndCreatePostEvent(ALSoundState *state, s16 eventType, s32 arg2) {
 
                 portAudioTraceSfxJson(
                     "{\"event\":\"post_event\",\"frame\":%d,\"type\":%d,\"state\":\"%p\",\"sound\":%d,\"pitch\":%.6f,\"auth_mix\":%d}",
-                    g_GlobalTimer,
+                    sndTraceFrameStamp(),
                     (int)eventType,
                     (void *)state,
                     meta->soundIndex,
@@ -772,7 +804,7 @@ void sndCreatePostEvent(ALSoundState *state, s16 eventType, s32 arg2) {
                 portAudioTraceSfxJson(
                     "{\"event\":\"post_event\",\"frame\":%d,\"type\":%d,\"state\":\"%p\",\"sound\":%d,"
                     "\"fx_mix\":%d,\"computed_fx_mix\":%d,\"auth_mix\":%d}",
-                    g_GlobalTimer,
+                    sndTraceFrameStamp(),
                     (int)eventType,
                     (void *)state,
                     meta->soundIndex,
@@ -848,7 +880,7 @@ void sndSetStatePosition(ALSoundState *state, f32 x, f32 y, f32 z) {
 
     portAudioTraceSfxJson(
         "{\"event\":\"state_position\",\"frame\":%d,\"state\":\"%p\",\"x\":%.3f,\"y\":%.3f,\"z\":%.3f}",
-        g_GlobalTimer,
+        sndTraceFrameStamp(),
         (void *)state,
         (double)x,
         (double)y,
@@ -978,7 +1010,7 @@ ALSoundState *sndPlaySfx(struct ALBankAlt_s *soundBank, s16 soundIndex, ALSoundS
                 "\"attack_time\":%d,\"decay_time\":%d,\"release_time\":%d,"
                 "\"attack_vol\":%u,\"decay_vol\":%u,\"attack_native\":%d,\"decay_native\":%d,"
                 "\"pan_native\":%d,\"has_position\":%d}",
-                g_GlobalTimer,
+                sndTraceFrameStamp(),
                 soundIndex,
                 bankSoundIndex,
                 chainIndex,
@@ -1124,7 +1156,7 @@ void sndSetSfxSlotVolume(u8 arg0, u16 arg1) {
     g_sndSfxSlotVolume[arg0] = (s16)((f32)arg1 * g_sndSfxVolumeScale);
     portAudioTraceSfxJson(
         "{\"event\":\"slot_volume\",\"frame\":%d,\"slot\":%u,\"natural\":%u,\"applied\":%d,\"scale\":%.6f,\"auth_mix\":%d}",
-        g_GlobalTimer,
+        sndTraceFrameStamp(),
         (unsigned int)arg0,
         (unsigned int)arg1,
         (int)g_sndSfxSlotVolume[arg0],
@@ -1217,7 +1249,7 @@ static void sndApplyStatePositionPan(ALSoundState *state, f32 x, f32 y, f32 z,
             portAudioTraceSfxJson(
                 "{\"event\":\"state_position_ignored\",\"frame\":%d,\"state\":\"%p\","
                 "\"reason\":\"stale\",\"path\":\"sndp\"}",
-                g_GlobalTimer,
+                sndTraceFrameStamp(),
                 (void *)state);
         }
         return;
@@ -1229,7 +1261,7 @@ static void sndApplyStatePositionPan(ALSoundState *state, f32 x, f32 y, f32 z,
     portAudioTraceSfxJson(
         "{\"event\":\"state_position\",\"frame\":%d,\"state\":\"%p\",\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,"
         "\"pan\":%u,\"path\":\"sndp\"}",
-        g_GlobalTimer,
+        sndTraceFrameStamp(),
         (void *)state,
         (double)x,
         (double)y,
@@ -1740,7 +1772,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_voice_start\",\"frame\":%d,\"state\":\"%p\",\"volume\":%d,"
                         "\"pan\":%u,\"pitch\":%.6f,\"fx_mix\":%d,\"active\":%u}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (int)startVolume,
                         (unsigned int)pan,
@@ -1779,7 +1811,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                             s_sndPlayerStats.releaseEvents++;
                             portAudioTraceSfxJson(
                                 "{\"event\":\"sndp_release\",\"frame\":%d,\"state\":\"%p\",\"volume\":0,\"ramp_usec\":%d}",
-                                g_GlobalTimer,
+                                sndTraceFrameStamp(),
                                 (void *)state,
                                 (int)delta);
 
@@ -1831,7 +1863,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.panUpdates++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_pan\",\"frame\":%d,\"state\":\"%p\",\"pan\":%u}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (unsigned int)pan);
                 }
@@ -1848,7 +1880,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.pitchUpdates++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_pitch\",\"frame\":%d,\"state\":\"%p\",\"pitch\":%.6f}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (double)(state->pitch_2c * state->pitch_28));
 
@@ -1874,7 +1906,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.fxUpdates++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_fxmix\",\"frame\":%d,\"state\":\"%p\",\"fx_mix\":%d}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (int)vtmp);
                 }
@@ -1904,7 +1936,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.volumeUpdates++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_volume\",\"frame\":%d,\"state\":\"%p\",\"volume\":%d,\"ramp_usec\":%d}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (int)vtmp,
                         (int)DELTA_1_MS);
@@ -1939,7 +1971,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.releaseEvents++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_release\",\"frame\":%d,\"state\":\"%p\",\"volume\":%d,\"ramp_usec\":%d}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (int)vtmp,
                         (int)delta);
@@ -1969,7 +2001,7 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event)
                     s_sndPlayerStats.volumeUpdates++;
                     portAudioTraceSfxJson(
                         "{\"event\":\"sndp_decay\",\"frame\":%d,\"state\":\"%p\",\"volume\":%d,\"ramp_usec\":%d}",
-                        g_GlobalTimer,
+                        sndTraceFrameStamp(),
                         (void *)state,
                         (int)vtmp,
                         (int)delta);
@@ -2853,7 +2885,7 @@ void sndDisposeSound(ALSoundState *state)
             : 0U;
         portAudioTraceSfxJson(
             "{\"event\":\"sndp_voice_stop\",\"frame\":%d,\"state\":\"%p\",\"active\":%u}",
-            g_GlobalTimer,
+            sndTraceFrameStamp(),
             (void *)state,
             s_sndPlayerStats.activeVoices);
     }
@@ -3084,7 +3116,7 @@ void sndUnlinkClearSound(ALSoundState *state)
             state->state->link.next = NULL;
             portAudioTraceSfxJson(
                 "{\"event\":\"sndp_owner_clear\",\"frame\":%d,\"state\":\"%p\",\"owner\":\"%p\"}",
-                g_GlobalTimer,
+                sndTraceFrameStamp(),
                 (void *)state,
                 (void *)state->state);
         }
@@ -3254,7 +3286,7 @@ static ALSoundState *sndPlaySfxInternal(struct ALBankAlt_s *soundBank, s16 sound
                 "\"bank_sound\":%d,\"bank_public_sound\":%d,"
                 "\"entry_bank\":%d,\"entry_public_sound\":%d,\"entry_submit\":%d,"
                 "\"state\":\"%p\",\"caller\":\"%s\",\"line\":%d,\"delay_usec\":%d}",
-                g_GlobalTimer,
+                sndTraceFrameStamp(),
                 publicSoundIndex > 0 ? (int)publicSoundIndex : (int)submitBankSoundIndex,
                 (int)publicSoundIndex,
                 (int)submitBankSoundIndex,
@@ -3300,31 +3332,48 @@ static ALSoundState *sndPlaySfxInternal(struct ALBankAlt_s *soundBank, s16 sound
         // removed
     }
 
-    if (nextState != NULL)
+    /* PERF-052 ADDED BRACKET (the one write-side hole TSAN found): by this
+     * point the play events for nextState were already posted above, so with
+     * the opt-in synth worker enabled the sound player's handler may ALREADY be
+     * processing this state concurrently — sndHandleEvent reads unk3e and walks
+     * state->link on the worker. These finalize writes were the only mutation
+     * of a live (event-visible) state outside an osSetIntMask section in this
+     * file (the siblings — sndSetupSound, sndRemoveEvents,
+     * sndDeactivateAllSfxByFlag — all bracket). Single-threaded builds are
+     * untouched: osSetIntMask is the historical return-0 no-op unless the
+     * worker exists (stubs.c g_audioSynthLockActive). Verified: tape gate
+     * byte-exact with this bracket in place; TSAN soak clean. */
     {
-        nextState->unk3e |= 0x1;
-        nextState->state = pendingState;
+        OSIntMask mask = osSetIntMask(OS_IM_NONE);
 
-        if (eventSoundIndex != 0)
+        if (nextState != NULL)
         {
-            ALSndpEvent playSfxEvent;
+            nextState->unk3e |= 0x1;
+            nextState->state = pendingState;
 
-            nextState->unk3e |= 0x10;
+            if (eventSoundIndex != 0)
+            {
+                ALSndpEvent playSfxEvent;
 
-            playSfxEvent.playSfx.type = AL_SNDP_PLAY_SFX_EVT;
-            playSfxEvent.playSfx.state = nextState;
-            playSfxEvent.playSfx.soundIndex = eventSoundIndex; // types dont match
-            playSfxEvent.playSfx.soundBank = soundBank;
-            playSfxEvent.playSfx.callerFile = callerFile;
-            playSfxEvent.playSfx.callerLine = callerLine;
+                nextState->unk3e |= 0x10;
 
-            alEvtqPostEvent(&g_sndPlayerPtr->evtq, (ALEvent *)&playSfxEvent, playSfxDelta);
+                playSfxEvent.playSfx.type = AL_SNDP_PLAY_SFX_EVT;
+                playSfxEvent.playSfx.state = nextState;
+                playSfxEvent.playSfx.soundIndex = eventSoundIndex; // types dont match
+                playSfxEvent.playSfx.soundBank = soundBank;
+                playSfxEvent.playSfx.callerFile = callerFile;
+                playSfxEvent.playSfx.callerLine = callerLine;
+
+                alEvtqPostEvent(&g_sndPlayerPtr->evtq, (ALEvent *)&playSfxEvent, playSfxDelta);
+            }
         }
-    }
 
-    if (pendingState != NULL)
-    {
-        pendingState->link.next = (void*)nextState;
+        if (pendingState != NULL)
+        {
+            pendingState->link.next = (void*)nextState;
+        }
+
+        osSetIntMask(mask);
     }
 
     return sndPlaySfxReturn(nextState);
@@ -3430,7 +3479,7 @@ void sndCreatePostEvent(ALSoundState *state, s16 eventType, s32 arg2)
             portAudioTraceSfxJson(
                 "{\"event\":\"sndp_post_ignored\",\"frame\":%d,\"state\":\"%p\","
                 "\"type\":%d,\"reason\":\"stale\"}",
-                g_GlobalTimer,
+                sndTraceFrameStamp(),
                 (void *)state,
                 (int)eventType);
         }

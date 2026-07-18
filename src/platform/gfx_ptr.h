@@ -53,6 +53,26 @@ extern uint32_t  gfx_ptr_ambiguous;   /* two live full ptrs shared one low-32 */
 extern uint32_t  gfx_ptr_full_fails;  /* insert refused: table 100% occupied */
 extern uint32_t  gfx_ptr_max_probe;   /* longest probe distance ever walked */
 
+/* PERF-052: per-thread registry-write opt-out. The registry is MAIN-THREAD
+ * state: only the main thread submits display lists and resolves tokens. The
+ * opt-in audio-synth worker (audio_pc.c) reaches gfx_ptr_store anyway, because
+ * the port's alAudioFrame builds its VESTIGIAL Acmd list (never executed —
+ * audi_port.c discards it) through osVirtualToPhysical, whose store side-effect
+ * exists for the renderer's benefit only. Those worker stores would race the
+ * render path's probes, so the worker sets this thread-local to 1 once at
+ * thread start and gfx_ptr_store becomes a no-op on that thread.
+ *
+ * Thread-local, not a global flag, so the MAIN thread's behavior is untouched
+ * by construction (its copy is always 0 — the store path is bit-for-bit the
+ * historical one, no lock, no atomic). Definition lives with the other
+ * registry globals (gfx_pc.c; test stub in test_gfx_ptr_registry.c). */
+#if defined(_MSC_VER)
+#define GFX_PTR_TLS __declspec(thread)
+#else
+#define GFX_PTR_TLS __thread
+#endif
+extern GFX_PTR_TLS int gfx_ptr_store_suppress;
+
 /* Record an insert's probe-walk length into the cumulative max-probe high-water
  * mark. Hoisted out of the insert body so EVERY insert path updates it: both the
  * common EMPTY-terminated path and the full-table-scan path (a tombstone reused
@@ -68,6 +88,13 @@ static inline void gfx_ptr_note_probe(uint32_t walked) {
 static inline void gfx_ptr_store(const void *ptr) {
     uintptr_t full = (uintptr_t)ptr;
     uint32_t key = (uint32_t)full;
+
+    /* PERF-052: the audio-synth worker's stores serve a never-executed Acmd
+     * list; suppress them so they cannot race the render path (see the
+     * gfx_ptr_store_suppress comment above). Always 0 on the main thread. */
+    if (gfx_ptr_store_suppress) {
+        return;
+    }
     uint32_t base_idx = ((key >> 2) ^ (key >> 16)) & GFX_PTR_TABLE_MASK;
     uint32_t free_idx = 0;
     int have_free = 0;

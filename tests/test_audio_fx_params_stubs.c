@@ -58,3 +58,16 @@ void portAudioMixSfxIntoBuffer(s16 *out, s32 numSamples) { (void)out; (void)numS
 int portAudioIsMuted(void) { return 0; }  /* PERF-060 live-mute gate; never muted here */
 void portMusicAudioDump(const void *buf, unsigned int size) { (void)buf; (void)size; }
 void sndGetPlayerStats(PortSndPlayerStats *stats) { (void)stats; }
+
+/* PERF-052: audi_port.c references the synth-worker handshake (defined in
+ * audio_pc.c, which this test does not link). The worker never runs here — this
+ * test only reads the FX-param table — so these are link-only no-ops that report
+ * "no worker" (portAudioFrame then takes the synchronous path). */
+int  portAudioSynthWorkerRunning(void) { return 0; }
+void portAudioSynthWorkerKick(s16 *buf, s32 frameSamples, int skip) {
+    (void)buf; (void)frameSamples; (void)skip;
+}
+void portAudioSynthWorkerJoin(void) { }
+/* PERF-052: the worker job body brackets with the (reified) interrupt mask;
+ * single-threaded here, so the historical no-op shape is correct. */
+OSIntMask osSetIntMask(OSIntMask mask) { (void)mask; return 0; }

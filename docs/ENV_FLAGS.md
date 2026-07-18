@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1076 flags** found across the source.
+**1077 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -59,6 +59,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_AUDIO_FILTER_TRACE_WAVE_BASE` | ? |  | 1 |  |
 | `GE007_AUDIO_POLE_TRACE_JSONL` | ? |  | 1 |  |
 | `GE007_AUDIO_QUEUE_TARGET` | float | 1.5f | 1 | Target audio-queue occupancy in frames; higher = more stall absorption but more latency; 1.5 = default. |
+| `GE007_AUDIO_SYNTH_THREAD` | int | 0 | 1 | Native only. Run the N64 music synthesis on a background thread; adds one frame of audio latency but absorbs GPU/main-thread stalls without audio gaps. Default off; takes effect on restart. |
 | `GE007_AUDIO_TRACE` | ? |  | 2 |  |
 | `GE007_AUTOGUN_BEAM_TICK` | ? |  | 1 |  |
 | `GE007_AUTOLOAD_DAM` | ? |  | 1 |  |

@@ -25020,6 +25020,9 @@ uint8_t   gfx_ptr_state[GFX_PTR_TABLE_SIZE];
 uint32_t  gfx_ptr_ambiguous;
 uint32_t  gfx_ptr_full_fails;
 uint32_t  gfx_ptr_max_probe;
+/* PERF-052: thread-local registry-write opt-out (see gfx_ptr.h). Zero on every
+ * thread until the audio-synth worker opts out at its own thread start. */
+GFX_PTR_TLS int gfx_ptr_store_suppress;
 
 static void gfx_sp_reset(void) {
     /* PERF-006 §3.3: frame start. Frame-constant globals derive_material reads

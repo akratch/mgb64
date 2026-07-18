@@ -1056,6 +1056,222 @@ static int portTraceWeaponAudio(void)
 
 /* Register audio settings with the config system.
  * Called from main_pc.c before configInit(). */
+/* ===== PERF-052: opt-in native audio-synthesis worker thread ========= *
+ *
+ * Default OFF. When Audio.SynthThread=1 on a NON-deterministic NATIVE run, the
+ * heavy N64 music synth (alAudioFrame) is moved onto a dedicated worker thread,
+ * one job in flight, joined once per frame by portAudioFrame (audi_port.c). The
+ * worker overlaps the synth with the main thread's sim+render, so a GPU or
+ * main-thread stall no longer starves the audio queue — at the cost of exactly
+ * one frame of added audio latency (the pipeline drains the previous frame's
+ * synth while kicking this frame's).
+ *
+ * Threading model: the port runs sim + render + the audio pump all on the main
+ * thread; this worker is the only other thread that touches libaudio. The
+ * reified osSetIntMask lock (stubs.c, gated by g_audioSynthLockActive) provides
+ * the mutual exclusion the N64 interrupt mask originally did.
+ *
+ * The SDL_sem/SDL_mutex path is intentionally avoided here in favour of raw
+ * pthreads: (a) it is native-only anyway (compiled out under __EMSCRIPTEN__),
+ * (b) the mutex/cond handoff is what TSAN instruments natively, giving a clean
+ * happens-before for the PCM-buffer hand-back with no false positives, and
+ * (c) winpthread already links on the MinGW native build. The job body itself
+ * (alAudioFrame + the libaudio low-pass) lives in audi_port.c
+ * (portAudioSynthWorkerRunJob) so it can reach that file's static synth state;
+ * this file owns only the thread + handshake. */
+static s32 s_audioSynthThread = 0;   /* Audio.SynthThread: 0/1, default 0 */
+
+#ifndef __EMSCRIPTEN__
+#include <pthread.h>
+
+extern int  g_deterministic;
+extern int  g_audioSynthLockActive;                 /* stubs.c: reified-lock gate  */
+extern void portSynthLockInit(void);                /* stubs.c: build recursive lock */
+extern void portAudioSynthWorkerRunJob(s16 *buf, s32 frameSamples, int skip); /* audi_port.c */
+
+enum { SYNTH_JOB_IDLE = 0, SYNTH_JOB_PENDING = 1, SYNTH_JOB_DONE = 2 };
+
+static pthread_t       s_synthThread;
+static pthread_mutex_t s_synthJobMtx;
+static pthread_cond_t  s_synthJobCv;
+static int             s_synthJobState   = SYNTH_JOB_IDLE;
+static int             s_synthQuit       = 0;
+static s16            *s_synthJobBuf     = NULL;
+static s32             s_synthJobSamples = 0;
+static int             s_synthJobSkip    = 0;
+static int             s_synthWorkerOn   = 0;   /* latched: worker created & live */
+
+/* PERF-052 main-thread-global isolation. The worker's synth subtree reaches two
+ * MAIN-THREAD globals the reified osSetIntMask lock deliberately does not cover:
+ *
+ *  (a) the gfx_ptr registry — alAudioFrame's VESTIGIAL Acmd build goes through
+ *      osVirtualToPhysical, whose gfx_ptr_store side-effect exists only for the
+ *      renderer. The worker opts out via the gfx_ptr_store_suppress thread-local
+ *      (gfx_ptr.h): set once below at thread start, so no worker store can race
+ *      the render path's probes and the main thread's path is bit-identical.
+ *
+ *  (b) g_GlobalTimer — read only as the frame-stamp argument of audio trace
+ *      lines (snd.c/audio_pc.c). The main thread snapshots it into
+ *      g_sndSynthFrameStamp inside the kick's critical section (so the job
+ *      mutex orders it against the timer's writer in lvl.c), and every trace
+ *      site reads its stamp through the sndTraceFrameStamp()/
+ *      portAudioTraceFrameStamp() expression: g_sndOnSynthWorker (thread-local,
+ *      1 only on the worker) selects the snapshot there and the live
+ *      g_GlobalTimer everywhere else. Stamp granularity is identical: the game
+ *      timer cannot advance while the job it stamps is in flight (main joins
+ *      before the next tick).
+ *
+ * SHAPE MATTERS (tape-gate lesson): these are deliberately EXPORTED VARIABLES
+ * read inline, NOT accessor functions. An earlier draft routed the stamp
+ * through a cross-TU call, and inserting a function call into the trace
+ * argument lists changed the stack-frame codegen of the snd.c event-posting
+ * functions — whose on-stack ALSndpEvent unions are memcpy'd WHOLE into the
+ * event queue, unassigned bytes included. The committed tape baselines encode
+ * those incidental bytes, so the call version deterministically flipped the
+ * Dam sim hashes (audio->sim via the FID-0089 voice write-backs) while this
+ * branch-over-plain-reads version leaves them byte-identical (verified 3x). */
+__thread int g_sndOnSynthWorker = 0;  /* 1 only on the synth worker thread      */
+s32 g_sndSynthFrameStamp = 0;         /* main writes at kick, under s_synthJobMtx;
+                                       * read only on the worker (mutex-ordered) */
+
+static void *portAudioSynthThreadMain(void *arg) {
+    (void)arg;
+    g_sndOnSynthWorker = 1;       /* (b) above: trace stamps read the snapshot  */
+    gfx_ptr_store_suppress = 1;   /* (a) above: no registry writes from this thread */
+    for (;;) {
+        s16 *buf;
+        s32  samples;
+        int  skip;
+
+        pthread_mutex_lock(&s_synthJobMtx);
+        while (s_synthJobState != SYNTH_JOB_PENDING && !s_synthQuit) {
+            pthread_cond_wait(&s_synthJobCv, &s_synthJobMtx);
+        }
+        if (s_synthQuit) {
+            pthread_mutex_unlock(&s_synthJobMtx);
+            break;
+        }
+        buf     = s_synthJobBuf;
+        samples = s_synthJobSamples;
+        skip    = s_synthJobSkip;
+        pthread_mutex_unlock(&s_synthJobMtx);
+
+        /* The heavy synth, off the main thread. Every libaudio critical section
+         * it enters brackets through the reified osSetIntMask lock, so it is
+         * mutually exclusive with the main thread's event posts / CSP controls. */
+        portAudioSynthWorkerRunJob(buf, samples, skip);
+
+        pthread_mutex_lock(&s_synthJobMtx);
+        s_synthJobState = SYNTH_JOB_DONE;
+        pthread_cond_signal(&s_synthJobCv);
+        pthread_mutex_unlock(&s_synthJobMtx);
+    }
+    return NULL;
+}
+
+int portAudioSynthWorkerRunning(void) {
+    return s_synthWorkerOn;
+}
+
+/* main thread: hand the just-sized buffer to the worker (non-blocking). */
+void portAudioSynthWorkerKick(s16 *buf, s32 frameSamples, int skip) {
+    pthread_mutex_lock(&s_synthJobMtx);
+    s_synthJobBuf     = buf;
+    s_synthJobSamples = frameSamples;
+    s_synthJobSkip    = skip;
+    /* Frame-stamp snapshot for the worker's trace lines — written under the job
+     * mutex so the worker's reads are ordered against this write (and the game
+     * timer's writer stays main-thread-only). */
+    g_sndSynthFrameStamp = g_GlobalTimer;
+    s_synthJobState   = SYNTH_JOB_PENDING;
+    pthread_cond_signal(&s_synthJobCv);
+    pthread_mutex_unlock(&s_synthJobMtx);
+}
+
+/* main thread: block until the previously-kicked job is fully synthesized. The
+ * mutex/cond release-acquire publishes the worker's writes to the shared PCM
+ * buffer back to the main thread, so the frame tail can safely read/mix it. */
+void portAudioSynthWorkerJoin(void) {
+    pthread_mutex_lock(&s_synthJobMtx);
+    while (s_synthJobState != SYNTH_JOB_DONE) {
+        pthread_cond_wait(&s_synthJobCv, &s_synthJobMtx);
+    }
+    s_synthJobState = SYNTH_JOB_IDLE;
+    pthread_mutex_unlock(&s_synthJobMtx);
+}
+
+/* Called once at the end of a successful portAudioInit. Latches the (already
+ * env/CLI/config-resolved) Audio.SynthThread and, when enabled on a
+ * non-deterministic native run, constructs the recursive lock + worker BEFORE
+ * arming g_audioSynthLockActive, so the flag is 1 only while the worker lives. */
+void portAudioSynthWorkerStart(void) {
+    if (s_synthWorkerOn) return;
+    if (g_deterministic) return;      /* tape / sim-hash lanes never thread */
+    if (!s_audioSynthThread) return;  /* opt-in, default off                */
+
+    /* Force portAudioTraceSfxJson's lazy init (s_sfxTraceInit/Fp/Enabled) to
+     * happen HERE, on the main thread, before the worker exists — after this
+     * both threads only read those statics (and pthread_create publishes the
+     * writes), so the first-trace-call lazy init can never be a cross-thread
+     * write-write race. NULL fmt = init-only, no output. */
+    portAudioTraceSfxJson(NULL);
+
+    portSynthLockInit();
+    pthread_mutex_init(&s_synthJobMtx, NULL);
+    pthread_cond_init(&s_synthJobCv, NULL);
+    s_synthJobState = SYNTH_JOB_IDLE;
+    s_synthQuit = 0;
+
+    if (pthread_create(&s_synthThread, NULL, portAudioSynthThreadMain, NULL) != 0) {
+        printf("[AUDIO] PERF-052: synth worker create failed; staying single-threaded\n");
+        pthread_mutex_destroy(&s_synthJobMtx);
+        pthread_cond_destroy(&s_synthJobCv);
+        return;
+    }
+    g_audioSynthLockActive = 1;   /* arm the reified lock AFTER the worker exists */
+    s_synthWorkerOn = 1;
+    printf("[AUDIO] PERF-052: native audio-synth worker ENABLED "
+           "(+1 frame audio latency; absorbs GPU/main-thread stalls without gaps)\n");
+}
+
+/* Called at the top of portAudioShutdown. The worker finishes any in-flight job
+ * (RunJob is uninterruptible), then observes the quit flag and exits; we join it
+ * and only then clear the lock gate, so no thread can be mid-bracket when the
+ * flag drops. */
+void portAudioSynthWorkerStop(void) {
+    if (!s_synthWorkerOn) return;
+
+    pthread_mutex_lock(&s_synthJobMtx);
+    s_synthQuit = 1;
+    pthread_cond_signal(&s_synthJobCv);
+    pthread_mutex_unlock(&s_synthJobMtx);
+    pthread_join(s_synthThread, NULL);
+
+    g_audioSynthLockActive = 0;   /* worker gone: brackets revert to no-op */
+    s_synthWorkerOn = 0;
+    pthread_mutex_destroy(&s_synthJobMtx);
+    pthread_cond_destroy(&s_synthJobCv);
+}
+#else /* __EMSCRIPTEN__ : PERF-052 is native-only, compiled out on web */
+int  portAudioSynthWorkerRunning(void) { return 0; }
+void portAudioSynthWorkerKick(s16 *buf, s32 frameSamples, int skip) { (void)buf; (void)frameSamples; (void)skip; }
+void portAudioSynthWorkerJoin(void) { }
+void portAudioSynthWorkerStart(void) { }
+void portAudioSynthWorkerStop(void) { }
+/* No worker on web — the flag stays 0 forever, so every trace-stamp expression
+ * (snd.c sndTraceFrameStamp / portAudioTraceFrameStamp below) reads the live
+ * g_GlobalTimer, exactly as before PERF-052. */
+__thread int g_sndOnSynthWorker = 0;
+s32 g_sndSynthFrameStamp = 0;
+#endif /* __EMSCRIPTEN__ */
+
+/* PERF-052: frame stamp for this file's own audio-trace lines. Identity
+ * (g_GlobalTimer) everywhere except on the synth worker, where it reads the
+ * kick-time snapshot instead of touching the main thread's live timer. Kept as
+ * a branch over plain reads — see the SHAPE MATTERS note above. */
+#define portAudioTraceFrameStamp() \
+    (g_sndOnSynthWorker ? g_sndSynthFrameStamp : g_GlobalTimer)
+
 void portAudioRegisterConfig(void)
 {
     /* W6.E3.T1 Q1 (docs §9.1) option (a): Audio.MasterVolume default 0.7 -> 1.0.
@@ -1124,9 +1340,23 @@ void portAudioRegisterConfig(void)
      * internal Q15 coefficient for the OutputFilter toggle (which stays
      * player-facing); QueueTargetFrames = the same latency-vs-absorption class
      * of low-level tuning as DeviceSamples. Volumes stay player-facing. */
+    /* PERF-052: opt-in native audio-synthesis worker thread. RESTART scope —
+     * latched once at portAudioInit (a mid-run change needs a restart). Default
+     * 0 keeps the historical single-threaded synth (byte-identical). Native-only:
+     * the worker is compiled out under __EMSCRIPTEN__, and it never engages under
+     * --deterministic, so every tape/hash baseline is untouched by construction. */
+    settingsRegisterInt("Audio.SynthThread", &s_audioSynthThread, 0, 0, 1,
+                        SETTING_SCOPE_RESTART, "GE007_AUDIO_SYNTH_THREAD",
+                        "--config-override Audio.SynthThread=VALUE",
+                        "Audio synthesis worker thread",
+                        "Native only. Run the N64 music synthesis on a background thread; "
+                        "adds one frame of audio latency but absorbs GPU/main-thread stalls "
+                        "without audio gaps. Default off; takes effect on restart.");
+
     settingsMarkAdvanced("Audio.DeviceSamples");
     settingsMarkAdvanced("Audio.OutputFilterAlpha");
     settingsMarkAdvanced("Audio.QueueTargetFrames");
+    settingsMarkAdvanced("Audio.SynthThread");
 }
 
 int portAudioShouldStartMuted(void)
@@ -1243,6 +1473,10 @@ void portAudioInit(void)
     memset(&s_sfxMixStats, 0, sizeof(s_sfxMixStats));
     s_audioInitialized = 1;
     { extern void portAiInit(void); portAiInit(); }
+
+    /* PERF-052: latch Audio.SynthThread and bring up the synth worker (no-op
+     * unless enabled + native + non-deterministic). */
+    portAudioSynthWorkerStart();
 }
 
 SDL_AudioDeviceID portAudioGetDevice(void) {
@@ -1256,6 +1490,11 @@ u32 portAudioGetDeviceBufferBytes(void) {
 void portAudioShutdown(void)
 {
     if (!s_audioInitialized) return;
+
+    /* PERF-052: join the synth worker BEFORE tearing down the device/mixer it
+     * feeds, so no in-flight synth writes into freed state. Clears the reified
+     * lock gate once the worker is gone. No-op when the worker was never started. */
+    portAudioSynthWorkerStop();
 
     if (s_audioDevice) SDL_CloseAudioDevice(s_audioDevice);
     if (s_audioMutex) SDL_DestroyMutex(s_audioMutex);
@@ -1369,7 +1608,7 @@ static s32 portAudioPlaySoundDetailedInternal(s16 soundIndex,
         "{\"event\":\"voice_start\",\"frame\":%d,\"voice\":%d,\"bank\":%d,\"volume\":%.6f,\"pan\":%.3f,\"pitch\":%.6f,"
         "\"delay_samples\":%d,\"fx_mix\":%u,\"use_envelope\":%d,\"attack_time\":%d,\"decay_time\":%d,"
         "\"attack_vol\":%u,\"decay_vol\":%u}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         soundIndex,
         (double)localParams.volume,
@@ -1555,7 +1794,7 @@ void portAudioStopVoice(s32 voiceIdx)
     SDL_UnlockMutex(s_audioMutex);
     portAudioTraceSfxJson(
         "{\"event\":\"voice_stop\",\"frame\":%d,\"voice\":%d}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx);
 }
 
@@ -1586,7 +1825,7 @@ void portAudioReleaseVoice(s32 voiceIdx, ALMicroTime releaseUsec)
 
     portAudioTraceSfxJson(
         "{\"event\":\"voice_release\",\"frame\":%d,\"voice\":%d,\"release_usec\":%d,\"release_samples\":%d,\"active\":%d}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (int)releaseUsec,
         releaseSamples,
@@ -1632,7 +1871,7 @@ void portAudioUpdateVoiceMixRamp(s32 voiceIdx, f32 volume, f32 pan,
     SDL_UnlockMutex(s_audioMutex);
     portAudioTraceSfxJson(
         "{\"event\":\"voice_mix\",\"frame\":%d,\"voice\":%d,\"volume\":%.6f,\"pan\":%.3f,\"ramp_usec\":%d,\"ramp_samples\":%d}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (double)volume,
         (double)pan,
@@ -1655,7 +1894,7 @@ void portAudioUpdateVoicePitch(s32 voiceIdx, f32 pitch)
     SDL_UnlockMutex(s_audioMutex);
     portAudioTraceSfxJson(
         "{\"event\":\"voice_pitch\",\"frame\":%d,\"voice\":%d,\"pitch\":%.6f}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (double)pitch);
 }
@@ -1673,7 +1912,7 @@ void portAudioUpdateVoiceFxMix(s32 voiceIdx, u8 fxMix)
     SDL_UnlockMutex(s_audioMutex);
     portAudioTraceSfxJson(
         "{\"event\":\"voice_fxmix\",\"frame\":%d,\"voice\":%d,\"fx_mix\":%u}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (unsigned int)fxMix);
 }
@@ -1708,7 +1947,7 @@ void portAudioUpdateVoiceSpatialRamp(s32 voiceIdx, f32 volume,
     portAudioTraceSfxJson(
         "{\"event\":\"voice_spatial\",\"frame\":%d,\"voice\":%d,\"base_volume\":%.6f,\"atten\":%.6f,\"final_volume\":%.6f,"
         "\"pan\":%.3f,\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"ramp_usec\":%d,\"ramp_samples\":%d}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (double)volume,
         (double)atten,
@@ -1745,7 +1984,7 @@ void portAudioUpdateVoicePanPositionRamp(s32 voiceIdx, f32 volume,
     portAudioTraceSfxJson(
         "{\"event\":\"voice_pan_position\",\"frame\":%d,\"voice\":%d,\"volume\":%.6f,\"ignored_atten\":%.6f,"
         "\"pan\":%.3f,\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"ramp_usec\":%d,\"ramp_samples\":%d}",
-        g_GlobalTimer,
+        portAudioTraceFrameStamp(),
         voiceIdx,
         (double)volume,
         (double)atten,

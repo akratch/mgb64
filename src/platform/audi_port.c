@@ -111,6 +111,10 @@ static OSMesgQueue g_DmaMessageQueue;
 static OSMesg    g_DmaMessageBuffer[AUDIO_DMA_QUEUE_SIZE];
 static s32       g_portAudioReady;
 static AudioInfo *g_lastInfo;
+/* PERF-052: the AudioInfo whose synth is currently in flight on the worker
+ * (kicked but not yet joined+tailed). NULL = no job pending (first enable frame,
+ * or non-threaded mode). Main-thread-only. */
+static AudioInfo *s_synthPendingInfo;
 static ALFxId    g_portAudioFxType;
 static u8        g_portAudioFxCustom;
 static s32       g_LibaudioLowPassState[2];
@@ -505,69 +509,145 @@ static int portAudioSynthSkipActive(void) {
     return portAudioIsMuted();
 }
 
+/* ---- PERF-052 pipeline helpers ------------------------------------------- */
+#ifndef __EMSCRIPTEN__
+extern int  portAudioSynthWorkerRunning(void);   /* audio_pc.c */
+extern void portAudioSynthWorkerKick(s16 *buf, s32 frameSamples, int skip);
+extern void portAudioSynthWorkerJoin(void);
+#endif
+static void portAudioFrameTail(AudioInfo *info);  /* defined below */
+
+/* Occupancy-targeted frame sizing (replaces the N64 subtraction formula).
+ *
+ * Treat the SDL queue as explicit occupancy, not a fake DMA remainder. Keep the
+ * queue near a modest target and scale production linearly:
+ * - below target: nudge upward toward g_MaxFrameSize
+ * - above target: reduce toward a true half-frame drain mode */
+static void portAudioSizeFrame(AudioInfo *info) {
+    if (g_deterministic) {
+        /* Deterministic mode still needs the exact average output rate.
+         * Use an aligned Bresenham cadence: NTSC alternates 720/736
+         * samples to average 735 samples per 30 Hz game frame. */
+        info->frameSamples = (s16)portAudioNextNominalFrameSize();
+    } else {
+        const u32 queued_bytes = osAiGetLength();
+        const s32 queued_samples = (s32)(queued_bytes >> 2);  /* stereo s16 -> sample frames */
+        /* PERF-010: tunable via Audio.QueueTargetFrames (LIVE). At the 1.5
+         * default this is byte-identical to the old fixed target:
+         * (s32)(n * 1.5f) == n + n/2 for every integer n >= 0, since 1.5f*n
+         * is exactly (3n)/2 in float and truncates to floor(3n/2). */
+        const s32 target_samples = (s32)((f32)g_FrameSize * g_portAudioQueueTargetFrames);
+        const s32 full_samples = (s32)g_FrameSize;
+        const s32 min_samples = (s32)portAudioAlign16(g_FrameSize / 2);
+        const s32 max_samples = (s32)portAudioAlign16(g_MaxFrameSize);
+        s32 chosen = full_samples + ((target_samples - queued_samples) / 2);
+
+        if (chosen < min_samples) chosen = min_samples;
+        if (chosen > max_samples) chosen = max_samples;
+        info->frameSamples = (s16)chosen;
+    }
+
+    /* Always keep the synth input aligned. */
+    info->frameSamples = (s16)portAudioAlign16((u32)info->frameSamples);
+}
+
+/* Synth stage: the N64 music synth (or the PERF-060 mute-silence frame) plus the
+ * libaudio low-pass, then the cmd-list double-buffer flip. Runs on the main
+ * thread in the synchronous path, or on the PERF-052 worker (via
+ * portAudioSynthWorkerRunJob). Exactly one of those calls it per frame, so
+ * g_CurrentAcmdList / g_CommandLength stay single-owner. */
+static void portAudioSynthStage(s16 *data, s32 frameSamples, int skip) {
+    if (skip) {
+        /* PERF-060: same-size silence frame in place of the music synth. The SFX
+         * mixer (in the tail) still runs, so all FID-0089 voice lifecycle is
+         * preserved. */
+        memset(data, 0, (size_t)frameSamples * 4);
+        g_CommandLength = 0;
+    } else {
+        alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
+                     &g_CommandLength, data, frameSamples);
+        portAudioApplyLibaudioLowPass(data, frameSamples);
+    }
+    g_CurrentAcmdList ^= 1;
+}
+
+#ifndef __EMSCRIPTEN__
+/* PERF-052 worker job body — runs on the synth worker thread. Serial by
+ * construction: the main thread joins the previous job before kicking the next,
+ * so it owns the synth cmd-list state and the target PCM buffer for its
+ * duration. The mute-skip decision is made on the main thread and passed in, so
+ * the worker never reads live mute state.
+ *
+ * The WHOLE job runs under the reified interrupt-mask lock. This is the
+ * faithful reification of the N64's exclusion model, not an extra layer: on
+ * hardware, a game-thread `osSetIntMask(OS_IM_NONE)` section stopped the
+ * interrupt-driven audio thread from being SCHEDULED AT ALL, so the entire
+ * synth pass (alAudioFrame -> sndPlayerVoiceHandler / CSP handlers) was atomic
+ * with respect to every masked game-thread section — the handlers themselves
+ * never take the mask (sndPlayerVoiceHandler brackets nothing). Holding the
+ * lock across the job reproduces exactly that: the game thread's short masked
+ * sections (event posts, state finalize) and the worker's handler pass are
+ * mutually exclusive, while unmasked main-thread work (sim, render, the
+ * FID-0089 SFX tail — which takes only s_audioMutex) still overlaps the synth.
+ * Lock ordering is one-way: the worker takes synthLock -> s_audioMutex (via
+ * the handler's PC-mixer calls); no main-thread path holds s_audioMutex while
+ * bracketing (verified), so no inversion. Uncontended in the common case —
+ * main blocks only when it posts audio events while a job is in flight. */
+void portAudioSynthWorkerRunJob(s16 *buf, s32 frameSamples, int skip) {
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
+    portAudioSynthStage(buf, frameSamples, skip);
+    osSetIntMask(mask);
+}
+#endif
+
 void portAudioFrame(void) {
     AudioInfo *info;
-    u32 target_bytes;
 
     if (!g_portAudioReady) return;
 
+#ifndef __EMSCRIPTEN__
+    if (portAudioSynthWorkerRunning()) {
+        /* PERF-052 threaded pipeline (+1 frame audio latency). The synth for the
+         * previous frame ran on the worker; drain it (join) and finish its
+         * main-thread tail — the FID-0089 SFX-mix / master-volume / queue-write
+         * cadence is byte-for-byte the synchronous path, just one frame delayed.
+         * Then size THIS frame and kick the worker for it. The join barrier makes
+         * the worker idle before amClearDmaBuffers / the DMA callback it will run
+         * next, so the DMA state has a single owner at every instant. */
+        if (s_synthPendingInfo != NULL) {
+            portAudioSynthWorkerJoin();
+            portAudioFrameTail(s_synthPendingInfo);
+        }
+        amClearDmaBuffers();
+        info = g_PortAudioMgr.audioInfo[g_AudioFrameCount % NUMBER_OUTPUT_BUFFERS];
+        portAudioSizeFrame(info);
+        s_synthPendingInfo = info;
+        /* First enable frame: s_synthPendingInfo was NULL above, so we only kick
+         * here — a one-frame prime that produces no output this frame (that gap
+         * is the inherent +1 latency). */
+        portAudioSynthWorkerKick(info->data, info->frameSamples,
+                                 portAudioSynthSkipActive());
+        return;
+    }
+#endif
+
+    /* Synchronous (default) path — cadence unchanged from before PERF-052. */
     amClearDmaBuffers();
     info = g_PortAudioMgr.audioInfo[g_AudioFrameCount % NUMBER_OUTPUT_BUFFERS];
+    portAudioSizeFrame(info);
+    portAudioSynthStage(info->data, info->frameSamples, portAudioSynthSkipActive());
+    portAudioFrameTail(info);
+}
 
-    /* Occupancy-targeted frame sizing (replaces N64 subtraction formula).
-     *
-     * Treat the SDL queue as explicit occupancy, not a fake DMA remainder.
-     * Keep the queue near a modest target and scale production linearly:
-     * - below target: nudge upward toward g_MaxFrameSize
-     * - above target: reduce toward a true half-frame drain mode
-     *
-     * The previous version only dipped from g_FrameSize to g_MinFrameSize
-     * (736 -> 720 samples on NTSC), which was too weak to drain backlog and
-     * ended up leaning on the hard drop cap. */
-    {
-        if (g_deterministic) {
-            /* Deterministic mode still needs the exact average output rate.
-             * Use an aligned Bresenham cadence: NTSC alternates 720/736
-             * samples to average 735 samples per 30 Hz game frame. */
-            info->frameSamples = (s16)portAudioNextNominalFrameSize();
-        } else {
-            const u32 queued_bytes = osAiGetLength();
-            const s32 queued_samples = (s32)(queued_bytes >> 2);  /* stereo s16 -> sample frames */
-            /* PERF-010: tunable via Audio.QueueTargetFrames (LIVE). At the 1.5
-             * default this is byte-identical to the old fixed target:
-             * (s32)(n * 1.5f) == n + n/2 for every integer n >= 0, since 1.5f*n
-             * is exactly (3n)/2 in float and truncates to floor(3n/2). */
-            const s32 target_samples = (s32)((f32)g_FrameSize * g_portAudioQueueTargetFrames);
-            const s32 full_samples = (s32)g_FrameSize;
-            const s32 min_samples = (s32)portAudioAlign16(g_FrameSize / 2);
-            const s32 max_samples = (s32)portAudioAlign16(g_MaxFrameSize);
-            s32 chosen = full_samples + ((target_samples - queued_samples) / 2);
-
-            if (chosen < min_samples) chosen = min_samples;
-            if (chosen > max_samples) chosen = max_samples;
-            info->frameSamples = (s16)chosen;
-        }
-
-        /* Always keep the synth input aligned. */
-        info->frameSamples = (s16)portAudioAlign16((u32)info->frameSamples);
-    }
+/* ---- main-thread frame tail: music dump + SFX mix + master volume + queue + telemetry ---- */
+static void portAudioFrameTail(AudioInfo *info) {
+    u32 target_bytes;
 
     /* PERF-010: telemetry target mirrors the controller's actual target
      * (Audio.QueueTargetFrames), not a hardcoded 1.5, so the trace's target=/
      * soft= columns stay accurate when the knob is tuned. Byte-identical at the
      * 1.5 default. Diagnostic only — not part of the synthesized output. */
     target_bytes = (u32)((f32)g_FrameSize * g_portAudioQueueTargetFrames) * 4;
-
-    if (portAudioSynthSkipActive()) {
-        /* PERF-060: same-size silence frame in place of the music synth. The SFX
-         * mixer below still runs, so all FID-0089 voice lifecycle is preserved. */
-        memset(info->data, 0, (size_t)info->frameSamples * 4);
-        g_CommandLength = 0;
-    } else {
-        alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
-                     &g_CommandLength, info->data, info->frameSamples);
-        portAudioApplyLibaudioLowPass(info->data, info->frameSamples);
-    }
 
     {
         static int s_musicDumpEnabled = -1;
@@ -774,7 +854,9 @@ void portAudioFrame(void) {
         }
     }
 
-    g_CurrentAcmdList ^= 1;
+    /* The cmd-list double-buffer flip now lives in portAudioSynthStage (with the
+     * synth that writes the list), so it happens on whichever thread synthesized
+     * this frame. */
     g_lastInfo = info;
 }
 
