@@ -304,7 +304,11 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
      * behaviour matches, which is the requirement. `in.clip_pos.xy` is the WGSL
      * @builtin(position) (top-left origin) — GL's gl_FragCoord is bottom-left, so
      * the cell grid is vertically mirrored; imperceptible for per-frame static. */
-    bool needs_noise = false;
+    /* AC-3: seed from opt_noise (G_AC_DITHER alpha dissolve) as well as a
+     * SHADER_NOISE combiner input — byte-match gfx_opengl.c:1141 — so the noise
+     * uniform + wgpu_noise() exist for the alpha-dissolve emitted after the
+     * combiner clamp below. */
+    bool needs_noise = cc.opt_noise;
     for (int ci = 0; ci < 2 && !needs_noise; ci++)
         for (int cj = 0; cj < 2 && !needs_noise; cj++)
             for (int ck = 0; ck < 4 && !needs_noise; ck++)
@@ -461,6 +465,20 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
     /* Texture-edge alpha cutout (PD 0.19 threshold). */
     if (cc.opt_texture_edge && cc.opt_alpha) {
         P("  if (texel.a > 0.19) { texel.a = 1.0; } else { discard; }\n");
+    }
+    /* AC-3: G_AC_DITHER alpha dissolve — byte-match gfx_opengl.c:1337. Multiplies
+     * alpha by floor(noise+0.5), killing ~50% of pixels stochastically (the
+     * PCL_SURF dissolve modes: watch-menu fade watch.c:2873, BG particle LUT
+     * bg.c:3247). GL/Metal emit this; WGSL previously dropped it entirely.
+     * wgpu_noise/uNoise exist because needs_noise is seeded with opt_noise above. */
+    if (cc.opt_alpha && cc.opt_noise) {
+        P("  texel.a *= floor(wgpu_noise(in.clip_pos.xy) + 0.5);\n");
+    }
+    /* DAM-R1c: room_water_alpha_suppress — GL/Metal force the shell alpha to 0
+     * (gfx_opengl.c:1360; Frigate settex 655, not Dam). WGSL previously omitted
+     * it, so a suppressed shell rendered at authored alpha on WebGPU. */
+    if (cc.opt_alpha && cc.room_water_alpha_suppress) {
+        P("  texel.a = 0.0;\n");
     }
     /* RDP memory-blend arms — byte-exact port of gfx_opengl.c :1373-1410.
      * HW blending is disabled for these draws (wgpu_blend_state returns opaque);
