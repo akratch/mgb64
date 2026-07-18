@@ -55,5 +55,6 @@ u32 portAudioGetDeviceBufferBytes(void) { return 0; }
 s32 portAudioGetMasterVolumeQ15(void) { return 32768; }
 void portAudioGetSfxMixStats(PortSfxMixStats *stats) { (void)stats; }
 void portAudioMixSfxIntoBuffer(s16 *out, s32 numSamples) { (void)out; (void)numSamples; }
+int portAudioIsMuted(void) { return 0; }  /* PERF-060 live-mute gate; never muted here */
 void portMusicAudioDump(const void *buf, unsigned int size) { (void)buf; (void)size; }
 void sndGetPlayerStats(PortSndPlayerStats *stats) { (void)stats; }
