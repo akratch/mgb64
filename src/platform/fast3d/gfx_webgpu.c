@@ -125,6 +125,13 @@ static WGPUTextureView       s_post_view  = NULL;
 static WGPUTextureView       s_present_target_view = NULL;
 static WGPUTexture           s_present_target_tex  = NULL;
 
+/* PERF-008: sticky "a frame is or may be read back" latch. Set once at startup for the
+ * known env/flag-armed capture paths (see wgpu_readback_possible), and — as a universal
+ * safety net — the first time wgpu_read_framebuffer_rgb actually runs, so ANY readback
+ * caller (the gfx_pc.c diagnostic pixel probes, or a future one) pins every subsequent
+ * frame to the offscreen present path even if its arming signal was not enumerated. */
+static bool                  s_readback_latched    = false;
+
 /* Per-frame objects, valid only between start_frame and end_frame. */
 static WGPUCommandEncoder    s_encoder    = NULL;
 static WGPURenderPassEncoder s_pass       = NULL;
@@ -493,6 +500,8 @@ static bool wgpu_format_is_bgra(WGPUTextureFormat f) {
     return f == WGPUTextureFormat_BGRA8Unorm || f == WGPUTextureFormat_BGRA8UnormSrgb;
 }
 
+static int wgpu_dump_surface_frame(void);   /* GE007_WEBGPU_DUMP_SURFACE target, or -1 */
+
 static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     if (s_surface == NULL || s_device == NULL || w == 0 || h == 0) {
         return;
@@ -505,9 +514,14 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
      * require). If a platform disallows CopyDst, wgpuSurfaceConfigure raises a
      * device error that on_device_error logs (never aborts) and present is
      * skipped — offscreen rendering + readback still work. */
-    /* CopyDst receives the scene blit; CopySrc lets GE007_WEBGPU_DUMP_SURFACE read
-     * the presented frame (scene + overlay) back for validation. */
-    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst | WGPUTextureUsage_CopySrc;
+    /* CopyDst receives the scene blit on the offscreen present path (always kept, as
+     * any frame may take it). CopySrc lets GE007_WEBGPU_DUMP_SURFACE read the presented
+     * frame (scene + overlay) back — requested ONLY when that dump is armed (PERF-008):
+     * a permanently CopySrc surface can block a compositor fast-path on some platforms. */
+    cfg.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst;
+    if (wgpu_dump_surface_frame() >= 0) {
+        cfg.usage |= WGPUTextureUsage_CopySrc;
+    }
     cfg.width = w;
     cfg.height = h;
     cfg.alphaMode = wgpu_choose_alpha_mode();   /* WEB-049: Opaque when advertised, else Auto */
@@ -1079,11 +1093,13 @@ static bool wgpu_ensure_postfx(void) {
            s_post_sampL != NULL;
 }
 
-/* Run the output filter: s_scene_tex -> s_post_tex, using the still-open frame
- * encoder. Returns true if the post target now holds the filtered frame. */
-static bool wgpu_run_postfx(void) {
+/* Run the output filter: s_scene_tex -> `target`, using the still-open frame encoder.
+ * `target` is s_post_view on the offscreen present path, or the acquired surface view
+ * on the PERF-008 direct-to-surface path. Returns true if the target now holds the
+ * filtered frame. */
+static bool wgpu_run_postfx(WGPUTextureView target) {
     if (!wgpu_ensure_postfx() || s_encoder == NULL || s_scene_view == NULL ||
-        s_post_view == NULL || s_scene_w == 0 || s_scene_h == 0) {
+        target == NULL || s_scene_w == 0 || s_scene_h == 0) {
         return false;
     }
 
@@ -1164,7 +1180,7 @@ static bool wgpu_run_postfx(void) {
     }
 
     WGPURenderPassColorAttachment att = {0};
-    att.view = s_post_view;
+    att.view = target;
     att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     att.loadOp = WGPULoadOp_Clear;   /* fullscreen triangle covers all pixels */
     att.storeOp = WGPUStoreOp_Store;
@@ -1180,6 +1196,60 @@ static bool wgpu_run_postfx(void) {
     return true;
 }
 
+/* PERF-008: could ANY frame in this session be read back or dumped? The offscreen
+ * present target must be retained (and the trailing texture-to-texture present copy
+ * kept) for such frames, because read_framebuffer_rgb + the frame/surface PPM dumps
+ * read s_present_target_tex AFTER present — a surface view is freed by then. Every
+ * trigger is armed at process start (a CLI flag or an env var), so a sticky latch is
+ * a safe conservative SUPERSET:
+ *   - the --screenshot-frame session (g_screenshotFrameSessionActive), its armed frame
+ *     (g_autoScreenshotFrame) and --screenshot-game-timer (g_autoScreenshotGameTimer),
+ *     which the parity/oracle screenshot ctests drive;
+ *   - the AUDIT-0003 screenshot series (GE007_SCREENSHOT_SERIES_DIR);
+ *   - the frame-30 GE007_SCREENSHOT one-shot;
+ *   - the in-end_frame WebGPU PPM dumps (GE007_WEBGPU_DUMP_FRAME / _SURFACE);
+ *   - the diag display-cast / menu captures;
+ *   - the F2 manual screenshot, itself inert unless GE007_DEV_HOTKEYS is set;
+ *   - the gfx_pc.c diagnostic pixel probes (GE007_TRACE_*_PIXEL / _FB_CAPTURE), which
+ *     read back mid-frame; the sticky s_readback_latched (tripped by the first actual
+ *     read_framebuffer_rgb) also nets these — and any future reader — from then on.
+ * When none are armed (normal gameplay / the web demo) a post-FX frame renders
+ * straight into the surface. Sticky so a flag that self-clears after firing (the
+ * auto-screenshot frame/timer reset to -1) still pins us to the offscreen path.
+ * Correctness-first: any unrecognised readback route ⇒ keep the offscreen path. */
+static bool wgpu_readback_possible(void) {
+    if (s_readback_latched) {
+        return true;
+    }
+    extern int g_screenshotFrameSessionActive;
+    extern int g_autoScreenshotFrame;
+    extern int g_autoScreenshotGameTimer;
+    if (g_screenshotFrameSessionActive || g_autoScreenshotFrame >= 0 ||
+        g_autoScreenshotGameTimer >= 0) {
+        s_readback_latched = true;
+        return true;
+    }
+    static int env_armed = -1;   /* env triggers are process-constant; parse once */
+    if (env_armed < 0) {
+        env_armed = (getenv("GE007_SCREENSHOT_SERIES_DIR")             != NULL ||
+                     getenv("GE007_SCREENSHOT")                        != NULL ||
+                     getenv("GE007_WEBGPU_DUMP_FRAME")                 != NULL ||
+                     getenv("GE007_WEBGPU_DUMP_SURFACE")               != NULL ||
+                     getenv("GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER") != NULL ||
+                     getenv("GE007_DIAG_MENU_SCREENSHOT_MENU")         != NULL ||
+                     getenv("GE007_DEV_HOTKEYS")                       != NULL ||
+                     getenv("GE007_TRACE_SETTEX_FB_CAPTURE")           != NULL ||
+                     getenv("GE007_TRACE_SETTEX_PIXEL")                != NULL ||
+                     getenv("GE007_TRACE_TRI_PIXEL")                   != NULL ||
+                     getenv("GE007_TRACE_ROOM_XLU_DEFER_PIXEL")        != NULL ||
+                     getenv("GE007_TRACE_SKY_PREP_PIXEL")              != NULL) ? 1 : 0;
+    }
+    if (env_armed) {
+        s_readback_latched = true;
+    }
+    return env_armed != 0;
+}
+
 static void wgpu_end_frame(void) {
     if (!s_frame_open) {
         /* start_frame bailed (not ready / no texture) — nothing to submit. */
@@ -1189,18 +1259,58 @@ static void wgpu_end_frame(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
-    /* Output post-FX: resolve the raw scene through the VI filter into s_post_tex.
-     * When active, THAT becomes the frame that is minimap-composited, presented and
-     * read back — matching GL (output filter into the default FB, THEN the minimap
-     * on top) and Metal (s_final_color, THEN minimap). A faithful frame (filter
-     * inactive) keeps the raw scene as the present source, byte-identical to the
-     * pre-post-FX copy. The minimap is drawn AFTER the filter so it is not
+    /* Acquire the window drawable up front: the PERF-008 direct-to-surface path below
+     * renders the output filter straight into it, and the offscreen path uses it as
+     * the present-copy destination. A hidden/occluded window has no drawable — that's
+     * fine, the offscreen scene still rendered (and can be dumped/read back). Exactly
+     * one GetCurrentTexture per frame, as before (just hoisted above the resolve). */
+    WGPUSurfaceTexture st = {0};
+    wgpuSurfaceGetCurrentTexture(s_surface, &st);
+    bool present_ok = st.texture != NULL &&
+        (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+         st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
+
+    /* PERF-008: when the output filter is active AND this frame is never read back,
+     * render the FINAL post-FX pass straight into the surface, eliminating the
+     * trailing full-resolution texture-to-texture present copy (~4-15 MB/frame plus a
+     * store on tile-based GPUs). The offscreen present target + copy are retained for
+     * any frame that can be read back — the screenshot/parity/dump harness reads
+     * s_present_target_tex AFTER present (AUDIT-0003) and a surface view is gone by
+     * then — and for faithful/no-post-FX frames (no fullscreen pass to redirect, and a
+     * blit would cost as much as the copy). wgpu_readback_possible() is a conservative
+     * session-level superset; in any doubt we keep the byte-identical offscreen path. */
+    WGPUTextureView surface_view = NULL;
+    bool direct = false;
+    if (present_ok && !wgpu_readback_possible() && wgpu_postfx_active()) {
+        surface_view = wgpuTextureCreateView(st.texture, NULL);
+        if (surface_view != NULL && wgpu_run_postfx(surface_view)) {
+            direct = true;
+            /* Presented pixels now live only in the surface (released after present),
+             * so there is no persistent readback target — safe, since the gate above
+             * proved this frame is never read back. NULL steers any stray readback to
+             * the still-valid raw scene rather than a freed surface texture. */
+            s_present_target_tex  = NULL;
+            s_present_target_view = surface_view;
+        } else if (surface_view != NULL) {
+            wgpuTextureViewRelease(surface_view);   /* post-FX unavailable; fall back */
+            surface_view = NULL;
+        }
+    }
+
+    /* Offscreen present path (byte-identical to the pre-PERF-008 backend). Resolve the
+     * raw scene through the VI filter into s_post_tex when active — THAT becomes the
+     * frame that is minimap-composited, copied to the surface and read back — matching
+     * GL (output filter into the default FB, THEN the minimap on top) and Metal
+     * (s_final_color, THEN minimap). A faithful frame (filter inactive) keeps the raw
+     * scene as the present source. The minimap is drawn AFTER the filter so it is not
      * tonemapped/graded, exactly as on GL/Metal. */
-    s_present_target_tex  = s_scene_tex;
-    s_present_target_view = s_scene_view;
-    if (wgpu_postfx_active() && wgpu_run_postfx()) {
-        s_present_target_tex  = s_post_tex;
-        s_present_target_view = s_post_view;
+    if (!direct) {
+        s_present_target_tex  = s_scene_tex;
+        s_present_target_view = s_scene_view;
+        if (wgpu_postfx_active() && wgpu_run_postfx(s_post_view)) {
+            s_present_target_tex  = s_post_tex;
+            s_present_target_view = s_post_view;
+        }
     }
 
     /* Minimap / radar overlay: a 2D screen-space pass into the present target after
@@ -1237,15 +1347,11 @@ static void wgpu_end_frame(void) {
         }
     }
 
-    /* Present: copy the scene into the window's surface texture (same format +
-     * size) and present it. A hidden/occluded window has no drawable — that's
-     * fine, the offscreen frame still rendered (and dumped/read back). */
-    WGPUSurfaceTexture st = {0};
-    wgpuSurfaceGetCurrentTexture(s_surface, &st);
-    bool present_ok = st.texture != NULL &&
-        (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
-         st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
-    if (present_ok) {
+    /* Present copy: OFFSCREEN path only. The direct path (PERF-008) already rendered
+     * the final frame straight into the surface, so it needs no copy. Same format +
+     * size (surface configured to the scene res). A hidden/occluded window has no
+     * drawable — present is skipped; the offscreen frame still rendered and read back. */
+    if (present_ok && !direct) {
         WGPUTexelCopyTextureInfo cs = {0};
         cs.texture = s_present_target_tex; cs.aspect = WGPUTextureAspect_All;
         WGPUTexelCopyTextureInfo cd = {0};
@@ -1351,6 +1457,9 @@ static void wgpu_end_frame(void) {
          * JS task yields (requestAnimationFrame), and emscripten's binding
          * aborts on an explicit present — so the browser side is a no-op. */
         WGPU_COMPAT_PRESENT(s_surface);
+    }
+    if (surface_view != NULL) {
+        wgpuTextureViewRelease(surface_view);   /* PERF-008 direct-path render target */
     }
     if (st.texture != NULL) {
         wgpuTextureRelease(st.texture);
@@ -2944,6 +3053,12 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
  * buffer, then extracts the requested rect with a vertical flip + BGRA->RGB.
  * Synchronous (submit + poll-map) — only the screenshot/parity path calls it. */
 static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
+    /* PERF-008: this session performs readbacks — pin every subsequent frame to the
+     * offscreen present path (which retains a readable s_present_target_tex). Sticky,
+     * so it protects any readback caller whose arming signal wgpu_readback_possible()
+     * did not pre-enumerate; the fire during gfx_run_dl trips before this frame's own
+     * end_frame, so even the current frame presents offscreen. */
+    s_readback_latched = true;
     /* Read the presented frame — the post-FX result (+ minimap) when the filter
      * ran this frame, else the raw scene — so screenshots/parity/oracle tooling
      * see the composited output, exactly as GL captures the post-FX'd default FB
