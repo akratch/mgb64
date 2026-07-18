@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1072 flags** found across the source.
+**1073 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -265,7 +265,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DECOR_ONLY_PRIM` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_SPEEDFRAMES` | ? |  | 1 |  |
 | `GE007_DETERMINISTIC_STABLE_COUNT` | ? |  | 1 |  |
-| `GE007_DEV_HOTKEYS` | ? |  | 1 |  |
+| `GE007_DEV_HOTKEYS` | ? |  | 2 |  |
 | `GE007_DIAG_ALPHA_BLEND` | ? |  | 1 |  |
 | `GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_CC` | ? |  | 2 |  |
 | `GE007_DIAG_ALPHA_FROM_TEX_INTENSITY_MIX` | ? |  | 1 |  |
@@ -274,11 +274,11 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_DIAG_CONVERT_K4K5` | ? |  | 2 |  |
 | `GE007_DIAG_DISABLE_SHADER_CLAMP` | ? |  | 2 |  |
 | `GE007_DIAG_DISABLE_SHADER_TILE_MASK` | ? |  | 2 |  |
-| `GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER` | ? |  | 1 |  |
+| `GE007_DIAG_DISPLAYCAST_SCREENSHOT_TIMER` | ? |  | 2 |  |
 | `GE007_DIAG_IA8_CHANNEL_MODE` | ? |  | 2 |  |
 | `GE007_DIAG_LOADED_TILE_2TEX_N64_FILTER` | ? |  | 2 |  |
 | `GE007_DIAG_LOD_FRACTION` | ? |  | 1 |  |
-| `GE007_DIAG_MENU_SCREENSHOT_MENU` | ? |  | 1 |  |
+| `GE007_DIAG_MENU_SCREENSHOT_MENU` | ? |  | 2 |  |
 | `GE007_DIAG_N64_FILTER_ALWAYS_3POINT` | ? |  | 1 |  |
 | `GE007_DIAG_N64_FILTER_CLAMPED_NON_TEXEDGE_NEAREST_THRESHOLD` | ? |  | 1 |  |
 | `GE007_DIAG_N64_FILTER_NEAREST_THRESHOLD` | ? |  | 1 |  |
@@ -652,6 +652,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_PAD_DISTANCE_TRACE_PAD` | ? |  | 1 |  |
 | `GE007_PAD_LOOK_PI` | ? |  | 1 |  |
 | `GE007_PC_BG_RENDERER` | ? |  | 1 |  |
+| `GE007_PERF006_VERIFY` | ? |  | 1 |  |
 | `GE007_PERF_TRACE` | ? |  | 1 |  |
 | `GE007_PERF_TRACE_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_PERF_TRACE_BUDGET` | ? |  | 1 |  |
@@ -701,9 +702,9 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SATURATION` | float | 1.15f | 1 | Output color saturation. 1.0 leaves colors unchanged. |
 | `GE007_SCENE_DECOR` | int | 0 | 1 | Adds extra 3D scenery -- like real trees and props -- layered on top of the original levels for a richer look. Purely cosmetic; never affects gameplay. 0 = off. |
 | `GE007_SCENE_DECOR_DIR` | string | assets/decor | 1 | Folder the 3D scene decoration is loaded from. The default is fine unless you are authoring your own scenery. |
-| `GE007_SCREENSHOT` | ? |  | 1 |  |
+| `GE007_SCREENSHOT` | ? |  | 2 |  |
 | `GE007_SCREENSHOT_SERIES_AFTER_FRAME` | ? |  | 1 |  |
-| `GE007_SCREENSHOT_SERIES_DIR` | ? |  | 1 |  |
+| `GE007_SCREENSHOT_SERIES_DIR` | ? |  | 2 |  |
 | `GE007_SCREENSHOT_SERIES_EVERY` | ? |  | 1 |  |
 | `GE007_SCREENSHOT_SERIES_LIMIT` | ? |  | 1 |  |
 | `GE007_SCREENSHOT_SERIES_PREFIX` | ? |  | 1 |  |
@@ -957,7 +958,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_ROOM_TRANSFORM` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_TRANSFORM_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_TRANSFORM_ROOM` | ? |  | 1 |  |
-| `GE007_TRACE_ROOM_XLU_DEFER_PIXEL` | ? |  | 1 |  |
+| `GE007_TRACE_ROOM_XLU_DEFER_PIXEL` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_XLU_DEFER_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_XLU_DEFER_PIXEL_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_ROOM_XLU_DEFER_PIXEL_INSIDE_ONLY` | ? |  | 2 |  |
@@ -970,7 +971,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_SCRIPTED_AMMO` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_AFTER_FRAME` | ? |  | 1 |  |
-| `GE007_TRACE_SETTEX_FB_CAPTURE` | ? |  | 2 |  |
+| `GE007_TRACE_SETTEX_FB_CAPTURE` | ? |  | 3 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_DIR` | ? |  | 2 |  |
@@ -981,7 +982,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_SETTEX_MATERIAL_CC_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_MATERIAL_CC_SAMPLES` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_MATERIAL_CC_VERTS` | ? |  | 1 |  |
-| `GE007_TRACE_SETTEX_PIXEL` | ? |  | 3 |  |
+| `GE007_TRACE_SETTEX_PIXEL` | ? |  | 4 |  |
 | `GE007_TRACE_SETTEX_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_PIXEL_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_PIXEL_INSIDE_ONLY` | ? |  | 1 |  |
@@ -993,7 +994,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_SHARDS_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_SHOT_BG` | ? |  | 1 |  |
 | `GE007_TRACE_SHOT_BG_BUDGET` | ? |  | 1 |  |
-| `GE007_TRACE_SKY_PREP_PIXEL` | ? |  | 1 |  |
+| `GE007_TRACE_SKY_PREP_PIXEL` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_ROOM` | ? |  | 1 |  |
@@ -1017,7 +1018,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_TINTED_GLASS` | ? |  | 2 |  |
 | `GE007_TRACE_TINTED_GLASS_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_TRAVEL_ANIM` | ? |  | 1 |  |
-| `GE007_TRACE_TRI_PIXEL` | ? |  | 2 |  |
+| `GE007_TRACE_TRI_PIXEL` | ? |  | 3 |  |
 | `GE007_TRACE_TRI_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_TRI_PIXEL_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_TRI_PIXEL_DRAWCLASS` | ? |  | 3 |  |
@@ -1072,8 +1073,8 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEAPON_DIAG_TREE` | ? |  | 1 |  |
 | `GE007_WEAPON_RENDER_FRAME` | ? |  | 1 |  |
 | `GE007_WEAPON_RENDER_LOG` | ? |  | 1 |  |
-| `GE007_WEBGPU_DUMP_FRAME` | ? |  | 1 |  |
-| `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 1 |  |
+| `GE007_WEBGPU_DUMP_FRAME` | ? |  | 2 |  |
+| `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 2 |  |
 | `GE007_WEBGPU_TRACE_VIEWPORT` | ? |  | 1 |  |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |
