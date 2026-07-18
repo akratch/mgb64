@@ -256,6 +256,17 @@ static bool s_unclipped_depth_supported = false;
  * drain check is a permanently-dead branch there and native behavior is unchanged. */
 static int s_pending_pipelines = 0;
 
+/* PERF-005b: count of draw batches dropped THIS FRAME because their render
+ * pipeline is still PENDING (async create in flight). A frame with any such
+ * drop is visually incomplete — world geometry is simply missing, which on
+ * screen reads as sky/backdrop "bleeding" through walls (the level-entry and
+ * first-sight pop-in of PERF-005). wgpu_end_frame uses this to withhold the
+ * PRESENT of incomplete frames (hold the last complete image) instead of
+ * showing them; see there for the bounded-hold contract. FAILED pipelines do
+ * NOT count — a permanently-failed create must present degraded rather than
+ * hold forever. Native never stores a PENDING slot, so this stays 0 there. */
+static int s_frame_pending_skips = 0;
+
 /* WEB-023-lite: the viewport/scissor rect LAST APPLIED to the current render-pass
  * encoder, so wgpu_draw_triangles can skip re-emitting an unchanged rect (gfx_pc
  * re-sets the same viewport+scissor for every draw in a run — hundreds of
@@ -1259,13 +1270,40 @@ static void wgpu_end_frame(void) {
     wgpuRenderPassEncoderRelease(s_pass);
     s_pass = NULL;
 
+    /* PERF-005b: a frame that dropped draw batches because their async pipelines
+     * are still compiling (PERF-005 web-live path) is visually incomplete — the
+     * missing world geometry reads as sky/backdrop "bleeding" through walls at
+     * level entry and on first-sight materials mid-mission. Do NOT present such a
+     * frame: skip the surface acquire below entirely, so the canvas (web: the
+     * canvas only updates on a frame whose getCurrentTexture was taken) / window
+     * (native: present is guarded on present_ok) keeps the LAST COMPLETE image
+     * while the offscreen scene still renders, the sim advances, and the end-of-
+     * frame drain lands the pending pipelines. Typical hold is 1-4 frames.
+     * Bounded: after WGPU_PRESENT_HOLD_MAX consecutive holds we present anyway,
+     * so a wedged compile can never freeze the output (and FAILED pipelines never
+     * count toward the hold — see s_frame_pending_skips). Native and web
+     * --deterministic never store PENDING slots, so the counter is permanently 0
+     * there and this block is behavior-neutral for every byte-exact gate. */
+    #define WGPU_PRESENT_HOLD_MAX 30
+    static int s_present_hold_frames = 0;
+    bool hold_present = false;
+    if (s_frame_pending_skips > 0 && s_present_hold_frames < WGPU_PRESENT_HOLD_MAX) {
+        hold_present = true;
+        s_present_hold_frames++;
+    } else {
+        s_present_hold_frames = 0;
+    }
+    s_frame_pending_skips = 0;
+
     /* Acquire the window drawable up front: the PERF-008 direct-to-surface path below
      * renders the output filter straight into it, and the offscreen path uses it as
      * the present-copy destination. A hidden/occluded window has no drawable — that's
      * fine, the offscreen scene still rendered (and can be dumped/read back). Exactly
      * one GetCurrentTexture per frame, as before (just hoisted above the resolve). */
     WGPUSurfaceTexture st = {0};
-    wgpuSurfaceGetCurrentTexture(s_surface, &st);
+    if (!hold_present) {
+        wgpuSurfaceGetCurrentTexture(s_surface, &st);
+    }
     bool present_ok = st.texture != NULL &&
         (st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
          st.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal);
@@ -2052,7 +2090,12 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
              * frame. Returning here — rather than falling through to the miss
              * path — is what prevents re-kicking a create for a key already in
              * flight (or one that failed). Native never stores a non-READY entry,
-             * so it never reaches this and its behavior is unchanged from HEAD. */
+             * so it never reaches this and its behavior is unchanged from HEAD.
+             * PERF-005b: a PENDING skip marks the frame visually incomplete so
+             * wgpu_end_frame withholds its present; FAILED does not (permanent). */
+            if (e->state == WGPU_PIPE_PENDING) {
+                s_frame_pending_skips++;
+            }
             return NULL;
         }
     }
@@ -2083,6 +2126,7 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
         cb.userdata1 = prg;
         cb.userdata2 = (void *)(uintptr_t)key;
         wgpuDeviceCreateRenderPipelineAsync(s_device, &pd, cb);
+        s_frame_pending_skips++;   /* PERF-005b: this batch is missing from the frame */
         return NULL;
     }
 #endif
