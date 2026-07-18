@@ -522,6 +522,20 @@ void bossMainloop(void)
         viInitBuffers();
         debmenuInit();
         portLoadYield();  /* PERF-035: unwind after VI/debug-menu init */
+#ifdef MGB64_WEBGPU_BACKEND
+        /* PERF-005 Phase 2 (W4.3): record/replay pipeline prewarm. set_stage points
+         * the recorder at this stage (persisting the previous stage's manifest if it
+         * grew); prewarm_stage then SYNCHRONOUSLY builds every pipeline recorded for
+         * this stage on a prior visit/session, so cold materials don't hitch on first
+         * sight. Runs here inside the watchdog-suppressed load window (load screen up)
+         * and AFTER portLoadYield, so it never straddles an Asyncify suspend. No-op
+         * under --deterministic, when GE007_PIPECACHE=0, or when the webgpu backend
+         * isn't the active one (gfx_webgpu.h). g_StageNum is boss.c's authority. */
+        extern void gfx_webgpu_set_stage(int stage);
+        extern void gfx_webgpu_prewarm_stage(int stage);
+        gfx_webgpu_set_stage(g_StageNum);
+        gfx_webgpu_prewarm_stage(g_StageNum);
+#endif
 #ifdef NATIVE_PORT
         /* Reset frame timer before first waitForNextFrame to avoid huge delta
          * from init time being counted as elapsed game frames */

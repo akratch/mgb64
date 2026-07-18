@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1074 flags** found across the source.
+**1076 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -657,6 +657,8 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_PERF_TRACE_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_PERF_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_PERPIXEL_LIGHT` | int | 0 | 1 | Per-pixel geometric-normal (dFdx) directional sun on room surfaces: recomputes Lambert per fragment from the world-position derivative and luma-replaces the baked directional shading (reuses Video.EnvRelightBlend as the strength dial). Supersedes Video.EnvSmoothNormals when on. 0 = off (identity). |
+| `GE007_PIPECACHE` | bool | 1 | 1 | PERF-005 Phase 2 record/replay pipeline prewarm (0 = off) |
+| `GE007_PIPECACHE_TRACE` | bool | 0 | 1 | PERF-005 Phase 2: log record/replay pipeline prewarm counts at level load |
 | `GE007_PMV_ORDER` | ? |  | 1 |  |
 | `GE007_POLY_TRACE` | ? |  | 4 |  |
 | `GE007_PORTAL_ACCEPTED_MIN_SPAN` | ? |  | 1 |  |

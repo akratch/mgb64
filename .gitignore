@@ -16,6 +16,8 @@ baserom*
 *.eeprom
 ge007_eeprom*
 ge007.ini
+ge007_bindings.ini
+ge007_pipecache.txt
 goldeneye-soundpack/
 tools/irix/
 

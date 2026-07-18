@@ -42,6 +42,18 @@ bool gfx_webgpu_bringup(void *metal_layer, void *sdl_window,
 void *gfx_webgpu_current_overlay_pass(void);
 void  gfx_webgpu_current_overlay_size(int *w, int *h);
 
+/* PERF-005 Phase 2 (W4.3): record/replay pipeline prewarm. boss.c calls both on
+ * every stage (re)load, inside the watchdog-suppressed load window:
+ *   gfx_webgpu_set_stage(stage)     — point the recorder at `stage` (and persist the
+ *                                     previous stage's manifest if it grew).
+ *   gfx_webgpu_prewarm_stage(stage) — synchronously build every pipeline recorded for
+ *                                     `stage` on a prior visit/session, so no material
+ *                                     is cold on entry.
+ * Both are safe no-ops when the webgpu backend isn't active, under --deterministic,
+ * or when GE007_PIPECACHE=0. Persistence is best-effort (I/O failure = no prewarm). */
+void gfx_webgpu_set_stage(int stage);
+void gfx_webgpu_prewarm_stage(int stage);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2139,6 +2139,154 @@ static int wgpu_pipe_reserve_slot(struct ShaderProgram *prg) {
     return slot;
 }
 
+/* ------------------------------------------------------------------------
+ * PERF-005 Phase 2 (W4.3): pipeline record/replay prewarm.
+ *
+ * PERF-005 killed the synchronous first-sight compile stall by kicking pipeline
+ * creates async (web-live) — but that traded the freeze for transient pop-in /
+ * present-holds whenever the camera meets a COLD material (worst at level entry,
+ * where EVERY material is cold). Phase 2 removes the cold set for revisits and
+ * repeat sessions: RECORD the (shader_id0, shader_id1, pipe-key) tuples actually
+ * used per stage, PERSIST them to a small text manifest in the save dir, and
+ * REPLAY them SYNCHRONOUSLY during the next load screen (gfx_webgpu_prewarm_stage,
+ * called from boss.c while the watchdog is suppressed and the load screen is up).
+ * The async path stays the safety net for genuinely-new keys.
+ *
+ * CRUX (shader-creation-at-load): a recorded shader may not have a ShaderProgram
+ * yet at load time (its first draw hasn't happened). That is fine — the shader is
+ * built PURELY from the ids: wgpu_create_and_load_new_shader → gfx_webgpu_build_wgsl
+ * → gfx_cc_get_features is a self-contained decode of (shader_id0, shader_id1) with
+ * ZERO gfx_pc render state, so prewarm creates the module too. Full scope: a
+ * persisted manifest warms everything from the second launch's first frame.
+ *
+ * Scope gate: record/persist/prewarm run only when the webgpu backend is the
+ * active one and NOT under --deterministic (so every byte-exact gate stays on the
+ * untouched synchronous HEAD path — prewarm never runs there). Persistence is
+ * best-effort: any I/O failure just means "no prewarm", never fatal. */
+extern const char *savedirPath(const char *filename);          /* src/platform/savedir.c */
+extern int port_env_bool(const char *name, int default_on, const char *help); /* src/platform/port_env.h */
+
+#define WGPU_PREWARM_FILE       "ge007_pipecache.txt"
+#define WGPU_PREWARM_MAX        8192   /* total records across all stages */
+#define WGPU_PREWARM_PER_STAGE  512    /* soft cap per stage (drop-on-full, one note) */
+
+struct WgpuPrewarmRec { uint64_t id0; uint32_t id1; uint32_t key; int stage; };
+static struct WgpuPrewarmRec s_prewarm_recs[WGPU_PREWARM_MAX];
+static int  s_prewarm_n = 0;
+static int  s_prewarm_cur_stage = -1;   /* stage the recorder tags new keys with */
+static bool s_prewarm_dirty = false;    /* current stage's set grew since last flush */
+static bool s_prewarm_loaded = false;   /* manifest read from disk once */
+
+/* Enabled iff not deterministic and not explicitly disabled. Memoized: both
+ * inputs are settled by the time the recorder first runs (argv already parsed),
+ * and this is on the per-create record hot-ish path. */
+static int wgpu_prewarm_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        extern int g_deterministic;
+        cached = (!g_deterministic &&
+                  port_env_bool("GE007_PIPECACHE", 1,
+                      "PERF-005 Phase 2 record/replay pipeline prewarm (0 = off)"))
+                 ? 1 : 0;
+    }
+    return cached;
+}
+
+/* Add (stage,id0,id1,key) if new and under the caps. Returns 1 when a record was
+ * appended, 0 on duplicate or cap. Shared by disk-load and live-record. */
+static int wgpu_prewarm_intern(int stage, uint64_t id0, uint32_t id1, uint32_t key) {
+    int stage_count = 0;
+    for (int i = 0; i < s_prewarm_n; i++) {
+        if (s_prewarm_recs[i].stage != stage) continue;
+        if (s_prewarm_recs[i].id0 == id0 && s_prewarm_recs[i].id1 == id1 &&
+            s_prewarm_recs[i].key == key) {
+            return 0;   /* already recorded */
+        }
+        stage_count++;
+    }
+    if (stage_count >= WGPU_PREWARM_PER_STAGE || s_prewarm_n >= WGPU_PREWARM_MAX) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr, "[webgpu] pipecache full (stage %d) — extra materials "
+                            "won't prewarm\n", stage);
+        }
+        return 0;
+    }
+    s_prewarm_recs[s_prewarm_n].stage = stage;
+    s_prewarm_recs[s_prewarm_n].id0 = id0;
+    s_prewarm_recs[s_prewarm_n].id1 = id1;
+    s_prewarm_recs[s_prewarm_n].key = key;
+    s_prewarm_n++;
+    return 1;
+}
+
+/* Rewrite the WHOLE manifest (all stages) when any stage grew. Best-effort: an
+ * open/write failure is swallowed (clears dirty so we don't retry every frame).
+ * File I/O only — safe to call post-device-teardown (e.g. from atexit). */
+static void wgpu_prewarm_flush(void) {
+    if (!wgpu_prewarm_enabled() || !s_prewarm_dirty) {
+        return;
+    }
+    char path[1024];
+    snprintf(path, sizeof(path), "%s", savedirPath(WGPU_PREWARM_FILE));
+    FILE *f = fopen(path, "w");
+    if (f == NULL) {
+        s_prewarm_dirty = false;   /* give up silently; no prewarm is acceptable */
+        return;
+    }
+    for (int i = 0; i < s_prewarm_n; i++) {
+        fprintf(f, "%d %016llx %08x %08x\n",
+                s_prewarm_recs[i].stage,
+                (unsigned long long)s_prewarm_recs[i].id0,
+                (unsigned)s_prewarm_recs[i].id1,
+                (unsigned)s_prewarm_recs[i].key);
+    }
+    fclose(f);
+    s_prewarm_dirty = false;
+}
+
+/* Load the manifest into the per-stage sets once. Registers an atexit flush so a
+ * single-stage native session (e.g. a headless --screenshot-exit boot) still
+ * persists what it recorded even though it never hits a stage transition; web
+ * relies on the transition flush + the shell's syncfs timer instead. */
+static void wgpu_prewarm_ensure_loaded(void) {
+    if (s_prewarm_loaded) {
+        return;
+    }
+    s_prewarm_loaded = true;
+    if (!wgpu_prewarm_enabled()) {
+        return;
+    }
+    atexit(wgpu_prewarm_flush);
+    char path[1024];
+    snprintf(path, sizeof(path), "%s", savedirPath(WGPU_PREWARM_FILE));
+    FILE *f = fopen(path, "r");
+    if (f == NULL) {
+        return;   /* no manifest yet (first ever run) — nothing to prewarm */
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        int stage; unsigned long long id0; unsigned id1, key;
+        if (sscanf(line, "%d %llx %x %x", &stage, &id0, &id1, &key) == 4) {
+            wgpu_prewarm_intern(stage, (uint64_t)id0, (uint32_t)id1, (uint32_t)key);
+        }
+    }
+    fclose(f);
+}
+
+/* Record a (shader,key) actually created for the current stage. Called on every
+ * genuine pipeline cache miss in wgpu_pipeline_for (before the sync/async split),
+ * so it captures the exact key set that would otherwise be cold on a revisit. */
+static void wgpu_prewarm_record(uint64_t id0, uint32_t id1, uint32_t key) {
+    if (!wgpu_prewarm_enabled() || s_prewarm_cur_stage < 0) {
+        return;
+    }
+    if (wgpu_prewarm_intern(s_prewarm_cur_stage, id0, id1, key)) {
+        s_prewarm_dirty = true;
+    }
+}
+
 #ifdef __EMSCRIPTEN__
 /* PERF-005: async render-pipeline completion (web-live only; see the seam-rule
  * note at wgpuCompatCreateSurface for why this block is #ifdef'd rather than in
@@ -2238,8 +2386,13 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
         }
     }
 
-    /* Cache miss. Build the descriptor ONCE via the shared helper; both the sync
-     * and async paths below submit this exact descriptor. */
+    /* Cache miss. PERF-005 Phase 2: record this (shader,key) for the current stage
+     * so a future load screen can prewarm it (both the sync and async create below
+     * are genuine first-sight CREATEs — this is the one place to capture them). */
+    wgpu_prewarm_record(prg->shader_id0, prg->shader_id1, key);
+
+    /* Build the descriptor ONCE via the shared helper; both the sync and async
+     * paths below submit this exact descriptor. */
     struct WgpuPipeScratch sc;
     WGPURenderPipelineDescriptor pd;
     wgpu_fill_pipeline_desc(prg, key, &pd, &sc);
@@ -2280,6 +2433,112 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
         prg->pipes[slot].state = WGPU_PIPE_READY;
     }
     return pipe;
+}
+
+/* PERF-005 Phase 2: switch the recorder to `stage`. Flushes the PREVIOUS stage's
+ * manifest first if it grew during play (persist at the transition, not per-create).
+ * Called from boss.c on every stage (re)load, adjacent to gfx_webgpu_prewarm_stage.
+ * A near no-op when prewarm is disabled (deterministic / GE007_PIPECACHE=0) or when
+ * the webgpu backend isn't the active one (nothing ever records, so nothing flushes).
+ * Declared in gfx_webgpu.h. */
+void gfx_webgpu_set_stage(int stage) {
+    if (!wgpu_prewarm_enabled()) {
+        s_prewarm_cur_stage = stage;   /* harmless; record() is a no-op when disabled */
+        return;
+    }
+    wgpu_prewarm_ensure_loaded();
+    if (s_prewarm_dirty) {
+        wgpu_prewarm_flush();          /* persist the stage we are leaving */
+    }
+    s_prewarm_cur_stage = stage;
+}
+
+/* PERF-005 Phase 2: synchronously build every pipeline recorded for `stage` on a
+ * prior visit/session, so its materials are already READY before the first draw —
+ * no cold-material pop-in / present-hold on entry. Runs inside boss.c's load window
+ * (watchdog suppressed, load screen up); the creates are the POINT of that window.
+ *
+ * IMPORTANT (Asyncify, PERF-031): this must NOT suspend. wgpuDeviceCreateRenderPipeline
+ * (sync) and the shader-module create it may trigger are non-suspending on both
+ * dialects — the only suspending calls are adapter/device bring-up pumps, which are
+ * absent here. Do NOT add emscripten_sleep / ProcessEvents in this path.
+ *
+ * Bit-identical guarantee: the descriptor is built through the SHARED
+ * wgpu_fill_pipeline_desc, so a prewarmed pipeline is byte-for-byte what the draw
+ * would have created for the same key — no async/sync render divergence.
+ * Declared in gfx_webgpu.h. */
+void gfx_webgpu_prewarm_stage(int stage) {
+    if (!wgpu_prewarm_enabled()) {
+        return;
+    }
+    if (!s_ready || s_device == NULL) {
+        return;   /* device not up yet — records still accrue; warm on the next visit */
+    }
+    wgpu_prewarm_ensure_loaded();
+
+    /* wgpu_create_and_load_new_shader sets s_cur_shader as a side effect; prewarm
+     * must not perturb the draw path's current-shader state, so snapshot + restore. */
+    struct ShaderProgram *saved_cur = s_cur_shader;
+    int considered = 0, warmed = 0, shaders_built = 0;
+
+    for (int i = 0; i < s_prewarm_n; i++) {
+        if (s_prewarm_recs[i].stage != stage) {
+            continue;
+        }
+        considered++;
+        uint64_t id0 = s_prewarm_recs[i].id0;
+        uint32_t id1 = s_prewarm_recs[i].id1;
+        uint32_t key = s_prewarm_recs[i].key;
+
+        struct ShaderProgram *prg = wgpu_lookup_shader(id0, id1);
+        if (prg == NULL) {
+            /* Shader not created yet (its first draw hasn't happened). Build it now
+             * — pure function of the ids (WGSL derived from the combiner encoding),
+             * no gfx_pc render state needed. This is the crux that makes second-launch
+             * cold-warming possible. */
+            prg = wgpu_create_and_load_new_shader(id0, id1);
+            if (prg != NULL && prg->module != NULL) {
+                shaders_built++;
+            }
+        }
+        if (prg == NULL || prg->module == NULL) {
+            continue;   /* inert program (WGSL build failed) — skip, draw path guards too */
+        }
+
+        /* Already READY (prewarmed earlier this session, or created by a draw)? skip. */
+        bool have = false;
+        for (int j = 0; j < prg->npipes; j++) {
+            if (prg->pipes[j].key == key && prg->pipes[j].state == WGPU_PIPE_READY) {
+                have = true;
+                break;
+            }
+        }
+        if (have) {
+            continue;
+        }
+
+        struct WgpuPipeScratch sc;
+        WGPURenderPipelineDescriptor pd;
+        wgpu_fill_pipeline_desc(prg, key, &pd, &sc);
+        WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(s_device, &pd);   /* SYNC */
+        if (pipe != NULL) {
+            int slot = wgpu_pipe_reserve_slot(prg);
+            prg->pipes[slot].key = key;
+            prg->pipes[slot].pipe = pipe;
+            prg->pipes[slot].state = WGPU_PIPE_READY;
+            warmed++;
+        }
+    }
+
+    s_cur_shader = saved_cur;
+
+    if (port_env_bool("GE007_PIPECACHE_TRACE", 0,
+            "PERF-005 Phase 2: log record/replay pipeline prewarm counts at level load")) {
+        fprintf(stderr, "[webgpu] pipecache prewarm stage %d: warmed %d pipeline(s), "
+                        "built %d shader(s), %d recorded\n",
+                stage, warmed, shaders_built, considered);
+        fflush(stderr);
+    }
 }
 
 /* ------------------------------------------------------------------------
