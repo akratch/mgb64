@@ -76,16 +76,44 @@ docs/audit/DAM_PARITY_HUNT_2026-07-17.md):
 - Negative result: literal water-through-geometry NOT reproducible — reservoir
   water occludes correctly everywhere inspected on both backends.
 
+**PERF PROGRAM LANDED 2026-07-17/18** (execution ledger:
+`docs/audit/PERF_BACKLOG_2026-07-17.md` — waves 1-3 + review; web-affecting
+items reconciled here):
+- **WEB-039 superseded** → PERF-032 `ba69d94`: streaming `instantiateWasm` +
+  fetch-before-gate (the MIME assumption that justified non-streaming was
+  disproven); WEB-032/033 guards preserved.
+- **WEB-062 build half** → PERF-033 `0091980`: INITIAL_MEMORY 256→128 MiB +
+  MAXIMUM_MEMORY 512 MiB.
+- **WEB-013 further mitigated** → PERF-035 `d0bad20`: level-load cooperative
+  yields (no frozen tab) + pre-teardown audio prefill to the 12-frame cap.
+- **WEB-012 near-term half** → PERF-010 `e79d871`+`97180bd`:
+  `Audio.QueueTargetFrames` LIVE knob (platform-aware max). Worklet half still
+  deferred (→ PERF-039).
+- **WEB-054 async half** → PERF-005 `4db633e` + **PERF-005b `1166fc1`** (the
+  async draw-drop presented incomplete frames — sky-flood bleed; fixed by
+  present-hold, root-caused via CDP repro). Prewarm half still open (→ W4.3).
+- **WEB-021 residual measured & deferred (data)** → PERF-007: 0/3,276
+  memory-blend splits empty on Facility/Runway/Dam; coalescing is a TBDR win
+  unmeasurable on the CPU-bound M3 Max.
+- Also web-facing: PERF-030 `639cffc` (web RenderScale native-res default —
+  the single biggest web pixel-load lever), PERF-014 `4765099` (per-draw
+  SetPipeline/SetBindGroup dedup), PERF-008 `6834759` (direct-to-surface
+  present, no trailing copy), plus the universal gfx_pc.c wins (PERF-002/003/
+  004/006/012/013/015/016 — the material split alone is ~12-15% CPU).
+- **W4.1 `0abbd19`**: browser regression lane (`web_frame_probe` ctest —
+  frame-completeness under CPU throttle + movement; the net WEB-022 wanted).
+
 **STILL DEFERRED / OPEN**:
 WEB-018 full (in-game settings overlay on web — seam unblocked via WEB-055),
-WEB-021 residual (pass-split coalescing — measure on Apple GPU first), WEB-022
-(Asyncify bounding experiment — wants the browser tape lane as safety net),
-WEB-023 residual (per-frame writeBuffer batching), WEB-028 fix-half (attr
-packing — diagnostic in place, no combiner observed tripping 16), WEB-036
-(ffp-contract — OWNER: requires native baseline re-record), WEB-050b (eviction
-→ gfx_pc invalidation hook, only if WGPU_SHADER_MAX is ever lowered), WEB-054
-(pipeline prewarm). Deploy to Pages = owner-gated (`web-demo.yml`
-workflow_dispatch).
+WEB-022 (Asyncify narrowing — regression net now EXISTS per W4.1; landing in
+progress as PERF-031/W4.2), WEB-023 residual (per-frame writeBuffer batching),
+WEB-028 fix-half (attr packing — diagnostic in place, no combiner observed
+tripping 16), WEB-036 (ffp-contract — OWNER: requires native baseline
+re-record), WEB-050b (eviction → gfx_pc invalidation hook, only if
+WGPU_SHADER_MAX is ever lowered), WEB-054 prewarm half (→ W4.3 in
+PERF_BACKLOG), WEB-012 worklet half (→ PERF-039, gated on COOP/COEP via
+PERF-036's coi-serviceworker path). Deploy to Pages = owner-gated
+(`web-demo.yml` workflow_dispatch).
 
 **Verification at HEAD**: native build clean; renderer_parity + both apertures +
 sim_state_hash + campaign_route + input/config ctests green; tape gate 7/7

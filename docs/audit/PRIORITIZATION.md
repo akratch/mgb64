@@ -80,7 +80,7 @@ save, or automation contract.
 - AUDIT-0012 Sanitizer gate certifies nonzero process exits as clean
 - AUDIT-0035 App shell converts engine boot failures into exit status zero
 - AUDIT-0043 Auto-screenshot write failure still exits successfully
-- AUDIT-0019 Performance gate hard-fails an unqualified host-specific baseline
+- AUDIT-0019 Performance gate hard-fails an unqualified host-specific baseline — **FIXED at `cf3944a`** (PERF-061 reconciliation: fingerprint-gated regression mode; portable runs are advisory-only)
 - AUDIT-0020 Guard-fire regression lane hardcodes a stale opt-out hash
 - AUDIT-0013 Fidelity ledger index omits nine authoritative records
 - AUDIT-0053 macOS/Linux release builds do not receive the release version
@@ -232,7 +232,7 @@ table is the authoritative 73-row list.
 | 14 | AUDIT-0055 | S3 | P1 | Runtime reproduced | Transient environment override erases the persisted setting |
 | 15 | AUDIT-0053 | S3 | P1 | Source and built-artifact proven | macOS and Linux release builds do not receive the release version |
 | 16 | AUDIT-0013 | S3 | P1 | Test reproduced | Fidelity ledger index omits nine authoritative records |
-| 17 | AUDIT-0019 | S3 | P1 | Test reproduced | Performance gate hard-fails an unqualified host-specific baseline |
+| 17 | AUDIT-0019 | S3 | P1 | **FIXED `cf3944a`** | Performance gate hard-fails an unqualified host-specific baseline |
 | 18 | AUDIT-0020 | S3 | P1 | Test reproduced | Guard-fire regression lane hardcodes a stale opt-out hash |
 | 19 | AUDIT-0041 | S3 | P1 | Source proven | Truncated EEPROM loads a partial prefix despite claiming blank state |
 | 20 | AUDIT-0045 | S3 | P1 | Source proven | ROM picker marks engine-rejected ROM sizes Ready to play |

@@ -7,6 +7,13 @@
 > but other docs previously pointed at a `perf/make-it-rip` merge SHA that is
 > private-lineage and does not exist on this repo's lineage — verify this work
 > by the two symbols above, not by any branch/merge hash.
+>
+> **Addendum 2026-07-18 (PERF-061):** M1/M2 are SHIPPED by content (jungle
+> 18→131 fps era); the §3 census numbers below are GL-era — current backend
+> numbers live in `docs/design/WEBGPU_BACKEND_STATUS_2026-07-13.md`, and the
+> 2026-07-17/18 perf program (waves 1-4: material-derivation split, async
+> pipelines, present path, web delivery) is ledgered in
+> `docs/audit/PERF_BACKLOG_2026-07-17.md`.
 
 <!-- Provenance: authored 2026-07-01 from a live profiling investigation of the
 Fast3D native port. Method: macOS `sample` call-graph on the Jungle render loop +
