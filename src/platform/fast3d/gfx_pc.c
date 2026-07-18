@@ -3660,8 +3660,15 @@ static bool gfx_cc_id_rgb_uses_lod_fraction(uint64_t cc_id, uint32_t cc_options)
  * the [0,size) scan window only ever holds current-cycle entries) but a
  * performance cliff: >256 distinct combiners cycling would re-generate combiners
  * every frame. It now grows like the backend shader-program pool
- * (gfx_opengl.c). The only retained pointer into it is prev_combiner (a 1-entry
- * lookup cache), reset whenever realloc moves the array. */
+ * (gfx_opengl.c). TWO pointers into it are retained across calls: prev_combiner
+ * (a 1-entry lookup cache, reset whenever realloc moves the array) and — since
+ * PERF-006 — s_material.comb (the cached MaterialState). The latter is safe by a
+ * CO-LOCATION INVARIANT: this lookup's only caller is derive_material, which runs
+ * only on a material-cache MISS and overwrites m->comb with the fresh post-realloc
+ * pointer in the same derivation; a cache HIT never reallocs. Both the realloc-move
+ * and OOM branches below also invalidate s_material defensively. If you ever add a
+ * second caller of gfx_lookup_or_create_color_combiner, or realloc the pool
+ * elsewhere, you MUST invalidate s_material there too. */
 static struct ColorCombiner *color_combiner_pool;
 static int color_combiner_pool_size;
 static int color_combiner_pool_cap;
@@ -5604,6 +5611,12 @@ static const char *gfx_room_xlu_cvg_memory_gate_reason(int dl_room,
     if (g_sky_tri_mode) {
         return "sky";
     }
+    /* LOAD-BEARING for the PERF-006 material cache: env_color.a (here) and
+     * prim_color.a (below) are the only COLOR channels that classify the
+     * material (they flow into cc_options/api_blend_mode/VBO stride via
+     * rdp_memory_blend_class). They are therefore in the cache's per-triangle
+     * equality key (k_env_color_a/k_prim_color_a). If you add another
+     * rdp.*_color read to this gate, add it to the key too. */
     if (rdp.env_color.a != 255) {
         return "envA";
     }
@@ -14960,10 +14973,15 @@ static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint64_t cc_id,
             (struct ColorCombiner *)realloc(color_combiner_pool,
                                             (size_t)new_cap * sizeof(struct ColorCombiner));
         if (grown != NULL) {
-            /* realloc may relocate the array; prev is the only retained pointer
-             * into it, so drop the 1-entry cache when the base moves. */
+            /* realloc may relocate the array; drop BOTH retained pointers when
+             * the base moves: the 1-entry prev cache, and (defensively) the
+             * PERF-006 material cache whose m->comb points into the pool. The
+             * co-location invariant (see the pool comment) already guarantees
+             * the caller rewrites m->comb this derivation — the dirty flag is
+             * belt-and-suspenders against a future second caller. */
             if (grown != color_combiner_pool) {
                 gfx_color_combiner_prev = NULL;
+                s_material_dirty = true;
             }
             color_combiner_pool = grown;
             color_combiner_pool_cap = new_cap;
@@ -14975,6 +14993,7 @@ static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint64_t cc_id,
              * Regenerable cache, so this is correct, just cache-thrashing. */
             color_combiner_pool_size = 0;
             gfx_color_combiner_prev = NULL;
+            s_material_dirty = true;  /* pool contents reset — cached comb is stale */
             /* PERF-013: the scan window resets to empty; clear the index too. */
             if (cc_index != NULL) {
                 memset(cc_index, 0, ((size_t)cc_index_mask + 1) * sizeof(int32_t));
@@ -16728,6 +16747,31 @@ static int gfx_vtx_dbg_capture_enabled(void) {
  * per-triangle diagnostic gate is added there, its latch MUST be added here.
  * (env is parsed by gfx_check_diag_env() at gfx_run_dl entry, so all flags are
  * post-parse (>=0) by the time a triangle is emitted.) */
+
+/* Review fix (PERF-006): the per-triangle trace/audit emitters that live INSIDE
+ * derive_material (blend audit histogram, ROOM-ALPHA/-CC, RDP render-mode notes,
+ * glass-shard coverage, sky-prep pixel events, settex ROOM-DRAW / material-CC,
+ * blend-fallback, eye-bind) fire once per DERIVE — so a material-cache hit would
+ * silently turn their per-triangle output into per-batch output (undercounted
+ * histograms, missing trace lines). Disable the cache whenever any of those
+ * trace families is armed. Env is process-constant, so a one-time latch is
+ * complete. Production (no trace env) pays one cached-int compare. */
+static int gfx_material_trace_active(void) {
+    static int latched = -1;
+    if (latched < 0) {
+        latched = (getenv("GE007_BLEND_AUDIT")                != NULL ||
+                   getenv("GE007_TRACE_ROOM_ALPHA")           != NULL ||
+                   getenv("GE007_TRACE_RDP_RENDER_MODES")     != NULL ||
+                   getenv("GE007_TRACE_GLASS_SHARD_COVERAGE") != NULL ||
+                   getenv("GE007_TRACE_SKY_PREP_PIXEL")       != NULL ||
+                   getenv("GE007_TRACE_SETTEX_MATERIAL_CC")   != NULL ||
+                   getenv("GE007_TRACE_SETTEX")               != NULL ||
+                   getenv("GE007_TRACE_BLEND_FALLBACK")       != NULL ||
+                   getenv("GE007_TRACE_EYE_BIND")             != NULL) ? 1 : 0;
+    }
+    return latched;
+}
+
 static int g_any_diag_active(void) {
     return g_diag_skip_cmd_range_enabled > 0 ||
            g_diag_skip_room_cmd_range_enabled > 0 ||
@@ -17712,6 +17756,15 @@ struct MaterialState {
     bool k_texrect_uv_mode;
     int k_texrect_tile_override;
     bool k_fillrect_active;
+    /* Review fix (PERF-006): env/prim ALPHA are material-classification inputs,
+     * not pure per-vertex uniforms — gfx_room_xlu_cvg_memory_gate_reason reads
+     * env_color.a != 255 and prim_color.a == 0, and its result flows into
+     * cc_options (cvg-memory combiner variant), api_blend_mode, and
+     * diag_rdp_cvg_memory (the VBO STRIDE). A mid-batch G_SETENVCOLOR/
+     * G_SETPRIMCOLOR alpha crossing must therefore miss the cache. The RGB
+     * channels stay live per-vertex (true uniforms). */
+    uint8_t k_env_color_a;
+    uint8_t k_prim_color_a;
 };
 
 /* PERF-006 Step B — the cached material and its env-gated self-verifier. */
@@ -19642,7 +19695,7 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     if (s_p006_verify < 0) {
         s_p006_verify = (getenv("GE007_PERF006_VERIFY") != NULL) ? 1 : 0;
     }
-    bool p006_diag = g_any_diag_active() != 0;
+    bool p006_diag = g_any_diag_active() != 0 || gfx_material_trace_active() != 0;
     bool p006_hit = s_material.valid && !s_material_dirty && !p006_diag
         && s_material.k_dl_room == dl_room
         && s_material.k_dl_which == dl_which
@@ -19650,7 +19703,10 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         && s_material.k_sky_tri_mode == g_sky_tri_mode
         && s_material.k_texrect_uv_mode == g_texrect_uv_mode
         && s_material.k_texrect_tile_override == g_texrect_tile_override
-        && s_material.k_fillrect_active == g_fillrect_draw_active;
+        && s_material.k_fillrect_active == g_fillrect_draw_active
+        /* env/prim ALPHA feed the XLU cvg-memory gate (see the k_ fields). */
+        && s_material.k_env_color_a == rdp.env_color.a
+        && s_material.k_prim_color_a == rdp.prim_color.a;
     struct MaterialState *const m = &s_material;
     if (!p006_hit) {
         if (!derive_material(v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
@@ -19672,6 +19728,8 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         m->k_texrect_uv_mode = g_texrect_uv_mode;
         m->k_texrect_tile_override = g_texrect_tile_override;
         m->k_fillrect_active = g_fillrect_draw_active;
+        m->k_env_color_a = rdp.env_color.a;
+        m->k_prim_color_a = rdp.prim_color.a;
         m->valid = true;
         s_material_dirty = false;
     }

@@ -1498,6 +1498,13 @@ static void wgpu_end_frame(void) {
     }
     if (surface_view != NULL) {
         wgpuTextureViewRelease(surface_view);   /* PERF-008 direct-path render target */
+        /* Review fix: on a direct frame s_present_target_view aliased this view;
+         * null it so nothing can deref a released view across the frame boundary
+         * (nothing does today — readback uses s_present_target_tex — but a
+         * dangling handle is a trap for future overlay/readback work). */
+        if (s_present_target_view == surface_view) {
+            s_present_target_view = NULL;
+        }
     }
     if (st.texture != NULL) {
         wgpuTextureRelease(st.texture);
