@@ -2069,8 +2069,67 @@ if(EMSCRIPTEN)
     )
     target_link_options(ge007_web PRIVATE
         "-sUSE_SDL=2"
+        # PERF-031: narrow the Asyncify instrumentation set. Blanket -sASYNCIFY
+        # instruments EVERY call path that could reach a suspend (the whole
+        # ~3.4 MB code section) with spill/restore scaffolding — 1.5-3x on
+        # instrumented paths — for a handful of real suspend sites. Measured
+        # effect of the narrowing below: wasm 4,020,482 -> 3,118,775 B (-22.4%),
+        # a cheap proxy for the per-frame CPU win. IGNORE_INDIRECT stops
+        # reachability inference at indirect (function-pointer) call edges, so
+        # only functions reaching a suspend via DIRECT calls auto-instrument; ADD
+        # force-instruments the functions that OWN an indirect suspend-reaching
+        # call (an auto-instrumented function does NOT scaffold its indirect call
+        # sites — only an ADD-listed one does; that scaffolding is what lets the
+        # stack unwind/rewind through the function pointer).
+        #
+        # Suspend imports (confirmed via -sASYNCIFY_ADVISE): emscripten_sleep,
+        # platformWaitAnimationFrame (the EM_ASYNC_JS rAF wait), and __wasi_fd_sync
+        # (fflush/close/EEPROM-save file sync — an emscripten default suspend import).
+        #
+        # Suspend sites and how each is covered:
+        #   1. rAF wait + hidden-tab emscripten_sleep — both DIRECT in
+        #      platformFrameSync, which -O2 inlines into osRecvMesg (ADDed). The
+        #      hidden-tab sleep shares that function, so it is covered by the same
+        #      entry (can't be exercised headless; covered by construction).
+        #   2. portLoadYield emscripten_sleep(0) (PERF-035 level-load yields) —
+        #      lvlStageLoad / load_bg_file inline into bossMainloop -> bossEntry;
+        #      portLoadYield is ADDed as the leaf.
+        #   3. WGPU_COMPAT_WAIT bring-up pumps (gfx_webgpu_bringup, emscripten_sleep)
+        #      — reached from gfx_init through the gfx_rapi->init FUNCTION POINTER.
+        #      gfx_init inlines into MAIN, so that indirect edge now lives in main;
+        #      `main` MUST be ADDed or its rewind mis-dispatches (RuntimeError:
+        #      unreachable at first game-loop suspend — the crash this iteration hit
+        #      and fixed). `bossEntry` is likewise ADDed for the game loop's own
+        #      indirect dispatch edges.
+        #   4. WGPU_COMPAT_WAIT readback pumps (wgpu_write_ppm buffer-map,
+        #      wgpu_read_framebuffer_rgb) — DELIBERATELY EXCLUDED. Armed only by
+        #      GE007_WEBGPU_DUMP_FRAME/_SURFACE getenv() or the native screenshot/
+        #      parity capture path; the browser build exposes no way to set those
+        #      env vars (no ENV export, no preRun setenv, the shell passes only
+        #      ?arg= CLI flags) and the frame-probe harness reads the canvas over
+        #      CDP, never the in-wasm readback — so this chain never fires in the
+        #      deployed/tested web build. The two leaf functions still auto-
+        #      instrument (they call the sleep directly) — harmless — but we do NOT
+        #      bridge their indirect (gfx_rapi->read_framebuffer_rgb / getenv-gated
+        #      end_frame) callers into the set.
+        #
+        # The ADD list names the whole logical suspend spine. LOAD-BEARING today:
+        # main + bossEntry (own the indirect edges above), osRecvMesg + wgpu_init +
+        # portLoadYield (real leaf/near-leaf owners). The rest (gfx_init,
+        # gfx_webgpu_bringup, platformFrameSync, lvlStageLoad, load_bg_file,
+        # bossMainloop) are inlined away by -O2 and emit a benign "Asyncify addlist
+        # contained a non-existing function name" warning at link — kept
+        # DELIBERATELY: they document the chain AND stay correct if a future
+        # refactor (or the LTO pass below) de-inlines one back into a standalone
+        # function that owns an indirect edge. None of these pull in a callee
+        # subtree (ASYNCIFY_PROPAGATE_ADD walks callers, not callees), so the hot
+        # per-triangle emit / audio DSP / sim loops stay OUT of the set (the win).
+        # A too-narrow list traps LOUDLY at the missed suspend at runtime — the
+        # iteration signal from the web_boot_smoke / web_frame_probe gates.
         "-sASYNCIFY"
         "-sASYNCIFY_STACK_SIZE=65536"
+        "-sASYNCIFY_IGNORE_INDIRECT"
+        "-sASYNCIFY_ADD=main,gfx_init,wgpu_init,gfx_webgpu_bringup,platformFrameSync,osRecvMesg,portLoadYield,lvlStageLoad,load_bg_file,bossMainloop,bossEntry"
         "-sALLOW_MEMORY_GROWTH=1"
         # PERF-033: real high-water is ~30 MB (12 MB ROM + 8 MB sim pool + GPU
         # staging), so 256 MiB was a large upfront commit that raised boot-failure
@@ -2096,13 +2155,16 @@ if(EMSCRIPTEN)
         # keep docs/WEB.md's --debug line in sync with these flags.
         "$<$<CONFIG:Debug>:-sSAFE_HEAP=1>"
         "$<$<CONFIG:Debug>:-sASSERTIONS=2>"
-        # PERF-034 (LTO + closure) was MEASURED AND REJECTED — see
-        # docs/audit/PERF_BACKLOG_2026-07-17.md. -flto inflated the wasm ~25%
-        # (4.01 -> 5.04 MB): whole-program Asyncify must instrument LTO's extra
-        # inlined call sites. --closure=1 (ADVANCED) fails the build outright on
-        # SDL2's legacy message-box ASM_CONST (allocate()/ALLOC_NORMAL, runtime
-        # APIs modern emscripten removed). Neither is a clean win here; revisit
-        # only alongside PERF-031 (Asyncify narrowing) and an SDL2/closure fix.
+        # PERF-034 (LTO) — RE-ATTEMPTED on top of the PERF-031 narrowing above and
+        # REJECTED AGAIN (measured 2026-07-18). Adding "$<$<CONFIG:Release>:-flto>"
+        # to the web compile + link inflated the wasm 3,118,775 -> 3,995,430 B
+        # (+28%), NOT the hoped-for shrink. The prior theory — that whole-program
+        # -sASYNCIFY was the amplifier and a narrow ADD list would flip LTO to a
+        # win — did NOT hold: LTO's own cross-module inlining duplicates code (and
+        # re-instruments each inlined copy that reaches a suspend), so the net is
+        # still a large inflation even with the narrow Asyncify set. Removed; the
+        # narrowing alone is the win. (--closure=1 stays OFF too — still fails the
+        # build on SDL2's legacy allocate()/ALLOC_NORMAL message-box ASM_CONST.)
     )
     # Layout-critical + warning flags: the wasm engine compiles the SAME decomp
     # game TUs as native ge007 (:1783), so it needs the identical parse-affecting
