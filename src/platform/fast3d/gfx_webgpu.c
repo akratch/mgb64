@@ -2036,6 +2036,48 @@ static bool wgpu_blend_state(enum GfxBlendMode mode, WGPUBlendState *out) {
     return true;
 }
 
+/* BLEND-1: coverage-alpha preservation, mirroring gfx_opengl.c:1905 and
+ * gfx_metal.mm:3368. The RDP coverage-memory path stores a synthetic 3-bit
+ * coverage in the scene-target ALPHA channel; a later draw reads it back to
+ * emulate N64 CVG_DST_WRAP. When that feature is active, ordinary translucent
+ * draws interleaved between two cvg-memory draws must NOT overwrite the stored
+ * coverage — GL masks alpha off (glColorMask(T,T,T,FALSE)), Metal drops it into
+ * the PSO colorWriteMask, and WebGPU bakes an RGB-only writeMask into the
+ * pipeline via the key (below). The WebGPU scene is ALWAYS rendered into the
+ * offscreen s_scene_tex (== GL's scene target, bound-by-default because
+ * room_xlu_cvg_memory defaults on), so — exactly like Metal — GL's
+ * g_scene_target_bound term is unconditionally true here and folded out. */
+static bool wgpu_room_cvg_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *d = getenv("GE007_DISABLE_ROOM_XLU_CVG_MEMORY");
+        const char *e = getenv("GE007_ROOM_XLU_CVG_MEMORY");
+        cached = 1;
+        if ((d != NULL && d[0] != '\0' && d[0] != '0') || (e != NULL && e[0] == '0')) cached = 0;
+    }
+    return cached != 0;
+}
+static bool wgpu_diag_cvg_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *e = getenv("GE007_DIAG_XLU_RDP_CVG_MEMORY_BLEND_CC");
+        cached = (e != NULL && e[0] != '\0' && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+/* The exact GL predicate (gfx_opengl.c:1906-1913) modulo the always-true
+ * scene-target term: preserve the coverage alpha for the four ordinary
+ * translucent modes GL masks — but NOT for the RDP-memory / RDP-CVG-memory modes
+ * themselves, which must WRITE the coverage they compute. A pure function of the
+ * blend mode plus the session-constant env flags, so encoding it into the
+ * pipeline key never splits a cache slot beyond what its blend bits already do. */
+static bool wgpu_preserve_cov_alpha(enum GfxBlendMode blend) {
+    return (wgpu_room_cvg_enabled() || wgpu_diag_cvg_enabled()) &&
+           (blend == GFX_BLEND_ALPHA || blend == GFX_BLEND_MODULATE ||
+            blend == GFX_BLEND_ALPHA_COVERAGE ||
+            blend == GFX_BLEND_ALPHA_CVG_WRAP_STENCIL);
+}
+
 /* Scratch backing store for the pointer members of a WGPURenderPipelineDescriptor.
  * The descriptor holds raw pointers into these sub-structs, so they must outlive
  * the create call — the caller keeps one on its stack and hands it to
@@ -2057,7 +2099,8 @@ struct WgpuPipeScratch {
  * prg->module/vattrs/info/playout) is stable config, identical on both paths.
  *
  * Key layout (see wgpu_pipeline_for): blend = bits 0-3, depth_test = bit 4,
- * depth_update = bit 5, depth_compare = bit 6, decal = bit 7. */
+ * depth_update = bit 5, depth_compare = bit 6, decal = bit 7,
+ * preserve_cov_alpha = bit 8 (BLEND-1). */
 static void wgpu_fill_pipeline_desc(struct ShaderProgram *prg, uint32_t key,
                                     WGPURenderPipelineDescriptor *pd,
                                     struct WgpuPipeScratch *sc) {
@@ -2066,6 +2109,7 @@ static void wgpu_fill_pipeline_desc(struct ShaderProgram *prg, uint32_t key,
     bool depth_update  = (key >> 5) & 1;
     bool depth_compare = (key >> 6) & 1;
     bool decal         = (key >> 7) & 1;
+    bool preserve_cov_alpha = (key >> 8) & 1;   /* BLEND-1: RGB-only writeMask */
 
     memset(sc, 0, sizeof(*sc));
 
@@ -2076,7 +2120,11 @@ static void wgpu_fill_pipeline_desc(struct ShaderProgram *prg, uint32_t key,
 
     bool has_blend = wgpu_blend_state(blend, &sc->blend);
     sc->color.format = s_surface_format;
-    sc->color.writeMask = WGPUColorWriteMask_All;
+    /* BLEND-1: mask alpha off (RGB-only) so an interleaved ordinary XLU draw does
+     * not clobber the stored RDP coverage-alpha; else write all four channels. */
+    sc->color.writeMask = preserve_cov_alpha
+        ? (WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue)
+        : WGPUColorWriteMask_All;
     sc->color.blend = has_blend ? &sc->blend : NULL;
 
     sc->fs.module = prg->module;
@@ -2365,7 +2413,8 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
                  | ((uint32_t)(s_depth_test ? 1 : 0)    << 4)
                  | ((uint32_t)(s_depth_update ? 1 : 0)  << 5)
                  | ((uint32_t)(s_depth_compare ? 1 : 0) << 6)
-                 | ((uint32_t)(decal ? 1 : 0)           << 7);
+                 | ((uint32_t)(decal ? 1 : 0)           << 7)
+                 | ((uint32_t)(wgpu_preserve_cov_alpha(blend) ? 1 : 0) << 8);
     for (int i = 0; i < prg->npipes; i++) {
         if (prg->pipes[i].key == key) {
             struct WgpuPipeEntry *e = &prg->pipes[i];
