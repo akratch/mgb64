@@ -588,6 +588,22 @@ if(BUILD_TESTING)
         SKIP_RETURN_CODE 125
         LABELS "web"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    # W4.1: browser FRAME-COMPLETENESS lane. Unlike web_boot_smoke (which only
+    # asserts a non-black frame — blind to the PERF-005 "sky-flood" bleed), this
+    # reaches real gameplay in a level and fails if any single colour floods the
+    # viewport. Two passes: deterministic dam, then live + CPU-throttled dam with
+    # held movement (the pass that would have caught the bleed). Same
+    # self-skip/label posture as web_boot_smoke; longer TIMEOUT for two passes,
+    # the second CPU-throttled. See tools/web/webcap.mjs + web_frame_probe.sh.
+    add_test(
+        NAME web_frame_probe
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/web/web_frame_probe.sh"
+    )
+    set_tests_properties(web_frame_probe PROPERTIES
+        TIMEOUT 180
+        SKIP_RETURN_CODE 125
+        LABELS "web"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     # Registry honesty: every add_port_validation_smoke(...) below must
     # reference a script that actually ships in tools/, so the advertised
     # validation-lane coverage cannot exceed what a fresh checkout can run.

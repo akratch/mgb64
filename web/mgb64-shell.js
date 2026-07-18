@@ -585,6 +585,19 @@ async function boot(romBytes) {
   args.push("--config-override", "Input.HitMarkers=0");
   args.push("--config-override", "Input.ReticleTargetFeedback=0");
   args.push("--config-override", "Input.MinimapEnabled=0");
+  // W4.1: pass every ?arg=<value> from the URL through to callMain, appended
+  // AFTER the defaults above so a query arg can override them (main_pc.c takes
+  // the last --config-override / later flag). This is a DEV/TEST surface: the
+  // browser regression lane (tools/web/web_frame_probe.sh + webcap.mjs, and the
+  // web input-tape harness) drives a level directly via
+  // "?arg=--level&arg=dam&arg=--deterministic". No gating is needed because it
+  // is client-side only — this is a BYO-ROM app with no server, so a user can
+  // only ever affect their OWN in-tab session (exactly the same trust domain as
+  // typing into the devtools console). It grants no capability the page owner
+  // doesn't already have over their own browser.
+  try {
+    for (const a of new URLSearchParams(location.search).getAll("arg")) args.push(a);
+  } catch {}
   m.callMain(args);
   // WEB-062: MEMFS now holds its own /rom copy, so drop the 12 MB byte array the
   // JS side was holding (both the local param and the module-scope reference) —

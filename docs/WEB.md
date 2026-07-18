@@ -106,6 +106,54 @@ A plain static file server is sufficient — there is no backend. WebGPU
 requires a secure context; `127.0.0.1` counts as one, so plain HTTP against
 localhost works fine for local iteration.
 
+### Browser regression lane
+
+Two headless-Chrome lanes guard the browser build (both zero-npm-dep,
+CDP-over-pipe, both `LABELS "web"`, both self-skip with exit 125 when
+dist/ROM/Chrome/node is absent):
+
+- **`ctest -R web_boot_smoke`** — boot end-to-end and prove the backend reaches
+  a live, non-black rendering state. Cannot see an *incomplete* frame.
+- **`ctest -R web_frame_probe`** — reach REAL gameplay in a level and assert
+  frame **completeness**. This exists because a non-black check is blind to the
+  PERF-005 "sky-flood" bleed (a single colour flooding the viewport under load);
+  boot-smoke would have passed a flood frame.
+
+The probe (`tools/web/web_frame_probe.sh` → `tools/web/webcap.mjs`) runs **two
+passes, both of which must pass**:
+
+1. **Deterministic dam** — boots `?arg=--level&arg=dam&arg=--deterministic` and
+   asserts a complete frame. `--deterministic` disables the PERF-005 async path,
+   so this is a clean, reproducible level frame with no input.
+2. **Live + CPU-throttled dam** — boots `?arg=--level&arg=dam` (no determinism)
+   under `--throttle 4` with a held-forward move, bursting screenshots through
+   the movement-under-load window. This is the pass that would have *caught* the
+   bleed. Because PERF-005b **holds incomplete frames** (the canvas keeps the
+   last complete image), it must only ever see the gate screen or complete
+   gameplay — never a flood. That invariant is the regression contract.
+
+The completeness check (`--assert-complete T`, default `T=90`) decodes a
+screenshot and fails if the single most common exact RGB triple covers more than
+`T`% of pixels — a real gameplay frame is richly varied; a flood is ~one colour.
+It also fails on a visible `#fatal` panel or a "Boot failed" gate message.
+
+`webcap.mjs` is a standalone tool (no SKIP semantics — the wrapper gates deps).
+Beyond the probe it takes `--keys` (scripted holds/taps, e.g.
+`hold:KeyW:2000;tap:Space`), `--burst N:M` (N screenshots every M ms for flicker
+hunts), `--settle-ms`, `--window`, and `--query` — see its header for the full
+grammar.
+
+#### `?arg=` URL passthrough
+
+Both lanes depend on a small dev/test surface in `web/mgb64-shell.js`: every
+`?arg=<value>` in the page URL is appended to the engine's `callMain` args
+(after the shell's own defaults, so a query arg can override them). This is how
+the probe boots straight into a level (`?arg=--level&arg=dam`). It needs no
+gating — the browser build is a BYO-ROM app with no server, so a query arg only
+ever affects the user's **own** in-tab session, the same trust domain as typing
+into the devtools console. The same passthrough backs the web input-tape
+harness.
+
 ### The compat-seam rule
 
 **All WebGPU dialect divergence between native (`wgpu-native`) and browser
