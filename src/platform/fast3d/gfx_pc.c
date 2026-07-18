@@ -2610,6 +2610,20 @@ static void blend_fallback_trace_record(uint32_t raw, uint32_t eff, uint32_t hi,
  * Never changes after init. Defined here, extern'd in gfx_opengl.c. */
 bool g_depth_clamp_enabled = false;
 
+/* PVD-001 (DAM_RENDER_DEEP_DIVE_2026-07-18 §D): whether the active GPU pipeline
+ * depth-CLAMPS (true) rather than depth-CLIPS.  When g_depth_clamp_enabled is
+ * set (Metal/WebGPU/GL-with-DEPTH_CLAMP) the CPU clipper delegates depth-plane
+ * clipping to the GPU on the assumption the GPU clamps.  That holds for GL
+ * (GL_DEPTH_CLAMP) and Metal (always), but a WebGPU adapter WITHOUT
+ * DepthClipControl builds unclippedDepth=FALSE and the GPU CLIPS instead — with
+ * no WGSL z-squash to compensate — so near/far-crossing tris get hard-clipped.
+ * Default true (GL/Metal unchanged); only gfx_init lowers it, to the WebGPU
+ * backend's granted-feature flag, so the needs_view_clip decision below routes
+ * depth clipping back to the CPU on featureless adapters.  On adapters that
+ * grant the feature (native M3, most desktop browsers) this stays true and the
+ * decision is byte-identical. */
+bool g_gpu_can_clamp_depth = true;
+
 /* Vertex color distribution tracking (for diagnostics) */
 static int g_vtx_color_buckets[8] = {0};
 static int g_vtx_zero_count = 0, g_vtx_max_count = 0, g_vtx_total_count = 0;
@@ -15913,6 +15927,33 @@ static bool import_texture(int slot, int tile_desc) {
                 }
                 fmt = recovered->gbiformat;
                 siz = recovered->depth;
+                /* TMEM-3 (DAM_RENDER_DEEP_DIVE_2026-07-18 §D): if the recovered
+                 * format is CI, the downstream CI decode reads rdp.palette[] /
+                 * rdp.palette_addrs, which may still hold a STALE TLUT from a
+                 * SEPARATE G_LOADTLUT (the caveat flagged above).  Re-fetch THIS
+                 * texture's own palette from the pool — the same source the settex
+                 * path trusts (texGetPalette) — and load it into rdp.palette[]
+                 * exactly as the static G_LOADTLUT branch does (host-order 16-bit,
+                 * no byteswap).  Also repoint rdp.palette_addrs so the texture-cache
+                 * key reflects the true palette source (otherwise a stale-keyed
+                 * cache entry would be returned before the corrected decode runs).
+                 * Byte-identical unless the live TLUT actually differs from the
+                 * texture's own palette (the stale-mismatch case this guards); the
+                 * whole recovery block is skipped entirely on the common path
+                 * (valid tile descriptor -> tex_combo_importable). */
+                if (fmt == G_IM_FMT_CI) {
+                    s32 ncolours = 0;
+                    const u16 *pal = texGetPalette((s32)token, &ncolours);
+                    if (pal != NULL && ncolours > 0) {
+                        if (ncolours > 256) ncolours = 256;
+                        for (s32 i = 0; i < ncolours; ++i) {
+                            rdp.palette[i] = pal[i];
+                        }
+                        rdp.palette_addrs[0] = (const uint8_t *)pal;
+                        rdp.palette_addrs[1] =
+                            (ncolours > 128) ? (const uint8_t *)(pal + 128) : NULL;
+                    }
+                }
             }
         }
     }
@@ -20696,7 +20737,15 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     bool needs_view_clip = has_non_positive_w ||
                            mixed_w ||
                            needs_side_clip ||
-                           (!g_depth_clamp_enabled && needs_depth_clip);
+                           /* PVD-001 (§D): CPU-clip depth planes when the GPU can't
+                            * clamp them.  The `!g_depth_clamp_enabled` term is the
+                            * original GL-no-DEPTH_CLAMP path; `!g_gpu_can_clamp_depth`
+                            * extends it to a WebGPU adapter lacking DepthClipControl
+                            * (unclippedDepth=FALSE -> GPU CLIPS, no WGSL z-squash).
+                            * g_gpu_can_clamp_depth is true on GL/Metal and on WebGPU
+                            * adapters that grant the feature, so this is byte-identical
+                            * except on a featureless WebGPU adapter. */
+                           ((!g_depth_clamp_enabled || !g_gpu_can_clamp_depth) && needs_depth_clip);
     bool pathological_view_clip_shard = ndc_metrics_ok &&
                                         needs_view_clip &&
                                         gfx_tri_is_pathological_projected_shard(&ndc_metrics);
@@ -21753,6 +21802,23 @@ static void gfx_dp_load_tlut(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t 
         }
         used_static_palette = true;
     } else if (base != NULL) {
+        /* TMEM-4 (DAM_RENDER_DEEP_DIVE_2026-07-18 §D): mirror the static branch's
+         * source-extent clamp on the runtime raw-palette path.  Above, `count` was
+         * clamped only to the destination palette (256 - palofs); it was never
+         * bounded so that base+count stays inside the source rectangle the TLUT
+         * command describes.  The read below is LINEAR (base[0..count-1]) while the
+         * source is pitched, so a rect wider than the SETTIMG pitch (pitch < width)
+         * or a non-zero uls makes the read run past the rectangle's last texel into
+         * adjacent memory (<=512 B; the confetti over-read class, 48d835d, on the
+         * palette source).  Bound `count` to the flat span from addr through the
+         * rectangle's last row.  No-op on the common path (uls==0 && pitch>=width
+         * -> src_index+count <= src_extent -> count unchanged -> byte-identical).
+         * palette_addrs are cache KEYS only (never dereferenced: hashed :3027,
+         * compared :3165/:15151), so only the write loop needs the bound. */
+        uint32_t src_extent = pitch * (ult + height);   /* flat span through last rect row */
+        if (src_index < src_extent && count > src_extent - src_index) {
+            count = src_extent - src_index;
+        }
         if (rdp.texture_tile[tile].tmem == 256) {
             rdp.palette_addrs[0] = (const uint8_t *)base;
             if (count >= 256) {
@@ -25151,6 +25217,14 @@ void gfx_init(void) {
 #ifdef MGB64_WEBGPU_BACKEND
     if (gfx_backend_use_webgpu()) {
         g_depth_clamp_enabled = true;
+        /* PVD-001 (§D): the 3D pipelines set unclippedDepth from the backend's
+         * DepthClipControl grant (gfx_webgpu.c), so the GPU only depth-CLAMPS when
+         * the feature is available.  gfx_rapi->init() ran above, so the grant is
+         * already latched; mirror it here so the CPU clipper (needs_view_clip)
+         * compensates with depth-plane clipping when the adapter lacks it.  Granted
+         * (native M3, most desktop browsers) -> stays true -> byte-identical. */
+        extern bool gfx_webgpu_unclipped_depth_supported(void);
+        g_gpu_can_clamp_depth = gfx_webgpu_unclipped_depth_supported();
     }
 #endif
 #ifdef __APPLE__

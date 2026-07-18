@@ -4036,6 +4036,14 @@ int gfx_webgpu_max_offscreen_dim(void) {
     return (int)s_max_tex_dim;
 }
 
+bool gfx_webgpu_unclipped_depth_supported(void) {
+    /* PVD-001 (DAM_RENDER_DEEP_DIVE_2026-07-18 §D): whether the 3D pipelines were
+     * built with unclippedDepth (i.e. DepthClipControl was granted, so the GPU
+     * depth-CLAMPS like GL/Metal).  gfx_init reads this to decide whether the CPU
+     * clipper must take over depth-plane clipping on featureless adapters. */
+    return s_unclipped_depth_supported;
+}
+
 /* ------------------------------------------------------------------------
  * The vtable — same field order as gfx_opengl_api / gfx_metal_api.
  * ---------------------------------------------------------------------- */
