@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1073 flags** found across the source.
+**1074 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -231,7 +231,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_BGORDER_PORTAL` | ? |  | 1 |  |
 | `GE007_BG_IMPACT_RETAIL_OOB` | bool | 0 | 1 |  |
 | `GE007_BG_PORTAL_AABB_EXPAND` | ? |  | 1 |  |
-| `GE007_BLEND_AUDIT` | ? |  | 1 |  |
+| `GE007_BLEND_AUDIT` | ? |  | 2 |  |
 | `GE007_BLEND_AUDIT_INTERVAL` | ? |  | 1 |  |
 | `GE007_BLOOM` | int | 1 | 1 | Soft glow that blooms around bright lights and highlights. 0 = off. |
 | `GE007_BLOOM_INTENSITY` | float | 0.5f | 1 | Strength of the bloom halo added to the image. |
@@ -814,7 +814,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_BG_SEGMENTS` | ? |  | 2 |  |
 | `GE007_TRACE_BG_TRIS` | ? |  | 1 |  |
 | `GE007_TRACE_BLEND_CLASSIFY` | ? |  | 1 |  |
-| `GE007_TRACE_BLEND_FALLBACK` | ? |  | 1 |  |
+| `GE007_TRACE_BLEND_FALLBACK` | ? |  | 2 |  |
 | `GE007_TRACE_BLOCKED` | ? |  | 2 |  |
 | `GE007_TRACE_BLOOD_ANIM` | ? |  | 1 |  |
 | `GE007_TRACE_BOND_BUF` | ? |  | 1 |  |
@@ -845,7 +845,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_DRAW_ONLY` | ? |  | 1 |  |
 | `GE007_TRACE_DROP_FRESH` | ? |  | 1 |  |
 | `GE007_TRACE_DROP_HELD` | ? |  | 1 |  |
-| `GE007_TRACE_EYE_BIND` | ? |  | 1 |  |
+| `GE007_TRACE_EYE_BIND` | ? |  | 2 |  |
 | `GE007_TRACE_EYE_DL` | ? |  | 1 |  |
 | `GE007_TRACE_EYE_TILE` | ? |  | 3 |  |
 | `GE007_TRACE_EYE_TITLE` | ? |  | 1 |  |
@@ -867,7 +867,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_GLASS` | ? |  | 3 |  |
 | `GE007_TRACE_GLASS_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_GLASS_PROJECTION_ALL` | ? |  | 1 |  |
-| `GE007_TRACE_GLASS_SHARD_COVERAGE` | ? |  | 2 |  |
+| `GE007_TRACE_GLASS_SHARD_COVERAGE` | ? |  | 3 |  |
 | `GE007_TRACE_GLASS_SHARD_COVERAGE_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_GLASS_SHARD_COVERAGE_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_GOLDENEYE_LOGO_MATERIALS` | ? |  | 2 |  |
@@ -927,7 +927,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_RAMROM_LOOP_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_RAMROM_UPCOMING` | ? |  | 1 |  |
 | `GE007_TRACE_RAMROM_UPCOMING_BUDGET` | ? |  | 1 |  |
-| `GE007_TRACE_RDP_RENDER_MODES` | ? |  | 1 |  |
+| `GE007_TRACE_RDP_RENDER_MODES` | ? |  | 2 |  |
 | `GE007_TRACE_RDP_RENDER_MODES_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_RDP_RENDER_MODES_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_RDP_RENDER_MODES_DRAWCLASS` | ? |  | 1 |  |
@@ -942,7 +942,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_ROOM_ADMIT_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_ADMIT_ROOM` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_ADMIT_SRC` | ? |  | 1 |  |
-| `GE007_TRACE_ROOM_ALPHA` | ? |  | 2 |  |
+| `GE007_TRACE_ROOM_ALPHA` | ? |  | 3 |  |
 | `GE007_TRACE_ROOM_BBOX` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_CLASSIFY` | ? |  | 1 |  |
 | `GE007_TRACE_ROOM_CLASSIFY_AFTER_FRAME` | ? |  | 1 |  |
@@ -969,7 +969,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_ROOM_XLU_SORT_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_RUMBLE` | ? |  | 1 |  |
 | `GE007_TRACE_SCRIPTED_AMMO` | ? |  | 1 |  |
-| `GE007_TRACE_SETTEX` | ? |  | 1 |  |
+| `GE007_TRACE_SETTEX` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE` | ? |  | 3 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_AFTER_FRAME` | ? |  | 2 |  |
@@ -977,7 +977,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_SETTEX_FB_CAPTURE_DIR` | ? |  | 2 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_TEXNUM` | ? |  | 3 |  |
 | `GE007_TRACE_SETTEX_FB_CAPTURE_TEXSIZE` | ? |  | 3 |  |
-| `GE007_TRACE_SETTEX_MATERIAL_CC` | ? |  | 2 |  |
+| `GE007_TRACE_SETTEX_MATERIAL_CC` | ? |  | 3 |  |
 | `GE007_TRACE_SETTEX_MATERIAL_CC_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_MATERIAL_CC_BUDGET` | ? |  | 1 |  |
 | `GE007_TRACE_SETTEX_MATERIAL_CC_SAMPLES` | ? |  | 1 |  |
@@ -994,7 +994,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_SHARDS_AFTER_FRAME` | ? |  | 1 |  |
 | `GE007_TRACE_SHOT_BG` | ? |  | 1 |  |
 | `GE007_TRACE_SHOT_BG_BUDGET` | ? |  | 1 |  |
-| `GE007_TRACE_SKY_PREP_PIXEL` | ? |  | 2 |  |
+| `GE007_TRACE_SKY_PREP_PIXEL` | ? |  | 3 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_BUDGET` | ? |  | 2 |  |
 | `GE007_TRACE_SKY_PREP_PIXEL_ROOM` | ? |  | 1 |  |
@@ -1075,6 +1075,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEAPON_RENDER_LOG` | ? |  | 1 |  |
 | `GE007_WEBGPU_DUMP_FRAME` | ? |  | 2 |  |
 | `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 2 |  |
+| `GE007_WEBGPU_PRESENT` | ? |  | 1 |  |
 | `GE007_WEBGPU_TRACE_VIEWPORT` | ? |  | 1 |  |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |

@@ -100,6 +100,12 @@ extern int   platformHostWgpuSurfaceFormat(void);
 /* Configured swapchain size; 0 forces a (re)configure on the next start_frame. */
 static uint32_t s_cfg_w = 0, s_cfg_h = 0;
 
+/* PERF-020: resize debounce state. The last requested (not-yet-committed) size and
+ * how many consecutive frames it has been held; a drag is only applied once the size
+ * settles for WGPU_RESIZE_STABLE_FRAMES frames (see wgpu_start_frame). */
+static uint32_t s_resize_pending_w = 0, s_resize_pending_h = 0;
+static int      s_resize_stable = 0;
+
 /* Offscreen scene target: the game renders here (not straight to the surface),
  * so rendering is independent of window visibility (a hidden/occluded window has
  * no drawable) and the frame can be read back (screenshots, Task 5). BGRA8 to
@@ -503,6 +509,67 @@ static WGPUCompositeAlphaMode wgpu_choose_alpha_mode(void) {
     return mode;
 }
 
+/* PERF-051: present-mode selection. FIFO (vsync) is the default and the
+ * byte-identity baseline — it matches the GL/Metal swap and is the only mode the
+ * WebGPU spec guarantees the surface advertises. GE007_WEBGPU_PRESENT opts into a
+ * lower-latency mode (the F5 uncapped-FPS prerequisite: render-only frames cannot
+ * exceed the refresh rate under FIFO):
+ *     fifo (default) | mailbox | immediate
+ * The requested mode is selected ONLY when the surface capabilities advertise it;
+ * otherwise it falls back to FIFO with one stderr note. Latched once — the env is
+ * process-constant, and this runs from wgpu_configure_surface (called every resize).
+ *
+ * Web: the browser present is rAF-driven (emdawnwebgpu no-ops the present, see
+ * gfx_webgpu_compat.h), so present mode is a native concern; the knob is harmless
+ * there by construction — an unset env keeps FIFO (byte-identical to today), and the
+ * env is never set on the web build. No inline __EMSCRIPTEN__ guard needed (seam
+ * rule): the default path is identical on both platforms. */
+static WGPUPresentMode wgpu_choose_present_mode(void) {
+    static int resolved = 0;
+    static WGPUPresentMode mode = WGPUPresentMode_Fifo;
+    if (resolved) {
+        return mode;
+    }
+    resolved = 1;
+    const char *want = getenv("GE007_WEBGPU_PRESENT");
+    if (want == NULL || *want == '\0' || strcmp(want, "fifo") == 0) {
+        return mode;   /* default / explicit FIFO — the byte-identity baseline */
+    }
+    WGPUPresentMode requested;
+    if (strcmp(want, "mailbox") == 0) {
+        requested = WGPUPresentMode_Mailbox;
+    } else if (strcmp(want, "immediate") == 0) {
+        requested = WGPUPresentMode_Immediate;
+    } else {
+        fprintf(stderr, "[webgpu] GE007_WEBGPU_PRESENT='%s' unrecognized "
+                        "(fifo|mailbox|immediate); using fifo\n", want);
+        return mode;
+    }
+    /* Select only if the surface advertises it — a non-advertised presentMode is a
+     * wgpuSurfaceConfigure validation error. Caps unavailable ⇒ keep FIFO. */
+    if (s_surface == NULL || s_adapter == NULL) {
+        return mode;
+    }
+    WGPUSurfaceCapabilities caps = {0};
+    bool advertised = false;
+    if (wgpuSurfaceGetCapabilities(s_surface, s_adapter, &caps) == WGPUStatus_Success) {
+        for (size_t i = 0; i < caps.presentModeCount; ++i) {
+            if (caps.presentModes[i] == requested) {
+                advertised = true;
+                break;
+            }
+        }
+    }
+    wgpuSurfaceCapabilitiesFreeMembers(caps);
+    if (advertised) {
+        mode = requested;
+    } else {
+        fprintf(stderr, "[webgpu] present mode '%s' not advertised by the surface; "
+                        "using fifo\n", want);
+    }
+    return mode;
+}
+
 /* Whether an 8-bit color target stores B,G,R,A (vs R,G,B,A) — so the readback
  * paths extract RGB correctly. BGRA8 is what wgpu_choose_format prefers and what
  * every current target advertises, but a platform that only offers RGBA8Unorm
@@ -536,7 +603,7 @@ static void wgpu_configure_surface(uint32_t w, uint32_t h) {
     cfg.width = w;
     cfg.height = h;
     cfg.alphaMode = wgpu_choose_alpha_mode();   /* WEB-049: Opaque when advertised, else Auto */
-    cfg.presentMode = WGPUPresentMode_Fifo;   /* vsync; matches the default GL/Metal swap */
+    cfg.presentMode = wgpu_choose_present_mode();   /* PERF-051: FIFO default (vsync), GE007_WEBGPU_PRESENT opt-in */
     wgpuSurfaceConfigure(s_surface, &cfg);
     s_cfg_w = w;
     s_cfg_h = h;
@@ -806,11 +873,62 @@ static void wgpu_start_frame(void) {
     /* Render at the frontend's resolution (gfx_current_dimensions) — the same
      * resolution the viewports and T&L are computed against, exactly like the
      * Metal backend. */
-    uint32_t rw = gfx_current_dimensions.width;
-    uint32_t rh = gfx_current_dimensions.height;
-    if (rw == 0 || rh == 0) {
+    uint32_t req_w = gfx_current_dimensions.width;
+    uint32_t req_h = gfx_current_dimensions.height;
+    if (req_w == 0 || req_h == 0) {
         return;   /* dimensions not established yet — skip this frame cleanly */
     }
+
+    /* PERF-020: debounce window-drag resizes. A native window drag changes
+     * gfx_current_dimensions every frame, and each change reconfigured the surface
+     * AND destroyed+recreated the three full-res offscreen targets (scene, depth,
+     * post) — pure churn for a size that is about to change again next frame.
+     * Instead, hold the current committed size until the requested size has been
+     * stable for WGPU_RESIZE_STABLE_FRAMES consecutive frames, then apply it once.
+     *
+     * Why this variant cannot produce a visible error/black frame: the surface and
+     * all three offscreen targets are ALWAYS the same committed size (they only ever
+     * change together, atomically, when we commit) — so the end-frame present copy's
+     * extent {s_scene_w, s_scene_h} always exactly matches both the source target and
+     * the surface destination, and can never over-run. While the window outgrows the
+     * held surface, wgpuSurfaceGetCurrentTexture returns SuccessSuboptimal (already
+     * accepted as present_ok) and the compositor scales — no error, no black frame.
+     * The transient during an active drag is at most a briefly-scaled / viewport-
+     * clamped image for a few frames, which snaps crisp the instant the size settles.
+     *
+     * Cannot wedge: this runs every frame, and any size held for STABLE_FRAMES
+     * commits — so the final size after a drag (held indefinitely once the mouse is
+     * released) always applies. The first size ever seen (s_cfg_w == 0) and any size
+     * already live (req == committed) apply immediately, so a fixed-resolution run
+     * (every headless gate) never debounces and stays byte-identical.
+     *
+     * Web note: the browser canvas resizes are rare and ResizeObserver-driven (not a
+     * per-frame drag), so in practice this only affects native drags; the mechanism is
+     * identical and harmless on web (a rare canvas resize applies within a few frames). */
+    #define WGPU_RESIZE_STABLE_FRAMES 3
+    uint32_t rw, rh;
+    if (s_cfg_w == 0 || s_cfg_h == 0 || s_scene_w == 0 || s_scene_h == 0 ||
+        (req_w == s_cfg_w && req_h == s_cfg_h)) {
+        /* Initial bring-up, or the requested size is already live: apply now. */
+        rw = req_w; rh = req_h;
+        s_resize_pending_w = req_w; s_resize_pending_h = req_h;
+        s_resize_stable = 0;
+    } else {
+        /* Requested size differs from the committed one: debounce. */
+        if (req_w == s_resize_pending_w && req_h == s_resize_pending_h) {
+            s_resize_stable++;
+        } else {
+            s_resize_pending_w = req_w; s_resize_pending_h = req_h;
+            s_resize_stable = 1;
+        }
+        if (s_resize_stable >= WGPU_RESIZE_STABLE_FRAMES) {
+            rw = req_w; rh = req_h;   /* stable long enough — commit the new size */
+            s_resize_stable = 0;
+        } else {
+            rw = s_cfg_w; rh = s_cfg_h;   /* keep rendering at the committed size */
+        }
+    }
+
     if (rw != s_cfg_w || rh != s_cfg_h) {
         wgpu_configure_surface(rw, rh);
     }
@@ -1599,7 +1717,18 @@ static enum GfxBlendMode      s_cur_blend = GFX_BLEND_DISABLED;
  * the cached bind group keeps the underlying object alive (a strong ref) — so a later
  * texture whose new view lands at the recycled address FALSE-MATCHED a stale entry and
  * the draw sampled the OLD texture (proven natively: menu glyphs rendered as other
- * glyphs, "Select"→"Гissi2A"). A classic ABA on the handle address, which is the key. */
+ * glyphs, "Select"→"Гissi2A"). A classic ABA on the handle address, which is the key.
+ *
+ * PERF-019: that invalidation was a full 512-entry sweep per released view — and a
+ * level transition (gfx_clear_texture_cache) deletes every pooled texture, so the storm
+ * was texture_count × 512 scans. Each WgpuTexEntry now carries a reverse index of the
+ * cache slots referencing its view (wgpu_tex_bg_ref_add on insert), so a release walks
+ * only its own slots (wgpu_bg_cache_invalidate_view_indexed). No dedicated level-flush
+ * hook was added: the natural flush IS gfx_clear_texture_cache's per-texture delete
+ * loop (gfx_pc.c) — which the reverse index already makes cheap — and a distinct backend
+ * flush entry point would require touching gfx_pc.c / gfx_rendering_api.h, out of scope
+ * here. The process-lifetime pinning is unchanged (still bounded at WGPU_BG_CACHE×WAYS)
+ * and remains the device-teardown WATCH ITEM below. */
 #define WGPU_BG_CACHE 512            /* power of two; 4-way set-associative */
 #define WGPU_BG_WAYS  4
 struct WgpuBgEntry { const void *key[7]; WGPUBindGroup bg; };
@@ -1610,10 +1739,12 @@ static uint32_t s_bg_cache_way = 0;  /* round-robin victim way on set overflow *
  * C-handle is released, so a future view reusing the freed address cannot false-match
  * a stale entry. The view can occupy key slots 1 (view0), 3 (view1) and 5 (snapshot
  * "memory color"); the sampler slots (2, 4), the bgl (0) and the diag UBO (6) hold
- * objects that are never released for the process lifetime, so they cannot ABA. Called
- * from every wgpuTextureViewRelease of a draw-reachable view (texture delete, in-place
- * re-upload recreate, snapshot resize). O(512) per release — trivial next to the
- * release + GPU free, and releases are rare vs the hundreds of cache HITS per frame. */
+ * objects that are never released for the process lifetime, so they cannot ABA. This
+ * full O(512) sweep is now used only for the SNAPSHOT view (slot 5, not a WgpuTexEntry)
+ * on scene resize, and as the PERF-019 overflow fallback — the common texture-view
+ * releases (delete / recreate-on-resize) go through wgpu_bg_cache_invalidate_view_indexed,
+ * which walks a per-texture reverse index instead. The per-slot drop predicate here is
+ * the canonical one the indexed path re-verifies against, so the two stay identical. */
 static void wgpu_bg_cache_invalidate_view(WGPUTextureView view) {
     if (view == NULL) {
         return;
@@ -2170,17 +2301,85 @@ static WGPURenderPipeline wgpu_pipeline_for(struct ShaderProgram *prg, enum GfxB
                                  pulling the N64 GBI headers into this TU */
 #define WGPU_TX_CLAMP  0x2u   /* G_TX_CLAMP */
 
+/* PERF-019: per-texture reverse index into the bind-group cache. Each entry records
+ * the bg-cache slot indices whose key references THIS texture's current `view` (in
+ * key slot 1 or 3). Releasing the view then walks only these candidate slots instead
+ * of sweeping all WGPU_BG_CACHE (512) entries — the level-transition delete storm
+ * (gfx_clear_texture_cache deletes every pooled texture) drops from texture_count×512
+ * to texture_count×refs. The list is a conservative SUPERSET: a slot round-robin-
+ * evicted+reused after registration stays listed (a stale candidate) but is filtered
+ * at release by re-checking the exact same pointer predicate the full sweep uses, so
+ * the invalidation DECISION is byte-identical (WEB-068 ABA discipline preserved). On
+ * overflow (a texture referenced by more than WGPU_TEX_BG_REFS distinct slots) the
+ * entry falls back to the exact full sweep — always correct, just not accelerated. */
+#define WGPU_TEX_BG_REFS 16
 struct WgpuTexEntry {
     WGPUTexture     tex;
     WGPUTextureView view;
     int             w, h;
     bool            used;
+    bool            bg_ref_overflow;                /* list overflowed → release full-sweeps */
+    uint8_t         bg_ref_n;                       /* live candidate count */
+    uint16_t        bg_refs[WGPU_TEX_BG_REFS];      /* bg-cache slot indices (0..WGPU_BG_CACHE-1) */
 };
 static struct WgpuTexEntry *s_tex = NULL;   /* indexed by (id - 1) */
 static uint32_t s_tex_cap = 0;
 static uint32_t s_tex_hi = 0;               /* highest id ever allocated */
 static uint32_t *s_tex_free = NULL;         /* stack of freed ids for reuse */
 static uint32_t s_tex_free_n = 0, s_tex_free_cap = 0;
+
+/* PERF-019: register a bg-cache slot as referencing this texture's view. Called from
+ * the draw path when a bind group is (re)built. Deduped so a slot re-inserted for the
+ * same view after an eviction is not double-listed; on a full list the entry flips to
+ * overflow (→ full sweep on release) rather than dropping a reference (which would
+ * under-invalidate — the ABA correctness bug). NULL entry = the white fallback view,
+ * which is never released, so it needs no reverse index. */
+static void wgpu_tex_bg_ref_add(struct WgpuTexEntry *e, uint32_t slot) {
+    if (e == NULL || e->bg_ref_overflow) {
+        return;
+    }
+    for (uint8_t i = 0; i < e->bg_ref_n; i++) {
+        if (e->bg_refs[i] == (uint16_t)slot) {
+            return;   /* already listed */
+        }
+    }
+    if (e->bg_ref_n >= WGPU_TEX_BG_REFS) {
+        e->bg_ref_overflow = true;
+        return;
+    }
+    e->bg_refs[e->bg_ref_n++] = (uint16_t)slot;
+}
+
+/* PERF-019: invalidate every cached bind group that references this texture's view,
+ * using the reverse index instead of a full 512-entry sweep. Must be called BEFORE
+ * the view's C-handle is released (reads e->view). Semantics are identical to
+ * wgpu_bg_cache_invalidate_view(e->view): the per-slot drop predicate is byte-for-byte
+ * the same, so no referencing entry survives (WEB-068). Clears the list afterward —
+ * the old view is gone; a recreated texture starts with an empty index. */
+static void wgpu_bg_cache_invalidate_view_indexed(struct WgpuTexEntry *e) {
+    if (e == NULL || e->view == NULL) {
+        return;
+    }
+    if (e->bg_ref_overflow) {
+        wgpu_bg_cache_invalidate_view(e->view);   /* list overflowed — exact full sweep */
+    } else {
+        const void *v = (const void *)e->view;
+        for (uint8_t i = 0; i < e->bg_ref_n; i++) {
+            struct WgpuBgEntry *slot = &s_bg_cache_tab[e->bg_refs[i]];
+            /* Re-verify against the SAME predicate the full sweep uses: a slot may have
+             * been evicted+reused since registration, so drop it only if it still
+             * references v (keeps the decision identical to the full sweep). */
+            if (slot->bg != NULL &&
+                (slot->key[1] == v || slot->key[3] == v || slot->key[5] == v)) {
+                wgpuBindGroupRelease(slot->bg);
+                slot->bg = NULL;
+                memset(slot->key, 0, sizeof(slot->key));
+            }
+        }
+    }
+    e->bg_ref_n = 0;
+    e->bg_ref_overflow = false;
+}
 
 /* Per-tile binding staged by select_texture / set_sampler_parameters and read by
  * the Task 3 draw path. */
@@ -2232,6 +2431,8 @@ static uint32_t wgpu_new_texture(void) {
     e->view = NULL;
     e->w = e->h = 0;
     e->used = true;
+    e->bg_ref_n = 0;             /* PERF-019: fresh id owns no cached bind groups yet */
+    e->bg_ref_overflow = false;
     return id;
 }
 
@@ -2241,7 +2442,7 @@ static void wgpu_delete_texture(uint32_t texture_id) {
         return;
     }
     if (e->view != NULL) {
-        wgpu_bg_cache_invalidate_view(e->view);   /* WEB-068: purge stale cache refs first */
+        wgpu_bg_cache_invalidate_view_indexed(e);   /* PERF-019/WEB-068: purge stale cache refs (reverse index) */
         wgpuTextureViewRelease(e->view); e->view = NULL;
     }
     if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
@@ -2309,7 +2510,7 @@ static bool wgpu_upload_texture(const uint8_t *rgba32_buf, int width, int height
     /* Dimensions changed (or first upload into this id): drop the old GPU
      * resources and (re)create the texture at the new size. */
     if (e->view != NULL) {
-        wgpu_bg_cache_invalidate_view(e->view);   /* WEB-068: purge stale cache refs first */
+        wgpu_bg_cache_invalidate_view_indexed(e);   /* PERF-019/WEB-068: purge stale cache refs (reverse index) */
         wgpuTextureViewRelease(e->view); e->view = NULL;
     }
     if (e->tex != NULL)  { wgpuTextureRelease(e->tex);      e->tex = NULL; }
@@ -2744,14 +2945,18 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
     if (s_cur_shader->bgl != NULL) {
         WGPUTextureView v0 = s_white_view, v1 = s_white_view;
         WGPUSampler     m0 = s_default_sampler, m1 = s_default_sampler;
+        /* PERF-019: track the texture entries whose views become v0/v1, so a newly
+         * built bind group can register its cache slot in their reverse index. NULL
+         * when the tile falls back to s_white_view (never released → no index needed). */
+        struct WgpuTexEntry *e0 = NULL, *e1 = NULL;
         if (s_cur_shader->info.used_textures[0]) {
             struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[0]);
-            if (e != NULL && e->view != NULL) v0 = e->view;
+            if (e != NULL && e->view != NULL) { v0 = e->view; e0 = e; }
             if (s_bound_sampler[0] != NULL) m0 = s_bound_sampler[0];
         }
         if (s_cur_shader->info.used_textures[1]) {
             struct WgpuTexEntry *e = wgpu_tex_lookup(s_bound_tex[1]);
-            if (e != NULL && e->view != NULL) v1 = e->view;
+            if (e != NULL && e->view != NULL) { v1 = e->view; e1 = e; }
             if (s_bound_sampler[1] != NULL) m1 = s_bound_sampler[1];
         }
         const void *key[7] = { s_cur_shader->bgl, v0, m0, v1, m1,
@@ -2825,6 +3030,16 @@ static void wgpu_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_
                 }
                 memcpy(victim->key, key, sizeof(victim->key));
                 victim->bg = bg;   /* the cache owns the ref */
+                /* PERF-019: register this slot in the reverse index of the textures
+                 * whose views it references (v0/v1), so releasing either view later
+                 * invalidates just this slot instead of sweeping all 512 entries.
+                 * The evicted slot's stale reverse-index entries (if any) are filtered
+                 * by re-verification at release time, so no cleanup is needed here. */
+                uint32_t slot_idx = (uint32_t)(victim - s_bg_cache_tab);
+                wgpu_tex_bg_ref_add(e0, slot_idx);
+                if (e1 != e0) {
+                    wgpu_tex_bg_ref_add(e1, slot_idx);   /* skip a duplicate when both tiles share a texture */
+                }
             }
         }
     }
