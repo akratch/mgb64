@@ -17639,6 +17639,1317 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
     }
 }
 
+/* PERF-006 Step A: material state derived once per emitted triangle by
+ * derive_material() below (pure extraction of gfx_emit_loaded_triangle's phase C —
+ * NO cache yet; Step B adds the dirty-flag cache around it). Fields per
+ * docs/design/PERF_006_MATERIAL_SPLIT_DESIGN.md §2. Prim/env/fog/fill colors and
+ * prim_lod_fraction are deliberately NOT here: they are live per-vertex uniforms. */
+struct MaterialState {
+    struct ColorCombiner *comb;
+    uint64_t cc_id;
+    uint64_t effective_cc_id;
+    uint64_t settex_material_cc_id;
+    uint32_t cc_options;
+    uint8_t num_inputs;
+    bool used_textures[2];
+    enum GfxBlendMode blend_mode;
+    enum GfxBlendMode api_blend_mode;
+    uint8_t tex_tile_base;
+    bool allow_lod_redirect;
+    uint32_t tex_width[2];
+    uint32_t tex_height[2];
+    uint32_t tex_clamp_width[2];
+    uint32_t tex_clamp_height[2];
+    bool settex_mirror_tex1;
+    bool mirror_tex1_from_tex0;
+    bool settex_authored_lod_endpoint;
+    bool allow_footprint_lod;
+    bool settex_cc_uses_lod_fraction;
+    bool use_alpha;
+    bool use_fog;
+    bool fog_use_fixed_alpha;
+    bool texture_edge;
+    bool use_noise;
+    bool use_texture;
+    bool depth_test;
+    bool depth_update;
+    bool depth_compare;
+    bool depth_source_prim;
+    uint16_t zmode;
+    uint8_t depth_mode;
+    bool sky_backdrop_depth;
+    bool room_matrix;
+    bool room_secondary_xlu_sort;
+    bool scale_room_alpha_env;
+    float room_alpha_env_scale;
+    bool diag_rdp_cvg_memory;
+    bool tint_match;
+    struct RGBA diag_tint_color;
+    bool trace_eye_material;
+};
+
+/* PERF-006 Step A — pure extraction of gfx_emit_loaded_triangle's per-triangle
+ * material derivation (phase C). Called EVERY triangle (no cache yet). The guarded
+ * gfx_flush()+shader/blend/texture binds stay INSIDE here in their original order,
+ * so rendering is byte-identical to the old inline body. Returns false on the two
+ * graceful-degrade paths (combiner OOM, GE007_SKIP_ALPHA_TRIANGLES); the caller then
+ * returns without emitting, exactly as before. Depth booleans are computed in the
+ * caller (phase B) and passed in; per-triangle values (lod_fraction, the xlu sort
+ * KEY, and phase-D traces/probes) stay in the caller and read *m. */
+static bool derive_material(struct LoadedVertex *v1,
+                            struct LoadedVertex *v2,
+                            struct LoadedVertex *v3,
+                            const struct GfxTriNdcMetrics *ndc_metrics_in,
+                            bool ndc_metrics_ok,
+                            bool was_cpu_clipped,
+                            uint32_t clip_reason_flags,
+                            int dl_room,
+                            const char *dl_which,
+                            bool has_cmd_offset,
+                            uintptr_t cmd_offset,
+                            bool focus_match,
+                            bool tint_match,
+                            bool depth_test,
+                            bool depth_update,
+                            bool depth_compare,
+                            bool depth_source_prim,
+                            uint16_t zmode,
+                            uint8_t depth_mode,
+                            bool sky_backdrop_depth,
+                            struct MaterialState *m) {
+    /* Local copy so the verbatim phase-C body can keep using `ndc_metrics` and
+     * `&ndc_metrics` unchanged (read-only in the traces below). */
+    struct GfxTriNdcMetrics ndc_metrics = *ndc_metrics_in;
+    uint64_t cc_id = rdp.combine_mode;
+
+    /* Blend mode classification from RAW (pre-fog-override) other_mode_l.
+     * The renderer keeps an effective fog-forced mode for legacy room fog,
+     * which contaminates authored frontend/menu blender patterns. Classify
+     * blend from raw and only apply forced fog to gameplay-style materials. */
+    bool texture_edge = (rdp.other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
+    bool use_noise = (rdp.other_mode_l & G_AC_DITHER) == G_AC_DITHER;
+    bool room_matrix =
+        rsp.modelview_matrix_stack_size > 0 &&
+        rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1];
+    bool frontend_settex_material =
+        settex_active &&
+        !room_matrix &&
+        (g_current_draw_class == DRAWCLASS_UNKNOWN ||
+         g_current_draw_class == DRAWCLASS_FRONTEND);
+    uint32_t fog_other_mode_l =
+        frontend_settex_material ? rdp.other_mode_l_raw : rdp.other_mode_l;
+    bool use_fog = ((fog_other_mode_l >> 30) == G_BL_CLR_FOG) ||
+                   ((fog_other_mode_l >> 26) == G_BL_A_FOG);
+    bool fog_use_fixed_alpha = use_fog && ((fog_other_mode_l >> 26) & 3) == G_BL_A_FOG;
+    if (g_diag_no_fog > 0 || gfx_current_draw_suppresses_room_fog()) {
+        use_fog = false;
+        fog_use_fixed_alpha = false;
+    }
+
+    enum GfxBlendMode blend_mode;
+    {
+        uint32_t raw = rdp.other_mode_l_raw;
+        uint32_t hi = raw & 0xFFFF0000;
+        bool used_effective_mode_fallback = false;
+
+        switch (raw) {
+            /* GoldenEye background LUT modes must be classified from the full
+             * raw value. The upper 16 bits alone conflate opaque terrain
+             * modes (e.g. PASS/FOG + AA_ZB_OPA_TERR2) with true translucent
+             * room modes (XLU_SURF2 / XLU_DECAL2). */
+            case 0x0C182078: /* PASS + AA_ZB_OPA_TERR2 */
+            case 0xC8102078: /* FOG_SHADE_A + AA_ZB_OPA_TERR2 */
+            case 0x04102078: /* FOG_PRIM_A (de-fogged) + OPA_TERR2 */
+            case 0x08102078: /* FOG_SHADE_A (de-fogged) + OPA_TERR2 */
+            case 0xC4102078: /* FOG_PRIM_A + AA_ZB_OPA_TERR2 */
+            case 0x0C182048: /* PASS + AA_OPA_TERR2 */
+            case 0xC8102048: /* FOG_SHADE_A + AA_OPA_TERR2 */
+            case 0x04102048: /* FOG_PRIM_A (de-fogged) + AA_OPA_TERR2 */
+            case 0x08102048: /* FOG_SHADE_A (de-fogged) + AA_OPA_TERR2 */
+            case 0xC4102048: /* FOG_PRIM_A + AA_OPA_TERR2 */
+            case 0x0C192078: /* PASS + AA_ZB_OPA_SURF2 */
+            case 0xC8112078: /* FOG_SHADE_A + AA_ZB_OPA_SURF2 */
+            case 0x04112078: /* FOG_PRIM_A (de-fogged) + OPA_SURF2 */
+            case 0x08112078: /* FOG_SHADE_A (de-fogged) + OPA_SURF2 */
+            case 0xC4112078: /* FOG_PRIM_A + AA_ZB_OPA_SURF2 */
+            case 0x00502078: /* CLR_IN + AA_ZB_OPA_SURF2 (Egyptian opaque, was fallback→ALPHA) */
+            case 0xC0502078: /* fog-forced CLR_IN + OPA_SURF2 */
+            case 0x0C192D58: /* PASS + AA_ZB_OPA_DECAL2 */
+            case 0xC8112D58: /* FOG_SHADE_A + AA_ZB_OPA_DECAL2 */
+            case 0x04112D58: /* FOG_PRIM_A (de-fogged) + OPA_DECAL2 */
+            case 0x08112D58: /* FOG_SHADE_A (de-fogged) + OPA_DECAL2 */
+            case 0xC4112D58: /* FOG_PRIM_A + AA_ZB_OPA_DECAL2 */
+            case 0x0C192048: /* PASS + AA_OPA_SURF2 */
+            case 0xC8112048: /* FOG_SHADE_A + AA_OPA_SURF2 */
+            case 0x04112048: /* FOG_PRIM_A (de-fogged) + AA_OPA_SURF2 */
+            case 0x08112048: /* FOG_SHADE_A (de-fogged) + AA_OPA_SURF2 */
+            case 0xC4112048: /* FOG_PRIM_A + AA_OPA_SURF2 */
+            case 0x00552D58: /* observed GE OPA_DECAL2 CLR_IN/MEM variant */
+            case 0x0F0A4000: /* PASS + PASS2 (setup/passthrough) */
+            case 0xCF0A4000: /* fog-forced PASS + PASS2 */
+                blend_mode = GFX_BLEND_DISABLED;
+                break;
+
+            case 0x00502048: /* observed GE alpha overlay AA_OPA_SURF2 variant */
+            case 0x005041C8: /* observed GE alpha overlay CLR_IN/MEM variant */
+            case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
+            case 0x00504B50: /* observed GE alpha overlay CLD_SURF2 variant */
+            case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
+            case 0x00552048: /* observed GE blood/flash CLD_SURF2 variant */
+            case 0x0C184B50: /* PASS + ZB_CLD_SURF2 */
+            case 0x0C184DD8: /* PASS + AA_ZB_XLU_DECAL2 */
+            case 0xC8104DD8: /* FOG_SHADE_A + AA_ZB_XLU_DECAL2 */
+            case 0x04104DD8: /* FOG_PRIM_A (de-fogged) + XLU_DECAL2 */
+            case 0x08104DD8: /* FOG_SHADE_A (de-fogged) + XLU_DECAL2 */
+            case 0xC4104DD8: /* FOG_PRIM_A + AA_ZB_XLU_DECAL2 */
+                /* True translucent decals. These do not use CVG_X_ALPHA on
+                 * N64, so forcing texture-edge behavior here turns them into
+                 * threshold/cutout materials and produces firing-only impact
+                 * corruption on world surfaces. */
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            case 0x0C1849D8: /* PASS + AA_ZB_XLU_SURF2 */
+            case 0xC81049D8: /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
+            case 0x041049D8: /* FOG_PRIM_A (de-fogged) + XLU_SURF2 */
+            case 0x081049D8: /* FOG_SHADE_A (de-fogged) + XLU_SURF2 */
+            case 0xC41049D8: /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
+            case 0x00504240: /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu) */
+            case 0xC0504240: /* fog-forced CLR_IN + XLU_SURF2 */
+                /* True translucent surfaces (glass, water, forcefields). Do
+                 * not force texture-edge here: N64 XLU_SURF lacks CVG_X_ALPHA,
+                 * and the shader's texture-edge path alpha-tests/discards
+                 * fragments instead of blending them. */
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            case 0x0C184340: /* PASS + AA_ZB_OPA_INTER2 */
+            case 0xC8104340: /* FOG_SHADE_A + AA_ZB_OPA_INTER2 */
+            case 0x04104340: /* FOG_PRIM_A (de-fogged) + OPA_INTER2 */
+            case 0x08104340: /* FOG_SHADE_A (de-fogged) + OPA_INTER2 */
+            case 0xC4104340: /* FOG_PRIM_A + AA_ZB_OPA_INTER2 */
+            case 0x00504340: /* CLR_IN + AA_ZB_OPA_INTER2 (fences/grates, menu cutouts) */
+            case 0xC0504340: /* fog-forced CLR_IN + OPA_INTER2 */
+                texture_edge = true;
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            case 0x0C184E50: /* PASS + ZB_XLU_DECAL2 */
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            case 0x0C193078: /* PASS + AA_ZB_TEX_EDGE2 */
+            case 0xC8113078: /* FOG_SHADE_A + AA_ZB_TEX_EDGE2 */
+            case 0x04113078: /* FOG_PRIM_A (de-fogged) + TEX_EDGE2 */
+            case 0x08113078: /* FOG_SHADE_A (de-fogged) + TEX_EDGE2 */
+            case 0xC4113078: /* FOG_PRIM_A + AA_ZB_TEX_EDGE2 */
+                texture_edge = true;
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            default:
+                switch (hi) {
+            /* Standard alpha blend families.
+             * Each pattern appears in two forms:
+             *   - explicit fog (0xC8/0xC4): game wrote G_RM_FOG_SHADE_A / FOG_PRIM_A
+             *   - pass/no-fog (0x0C/0x00): game wrote G_RM_PASS or CLR_IN,
+             *     fog override forces bits 31:30 in effective (not raw) */
+            case 0xC8100000:  /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
+            case 0xC4100000:  /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
+            case 0x08100000:  /* (de-fogged) FOG_SHADE_A + XLU2 */
+            case 0x04100000:  /* (de-fogged) FOG_PRIM_A + XLU2 */
+            case 0x0C180000:  /* PASS + AA_ZB_XLU_SURF2 */
+            case 0xCC180000:  /* (fog-forced) PASS + XLU2 */
+            case 0x00500000:  /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu/gun) */
+            case 0xC0500000:  /* (fog-forced) CLR_IN + XLU2 */
+                blend_mode = GFX_BLEND_ALPHA;
+                break;
+
+            /* Opaque / texture-edge families */
+            case 0xC8110000:  /* FOG_SHADE_A + AA_ZB_OPA_SURF2 */
+            case 0xC4110000:  /* FOG_PRIM_A + AA_ZB_OPA_SURF2 */
+            case 0x08110000:  /* (de-fogged) FOG_SHADE_A + OPA2 */
+            case 0x04110000:  /* (de-fogged) FOG_PRIM_A + OPA2 */
+            case 0x0C190000:  /* PASS + AA_ZB_OPA_SURF2 */
+            case 0xCC190000:  /* (fog-forced) PASS + OPA2 */
+            case 0x0F0A0000:  /* PASS + PASS2 (setup/passthrough) */
+            case 0xCF0A0000:  /* (fog-forced) PASS + PASS2 */
+                blend_mode = texture_edge ? GFX_BLEND_ALPHA : GFX_BLEND_DISABLED;
+                break;
+
+            default: {
+                /* Fallback: check effective mode for standard alpha pattern */
+                used_effective_mode_fallback = true;
+                bool alpha = (rdp.other_mode_l & (3U << 20)) == (G_BL_CLR_MEM << 20) &&
+                             (rdp.other_mode_l & (3U << 16)) == (G_BL_1MA << 16);
+                blend_mode = (alpha || texture_edge) ? GFX_BLEND_ALPHA : GFX_BLEND_DISABLED;
+                break;
+            }
+        }
+                break;
+        }
+
+#ifdef NATIVE_PORT
+        if (used_effective_mode_fallback) {
+            blend_fallback_trace_record(raw, rdp.other_mode_l, hi, blend_mode,
+                                        use_fog, texture_edge, rsp.geometry_mode);
+        }
+#endif
+
+        /* Record for blend audit if enabled */
+        blend_audit_record(raw, rdp.other_mode_l, rsp.geometry_mode,
+                           (int)blend_mode, use_fog, texture_edge);
+
+#ifdef NATIVE_PORT
+        {
+            static int trace_blend_classify = -1;
+            static uint32_t seen_hi[32];
+            static int seen_count = 0;
+            static int trace_count = 0;
+            int already_seen = 0;
+            if (trace_blend_classify < 0) {
+                trace_blend_classify = (getenv("GE007_TRACE_BLEND_CLASSIFY") != NULL);
+            }
+            if (trace_blend_classify) {
+                for (int si = 0; si < seen_count; si++) {
+                    if (seen_hi[si] == hi) {
+                        already_seen = 1;
+                        break;
+                    }
+                }
+                if (!already_seen && trace_count < 32) {
+                    const char *mode_name = "disabled";
+                    if (blend_mode == GFX_BLEND_ALPHA) {
+                        mode_name = "alpha";
+                    } else if (blend_mode == GFX_BLEND_MODULATE) {
+                        mode_name = "modulate";
+                    }
+                    fprintf(stderr,
+                            "[BLEND-CLASSIFY] frame=%d raw=0x%08X eff=0x%08X hi=0x%08X "
+                            "mode=%s texedge=%d fog=%d geom=0x%08X\n",
+                            g_frame_count_diag, raw, rdp.other_mode_l, hi,
+                            mode_name, texture_edge ? 1 : 0, use_fog ? 1 : 0,
+                            rsp.geometry_mode);
+                    if (seen_count < (int)(sizeof(seen_hi) / sizeof(seen_hi[0]))) {
+                        seen_hi[seen_count++] = hi;
+                    }
+                    trace_count++;
+                }
+            }
+        }
+#endif
+    }
+    bool use_alpha = (blend_mode != GFX_BLEND_DISABLED);
+
+    if (g_fillrect_draw_active && texture_edge) {
+        /* FILLRECT has no texture coverage alpha. GoldenEye uses the same
+         * OPA_INTER/CLD-style render modes for primitive full-screen fades,
+         * where thresholding alpha turns damage flashes into opaque blocks. */
+        texture_edge = false;
+    }
+    if (texture_edge && gfx_texrect_is_ge_blood_overlay(cc_id)) {
+        /* The gunbarrel/gameplay blood I4 mask uses CLD_SURF, but still needs
+         * soft texture alpha multiplied by primitive alpha. The generic
+         * texture-edge path alpha-tests it into a fully opaque red quad. */
+        texture_edge = false;
+    }
+
+#ifdef NATIVE_PORT
+    {
+        static int room_xlu_as_opaque = -1;
+        static int room_alpha_as_texedge = -1;
+        static int skip_alpha_triangles = -1;
+        if (room_xlu_as_opaque < 0) {
+            room_xlu_as_opaque = (getenv("GE007_ROOM_XLU_AS_OPAQUE") != NULL);
+        }
+        if (room_alpha_as_texedge < 0) {
+            room_alpha_as_texedge = (getenv("GE007_ROOM_ALPHA_AS_TEXEDGE") != NULL);
+        }
+        if (skip_alpha_triangles < 0) {
+            skip_alpha_triangles = (getenv("GE007_SKIP_ALPHA_TRIANGLES") != NULL);
+        }
+        if (room_alpha_as_texedge &&
+            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] &&
+            blend_mode == GFX_BLEND_ALPHA &&
+            (rdp.other_mode_l_raw & 0x0000FFFF) == 0x2078) {
+            texture_edge = true;
+        }
+        if (room_xlu_as_opaque &&
+            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] &&
+            blend_mode == GFX_BLEND_ALPHA) {
+            uint32_t hi = rdp.other_mode_l_raw & 0xFFFF0000;
+            if (hi == 0xC8100000 || hi == 0xC4100000 ||
+                hi == 0x08100000 || hi == 0x04100000 ||
+                hi == 0x0C180000 || hi == 0xCC180000) {
+                blend_mode = GFX_BLEND_DISABLED;
+                use_alpha = false;
+            }
+        }
+	        if (skip_alpha_triangles && blend_mode == GFX_BLEND_ALPHA) {
+	            gfx_effect_tri_trace_reject("skip_alpha_triangles", v1, v2, v3,
+	                                        &ndc_metrics, ndc_metrics_ok,
+	                                        was_cpu_clipped, clip_reason_flags);
+    return false;
+	        }
+	    }
+#endif
+
+#ifdef NATIVE_PORT
+    {
+        static int trace_room_alpha = -1;
+        static int trace_room_alpha_count = 0;
+        static int trace_room_alpha_frame = -1;
+        bool room_matrix = (rsp.modelview_matrix_stack_size > 0) ?
+            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] : false;
+        if (trace_room_alpha < 0) {
+            trace_room_alpha = (getenv("GE007_TRACE_ROOM_ALPHA") != NULL);
+        }
+        if (trace_room_alpha && room_matrix && blend_mode == GFX_BLEND_ALPHA) {
+            if (trace_room_alpha_frame != g_frame_count_diag) {
+                trace_room_alpha_frame = g_frame_count_diag;
+                trace_room_alpha_count = 0;
+            }
+            if (trace_room_alpha_count < 48) {
+                int room = -1;
+                int vertex_room = -1;
+                int mv_room = -1;
+                int dl_room = -1;
+                const char *dl_which = NULL;
+                const char *room_source = "none";
+                uintptr_t cmd_offset = 0;
+                bool has_cmd_offset = false;
+
+                if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
+                    vertex_room = v1->room_id;
+                }
+                if (rsp.modelview_matrix_stack_size > 0 &&
+                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
+                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
+                }
+                dl_room = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which);
+                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
+                                                          NULL, NULL, NULL, &cmd_offset);
+
+                if (vertex_room >= 0) {
+                    room = vertex_room;
+                    room_source = "vtx";
+                } else if (mv_room >= 0) {
+                    room = mv_room;
+                    room_source = "mtx";
+                } else if (dl_room >= 0) {
+                    room = dl_room;
+                    room_source = "dl";
+                }
+                fprintf(stderr,
+                        "[ROOM-ALPHA] frame=%d tri=%d room=%d source=%s "
+                        "vtx_room=%d mv_room=%d dl_room=%d dl=%s offset=%s0x%zX "
+                        "raw=0x%08X eff=0x%08X "
+                        "zcmp=%d zupd=%d zmode=0x%03X blend=%d texedge=%d "
+                        "envA=%d primA=%d shadeA=(%d,%d,%d) fog=(%d,%d,%d)\n",
+                        g_frame_count_diag, g_tri_count_diag, room, room_source,
+                        vertex_room, mv_room, dl_room, dl_which ? dl_which : "?",
+                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
+                        rdp.other_mode_l_raw, rdp.other_mode_l,
+                        depth_compare ? 1 : 0, depth_update ? 1 : 0, zmode,
+                        (int)blend_mode, texture_edge ? 1 : 0,
+                        rdp.env_color.a, rdp.prim_color.a,
+                        v1->color.a, v2->color.a, v3->color.a,
+                        v1->fog, v2->fog, v3->fog);
+                trace_room_alpha_count++;
+            }
+        }
+    }
+#endif
+
+    /* Build shader options as separate word (not packed into cc_id) */
+    uint32_t cc_options = 0;
+    if (use_alpha) cc_options |= SHADER_OPT_ALPHA;
+    if (use_fog && !g_diag_no_fog) cc_options |= SHADER_OPT_FOG;
+    if (texture_edge) cc_options |= SHADER_OPT_TEXTURE_EDGE;
+    if (use_noise) cc_options |= SHADER_OPT_NOISE;
+    if ((rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE)
+        cc_options |= SHADER_OPT_2CYC;
+    /* W1.E2.T2: request the world-position vertex attribute on world-perspective
+     * ROOM draws when a consumer wants it. IDENTICAL predicate to the per-vertex
+     * compute in gfx_sp_vertex, so d->wx/wy/wz are populated exactly for the draws
+     * that pack + read them. Consumer sub-bits (SUN_SHADOW/DFDX_LIGHT/…) are OR'd
+     * in by their epics; E2 only lands the WORLD_POS attribute itself. */
+    if (gfx_world_attrs_wanted() && g_current_draw_class == DRAWCLASS_ROOM &&
+        g_pc_view_inv_valid) {
+        cc_options |= SHADER_OPT_WORLD_POS;
+        /* W1.E3.T4: ROOM receives the sun shadow when the feature is on, a shadow
+         * matrix was captured this frame, AND (§3.5 fix) the backend actually
+         * replayed a non-empty depth pass with it this frame (g_pc_shadow_map_ready).
+         * Without the readiness term, the first flagged frame (or any frame the
+         * replay was skipped/failed) samples an undefined or stale depth map
+         * instead of just rendering with no shadow. Rooms only (invariant §4.0);
+         * characters cast (E3.T1 ring) but receiving on characters is E6. */
+        if (g_pcSunShadow && g_pc_shadow_mat_valid && g_pc_shadow_map_ready) {
+            cc_options |= SHADER_OPT_SUN_SHADOW;
+        }
+        /* W1.E4: per-pixel geometric-normal directional sun. Setting DFDX forces
+         * WORLD_POS on for this draw (the fragment reconstructs the geometric
+         * normal from dFdx/dFdy of vWorldPos). Mirrors the §4.4 consumer-bit
+         * shape (future MATERIAL_MAPS/DYN_LIGHTS OR in here too). */
+        if (g_pcPerPixelLight) cc_options |= SHADER_OPT_DFDX_LIGHT;
+    }
+    bool noperspective_all_settex_texcoords =
+        settex_active && gfx_diag_noperspective_settex_texcoords_enabled();
+    struct GfxCcRawFeatures cc_features_for_options =
+        gfx_cc_id_raw_features(cc_id, cc_options);
+
+    /* Shader-side UV clamping from tile descriptors (PD pattern) */
+    {
+        uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
+            (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
+        bool allow_lod_redirect = (g_texrect_tile_override < 0);
+        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
+        bool allow_n64_filter = !g_texrect_uv_mode &&
+            depth_test &&
+            linear_filter &&
+            gfx_n64_shader_filter_enabled();
+        bool loaded_tile_two_tex_filter_diag =
+            cc_features_for_options.used_textures[0] &&
+            cc_features_for_options.used_textures[1] &&
+            gfx_diag_loaded_tile_two_tex_n64_filter_enabled(cc_id);
+        bool allow_mask_n64_filter = !g_texrect_uv_mode &&
+            linear_filter &&
+            gfx_n64_shader_filter_enabled();
+        bool allow_loaded_tile_n64_filter = !g_texrect_uv_mode &&
+            !settex_active &&
+            linear_filter &&
+            gfx_n64_shader_filter_enabled() &&
+            ((cc_features_for_options.used_textures[0] !=
+              cc_features_for_options.used_textures[1]) ||
+             loaded_tile_two_tex_filter_diag);
+        uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
+        struct SetTexTileState settex_tile0;
+        bool tex0_tile_masked = false;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 0, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 1, &settex_tile0)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 0)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
+                tex0_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 1)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
+                tex0_tile_masked = true;
+            }
+            if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
+        } else if (td0 < 8) {
+            const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td0);
+            bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
+                tex0_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[0] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
+                tex0_tile_masked = true;
+            }
+            if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[0])
+                cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
+        }
+        if (tex0_tile_masked &&
+            allow_mask_n64_filter &&
+            cc_features_for_options.used_textures[0]) {
+            cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
+        }
+        uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
+        struct SetTexTileState settex_tile1;
+        bool tex1_tile_masked = false;
+        if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 0, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 1, &settex_tile1)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 0)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
+                tex1_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 1)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
+                tex1_tile_masked = true;
+            }
+            if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
+        } else if (td1 < 8) {
+            const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td1);
+            bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
+            }
+            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 0, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
+                tex1_tile_masked = true;
+            }
+            if (cc_features_for_options.used_textures[1] &&
+                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 1, is_font_texture)) {
+                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
+                tex1_tile_masked = true;
+            }
+            if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[1])
+                cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
+        }
+        if (tex1_tile_masked &&
+            allow_mask_n64_filter &&
+            cc_features_for_options.used_textures[1]) {
+            cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
+        }
+    }
+
+    uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
+        (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
+    uint64_t effective_cc_id = cc_id;
+    effective_cc_id = gfx_apply_room_alpha_lut(effective_cc_id,
+                                               rdp.other_mode_l_raw,
+                                               room_matrix,
+                                               blend_mode);
+    struct RGBA diag_tint_color = g_diag_tint_rgba;
+    bool eye_intro_strip = gfx_is_eye_intro_strip_material(tex_tile_base);
+    bool trace_eye_material = (g_diag_trace_eye_bind > 0 && gfx_is_eye_intro_diag_material());
+    if (eye_intro_strip && g_diag_disable_eye_cc_override <= 0) {
+        effective_cc_id =
+            (uint64_t)color_comb(0, 0, 0, G_CCMUX_TEXEL0) |
+            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_TEXEL0) << 16) |
+            ((uint64_t)color_comb(0, 0, 0, G_CCMUX_TEXEL0) << 28) |
+            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_TEXEL0) << 44);
+        cc_options &= ~SHADER_OPT_2CYC;
+        if (trace_eye_material) {
+            fprintf(stderr,
+                    "[EYE-CC-OVERRIDE] frame=%d prim=%u tex_tile=%u cc=0x%016llx\n",
+                    g_frame_count_diag, rdp.prim_color.r, tex_tile_base,
+                    (unsigned long long)cc_id);
+            fflush(stderr);
+        }
+    }
+    uint64_t settex_material_cc_id = effective_cc_id;
+    uint32_t settex_material_cc_options = cc_options;
+    if (settex_active &&
+        texture_edge &&
+        rdp.other_mode_l_raw == 0x0C184340 &&
+        !depth_test &&
+        !depth_update &&
+        !depth_compare &&
+        !use_fog) {
+        /* Frontend G_SETTEX menu overlays use OPA_INTER state for soft alpha
+         * compositing. Treating CVG_X_ALPHA as texture-edge here hardens the
+         * mask and makes stamps/cutouts far too opaque versus the ROM. */
+        texture_edge = false;
+        cc_options &= ~SHADER_OPT_TEXTURE_EDGE;
+        settex_material_cc_options = cc_options;
+    }
+    if (settex_active &&
+        texture_edge &&
+        gfx_diag_settex_cc_disable_texture_edge_enabled(settex_material_cc_id)) {
+        texture_edge = false;
+        cc_options &= ~SHADER_OPT_TEXTURE_EDGE;
+        settex_material_cc_options = cc_options;
+    }
+    if (tint_match) {
+        effective_cc_id =
+            (uint64_t)color_comb(0, 0, 0, G_CCMUX_PRIMITIVE) |
+            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_PRIMITIVE) << 16) |
+            ((uint64_t)color_comb(0, 0, 0, G_CCMUX_PRIMITIVE) << 28) |
+            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_PRIMITIVE) << 44);
+        cc_options = 0;
+        blend_mode = GFX_BLEND_DISABLED;
+        use_alpha = false;
+        use_fog = false;
+        texture_edge = false;
+        if (focus_match && ndc_metrics_ok) {
+            gfx_diag_log_focus_event("GFX-FOCUS-TINT",
+                                     g_diag_current_cmd_addr, dl_room, dl_which,
+                                     was_cpu_clipped, clip_reason_flags,
+                                     rdp.other_mode_l_raw, rdp.other_mode_l,
+                                     v1, v2, v3, &ndc_metrics);
+        }
+    }
+    if (!tint_match && settex_active &&
+        (noperspective_all_settex_texcoords ||
+         gfx_diag_noperspective_settex_cc_texcoords_enabled(settex_material_cc_id))) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_TEXCOORDS;
+    }
+    if (!tint_match && settex_active &&
+        gfx_diag_noperspective_settex_cc_inputs_enabled(settex_material_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
+    }
+    if (!tint_match && settex_active &&
+        gfx_diag_noperspective_settex_cc_fog_enabled(settex_material_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_FOG;
+    }
+    if (!tint_match &&
+        gfx_diag_noperspective_cc_texcoords_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_TEXCOORDS;
+    }
+    if (!tint_match &&
+        gfx_diag_noperspective_cc_inputs_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
+    }
+    struct GfxCcRawFeatures effective_cc_features_for_options =
+        gfx_cc_id_raw_features(effective_cc_id, cc_options);
+    bool room_water_alpha_suppress =
+        !tint_match &&
+        gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
+                                             room_matrix,
+                                             blend_mode,
+                                             depth_test,
+                                             depth_update,
+                                             depth_compare,
+                                             zmode,
+                                             texture_edge,
+                                             rdp.other_mode_l_raw);
+    const char *room_xlu_cvg_memory_reason = room_water_alpha_suppress
+        ? "water_suppress"
+        : (tint_match
+            ? "tint"
+            : gfx_room_xlu_cvg_memory_gate_reason(dl_room, dl_which,
+                                                  room_matrix,
+                                                  blend_mode,
+                                                  depth_test,
+                                                  depth_update,
+                                                  depth_compare,
+                                                  zmode,
+                                                  texture_edge,
+                                                  rdp.other_mode_l_raw,
+                                                  use_fog));
+    bool room_xlu_cvg_memory =
+        gfx_room_xlu_cvg_memory_needed(room_xlu_cvg_memory_reason);
+    enum GfxRdpMemoryBlendClass rdp_memory_blend_class =
+        gfx_rdp_memory_blend_class_for_draw(tint_match,
+                                            use_alpha,
+                                            blend_mode,
+                                            rdp.other_mode_l_raw,
+                                            effective_cc_features_for_options.used_textures[0],
+                                            effective_cc_features_for_options.used_textures[1],
+                                            effective_cc_id,
+                                            room_xlu_cvg_memory);
+    if (!tint_match && !settex_active && use_alpha &&
+        (effective_cc_features_for_options.used_textures[0] ||
+         effective_cc_features_for_options.used_textures[1]) &&
+        gfx_diag_alpha_from_tex_intensity_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY;
+    }
+    if (!tint_match && !settex_active && use_alpha &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        (effective_cc_features_for_options.used_textures[0] ||
+         effective_cc_features_for_options.used_textures[1]) &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_wrap_thin_cc_enabled(effective_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN;
+    }
+    if (!tint_match && use_alpha &&
+        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COVERAGE) {
+        cc_options |= SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND;
+    } else if (!tint_match && use_alpha &&
+        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COLOR) {
+        cc_options |= SHADER_OPT_DIAG_RDP_MEMORY_BLEND;
+    }
+    if (!tint_match && settex_active &&
+        gfx_diag_settex_cc_disable_n64_filter_enabled(settex_material_cc_id)) {
+        cc_options &= ~(SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER);
+    }
+    if (!tint_match && settex_active &&
+        (cc_options & (SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER)) != 0) {
+        bool clamped_material =
+            (settex_material_cc_options &
+             (SHADER_OPT_TEXEL0_CLAMP_S | SHADER_OPT_TEXEL0_CLAMP_T |
+              SHADER_OPT_TEXEL1_CLAMP_S | SHADER_OPT_TEXEL1_CLAMP_T)) != 0;
+        bool clamped_non_texedge_settex =
+            clamped_material &&
+            (settex_material_cc_options & SHADER_OPT_TEXTURE_EDGE) == 0;
+        /*
+         * Clamped non-cutout settex surfaces are authored for N64 filtering.
+         * The PC footprint shortcut can otherwise collapse them to nearest
+         * samples, which hardens translucent room glass and nearby wall shades.
+         */
+        if ((clamped_non_texedge_settex &&
+             gfx_settex_clamped_non_texedge_n64_filter_always_3point_enabled()) ||
+            gfx_diag_settex_cc_n64_filter_always_3point_enabled(settex_material_cc_id,
+                                                                settex_material_cc_options)) {
+            cc_options |= SHADER_OPT_N64_FILTER_ALWAYS_3POINT;
+        }
+    }
+    if (!tint_match && settex_active &&
+        gfx_diag_settex_cc_color_scale_enabled(settex_material_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_COLOR_SCALE;
+    }
+    if (!tint_match && settex_active &&
+        gfx_diag_settex_cc_alpha_scale_enabled(settex_material_cc_id)) {
+        cc_options |= SHADER_OPT_DIAG_ALPHA_SCALE;
+    }
+    if (room_water_alpha_suppress) {
+        cc_options |= SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS;
+    }
+
+    enum GfxBlendMode api_blend_mode =
+        gfx_api_blend_mode_for_rdp_memory_class(blend_mode,
+                                                rdp_memory_blend_class);
+    if (api_blend_mode == blend_mode &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
+        gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
+        api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
+    } else if (api_blend_mode == blend_mode &&
+               blend_mode == GFX_BLEND_ALPHA &&
+               gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
+               gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
+        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
+    }
+
+    bool room_secondary_xlu_sort =
+        dl_room >= 0 &&
+        dl_which != NULL &&
+        strcmp(dl_which, "secondary") == 0 &&
+        room_matrix &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        api_blend_mode == GFX_BLEND_ALPHA &&
+        depth_test &&
+        depth_compare &&
+        !depth_update &&
+        zmode == ZMODE_XLU &&
+        !texture_edge &&
+        !g_sky_tri_mode;
+
+    gfx_trace_rdp_render_mode_note(cc_id,
+                                   effective_cc_id,
+                                   cc_options,
+                                   blend_mode,
+                                   api_blend_mode,
+                                   rdp_memory_blend_class,
+                                   room_xlu_cvg_memory,
+                                   room_xlu_cvg_memory_reason,
+                                   room_water_alpha_suppress,
+                                   room_secondary_xlu_sort,
+                                   effective_cc_features_for_options.used_textures[0],
+                                   effective_cc_features_for_options.used_textures[1],
+                                   use_alpha,
+                                   use_fog,
+                                   texture_edge,
+                                   use_noise,
+                                   depth_test,
+                                   depth_update,
+                                   depth_compare,
+                                   depth_source_prim,
+                                   room_matrix,
+                                   dl_room,
+                                   dl_which,
+                                   has_cmd_offset,
+                                   cmd_offset,
+                                   &ndc_metrics,
+                                   ndc_metrics_ok);
+
+    gfx_trace_glass_shard_coverage_note(gfx_effect_label_for_current_command(),
+                                         &ndc_metrics,
+                                         ndc_metrics_ok,
+                                         effective_cc_id,
+                                         cc_options,
+                                         blend_mode,
+                                         api_blend_mode,
+                                         use_alpha,
+                                         use_fog,
+                                         texture_edge,
+                                         depth_test,
+                                         depth_update,
+                                         depth_compare,
+                                         depth_source_prim,
+                                         v1,
+                                         v2,
+                                         v3);
+
+#ifdef NATIVE_PORT
+    {
+        static int trace_room_alpha_cc = -1;
+        static int trace_room_alpha_cc_count = 0;
+        static int trace_room_alpha_cc_frame = -1;
+
+        if (trace_room_alpha_cc < 0) {
+            trace_room_alpha_cc = (getenv("GE007_TRACE_ROOM_ALPHA") != NULL);
+        }
+
+        if (trace_room_alpha_cc && room_matrix && blend_mode == GFX_BLEND_ALPHA) {
+            if (trace_room_alpha_cc_frame != g_frame_count_diag) {
+                trace_room_alpha_cc_frame = g_frame_count_diag;
+                trace_room_alpha_cc_count = 0;
+            }
+
+            if (trace_room_alpha_cc_count < 48) {
+                int room = -1;
+                int vertex_room = -1;
+                int mv_room = -1;
+                int dl_room_trace = -1;
+                const char *dl_which_trace = NULL;
+                const char *room_source = "none";
+                uintptr_t cmd_offset = 0;
+                bool has_cmd_offset = false;
+
+                if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
+                    vertex_room = v1->room_id;
+                }
+                if (rsp.modelview_matrix_stack_size > 0 &&
+                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
+                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
+                }
+                dl_room_trace = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which_trace);
+                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
+                                                          NULL, NULL, NULL, &cmd_offset);
+
+                if (vertex_room >= 0) {
+                    room = vertex_room;
+                    room_source = "vtx";
+                } else if (mv_room >= 0) {
+                    room = mv_room;
+                    room_source = "mtx";
+                } else if (dl_room_trace >= 0) {
+                    room = dl_room_trace;
+                    room_source = "dl";
+                }
+
+                fprintf(stderr,
+                        "[ROOM-ALPHA-CC] frame=%d tri=%d room=%d source=%s "
+                        "dl_room=%d dl=%s offset=%s0x%zX raw=0x%08X eff=0x%08X "
+                        "mode_decode={z=%s cvg=%s aa=%d imrd=%d clr_on_cvg=%d cvg_x_alpha=%d alpha_cvg=%d force_bl=%d "
+                        "b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
+                        "cc=0x%016llX effcc=0x%016llX cc_changed=%d "
+                        "opts=0x%08X settexcc=0x%016llX settexopts=0x%08X "
+                        "blend=%d api_blend=%s alpha=%d fog=%d texedge=%d noise=%d "
+                        "settex=%d tile=%u first_tile=%u texrect_override=%d "
+                        "envA=%d primA=%d shadeA=(%d,%d,%d)\n",
+                        g_frame_count_diag, g_tri_count_diag, room, room_source,
+                        dl_room_trace, dl_which_trace ? dl_which_trace : "?",
+                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
+                        rdp.other_mode_l_raw, rdp.other_mode_l,
+                        gfx_zmode_diag_name(rdp.other_mode_l_raw),
+                        gfx_cvg_dst_diag_name(rdp.other_mode_l_raw),
+                        (rdp.other_mode_l_raw & AA_EN) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & IM_RD) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & CLR_ON_CVG) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & CVG_X_ALPHA) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & ALPHA_CVG_SEL) != 0 ? 1 : 0,
+                        (rdp.other_mode_l_raw & FORCE_BL) != 0 ? 1 : 0,
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 0),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 1),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 2),
+                        gfx_blender_field(rdp.other_mode_l_raw, 0, 3),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 0),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 1),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 2),
+                        gfx_blender_field(rdp.other_mode_l_raw, 1, 3),
+                        (unsigned long long)cc_id,
+                        (unsigned long long)effective_cc_id,
+                        effective_cc_id != cc_id ? 1 : 0,
+                        cc_options,
+                        (unsigned long long)settex_material_cc_id,
+                        settex_material_cc_options,
+                        (int)blend_mode, gfx_blend_mode_diag_name(api_blend_mode),
+                        use_alpha ? 1 : 0,
+                        use_fog ? 1 : 0, texture_edge ? 1 : 0,
+                        use_noise ? 1 : 0,
+                        settex_active ? 1 : 0,
+                        tex_tile_base,
+                        rdp.first_tile_index,
+                        g_texrect_tile_override,
+                        rdp.env_color.a, rdp.prim_color.a,
+                        v1->color.a, v2->color.a, v3->color.a);
+                trace_room_alpha_cc_count++;
+            }
+        }
+    }
+#endif
+
+    struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(effective_cc_id, cc_options);
+    if (comb == NULL) {
+        /* Combiner cache allocation failed (host OOM). Keep the current shader
+         * bound and skip this draw's combiner setup rather than dereferencing
+         * NULL -- degrades gracefully instead of crashing. */
+    return false;
+    }
+    struct ShaderProgram *prg = comb->prg;
+    if (prg != rendering_state.shader_program) {
+        gfx_flush();
+        gfx_rapi->unload_shader(rendering_state.shader_program);
+        gfx_rapi->load_shader(prg);
+        rendering_state.shader_program = prg;
+    }
+    if (api_blend_mode != rendering_state.blend_mode) {
+        gfx_flush();
+        gfx_rapi->set_blend_mode(api_blend_mode);
+        rendering_state.blend_mode = api_blend_mode;
+    }
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_program_blend");
+    }
+
+    uint8_t num_inputs;
+    bool used_textures[2];
+    gfx_rapi->shader_get_info(prg, &num_inputs, used_textures);
+
+    /* Per-tile texture setup (PD pattern: tile array with first_tile_index).
+     * TEXEL0 uses tile[first_tile_index+0], TEXEL1 uses tile[first_tile_index+1]. */
+    uint32_t tex_width[2] = {1, 1}, tex_height[2] = {1, 1};
+    uint32_t tex_clamp_width[2] = {1, 1}, tex_clamp_height[2] = {1, 1};
+    bool settex_mirror_tex1 = false;
+    bool mirror_tex1_from_tex0 = false;
+    bool allow_lod_redirect = (g_texrect_tile_override < 0);
+    if (settex_active && used_textures[0] && g_current_draw_class == DRAWCLASS_ROOM) {
+        gfx_log_settex_event("ROOM-DRAW", "settex driving TEXEL0 on room draw");
+    }
+    if (settex_active && used_textures[0]) {
+        /* G_SETTEX path: texture 0 from Rare's texture-by-number system */
+        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+        bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0;
+        bool sampler_linear_filter;
+        struct SetTexTileState tile_state;
+        bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 0, &tile_state);
+        uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+        uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
+        sampler_linear_filter = linear_filter && !shader_n64_filter;
+        if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
+            rendering_state.textures[0] != NULL ||
+            rendering_state.bound_texture_linear[0] != sampler_linear_filter ||
+            rendering_state.bound_texture_cms[0] != cms ||
+            rendering_state.bound_texture_cmt[0] != cmt) {
+            gfx_flush();
+            gfx_bind_texture(0, settex_gl_tex_id);
+            gfx_set_sampler_state(0, sampler_linear_filter, cms, cmt);
+            rendering_state.textures[0] = NULL;
+        }
+        tex_width[0] = (uint32_t)settex_tex_w;
+        tex_height[0] = (uint32_t)settex_tex_h;
+        (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 0,
+                                                             &tex_width[0],
+                                                             &tex_height[0]);
+    }
+
+    {
+        uint8_t tex1_tile_desc = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
+        bool tex1_valid = gfx_tile_has_live_texture(tex1_tile_desc);
+        bool force_settex_tex1 = gfx_diag_settex_mirror_tex1_enabled();
+        if (settex_active && used_textures[1] &&
+            (force_settex_tex1 || settex_tile_state[1].valid || !tex1_valid)) {
+            /* Rare's G_SETTEX owns both logical texture endpoints for these
+             * materials. Do not let stale traditional TMEM state on tile 0/1
+             * override TEXEL1 just because it still looks live from an earlier
+             * load; bind the active settex image and apply the settex tile-1
+             * transform when the command defined one. */
+            bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+            bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0;
+            bool sampler_linear_filter;
+            struct SetTexTileState tile_state;
+            bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 1, &tile_state);
+            uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
+            uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
+            cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
+            cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
+            linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
+            sampler_linear_filter = linear_filter && !shader_n64_filter;
+            if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
+                rendering_state.textures[1] != NULL ||
+                rendering_state.bound_texture_linear[1] != sampler_linear_filter ||
+                rendering_state.bound_texture_cms[1] != cms ||
+                rendering_state.bound_texture_cmt[1] != cmt) {
+                gfx_flush();
+                gfx_bind_texture(1, settex_gl_tex_id);
+                gfx_set_sampler_state(1, sampler_linear_filter, cms, cmt);
+                rendering_state.textures[1] = NULL;
+            }
+            tex_width[1] = (uint32_t)settex_tex_w;
+            tex_height[1] = (uint32_t)settex_tex_h;
+            (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 1,
+                                                                 &tex_width[1],
+                                                                 &tex_height[1]);
+            settex_mirror_tex1 = true;
+        }
+
+        if (!settex_active &&
+            used_textures[0] && used_textures[1] &&
+            !tex1_valid) {
+            /* GoldenEye's menu/intro 2-cycle materials frequently reuse TEXEL0
+             * in the second cycle without issuing a distinct TMEM load for
+             * slot 1. Falling through to the normal path leaves sampler 1
+             * bound to an unloadable texture on macOS, which collapses startup
+             * screens into flat grey fills. */
+            mirror_tex1_from_tex0 = true;
+        }
+    }
+
+    for (int ti = 0; ti < 2; ti++) {
+        if (!used_textures[ti]) continue;
+        if (ti == 0 && settex_active) continue; /* tex 0 handled by settex above */
+        if (ti == 1 && settex_mirror_tex1) continue; /* tex 1 mirrored from settex */
+        if (ti == 1 && mirror_tex1_from_tex0) continue; /* tex 1 mirrored from tex 0 */
+
+        uint8_t tile_desc = gfx_effective_tile_desc_for_unit(tex_tile_base, ti, allow_lod_redirect);
+
+        if (rdp.textures_changed[ti]) {
+            gfx_flush();
+            import_texture(ti, tile_desc);
+            rdp.textures_changed[ti] = false;
+        }
+
+        /* Per-tile sampler parameters */
+        uint8_t cms = rdp.texture_tile[tile_desc].cms;
+        uint8_t cmt = rdp.texture_tile[tile_desc].cmt;
+        const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(tile_desc);
+        bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
+        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+        bool shader_n64_filter = (ti == 0) ?
+            ((cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0) :
+            ((cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0);
+        bool sampler_linear_filter;
+        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
+        if (is_font_texture) {
+            cms = G_TX_CLAMP;
+            cmt = G_TX_CLAMP;
+        }
+        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, ti, 0);
+        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, ti, 1);
+        if (is_font_texture && gfx_font_force_point_filter()) {
+            linear_filter = false;
+        }
+        sampler_linear_filter = linear_filter && !shader_n64_filter;
+        if (rendering_state.textures[ti] != NULL &&
+            (sampler_linear_filter != rendering_state.textures[ti]->linear_filter ||
+             cms != rendering_state.textures[ti]->cms ||
+             cmt != rendering_state.textures[ti]->cmt)) {
+            gfx_flush();
+            gfx_set_sampler_state(ti, sampler_linear_filter, cms, cmt);
+            rendering_state.textures[ti]->linear_filter = sampler_linear_filter;
+            rendering_state.textures[ti]->cms = cms;
+            rendering_state.textures[ti]->cmt = cmt;
+        }
+
+        /* TEXRECT supplies tile-relative texel coordinates, so its UV
+         * normalization must use the active tile descriptor dimensions. TMEM
+         * line footprints can differ from the logical tile size for packed HUD
+         * sprites such as the 32x32 crosshair; using the footprint there makes
+         * the sprite repeat horizontally and compress vertically. */
+        if (g_texrect_uv_mode &&
+            rdp.texture_tile[tile_desc].width != 0 &&
+            rdp.texture_tile[tile_desc].height != 0) {
+            tex_width[ti] = rdp.texture_tile[tile_desc].width;
+            tex_height[ti] = rdp.texture_tile[tile_desc].height;
+        /* Outside TEXRECT, dimensions must match the uploaded GL texture, not
+         * necessarily the N64 tile rectangle. Some 2-cycle effects load a
+         * small texture into TMEM, then use tile shifts to sample it across a
+         * larger quad. */
+        } else if (loaded_texture != NULL &&
+            gfx_loaded_texture_decode_line_size_bytes(loaded_texture) != 0) {
+            uint32_t decode_line_size_bytes =
+                gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
+            uint32_t decode_size_bytes =
+                gfx_loaded_texture_decode_size_bytes(loaded_texture);
+
+            tex_width[ti] = gfx_texture_width_texels_from_line(
+                decode_line_size_bytes,
+                rdp.texture_tile[tile_desc].siz);
+            tex_height[ti] = decode_size_bytes / decode_line_size_bytes;
+        } else {
+            int32_t s_delta =
+                (int32_t)rdp.texture_tile[tile_desc].lrs -
+                (int32_t)rdp.texture_tile[tile_desc].uls;
+            int32_t t_delta =
+                (int32_t)rdp.texture_tile[tile_desc].lrt -
+                (int32_t)rdp.texture_tile[tile_desc].ult;
+            tex_width[ti] = s_delta >= 0 ? (((uint32_t)s_delta + 4U) / 4U) : 1U;
+            tex_height[ti] = t_delta >= 0 ? (((uint32_t)t_delta + 4U) / 4U) : 1U;
+        }
+        if (tex_width[ti] == 0) tex_width[ti] = 1;
+        if (tex_height[ti] == 0) tex_height[ti] = 1;
+    }
+
+    if (mirror_tex1_from_tex0 &&
+        used_textures[0] && used_textures[1] &&
+        rendering_state.bound_texture_id[0] != 0) {
+        if (rendering_state.bound_texture_id[1] != rendering_state.bound_texture_id[0] ||
+            rendering_state.bound_texture_linear[1] != rendering_state.bound_texture_linear[0] ||
+            rendering_state.bound_texture_cms[1] != rendering_state.bound_texture_cms[0] ||
+            rendering_state.bound_texture_cmt[1] != rendering_state.bound_texture_cmt[0]) {
+            gfx_flush();
+            gfx_bind_texture(1, rendering_state.bound_texture_id[0]);
+            gfx_set_sampler_state(1,
+                                  rendering_state.bound_texture_linear[0],
+                                  rendering_state.bound_texture_cms[0],
+                                  rendering_state.bound_texture_cmt[0]);
+            rendering_state.textures[1] = rendering_state.textures[0];
+        }
+        tex_width[1] = tex_width[0];
+        tex_height[1] = tex_height[0];
+    }
+
+    for (int ti = 0; ti < 2; ti++) {
+        struct SetTexTileState settex_tile_state_effective;
+        uint32_t logical_width;
+        uint32_t logical_height;
+        bool unit_uses_settex =
+            (ti == 0 && settex_active) ||
+            (ti == 1 && settex_mirror_tex1);
+
+        if (!used_textures[ti]) {
+            continue;
+        }
+
+        tex_clamp_width[ti] = tex_width[ti] != 0 ? tex_width[ti] : 1U;
+        tex_clamp_height[ti] = tex_height[ti] != 0 ? tex_height[ti] : 1U;
+
+        if (unit_uses_settex &&
+            gfx_get_settex_effective_tile_state(tex_tile_base, ti,
+                                                &settex_tile_state_effective)) {
+            logical_width = settex_tile_state_effective.width != 0
+                ? settex_tile_state_effective.width
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.uls,
+                                                   settex_tile_state_effective.lrs);
+            logical_height = settex_tile_state_effective.height != 0
+                ? settex_tile_state_effective.height
+                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.ult,
+                                                   settex_tile_state_effective.lrt);
+            if (logical_width != 0) {
+                tex_clamp_width[ti] = logical_width;
+            }
+            if (logical_height != 0) {
+                tex_clamp_height[ti] = logical_height;
+            }
+        } else {
+            uint8_t tile_desc =
+                gfx_effective_tile_desc_for_unit(tex_tile_base, ti,
+                                                 allow_lod_redirect);
+            if (tile_desc < 8) {
+                logical_width = rdp.texture_tile[tile_desc].width != 0
+                    ? rdp.texture_tile[tile_desc].width
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].uls,
+                                                       rdp.texture_tile[tile_desc].lrs);
+                logical_height = rdp.texture_tile[tile_desc].height != 0
+                    ? rdp.texture_tile[tile_desc].height
+                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].ult,
+                                                       rdp.texture_tile[tile_desc].lrt);
+                if (logical_width != 0) {
+                    tex_clamp_width[ti] = logical_width;
+                }
+                if (logical_height != 0) {
+                    tex_clamp_height[ti] = logical_height;
+                }
+            }
+        }
+    }
+
+    if (mirror_tex1_from_tex0 && used_textures[0] && used_textures[1]) {
+        tex_clamp_width[1] = tex_clamp_width[0];
+        tex_clamp_height[1] = tex_clamp_height[0];
+    }
+
+    /* Footprint-derived LOD is valid only when TEXEL1 is an independent
+     * endpoint. Most G_SETTEX draws still fall back to W-derived LOD because
+     * stale tile state can leave TEXEL1 looking live. XLU room materials that
+     * explicitly define tile 1 and consume LOD_FRACTION are authored two-scale
+     * SETTEX draws; stock can blend tile 1 even when SPTexture max LOD is zero. */
+    bool settex_cc_uses_lod_fraction =
+        gfx_cc_id_rgb_uses_lod_fraction(settex_material_cc_id, cc_options);
+    bool settex_authored_lod_endpoint =
+        gfx_settex_footprint_lod_enabled() &&
+        settex_active &&
+        g_current_draw_class == DRAWCLASS_ROOM &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_mode_is_room_xlu(rdp.other_mode_l_raw) &&
+        settex_mirror_tex1 &&
+        settex_tile_state[1].valid &&
+        used_textures[0] &&
+        used_textures[1] &&
+        settex_cc_uses_lod_fraction;
+    bool allow_footprint_lod =
+        (!settex_active &&
+         !settex_mirror_tex1 &&
+         !mirror_tex1_from_tex0) ||
+        settex_authored_lod_endpoint;
+    bool use_texture = used_textures[0] || used_textures[1];
+    if (g_sky_tri_mode) {
+        gfx_trace_sky_prep_pixel_event("emit_after_textures");
+    }
+    float room_alpha_env_scale = gfx_diag_room_alpha_env_scale();
+    bool scale_room_alpha_env =
+        room_alpha_env_scale != 1.0f &&
+        room_matrix &&
+        settex_active &&
+        blend_mode == GFX_BLEND_ALPHA &&
+        gfx_mode_is_room_xlu(rdp.other_mode_l_raw);
+    bool diag_rdp_cvg_memory =
+        (cc_options & SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND) != 0;
+
+    m->comb = comb;
+    m->cc_id = cc_id;
+    m->effective_cc_id = effective_cc_id;
+    m->settex_material_cc_id = settex_material_cc_id;
+    m->cc_options = cc_options;
+    m->num_inputs = num_inputs;
+    m->used_textures[0] = used_textures[0];
+    m->used_textures[1] = used_textures[1];
+    m->blend_mode = blend_mode;
+    m->api_blend_mode = api_blend_mode;
+    m->tex_tile_base = tex_tile_base;
+    m->allow_lod_redirect = allow_lod_redirect;
+    m->tex_width[0] = tex_width[0];
+    m->tex_width[1] = tex_width[1];
+    m->tex_height[0] = tex_height[0];
+    m->tex_height[1] = tex_height[1];
+    m->tex_clamp_width[0] = tex_clamp_width[0];
+    m->tex_clamp_width[1] = tex_clamp_width[1];
+    m->tex_clamp_height[0] = tex_clamp_height[0];
+    m->tex_clamp_height[1] = tex_clamp_height[1];
+    m->settex_mirror_tex1 = settex_mirror_tex1;
+    m->mirror_tex1_from_tex0 = mirror_tex1_from_tex0;
+    m->settex_authored_lod_endpoint = settex_authored_lod_endpoint;
+    m->allow_footprint_lod = allow_footprint_lod;
+    m->settex_cc_uses_lod_fraction = settex_cc_uses_lod_fraction;
+    m->use_alpha = use_alpha;
+    m->use_fog = use_fog;
+    m->fog_use_fixed_alpha = fog_use_fixed_alpha;
+    m->texture_edge = texture_edge;
+    m->use_noise = use_noise;
+    m->use_texture = use_texture;
+    m->depth_test = depth_test;
+    m->depth_update = depth_update;
+    m->depth_compare = depth_compare;
+    m->depth_source_prim = depth_source_prim;
+    m->zmode = zmode;
+    m->depth_mode = depth_mode;
+    m->sky_backdrop_depth = sky_backdrop_depth;
+    m->room_matrix = room_matrix;
+    m->room_secondary_xlu_sort = room_secondary_xlu_sort;
+    m->scale_room_alpha_env = scale_room_alpha_env;
+    m->room_alpha_env_scale = room_alpha_env_scale;
+    m->diag_rdp_cvg_memory = diag_rdp_cvg_memory;
+    m->tint_match = tint_match;
+    m->diag_tint_color = diag_tint_color;
+    m->trace_eye_material = trace_eye_material;
+    return true;
+}
+
+
 static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                      struct LoadedVertex *v2,
                                      struct LoadedVertex *v3,
@@ -18225,1175 +19536,59 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
     }
 
-    uint64_t cc_id = rdp.combine_mode;
-
-    /* Blend mode classification from RAW (pre-fog-override) other_mode_l.
-     * The renderer keeps an effective fog-forced mode for legacy room fog,
-     * which contaminates authored frontend/menu blender patterns. Classify
-     * blend from raw and only apply forced fog to gameplay-style materials. */
-    bool texture_edge = (rdp.other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
-    bool use_noise = (rdp.other_mode_l & G_AC_DITHER) == G_AC_DITHER;
-    bool room_matrix =
-        rsp.modelview_matrix_stack_size > 0 &&
-        rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1];
-    bool frontend_settex_material =
-        settex_active &&
-        !room_matrix &&
-        (g_current_draw_class == DRAWCLASS_UNKNOWN ||
-         g_current_draw_class == DRAWCLASS_FRONTEND);
-    uint32_t fog_other_mode_l =
-        frontend_settex_material ? rdp.other_mode_l_raw : rdp.other_mode_l;
-    bool use_fog = ((fog_other_mode_l >> 30) == G_BL_CLR_FOG) ||
-                   ((fog_other_mode_l >> 26) == G_BL_A_FOG);
-    bool fog_use_fixed_alpha = use_fog && ((fog_other_mode_l >> 26) & 3) == G_BL_A_FOG;
-    if (g_diag_no_fog > 0 || gfx_current_draw_suppresses_room_fog()) {
-        use_fog = false;
-        fog_use_fixed_alpha = false;
+    struct MaterialState mstate;
+    struct MaterialState *const m = &mstate;
+    if (!derive_material(v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
+                         was_cpu_clipped, clip_reason_flags,
+                         dl_room, dl_which, has_cmd_offset, cmd_offset,
+                         focus_match, tint_match,
+                         depth_test, depth_update, depth_compare, depth_source_prim,
+                         zmode, depth_mode, sky_backdrop_depth, m)) {
+        return;
     }
-
-    enum GfxBlendMode blend_mode;
-    {
-        uint32_t raw = rdp.other_mode_l_raw;
-        uint32_t hi = raw & 0xFFFF0000;
-        bool used_effective_mode_fallback = false;
-
-        switch (raw) {
-            /* GoldenEye background LUT modes must be classified from the full
-             * raw value. The upper 16 bits alone conflate opaque terrain
-             * modes (e.g. PASS/FOG + AA_ZB_OPA_TERR2) with true translucent
-             * room modes (XLU_SURF2 / XLU_DECAL2). */
-            case 0x0C182078: /* PASS + AA_ZB_OPA_TERR2 */
-            case 0xC8102078: /* FOG_SHADE_A + AA_ZB_OPA_TERR2 */
-            case 0x04102078: /* FOG_PRIM_A (de-fogged) + OPA_TERR2 */
-            case 0x08102078: /* FOG_SHADE_A (de-fogged) + OPA_TERR2 */
-            case 0xC4102078: /* FOG_PRIM_A + AA_ZB_OPA_TERR2 */
-            case 0x0C182048: /* PASS + AA_OPA_TERR2 */
-            case 0xC8102048: /* FOG_SHADE_A + AA_OPA_TERR2 */
-            case 0x04102048: /* FOG_PRIM_A (de-fogged) + AA_OPA_TERR2 */
-            case 0x08102048: /* FOG_SHADE_A (de-fogged) + AA_OPA_TERR2 */
-            case 0xC4102048: /* FOG_PRIM_A + AA_OPA_TERR2 */
-            case 0x0C192078: /* PASS + AA_ZB_OPA_SURF2 */
-            case 0xC8112078: /* FOG_SHADE_A + AA_ZB_OPA_SURF2 */
-            case 0x04112078: /* FOG_PRIM_A (de-fogged) + OPA_SURF2 */
-            case 0x08112078: /* FOG_SHADE_A (de-fogged) + OPA_SURF2 */
-            case 0xC4112078: /* FOG_PRIM_A + AA_ZB_OPA_SURF2 */
-            case 0x00502078: /* CLR_IN + AA_ZB_OPA_SURF2 (Egyptian opaque, was fallback→ALPHA) */
-            case 0xC0502078: /* fog-forced CLR_IN + OPA_SURF2 */
-            case 0x0C192D58: /* PASS + AA_ZB_OPA_DECAL2 */
-            case 0xC8112D58: /* FOG_SHADE_A + AA_ZB_OPA_DECAL2 */
-            case 0x04112D58: /* FOG_PRIM_A (de-fogged) + OPA_DECAL2 */
-            case 0x08112D58: /* FOG_SHADE_A (de-fogged) + OPA_DECAL2 */
-            case 0xC4112D58: /* FOG_PRIM_A + AA_ZB_OPA_DECAL2 */
-            case 0x0C192048: /* PASS + AA_OPA_SURF2 */
-            case 0xC8112048: /* FOG_SHADE_A + AA_OPA_SURF2 */
-            case 0x04112048: /* FOG_PRIM_A (de-fogged) + AA_OPA_SURF2 */
-            case 0x08112048: /* FOG_SHADE_A (de-fogged) + AA_OPA_SURF2 */
-            case 0xC4112048: /* FOG_PRIM_A + AA_OPA_SURF2 */
-            case 0x00552D58: /* observed GE OPA_DECAL2 CLR_IN/MEM variant */
-            case 0x0F0A4000: /* PASS + PASS2 (setup/passthrough) */
-            case 0xCF0A4000: /* fog-forced PASS + PASS2 */
-                blend_mode = GFX_BLEND_DISABLED;
-                break;
-
-            case 0x00502048: /* observed GE alpha overlay AA_OPA_SURF2 variant */
-            case 0x005041C8: /* observed GE alpha overlay CLR_IN/MEM variant */
-            case 0x005049D8: /* observed GE alpha overlay XLU_SURF2 variant */
-            case 0x00504B50: /* observed GE alpha overlay CLD_SURF2 variant */
-            case 0x00504DD8: /* observed GE alpha overlay XLU_DECAL2 variant */
-            case 0x00552048: /* observed GE blood/flash CLD_SURF2 variant */
-            case 0x0C184B50: /* PASS + ZB_CLD_SURF2 */
-            case 0x0C184DD8: /* PASS + AA_ZB_XLU_DECAL2 */
-            case 0xC8104DD8: /* FOG_SHADE_A + AA_ZB_XLU_DECAL2 */
-            case 0x04104DD8: /* FOG_PRIM_A (de-fogged) + XLU_DECAL2 */
-            case 0x08104DD8: /* FOG_SHADE_A (de-fogged) + XLU_DECAL2 */
-            case 0xC4104DD8: /* FOG_PRIM_A + AA_ZB_XLU_DECAL2 */
-                /* True translucent decals. These do not use CVG_X_ALPHA on
-                 * N64, so forcing texture-edge behavior here turns them into
-                 * threshold/cutout materials and produces firing-only impact
-                 * corruption on world surfaces. */
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            case 0x0C1849D8: /* PASS + AA_ZB_XLU_SURF2 */
-            case 0xC81049D8: /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
-            case 0x041049D8: /* FOG_PRIM_A (de-fogged) + XLU_SURF2 */
-            case 0x081049D8: /* FOG_SHADE_A (de-fogged) + XLU_SURF2 */
-            case 0xC41049D8: /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
-            case 0x00504240: /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu) */
-            case 0xC0504240: /* fog-forced CLR_IN + XLU_SURF2 */
-                /* True translucent surfaces (glass, water, forcefields). Do
-                 * not force texture-edge here: N64 XLU_SURF lacks CVG_X_ALPHA,
-                 * and the shader's texture-edge path alpha-tests/discards
-                 * fragments instead of blending them. */
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            case 0x0C184340: /* PASS + AA_ZB_OPA_INTER2 */
-            case 0xC8104340: /* FOG_SHADE_A + AA_ZB_OPA_INTER2 */
-            case 0x04104340: /* FOG_PRIM_A (de-fogged) + OPA_INTER2 */
-            case 0x08104340: /* FOG_SHADE_A (de-fogged) + OPA_INTER2 */
-            case 0xC4104340: /* FOG_PRIM_A + AA_ZB_OPA_INTER2 */
-            case 0x00504340: /* CLR_IN + AA_ZB_OPA_INTER2 (fences/grates, menu cutouts) */
-            case 0xC0504340: /* fog-forced CLR_IN + OPA_INTER2 */
-                texture_edge = true;
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            case 0x0C184E50: /* PASS + ZB_XLU_DECAL2 */
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            case 0x0C193078: /* PASS + AA_ZB_TEX_EDGE2 */
-            case 0xC8113078: /* FOG_SHADE_A + AA_ZB_TEX_EDGE2 */
-            case 0x04113078: /* FOG_PRIM_A (de-fogged) + TEX_EDGE2 */
-            case 0x08113078: /* FOG_SHADE_A (de-fogged) + TEX_EDGE2 */
-            case 0xC4113078: /* FOG_PRIM_A + AA_ZB_TEX_EDGE2 */
-                texture_edge = true;
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            default:
-                switch (hi) {
-            /* Standard alpha blend families.
-             * Each pattern appears in two forms:
-             *   - explicit fog (0xC8/0xC4): game wrote G_RM_FOG_SHADE_A / FOG_PRIM_A
-             *   - pass/no-fog (0x0C/0x00): game wrote G_RM_PASS or CLR_IN,
-             *     fog override forces bits 31:30 in effective (not raw) */
-            case 0xC8100000:  /* FOG_SHADE_A + AA_ZB_XLU_SURF2 */
-            case 0xC4100000:  /* FOG_PRIM_A + AA_ZB_XLU_SURF2 */
-            case 0x08100000:  /* (de-fogged) FOG_SHADE_A + XLU2 */
-            case 0x04100000:  /* (de-fogged) FOG_PRIM_A + XLU2 */
-            case 0x0C180000:  /* PASS + AA_ZB_XLU_SURF2 */
-            case 0xCC180000:  /* (fog-forced) PASS + XLU2 */
-            case 0x00500000:  /* CLR_IN + AA_ZB_XLU_SURF2 (water/menu/gun) */
-            case 0xC0500000:  /* (fog-forced) CLR_IN + XLU2 */
-                blend_mode = GFX_BLEND_ALPHA;
-                break;
-
-            /* Opaque / texture-edge families */
-            case 0xC8110000:  /* FOG_SHADE_A + AA_ZB_OPA_SURF2 */
-            case 0xC4110000:  /* FOG_PRIM_A + AA_ZB_OPA_SURF2 */
-            case 0x08110000:  /* (de-fogged) FOG_SHADE_A + OPA2 */
-            case 0x04110000:  /* (de-fogged) FOG_PRIM_A + OPA2 */
-            case 0x0C190000:  /* PASS + AA_ZB_OPA_SURF2 */
-            case 0xCC190000:  /* (fog-forced) PASS + OPA2 */
-            case 0x0F0A0000:  /* PASS + PASS2 (setup/passthrough) */
-            case 0xCF0A0000:  /* (fog-forced) PASS + PASS2 */
-                blend_mode = texture_edge ? GFX_BLEND_ALPHA : GFX_BLEND_DISABLED;
-                break;
-
-            default: {
-                /* Fallback: check effective mode for standard alpha pattern */
-                used_effective_mode_fallback = true;
-                bool alpha = (rdp.other_mode_l & (3U << 20)) == (G_BL_CLR_MEM << 20) &&
-                             (rdp.other_mode_l & (3U << 16)) == (G_BL_1MA << 16);
-                blend_mode = (alpha || texture_edge) ? GFX_BLEND_ALPHA : GFX_BLEND_DISABLED;
-                break;
-            }
-        }
-                break;
-        }
-
-#ifdef NATIVE_PORT
-        if (used_effective_mode_fallback) {
-            blend_fallback_trace_record(raw, rdp.other_mode_l, hi, blend_mode,
-                                        use_fog, texture_edge, rsp.geometry_mode);
-        }
-#endif
-
-        /* Record for blend audit if enabled */
-        blend_audit_record(raw, rdp.other_mode_l, rsp.geometry_mode,
-                           (int)blend_mode, use_fog, texture_edge);
-
-#ifdef NATIVE_PORT
-        {
-            static int trace_blend_classify = -1;
-            static uint32_t seen_hi[32];
-            static int seen_count = 0;
-            static int trace_count = 0;
-            int already_seen = 0;
-            if (trace_blend_classify < 0) {
-                trace_blend_classify = (getenv("GE007_TRACE_BLEND_CLASSIFY") != NULL);
-            }
-            if (trace_blend_classify) {
-                for (int si = 0; si < seen_count; si++) {
-                    if (seen_hi[si] == hi) {
-                        already_seen = 1;
-                        break;
-                    }
-                }
-                if (!already_seen && trace_count < 32) {
-                    const char *mode_name = "disabled";
-                    if (blend_mode == GFX_BLEND_ALPHA) {
-                        mode_name = "alpha";
-                    } else if (blend_mode == GFX_BLEND_MODULATE) {
-                        mode_name = "modulate";
-                    }
-                    fprintf(stderr,
-                            "[BLEND-CLASSIFY] frame=%d raw=0x%08X eff=0x%08X hi=0x%08X "
-                            "mode=%s texedge=%d fog=%d geom=0x%08X\n",
-                            g_frame_count_diag, raw, rdp.other_mode_l, hi,
-                            mode_name, texture_edge ? 1 : 0, use_fog ? 1 : 0,
-                            rsp.geometry_mode);
-                    if (seen_count < (int)(sizeof(seen_hi) / sizeof(seen_hi[0]))) {
-                        seen_hi[seen_count++] = hi;
-                    }
-                    trace_count++;
-                }
-            }
-        }
-#endif
-    }
-    bool use_alpha = (blend_mode != GFX_BLEND_DISABLED);
-
-    if (g_fillrect_draw_active && texture_edge) {
-        /* FILLRECT has no texture coverage alpha. GoldenEye uses the same
-         * OPA_INTER/CLD-style render modes for primitive full-screen fades,
-         * where thresholding alpha turns damage flashes into opaque blocks. */
-        texture_edge = false;
-    }
-    if (texture_edge && gfx_texrect_is_ge_blood_overlay(cc_id)) {
-        /* The gunbarrel/gameplay blood I4 mask uses CLD_SURF, but still needs
-         * soft texture alpha multiplied by primitive alpha. The generic
-         * texture-edge path alpha-tests it into a fully opaque red quad. */
-        texture_edge = false;
-    }
-
-#ifdef NATIVE_PORT
-    {
-        static int room_xlu_as_opaque = -1;
-        static int room_alpha_as_texedge = -1;
-        static int skip_alpha_triangles = -1;
-        if (room_xlu_as_opaque < 0) {
-            room_xlu_as_opaque = (getenv("GE007_ROOM_XLU_AS_OPAQUE") != NULL);
-        }
-        if (room_alpha_as_texedge < 0) {
-            room_alpha_as_texedge = (getenv("GE007_ROOM_ALPHA_AS_TEXEDGE") != NULL);
-        }
-        if (skip_alpha_triangles < 0) {
-            skip_alpha_triangles = (getenv("GE007_SKIP_ALPHA_TRIANGLES") != NULL);
-        }
-        if (room_alpha_as_texedge &&
-            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] &&
-            blend_mode == GFX_BLEND_ALPHA &&
-            (rdp.other_mode_l_raw & 0x0000FFFF) == 0x2078) {
-            texture_edge = true;
-        }
-        if (room_xlu_as_opaque &&
-            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] &&
-            blend_mode == GFX_BLEND_ALPHA) {
-            uint32_t hi = rdp.other_mode_l_raw & 0xFFFF0000;
-            if (hi == 0xC8100000 || hi == 0xC4100000 ||
-                hi == 0x08100000 || hi == 0x04100000 ||
-                hi == 0x0C180000 || hi == 0xCC180000) {
-                blend_mode = GFX_BLEND_DISABLED;
-                use_alpha = false;
-            }
-        }
-	        if (skip_alpha_triangles && blend_mode == GFX_BLEND_ALPHA) {
-	            gfx_effect_tri_trace_reject("skip_alpha_triangles", v1, v2, v3,
-	                                        &ndc_metrics, ndc_metrics_ok,
-	                                        was_cpu_clipped, clip_reason_flags);
-	            return;
-	        }
-	    }
-#endif
-
-#ifdef NATIVE_PORT
-    {
-        static int trace_room_alpha = -1;
-        static int trace_room_alpha_count = 0;
-        static int trace_room_alpha_frame = -1;
-        bool room_matrix = (rsp.modelview_matrix_stack_size > 0) ?
-            rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1] : false;
-        if (trace_room_alpha < 0) {
-            trace_room_alpha = (getenv("GE007_TRACE_ROOM_ALPHA") != NULL);
-        }
-        if (trace_room_alpha && room_matrix && blend_mode == GFX_BLEND_ALPHA) {
-            if (trace_room_alpha_frame != g_frame_count_diag) {
-                trace_room_alpha_frame = g_frame_count_diag;
-                trace_room_alpha_count = 0;
-            }
-            if (trace_room_alpha_count < 48) {
-                int room = -1;
-                int vertex_room = -1;
-                int mv_room = -1;
-                int dl_room = -1;
-                const char *dl_which = NULL;
-                const char *room_source = "none";
-                uintptr_t cmd_offset = 0;
-                bool has_cmd_offset = false;
-
-                if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
-                    vertex_room = v1->room_id;
-                }
-                if (rsp.modelview_matrix_stack_size > 0 &&
-                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
-                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
-                }
-                dl_room = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which);
-                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
-                                                          NULL, NULL, NULL, &cmd_offset);
-
-                if (vertex_room >= 0) {
-                    room = vertex_room;
-                    room_source = "vtx";
-                } else if (mv_room >= 0) {
-                    room = mv_room;
-                    room_source = "mtx";
-                } else if (dl_room >= 0) {
-                    room = dl_room;
-                    room_source = "dl";
-                }
-                fprintf(stderr,
-                        "[ROOM-ALPHA] frame=%d tri=%d room=%d source=%s "
-                        "vtx_room=%d mv_room=%d dl_room=%d dl=%s offset=%s0x%zX "
-                        "raw=0x%08X eff=0x%08X "
-                        "zcmp=%d zupd=%d zmode=0x%03X blend=%d texedge=%d "
-                        "envA=%d primA=%d shadeA=(%d,%d,%d) fog=(%d,%d,%d)\n",
-                        g_frame_count_diag, g_tri_count_diag, room, room_source,
-                        vertex_room, mv_room, dl_room, dl_which ? dl_which : "?",
-                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
-                        rdp.other_mode_l_raw, rdp.other_mode_l,
-                        depth_compare ? 1 : 0, depth_update ? 1 : 0, zmode,
-                        (int)blend_mode, texture_edge ? 1 : 0,
-                        rdp.env_color.a, rdp.prim_color.a,
-                        v1->color.a, v2->color.a, v3->color.a,
-                        v1->fog, v2->fog, v3->fog);
-                trace_room_alpha_count++;
-            }
-        }
-    }
-#endif
-
-    /* Build shader options as separate word (not packed into cc_id) */
-    uint32_t cc_options = 0;
-    if (use_alpha) cc_options |= SHADER_OPT_ALPHA;
-    if (use_fog && !g_diag_no_fog) cc_options |= SHADER_OPT_FOG;
-    if (texture_edge) cc_options |= SHADER_OPT_TEXTURE_EDGE;
-    if (use_noise) cc_options |= SHADER_OPT_NOISE;
-    if ((rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE)
-        cc_options |= SHADER_OPT_2CYC;
-    /* W1.E2.T2: request the world-position vertex attribute on world-perspective
-     * ROOM draws when a consumer wants it. IDENTICAL predicate to the per-vertex
-     * compute in gfx_sp_vertex, so d->wx/wy/wz are populated exactly for the draws
-     * that pack + read them. Consumer sub-bits (SUN_SHADOW/DFDX_LIGHT/…) are OR'd
-     * in by their epics; E2 only lands the WORLD_POS attribute itself. */
-    if (gfx_world_attrs_wanted() && g_current_draw_class == DRAWCLASS_ROOM &&
-        g_pc_view_inv_valid) {
-        cc_options |= SHADER_OPT_WORLD_POS;
-        /* W1.E3.T4: ROOM receives the sun shadow when the feature is on, a shadow
-         * matrix was captured this frame, AND (§3.5 fix) the backend actually
-         * replayed a non-empty depth pass with it this frame (g_pc_shadow_map_ready).
-         * Without the readiness term, the first flagged frame (or any frame the
-         * replay was skipped/failed) samples an undefined or stale depth map
-         * instead of just rendering with no shadow. Rooms only (invariant §4.0);
-         * characters cast (E3.T1 ring) but receiving on characters is E6. */
-        if (g_pcSunShadow && g_pc_shadow_mat_valid && g_pc_shadow_map_ready) {
-            cc_options |= SHADER_OPT_SUN_SHADOW;
-        }
-        /* W1.E4: per-pixel geometric-normal directional sun. Setting DFDX forces
-         * WORLD_POS on for this draw (the fragment reconstructs the geometric
-         * normal from dFdx/dFdy of vWorldPos). Mirrors the §4.4 consumer-bit
-         * shape (future MATERIAL_MAPS/DYN_LIGHTS OR in here too). */
-        if (g_pcPerPixelLight) cc_options |= SHADER_OPT_DFDX_LIGHT;
-    }
-    bool noperspective_all_settex_texcoords =
-        settex_active && gfx_diag_noperspective_settex_texcoords_enabled();
-    struct GfxCcRawFeatures cc_features_for_options =
-        gfx_cc_id_raw_features(cc_id, cc_options);
-
-    /* Shader-side UV clamping from tile descriptors (PD pattern) */
-    {
-        uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
-            (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
-        bool allow_lod_redirect = (g_texrect_tile_override < 0);
-        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-        bool allow_n64_filter = !g_texrect_uv_mode &&
-            depth_test &&
-            linear_filter &&
-            gfx_n64_shader_filter_enabled();
-        bool loaded_tile_two_tex_filter_diag =
-            cc_features_for_options.used_textures[0] &&
-            cc_features_for_options.used_textures[1] &&
-            gfx_diag_loaded_tile_two_tex_n64_filter_enabled(cc_id);
-        bool allow_mask_n64_filter = !g_texrect_uv_mode &&
-            linear_filter &&
-            gfx_n64_shader_filter_enabled();
-        bool allow_loaded_tile_n64_filter = !g_texrect_uv_mode &&
-            !settex_active &&
-            linear_filter &&
-            gfx_n64_shader_filter_enabled() &&
-            ((cc_features_for_options.used_textures[0] !=
-              cc_features_for_options.used_textures[1]) ||
-             loaded_tile_two_tex_filter_diag);
-        uint8_t td0 = gfx_effective_tile_desc_for_unit(tex_tile_base, 0, allow_lod_redirect);
-        struct SetTexTileState settex_tile0;
-        bool tex0_tile_masked = false;
-        if (gfx_get_settex_effective_tile_state(tex_tile_base, 0, &settex_tile0)) {
-            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 0, &settex_tile0)) {
-                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            }
-            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 0, 1, &settex_tile0)) {
-                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
-            }
-            if (cc_features_for_options.used_textures[0] &&
-                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 0)) {
-                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
-                tex0_tile_masked = true;
-            }
-            if (cc_features_for_options.used_textures[0] &&
-                gfx_shader_tile_mask_needed_for_settex(&settex_tile0, 1)) {
-                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
-                tex0_tile_masked = true;
-            }
-            if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
-        } else if (td0 < 8) {
-            const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td0);
-            bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 0, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL0_CLAMP_S;
-            }
-            if (gfx_shader_clamp_needed_for_loaded_tile(td0, 1, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL0_CLAMP_T;
-            }
-            if (cc_features_for_options.used_textures[0] &&
-                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 0, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL0_MASK_S;
-                tex0_tile_masked = true;
-            }
-            if (cc_features_for_options.used_textures[0] &&
-                gfx_shader_tile_mask_needed_for_loaded_tile(td0, 1, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL0_MASK_T;
-                tex0_tile_masked = true;
-            }
-            if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[0])
-                cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
-        }
-        if (tex0_tile_masked &&
-            allow_mask_n64_filter &&
-            cc_features_for_options.used_textures[0]) {
-            cc_options |= SHADER_OPT_TEXEL0_N64_FILTER;
-        }
-        uint8_t td1 = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
-        struct SetTexTileState settex_tile1;
-        bool tex1_tile_masked = false;
-        if (gfx_get_settex_effective_tile_state(tex_tile_base, 1, &settex_tile1)) {
-            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 0, &settex_tile1)) {
-                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            }
-            if (gfx_shader_clamp_needed_for_settex(tex_tile_base, 1, 1, &settex_tile1)) {
-                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
-            }
-            if (cc_features_for_options.used_textures[1] &&
-                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 0)) {
-                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
-                tex1_tile_masked = true;
-            }
-            if (cc_features_for_options.used_textures[1] &&
-                gfx_shader_tile_mask_needed_for_settex(&settex_tile1, 1)) {
-                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
-                tex1_tile_masked = true;
-            }
-            if (allow_n64_filter) cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
-        } else if (td1 < 8) {
-            const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(td1);
-            bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 0, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL1_CLAMP_S;
-            }
-            if (gfx_shader_clamp_needed_for_loaded_tile(td1, 1, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL1_CLAMP_T;
-            }
-            if (cc_features_for_options.used_textures[1] &&
-                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 0, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL1_MASK_S;
-                tex1_tile_masked = true;
-            }
-            if (cc_features_for_options.used_textures[1] &&
-                gfx_shader_tile_mask_needed_for_loaded_tile(td1, 1, is_font_texture)) {
-                cc_options |= SHADER_OPT_TEXEL1_MASK_T;
-                tex1_tile_masked = true;
-            }
-            if (allow_loaded_tile_n64_filter && cc_features_for_options.used_textures[1])
-                cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
-        }
-        if (tex1_tile_masked &&
-            allow_mask_n64_filter &&
-            cc_features_for_options.used_textures[1]) {
-            cc_options |= SHADER_OPT_TEXEL1_N64_FILTER;
-        }
-    }
-
-    uint8_t tex_tile_base = (g_texrect_tile_override >= 0) ?
-        (uint8_t)g_texrect_tile_override : rdp.first_tile_index;
-    uint64_t effective_cc_id = cc_id;
-    effective_cc_id = gfx_apply_room_alpha_lut(effective_cc_id,
-                                               rdp.other_mode_l_raw,
-                                               room_matrix,
-                                               blend_mode);
-    struct RGBA diag_tint_color = g_diag_tint_rgba;
-    bool eye_intro_strip = gfx_is_eye_intro_strip_material(tex_tile_base);
-    bool trace_eye_material = (g_diag_trace_eye_bind > 0 && gfx_is_eye_intro_diag_material());
-    if (eye_intro_strip && g_diag_disable_eye_cc_override <= 0) {
-        effective_cc_id =
-            (uint64_t)color_comb(0, 0, 0, G_CCMUX_TEXEL0) |
-            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_TEXEL0) << 16) |
-            ((uint64_t)color_comb(0, 0, 0, G_CCMUX_TEXEL0) << 28) |
-            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_TEXEL0) << 44);
-        cc_options &= ~SHADER_OPT_2CYC;
-        if (trace_eye_material) {
-            fprintf(stderr,
-                    "[EYE-CC-OVERRIDE] frame=%d prim=%u tex_tile=%u cc=0x%016llx\n",
-                    g_frame_count_diag, rdp.prim_color.r, tex_tile_base,
-                    (unsigned long long)cc_id);
-            fflush(stderr);
-        }
-    }
-    uint64_t settex_material_cc_id = effective_cc_id;
-    uint32_t settex_material_cc_options = cc_options;
-    if (settex_active &&
-        texture_edge &&
-        rdp.other_mode_l_raw == 0x0C184340 &&
-        !depth_test &&
-        !depth_update &&
-        !depth_compare &&
-        !use_fog) {
-        /* Frontend G_SETTEX menu overlays use OPA_INTER state for soft alpha
-         * compositing. Treating CVG_X_ALPHA as texture-edge here hardens the
-         * mask and makes stamps/cutouts far too opaque versus the ROM. */
-        texture_edge = false;
-        cc_options &= ~SHADER_OPT_TEXTURE_EDGE;
-        settex_material_cc_options = cc_options;
-    }
-    if (settex_active &&
-        texture_edge &&
-        gfx_diag_settex_cc_disable_texture_edge_enabled(settex_material_cc_id)) {
-        texture_edge = false;
-        cc_options &= ~SHADER_OPT_TEXTURE_EDGE;
-        settex_material_cc_options = cc_options;
-    }
-    if (tint_match) {
-        effective_cc_id =
-            (uint64_t)color_comb(0, 0, 0, G_CCMUX_PRIMITIVE) |
-            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_PRIMITIVE) << 16) |
-            ((uint64_t)color_comb(0, 0, 0, G_CCMUX_PRIMITIVE) << 28) |
-            ((uint64_t)alpha_comb(0, 0, 0, G_ACMUX_PRIMITIVE) << 44);
-        cc_options = 0;
-        blend_mode = GFX_BLEND_DISABLED;
-        use_alpha = false;
-        use_fog = false;
-        texture_edge = false;
-        if (focus_match && ndc_metrics_ok) {
-            gfx_diag_log_focus_event("GFX-FOCUS-TINT",
-                                     g_diag_current_cmd_addr, dl_room, dl_which,
-                                     was_cpu_clipped, clip_reason_flags,
-                                     rdp.other_mode_l_raw, rdp.other_mode_l,
-                                     v1, v2, v3, &ndc_metrics);
-        }
-    }
-    if (!tint_match && settex_active &&
-        (noperspective_all_settex_texcoords ||
-         gfx_diag_noperspective_settex_cc_texcoords_enabled(settex_material_cc_id))) {
-        cc_options |= SHADER_OPT_NOPERSPECTIVE_TEXCOORDS;
-    }
-    if (!tint_match && settex_active &&
-        gfx_diag_noperspective_settex_cc_inputs_enabled(settex_material_cc_id)) {
-        cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
-    }
-    if (!tint_match && settex_active &&
-        gfx_diag_noperspective_settex_cc_fog_enabled(settex_material_cc_id)) {
-        cc_options |= SHADER_OPT_NOPERSPECTIVE_FOG;
-    }
-    if (!tint_match &&
-        gfx_diag_noperspective_cc_texcoords_enabled(effective_cc_id)) {
-        cc_options |= SHADER_OPT_NOPERSPECTIVE_TEXCOORDS;
-    }
-    if (!tint_match &&
-        gfx_diag_noperspective_cc_inputs_enabled(effective_cc_id)) {
-        cc_options |= SHADER_OPT_NOPERSPECTIVE_INPUTS;
-    }
-    struct GfxCcRawFeatures effective_cc_features_for_options =
-        gfx_cc_id_raw_features(effective_cc_id, cc_options);
-    bool room_water_alpha_suppress =
-        !tint_match &&
-        gfx_room_water_alpha_suppress_needed(dl_room, dl_which,
-                                             room_matrix,
-                                             blend_mode,
-                                             depth_test,
-                                             depth_update,
-                                             depth_compare,
-                                             zmode,
-                                             texture_edge,
-                                             rdp.other_mode_l_raw);
-    const char *room_xlu_cvg_memory_reason = room_water_alpha_suppress
-        ? "water_suppress"
-        : (tint_match
-            ? "tint"
-            : gfx_room_xlu_cvg_memory_gate_reason(dl_room, dl_which,
-                                                  room_matrix,
-                                                  blend_mode,
-                                                  depth_test,
-                                                  depth_update,
-                                                  depth_compare,
-                                                  zmode,
-                                                  texture_edge,
-                                                  rdp.other_mode_l_raw,
-                                                  use_fog));
-    bool room_xlu_cvg_memory =
-        gfx_room_xlu_cvg_memory_needed(room_xlu_cvg_memory_reason);
-    enum GfxRdpMemoryBlendClass rdp_memory_blend_class =
-        gfx_rdp_memory_blend_class_for_draw(tint_match,
-                                            use_alpha,
-                                            blend_mode,
-                                            rdp.other_mode_l_raw,
-                                            effective_cc_features_for_options.used_textures[0],
-                                            effective_cc_features_for_options.used_textures[1],
-                                            effective_cc_id,
-                                            room_xlu_cvg_memory);
-    if (!tint_match && !settex_active && use_alpha &&
-        (effective_cc_features_for_options.used_textures[0] ||
-         effective_cc_features_for_options.used_textures[1]) &&
-        gfx_diag_alpha_from_tex_intensity_cc_enabled(effective_cc_id)) {
-        cc_options |= SHADER_OPT_DIAG_ALPHA_FROM_TEX_INTENSITY;
-    }
-    if (!tint_match && !settex_active && use_alpha &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        (effective_cc_features_for_options.used_textures[0] ||
-         effective_cc_features_for_options.used_textures[1]) &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_coverage_wrap_thin_cc_enabled(effective_cc_id)) {
-        cc_options |= SHADER_OPT_DIAG_XLU_COVERAGE_WRAP_THIN;
-    }
-    if (!tint_match && use_alpha &&
-        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COVERAGE) {
-        cc_options |= SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND;
-    } else if (!tint_match && use_alpha &&
-        rdp_memory_blend_class == GFX_RDP_MEMORY_BLEND_COLOR) {
-        cc_options |= SHADER_OPT_DIAG_RDP_MEMORY_BLEND;
-    }
-    if (!tint_match && settex_active &&
-        gfx_diag_settex_cc_disable_n64_filter_enabled(settex_material_cc_id)) {
-        cc_options &= ~(SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER);
-    }
-    if (!tint_match && settex_active &&
-        (cc_options & (SHADER_OPT_TEXEL0_N64_FILTER | SHADER_OPT_TEXEL1_N64_FILTER)) != 0) {
-        bool clamped_material =
-            (settex_material_cc_options &
-             (SHADER_OPT_TEXEL0_CLAMP_S | SHADER_OPT_TEXEL0_CLAMP_T |
-              SHADER_OPT_TEXEL1_CLAMP_S | SHADER_OPT_TEXEL1_CLAMP_T)) != 0;
-        bool clamped_non_texedge_settex =
-            clamped_material &&
-            (settex_material_cc_options & SHADER_OPT_TEXTURE_EDGE) == 0;
-        /*
-         * Clamped non-cutout settex surfaces are authored for N64 filtering.
-         * The PC footprint shortcut can otherwise collapse them to nearest
-         * samples, which hardens translucent room glass and nearby wall shades.
-         */
-        if ((clamped_non_texedge_settex &&
-             gfx_settex_clamped_non_texedge_n64_filter_always_3point_enabled()) ||
-            gfx_diag_settex_cc_n64_filter_always_3point_enabled(settex_material_cc_id,
-                                                                settex_material_cc_options)) {
-            cc_options |= SHADER_OPT_N64_FILTER_ALWAYS_3POINT;
-        }
-    }
-    if (!tint_match && settex_active &&
-        gfx_diag_settex_cc_color_scale_enabled(settex_material_cc_id)) {
-        cc_options |= SHADER_OPT_DIAG_COLOR_SCALE;
-    }
-    if (!tint_match && settex_active &&
-        gfx_diag_settex_cc_alpha_scale_enabled(settex_material_cc_id)) {
-        cc_options |= SHADER_OPT_DIAG_ALPHA_SCALE;
-    }
-    if (room_water_alpha_suppress) {
-        cc_options |= SHADER_OPT_ROOM_WATER_ALPHA_SUPPRESS;
-    }
-
-    enum GfxBlendMode api_blend_mode =
-        gfx_api_blend_mode_for_rdp_memory_class(blend_mode,
-                                                rdp_memory_blend_class);
-    if (api_blend_mode == blend_mode &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        gfx_raw_mode_has_xlu_wrap_color_on_coverage(rdp.other_mode_l_raw) &&
-        gfx_diag_xlu_coverage_stencil_cc_enabled(effective_cc_id)) {
-        api_blend_mode = GFX_BLEND_ALPHA_CVG_WRAP_STENCIL;
-    } else if (api_blend_mode == blend_mode &&
-               blend_mode == GFX_BLEND_ALPHA &&
-               gfx_raw_mode_has_xlu_coverage_flags(rdp.other_mode_l_raw) &&
-               gfx_diag_xlu_coverage_a2c_enabled(rdp.other_mode_l_raw)) {
-        api_blend_mode = GFX_BLEND_ALPHA_COVERAGE;
-    }
-
-    bool room_secondary_xlu_sort =
-        dl_room >= 0 &&
-        dl_which != NULL &&
-        strcmp(dl_which, "secondary") == 0 &&
-        room_matrix &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        api_blend_mode == GFX_BLEND_ALPHA &&
-        depth_test &&
-        depth_compare &&
-        !depth_update &&
-        zmode == ZMODE_XLU &&
-        !texture_edge &&
-        !g_sky_tri_mode;
+    /* Per-triangle locals bound to derive_material's material outputs. Byte-identical
+     * to the old inline derivation (each holds the exact derived value). They are
+     * re-read from *m every triangle, so the VBO stride (m->diag_rdp_cvg_memory) and
+     * every other consumer always track the shader/blend/texture that derive_material
+     * just bound. Step B will simply repopulate *m from the cache on a hit. */
+    struct ColorCombiner *comb = m->comb;
+    uint64_t cc_id = m->cc_id;
+    uint64_t effective_cc_id = m->effective_cc_id;
+    uint64_t settex_material_cc_id = m->settex_material_cc_id;
+    uint32_t cc_options = m->cc_options;
+    uint8_t num_inputs = m->num_inputs;
+    bool used_textures[2] = { m->used_textures[0], m->used_textures[1] };
+    enum GfxBlendMode blend_mode = m->blend_mode;
+    enum GfxBlendMode api_blend_mode = m->api_blend_mode;
+    uint8_t tex_tile_base = m->tex_tile_base;
+    bool allow_lod_redirect = m->allow_lod_redirect;
+    uint32_t tex_width[2] = { m->tex_width[0], m->tex_width[1] };
+    uint32_t tex_height[2] = { m->tex_height[0], m->tex_height[1] };
+    uint32_t tex_clamp_width[2] = { m->tex_clamp_width[0], m->tex_clamp_width[1] };
+    uint32_t tex_clamp_height[2] = { m->tex_clamp_height[0], m->tex_clamp_height[1] };
+    bool settex_mirror_tex1 = m->settex_mirror_tex1;
+    bool mirror_tex1_from_tex0 = m->mirror_tex1_from_tex0;
+    bool settex_authored_lod_endpoint = m->settex_authored_lod_endpoint;
+    bool allow_footprint_lod = m->allow_footprint_lod;
+    bool settex_cc_uses_lod_fraction = m->settex_cc_uses_lod_fraction;
+    bool use_alpha = m->use_alpha;
+    bool use_fog = m->use_fog;
+    bool fog_use_fixed_alpha = m->fog_use_fixed_alpha;
+    bool texture_edge = m->texture_edge;
+    bool use_noise = m->use_noise;
+    bool use_texture = m->use_texture;
+    bool room_matrix = m->room_matrix;
+    bool room_secondary_xlu_sort = m->room_secondary_xlu_sort;
+    bool scale_room_alpha_env = m->scale_room_alpha_env;
+    float room_alpha_env_scale = m->room_alpha_env_scale;
+    bool diag_rdp_cvg_memory = m->diag_rdp_cvg_memory;
+    /* tint_match stays the phase-A local (already == m->tint_match); do not re-declare. */
+    struct RGBA diag_tint_color = m->diag_tint_color;
+    bool trace_eye_material = m->trace_eye_material;
+    /* Per-triangle (vertex-derived) values — NOT part of the cached material. */
     float room_secondary_xlu_sort_key = room_secondary_xlu_sort
         ? gfx_room_xlu_tri_sort_key(v1, v2, v3)
         : 0.0f;
-
-    gfx_trace_rdp_render_mode_note(cc_id,
-                                   effective_cc_id,
-                                   cc_options,
-                                   blend_mode,
-                                   api_blend_mode,
-                                   rdp_memory_blend_class,
-                                   room_xlu_cvg_memory,
-                                   room_xlu_cvg_memory_reason,
-                                   room_water_alpha_suppress,
-                                   room_secondary_xlu_sort,
-                                   effective_cc_features_for_options.used_textures[0],
-                                   effective_cc_features_for_options.used_textures[1],
-                                   use_alpha,
-                                   use_fog,
-                                   texture_edge,
-                                   use_noise,
-                                   depth_test,
-                                   depth_update,
-                                   depth_compare,
-                                   depth_source_prim,
-                                   room_matrix,
-                                   dl_room,
-                                   dl_which,
-                                   has_cmd_offset,
-                                   cmd_offset,
-                                   &ndc_metrics,
-                                   ndc_metrics_ok);
-
-    gfx_trace_glass_shard_coverage_note(gfx_effect_label_for_current_command(),
-                                         &ndc_metrics,
-                                         ndc_metrics_ok,
-                                         effective_cc_id,
-                                         cc_options,
-                                         blend_mode,
-                                         api_blend_mode,
-                                         use_alpha,
-                                         use_fog,
-                                         texture_edge,
-                                         depth_test,
-                                         depth_update,
-                                         depth_compare,
-                                         depth_source_prim,
-                                         v1,
-                                         v2,
-                                         v3);
-
-#ifdef NATIVE_PORT
-    {
-        static int trace_room_alpha_cc = -1;
-        static int trace_room_alpha_cc_count = 0;
-        static int trace_room_alpha_cc_frame = -1;
-
-        if (trace_room_alpha_cc < 0) {
-            trace_room_alpha_cc = (getenv("GE007_TRACE_ROOM_ALPHA") != NULL);
-        }
-
-        if (trace_room_alpha_cc && room_matrix && blend_mode == GFX_BLEND_ALPHA) {
-            if (trace_room_alpha_cc_frame != g_frame_count_diag) {
-                trace_room_alpha_cc_frame = g_frame_count_diag;
-                trace_room_alpha_cc_count = 0;
-            }
-
-            if (trace_room_alpha_cc_count < 48) {
-                int room = -1;
-                int vertex_room = -1;
-                int mv_room = -1;
-                int dl_room_trace = -1;
-                const char *dl_which_trace = NULL;
-                const char *room_source = "none";
-                uintptr_t cmd_offset = 0;
-                bool has_cmd_offset = false;
-
-                if (v1->room_id >= 0 && v1->room_id == v2->room_id && v1->room_id == v3->room_id) {
-                    vertex_room = v1->room_id;
-                }
-                if (rsp.modelview_matrix_stack_size > 0 &&
-                    rsp.modelview_is_room_matrix[rsp.modelview_matrix_stack_size - 1]) {
-                    mv_room = rsp.modelview_room_id[rsp.modelview_matrix_stack_size - 1];
-                }
-                dl_room_trace = gfx_find_room_for_dl_addr(g_diag_current_cmd_addr, &dl_which_trace);
-                has_cmd_offset = gfx_diag_room_cmd_offset(g_diag_current_cmd_addr,
-                                                          NULL, NULL, NULL, &cmd_offset);
-
-                if (vertex_room >= 0) {
-                    room = vertex_room;
-                    room_source = "vtx";
-                } else if (mv_room >= 0) {
-                    room = mv_room;
-                    room_source = "mtx";
-                } else if (dl_room_trace >= 0) {
-                    room = dl_room_trace;
-                    room_source = "dl";
-                }
-
-                fprintf(stderr,
-                        "[ROOM-ALPHA-CC] frame=%d tri=%d room=%d source=%s "
-                        "dl_room=%d dl=%s offset=%s0x%zX raw=0x%08X eff=0x%08X "
-                        "mode_decode={z=%s cvg=%s aa=%d imrd=%d clr_on_cvg=%d cvg_x_alpha=%d alpha_cvg=%d force_bl=%d "
-                        "b1=(%u,%u,%u,%u) b2=(%u,%u,%u,%u)} "
-                        "cc=0x%016llX effcc=0x%016llX cc_changed=%d "
-                        "opts=0x%08X settexcc=0x%016llX settexopts=0x%08X "
-                        "blend=%d api_blend=%s alpha=%d fog=%d texedge=%d noise=%d "
-                        "settex=%d tile=%u first_tile=%u texrect_override=%d "
-                        "envA=%d primA=%d shadeA=(%d,%d,%d)\n",
-                        g_frame_count_diag, g_tri_count_diag, room, room_source,
-                        dl_room_trace, dl_which_trace ? dl_which_trace : "?",
-                        has_cmd_offset ? "" : "?", (size_t)cmd_offset,
-                        rdp.other_mode_l_raw, rdp.other_mode_l,
-                        gfx_zmode_diag_name(rdp.other_mode_l_raw),
-                        gfx_cvg_dst_diag_name(rdp.other_mode_l_raw),
-                        (rdp.other_mode_l_raw & AA_EN) != 0 ? 1 : 0,
-                        (rdp.other_mode_l_raw & IM_RD) != 0 ? 1 : 0,
-                        (rdp.other_mode_l_raw & CLR_ON_CVG) != 0 ? 1 : 0,
-                        (rdp.other_mode_l_raw & CVG_X_ALPHA) != 0 ? 1 : 0,
-                        (rdp.other_mode_l_raw & ALPHA_CVG_SEL) != 0 ? 1 : 0,
-                        (rdp.other_mode_l_raw & FORCE_BL) != 0 ? 1 : 0,
-                        gfx_blender_field(rdp.other_mode_l_raw, 0, 0),
-                        gfx_blender_field(rdp.other_mode_l_raw, 0, 1),
-                        gfx_blender_field(rdp.other_mode_l_raw, 0, 2),
-                        gfx_blender_field(rdp.other_mode_l_raw, 0, 3),
-                        gfx_blender_field(rdp.other_mode_l_raw, 1, 0),
-                        gfx_blender_field(rdp.other_mode_l_raw, 1, 1),
-                        gfx_blender_field(rdp.other_mode_l_raw, 1, 2),
-                        gfx_blender_field(rdp.other_mode_l_raw, 1, 3),
-                        (unsigned long long)cc_id,
-                        (unsigned long long)effective_cc_id,
-                        effective_cc_id != cc_id ? 1 : 0,
-                        cc_options,
-                        (unsigned long long)settex_material_cc_id,
-                        settex_material_cc_options,
-                        (int)blend_mode, gfx_blend_mode_diag_name(api_blend_mode),
-                        use_alpha ? 1 : 0,
-                        use_fog ? 1 : 0, texture_edge ? 1 : 0,
-                        use_noise ? 1 : 0,
-                        settex_active ? 1 : 0,
-                        tex_tile_base,
-                        rdp.first_tile_index,
-                        g_texrect_tile_override,
-                        rdp.env_color.a, rdp.prim_color.a,
-                        v1->color.a, v2->color.a, v3->color.a);
-                trace_room_alpha_cc_count++;
-            }
-        }
-    }
-#endif
-
-    struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(effective_cc_id, cc_options);
-    if (comb == NULL) {
-        /* Combiner cache allocation failed (host OOM). Keep the current shader
-         * bound and skip this draw's combiner setup rather than dereferencing
-         * NULL -- degrades gracefully instead of crashing. */
-        return;
-    }
-    struct ShaderProgram *prg = comb->prg;
-    if (prg != rendering_state.shader_program) {
-        gfx_flush();
-        gfx_rapi->unload_shader(rendering_state.shader_program);
-        gfx_rapi->load_shader(prg);
-        rendering_state.shader_program = prg;
-    }
-    if (api_blend_mode != rendering_state.blend_mode) {
-        gfx_flush();
-        gfx_rapi->set_blend_mode(api_blend_mode);
-        rendering_state.blend_mode = api_blend_mode;
-    }
-    if (g_sky_tri_mode) {
-        gfx_trace_sky_prep_pixel_event("emit_after_program_blend");
-    }
-
-    uint8_t num_inputs;
-    bool used_textures[2];
-    gfx_rapi->shader_get_info(prg, &num_inputs, used_textures);
-
-    /* Per-tile texture setup (PD pattern: tile array with first_tile_index).
-     * TEXEL0 uses tile[first_tile_index+0], TEXEL1 uses tile[first_tile_index+1]. */
-    uint32_t tex_width[2] = {1, 1}, tex_height[2] = {1, 1};
-    uint32_t tex_clamp_width[2] = {1, 1}, tex_clamp_height[2] = {1, 1};
-    bool settex_mirror_tex1 = false;
-    bool mirror_tex1_from_tex0 = false;
-    bool allow_lod_redirect = (g_texrect_tile_override < 0);
-    if (settex_active && used_textures[0] && g_current_draw_class == DRAWCLASS_ROOM) {
-        gfx_log_settex_event("ROOM-DRAW", "settex driving TEXEL0 on room draw");
-    }
-    if (settex_active && used_textures[0]) {
-        /* G_SETTEX path: texture 0 from Rare's texture-by-number system */
-        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-        bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0;
-        bool sampler_linear_filter;
-        struct SetTexTileState tile_state;
-        bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 0, &tile_state);
-        uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
-        uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
-        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
-        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
-        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-        sampler_linear_filter = linear_filter && !shader_n64_filter;
-        if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
-            rendering_state.textures[0] != NULL ||
-            rendering_state.bound_texture_linear[0] != sampler_linear_filter ||
-            rendering_state.bound_texture_cms[0] != cms ||
-            rendering_state.bound_texture_cmt[0] != cmt) {
-            gfx_flush();
-            gfx_bind_texture(0, settex_gl_tex_id);
-            gfx_set_sampler_state(0, sampler_linear_filter, cms, cmt);
-            rendering_state.textures[0] = NULL;
-        }
-        tex_width[0] = (uint32_t)settex_tex_w;
-        tex_height[0] = (uint32_t)settex_tex_h;
-        (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 0,
-                                                             &tex_width[0],
-                                                             &tex_height[0]);
-    }
-
-    {
-        uint8_t tex1_tile_desc = gfx_effective_tile_desc_for_unit(tex_tile_base, 1, allow_lod_redirect);
-        bool tex1_valid = gfx_tile_has_live_texture(tex1_tile_desc);
-        bool force_settex_tex1 = gfx_diag_settex_mirror_tex1_enabled();
-        if (settex_active && used_textures[1] &&
-            (force_settex_tex1 || settex_tile_state[1].valid || !tex1_valid)) {
-            /* Rare's G_SETTEX owns both logical texture endpoints for these
-             * materials. Do not let stale traditional TMEM state on tile 0/1
-             * override TEXEL1 just because it still looks live from an earlier
-             * load; bind the active settex image and apply the settex tile-1
-             * transform when the command defined one. */
-            bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-            bool shader_n64_filter = (cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0;
-            bool sampler_linear_filter;
-            struct SetTexTileState tile_state;
-            bool have_tile_state = gfx_get_settex_effective_tile_state(tex_tile_base, 1, &tile_state);
-            uint8_t cms = have_tile_state ? tile_state.cms : G_TX_WRAP;
-            uint8_t cmt = have_tile_state ? tile_state.cmt : G_TX_WRAP;
-            cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
-            cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
-            linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-            sampler_linear_filter = linear_filter && !shader_n64_filter;
-            if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
-                rendering_state.textures[1] != NULL ||
-                rendering_state.bound_texture_linear[1] != sampler_linear_filter ||
-                rendering_state.bound_texture_cms[1] != cms ||
-                rendering_state.bound_texture_cmt[1] != cmt) {
-                gfx_flush();
-                gfx_bind_texture(1, settex_gl_tex_id);
-                gfx_set_sampler_state(1, sampler_linear_filter, cms, cmt);
-                rendering_state.textures[1] = NULL;
-            }
-            tex_width[1] = (uint32_t)settex_tex_w;
-            tex_height[1] = (uint32_t)settex_tex_h;
-            (void)gfx_get_settex_authoritative_render_dimensions(tex_tile_base, 1,
-                                                                 &tex_width[1],
-                                                                 &tex_height[1]);
-            settex_mirror_tex1 = true;
-        }
-
-        if (!settex_active &&
-            used_textures[0] && used_textures[1] &&
-            !tex1_valid) {
-            /* GoldenEye's menu/intro 2-cycle materials frequently reuse TEXEL0
-             * in the second cycle without issuing a distinct TMEM load for
-             * slot 1. Falling through to the normal path leaves sampler 1
-             * bound to an unloadable texture on macOS, which collapses startup
-             * screens into flat grey fills. */
-            mirror_tex1_from_tex0 = true;
-        }
-    }
-
-    for (int ti = 0; ti < 2; ti++) {
-        if (!used_textures[ti]) continue;
-        if (ti == 0 && settex_active) continue; /* tex 0 handled by settex above */
-        if (ti == 1 && settex_mirror_tex1) continue; /* tex 1 mirrored from settex */
-        if (ti == 1 && mirror_tex1_from_tex0) continue; /* tex 1 mirrored from tex 0 */
-
-        uint8_t tile_desc = gfx_effective_tile_desc_for_unit(tex_tile_base, ti, allow_lod_redirect);
-
-        if (rdp.textures_changed[ti]) {
-            gfx_flush();
-            import_texture(ti, tile_desc);
-            rdp.textures_changed[ti] = false;
-        }
-
-        /* Per-tile sampler parameters */
-        uint8_t cms = rdp.texture_tile[tile_desc].cms;
-        uint8_t cmt = rdp.texture_tile[tile_desc].cmt;
-        const typeof(rdp.loaded_texture[0]) *loaded_texture = gfx_loaded_texture_for_tile(tile_desc);
-        bool is_font_texture = loaded_texture != NULL && gfx_is_font_texture_addr(loaded_texture->addr);
-        bool linear_filter = (rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-        bool shader_n64_filter = (ti == 0) ?
-            ((cc_options & SHADER_OPT_TEXEL0_N64_FILTER) != 0) :
-            ((cc_options & SHADER_OPT_TEXEL1_N64_FILTER) != 0);
-        bool sampler_linear_filter;
-        linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-        if (is_font_texture) {
-            cms = G_TX_CLAMP;
-            cmt = G_TX_CLAMP;
-        }
-        cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, ti, 0);
-        cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, ti, 1);
-        if (is_font_texture && gfx_font_force_point_filter()) {
-            linear_filter = false;
-        }
-        sampler_linear_filter = linear_filter && !shader_n64_filter;
-        if (rendering_state.textures[ti] != NULL &&
-            (sampler_linear_filter != rendering_state.textures[ti]->linear_filter ||
-             cms != rendering_state.textures[ti]->cms ||
-             cmt != rendering_state.textures[ti]->cmt)) {
-            gfx_flush();
-            gfx_set_sampler_state(ti, sampler_linear_filter, cms, cmt);
-            rendering_state.textures[ti]->linear_filter = sampler_linear_filter;
-            rendering_state.textures[ti]->cms = cms;
-            rendering_state.textures[ti]->cmt = cmt;
-        }
-
-        /* TEXRECT supplies tile-relative texel coordinates, so its UV
-         * normalization must use the active tile descriptor dimensions. TMEM
-         * line footprints can differ from the logical tile size for packed HUD
-         * sprites such as the 32x32 crosshair; using the footprint there makes
-         * the sprite repeat horizontally and compress vertically. */
-        if (g_texrect_uv_mode &&
-            rdp.texture_tile[tile_desc].width != 0 &&
-            rdp.texture_tile[tile_desc].height != 0) {
-            tex_width[ti] = rdp.texture_tile[tile_desc].width;
-            tex_height[ti] = rdp.texture_tile[tile_desc].height;
-        /* Outside TEXRECT, dimensions must match the uploaded GL texture, not
-         * necessarily the N64 tile rectangle. Some 2-cycle effects load a
-         * small texture into TMEM, then use tile shifts to sample it across a
-         * larger quad. */
-        } else if (loaded_texture != NULL &&
-            gfx_loaded_texture_decode_line_size_bytes(loaded_texture) != 0) {
-            uint32_t decode_line_size_bytes =
-                gfx_loaded_texture_decode_line_size_bytes(loaded_texture);
-            uint32_t decode_size_bytes =
-                gfx_loaded_texture_decode_size_bytes(loaded_texture);
-
-            tex_width[ti] = gfx_texture_width_texels_from_line(
-                decode_line_size_bytes,
-                rdp.texture_tile[tile_desc].siz);
-            tex_height[ti] = decode_size_bytes / decode_line_size_bytes;
-        } else {
-            int32_t s_delta =
-                (int32_t)rdp.texture_tile[tile_desc].lrs -
-                (int32_t)rdp.texture_tile[tile_desc].uls;
-            int32_t t_delta =
-                (int32_t)rdp.texture_tile[tile_desc].lrt -
-                (int32_t)rdp.texture_tile[tile_desc].ult;
-            tex_width[ti] = s_delta >= 0 ? (((uint32_t)s_delta + 4U) / 4U) : 1U;
-            tex_height[ti] = t_delta >= 0 ? (((uint32_t)t_delta + 4U) / 4U) : 1U;
-        }
-        if (tex_width[ti] == 0) tex_width[ti] = 1;
-        if (tex_height[ti] == 0) tex_height[ti] = 1;
-    }
-
-    if (mirror_tex1_from_tex0 &&
-        used_textures[0] && used_textures[1] &&
-        rendering_state.bound_texture_id[0] != 0) {
-        if (rendering_state.bound_texture_id[1] != rendering_state.bound_texture_id[0] ||
-            rendering_state.bound_texture_linear[1] != rendering_state.bound_texture_linear[0] ||
-            rendering_state.bound_texture_cms[1] != rendering_state.bound_texture_cms[0] ||
-            rendering_state.bound_texture_cmt[1] != rendering_state.bound_texture_cmt[0]) {
-            gfx_flush();
-            gfx_bind_texture(1, rendering_state.bound_texture_id[0]);
-            gfx_set_sampler_state(1,
-                                  rendering_state.bound_texture_linear[0],
-                                  rendering_state.bound_texture_cms[0],
-                                  rendering_state.bound_texture_cmt[0]);
-            rendering_state.textures[1] = rendering_state.textures[0];
-        }
-        tex_width[1] = tex_width[0];
-        tex_height[1] = tex_height[0];
-    }
-
-    for (int ti = 0; ti < 2; ti++) {
-        struct SetTexTileState settex_tile_state_effective;
-        uint32_t logical_width;
-        uint32_t logical_height;
-        bool unit_uses_settex =
-            (ti == 0 && settex_active) ||
-            (ti == 1 && settex_mirror_tex1);
-
-        if (!used_textures[ti]) {
-            continue;
-        }
-
-        tex_clamp_width[ti] = tex_width[ti] != 0 ? tex_width[ti] : 1U;
-        tex_clamp_height[ti] = tex_height[ti] != 0 ? tex_height[ti] : 1U;
-
-        if (unit_uses_settex &&
-            gfx_get_settex_effective_tile_state(tex_tile_base, ti,
-                                                &settex_tile_state_effective)) {
-            logical_width = settex_tile_state_effective.width != 0
-                ? settex_tile_state_effective.width
-                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.uls,
-                                                   settex_tile_state_effective.lrs);
-            logical_height = settex_tile_state_effective.height != 0
-                ? settex_tile_state_effective.height
-                : gfx_clamp_extent_from_tile_delta(settex_tile_state_effective.ult,
-                                                   settex_tile_state_effective.lrt);
-            if (logical_width != 0) {
-                tex_clamp_width[ti] = logical_width;
-            }
-            if (logical_height != 0) {
-                tex_clamp_height[ti] = logical_height;
-            }
-        } else {
-            uint8_t tile_desc =
-                gfx_effective_tile_desc_for_unit(tex_tile_base, ti,
-                                                 allow_lod_redirect);
-            if (tile_desc < 8) {
-                logical_width = rdp.texture_tile[tile_desc].width != 0
-                    ? rdp.texture_tile[tile_desc].width
-                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].uls,
-                                                       rdp.texture_tile[tile_desc].lrs);
-                logical_height = rdp.texture_tile[tile_desc].height != 0
-                    ? rdp.texture_tile[tile_desc].height
-                    : gfx_clamp_extent_from_tile_delta(rdp.texture_tile[tile_desc].ult,
-                                                       rdp.texture_tile[tile_desc].lrt);
-                if (logical_width != 0) {
-                    tex_clamp_width[ti] = logical_width;
-                }
-                if (logical_height != 0) {
-                    tex_clamp_height[ti] = logical_height;
-                }
-            }
-        }
-    }
-
-    if (mirror_tex1_from_tex0 && used_textures[0] && used_textures[1]) {
-        tex_clamp_width[1] = tex_clamp_width[0];
-        tex_clamp_height[1] = tex_clamp_height[0];
-    }
-
-    /* Footprint-derived LOD is valid only when TEXEL1 is an independent
-     * endpoint. Most G_SETTEX draws still fall back to W-derived LOD because
-     * stale tile state can leave TEXEL1 looking live. XLU room materials that
-     * explicitly define tile 1 and consume LOD_FRACTION are authored two-scale
-     * SETTEX draws; stock can blend tile 1 even when SPTexture max LOD is zero. */
-    bool settex_cc_uses_lod_fraction =
-        gfx_cc_id_rgb_uses_lod_fraction(settex_material_cc_id, cc_options);
-    bool settex_authored_lod_endpoint =
-        gfx_settex_footprint_lod_enabled() &&
-        settex_active &&
-        g_current_draw_class == DRAWCLASS_ROOM &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        gfx_mode_is_room_xlu(rdp.other_mode_l_raw) &&
-        settex_mirror_tex1 &&
-        settex_tile_state[1].valid &&
-        used_textures[0] &&
-        used_textures[1] &&
-        settex_cc_uses_lod_fraction;
-    bool allow_footprint_lod =
-        (!settex_active &&
-         !settex_mirror_tex1 &&
-         !mirror_tex1_from_tex0) ||
-        settex_authored_lod_endpoint;
     uint8_t lod_fraction = gfx_lod_fraction_for_triangle(v1, v2, v3,
                                                          &ndc_metrics,
                                                          ndc_metrics_ok,
@@ -19405,10 +19600,6 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
                                                          mirror_tex1_from_tex0,
                                                          allow_footprint_lod,
                                                          settex_authored_lod_endpoint);
-    bool use_texture = used_textures[0] || used_textures[1];
-    if (g_sky_tri_mode) {
-        gfx_trace_sky_prep_pixel_event("emit_after_textures");
-    }
 
     gfx_trace_settex_material_cc_emit(cc_id,
                                       settex_material_cc_id,
@@ -19683,15 +19874,6 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
     }
 
     bool z_is_from_0_to_1 = gfx_rapi->z_is_from_0_to_1();
-    float room_alpha_env_scale = gfx_diag_room_alpha_env_scale();
-    bool scale_room_alpha_env =
-        room_alpha_env_scale != 1.0f &&
-        room_matrix &&
-        settex_active &&
-        blend_mode == GFX_BLEND_ALPHA &&
-        gfx_mode_is_room_xlu(rdp.other_mode_l_raw);
-    bool diag_rdp_cvg_memory =
-        (cc_options & SHADER_OPT_DIAG_RDP_CVG_MEMORY_BLEND) != 0;
     float diag_tri_ndc[6] = {0};
 
     if (diag_rdp_cvg_memory) {
