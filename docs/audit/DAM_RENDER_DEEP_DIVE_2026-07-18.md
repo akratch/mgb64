@@ -198,6 +198,19 @@ reinterpretation half is still open.**
   variants). Requires TMEM-2 first.
 - **Risk:** Medium (depends on the cache key fix).
 
+> **UPDATE 2026-07-18 (implementation): TMEM-2 LANDED (`37dd559`), TMEM-1 DEFERRED with evidence.**
+> TMEM-2 shipped byte-identically (palette-identity key + `settex_cache_key.h` predicate
+> + unit test; parity 5/5, tape 7/7). TMEM-1 as specified — "decode by the tile fmt when
+> it disagrees with the pool fmt inside `gfx_handle_settex`" — was proven to have **no valid
+> trigger on the settex path**: (1) `rdp.texture_tile[]` is STALE at G_SETTEX time (the render
+> `G_SETTILE` runs *after* `G_SETTEX`); (2) across `dam_forward_30s`, 14515/14515 `G_SETTILE`s
+> issued while `settex_active` were the dummy `tile=7` LOADTILE (would corrupt ALL settex
+> textures if used as the signal); (3) the monitor's I8-vs-CI4 intent lives in the per-model
+> `sImageTableEntry`/`texSelect` (`othermodemicrocode.c`), not in anything `gfx_handle_settex`
+> receives (only a texturenum). **TMEM-1's real home is the texture-cataloging / `texSelect`
+> layer (choose `tconfig->format` over `tex->gbiformat` for reinterpreted images), and it needs
+> a stock-N64 (ares) monitor capture to verify — reclassify as stock-verdict-pending.**
+
 ### TMEM-2 — `settex_cache` keyed on `texturenum` alone — P2, CONFIRMED (verified at HEAD)
 The lookup matches `settex_cache[i].texturenum == texturenum` (`gfx_pc.c:22571`,
 **verified**) with no fmt/siz/palette component, so the same texturenum through two tile
