@@ -80,6 +80,44 @@ this hardware. **Also found + fixed a real regression from Wave 2's PERF-005** (
 | PERF-007 | **DEFERRED (data-driven)** | — | measured 3,276 memory-blend splits (Facility/Runway/Dam), **0 empty/offscreen** (culled upstream), so part 1's empty-rect skip is a dead path; part 2 (coalescing) is a TBDR-GPU win unmeasurable on this CPU-bound M3 Max |
 | PERF-005b | **LANDED (regression fix)** | `1166fc1` | PERF-005 async pipeline draw-drops presented visually-incomplete frames (sky bleed through walls, up to 98.8% flood under throttle). Fix: withhold present of any frame with a PENDING-skip (hold last complete image, 30-frame cap); native/deterministic-neutral. Root-caused via a browser CDP repro |
 
+## Post-Wave-3 code review (2026-07-18) + Wave 4 — SCOPED (next)
+
+A 4-lane adversarial review of all 19 post-Wave-1-review commits found **one real
+HIGH bug** (fixed same-session), one MEDIUM diagnostic regression (fixed), two LOW
+robustness items (fixed); everything else verified clean — including the scariest
+surfaces (texture-eviction ABA, flush/bind invariant, async pipeline lifecycle,
+PERF-005b×008 composition, both cache indexes, PERF-035 re-entry).
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| PERF-006: `env_color.a`/`prim_color.a` classify the material (XLU cvg-memory gate → cc_options/api_blend/VBO stride) but weren't keyed — mid-batch alpha change served a stale material | **HIGH** | alphas added to the per-triangle equality key; load-bearing comment at the gate; verifier re-run 0 mismatches |
+| PERF-006: cache hits suppressed per-triangle trace/audit output (blend audit, ROOM-ALPHA, sky-prep, settex-CC…) — those latches weren't in the cache-disable | MEDIUM | `gfx_material_trace_active()` (one-time env latch over the 9 trace families) folded into the cache-disable |
+| PERF-013×006: `s_material.comb` is a second retained pointer into the realloc-able combiner pool (comment claimed one); safe only by an implicit co-location invariant | LOW | invariant documented at the pool + defensive `s_material_dirty=true` on realloc-move/OOM |
+| PERF-008: `s_present_target_view` left dangling after direct-frame release | LOW | nulled at release |
+| PERF-005b: capture landing on a held frame records incomplete geometry (dev-only, non-deterministic captures) | LOW (accepted) | documented here; all byte-exact gates are `--deterministic` (unreachable there) |
+| PERF-005b: under a *rolling* cold-material reveal on a slow device, the canvas can hold ~30 frames then flash one incomplete frame | QUALITY | drives W4.3 below (prewarm eliminates the cold-material class) |
+
+**Review lesson**: the `GE007_PERF006_VERIFY` 0-mismatch result was a *coverage*
+statement, not a proof — headless captures don't exercise gameplay alpha fades.
+Hence W4.0.
+
+### Wave 4 backlog (ranked; review-informed)
+
+| # | Item | Effort | Rationale |
+|---|------|--------|-----------|
+| W4.0 | **PERF-006 verify-under-combat-tape**: run the tape replays (esp. `dam_ak47_sustained` — combat = damage-flash alpha fades) with `GE007_PERF006_VERIFY=1` as a periodic gate | S | closes the exact coverage gap the review exposed; combat tapes exercise env/prim alpha mid-batch |
+| W4.1 | **Browser regression lane**: productionize the CDP repro harness (level-entry via `?arg=`, scripted key-holds, burst capture, CPU throttle — the PERF-005b hunt built a prototype) into `tools/web/`; add a frame-completeness assertion (no flood frames) | M | PERF-031's stated precondition; would have caught the PERF-005 bleed that `web_boot_smoke` missed |
+| W4.2 | **PERF-031 Asyncify narrowing**: `-sASYNCIFY_IGNORE_INDIRECT` + explicit ADD list. ⚠ the list must include PERF-035's new yield chains (`portLoadYield` ← lvlStageLoad/load_bg_file/boss) — new since the original scoping. Then **re-attempt PERF-034 LTO** (expected to flip from +25% to a win once Asyncify is narrow) | M-L | the largest whole-program browser CPU multiplier (1.5-3× on instrumented paths); compounds with everything |
+| W4.3 | **PERF-005 Phase 2 — record/replay pipeline prewarm** (design already in `PERF_005_ASYNC_PIPELINE_DESIGN.md`): record (shader, key) per stage, persist (file/OPFS), prewarm in the boss.c load slot | M | eliminates the cold-material class → kills both the pop-in AND the review's 30-frame-hold quality concern |
+| W4.4 | **PERF-036 service worker** (repeat visits + offline); also the coi-serviceworker path to COOP/COEP → unlocks PERF-039 AudioWorklet later | M | repeat-visit boot ≈ instant; deploy-skew close; PERF-039 enabler |
+| W4.5 | **Tier-3 cleanup batch**: PERF-015 (DL-dispatch binary search), 016 (XLU defer arena), 019 (bind-group reverse index + level flush), 020 (resize debounce), 021 (env-latch stragglers + modern-mesh UBO ring), 037 (JS-crossing cleanup), 038 (hidden-tab pause), 051 (present-mode knob — F5 prereq), 060 (mute-skip synth). Note: 017 (failed-pipeline tombstone) is DONE on web by PERF-005's FAILED state; check the native sync path's retry in the batch | S each | cheap breadth; existing gates cover all of them |
+| W4.6 | **PERF-052 native audio-synthesis thread** (FID-0089 constraint: DSP only, voice lifecycle stays main-thread) | L | the last perf long-pole |
+| W4.7 | **PERF-061 remainder**: WEB_BACKLOG LANDED/DEFERRED entries (WEB-062 build half, WEB-012 worklet half, WEB-039 streaming), PERFORMANCE_PLAN header refresh, PRIORITIZATION AUDIT-0019 | S | ledger truth |
+
+**Adjacent, different programs (not Wave 4):** DAM-R1 WGSL-vs-GLSL backdrop
+divergence (fidelity program — instruments already scoped in the DAM deep-dive);
+F5 uncapped FPS (PERF-050 landed, 051 in W4.5, then F5's own plan).
+
 ## Index
 
 | ID | Title | Scope | Impact | Effort |
