@@ -62,6 +62,23 @@ a native drop-cap-safe `Audio.QueueTargetFrames` max, and doc/comment fixes).
 | PERF-034 | **REJECTED** | `ea08b1a` | LTO inflated wasm +25% (Asyncify interaction); closure fails on SDL2's legacy `allocate`/`ALLOC_NORMAL`. Revisit with PERF-031 |
 | PERF-005 | **LANDED** | `4db633e` | async pipeline create (Option B, web-only slice) gated to sync under `g_deterministic`/native; parity + sim_state byte-exact; web_boot_smoke green with the async path active (pipelines complete in warmup, non-black, no errors) |
 | PERF-004 | **LANDED (part 1)** | `f88d7f2` | `g_any_diag_active()` master flag gates the ~19 dead per-triangle skip/tint/focus booleans (byte-identical when diags off, proven by parity + diag spot-check). Part 2 (cull-before-diag) + part 3 (room-cmd attribution) fold into PERF-006 |
+| PERF-013 | **LANDED** | `8328836` | combiner-pool lookup linear-scan → O(1) keyed hash (slot+1, rebuild-on-grow, linear fallback); byte-exact |
+| PERF-014 | **LANDED** | `4765099` | dedup per-draw SetPipeline/SetBindGroup (web wasm↔JS crossings); reset per pass; modern-mesh keeps trackers honest; byte-exact + web smoke |
+
+## Execution status — Wave 3 (2026-07-18, on `main`) — the structural/profile-gated phase
+
+Profile confirmed the frame is CPU-bound (work_ms 4-6 vs GPU 0.2-0.5), so the CPU
+items lead; GPU-side items were measured and deferred where the win isn't present on
+this hardware. **Also found + fixed a real regression from Wave 2's PERF-005** (see
+`PERF-005b`).
+
+| ID | Status | Commit | Note |
+|----|--------|--------|------|
+| PERF-006 | **LANDED (the marquee)** | `7bba660` (A) + `46a39e1` (B) | material-derivation split: Step A extracts `derive_material()` verbatim (12/12 byte-exact), Step B caches it behind a dirty flag (handler-triggers + 7 non-command per-tri equality checks + cache-off-under-diag). **Trigger-completeness PROVEN** by an env-gated `GE007_PERF006_VERIFY` self-check (0 mismatches / 6 scenes / 200 frames; negative control fires). Byte-identical; **~12-15% CPU work_ms** on same-material-heavy levels. Design: `docs/design/PERF_006_MATERIAL_SPLIT_DESIGN.md` |
+| PERF-008 | **LANDED** | `6834759` | present post-FX direct-to-surface, skip the trailing full-res copy; offscreen path retained for any readback frame (conservative `wgpu_readback_possible()` + sticky safety latch); CopySrc only when dump armed. Readback path byte-exact; web direct path smoke-green |
+| PERF-012 | **LANDED (part 1)** | `c69c01d` | palette-presence refcount fast-rejects the empty TLUT-invalidation pool sweeps (measured 75-100% of sweeps delete nothing). Part 2 (content-gen keying) DEFERRED — measured re-decode churn = 0 |
+| PERF-007 | **DEFERRED (data-driven)** | — | measured 3,276 memory-blend splits (Facility/Runway/Dam), **0 empty/offscreen** (culled upstream), so part 1's empty-rect skip is a dead path; part 2 (coalescing) is a TBDR-GPU win unmeasurable on this CPU-bound M3 Max |
+| PERF-005b | **LANDED (regression fix)** | `1166fc1` | PERF-005 async pipeline draw-drops presented visually-incomplete frames (sky bleed through walls, up to 98.8% flood under throttle). Fix: withhold present of any frame with a PENDING-skip (hold last complete image, 30-frame cap); native/deterministic-neutral. Root-caused via a browser CDP repro |
 
 ## Index
 
@@ -250,7 +267,7 @@ and skip the draw until ready (one-frame pop-in of a new material vs a full-fram
 column), web tape/boot smoke; visual check that skip-until-ready doesn't drop
 load-bearing geometry (prefer prewarm as primary, async as backstop).
 
-## PERF-006 — Material-derivation split in the triangle emit path  `L · High`
+## PERF-006 — Material-derivation split in the triangle emit path  `L · High`   — ✅ **LANDED `7bba660`+`46a39e1`** (~12-15% CPU; trigger-completeness proven; see `docs/design/PERF_006_MATERIAL_SPLIT_DESIGN.md`)
 
 **Problem.** The structural CPU hot spot of the whole port. `gfx_emit_loaded_triangle`
 (`gfx_pc.c:17351-19807`, ~2,450 lines) executes once per emitted triangle and re-derives
@@ -279,7 +296,7 @@ this one), then profile, then do this split.
 **Validation.** Full screenshot/oracle suite, 20-level perf census before/after,
 sim-invariance hash (should be untouched — this layer is render-only), tape gate.
 
-## PERF-007 — Memory-blend pass-split coalescing  `M · Med-High on TBDR`  *(tracked: WEB-021 residual)*
+## PERF-007 — Memory-blend pass-split coalescing  `M · Med-High on TBDR`  *(tracked: WEB-021 residual)*   — ⏸ **DEFERRED (data-driven)**: 0/3276 splits empty; part 2 is a TBDR win unmeasurable on the CPU-bound M3 Max
 
 **Problem.** N64 "memory-blend" materials (glass, fences) need the current scene as a
 texture, so the backend ends the scene render pass, copies scene→snapshot, and reopens
@@ -310,7 +327,7 @@ that's where the win lives.
 **Validation.** Dam/Facility glass screenshot parity (this path was built for
 correctness — FID-0005 lineage), Apple-GPU frame time, perf census.
 
-## PERF-008 — Present without the extra full-res copy  `M · Med`
+## PERF-008 — Present without the extra full-res copy  `M · Med`   — ✅ **LANDED `6834759`**
 
 **Problem.** Every frame ends with a full-resolution texture-to-texture copy from the
 offscreen present target to the surface texture — on top of the post-FX chain that
@@ -429,7 +446,7 @@ ADPCM codebook to skip the per-voice-per-subframe byte-copy (`mixer.c:324-333`).
 **Validation.** `GE007_AUDIO_DUMP` byte-compare before/after — this is the strongest
 oracle in the repo; use it.
 
-## PERF-012 — TLUT invalidation: pool sweep → keyed index  `M · Med`  *(verify at runtime first)*
+## PERF-012 — TLUT invalidation: pool sweep → keyed index  `M · Med`  *(verify at runtime first)*   — ◑ **PART 1 LANDED `c69c01d`** (empty-sweep fast-reject; part 2 deferred — 0 re-decode churn measured)
 
 **Problem.** Every `G_LOADTLUT` opens with two full sweeps of the 1024-node texture-cache
 pool, and deletes every cached texture decoded against the palette pointers being
