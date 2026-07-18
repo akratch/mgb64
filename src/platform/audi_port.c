@@ -465,6 +465,46 @@ void portAudioPrefillQueue(void) {
 #endif
 }
 
+/* PERF-060 (FID-0089-safe). A GE007_MUTE run with no signal consumer sends its
+ * synthesized output straight to silence (WEB-045 mute ramp in osAiSetNextBuffer),
+ * so running the heavy N64 music synth every frame is pure waste on every headless
+ * CI lane. When active, skip alAudioFrame and emit a same-size silence frame.
+ *
+ * The scope is provably DSP-only. alAudioFrame (audio_compat.c) synthesizes MUSIC
+ * from the prebuilt audio command list into the output PCM; it touches NO PortVoice
+ * or ChrRecord state. The FID-0089 voice lifecycle — SFX voice sample-advance ->
+ * exhaustion (audio_pc.c portAudioMixActiveVoices sets voice->active = 0) ->
+ * portAudioVoiceIsActive -> sndGetPlayingState -> sndDisposeSound -> the
+ * ChrRecord.ptr_SEbuffer* write-back — runs entirely inside portAudioMixSfxIntoBuffer,
+ * which STILL executes in full below. amClearDmaBuffers (hence g_AudioFrameCount and
+ * the DMA recycle cadence), the occupancy controller, and osAiSetNextBuffer are all
+ * unchanged. So the per-frame call cadence and every voice-lifecycle side effect are
+ * byte-for-byte identical; only the music DSP is elided.
+ *
+ * Gated OFF whenever any signal consumer is armed (GE007_AUDIO_DUMP /
+ * GE007_MUSIC_AUDIO_DUMP / GE007_AUDIO_TRACE / GE007_VERBOSE) and under
+ * --deterministic, so every dump / hash / tape baseline is untouched by construction.
+ * The env predicate is latched once; the live portAudioIsMuted() gate lets a runtime
+ * unmute restore full synthesis mid-run. */
+static int portAudioSynthSkipEnvLatched(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = (getenv("GE007_MUTE") != NULL)
+              && (getenv("GE007_AUDIO_DUMP") == NULL)
+              && (getenv("GE007_MUSIC_AUDIO_DUMP") == NULL)
+              && (getenv("GE007_AUDIO_TRACE") == NULL)
+              && (getenv("GE007_VERBOSE") == NULL) ? 1 : 0;
+    }
+    return cached;
+}
+
+static int portAudioSynthSkipActive(void) {
+    extern int portAudioIsMuted(void);
+    if (g_deterministic) return 0;
+    if (!portAudioSynthSkipEnvLatched()) return 0;
+    return portAudioIsMuted();
+}
+
 void portAudioFrame(void) {
     AudioInfo *info;
     u32 target_bytes;
@@ -518,9 +558,16 @@ void portAudioFrame(void) {
      * 1.5 default. Diagnostic only — not part of the synthesized output. */
     target_bytes = (u32)((f32)g_FrameSize * g_portAudioQueueTargetFrames) * 4;
 
-    alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
-                 &g_CommandLength, info->data, info->frameSamples);
-    portAudioApplyLibaudioLowPass(info->data, info->frameSamples);
+    if (portAudioSynthSkipActive()) {
+        /* PERF-060: same-size silence frame in place of the music synth. The SFX
+         * mixer below still runs, so all FID-0089 voice lifecycle is preserved. */
+        memset(info->data, 0, (size_t)info->frameSamples * 4);
+        g_CommandLength = 0;
+    } else {
+        alAudioFrame(g_PortAudioMgr.cmdList[g_CurrentAcmdList],
+                     &g_CommandLength, info->data, info->frameSamples);
+        portAudioApplyLibaudioLowPass(info->data, info->frameSamples);
+    }
 
     {
         static int s_musicDumpEnabled = -1;

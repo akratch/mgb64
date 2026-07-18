@@ -54,12 +54,12 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_ATMOS_GRADE_VAL` | ? |  | 1 |  |
 | `GE007_AUDIO` | ? |  | 1 |  |
 | `GE007_AUDIO_DEVICE_SAMPLES` | int | PORT_AUDIO_SAMPLES | 1 | SDL audio device buffer size in samples. |
-| `GE007_AUDIO_DUMP` | ? |  | 1 |  |
+| `GE007_AUDIO_DUMP` | ? |  | 2 |  |
 | `GE007_AUDIO_FILTER_TRACE_JSONL` | ? |  | 1 |  |
 | `GE007_AUDIO_FILTER_TRACE_WAVE_BASE` | ? |  | 1 |  |
 | `GE007_AUDIO_POLE_TRACE_JSONL` | ? |  | 1 |  |
 | `GE007_AUDIO_QUEUE_TARGET` | float | 1.5f | 1 | Target audio-queue occupancy in frames; higher = more stall absorption but more latency; 1.5 = default. |
-| `GE007_AUDIO_TRACE` | ? |  | 1 |  |
+| `GE007_AUDIO_TRACE` | ? |  | 2 |  |
 | `GE007_AUTOGUN_BEAM_TICK` | ? |  | 1 |  |
 | `GE007_AUTOLOAD_DAM` | ? |  | 1 |  |
 | `GE007_AUTO_ADD_DUAL_FRAME` | ? |  | 1 |  |
@@ -558,14 +558,14 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_MOUSE_SENSITIVITY_AIM` | float | 0.05f | 1 | Mouse-look sensitivity while aiming. |
 | `GE007_MP_YOLT` | ? |  | 1 |  |
 | `GE007_MSAA` | enum | 0 | 1 | Scene multisample anti-aliasing samples: 0, 2, 4, or 8. |
-| `GE007_MUSIC_AUDIO_DUMP` | ? |  | 1 |  |
+| `GE007_MUSIC_AUDIO_DUMP` | ? |  | 2 |  |
 | `GE007_MUSIC_MIDI_TRACE_JSONL` | ? |  | 1 |  |
 | `GE007_MUSIC_MUTE_PROGRAMS` | ? |  | 1 |  |
 | `GE007_MUSIC_SOLO_PROGRAMS` | ? |  | 1 |  |
 | `GE007_MUSIC_TRACE` | ? |  | 1 |  |
 | `GE007_MUSIC_TRACE_SNAPSHOT` | ? |  | 1 |  |
 | `GE007_MUSIC_VOLUME` | float | 1.0f | 1 | Music bus volume (scales the sequenced-music mix). 1.0 = unity. |
-| `GE007_MUTE` | ? |  | 1 |  |
+| `GE007_MUTE` | ? |  | 2 |  |
 | `GE007_NATIVE_EXPLOSION_FALLBACK` | ? |  | 1 |  |
 | `GE007_NEAR_CLIP_ONLY` | ? |  | 1 |  |
 | `GE007_NO_A2C` | ? |  | 2 |  |
@@ -1052,7 +1052,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_UNMUTE` | ? |  | 1 |  |
 | `GE007_UPDATE_CHECK` | int | 1 | 2 | At startup, quietly check for a newer version of MGB64 and show a dismissible banner if one is available. No personal data is sent. 0 = never check. |
 | `GE007_UPDATE_CHECK_URL` | ? |  | 1 |  |
-| `GE007_VERBOSE` | ? |  | 54 |  |
+| `GE007_VERBOSE` | ? |  | 55 |  |
 | `GE007_VERIFY_GPU` | ? |  | 1 |  |
 | `GE007_VIEWMODEL_FOV` | float | 50.0f | 1 | Vertical FOV used to project the first-person weapon. Fixed reference so the gun does not warp at wide world FOV. 0 follows world FOV (vanilla). |
 | `GE007_VIEWMODEL_SWAY` | float | 1.0f | 1 | Additive breathing sway on the first-person weapon (0 = off, 1 = subtle). |

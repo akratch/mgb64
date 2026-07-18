@@ -143,13 +143,23 @@ typedef struct MinimapOverlayTraceSummary {
 
 static const char *minimap_overlay_dump_path(void)
 {
-    const char *path = getenv("GE007_MINIMAP_OVERLAY_DUMP");
+    /* PERF-021: this is consulted on every overlay update path — including the
+     * early-outs taken when the minimap is off — so latch the getenv() once. The
+     * environment is immutable per run and getenv() returns a process-lifetime
+     * pointer, so the resolved value is safe to cache. */
+    static const char *cached = NULL;
+    static int resolved = 0;
 
-    if (path == NULL || path[0] == '\0' || (path[0] == '0' && path[1] == '\0')) {
-        return NULL;
+    if (!resolved) {
+        const char *path = getenv("GE007_MINIMAP_OVERLAY_DUMP");
+        if (path == NULL || path[0] == '\0' || (path[0] == '0' && path[1] == '\0')) {
+            path = NULL;
+        }
+        cached = path;
+        resolved = 1;
     }
 
-    return path;
+    return cached;
 }
 
 static void minimap_overlay_dump_summary(const MinimapOverlayTraceSummary *summary)

@@ -25,13 +25,63 @@
 EM_ASYNC_JS(void, platformWaitAnimationFrame, (void), {
     await new Promise((resolve) => requestAnimationFrame(resolve));
 });
-/* Cheap synchronous check ahead of the rAF wait below: a backgrounded tab
- * never fires requestAnimationFrame (browsers suspend it to save power), so
- * blocking on platformWaitAnimationFrame() while hidden would freeze the
- * whole loop — including audio — until the tab regains focus. */
+/* PERF-037 (d): the per-frame rAF wait above is the main loop's ONLY Asyncify
+ * suspend site and sits on the narrow ASYNCIFY_ADD spine (PERF-031). It keeps its
+ * `new Promise(...requestAnimationFrame)` shape DELIBERATELY: a persistent
+ * rAF-bridge callback would trade a minor-GC win (one Promise/frame, which the
+ * generational collector already absorbs) for churn on the exact suspend chain
+ * PERF-031 just narrowed. Left as-is.
+ *
+ * PERF-037 (a/b/c): the other steady-state browser-state queries used to cross
+ * wasm->JS every frame — document.hidden per pacer-wait iteration (2-3x/frame),
+ * document.pointerLockElement once/frame, and the canvas CSS size once/frame via
+ * getComputedStyle. Mirror all three into plain JS globals kept live by
+ * visibilitychange / pointerlockchange listeners and a single ResizeObserver
+ * (installed once by platformWebInstallStateMirrors), and read them via cheap
+ * SYNCHRONOUS EM_JS. No new suspend site is introduced (these are all sync
+ * reads, no emscripten_sleep / await), so the Asyncify spine is untouched. */
 EM_JS(int, platformTabHidden, (void), {
-    return document.hidden ? 1 : 0;
+    return Module.__mgb64_hidden ? 1 : 0;
 });
+EM_JS(int, platformPointerLocked, (void), {
+    return Module.__mgb64_plock ? 1 : 0;
+});
+/* Returns 1 (and clears the flag) exactly on frames where the ResizeObserver
+ * saw the canvas CSS box change; 0 otherwise. The C side then re-queries the CSS
+ * size (the SAME emscripten_get_element_css_size call — same VALUE) ONLY on those
+ * frames and reuses its cache every other frame, so getComputedStyle no longer
+ * runs per frame. If ResizeObserver is unavailable (ancient browser), __mgb64_noRO
+ * forces always-dirty, i.e. the exact old per-frame-query behavior. */
+EM_JS(int, platformCanvasSizeDirty, (void), {
+    if (Module.__mgb64_noRO) return 1;
+    if (Module.__mgb64_sizeDirty) { Module.__mgb64_sizeDirty = 0; return 1; }
+    return 0;
+});
+/* Install the browser-state mirrors ONCE, after the canvas exists (called at the
+ * end of platformInitSDL). Seeds every global with its current value so frame 0
+ * reads correct state, then keeps them live via listeners. Idempotent. */
+static void platformWebInstallStateMirrors(void) {
+    EM_ASM({
+        if (Module.__mgb64_mirrors) return;
+        Module.__mgb64_mirrors = 1;
+        Module.__mgb64_hidden = document.hidden ? 1 : 0;
+        Module.__mgb64_plock  = document.pointerLockElement ? 1 : 0;
+        Module.__mgb64_sizeDirty = 0;
+        document.addEventListener('visibilitychange', function() {
+            Module.__mgb64_hidden = document.hidden ? 1 : 0;
+        });
+        document.addEventListener('pointerlockchange', function() {
+            Module.__mgb64_plock = document.pointerLockElement ? 1 : 0;
+        });
+        var canvas = document.querySelector('#canvas');
+        if (canvas && typeof ResizeObserver !== 'undefined') {
+            var ro = new ResizeObserver(function() { Module.__mgb64_sizeDirty = 1; });
+            ro.observe(canvas);
+        } else {
+            Module.__mgb64_noRO = 1;   /* no RO: fall back to per-frame CSS query */
+        }
+    });
+}
 #endif
 
 /* PERF-035: cooperative yield at load boundaries. Time-gated so liberal
@@ -3240,6 +3290,12 @@ int platformInitSDL(void) {
     }
     platformSyncPad0Alias();
 
+#ifdef __EMSCRIPTEN__
+    /* PERF-037: install the per-frame browser-state mirrors (visibility,
+     * pointer-lock, canvas resize) once — the canvas exists by now. */
+    platformWebInstallStateMirrors();
+#endif
+
     return 0;
 }
 
@@ -3346,7 +3402,7 @@ void platformPollEvents(void) {
      * window after a regrab-click, so it integrates with (doesn't fight) the
      * b1525bf MOUSEBUTTONDOWN relock path below. */
     if (g_mouseGrabbed) {
-        int locked = EM_ASM_INT({ return document.pointerLockElement ? 1 : 0; });
+        int locked = platformPointerLocked();   /* PERF-037: mirrored, no EM_ASM crossing */
         if (locked) {
             g_pcWebLockConfirmed = 1;
         } else if (g_pcWebLockConfirmed) {
@@ -3369,16 +3425,36 @@ void platformPollEvents(void) {
      * touch the SDL window size — gfx sizing reads the CSS box independently
      * (gfx_pc.c) and must not be disturbed. */
     {
-        double cssw = 0.0, cssh = 0.0;
+        /* PERF-037 (a): the canvas CSS box only changes on a resize, so re-query
+         * it (getComputedStyle, via emscripten_get_element_css_size) ONLY on frames
+         * the ResizeObserver flagged, and reuse the cached value otherwise. The
+         * query — hence the fed VALUE — is byte-for-byte the one the old per-frame
+         * code used; WEB-016's unscale math below is unchanged. A ResizeObserver
+         * delivers before the next paint, so during an active resize the cache is at
+         * most ONE frame stale — and the old code already sampled once per frame (not
+         * per motion event), so it carried the same up-to-one-frame latency; a
+         * 1-frame-late unscale ratio during a drag is imperceptible for mouse-look.
+         * s_cssValid stays 0 until the first successful query (seeded frame 0) and is
+         * re-tried every frame while invalid, matching the old fall-through to 1.0. */
+        static double s_cssW = 0.0, s_cssH = 0.0;
+        static int    s_cssValid = 0;
         int winw = 0, winh = 0;
         if (g_sdlWindow != NULL) {
             SDL_GetWindowSize(g_sdlWindow, &winw, &winh);
         }
-        if (emscripten_get_element_css_size("#canvas", &cssw, &cssh) == 0) {
-            g_pcWebMouseUnscaleX = (cssw >= 1.0 && winw >= 1)
-                ? (float)(cssw / (double)winw) : 1.0f;
-            g_pcWebMouseUnscaleY = (cssh >= 1.0 && winh >= 1)
-                ? (float)(cssh / (double)winh) : 1.0f;
+        if (!s_cssValid || platformCanvasSizeDirty()) {
+            double qw = 0.0, qh = 0.0;
+            if (emscripten_get_element_css_size("#canvas", &qw, &qh) == 0) {
+                s_cssW = qw; s_cssH = qh; s_cssValid = 1;
+            } else {
+                s_cssValid = 0;
+            }
+        }
+        if (s_cssValid) {
+            g_pcWebMouseUnscaleX = (s_cssW >= 1.0 && winw >= 1)
+                ? (float)(s_cssW / (double)winw) : 1.0f;
+            g_pcWebMouseUnscaleY = (s_cssH >= 1.0 && winh >= 1)
+                ? (float)(s_cssH / (double)winh) : 1.0f;
         } else {
             g_pcWebMouseUnscaleX = 1.0f;
             g_pcWebMouseUnscaleY = 1.0f;
@@ -3581,7 +3657,7 @@ void platformPollEvents(void) {
                  * believe we're grabbed, force a fresh request by toggling
                  * relative mode off->on (SDL early-outs on a same-state set). */
                 else if (!g_disableInputGrab && g_mouseGrabbed &&
-                         !EM_ASM_INT({ return document.pointerLockElement ? 1 : 0; })) {
+                         !platformPointerLocked()) {   /* PERF-037: mirrored state */
                     SDL_SetRelativeMouseMode(SDL_FALSE);
                     SDL_SetRelativeMouseMode(SDL_TRUE);
                     g_pcMouseRegrabFrame = 1; /* suppress fire on regrab click */
@@ -3926,18 +4002,22 @@ void platformFrameSync(void) {
          * whole-vsync wait would overshoot; finishing slightly early is phase
          * lead, not drift, because the deadline is absolute.
          *
-         * Hidden-tab fallback: requestAnimationFrame never fires while the
-         * tab is backgrounded, so unconditionally waiting on it here would
-         * block the whole loop — including audio — until refocus, a
-         * regression vs. the old emscripten_sleep() pacer (which browsers
-         * throttle to the 1-4ms setTimeout clamp but never fully suspend).
-         * Check document.hidden per iteration (cheap, synchronous) and pick
-         * the wait primitive accordingly: visible stays on the display-synced
-         * rAF wait above; hidden falls back to throttled-but-alive
-         * emscripten_sleep so the sim clock and audio mixer keep ticking in
-         * the background. At least one wait call always runs per paced frame
-         * (the "ALWAYS yield" contract above), whichever primitive is picked
-         * on the first iteration. */
+         * Hidden-tab fallback: requestAnimationFrame never fires while the tab
+         * is backgrounded, so unconditionally waiting on it here would block the
+         * whole loop until refocus. Fall back to emscripten_sleep, which stays
+         * ALIVE while hidden. But note the real clamp is NOT 1-4ms: browsers
+         * throttle background-tab timers to >=1s (Chrome ~1/min after ~5 min for
+         * silent tabs), so each loop iteration takes ~1s of wall clock and the
+         * 60Hz sim advances at ~1 Hz while hidden — a de-facto pause. That is
+         * DELIBERATE: hidden == effectively paused. The sleep exists only to keep
+         * the loop responsive enough to notice refocus (via platformTabHidden,
+         * now a mirrored visibilitychange flag — PERF-037), not to keep audio
+         * meaningful — PERF-038 skips portAudioFrame entirely while hidden (frame
+         * tail below), since synthesizing at ~1 Hz produces only gaps-and-blips.
+         * At least one wait call always runs per paced frame (the "ALWAYS yield"
+         * contract above), whichever primitive is picked on the first iteration.
+         * WEB-005's no-catch-up deadline resync (the >period rewind above) is what
+         * keeps refocus from fast-forwarding the backlog of missed frames. */
         bool waited_once = false;
         while (!waited_once ||
                (pace_now < g_paceDeadline &&
@@ -4041,9 +4121,23 @@ void platformFrameSync(void) {
     {
         extern void portAudioFrame(void);
         extern s32 g_pcUncapRenderOnlyFrame;
+        int skip_audio = (g_pcUncapRenderOnlyFrame && portUncapAudioSkipEnabled());
+#ifdef __EMSCRIPTEN__
+        /* PERF-038: a backgrounded tab clamps timers to >=1s, so the loop above is
+         * running the sim at ~1 Hz — effectively paused. Synthesizing audio at that
+         * cadence produces only gaps-and-blips that then pile into the AI queue, so
+         * skip portAudioFrame entirely while hidden: no broken audio is produced or
+         * queued. The SDL device keeps draining, so the queue empties to silence and
+         * refocus resumes from an empty queue (no stale burst — WEB-045's mute ramp
+         * governs the mute edge, not this one). Deterministic runs never branch here
+         * (and this whole path is web-only), so no baseline is affected. */
+        if (!g_deterministic && platformTabHidden()) {
+            skip_audio = 1;
+        }
+#endif
         /* Sim-pure 0-tick frame: do not advance audio playback (see the
          * portUncapAudioSkipEnabled comment above). No-op in normal play. */
-        if (!(g_pcUncapRenderOnlyFrame && portUncapAudioSkipEnabled())) {
+        if (!skip_audio) {
             portAudioFrame();
         }
     }

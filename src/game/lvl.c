@@ -1377,8 +1377,15 @@ Gfx* lvlRender(Gfx* DL)
 
     /* Room rendering normally uses the original bgLevelRender path (bg.c).
      * Keep the alternate PC renderer behind an env toggle for controlled
-     * A/B diagnostics against the original room pipeline. */
-    pc_flycam_bg_renderer = (getenv("GE007_PC_BG_RENDERER") != NULL);
+     * A/B diagnostics against the original room pipeline. PERF-021: env is
+     * immutable per run, so latch it once instead of a getenv() per lvlRender. */
+    {
+        static int s_bgRendererEnv = -1;
+        if (s_bgRendererEnv < 0) {
+            s_bgRendererEnv = (getenv("GE007_PC_BG_RENDERER") != NULL) ? 1 : 0;
+        }
+        pc_flycam_bg_renderer = s_bgRendererEnv;
+    }
 
     {
         /* PC room rendering: always use fly camera path for rooms.

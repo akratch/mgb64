@@ -1003,6 +1003,14 @@ void portAudioSetMuted(int muted)
     s_muteTargetQ15 = muted ? 0 : 32768;
 }
 
+/* PERF-060: live mute-target query (1 = output is headed to silence). Lets
+ * audi_port.c's synth-skip re-check the CURRENT mute state each frame, so a
+ * runtime unmute (F-key / GE007_AUTO_MUTE_TOGGLE) restores full synthesis. */
+int portAudioIsMuted(void)
+{
+    return s_muteTargetQ15 == 0;
+}
+
 void portAudioApplyMuteRamp(s16 *samples, s32 sampleFrames)
 {
     s32 gain   = s_muteGainQ15;
