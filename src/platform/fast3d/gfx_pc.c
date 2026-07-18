@@ -1086,6 +1086,14 @@ static struct SetTexTileState settex_tile_state[2];
 static bool g_texrect_uv_mode = false;
 static int g_texrect_tile_override = -1;
 
+/* PERF-006 Step B — material-cache dirty flag. Set true by every §3.1 DL-command
+ * handler that mutates state derive_material() reads, and at frame start
+ * (gfx_sp_reset). The cached material itself (s_material) is declared after
+ * struct MaterialState; this bool must be visible to the early handlers
+ * (gfx_sp_matrix etc.), hence the split declaration. See
+ * docs/design/PERF_006_MATERIAL_SPLIT_DESIGN.md §3. */
+static bool s_material_dirty = true;
+
 static uint8_t gfx_tex_mode_to_gbi_mode(uint32_t mode)
 {
     if (mode == 1) {
@@ -1193,6 +1201,7 @@ static void gfx_settex_configure_tiles(uint32_t w0,
                                        uint8_t maxlod,
                                        bool has_custom_lods)
 {
+    s_material_dirty = true;  /* PERF-006 §3.1: settex tile-state feeds the material */
     uint8_t smode = (uint8_t)((w0 >> 22) & 3U);
     uint8_t tmode = (uint8_t)((w0 >> 20) & 3U);
     uint8_t offset = (uint8_t)((w0 >> 18) & 3U);
@@ -4684,6 +4693,7 @@ static void gfx_invalidate_settex_gl_texture(uint32_t texture_id)
     }
 
     if (settex_active && settex_gl_tex_id == texture_id) {
+        s_material_dirty = true;  /* PERF-006 §3.1: settex eviction clears settex_active */
         settex_active = false;
         settex_gl_tex_id = 0;
         settex_tex_w = 0;
@@ -16348,6 +16358,7 @@ void gfx_compute_shadow_mat(float out[4][4]) {
 }
 
 static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *source_addr) {
+    s_material_dirty = true;  /* PERF-006 §3.2: modelview_is_room_matrix feeds room_matrix */
     float matrix[4][4];
     bool is_room_matrix_addr = false;
     bool is_field_10e0_addr = false;
@@ -16560,6 +16571,7 @@ static void gfx_sp_matrix(uint8_t parameters, const void *addr_raw, const void *
 }
 
 static void gfx_sp_pop_matrix(uint32_t count) {
+    s_material_dirty = true;  /* PERF-006 §3.2: matrix pop changes room_matrix state */
     while (count--) {
         if (rsp.modelview_matrix_stack_size > 0) {
             --rsp.modelview_matrix_stack_size;
@@ -17686,7 +17698,86 @@ struct MaterialState {
     bool tint_match;
     struct RGBA diag_tint_color;
     bool trace_eye_material;
+
+    /* PERF-006 Step B — cache metadata. `valid` gates the very first use;
+     * the k_* fields snapshot the §3.2 mid-batch inputs that are NOT DL-command
+     * state (so no handler dirties them) and are compared for equality on every
+     * triangle to decide a cache hit. Stamped only on a successful miss-derive;
+     * NOT touched by derive_material's field stamping above. */
+    bool valid;
+    int k_dl_room;
+    const char *k_dl_which;
+    enum DrawClass k_draw_class;
+    bool k_sky_tri_mode;
+    bool k_texrect_uv_mode;
+    int k_texrect_tile_override;
+    bool k_fillrect_active;
 };
+
+/* PERF-006 Step B — the cached material and its env-gated self-verifier. */
+static struct MaterialState s_material;
+static int s_p006_verify = -1;             /* -1 = unresolved; 0/1 from GE007_PERF006_VERIFY */
+static uint64_t s_p006_verify_mismatches = 0;
+
+/* Field-by-field material comparison for the GE007_PERF006_VERIFY self-check
+ * (NOT memcmp — struct padding and the k_* cache metadata must be ignored).
+ * Returns the name of the first mismatching MATERIAL field, or NULL if the two
+ * derived materials are identical. */
+static const char *gfx_p006_material_mismatch(const struct MaterialState *a,
+                                              const struct MaterialState *b) {
+#define P006_CMP(field) do { if (a->field != b->field) return #field; } while (0)
+    P006_CMP(comb);
+    P006_CMP(cc_id);
+    P006_CMP(effective_cc_id);
+    P006_CMP(settex_material_cc_id);
+    P006_CMP(cc_options);
+    P006_CMP(num_inputs);
+    P006_CMP(used_textures[0]);
+    P006_CMP(used_textures[1]);
+    P006_CMP(blend_mode);
+    P006_CMP(api_blend_mode);
+    P006_CMP(tex_tile_base);
+    P006_CMP(allow_lod_redirect);
+    P006_CMP(tex_width[0]);
+    P006_CMP(tex_width[1]);
+    P006_CMP(tex_height[0]);
+    P006_CMP(tex_height[1]);
+    P006_CMP(tex_clamp_width[0]);
+    P006_CMP(tex_clamp_width[1]);
+    P006_CMP(tex_clamp_height[0]);
+    P006_CMP(tex_clamp_height[1]);
+    P006_CMP(settex_mirror_tex1);
+    P006_CMP(mirror_tex1_from_tex0);
+    P006_CMP(settex_authored_lod_endpoint);
+    P006_CMP(allow_footprint_lod);
+    P006_CMP(settex_cc_uses_lod_fraction);
+    P006_CMP(use_alpha);
+    P006_CMP(use_fog);
+    P006_CMP(fog_use_fixed_alpha);
+    P006_CMP(texture_edge);
+    P006_CMP(use_noise);
+    P006_CMP(use_texture);
+    P006_CMP(depth_test);
+    P006_CMP(depth_update);
+    P006_CMP(depth_compare);
+    P006_CMP(depth_source_prim);
+    P006_CMP(zmode);
+    P006_CMP(depth_mode);
+    P006_CMP(sky_backdrop_depth);
+    P006_CMP(room_matrix);
+    P006_CMP(room_secondary_xlu_sort);
+    P006_CMP(scale_room_alpha_env);
+    P006_CMP(room_alpha_env_scale);
+    P006_CMP(diag_rdp_cvg_memory);
+    P006_CMP(tint_match);
+    P006_CMP(diag_tint_color.r);
+    P006_CMP(diag_tint_color.g);
+    P006_CMP(diag_tint_color.b);
+    P006_CMP(diag_tint_color.a);
+    P006_CMP(trace_eye_material);
+#undef P006_CMP
+    return NULL;
+}
 
 /* PERF-006 Step A — pure extraction of gfx_emit_loaded_triangle's per-triangle
  * material derivation (phase C). Called EVERY triangle (no cache yet). The guarded
@@ -19536,15 +19627,86 @@ static void gfx_emit_loaded_triangle(struct LoadedVertex *v1,
         }
     }
 
-    struct MaterialState mstate;
-    struct MaterialState *const m = &mstate;
-    if (!derive_material(v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
-                         was_cpu_clipped, clip_reason_flags,
-                         dl_room, dl_which, has_cmd_offset, cmd_offset,
-                         focus_match, tint_match,
-                         depth_test, depth_update, depth_compare, depth_source_prim,
-                         zmode, depth_mode, sky_backdrop_depth, m)) {
-        return;
+    /* PERF-006 Step B — dirty-flag material cache. derive_material() is
+     * loop-invariant between RDP/RSP state changes, so a same-material batch of
+     * N triangles need only derive once. The cache lives in the static
+     * s_material; s_material_dirty is raised by every §3.1 DL-command handler and
+     * at frame start (gfx_sp_reset). The §3.2 inputs below are NOT DL-command
+     * state (nothing dirties them), so they are validated by per-triangle
+     * equality. The cache is disabled entirely whenever any diagnostic latch is
+     * live (§3.3) so diag interactions always see a fresh derive. On a hit,
+     * derive_material — and therefore its guarded gfx_flush()+shader/blend/
+     * texture binds — is SKIPPED; that is byte-exact because rendering_state
+     * already reflects the cached material's binds and nothing has changed it
+     * (see the flush invariant, design §5.3). */
+    if (s_p006_verify < 0) {
+        s_p006_verify = (getenv("GE007_PERF006_VERIFY") != NULL) ? 1 : 0;
+    }
+    bool p006_diag = g_any_diag_active() != 0;
+    bool p006_hit = s_material.valid && !s_material_dirty && !p006_diag
+        && s_material.k_dl_room == dl_room
+        && s_material.k_dl_which == dl_which
+        && s_material.k_draw_class == g_current_draw_class
+        && s_material.k_sky_tri_mode == g_sky_tri_mode
+        && s_material.k_texrect_uv_mode == g_texrect_uv_mode
+        && s_material.k_texrect_tile_override == g_texrect_tile_override
+        && s_material.k_fillrect_active == g_fillrect_draw_active;
+    struct MaterialState *const m = &s_material;
+    if (!p006_hit) {
+        if (!derive_material(v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
+                             was_cpu_clipped, clip_reason_flags,
+                             dl_room, dl_which, has_cmd_offset, cmd_offset,
+                             focus_match, tint_match,
+                             depth_test, depth_update, depth_compare, depth_source_prim,
+                             zmode, depth_mode, sky_backdrop_depth, m)) {
+            /* Graceful-degrade (combiner OOM / GE007_SKIP_ALPHA_TRIANGLES): skip
+             * the triangle. Leave s_material_dirty as-is (still true) so the
+             * next triangle re-derives rather than reading this failed state. */
+            return;
+        }
+        /* Stamp the §3.2 cache key and mark the material clean+valid. */
+        m->k_dl_room = dl_room;
+        m->k_dl_which = dl_which;
+        m->k_draw_class = g_current_draw_class;
+        m->k_sky_tri_mode = g_sky_tri_mode;
+        m->k_texrect_uv_mode = g_texrect_uv_mode;
+        m->k_texrect_tile_override = g_texrect_tile_override;
+        m->k_fillrect_active = g_fillrect_draw_active;
+        m->valid = true;
+        s_material_dirty = false;
+    }
+
+    /* PERF-006 Step B — trigger-completeness self-check (env-gated, never on in
+     * production). Re-derive the material from CURRENT live state into a scratch
+     * struct and compare it field-by-field against what the cache just returned.
+     * A missed §3.1 trigger or §3.2 key surfaces here as a loud, greppable
+     * MISMATCH. The scratch derive re-runs derive_material's guarded binds, but
+     * on a correct cache every bind is a redundant no-op (rendering_state already
+     * matches), so rendering is unperturbed — the only way a bind actually fires
+     * is when the material genuinely differs, i.e. exactly the bug we are
+     * flagging. Runs on hits AND misses (on a miss it is a redundant re-derive of
+     * identical state, always equal). */
+    if (s_p006_verify) {
+        struct MaterialState p006_scratch;
+        if (derive_material(v1, v2, v3, &ndc_metrics, ndc_metrics_ok,
+                            was_cpu_clipped, clip_reason_flags,
+                            dl_room, dl_which, has_cmd_offset, cmd_offset,
+                            focus_match, tint_match,
+                            depth_test, depth_update, depth_compare, depth_source_prim,
+                            zmode, depth_mode, sky_backdrop_depth, &p006_scratch)) {
+            const char *p006_bad = gfx_p006_material_mismatch(m, &p006_scratch);
+            if (p006_bad != NULL) {
+                s_p006_verify_mismatches++;
+                fprintf(stderr,
+                        "[PERF006-VERIFY] MISMATCH field=%s tri=%d frame=%d hit=%d "
+                        "dl_room=%d dl=%s cc=0x%016llX total=%llu\n",
+                        p006_bad, g_tri_count_diag, g_frame_count_diag, (int)p006_hit,
+                        dl_room, dl_which ? dl_which : "?",
+                        (unsigned long long)m->cc_id,
+                        (unsigned long long)s_p006_verify_mismatches);
+                fflush(stderr);
+            }
+        }
     }
     /* Per-triangle locals bound to derive_material's material outputs. Byte-identical
      * to the old inline derivation (each holds the exact derived value). They are
@@ -20642,6 +20804,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
 /* ===== Remaining RSP/RDP handlers (identical to reference) ===== */
 
 static void gfx_sp_geometry_mode(uint32_t clear, uint32_t set) {
+    s_material_dirty = true;  /* PERF-006 §3.1: geometry_mode (+forced-fog, G_ZBUFFER) */
     static int trace_geom_mode = -1;
     static int trace_geom_after_frame = 0;
     static int keep_texture_gen_fog = -1;
@@ -20861,6 +21024,7 @@ static void gfx_sp_moveword(uint8_t index, uint16_t offset, uintptr_t data) {
 }
 
 static void gfx_sp_texture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t tile, uint8_t on) {
+    s_material_dirty = true;  /* PERF-006 §3.1: first_tile_index/scaling/textures_changed */
     (void)on;
     rsp.texture_scaling_factor.s = sc;
     rsp.texture_scaling_factor.t = tc;
@@ -21018,6 +21182,7 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size,
                                      uintptr_t cache_key,
                                      bool is_static_game_texture,
                                      bool static_texture_has_lods) {
+    s_material_dirty = true;  /* PERF-006 §3.1: texture_to_load/textures_changed (G_SETTIMG) */
     gfx_trace_tex_pipeline_init();
     if (g_trace_tex_pipeline) {
         fprintf(stderr,
@@ -21057,6 +21222,7 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size,
 }
 
 static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t tmem, uint8_t tile, uint32_t palette, uint32_t cmt, uint32_t maskt, uint32_t shiftt, uint32_t cms, uint32_t masks, uint32_t shifts) {
+    s_material_dirty = true;  /* PERF-006 §3.1: texture_tile[] descriptor (G_SETTILE) */
     /* Store tile descriptor for ALL tiles (0-7), not just rendertile.
      * 2-cycle LOD blend needs different tile descriptors for TEXEL0 vs TEXEL1. */
     if (tile < 8) {
@@ -21166,6 +21332,7 @@ static void gfx_alias_lod_tile_from_loadblock(uint8_t tile,
 }
 
 static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint16_t lrs, uint16_t lrt) {
+    s_material_dirty = true;  /* PERF-006 §3.1: texture_tile[] size (G_SETTILESIZE) */
     if (tile < 8) {
         int32_t s_delta = (int32_t)lrs - (int32_t)uls;
         int32_t t_delta = (int32_t)lrt - (int32_t)ult;
@@ -21357,6 +21524,7 @@ static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint1
 }
 
 static void gfx_dp_load_tlut(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
+    s_material_dirty = true;  /* PERF-006 §3.1: TLUT/palette (G_LOADTLUT) */
     gfx_texture_cache_delete_by_palette_addr(rdp.palette_addrs[0]);
     gfx_texture_cache_delete_by_palette_addr(rdp.palette_addrs[1]);
     rdp.palette_addrs[0] = NULL;
@@ -21523,6 +21691,7 @@ static inline bool gfx_is_eye_intro_diag_material(void)
 }
 
 static void gfx_dp_load_block(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t dxt) {
+    s_material_dirty = true;  /* PERF-006 §3.1: loaded_texture[]/settex clear (G_LOADBLOCK) */
     /* When the preceding G_SETTIMG was part of a settex sequence (G_SETTEX →
      * G_SETTIMG → G_LOADBLOCK), the SETTIMG address is a raw texture enum
      * that resolved to garbage via the pointer hash table. Skip this LOADBLOCK
@@ -21587,6 +21756,7 @@ static void gfx_dp_load_block(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t
 }
 
 static void gfx_dp_load_tile(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
+    s_material_dirty = true;  /* PERF-006 §3.1: loaded_texture[]/settex clear (G_LOADTILE) */
     if (rdp.texture_to_load.skip_load_via_settex && settex_active) {
         if (g_trace_tex_pipeline) {
             fprintf(stderr,
@@ -21752,6 +21922,7 @@ static inline uint32_t alpha_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d
 }
 
 static void gfx_dp_set_combine_mode(uint32_t rgb, uint32_t alpha, uint32_t rgb2, uint32_t alpha2) {
+    s_material_dirty = true;  /* PERF-006 §3.1: rdp.combine_mode (G_SETCOMBINE) */
     rdp.combine_mode = (uint64_t)rgb | ((uint64_t)alpha << 16) |
                        ((uint64_t)rgb2 << 28) | ((uint64_t)alpha2 << 44);
 }
@@ -22190,6 +22361,11 @@ static void gfx_dp_set_color_image(uint32_t format, uint32_t size, uint32_t widt
  * point of truth — ALL paths that write other_mode_l_raw or change
  * geometry mode fog state MUST call it to keep raw/effective in sync. */
 static void gfx_sync_other_mode_l_effective(void) {
+    /* PERF-006 §3.1: other_mode_l/l_raw/h + palette_fmt. This is the single choke
+     * point for ALL othermode changes — G_SETOTHERMODE_L/H (via
+     * gfx_sp_set_other_mode), G_RDPSETOTHERMODE (0xEF, direct), and geometry-mode
+     * forced-fog (via gfx_sp_geometry_mode) all pass through here. */
+    s_material_dirty = true;
     rdp.other_mode_l = rdp.other_mode_l_raw;
     rdp.palette_fmt = rdp.other_mode_h & (3U << G_MDSFT_TEXTLUT);
     if ((rsp.geometry_mode & G_FOG) && !gfx_current_draw_suppresses_room_fog()) {
@@ -22198,6 +22374,7 @@ static void gfx_sync_other_mode_l_effective(void) {
 }
 
 static void gfx_sp_set_other_mode(uint32_t shift, uint32_t num_bits, uint64_t mode) {
+    s_material_dirty = true;  /* PERF-006 §3.1: other_mode raw L/H + tex_lod/detail (also via sync below) */
     uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
     uint64_t om = rdp.other_mode_l_raw | ((uint64_t)rdp.other_mode_h << 32);
     om = (om & ~mask) | mode;
@@ -22211,6 +22388,7 @@ static void gfx_sp_set_other_mode(uint32_t shift, uint32_t num_bits, uint64_t mo
 /* ===== G_SETTEX handler (Rare's texture-by-number system) ===== */
 
 static void gfx_handle_settex(uint32_t w0, uint32_t w1) {
+    s_material_dirty = true;  /* PERF-006 §3.1: settex_active/gl_tex_id/tex_w/h/texturenum/tile_state (G_SETTEX) */
     int texturenum = w1 & 0xFFF;
 
     rdp.texture_to_load.skip_load_via_settex = false;
@@ -24701,6 +24879,12 @@ uint32_t  gfx_ptr_full_fails;
 uint32_t  gfx_ptr_max_probe;
 
 static void gfx_sp_reset(void) {
+    /* PERF-006 §3.3: frame start. Frame-constant globals derive_material reads
+     * (g_pcSunShadow, g_pcPerPixelLight, g_FogSkyIsEnabled, z_is_from_0_to_1,
+     * shadow/view-inv valid flags) can change between frames without any
+     * per-command trigger, so invalidate the material cache here. */
+    s_material_dirty = true;
+    s_material.valid = false;
     rsp.modelview_matrix_stack_size = 1;
     memset(rsp.modelview_is_room_matrix, 0, sizeof(rsp.modelview_is_room_matrix));
     memset(rsp.modelview_is_float_port, 0, sizeof(rsp.modelview_is_float_port));
