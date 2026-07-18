@@ -26,7 +26,8 @@ jobs:
         # three N64 byte orders at offset 0 (a ROM renamed onto a whitelisted name)
         # AND scanned for the big-endian sequence anywhere in each artifact (ROM
         # content appended/embedded inside the wasm under the 40 MiB budget). The
-        # site ships exactly 5 known files. Fast: 5 small files, grep -q short-circuits.
+        # site ships exactly 6 known files (PERF-036 added sw.js). Fast: 6 small
+        # files, grep -q short-circuits.
         run: |
           set -euo pipefail
           # Big-endian .z64 header magic (80 37 12 40) — the on-disk form the engine
@@ -47,9 +48,9 @@ jobs:
             if LC_ALL=C grep -qaF "$be_magic" "$f"; then
               echo "ROM magic byte sequence found inside artifact: $f"; exit 1
             fi
-            # (3) whitelist: exactly the 5 files the site ships, fail closed.
+            # (3) whitelist: exactly the 6 files the site ships, fail closed.
             case "$(basename "$f")" in
-              index.html|mgb64-shell.js|style.css|ge007_web.js|ge007_web.wasm) ;;
+              index.html|mgb64-shell.js|style.css|sw.js|ge007_web.js|ge007_web.wasm) ;;
               *) echo "unexpected file in artifact: $f"; exit 1 ;;
             esac
           done

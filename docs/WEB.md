@@ -91,9 +91,16 @@ This configures an Emscripten-toolchain build in `build-web/` (kept separate
 from the native `build/` tree — different toolchain, different CMake cache),
 builds the `ge007_web` target, and stages the deployable site into
 `dist/web/`: `ge007_web.js`, `ge007_web.wasm`, plus the static shell
-(`web/index.html`, `web/mgb64-shell.js`, `web/style.css`) copied alongside.
-Both `build-web/` and `dist/` are gitignored — they're build output, not
-source.
+(`web/index.html`, `web/mgb64-shell.js`, `web/style.css`, `web/sw.js`) copied
+alongside. Both `build-web/` and `dist/` are gitignored — they're build output,
+not source.
+
+**The dist is exactly 6 files** (the two engine files + four static shell
+files). This count is an enforced invariant: the source list here, the
+`build_web.sh` staging + hash-stamp step, and the `web-demo.yml` ROM-absence
+whitelist (which fails closed on any unexpected file) must all stay in lockstep.
+PERF-036 grew it from 5 to 6 by adding `sw.js`; the runtime-generated favicon is
+deliberately NOT a file (see `mgb64-shell.js`), so it does not count.
 
 ### Serve it locally
 
@@ -153,6 +160,53 @@ gating — the browser build is a BYO-ROM app with no server, so a query arg onl
 ever affects the user's **own** in-tab session, the same trust domain as typing
 into the devtools console. The same passthrough backs the web input-tape
 harness.
+
+### Service worker (repeat visits + offline) — PERF-036
+
+`web/sw.js` is a **hash-versioned, cache-first** service worker. On first visit
+it precaches the whole app (`./`, `index.html`, `style.css`, `mgb64-shell.js`,
+`ge007_web.js`, `ge007_web.wasm` — everything except sw.js itself, which the
+browser fetches through its own update channel). After that, repeat visits boot
+**from cache** (instant, no re-download and no 10-minute Pages re-validation),
+and the demo is **fully playable offline** — the ROM is already in OPFS and
+saves in IDBFS, so nothing needs the network.
+
+- **Hash-keyed cache generation.** `CACHE_NAME = "mgb64-" + BUILD`, where `BUILD`
+  is the same `__MGB64_BUILD__` stamp `build_web.sh` rewrites in the shell —
+  each deploy is its own independent cache.
+- **Atomic activate-on-complete.** `install` calls `skipWaiting()` *only after*
+  `cache.addAll()` resolves, so a half-downloaded new build never takes over from
+  a good old one. `activate` deletes every *other* `mgb64-*` cache (old deploys)
+  and claims open clients. This closes the WEB-032 glue/wasm skew window more
+  robustly than `?v=`: the whole app is one atomic generation, so a cached
+  index/shell can never pair with wasm from a different build. An open tab on an
+  old build switches to the new one on its next navigation.
+- **`?v=HASH` interaction.** The shell requests the engine files as
+  `ge007_web.js?v=HASH` / `ge007_web.wasm?v=HASH`. They are precached under their
+  canonical query-less URLs and matched with `{ ignoreSearch: true }`, so a `?v=`
+  request still hits the cache. `ignoreSearch` only ignores the query (paths
+  still match exactly), which also lets a dev/test navigation carrying `?arg=…`
+  (the URL passthrough above) resolve to the cached shell offline.
+- **Scope of interception.** Same-origin `GET` only, cache-first with network
+  fallback; anything not precached is a plain network passthrough. Cross-origin
+  and non-GET requests are never touched. The worker logs nothing (the boot-smoke
+  console gate fails on unexpected console output).
+- **Unstamped-source gate + ctest behaviour.** Registration in the shell is gated
+  on the *stamped-build* check (`BUILD.indexOf("__MGB64") === -1`, the same one
+  `?v=` uses). The raw `web/` source keeps the literal placeholder, so an
+  un-built copy never installs a worker — a defensive guarantee, not a real boot
+  path (raw source has no built engine files anyway). A `build_web.sh`-produced
+  `dist/web` **is** stamped, so both `serve_web.sh` and the `web_boot_smoke` /
+  `web_frame_probe` ctest lanes serve a stamped shell and **the worker does
+  register there.** That is fine and is what the lanes cover: each runs in a
+  **fresh Chrome profile** (a clean install every run, so it's deterministic — no
+  cache carries over), first-load content comes from the local server, and the
+  only assertion is that install-does-not-break-boot (registration is
+  fire-and-forget on `load`, so it never competes with or blocks the engine
+  download). Manual-dev caveat: `BUILD` is the git `HEAD` short hash and is stable
+  across same-commit rebuilds, so if you iterate on a persistent browser profile,
+  unregister the worker (DevTools → Application → Service Workers) or hard-reload
+  to pick up edits.
 
 ### The compat-seam rule
 

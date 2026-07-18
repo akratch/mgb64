@@ -32,14 +32,22 @@ const MOUSE_SENS_DEFAULT = 0.15;
 // build_web.sh seds this placeholder to a short content hash in the STAGED dist
 // copy only; the untouched source keeps the literal. When substituted we suffix
 // ?v=HASH on BOTH the ge007_web.js <script> and the ge007_web.wasm fetch, so the
-// pair always matches. Dynamic injection keeps the dist at exactly 5 files.
+// pair always matches. PERF-036 also keys the service-worker cache generation on
+// this same stamp (see registerServiceWorker below). Dynamic injection keeps the
+// favicon out of the dist, which is exactly 6 files (5 static + sw.js).
 const BUILD = "__MGB64_BUILD__";
 const _verParam = BUILD.indexOf("__MGB64") === -1 ? ("?v=" + BUILD) : "";
+// PERF-036: true only for a build_web.sh-STAMPED copy (the `?v=` case above). An
+// unstamped dev/ctest tree keeps the literal placeholder — SW registration is
+// gated on this so quick-iterating dev servers and the browser regression lanes
+// never get a sticky worker serving a stale iteration.
+const _isStampedBuild = BUILD.indexOf("__MGB64") === -1;
 
 // Favicon (trademark-free crosshair in the page accent), generated at runtime
 // as a Blob URL. Deliberately NOT a tracked data: URI (contamination guard
-// forbids embedded data-URI payloads) and NOT a 6th dist file (the web-demo
-// workflow pins the Pages artifact to exactly 5 files). Kills /favicon.ico 404.
+// forbids embedded data-URI payloads) and NOT an extra dist file (the web-demo
+// workflow pins the Pages artifact to exactly 6 files: the 5 static shell files
+// plus sw.js). Kills /favicon.ico 404.
 (() => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
     + '<g stroke="#5ce09a" stroke-width="2" fill="none">'
@@ -52,6 +60,31 @@ const _verParam = BUILD.indexOf("__MGB64") === -1 ? ("?v=" + BUILD) : "";
   link.href = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   document.head.appendChild(link);
 })();
+
+// PERF-036: register the cache-first service worker (web/sw.js) for instant
+// repeat boots + full offline play, and a more robust close on the WEB-032
+// glue/wasm skew window (atomic activate-on-complete keyed on the same build
+// hash). Deliberately fire-and-forget on `load`, so it NEVER competes with the
+// boot-critical engine download the main IIFE below kicks off, and never blocks
+// boot. Feature-checked + try/catch + silent .catch so a missing or blocked SW
+// is a non-event — the demo runs identically without it. No updatefound/reload
+// prompt: a new build precaches and activates atomically, and the next
+// navigation picks it up on its own (keep it simple).
+//
+// Gated on _isStampedBuild: an UNSTAMPED copy (the raw web/ source, placeholder
+// intact — never a real boot, since it lacks the built engine files) never
+// installs a worker. A build_web.sh-produced dist IS stamped, so serve_web.sh
+// and the web_boot_smoke / web_frame_probe ctest lanes DO register it — which is
+// fine: the lanes use a fresh Chrome profile (clean install every run) and only
+// assert that install doesn't break boot; registration is fire-and-forget so it
+// never blocks the engine download. (Manual dev caveat: BUILD is the git HEAD
+// short hash, stable across same-commit rebuilds, so if you iterate with a
+// persistent browser profile, unregister the worker / hard-reload to see edits.)
+if (_isStampedBuild && "serviceWorker" in navigator) {
+  addEventListener("load", () => {
+    try { navigator.serviceWorker.register("sw.js").catch(() => {}); } catch {}
+  });
+}
 
 const $ = (id) => document.getElementById(id);
 
