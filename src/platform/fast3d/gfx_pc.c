@@ -549,6 +549,24 @@ static struct {
 } draw_class_dl_ranges[MAX_DRAW_CLASS_DL_RANGES];
 static int draw_class_dl_range_count = 0;
 
+/* PERF-015: per-run memo for gfx_draw_class_for_cmd_addr().  Ranges are
+ * registered in DL-build order and the build cursor (DL) only advances within
+ * a frame, so registered ranges are pairwise DISJOINT (range k+1's start is
+ * >= range k's end).  Any address is therefore contained by AT MOST ONE range,
+ * and the scan below returns that unique range regardless of iteration order.
+ * The DL is walked in mostly-sequential address order, so caching the last
+ * containing range lets consecutive commands short-circuit the scan.  A memo
+ * HIT (addr inside the cached range) is provably identical to the scan result
+ * precisely because ranges are disjoint — there is no other containing range
+ * the scan could have preferred.  Only HITS are cached: a miss falls through
+ * to the scan and returns the caller-supplied `fallback`, which varies per
+ * call and must never be memoized.  Invalidated whenever the set changes
+ * (register / frame-end reset / recovery reset). */
+static bool g_drawclass_memo_valid = false;
+static uintptr_t g_drawclass_memo_start = 0;
+static uintptr_t g_drawclass_memo_end = 0;
+static enum DrawClass g_drawclass_memo_cls = DRAWCLASS_UNKNOWN;
+
 static int gfx_effect_range_trace_is_enabled(void) {
     if (g_effect_range_trace_enabled < 0) {
         const char *env = getenv("GE007_EFFECT_RANGE_TRACE");
@@ -583,6 +601,9 @@ void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, con
         return;
     }
 
+    /* The range set is about to change — drop the per-run memo (PERF-015). */
+    g_drawclass_memo_valid = false;
+
     for (int i = 0; i < draw_class_dl_range_count; i++) {
         if (draw_class_dl_ranges[i].cls == cls &&
             draw_class_dl_ranges[i].end == s) {
@@ -600,8 +621,20 @@ void gfx_register_draw_class_dl_range(enum DrawClass cls, const void *start, con
 }
 
 static enum DrawClass gfx_draw_class_for_cmd_addr(uintptr_t addr, enum DrawClass fallback) {
+    /* Fast path: the previous lookup's containing range (PERF-015).  Safe
+     * because ranges are disjoint (see the memo declaration): a hit is the
+     * one-and-only container, identical to what the scan would return. */
+    if (g_drawclass_memo_valid &&
+        addr >= g_drawclass_memo_start && addr < g_drawclass_memo_end) {
+        return g_drawclass_memo_cls;
+    }
+
     for (int i = draw_class_dl_range_count - 1; i >= 0; i--) {
         if (addr >= draw_class_dl_ranges[i].start && addr < draw_class_dl_ranges[i].end) {
+            g_drawclass_memo_valid = true;
+            g_drawclass_memo_start = draw_class_dl_ranges[i].start;
+            g_drawclass_memo_end = draw_class_dl_ranges[i].end;
+            g_drawclass_memo_cls = draw_class_dl_ranges[i].cls;
             return draw_class_dl_ranges[i].cls;
         }
     }
@@ -4909,7 +4942,8 @@ static uint32_t g_room_xlu_sort_serial = 0;
 #define ROOM_XLU_DEFER_MAX_BATCHES 4096
 
 struct GfxRoomXluDeferredBatch {
-    float *vbo;
+    float *vbo;         /* transient: materialized from vbo_offset at replay */
+    size_t vbo_offset;  /* PERF-016: float offset into room_xlu_defer_arena */
     size_t len;
     size_t tris;
     size_t stride;
@@ -4928,6 +4962,44 @@ struct GfxRoomXluDeferredBatch {
 static struct GfxRoomXluDeferredBatch room_xlu_deferred_batches[ROOM_XLU_DEFER_MAX_BATCHES];
 static size_t room_xlu_deferred_count = 0;
 static uint32_t room_xlu_deferred_serial = 0;
+
+/* PERF-016: persistent high-water arena backing the deferred XLU batch copies.
+ * Batches carve their vertex data here sequentially instead of each doing its
+ * own malloc/memcpy/free every frame.  The arena grows by realloc on high-water
+ * demand and is NEVER shrunk or freed (rewound to 0 at replay / reset; the OS
+ * reclaims it at process exit) so the steady state does zero heap churn.
+ * Because a growth realloc can MOVE the buffer while earlier batches are still
+ * alive, batches store an OFFSET (vbo_offset) rather than a raw pointer; the
+ * pointer is materialized only at replay, after all growth for the frame is
+ * done.  All live batches are carved in increasing-offset order and drained as
+ * one group at gfx_room_xlu_deferred_draw_pending(), so a single rewind frees
+ * them all; the only partial reclaim is an OOM suffix rollback. */
+static float *room_xlu_defer_arena = NULL;
+static size_t room_xlu_defer_arena_used = 0;   /* floats currently carved */
+static size_t room_xlu_defer_arena_cap = 0;    /* floats allocated */
+
+/* Reserve `floats` contiguous floats; returns their offset, or SIZE_MAX if the
+ * growth realloc fails (arena and used-count left unchanged on failure). */
+static size_t gfx_room_xlu_defer_arena_alloc(size_t floats) {
+    if (floats > room_xlu_defer_arena_cap - room_xlu_defer_arena_used) {
+        size_t need = room_xlu_defer_arena_used + floats;
+        size_t new_cap = room_xlu_defer_arena_cap ? room_xlu_defer_arena_cap : 4096;
+        while (new_cap < need) {
+            new_cap *= 2;
+        }
+        float *grown = (float *)realloc(room_xlu_defer_arena,
+                                        new_cap * sizeof(float));
+        if (grown == NULL) {
+            return SIZE_MAX;
+        }
+        room_xlu_defer_arena = grown;
+        room_xlu_defer_arena_cap = new_cap;
+    }
+
+    size_t offset = room_xlu_defer_arena_used;
+    room_xlu_defer_arena_used += floats;
+    return offset;
+}
 
 /* Background clear color */
 static float clear_r = 0, clear_g = 0, clear_b = 0;
@@ -14190,9 +14262,15 @@ static int gfx_room_xlu_defer_enabled(void) {
 }
 
 static void gfx_room_xlu_deferred_free_from(size_t first) {
-    for (size_t i = first; i < room_xlu_deferred_count; i++) {
-        free(room_xlu_deferred_batches[i].vbo);
-        room_xlu_deferred_batches[i].vbo = NULL;
+    /* PERF-016: batches no longer own their vbo memory — it is carved from the
+     * shared high-water arena in increasing-offset order.  Reclaiming a suffix
+     * therefore just rewinds the arena high-water to where that suffix began.
+     * batch[0] is always carved at offset 0 (the arena is rewound to 0 whenever
+     * the batch list is emptied), so first==0 rewinds the whole arena. */
+    if (first < room_xlu_deferred_count) {
+        room_xlu_defer_arena_used = room_xlu_deferred_batches[first].vbo_offset;
+    } else if (first == 0) {
+        room_xlu_defer_arena_used = 0;
     }
     room_xlu_deferred_count = first;
 }
@@ -14357,9 +14435,13 @@ static void gfx_room_xlu_deferred_draw_pending(void) {
         struct GfxRoomXluDeferredBatch *batch = &room_xlu_deferred_batches[i];
         struct GfxRoomXluDeferPixelProbe pixel_probe;
         bool pixel_probe_active;
-        if (batch->vbo == NULL || batch->len == 0 || batch->tris == 0) {
+        if (batch->len == 0 || batch->tris == 0) {
             continue;
         }
+
+        /* PERF-016: materialize the arena pointer now — all growth for this
+         * frame is done, so the base address is stable for the whole replay. */
+        batch->vbo = room_xlu_defer_arena + batch->vbo_offset;
 
         gfx_apply_rendering_state_snapshot(&batch->state);
         pixel_probe_active =
@@ -14371,11 +14453,11 @@ static void gfx_room_xlu_deferred_draw_pending(void) {
         if (pixel_probe_active) {
             gfx_room_xlu_defer_pixel_probe_finish(&pixel_probe);
         }
-        free(batch->vbo);
         batch->vbo = NULL;
     }
 
     room_xlu_deferred_count = 0;
+    room_xlu_defer_arena_used = 0;   /* PERF-016: rewind, keep high-water cap */
     gfx_apply_rendering_state_snapshot(&saved_state);
 }
 
@@ -14443,18 +14525,21 @@ static bool gfx_room_xlu_defer_buffer(size_t stride) {
         const struct GfxRoomXluSortGroup *group = &room_xlu_sort_groups[i];
         size_t src = group->start * tri_floats;
         size_t len = group->count * tri_floats;
-        float *vbo = (float *)malloc(len * sizeof(float));
+        size_t offset = gfx_room_xlu_defer_arena_alloc(len);
 
-        if (vbo == NULL) {
+        if (offset == SIZE_MAX) {
+            /* Arena growth failed — roll back this call's suffix; free_from()
+             * rewinds the arena high-water to where these additions began. */
             gfx_room_xlu_deferred_free_from(first_added);
             return false;
         }
 
-        memcpy(vbo, &buf_vbo[src], len * sizeof(float));
+        memcpy(&room_xlu_defer_arena[offset], &buf_vbo[src], len * sizeof(float));
 
         struct GfxRoomXluDeferredBatch *batch =
             &room_xlu_deferred_batches[room_xlu_deferred_count++];
-        batch->vbo = vbo;
+        batch->vbo = NULL;         /* materialized from vbo_offset at replay */
+        batch->vbo_offset = offset;
         batch->len = len;
         batch->tris = group->count;
         batch->stride = stride;
@@ -25127,6 +25212,7 @@ void gfx_run_dl(Gfx *dl) {
                 dl_depth = 0;
                 effect_dl_range_count = 0;
                 draw_class_dl_range_count = 0;
+                g_drawclass_memo_valid = false;
                 visibility_scaled_matrix_region_count = 0;
                 return;
             }
@@ -25462,6 +25548,7 @@ void gfx_run_dl(Gfx *dl) {
 
     effect_dl_range_count = 0;
     draw_class_dl_range_count = 0;
+    g_drawclass_memo_valid = false;
 }
 
 /* ===== Sky Triangle Rendering ===== */
