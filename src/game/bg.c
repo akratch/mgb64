@@ -17150,8 +17150,20 @@ void sub_GAME_7F0B8A6C(void) {
          * class. The frozen intro is a detached authored camera, so
          * camera_walk_seed_room >= 0 and the draw-only invariant below holds.
          * Opt out (restore the bare-sky vista, prove byte-identical default) with
-         * GE007_NO_INTRO_FARVISTA_ADMIT. */
+         * GE007_NO_INTRO_FARVISTA_ADMIT.
+         *
+         * Scope: Dam ONLY (g_CurrentStageToLoad == LEVELID_DAM). Over-admission
+         * safety (no z-fighting, no train-sky-leak-class shards) was only validated
+         * against the Dam stock-ares establishing shot; Silo's frozen intro instead
+         * pins the opt-out ON in its own regression
+         * (tools/silo_intro_aperture_regression.sh) rather than being validated here.
+         * Per repo doctrine, an unvalidated-vs-stock change must not ship on levels
+         * it hasn't been checked against, so gate on the current level. Other levels'
+         * frozen intros are candidates for the same fix pending their own stock-ares
+         * adjudication -- see docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md, section
+         * "C. Room admission / DAM-R2", R-01. */
         {
+            extern s32 g_CurrentStageToLoad;
             static int no_intro_farvista = -1;
             if (no_intro_farvista < 0) {
                 no_intro_farvista =
@@ -17160,6 +17172,7 @@ void sub_GAME_7F0B8A6C(void) {
                                  "admission (restore the bare-sky establishing shot)");
             }
             if (!no_intro_farvista
+                && g_CurrentStageToLoad == LEVELID_DAM
                 && playerHasFrozenIntroCamera(g_CurrentPlayer)) {
                 u8 snap_rendered[MAXROOMCOUNT];
                 u8 snap_neighbor[MAXROOMCOUNT];
@@ -17177,7 +17190,10 @@ void sub_GAME_7F0B8A6C(void) {
 
                 /* Add every frustum-visible, loaded, not-yet-rendered room to the
                  * draw list. Same gate set as the T13 room-visibility classifier:
-                 * model loaded + frustum-visible (sub_GAME_7F0B5208). */
+                 * model loaded + frustum-visible (sub_GAME_7F0B5208). Start at
+                 * idx=1: room 0 is the null/sky room (matches the snapshot/restore
+                 * loops below, which start at 0 only because they must also cover
+                 * that null slot's -- always-zero -- fields). */
                 for (idx = 1; idx < g_MaxNumRooms; idx++) {
                     if (g_BgRoomInfo[idx].room_rendered) continue;
                     if (!g_BgRoomInfo[idx].model_bin_loaded) continue;
@@ -17188,11 +17204,17 @@ void sub_GAME_7F0B8A6C(void) {
                 }
 
                 /* Mark the delta draw-only, then restore the sim-visible fields so
-                 * the sim reads exactly the pre-pass room_rendered set. */
+                 * the sim reads exactly the pre-pass room_rendered set. Guard the
+                 * count increment on !g_BgRoomDrawOnly[idx]: the adjacent T13b walk
+                 * above may have already flagged this room draw-only, and without
+                 * the guard this pass would double-count it in
+                 * g_BgRoomDrawOnlyCount. */
                 for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
                     if (g_BgRoomInfo[idx].room_rendered && !snap_rendered[idx]) {
+                        if (!g_BgRoomDrawOnly[idx]) {
+                            g_BgRoomDrawOnlyCount++;
+                        }
                         g_BgRoomDrawOnly[idx] = 1;
-                        g_BgRoomDrawOnlyCount++;
                     }
                     g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
                     g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];

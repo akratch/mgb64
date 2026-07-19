@@ -44,7 +44,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
 | TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
 | TMEM-1 (format reinterpretation) | **RESOLVED — NO DEFECT (2026-07-19 census)** | census at the texSelect choke point: reinterpretation is a phantom. `texSelect` (retail 0x7F076D68) selects `format = tex->gbiformat` (pool) over `tconfig->format` (table) whenever the texture is pooled — RDP-definitional, retail-identical. The table's differing fmt is discarded metadata, NOT honored on hardware. Class (b) live-divergence = EMPTY; see §TMEM-1 census. |
-| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19)** | stock draws the shore (Task 0); camera is CORRECT (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. Residual intro-FOV framing gap filed separately (CutsceneFovY, not FovY). |
+| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower, more foreground) remains OPEN — unadjudicated `CutsceneFovY`, see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
 | R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
 | FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
 
@@ -336,21 +336,32 @@ correct across all three backends + a CPU reference (see §E).*
 
 ## C. Room admission / DAM-R2
 
-### R-01 — DAM-R2: distant reservoir shore not admitted from the establishing cam — P2, **LANDED 2026-07-19**
+### R-01 — DAM-R2: distant reservoir shore not admitted from the establishing cam — P2, **LANDED 2026-07-19 (Dam-scoped)**
 **Resolution (2026-07-19):** stock draws the shore (Task 0 ground truth). The suspected
 intro-camera *pitch divergence* was a MISDIAGNOSIS: force-admitting the classifier's
 frustum-visible far rooms at the as-is native camera renders the reservoir/shore/mountains
-at the stock location — the camera was aimed correctly; the missing far geometry left
-sky-clear color that read as a wrong pitch. The far rooms have NO portal across the
-open-water gap (R-03), so no portal-gated widener can reach them. Fixed by admitting every
-frustum-visible, loaded, not-yet-rendered room into the **draw-only** set during
-`playerHasFrozenIntroCamera` only, via the T13b reproduce-then-restore idiom (sim-neutral:
-`room_rendered` restored, draw list carries the vista). Opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`
-reproduces the bare-sky baseline byte-identically. ROI [80,95,480,80] WebGPU luma 91→62,
-blue-dom 1.00→0.86 (toward stock ~44/0.74); GL agrees. A residual intro **FOV/framing** gap
-vs stock remains (native intro uses `Video.CutsceneFovY`=60, not `Video.FovY`; whether
-retail's authored establishing FOV is truly 60 is unadjudicated) — filed separately, NOT
-DAM-R2. Original CONFIRMED analysis below.
+at the stock location — the camera AIM admits the rooms (not a pitch defect); the missing
+far geometry left sky-clear color that read as a wrong pitch. The far rooms have NO portal
+across the open-water gap (R-03), so no portal-gated widener can reach them. Fixed by
+admitting every frustum-visible, loaded, not-yet-rendered room into the **draw-only** set
+during `playerHasFrozenIntroCamera` only, via the T13b reproduce-then-restore idiom
+(sim-neutral: `room_rendered` restored, draw list carries the vista). Opt-out
+`GE007_NO_INTRO_FARVISTA_ADMIT` reproduces the bare-sky baseline byte-identically. ROI
+[80,95,480,80] WebGPU luma 91→62, blue-dom 1.00→0.86 (toward stock ~44/0.74); GL agrees. A
+residual intro **FOV/framing** gap vs stock remains OPEN and is a *separate finding, NOT
+DAM-R2*: native shows more dam-wall foreground and the mountains sit lower/smaller than
+stock at the same byte-identical logged camera; native intro uses `Video.CutsceneFovY`=60,
+not `Video.FovY` (Task 0's FovY override didn't change the intro framing), and whether
+retail's authored establishing FOV is truly 60 is unadjudicated.
+
+**Scope (review finding, this round):** over-admission safety was validated on Dam only
+(plus Silo, which pins the opt-out ON in `tools/silo_intro_aperture_regression.sh` rather
+than being validated). Per repo doctrine, an unvalidated-vs-stock change must not ship on
+levels it hasn't been checked against, so the fix is gated to
+`g_CurrentStageToLoad == LEVELID_DAM` in `bg.c` — it no longer fires on any other level's
+frozen intro. Other levels' frozen intros (Facility, Silo, Frigate, etc.) are candidates
+for the same admission pass pending their own stock-ares over-admission adjudication; this
+R-01 entry is the doc-of-record for that follow-up. Original CONFIRMED analysis below.
 
 
 Reproduced: `GE007_INTRO_CAMERA_INDEX=4` resolves to room 71; the shore-bearing far

@@ -157,12 +157,12 @@ echo "  rom:    $ROM"
 
 # Isolate the FID-0009 camera-seed walk that THIS lane guards. DAM-R2 added a second,
 # independent draw-only admission mechanism (GE007_NO_INTRO_FARVISTA_ADMIT / bg.c far-vista
-# pass) that also runs during the Silo frozen intro and independently admits the grazing
-# room 27, which would MASK the leak in the opt-out control and defeat the FID-0009 fail-on-
-# revert. Disable it in BOTH captures so the walk is the only mechanism under test. (The
-# DAM-R2 far-vista pass is itself sim-neutral here -- with it ON, room 27 is still admitted
-# draw-only and every sim-consumed field stays byte-identical -- but that is DAM-R2's lane,
-# not FID-0009's.)
+# pass); when it ran on every frozen intro it independently admitted the grazing room 27
+# on Silo, MASKING the leak in the opt-out control and defeating the FID-0009 fail-on-
+# revert. The pass is now scoped to the Dam level only (review round 1), so it cannot fire
+# here -- but keep the opt-out pinned in BOTH captures as defense-in-depth: this lane must
+# stay valid even if the far-vista pass is later extended to more levels after their own
+# stock adjudication (see DAM_RENDER_DEEP_DIVE_2026-07-18.md R-01).
 capture fix    GE007_NO_INTRO_FARVISTA_ADMIT=1
 capture optout GE007_NO_INTRO_FARVISTA_ADMIT=1 GE007_NO_CAMERA_SEED_MULTIHOP=1
 
