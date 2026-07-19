@@ -87,6 +87,27 @@ float cosf(float);
 double cos(double);
 #endif
 
+/* Standard <math.h> macros. This shadow header REPLACES the system <math.h> (it
+ * declares its own libm prototypes instead of #include-ing it), so it must also
+ * supply the standard macros that framework/library headers expect when THEY
+ * pull in <math.h> and this shadow wins the search path — notably macOS Metal's
+ * MTLAccelerationStructureTypes.h references INFINITY under the Xcode 15.4 SDK,
+ * which broke the ge007_lib universal build (gfx_metal.mm). Guarded, so any
+ * system/earlier definition wins; the game references none of these (grep: 0
+ * INFINITY/NAN/HUGE_VAL uses in src/), so every game/decomp TU is byte-identical. */
+#ifndef INFINITY
+#define INFINITY  (__builtin_inff())
+#endif
+#ifndef NAN
+#define NAN       (__builtin_nanf(""))
+#endif
+#ifndef HUGE_VALF
+#define HUGE_VALF (__builtin_huge_valf())
+#endif
+#ifndef HUGE_VAL
+#define HUGE_VAL  (__builtin_huge_val())
+#endif
+
 #ifndef M_PI_F
 #define M_PI_F 3.1415927f
 #endif
