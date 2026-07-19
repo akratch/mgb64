@@ -26,6 +26,10 @@
     {
       "kind": "doc-anchor",
       "path": "docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md (TMEM-1 row + section, 2026-07-19 census update); docs/audit/DAM_PARITY_DEEP_DIVE_2026-07-17.md#4.7 (2026-07-19 Task 2 correction)"
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/othermodemicrocode.c (texSelect, one-shot instrumented Dam boot, fix round 1 2026-07-19): texnum 1980's raw 32x32 pool bytes (1024 x CI8 index + 190-entry palette) dual-decoded offline both ways -- (i) CI8 index + palette under IA16-TLUT semantics (the resolved pool fmt) renders a coherent soft radial/vignette alpha-gradient blob (authored env falloff mask; every palette entry has intensity byte 0, so the whole authored signal lives in the alpha ramp); (ii) the identical byte stream reinterpreted as raw RGBA5551 (both big- and little-endian word order, per the table's RGBA(0)/8b placeholder) renders chaotic multicolour speckle noise with no plausible authored content in either byte order. This is positive, not just structural, evidence that the pool CI8 fmt is the authored intent and the table RGBA placeholder is inert metadata, confirming the BENIGN classification for texnum 1980."
     }
   ],
   "history": [
@@ -42,6 +46,13 @@
       "to": "refuted",
       "evidence": "src/game/othermodemicrocode.c:670-680 (texSelect); GE007_TRACE_TMEM_REINTERP census (2 pooled members, no divergence); left-monitor ROI green std=30.1.",
       "note": "REFUTED (Task 2). The choke point is texSelect (retail 0x7F076D68), the only place holding both the table entry and the pool entry. It selects format = tex->gbiformat (pool) over tconfig->format (table) for every pooled texture and emits the DL with the pool fmt, so retail hardware draws CI, not I8 -- there is nothing to 'honor'. The 4.7 'I8 tile / G_CC_MODULATEI intensity term' story mis-took tconfig->format=I8 (discarded metadata) for the emitted format; texSelect emits CI + G_CC_MODULATEIA and the CI4->IA16-TLUT decode (fb59c95) produces the text. Landed the game-wide fmt-mismatch census (off by default) the 'generalized class' backlog item asked for; it is retained as the standing audit tool. Class (b) live-divergence = EMPTY -> NO engine fix. Diagnostic-only, default rendering byte-identical (census ON vs OFF = 0 px)."
+    },
+    {
+      "ts": "2026-07-19T18:10:00Z",
+      "from": "refuted",
+      "to": "refuted",
+      "evidence": "src/game/othermodemicrocode.c (texSelect, one-shot instrumented Dam boot): texnum 1980 raw-bytes dual-decode -- CI8+IA16-TLUT coherent vs RGBA5551-raw noise.",
+      "note": "Review finding closed (Task 2 fix round 1): reviewer accepted texnum 2224 (empirically corroborated vs stock) but flagged texnum 1980 as resting only on the structural pooled->pool-fmt argument, with no positive evidence. Produced it: dumped texnum 1980's real raw pool bytes (32x32 CI8 index + 190-colour palette) from a live one-shot instrumented boot and decoded them offline both ways. CI8+palette/IA16-TLUT (the resolved pool fmt) yields a coherent authored soft-gradient alpha blob; the same bytes reinterpreted as raw RGBA5551 (both byte orders, the table's placeholder fmt) yield incoherent colour-speckle noise. Status unchanged (still refuted/BENIGN); this closes the evidence gap the reviewer identified."
     }
   ]
 }
