@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1079 flags** found across the source.
+**1080 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -1022,6 +1022,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_TRACE_TILE_NAME` | ? |  | 2 |  |
 | `GE007_TRACE_TINTED_GLASS` | ? |  | 2 |  |
 | `GE007_TRACE_TINTED_GLASS_BUDGET` | ? |  | 2 |  |
+| `GE007_TRACE_TMEM_REINTERP` | ? |  | 1 |  |
 | `GE007_TRACE_TRAVEL_ANIM` | ? |  | 1 |  |
 | `GE007_TRACE_TRI_PIXEL` | ? |  | 3 |  |
 | `GE007_TRACE_TRI_PIXEL_AFTER_FRAME` | ? |  | 2 |  |
