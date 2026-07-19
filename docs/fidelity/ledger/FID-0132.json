@@ -6,7 +6,7 @@
   "priority": "P2",
   "status": "landed",
   "suspect": [],
-  "repro": "GE007_TRACE_HULL_DEGEN=1 boot of Dam: 40 objects emit degenerate footprints, of which 31 are SPURIOUS (the clamp defect) and 9 are INHERENT (collinear panels, unfixable by design). GE007_TRACE_MONITOR_Y warp pad 100: 3 monitors at -618.71 (floor), 1 at -525.31 (desk).",
+  "repro": "GE007_TRACE_HULL_DEGEN=1 boot of Dam: 40 objects emit degenerate footprints, of which 31 are SPURIOUS (the clamp defect) and 9 are INHERENT (collinear panels, unfixable by design). ctest hull_builder is GREEN by default (unclamped, retail-faithful) and RED under HULL_TEST_CLAMP=1 (pre-fix clamp behavior). The monitor floor-snap is reproducible end-to-end via the registered tools/rom_oracle_routes/dam_monitor_probe_visual.json capture route (pad 100, game_timer 1190); at the time of root-causing, pre-fix warp-pad measurement showed 3 monitors at -618.71 (floor) and 1 at -525.31 (desk) -- recorded fact, not a currently-committed flag.",
   "evidence": [
     {
       "kind": "asm-citation",
@@ -14,7 +14,7 @@
     },
     {
       "kind": "counter-log",
-      "path": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 31->0 spurious hulls (40 degenerate total pre-fix, 9 inherent/collinear and unfixable by design; 116->0 spurious across dam/facility/archives/streets); GE007_TRACE_MONITOR_Y pad 100 pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical)."
+      "path": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 31->0 spurious hulls (40 degenerate total pre-fix, 9 inherent/collinear and unfixable by design; 116->0 spurious across dam/facility/archives/streets); registered dam_monitor_probe_visual route (tools/rom_oracle_routes/dam_monitor_probe_visual.json, committed ceeb8b8) pad 100 warp-pad measurement pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical)."
     },
     {
       "kind": "doc-anchor",
@@ -37,7 +37,7 @@
       "ts": "2026-07-19T12:54:14Z",
       "from": "triaged",
       "to": "root-caused",
-      "evidence": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 31->0 spurious hulls (40 degenerate total pre-fix, 9 inherent/collinear and unfixable by design; 116->0 spurious across dam/facility/archives/streets); GE007_TRACE_MONITOR_Y pad 100 pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical).",
+      "evidence": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 31->0 spurious hulls (40 degenerate total pre-fix, 9 inherent/collinear and unfixable by design; 116->0 spurious across dam/facility/archives/streets); registered dam_monitor_probe_visual route (tools/rom_oracle_routes/dam_monitor_probe_visual.json, committed ceeb8b8) pad 100 warp-pad measurement pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical).",
       "note": "Mechanism: thin/near-axis-aligned box -> 2 distinct extreme picks -> emit collapses to <4 distinct after clamp; point-in-poly tests a triangle. Fix scoped to collision_data-backed path (rect==&data->unk04); tank path stays clamped."
     },
     {

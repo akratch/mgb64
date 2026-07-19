@@ -177,7 +177,7 @@ def repo_root(explicit: str | None) -> str:
 def source_files(root: str) -> list[str]:
     out = subprocess.check_output(
         ["git", "ls-files", "src/*.c", "src/*.h", "src/**/*.c", "src/**/*.h",
-         "src/**/*.cpp", "src/**/*.mm", "include/**/*.h"],
+         "src/**/*.cpp", "src/**/*.mm", "src/**/*.inc", "include/**/*.h"],
         cwd=root, text=True,
     )
     return [l for l in out.splitlines() if l]
