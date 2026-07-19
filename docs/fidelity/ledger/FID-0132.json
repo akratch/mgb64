@@ -1,0 +1,58 @@
+{
+  "id": "FID-0132",
+  "title": "sub_GAME_7F03ECC0 hull clamp drops real corners on the collision path (Dam monitors floor-snap); unclamp the collision_data-backed path",
+  "class": "port-defect",
+  "surface": "sim",
+  "priority": "P2",
+  "status": "landed",
+  "suspect": [],
+  "repro": "GE007_TRACE_HULL_DEGEN=1 boot of Dam: 40 objects emit degenerate (spurious) footprints. GE007_TRACE_MONITOR_Y warp pad 100: 3 monitors at -618.71 (floor), 1 at -525.31 (desk).",
+  "evidence": [
+    {
+      "kind": "asm-citation",
+      "path": "src/game/chrprop_hull_impl.inc: retail 0x7F03ECC0 stores the true hull vertex count (up to 8, geometrically <=6 for a box) with NO clamp, writing overflow verts into the collision_data words after the 4-vertex rect4f (rect==&data->unk04). FID-0096 added an unconditional clamp-to-4 for tank-path memory safety, but that also clamps the object/door collision path, DROPPING real hull corners for thin/near-axis-aligned box footprints: chrpropTestPointInPolygon then tests a triangle/duplicated-corner sliver, so sub_GAME_7F03FAB0 desk detection fails and objInit floor-snaps props. Root symptom: 3 of 4 Dam security-hut monitors (setup pads 88/91/97) grounded at floor y=-618.71 instead of desk y=-525.31."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 40->0 spurious hulls (116->0 across dam/facility/archives/streets); GE007_TRACE_MONITOR_Y pad 100 pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical)."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/chrprop_hull_impl.inc"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tests/test_hull_builder.c: corpus ctest hull_builder GREEN (unclamped) / RED under HULL_TEST_CLAMP=1 (pre-fix clamp fails the real Dam desk box: 4->3 corners, dropped corner outside). Refactor byte-identical (full HULL_DEGEN log diff clean)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-19T12:51:05Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "src/game/chrprop_hull_impl.inc: retail 0x7F03ECC0 stores the true hull vertex count (up to 8, geometrically <=6 for a box) with NO clamp, writing overflow verts into the collision_data words after the 4-vertex rect4f (rect==&data->unk04). FID-0096 added an unconditional clamp-to-4 for tank-path memory safety, but that also clamps the object/door collision path, DROPPING real hull corners for thin/near-axis-aligned box footprints: chrpropTestPointInPolygon then tests a triangle/duplicated-corner sliver, so sub_GAME_7F03FAB0 desk detection fails and objInit floor-snaps props. Root symptom: 3 of 4 Dam security-hut monitors (setup pads 88/91/97) grounded at floor y=-618.71 instead of desk y=-525.31.",
+      "note": "Task 1b: refutes the DAM_PARITY 4.7 'CRT body never draws / opcode-0x12' render hypothesis; real cause is this collision-hull clamp. Supersedes the deferred FID-0096 faithful-mode decision for the collision path."
+    },
+    {
+      "ts": "2026-07-19T12:54:14Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/game/chrprop_hull_impl.inc: GE007_TRACE_HULL_DEGEN Dam census 40->0 spurious hulls (116->0 across dam/facility/archives/streets); GE007_TRACE_MONITOR_Y pad 100 pre 3@-618.71+1@-525.31, post 0@-618.71+4@-525.31 (WebGPU and GL identical).",
+      "note": "Mechanism: thin/near-axis-aligned box -> 2 distinct extreme picks -> emit collapses to <4 distinct after clamp; point-in-poly tests a triangle. Fix scoped to collision_data-backed path (rect==&data->unk04); tank path stays clamped."
+    },
+    {
+      "ts": "2026-07-19T12:54:14Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/game/chrprop_hull_impl.inc",
+      "note": "Extracted geometry to a shared .inc; caller passes retail_unclamped for the collision path."
+    },
+    {
+      "ts": "2026-07-19T12:54:14Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tests/test_hull_builder.c: corpus ctest hull_builder GREEN (unclamped) / RED under HULL_TEST_CLAMP=1 (pre-fix clamp fails the real Dam desk box: 4->3 corners, dropped corner outside). Refactor byte-identical (full HULL_DEGEN log diff clean).",
+      "note": "Landed on fix/tier1-render (Task 1b)."
+    }
+  ]
+}

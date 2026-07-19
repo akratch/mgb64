@@ -113,6 +113,19 @@ library namespace — wgpu-native and Dawn disagree on `WGPUTextureFormat` value
 | 16 | **FMA-1** | float cull | P2 | CONFIRMED(mech) | web vs native | Backface-cull cross-product dead-band covers only CPU-clipped room tris; guard/prop/weapon geometry can flip culled↔drawn. |
 | 17 | **DAM-R1c** | shader | P3 | CONFIRMED | web | WGSL combiner emitter is a partial port; `room_water_alpha_suppress` (Frigate, not Dam) is un-ported. |
 
+**CORRECTION (2026-07-19, Task 1b — FID-0132):** the companion "monitor floor-level
+detachment" symptom (the prior "pad-spawned single monitors render only the screen
+sub-DL; the **CRT body never draws** / opcode-0x12 switch" hypothesis carried in
+DAM_PARITY §4.7) is **REFUTED**. The CRT body draws; the monitors were mis-**placed**,
+not mis-drawn. Root cause is a **sim** defect, not a render defect: the NONMATCHING
+collision-hull builder `sub_GAME_7F03ECC0` emitted a degenerate footprint for the
+near-axis-aligned desk collision boxes (the FID-0096 `hullVertexCount` clamp-to-4
+dropped real hull corners → point-in-polygon triangle → desk-detection miss →
+floor-snap at `runtime_pos.y=−618.71` vs the desk `−525.31`). Fixed by unclamping
+the collision_data-backed path (retail-faithful); 4/4 hut monitors now seat on
+desks, both backends; Dam degenerate-hull census 40→0. **TMEM-1 (monitor flat-green
+*text*, row 2) is a distinct, still-open texture defect** and is unaffected.
+
 Lower-severity / by-design items (AC-2/4/5, BLEND-3/4/5, FILT-3/4/5, TMEM-5, FMA-3/4,
 PVD-003, R-03/04/05) are detailed in their sections. **Beyond-1:1 constraint-release
 catalog (R1–R10)** is §F.
