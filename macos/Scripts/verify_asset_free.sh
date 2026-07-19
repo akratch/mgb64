@@ -276,11 +276,34 @@ else
     # app bundles AND standalone executables/dylibs use a 16 MB BSS-aware
     # threshold; the tight 500 KB threshold applies only to static libraries
     # (.a), whose per-object __DATA carries no such reservation.
-    IS_MACHO_IMAGE=false
+    # Classify the binary so the right data-segment threshold applies. A ROM
+    # would show up as ~12 MB of real initialized data on every platform; what
+    # differs is how `size` measures the CLEAN baseline.
+    IS_MACHO_IMAGE=false   # macOS `size` folds __bss into __DATA (~10 MB base)
+    IS_ELF_IMAGE=false     # Linux `size` DATA is REAL data (bss is a separate col)
     if file "$BINARY" 2>/dev/null | grep -qiE "Mach-O.*(executable|shared library|dylib)"; then
         IS_MACHO_IMAGE=true
+    elif file "$BINARY" 2>/dev/null | grep -qiE "ELF.*(executable|shared object)"; then
+        IS_ELF_IMAGE=true
     fi
-    if [[ "${APP_BUNDLE_INPUT}" == true || "${IS_MACHO_IMAGE}" == true ]]; then
+    if [[ "${IS_ELF_IMAGE}" == true ]]; then
+        # Linux ELF program: the 8 MB RDRAM reservation lives in BSS (a separate
+        # `size` column), so the DATA column is real initialized data/rodata. A
+        # clean port is well under 1 MB (WGSL/combiner string tables etc.); a
+        # compiled-in ROM adds ~12 MB. A 4 MB FAIL catches the ROM with headroom
+        # for legitimate code growth. (Previously an ELF executable fell through to
+        # the 500 KB static-library branch below — a misclassification, per this
+        # block's own "standalone executables use the BSS-aware threshold" intent —
+        # which false-positived once legit rodata crossed 500 KB. Checks 1/2/3/5
+        # remain the primary ROM detectors; this is only the coarse size backstop.)
+        if (( DATA_SIZE > 4194304 )); then
+            fail "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Threshold: 4 MB (ELF program). Assets may be compiled in."
+        elif (( DATA_SIZE > 2097152 )); then
+            warn "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Above 2 MB -- review for embedded assets."
+        else
+            pass "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Within limits (ELF program)."
+        fi
+    elif [[ "${APP_BUNDLE_INPUT}" == true || "${IS_MACHO_IMAGE}" == true ]]; then
         if (( DATA_SIZE > 16777216 )); then
             fail "Data segment is ${DATA_KB} KB (${DATA_SIZE} bytes). Threshold: 16 MB. Assets may be compiled in."
         elif (( DATA_SIZE > 12582912 )); then
