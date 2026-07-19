@@ -4,7 +4,7 @@
   "level": 34,
   "frames": 150,
   "route_class": "scripted_contract",
-  "description": "Facility door interaction contract. Bond is deterministically placed at door object 158, then real B input opens and reverses the door while interact, door, and camera-clearance traces prove the transition.",
+  "description": "Facility door interaction contract. Bond is deterministically placed at door object 158, then real B input opens and reverses the door while interact, door, and camera-clearance traces prove the transition. [Recalibrated 2026-07-19 for FID-0132: with the retail-correct door collision footprint the camera-clearance ray grazes the closing door 4x (was 20+ against the degenerate half-hull); the assertion still proves the clearance path fires. Attribution via GE007_NO_HULL_CORNER_FIX=1 A/B. See docs/fidelity/ledger/FID-0132.json.]",
   "env": {
     "GE007_DEBUG": 1,
     "GE007_ASSERT_ON_FAIL": 0,
@@ -66,7 +66,7 @@
       {
         "name": "moving_closing_door_clearance_hits",
         "pattern": "^\\[CAM-CLEARANCE\\].*\\bhit_prop_type=2\\b.*\\bhit_obj=158\\b.*\\bhit_door_state=2\\b.*\\bhit_door_open=(?!0\\.000)0\\.\\d+",
-        "min_count": 20
+        "min_count": 3
       }
     ],
     "setup_target_milestones": [
