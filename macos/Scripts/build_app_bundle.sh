@@ -249,6 +249,30 @@ if [[ ! -f "${ENGINE_LIB}" ]]; then
     die "Missing engine library: ${ENGINE_LIB}. Run without --no-cmake first."
 fi
 
+# WebGPU (wgpu-native) transitive link deps. libge007_lib.a is a STATIC archive,
+# so it carries the engine's wgpu*/C++ symbol REFERENCES but not the wgpu library
+# or libc++ themselves — the final swiftc link must resolve them. Since the
+# 2026-07-13 WebGPU-default flip, MGB64_WEBGPU_BACKEND=ON is the default, so
+# ge007_lib references wgpuCreateInstance/etc. and needs these; without them the
+# app-bundle link fails "Undefined symbols … _wgpu* / ___gxx_personality_v0".
+# The lib path + macOS framework list mirror cmake/webgpu.cmake exactly (the
+# INTERFACE `webgpu` target the ge007 executable links). Empty when the wgpu lib
+# is absent (a GL/Metal-only MGB64_WEBGPU_BACKEND=OFF build), so that path is
+# unaffected.
+WGPU_LINK=()
+WGPU_LIB="${BUILD_DIR}/_deps/wgpu_native-src/lib/libwgpu_native.a"
+if [[ -f "${WGPU_LIB}" ]]; then
+    WGPU_LINK=(
+        "${WGPU_LIB}"
+        -lc++
+        -framework CoreFoundation
+        -framework IOKit
+        -framework IOSurface
+        -framework CoreGraphics
+        -framework Security
+    )
+fi
+
 SWIFT_SOURCES=()
 while IFS= read -r source; do
     SWIFT_SOURCES+=("${source}")
@@ -328,6 +352,7 @@ swiftc -o "${EXECUTABLE_PATH}" \
     -I "${PROJECT_ROOT}/macos/Sources" \
     "${SWIFT_SOURCES[@]}" \
     "${ENGINE_LIB}" \
+    "${WGPU_LINK[@]}" \
     "${SDL_CFLAGS[@]}" \
     "${SDL_LIBS[@]}" \
     -framework Cocoa \
