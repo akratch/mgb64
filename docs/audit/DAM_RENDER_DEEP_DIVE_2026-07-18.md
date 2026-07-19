@@ -123,7 +123,8 @@ near-axis-aligned desk collision boxes (the FID-0096 `hullVertexCount` clamp-to-
 dropped real hull corners → point-in-polygon triangle → desk-detection miss →
 floor-snap at `runtime_pos.y=−618.71` vs the desk `−525.31`). Fixed by unclamping
 the collision_data-backed path (retail-faithful); 4/4 hut monitors now seat on
-desks, both backends; Dam degenerate-hull census 40→0. **TMEM-1 (monitor flat-green
+desks, both backends; Dam degenerate-hull census 31→0 spurious (40 degenerate
+total pre-fix, 9 inherent/collinear and unfixable by design). **TMEM-1 (monitor flat-green
 *text*, row 2) is a distinct, still-open texture defect** and is unaffected.
 
 Lower-severity / by-design items (AC-2/4/5, BLEND-3/4/5, FILT-3/4/5, TMEM-5, FMA-3/4,
