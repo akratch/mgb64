@@ -1,10 +1,11 @@
 {
   "id": "FID-0134",
-  "title": "Web 3D over-bright residual (DAM-R1b) REFUTED: CDP screenshot byte-faithful to in-page GPU readback; opaque 3D surfaces at native parity; prior ~7-11-level lift was pose/frame mismatch on the sky ROI",
+  "title": "Web 3D over-bright (DAM-R1b) REFUTED on opaque surfaces: CDP byte-faithful to GPU readback; prior sky lift = time-varying sky at static cam (not drift, corrected rnd 1); compositor-path open",
   "class": "parity-divergence",
   "surface": "renderer",
   "priority": "P1",
   "status": "refuted",
+  "status_note": "Refuted on the evidence actually gathered: opaque 3D surfaces (rock/ground/viewmodel) are at native parity and CDP is faithful to the GPU buffer it captures. NOT fully closed: the canvas/compositor/display color-management path a human viewer sees was never exercised (path (ii) getImageData was blank in headless) -- that leg is open, not refuted. See Fix round 1 correction in history below.",
   "suspect": [
     "src/platform/fast3d/gfx_webgpu.c:1481",
     "src/platform/fast3d/gfx_webgpu.c:1558"
@@ -25,11 +26,15 @@
     },
     {
       "kind": "counter-log",
-      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 sky-ROI pose-sensitivity): the sky ROI is pose-sensitive because the drifting camera sweeps the rock silhouette across it. Native dam sky-ROI mean alone swings across frames with NO input: f120 [60.9,89.0,130.5], f200 [34.4,68.4,116.5], f300 [62.1,72.1,88.6], f350 [78.4,103.0,140.3] — a >40-level spread. The audit's cited web sky ~(65,90,130) sits squarely inside native's own frame-to-frame range. The prior ~7-11 (scene) / ~20 (sky) 'lift' was mismatched-pose ROI variance, not a render or capture defect. Within one pose, web-CDP sky [36.5,64.7,105.1] == web-dump sky [36.4,64.7,105.0]."
+      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 sky-ROI, CORRECTED Fix round 1): the sky ROI is unreliable cross-frame not because of camera drift but because the sky itself is TIME-VARYING at a STATIC camera. Re-derived directly from the preserved capture bitmaps (roi.mjs re-run 2026-07-21): rock/ground are byte-identical frame-for-frame across the whole sweep ([32.0,32.6,34.3] / [77.9,79.2,83.3], zero variation f120-f350), proving the camera does not move. Meanwhile native dam sky-ROI mean climbs monotonically with NO input: f120 [39.2,54.3,76.4], f200 [46.8,60.1,80.3], f250 [56.9,68.0,85.7], f300 [62.1,72.1,88.6], f350 [72.1,80.3,94.5] -- roughly +18 to +33 levels/channel over 230 frames at a fixed pose. (The original 2026-07-20 text here cited different, non-reproducing numbers -- f120 [60.9,89.0,130.5], f200 [34.4,68.4,116.5], f350 [78.4,103.0,140.3] -- and attributed the swing to 'the drifting camera sweeping the rock silhouette'; neither the numbers nor the camera-drift mechanism survive re-derivation and are RETRACTED.) The prior ~7-11 (scene) / ~20 (sky) 'lift' was a cross-frame sky comparison made invalid by this time-varying sky term, not a render or capture defect. Within one pose (frame 500, the primary/clean run), web-CDP sky [36.5,64.7,105.1] ~= web-dump sky [36.4,64.7,105.0] (<=0.4 level); at a second pose (frame 250) CDP vs dump sky differs by ~2-3 levels ([61.9,84.4,118.6] vs [64.5,86.4,120.0]) -- noted rather than folded into a blanket 'CDP==dump'."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 web1, 1 of 3 runs, Fix round 1 disclosure): the poll-for-dump-then-CDP-screenshot synchronization race FAILED in this run -- CDP sky [36.4,64.7,105.1] vs GPU-dump sky [72.6,92.9,124.6], full-image mean-abs-diff R 3.31 / G 2.95 / B 2.48 (vs R 0.53 / G 0.50 / B 0.49 on the clean run used for the closure table). This was undisclosed in the original 2026-07-20 closure. Even in this failed run, rock/ground stayed byte-identical CDP-vs-dump, so the failure is temporal (the two reads landed on different frames), not colorimetric -- the 'CDP is faithful to the buffer' conclusion survives, but the harness's capture synchronization is not fully reliable and should be re-verified (e.g. an assert on matched frame counters) before further use."
     },
     {
       "kind": "doc-anchor",
-      "path": "docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md (CORRECTION 2026-07-20 closure paragraph); full numeric table + harness in Evidence root task-4 (.superpowers/sdd/task-4-report.md)"
+      "path": "docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md (CORRECTION 2026-07-20 closure paragraph + Fix round 1 corrections 2026-07-21); full numeric table + harness in Evidence root task-4 (.superpowers/sdd/task-4-report.md, 'Fix round 1 -- corrected evidence' section)"
     }
   ],
   "history": [
@@ -39,6 +44,13 @@
       "to": "refuted",
       "evidence": "task-4 webprobe.mjs four-way read (native / CDP / GPU-scene-dump / GPU-surface-dump), dam --deterministic, HEAD 3f376bb.",
       "note": "REFUTED (Task 4). Built a discriminator that reads the SAME web frame three ways (CDP screenshot + two engine GPU-buffer readbacks that bypass canvas/compositor/CDP entirely) plus a wgpu-native baseline. Findings: (1) CDP == in-page GPU readback to a mean of <0.53 level/channel (rock/ground byte-identical) -> the historically-blamed CDP capture is faithful, NOT a color-management artifact. (2) Opaque 3D surfaces (rock/ground/viewmodel) are at native parity within <=2-3 levels in BOTH directions -> no systematic over-bright. (3) The prior ~7-11/~20-level 'lift' was pose/frame mismatch: the sky ROI swings >40 levels frame-to-frame on native alone as the idle camera sweeps the rock silhouette; the audit's web sky value lies inside native's own range. Docs-only closure; no engine change (default rendering untouched). The one residual is a small sky HUE shift (web slightly more saturated blue, i.e. bluer not brighter) that is real-in-bytes (CDP==dump) but pose-confounded and NOT the over-bright symptom; left as a minor open note, plausibly the known WebGPU sky-backdrop blend behavior (BLEND-1/FMA-2), present on wgpu-native too."
+    },
+    {
+      "ts": "2026-07-21T00:00:00Z",
+      "from": "refuted",
+      "to": "refuted",
+      "evidence": "Fix round 1 correction: re-ran roi.mjs/diff.mjs directly on the preserved task-4 evidence bitmaps (shots/, web1/, web2/, web3/) against the closure's own numbers; all reviewer-flagged discrepancies confirmed.",
+      "note": "CORRECTED, status unchanged (refuted, scope narrowed). Four fixes to the 2026-07-20 record: (1) CRITICAL -- the '>40-level native sky swing from idle camera drift' mechanism and its cited f120/f200/f300/f350 numbers do NOT reproduce and are RETRACTED; the actual re-derived values show a STATIC camera (rock/ground byte-identical every frame) with a TIME-VARYING sky (monotonic +18 to +33 level/channel climb over 230 frames) -- this still invalidates cross-frame sky comparisons, but the mechanism is an animated sky term, not camera motion. (2) An undisclosed capture-sync failure in 1 of 3 web runs (web1: CDP-vs-dump full-image diff ~R3.3/G3.0/B2.5, vs <=0.53 on the clean run) is now disclosed as a method-reliability caveat; rock/ground stayed byte-identical even in the failed run, so the colorimetric conclusion survives (the failure is temporal, not colorimetric). (3) The verdict scope is narrowed: parity is proven only up to the GPU swapchain buffer; the canvas/compositor/display color-management path a human viewer sees was never exercised (path (ii) getImageData blank in headless) and remains OPEN, not verified. (4) The second pose (frame 250) CDP-vs-dump sky difference of ~2-3 levels is now noted explicitly rather than folded into 'CDP==dump'. The refuted status on the over-bright claim for opaque 3D surfaces stands; the finding's scope and the sky mechanism are corrected. Full derivation: .superpowers/sdd/task-4-report.md 'Fix round 1 -- corrected evidence'."
     }
   ]
 }

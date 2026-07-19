@@ -138,4 +138,4 @@
 | FID-0131 | P2 | verified | instrumentation-gap | infra |  |  | Dam (LEVELID 33) tape sim-state hashes are build-environment (toolchain/link-layout) sensitive via dead pool bytes |
 | FID-0132 | P2 | landed | port-defect | sim | yes |  | sub_GAME_7F03ECC0 hull clamp drops real corners on the collision path (Dam monitors floor-snap); unclamp the collision_data-backed path |
 | FID-0133 | P1 | refuted | parity-divergence | renderer |  |  | TMEM-1 monitor-text format-reinterpretation is a PHANTOM — texSelect emits the pool fmt over the table fmt exactly as retail; census finds no live divergence |
-| FID-0134 | P1 | refuted | parity-divergence | renderer |  |  | Web 3D over-bright residual (DAM-R1b) REFUTED: CDP screenshot byte-faithful to in-page GPU readback; opaque 3D surfaces at native parity; prior ~7-11-level lift was pose/frame mismatch on the sky ROI |
+| FID-0134 | P1 | refuted | parity-divergence | renderer |  |  | Web 3D over-bright (DAM-R1b) REFUTED on opaque surfaces: CDP byte-faithful to GPU readback; prior sky lift = time-varying sky at static cam (not drift, corrected rnd 1); compositor-path open |
