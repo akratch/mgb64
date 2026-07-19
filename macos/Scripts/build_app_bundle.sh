@@ -265,7 +265,25 @@ done < <(pkg-config --cflags sdl2 | tr ' ' '\n')
 
 SDL_LIBS=()
 while IFS= read -r flag; do
-    [[ -n "${flag}" ]] && SDL_LIBS+=("${flag}")
+    [[ -z "${flag}" ]] && continue
+    # swiftc (used for the app shell below) does NOT accept clang's `-Wl,a,b`
+    # linker-passthrough form. Homebrew SDL2's `pkg-config --libs sdl2` emits
+    # e.g. `-Wl,-framework,Cocoa`, which made swiftc die "unknown argument".
+    # Rewrite each `-Wl,`-prefixed flag into swiftc's `-Xlinker <arg>` form
+    # (one -Xlinker per comma-separated arg). Flags with no `-Wl,` (e.g. -lSDL2,
+    # -L...) pass through unchanged, so SDL builds whose --libs carry no -Wl,
+    # (many do not) are unaffected.
+    case "${flag}" in
+        -Wl,*)
+            IFS=',' read -ra _wl_parts <<< "${flag#-Wl,}"
+            for _wl_p in "${_wl_parts[@]}"; do
+                [[ -n "${_wl_p}" ]] && SDL_LIBS+=("-Xlinker" "${_wl_p}")
+            done
+            ;;
+        *)
+            SDL_LIBS+=("${flag}")
+            ;;
+    esac
 done < <(pkg-config --libs sdl2 | tr ' ' '\n')
 
 rm -rf "${OUTPUT_APP}"
