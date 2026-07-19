@@ -59,6 +59,133 @@ static int texDebugTraceSelectEnabled(void)
     return g_TexDebugTraceSelect != 0;
 }
 
+/* -----------------------------------------------------------------------
+ * TMEM-1 format-reinterpretation census (GE007_TRACE_TMEM_REINTERP).
+ *
+ * Off by default. One-shot per (texnum, table-fmt, table-depth) tuple. Logs
+ * every texSelect where the requesting image-table entry's declared fmt/siz
+ * (tconfig->format/depth) disagrees with the catalogued pool entry's fmt/siz
+ * (tex->gbiformat/tex->depth) -- i.e. the "reinterpretation" class the Dam
+ * render deep-dive (DAM_PARITY 4.7 / DEEP_DIVE TMEM-1) asked to enumerate
+ * game-wide. Also records the (informational) tex==NULL fallback case, where
+ * texSelect decodes by the table entry because the pool has no catalogued
+ * entry.
+ *
+ * The census sits at the ONLY choke point where both the table entry and the
+ * pool entry are simultaneously in hand: texSelect (retail 0x7F076D68). The
+ * 2026-07-18 session's G_SETTEX-path attempt saw only a texturenum + a stale
+ * dummy tile, never the table intent -- this is its real home.
+ * --------------------------------------------------------------------- */
+static const char *texDebugImageTableName(struct sImageTableEntry *entry, int *index_out);
+
+static int g_TexDebugTmemReinterp = -1;
+#define TEX_REINTERP_SEEN_MAX 512
+static struct {
+    uint16_t texnum;
+    uint8_t table_fmt;
+    uint8_t table_depth;
+    uint8_t pooled;   /* 1 = tex!=NULL branch, 0 = tex==NULL fallback */
+} g_TexReinterpSeen[TEX_REINTERP_SEEN_MAX];
+static int g_TexReinterpSeenCount = 0;
+
+static int texDebugTmemReinterpEnabled(void)
+{
+    if (g_TexDebugTmemReinterp < 0) {
+        g_TexDebugTmemReinterp = getenv("GE007_TRACE_TMEM_REINTERP") ? 1 : 0;
+    }
+    return g_TexDebugTmemReinterp != 0;
+}
+
+/* Returns 1 the first time this (texnum,fmt,depth,pooled) tuple is seen. */
+static int texReinterpMarkSeen(uint16_t texnum, uint8_t fmt, uint8_t depth, uint8_t pooled)
+{
+    int i;
+    for (i = 0; i < g_TexReinterpSeenCount; i++) {
+        if (g_TexReinterpSeen[i].texnum == texnum &&
+            g_TexReinterpSeen[i].table_fmt == fmt &&
+            g_TexReinterpSeen[i].table_depth == depth &&
+            g_TexReinterpSeen[i].pooled == pooled) {
+            return 0;
+        }
+    }
+    if (g_TexReinterpSeenCount < TEX_REINTERP_SEEN_MAX) {
+        g_TexReinterpSeen[g_TexReinterpSeenCount].texnum = texnum;
+        g_TexReinterpSeen[g_TexReinterpSeenCount].table_fmt = fmt;
+        g_TexReinterpSeen[g_TexReinterpSeenCount].table_depth = depth;
+        g_TexReinterpSeen[g_TexReinterpSeenCount].pooled = pooled;
+        g_TexReinterpSeenCount++;
+    }
+    return 1;
+}
+
+static void texDebugCensusReinterp(struct sImageTableEntry *tconfig,
+                                   struct tex *tex,
+                                   u32 texture_index)
+{
+    uint16_t texnum;
+    uint8_t pool_fmt;
+    uint8_t pool_depth;
+    int mismatch;
+    int table_name_index;
+    const char *table_name;
+
+    if (!texDebugTmemReinterpEnabled() || tconfig == NULL) {
+        return;
+    }
+
+    if (tex != NULL) {
+        texnum = (uint16_t)tex->texturenum;
+        pool_fmt = (uint8_t)tex->gbiformat;
+        pool_depth = (uint8_t)tex->depth;
+        mismatch = (tconfig->format != pool_fmt) || (tconfig->depth != pool_depth);
+        if (!mismatch) {
+            return; /* pooled + agrees -> not a reinterpretation candidate */
+        }
+        if (!texReinterpMarkSeen(texnum, tconfig->format, tconfig->depth, 1)) {
+            return;
+        }
+        table_name = texDebugImageTableName(tconfig, &table_name_index);
+        /* resolved_fmt/depth = what texSelect actually emits into the DL.
+         * When pooled, texSelect uses the POOL fmt/siz (retail-identical:
+         * the RDP executes the emitted tile), so the table entry's differing
+         * fmt/siz is discarded metadata, NOT a raw-TMEM reinterpretation. */
+        fprintf(stderr,
+                "[TMEM-REINTERP] gt=%d tag=%s src=%s[%d] texnum=%u pooled=1 "
+                "table_fmt=%u table_depth=%u pool_fmt=%u pool_depth=%u "
+                "resolved_fmt=%u resolved_depth=%u wh=%ux%u lutmode=%u\n",
+                g_GlobalTimer,
+                g_TexDebugSourceTag != NULL ? g_TexDebugSourceTag : "-",
+                table_name, table_name_index,
+                texnum,
+                tconfig->format, tconfig->depth,
+                pool_fmt, pool_depth,
+                pool_fmt, pool_depth,
+                tconfig->width, tconfig->height,
+                tex->lutmodeindex);
+        fflush(stderr);
+    } else {
+        /* Unpooled: texSelect decodes by the table entry itself. Census it so
+         * the "table fmt drives the decode" cases are enumerated too (these are
+         * the only ones where tconfig->format actually reaches the decoder). */
+        if (!texReinterpMarkSeen((uint16_t)texture_index, tconfig->format, tconfig->depth, 0)) {
+            return;
+        }
+        table_name = texDebugImageTableName(tconfig, &table_name_index);
+        fprintf(stderr,
+                "[TMEM-REINTERP] gt=%d tag=%s src=%s[%d] texnum=%u pooled=0 "
+                "table_fmt=%u table_depth=%u pool_fmt=- pool_depth=- "
+                "resolved_fmt=%u resolved_depth=%u wh=%ux%u lutmode=-\n",
+                g_GlobalTimer,
+                g_TexDebugSourceTag != NULL ? g_TexDebugSourceTag : "-",
+                table_name, table_name_index,
+                texture_index,
+                tconfig->format, tconfig->depth,
+                tconfig->format, tconfig->depth,
+                tconfig->width, tconfig->height);
+        fflush(stderr);
+    }
+}
+
 static const char *texDebugImageTableName(struct sImageTableEntry *entry, int *index_out)
 {
     if (index_out != NULL) {
@@ -654,6 +781,10 @@ void texSelect(Gfx **gdlptr, struct sImageTableEntry *tconfig, u32 arg2, s32 arg
 #else
         aa = PHYS_TO_K0(tconfig->index);
         tex = texFindInPool((aa)[-4], NULL);
+#endif
+
+#ifdef NATIVE_PORT
+        texDebugCensusReinterp(tconfig, tex, texture_index);
 #endif
 
 #ifdef NATIVE_PORT
