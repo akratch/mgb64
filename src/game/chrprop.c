@@ -8037,7 +8037,7 @@ static int portHullVertsRetail(void)
 /* FID-0132 A/B negative control: GE007_NO_HULL_CORNER_FIX=1 (opt-out, default
  * OFF) restores the pre-fix unconditional clamp-to-4 on ALL paths, reproducing
  * the previous sim-state hashes byte-exactly (used by the tape re-baseline
- * attribution; see baselines/tapes/*.expected.json notes). */
+ * attribution; see the expected-json notes under baselines/tapes/). */
 static int portNoHullCornerFix(void)
 {
     static int s_no_fix = -1;
@@ -8050,7 +8050,7 @@ static int portNoHullCornerFix(void)
 #ifdef NONMATCHING
 #include "chrprop_hull_impl.inc"
 void sub_GAME_7F03ECC0(f32 xmin, f32 xmax, f32 ymin, f32 ymax, f32 zmin, f32 zmax, Mtxf *mtx, struct rect4f *rect, struct collision_data *data) {
-    /* FID-0099: the collision-hull geometry lives in chrprop_hull_impl.inc so the
+    /* FID-0132: the collision-hull geometry lives in chrprop_hull_impl.inc so the
      * exact production code is covered by the ROM-free corpus test
      * (tests/test_hull_builder.c). Retail stores the true hull vertex count with
      * no clamp; the port must clamp to 4 only on the bare TankRecord.rect path.

@@ -1145,7 +1145,7 @@ if(BUILD_TESTING)
     target_include_directories(test_hull_vertex_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME hull_vertex_clamp COMMAND test_hull_vertex_clamp)
 
-    # Collision-hull builder corpus — ROM-free regression (FID-0099). Drives the
+    # Collision-hull builder corpus — ROM-free regression (FID-0132). Drives the
     # exact production geometry (src/game/chrprop_hull_impl.inc) over the Dam desk
     # boxes, axis-aligned ties, rotated boxes and a fixed-seed randomized batch,
     # asserting >=4 distinct corners for boxes with 2D area and every projected

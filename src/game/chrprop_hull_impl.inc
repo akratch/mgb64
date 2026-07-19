@@ -10,7 +10,7 @@
  * tie-breaks) and inserts intermediate hull vertices, translates by the matrix
  * position, and returns the hull vertex count. `retail_unclamped` selects the
  * retail behavior (store the true count, up to 8) vs the port's memory-safe
- * clamp-to-4 (needed only for the bare-rect4f tank path). See FID-0099/FID-0096.
+ * clamp-to-4 (needed only for the bare-rect4f tank path). See FID-0132/FID-0096.
  *
  * Requires (provided by the including TU): f32/f64/s32/u8 typedefs, getenv/
  * fprintf/stderr, and hullVertexCount() (hull_vertex_clamp.h).
@@ -299,7 +299,7 @@ static int chrpropHullBuildFootprint(f32 xmin, f32 xmax, f32 ymin, f32 ymax,
         rp++;
     }
 
-    /* FID-0099: retail stores the true hull vertex count (up to 8) with NO clamp
+    /* FID-0132: retail stores the true hull vertex count (up to 8) with NO clamp
      * and writes the overflow vertices into the words that follow the 4-vertex
      * rect4f. The port previously clamped to 4 unconditionally (FID-0096), which
      * DROPS real hull corners for thin / near-axis-aligned box footprints:
@@ -324,7 +324,7 @@ static int chrpropHullBuildFootprint(f32 xmin, f32 xmax, f32 ymin, f32 ymax,
      *               it has no 2D area, so <4 corners is correct and unfixable.
      *   SPURIOUS  - the projected box has genuine 2D area (>=4-corner hull) but
      *               the emitted polygon collapsed to <4 distinct points. This is
-     *               the FID-0099 defect: dropped hull corners break point-in-poly
+     *               the FID-0132 defect: dropped hull corners break point-in-poly
      *               (object grounding, e.g. Dam monitors floor-snapping).
      * SPURIOUS is the blast-radius denominator the fix must drive to zero. Full
      * inputs (bbox extents + the 8 matrix elements used) are logged so the exact

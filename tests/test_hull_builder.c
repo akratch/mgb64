@@ -1,6 +1,6 @@
 /*
  * test_hull_builder.c — ROM-free corpus regression for the collision-hull
- * builder at 0x7F03ECC0 (FID-0099).
+ * builder at 0x7F03ECC0 (FID-0132).
  *
  * Drives the EXACT production geometry (src/game/chrprop_hull_impl.inc, the same
  * single source compiled into ge007) over a corpus of box + transform inputs and
@@ -150,23 +150,54 @@ int main(void) {
     int unclamped = clamp ? 0 : 1;
     if (clamp) fprintf(stderr, "[hull_builder] HULL_TEST_CLAMP set: exercising PRE-FIX clamped behavior (expect FAIL)\n");
 
-    /* ---- (c) hand-derived exact case: axis-aligned box, identity rotation ---- */
+    /* ---- (c) hand-derived exact case: axis-aligned box, identity rotation ----
+     * Box x[-10,10] y[-1,1] z[-5,5] under identity+translate(100,0,200): the
+     * identity matrix's y-column (m[1][0]=m[1][2]=0) never contributes to the
+     * XZ projection, so this degenerates to the same "4 duplicated pairs of 8
+     * projected corners" shape as the axis_tie case below, and the exact same
+     * by-hand walk of the documented tie-break rules (chrprop_hull_impl.inc
+     * min-x/max-y/max-x/min-y extreme search + edge-insert) applies:
+     *   pre-translate vertex table (x only takes {-10,10}, z only {-5,5},
+     *   duplicated once per y value):
+     *     v0=v2=(-10,-5)  v1=v3=(-10,5)  v4=v6=(10,-5)  v5=v7=(10,5)
+     *   min-x (tie min-y over v0/v1/v2/v3, all x=-10): v0 (-10,-5) wins since
+     *     it is visited first and no later candidate has a STRICTLY smaller y
+     *     (v2 ties y too but the tie-break is strict '<').
+     *   max-y (tie min-x over v1/v3/v5/v7, all y=5... wait z=5 group): v1
+     *     (-10,5) wins over v3 the same way (first-visited, no strictly-lesser
+     *     x afterwards).
+     *   max-x (tie max-y over v4/v5/v6/v7, all x=10): v5 (10,5) wins — v4 is
+     *     first taken as the running max-x, then v5 beats it on the y tie-
+     *     break (5 > -5), and v6/v7 don't beat v5's y.
+     *   min-y (tie max-x over v0/v2/v4/v6, all z=-5): v4 (10,-5) wins — v0 is
+     *     first taken as running min-y, then v4 beats it on the x tie-break
+     *     (10 > -10), and v6 doesn't strictly beat v4.
+     *   remaining (non-extreme) = {v2,v3,v6,v7}, all exact duplicates of an
+     *   extreme vertex, so every edge-insert cross-product test below is
+     *   degenerate (cross1==cross2) and none of them insert -> the hull is
+     *   exactly the 4 extremes, emitted in the fixed order
+     *   min_x -> min_y -> max_x -> max_y:
+     *     (-10,-5) -> (10,-5) -> (10,5) -> (-10,5)
+     *   Translate by (+100,+200): (90,195) -> (110,195) -> (110,205) -> (90,205).
+     * This ordering is CCW winding in (x,z) and pins exactly which of each
+     * duplicate-coordinate pair (v0 vs v2, v1 vs v3, v4 vs v6, v5 vs v7) the
+     * retail extreme search selects. */
     {
         f32 m[4][4] = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{100,0,200,1}};
         f32 hull[16];
-        /* box x[-10,10] z[-5,5], y thin. Footprint corners (post-translate):
-         * (90,195)(90,205)(110,195)(110,205). */
+        double want_ordered[4][2] = {{90,195},{110,195},{110,205},{90,205}};
         int count = chrpropHullBuildFootprint(-10, 10, -1, 1, -5, 5, m, hull, unclamped);
         int d = distinct_corners(hull, count);
-        double want[4][2] = {{90,195},{90,205},{110,195},{110,205}};
-        int wi, hi, found;
+        int wi;
+        char msg[160];
         CHECK(d == 4, "axis-aligned: exactly 4 distinct corners");
-        for (wi = 0; wi < 4; wi++) {
-            found = 0;
-            for (hi = 0; hi < count; hi++)
-                if (fabs(hull[hi * 2] - want[wi][0]) < 1e-2 &&
-                    fabs(hull[hi * 2 + 1] - want[wi][1]) < 1e-2) found = 1;
-            CHECK(found, "axis-aligned: expected corner present");
+        CHECK(count == 4, "axis-aligned: exact hull count is 4 (no spurious inserts)");
+        for (wi = 0; wi < 4 && wi < count; wi++) {
+            snprintf(msg, sizeof msg,
+                     "axis-aligned: hull[%d] == (%.0f,%.0f) exactly (ordered/winding pinned)",
+                     wi, want_ordered[wi][0], want_ordered[wi][1]);
+            CHECK(fabs(hull[wi * 2] - want_ordered[wi][0]) < 1e-2 &&
+                  fabs(hull[wi * 2 + 1] - want_ordered[wi][1]) < 1e-2, msg);
         }
         check_box("axis-aligned", m, -10, 10, -1, 1, -5, 5, unclamped);
     }
@@ -210,9 +241,39 @@ int main(void) {
         check_box("dam_desk_31", m, -758, 758, -700, 700, -15, 15, unclamped);
     }
 
-    /* ---- axis-aligned tie: projected rectangle exactly axis-aligned ---- */
+    /* ---- axis-aligned tie: projected rectangle exactly axis-aligned ----
+     * m00=0.5, m22=0.5, all other rotation terms 0 (including m10/m12, so y
+     * never contributes) -> the same duplicated-pair-of-8 shape as the
+     * axis-aligned case above, hand-walked the same way against the
+     * documented tie-break rules:
+     *   pre-translate: v0=v2=(-100,-60) v1=v3=(-100,60) v4=v6=(100,-60)
+     *                  v5=v7=(100,60)   [ox=0.5*x, oz=0.5*z]
+     *   min-x (tie min-y): v0 (-100,-60)  max-y (tie min-x): v1 (-100,60)
+     *   max-x (tie max-y): v5 (100,60)    min-y (tie max-x): v4 (100,-60)
+     *   remaining {v2,v3,v6,v7} are exact duplicates -> every edge-insert
+     *   cross-product is degenerate (cross1==cross2, insert test is strict
+     *   '<') -> hull = the 4 extremes only, order min_x->min_y->max_x->max_y:
+     *     (-100,-60) -> (100,-60) -> (100,60) -> (-100,60)
+     *   Translate by (+1000,-2000):
+     *     (900,-2060) -> (1100,-2060) -> (1100,-1940) -> (900,-1940)
+     * This is the "hand-derived degenerate/tie case" pin: it fixes which of
+     * each tied duplicate vertex (e.g. v1 not v3, v5 not v7) the retail
+     * extreme search picks, and the exact CCW winding order emitted. */
     {
         f32 m[4][4] = {{0.5f,0,0,0},{0,1,0,0},{0,0,0.5f,0},{1000,0,-2000,1}};
+        f32 hull[16];
+        double want_ordered[4][2] = {{900,-2060},{1100,-2060},{1100,-1940},{900,-1940}};
+        int count = chrpropHullBuildFootprint(-200, 200, -3, 3, -120, 120, m, hull, unclamped);
+        int wi;
+        char msg[160];
+        CHECK(count == 4, "axis_tie: exact hull count is 4 (no spurious inserts)");
+        for (wi = 0; wi < 4 && wi < count; wi++) {
+            snprintf(msg, sizeof msg,
+                     "axis_tie: hull[%d] == (%.0f,%.0f) exactly (ordered/winding, tie-break pinned)",
+                     wi, want_ordered[wi][0], want_ordered[wi][1]);
+            CHECK(fabs(hull[wi * 2] - want_ordered[wi][0]) < 1e-2 &&
+                  fabs(hull[wi * 2 + 1] - want_ordered[wi][1]) < 1e-2, msg);
+        }
         check_box("axis_tie", m, -200, 200, -3, 3, -120, 120, unclamped);
     }
 
