@@ -8034,306 +8034,38 @@ static int portHullVertsRetail(void)
     return s_retail;
 }
 
+/* FID-0132 A/B negative control: GE007_NO_HULL_CORNER_FIX=1 (opt-out, default
+ * OFF) restores the pre-fix unconditional clamp-to-4 on ALL paths, reproducing
+ * the previous sim-state hashes byte-exactly (used by the tape re-baseline
+ * attribution; see baselines/tapes/*.expected.json notes). */
+static int portNoHullCornerFix(void)
+{
+    static int s_no_fix = -1;
+    if (s_no_fix < 0) {
+        s_no_fix = ge_env_bool("GE007_NO_HULL_CORNER_FIX", 0);
+    }
+    return s_no_fix;
+}
+
 #ifdef NONMATCHING
+#include "chrprop_hull_impl.inc"
 void sub_GAME_7F03ECC0(f32 xmin, f32 xmax, f32 ymin, f32 ymax, f32 zmin, f32 zmax, Mtxf *mtx, struct rect4f *rect, struct collision_data *data) {
-    f64 vertices[8][2];
-    s32 remaining[8];
-    u8 is_extreme[8];
-    f64 m00d, m02d, m10d, m12d, m20d, m22d;
-    f64 xmin_d, ymin_d, zmin_d, xmax_d, ymax_d, zmax_d;
-    f64 m00_xmin, m10_ymin, m20_zmin;
-    f64 m02_xmin, m12_ymin, m22_zmin;
-    f64 m20_zmax, m22_zmax;
-    f64 m10_ymax, m12_ymax;
-    f64 m00_xmax, m02_xmax;
-    f64 sum_x, sum_y;
-    f64 edge_dx, edge_dy, px, py, cross1, cross2;
-    f64 bx, by;
-    s32 min_x_idx, max_y_idx, max_x_idx, min_y_idx;
-    s32 i, j, count, remaining_count;
-    f32 *out;
-    s32 *rp;
-    s32 *rp_end;
-
-    m00d = (f64)mtx->m[0][0];
-    m02d = (f64)mtx->m[0][2];
-    m10d = (f64)mtx->m[1][0];
-    m12d = (f64)mtx->m[1][2];
-    m20d = (f64)mtx->m[2][0];
-    m22d = (f64)mtx->m[2][2];
-
-    xmin_d = (f64)xmin;
-    ymin_d = (f64)ymin;
-    zmin_d = (f64)zmin;
-    xmax_d = (f64)xmax;
-    ymax_d = (f64)ymax;
-    zmax_d = (f64)zmax;
-
-    m00_xmin = m00d * xmin_d;
-    m10_ymin = m10d * ymin_d;
-    m20_zmin = m20d * zmin_d;
-    m02_xmin = m02d * xmin_d;
-    m12_ymin = m12d * ymin_d;
-    m22_zmin = m22d * zmin_d;
-    m20_zmax = m20d * zmax_d;
-    m22_zmax = m22d * zmax_d;
-
-    /* Compute 8 projected vertices of the bounding box */
-    /* Each vertex projected to 2D via matrix X-column and Z-column */
-
-    /* vertex 0: xmin, ymin, zmin */
-    sum_x = m00_xmin + m10_ymin;
-    sum_y = m02_xmin + m12_ymin;
-    vertices[0][0] = sum_x + m20_zmin;
-    vertices[0][1] = sum_y + m22_zmin;
-
-    /* vertex 1: xmin, ymin, zmax */
-    vertices[1][0] = sum_x + m20_zmax;
-    vertices[1][1] = sum_y + m22_zmax;
-
-    m10_ymax = m10d * ymax_d;
-    m12_ymax = m12d * ymax_d;
-
-    /* vertex 2: xmin, ymax, zmin */
-    sum_x = m00_xmin + m10_ymax;
-    sum_y = m02_xmin + m12_ymax;
-    vertices[2][0] = sum_x + m20_zmin;
-    vertices[2][1] = sum_y + m22_zmin;
-
-    /* vertex 3: xmin, ymax, zmax */
-    vertices[3][0] = sum_x + m20_zmax;
-    vertices[3][1] = sum_y + m22_zmax;
-
-    m00_xmax = m00d * xmax_d;
-    m02_xmax = m02d * xmax_d;
-
-    /* vertex 4: xmax, ymin, zmin */
-    sum_x = m00_xmax + m10_ymin;
-    sum_y = m02_xmax + m12_ymin;
-    vertices[4][0] = sum_x + m20_zmin;
-    vertices[4][1] = sum_y + m22_zmin;
-
-    /* vertex 5: xmax, ymin, zmax */
-    vertices[5][0] = sum_x + m20_zmax;
-    vertices[5][1] = sum_y + m22_zmax;
-
-    /* vertex 6: xmax, ymax, zmin */
-    sum_x = m00_xmax + m10_ymax;
-    sum_y = m02_xmax + m12_ymax;
-    vertices[6][0] = sum_x + m20_zmin;
-    vertices[6][1] = sum_y + m22_zmin;
-
-    /* vertex 7: xmax, ymax, zmax */
-    vertices[7][0] = sum_x + m20_zmax;
-    vertices[7][1] = sum_y + m22_zmax;
-
-    /* Find 4 extreme vertices of the convex hull */
-
-    /* min-x vertex ($v0/$t1 in asm), tiebreak: min y */
-    min_x_idx = 0;
-    for (i = 1; i < 8; i++) {
-        if (vertices[i][0] < vertices[min_x_idx][0]) {
-            min_x_idx = i;
-        } else if (vertices[i][0] == vertices[min_x_idx][0]) {
-            if (vertices[i][1] < vertices[min_x_idx][1]) {
-                min_x_idx = i;
-            }
-        }
-    }
-
-    /* max-y vertex ($t2/$t0 in asm), tiebreak: min x */
-    max_y_idx = 0;
-    for (i = 1; i < 8; i++) {
-        if (vertices[max_y_idx][1] < vertices[i][1]) {
-            max_y_idx = i;
-        } else if (vertices[i][1] == vertices[max_y_idx][1]) {
-            if (vertices[i][0] < vertices[max_y_idx][0]) {
-                max_y_idx = i;
-            }
-        }
-    }
-
-    /* max-x vertex ($a0/$a3 in asm), tiebreak: max y */
-    max_x_idx = 0;
-    for (i = 1; i < 8; i++) {
-        if (vertices[max_x_idx][0] < vertices[i][0]) {
-            max_x_idx = i;
-        } else if (vertices[i][0] == vertices[max_x_idx][0]) {
-            if (vertices[max_x_idx][1] < vertices[i][1]) {
-                max_x_idx = i;
-            }
-        }
-    }
-
-    /* min-y vertex ($t3/$t4 in asm), tiebreak: max x */
-    min_y_idx = 0;
-    for (i = 1; i < 8; i++) {
-        if (vertices[i][1] < vertices[min_y_idx][1]) {
-            min_y_idx = i;
-        } else if (vertices[i][1] == vertices[min_y_idx][1]) {
-            if (vertices[min_y_idx][0] < vertices[i][0]) {
-                min_y_idx = i;
-            }
-        }
-    }
-
-    /* Collect non-extreme vertex indices. The four "extreme" picks are not
-     * guaranteed to be unique when several projected vertices tie on an axis. */
-    for (i = 0; i < 8; i++) {
-        is_extreme[i] = 0;
-    }
-
-    is_extreme[min_x_idx] = 1;
-    is_extreme[max_x_idx] = 1;
-    is_extreme[max_y_idx] = 1;
-    is_extreme[min_y_idx] = 1;
-
-    remaining_count = 0;
-    for (i = 0; i < 8; i++) {
-        if (is_extreme[i]) {
-            continue;
-        }
-        remaining[remaining_count] = i;
-        remaining_count++;
-    }
-
-    /* Build convex hull polygon, outputting vertices into rect */
-    out = (f32 *)rect;
-    count = 1;
-
-    /* Output vertex 0: min-x */
-    out[0] = (f32)vertices[min_x_idx][0];
-    out[1] = (f32)vertices[min_x_idx][1];
-
-    /*
-     * For each edge of the hull (min_x -> min_y -> max_x -> max_y -> min_x),
-     * test remaining vertices with a cross product to insert between corners.
-     * Cross product test: (p - B) x (A - B) < 0, where edge goes from A to B.
-     */
-
-    /* Edge 1: min_x (A) to min_y (B) */
-    bx = vertices[min_y_idx][0];
-    by = vertices[min_y_idx][1];
-    edge_dx = vertices[min_x_idx][0] - bx;
-    edge_dy = vertices[min_x_idx][1] - by;
-
-    rp = remaining;
-    rp_end = remaining + remaining_count;
-    while (rp < rp_end) {
-        j = *rp;
-        px = vertices[j][0] - bx;
-        py = vertices[j][1] - by;
-        cross1 = px * edge_dy;
-        cross2 = py * edge_dx;
-        if (cross1 < cross2) {
-            out[count * 2] = (f32)vertices[j][0];
-            out[count * 2 + 1] = (f32)vertices[j][1];
-            count++;
-            break;
-        }
-        rp++;
-    }
-
-    /* Output min_y vertex */
-    out[count * 2] = (f32)vertices[min_y_idx][0];
-    out[count * 2 + 1] = (f32)vertices[min_y_idx][1];
-    count++;
-
-    /* Edge 2: min_y (A) to max_x (B) */
-    bx = vertices[max_x_idx][0];
-    by = vertices[max_x_idx][1];
-    edge_dy = vertices[min_y_idx][1] - by;
-    edge_dx = vertices[min_y_idx][0] - bx;
-
-    rp = remaining;
-    rp_end = remaining + remaining_count;
-    while (rp < rp_end) {
-        j = *rp;
-        px = vertices[j][0] - bx;
-        py = vertices[j][1] - by;
-        cross1 = px * edge_dy;
-        cross2 = py * edge_dx;
-        if (cross1 < cross2) {
-            out[count * 2] = (f32)vertices[j][0];
-            out[count * 2 + 1] = (f32)vertices[j][1];
-            count++;
-            break;
-        }
-        rp++;
-    }
-
-    /* Output max_x vertex */
-    out[count * 2] = (f32)vertices[max_x_idx][0];
-    out[count * 2 + 1] = (f32)vertices[max_x_idx][1];
-    count++;
-
-    /* Edge 3: max_x (A) to max_y (B) */
-    bx = vertices[max_y_idx][0];
-    by = vertices[max_y_idx][1];
-    edge_dx = vertices[max_x_idx][0] - bx;
-    edge_dy = vertices[max_x_idx][1] - by;
-
-    rp = remaining;
-    rp_end = remaining + remaining_count;
-    while (rp < rp_end) {
-        j = *rp;
-        px = vertices[j][0] - bx;
-        py = vertices[j][1] - by;
-        cross1 = px * edge_dy;
-        cross2 = py * edge_dx;
-        if (cross1 < cross2) {
-            out[count * 2] = (f32)vertices[j][0];
-            out[count * 2 + 1] = (f32)vertices[j][1];
-            count++;
-            break;
-        }
-        rp++;
-    }
-
-    /* Output max_y vertex */
-    out[count * 2] = (f32)vertices[max_y_idx][0];
-    out[count * 2 + 1] = (f32)vertices[max_y_idx][1];
-    count++;
-
-    /* Edge 4: max_y (A) to min_x (B) */
-    bx = vertices[min_x_idx][0];
-    by = vertices[min_x_idx][1];
-    edge_dy = vertices[max_y_idx][1] - by;
-    edge_dx = vertices[max_y_idx][0] - bx;
-
-    rp = remaining;
-    rp_end = remaining + remaining_count;
-    while (rp < rp_end) {
-        j = *rp;
-        px = vertices[j][0] - bx;
-        py = vertices[j][1] - by;
-        cross1 = px * edge_dy;
-        cross2 = py * edge_dx;
-        if (cross1 < cross2) {
-            out[count * 2] = (f32)vertices[j][0];
-            out[count * 2 + 1] = (f32)vertices[j][1];
-            count++;
-            break;
-        }
-        rp++;
-    }
-
-    /* Store vertex count and translate all output vertices by matrix translation.
-     * FID-0096: retail stores the true count (up to 8) with NO clamp (ASM
-     * src/game/chrprop.c:8710-8712) — the claim "Original N64 bug" was incorrect.
-     * The port clamps to 4 as a memory-safe default: the collision_data path has
-     * spare words (unk24..unk40) after the 4-vertex rect4f, but the TANK path
-     * (TankRecord.rect, chrobjhandler.c:11890) is followed by live fields, so >4
-     * vertices there corrupt tank state. GE007_HULL_VERTS_RETAIL removes the
-     * clamp (retail-faithful; not tank-safe). */
-    count = hullVertexCount(count, portHullVertsRetail());
-    data->unk00 = count;
-    if (count > 0) {
-        for (i = 0; i < count; i++) {
-            out[i * 2] += mtx->m[3][0];
-            out[i * 2 + 1] += mtx->m[3][2];
-        }
-    }
+    /* FID-0099: the collision-hull geometry lives in chrprop_hull_impl.inc so the
+     * exact production code is covered by the ROM-free corpus test
+     * (tests/test_hull_builder.c). Retail stores the true hull vertex count with
+     * no clamp; the port must clamp to 4 only on the bare TankRecord.rect path.
+     * Detect the collision_data-backed object/door path (rect == &data->unk04) —
+     * whose spare words (unk24..unk40) hold the full retail hull — and run it
+     * unclamped (retail-faithful); keep the clamp on the tank path and honor the
+     * GE007_HULL_VERTS_RETAIL global override. This is the fix: the old
+     * unconditional clamp dropped real hull corners for thin/near-axis-aligned
+     * boxes, collapsing point-in-polygon to a triangle and floor-snapping the Dam
+     * control-room monitors. */
+    int collision_data_backed = (data != NULL && (void *)rect == (void *)&data->unk04)
+                                && !portNoHullCornerFix();
+    int retail_unclamped = portHullVertsRetail() || collision_data_backed;
+    data->unk00 = chrpropHullBuildFootprint(xmin, xmax, ymin, ymax, zmin, zmax,
+                                            mtx->m, (f32 *)rect, retail_unclamped);
 }
 #else
 /* This forward declaration is required for sub_GAME_7F03F540() to link until sub_GAME_7F03ECC0() is properly decompiled */

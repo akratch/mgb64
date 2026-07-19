@@ -1145,6 +1145,21 @@ if(BUILD_TESTING)
     target_include_directories(test_hull_vertex_clamp PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME hull_vertex_clamp COMMAND test_hull_vertex_clamp)
 
+    # Collision-hull builder corpus — ROM-free regression (FID-0099). Drives the
+    # exact production geometry (src/game/chrprop_hull_impl.inc) over the Dam desk
+    # boxes, axis-aligned ties, rotated boxes and a fixed-seed randomized batch,
+    # asserting >=4 distinct corners for boxes with 2D area and every projected
+    # corner inside-or-on the hull. Default (unclamped, the fix) PASSES;
+    # HULL_TEST_CLAMP=1 reproduces the pre-fix clamped RED.
+    add_executable(test_hull_builder
+        "${CMAKE_SOURCE_DIR}/tests/test_hull_builder.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/hull_vertex_clamp.c"
+    )
+    target_include_directories(test_hull_builder PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/platform"
+        "${CMAKE_SOURCE_DIR}/src/game")
+    add_test(NAME hull_builder COMMAND test_hull_builder)
+
     # Background-only bullet-impact spawn gate — ROM-free unit test (FID-0097):
     # the port keeps a texture_index>=0 guard around the retail g_Textures[-1] OOB
     # read as the memory-safe default; GE007_BG_IMPACT_RETAIL_OOB opts into

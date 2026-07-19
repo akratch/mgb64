@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1078 flags** found across the source.
+**1079 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -594,6 +594,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_GRENADE_TIMER_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw N64 0x82 write of the grenade/flare/piton fuse timer (corrupts maxdamage on the pointer-grown ObjectRecord and leaves the fuse 0); the fix writes WeaponObjRecord.timer [FID-0126] |
 | `GE007_NO_GUNAMMOOFF_RESPAWN_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write clearing gunammooff at player+0x1064 on MP respawn [FID-0093] |
 | `GE007_NO_GUNHAND_AIMBONE_FIX` | bool | 0 | 1 |  |
+| `GE007_NO_HULL_CORNER_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | presence | unset | 1 | Restore the old same-tick native Bond intro chr load |
 | `GE007_NO_INTRO_PHASE3` | presence | unset | 1 | Disable the scripted phase-3 Bond intro animation |
