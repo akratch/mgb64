@@ -2508,6 +2508,7 @@ if(MACOS_APP_BUNDLE AND APPLE)
         assets
         lib/glad/include
         lib/stb
+        lib/cgltf   # decor_assets.c #includes cgltf.h; ge007/ge007_web already list this — ge007_lib (macOS universal build via build_universal.sh) was missing it, breaking the macos-release universal-library step
         macos/Sources
         .
     )
