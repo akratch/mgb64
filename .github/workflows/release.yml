@@ -54,7 +54,15 @@ jobs:
       - name: Smoke-launch the ROM-free launcher (headless)
         run: |
           sudo apt-get install -y xvfb
-          xvfb-run -a env MGB64_APP_SMOKE_FRAMES=30 ./build/ge007 | tee smoke.txt
+          # WebGPU is the default backend, but a headless CI runner (Xvfb: an X
+          # display with no GPU/Vulkan) can't acquire a wgpu-native adapter, so
+          # the WebGPU bring-up fails here. Drive the smoke through GL — the
+          # documented one-release fallback (GE007_RENDERER=gl; Mesa software GL /
+          # llvmpipe renders under Xvfb, as this smoke did before the WebGPU-default
+          # switch). This validates the packaged app/launcher/assets boot and
+          # render; the WebGPU default path is covered by the browser demo + the
+          # owner's on-hardware gameplay verification.
+          xvfb-run -a env GE007_RENDERER=gl MGB64_APP_SMOKE_FRAMES=30 ./build/ge007 | tee smoke.txt
           grep -q "smoke: rendered 30 frames" smoke.txt
       - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
