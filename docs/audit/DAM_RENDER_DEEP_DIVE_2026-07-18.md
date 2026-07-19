@@ -43,7 +43,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | R1 (FogDensity remaster default) | **LANDED** | `262c4cf` — 0.6 in remaster preset, faithful pinned 1.0 |
 | R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
 | TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
-| TMEM-1 (format reinterpretation) | **DEFERRED (evidence)** | no valid settex-path signal; real home = texSelect/cataloging; needs stock-ares monitor capture |
+| TMEM-1 (format reinterpretation) | **RESOLVED — NO DEFECT (2026-07-19 census)** | census at the texSelect choke point: reinterpretation is a phantom. `texSelect` (retail 0x7F076D68) selects `format = tex->gbiformat` (pool) over `tconfig->format` (table) whenever the texture is pooled — RDP-definitional, retail-identical. The table's differing fmt is discarded metadata, NOT honored on hardware. Class (b) live-divergence = EMPTY; see §TMEM-1 census. |
 | DAM-R2 (R-01/R-02 authored PVS) | **DEFERRED** | needs stock-ares capture at INTRO_CAMERA_INDEX=4 |
 | R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
 | FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
@@ -96,7 +96,7 @@ library namespace — wgpu-native and Dawn disagree on `WGPUTextureFormat` value
 | # | id | area | sev | conf | backends | one-liner |
 |---|-----|------|-----|------|----------|-----------|
 | 1 | **DAM-R1b** | sky/surface | **P1** | PROBABLE | web only | Browser scene target is an **sRGB** surface (fmt 23) → combiner bytes get gamma-encoded on store; horizon backdrop renders over-bright. Native (fmt 27 linear) is clean. |
-| 2 | **TMEM-1** | texture | **P1** | CONFIRMED | all | Format **reinterpretation dropped** on the G_SETTEX texture-by-number path (decodes by pool fmt, ignores the tile fmt) → the "monitor flat-green" class. Only the byte-order half was ever fixed. |
+| 2 | **TMEM-1** | texture | ~~P1~~→**NO DEFECT** | CONFIRMED-BENIGN (2026-07-19 census) | all | **Reinterpretation is a phantom.** The game-wide texSelect fmt-mismatch census (`GE007_TRACE_TMEM_REINTERP`) found 2 members (texnum 2224 monitor-text I8-table/CI4-pool; texnum 1980 RGBA-table/CI8-pool) — both **pooled**, both resolved to the pool fmt exactly as retail hardware does. `texSelect` prefers `tex->gbiformat` over `tconfig->format`, so nothing is dropped. Monitor green text renders (ROI green std=30.1 vs stock 27.0). Class (b) = EMPTY → no fix. |
 | 3 | **DAM-R1a** | sky | P1→**refuted** | CONFIRMED | — | The standing "native over-bright backdrop" P1 **does not reproduce**; the old f190 measurement was intro-swirl animation phase-skew. Reclassify/close. |
 | 4 | **BLEND-1** | blender | P2 | CONFIRMED | web broken | WebGPU never preserves the coverage-alpha channel (GL/Metal mask it) → interleaved XLU draws clobber stored N64 coverage. |
 | 5 | **AC-3** | alpha | P2 | CONFIRMED | web broken | WGSL omits the `G_AC_DITHER` alpha-dissolve entirely; GL/Metal emit it. Default backend silently drops the effect. |
@@ -250,6 +250,33 @@ reinterpretation half is still open.**
 > receives (only a texturenum). **TMEM-1's real home is the texture-cataloging / `texSelect`
 > layer (choose `tconfig->format` over `tex->gbiformat` for reinterpreted images), and it needs
 > a stock-N64 (ares) monitor capture to verify — reclassify as stock-verdict-pending.**
+
+> **UPDATE 2026-07-19 (Task 2 — census executed at the texSelect choke point): NO DEFECT. Reinterpretation is a PHANTOM; the 07-18 fix direction was inverted.**
+> Landed a game-wide one-shot fmt-mismatch census (`GE007_TRACE_TMEM_REINTERP`,
+> `othermodemicrocode.c texSelect`, off by default) that logs every draw where the image-table
+> entry's fmt/siz (`tconfig->format/depth`) disagrees with the pooled entry's (`tex->gbiformat/depth`).
+> Deterministic sweeps (Dam incl. the pad-100 monitor room, facility, runway, surface, archives)
+> yielded **exactly 2 members, both `pooled=1`**:
+> - **texnum 2224** `IMAGE_MONITOR_TEXT` (`monitors/screennew2`, GlobalImageTable.c:622): table
+>   `I8/8b`, pool `CI4`, resolved `CI4 + IA16-TLUT` (lutmode 3). The green monitor text.
+> - **texnum 1980**: mipmapped (level 6) env texture, table `RGBA(0)/8b` placeholder, pool `CI8 +
+>   IA16-TLUT`, resolved `CI8`. Drawn at preload in every level.
+>
+> **Why it is BENIGN — the 07-18 reasoning was backwards.** `texSelect` (retail 0x7F076D68), when
+> the texture is found in the pool (`tex != NULL`), sets `format = tex->gbiformat; depth = tex->depth`
+> (`othermodemicrocode.c:670-680` / `812-822`) and emits the whole DL — `gDPSetTextureImage`,
+> `gDPSetTile`, the combiner (`G_CC_MODULATE*`), the TLUT branch — with the **pool** fmt/siz. The
+> `tconfig->format` (table) value is *only* consulted in the `tex == NULL` fallback. This is
+> RDP-definitional: N64 hardware decodes whatever tile the DL emits, so retail draws these as CI,
+> not I8. The proposed fix ("honor the tile/table fmt over the pool fmt") would have DIVERGED from
+> retail. The §4.7 "I8 tile / `G_CC_MODULATEI` intensity-term" story mis-took `tconfig->format=I8`
+> (discarded metadata) for the emitted format; texSelect actually emits CI + `G_CC_MODULATEIA`, and
+> the CI4→IA16-TLUT decode (byte order already fixed by `fb59c95`) is what produces the text.
+> **Evidence:** census ON vs OFF byte-identical (0 px diff); left-monitor ROI green **std=30.1,
+> max=130** (stock Task-0 27.0, native 22.8 — a flat-green defect would be std≈0); WebGPU frame shows
+> legible green text on all 4 desk CRTs (Task-2 evidence). **Verdict: class (b) live-divergence =
+> EMPTY. No engine fix. TMEM-1 closed as NO-DEFECT; ledger FID-0133.** The census instrument is
+> retained as the standing game-wide fmt-reinterpretation audit tool the backlog asked for.
 
 ### TMEM-2 — `settex_cache` keyed on `texturenum` alone — P2, CONFIRMED (verified at HEAD)
 The lookup matches `settex_cache[i].texturenum == texturenum` (`gfx_pc.c:22571`,
