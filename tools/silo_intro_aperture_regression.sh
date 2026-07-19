@@ -155,8 +155,16 @@ echo "=== Silo Intro Aperture Regression (FID-0009, level $LEVEL, swirl frame $F
 echo "  binary: $BINARY"
 echo "  rom:    $ROM"
 
-capture fix
-capture optout GE007_NO_CAMERA_SEED_MULTIHOP=1
+# Isolate the FID-0009 camera-seed walk that THIS lane guards. DAM-R2 added a second,
+# independent draw-only admission mechanism (GE007_NO_INTRO_FARVISTA_ADMIT / bg.c far-vista
+# pass) that also runs during the Silo frozen intro and independently admits the grazing
+# room 27, which would MASK the leak in the opt-out control and defeat the FID-0009 fail-on-
+# revert. Disable it in BOTH captures so the walk is the only mechanism under test. (The
+# DAM-R2 far-vista pass is itself sim-neutral here -- with it ON, room 27 is still admitted
+# draw-only and every sim-consumed field stays byte-identical -- but that is DAM-R2's lane,
+# not FID-0009's.)
+capture fix    GE007_NO_INTRO_FARVISTA_ADMIT=1
+capture optout GE007_NO_INTRO_FARVISTA_ADMIT=1 GE007_NO_CAMERA_SEED_MULTIHOP=1
 
 python3 - "$OUT_DIR" "$LEAK_ROOM" "$BLUE_LEAK_MIN" "$BLUE_OK_MAX" <<'PY'
 import json, sys

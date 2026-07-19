@@ -17123,6 +17123,84 @@ void sub_GAME_7F0B8A6C(void) {
             }
         }
 
+        /* DAM-R2: distant reservoir-shore admission for the static establishing
+         * intro camera (playerHasFrozenIntroCamera). Retail draws the far shore /
+         * snow-capped mountains across the reservoir from the Dam establishing
+         * shot; on the port those rooms render as bare sky. Root cause: the far-
+         * vista rooms sit across an OPEN-WATER gap with no portal connecting them
+         * to the camera's room, so the port's portal-BFS + adjacency/AABB-gated
+         * wideners (the T13b camera-seed walk above, portal edge-rescue, the
+         * visibility-supplement) structurally cannot reach them (deep-dive R-03:
+         * removing the adjacency gate in gameplay reintroduces the room-14 far-
+         * shard / train-sky-leak class, so loosening it is NOT the answer). Retail's
+         * own mechanism is the authored per-room PVS list consumed by
+         * sub_GAME_7F0B38B4, but that consumer has no live caller and its vis-list
+         * data source is absent from the decomp, so it cannot be revived without
+         * guessing retail control flow. Recover the LOOK the sim-neutral way instead:
+         * for the frozen establishing camera ONLY, admit every frustum-visible,
+         * not-yet-rendered, loaded room into the DRAW-ONLY set via the same
+         * reproduce-then-restore mechanism as the T13b walk above (call
+         * sub_GAME_7F0B39BC to add the room to the render-only draw list, then
+         * restore the three sim-visible s_room_info fields). The draw path renders
+         * from the draw list, NOT room_rendered, so the vista draws while every
+         * room_rendered consumer (auto-aim room_rendered coupling at chr.c ~5205,
+         * PROPFLAG_ONSCREEN -> actor tick -> intro RNG) reads the byte-identical
+         * pre-pass set. Scoping to the frozen intro (no gameplay, camera detached)
+         * means there is no auto-aim to perturb and no gameplay over-admission
+         * class. The frozen intro is a detached authored camera, so
+         * camera_walk_seed_room >= 0 and the draw-only invariant below holds.
+         * Opt out (restore the bare-sky vista, prove byte-identical default) with
+         * GE007_NO_INTRO_FARVISTA_ADMIT. */
+        {
+            static int no_intro_farvista = -1;
+            if (no_intro_farvista < 0) {
+                no_intro_farvista =
+                    port_env_set("GE007_NO_INTRO_FARVISTA_ADMIT",
+                                 "Disable the DAM-R2 static-intro far-vista draw-only "
+                                 "admission (restore the bare-sky establishing shot)");
+            }
+            if (!no_intro_farvista
+                && playerHasFrozenIntroCamera(g_CurrentPlayer)) {
+                u8 snap_rendered[MAXROOMCOUNT];
+                u8 snap_neighbor[MAXROOMCOUNT];
+                u8 snap_portals[MAXROOMCOUNT];
+                s32 idx;
+
+                for (idx = 0; idx < MAXROOMCOUNT; idx++) {
+                    snap_rendered[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_rendered : 0;
+                    snap_neighbor[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_neighbor_to_rendered : 0;
+                    snap_portals[idx] =
+                        (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].portals_to_room_count : 0;
+                }
+
+                /* Add every frustum-visible, loaded, not-yet-rendered room to the
+                 * draw list. Same gate set as the T13 room-visibility classifier:
+                 * model loaded + frustum-visible (sub_GAME_7F0B5208). */
+                for (idx = 1; idx < g_MaxNumRooms; idx++) {
+                    if (g_BgRoomInfo[idx].room_rendered) continue;
+                    if (!g_BgRoomInfo[idx].model_bin_loaded) continue;
+                    if (!sub_GAME_7F0B5208(idx, player_bbox)) continue;
+                    bgSetRoomAdmitTraceContext("intro_farvista", g_BgCurrentRoom, -1, 0);
+                    sub_GAME_7F0B39BC(idx, 0, player_bbox, 1);
+                    bgClearRoomAdmitTraceContext();
+                }
+
+                /* Mark the delta draw-only, then restore the sim-visible fields so
+                 * the sim reads exactly the pre-pass room_rendered set. */
+                for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+                    if (g_BgRoomInfo[idx].room_rendered && !snap_rendered[idx]) {
+                        g_BgRoomDrawOnly[idx] = 1;
+                        g_BgRoomDrawOnlyCount++;
+                    }
+                    g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
+                    g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
+                    g_BgRoomInfo[idx].portals_to_room_count = snap_portals[idx];
+                }
+            }
+        }
+
         /* FID-0008: Train room-51 rear-office window (the Trevelyan "that's close
          * enough" beat) -- and any grazing-aperture room whose projected portal
          * bbox collapses so the pure portal BFS drops it -- shows a wrong window

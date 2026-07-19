@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1080 flags** found across the source.
+**1081 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -597,6 +597,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_HULL_CORNER_FIX` | bool | 0 | 1 |  |
 | `GE007_NO_INPUT_GRAB` | ? |  | 1 |  |
 | `GE007_NO_INTRO_CHR_TIMING_FIX` | presence | unset | 1 | Restore the old same-tick native Bond intro chr load |
+| `GE007_NO_INTRO_FARVISTA_ADMIT` | presence | unset | 1 | Disable the DAM-R2 static-intro far-vista draw-only admission (restore the bare-sky establishing shot) |
 | `GE007_NO_INTRO_PHASE3` | presence | unset | 1 | Disable the scripted phase-3 Bond intro animation |
 | `GE007_NO_INTRO_ROOTMOTION` | presence | unset | 1 | Restore the static intro-Bond pin (disable anim root motion, default ON) |
 | `GE007_NO_LAST_Z_TRIGGER_TIMER_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset write of the rocket-launch fire timer to player+0x105C [FID-0092] |
