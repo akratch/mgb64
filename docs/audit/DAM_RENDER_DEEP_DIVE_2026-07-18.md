@@ -44,7 +44,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
 | TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
 | TMEM-1 (format reinterpretation) | **RESOLVED — NO DEFECT (2026-07-19 census)** | census at the texSelect choke point: reinterpretation is a phantom. `texSelect` (retail 0x7F076D68) selects `format = tex->gbiformat` (pool) over `tconfig->format` (table) whenever the texture is pooled — RDP-definitional, retail-identical. The table's differing fmt is discarded metadata, NOT honored on hardware. Class (b) live-divergence = EMPTY; see §TMEM-1 census. |
-| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower, more foreground) remains OPEN — unadjudicated `CutsceneFovY`, see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
+| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower): `CutsceneFovY`=60 **ADJUDICATED retail-faithful (Task 5, 2026-07-20)** — asm (no FOV field in `SetupIntroCamera`; base `fovy`=60) + geometry (waterline matches, k≈1) agree; the mountain-height gap is NOT FOV but the DAM-R2 admission superset (→ R-02, deferred), see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
 | R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
 | FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
 
@@ -452,8 +452,34 @@ during `playerHasFrozenIntroCamera` only, via the T13b reproduce-then-restore id
 residual intro **FOV/framing** gap vs stock remains OPEN and is a *separate finding, NOT
 DAM-R2*: native shows more dam-wall foreground and the mountains sit lower/smaller than
 stock at the same byte-identical logged camera; native intro uses `Video.CutsceneFovY`=60,
-not `Video.FovY` (Task 0's FovY override didn't change the intro framing), and whether
-retail's authored establishing FOV is truly 60 is unadjudicated.
+not `Video.FovY` (Task 0's FovY override didn't change the intro framing).
+
+**FOV ADJUDICATED — Task 5 (2026-07-20): CutsceneFovY = 60 is retail-FAITHFUL; the
+framing residual is NOT an FOV defect — it is the DAM-R2 admission superset (→ R-02).**
+Two independent legs agree the intro renders at FOV_y = 60 and native already uses it, so
+no FOV code change is warranted:
+- **Asm leg**: retail's authored intro camera struct `struct SetupIntroCamera`
+  (`bondtypes.h:3872`) carries only pos/yaw/pitch/pad/lang — **no FOV field**. Retail
+  renders the intro through `lvlRender` → `viSetFovY(g_CurrentPlayer->fovy)` with the
+  player base `fovy = 60.0` (`player_2.c:479`); no non-60 `fovy` write exists on the
+  frozen-intro path. Vertical framing depends **only** on `perspfovy` — `c_scaley` in
+  `currentPlayerSetCameraScale` (`bondview.c:1801`) is a function of `perspfovy` alone;
+  aspect enters `c_scalex` (`:1802`) only, i.e. horizontal. Port `Video.CutsceneFovY`
+  default 60 (`platform_sdl.c:461`) exactly reproduces this.
+- **Native leg (trace)**: at the registered idx5/pad-273 intro the engine renders
+  `vi_fovy = 60.0, aspect = 1.4545 (= 320/220 viewport)` on **both** WebGPU and GL
+  (`GE007_TRACE_FOV`) — native provably already uses the retail value.
+- **Geometric leg**: camera is byte-identical (Task 0). The **reservoir waterline** — the
+  robust shared landmark — matches native-vs-stock at y ≈ 185 (Δ ≈ 0 px, crop-scale
+  k ≈ 1.0), pinning stock FOV_y = 60 ± ~4° (from ±5 px waterline localisation at its
+  67 px off-centre offset). The **mountain silhouette top** differs by ~50 px (stock
+  taller), which a single FOV/crop-scale cannot produce alongside a matching waterline
+  (best-fit crop-scale rms 24 px — no consistent k). The mountains are 100 %
+  admission-sourced (`NO_INTRO_FARVISTA_ADMIT` → bare sky), so the height gap is DAM-R2
+  drawing a **frustum superset ≠ retail's authored PVS** — exactly **R-02**. R-02 stays
+  DEFERRED (no live caller, vis-list data absent from decomp — escalate, do not guess).
+  The separate ~21-level ROI luma gap (native 62 vs stock 41, blue-dom 0.94 both) is the
+  DAM-R1 lighting difference, unaffected by FOV (confirmed by a 40–60° CutsceneFovY sweep).
 
 **Scope (review finding, this round):** over-admission safety was validated on Dam only
 (plus Silo, which pins the opt-out ON in `tools/silo_intro_aperture_regression.sh` rather
