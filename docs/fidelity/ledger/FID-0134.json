@@ -1,0 +1,44 @@
+{
+  "id": "FID-0134",
+  "title": "Web 3D over-bright residual (DAM-R1b) REFUTED: CDP screenshot byte-faithful to in-page GPU readback; opaque 3D surfaces at native parity; prior ~7-11-level lift was pose/frame mismatch on the sky ROI",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "refuted",
+  "suspect": [
+    "src/platform/fast3d/gfx_webgpu.c:1481",
+    "src/platform/fast3d/gfx_webgpu.c:1558"
+  ],
+  "repro": "Same dam --deterministic frame read FOUR ways and compared per-ROI (harness: task-4 webprobe.mjs, patched throwaway dist that seeds ENV from ?env= and exposes window._mgb64). (2) CDP Page.captureScreenshot; (i-scene) GE007_WEBGPU_DUMP_FRAME=N -> /tmp/webgpu_frame_N.ppm (offscreen scene target, pre-present GPU-buffer readback); (i-surface) GE007_WEBGPU_DUMP_SURFACE=N -> /tmp/webgpu_surface_N.ppm (post present-copy GPU-buffer readback). CDP is captured the instant the MEMFS dump file appears so all three web reads share one camera pose. Native baseline: build/ge007 --level dam --deterministic --screenshot-frame N (wgpu-native).",
+  "evidence": [
+    {
+      "kind": "pixel-diff",
+      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 web2, frame 500, tight pose alignment): full-image mean-abs-diff CDP screenshot vs GPU-buffer readback = R 0.525 / G 0.499 / B 0.488; frame-invariant rock+ground ROIs are byte-identical between CDP and both GPU dumps. => Page.captureScreenshot introduces NO brightness lift; it reports the engine's rendered bytes. Hypothesis (a) 'CDP color-management artifact' is FALSE."
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 ROI means, frame 500; native f300 640x480 vs web f500 640x393, matched pose): native [32.0,32.6,34.3] vs web-CDP [30.9,31.5,33.2] vs web-dump [30.9,31.5,33.2] (web ~1 DARKER). ground: native [77.9,79.2,83.3] vs web [78.5,79.8,83.9] (web +0.6). gun/viewmodel: native [63.2,64.3,67.5] vs web [60.5..61.3] (web ~2 darker). Deltas are <=2-3 levels and go BOTH directions -> NO systematic over-bright. Hypothesis (b) 'genuine 3D over-bright divergence' is FALSE for a lift."
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/platform/fast3d/gfx_webgpu.c:1510 (task-4 present-copy): web_dump_surface == web_dump_scene byte-for-byte (identical full-image diff vs CDP) -> the present-copy blit into the canvas swapchain is a pure LINEAR copy with no sRGB re-encode-on-store, independently corroborating the 2026-07-18 CORRECTION (both surfaces are linear BGRA8; the reverted sRGB fix bb4a824 was correctly a no-op)."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_webgpu.c (task-4 sky-ROI pose-sensitivity): the sky ROI is pose-sensitive because the drifting camera sweeps the rock silhouette across it. Native dam sky-ROI mean alone swings across frames with NO input: f120 [60.9,89.0,130.5], f200 [34.4,68.4,116.5], f300 [62.1,72.1,88.6], f350 [78.4,103.0,140.3] — a >40-level spread. The audit's cited web sky ~(65,90,130) sits squarely inside native's own frame-to-frame range. The prior ~7-11 (scene) / ~20 (sky) 'lift' was mismatched-pose ROI variance, not a render or capture defect. Within one pose, web-CDP sky [36.5,64.7,105.1] == web-dump sky [36.4,64.7,105.0]."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md (CORRECTION 2026-07-20 closure paragraph); full numeric table + harness in Evidence root task-4 (.superpowers/sdd/task-4-report.md)"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T00:00:00Z",
+      "from": "",
+      "to": "refuted",
+      "evidence": "task-4 webprobe.mjs four-way read (native / CDP / GPU-scene-dump / GPU-surface-dump), dam --deterministic, HEAD 3f376bb.",
+      "note": "REFUTED (Task 4). Built a discriminator that reads the SAME web frame three ways (CDP screenshot + two engine GPU-buffer readbacks that bypass canvas/compositor/CDP entirely) plus a wgpu-native baseline. Findings: (1) CDP == in-page GPU readback to a mean of <0.53 level/channel (rock/ground byte-identical) -> the historically-blamed CDP capture is faithful, NOT a color-management artifact. (2) Opaque 3D surfaces (rock/ground/viewmodel) are at native parity within <=2-3 levels in BOTH directions -> no systematic over-bright. (3) The prior ~7-11/~20-level 'lift' was pose/frame mismatch: the sky ROI swings >40 levels frame-to-frame on native alone as the idle camera sweeps the rock silhouette; the audit's web sky value lies inside native's own range. Docs-only closure; no engine change (default rendering untouched). The one residual is a small sky HUE shift (web slightly more saturated blue, i.e. bluer not brighter) that is real-in-bytes (CDP==dump) but pose-confounded and NOT the over-bright symptom; left as a minor open note, plausibly the known WebGPU sky-backdrop blend behavior (BLEND-1/FMA-2), present on wgpu-native too."
+    }
+  ]
+}

@@ -89,13 +89,65 @@ fix.** DAM-R1a (native reproduces nothing) still stands; DAM-R1 overall remains
 **Lesson:** never interpret a raw WebGPU enum integer without pinning the enum's
 library namespace — wgpu-native and Dawn disagree on `WGPUTextureFormat` values.
 
+### ⚠️ CLOSURE 2026-07-20 (Task 4): the residual over-bright is REFUTED — no lift, and CDP is faithful (FID-0134)
+
+The "residual over-bright" left open above (hypotheses (a) CDP capture artifact vs
+(b) genuine Dawn-vs-wgpu-native 3D divergence) was resolved with a same-frame,
+four-way readback discriminator and it is **neither** — there is **no systematic
+lift at HEAD (`3f376bb`)**, and the CDP screenshot is byte-faithful to the rendered
+pixels. Method: read the SAME dam `--deterministic` web frame three ways — (2) CDP
+`Page.captureScreenshot`; (i-scene) `GE007_WEBGPU_DUMP_FRAME` → the offscreen scene
+target GPU-buffer readback (pre-present); (i-surface) `GE007_WEBGPU_DUMP_SURFACE` →
+the post-present-copy GPU-buffer readback — the two dumps **bypass the canvas
+colorspace, the compositor and the CDP encode entirely**. CDP is captured the instant
+the MEMFS dump file appears, so all three web reads share one camera pose. Baseline:
+`build/ge007 … --level dam --deterministic --screenshot-frame N` (wgpu-native).
+
+| ROI (frame-matched: native f300 / web f500) | native (wgpu-native) | web CDP (2) | web GPU-dump surface (i) | web GPU-dump scene (i) |
+|---|---|---|---|---|
+| sky *(pose-sensitive, see below)* | 62.1, 72.1, 88.6 | 36.5, 64.7, 105.1 | 36.4, 64.7, 105.0 | 36.4, 64.7, 105.0 |
+| rock (3D terrain, frame-invariant) | 32.0, 32.6, 34.3 | 30.9, 31.5, 33.2 | 30.9, 31.5, 33.2 | 30.9, 31.5, 33.2 |
+| ground (3D terrain, frame-invariant) | 77.9, 79.2, 83.3 | 78.5, 79.8, 83.9 | 78.5, 79.8, 83.9 | 78.5, 79.8, 83.9 |
+| gun/viewmodel (2D-ish overlay control) | 63.2, 64.3, 67.5 | 61.3, 62.3, 65.5 | 60.5, 61.5, 64.6 | 60.5, 61.5, 64.6 |
+
+- **CDP is faithful (hypothesis (a) FALSE).** Full-image mean-abs-diff between the CDP
+  screenshot and the GPU-buffer readback (tight pose alignment) is **R 0.53 / G 0.50 /
+  B 0.49**, and the frame-invariant rock/ground ROIs are **byte-identical** between CDP
+  and both dumps. `Page.captureScreenshot` adds no brightness — there is no
+  color-management lift in the capture path.
+- **No systematic over-bright (hypothesis (b) FALSE for a lift).** On the
+  frame-invariant opaque surfaces, web-vs-native is **≤2–3 levels and goes BOTH
+  directions** (rock web ~1 *darker*, ground web +0.6, viewmodel ~2 darker). This is
+  ordinary FILT-1 / sort-epsilon noise, not a lift.
+- **The prior ~7–11 (scene) / ~20 (sky) "lift" was a pose/frame-mismatch measurement
+  artifact.** The sky ROI is dominated by the drifting idle camera sweeping the rock
+  silhouette across it: on native *alone*, with no input, the sky-ROI mean swings
+  f120 `[60.9,89.0,130.5]` → f200 `[34.4,68.4,116.5]` → f350 `[78.4,103.0,140.3]` — a
+  >40-level spread. The audit's cited web sky `~(65,90,130)` sits squarely inside
+  native's own range. Comparisons that were not pose-locked mis-read that variance as a
+  web lift.
+- **`surface` dump == `scene` dump byte-for-byte**, independently confirming the
+  present-copy blit is a pure linear copy (no sRGB re-encode-on-store), corroborating
+  the CORRECTION above and the reverted `bb4a824`.
+- **Residual note (minor, left open):** the one real native-vs-web difference is a
+  small sky *hue* shift — web renders a slightly more saturated blue (bluer, **not
+  brighter**). It is real-in-bytes (CDP == dump) but pose-confounded and is **not** the
+  over-bright symptom; it is plausibly the known WebGPU sky-backdrop blend behavior
+  (BLEND-1 / FMA-2), which is present on wgpu-native too. Not pursued here.
+
+Ledger: **FID-0134 (refuted)**. Full harness (`webprobe.mjs`), commands and images:
+Task-4 report. Path (ii) canvas `drawImage`→`getImageData` readback returned blank in
+headless (the WebGPU canvas is not `drawImage`-able outside its rAF frame); it is
+superseded by the two engine GPU-buffer dumps, which bypass strictly more of the
+pipeline anyway.
+
 ---
 
 ## Executive summary — ranked findings
 
 | # | id | area | sev | conf | backends | one-liner |
 |---|-----|------|-----|------|----------|-----------|
-| 1 | **DAM-R1b** | sky/surface | **P1** | PROBABLE | web only | Browser scene target is an **sRGB** surface (fmt 23) → combiner bytes get gamma-encoded on store; horizon backdrop renders over-bright. Native (fmt 27 linear) is clean. |
+| 1 | **DAM-R1b** | sky/surface | ~~P1~~→**REFUTED/CLOSED** | REFUTED (2026-07-20, FID-0134) | web only | ~~Browser scene target is sRGB → over-bright.~~ Superseded by the CORRECTION (linear BGRA8, not sRGB) and now fully CLOSED: a same-frame four-way readback shows CDP is byte-faithful to the GPU readback (mean <0.53/ch) and opaque 3D surfaces are at native parity (≤2–3 lvl, both directions). The prior "lift" was pose/frame-mismatch on the drift-sensitive sky ROI. See CLOSURE 2026-07-20 above. |
 | 2 | **TMEM-1** | texture | ~~P1~~→**NO DEFECT** | CONFIRMED-BENIGN (2026-07-19 census) | all | **Reinterpretation is a phantom.** The game-wide texSelect fmt-mismatch census (`GE007_TRACE_TMEM_REINTERP`) found 2 members (texnum 2224 monitor-text I8-table/CI4-pool; texnum 1980 RGBA-table/CI8-pool) — both **pooled**, both resolved to the pool fmt exactly as retail hardware does. `texSelect` prefers `tex->gbiformat` over `tconfig->format`, so nothing is dropped. Monitor green text renders (ROI green std=30.1 vs stock 27.0). Class (b) = EMPTY → no fix. |
 | 3 | **DAM-R1a** | sky | P1→**refuted** | CONFIRMED | — | The standing "native over-bright backdrop" P1 **does not reproduce**; the old f190 measurement was intro-swirl animation phase-skew. Reclassify/close. |
 | 4 | **BLEND-1** | blender | P2 | CONFIRMED | web broken | WebGPU never preserves the coverage-alpha channel (GL/Metal mask it) → interleaved XLU draws clobber stored N64 coverage. |
