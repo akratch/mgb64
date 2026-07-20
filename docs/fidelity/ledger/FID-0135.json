@@ -23,6 +23,13 @@
       "to": "triaged",
       "evidence": "Measured bars (rows whose max channel <= 8 from each edge) on 640x480 captures of the registered Dam establishing intro (GE007_INTRO_CAMERA_INDEX=5, --screenshot-frame 60): native at the DEFAULT window (1440x810 = 16:9) = top 75 / bottom 75; the SAME build at GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 (4:3) = top 20 / bottom 20, exactly matching stock-ares (a_estab_pad273_stock_f1400.ppm, 20/20). Decomposition of the 75: capture letterbox (480 - 640/(16/9))/2 = 60 px, plus the engine's own retail 10/240 viewport band scaled into the 360-row content = 15 px. Gameplay (no intro) shows the same 75 vs 20, so this is not cutscene-specific. Registration fit (gradient-correlation, stock warped to native): 16:9 needs vertical scale 0.75 (corr 0.417); 4:3 needs the IDENTITY sy=sx=1.000, ty=tx=0 (corr 0.683). Content mean-abs-diff vs stock 33.27 -> 21.23.",
       "note": "Task 5b. Root cause of the 'native cinematic band is 75px vs retail 20px' defect report: the band divergence is 100% capture-side, not rendered. No script under scripts/ or tools/ pins a 4:3 window, so every stock-vs-native pixel comparison taken at the default window carries a 0.75x vertical scale plus a 60px offset. Mitigated in a3acb93 by a one-shot stderr disclosure whenever the capture aspect differs from the drawable; the durable fix is for hardware-comparison harnesses to pin GE007_WINDOW_WIDTH/HEIGHT to a 4:3 pair."
+    },
+    {
+      "ts": "2026-07-20T08:28:23Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "Review-fix round 2 (fix/tier1-residuals): pinned tools/rom_oracle_routes/dam_monitor_probe_visual.json and tools/rom_oracle_routes/dam_r2_establishing_visual.json to a 4:3 native_config window (already Video.WindowWidth=640/Video.WindowHeight=480 in both, predating this finding) as the durable per-route fix for the two stock-comparison routes; native-vs-native regression routes/baselines were left untouched (common-mode, unaffected).",
+      "note": "Backlogging two deferred instrumentation recommendations from this round's review so they are not lost, NOT implemented here: (a) emit capture content-rect metadata (offset_x/offset_y/scaled_w/scaled_h) alongside every screenshot, plus a de-letterbox step in the measurement scripts, so already-recorded 16:9 captures stay re-analyzable without a re-capture; (b) a fail-closed GE007_FIDELITY_CAPTURE=1 mode where a non-4:3 drawable at capture time is a hard error, replacing the current advisory one-shot stderr disclosure (a3acb93). Both remain open follow-up work against this record."
     }
   ]
 }

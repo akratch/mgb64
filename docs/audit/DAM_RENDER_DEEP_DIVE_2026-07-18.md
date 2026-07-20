@@ -448,14 +448,34 @@ admitting every frustum-visible, loaded, not-yet-rendered room into the **draw-o
 during `playerHasFrozenIntroCamera` only, via the T13b reproduce-then-restore idiom
 (sim-neutral: `room_rendered` restored, draw list carries the vista). Opt-out
 `GE007_NO_INTRO_FARVISTA_ADMIT` reproduces the bare-sky baseline byte-identically. ROI
-[80,95,480,80] WebGPU luma 91→62, blue-dom 1.00→0.86 (toward stock ~44/0.74); GL agrees. A
-residual intro **FOV/framing** gap vs stock remains OPEN and is a *separate finding, NOT
-DAM-R2*: native shows more dam-wall foreground and the mountains sit lower/smaller than
-stock at the same byte-identical logged camera; native intro uses `Video.CutsceneFovY`=60,
-not `Video.FovY` (Task 0's FovY override didn't change the intro framing).
+[80,95,480,80] WebGPU luma 91→62, blue-dom 1.00→0.86 — a valid **native-vs-native**
+before/after (same capture aspect both sides, common-mode, unaffected by FID-0135); GL
+agrees. **[Review round 2, 2026-07-20]** The `(toward stock ~44/0.74)` clause in that same
+sentence is a *stock*-comparison number taken at the unregistered default 16:9 window —
+it is **superseded** by the registered re-measurement below: native luma 53.1 at a 4:3
+window vs stock-ares 41.0, blue-dom 0.493 vs 0.465 (FID-0136, Task 5b). A residual intro
+**FOV/framing** gap vs stock remains OPEN and is a *separate finding, NOT DAM-R2*: native
+shows more dam-wall foreground and the mountains sit lower/smaller than stock at the same
+byte-identical logged camera **(caveat, review round 2: this sentence's underlying capture
+was also unregistered 16:9-vs-4:3; per Task 5b below, most of this "more foreground /
+lower mountains" reading is the FID-0135 capture squeeze, not rendered geometry — see the
+re-registered geometry, whose small residual is now attributed to admission, not
+projection)**; native intro uses `Video.CutsceneFovY`=60, not `Video.FovY` (Task 0's FovY
+override didn't change the intro framing).
 
 **FOV ADJUDICATED — Task 5 (2026-07-20): CutsceneFovY = 60 is retail-FAITHFUL; the
-framing residual is NOT an FOV defect — it is the DAM-R2 admission superset (→ R-02).**
+framing residual is NOT an FOV defect.** **[Corrected, review round 2]** It is **not**
+simply "the DAM-R2 admission superset" — per Task 5b's re-registered geometry (below),
+most of the originally-reported framing residual was the FID-0135 capture-aspect
+confound, not admission at all. The small true residual is DAM-R2 admitting a
+**different** far-room set than retail's authored PVS: native replaces retail's authored
+per-room PVS with a structurally different portal-BFS + heuristic-widener mechanism (plus
+the Dam-scoped frustum force-admit), and the decompiled PVS consumer separately carries a
+known **under**-admission bug (FID-0121) — so native may admit the **wrong** rooms in
+either direction (→ R-02). The newly-visible far shore/bridge geometry at the registered
+landmarks (x≈430/540, see below) shows this cuts the *other* way too: native draws
+geometry stock does not, an **over-admission** risk not covered by DAM-R2's original
+under-admission premise, tracked separately as **FID-0137** (→ R-02).
 Two independent legs agree the intro renders at FOV_y = 60 and native already uses it, so
 no FOV code change is warranted:
 - **Asm leg**: retail's authored intro camera struct `struct SetupIntroCamera`
@@ -520,7 +540,11 @@ silhouette and the water→dam/rock transition at x = 140/240/320/430/540) impro
 **57.7 px → 22.5 px**; whole-content mean-abs-diff **33.27 → 21.23**. The residual
 landmark deltas are concentrated on the right half (x = 430/540), where native draws far
 shore/bridge geometry that stock does not — consistent with the R-02 admission difference
-below, not with projection.
+below, not with projection. **[Review round 2, 2026-07-20]** This is the *opposite*
+direction from DAM-R2's original under-admission premise — the far shore/bridge geometry
+at x≈430/540 is native drawing **more** than stock, not less — and was invisible behind
+the 16:9/4:3 capture squeeze until this registration. Filed as **FID-0137** (over-admission
+risk; see R-02 below).
 
 *Attribution wording (review finding).* Calling native's admission a "frustum **superset**"
 is too narrow. Native does not merely draw *extra* rooms: per R-02 below it uses a
@@ -570,7 +594,10 @@ if wired. **Fix:** drive `sub_GAME_7F0B38B4` (FID-0121-corrected) over the camer
 room and feed admits into `g_BgRoomDrawOnly` (NOT `room_rendered` — retail feeds
 `room_rendered`, which perturbs RNG; the port must stay draw-only). **Risk medium-high**
 (new admission source; validate no over-admission of the train-sky-leak / room-14 far-
-shard class). **Stock-N64 capture at `INTRO_CAMERA_INDEX=4` required before shipping.**
+shard class — see also **FID-0137**, the registered-capture evidence that the *current*
+Dam-scoped frustum force-admit already over-admits far shore/bridge geometry at x≈430/540
+relative to stock, the opposite direction from this section's under-admission premise).
+**Stock-N64 capture at `INTRO_CAMERA_INDEX=4` required before shipping.**
 
 ### R-03/04/05 (supporting) — CONFIRMED / HYPOTHESIS
 - **R-03:** the visibility-supplement adjacency gate (`bg.c:2241`) makes `far` rooms
