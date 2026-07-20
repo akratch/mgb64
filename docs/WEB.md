@@ -222,6 +222,41 @@ instead of accumulating divergent branches inline. If you find yourself about
 to add `#ifdef __EMSCRIPTEN__` directly in `gfx_webgpu.c`, that's a signal the
 seam is missing a primitive — add it to the compat header instead.
 
+### Audio output backend (WEB-069)
+
+The browser build has **two** audio output paths, chosen at startup in
+`portAudioInit` (`src/platform/audio_pc.c`):
+
+1. **AudioWorklet (preferred)** — `src/platform/web_audio_worklet.c`. A plain-JS
+   `AudioWorkletProcessor` (injected as a Blob module, so no 7th deploy file)
+   owns a ring buffer and pulls 128-sample render quanta (~2.7 ms) on the audio
+   render thread. The engine still synthesises on the main thread (it is welded
+   to the 60 Hz sim tick) and posts finished PCM into the ring via
+   `postMessage`. The occupancy controller reads ring depth synchronously on the
+   main thread from the worklet's last reported count plus `ctx.currentTime`, so
+   this needs **no SharedArrayBuffer, no cross-origin isolation, and no headers**
+   — it works on plain GitHub Pages. It does **not** touch the WebGPU build.
+2. **SDL ScriptProcessorNode (fallback)** — if the browser has no AudioWorklet,
+   `webAudioOutputInit` returns 0 and `portAudioInit` opens the legacy SDL device
+   (a main-thread ScriptProcessorNode with a deep 2048-sample buffer).
+
+**Why it matters.** The SDL SPN path runs *both* the `SDL_QueueAudio` pump and
+the audio callback on the main thread, so a GC pause / WebGPU pipeline compile /
+level-load stall starves audio — which forced a deep (~43 ms) device buffer as
+glitch insurance and made the fire-to-hear delay ~2× native. Moving the drain to
+the worklet's audio thread removes that: measured device-side latency drops from
+~136 ms (queue + SPN buffer) to ~58 ms (ring only) — **native parity** — with
+zero steady-state underruns. Big main-thread stalls (level load) still glitch on
+*either* path; during those the sim is paused anyway. See FID-0141 / WEB-069.
+
+The swap is a leaf at the `SDL_QueueAudio` boundary: `osAiSetNextBuffer` /
+`osAiGetLength` / `osAiQueueBelowLimit` in `stubs.c` route through the worklet
+via `ai_enqueue()` / `ai_queued_bytes()` when `webAudioOutputActive()`. The
+synth, SFX mixer, VADPCM decoder, mute ramp, and master-volume stages are all
+upstream and unchanged. Native is completely unaffected (real SDL + CoreAudio /
+WASAPI). The worklet reuses `Module.SDL2.audioContext` so the shell's existing
+gesture-resume / teardown lifecycle (WEB-035 / WEB-009) works unchanged.
+
 ### ILP32 (wasm32) notes
 
 wasm32 is an ILP32 target: pointers are 32 bits, same width as the N64's

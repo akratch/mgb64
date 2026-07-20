@@ -1,0 +1,51 @@
+{
+  "id": "FID-0141",
+  "title": "Audio output latency: occupancy controller used 30 Hz frame units in a 60 Hz pump -- base biased 2x realtime + drain floor above consumption -> queue railed at the cap; ~400 ms fire-to-hear on web",
+  "class": "port-defect",
+  "surface": "audio",
+  "priority": "P2",
+  "status": "landed",
+  "suspect": [
+    "src/platform/audi_port.c (portAudioSizeFrame: min_samples = align16(g_FrameSize/2) = 368 > consumption 367.5)",
+    "src/platform/audi_port.c:379 (g_FrameSize = outputRate*2/60 = 736, sized for retail's 30 Hz task but pumped at 60 Hz)",
+    "src/platform/audi_port.c (portAudioPrefillQueue, PERF-035 d0bad20 -- fills to the cap at every level load)",
+    "src/platform/stubs.c (AI_QUEUE_LIMIT_FRAMES 12u on web = ~400 ms cap; f17d6a9)",
+    "src/platform/web_audio_worklet.c (WEB-069 AudioWorklet output backend \u2014 the parity fix for the main-thread SPN floor)"
+  ],
+  "repro": "Web build, boot into a level, fire repeatedly: the muzzle/impact decal appears well before the gunshot is audible. Measured directly by instrumenting portAudioFrame's per-pump queue_before over tools/web/webcap.mjs (stderr -> console.error): the PERF-035 prefill jumps the SDL queue to ~394 ms at pump 30 and it oscillates 238-400 ms indefinitely, with the controller producing exactly 368 samples every pump (railed at its floor). Native shows the same rail at its smaller 5-frame cap: GE007_AUDIO_TRACE queue_before settles at 127-154 ms against a 50 ms target.",
+  "evidence": [
+    {
+      "kind": "counter-log",
+      "path": "src/platform/audi_port.c -- Web build measured via tools/web/webcap.mjs, level=dam. BEFORE: per-pump queue_before = 0 -> 394 ms (pump 0->30, the PERF-035 prefill), then oscillates 238-358 ms and never recovers; produced=368 samples on every pump (the floor). AFTER (floor dropped to 352): 397 ms -> 243 -> 194 -> 144 -> 124 -> 96 -> 91 ms over the first ~18 pumps, settling ~65-170 ms (mean ~115); produced=352 samples. The 400 ms backlog is retired in ~8 s of play."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/audi_port.c -- Second limb of the same 30/60 Hz unit bug, found while closing the web gap. The controller base was full_samples = g_FrameSize = 736 (a 30 Hz frame), i.e. it proposed 2x realtime every 60 Hz pump and leaned on the (target-queued)/2 feedback to claw it back. A proportional controller with an off-realtime base has a steady-state offset: it balances at target + 2*(base - consumption) = target + ~737 samples = target + 33 ms, NOT at target. Modelled and measured: with the 50 ms default target the queue settled at 83 ms (native, base=736) regardless of the floor fix. Rebasing full_samples on realtime (g_FrameSize/2 = 368) makes the fixed point the target itself. Measured native queue after: 134 ms (railed) -> 91 ms (floor fix) -> 58 ms (floor + base fix), target 50 ms, zero underruns. Web mean queue ~300 ms -> ~93 ms."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/audi_port.c -- Native, GE007_AUDIO_TRACE over 4000 frames of Dam. Steady-state queue_before: BEFORE 134 ms, AFTER 91 ms (its soft target = 50 ms controller target + 46 ms device-jitter headroom). Zero underruns (queue never hit 0 after warmup) in both; min queue after warmup 115 ms -> 75 ms. The controller now regulates instead of railing."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/audi_port.c -- Root cause: g_FrameSize = outputRate*2/60 = 736 is sized for retail's 30 Hz audio task (FRAMES_PER_FIELD_AS_POW2 = 1, the <<1). The port pumps once per RENDERED frame at 60 Hz (platform_sdl.c portAudioFrame), so true consumption is outputRate/60 = 367.5 samples/pump. The drain floor was align16(736/2) = 368 -- 0.5 samples ABOVE consumption -- giving the occupancy controller zero downward authority. Fix: floor = align16(g_FrameSize/2) - 0x10 = 352, i.e. ~15.5 samples/pump of drain authority. Deterministic mode takes the Bresenham branch and is unaffected."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/audi_port.c -- Regression provenance: the rail is structural (present since 8de295b) but only ENGAGES above 59.92 fps (22050/f < 368). Pre-perf-wave frames missed the 16.667 ms deadline (~58 fps per platform_sdl.c cap-pacing notes), where consumption 380 > 368 kept the controller draining and the queue stable ~82 ms. The recent perf wave (PERF-002/003/030/032/033 etc.) brought frames inside budget so the deadline pacer holds a locked 60.00 Hz, crossing the threshold and converting a stable queue into one pinned at the cap. On web the PERF-035 prefill (d0bad20) and the 12-frame cap (f17d6a9) make it worst -- the fill goes straight to ~400 ms and can never drain. No audio TU changed; the latency was a second-order consequence of the frame-rate improvement."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/web_audio_worklet.c -- WEB-069 parity fix, measured on the real web build via tools/web/webcap.mjs with per-second worklet telemetry (ring depth, underruns, output peak amplitude). The AudioWorklet backend replaces the main-thread ScriptProcessorNode: ctx created at 22050 Hz (browser honoured it, no resampling), audio confirmed flowing (peak 0.3-0.48 of full scale throughout), ring settles at a steady ~55 ms (matching native's queue) with the 128-sample render quantum (~2.7 ms) replacing the SPN's 2048-sample (~43 ms) buffer. Idle steady state: under=0 for a full 24 s run. Device-side latency ~136 ms (SPN queue + buffer) -> ~58 ms (ring), i.e. native parity. Big multi-second main-thread stalls (level load / movement pipeline compiles, headless-amplified) still underrun on either path -- the ring, like the old SPN buffer, cannot bridge a stall longer than itself; during load the sim is paused so silence is the correct behaviour. Web-only, behind webAudioOutputActive(), SPN kept as fallback; native untouched (input_tape + port_streets_determinism_regression byte-identical); web_boot_smoke + web_frame_probe green."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T19:00:00Z",
+      "from": "",
+      "to": "landed",
+      "evidence": "Direct per-pump queue instrumentation on both web (webcap) and native (GE007_AUDIO_TRACE): web 238-400 ms -> settles 65-170 ms; native 134 ms -> 91 ms; zero underruns; input_tape + port_streets_determinism_regression + combat_oracle_contract byte-identical; web_boot_smoke + web_frame_probe green.",
+      "note": "Owner reported a fire-to-hear delay on the web build (decal appears, sound arrives late). Root-caused to the audio occupancy controller's drain floor sitting 0.5 samples above the true 60 Hz device consumption, so the SDL queue could only grow to its cap and never drain. Newly triggered by the perf wave locking a genuine 60.00 fps (the rail only engages above 59.92 fps); worst on web because PERF-035's level-load prefill fills straight to the 12-frame (~400 ms) cap. Two coupled fixes, both the same 30/60 Hz unit confusion in portAudioSizeFrame: (1) drop the drain FLOOR one quantum below realtime (368 -> 352) so the controller can shrink the queue at all; (2) rebase the controller from a 30 Hz frame (736) onto realtime (368) so its steady state IS the target instead of target + 1 frame. Measured native queue 134 -> 58 ms; web mean ~300 -> ~93 ms. Verified by re-measuring the same queue trace. Native latency also improved as a side effect (134 -> 91 ms). Deterministic/tape path untouched. RESIDUAL (not addressed, deferred to PERF-039): the SDL emscripten driver is a deprecated main-thread ScriptProcessorNode; an AudioWorklet path would cut the device-buffer component further. The remaining web queue (mean ~93 ms, a stall-driven sawtooth 30-150 ms) is the queue target (Audio.QueueTargetFrames, deliberately deep on web to absorb wasm frame-time jitter) plus the 2048-sample web device buffer -- both intentional stall-absorption headroom, tunable via the LIVE knob, not a defect. WEB PARITY GAP (still open): even after both fixes web sits ~55 ms above native, because on web the SDL_QueueAudio pump AND the ScriptProcessorNode both run on the browser MAIN THREAD, so every GC / WebGPU-pipeline-compile / level-load stall spikes the queue, and the 2048-sample SPN buffer (42.7 ms) is load-bearing glitch protection that cannot shrink without crackle. That gap is now closed (WEB-069, src/platform/web_audio_worklet.c): a plain-JS AudioWorklet + ring buffer moves the drain onto the audio render thread. NO SharedArrayBuffer / cross-origin isolation (works on plain GitHub Pages), does not touch the WebGPU build, web-only with the SPN kept as fallback. Measured: device-side latency ~136 ms -> ~58 ms (native parity), audio confirmed flowing, zero idle-steady-state underruns. The full wasm-in-worklet (shared-memory) option was rejected: it needs COOP/COEP headers Pages can't serve, risks the ASYNCIFY+memory-growth WebGPU build, and buys nothing over the plain-JS ring because the synth stays sim-coupled. True sub-10 ms parity would need decoupling the synth from the 60 Hz sim tick (a large fidelity risk), which is not warranted. The three fixes together (drain floor, controller base, AudioWorklet) take web fire-to-hear from ~400 ms to native-parity."
+    }
+  ]
+}

@@ -20,6 +20,7 @@
 #include "weapon_cycle_queue.h"
 #include "audi.h"
 #include "savedir.h"
+#include "web_audio_worklet.h"
 #include "game/bondinv.h"
 #include "game/bondview.h"
 #include "game/chr.h"
@@ -519,8 +520,35 @@ static PortAiStats s_aiStats;
 #define AI_QUEUE_LIMIT_FRAMES 5u
 #endif
 #define AI_QUEUE_LIMIT_FRAMES_DETERMINISTIC 4u
+
+/* WEB-069: on web the AudioWorklet backend (web_audio_worklet.c) may own output
+ * instead of an SDL device. These two helpers select the backend so the queueing
+ * logic below stays single-path. On native, and on web when the worklet is not
+ * active, they use SDL exactly as before. */
+static inline u32 ai_queued_bytes(void) {
+#ifdef __EMSCRIPTEN__
+    if (webAudioOutputActive()) return webAudioOutputQueuedBytes();
+#endif
+    return SDL_GetQueuedAudioSize(s_aiDev);
+}
+static inline int ai_enqueue(void *buf, u32 size) {   /* 0 == success (SDL contract) */
+#ifdef __EMSCRIPTEN__
+    if (webAudioOutputActive()) return webAudioOutputPush(buf, size);
+#endif
+    return SDL_QueueAudio(s_aiDev, buf, size);
+}
+
 void portAiInit(void) {
     if (s_aiOpen) return;
+#ifdef __EMSCRIPTEN__
+    /* WEB-069: the AudioWorklet backend has no SDL device handle; mark the AI
+     * path open so osAiSetNextBuffer routes PCM to it via ai_enqueue(). */
+    if (webAudioOutputActive()) {
+        s_aiOpen = 1;
+        printf("[AI] Using web AudioWorklet output backend\n");
+        return;
+    }
+#endif
     /* Single-device architecture: audio_pc.c owns the SDL audio device.
      * We reuse it here for AI queue writes (osAiSetNextBuffer). */
     {
@@ -584,7 +612,7 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
     queue_limit = live_frame_bytes * AI_QUEUE_LIMIT_FRAMES;
 
     if (s_aiOpen && buf && size > 0) {
-        const u32 queued = SDL_GetQueuedAudioSize(s_aiDev);
+        const u32 queued = ai_queued_bytes();
         u32 effective_limit = queue_limit;
 
         s_aiStats.queue_before_bytes = queued;
@@ -605,9 +633,9 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
                  * succeeded; a failed SDL_QueueAudio is a dropped buffer, not
                  * accepted output. (Under the deterministic dummy driver the call
                  * always succeeds, so baselines are unchanged.) */
-                if (SDL_QueueAudio(s_aiDev, buf, size) == 0) {
+                if (ai_enqueue(buf, size) == 0) {
                     s_aiStats.accepted_bytes = size;
-                    s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                    s_aiStats.queue_after_bytes = ai_queued_bytes();
                 } else {
                     s_aiDroppedBuffers++;
                     s_aiStats.dropped_bytes += size;
@@ -622,10 +650,10 @@ s32 osAiSetNextBuffer(void *buf, u32 size) {
              * full frame and then trip a drop on the following callback under
              * normal host jitter. */
             if (queued <= queue_limit && size <= (queue_limit - queued)) {
-                /* AUDIT-0068: only count bytes SDL actually accepted. */
-                if (SDL_QueueAudio(s_aiDev, buf, size) == 0) {
+                /* AUDIT-0068: only count bytes the backend actually accepted. */
+                if (ai_enqueue(buf, size) == 0) {
                     s_aiStats.accepted_bytes = size;
-                    s_aiStats.queue_after_bytes = SDL_GetQueuedAudioSize(s_aiDev);
+                    s_aiStats.queue_after_bytes = ai_queued_bytes();
                 } else {
                     s_aiDroppedBuffers++;
                     s_aiStats.dropped_bytes += size;
@@ -659,7 +687,7 @@ int osAiQueueBelowLimit(void) {
         live_frame_bytes = 2944;
     }
     queue_limit = live_frame_bytes * AI_QUEUE_LIMIT_FRAMES;
-    return SDL_GetQueuedAudioSize(s_aiDev) < queue_limit;
+    return ai_queued_bytes() < queue_limit;
 }
 
 /* AUDIT-0068: on SDL_AUDIODEVICEREMOVED for our opened device, invalidate the
@@ -678,10 +706,10 @@ u32 osAiGetLength(void) {
      * runs regardless of SDL audio drain timing. */
     if (g_deterministic) return 0;
     if (!s_aiOpen) return 0;
-    /* Return actual SDL queue size in bytes.  The caller (portAudioFrame)
-     * uses this as a queue occupancy signal for adaptive frame sizing,
-     * not as an N64 DMA remainder. */
-    return SDL_GetQueuedAudioSize(s_aiDev);
+    /* Return actual queue size in bytes.  The caller (portAudioFrame) uses this
+     * as a queue occupancy signal for adaptive frame sizing, not as an N64 DMA
+     * remainder. On web this is the AudioWorklet ring estimate (ai_queued_bytes). */
+    return ai_queued_bytes();
 }
 
 u32 portAiGetDroppedBufferCount(void) {

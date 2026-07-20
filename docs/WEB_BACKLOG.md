@@ -86,6 +86,31 @@ items reconciled here):
   MAXIMUM_MEMORY 512 MiB.
 - **WEB-013 further mitigated** → PERF-035 `d0bad20`: level-load cooperative
   yields (no frozen tab) + pre-teardown audio prefill to the 12-frame cap.
+  - **WEB-069 audio latency (FID-0141):** the audio occupancy controller in
+    `audi_port.c` `portAudioSizeFrame` used **30 Hz frame units in a 60 Hz pump**,
+    two ways: (1) the drain floor `align16(g_FrameSize/2)` = 368 sat *above* true
+    60 Hz consumption (367.5), so once the PERF-035 prefill filled the queue to the
+    12-frame (~400 ms) web cap the controller could never drain it — measured
+    ~240–400 ms fire-to-hear; and (2) the controller base was a full 30 Hz frame
+    (736 = 2× realtime), which parks a proportional controller's steady state one
+    full frame *above* its target (83 ms vs a 50 ms target) even once draining.
+    Fix: floor → 352 (one quantum below realtime, restores drain authority) and
+    base → 368 (realtime, so the fixed point is the target). Measured native queue
+    134 → 58 ms; web mean ~300 → ~93 ms; zero underruns; deterministic/tape
+    byte-identical.
+  - **WEB-069 parity fix — AudioWorklet (`web_audio_worklet.c`):** the remaining
+    ~55 ms web-vs-native gap was architectural — the `SDL_QueueAudio` pump *and*
+    the ScriptProcessorNode both ran on the main thread, so stalls spiked the
+    queue and the 2048-sample SPN buffer (42.7 ms) was un-shrinkable glitch
+    insurance. Fixed by a plain-JS AudioWorklet + ring buffer that drains on the
+    audio render thread: **no SharedArrayBuffer / COOP-COEP (works on plain
+    Pages), no WebGPU-build risk**, web-only with the SPN kept as fallback.
+    Measured device-side latency ~136 ms → ~58 ms (native parity), audio flowing,
+    zero idle-steady-state underruns. The full wasm-in-worklet (shared-memory)
+    option was rejected — needs headers Pages can't serve, risks the
+    ASYNCIFY+growth WebGPU build, and buys nothing over the ring while the synth
+    stays sim-coupled. True sub-10 ms parity would need decoupling the synth from
+    the 60 Hz sim tick (a large fidelity risk); not warranted.
 - **WEB-012 near-term half** → PERF-010 `e79d871`+`97180bd`:
   `Audio.QueueTargetFrames` LIVE knob (platform-aware max). Worklet half still
   deferred (→ PERF-039).

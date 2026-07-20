@@ -21,6 +21,7 @@
 #include "config_pc.h"
 #include "settings.h"
 #include "audio_pc.h"
+#include "web_audio_worklet.h"
 
 /* ===== Configuration ===== */
 #define PORT_AUDIO_RATE       22050
@@ -1398,11 +1399,31 @@ void portAudioInit(void)
         return;
     }
 
+    int web_worklet_active = 0;
+#ifdef __EMSCRIPTEN__
+    /* WEB-069: prefer the off-main-thread AudioWorklet output backend. It moves
+     * the audio drain onto the audio render thread (immune to main-thread
+     * stalls), so the deep ScriptProcessorNode buffer below is no longer needed
+     * and device-side latency drops from ~43 ms to one 128-sample render quantum.
+     * If the browser has no AudioWorklet, webAudioOutputInit returns 0 and we
+     * fall through to the legacy SDL ScriptProcessorNode path unchanged. */
+    if (webAudioOutputInit(PORT_AUDIO_RATE, PORT_AUDIO_CHANNELS)) {
+        web_worklet_active = 1;
+        s_audioDevice = 0;             /* worklet owns output; no SDL device */
+        s_audioDeviceBufferBytes = 0;  /* worklet reports its own occupancy */
+        printf("[AUDIO] Web AudioWorklet output backend active (%d Hz, %d ch)\n",
+               PORT_AUDIO_RATE, PORT_AUDIO_CHANNELS);
+    } else {
+        printf("[AUDIO] AudioWorklet unavailable; using SDL ScriptProcessorNode\n");
+    }
+#endif
+
     /* Single unified SDL audio device (queue mode, no callback).
      * All audio — both the libultra synthesis path (osAiSetNextBuffer) and
      * any future SFX paths — goes through this one device.
-     * portAiInit() in stubs.c reuses this device via portAudioGetDevice(). */
-    {
+     * portAiInit() in stubs.c reuses this device via portAudioGetDevice().
+     * Skipped entirely when the web AudioWorklet backend is active. */
+    if (!web_worklet_active) {
         SDL_AudioSpec want, have;
         memset(&want, 0, sizeof(want));
         want.freq     = PORT_AUDIO_RATE;

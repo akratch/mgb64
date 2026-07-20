@@ -522,7 +522,7 @@ static void portAudioFrameTail(AudioInfo *info);  /* defined below */
  * Treat the SDL queue as explicit occupancy, not a fake DMA remainder. Keep the
  * queue near a modest target and scale production linearly:
  * - below target: nudge upward toward g_MaxFrameSize
- * - above target: reduce toward a true half-frame drain mode */
+ * - above target: reduce below realtime to drain */
 static void portAudioSizeFrame(AudioInfo *info) {
     if (g_deterministic) {
         /* Deterministic mode still needs the exact average output rate.
@@ -532,14 +532,41 @@ static void portAudioSizeFrame(AudioInfo *info) {
     } else {
         const u32 queued_bytes = osAiGetLength();
         const s32 queued_samples = (s32)(queued_bytes >> 2);  /* stereo s16 -> sample frames */
-        /* PERF-010: tunable via Audio.QueueTargetFrames (LIVE). At the 1.5
-         * default this is byte-identical to the old fixed target:
-         * (s32)(n * 1.5f) == n + n/2 for every integer n >= 0, since 1.5f*n
-         * is exactly (3n)/2 in float and truncates to floor(3n/2). */
+        /* THE 30 Hz / 60 Hz UNIT BUG (audio latency).  g_FrameSize is 736 =
+         * outputRate * 2 / 60, sized for retail's 30 Hz audio task.  But the port
+         * pumps this controller once per RENDERED frame at 60 Hz, so:
+         *   - true device consumption is outputRate / 60 = 367.5 samples/pump; and
+         *   - one realtime pump's worth of production is g_FrameSize / 2 = 368.
+         * Two constants here were left in 30 Hz units and both cost latency:
+         *
+         *   (a) The controller base was full_samples = g_FrameSize = 736, i.e. it
+         *       proposed 2x realtime every pump and relied on the (target-queued)/2
+         *       feedback term to claw it back.  A proportional controller with an
+         *       off-realtime base has a steady-state offset: it balances not at the
+         *       target but at target + 2*(base - consumption) = target + ~737
+         *       samples = target + 33 ms.  So the queue sat a full extra frame above
+         *       the configured target forever (modelled + measured: 83 ms actual vs
+         *       a 50 ms target).  Base it on realtime (368) and the fixed point IS
+         *       the target.
+         *
+         *   (b) The drain floor was align16(g_FrameSize/2) = 368, which is 0.5
+         *       samples ABOVE consumption (367.5) -- so once the queue was full the
+         *       controller had literally no way to shrink it and railed at the cap.
+         *       On web that meant PERF-035's level-load prefill went straight to the
+         *       12-frame (~400 ms) cap and stuck there: ~400 ms fire-to-hear delay.
+         *       Drop the floor one 16-sample quantum below realtime (352 < 367.5) so
+         *       the controller has ~15.5 samples/pump of drain authority.
+         *
+         * Net: base at realtime + floor below realtime = the queue converges to the
+         * configured Audio.QueueTargetFrames target and holds there.  Deterministic
+         * mode takes the branch above and is untouched (tape gate byte-identical). */
+        const s32 realtime_60hz = (s32)portAudioAlign16(g_FrameSize / 2);
         const s32 target_samples = (s32)((f32)g_FrameSize * g_portAudioQueueTargetFrames);
-        const s32 full_samples = (s32)g_FrameSize;
-        const s32 min_samples = (s32)portAudioAlign16(g_FrameSize / 2);
+        const s32 full_samples = realtime_60hz;                  /* (a) base at realtime, not 2x */
+        s32 min_samples = realtime_60hz - 0x10;                  /* (b) floor below realtime */
         const s32 max_samples = (s32)portAudioAlign16(g_MaxFrameSize);
+
+        if (min_samples < 0x10) min_samples = 0x10;
         s32 chosen = full_samples + ((target_samples - queued_samples) / 2);
 
         if (chosen < min_samples) chosen = min_samples;
