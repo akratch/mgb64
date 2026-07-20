@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1082 flags** found across the source.
+**1083 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -793,6 +793,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SYNTHETIC_WALK_SCALE` | ? |  | 1 |  |
 | `GE007_SYNTH_FRAME_PATTERN` | ? |  | 1 |  |
 | `GE007_TANK_AIM_TRACE` | ? |  | 1 |  |
+| `GE007_TEXGEN_LEGACY` | ? |  | 1 |  |
 | `GE007_TEXTURE_PACK` | string |  | 1 | Folder containing an HD texture pack you built from your own ROM. Empty = off (original N64 textures). |
 | `GE007_TEXT_AUDIT` | ? |  | 1 |  |
 | `GE007_TEXT_GLYPH_AUDIT` | ? |  | 1 |  |

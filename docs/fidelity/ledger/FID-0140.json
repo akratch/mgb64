@@ -1,0 +1,45 @@
+{
+  "id": "FID-0140",
+  "title": "RSP texgen mapping diverged three ways (2x scale, spurious S mirror, clamp on the dead branch) -- env-mapped surfaces sampled the map border, not its interior; washed-out boot GoldenEye logo",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "landed",
+  "suspect": [
+    "src/platform/fast3d/gfx_pc.c (gfx_sp_vertex, G_TEXTURE_GEN block) -- the three divergences",
+    "src/platform/fast3d/gfx_texgen.h (gfx_texgen_coords) -- the corrected mapping, split out for test",
+    "docs/RENDERER_SIM_AUDIT_2026-07-06.md finding 15 -- spotted the 2x in 2026-07-06 and then wrongly dismissed it as intentional"
+  ],
+  "repro": "SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 ./build/ge007 --rom baserom.u.z64 --deterministic --screenshot-frame 1890 --screenshot-label gelogo --screenshot-exit (plus the faithful config-override set from tools/startup_visual_parity_capture.sh). Before the fix the boot 'GoldenEye' wordmark is grey/white over its top ~2/3 and only turns gold near the bottom; retail is gold throughout. Console reference: ares oracle at MGB64_ARES_SCREENSHOT_FRAME=1950. A/B: GE007_TEXGEN_LEGACY=1 restores the pre-fix mapping byte-identically.",
+  "evidence": [
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/fast3d/gfx_texgen.h -- Mr-Wiseguy/f3dex2 f3dex2.s -- the authority for the correct formula. 'vmudh vPairST, vOne, $v31[5]' sets ST = 0x4000; 'vmacf vPairST, $v3, $v21[0h]' accumulates 0x4000*dot; the later 'vmudm $v3, vPairST, vVpMisc' is a multiply-then->>16. Composing: coord = 0x4000*(1+dot)*scale/0x10000 = (1+dot)*scale/4. The coordinate therefore spans HALF of texture_scaling_factor. GE authors env materials with scale == tex_width*64 while one texture span is tex_width*32 in the 5.5 domain, so the correct mapping covers the map exactly once and a camera-facing normal (dot==0) samples its CENTRE. Corroborated by four fast3d lineages (Emill, sm64ex, sm64-port, libultraship) and three HLE plugins (GLideN64, glN64, Glide64); none of the nine implementations surveyed contains an S mirror."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_pc.c -- direct instrumentation of post-texgen U/V against the bound texture span (tile width*32), boot sequence, 200 samples per scene. BEFORE: GoldenEye logo S 42% / T 39% of coordinates outside the map; Nintendo logo S 49% / T 48%. AFTER: 0% on both axes for both scenes, with U/V centred (GoldenEye logo U median 0.508, V median 0.487 of one span). The tiles are G_TX_CLAMP for the logos and G_TX_WRAP in-world, so 'outside' means pinned to the border texel or wrapped into the wrong region -- not a harmless overrun."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_pc.c -- Console (ares oracle) vs native, brightness-normalised because the native capture is globally brighter than the ares capture (cf. FID-0138). GoldenEye logo, frame-matched: mean saturation of lit logo pixels console 0.82, before 0.06, after 0.82. Rare logo, pose-matched by silhouette IoU 0.75 (native f905 <-> stock f880): hue console 36.8deg, before 141.1deg (sat 0.30), after 38.9deg (sat 0.72). Nintendo logo, pooled over the rotation to be pose-invariant: median luma console 86, before 114, after 83 -- and before had 10% of pixels blown to pure 255, which console never reaches."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_texgen.h -- Env-map symmetry, from GE007_DUMP_LOADED_TEXTURES='*' at the GoldenEye logo. Its 32x32 RGBA5551 env map is COLUMN-CONSTANT: mean |delta| under an S mirror = 0.09/255, versus 103.33/255 under a T flip (it is a pure vertical red->yellow->white ramp, centre texel (255,255,0)). This is why the spurious S mirror was invisible on that one surface, and why the whole defect presented as a purely vertical (T-axis) artifact. It is NOT inert elsewhere: on the in-world Dam texgen surface the mirror moves ~100 pixels by up to 40/255."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/platform/fast3d/gfx_texgen.h -- In-world (class=room) texgen, console-validated 2026-07-20 via tools/movement_oracle_capture.sh --route dam_monitor_probe_visual, which yields a matched native/stock frame pair. The texgen ROI was localised WITHOUT a trace by diffing the native frame against itself under GE007_TEXGEN_LEGACY=1: 22617 pixels differ, bbox x[351..637] y[157..459]. Stratifying by A/B delta (this route has a substantial baseline native-vs-stock divergence, ~11.7 MAE, unrelated to texgen, which swamps a weak signal): at delta>6 (22617 px) MAE fixed 11.86 vs legacy 11.66 and at delta>15 (11025 px) 10.66 vs 10.30 -- both inside the noise floor; at delta>30 (833 px), where the texgen contribution actually rises above that floor, MAE fixed 10.76 vs legacy 14.70, i.e. the fix is 27% closer to console. No pixel exceeds delta 60, so this surface is a low-amplitude shading detail over a dark region (means ~34/255), not a dramatic one. Aggregate colour bias over the whole affected set also favours the fix: console mean RGB (34.78,36.40,32.29) vs fixed (35.71,36.77,32.70) vs legacy (33.56,34.62,30.55)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T17:00:00Z",
+      "from": "",
+      "to": "landed",
+      "evidence": "F3DEX2 microcode closed form + nine reference implementations; coordinate-vs-span census 42-49% outside -> 0%; console agreement on three independent surfaces (GoldenEye logo saturation 0.82 vs 0.82, Rare logo hue 38.9 vs 36.8deg, Nintendo logo median luma 83 vs 86).",
+      "note": "Three divergences in one block, all fixed together because all three push texgen coordinates off the end of the environment map: (1) the divisor was 2 instead of 4, i.e. 2x the reference -- this is the player-visible one and the root cause of the washed-out boot logo; (2) a trailing 'U = s_scale - U' S mirror with no counterpart in the microcode or any reference implementation; (3) the [-1,1] dot clamp sat inside the G_TEXTURE_GEN_LINEAR branch, i.e. only on the path GE never takes, so the live path ran unclamped. Also corrected the G_TEXTURE_GEN_LINEAR branch itself to acos(-dot)/(2*pi)*scale (was acos(+dot)/pi: 2x too wide AND inverted) -- that branch is DEAD on GE content (the game never SETS the bit, it appears only in gSPClearGeometryMode masks) so it is unvalidated against console and pinned only against the reference form. CLOSES the texgen limb of FID-0020 by construction: with |dot| <= 1 and the /4 divisor, U and V are bounded by scale/2 <= 32767 and always fit the short staging. ROOT CAUSE OF THE 2026-07-06 MISS: there was no test, baseline, or golden image covering texgen anywhere in the repo, so the audit's verify pass deferred to an in-code comment instead of testing pixels; see the RETRACTION added to RENDERER_SIM_AUDIT_2026-07-06.md finding 15. Now pinned by tests/test_texgen_coords.c (ctest 'texgen_coords') against the extracted src/platform/fast3d/gfx_texgen.h. In-world (class=room) texgen is now console-validated too (see the dam_monitor_probe_visual evidence entry): the fix is 27% closer to console in the region where the texgen signal exceeds the route's baseline noise, and below that the effect is under the noise floor. That surface is a low-amplitude detail (no A/B pixel delta above 60), so this is a directional confirmation rather than a sharp one -- the strong console evidence remains the three boot logos."
+    }
+  ]
+}

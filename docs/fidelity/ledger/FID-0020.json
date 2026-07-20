@@ -31,6 +31,13 @@
       "to": "triaged",
       "evidence": "docs/BACKLOG_v0.4.0.md#M3.3",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "ts": "2026-07-20T17:10:00Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "src/platform/fast3d/gfx_texgen.h -- texgen coords are now bounded by scale/2 <= 32767 by construction; pinned by tests/test_texgen_coords.c (max-scale case).",
+      "note": "The 'texgen s16 overflow' limb of this composite entry is CLOSED by the FID-0140 fix, not by a separate change. With the reference /4 divisor and the [-1,1] dot clamp now applied on the live (non-LINEAR) path, U and V are bounded by scale/2 <= 0xFFFF/2 = 32767 and always fit the `short U`/`short V` staging in gfx_sp_vertex; the old mapping could reach scale (65535) and wrap negative. NOTE ALSO that this entry's own verify pass wrongly dismissed the 2x scale divergence as intentional -- that dismissal is retracted in RENDERER_SIM_AUDIT_2026-07-06.md finding 15 and superseded by FID-0140. The other limbs of this composite entry (footprint-reject eviction, L7 moveMem OOB, mtx-stack depth-11 clobber, prim-color cache-key miss, G_SETBLENDCOLOR no-op, texSelect) are UNTOUCHED and remain open."
     }
   ]
 }

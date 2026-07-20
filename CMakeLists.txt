@@ -1286,6 +1286,18 @@ if(BUILD_TESTING)
     target_include_directories(test_setup_pnames PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
     add_test(NAME setup_pnames COMMAND test_setup_pnames)
 
+    # RSP texgen (environment mapping) coordinate mapping. There was no coverage
+    # of this at all, which is how the 2x-scale defect survived an audit that had
+    # already spotted it.
+    add_executable(test_texgen_coords
+        "${CMAKE_SOURCE_DIR}/tests/test_texgen_coords.c"
+    )
+    target_include_directories(test_texgen_coords PRIVATE "${CMAKE_SOURCE_DIR}/src/platform/fast3d")
+    if(NOT MSVC)
+        target_link_libraries(test_texgen_coords PRIVATE m)
+    endif()
+    add_test(NAME texgen_coords COMMAND test_texgen_coords)
+
     # Generated GE007_* flag reference must match the source flag surface, so
     # docs/ENV_FLAGS.md cannot drift from the code (regenerate with
     # tools/gen_env_reference.py --out docs/ENV_FLAGS.md).

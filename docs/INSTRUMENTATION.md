@@ -1894,6 +1894,55 @@ engine-projected. `audit_intro_trace.py` also gained optional
 `intro.bond_body` record for trace-only (screenshot-free) coverage. Screenshots,
 traces, logs, and saves are ROM-derived local artifacts — do not commit them.
 
+### Texgen (environment mapping) validation
+
+The RSP texgen contract lives in `docs/RENDERING_ARCHITECTURE.md` §7; this is how to
+re-derive it. The formula is shared by every env-mapped surface in the game, so a
+divergence here is whole-game (FID-0140).
+
+**Cheap guard (always run this first — ROM-free, sub-second):**
+
+```sh
+ctest --test-dir build -R texgen_coords --output-on-failure
+```
+
+**A/B isolation.** `GE007_TEXGEN_LEGACY=1` restores the pre-fix mapping (2× scale +
+the spurious S mirror), verified byte-identical to pre-fix output:
+
+```sh
+env SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 \
+    GE007_TEXGEN_LEGACY=1 ./build/ge007 --rom baserom.u.z64 --deterministic \
+    --screenshot-frame 1890 --screenshot-label legacy --screenshot-exit
+```
+
+Boot-sequence texgen scenes at the faithful config-override set used by
+`tools/startup_visual_parity_capture.sh` (frames are for
+`GE007_DETERMINISTIC_STABLE_COUNT=1`): **Nintendo logo** ~600–720, **Rare logo**
+~905–985, **GoldenEye logo** ~1890. Matching ares oracle frames:
+`MGB64_ARES_SCREENSHOT_FRAME=` 700/720, 860/880, 1950 respectively.
+
+**Coordinate census (the decisive check).** Rather than eyeballing colour, measure
+where the texgen coordinates land relative to the bound texture span
+(`tile_width * 32`). Correct behaviour is 0% outside on both axes, with the median
+near half a span; the defect showed 42–49% outside. Note the `[TEXGEN-MATERIAL]`
+trace's `uvn` field is **not** usable for this — it is the post-tile-transform
+sampling coordinate and can reflect a different tile than the draw used. Instrument
+`U`/`V` directly in `gfx_sp_vertex` (or extend `gfx_texgen_coords`) instead.
+
+**Env-map inspection.** `GE007_DUMP_LOADED_TEXTURES='*'` plus
+`GE007_DUMP_LOADED_TEXTURE_DIR` writes each decoded texture as PPM. Worth knowing:
+the GoldenEye logo's 32×32 map is **column-constant** (a pure vertical
+red→yellow→white ramp), which is why an S-axis error is invisible on that surface
+specifically — always confirm S-axis behaviour on a column-varying map.
+
+**Comparing against ares.** Two confounds bite here. (1) The native capture is
+globally brighter than the ares capture (cf. FID-0138), so compare
+brightness-normalised hue/saturation or medians, never raw mean RGB. (2) The logos
+are *spinning*, so pose-match before comparing colour — and note that a
+luma-threshold IoU is itself confounded by brightness (a darker variant scores a
+lower IoU for free). Either match on a low threshold that captures the silhouette,
+or go pose-invariant by pooling percentiles across the whole rotation.
+
 ### Performance census & budgets
 
 The performance regression harness (`docs/design/PERFORMANCE_PLAN.md`) measures per-level

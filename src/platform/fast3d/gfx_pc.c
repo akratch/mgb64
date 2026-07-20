@@ -34,6 +34,7 @@
 
 #include "gfx_pc.h"
 #include "gfx_cc.h"
+#include "gfx_texgen.h"
 #include "gfx_palette.h"
 #include "gfx_rendering_api.h"
 #include "gfx_uniforms.h"   /* enforce these definitions match the shared declarations */
@@ -17312,6 +17313,17 @@ static inline uint8_t gfx_env_clamp_u8(float f) {
     return (uint8_t)(f + 0.5f);
 }
 
+/* GE007_TEXGEN_LEGACY=1 restores the pre-fix texgen mapping (2x scale plus the
+ * spurious S mirror) for A/B comparison. */
+static bool gfx_texgen_legacy(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = (getenv("GE007_TEXGEN_LEGACY") != NULL) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
 static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *vertices,
                           uintptr_t src_base, size_t src_stride, int source_room,
                           uint8_t decode_mode) {
@@ -17677,20 +17689,68 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
                 dotx /= 127.0f;
                 doty /= 127.0f;
 
-                if (rsp.geometry_mode & G_TEXTURE_GEN_LINEAR) {
-                    if (dotx < -1.0f) dotx = -1.0f;
-                    if (dotx > 1.0f) dotx = 1.0f;
-                    if (doty < -1.0f) doty = -1.0f;
-                    if (doty > 1.0f) doty = 1.0f;
-                    U = (int32_t)(acosf(dotx) * (s_scale / (float)M_PI));
-                    V = (int32_t)(acosf(doty) * (t_scale / (float)M_PI));
-                } else {
-                    U = (int32_t)((dotx + 1.0f) * (s_scale * 0.5f));
-                    V = (int32_t)((doty + 1.0f) * (t_scale * 0.5f));
-                }
-                /* Match the RSP texgen S-axis convention after quantizing into
-                 * the same 5.5 coordinate domain used by the triangle path. */
-                U = (int32_t)s_scale - U;
+                /* RSP texgen.  From the F3DEX2 microcode (Mr-Wiseguy/f3dex2.s):
+                 *
+                 *     vmudh vPairST, vOne, $v31[5]   ; ST = 0x4000
+                 *     vmacf vPairST, $v3,  $v21[0h]  ; ST += 0x4000 * dot
+                 *     ...
+                 *     vmudm $v3, vPairST, vVpMisc    ; (ST * scale) >> 16
+                 *
+                 * i.e. ST = 0x4000 * (1 + dot), spanning 0x0000..0x7FFF, and the
+                 * scale multiply is a >>16.  Composing:
+                 *
+                 *     coord = 0x4000 * (1 + dot) * scale / 0x10000
+                 *           = (1 + dot) * scale / 4
+                 *
+                 * So the coordinate spans only HALF of texture_scaling_factor.
+                 * GE authors its env-mapped materials with scale == width * 64,
+                 * while one texture span is width * 32 in the 5.5 domain, so the
+                 * full normal sweep lands on exactly one copy of the environment
+                 * map and a camera-facing normal (dot == 0) sits at its CENTRE.
+                 * Every fast3d lineage (Emill, sm64ex, sm64-port, libultraship)
+                 * and every HLE plugin (GLideN64, glN64, Glide64) agrees.
+                 *
+                 * Two divergences used to live here.  Both pushed coordinates off
+                 * the end of the map -- and these tiles are G_TX_CLAMP (logo) or
+                 * G_TX_WRAP (in-world), so "off the end" means pinned to the
+                 * border texel or wrapped into the wrong region, not harmless:
+                 *
+                 *   1. the divisor was 2 instead of 4 (2x the reference; see also
+                 *      RENDERER_SIM_AUDIT_2026-07-06 finding 15, which spotted
+                 *      the 2x and then wrongly dismissed it as intentional); and
+                 *   2. a trailing `U = scale - U` S mirror that has no counterpart
+                 *      in the microcode or in any of the nine reference
+                 *      implementations surveyed.  It was invisible on the
+                 *      GoldenEye logo only because that particular env map is
+                 *      column-constant (verified: mean |S-mirror delta| = 0.09/255).
+                 *
+                 * Measured effect, fraction of texgen coordinates landing outside
+                 * the env map (before -> after):
+                 *     GoldenEye logo   S 42% -> 0%,  T 39% -> 0%
+                 *     Nintendo logo    S 49% -> 0%,  T 48% -> 0%
+                 * Console (ares) agreement after the fix: GoldenEye logo mean
+                 * saturation 0.82 vs 0.82 (was 0.06); Rare logo hue 38.9deg vs
+                 * 36.8deg (was 141deg); Nintendo logo median luma 83 vs 86
+                 * (was 114, with 10% of pixels blown to pure white).
+                 *
+                 * GE007_TEXGEN_LEGACY=1 restores the old mapping for A/B.
+                 *
+                 * The clamp inside gfx_texgen_coords() additionally makes the
+                 * int16 range provable, which closes the texgen limb of FID-0020:
+                 * with |dot| <= 1 and the /4 divisor, U and V are bounded by
+                 * scale/2 <= 0xFFFF/2 = 32767, so they always fit the `short U` /
+                 * `short V` staging above.  The old mapping could reach scale
+                 * (65535) and wrap negative for any material authored with a
+                 * texgen scale >= 0x8000. */
+                int32_t texgen_u;
+                int32_t texgen_v;
+
+                gfx_texgen_coords(dotx, doty, s_scale, t_scale,
+                                  (rsp.geometry_mode & G_TEXTURE_GEN_LINEAR) != 0,
+                                  gfx_texgen_legacy(),
+                                  &texgen_u, &texgen_v);
+                U = texgen_u;
+                V = texgen_v;
             }
         } else {
             d->color.r = v->cn[0];
