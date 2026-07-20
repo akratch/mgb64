@@ -1,0 +1,28 @@
+{
+  "id": "FID-0136",
+  "title": "Dam intro scene renders brighter than hardware at matched pose and registered framing (shore ROI luma 53.1 native vs 41.0 stock-ares)",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "src/game/lvl.c:1646 (intro render path)",
+    "unattributed: native-vs-N64-hardware shading/lighting on the Dam establishing shot"
+  ],
+  "repro": "SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_ENABLE_LEVEL_INTRO=1 GE007_INTRO_CAMERA_INDEX=5 GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 build/ge007 --rom baserom.u.z64 --level dam --no-ui --deterministic --savedir <fresh> --screenshot-label X --screenshot-frame 60 --screenshot-exit ; compare ROI [80,95,480,80] against .../tier1/task0/stock/a_estab_pad273_stock_f1400.ppm. A 4:3 window is REQUIRED (FID-0135) or the ROI lands on different scene content.",
+  "evidence": [
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/lvl.c:1646 \u2014 Registered comparison (Task 5b): native 4:3 capture and stock-ares frame are pixel-registered at the IDENTITY transform (gradient-correlation fit sy=sx=1.000, ty=tx=0, corr 0.683), so framing is no longer a confound. Shore ROI [x=80,y=95,w=480,h=80] on the 640x480 canvas: stock-ares luma 41.0, blue-dominance B/(R+G+B) 0.465, B/max(R,G) 1.473; native (WebGPU, 4:3 window, registered) luma 53.1, 0.493, 1.582. Native is ~+12 luma (~+29%) and slightly bluer. GL agrees with WebGPU (whole-frame mean-abs-diff 2.283 = the documented DAM-R1a micro-deltas). Content-region mean-abs-diff native-vs-stock 21.23."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T08:09:05Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "Registered comparison (Task 5b): native 4:3 capture and stock-ares frame are pixel-registered at the IDENTITY transform (gradient-correlation fit sy=sx=1.000, ty=tx=0, corr 0.683), so framing is no longer a confound. Shore ROI [x=80,y=95,w=480,h=80] on the 640x480 canvas: stock-ares luma 41.0, blue-dominance B/(R+G+B) 0.465, B/max(R,G) 1.473; native (WebGPU, 4:3 window, registered) luma 53.1, 0.493, 1.582. Native is ~+12 luma (~+29%) and slightly bluer. GL agrees with WebGPU (whole-frame mean-abs-diff 2.283 = the documented DAM-R1a micro-deltas). Content-region mean-abs-diff native-vs-stock 21.23.",
+      "note": "Task 5b, requirement 4b. This observation was previously filed under 'DAM-R1' in docs/audit/DAM_RENDER_DEEP_DIVE_2026-07-18.md, but DAM-R1's established scope in that same document is WEB-vs-NATIVE backend divergence (DAM-R1a refuted, DAM-R1b refuted/closed for native, DAM-R1c a WGSL port gap) \u2014 none of which covers a native-vs-HARDWARE brightness gap. Tracked separately here. Note the prior Task-5 numbers (native 62 vs stock 41) were taken at an unregistered 16:9 capture, i.e. over different scene content; the registered gap is smaller (53.1 vs 41.0) but real. Not root-caused: candidates include the port's remaster post-FX defaults (tonemap/grade), fog/lighting evaluation, and ares' own VI/gamma emulation \u2014 none excluded yet."
+    }
+  ]
+}

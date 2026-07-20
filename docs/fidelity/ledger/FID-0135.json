@@ -1,0 +1,28 @@
+{
+  "id": "FID-0135",
+  "title": "Fidelity screenshot captures at the default 16:9 window are letterboxed into the fixed 640x480 canvas, invalidating raw pixel comparison against 4:3 hardware references",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "src/platform/platform_sdl.c:737 (platformResampleFramebufferToScreenshot, aspect-preserving fit into SCREENSHOT_W/H 640x480)",
+    "src/platform/platform_sdl.c:2036 (Video.WindowWidth/Height default 1440x810 = 16:9)"
+  ],
+  "repro": "SDL_AUDIODRIVER=dummy GE007_MUTE=1 GE007_ENABLE_LEVEL_INTRO=1 GE007_INTRO_CAMERA_INDEX=5 build/ge007 --rom baserom.u.z64 --level dam --no-ui --deterministic --savedir <fresh> --screenshot-label X --screenshot-frame 60 --screenshot-exit ; repeat with GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 and measure the black bars from each edge. The 4:3 run reproduces stock's 20/20; the default run does not.",
+  "evidence": [
+    {
+      "kind": "pixel-diff",
+      "path": "src/platform/platform_sdl.c:737 \u2014 Measured bars (rows whose max channel <= 8 from each edge) on 640x480 captures of the registered Dam establishing intro (GE007_INTRO_CAMERA_INDEX=5, --screenshot-frame 60): native at the DEFAULT window (1440x810 = 16:9) = top 75 / bottom 75; the SAME build at GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 (4:3) = top 20 / bottom 20, exactly matching stock-ares (a_estab_pad273_stock_f1400.ppm, 20/20). Decomposition of the 75: capture letterbox (480 - 640/(16/9))/2 = 60 px, plus the engine's own retail 10/240 viewport band scaled into the 360-row content = 15 px. Gameplay (no intro) shows the same 75 vs 20, so this is not cutscene-specific. Registration fit (gradient-correlation, stock warped to native): 16:9 needs vertical scale 0.75 (corr 0.417); 4:3 needs the IDENTITY sy=sx=1.000, ty=tx=0 (corr 0.683). Content mean-abs-diff vs stock 33.27 -> 21.23."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T08:08:47Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "Measured bars (rows whose max channel <= 8 from each edge) on 640x480 captures of the registered Dam establishing intro (GE007_INTRO_CAMERA_INDEX=5, --screenshot-frame 60): native at the DEFAULT window (1440x810 = 16:9) = top 75 / bottom 75; the SAME build at GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 (4:3) = top 20 / bottom 20, exactly matching stock-ares (a_estab_pad273_stock_f1400.ppm, 20/20). Decomposition of the 75: capture letterbox (480 - 640/(16/9))/2 = 60 px, plus the engine's own retail 10/240 viewport band scaled into the 360-row content = 15 px. Gameplay (no intro) shows the same 75 vs 20, so this is not cutscene-specific. Registration fit (gradient-correlation, stock warped to native): 16:9 needs vertical scale 0.75 (corr 0.417); 4:3 needs the IDENTITY sy=sx=1.000, ty=tx=0 (corr 0.683). Content mean-abs-diff vs stock 33.27 -> 21.23.",
+      "note": "Task 5b. Root cause of the 'native cinematic band is 75px vs retail 20px' defect report: the band divergence is 100% capture-side, not rendered. No script under scripts/ or tools/ pins a 4:3 window, so every stock-vs-native pixel comparison taken at the default window carries a 0.75x vertical scale plus a 60px offset. Mitigated in a3acb93 by a one-shot stderr disclosure whenever the capture aspect differs from the drawable; the durable fix is for hardware-comparison harnesses to pin GE007_WINDOW_WIDTH/HEIGHT to a 4:3 pair."
+    }
+  ]
+}
