@@ -1,0 +1,38 @@
+{
+  "id": "FID-0139",
+  "title": "Web build cannot write the standard fidelity screenshot (sync GPU map-wait fails under Emscripten), and its render-frame ordinal does not track the sim clock -- neither flag can pin a web capture",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P2",
+  "status": "triaged",
+  "suspect": [
+    "src/platform/platform_sdl.c:1053 (platformSaveScreenshot -> gfx_backend_read_framebuffer_rgb; bails with '[gfx] screenshot readback failed')",
+    "src/platform/fast3d/gfx_webgpu.c:3629 (wgpu_read_framebuffer_rgb)",
+    "src/platform/fast3d/gfx_webgpu.c:3684 (WGPU_COMPAT_WAIT on wgpuBufferMapAsync -- the map callback only fires during ProcessEvents, which cannot run inside this synchronous call on web)",
+    "src/game/lvl.c:2203 (g_ClockTimer, 0..4 ticks per rendered frame)"
+  ],
+  "repro": "Serve dist/web, boot with ?arg=--level&arg=dam&arg=--deterministic&arg=--screenshot-game-timer&arg=300. The engine reaches the timer and attempts the capture, but the console shows '[gfx] screenshot readback failed' and no BMP is written to MEMFS (FS.readdir('/') shows no screenshot_*.bmp). The same flags on the native binary write screenshot_<label>.bmp normally. Harness: .superpowers/sdd/task-6-harness/webprobe6.mjs --mode timer.",
+  "evidence": [
+    {
+      "kind": "counter-log",
+      "path": "src/platform/platform_sdl.c:1053 -- Task 6, web dist built at 88c7f31, headless Chrome, canvas pinned to a 640x480 backing store. Console tail ends with '[gfx] screenshot readback failed'; MEMFS listing after the timer is reached is {'/':['.','..','tmp','home','dev','proc','rom','save'],'/tmp':['.','..']} -- no screenshot written. The WebGPU PPM dump path (GE007_WEBGPU_DUMP_FRAME / GE007_WEBGPU_DUMP_SURFACE) DOES work on web ('[webgpu] wrote frame dump /tmp/webgpu_frame_600.ppm (640x480)'), because it maps a buffer whose copy was already submitted in the same end_frame rather than issuing its own mid-frame encoder + blocking wait. So web fidelity capture must go through the dump path, not the screenshot path."
+    },
+    {
+      "kind": "counter-log",
+      "path": "src/game/lvl.c:2203 -- the web render-frame ordinal is NOT proportional to the sim clock, and the ratio is not even stable across runs of the same build. Task 6 placed three web GPU dumps on the native sky curve (see FID-0134) by least-squares: web render frame 400 -> native game timer 234; frame 600 -> timer 1039; frame 800 -> timer 471. Non-monotonic across runs. Cause: g_GlobalTimer/g_SkyCloudOffset accumulate g_ClockTimer (0 while controls are locked, up to 4 on a hitch) per rendered frame, so the frames:ticks ratio is load-dependent. The same effect is visible natively: with GE007_WEBGPU_DUMP_FRAME, a native run that reaches game timer 300 has a backend frame_no between 50 and 200 (dumps fire for N=5 and N=50, not for N=200). CONSEQUENCE: the Task-4 assumption of a fixed '+200' native/web frame-ordinal offset is invalid; frame ordinals cannot pin a web capture at all."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": ".superpowers/sdd/task-6-harness/analyze.py -- the workaround actually used (locus matching against a timer-pinned native curve) is implemented here; full write-up in .superpowers/sdd/task-6-report.md (sections 'Method' and 'Residual (b): sky hue')."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-20T11:20:00Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "Task 6: web --screenshot-game-timer produces '[gfx] screenshot readback failed' and no MEMFS file, while the GE007_WEBGPU_DUMP_* PPM path succeeds in the same run; three web dumps fit native game timers 234/1039/471 at render frames 400/600/800 (non-monotonic).",
+      "note": "Filed by Task 6. Two coupled instrumentation gaps that together mean a web frame cannot be pinned the way a native frame can. (1) The screenshot path needs a synchronous GPU buffer map; on web the map callback only fires during ProcessEvents, which cannot run inside that blocking call, so every web screenshot fails closed. (2) Even with a working screenshot, --screenshot-frame is a render-frame counter whose relation to the sim clock is load-dependent, so it cannot align a web capture to a native one. Task 6 worked around both by (a) capturing the web via GE007_WEBGPU_DUMP_SURFACE and (b) locating the web frame on a native curve that IS timer-pinned, using the sky as the clock and the frame-invariant terrain as a registration control. Durable fixes, both deferred and not implemented here: make the web screenshot path async (or route it through the same deferred write the dump path uses), and emit g_GlobalTimer into the dump filename or a sidecar so a web dump is self-identifying. Until then, treat any web-vs-native pixel comparison that pins on a frame ordinal as unregistered."
+    }
+  ]
+}
