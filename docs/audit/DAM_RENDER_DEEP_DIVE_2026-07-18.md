@@ -44,7 +44,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
 | TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
 | TMEM-1 (format reinterpretation) | **RESOLVED — NO DEFECT (2026-07-19 census)** | census at the texSelect choke point: reinterpretation is a phantom. `texSelect` (retail 0x7F076D68) selects `format = tex->gbiformat` (pool) over `tconfig->format` (table) whenever the texture is pooled — RDP-definitional, retail-identical. The table's differing fmt is discarded metadata, NOT honored on hardware. Class (b) live-divergence = EMPTY; see §TMEM-1 census. |
-| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower): `CutsceneFovY`=60 **ADJUDICATED retail-faithful (Task 5, 2026-07-20)** — asm (no FOV field in `SetupIntroCamera`; base `fovy`=60) + geometry (waterline matches, k≈1) agree; the mountain-height gap is NOT FOV but the DAM-R2 admission superset (→ R-02, deferred), see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
+| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower): `CutsceneFovY`=60 **ADJUDICATED retail-faithful (Task 5, 2026-07-20)** — asm (no FOV field in `SetupIntroCamera`; base `fovy`=60) + geometry agree. **Task 5b (2026-07-20) re-ran the geometric leg on properly registered frames** (Task 5 compared a 16:9 native capture with a 4:3 stock frame, unregistered): stock→native fits the **identity** (sy=sx=1.000, corr 0.683) → **FOV_y = 60.0 ± 0.25°**, confirming the conclusion on corrected numbers, and the reported "native 75px vs retail 20px cinematic band" is a **capture artifact** (fixed-640×480 screenshot canvas letterboxing the default 16:9 window — a 4:3 window reproduces stock's 20/20 exactly; FID-0135). The residual framing gap is DAM-R2 admitting a **different** far-room set than retail's authored PVS — not merely a superset (→ R-02, deferred), see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
 | R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
 | FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
 
@@ -469,17 +469,75 @@ no FOV code change is warranted:
 - **Native leg (trace)**: at the registered idx5/pad-273 intro the engine renders
   `vi_fovy = 60.0, aspect = 1.4545 (= 320/220 viewport)` on **both** WebGPU and GL
   (`GE007_TRACE_FOV`) — native provably already uses the retail value.
-- **Geometric leg**: camera is byte-identical (Task 0). The **reservoir waterline** — the
-  robust shared landmark — matches native-vs-stock at y ≈ 185 (Δ ≈ 0 px, crop-scale
-  k ≈ 1.0), pinning stock FOV_y = 60 ± ~4° (from ±5 px waterline localisation at its
-  67 px off-centre offset). The **mountain silhouette top** differs by ~50 px (stock
-  taller), which a single FOV/crop-scale cannot produce alongside a matching waterline
-  (best-fit crop-scale rms 24 px — no consistent k). The mountains are 100 %
-  admission-sourced (`NO_INTRO_FARVISTA_ADMIT` → bare sky), so the height gap is DAM-R2
-  drawing a **frustum superset ≠ retail's authored PVS** — exactly **R-02**. R-02 stays
-  DEFERRED (no live caller, vis-list data absent from decomp — escalate, do not guess).
-  The separate ~21-level ROI luma gap (native 62 vs stock 41, blue-dom 0.94 both) is the
-  DAM-R1 lighting difference, unaffected by FOV (confirmed by a 40–60° CutsceneFovY sweep).
+- **Geometric leg — SUPERSEDED by Task 5b (2026-07-20), see the correction block below.**
+  The original leg compared a native capture taken at the default **16:9** window against
+  the 4:3 stock frame *without registering them*; the two canvases differ by a 0.75×
+  vertical scale and a 60 px offset, so every landmark Δ it reported (including the
+  "~50 px mountain silhouette" and the "centre column x≈270", which is wrong on a
+  640-wide canvas — the centre is 320) is invalid as stated. Its **conclusion** (FOV_y =
+  60) survives and is now *better* supported: on properly registered frames the fit is the
+  identity. Corrected numbers below.
+
+**CORRECTION — Task 5b (2026-07-20): the intro "cinematic band" divergence is a CAPTURE
+artifact, and the re-registered geometry re-confirms FOV_y = 60.**
+
+*Band mechanism (adjudicated).* There is **no cutscene-specific letterbox** in either
+retail or the port. GoldenEye's single-player viewport is permanently 320×220 at
+`uly = 10` — `bondviewGetCurrentPlayerViewportHeight` (retail `0x7F086D24`,
+`bondview.c:15600`) returns `VIEWPORT_HEIGHT_DEFAULT` = 220 (`fr.h:33`) and
+`bondviewGetCurrentPlayerViewportUly` (retail `0x7F086E38`, `bondview.c:15646`) returns
+`VIEWPORT_ULY_DEFAULT` = 10 (`fr.h:80`) on the non-`cameraBufferToggle`, 1-player path
+taken by both gameplay and the frozen intro. So retail's band is 10/240 top and bottom =
+**20/20 px** on a 640×480 4:3 output, which is exactly what the stock-ares frame measures.
+The port reproduces it *proportionally*: `gfx_calc_and_set_viewport`
+(`gfx_pc.c:21058`) scales the N64 viewport rect by `ratio_x = window_w/320`,
+`ratio_y = window_h/240` (`gfx_pc.c:207-220`), leaving the band as the cleared frame.
+(Adjudicated against the stock-ares *output* + the decompiled constants; no MIPS
+disassembler is available in this environment, so the constants were not re-read from the
+ROM — the hardware capture is the stronger ground truth for an observable band height.)
+
+*Therefore the reported "native 75 px vs retail 20 px band" is not rendered.* The
+screenshot path resamples the drawable into a fixed 640×480 canvas with aspect
+preservation (`platform_sdl.c:737`, `SCREENSHOT_W/H`); at the shipped default window
+1440×810 (16:9, `platform_sdl.c:2036`) it **adds** (480 − 640/(16/9))/2 = 60 px of bar and
+squeezes the scene to 360 rows, inside which the engine's genuine 10/240 band is 15 px —
+60 + 15 = **75**, the measured value. Re-capturing the same build at a 4:3 window
+(`GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080`) yields **20/20**, matching stock
+exactly, on **WebGPU and GL**, and in **gameplay** as well as the intro (so it is not
+cutscene-scoped). Tracked as **FID-0135**; disclosure landed in `a3acb93`. No render
+change was made or warranted.
+
+*Re-registered geometry (replaces the Task-5 geometric leg).* With the 4:3 native capture,
+a gradient-correlation fit of stock→native over the whole 640×480 canvas returns the
+**identity**: `sy = 1.000, sx = 1.000, ty = tx = 0`, correlation 0.683. The same fit
+against the old 16:9 capture returns `sy = 0.75` (corr 0.417) — i.e. the prior comparison
+carried an unregistered 25 % vertical size difference, which by itself produces the
+"mountains smaller and lower, more foreground" reading. Since a pure FOV change is exactly
+a crop-scale about the image centre, `sy = 1.000` means native's vertical FOV equals
+stock's; the sy window within Δcorr ≤ 0.01 is [0.995, 1.005] → **stock FOV_y = 60.0
+± 0.25°** (vs the old ±4°). Landmark mean |Δy| across 10 detections (sky/mountain
+silhouette and the water→dam/rock transition at x = 140/240/320/430/540) improves
+**57.7 px → 22.5 px**; whole-content mean-abs-diff **33.27 → 21.23**. The residual
+landmark deltas are concentrated on the right half (x = 430/540), where native draws far
+shore/bridge geometry that stock does not — consistent with the R-02 admission difference
+below, not with projection.
+
+*Attribution wording (review finding).* Calling native's admission a "frustum **superset**"
+is too narrow. Native does not merely draw *extra* rooms: per R-02 below it uses a
+structurally **different** mechanism (portal-BFS + heuristic wideners, plus the Dam-scoped
+frustum force-admit) in place of retail's authored per-room PVS, and the decompiled PVS
+consumer also carries a known **under**-admission bug (FID-0121). Native may therefore
+admit the **wrong** far rooms — some retail draws and native omits, some native draws and
+retail omits — not a strict superset. The residual framing/silhouette differences should be
+read that way.
+
+*ROI re-filing (review finding).* The shore-ROI brightness observation is a **native-vs-
+hardware** finding and was mis-filed under DAM-R1, whose scope in this document is
+**web-vs-native** backend divergence (R1a refuted, R1b refuted/closed for native, R1c a
+WGSL port gap). It now has its own record, **FID-0136**. Corrected, registered numbers at
+ROI [80,95,480,80]: stock-ares luma 41.0 / B-dominance 0.465 (B/max(R,G) 1.473); native
+4:3 luma 53.1 / 0.493 (1.582). The old "native 62" was measured at the unregistered 16:9
+canvas, i.e. over different scene content; the gap is real but smaller than reported.
 
 **Scope (review finding, this round):** over-admission safety was validated on Dam only
 (plus Silo, which pins the opt-out ON in `tools/silo_intro_aperture_regression.sh` rather
