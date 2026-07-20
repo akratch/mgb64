@@ -35,7 +35,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | finding | status | commit / note |
 |---|---|---|
 | DAM-R1a (native over-bright) | **REFUTED / closed** | camera phase-skew, not shading (`d0d6152`) |
-| DAM-R1b (sRGB surface) | **REFUTED** | enum-namespace confusion — web fmt 23 = Dawn BGRA8Unorm (linear); full fix implemented → 0 web effect → reverted (`bb4a824`). Residual ~10-lvl CDP-capture artifact, not a render bug |
+| DAM-R1b (sRGB surface) | **REFUTED** | enum-namespace confusion — web fmt 23 = Dawn BGRA8Unorm (linear); full fix implemented → 0 web effect → reverted (`bb4a824`). Residual ~10-lvl CDP-capture artifact, not a render bug. **Fully closed 2026-07-20 (Task 6): compositor path verified faithful, sky hue refuted** |
 | BLEND-1 (coverage-alpha writeMask) | **LANDED** | `d10866a` — cvg pixels now match GL (26→≤3), non-cvg byte-identical |
 | AC-3 (G_AC_DITHER dissolve) | **LANDED** | `f1cc65f` — WGSL now emits the dissolve like GL/Metal |
 | DAM-R1c (room_water_alpha_suppress) | **LANDED** | `f1cc65f` — ported to WGSL |
@@ -190,13 +190,104 @@ frame); it is superseded by the two engine GPU-buffer dumps for the opaque-surfa
 question, but it means the compositor/canvas leg of the pipeline was never actually
 exercised — that gap is still open, not closed.
 
+### ✅ CLOSURE round 2 — 2026-07-20 (Task 6): both residuals closed at matched geometry (FID-0134, FID-0138, FID-0139)
+
+The two gaps left open above — **(a)** the unverified compositor path and **(b)** the
+sky hue shift — are now measured and both close **negative**. Neither required an
+engine change.
+
+**(a) Compositor path — CLOSED, clean.** Headful Chrome, canvas pinned to a 640×480
+backing store, the engine's own GPU surface dump of frame 600, and the rAF pump frozen
+on dump detection so the presented frame stops advancing (freeze verified: two
+`screencapture`s 1.2 s apart are **byte-identical**). The visible window was captured
+with macOS `screencapture` — the true compositor/display path — and 2×2 box-downsampled
+to the buffer's native resolution:
+
+| ROI | Δ RGB vs GPU buffer (P3→sRGB corrected) | Δhue |
+|---|---|---|
+| rock | +0.27, +0.16, +0.03 | — (s≈0.06, ill-conditioned) |
+| ground | +0.38, +0.11, −0.17 | — |
+| sky | +2.18, +1.48, +0.51 | **+0.05°** |
+| skyhi | +1.52, +1.09, +0.28 | **−0.07°** |
+
+What a human sees matches the GPU swapchain buffer to ≤0.4 levels on opaque surfaces
+and ≤2.2 levels on the sky, hue within 0.1°. **The compositor/canvas/display path adds
+no brightness or hue divergence.**
+
+⚠️ **The trap this uncovered (FID-0138):** read *raw*, the same capture shows a
+**+3.0°/+3.6° sky hue shift with R up 6–8 levels**, while neutral surfaces are
+untouched. `screencapture` tags its output **Display P3**, not sRGB (`sips -g profile`
+confirms), and an sRGB→P3 encode moves only saturated colours. After
+`sips --matchTo 'sRGB Profile.icc'` the hue error collapses to +0.05°/−0.07°. Any
+harness comparing raw `screencapture` bytes to an engine buffer will manufacture a
+false "the web renders bluer" result. This is the colour-space sibling of FID-0135's
+geometry confound.
+
+**(b) Sky hue — REFUTED.** Root cause of the time-varying sky is
+`g_SkyCloudOffset += g_ClockTimer` (`src/game/player.c:272-278`), a scrolling cloud
+texcoord consumed at `player.c:486-656`, wrapping at 4096 and never reset — so it is
+driven by the **level-local clock**, and `--screenshot-game-timer` (not
+`--screenshot-frame`) is the correct pin. Across a 36-sample native curve at pinned 4:3
+640×480 / RenderScale 1 over game timers 150–1400, the sky **hue spans only
+215.21–217.89° (2.68°) while saturation spans 0.29–0.70** — hue is phase-robust,
+saturation is not. Three web GPU dumps located on that curve by least squares over two
+sky ROIs:
+
+| web dump | best-fit native timer | joint rms | Δhue (sky / skyhi) | nearest rival |
+|---|---|---|---|---|
+| frame 400 | 234 | 0.175 lvl | +0.028° / +0.014° | 154 (rms 2.36) |
+| frame 600 | 1039 | **0.016 lvl** | +0.000° / −0.003° | 1119 (rms 4.54) |
+| frame 800 | 471 | **0.007 lvl** | +0.000° / −0.008° | 1308 (rms 6.18) |
+
+Frame-invariant terrain controls agree independently in all three: rock
+[−0.02,−0.02,−0.02], ground [0.00,0.00,0.00]. **The web sky lies exactly on the native
+locus.** The "web renders a more saturated blue" residual was a *phase* artifact and is
+retracted.
+
+**Geometry audit of Task 4's own numbers (FID-0135 applied retroactively).** Task 4's
+preserved native captures measure 640×480 with 75px bars → content aspect **1.939**
+(the default 16:9 window squeezed into the fixed screenshot canvas); its web captures
+are 640×393 with 16/15px bars → aspect **1.768**. A **9.7% aspect mismatch**, with
+hand-placed whole-image-fraction ROIs in two different framings. The web side has its
+own analogue: the canvas is `width:100vw;height:100vh` with **no aspect fit**, so it
+inherits the browser viewport's aspect. Cost, measured at a *fixed* game timer 300 by
+changing only the native window aspect: the sky ROI moves **+31.8/+33.2/+37.1 levels**
+(16:9 → 4:3) — the same order as the ~20-level "sky lift" under investigation. Terrain
+is far less affected (≤1.5 levels), which is why Task 4's terrain conclusion survived
+while its sky numbers did not.
+
+**Task 4's parity numbers are therefore corrected** — conclusion unchanged, evidence
+~100× tighter:
+
+| ROI | Task 4 reported | Task 6 at matched geometry |
+|---|---|---|
+| rock | web ~1 level darker | **−0.02** |
+| ground | +0.6 | **+0.00** |
+| claim | "≤2–3 lvl, both directions" | **≤0.02 lvl** |
+
+`Video.RenderScale` (native 2 vs web 1) was checked and is **not** a confound (≤0.2 lvl).
+
+**Instrumentation gaps found (FID-0139).** The web build **cannot** write the standard
+fidelity screenshot — `platformSaveScreenshot` → `gfx_backend_read_framebuffer_rgb`
+needs a synchronous GPU map whose callback only fires during `ProcessEvents`, so it
+fails closed (`[gfx] screenshot readback failed`); web capture must use
+`GE007_WEBGPU_DUMP_*`. And the render-frame ordinal does **not** track the sim clock
+(`g_ClockTimer` is 0–4 ticks per rendered frame): across three runs of the same build,
+frame 400/600/800 mapped to timers 234/1039/471, non-monotonic. **Task 4's assumed fixed
+"+200" native/web frame offset is therefore invalid and is retracted** — frame ordinals
+cannot pin a web capture at all, which is why Task 6 used locus matching instead.
+
+Ledger: **FID-0134 (refuted, both residuals now closed)**, **FID-0138** (screencapture
+Display P3 confound), **FID-0139** (web capture/pinning gaps). Harness and full numeric
+tables: `.superpowers/sdd/task-6-report.md`, `.superpowers/sdd/task-6-harness/`.
+
 ---
 
 ## Executive summary — ranked findings
 
 | # | id | area | sev | conf | backends | one-liner |
 |---|-----|------|-----|------|----------|-----------|
-| 1 | **DAM-R1b** | sky/surface | ~~P1~~→**REFUTED/CLOSED (scope narrowed)** | REFUTED (2026-07-20, corrected 2026-07-21, FID-0134) | web only | ~~Browser scene target is sRGB → over-bright.~~ Superseded by the CORRECTION (linear BGRA8, not sRGB). A same-frame four-way readback shows CDP is byte-faithful to the GPU readback it captures (mean <0.53/ch) and opaque 3D surfaces are at native parity (≤2–3 lvl, both directions). The prior sky "lift" was a cross-frame comparison artifact caused by a **time-varying sky at a static camera** (not camera drift, corrected Fix round 1). The canvas/compositor/display path a human viewer sees was **not** verified — that remains open. See CLOSURE 2026-07-20 above. |
+| 1 | **DAM-R1b** | sky/surface | ~~P1~~→**REFUTED/CLOSED (scope narrowed)** | REFUTED (2026-07-20, corrected 2026-07-21, FID-0134) | web only | ~~Browser scene target is sRGB → over-bright.~~ Superseded by the CORRECTION (linear BGRA8, not sRGB). A same-frame four-way readback shows CDP is byte-faithful to the GPU readback it captures (mean <0.53/ch) and opaque 3D surfaces are at native parity (≤2–3 lvl, both directions). The prior sky "lift" was a cross-frame comparison artifact caused by a **time-varying sky at a static camera** (not camera drift, corrected Fix round 1). **CLOSURE round 2 (2026-07-20, Task 6): both residuals now CLOSED.** The compositor/display path a human actually sees was measured (headful capture vs GPU buffer at a frozen frame) and is faithful — opaque ≤0.4 lvl, sky ≤2.2 lvl, hue within 0.1°. The sky hue shift is REFUTED: at matched geometry and matched phase the web sky lies on the native locus (rms 0.007–0.175 lvl, Δhue ≤0.028°). Task 4's own parity numbers carried a 9.7% aspect confound (FID-0135) and are corrected to ≤0.02 lvl. See CLOSURE round 2 above; FID-0138/FID-0139. |
 | 2 | **TMEM-1** | texture | ~~P1~~→**NO DEFECT** | CONFIRMED-BENIGN (2026-07-19 census) | all | **Reinterpretation is a phantom.** The game-wide texSelect fmt-mismatch census (`GE007_TRACE_TMEM_REINTERP`) found 2 members (texnum 2224 monitor-text I8-table/CI4-pool; texnum 1980 RGBA-table/CI8-pool) — both **pooled**, both resolved to the pool fmt exactly as retail hardware does. `texSelect` prefers `tex->gbiformat` over `tconfig->format`, so nothing is dropped. Monitor green text renders (ROI green std=30.1 vs stock 27.0). Class (b) = EMPTY → no fix. |
 | 3 | **DAM-R1a** | sky | P1→**refuted** | CONFIRMED | — | The standing "native over-bright backdrop" P1 **does not reproduce**; the old f190 measurement was intro-swirl animation phase-skew. Reclassify/close. |
 | 4 | **BLEND-1** | blender | P2 | CONFIRMED | web broken | WebGPU never preserves the coverage-alpha channel (GL/Metal mask it) → interleaved XLU draws clobber stored N64 coverage. |
