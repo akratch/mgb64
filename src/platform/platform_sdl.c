@@ -734,6 +734,35 @@ extern s32 g_diagDisplayCastLastAnimIndex;
 extern s32 g_diagDisplayCastLastCameraPreset;
 extern s32 g_diagDisplayCastLastTimer;
 
+/* [Task 5b] The screenshot canvas is a FIXED 640x480 (4:3). When the drawable is
+ * not 4:3 (the shipped default window is 1440x810 = 16:9), the resample below
+ * letterboxes/pillarboxes the frame to preserve its aspect — it ADDS black bars
+ * that the engine never rendered. That is correct for the capture, but it makes a
+ * raw pixel comparison against a 4:3 hardware/emulator reference invalid: the
+ * scene content is uniformly scaled (16:9 -> 0.75x vertically) and offset inside
+ * the canvas. Task 5's geometric leg was confounded exactly this way (native's
+ * band measured 75px vs stock's 20px, all of it capture-added). Emit a one-shot
+ * disclosure so the confound can never again be silent in a capture log; fidelity
+ * captures meant for hardware comparison should pin a 4:3 window, e.g.
+ * GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080. */
+static void platformWarnScreenshotAspectOnce(int src_w, int src_h, int dst_w, int dst_h) {
+    static int warned = 0;
+    if (warned || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
+        return;
+    }
+    if ((int64_t)src_w * dst_h == (int64_t)dst_w * src_h) {
+        return;  /* same aspect: pure rescale, no bars added */
+    }
+    warned = 1;
+    fprintf(stderr,
+            "[SDL] screenshot: drawable %dx%d has a different aspect than the %dx%d "
+            "capture canvas; the capture ADDS letterbox/pillarbox bars and rescales "
+            "the scene. Do NOT pixel-compare this against a 4:3 hardware reference — "
+            "re-capture with a 4:3 window (e.g. GE007_WINDOW_WIDTH=1440 "
+            "GE007_WINDOW_HEIGHT=1080).\n",
+            src_w, src_h, dst_w, dst_h);
+}
+
 static void platformResampleFramebufferToScreenshot(const unsigned char *src,
                                                     int src_w, int src_h,
                                                     unsigned char *dst,
@@ -1074,6 +1103,7 @@ void platformSaveScreenshot(void) {
     if (src_w == w && src_h == h) {
         memcpy(pixels, source_pixels, (size_t)w * (size_t)h * 3);
     } else {
+        platformWarnScreenshotAspectOnce(src_w, src_h, w, h);
         platformResampleFramebufferToScreenshot(source_pixels, src_w, src_h, pixels, w, h);
     }
     platformApplyScreenshotViFilter(pixels, w, h);
