@@ -44,7 +44,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | R5 (SmoothSky) | **LANDED** | `262c4cf` — opt-in; NO-OP on Dam (audit premise corrected), real effect on gradient skies |
 | TMEM-4 / TMEM-3 / PVD-001 | **latent hardening** | defensive, byte-identical (this session) |
 | TMEM-1 (format reinterpretation) | **RESOLVED — NO DEFECT (2026-07-19 census)** | census at the texSelect choke point: reinterpretation is a phantom. `texSelect` (retail 0x7F076D68) selects `format = tex->gbiformat` (pool) over `tconfig->format` (table) whenever the texture is pooled — RDP-definitional, retail-identical. The table's differing fmt is discarded metadata, NOT honored on hardware. Class (b) live-divergence = EMPTY; see §TMEM-1 census. |
-| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower): `CutsceneFovY`=60 **ADJUDICATED retail-faithful (Task 5, 2026-07-20)** — asm (no FOV field in `SetupIntroCamera`; base `fovy`=60) + geometry agree. **Task 5b (2026-07-20) re-ran the geometric leg on properly registered frames** (Task 5 compared a 16:9 native capture with a 4:3 stock frame, unregistered): stock→native fits the **identity** (sy=sx=1.000, corr 0.683) → **FOV_y = 60.0 ± 0.25°**, confirming the conclusion on corrected numbers, and the reported "native 75px vs retail 20px cinematic band" is a **capture artifact** (fixed-640×480 screenshot canvas letterboxing the default 16:9 window — a 4:3 window reproduces stock's 20/20 exactly; FID-0135). The residual framing gap is DAM-R2 admitting a **different** far-room set than retail's authored PVS — not merely a superset (→ R-02, deferred), see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
+| DAM-R2 (R-01/R-02 authored PVS) | **LANDED (2026-07-19), Dam-scoped** | stock draws the shore (Task 0); camera AIM admits the far rooms (force-admit proves the far rooms are frustum-visible at the as-is native cam — the "pitch divergence" was bare-sky filling the missing far geometry). FOV/framing residual (mountains smaller/lower): `CutsceneFovY`=60 **ADJUDICATED retail-faithful (Task 5, 2026-07-20)** — asm (no FOV field in `SetupIntroCamera`; base `fovy`=60) + geometry agree. **Task 5b (2026-07-20) re-ran the geometric leg on properly registered frames** (Task 5 compared a 16:9 native capture with a 4:3 stock frame, unregistered): stock→native fits the **identity** (sy=sx=1.000, corr 0.683) → **FOV_y = 60.0 ± 0.25°**, confirming the conclusion on corrected numbers, and the reported "native 75px vs retail 20px cinematic band" is a **capture artifact** (fixed-640×480 screenshot canvas letterboxing the default 16:9 window — a 4:3 window reproduces stock's 20/20 exactly; FID-0135). Most of the originally-reported "mountains smaller/lower" reading was itself the FID-0135 capture-aspect squeeze, not rendered geometry; the small residual that survives registration is DAM-R2 admitting a **different** far-room set than retail's authored PVS — not merely a superset, and the surviving direction is now suspected **over**-admission (native draws far shore/bridge geometry stock omits, at x≈430/540) rather than the original under-admission premise (→ **FID-0137**, R-02 deferred), see below. Fixed by admitting frustum-visible far rooms **draw-only** during `playerHasFrozenIntroCamera`, gated to `g_CurrentStageToLoad == LEVELID_DAM` (`bg.c`, reproduce-then-restore; opt-out `GE007_NO_INTRO_FARVISTA_ADMIT`) — over-admission safety was validated on Dam only, so other levels' frozen intros are candidates pending their own stock-ares adjudication (R-01 below). R-02 (revive `sub_GAME_7F0B38B4`) NOT taken: no live caller + vis-list data source absent from decomp. |
 | R3 (Anisotropy) | **DEFERRED (evidence)** | entangled with the WGSL 3-point filter (forces NEAREST sampler); needs FILT-1 rework + a mip chain |
 | FILT-1, FMA-1, FMA-2, EN-1, AC-1 | **open** | FILT-1 needs a filter-scale uniform; FMA-1/2 shift the baseline (re-record decision); EN-1 no live trigger; AC-1 latent (GE doesn't emit G_AC_THRESHOLD) |
 
@@ -196,10 +196,11 @@ The two gaps left open above — **(a)** the unverified compositor path and **(b
 sky hue shift — are now measured and both close **negative**. Neither required an
 engine change.
 
-**(a) Compositor path — CLOSED, clean.** Headful Chrome, canvas pinned to a 640×480
-backing store, the engine's own GPU surface dump of frame 600, and the rAF pump frozen
-on dump detection so the presented frame stops advancing (freeze verified: two
-`screencapture`s 1.2 s apart are **byte-identical**). The visible window was captured
+**(a) Compositor path — CLOSED, clean, n=1 pose.** Headful Chrome, canvas pinned to a
+640×480 backing store, the engine's own GPU surface dump of frame 600, and the rAF pump
+frozen on dump detection so the presented frame stops advancing (freeze verified: two
+`screencapture`s 1.2 s apart are **byte-identical** — this proves *temporal* stability of
+that one captured frame, not pose coverage). The visible window was captured
 with macOS `screencapture` — the true compositor/display path — and 2×2 box-downsampled
 to the buffer's native resolution:
 
@@ -209,10 +210,24 @@ to the buffer's native resolution:
 | ground | +0.38, +0.11, −0.17 | — |
 | sky | +2.18, +1.48, +0.51 | **+0.05°** |
 | skyhi | +1.52, +1.09, +0.28 | **−0.07°** |
+| gun | +1.63, +1.43, +1.31 | — (s≈0.06, ill-conditioned) |
 
-What a human sees matches the GPU swapchain buffer to ≤0.4 levels on opaque surfaces
-and ≤2.2 levels on the sky, hue within 0.1°. **The compositor/canvas/display path adds
-no brightness or hue divergence.**
+Rock/ground agree to ≤0.4 levels; sky/skyhi to ≤2.2 levels with hue within 0.1°.
+**gun is +1.6 levels and is not folded into "opaque surfaces" above** — it is not isolated,
+and the suspected cause is the 2×2 box-downsample alignment (`ox=0, oy=1`) landing badly
+on the gun's high-frequency viewmodel content, not a render divergence. Note the FID-0138
+P3-encode explanation that accounts for the sky's raw-vs-corrected hue shift does **not**
+extend to gun's residual: unlike residual (b)'s phase artifact, (a) compares the *same*
+frozen frame on both sides, so there is no phase difference for a (b)-style aliasing
+mechanism to act on. **The compositor/canvas/display path adds no brightness or hue
+divergence on rock/ground/sky; the gun ROI is a reported, unresolved residual.**
+
+**Disclosure (n=1):** this verdict rests on **ONE** captured pose (frame 600). Two
+further attempts (frames 400, 800) produced valid engine GPU dumps but the
+`screencapture` came back **black** both times — the display slept and then the session
+locked mid-session, and `caffeinate -dis` did not survive the lock, so a second pose was
+never obtained. The byte-identity freeze-check above demonstrates the one captured frame
+was stable while held, not that the result generalizes across poses.
 
 ⚠️ **The trap this uncovered (FID-0138):** read *raw*, the same capture shows a
 **+3.0°/+3.6° sky hue shift with R up 6–8 levels**, while neutral surfaces are
@@ -287,12 +302,12 @@ tables: `.superpowers/sdd/task-6-report.md`, `.superpowers/sdd/task-6-harness/`.
 
 | # | id | area | sev | conf | backends | one-liner |
 |---|-----|------|-----|------|----------|-----------|
-| 1 | **DAM-R1b** | sky/surface | ~~P1~~→**REFUTED/CLOSED (scope narrowed)** | REFUTED (2026-07-20, corrected 2026-07-21, FID-0134) | web only | ~~Browser scene target is sRGB → over-bright.~~ Superseded by the CORRECTION (linear BGRA8, not sRGB). A same-frame four-way readback shows CDP is byte-faithful to the GPU readback it captures (mean <0.53/ch) and opaque 3D surfaces are at native parity (≤2–3 lvl, both directions). The prior sky "lift" was a cross-frame comparison artifact caused by a **time-varying sky at a static camera** (not camera drift, corrected Fix round 1). **CLOSURE round 2 (2026-07-20, Task 6): both residuals now CLOSED.** The compositor/display path a human actually sees was measured (headful capture vs GPU buffer at a frozen frame) and is faithful — opaque ≤0.4 lvl, sky ≤2.2 lvl, hue within 0.1°. The sky hue shift is REFUTED: at matched geometry and matched phase the web sky lies on the native locus (rms 0.007–0.175 lvl, Δhue ≤0.028°). Task 4's own parity numbers carried a 9.7% aspect confound (FID-0135) and are corrected to ≤0.02 lvl. See CLOSURE round 2 above; FID-0138/FID-0139. |
+| 1 | **DAM-R1b** | sky/surface | ~~P1~~→**REFUTED/CLOSED (scope narrowed)** | REFUTED (2026-07-20, corrected 2026-07-21, FID-0134) | web only | ~~Browser scene target is sRGB → over-bright.~~ Superseded by the CORRECTION (linear BGRA8, not sRGB). A same-frame four-way readback shows CDP is byte-faithful to the GPU readback it captures (mean <0.53/ch) and opaque 3D surfaces are at native parity (≤2–3 lvl, both directions). The prior sky "lift" was a cross-frame comparison artifact caused by a **time-varying sky at a static camera** (not camera drift, corrected Fix round 1). **CLOSURE round 2 (2026-07-20, Task 6): both residuals now CLOSED (n=1 compositor pose; gun ROI not isolated — see full §CLOSURE round 2 (a) above).** The compositor/display path a human actually sees was measured (headful capture vs GPU buffer at one frozen frame) and is faithful on rock/ground/sky — ≤0.4 lvl / ≤2.2 lvl, hue within 0.1° — with a +1.6 lvl gun residual reported, not folded in. The sky hue shift is REFUTED: at matched geometry and matched phase the web sky lies on the native locus (rms 0.007–0.175 lvl, Δhue ≤0.028°). Task 4's own parity numbers carried a 9.7% aspect confound (FID-0135) and are corrected to ≤0.02 lvl. See CLOSURE round 2 above; FID-0138/FID-0139. |
 | 2 | **TMEM-1** | texture | ~~P1~~→**NO DEFECT** | CONFIRMED-BENIGN (2026-07-19 census) | all | **Reinterpretation is a phantom.** The game-wide texSelect fmt-mismatch census (`GE007_TRACE_TMEM_REINTERP`) found 2 members (texnum 2224 monitor-text I8-table/CI4-pool; texnum 1980 RGBA-table/CI8-pool) — both **pooled**, both resolved to the pool fmt exactly as retail hardware does. `texSelect` prefers `tex->gbiformat` over `tconfig->format`, so nothing is dropped. Monitor green text renders (ROI green std=30.1 vs stock 27.0). Class (b) = EMPTY → no fix. |
 | 3 | **DAM-R1a** | sky | P1→**refuted** | CONFIRMED | — | The standing "native over-bright backdrop" P1 **does not reproduce**; the old f190 measurement was intro-swirl animation phase-skew. Reclassify/close. |
 | 4 | **BLEND-1** | blender | P2 | CONFIRMED | web broken | WebGPU never preserves the coverage-alpha channel (GL/Metal mask it) → interleaved XLU draws clobber stored N64 coverage. |
 | 5 | **AC-3** | alpha | P2 | CONFIRMED | web broken | WGSL omits the `G_AC_DITHER` alpha-dissolve entirely; GL/Metal emit it. Default backend silently drops the effect. |
-| 6 | **R-01 / R-02** | room admit | P2 | CONFIRMED / PROBABLE | all | DAM-R2 distant shore not admitted from the establishing cam; root cause = the retail authored PVS list is parsed at load but its consumer has **no live caller**. Stock-verdict-pending. |
+| 6 | **R-01 / R-02** | room admit | P2 | **LANDED (R-01, Dam-scoped, 2026-07-19)** / PROBABLE (R-02, deferred) | all | R-01 FIXED: distant shore now admitted from the establishing cam (frustum force-admit, draw-only, `LEVELID_DAM`-gated). The intro "cinematic band" divergence is a **capture artifact** (FID-0135 — fixed-canvas letterboxing of the default 16:9 window; a 4:3 window reproduces stock's band exactly). A small post-registration residual remains — direction now suspected **over**-admission (native draws far shore/bridge geometry stock omits, FID-0137) rather than the original under-admission premise; R-02 (revive the authored-PVS consumer `sub_GAME_7F0B38B4`, no live caller) NOT taken, deferred. |
 | 7 | **TMEM-2** | texture | P2 | CONFIRMED | all | `settex_cache` is keyed on `texturenum` **alone** — the structural enabler of TMEM-1. |
 | 8 | **AC-1** | alpha | P2 | CONFIRMED(mech) | all | `G_AC_THRESHOLD` is never decoded and `G_SETBLENDCOLOR` is a no-op → the alpha-threshold comparand doesn't exist. Latent (GE rarely uses it). |
 | 9 | **FILT-1** | filtering | P2 | CONFIRMED | web vs GL/Metal | WGSL has no magnification nearest-fast-path; GL/Metal do. Source of the documented ~5/px WebGPU↔GL "filter noise" (WebGPU is the *more* faithful side). |
@@ -529,6 +544,21 @@ correct across all three backends + a CPU reference (see §E).*
 ## C. Room admission / DAM-R2
 
 ### R-01 — DAM-R2: distant reservoir shore not admitted from the establishing cam — P2, **LANDED 2026-07-19 (Dam-scoped)**
+
+> **Current state (2026-07-20).** This section is four superseding rounds deep
+> (2026-07-19 fix → Task 5 FOV adjudication → Task 5b capture-aspect correction →
+> review-round-2 attribution wording); read the archaeology below only if you need the
+> derivation. The three settled conclusions are:
+> 1. **FOV is retail-faithful** — `Video.CutsceneFovY = 60` matches the asm (no FOV
+>    field in `SetupIntroCamera`) and the re-registered geometry (`sy = sx = 1.000`),
+>    to **60.0° ± 0.25°**.
+> 2. **The "cinematic band" divergence is a capture artifact**, not rendered — the
+>    fixed-640×480 screenshot canvas letterboxes the default 16:9 window; a 4:3 window
+>    reproduces stock's 20/20 px band exactly (FID-0135).
+> 3. **A small residual remains, now suspected over- (not under-) admission** — at
+>    x≈430/540 native draws far shore/bridge geometry stock omits, the opposite
+>    direction from R-01's original under-admission premise (FID-0137, R-02 deferred).
+
 **Resolution (2026-07-19):** stock draws the shore (Task 0 ground truth). The suspected
 intro-camera *pitch divergence* was a MISDIAGNOSIS: force-admitting the classifier's
 frustum-visible far rooms at the as-is native camera renders the reservoir/shore/mountains

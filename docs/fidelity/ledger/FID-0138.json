@@ -1,6 +1,6 @@
 {
   "id": "FID-0138",
-  "title": "macOS screencapture writes Display P3, not sRGB: raw pixel comparison of a screen capture against an engine sRGB buffer manufactures a ~+3 deg hue / +6-8 level R shift on saturated content",
+  "title": "macOS screencapture tags output with the DISPLAY's profile (P3 here), not sRGB: raw vs sRGB-buffer comparison manufactures a ~+3 deg hue / +6-8 level R shift on saturated content",
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P2",
@@ -26,6 +26,13 @@
       "to": "triaged",
       "evidence": "Task 6 residual-(a) measurement: compositor capture vs GPU surface dump, read both raw-P3 and P3->sRGB-converted. Hue error +3.00/+3.64 deg raw collapses to +0.05/-0.07 deg after conversion; neutral ROIs identical (<=0.41 levels) in both readings. `sips -g profile` confirms the Display P3 profile on every screencapture output.",
       "note": "Filed by Task 6 while closing the FID-0134 compositor-path residual. This is a measurement trap, not a rendering defect: `screencapture` tags its output with the DISPLAY's colour profile (Display P3 on this Retina Mac), so the stored bytes are P3-encoded. Any harness that reads those bytes and compares them to an engine buffer (which is sRGB) will see a hue shift on saturated content and nothing at all on neutrals -- exactly the shape of a 'the web renders bluer' style false positive. Mitigation for future harnesses: always run `sips --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'` on a screencapture before pixel comparison, or read and apply the embedded iCCP chunk. Note the residual +1.5 to +2.2 level R/G offset that survives conversion is consistent with the double 8-bit quantisation of the P3->sRGB round trip and is NOT evidence of a render difference. Sibling of FID-0135 (which is the geometry analogue of the same class of confound)."
+    },
+    {
+      "ts": "2026-07-20T15:00:00Z",
+      "from": "triaged",
+      "to": "triaged",
+      "evidence": "Final-review fix round (fix/tier1-residuals): title reworded to match the body's already-correct claim (device-profile-dependent, not a hardcoded 'always P3').",
+      "note": "Final-review fix round, 2026-07-20 (non-blocking). The title previously read 'macOS screencapture writes Display P3, not sRGB', an overgeneralized claim; the body has always correctly said screencapture tags output with the DISPLAY's profile (P3 on this Retina Mac specifically, not universally). Reworded the title to match. No content/status change."
     }
   ]
 }
