@@ -1620,6 +1620,23 @@ static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
     return linear_filter;
 }
 
+/* Anisotropic-filtering override (Video.AnisotropicFiltering > 1, remaster-only).
+ * The faithful path binds a NEAREST sampler for shader-N64-3-point (bilerp)
+ * materials — they resolve the RDP triangular filter over point taps in the WGSL
+ * shader. That leaves grazing-angle surfaces (e.g. Dam canyon walls at the frame
+ * edge) with a streaked/aliased minified footprint the isotropic sampler cannot
+ * resolve. With anisotropy on, route those materials to a hardware LINEAR sampler
+ * so the GPU's anisotropic sampling engages; gfx_webgpu_shader.c correspondingly
+ * emits a hardware textureSample instead of the LOD-0 n64Filter3. Aniso<=1 is
+ * byte-identical to prior behavior. */
+static bool gfx_sampler_linear_for_material(bool linear_filter, bool shader_n64_filter)
+{
+    if (shader_n64_filter && g_pcTextureAnisotropy > 1) {
+        return linear_filter;
+    }
+    return linear_filter && !shader_n64_filter;
+}
+
 static bool gfx_diag_convert_k4k5_enabled(void)
 {
     if (g_diag_convert_k4k5 < 0) {
@@ -18974,7 +18991,7 @@ static bool derive_material(struct LoadedVertex *v1,
         cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 0, 0);
         cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 0, 1);
         linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-        sampler_linear_filter = linear_filter && !shader_n64_filter;
+        sampler_linear_filter = gfx_sampler_linear_for_material(linear_filter, shader_n64_filter);
         if (rendering_state.bound_texture_id[0] != settex_gl_tex_id ||
             rendering_state.textures[0] != NULL ||
             rendering_state.bound_texture_linear[0] != sampler_linear_filter ||
@@ -19013,7 +19030,7 @@ static bool derive_material(struct LoadedVertex *v1,
             cms = gfx_sampler_cm_for_shader_clamp(cms, cc_options, 1, 0);
             cmt = gfx_sampler_cm_for_shader_clamp(cmt, cc_options, 1, 1);
             linear_filter = gfx_apply_material_texture_filter_policy(linear_filter);
-            sampler_linear_filter = linear_filter && !shader_n64_filter;
+            sampler_linear_filter = gfx_sampler_linear_for_material(linear_filter, shader_n64_filter);
             if (rendering_state.bound_texture_id[1] != settex_gl_tex_id ||
                 rendering_state.textures[1] != NULL ||
                 rendering_state.bound_texture_linear[1] != sampler_linear_filter ||
@@ -19078,7 +19095,7 @@ static bool derive_material(struct LoadedVertex *v1,
         if (is_font_texture && gfx_font_force_point_filter()) {
             linear_filter = false;
         }
-        sampler_linear_filter = linear_filter && !shader_n64_filter;
+        sampler_linear_filter = gfx_sampler_linear_for_material(linear_filter, shader_n64_filter);
         if (rendering_state.textures[ti] != NULL &&
             (sampler_linear_filter != rendering_state.textures[ti]->linear_filter ||
              cms != rendering_state.textures[ti]->cms ||

@@ -2863,6 +2863,16 @@ static WGPUSampler wgpu_get_sampler(bool linear_filter, uint32_t cms, uint32_t c
     sd.lodMinClamp = 0.0f;
     sd.lodMaxClamp = 0.0f;
     sd.maxAnisotropy = 1;
+    /* Video.AnisotropicFiltering (remaster): resolve grazing-angle texture streak.
+     * WebGPU requires all-Linear filters when maxAnisotropy>1, so only the linear
+     * samplers are upgraded; nearest/point materials stay exactly as the N64 path.
+     * gfx_pc.c gives 3-point (bilerp) materials a linear sampler when aniso is on,
+     * and the WGSL generator emits hardware textureSample for them so this engages. */
+    if (linear_filter && g_pcTextureAnisotropy > 1) {
+        int aniso = g_pcTextureAnisotropy > 16 ? 16 : g_pcTextureAnisotropy;
+        sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
+        sd.maxAnisotropy = (uint16_t)aniso;
+    }
     WGPUSampler s = wgpuDeviceCreateSampler(s_device, &sd);
     if (s == NULL) {
         return NULL;

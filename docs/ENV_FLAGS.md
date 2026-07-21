@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1083 flags** found across the source.
+**1084 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -49,6 +49,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_AI_TRACE_LISTS` | ? |  | 1 |  |
 | `GE007_AMMO_ICON_FAULT` | ? |  | 1 |  |
 | `GE007_AMMO_ICON_FAULT_INVALID` | ? |  | 1 |  |
+| `GE007_ANISO` | int | 16 | 1 | Texture anisotropy for grazing-angle surfaces (1-16). 1 = faithful N64 filtering; higher values sharpen oblique walls/floors (e.g. Dam canyon edges) at slight GPU cost. Remaster enhancement; takes effect on restart. |
 | `GE007_ASSERT_ON_FAIL` | ? |  | 1 |  |
 | `GE007_ATMOS_GRADE_SAT` | ? |  | 1 |  |
 | `GE007_ATMOS_GRADE_VAL` | ? |  | 1 |  |

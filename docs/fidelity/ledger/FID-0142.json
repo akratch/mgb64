@@ -1,0 +1,43 @@
+{
+  "id": "FID-0142",
+  "title": "Dam edge 'washed-out cliff / portal leakage' = grazing-angle texture streak (faithful isotropic N64 filtering), NOT over-admission or sky-leak (refuted); remaster fix Video.AnisotropicFiltering",
+  "class": "parity-divergence",
+  "surface": "renderer",
+  "priority": "P2",
+  "status": "refuted",
+  "suspect": [
+    "src/platform/fast3d/gfx_webgpu.c (wgpu_get_sampler hardcodes maxAnisotropy=1 / mipmapFilter=Nearest / lodMaxClamp=0 -- no anisotropic filtering; the root of the grazing-angle streak)",
+    "src/game/bg.c (portal edge-rescue / vis-supplement / project-frustum-fallback over-admission heuristics -- RULED OUT: faithful A/B byte-identical)"
+  ],
+  "repro": "build/ge007 --rom baserom.u.z64 --level dam --deterministic with GE007_AUTO_LOOK_LEFT=5-45 GE007_AUTO_LOOK_STEP=15 --screenshot-frame 70 --screenshot-exit. The left-edge canyon wall renders washed-out / vertically-streaked. A/B Video.AnisotropicFiltering=1 (faithful, streaked) vs 16 (sharp).",
+  "evidence": [
+    {
+      "kind": "pixel-diff",
+      "path": "src/game/bg.c -- Faithful A/B at the reported Dam vantage (spawn road, look-left) with the 3 default-ON port over-admission heuristics OFF (GE007_PORTAL_EDGE_RESCUE / VIS_SUPPLEMENT / PORTAL_PROJECT_FRUSTUM_FALLBACK = 0): byte-identical (cmp diff=0). GE007_TINT_SKY=1 leaves the cliff un-tinted (it is not the sky backdrop). GE007_FORCE_ALL_ROOMS changes ~800px elsewhere, cliff unchanged. So the washout is NOT room over-admission and NOT a sky leak -- it is drawn by a faithfully-admitted room."
+    },
+    {
+      "kind": "pixel-diff",
+      "path": "src/platform/fast3d/gfx_webgpu.c -- wgpu_get_sampler hardcodes maxAnisotropy=1 / mipmapFilter=Nearest / lodMaxClamp=0 (a faithful copy of N64's single-level isotropic filtering). The same Dam rock texture is crisp head-on (center cliff) but streaked at the grazing left edge; GE007_FORCE_POINT_FILTER leaves it streaked -- so it is grazing-angle UV/minification stretch, not a bilinear blur and not a per-material bug. Faithful-in-kind to N64; starker only at the port's higher resolution."
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/LEDGER.md -- Remaster fix Video.AnisotropicFiltering (g_pcTextureAnisotropy default 16; --faithful pins 1). gfx_pc.c routes 3-point/bilerp materials to a linear sampler, gfx_webgpu.c sets maxAnisotropy on linear samplers, gfx_webgpu_shader.c emits hardware textureSample so anisotropy engages. 146/146 ctest green (renderer_parity_smoke / screenshot_series / native_tri_pixel / watch_scene_render / pixel_oracle_sweep / sim_state_hash / input_tape all Passed); faithful path byte-identical by construction; web dist rebuilt + web_frame_probe green on the aniso-active dist. aniso16 sharpens the grazing left cliff + center rock; residual only at the extreme edge (footprint >16 texels, would need mipmaps)."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-21T08:03:58Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "Owner-reported long-standing 'portal leakage / other rooms admitted toward the outside of the frame' on Dam (web + native): a washed-out, vertically-streaked cliff dominating the left of the spawn-road view.",
+      "note": "Reproduced at the Dam spawn/look-left vantage."
+    },
+    {
+      "ts": "2026-07-21T08:12:00Z",
+      "from": "triaged",
+      "to": "refuted",
+      "evidence": "Faithful room-admission A/B byte-identical (cmp diff=0); GE007_TINT_SKY negative on the cliff; GE007_FORCE_ALL_ROOMS cliff-unchanged; head-on crisp vs grazing streaked; GE007_FORCE_POINT_FILTER still streaked. Root = WebGPU maxAnisotropy=1 (faithful N64 single-level isotropic filtering).",
+      "note": "REFUTED as a fidelity divergence: the port faithfully reproduces N64's isotropic single-level filtering, so the grazing-angle streak is faithful-in-kind (starker only at the port's higher resolution), and 'other rooms admitted at the frame edge' is disproven. Separately shipped a REMASTER enhancement (Video.AnisotropicFiltering, default 16; --faithful pins 1) that resolves the streak; the faithful path is byte-identical."
+    }
+  ]
+}

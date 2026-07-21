@@ -20,6 +20,7 @@
 #include "gfx_webgpu_shader.h"
 
 #include "gfx_cc.h"
+#include "gfx_uniforms.h"   /* g_pcTextureAnisotropy: aniso bypasses the in-shader 3-point filter */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -328,7 +329,9 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
      * axis uses it OR the N64 3-point filter needs them (its taps are mask-wrapped
      * — mask 0 is identity). Ports gfx_opengl.c n64TileMaskAxis/n64TileMaskUv;
      * GLSL mod() = floor-based remainder, so n64mod() must too (WGSL % truncates). */
-    bool needs_filter = cc.n64_filter[0] || cc.n64_filter[1];
+    /* Aniso (Video.AnisotropicFiltering>1) bypasses the in-shader 3-point filter:
+     * those materials sample via hardware textureSample so GPU anisotropy engages. */
+    bool needs_filter = (cc.n64_filter[0] || cc.n64_filter[1]) && g_pcTextureAnisotropy <= 1;
     bool uses_mask = cc.tile_mask[0][0] || cc.tile_mask[0][1] ||
                      cc.tile_mask[1][0] || cc.tile_mask[1][1];
     if (uses_mask || needs_filter) {
@@ -395,7 +398,7 @@ char *gfx_webgpu_build_wgsl(uint64_t shader_id0, uint32_t shader_id1,
         const char *samp = i == 0 ? "uSamp0" : "uSamp1";
         bool clamp_s = cc.clamp[i][0], clamp_t = cc.clamp[i][1];
         bool mask_s = cc.tile_mask[i][0], mask_t = cc.tile_mask[i][1];
-        bool filt = cc.n64_filter[i];
+        bool filt = cc.n64_filter[i] && g_pcTextureAnisotropy <= 1;
         /* texSize when clamp/mask/filter needs it (textureDimensions). */
         if (clamp_s || clamp_t || mask_s || mask_t || filt) {
             P("  let texSize%d = vec2<f32>(textureDimensions(%s));\n", i, tex);

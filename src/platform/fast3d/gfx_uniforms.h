@@ -24,6 +24,7 @@ extern "C" {
 extern float g_pcVideoGamma;
 extern float g_pcRenderScale;
 extern int   g_pcMsaaSamples;
+extern int   g_pcTextureAnisotropy;   /* Video.AnisotropicFiltering: 1=faithful, >1=hw aniso for grazing surfaces */
 extern int   g_pcRetroFilterMode;
 extern float g_pcVideoSaturation;
 extern float g_pcVideoContrast;

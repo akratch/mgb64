@@ -457,6 +457,7 @@ f32 g_pcRenderScale = 1.0f;   /* native res: R36S 2x SSAA = 1280x960 on a Mali-G
 f32 g_pcRenderScale = 2.0f;   /* desktop remaster default: 2x SSAA (clean edges; raise to 4x for max IQ) */
 #endif
 s32 g_pcMsaaSamples = 0;       /* remaster default: OFF by design. The AA stack is 2x SSAA (RenderScale) + FXAA; MSAA stacked on a supersampled scene buffer is redundant geometry AA at real cost. When the user does enable MSAA, alpha-to-coverage (gfx_opengl.c) engages to feather cutout edges SSAA cannot. */
+int g_pcTextureAnisotropy = 16; /* Video.AnisotropicFiltering: remaster default 16 (--faithful pins 1). 1 = faithful (N64 nearest + in-shader 3-point filter); >1 routes 3-point (bilerp) materials through a hardware linear + anisotropic sampler so grazing-angle surfaces (e.g. Dam canyon walls at the frame edge) stop streaking. Only the WebGPU backend consumes it; GL/Metal ignore it. 1 is byte-identical to prior behavior. */
 f32 g_pcFovY = 50.0f;            /* default: classic GoldenEye feel — 60deg vertical balloons to a fisheye ~90deg horizontal on 16:9; 50 keeps the original ~75deg horizontal. Slider still goes 45..105. */
 f32 g_pcCutsceneFovY = 60.0f;    /* D6/T16: authored cinematics render at the N64's fixed 60deg vertical FOV regardless of gameplay Video.FovY; 0 = follow Video.FovY. */
 f32 g_pcVideoSaturation = 1.15f; /* remaster default: subtly richer palette */
@@ -2376,6 +2377,13 @@ void platformRegisterConfig(void)
                          "--config-override Video.MSAA=VALUE",
                          "MSAA",
                          "Scene multisample anti-aliasing samples: 0, 2, 4, or 8.");
+    settingsRegisterInt("Video.AnisotropicFiltering", &g_pcTextureAnisotropy, 16, 1, 16,
+                        SETTING_SCOPE_RESTART, "GE007_ANISO",
+                        "--config-override Video.AnisotropicFiltering=VALUE",
+                        "Anisotropic filtering",
+                        "Texture anisotropy for grazing-angle surfaces (1-16). 1 = faithful N64 "
+                        "filtering; higher values sharpen oblique walls/floors (e.g. Dam canyon "
+                        "edges) at slight GPU cost. Remaster enhancement; takes effect on restart.");
     settingsRegisterFloat("Video.FovY", &g_pcFovY, 50.0f, 45.0f, 105.0f,
                           SETTING_SCOPE_LIVE, "GE007_FOV_Y",
                           "--config-override Video.FovY=VALUE",
@@ -2748,6 +2756,7 @@ static const struct {
     { "Video.FpsOverlay",            "0" },      /* [AUDIT-0010] no non-original HUD */
     { "Video.RenderScale",           "1" },      /* native res (no supersampling)  */
     { "Video.MSAA",                  "0" },
+    { "Video.AnisotropicFiltering",  "1" },      /* faithful N64 filtering (no aniso) */
     { "Video.TexturePack",           "" },       /* stock textures (no HD pack)    */
     { "Video.FovY",                  "60" },     /* classic 4:3 vertical FOV       */
     { "Video.ViewmodelFov",          "60" },
