@@ -1527,9 +1527,10 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # path is live (shadow map rendered + non-trivial), the 73bbdac nil-fallback stays
     # unreachable in normal play, and both P1b negative-control flags
     # (GE007_NO_METAL_SHADOW_DEPTH_CLAMP / _DUMMY_DEPTH) are wired. Metal-only: SKIPs
-    # cleanly on non-Apple hosts and when no Metal device is available. The clamp's
-    # pixel effect (near-plane pancaking) is inert on the reachable scene (documented,
-    # not asserted -- FID-0019 stays open for a hand-crafted pancaking scene).
+    # cleanly on non-Apple hosts and when no Metal device is available. The authored
+    # scene also proves the clamp is correctly inert with in-frustum casters; a
+    # test-only clip-Z translation then drives those real casters through the near
+    # plane and asserts Clamp differs from the legacy Clip negative control.
     add_port_validation_smoke(port_metal_shadow_clamp_regression metal_shadow_clamp_regression.sh 300)
     add_port_validation_smoke(port_surface_xlu_cvg_memory_regression surface_xlu_cvg_memory_regression.sh 360
         --msaa-values 0

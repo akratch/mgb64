@@ -20,16 +20,17 @@
 # backend cannot initialize a device (the GL backend does not have this code path
 # -- GL_DEPTH_CLAMP is process-global there, so the fix is a Metal-parity fix).
 #
-# HONEST SCOPE (see docs/fidelity/ledger/FID-0019.json): the depth-clip clamp only
+# The depth-clip clamp only
 # changes output for a caster crossing the light near/far plane ("near-plane
 # pancaking"). On the reachable deterministic Dam scene the casters stay well
 # inside the ortho z-range (shadow-map min-depth measured ~130/255 across radii
 # 20..250), so the clamp is INERT here and fix-on vs the clamp-revert are
-# byte-identical -- this lane documents that (prints the delta) rather than
-# asserting a divergence that the scene cannot produce. It therefore guards the
-# shadow PATH (map rendered + non-trivial), the fallback-reachability invariant
-# (73bbdac), and the flag wiring -- not the clamp's pixel effect, which needs a
-# hand-crafted pancaking scene FID-0019 remains open for.
+# byte-identical. The lane therefore runs two layers: the authored scene proves
+# the real shadow path is healthy and the dummy fallback stays unreachable; then
+# MGB64_TEST_METAL_SHADOW_CLIP_Z_OFFSET translates the REAL captured casters
+# across the light near plane so Clamp and the legacy Clip negative control must
+# produce different shadow maps. That second layer is the fail-on-revert oracle
+# for the clamp's pixel effect without altering shipped behavior.
 #
 # ROM-gated. Captured shadow maps / screenshots are ROM-derived local artifacts --
 # do not commit them.
@@ -154,6 +155,30 @@ print(f"{100.0*occ/n:.2f} {mn}")
 PY
 }
 
+# changed_pct <pgm-a> <pgm-b> -> percentage of differing depth-map bytes.
+changed_pct() {
+    python3 - "$1" "$2" <<'PY'
+import sys
+
+def pixels(path):
+    with open(path, "rb") as f:
+        if f.readline().strip() != b"P5":
+            raise ValueError("not P5")
+        w, h = map(int, f.readline().split())
+        int(f.readline())
+        return f.read(w * h)
+
+try:
+    a, b = pixels(sys.argv[1]), pixels(sys.argv[2])
+    if len(a) != len(b) or not a:
+        raise ValueError("size mismatch")
+    changed = sum(x != y for x, y in zip(a, b))
+    print(f"{100.0 * changed / len(a):.6f}")
+except Exception:
+    print("0.000000")
+PY
+}
+
 echo "=== metal_shadow_clamp_regression (Metal + SunShadow, level $LEVEL, frame $FRAME) ==="
 
 # --- fix-on (default: both M3.2 fixes active) ---
@@ -207,7 +232,7 @@ for flag in GE007_NO_METAL_SHADOW_DEPTH_CLAMP GE007_NO_METAL_SHADOW_DUMMY_DEPTH;
     fi
 done
 
-# (e) DOCUMENT (informational, not asserted): the depth-clip clamp is inert on this
+# (e) Document the expected authored-scene inertness: the depth-clip clamp is inert
 # reachable scene -- fix-on vs the clamp-revert are byte-identical because no caster
 # crosses the near plane (min-depth ~${on_min}/255, far from the near plane at 0).
 if [[ -f "$OUT_DIR/fixon/frame.bmp" && -f "$OUT_DIR/revert_DEPTH_CLAMP/frame.bmp" ]]; then
@@ -216,11 +241,37 @@ if [[ -f "$OUT_DIR/fixon/frame.bmp" && -f "$OUT_DIR/revert_DEPTH_CLAMP/frame.bmp
         | grep -m1 'Changed pixels:' || true)"
     echo "  [doc] fix-on vs clamp-revert final frame: ${changed:-<compare unavailable>}"
     echo "  [doc] clamp is INERT here (casters min-depth ${on_min}/255 never reach the near plane);"
-    echo "  [doc] its divergence needs a near-plane-pancaking scene -- FID-0019 stays open for that."
+fi
+
+# (f) Fail-on-revert pixel oracle for dc55008. Shift the actual captured Dam
+# caster geometry across the shadow near plane. Clamp keeps the boundary
+# triangles by pancaking their depth; the legacy Clip mode removes/clips them.
+# The two depth maps MUST differ. The MGB64_ variable is test-only and does not
+# enter the documented player-facing environment surface.
+PROBE_Z_OFFSET="-1.2"
+probe_on_rc="$(capture clamp_probe \
+    MGB64_TEST_METAL_SHADOW_CLIP_Z_OFFSET="$PROBE_Z_OFFSET")"
+probe_off_rc="$(capture clamp_probe_revert \
+    MGB64_TEST_METAL_SHADOW_CLIP_Z_OFFSET="$PROBE_Z_OFFSET" \
+    GE007_NO_METAL_SHADOW_DEPTH_CLAMP=1)"
+read probe_on_occ probe_on_min < <(occupancy "$OUT_DIR/clamp_probe/shadow.pgm")
+read probe_off_occ probe_off_min < <(occupancy "$OUT_DIR/clamp_probe_revert/shadow.pgm")
+probe_delta="$(changed_pct "$OUT_DIR/clamp_probe/shadow.pgm" \
+                           "$OUT_DIR/clamp_probe_revert/shadow.pgm")"
+echo "  near-plane probe z=${PROBE_Z_OFFSET}: clamp occupancy=${probe_on_occ}% min=${probe_on_min}; legacy-clip occupancy=${probe_off_occ}% min=${probe_off_min}; changed=${probe_delta}%"
+if [[ "$probe_on_rc" -ne 0 || "$probe_off_rc" -ne 0 ]]; then
+    echo "FAIL: near-plane clamp oracle run failed (clamp=$probe_on_rc legacy=$probe_off_rc)"
+    rc=1
+elif awk -v o="$probe_on_occ" -v m="$MIN_OCCUPANCY_PCT" 'BEGIN{exit !(o+0 < m+0)}'; then
+    echo "FAIL: near-plane clamp probe produced no non-trivial clamped casters"
+    rc=1
+elif awk -v d="$probe_delta" 'BEGIN{exit !(d+0 <= 0.001)}'; then
+    echo "FAIL: near-plane clamp probe did not distinguish Clamp from legacy Clip"
+    rc=1
 fi
 
 if [[ "$rc" -ne 0 ]]; then
     echo "FAIL: metal_shadow_clamp_regression"
     exit 1
 fi
-echo "PASS: metal_shadow_clamp_regression (shadow path live, occupancy ${on_occ}%, fallback unreachable, both P1b flags wired)"
+echo "PASS: metal_shadow_clamp_regression (shadow path live, fallback unreachable, flags wired, near-plane Clamp effect ${probe_delta}% map delta)"

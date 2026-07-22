@@ -1885,6 +1885,28 @@ static void mtl_ensure_shadow_dummy(void) {
  * default so both backends cull the same faces (parity). */
 static void mtl_shadow_encode(id<MTLRenderCommandEncoder> enc, id<MTLBuffer> vbuf,
                               size_t tri_count, const float *sm16) {
+    const float *encode_mat = sm16;
+    float test_mat[16];
+
+    /* FID-0019 oracle fixture: normal authored scenes keep every captured caster
+     * comfortably inside the light frustum, so Clamp and the legacy Clip mode
+     * are byte-identical there. The Metal-only regression lane can translate
+     * clip-space Z to put the REAL captured scene across the near plane and make
+     * the API semantic observable. This is test instrumentation only (MGB64_,
+     * deliberately outside the player-facing GE007_* flag surface); absent in
+     * every normal launch and incapable of touching sim state. sm16 is the
+     * column-major upload of g_pc_shadow_mat, so index 14 is row Z / column W. */
+    const char *test_z = getenv("MGB64_TEST_METAL_SHADOW_CLIP_Z_OFFSET");
+    if (test_z != NULL && test_z[0] != '\0') {
+        char *end = NULL;
+        float offset = strtof(test_z, &end);
+        if (end != test_z && __builtin_isfinite(offset)) {
+            memcpy(test_mat, sm16, sizeof(test_mat));
+            test_mat[14] += offset;
+            encode_mat = test_mat;
+        }
+    }
+
     [enc setRenderPipelineState:s_shadow_pso];
     [enc setDepthStencilState:s_shadow_ds];
     /* Metal's framebuffer y-axis is flipped vs GL, so a triangle GL sees as CCW is
@@ -1906,7 +1928,7 @@ static void mtl_shadow_encode(id<MTLRenderCommandEncoder> enc, id<MTLBuffer> vbu
     if (!mtl_shadow_depth_clamp_disabled())
         [enc setDepthClipMode:MTLDepthClipModeClamp];
     [enc setVertexBuffer:vbuf offset:0 atIndex:0];
-    [enc setVertexBytes:sm16 length:16 * sizeof(float) atIndex:1];
+    [enc setVertexBytes:encode_mat length:16 * sizeof(float) atIndex:1];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
             vertexCount:(NSUInteger)(tri_count * 3)];
 }

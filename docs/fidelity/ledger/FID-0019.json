@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "renderer",
   "priority": "P2",
-  "status": "fix-in-progress",
+  "status": "verified",
   "suspect": [
     "gfx_metal.mm:1631-1649",
     "gfx_metal.mm:3308-3311"
@@ -23,6 +23,14 @@
     {
       "kind": "gate-log",
       "path": "ctest:port_metal_shadow_clamp_regression"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_metal_shadow_clamp_regression"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_f851a79c7858-dirty_ctest_rom_gated_7.log"
     }
   ],
   "history": [
@@ -47,6 +55,20 @@
       "evidence": "ctest:port_metal_shadow_clamp_regression",
       "note": "P1b: added the two GE007_NO_METAL_SHADOW_* negative-control flags (charter rule 4a): _DEPTH_CLAMP reverts dc55008 (shadow-pass MTLDepthClipModeClamp), _DUMMY_DEPTH reverts 73bbdac (cleared 1x1 nil-fallback vs the pre-fix s_scene_depth read-while-write hazard). Added tools/metal_shadow_clamp_regression.sh (ctest port_metal_shadow_clamp_regression, Metal-only, SKIPs off-Metal/headless) -- a REAL shadow-casting scene (Dam + GE007_SUN_SHADOW; shadow map 28.46% caster occupancy) that the cited renderer_parity smoke never exercised (facility_scissor/surface_sky_fog/world_attrs are shadow-free). HONEST DOWNGRADE landed->fix-in-progress: the fix cannot reach charter 4.3 (oracle-verify BOTH sides). The depth-clip clamp's only visible effect is near-plane pancaking; on the reachable deterministic Dam scene the shadow map is byte-IDENTICAL fix-on vs clamp-revert across radii 20..250 (measured casters min-depth 130/255 never reach the near plane at 0), so no both-sides pixel divergence is producible without a hand-crafted caster crossing the light near plane. The dummy-depth fallback is unreachable in normal play by design (73bbdac). The lane guards what IS assertable (shadow path live+non-trivial, fallback unreachable, both flags wired) and documents the inertness. Remains fix-in-progress pending a near-plane-pancaking scene (or a waiver). autorelease hygiene e8d283a is leak-only, no flag. Render-only proven: sim_invariance PASS + gfx_metal.mm executes only under GE007_RENDERER=metal (sim-hash lanes use GL).",
       "reopen": true
+    },
+    {
+      "ts": "2026-07-22T17:24:08Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "ctest:port_metal_shadow_clamp_regression",
+      "note": "Metal shadow regression now shifts real captured Dam casters across the light near plane using test-only clip-Z instrumentation: Clamp vs legacy Clip changes 3.489852% of shadow-map bytes, while the authored scene remains correctly identical and the dummy-depth fallback stays unreachable."
+    },
+    {
+      "ts": "2026-07-22T18:14:58Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_f851a79c7858-dirty_ctest_rom_gated_7.log",
+      "note": "Tier 2: all 57 port runtime tests passed, including renderer parity and the real-caster near-plane clamp oracle; sim_invariance_gate passed in 20s and uncap_purity_gate --quick passed in 376s. Stable-tree Tier 1 rerun is green 12/12 with 90/90 non-port CTests. Clamp-vs-legacy Clip changes 3.489852% of shadow-map bytes; authored scene remains correctly identical."
     }
   ]
 }
