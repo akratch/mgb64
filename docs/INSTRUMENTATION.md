@@ -291,6 +291,17 @@ promoting any translucent-composition change; include the new same-frame stock
 framebuffer-input fields in that comparison so source, memory color, hidden
 coverage, and final output can be separated per pixel.
 
+On WebGPU, draw-boundary probes have a stricter contract than end-of-frame
+screenshots. A probe read during an open frame now ends and submits the current
+scene pass, reads `s_scene_tex`, and resumes color and depth with Load/Store
+semantics. Before FID-0145, WebGPU only recorded the selected draw and sampled
+the previous completed presentation target, so a 2,156-row all-triangle probe
+reported `pre == post` for every row. This partial-submit path is diagnostic
+only: ordinary gameplay still performs one vertex upload and submission at the
+end of the frame. `port_webgpu_live_readback_guard` permanently pins the split,
+deferred-VBO upload, live texture selection, Load/Store resume, and dynamic-state
+reset contracts.
+
 Two additional current probes show why a multi-pixel pass is required:
 `/tmp/mgb64_pixel_handoff_176_158_1782631121` samples stock/aligned `176,158`
 mapped to native `88,89` and reports stock `[32,32,32]` versus native

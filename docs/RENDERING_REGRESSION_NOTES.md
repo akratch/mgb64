@@ -260,6 +260,12 @@ The visible symptoms were level-specific but shared renderer causes:
     tri1080-to-sky gap. Treat draw-boundary probes as trace-routing evidence
     before changing blend, depth, fog, or texture policy.
 
+    WebGPU probes must also make their command-stream boundary real. FID-0145
+    fixed their previous-frame read by partially submitting the open scene,
+    sampling the live scene texture, and resuming color/depth with Load/Store.
+    The normal no-readback gameplay path remains a single end-of-frame submit;
+    `port_webgpu_live_readback_guard` guards both sides of that contract.
+
 17. **Shader sampling must honor N64 tile masks before filtering.**
     GL repeat/mirror repeats the full uploaded texture. N64 tile masks can
     repeat or mirror a smaller texel-period inside that upload, so masked axes

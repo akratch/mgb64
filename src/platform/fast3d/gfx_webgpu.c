@@ -3631,11 +3631,85 @@ int gfx_webgpu_draw_minimap_overlay(const void *vertices, size_t vertex_count,
     return 1;
 }
 
+/* Submit the in-progress scene and immediately resume it with Load semantics.
+ *
+ * The ordinary WebGPU path intentionally records one command buffer for the
+ * whole frame.  Draw-boundary diagnostics in gfx_pc.c are different: they call
+ * read_framebuffer_rgb before and after a selected draw and require those reads
+ * to observe the current command-stream position.  Without a partial submit,
+ * readback can only see the previous completed frame, so every WebGPU
+ * [TRI-PIXEL]/[SETTEX-PIXEL] row falsely reports pre == post.
+ *
+ * This slow path is reached only when a readback is actually requested.  The
+ * normal gameplay path still performs the single end-of-frame vertex upload
+ * and submit.  Vertex data must be uploaded before finishing this encoder:
+ * WEB-023 normally defers that upload until end_frame, but the draws being
+ * submitted here already reference the staged offsets. */
+static bool wgpu_submit_live_scene_for_readback(void) {
+    if (!s_frame_open || s_encoder == NULL || s_pass == NULL ||
+        s_scene_view == NULL || s_depth_view == NULL) {
+        return false;
+    }
+
+    wgpuRenderPassEncoderEnd(s_pass);
+    wgpuRenderPassEncoderRelease(s_pass);
+    s_pass = NULL;
+
+    if (s_vbuf != NULL && s_vbuf_shadow != NULL && s_vbuf_off > 0) {
+        wgpuQueueWriteBuffer(s_queue, s_vbuf, 0, s_vbuf_shadow, s_vbuf_off);
+    }
+
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(s_encoder, NULL);
+    if (cmd == NULL) {
+        wgpuCommandEncoderRelease(s_encoder);
+        s_encoder = NULL;
+        s_frame_open = false;
+        return false;
+    }
+    wgpuQueueSubmit(s_queue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+    wgpuCommandEncoderRelease(s_encoder);
+
+    s_encoder = wgpuDeviceCreateCommandEncoder(s_device, NULL);
+    if (s_encoder == NULL) {
+        s_frame_open = false;
+        return false;
+    }
+
+    WGPURenderPassColorAttachment att = {0};
+    att.view = s_scene_view;
+    att.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    att.loadOp = WGPULoadOp_Load;
+    att.storeOp = WGPUStoreOp_Store;
+    WGPURenderPassDepthStencilAttachment depth = {0};
+    depth.view = s_depth_view;
+    depth.depthLoadOp = WGPULoadOp_Load;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    WGPURenderPassDescriptor rp = {0};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &att;
+    rp.depthStencilAttachment = &depth;
+    s_pass = wgpuCommandEncoderBeginRenderPass(s_encoder, &rp);
+    if (s_pass == NULL) {
+        wgpuCommandEncoderRelease(s_encoder);
+        s_encoder = NULL;
+        s_frame_open = false;
+        return false;
+    }
+
+    /* A new pass inherits no dynamic state.  gfx_pc.c re-applies the current
+     * viewport/scissor/pipeline before the next draw. */
+    wgpu_reset_pass_dynamic_state();
+    return true;
+}
+
 /* Task 5: read back the last-rendered offscreen scene as GL-convention
  * bottom-left RGB (so platformSaveScreenshot + the parity/oracle tooling work on
  * WebGPU identically to GL/Metal). Copies the whole BGRA8 scene into a mappable
  * buffer, then extracts the requested rect with a vertical flip + BGRA->RGB.
- * Synchronous (submit + poll-map) — only the screenshot/parity path calls it. */
+ * Synchronous (submit + poll-map) — only screenshot/parity/diagnostic paths call
+ * it.  During an open frame, partially submit first so draw-boundary probes see
+ * the live scene rather than s_present_target_tex from the previous frame. */
 static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8_t *rgb_out) {
     /* PERF-008: this session performs readbacks — pin every subsequent frame to the
      * offscreen present path (which retains a readable s_present_target_tex). Sticky,
@@ -3643,11 +3717,15 @@ static bool wgpu_read_framebuffer_rgb(int x, int y, int width, int height, uint8
      * did not pre-enumerate; the fire during gfx_run_dl trips before this frame's own
      * end_frame, so even the current frame presents offscreen. */
     s_readback_latched = true;
-    /* Read the presented frame — the post-FX result (+ minimap) when the filter
-     * ran this frame, else the raw scene — so screenshots/parity/oracle tooling
-     * see the composited output, exactly as GL captures the post-FX'd default FB
-     * (AUDIT-0003). s_present_target_tex persists past end_frame's submit. */
-    WGPUTexture rb_tex = s_present_target_tex ? s_present_target_tex : s_scene_tex;
+    bool live_scene = s_frame_open;
+    if (live_scene && !wgpu_submit_live_scene_for_readback()) {
+        return false;
+    }
+    /* During a frame, the freshly submitted raw scene is authoritative.  After
+     * end_frame, preserve AUDIT-0003 behavior and read the post-FX/minimap target. */
+    WGPUTexture rb_tex = live_scene
+        ? s_scene_tex
+        : (s_present_target_tex ? s_present_target_tex : s_scene_tex);
     if (!s_ready || rb_tex == NULL || rgb_out == NULL ||
         width <= 0 || height <= 0 || s_scene_w == 0 || s_scene_h == 0) {
         return false;

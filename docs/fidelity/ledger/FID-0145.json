@@ -1,0 +1,71 @@
+{
+  "id": "FID-0145",
+  "title": "WebGPU draw-boundary pixel probes read the previous completed frame",
+  "class": "instrumentation-gap",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "verified",
+  "suspect": [
+    "src/platform/fast3d/gfx_webgpu.c:WebGPU readback during an open render pass"
+  ],
+  "repro": "GE007_TRACE_SETTEX_PIXEL=0x00738e4f020a2d12 GE007_TRACE_SETTEX_PIXEL_AFTER_FRAME=122 GE007_TRACE_SETTEX_PIXEL_TEXNUM=654 GE007_TRACE_SETTEX_PIXEL_X=94 GE007_TRACE_SETTEX_PIXEL_Y=95 tools/movement_oracle_capture.sh --route dam_regular_glass_shatter_pad10092_impact_visual_probe --native-only --no-compare --no-build",
+  "evidence": [
+    {
+      "kind": "counter-log",
+      "path": "/tmp/mgb64_fid0001_live_probe_94_95/native_dam_regular_glass_shatter_pad10092_impact_visual_probe.log"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/fast3d/gfx_webgpu.c"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/fast3d/gfx_metal.mm"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_webgpu_live_readback_guard"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_53253bf36c9a-dirty.json"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-22T21:26:01Z",
+      "from": "",
+      "to": "triaged",
+      "evidence": "/tmp/mgb64_fid0001_live_probe_94_95/native_dam_regular_glass_shatter_pad10092_impact_visual_probe.log",
+      "note": "A 2,156-row all-triangle WebGPU probe reported zero changes because read_framebuffer_rgb sampled s_present_target_tex from the previous completed frame; Metal already flushes and resumes its live encoder for this diagnostic contract."
+    },
+    {
+      "ts": "2026-07-22T21:26:01Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/platform/fast3d/gfx_webgpu.c",
+      "note": "wgpu_flush only records commands and the scene encoder is submitted at end_frame, so synchronous mid-frame readback cannot observe the selected draw without a partial submit; selecting s_present_target_tex also points at the prior presented frame."
+    },
+    {
+      "ts": "2026-07-22T21:26:01Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/fast3d/gfx_metal.mm",
+      "note": "Implement WebGPU parity with Metal's established contract: end/submit the live pass, resume color+depth with Load semantics, and read s_scene_tex; preserve normal one-submit gameplay behavior when no diagnostic readback occurs."
+    },
+    {
+      "ts": "2026-07-22T22:16:13Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "ctest:port_webgpu_live_readback_guard",
+      "note": "WebGPU now partially submits only when readback occurs during an open frame, uploads the deferred VBO first, reads the live scene texture, and resumes color/depth with Load+Store; focused Dam probes recover real draw transitions while the probe-armed and unarmed screenshots remain byte-identical."
+    },
+    {
+      "ts": "2026-07-22T22:16:13Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_53253bf36c9a-dirty.json",
+      "note": "Tier 1-2 validation exercised all gates: focused guard PASS; 57/58 port tests PASS, renderer parity/surface XLU/perf/gate routes/sim invariance/uncap purity all PASS. The sole port failure is the independently reproducible FID-0046 Streets hash regression with byte-identical screenshots and no readback call; the other red item was the expected pre-render stale ledger index. The FID-0145 diagnostic contract is verified and ordinary gameplay remains outside the slow path."
+    }
+  ]
+}
