@@ -1418,6 +1418,19 @@ void portAudioInit(void)
     }
 #endif
 
+    /* Snap the boot mute ramp for BOTH output backends: the soft-mute gain is
+     * applied in the shared mix path, so the web AudioWorklet route must honor
+     * GE007_MUTE/GE007_UNMUTE exactly like the SDL device route (test etiquette
+     * depends on GE007_MUTE muting every backend). */
+    {
+        int start_muted = portAudioShouldStartMuted();
+        s_muteTargetQ15 = start_muted ? 0 : 32768;
+        s_muteGainQ15   = s_muteTargetQ15;
+        if (start_muted) {
+            printf("[AUDIO] Starting MUTED (clear GE007_MUTE or set GE007_UNMUTE=1 to enable on boot)\n");
+        }
+    }
+
     /* Single unified SDL audio device (queue mode, no callback).
      * All audio — both the libultra synthesis path (osAiSetNextBuffer) and
      * any future SFX paths — goes through this one device.
@@ -1457,21 +1470,13 @@ void portAudioInit(void)
             return;
         }
 
-        {
-            int start_muted = portAudioShouldStartMuted();
-            /* WEB-045: always START (unpause) the unified device; express the
-             * initial mute through the soft-mute ramp instead of leaving the
-             * device paused. This keeps the runtime M toggle symmetric — it only
-             * moves the ramp target and never has to un-pause a device — and
-             * avoids the paused-queue → stale-replay-on-first-unmute case. Snap
-             * the ramp gain at boot so there is no 5 ms fade-in. */
-            SDL_PauseAudioDevice(s_audioDevice, 0);
-            s_muteTargetQ15 = start_muted ? 0 : 32768;
-            s_muteGainQ15   = s_muteTargetQ15;
-            if (start_muted) {
-                printf("[AUDIO] Starting MUTED (clear GE007_MUTE or set GE007_UNMUTE=1 to enable on boot)\n");
-            }
-        }
+        /* WEB-045: always START (unpause) the unified device; the initial mute
+         * is expressed through the soft-mute ramp (snapped above, both
+         * backends) instead of leaving the device paused. This keeps the
+         * runtime M toggle symmetric — it only moves the ramp target and never
+         * has to un-pause a device — and avoids the paused-queue →
+         * stale-replay-on-first-unmute case. */
+        SDL_PauseAudioDevice(s_audioDevice, 0);
 #ifdef __EMSCRIPTEN__
         /* WEB-046: on web the SDL emscripten backend does NOT open a device at
          * this spec — it runs a main-thread ScriptProcessorNode at the browser
