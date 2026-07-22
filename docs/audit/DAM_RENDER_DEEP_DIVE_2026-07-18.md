@@ -35,7 +35,7 @@ Every actionable finding was either landed, refuted, or deferred-with-evidence:
 | finding | status | commit / note |
 |---|---|---|
 | DAM-R1a (native over-bright) | **REFUTED / closed** | camera phase-skew, not shading (`d0d6152`) |
-| DAM-R1b (sRGB surface) | **REFUTED** | enum-namespace confusion — web fmt 23 = Dawn BGRA8Unorm (linear); full fix implemented → 0 web effect → reverted (`bb4a824`). Residual ~10-lvl CDP-capture artifact, not a render bug. **Fully closed 2026-07-20 (Task 6): compositor path verified faithful, sky hue refuted** |
+| DAM-R1b (sRGB surface) | **REFUTED** | enum-namespace confusion — web fmt 23 = Dawn BGRA8Unorm (linear); full fix implemented → 0 web effect → reverted (`bb4a824`). Residual ~10-lvl CDP-capture artifact, not a render bug. **Fully closed 2026-07-20 (Task 6): sky hue refuted (36-sample locus); compositor path faithful on the ONE captured pose (both retries black — single-pose evidence, +1.6-lvl gun ROI residual not isolated; see §Task 6 caveats)** |
 | BLEND-1 (coverage-alpha writeMask) | **LANDED** | `d10866a` — cvg pixels now match GL (26→≤3), non-cvg byte-identical |
 | AC-3 (G_AC_DITHER dissolve) | **LANDED** | `f1cc65f` — WGSL now emits the dissolve like GL/Metal |
 | DAM-R1c (room_water_alpha_suppress) | **LANDED** | `f1cc65f` — ported to WGSL |

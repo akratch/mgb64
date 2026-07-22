@@ -163,7 +163,7 @@ int main(void) {
      *   min-x (tie min-y over v0/v1/v2/v3, all x=-10): v0 (-10,-5) wins since
      *     it is visited first and no later candidate has a STRICTLY smaller y
      *     (v2 ties y too but the tie-break is strict '<').
-     *   max-y (tie min-x over v1/v3/v5/v7, all y=5... wait z=5 group): v1
+     *   max-y (tie min-x over v1/v3/v5/v7, the z=5 group): v1
      *     (-10,5) wins over v3 the same way (first-visited, no strictly-lesser
      *     x afterwards).
      *   max-x (tie max-y over v4/v5/v6/v7, all x=10): v5 (10,5) wins — v4 is

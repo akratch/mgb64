@@ -245,7 +245,9 @@ the audio callback on the main thread, so a GC pause / WebGPU pipeline compile /
 level-load stall starves audio — which forced a deep (~43 ms) device buffer as
 glitch insurance and made the fire-to-hear delay ~2× native. Moving the drain to
 the worklet's audio thread removes that: measured device-side latency drops from
-~136 ms (queue + SPN buffer) to ~58 ms (ring only) — **native parity** — with
+~136 ms (queue + SPN buffer) to ~58 ms (ring only) — **device-side native
+parity** (the web pipeline keeps a deliberately deeper main-thread queue
+target, ~93 ms mean vs native ~58 ms end-to-end; see FID-0141) — with
 zero steady-state underruns. Big main-thread stalls (level load) still glitch on
 *either* path; during those the sim is paused anyway. See FID-0141 / WEB-069.
 

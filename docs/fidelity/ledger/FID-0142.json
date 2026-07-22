@@ -38,6 +38,12 @@
       "to": "refuted",
       "evidence": "Faithful room-admission A/B byte-identical (cmp diff=0); GE007_TINT_SKY negative on the cliff; GE007_FORCE_ALL_ROOMS cliff-unchanged; head-on crisp vs grazing streaked; GE007_FORCE_POINT_FILTER still streaked. Root = WebGPU maxAnisotropy=1 (faithful N64 single-level isotropic filtering).",
       "note": "REFUTED as a fidelity divergence: the port faithfully reproduces N64's isotropic single-level filtering, so the grazing-angle streak is faithful-in-kind (starker only at the port's higher resolution), and 'other rooms admitted at the frame edge' is disproven. Separately shipped a REMASTER enhancement (Video.AnisotropicFiltering, default 16; --faithful pins 1) that resolves the streak; the faithful path is byte-identical."
+    },
+    {
+      "ts": "2026-07-22T12:00:00Z",
+      "from": "refuted",
+      "to": "refuted",
+      "evidence": "Skeptical-review amendment (owner-requested audit). DISCLOSURE the original entry omitted: with the default Video.AnisotropicFiltering=16, EVERY 3-point (SHADER_OPT_TEXELn_N64_FILTER) material in the game switches from the in-shader RDP triangular filter to hardware bilinear+aniso at ALL view angles \u2014 a global default-look change, not a scoped grazing-surface sharpen. --faithful (aniso=1) remains byte-identical. DEFECTS FIXED in the same review round: (1) gfx_sampler_linear_for_material was backend-agnostic, feeding the GL/Metal fallbacks' still-active in-shader triangular filter from linear(+aniso) taps \u2014 now gated on the WebGPU backend (gfx_backend_is_webgpu_active); (2) --faithful-hd did not pin aniso and rendered bilinear game-wide against its byte-faithful-look contract \u2014 now pins 1; (3) none of the 11 rom_oracle_routes native_config blocks pinned aniso, so the pixel-oracle lane captured bilinear frames and left the 3-point path unexercised (vacuous green) \u2014 all now pin 1. EVIDENCE GAP left open: the cmp-diff=0 faithful A/B and aniso before/after numbers were session-local with no committed bitmaps/routes \u2014 verdict is re-runnable from the repro command but not re-derivable from preserved artifacts. OPEN QUESTION for the owner: keep default 16 (bilinear look, sharp grazing), scope aniso to strong minification only (preserves close-up 3-point signature; preferred), or default 1. Known residual risk at default 16: mask-wrapped materials can bleed across the mask period under hardware bilinear+aniso (seam smear) \u2014 the in-shader filter wrapped every tap."
     }
   ]
 }
