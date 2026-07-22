@@ -512,8 +512,11 @@ floating Bond.
       `GE007_TRACE_ROOM_CLASSIFY` (dropped-vs-far). Aperture residual (Silo 28/44,
       screen-edge sliver — rooms many winding-portal-hops away that even the T13 walk
       doesn't reach) → **M3.4**.
-- [ ] Re-test D31/D32/D35/D36 waivers after M0.3+M1.3; delete every waiver the fixes
-      obsolete (that is the ledger's exit criterion).
+- [x] Re-test D31/D32/D35/D36 waivers after M0.3+M1.3 (fresh stock-ares/native
+      pair, 2026-07-22): D36 is clean and its final waiver is deleted; D31
+      remains live (42 divergences, max 74.89u), D32 remains live (3 records),
+      and D35 remains live across 13 scoped camera fields. The D36 verdict is
+      now guarded by `intro_oracle_dam_bond_anim`; the live residuals stay open.
 
 ---
 

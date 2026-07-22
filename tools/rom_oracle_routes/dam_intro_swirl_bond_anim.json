@@ -1,7 +1,7 @@
 {
     "schema": "mgb64.rom_oracle.route.v1",
     "name": "dam_intro_swirl_bond_anim",
-    "description": "Dam intro swirl camera and Bond animation comparison aligned by authored intro timer. D43 (2026-07-08): the intro Bond now plays his scripted phase-3 animation (ANIM index 99, aim_one_handed_weapon_left_right) and follows its root motion, so all bond_anim fields except frame (D41 seed offset, <=1) now match stock, and the D35 camera-anchor drift collapsed (total divergences 2546 -> 1116). Removed the D36 bond_anim waivers that now pass. Phase-3 bond-anim onset is event-aligned with tolerance 30 timer units: retail fires phase 3 from an RNG-jittered AI sleep-wake boundary (observed onsets t41.05 and t57.05 across captures) while native D43 fires at a fixed swirl timer -- the onset is scheduling-dependent, the animation itself must match (DAM_PARITY_DEEP_DIVE 2026-07-17 s3.3).",
+    "description": "Dam intro swirl camera and Bond animation comparison aligned by authored intro timer. D43 (2026-07-08): the intro Bond now plays his scripted phase-3 animation (ANIM index 99, aim_one_handed_weapon_left_right) and follows its root motion, so the D36 bond_anim family now matches stock; its final gunhand waiver was removed after a fresh ares retest on 2026-07-22. D32/D35/D41 remain measured divergences. Phase-3 bond-anim onset is event-aligned with tolerance 30 timer units: retail fires phase 3 from an RNG-jittered AI sleep-wake boundary (observed onsets t41.05 and t57.05 across captures) while native D43 fires at a fixed swirl timer -- the onset is scheduling-dependent, the animation itself must match (DAM_PARITY_DEEP_DIVE 2026-07-17 s3.3).",
     "level": "33",
     "frames": 1200,
     "native_frames": 1200,
@@ -42,8 +42,7 @@
         "field:cam_delta[2]:mode3": "D35",
         "field:facing[0]:mode3": "D35",
         "field:facing[2]:mode3": "D35",
-        "field:intro.bond_anim.frame:mode3": "D41",
-        "field:intro.bond_anim.gunhand:mode3": "D36"
+        "field:intro.bond_anim.frame:mode3": "D41"
     },
     "native_intro_audit": true,
     "native_intro_require_player": true,

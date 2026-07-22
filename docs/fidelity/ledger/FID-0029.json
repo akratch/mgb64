@@ -14,6 +14,11 @@
       "kind": "doc-anchor",
       "path": "docs/design/INTRO_OUTRO_LEDGER.md",
       "note": "seed from FAITHFULNESS_S_TIER_PLAN \u00a70.3"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "tools/rom_oracle_routes/dam_intro_swirl_bond_anim.json",
+      "note": "Fresh stock-ares/native capture on 2026-07-22: D36 gunhand has zero divergences and its last waiver was removed; D31 remains 42/max 74.89u, D32 remains 3 records, D35 remains across 13 fields (cam_pos[0] max 38.0043u; cam_floor[1] max 440.85u), and D41 remains 108/max 1.0 frame. Dedicated intro_oracle_dam_bond_anim CTest now guards the D36 verdict."
     }
   ],
   "history": [

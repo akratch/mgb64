@@ -1711,6 +1711,28 @@ if(BUILD_TESTING)
     )
     set_tests_properties(intro_oracle_dam_route PROPERTIES LABELS oracle)
 
+    # FID-0029 / D36: the camera-path route does not compare Bond's animation.
+    # Keep the post-D43 three-phase animation verdict as a separate ares-backed
+    # oracle: the RNG-jittered phase-3 onset is event-aligned, but every field
+    # after both sides enter ACT_ANIM must match. This is what makes removal of
+    # the last D36 gunhand waiver a fail-on-regression contract.
+    add_intro_gate_smoke(
+        NAME intro_oracle_dam_bond_anim
+        TIMEOUT 900
+        REQUIRES
+            "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            "${CMAKE_BINARY_DIR}/ge007"
+            "${CMAKE_SOURCE_DIR}/build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tools/movement_oracle_capture.sh"
+            --route dam_intro_swirl_bond_anim
+            --build-dir "${CMAKE_BINARY_DIR}"
+            --rom "${CMAKE_SOURCE_DIR}/baserom.u.z64"
+            --no-build
+            --ares-bin "${CMAKE_SOURCE_DIR}/build/ares-movement-oracle/ares/build-movement-oracle/desktop-ui/ares.app/Contents/MacOS/ares"
+            --timeout 600
+    )
+    set_tests_properties(intro_oracle_dam_bond_anim PROPERTIES LABELS oracle)
+
     # Single-stage (Dam) census smoke, reduced frame count for a sub-60s
     # ctest lane; tools/intro_census_capture.sh --all (20 stages) is the
     # manual/release-lane invocation.
