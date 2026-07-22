@@ -68,6 +68,27 @@ uint64_t sim_state_hash_compute(const SimHashRegion *hr, int nh) {
     return h;
 }
 
+/* Write region k's CANONICALIZED word stream (exactly what the hash consumes:
+ * pointers tokenized, non-pointer words literal) into out, which must hold
+ * hr[k].size bytes. Returns bytes written. Companion to the byte-attribution
+ * region dump (GE007_SIM_REGION_DUMP): raw dumps are ASLR-noise across runs,
+ * canonical dumps diff cleanly to the exact semantically-diverging word. */
+size_t sim_state_hash_canon_region(const SimHashRegion *hr, int nh, int k,
+                                   unsigned char *out) {
+    if (k < 0 || k >= nh || !hr[k].base || hr[k].size == 0 || out == NULL) return 0;
+    const unsigned char *b = (const unsigned char *)hr[k].base;
+    size_t sz = hr[k].size, i = 0;
+    for (; i + sizeof(uintptr_t) <= sz; i += sizeof(uintptr_t)) {
+        uintptr_t w;
+        uint64_t c;
+        memcpy(&w, b + i, sizeof w);
+        c = canon_word(w, hr, nh);
+        memcpy(out + i, &c, sizeof c);
+    }
+    if (i < sz) memcpy(out + i, b + i, sz - i);
+    return sz;
+}
+
 uint64_t sim_state_hash_compute_region(const SimHashRegion *hr, int nh, int k) {
     uint64_t h = FNV64_OFFSET;
     if (k < 0 || k >= nh) return h;

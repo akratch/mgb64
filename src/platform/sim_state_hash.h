@@ -42,6 +42,11 @@ uint64_t sim_state_hash_compute(const SimHashRegion *regions, int n);
  */
 uint64_t sim_state_hash_compute_region(const SimHashRegion *regions, int n, int k);
 
+/* Canonicalized-byte writer for region k (pointer words tokenized exactly as the
+ * hash sees them). out must hold regions[k].size bytes; returns bytes written. */
+size_t sim_state_hash_canon_region(const SimHashRegion *regions, int n, int k,
+                                   unsigned char *out);
+
 /* Write the gate result as JSON (hash, frame, replay, region names+sizes). */
 int sim_state_hash_emit_json(const char *path, uint64_t hash,
                              const SimHashRegion *regions, int n,

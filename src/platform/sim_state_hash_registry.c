@@ -118,6 +118,91 @@ void simStateHashPerFrameTrace(int global_timer) {
     }
     fprintf(stderr, "[SIM-HASH-FRAME] global=%d prop_pool=%016llx g_BgRoomInfo=%016llx\n",
             global_timer, (unsigned long long)prop, (unsigned long long)room);
+
+    /* GE007_SIM_HASH_EVERY_FRAME=full: additionally hash EVERY region each
+     * frame (incl. the 8 MB pool) — the divergence-attribution mode for when
+     * the cheap pair above is clean but the end-of-run hash differs. */
+    {
+        static int full_mode = -1;
+        if (full_mode < 0) {
+            const char *v = getenv("GE007_SIM_HASH_EVERY_FRAME");
+            full_mode = (v != NULL && strcmp(v, "full") == 0);
+        }
+        if (full_mode) {
+            for (int r = 0; r < n; r++) {
+                if (!regs[r].name) continue;
+                if (strcmp(regs[r].name, "prop_pool") == 0 ||
+                    strcmp(regs[r].name, "g_BgRoomInfo") == 0) continue;
+                fprintf(stderr, "[SIM-HASH-FRAME-FULL] global=%d %s=%016llx\n",
+                        global_timer, regs[r].name,
+                        (unsigned long long)sim_state_hash_compute_region(regs, n, r));
+            }
+        }
+    }
+
+    /* GE007_SIM_REGION_DUMP=<dir>: byte-level attribution companion to the
+     * per-frame hashes above. Appends the RAW prop_pool and g_BgRoomInfo region
+     * bytes each sim frame to <dir>/prop_pool.bin and <dir>/g_BgRoomInfo.bin
+     * (fixed record size = region size, record index = trace line index), so an
+     * A/B pair of runs can be binary-diffed to the exact diverging byte offset
+     * and mapped to a struct field — turning "region X diverged at frame N"
+     * into "field F of entry E diverged". Diagnostic-only; requires
+     * GE007_SIM_HASH_EVERY_FRAME. */
+    {
+        static int dump_init = 0;
+        static FILE *dump_prop = NULL, *dump_room = NULL;
+        if (!dump_init) {
+            const char *dir = getenv("GE007_SIM_REGION_DUMP");
+            dump_init = 1;
+            if (dir != NULL && dir[0] != '\0') {
+                char path[1024];
+                snprintf(path, sizeof path, "%s/prop_pool.bin", dir);
+                dump_prop = fopen(path, "wb");
+                snprintf(path, sizeof path, "%s/g_BgRoomInfo.bin", dir);
+                dump_room = fopen(path, "wb");
+            }
+        }
+        if (dump_prop != NULL || dump_room != NULL) {
+            /* Dump CANONICALIZED bytes (pointers tokenized) — raw bytes are
+             * ASLR noise across the A/B pair of processes. The huge "pool"
+             * region is dumped only for the first
+             * GE007_SIM_REGION_DUMP_POOL_FRAMES frames (default 0: off). */
+            static unsigned char *canon_buf = NULL;
+            static size_t canon_cap = 0;
+            static FILE *dump_pool = NULL;
+            static int pool_frames = -1, pool_written = 0;
+            if (pool_frames < 0) {
+                const char *v = getenv("GE007_SIM_REGION_DUMP_POOL_FRAMES");
+                const char *dir = getenv("GE007_SIM_REGION_DUMP");
+                pool_frames = v ? atoi(v) : 0;
+                if (pool_frames > 0 && dir != NULL) {
+                    char path[1024];
+                    snprintf(path, sizeof path, "%s/pool.bin", dir);
+                    dump_pool = fopen(path, "wb");
+                }
+            }
+            for (int r = 0; r < n; r++) {
+                FILE *out = NULL;
+                if (!regs[r].name) continue;
+                if (dump_prop && strcmp(regs[r].name, "prop_pool") == 0) out = dump_prop;
+                else if (dump_room && strcmp(regs[r].name, "g_BgRoomInfo") == 0) out = dump_room;
+                else if (dump_pool && pool_written < pool_frames && strcmp(regs[r].name, "pool") == 0) out = dump_pool;
+                if (out == NULL) continue;
+                if (regs[r].size > canon_cap) {
+                    free(canon_buf);
+                    canon_cap = regs[r].size;
+                    canon_buf = (unsigned char *)malloc(canon_cap);
+                    if (canon_buf == NULL) { canon_cap = 0; continue; }
+                }
+                {
+                    size_t wrote = sim_state_hash_canon_region(regs, n, r, canon_buf);
+                    fwrite(canon_buf, 1, wrote, out);
+                    fflush(out);
+                }
+                if (out == dump_pool) pool_written++;
+            }
+        }
+    }
 }
 
 void simStateHashEmitIfRequested(int frame, const char *replay) {
