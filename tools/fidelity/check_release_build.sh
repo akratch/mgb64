@@ -107,7 +107,7 @@ if [[ ! -e "$BINARY" ]]; then
 fi
 
 # Is the binary a CURRENT LINK? The reliable staleness signal is the object
-# files it links, NOT CMakeCache.txt's mtime: a `cmake -B build` RECONFIGURE
+# files from ITS TARGET, NOT CMakeCache.txt's mtime: a `cmake -B build` RECONFIGURE
 # touches the cache (and leaves a perpetual `cmake_check_build_system` phony
 # dep, so `make -q` never reports up-to-date) without changing what the binary
 # links -- so a cache-mtime or make-query heuristic FALSE-REDs on the most
@@ -116,7 +116,15 @@ fi
 # a binary newer than every .o it links is a current link that reflects the
 # cache's CMAKE_BUILD_TYPE=Release confirmed above. A binary OLDER than some .o
 # is genuinely stale (a real recompile happened without a relink) -> FAIL.
-_obj_root="${BUILD_DIR}/CMakeFiles"
+#
+# FID-0144: never scan all of CMakeFiles here. Unit-test targets are independent
+# executables and may legitimately recompile/relink after ge007; comparing their
+# objects to ge007 falsely reports a stale game binary after a completely clean
+# `cmake --build`. CMake's per-target object directory is stable across the
+# Makefiles and Ninja generators. Strip the Windows .exe suffix when deriving it.
+_target_name="$(basename "$BINARY")"
+_target_name="${_target_name%.exe}"
+_obj_root="${BUILD_DIR}/CMakeFiles/${_target_name}.dir"
 if [[ -d "$_obj_root" ]]; then
     _stale_obj="$(find "$_obj_root" -name '*.o' -newer "$BINARY" 2>/dev/null | head -1)"
     if [[ -n "$_stale_obj" ]]; then
@@ -128,5 +136,6 @@ if [[ -d "$_obj_root" ]]; then
 fi
 
 echo "check_release_build: PASS -- ${BINARY} is Release (build/CMakeCache.txt" \
-     "CMAKE_BUILD_TYPE=Release; binary is a current link, newer than every object)"
+     "CMAKE_BUILD_TYPE=Release; binary is a current link, newer than every" \
+     "${_target_name} target object)"
 exit 0

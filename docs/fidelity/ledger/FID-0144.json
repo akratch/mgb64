@@ -1,0 +1,82 @@
+{
+  "id": "FID-0144",
+  "title": "Release-build guard false-reds current ge007 when unrelated CTest objects are newer",
+  "class": "instrumentation-gap",
+  "surface": "infra",
+  "priority": "P1",
+  "status": "verified",
+  "suspect": [
+    "tools/fidelity/check_release_build.sh"
+  ],
+  "repro": "cmake --build build -j8; tools/fidelity/check_release_build.sh",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_563c0173344d_check_release_build.log"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_563c0173344d_check_release_build.log"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "tools/fidelity/check_release_build.sh"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "tools/fidelity/tests/test_check_release_build.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:fidelity_release_build_guard"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_563c0173344d-dirty.json"
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-22T17:14:39Z",
+      "from": "",
+      "to": "discovered",
+      "evidence": "docs/fidelity/reports/verify_563c0173344d_check_release_build.log",
+      "note": "Fresh ratchet run failed on test_hull_builder.o even though no ge007 target object was newer than the game binary."
+    },
+    {
+      "ts": "2026-07-22T17:14:39Z",
+      "from": "discovered",
+      "to": "triaged",
+      "evidence": "docs/fidelity/reports/verify_563c0173344d_check_release_build.log",
+      "note": "Reproduced on a clean Release + WebGPU + validation build immediately after cmake --build."
+    },
+    {
+      "ts": "2026-07-22T17:14:39Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "tools/fidelity/check_release_build.sh",
+      "note": "The freshness scan searches all build/CMakeFiles objects, conflating independent executable targets with ge007 link inputs."
+    },
+    {
+      "ts": "2026-07-22T17:14:40Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "tools/fidelity/tests/test_check_release_build.sh",
+      "note": "Scope the scan to CMakeFiles/<binary-target>.dir and pin both the false-red and real stale-link sides in a ROM-free fixture."
+    },
+    {
+      "ts": "2026-07-22T17:14:40Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "ctest:fidelity_release_build_guard",
+      "note": "Fixture passes: newer unrelated target ignored; newer ge007 target and Debug config still fail closed."
+    },
+    {
+      "ts": "2026-07-22T17:14:40Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_563c0173344d-dirty.json",
+      "note": "Tier-1 ratchet green: 12/12 gates with zero failures and zero skips."
+    }
+  ]
+}

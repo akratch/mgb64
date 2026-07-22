@@ -1346,6 +1346,17 @@ if(BUILD_TESTING)
         set_tests_properties(fidelity_ledger_index_current PROPERTIES
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+        # FID-0144: the Release-build guard must compare ge007 only with object
+        # files belonging to the ge007 target. Independently rebuilt unit-test
+        # objects may be newer than ge007 without making the game binary stale.
+        add_test(
+            NAME fidelity_release_build_guard
+            COMMAND bash "${CMAKE_SOURCE_DIR}/tools/fidelity/tests/test_check_release_build.sh"
+        )
+        set_tests_properties(fidelity_release_build_guard PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            TIMEOUT 30)
+
         # ASM-vs-C audit queue must stay schema-valid with sound verdict-transition
         # integrity (S-tier Task 2.4, FID-0042). ROM-free python guard: validates
         # docs/fidelity/asm_audit_queue.json (verdict grammar, finding-filed FIDs

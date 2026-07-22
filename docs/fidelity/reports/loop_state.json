@@ -1,5 +1,5 @@
 {
-  "iteration": 1,
+  "iteration": 2,
   "lanes": {
     "S1": 0,
     "S2": 0,
@@ -8,6 +8,6 @@
     "S5": 0,
     "S6": 0
   },
-  "updated": "2026-07-10T00:00:00Z",
+  "updated": "2026-07-22T17:18:45Z",
   "note": "Cross-session cursor for the Fidelity Flywheel loop. iteration = number of completed checkpoint iterations; lanes[SN] = the iteration at which lane SN last ran (0 = never). loop_iteration.sh maintains this file."
 }
