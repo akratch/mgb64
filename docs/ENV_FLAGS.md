@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1084 flags** found across the source.
+**1085 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -1087,6 +1087,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 2 |  |
 | `GE007_WEBGPU_PRESENT` | ? |  | 1 |  |
 | `GE007_WEBGPU_TRACE_VIEWPORT` | ? |  | 1 |  |
+| `GE007_WIDESCREEN_VIS_WIDEN` | presence | unset | 1 | OPT-IN (default OFF): widescreen draw-only portal-visibility widen — on wide (non-4:3) windows, re-run the faithful room admission against the rendered 16:9 extent and draw the extra wide-edge rooms with proper clipped apertures instead of the frustum-fallback over-admission. DEFAULT-OFF because the second traversal's mutation of per-frame portal scratch is not yet fully checkpointed: prop/door visibility reads it post-pass, diverging the deterministic sim (prop_pool region) at 16:9 vs 4:3 — see the tape-gate A/B on dam_forward_30s (widen-on hash e61d31e5c302d1cb vs baseline c6d1bd05d67a8902; opt-out reproduces the baseline byte-identically). Flip to default-ON only after the widen pass is fully sandboxed and per-frame prop_pool byte-identity 16:9-vs-4:3 is proven across all committed tapes [Pathway-3] |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |
 | `GE007_WINDOW_SIZE` | ? |  | 1 |  |

@@ -1287,11 +1287,24 @@ static s32 bgPortalProjectVisibleBbox(s32 source_room, s32 portal_idx, const f32
     return 1;
 }
 
+/* Set when bgRebuildFrustumAllVisibility actually rebuilt the frame's admission
+ * (the frustum-all "shotgun"): the draw list is then the frustum-all set, not the
+ * faithful one, so the widescreen widen's union snapshot must stop at the
+ * pre-fallback capture. Cleared with the rest of the per-frame rescue state. */
+static s32 bgFrustumFallbackFiredThisFrame = 0;
+/* Set when bgApplyWidescreenDrawOnlyWiden ran to completion this frame; the
+ * draw-only leak assert keys on this rather than the live window factor so it
+ * stays meaningful on frames where the widen skipped (detached camera,
+ * non-portal-BFS main pass). */
+static s32 bgWidescreenWidenRanThisFrame = 0;
+
 static void bgClearPortalEdgeRescueCandidates(void)
 {
     bgPortalEdgeRescueCount = 0;
     bgPortalEdgeRescueOverflow = 0;
     bgPortalProjectRescuePromotedThisFrame = 0;
+    bgFrustumFallbackFiredThisFrame = 0;
+    bgWidescreenWidenRanThisFrame = 0;
 }
 
 static s32 bgProjectRoomAabbToScreenBbox(s32 room_id, f32 *out_bbox)
@@ -1384,9 +1397,20 @@ static int bgPortalProjectFailContinuationEnabled(void)
     return enabled;
 }
 
+/* Set for the duration of the widescreen draw-only re-run (bgApplyWidescreenDrawOnlyWiden)
+ * so the existing surgical project-fail admit (dest room clipped to its own projected
+ * AABB) fills grazing-doorway holes there -- captured as draw-only, room_rendered
+ * restored -- letting the occlusion-blind frustum shotgun retire without reopening them.
+ * Never set during the sim-consumed main pass (would perturb auto-aim, FID-0014). */
+static int bgWidescreenProjectFailAdmitOverride = 0;
+
 static int bgPortalProjectFailAdmitEnabled(void)
 {
     static int enabled = -1;
+
+    if (bgWidescreenProjectFailAdmitOverride) {
+        return 1;
+    }
 
     if (enabled < 0) {
         const char *env = getenv("GE007_PORTAL_PROJECT_RESCUE_ADMIT");
@@ -1555,6 +1579,8 @@ static void bgClearFrameVisibilityState(void)
 
 static void bgRebuildFrustumAllVisibility(bbox2d *player_bbox)
 {
+    bgFrustumFallbackFiredThisFrame = 1;
+
     bgClearFrameVisibilityState();
 
     if (levelentry_index == LEVEL_INDEX_CRAD) {
@@ -2287,6 +2313,234 @@ static void bgApplyVisibilitySupplement(bbox2d *player_bbox, const u8 *neighbor_
         sub_GAME_7F0B39BC(candidate->room, 0, player_bbox, 1);
         bgClearRoomAdmitTraceContext();
     }
+}
+
+/* Forward decls for symbols defined later in this TU, used by the widescreen
+ * draw-only widen below. */
+static void bgQueueConnectedRoomPortals(s32 seed_room, f32 *screen_bbox);
+extern u8  g_BgRoomDrawOnly[MAXROOMCOUNT];
+extern s32 g_BgRoomDrawOnlyCount;
+
+/* ---------------------------------------------------------------------------
+ * Pathway-3 ROOT FIX: widescreen draw-only portal-visibility widen.
+ *
+ * The fast3d backend renders a wider horizontal FOV than the game's fixed-4:3
+ * (c_perspaspect = 1.4545) portal projection assumes: gfx_adjust_x_for_aspect_ratio
+ * squeezes every clip-x by factor = (4/3)/window_aspect (== 1.0 on 4:3, ~0.75 on
+ * 16:9), so the rendered image shows world ~1/factor wider than the projection.
+ * Rooms genuinely visible in those widened L/R strips project OUTSIDE the 4:3
+ * screen rect the portal BFS tests (bondview.c transform3Dto2DWithZScaling +
+ * g_CurrentPlayer->screenx{min,max}f), so the faithful traversal drops them --
+ * which the crude bgApplyPortalProjectFrustumFallback then papers over by
+ * admitting every frustum-visible (incl. OCCLUDED) room full-screen = the wide-edge
+ * "junk". The port already reconciles this exact widening for object culling
+ * (widenCullHorizontal, FID-0058) and the sky quad (player.c sub_GAME_7F093880),
+ * but never for portal visibility.
+ *
+ * This recomputes the SAME faithful admission (global vis packet + BFS +
+ * edge-rescue [with the surgical project-fail admit] + vis-supplement) a second
+ * time against the horizontally-widened screen rect (matched to the rendered
+ * extent), unions in any faithful main-pass draw room the re-run dropped
+ * (wide ⊇ faithful), and flags the ADDITIONAL rooms it reaches as DRAW-ONLY
+ * (g_BgRoomDrawOnly): they render but never enter the sim-consumed room_rendered
+ * set. Per FID-0014 the sim keeps the retail 4:3 frustum -- deterministic,
+ * window-timing-independent, auto-aim/AI faithful (the frustum-fallback still
+ * runs unconditionally for its sim-visible effect; only its frustum-all DRAW
+ * over-admission retires here, replaced by the rebuilt list's clipped
+ * apertures). At 4:3 factor == 1.0 so this is a byte-identical no-op. Skipped
+ * when the main pass used frustum-all admission (Cradle, portal-less levels,
+ * GE007_PORTAL_BFS=0). Opt out: GE007_NO_WIDESCREEN_VIS_WIDEN. */
+static int bgWidescreenVisWidenActive(void)
+{
+    static int enabled = -1;
+    f32 factor;
+
+    if (enabled < 0) {
+        extern int g_pcFaithfulSim;
+        int env_enabled = port_env_set(
+            "GE007_WIDESCREEN_VIS_WIDEN",
+            "OPT-IN (default OFF): widescreen draw-only portal-visibility widen — on "
+            "wide (non-4:3) windows, re-run the faithful room admission against the "
+            "rendered 16:9 extent and draw the extra wide-edge rooms with proper "
+            "clipped apertures instead of the frustum-fallback over-admission. "
+            "DEFAULT-OFF because the second traversal's mutation of per-frame portal "
+            "scratch is not yet fully checkpointed: prop/door visibility reads it "
+            "post-pass, diverging the deterministic sim (prop_pool region) at 16:9 "
+            "vs 4:3 — see the tape-gate A/B on dam_forward_30s (widen-on hash "
+            "e61d31e5c302d1cb vs baseline c6d1bd05d67a8902; opt-out reproduces the "
+            "baseline byte-identically). Flip to default-ON only after the widen "
+            "pass is fully sandboxed and per-frame prop_pool byte-identity "
+            "16:9-vs-4:3 is proven across all committed tapes [Pathway-3]");
+        /* --faithful is pure retail 4:3 sim with every port heuristic off, so the
+         * widen (a port-only render enhancement) stays off there regardless. */
+        enabled = env_enabled && !g_pcFaithfulSim;
+    }
+    if (!enabled) {
+        return 0;
+    }
+    factor = gfx_get_aspect_x_factor(); /* 1.0 on 4:3; <1 (e.g. 0.75) on 16:9 */
+    return (factor > 0.001f && factor < 0.999f);
+}
+
+/* Record which rooms are currently in the frame's draw list (one byte per room).
+ * Used to capture the FAITHFUL draw membership before/after the frustum-fallback
+ * so the widescreen widen can guarantee wide ⊇ faithful (union re-admit). */
+static void bgCaptureDrawListMembership(u8 *membership)
+{
+    s32 i;
+
+    memset(membership, 0, MAXROOMCOUNT);
+    for (i = 0; i < g_BgNumberOfRoomsDrawn; i++) {
+        s32 roomid = dword_CODE_bss_8007FFA0[i].roomid;
+        if (roomid > 0 && roomid < MAXROOMCOUNT) {
+            membership[roomid] = 1;
+        }
+    }
+}
+
+static void bgApplyWidescreenDrawOnlyWiden(bbox2d *player_bbox,
+                                           s32 main_used_portal_bfs,
+                                           const u8 *faithful_draw_rooms)
+{
+    f32 factor, old_xmin, old_xmax, centre, half;
+    f32 widened_bbox[4];
+    s32 tmp, idx, i, seed_count;
+    s32 seed_rooms[4];
+    enum CAMERAMODE camera_mode;
+    u8 snap_rendered[MAXROOMCOUNT];
+    u8 snap_neighbor[MAXROOMCOUNT];
+    u8 snap_portals[MAXROOMCOUNT];
+    u8 snap_loaded[MAXROOMCOUNT];
+
+    if (player_bbox == NULL || !bgWidescreenVisWidenActive()) {
+        return;
+    }
+    /* The widen re-runs the portal-BFS admission; if the main pass used the
+     * frustum-all path instead (Cradle, portal-less data, GE007_PORTAL_BFS=0,
+     * GE007_FORCE_ALL_ROOMS), a BFS-shaped rebuild would collapse the draw list
+     * to the seed rooms. Leave those frames on their main-pass admission. */
+    if (!main_used_portal_bfs) {
+        return;
+    }
+    /* Detached authored cameras (intro/swirl/death) own their admission via the
+     * T13b camera-seed walk; leave them alone. */
+    camera_mode = bondviewGetCameraMode();
+    if (bgIsDetachedAuthoredCamera(camera_mode)) {
+        return;
+    }
+    factor = gfx_get_aspect_x_factor();
+
+    /* Snapshot the faithful (sim-consumed) admission set so we can restore it and
+     * flag only the widen-added rooms draw-only. */
+    for (idx = 0; idx < MAXROOMCOUNT; idx++) {
+        snap_rendered[idx] = (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_rendered : 0;
+        snap_neighbor[idx] = (idx < g_MaxNumRooms) ? g_BgRoomInfo[idx].room_neighbor_to_rendered : 0;
+        snap_portals[idx]  = (idx < g_MaxNumRooms) ? (u8)g_BgRoomInfo[idx].portals_to_room_count : 0;
+        snap_loaded[idx]   = (idx < g_MaxNumRooms) ? (u8)g_BgRoomInfo[idx].room_loaded_mask : 0;
+    }
+
+    /* Reset visibility + draw list, then re-run admission against the widened rect.
+     * The whole BFS (sub_GAME_7F0B5208, the projection degenerate-expand, the
+     * per-hop aperture intersects) reads screenx{min,max}f, so widening those
+     * globals makes the second traversal cull against the true 16:9 extent. */
+    bgClearFrameVisibilityState();
+
+    old_xmin = g_CurrentPlayer->screenxminf;
+    old_xmax = g_CurrentPlayer->screenxmaxf;
+    centre = (old_xmin + old_xmax) * 0.5f;
+    half = ((old_xmax - old_xmin) * 0.5f) / factor;
+    g_CurrentPlayer->screenxminf = centre - half;
+    g_CurrentPlayer->screenxmaxf = centre + half;
+    widened_bbox[0] = g_CurrentPlayer->screenxminf;
+    widened_bbox[1] = g_CurrentPlayer->screenyminf;
+    widened_bbox[2] = g_CurrentPlayer->screenxmaxf;
+    widened_bbox[3] = g_CurrentPlayer->screenymaxf;
+
+    /* Restore the level packet's per-frame room DISABLES (opcodes 0x24/0x25 via
+     * room_loaded_mask) that the clear above wiped, from the pre-clear snapshot:
+     * without this the rebuilt BFS draws rooms retail never draws. Deliberately
+     * NOT re-running the packet interpreter (sub_GAME_7F0B8A24) here — it is not
+     * a pure visibility function: it emits display-list state into the frame GDL,
+     * and re-running it mid-frame with the widened rect live bakes a widened
+     * projection into the whole frame (observed as a 4/3 full-frame zoom).
+     * Packet-ADMITTED rooms (opcode 0x20) the rebuilt BFS cannot reach come back
+     * via the faithful-membership union below. Residual: a rescue candidate whose
+     * SOURCE room is packet-only is skipped in this pass (its dest, if faithfully
+     * drawn, still returns via the union). */
+    for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+        g_BgRoomInfo[idx].room_loaded_mask = snap_loaded[idx];
+    }
+
+    bgSetRoomAdmitTraceContext("widescreen_draw_only", -1, -1, 0);
+    sub_GAME_7F0B39BC(g_BgCurrentRoom, 0, (bbox2d *)widened_bbox, 1);
+    seed_count = bgCollectPortalSeedRoomsFromPosition(
+        g_BgCurrentRoom, bondviewGetCurrentPlayersPosition(), seed_rooms, 4);
+    for (i = 0; i < seed_count; i++) {
+        sub_GAME_7F0B39BC(seed_rooms[i], 0, (bbox2d *)widened_bbox, 1);
+    }
+    bgQueueConnectedRoomPortals(g_BgCurrentRoom, widened_bbox);
+    for (i = 0; i < seed_count; i++) {
+        bgQueueConnectedRoomPortals(seed_rooms[i], widened_bbox);
+    }
+    tmp = 0;
+    while (sub_GAME_7F0B7EE4(&tmp)) {
+    }
+    bgClearRoomAdmitTraceContext();
+
+    bgMarkPortalNeighborsToRendered(g_BgPortals);
+    /* Fill grazing-doorway project-fail holes surgically DURING this draw-only
+     * re-run: the promote admits each project-fail dest room clipped to its own
+     * projected AABB (bg.c ~14411), a single bounded room the depth buffer then
+     * occludes -- NOT the frustum shotgun's every-visible-room-full-screen. Scoped
+     * to this pass so the admit is captured as draw-only and room_rendered is
+     * restored below; the sim-consumed main pass never sees it. This is what lets
+     * the shotgun retire on wide windows without reopening those holes. */
+    bgWidescreenProjectFailAdmitOverride = 1;
+    bgPromotePortalEdgeRescueCandidates((bbox2d *)widened_bbox);
+    bgWidescreenProjectFailAdmitOverride = 0;
+    {
+        u8 local_neighbor_snapshot[MAXROOMCOUNT] = {0};
+        bgComputePortalNeighborSnapshotLocal(g_BgPortals, local_neighbor_snapshot);
+        bgApplyVisibilitySupplement((bbox2d *)widened_bbox, local_neighbor_snapshot);
+    }
+
+    /* Union guarantee (wide ⊇ faithful): every room the FAITHFUL main pass drew
+     * must survive the rebuild. The re-run mechanisms are monotonic under a wider
+     * rect except the supplement's max-extra cap (a nearer wide-strip candidate
+     * can displace a main-pass pick), and rescue-array overflow is order-
+     * sensitive; re-admit any dropped member with the widened rect. The
+     * membership set was captured from the faithful draw list (pre-fallback when
+     * the frustum shotgun fired), so the shotgun's over-admissions are
+     * deliberately NOT re-added here. */
+    if (faithful_draw_rooms != NULL) {
+        for (idx = 1; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+            if (faithful_draw_rooms[idx] && bgFindRoomDrawIndex(idx) < 0) {
+                bgSetRoomAdmitTraceContext("widescreen_union", -1, -1, 0);
+                sub_GAME_7F0B39BC(idx, 0, (bbox2d *)widened_bbox, 1);
+                bgClearRoomAdmitTraceContext();
+            }
+        }
+    }
+
+    g_CurrentPlayer->screenxminf = old_xmin;
+    g_CurrentPlayer->screenxmaxf = old_xmax;
+
+    /* Flag widen-added rooms draw-only; restore the faithful sim set (the widened
+     * DRAW list stays live for rendering). */
+    for (idx = 0; idx < g_MaxNumRooms && idx < MAXROOMCOUNT; idx++) {
+        if (g_BgRoomInfo[idx].room_rendered && !snap_rendered[idx]) {
+            if (!g_BgRoomDrawOnly[idx]) {
+                g_BgRoomDrawOnlyCount++;
+            }
+            g_BgRoomDrawOnly[idx] = 1;
+        }
+        g_BgRoomInfo[idx].room_rendered = snap_rendered[idx];
+        g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
+        g_BgRoomInfo[idx].portals_to_room_count = snap_portals[idx];
+        g_BgRoomInfo[idx].room_loaded_mask = snap_loaded[idx];
+    }
+
+    bgWidescreenWidenRanThisFrame = 1;
 }
 
 static void bgTraceRoomSummaryIfRequested(s32 room)
@@ -16858,7 +17112,20 @@ void sub_GAME_7F0B8A6C(void) {
      * trigger a guarded frustum rebuild when that rebuild is a small correction. */
     {
         bbox2d *player_bbox = (bbox2d *)&g_CurrentPlayer->screenxminf;
+        u8 faithful_draw_membership[MAXROOMCOUNT];
         bgPromotePortalEdgeRescueCandidates(player_bbox);
+        /* Capture the faithful draw membership BEFORE the frustum fallback: if
+         * the fallback fires it rebuilds the draw list as the frustum-all set,
+         * and the widescreen widen's union guarantee must be anchored to the
+         * faithful (packet+BFS+rescue) set, not the shotgun's. Refreshed after
+         * the supplement below when the fallback did not fire. */
+        bgCaptureDrawListMembership(faithful_draw_membership);
+        /* The fallback runs UNCONDITIONALLY on every aspect: its room_rendered
+         * mutation is sim-visible (auto-aim/PROPFLAG_ONSCREEN consumers) and per
+         * FID-0014 must never key on the live window shape. On wide windows the
+         * widescreen widen below rebuilds the DRAW list without the fallback's
+         * frustum-all over-admission, so only its visual junk retires — the sim
+         * set stays byte-identical across window shapes. */
         bgApplyPortalProjectFrustumFallback(player_bbox);
         bgTraceRoomProjectIfRequested("post_portal", player_bbox);
         /* Recompute the portal-neighbor adjacency test immediately before
@@ -16880,6 +17147,17 @@ void sub_GAME_7F0B8A6C(void) {
             bgComputePortalNeighborSnapshotLocal(g_BgPortals, local_neighbor_snapshot);
             bgApplyVisibilitySupplement(player_bbox, local_neighbor_snapshot);
         }
+        /* Pathway-3: widescreen draw-only widen (no-op at 4:3). Runs LAST so it
+         * snapshots the final sim set (incl. any fallback mutation), then rebuilds
+         * the draw list against the widened rect and appends the genuinely-visible
+         * wide-edge rooms as draw-only (render-only, sim untouched). */
+        if (!bgFrustumFallbackFiredThisFrame) {
+            /* No shotgun rebuild this frame: the live draw list IS the faithful
+             * set including the supplement's picks — anchor the union to it. */
+            bgCaptureDrawListMembership(faithful_draw_membership);
+        }
+        bgApplyWidescreenDrawOnlyWiden(player_bbox, use_portal_bfs,
+                                       faithful_draw_membership);
         bgTraceRoomProjectIfRequested("post_visibility", player_bbox);
         /* T13 room-visibility classifier: for the frame's final default room
          * admission set, categorize every loaded-but-unrendered room as
@@ -17300,8 +17578,14 @@ void sub_GAME_7F0B8A6C(void) {
          * sim and render are exactly as before. GE007_TRACE_DRAW_ONLY logs the count. */
         {
             extern int g_pcFaithfulSim;
+            /* Pathway-3 adds a fourth source: the widescreen draw-only widen on a
+             * wide (non-4:3) window. Keyed on the widen having actually RUN this
+             * frame (not the live window factor) so the invariant stays meaningful
+             * on wide-window frames where the widen skipped (detached camera,
+             * frustum-all main pass). At 4:3 it never runs, preserving the
+             * original "empty in default-mode gameplay" invariant. */
             assert(g_BgRoomDrawOnlyCount == 0 || camera_walk_seed_room >= 0
-                   || g_pcFaithfulSim);
+                   || g_pcFaithfulSim || bgWidescreenWidenRanThisFrame);
         }
         {
             static int trace_draw_only = -1;
