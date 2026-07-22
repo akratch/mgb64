@@ -171,6 +171,7 @@ COMPARE_SELECTED_CAMERA="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH"
 COMPARE_INTRO_SETUP="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_intro_setup)"
 COMPARE_BOND_ANIM="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_bond_anim)"
 COMPARE_BOND_ANIM_ONSET_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_bond_anim_onset_tolerance)"
+COMPARE_BOND_IDLE_ONSET_TOLERANCE="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_bond_idle_onset_tolerance)"
 COMPARE_EXCLUDE_FIELDS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_exclude_fields)"
 COMPARE_REQUIRE_FROZEN="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_require_frozen)"
 COMPARE_EXPECT_MODE_DURATIONS="$(python3 tools/rom_oracle_route.py field "$ROUTE_PATH" compare_expect_mode_durations)"
@@ -1554,6 +1555,9 @@ PY
         esac
         if [[ -n "$COMPARE_BOND_ANIM_ONSET_TOLERANCE" ]]; then
             compare_args+=(--bond-anim-onset-tolerance "$COMPARE_BOND_ANIM_ONSET_TOLERANCE")
+        fi
+        if [[ -n "$COMPARE_BOND_IDLE_ONSET_TOLERANCE" ]]; then
+            compare_args+=(--bond-idle-onset-tolerance "$COMPARE_BOND_IDLE_ONSET_TOLERANCE")
         fi
         case "$COMPARE_REQUIRE_FROZEN" in
             1|true|True|TRUE|yes|YES)

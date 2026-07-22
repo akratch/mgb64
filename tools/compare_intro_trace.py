@@ -458,7 +458,7 @@ def align_mode_segment(
     baseline_segment: list[dict[str, Any]],
     test_segment: list[dict[str, Any]],
 ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
-    """Align one camera-mode segment: key by `intro.timer` (deduped to the first
+    """Align one camera-mode segment: key by `intro.timer` (deduped to the last
     record per timer value per side) when both sides have a usable timer AND
     that keying actually produces overlap; otherwise fall back to
     segment-relative index (timer absent entirely, or the two sides' timer
@@ -490,14 +490,21 @@ def align_mode_segment(
         base_order: list[tuple[int, float]] = []
         for record in baseline_segment:
             key = timer_key_of(record)
-            if key is None or key in base_by_timer:
+            if key is None:
                 continue
+            if key not in base_by_timer:
+                base_order.append(key)
+            # The ares harness records all four controller polls for a VI.
+            # The first poll can carry the timer's pre-tick actor state while
+            # later polls carry the settled state (D41: stale intro animation
+            # frame at 11 otherwise-isolated keys). The last record is the
+            # completed state for that authored timer and matches native's
+            # post-tick trace point.
             base_by_timer[key] = record
-            base_order.append(key)
         test_by_timer: dict[tuple[int, float], dict[str, Any]] = {}
         for record in test_segment:
             key = timer_key_of(record)
-            if key is None or key in test_by_timer:
+            if key is None:
                 continue
             test_by_timer[key] = record
         timer_pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
@@ -573,22 +580,134 @@ def parse_exclude_fields(spec: str) -> set[str]:
     return fields
 
 
-def apply_bond_anim_onset_alignment(
+def apply_bond_idle_onset_alignment(
     pairs: list[tuple[Any, dict[str, Any], dict[str, Any]]],
     tolerance: float,
 ) -> tuple[set[int], dict[str, Any], list[Divergence]]:
+    """Absorb only the ACT_BONDINTRO -> ACT_STAND sampling boundary.
+
+    Retail advances the intro actor in three-tick batches. Depending on the
+    controller-poll lattice, its last ACT_BONDINTRO record and first ACT_STAND
+    record can be three authored timer units later than native's per-tick
+    trace even though both execute the same transition. Numeric animation
+    phase remains an ordinary comparison; this alignment only prevents that
+    one boundary record from looking like an animation identity regression.
+    """
+    def action_of(record: dict[str, Any]) -> int | None:
+        return parse_int(get_path(record, "intro.bond_action"))
+
+    base_idx = next(
+        (index for index, (_key, base, _test) in enumerate(pairs) if action_of(base) == 1),
+        None,
+    )
+    test_idx = next(
+        (index for index, (_key, _base, test) in enumerate(pairs) if action_of(test) == 1),
+        None,
+    )
+    metrics: dict[str, Any] = {"tolerance": tolerance}
+    divergences: list[Divergence] = []
+    absorbed: set[int] = set()
+
+    if base_idx is None or test_idx is None:
+        metrics["delta"] = None
+        metrics["baseline_onset"] = None if base_idx is None else str(pairs[base_idx][0])
+        metrics["test_onset"] = None if test_idx is None else str(pairs[test_idx][0])
+        return absorbed, metrics, divergences
+
+    low, high = min(base_idx, test_idx), max(base_idx, test_idx)
+    for index in range(low, high):
+        base_action = action_of(pairs[index][1])
+        test_action = action_of(pairs[index][2])
+        if base_action != test_action and {base_action, test_action} <= {1, 23}:
+            absorbed.add(index)
+
+    def onset_info(index: int, record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": str(pairs[index][0]),
+            "segment": parse_int(get_path(record, "intro.setup.swirl.current.index")),
+            "timer": parse_float(get_path(record, "intro.timer")),
+        }
+
+    base_info = onset_info(base_idx, pairs[base_idx][1])
+    test_info = onset_info(test_idx, pairs[test_idx][2])
+    metrics["baseline_onset"] = base_info
+    metrics["test_onset"] = test_info
+    metrics["absorbed_pairs"] = len(absorbed)
+    mode = parse_int(pairs[base_idx][1].get("cam"))
+
+    if base_info["segment"] != test_info["segment"]:
+        metrics["delta"] = None
+        divergences.append(
+            Divergence(
+                message=(
+                    f"bond_anim idle onset segments differ: baseline {base_info['key']}"
+                    f" vs test {test_info['key']}"
+                ),
+                field="intro.bond_anim.idle_onset",
+                mode=mode,
+            )
+        )
+    elif base_info["timer"] is None or test_info["timer"] is None:
+        metrics["delta"] = None
+        divergences.append(
+            Divergence(
+                message=(
+                    f"bond_anim idle onset timer missing: baseline {base_info['key']}"
+                    f" vs test {test_info['key']}"
+                ),
+                field="intro.bond_anim.idle_onset",
+                mode=mode,
+            )
+        )
+    else:
+        delta = abs(base_info["timer"] - test_info["timer"])
+        metrics["delta"] = delta
+        if delta > tolerance:
+            divergences.append(
+                Divergence(
+                    message=(
+                        f"bond_anim idle onset delta {delta:.2f} > tolerance"
+                        f" {tolerance:.2f} (baseline {base_info['key']},"
+                        f" test {test_info['key']})"
+                    ),
+                    field="intro.bond_anim.idle_onset",
+                    mode=mode,
+                    delta=delta,
+                )
+            )
+
+    return absorbed, metrics, divergences
+
+
+def apply_bond_anim_onset_alignment(
+    pairs: list[tuple[Any, dict[str, Any], dict[str, Any]]],
+    baseline_records: list[dict[str, Any]],
+    test_records: list[dict[str, Any]],
+    tolerance: float,
+) -> tuple[
+    set[int],
+    list[tuple[str, dict[str, Any], dict[str, Any]]],
+    dict[str, Any],
+    list[Divergence],
+]:
     """Phase-3 onset event alignment (DAM_PARITY_DEEP_DIVE 2026-07-17 §3.3).
 
     Retail fires the intro phase-3 animation from an RNG-jittered AI
     sleep-wake boundary; native (D43) fires the SAME animation at a fixed
     swirl timer. The camera path stays tick-exact, so per-timer alignment is
     right for every other field — but the bond-anim family flips at each
-    side's own onset, and every pair between the two onsets diverges on all
-    of it. This helper finds each side's first ACT_ANIM (bond_action == 3)
-    pair, absorbs bond-family mismatches ONLY inside the [min, max) onset
-    window, and gates the onset timer delta by `tolerance` (same swirl
-    segment required). Pairs after both onsets — e.g. one side reverting to
-    ACT_STAND at swirl end — are NOT absorbed: those are real divergences.
+    side's own onset, so comparing phase-3 animation frames at the same
+    camera timer remains wrong even after both sides have started: the side
+    that started first keeps its scheduling lead. This helper therefore:
+
+    * keeps ordinary per-timer Bond comparison before the earlier onset;
+    * gates the onset timer delta by `tolerance` (same swirl segment); and
+    * re-pairs phase-3 records by animation frame, so the animation identity,
+      speed, end, hand, and frame coverage are judged at equal animation age.
+
+    This is deliberately narrower than ignoring phase 3. Missing internal
+    stock frame samples and a shortened/frozen phase-3 range are explicit
+    divergences, while one leading sample of capture skew is tolerated.
     """
     def action_of(record: dict[str, Any]) -> int | None:
         return parse_int(get_path(record, "intro.bond_action"))
@@ -606,6 +725,7 @@ def apply_bond_anim_onset_alignment(
     metrics: dict[str, Any] = {"tolerance": tolerance}
     divergences: list[Divergence] = []
     absorbed: set[int] = set()
+    phase3_pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
 
     if base_idx is None or test_idx is None:
         # Zero or one side reaches phase 3 inside the compared window: nothing
@@ -613,14 +733,13 @@ def apply_bond_anim_onset_alignment(
         metrics["delta"] = None
         metrics["baseline_onset"] = None if base_idx is None else str(pairs[base_idx][0])
         metrics["test_onset"] = None if test_idx is None else str(pairs[test_idx][0])
-        return absorbed, metrics, divergences
+        return absorbed, phase3_pairs, metrics, divergences
 
     low, high = min(base_idx, test_idx), max(base_idx, test_idx)
-    for index in range(low, high):
-        base_action = action_of(pairs[index][1])
-        test_action = action_of(pairs[index][2])
-        if base_action != test_action and {base_action, test_action} <= {1, 3}:
-            absorbed.add(index)
+    # Once either side reaches phase 3, compare the Bond family by animation
+    # age below. Camera/path fields remain compared on these ordinary timer
+    # pairs, and pre-onset idle animation (including D41) stays timer-aligned.
+    absorbed.update(range(low, len(pairs)))
 
     def onset_info(index: int, record: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -633,7 +752,8 @@ def apply_bond_anim_onset_alignment(
     test_info = onset_info(test_idx, pairs[test_idx][2])
     metrics["baseline_onset"] = base_info
     metrics["test_onset"] = test_info
-    metrics["absorbed_pairs"] = len(absorbed)
+    metrics["onset_window_pairs"] = high - low
+    metrics["timer_pairs_replaced"] = len(absorbed)
 
     mode = parse_int(pairs[base_idx][1].get("cam"))
     if base_info["segment"] != test_info["segment"]:
@@ -677,7 +797,99 @@ def apply_bond_anim_onset_alignment(
                 )
             )
 
-    return absorbed, metrics, divergences
+    def phase3_by_frame(records: list[dict[str, Any]]) -> dict[float, dict[str, Any]]:
+        by_frame: dict[float, dict[str, Any]] = {}
+        for record in records:
+            if action_of(record) != 3:
+                continue
+            frame = parse_float(get_path(record, "intro.bond_anim.frame"))
+            if frame is None:
+                continue
+            # Trace output is decimal and authored animation frames advance in
+            # quarter/half-frame units. Rounding only canonicalizes formatting.
+            by_frame[round(frame, 3)] = record
+        return by_frame
+
+    base_by_frame = phase3_by_frame(baseline_records)
+    test_by_frame = phase3_by_frame(test_records)
+    shared_frames = sorted(base_by_frame.keys() & test_by_frame.keys())
+    phase3_pairs = [
+        (f"bond-frame:{frame:g}", base_by_frame[frame], test_by_frame[frame])
+        for frame in shared_frames
+    ]
+
+    base_frames = sorted(base_by_frame)
+    test_frames = sorted(test_by_frame)
+    metrics["phase3_frame_alignment"] = {
+        "baseline_unique": len(base_frames),
+        "test_unique": len(test_frames),
+        "aligned": len(shared_frames),
+        "baseline_range": None if not base_frames else [base_frames[0], base_frames[-1]],
+        "test_range": None if not test_frames else [test_frames[0], test_frames[-1]],
+    }
+
+    if not phase3_pairs:
+        divergences.append(
+            Divergence(
+                message="bond_anim phase-3 has no shared animation-frame samples",
+                field="intro.bond_anim.phase_coverage",
+                mode=mode,
+            )
+        )
+    elif base_frames and test_frames:
+        # Ares may first observe the three-tick retail batch one frame before
+        # native's per-tick trace point. That leading edge is sampling skew;
+        # holes after both captures are active or an early endpoint are not.
+        coverage_slack = 1.0
+        start_delta = abs(base_frames[0] - test_frames[0])
+        metrics["phase3_frame_alignment"]["start_delta"] = start_delta
+        if start_delta > coverage_slack:
+            divergences.append(
+                Divergence(
+                    message=(
+                        f"bond_anim phase-3 start delta {start_delta:.2f} > "
+                        f"sampling slack {coverage_slack:.2f}"
+                    ),
+                    field="intro.bond_anim.phase_coverage",
+                    mode=mode,
+                    delta=start_delta,
+                )
+            )
+
+        internal_missing = [
+            frame
+            for frame in base_frames
+            if frame >= test_frames[0] and frame not in test_by_frame
+        ]
+        metrics["phase3_frame_alignment"]["missing_baseline_internal"] = internal_missing
+        if internal_missing:
+            divergences.append(
+                Divergence(
+                    message=(
+                        "bond_anim phase-3 native trace misses stock animation-frame "
+                        f"sample(s): {internal_missing[:8]}"
+                    ),
+                    field="intro.bond_anim.phase_coverage",
+                    mode=mode,
+                )
+            )
+
+        end_delta = abs(base_frames[-1] - test_frames[-1])
+        metrics["phase3_frame_alignment"]["end_delta"] = end_delta
+        if end_delta > coverage_slack:
+            divergences.append(
+                Divergence(
+                    message=(
+                        f"bond_anim phase-3 endpoint delta {end_delta:.2f} > "
+                        f"sampling slack {coverage_slack:.2f}"
+                    ),
+                    field="intro.bond_anim.phase_coverage",
+                    mode=mode,
+                    delta=end_delta,
+                )
+            )
+
+    return absorbed, phase3_pairs, metrics, divergences
 
 
 def compare_pairs(
@@ -833,6 +1045,16 @@ def main() -> int:
     parser.add_argument("--scalar-tolerance", type=float, default=0.05)
     parser.add_argument("--anim-tolerance", type=float, default=0.02)
     parser.add_argument(
+        "--bond-idle-onset-tolerance",
+        type=float,
+        default=None,
+        help=(
+            "event-align the ACT_BONDINTRO-to-ACT_STAND boundary by absorbing "
+            "Bond-family identity mismatches only between the two first idle "
+            "records, and fail if their authored timer delta exceeds this value"
+        ),
+    )
+    parser.add_argument(
         "--bond-anim-onset-tolerance",
         type=float,
         default=None,
@@ -884,6 +1106,8 @@ def main() -> int:
         raise SystemExit("FAIL: --min-aligned must be positive when set")
     if args.anim_tolerance < 0.0:
         raise SystemExit("FAIL: --anim-tolerance must be non-negative")
+    if args.bond_idle_onset_tolerance is not None and args.bond_idle_onset_tolerance < 0.0:
+        raise SystemExit("FAIL: --bond-idle-onset-tolerance must be non-negative")
 
     baseline_all = load_jsonl(args.baseline)
     test_all = load_jsonl(args.test)
@@ -1049,12 +1273,25 @@ def main() -> int:
         parse_exclude_fields(args.exclude_fields),
     )
     absorbed_indices: set[int] | None = None
+    idle_onset_metrics: dict[str, Any] | None = None
+    idle_onset_divergences: list[Divergence] = []
+    if args.bond_idle_onset_tolerance is not None:
+        absorbed_indices, idle_onset_metrics, idle_onset_divergences = (
+            apply_bond_idle_onset_alignment(pairs, args.bond_idle_onset_tolerance)
+        )
+    phase3_pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     onset_metrics: dict[str, Any] | None = None
     onset_divergences: list[Divergence] = []
     if args.bond_anim_onset_tolerance is not None:
-        absorbed_indices, onset_metrics, onset_divergences = (
-            apply_bond_anim_onset_alignment(pairs, args.bond_anim_onset_tolerance)
+        phase3_absorbed, phase3_pairs, onset_metrics, onset_divergences = (
+            apply_bond_anim_onset_alignment(
+                pairs, baseline, test, args.bond_anim_onset_tolerance
+            )
         )
+        if absorbed_indices is None:
+            absorbed_indices = phase3_absorbed
+        else:
+            absorbed_indices.update(phase3_absorbed)
 
     divergences, max_abs = compare_pairs(
         pairs,
@@ -1065,6 +1302,22 @@ def main() -> int:
         args.anim_tolerance,
         absorbed_indices=absorbed_indices,
     )
+    if phase3_pairs:
+        phase3_specs = [spec for spec in specs if spec[0] in BOND_ONSET_WINDOW_FIELDS]
+        phase3_divergences, phase3_max_abs = compare_pairs(
+            phase3_pairs,
+            phase3_specs,
+            args.vector_tolerance,
+            args.direction_tolerance,
+            args.scalar_tolerance,
+            args.anim_tolerance,
+        )
+        divergences.extend(phase3_divergences)
+        for field, delta in phase3_max_abs.items():
+            max_abs[field] = max(max_abs.get(field, 0.0), delta)
+    divergences.extend(idle_onset_divergences)
+    if idle_onset_metrics is not None:
+        common_metrics["bond_idle_onset"] = idle_onset_metrics
     divergences.extend(onset_divergences)
     if onset_metrics is not None:
         common_metrics["bond_anim_onset"] = onset_metrics

@@ -484,8 +484,15 @@ floating Bond.
       ~34u, Cradle ~9083u) — instrument the static-shot camera seed vs stock captures.
 - [ ] **D38:** stock static-shot duration varies +3..+14 ticks while native is fixed —
       find stock's duration source (likely per-setup or load-driven), replicate.
-- [ ] **D41:** ~3-tick anim-phase shift between menu-boot and direct-boot — trace where
-      the tick offset enters (menu exit timing) and align.
+- [x] **D41 — resolved as refuted / no gameplay fix 2026-07-22:** a fresh
+      1075-record menu/direct comparison is bit-exact for camera and numeric animation,
+      refuting the original ~3-tick port-path diagnosis. Preserved stock captures sample
+      the same first 0.75 idle frame on different retail three-tick lattices (timer 100
+      or 102); a fixed +0.25 native seed helped one and worsened the other, so it was
+      removed before landing. The oracle now selects the settled last ares poll and
+      event-aligns only the `ACT_BONDINTRO`→`ACT_STAND` identity boundary within one
+      retail batch; numeric idle phase remains narrowly D41-waived until a game-tick
+      stock trace exists. `gunhand` is wider boot-history PRNG state (FID-0063).
 - [x] **D42 residual — camera-seed WALK, DECOUPLED + DEFAULT ON (T13b, 2026-07-09):**
       the headline "large map areas render as flat sky-blue" on establishing/intro
       cameras (Silo especially, also Dam) is FIXED default-on. Root cause (T13): the D42
@@ -513,10 +520,14 @@ floating Bond.
       screen-edge sliver — rooms many winding-portal-hops away that even the T13 walk
       doesn't reach) → **M3.4**.
 - [x] Re-test D31/D32/D35/D36 waivers after M0.3+M1.3 (fresh stock-ares/native
-      pair, 2026-07-22): D36 is clean and its final waiver is deleted; D31
-      remains live (42 divergences, max 74.89u), D32 remains live (3 records),
-      and D35 remains live across 13 scoped camera fields. The D36 verdict is
-      now guarded by `intro_oracle_dam_bond_anim`; the live residuals stay open.
+      pair, 2026-07-22): D36's animation identity/metadata/event-relative phase 3 are clean.
+      Repeated natural-seed capture refuted deterministic `gunhand` parity; that one
+      random mirrored-hand field is narrowly owned by FID-0063 instead. Correct
+      ares timer deduplication now selects the settled last controller-poll record;
+      the gated capture leaves D31 live at 1 divergence/max 0.26u, D32 live at one
+      duration verdict/delta 2 records, and D35 live across 10 camera fields. The
+      D36 verdict and D41 attribution are guarded by `intro_oracle_dam_bond_anim`; live residuals
+      stay open.
 
 ---
 

@@ -1,7 +1,7 @@
 {
     "schema": "mgb64.rom_oracle.route.v1",
     "name": "dam_intro_swirl_bond_anim",
-    "description": "Dam intro swirl camera and Bond animation comparison aligned by authored intro timer. D43 (2026-07-08): the intro Bond now plays his scripted phase-3 animation (ANIM index 99, aim_one_handed_weapon_left_right) and follows its root motion, so the D36 bond_anim family now matches stock; its final gunhand waiver was removed after a fresh ares retest on 2026-07-22. D32/D35/D41 remain measured divergences. Phase-3 bond-anim onset is event-aligned with tolerance 30 timer units: retail fires phase 3 from an RNG-jittered AI sleep-wake boundary (observed onsets t41.05 and t57.05 across captures) while native D43 fires at a fixed swirl timer -- the onset is scheduling-dependent, the animation itself must match (DAM_PARITY_DEEP_DIVE 2026-07-17 s3.3).",
+    "description": "Dam intro Bond-animation comparison aligned by authored intro timer. D43 restored phase 3; animation identity, metadata, and phase-3 coverage are strict. The mirrored idle hand is a natural-seed randomGetNext choice and is narrowly owned by FID-0063 because stock/native boot histories need not share a PRNG phase. Exact timer zero is excluded because it straddles the asynchronous stock DMA presence boundary already guarded by the actor audit. The separate dam_intro_camera_path route owns camera selection/path and D31/D32/D35; this route compares camera mode/setup/Bond so retail's randomized intro-camera pick cannot invalidate the animation oracle. D41's original menu/direct timing claim is refuted. For stock/native comparison, the ACT_BONDINTRO-to-ACT_STAND identity boundary is event-aligned within one retail three-tick batch; its numeric idle-frame field stays narrowly waived because fresh retail captures sample the same first 0.75 frame on different timer lattices (100 or 102), so a fixed native phase offset cannot satisfy both. Phase-3 onset is bounded to 30 timer units because retail fires from an RNG-jittered AI sleep-wake boundary, then phase 3 is compared at equal animation age with coverage and metadata gates.",
     "level": "33",
     "frames": 1200,
     "native_frames": 1200,
@@ -13,36 +13,22 @@
     "native_render_audit": true,
     "compare_kind": "intro",
     "compare_align": "per-mode",
-    "compare_profile": "path",
+    "compare_profile": "state",
     "compare_state": true,
-    "compare_selected_camera": true,
+    "compare_selected_camera": false,
     "compare_intro_setup": true,
     "compare_bond_anim": true,
     "compare_min_aligned": 20,
     "compare_camera_modes": "swirl",
+    "compare_start_intro_timer": 0.01,
     "compare_require_frozen": true,
     "compare_vector_tolerance": 0.15,
     "compare_direction_tolerance": 0.005,
     "compare_scalar_tolerance": 0.001,
     "compare_anim_tolerance": 0.03,
-    "compare_expect_mode_durations": "3:591:0",
     "compare_waivers": {
-        "field:cam_delta[1]:mode3": "D31",
-        "mode_durations": "D32",
-        "field:cam_pos[0]:mode3": "D35",
-        "field:cam_pos[1]:mode3": "D35",
-        "field:cam_pos[2]:mode3": "D35",
-        "field:cam_target[0]:mode3": "D35",
-        "field:cam_target[1]:mode3": "D35",
-        "field:cam_target[2]:mode3": "D35",
-        "field:cam_floor[0]:mode3": "D35",
-        "field:cam_floor[1]:mode3": "D35",
-        "field:cam_floor[2]:mode3": "D35",
-        "field:cam_delta[0]:mode3": "D35",
-        "field:cam_delta[2]:mode3": "D35",
-        "field:facing[0]:mode3": "D35",
-        "field:facing[2]:mode3": "D35",
-        "field:intro.bond_anim.frame:mode3": "D41"
+        "field:intro.bond_anim.frame:mode3": "D41",
+        "field:intro.bond_anim.gunhand:mode3": "FID-0063"
     },
     "native_intro_audit": true,
     "native_intro_require_player": true,
@@ -94,5 +80,6 @@
             }
         }
     ],
-    "compare_bond_anim_onset_tolerance": 30.0
+    "compare_bond_anim_onset_tolerance": 30.0,
+    "compare_bond_idle_onset_tolerance": 3.0
 }

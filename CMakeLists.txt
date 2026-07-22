@@ -1711,11 +1711,11 @@ if(BUILD_TESTING)
     )
     set_tests_properties(intro_oracle_dam_route PROPERTIES LABELS oracle)
 
-    # FID-0029 / D36: the camera-path route does not compare Bond's animation.
-    # Keep the post-D43 three-phase animation verdict as a separate ares-backed
-    # oracle: the RNG-jittered phase-3 onset is event-aligned, but every field
-    # after both sides enter ACT_ANIM must match. This is what makes removal of
-    # the last D36 gunhand waiver a fail-on-regression contract.
+    # FID-0029 / D36/D41: the camera-path route does not compare Bond's animation.
+    # Keep the post-D43 three-phase verdict as a separate ares-backed oracle.
+    # It compares camera mode/setup/Bond only (the route above owns randomized
+    # camera selection and D31/D35), event-aligns the retail three-tick idle
+    # boundary, and compares phase 3 at equal animation age.
     add_intro_gate_smoke(
         NAME intro_oracle_dam_bond_anim
         TIMEOUT 900

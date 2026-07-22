@@ -34,7 +34,7 @@
 | FID-0026 | P2 | discovered | parity-divergence | audio | yes |  | Audio: per-instrument bank loop/tuning deltas never measured (H3/M5.2, Surface 2) |
 | FID-0027 | P2 | discovered | instrumentation-gap | audio | yes |  | Audio: DMA-window exhaustion / voice starvation hypotheses unmeasured (H4/H5) |
 | FID-0028 | P3 | triaged | instrumentation-gap | audio | yes |  | Audio hygiene: dead simple-synth + dead spatial branch (M5.4) |
-| FID-0029 | P2 | fix-in-progress | parity-divergence | sim | yes |  | Intro D-ledger waiver retests pending post-D43: D32, D35 pose drift, D37/D39 static-shot camera seed, D38 duration, D41 menu-boot anim phase (M1.5) |
+| FID-0029 | P2 | fix-in-progress | parity-divergence | sim | yes |  | Intro D-ledger residuals post-D43: D31/D32/D35 pose drift, D37/D39 static-shot camera seed, D38 duration (M1.5) |
 | FID-0030 | P0 | verified | instrumentation-gap | infra |  |  | Sim-hash blind spot: stan/collision scratch + unaudited mutable game BSS (M8.1 residual) |
 | FID-0031 | P0 | triaged | coverage-gap | infra | yes |  | Oracle route coverage Dam-only; ~12 placeholder intro routes, no organic completion routes (M8.2) |
 | FID-0032 | P0 | verified | instrumentation-gap | infra |  |  | Combat/floor-field oracle absent: ares reader extracts no guard/combat/stan state (COMBAT_DEFERRED §2.1, "single biggest blocker, XL") |

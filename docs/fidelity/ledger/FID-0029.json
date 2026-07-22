@@ -1,6 +1,6 @@
 {
   "id": "FID-0029",
-  "title": "Intro D-ledger waiver retests pending post-D43: D32, D35 pose drift, D37/D39 static-shot camera seed, D38 duration, D41 menu-boot anim phase (M1.5)",
+  "title": "Intro D-ledger residuals post-D43: D31/D32/D35 pose drift, D37/D39 static-shot camera seed, D38 duration (M1.5)",
   "class": "parity-divergence",
   "surface": "sim",
   "priority": "P2",
@@ -18,7 +18,12 @@
     {
       "kind": "trace-diff",
       "path": "tools/rom_oracle_routes/dam_intro_swirl_bond_anim.json",
-      "note": "Fresh stock-ares/native capture on 2026-07-22: D36 gunhand has zero divergences and its last waiver was removed; D31 remains 42/max 74.89u, D32 remains 3 records, D35 remains across 13 fields (cam_pos[0] max 38.0043u; cam_floor[1] max 440.85u), and D41 remains 108/max 1.0 frame. Dedicated intro_oracle_dam_bond_anim CTest now guards the D36 verdict."
+      "note": "Initial first-poll-aligned stock-ares/native capture on 2026-07-22: D36 gunhand had zero divergences and its last waiver was removed; it measured D31 at 42/max 74.89u, D32 at 3 records, D35 across 13 fields (cam_pos[0] max 38.0043u; cam_floor[1] max 440.85u), and D41 at 108/max 1.0 frame. The follow-up evidence records why the first-poll D31/D35 counts and broad D41 count were superseded rather than silently discarded."
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/rom_oracle_routes/dam_intro_swirl_bond_anim.json",
+      "note": "D41 resolution, 2026-07-22: a fresh native menu/direct comparison is exact across 1075 camera/setup/numeric-animation records, refuting the original menu-path phase diagnosis. Ares emits multiple controller polls per authored timer, so per-mode alignment now selects the settled last record (unit-gated); exact timer zero is excluded as the audited asynchronous DMA boundary. Stress captures then showed why no simulation change is valid: retail first samples the same 0.75 idle frame at timer 100 in one run and 102 in another, depending on its three-tick/controller-poll lattice. A +0.25 native seed matched the first and worsened the second, so it was removed before landing. The camera-independent Bond oracle event-aligns only the idle identity boundary within one retail batch and keeps numeric idle frame narrowly D41-waived pending a game-tick stock hook; phase-3 identity/metadata/coverage remain event-relative and strict. Repeated natural-seed captures also correct the earlier D36 conclusion: gunhand can be the opposite mirrored choice (103 stock/native records; 274 menu/direct) because wider boot histories reach randomGetNext() & 1 at different PRNG phases, so that field is narrowly owned by FID-0063. Settled matched-camera evidence leaves D31 at 1/max 0.26u, D32 at one duration verdict/delta 2 records, and D35 live across 10 camera fields (cam_pos[0] max 0.91u; cam_floor[1] max 440.85u)."
     }
   ],
   "history": [

@@ -119,6 +119,8 @@ def route_field(route: dict[str, Any], field: str) -> Any:
         return route.get("compare_require_hash_match", False)
     if field == "compare_bond_anim_onset_tolerance":
         return route.get("compare_bond_anim_onset_tolerance", "")
+    if field == "compare_bond_idle_onset_tolerance":
+        return route.get("compare_bond_idle_onset_tolerance", "")
     if field == "compare_first_active_tolerance":
         return route.get("compare_first_active_tolerance", "")
     if field == "compare_max_active_tolerance":
@@ -810,6 +812,9 @@ def validate_route(route: dict[str, Any]) -> None:
         route_positive_float(route, "compare_bond_anim_onset_tolerance")
         if route.get("compare_bond_anim_onset_tolerance") is not None and not route.get("compare_bond_anim"):
             errors.append("compare_bond_anim_onset_tolerance requires compare_bond_anim")
+        route_positive_float(route, "compare_bond_idle_onset_tolerance")
+        if route.get("compare_bond_idle_onset_tolerance") is not None and not route.get("compare_bond_anim"):
+            errors.append("compare_bond_idle_onset_tolerance requires compare_bond_anim")
     elif compare_kind == "visual":
         if compare_align not in ("global", "frame", "index"):
             errors.append(f"visual route compare_align is unsupported: {compare_align}")
