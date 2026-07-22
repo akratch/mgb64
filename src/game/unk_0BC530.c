@@ -23,20 +23,37 @@ extern int g_frame_count_diag;
 #define AMT300 300
 #endif
 
+#ifdef NATIVE_PORT
+/* Reserved matrix-slot band for the widescreen widen's DRAW-ONLY rooms
+ * (bg.c bgApplyWidescreenDrawOnlyWiden). Draw-only rooms render but must not
+ * touch sim-hashed state: the normal allocator records its slot id in
+ * g_BgRoomInfo[room].field_36 (inside the FID-0012-hashed region) and shares
+ * the AMT300 slot space with faithful rooms (interleaving could shift their
+ * slot ids). Band slots live ABOVE AMT300 so faithful allocation is untouched
+ * byte-for-byte, and the band setup never writes field_36. roomIndices[] IS
+ * kept for band slots so impact attribution (roomMatrixRoomFromAddress) still
+ * resolves the room. Sized for the worst per-frame draw-only count; overflow
+ * reuses the last slot (visual-only artifact) with a one-time warning. */
+#define ROOMMTX_DRAWONLY_BAND 32
+#define ROOMMTX_TOTAL (AMT300 + ROOMMTX_DRAWONLY_BAND)
+#else
+#define ROOMMTX_TOTAL AMT300
+#endif
+
 // bss
 /**
  * EU .bss 8007DC90
 */
-u8 roomStatusFlags[AMT300] = {0};
+u8 roomStatusFlags[ROOMMTX_TOTAL] = {0};
 
-s32 roomIndices[AMT300] = {0}; //mtxbufferroom
-s32 roomOwners[AMT300] = {0};
-Mtx roomMatrices[AMT300] = {0};
+s32 roomIndices[ROOMMTX_TOTAL] = {0}; //mtxbufferroom
+s32 roomOwners[ROOMMTX_TOTAL] = {0};
+Mtx roomMatrices[ROOMMTX_TOTAL] = {0};
 #ifdef NATIVE_PORT
-static Mtxf roomMatricesF[AMT300];
-static Mtxf roomMatricesFVisibilityCompensated[AMT300];
-static coord3d roomMatrixBases[AMT300];
-static s32 roomMatrixBasisValid[AMT300];
+static Mtxf roomMatricesF[ROOMMTX_TOTAL];
+static Mtxf roomMatricesFVisibilityCompensated[ROOMMTX_TOTAL];
+static coord3d roomMatrixBases[ROOMMTX_TOTAL];
+static s32 roomMatrixBasisValid[ROOMMTX_TOTAL];
 
 int roomMatrixContainsAddress(const void *addr)
 {
@@ -95,7 +112,7 @@ void initializeRoomData(void)
         g_playerPointers[i]->curRoomIndex = -1;
     }
 
-    for (i=0; i<AMT300; i++)
+    for (i=0; i<ROOMMTX_TOTAL; i++)
     {
       roomIndices[i] = -1;
       roomStatusFlags[i] = 2;
@@ -118,7 +135,7 @@ void invalidateRoomMatrices(void)
 {
     int i;
 
-    for (i = 0; i < AMT300; i++)
+    for (i = 0; i < ROOMMTX_TOTAL; i++)
     {
         roomIndices[i] = -1;
         roomStatusFlags[i] = 2;
@@ -254,12 +271,56 @@ void updateRoomStatusFlags(void)
  *
  * NTSC address 0x7F0BC85C.
  */
+static void roomMatrixFillSlot(s32 mtx, s32 room);
+
+#ifdef NATIVE_PORT
+/* Draw-only room-matrix band setup (widescreen widen frames only): allocate a
+ * per-frame slot from the reserved band ABOVE AMT300 and fill it, WITHOUT
+ * touching g_BgRoomInfo[room].field_36 (sim-hashed) or the faithful slot space.
+ * roomIndices[] is written so roomMatrixRoomFromAddress still attributes
+ * impacts on this room's geometry. The per-frame counter self-resets on the
+ * frame counter, so split-screen passes within one frame share the band. */
+static s32 roomMatrixDrawOnlySetup(s32 room)
+{
+    static s32 frame_tag = -1;
+    static s32 used = 0;
+    s32 mtx;
+
+    if (frame_tag != g_frame_count_diag) {
+        frame_tag = g_frame_count_diag;
+        used = 0;
+    }
+    if (used >= ROOMMTX_DRAWONLY_BAND) {
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            fprintf(stderr,
+                    "[ROOM-MTX] draw-only matrix band overflow (>%d slots/frame); reusing last slot\n",
+                    ROOMMTX_DRAWONLY_BAND);
+        }
+        used = ROOMMTX_DRAWONLY_BAND - 1;
+    }
+    mtx = AMT300 + used;
+    used++;
+    roomIndices[mtx] = room;
+    roomMatrixFillSlot(mtx, room);
+    return mtx;
+}
+#endif
+
 s32 setupRoomTransformationMatrix(s32 room)
 {
     s32 mtx;
-    Mtxf roomTransformMatrix;
 #ifdef NATIVE_PORT
     s32 basisMatches = FALSE;
+
+    {
+        extern u8 g_BgRoomDrawOnly[];
+        extern s32 bgWidescreenWidenRanThisFrameGet(void);
+        if (g_BgRoomDrawOnly[room] && bgWidescreenWidenRanThisFrameGet()) {
+            return roomMatrixDrawOnlySetup(room);
+        }
+    }
 #endif
 
     mtx = g_BgRoomInfo[room].field_36;//mtxid
@@ -306,6 +367,18 @@ s32 setupRoomTransformationMatrix(s32 room)
         return mtx;
     }
 
+    roomMatrixFillSlot(mtx, room);
+
+    return mtx;
+}
+
+/* Build + store the room transform for slot mtx (owner, fixed + float
+ * matrices, basis cache). Shared by the faithful allocator above and the
+ * draw-only band setup. */
+static void roomMatrixFillSlot(s32 mtx, s32 room)
+{
+    Mtxf roomTransformMatrix;
+
     roomOwners[mtx] = g_CurrentPlayer->curRoomIndex;
 
     matrix_4x4_set_identity(&roomTransformMatrix);
@@ -349,8 +422,6 @@ s32 setupRoomTransformationMatrix(s32 room)
     roomMatrixBases[mtx] = g_CurrentPlayer->current_model_pos;
     roomMatrixBasisValid[mtx] = 1;
 #endif
-
-    return mtx;
 }
 
 

@@ -1298,6 +1298,69 @@ static s32 bgFrustumFallbackFiredThisFrame = 0;
  * non-portal-BFS main pass). */
 static s32 bgWidescreenWidenRanThisFrame = 0;
 
+/* Exported for the draw-only room-matrix band (unk_0BC530.c): draw-only rooms
+ * take band matrix slots ONLY on widen frames, so the shipped T13b/DAM-R2
+ * detached-camera draw-only paths keep their exact historical slot behavior. */
+s32 bgWidescreenWidenRanThisFrameGet(void)
+{
+    return bgWidescreenWidenRanThisFrame;
+}
+
+/* SIM VIEW of the frame's draw list, captured by the widescreen widen
+ * immediately before it rebuilds the list against the widened rect. Sim-side
+ * draw-list queries (bgGet2dBboxByRoomId: prop screen-visibility bboxes in
+ * sub_GAME_7F054A64, chrlv tile-room bboxes) answer from THIS snapshot on
+ * widen frames, so every sim-consumed value is byte-identical to a widen-off
+ * run — the rebuilt (widened) entries feed rendering only. Proven necessary:
+ * with live-list queries, a borderline prop's camIsPosInScreenBox verdict
+ * flips against the widened room bbox (dam_forward_30s obj 210, frame 91),
+ * latching PROPFLAG_ONSCREEN and diverging the deterministic sim. */
+static s32 bgSimDrawSnapValid[MAXROOMCOUNT];
+static f32 bgSimDrawSnapBbox[MAXROOMCOUNT][4];
+/* Pre-widen draw ORDER (first occurrence per room): consumed by the widen
+ * finale to pre-warm room-matrix slots in faithful order, so the lazy
+ * draw-time slot allocation (setupRoomTransformationMatrix, which records its
+ * slot id in the sim-hashed field_36) sees cache hits and assigns identical
+ * slot ids to a widen-off run even though the rebuilt list draws in BFS
+ * order. Proven necessary: facility_traverse rooms 12/14 swapped slot ids. */
+static s32 bgSimDrawSnapOrder[MAXROOMCOUNT];
+static s32 bgSimDrawSnapCount = 0;
+
+static void bgCaptureSimDrawSnapshot(void)
+{
+    s32 i, j;
+    s32 order_key[MAXROOMCOUNT];
+
+    memset(bgSimDrawSnapValid, 0, sizeof bgSimDrawSnapValid);
+    bgSimDrawSnapCount = 0;
+    for (i = 0; i < g_BgNumberOfRoomsDrawn; i++) {
+        s32 roomid = dword_CODE_bss_8007FFA0[i].roomid;
+        if (roomid > 0 && roomid < MAXROOMCOUNT && !bgSimDrawSnapValid[roomid]) {
+            bgSimDrawSnapValid[roomid] = 1;
+            bgSimDrawSnapBbox[roomid][0] = dword_CODE_bss_8007FFA0[i].bbox.f[0][0];
+            bgSimDrawSnapBbox[roomid][1] = dword_CODE_bss_8007FFA0[i].bbox.f[0][1];
+            bgSimDrawSnapBbox[roomid][2] = dword_CODE_bss_8007FFA0[i].bbox.f[1][0];
+            bgSimDrawSnapBbox[roomid][3] = dword_CODE_bss_8007FFA0[i].bbox.f[1][1];
+            order_key[bgSimDrawSnapCount] = dword_CODE_bss_8007FFA0[i].unk1;
+            bgSimDrawSnapOrder[bgSimDrawSnapCount++] = roomid;
+        }
+    }
+
+    /* The render loop draws entries by ascending unk1 (the explicit draw-order
+     * key), NOT list index — the matrix-slot pre-warm must replay THAT order.
+     * Stable insertion sort by unk1. */
+    for (i = 1; i < bgSimDrawSnapCount; i++) {
+        s32 key = order_key[i];
+        s32 room = bgSimDrawSnapOrder[i];
+        for (j = i - 1; j >= 0 && order_key[j] > key; j--) {
+            order_key[j + 1] = order_key[j];
+            bgSimDrawSnapOrder[j + 1] = bgSimDrawSnapOrder[j];
+        }
+        order_key[j + 1] = key;
+        bgSimDrawSnapOrder[j + 1] = room;
+    }
+}
+
 static void bgClearPortalEdgeRescueCandidates(void)
 {
     bgPortalEdgeRescueCount = 0;
@@ -2357,23 +2420,25 @@ static int bgWidescreenVisWidenActive(void)
 
     if (enabled < 0) {
         extern int g_pcFaithfulSim;
-        int env_enabled = port_env_set(
-            "GE007_WIDESCREEN_VIS_WIDEN",
-            "OPT-IN (default OFF): widescreen draw-only portal-visibility widen — on "
-            "wide (non-4:3) windows, re-run the faithful room admission against the "
-            "rendered 16:9 extent and draw the extra wide-edge rooms with proper "
-            "clipped apertures instead of the frustum-fallback over-admission. "
-            "DEFAULT-OFF because the second traversal's mutation of per-frame portal "
-            "scratch is not yet fully checkpointed: prop/door visibility reads it "
-            "post-pass, diverging the deterministic sim (prop_pool region) at 16:9 "
-            "vs 4:3 — see the tape-gate A/B on dam_forward_30s (widen-on hash "
-            "e61d31e5c302d1cb vs baseline c6d1bd05d67a8902; opt-out reproduces the "
-            "baseline byte-identically). Flip to default-ON only after the widen "
-            "pass is fully sandboxed and per-frame prop_pool byte-identity "
-            "16:9-vs-4:3 is proven across all committed tapes [Pathway-3]");
+        int env_disabled = port_env_set(
+            "GE007_NO_WIDESCREEN_VIS_WIDEN",
+            "Disable the widescreen draw-only portal-visibility widen (default ON): "
+            "on wide (non-4:3) windows the faithful room admission is re-run against "
+            "the rendered 16:9 extent and the extra wide-edge rooms draw with proper "
+            "clipped apertures, replacing the frustum-fallback's over-admission junk. "
+            "SIM-SANDBOXED: sim-consumed state is byte-identical to widen-off — "
+            "room state snapshot/restored, sim draw-list queries answered from the "
+            "pre-widen snapshot (bgCaptureSimDrawSnapshot), room-matrix slots for "
+            "draw-only rooms come from a reserved band that never writes the hashed "
+            "field_36, and faithful slots are pre-warmed in faithful draw order. "
+            "Proven: 5/6 gate tapes byte-identical widen-on vs widen-off; the runway "
+            "residual is the chr->field_20 transient render-DL pointer for guards "
+            "rendering in the widened strips (prop flags/gameplay proven identical "
+            "per-frame; re-baselined with this opt-out as the reproduction contract) "
+            "[Pathway-3 / FID-0143]");
         /* --faithful is pure retail 4:3 sim with every port heuristic off, so the
          * widen (a port-only render enhancement) stays off there regardless. */
-        enabled = env_enabled && !g_pcFaithfulSim;
+        enabled = !env_disabled && !g_pcFaithfulSim;
     }
     if (!enabled) {
         return 0;
@@ -2438,6 +2503,12 @@ static void bgApplyWidescreenDrawOnlyWiden(bbox2d *player_bbox,
         snap_portals[idx]  = (idx < g_MaxNumRooms) ? (u8)g_BgRoomInfo[idx].portals_to_room_count : 0;
         snap_loaded[idx]   = (idx < g_MaxNumRooms) ? (u8)g_BgRoomInfo[idx].room_loaded_mask : 0;
     }
+
+    /* Capture the SIM VIEW of the draw list (roomid -> bbox) exactly as a
+     * widen-off run would leave it: bgGet2dBboxByRoomId answers from this
+     * snapshot on widen frames (see bgCaptureSimDrawSnapshot). Must happen
+     * before the clear below. */
+    bgCaptureSimDrawSnapshot();
 
     /* Reset visibility + draw list, then re-run admission against the widened rect.
      * The whole BFS (sub_GAME_7F0B5208, the projection degenerate-expand, the
@@ -2538,6 +2609,20 @@ static void bgApplyWidescreenDrawOnlyWiden(bbox2d *player_bbox,
         g_BgRoomInfo[idx].room_neighbor_to_rendered = snap_neighbor[idx];
         g_BgRoomInfo[idx].portals_to_room_count = snap_portals[idx];
         g_BgRoomInfo[idx].room_loaded_mask = snap_loaded[idx];
+    }
+
+    /* Pre-warm the FAITHFUL rooms' matrix slots in faithful draw order (the
+     * pre-widen list order captured above): slot assignment happens lazily at
+     * draw time and records its slot id in the sim-hashed field_36, so without
+     * this the rebuilt list's BFS draw order would assign faithful rooms
+     * different slot ids than a widen-off run. After the pre-warm the actual
+     * draws are pure cache hits. Runs AFTER the sim-state restore so the
+     * setup's draw-only gate sees the faithful g_BgRoomDrawOnly state. */
+    {
+        extern s32 setupRoomTransformationMatrix(s32 room);
+        for (i = 0; i < bgSimDrawSnapCount; i++) {
+            setupRoomTransformationMatrix(bgSimDrawSnapOrder[i]);
+        }
     }
 
     bgWidescreenWidenRanThisFrame = 1;
@@ -4406,6 +4491,26 @@ glabel sub_GAME_7F0B3BC4
 s32 bgGet2dBboxByRoomId(s32 room_id, struct bbox2d *result)
 {
     s32 i;
+
+    /* Widen frames: answer from the pre-widen SIM snapshot so sim-consumed
+     * bboxes (prop screen tests, chrlv) are byte-identical to a widen-off run.
+     * The live (rebuilt) entries carry widened render bboxes and include the
+     * draw-only rooms, neither of which the sim may observe. */
+    if (bgWidescreenWidenRanThisFrame) {
+        if (room_id > 0 && room_id < MAXROOMCOUNT && bgSimDrawSnapValid[room_id]) {
+            result->f[0][0] = bgSimDrawSnapBbox[room_id][0];
+            result->f[0][1] = bgSimDrawSnapBbox[room_id][1];
+            result->f[1][0] = bgSimDrawSnapBbox[room_id][2];
+            result->f[1][1] = bgSimDrawSnapBbox[room_id][3];
+            return 1;
+        }
+        result->f[0][0] = 0.0f;
+        result->f[0][1] = 0.0f;
+        result->f[1][0] = 0.0f;
+        result->f[1][1] = 0.0f;
+        return 0;
+    }
+
     for (i=0; i<g_BgNumberOfRoomsDrawn; i++)
     {
         if (room_id == dword_CODE_bss_8007FFA0[i].roomid)

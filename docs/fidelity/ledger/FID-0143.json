@@ -1,0 +1,43 @@
+{
+  "id": "FID-0143",
+  "title": "Widescreen room-visibility widen (default ON): 16:9 corner room-leak junk replaced by faithful wide-edge geometry, sim provably sandboxed",
+  "class": "port-defect",
+  "surface": "renderer",
+  "priority": "P1",
+  "status": "landed",
+  "suspect": [
+    "src/game/bg.c: bgApplyWidescreenDrawOnlyWiden / bgCaptureSimDrawSnapshot / bgGet2dBboxByRoomId snapshot gate",
+    "src/game/unk_0BC530.c: draw-only room-matrix band (ROOMMTX_DRAWONLY_BAND)"
+  ],
+  "repro": "GE007_NO_WIDESCREEN_VIS_WIDEN=1 A/B at a 16:9 window on Dam pad12 look-L2 (the confirmed corner-leak vantage): default renders the widened side strips as real clipped-aperture geometry; opt-out restores the frustum-fallback junk (white shards / floating fragments). Sim parity: tools/fidelity/tape_regression.sh (dam_forward widescreen_widen_optout variant asserts on==off; runway variant asserts the opt-out reproduces the pre-widen hash).",
+  "evidence": [
+    {
+      "kind": "gate-log",
+      "path": "baselines/tapes/dam_forward_30s.expected.json",
+      "note": "Widen-on reproduces the committed baseline c6d1bd05d67a8902 byte-identically at a 16:9 window; per-frame prop_pool+g_BgRoomInfo region trace = 0 differing lines across 1801 frames. 5 of 6 gate tapes byte-identical widen-on vs widen-off (bunker1/dam_combat_guard6/dam_forward/facility/surface1)."
+    },
+    {
+      "kind": "trace-diff",
+      "path": "baselines/tapes/runway_traverse.expected.json",
+      "note": "Runway delta attributed to the byte: canonicalized per-frame dumps show prop_pool and g_BgRoomInfo identical all 361 frames; the pool-region delta is the transient chr->field_20 render-DL pointer written by chrTickBeams when guards in the widened strips render (lldb write-watchpoint at pool+0x6C4D8, 8 chr records, stride 0x238). Re-baselined with the opt-out variant as the reproduction contract."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/game/bg.c",
+      "note": "Sim sandbox: (1) room_rendered/neighbor/portals/loaded_mask snapshot+restore; (2) sim draw-list queries (bgGet2dBboxByRoomId -> prop screen tests sub_GAME_7F054A64, chrlv) answered from the pre-widen snapshot on widen frames \u2014 proven necessary by the obj-210 camIsPosInScreenBox verdict flip vs the widened room bbox (dam_forward frame 91); (3) draw-only rooms take matrix slots from a reserved band above AMT300 that never writes the sim-hashed field_36 (facility rooms 12/14 slot swap proven and fixed); (4) faithful rooms' slots pre-warmed in faithful (unk1) draw order; (5) the frustum-fallback runs unconditionally so its sim-visible mutation stays window-independent (FID-0014); (6) global-vis-packet disables restored from snapshot (the interpreter itself emits GDL and must NOT be re-run mid-frame: re-running it baked a 4/3 full-frame zoom)."
+    },
+    {
+      "kind": "trace-diff",
+      "path": "baselines/tapes/dam_ak47_sustained.expected.json",
+      "note": "PRE-EXISTING and widen-independent: dam_ak47_sustained is run-to-run unstable in some shell contexts (two different hashes across consecutive identical bare-env widen-OFF runs; also perturbed by --trace-state and by per-frame trace I/O) \u2014 the FID-0014 'run-to-run sim-hash flip' + FID-0131 dead-byte classes on this tape. Working-tree-vs-committed --trace-state is byte-identical (601 records), proving no behavior change from this work. Flaky-tape root-cause (window-timing coupling of the live aspect factor) is tracked as follow-up work, not papered over with a re-record."
+    }
+  ],
+  "history": [
+    {
+      "ts": "2026-07-22T18:00:00Z",
+      "from": "",
+      "to": "landed",
+      "evidence": "Landed default-ON after the sim sandbox reached provable parity: byte-identical tape hashes widen-on vs widen-off on 5/6 gate routes + zero per-frame region divergence on dam_forward; runway re-baselined with byte-level attribution and the opt-out variant contract; visual win validated at real 16:9 (left-strip blue-void/leak replaced by continuous cliff geometry; pad12-L2 corner junk gone; pinned-4:3 byte-identical with widen inert)."
+    }
+  ]
+}

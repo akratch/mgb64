@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1085 flags** found across the source.
+**1087 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -633,6 +633,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_NO_WATCH_RENDER_FIX` | presence | unset | 1 | Restore the pre-fix paused-watch tint (written to the inert cullmode, LE-reversed) and the 1.456f aspect [FID-0068] |
 | `GE007_NO_WATCH_UPSCROLL_FIX` | presence | unset | 1 | Restore the legacy watch up-scroll AND-gate (up-button tap alone no longer snap-scrolls) [FID-0100] |
 | `GE007_NO_WEAPONSTATS_RECOIL_OFFSET_FIX` | presence | unset | 1 | Restore the legacy raw N64 byte-offset reads of WeaponStats recoil fields in the FP recoil-settle path; the fix reads the named RecoilSpeed/RecoilBack/RecoilUp fields (pointer-grown struct) [FID-0123] |
+| `GE007_NO_WIDESCREEN_VIS_WIDEN` | presence | unset | 1 | Disable the widescreen draw-only portal-visibility widen (default ON): on wide (non-4:3) windows the faithful room admission is re-run against the rendered 16:9 extent and the extra wide-edge rooms draw with proper clipped apertures, replacing the frustum-fallback's over-admission junk. SIM-SANDBOXED: sim-consumed state is byte-identical to widen-off — room state snapshot/restored, sim draw-list queries answered from the pre-widen snapshot (bgCaptureSimDrawSnapshot), room-matrix slots for draw-only rooms come from a reserved band that never writes the hashed field_36, and faithful slots are pre-warmed in faithful draw order. Proven: 5/6 gate tapes byte-identical widen-on vs widen-off; the runway residual is the chr->field_20 transient render-DL pointer for guards rendering in the widened strips (prop flags/gameplay proven identical per-frame; re-baselined with this opt-out as the reproduction contract) [Pathway-3 / FID-0143] |
 | `GE007_OBJECT_TRACE` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_BUDGET` | ? |  | 1 |  |
 | `GE007_OBJECT_TRACE_OBJ` | ? |  | 1 |  |
@@ -730,8 +731,10 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SHOOT_OUT_LIGHTS` | ? |  | 1 |  |
 | `GE007_SHOW_AUTOMATION_WINDOW` | ? |  | 1 |  |
 | `GE007_SIM_HASH_DUMP` | ? |  | 1 |  |
-| `GE007_SIM_HASH_EVERY_FRAME` | ? |  | 1 |  |
+| `GE007_SIM_HASH_EVERY_FRAME` | ? |  | 2 |  |
 | `GE007_SIM_HASH_PER_REGION` | ? |  | 1 |  |
+| `GE007_SIM_REGION_DUMP` | ? |  | 2 |  |
+| `GE007_SIM_REGION_DUMP_POOL_FRAMES` | ? |  | 1 |  |
 | `GE007_SKIP_ALPHA_TRIANGLES` | ? |  | 1 |  |
 | `GE007_SKIP_BG_ALLOW_CURRENT` | ? |  | 1 |  |
 | `GE007_SKIP_BG_ROOM` | ? |  | 2 |  |
@@ -1087,7 +1090,6 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_WEBGPU_DUMP_SURFACE` | ? |  | 2 |  |
 | `GE007_WEBGPU_PRESENT` | ? |  | 1 |  |
 | `GE007_WEBGPU_TRACE_VIEWPORT` | ? |  | 1 |  |
-| `GE007_WIDESCREEN_VIS_WIDEN` | presence | unset | 1 | OPT-IN (default OFF): widescreen draw-only portal-visibility widen — on wide (non-4:3) windows, re-run the faithful room admission against the rendered 16:9 extent and draw the extra wide-edge rooms with proper clipped apertures instead of the frustum-fallback over-admission. DEFAULT-OFF because the second traversal's mutation of per-frame portal scratch is not yet fully checkpointed: prop/door visibility reads it post-pass, diverging the deterministic sim (prop_pool region) at 16:9 vs 4:3 — see the tape-gate A/B on dam_forward_30s (widen-on hash e61d31e5c302d1cb vs baseline c6d1bd05d67a8902; opt-out reproduces the baseline byte-identically). Flip to default-ON only after the widen pass is fully sandboxed and per-frame prop_pool byte-identity 16:9-vs-4:3 is proven across all committed tapes [Pathway-3] |
 | `GE007_WINDOW_HEIGHT` | int | 810 | 1 | Initial SDL window height in pixels. |
 | `GE007_WINDOW_MODE` | enum | PLATFORM_WINDOW_MODE_WINDOWED | 1 | SDL display mode: windowed, borderless, or exclusive. |
 | `GE007_WINDOW_SIZE` | ? |  | 1 |  |
