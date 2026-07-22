@@ -79,6 +79,7 @@
     "compare_max_buffer_len": 200,
     "description": "Dam regular-glass pad-10004 impact-aligned visual checkpoint. This is the pane/crack/decal companion to the first-active RNG visual route: stock frame 2437 and native frame 113 have full health, inactive damage/health HUD timers, active shards 90 -> 90, first shard timer 6 -> 6, exact first-active shard-sample parity from the shared RNG call seed, and matched world bullet-impact state within the 5.0-unit center gate. Use this route when investigating pane break, crack/decal presentation, and ordering; keep dam_regular_glass_shatter_rng_visual_probe as the strict timer-1 first-active shard-state/projection guard.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

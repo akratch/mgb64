@@ -85,6 +85,7 @@
     "compare_max_buffer_len": 200,
     "description": "Milestone-5 Dam regular-glass actor-clean visual candidate. Fresh native/stock scouting ranks pad 10001 as the least actor-contaminated regular pane and proves this late-warp/late-fire pose can shatter pad 10001 with matching health, active-shard count, shard timer, and visible actor set. It is still a candidate, not a promoted pixel gate: the best organic checkpoint remains actor-contaminated by chr10 action/position drift and a chr12 onscreen-flag mismatch, so the pre-pixel actor guard is expected to reject it until actor composition is isolated.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

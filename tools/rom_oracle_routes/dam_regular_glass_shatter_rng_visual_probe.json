@@ -75,6 +75,7 @@
     "compare_max_buffer_len": 200,
     "description": "Dam regular-glass first-active visual checkpoint for renderer-isolation work. It uses the same pad-103 force-player pose as the active-shard visual route, but takes the screenshot at the first active shard frame and reuses the RNG-isolation route's native call-level seed compensation so stock/native first active glass.sample data must match exactly before pixels are written. This route deliberately proves shard-renderer isolation, not actor-clean final visual parity: the original pad-10004 active-shard route remains the actor-composition/presentation backlog.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

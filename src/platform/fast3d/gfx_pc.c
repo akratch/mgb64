@@ -1629,9 +1629,16 @@ static bool gfx_apply_material_texture_filter_policy(bool linear_filter)
  * so the GPU's anisotropic sampling engages; gfx_webgpu_shader.c correspondingly
  * emits a hardware textureSample instead of the LOD-0 n64Filter3. Aniso<=1 is
  * byte-identical to prior behavior. */
+static bool gfx_backend_is_webgpu_active(void); /* defined after gfx_rapi below */
+
 static bool gfx_sampler_linear_for_material(bool linear_filter, bool shader_n64_filter)
 {
-    if (shader_n64_filter && g_pcTextureAnisotropy > 1) {
+    /* WebGPU-ONLY: only gfx_webgpu_shader.c gates its in-shader n64Filter3 on
+     * aniso>1. The GL and Metal shader generators always emit the triangular
+     * filter, which is written for NEAREST taps — handing them a linear(+aniso)
+     * sampler here would double-filter every 3-point material on the fallback
+     * backends. They keep the pre-aniso routing unconditionally. */
+    if (shader_n64_filter && g_pcTextureAnisotropy > 1 && gfx_backend_is_webgpu_active()) {
         return linear_filter;
     }
     return linear_filter && !shader_n64_filter;
@@ -2853,6 +2860,16 @@ static void gfx_drawclass_bbox_trace_one(enum DrawClass cls) {
 /* Forward declaration — gfx_rapi is initialized in gfx_init() */
 extern struct GfxRenderingAPI gfx_opengl_api;
 static struct GfxRenderingAPI *gfx_rapi;
+
+/* Whether the active backend is WebGPU (the only backend whose shader
+ * generator understands the aniso>1 sampler re-routing). NULL-safe: before
+ * gfx_init picks a backend this reports false, which keeps every caller on
+ * the faithful (pre-aniso) path. */
+static bool gfx_backend_is_webgpu_active(void)
+{
+    extern struct GfxRenderingAPI gfx_webgpu_api;
+    return gfx_rapi == &gfx_webgpu_api;
+}
 
 #define TEXTURE_CACHE_MAX_SIZE 1024
 

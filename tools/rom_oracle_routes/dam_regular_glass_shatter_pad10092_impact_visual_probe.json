@@ -108,6 +108,7 @@
     "compare_max_buffer_len": 200,
     "description": "Dam regular-glass pad-10092 impact-aligned route seed. This is the actor-light pane/decal successor candidate to the pad-10004 impact route, not a final pixel-parity oracle. Stock uses crosshair 160:120; native uses fire start 68 plus crosshair 159.00:122.50, found by impact-sequence scouting. The selected world impact at stock frame 2541 and native frame 124 satisfies the 5.0 world-unit center gate and <=1.0px projected-center gate, while the sampled world-impact type sequence matches [1,1,1,1] on both sides. Actor composition remains report-only: chr7 onscreen and chr44 room/position drift are expected, so use glass_pad10092_impact_visual_regression.sh rather than promoting broad screenshot deltas directly.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

@@ -83,6 +83,7 @@
     "compare_impact_position_points": "center",
     "description": "Dam regular glass post-shatter stock/native visual checkpoint. Native uses the deterministic force-player hook to hold the same absolute +Z pose, camera height, and pad anchor as the stock Ares force-player pose, forces the same raised/left crosshair as stock through the shot window, disables route-only autoaim before the shot so the nearby chr12 guard is not killed by the direct-boot setup, and seeds the first shard-size RNG draw to match the renderer-isolation route. Stock keeps the forced pose through the screenshot, forces the same crosshair, fires on the stock global timer, and repeats the pre-shatter gameplay-frame RNG seed on the clean shot frame. The health/HUD guard and chr12 world-position guard fail before pixel artifacts are written when combat phase or foreground actor composition drift. This route is an evidence route rather than a promoted pixel gate: stock/native shard timers/rotation phase and Bond health are not currently matched at the screenshot checkpoint. Keep future route-origin misses, lifecycle phase gaps, actor-composition drift, health/HUD phase gaps, and renderer defects separate.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

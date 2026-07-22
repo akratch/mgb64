@@ -28,6 +28,7 @@
   "compare_max_buffer_len": 200,
   "description": "Dam regular glass renderer-isolation checkpoint. This route keeps the same pad-103 shot and same-pose stock/native setup as the visual probe, disables route-only native autoaim before the shot so the nearby chr12 guard is not killed by the direct-boot setup, then seeds native immediately before the first shard-size RNG draw so first active glass.sample records must match stock exactly. It is a diagnostic renderer gate, not proof that stock/native gameplay RNG timing is aligned.",
   "native_config": {
+    "Video.AnisotropicFiltering": 1,
     "Input.ViewmodelSway": 0,
     "Video.Bloom": 0,
     "Video.Brightness": 0,

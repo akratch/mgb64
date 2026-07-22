@@ -12,6 +12,7 @@
     "GE007_INTRO_CAMERA_INDEX": "4"
   },
   "native_config": {
+    "Video.AnisotropicFiltering": 1,
     "Video.FovY": 60,
     "Video.RenderScale": 1,
     "Video.WindowWidth": 640,

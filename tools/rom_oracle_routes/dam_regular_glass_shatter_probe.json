@@ -30,6 +30,7 @@
   "compare_max_buffer_len": 200,
   "description": "Dam regular glass bullet-shatter stock/native state checkpoint near pad 103. Native uses the deterministic shatter repro, forces the same +Z facing as stock, and disables route-only autoaim before the shot so the nearby chr12 guard is not killed by the direct-boot setup; stock uses a forced pose plus gameplay-phased fire input.",
   "native_config": {
+    "Video.AnisotropicFiltering": 1,
     "Input.ViewmodelSway": 0,
     "Video.Bloom": 0,
     "Video.Brightness": 0,

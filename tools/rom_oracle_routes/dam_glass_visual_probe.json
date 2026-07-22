@@ -73,6 +73,7 @@
     ],
     "description": "Dam glass corridor stock/native visual checkpoint at pad 100 using timer-keyed screenshots, native direct-gameplay warp, and the stock direct-position oracle.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

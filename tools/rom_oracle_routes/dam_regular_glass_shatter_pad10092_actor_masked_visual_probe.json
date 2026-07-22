@@ -95,6 +95,7 @@
     "compare_max_buffer_len": 200,
     "description": "Dam regular-glass actor-masked visual fixture for the best current actor-light pane. Pad 10092 yaw 315 distance 650 has stock/native glass state parity at stock frame 2541 and native trace frame 126: target pane destroyed, active count 88, first position delta 0, and prop position delta 0. The stricter first-active timer-1 glass proof lives in glass_active_visual_isolation_regression.sh; this route is intentionally not an actor-clean pixel route. chr44 position drift and chr7 onscreen/action drift are expected, so the visual regression wrapper runs no-compare capture and then applies explicit actor/viewmodel masks while preserving unmasked ROI metrics.",
     "native_config": {
+        "Video.AnisotropicFiltering": 1,
         "Input.ViewmodelSway": 0,
         "Video.Bloom": 0,
         "Video.Brightness": 0,

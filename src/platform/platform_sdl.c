@@ -2882,6 +2882,9 @@ static const struct {
     { "Input.MinimapEnabled",        "0" },
     { "Video.FogDensity",            "1.0" },    /* R1: original N64 fog thickness (see --faithful note) */
     { "Video.SmoothSky",             "0" },      /* R5: original N64 5-bit sky band                      */
+    { "Video.AnisotropicFiltering",  "1" },      /* FID-0142: keep the N64 3-point filter (aniso>1 swaps
+                                                    3-point materials to hardware bilinear game-wide,
+                                                    which contradicts this preset's byte-faithful look) */
 };
 
 int platformApplyFaithfulHdPreset(void)
