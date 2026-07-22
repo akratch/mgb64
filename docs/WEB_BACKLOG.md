@@ -111,6 +111,15 @@ items reconciled here):
     ASYNCIFY+growth WebGPU build, and buys nothing over the ring while the synth
     stays sim-coupled. True sub-10 ms parity would need decoupling the synth from
     the 60 Hz sim tick (a large fidelity risk); not warranted.
+  - **FID-0141 low-FPS residual closed:** the live controller's 368-sample base
+    was correct only while the render/audio pump sustained 60 Hz; at 40/30 fps
+    its fixed point fell to roughly 33/17 ms, stripping the jitter cushion on
+    weak hardware. A measured 1/4-rate pump-interval EMA now raises only the
+    production base (bounded by the existing synth maximum), while 60 Hz stays
+    exactly 368 and deterministic replay never samples time. Real 30 fps native
+    A/B: mean pre-enqueue occupancy 16.27 → 49.35 ms, zero drops/underruns on
+    both sides. Durable model + trace evidence:
+    `docs/fidelity/derivations/FID-0141-audio-pump-ema.md`.
 - **WEB-012 near-term half** → PERF-010 `e79d871`+`97180bd`:
   `Audio.QueueTargetFrames` LIVE knob (platform-aware max). Worklet half still
   deferred (→ PERF-039).

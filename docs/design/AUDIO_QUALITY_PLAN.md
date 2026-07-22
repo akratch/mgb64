@@ -5,7 +5,10 @@
 > faithfulness fix. H2 (envelope/pole sample-ordering) and H3 (per-instrument
 > bank loop/tuning) are still open. The current plan of record for closing them
 > is `docs/BACKLOG_v0.4.0.md` milestone M5 (Audio polish); treat the body below
-> as historical investigation record, not a live task list.
+> as historical investigation record, not a live task list. Output robustness
+> is separately closed: FID-0141's measured pump-interval EMA preserves the
+> configured live queue cushion at 40/30 fps without changing the 60 Hz or
+> deterministic paths (`docs/fidelity/derivations/FID-0141-audio-pump-ema.md`).
 
 # Audio Quality Plan — "Crappy MIDI" Timbre Investigation & Solution Trace
 

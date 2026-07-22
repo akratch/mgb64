@@ -1089,7 +1089,11 @@ arithmetic) — read it while there.
 ## M5 — Audio polish
 
 Audio is in strong shape (no crackle/underrun bugs, queue-mode output, authentic
-polyphase resampler, volume buses wired, RAW16 byte-swap fixed). What remains:
+polyphase resampler, volume buses wired, RAW16 byte-swap fixed). FID-0141's final
+low-FPS risk is also closed: the live queue controller now follows a measured
+pump-interval EMA, preserving its ~50 ms cushion at 40/30 fps while remaining
+exactly at the old 368-sample base at 60 Hz; see
+`docs/fidelity/derivations/FID-0141-audio-pump-ema.md`. What remains:
 
 ### M5.1 — Resolve H2: envelope/pole sample-ordering (last open DSP question)
 **P2 · M**

@@ -4,7 +4,7 @@
   "class": "port-defect",
   "surface": "audio",
   "priority": "P2",
-  "status": "landed",
+  "status": "verified",
   "suspect": [
     "src/platform/audi_port.c (portAudioSizeFrame: min_samples = align16(g_FrameSize/2) = 368 > consumption 367.5)",
     "src/platform/audi_port.c:379 (g_FrameSize = outputRate*2/60 = 736, sized for retail's 30 Hz task but pumped at 60 Hz)",
@@ -37,6 +37,10 @@
     {
       "kind": "counter-log",
       "path": "src/platform/web_audio_worklet.c -- WEB-069 parity fix, measured on the real web build via tools/web/webcap.mjs with per-second worklet telemetry (ring depth, underruns, output peak amplitude). The AudioWorklet backend replaces the main-thread ScriptProcessorNode: ctx created at 22050 Hz (browser honoured it, no resampling), audio confirmed flowing (peak 0.3-0.48 of full scale throughout), ring settles at a steady ~55 ms (matching native's queue) with the 128-sample render quantum (~2.7 ms) replacing the SPN's 2048-sample (~43 ms) buffer. Idle steady state: under=0 for a full 24 s run. Device-side latency ~136 ms (SPN queue + buffer) -> ~58 ms (ring), i.e. native parity. Big multi-second main-thread stalls (level load / movement pipeline compiles, headless-amplified) still underrun on either path -- the ring, like the old SPN buffer, cannot bridge a stall longer than itself; during load the sim is paused so silence is the correct behaviour. Web-only, behind webAudioOutputActive(), SPN kept as fallback; native untouched (input_tape + port_streets_determinism_regression byte-identical); web_boot_smoke + web_frame_probe green."
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/derivations/FID-0141-audio-pump-ema.md"
     }
   ],
   "history": [
@@ -52,6 +56,13 @@
       "from": "landed",
       "to": "landed",
       "evidence": "Skeptical-review amendment. PROVENANCE: the web-side numbers (~136->~58 ms, worklet ring depth, underrun=0, output peak 0.3-0.48) were taken with session-local instrumentation that is NOT in the committed tree (the committed worklet reports only {ring,under}; nothing consumes under; webcap.mjs has no telemetry hooks) \u2014 they are honest but not re-derivable. SCOPE: 'native parity' holds for the device-side component only (~58 vs ~58 ms); the web pipeline keeps a deliberately deeper main-thread queue target (mean ~93 ms vs native ~58 ms end-to-end) \u2014 WEB_BACKLOG.md wording is correct, the commit title over-generalizes. FIXES since: init-order bug (backend handle committed before the fallible module-load section could strand a session on a phantom backend with permanent silence while the working SDL device idles) \u2014 handle now assigned only after all synchronous steps succeed, ctx closed on failure; async addModule rejection now leaves the backend committed-but-silent instead of flipping active() to 0 and driving SDL calls against device 0 every frame; ring overflow now drops oldest (not newest) samples; occupancy stat is stamped with audio-thread time at send (removes main-thread delivery-jank inflation during stall recovery); boot mute snap hoisted out of the SDL-only block so GE007_MUTE mutes the worklet path too. OPEN RISK (unfixed, needs its own validation): the controller base 368 hard-codes the 60 fps pump \u2014 below ~40 fps the jitter cushion thins 3-4x vs the old 736 (underruns on weak hardware); fix direction is a measured pump-interval EMA."
+    },
+    {
+      "ts": "2026-07-22T20:56:25Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/derivations/FID-0141-audio-pump-ema.md",
+      "note": "Closed the skeptical-review low-FPS residual with a measured pump-interval EMA. Real Release/native 30 fps A/B over the final 120 traced pumps: default base=736, queue_before mean=49.35 ms versus GE007_NO_AUDIO_PUMP_EMA base=368, mean=16.27 ms; both zero drops/underruns. At 60 fps the default base stayed exactly 368 for all final 120 pumps. ROM-free audio_queue_controller pins 60/40/30 convergence, recovery, max clamp, fixed-base negative control, and real portAudioSizeFrame wiring. Canonical WebGPU/Emscripten build + browser boot smoke passed; tape_regression 7/7 plus variants byte-exact."
     }
   ]
 }

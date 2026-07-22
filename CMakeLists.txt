@@ -888,6 +888,7 @@ if(BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}/tests/test_audio_fx_params.c"
         "${CMAKE_SOURCE_DIR}/tests/test_audio_fx_params_stubs.c"
         "${CMAKE_SOURCE_DIR}/src/platform/audi_port.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/audio_queue_controller.c"
     )
     # The global add_definitions() (CMakeLists:1578-ish) runs after this
     # block, so NATIVE_PORT (audi_port.c's compile gate) is applied
@@ -903,6 +904,29 @@ if(BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}/src/platform"
     )
     add_test(NAME audio_fx_params COMMAND test_audio_fx_params)
+
+    # FID-0141: the live audio occupancy controller measures its actual pump
+    # cadence so weak machines retain the configured queue cushion below 40 fps.
+    # Pure ROM-free model: pins 60/40/30 fps convergence, max clamping, recovery,
+    # and a fixed-60-base negative control that reproduces the thin cushion.
+    add_executable(test_audio_queue_controller
+        "${CMAKE_SOURCE_DIR}/tests/test_audio_queue_controller.c"
+        "${CMAKE_SOURCE_DIR}/tests/test_audio_fx_params_stubs.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/audio_queue_controller.c"
+        "${CMAKE_SOURCE_DIR}/src/platform/audi_port.c"
+    )
+    target_compile_definitions(test_audio_queue_controller PRIVATE
+        NONMATCHING NATIVE_PORT PORT_FIXME_STUBS _LANGUAGE_C
+        VERSION_US LANG_US REFRESH_NTSC LEFTOVERDEBUG
+        LEFTOVERSPECTRUM BUGFIX_R0 BYTEMATCH SDL_MAIN_HANDLED
+        PORT_AUDIO_CONTROLLER_TEST_HOOKS)
+    target_include_directories(test_audio_queue_controller PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/include/PR"
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/src/platform"
+    )
+    add_test(NAME audio_queue_controller COMMAND test_audio_queue_controller)
 
     # Sticky-projectile deposit-motion endpoint pull-back — ROM-free unit test
     # (FID-0065): retail clamps the collision endpoint + impact to bg_hit-0.1*travel

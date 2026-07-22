@@ -15,7 +15,9 @@
 #include <string.h>
 #include "audi.h"
 #include "audio_pc.h"
+#include "audio_queue_controller.h"
 #include "mixer.h"
+#include "port_env.h"
 #include "snd.h"
 
 /* libaudio.h is now ungated, all types available via ultra64.h */
@@ -102,6 +104,10 @@ static u32       g_NominalFrameSizeRemainder;
 static u32       g_NominalFrameSizeQuantum;
 static u32       g_NominalFrameSizeAccumulator;
 static u32       g_MaxFrameSize;
+static PortAudioPumpRate g_AudioPumpRate;
+static u32       g_AudioPumpLastCount;
+static u32       g_AudioPumpBaseSamples;
+static s32       g_AudioPumpLastCountValid;
 static s32       g_CommandLength;
 static u32       g_CurrentAcmdList;
 static u32       g_AudioFrameCount;
@@ -134,6 +140,46 @@ f32 g_portAudioQueueTargetFrames = 1.5f;
 
 static u32 portAudioAlign16(u32 samples) {
     return samples & ~0xfU;
+}
+
+static void portAudioResetPumpRate(void) {
+    const u32 nominal = portAudioAlign16(g_FrameSize / 2);
+    portAudioPumpRateReset(&g_AudioPumpRate, nominal);
+    g_AudioPumpLastCount = 0;
+    g_AudioPumpBaseSamples = nominal;
+    g_AudioPumpLastCountValid = 0;
+}
+
+static u32 portAudioMeasurePumpBase(u32 max_samples) {
+    const u32 now = osGetCount();
+    const u32 nominal = portAudioAlign16(g_FrameSize / 2);
+
+    if (!g_AudioPumpLastCountValid) {
+        g_AudioPumpLastCount = now;
+        g_AudioPumpLastCountValid = 1;
+        g_AudioPumpBaseSamples = nominal;
+        return nominal;
+    }
+
+    g_AudioPumpBaseSamples = portAudioPumpRateObserve(
+        &g_AudioPumpRate,
+        now - g_AudioPumpLastCount, /* unsigned subtraction handles counter wrap */
+        osClockRate,
+        OUTPUT_RATE,
+        nominal,
+        max_samples);
+    g_AudioPumpLastCount = now;
+    return g_AudioPumpBaseSamples;
+}
+
+static int portAudioPumpRateAdaptiveEnabled(void) {
+    static int disabled = -1;
+    if (disabled < 0) {
+        disabled = port_env_bool(
+            "GE007_NO_AUDIO_PUMP_EMA", 0,
+            "FID-0141 negative control: restore the fixed 60 Hz audio-controller base, which thins the queue cushion below 40 fps.");
+    }
+    return !disabled;
 }
 
 static s16 portAudioClampS16(s32 value) {
@@ -388,6 +434,7 @@ void amCreateAudioManager(ALSynConfig *alconf) {
         exactFrameNumerator - (g_NominalFrameSizeBase * MAYBE_FRAME_RATE);
     g_NominalFrameSizeQuantum = 0x10 * MAYBE_FRAME_RATE;
     g_NominalFrameSizeAccumulator = 0;
+    portAudioResetPumpRate();
     g_LibaudioLowPassState[0] = 0;
     g_LibaudioLowPassState[1] = 0;
     g_LibaudioLowPassInitialized = 0;
@@ -466,6 +513,10 @@ void portAudioPrefillQueue(void) {
         portAudioFrame();
         i++;
     }
+    /* The tight prefill loop and the following synchronous level load are not
+     * rendered-frame pump intervals. Re-prime so neither contaminates the live
+     * low-FPS estimator when gameplay resumes. */
+    portAudioResetPumpRate();
 #endif
 }
 
@@ -522,7 +573,13 @@ static void portAudioFrameTail(AudioInfo *info);  /* defined below */
  * Treat the SDL queue as explicit occupancy, not a fake DMA remainder. Keep the
  * queue near a modest target and scale production linearly:
  * - below target: nudge upward toward g_MaxFrameSize
- * - above target: reduce below realtime to drain */
+ * - above target: reduce below realtime to drain
+ *
+ * FID-0141 residual: the production base follows a 1/4-rate EMA of the actual
+ * wall-clock pump interval, clamped to [60 Hz nominal, synth maximum]. Thus a
+ * weak machine sustaining 40/30 fps keeps the same configured occupancy cushion
+ * instead of balancing at target minus 2*(device consumption - 60 Hz base).
+ * The deterministic branch never samples the wall clock and remains unchanged. */
 static void portAudioSizeFrame(AudioInfo *info) {
     if (g_deterministic) {
         /* Deterministic mode still needs the exact average output rate.
@@ -546,8 +603,8 @@ static void portAudioSizeFrame(AudioInfo *info) {
          *       target but at target + 2*(base - consumption) = target + ~737
          *       samples = target + 33 ms.  So the queue sat a full extra frame above
          *       the configured target forever (modelled + measured: 83 ms actual vs
-         *       a 50 ms target).  Base it on realtime (368) and the fixed point IS
-         *       the target.
+         *       a 50 ms target).  Base it on the measured realtime pump consumption
+         *       (368 at 60 Hz) and the fixed point IS the target.
          *
          *   (b) The drain floor was align16(g_FrameSize/2) = 368, which is 0.5
          *       samples ABOVE consumption (367.5) -- so once the queue was full the
@@ -557,21 +614,21 @@ static void portAudioSizeFrame(AudioInfo *info) {
          *       Drop the floor one 16-sample quantum below realtime (352 < 367.5) so
          *       the controller has ~15.5 samples/pump of drain authority.
          *
-         * Net: base at realtime + floor below realtime = the queue converges to the
-         * configured Audio.QueueTargetFrames target and holds there.  Deterministic
-         * mode takes the branch above and is untouched (tape gate byte-identical). */
+         * Net: measured realtime base + floor below 60 Hz realtime = the queue
+         * converges to the configured Audio.QueueTargetFrames target and holds
+         * there at 60/40/30 Hz. Deterministic mode takes the branch above and is
+         * untouched (tape gate byte-identical). */
         const s32 realtime_60hz = (s32)portAudioAlign16(g_FrameSize / 2);
         const s32 target_samples = (s32)((f32)g_FrameSize * g_portAudioQueueTargetFrames);
-        const s32 full_samples = realtime_60hz;                  /* (a) base at realtime, not 2x */
         s32 min_samples = realtime_60hz - 0x10;                  /* (b) floor below realtime */
         const s32 max_samples = (s32)portAudioAlign16(g_MaxFrameSize);
+        const s32 full_samples = portAudioPumpRateAdaptiveEnabled()
+            ? (s32)portAudioMeasurePumpBase((u32)max_samples)
+            : realtime_60hz; /* FID-0141 negative control: fixed 60 Hz base */
 
         if (min_samples < 0x10) min_samples = 0x10;
-        s32 chosen = full_samples + ((target_samples - queued_samples) / 2);
-
-        if (chosen < min_samples) chosen = min_samples;
-        if (chosen > max_samples) chosen = max_samples;
-        info->frameSamples = (s16)chosen;
+        info->frameSamples = (s16)portAudioQueueChooseSamples(
+            full_samples, queued_samples, target_samples, min_samples, max_samples);
     }
 
     /* Always keep the synth input aligned. */
@@ -783,7 +840,7 @@ static void portAudioFrameTail(AudioInfo *info) {
 
             if (s_trace_fp) {
                 fprintf(s_trace_fp,
-                        "{\"frame\":%d,\"samples\":%d,\"queue_before\":%u,\"queue_after\":%u,"
+                        "{\"frame\":%d,\"samples\":%d,\"pump_base_samples\":%u,\"queue_before\":%u,\"queue_after\":%u,"
                         "\"target_bytes\":%u,\"soft_target_bytes\":%u,\"limit_bytes\":%u,\"primed\":%u,"
                         "\"fx_type\":%u,\"fx_custom\":%u,"
                         "\"output_peak\":%u,\"output_rail_hits\":%u,"
@@ -814,7 +871,7 @@ static void portAudioFrameTail(AudioInfo *info) {
                         "\"sndp_volume_updates\":%u,\"sndp_pan_updates\":%u,"
                         "\"sndp_pitch_updates\":%u,\"sndp_fx_updates\":%u,"
                         "\"sndp_release_events\":%u,\"sndp_decay_events\":%u}\n",
-                        s_frameCount, info->frameSamples, qb, post_queue,
+                        s_frameCount, info->frameSamples, g_AudioPumpBaseSamples, qb, post_queue,
                         controller_target_bytes, soft_target_bytes, queue_limit, s_queuePrimed,
                         (unsigned int)g_portAudioFxType,
                         (unsigned int)g_portAudioFxCustom,
@@ -867,8 +924,8 @@ static void portAudioFrameTail(AudioInfo *info) {
             }
 
             if (s_frameCount % 120 == 1) {
-                printf("[AUDIO] f=%d samp=%d q=%uB [%u-%u] target=%uB soft=%uB limit=%uB under=%u over=%u drop=%u post=%uB req=%uB enq=%uB dropB=%uB peak=%u rails=%u sfxStart=%u sfxActive=%u sfxPeak=%u\n",
-                       s_frameCount, info->frameSamples, qb,
+                printf("[AUDIO] f=%d samp=%d base=%u q=%uB [%u-%u] target=%uB soft=%uB limit=%uB under=%u over=%u drop=%u post=%uB req=%uB enq=%uB dropB=%uB peak=%u rails=%u sfxStart=%u sfxActive=%u sfxPeak=%u\n",
+                       s_frameCount, info->frameSamples, g_AudioPumpBaseSamples, qb,
                        s_minQueue, s_maxQueue, controller_target_bytes, soft_target_bytes, queue_limit,
                        s_underruns, s_overTarget, drop_count, post_queue,
                        ai_stats.requested_bytes, ai_stats.accepted_bytes,
@@ -886,6 +943,26 @@ static void portAudioFrameTail(AudioInfo *info) {
      * this frame. */
     g_lastInfo = info;
 }
+
+#ifdef PORT_AUDIO_CONTROLLER_TEST_HOOKS
+/* ROM-free wiring hooks: tests drive the REAL portAudioSizeFrame call through
+ * stubbed osGetCount/osAiGetLength. Kept out of production symbol tables. */
+void portAudioTestConfigureQueueController(u32 frame_size, u32 max_frame_size) {
+    g_FrameSize = frame_size;
+    g_MaxFrameSize = max_frame_size;
+    portAudioResetPumpRate();
+}
+
+s32 portAudioTestSizeFrameSamples(void) {
+    AudioInfo info = {0};
+    portAudioSizeFrame(&info);
+    return info.frameSamples;
+}
+
+u32 portAudioTestGetPumpBaseSamples(void) {
+    return g_AudioPumpBaseSamples;
+}
+#endif
 
 /* Export the nominal per-game-frame sample count so the AI stub can derive
  * a queue-limit safety net without duplicating PAL/NTSC math. */

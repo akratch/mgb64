@@ -16,6 +16,16 @@
 #include "snd.h"
 
 int g_deterministic = 0;
+u64 osClockRate = 46875000u;
+static u32 s_testOsCount;
+static u32 s_testQueuedAudioBytes;
+u32 osGetCount(void) { return s_testOsCount; }
+void portAudioTestStubSetCount(u32 value) { s_testOsCount = value; }
+void portAudioTestStubSetQueuedAudioBytes(u32 value) { s_testQueuedAudioBytes = value; }
+int port_env_bool(const char *name, int default_on, const char *help) {
+    (void)name; (void)help;
+    return default_on;
+}
 
 void alUnlink(ALLink *element) { (void)element; }
 void alLink(ALLink *element, ALLink *after) { (void)element; (void)after; }
@@ -33,7 +43,7 @@ Acmd *alAudioFrame(Acmd *cmdList, s32 *cmdLen, s16 *outBuf, s32 outLen) {
 void mixerInit(void) {}
 void mixerGetStats(PortMixerStats *out) { (void)out; }
 
-u32 osAiGetLength(void) { return 0; }
+u32 osAiGetLength(void) { return s_testQueuedAudioBytes; }
 s32 osAiSetNextBuffer(void *buf, u32 size) { (void)buf; (void)size; return 0; }
 void osCreateMesgQueue(OSMesgQueue *mq, OSMesg *msg, s32 count) {
     (void)mq; (void)msg; (void)count;
