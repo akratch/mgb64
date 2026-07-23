@@ -105,6 +105,7 @@ BASE_CONFIG_OVERRIDES=(
     "Video.WindowX=-1"
     "Video.WindowY=-1"
     "Video.WindowMode=windowed"
+    "Video.HiDPI=0"
     "Video.RenderScale=1"
     "Video.MSAA=0"
     "Video.FovY=60"
@@ -170,6 +171,7 @@ run_capture() {
                 GE007_NO_VSYNC=1 \
                 GE007_BACKGROUND=1 \
                 GE007_NO_INPUT_GRAB=1 \
+                GE007_FIDELITY_CAPTURE=1 \
                 GE007_DISABLE_LEVEL_INTRO=1 \
                 "$BINARY" \
                 --savedir "$save_dir" \

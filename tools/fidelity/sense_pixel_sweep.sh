@@ -247,7 +247,7 @@ fi
 # ---------------------------------------------------------------------------
 DETERMINISM_ENV=(env -u GE007_DEBUG SDL_AUDIODRIVER=dummy GE007_MUTE=1
     GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1
-    GE007_NO_INPUT_GRAB=1)
+    GE007_NO_INPUT_GRAB=1 GE007_FIDELITY_CAPTURE=1)
 
 DIVERGED=0
 ROUTE_SKIPS=""
@@ -282,6 +282,15 @@ run_route() {
     # the diff. movement_oracle_capture.sh applies these the same way.
     local cfg_lines; cfg_lines="$(python3 tools/rom_oracle_route.py native-config "$route" 2>/dev/null)" || true
     local cfg_args=(); while IFS= read -r line; do [[ -n "$line" ]] && cfg_args+=(--config-override "$line"); done <<<"$cfg_lines"
+    # FID-0135: source pixels must use the same 4:3, DPI-pinned presentation
+    # boundary as the stock PPM. Put these after route config so the common
+    # oracle contract cannot be accidentally overridden.
+    cfg_args+=(
+        --config-override Video.WindowWidth=640
+        --config-override Video.WindowHeight=480
+        --config-override Video.WindowMode=windowed
+        --config-override Video.HiDPI=0
+    )
     # Level pin: a route reaches its checkpoint via a direct --level boot unless it
     # declares native_menu_boot (frontend-driven). WITHOUT --level the binary boots
     # to the front menu, the gameplay game-timer never advances, and the timer-keyed

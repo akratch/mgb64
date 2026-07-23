@@ -4,7 +4,7 @@
   "class": "instrumentation-gap",
   "surface": "infra",
   "priority": "P2",
-  "status": "triaged",
+  "status": "verified",
   "suspect": [
     "src/platform/platform_sdl.c:737 (platformResampleFramebufferToScreenshot, aspect-preserving fit into SCREENSHOT_W/H 640x480)",
     "src/platform/platform_sdl.c:2036 (Video.WindowWidth/Height default 1440x810 = 16:9)"
@@ -14,6 +14,14 @@
     {
       "kind": "pixel-diff",
       "path": "src/platform/platform_sdl.c:737 \u2014 Measured bars (rows whose max channel <= 8 from each edge) on 640x480 captures of the registered Dam establishing intro (GE007_INTRO_CAMERA_INDEX=5, --screenshot-frame 60): native at the DEFAULT window (1440x810 = 16:9) = top 75 / bottom 75; the SAME build at GE007_WINDOW_WIDTH=1440 GE007_WINDOW_HEIGHT=1080 (4:3) = top 20 / bottom 20, exactly matching stock-ares (a_estab_pad273_stock_f1400.ppm, 20/20). Decomposition of the 75: capture letterbox (480 - 640/(16/9))/2 = 60 px, plus the engine's own retail 10/240 viewport band scaled into the 360-row content = 15 px. Gameplay (no intro) shows the same 75 vs 20, so this is not cutscene-specific. Registration fit (gradient-correlation, stock warped to native): 16:9 needs vertical scale 0.75 (corr 0.417); 4:3 needs the IDENTITY sy=sx=1.000, ty=tx=0 (corr 0.683). Content mean-abs-diff vs stock 33.27 -> 21.23."
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/platform_sdl.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "tools/regression_test.sh"
     }
   ],
   "history": [
@@ -30,6 +38,34 @@
       "to": "triaged",
       "evidence": "Review-fix round 2 (fix/tier1-residuals): pinned tools/rom_oracle_routes/dam_monitor_probe_visual.json and tools/rom_oracle_routes/dam_r2_establishing_visual.json to a 4:3 native_config window (already Video.WindowWidth=640/Video.WindowHeight=480 in both, predating this finding) as the durable per-route fix for the two stock-comparison routes; native-vs-native regression routes/baselines were left untouched (common-mode, unaffected).",
       "note": "Backlogging two deferred instrumentation recommendations from this round's review so they are not lost, NOT implemented here: (a) emit capture content-rect metadata (offset_x/offset_y/scaled_w/scaled_h) alongside every screenshot, plus a de-letterbox step in the measurement scripts, so already-recorded 16:9 captures stay re-analyzable without a re-capture; (b) a fail-closed GE007_FIDELITY_CAPTURE=1 mode where a non-4:3 drawable at capture time is a hard error, replacing the current advisory one-shot stderr disclosure (a3acb93). Both remain open follow-up work against this record."
+    },
+    {
+      "ts": "2026-07-23T02:01:11Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "src/platform/platform_sdl.c",
+      "note": "The fixed screenshot canvas is 640x480, but platformSaveScreenshot aspect-preserving-resamples the actual drawable. At the default isolated-config window 1440x810, this adds 60 capture-only rows per side before the game's own bands; tools/regression_test.sh and the common movement-oracle wrapper did not pin a 4:3 drawable, so hardware-reference comparisons could silently consume rescaled/offset pixels."
+    },
+    {
+      "ts": "2026-07-23T02:01:11Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "tools/regression_test.sh",
+      "note": "Implement an opt-in GE007_FIDELITY_CAPTURE fail-closed aspect contract at platformSaveScreenshot; pin 640x480 windowed and HiDPI off at every hardware-reference capture boundary; add a three-case permanent smoke proving legacy wide capture, strict rejection, and strict 4:3 success."
+    },
+    {
+      "ts": "2026-07-23T07:46:48Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "tools/fidelity_capture_aspect_smoke.sh",
+      "note": "Landed the fail-closed contract plus the capture-source authority fix: platformSaveScreenshot resolves the source via gfx_backend_get_framebuffer_size (WebGPU s_scene_tex / Metal s_fb dims), not SDL drawable queries, because on Retina SDL_Metal_GetDrawableSize reports the CAMetalLayer backing (1280x720 for a 640x360 window even with Video.HiDPI=0), which is not the texture read_framebuffer_rgb copies. Harness pinning: regression_test.sh, movement_oracle_capture.sh (appended after route/ad-hoc overrides), sense_pixel_sweep.sh, startup_visual_parity_capture.sh, bunker_brightness_regression.sh. Three-case smoke green via ctest port_fidelity_capture_aspect_smoke; the strict-wide refusal reports source framebuffer 640x360 (the WebGPU scene target) on that Retina host, proving the backend authority live."
+    },
+    {
+      "ts": "2026-07-23T07:46:48Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "tools/regression_test.sh",
+      "note": "Machine-local baselines re-recorded under the pinned 4:3 contract (20/20 record) and the follow-up comparison passed 20/20 across pixel, 179-frame state, audio, render-health, and spawn lanes. Band attribution vs the preserved wide set (rows with max channel <= 8): Dam 75/75 -> 20/20, level 34 75/75 -> 20/20, level 22 78/75 -> 24/20 \u2014 the 4:3 captures carry only the retail 10/240 viewport band, matching stock-ares geometry; the 55px capture-added component is gone. Full 151-test ctest at -j4: the only failure was fidelity_ledger_index_current tripping on this record's own status drift, cleared by ledger.py render in the same change; both ares-backed intro oracles passed under the forced 4:3 native presentation. Pre/wide golden sets preserved with reproducible aggregates and archived at ~/mgb64_fid0135_baseline_archive (see derivation doc)."
     }
   ]
 }

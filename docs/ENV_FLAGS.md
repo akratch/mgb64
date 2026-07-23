@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1089 flags** found across the source.
+**1090 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -429,6 +429,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_EXPLOSION_DAMAGE_TRACE_TYPE` | ? |  | 1 |  |
 | `GE007_EXPLOSION_PART_FADE` | ? |  | 1 |  |
 | `GE007_EXPLOSION_TRACE` | ? |  | 1 |  |
+| `GE007_FIDELITY_CAPTURE` | bool | 0 | 1 | Fail hardware-reference screenshots when the readback source is not 4:3. |
 | `GE007_FIELD_10E0_FIXED` | ? |  | 1 |  |
 | `GE007_FIELD_10E0_SCALED` | ? |  | 3 |  |
 | `GE007_FIRE_RATE_AUTHENTIC` | int | 1 | 1 | Scale full-auto cadence to the faithful N64 per-frame rate (default ON). 0 = legacy vanilla 60Hz (~3x faster) cadence. |

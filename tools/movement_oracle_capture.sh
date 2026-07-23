@@ -25,6 +25,15 @@ NATIVE_FULL_TRACE=0
 COMPARE_ALIGN=""
 SEED_EEPROM=""
 EXTRA_NATIVE_CONFIG_OVERRIDES=()
+# FID-0135: every native-vs-retail oracle shares the retail 4:3 presentation
+# boundary. Keep these last in the override order so a route or ad-hoc A/B
+# cannot silently turn the screenshot (and aspect-coupled sim) widescreen.
+FIDELITY_CAPTURE_CONFIG_OVERRIDES=(
+    "Video.WindowWidth=640"
+    "Video.WindowHeight=480"
+    "Video.WindowMode=windowed"
+    "Video.HiDPI=0"
+)
 
 usage() {
     cat <<'USAGE'
@@ -520,6 +529,7 @@ audit_native_effective_config() {
     if [[ "${#EXTRA_NATIVE_CONFIG_OVERRIDES[@]}" -gt 0 ]]; then
         native_config+=("${EXTRA_NATIVE_CONFIG_OVERRIDES[@]}")
     fi
+    native_config+=("${FIDELITY_CAPTURE_CONFIG_OVERRIDES[@]}")
 
     if [[ "${#native_config[@]}" -eq 0 ]]; then
         return 0
@@ -613,6 +623,9 @@ run_native_capture() {
             native_config_args+=(--config-override "$line")
         done
     fi
+    for line in "${FIDELITY_CAPTURE_CONFIG_OVERRIDES[@]}"; do
+        native_config_args+=(--config-override "$line")
+    done
     if [[ -n "$NATIVE_SPEEDFRAMES" ]]; then
         native_timing_env+=(GE007_DETERMINISTIC_SPEEDFRAMES="$NATIVE_SPEEDFRAMES")
     fi
@@ -638,6 +651,7 @@ run_native_capture() {
     if [[ "${#native_env[@]}" -gt 0 ]]; then
         env_cmd+=("${native_env[@]}")
     fi
+    env_cmd+=(GE007_FIDELITY_CAPTURE=1)
     if [[ -n "$NATIVE_SCREENSHOT_GAME_TIMER" ]]; then
         native_screenshot_args=(--screenshot-game-timer "$NATIVE_SCREENSHOT_GAME_TIMER")
     else

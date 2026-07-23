@@ -22,6 +22,12 @@ void gfx_init(void);
 void gfx_run_dl(Gfx *dl);
 void gfx_end_frame(void);
 
+/* Exact dimensions of the active backend's readable/presented framebuffer.
+ * Unlike an SDL drawable query, this follows offscreen Metal/WebGPU targets and
+ * therefore remains correct when RenderScale or Retina backing scale differs
+ * from the logical window. Returns false before a target exists. */
+bool gfx_backend_get_framebuffer_size(int *width, int *height);
+
 /**
  * Register a memory region containing N64-format display list data
  * (8-byte big-endian commands). The GFX translator will automatically

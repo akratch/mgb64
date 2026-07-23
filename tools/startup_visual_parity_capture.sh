@@ -160,6 +160,7 @@ FAITHFUL_CONFIG=(
     "Video.WindowWidth=640"
     "Video.WindowHeight=480"
     "Video.WindowMode=windowed"
+    "Video.HiDPI=0"
     "Video.RenderScale=1"
     "Video.RetroFilter=on"
     "Video.RemasterFX=0"
@@ -206,6 +207,7 @@ run_native() {
         GE007_NO_VSYNC=1
         GE007_BACKGROUND=1
         GE007_NO_INPUT_GRAB=1
+        GE007_FIDELITY_CAPTURE=1
         "$BINARY"
         "${config_args[@]}"
         --savedir "$NATIVE_SAVE_DIR"
@@ -262,6 +264,7 @@ run_native_trace() {
         GE007_NO_VSYNC=1
         GE007_BACKGROUND=1
         GE007_NO_INPUT_GRAB=1
+        GE007_FIDELITY_CAPTURE=1
         "$BINARY"
         "${config_args[@]}"
         --savedir "$NATIVE_SAVE_DIR"

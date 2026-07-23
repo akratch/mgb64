@@ -1511,6 +1511,11 @@ if(BUILD_TESTING AND PORT_VALIDATION_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/baser
     # differs (the fix is load-bearing -> reddens on a gun.c revert) and that fix-ON is
     # a real orthonormal rotation while the legacy raw+0xAD8 read is not.
     add_port_validation_smoke(port_grenade_round_spawn_mtx_smoke grenade_round_spawn_mtx_smoke.sh 240)
+    # FID-0135: hardware-reference screenshots must never silently resample a
+    # widescreen drawable into the fixed 640x480 oracle canvas. Proves all three
+    # contracts on the default renderer: legacy wide capture remains supported,
+    # strict wide capture fails closed with exit 4/no BMP, and strict 4:3 writes.
+    add_port_validation_smoke(port_fidelity_capture_aspect_smoke fidelity_capture_aspect_smoke.sh 240)
     # FID-0079: end-to-end guard for the live flag-8 projectile tile-reacquire
     # path (chrobjhandler.c:5328 -> stan.c sub_GAME_7F0AF20C roomset filter).
     # Lobs a proximity mine on Dam so its stan tile is invalidated mid-flight and

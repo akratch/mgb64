@@ -941,6 +941,13 @@ stock ares oracle build. The output directory defaults to
 `/tmp/mgb64_route_contract_smoke_*`; generated traces, screenshots, logs, and
 summaries are ROM-derived local artifacts and must not be committed.
 
+The movement-oracle wrapper applies the same FID-0135 capture contract to every
+route, including trace-oriented routes that still emit a terminal screenshot:
+native overrides end with `640x480`, windowed, and HiDPI off; the saved config is
+audited for those effective values; and `GE007_FIDELITY_CAPTURE=1` rejects a
+runtime aspect mismatch. Route-local and ad-hoc overrides cannot silently move
+the native half away from retail's 4:3 presentation boundary.
+
 With a local instrumented ares binary from
 `tools/prepare_ares_movement_oracle_build.sh`,
 `tools/movement_oracle_capture.sh --ares-bin ...` captures the same route from
@@ -1766,6 +1773,21 @@ default mode fails by design; use `--allow-missing-baselines` to skip
 comparisons during bootstrap. The pixel lane needs Pillow; the state and audio
 lanes are standard-library only.
 
+FID-0135 makes the stock-reference presentation contract explicit. Regression
+captures pin an exact `640x480` window, windowed mode, and `Video.HiDPI=0`, then
+set `GE007_FIDELITY_CAPTURE=1`. In that mode `platformSaveScreenshot()` refuses
+any non-4:3 readback source before GPU readback; `--screenshot-exit` reports exit 4 and
+no BMP is written. Ordinary player/debug screenshots keep the prior behavior:
+a widescreen source is aspect-preserving-resampled into the fixed 640x480 BMP
+with a warning. The permanent three-case guard is:
+
+```sh
+tools/fidelity_capture_aspect_smoke.sh --no-build
+```
+
+It proves legacy 16:9 capture still succeeds, strict 16:9 capture fails closed,
+and strict 4:3 capture succeeds on the default renderer (WebGPU in production).
+
 ### Renderer parity scenes
 
 For known renderer compatibility defaults, capture compact local A/B scenes:
@@ -2152,7 +2174,8 @@ should fail on future regressions.
 #### Startup visual/title workflow
 
 Use `tools/startup_visual_parity_capture.sh` for boot/title visual work. The
-wrapper pins the native port to a 640x480 original-look config, captures a
+wrapper pins the native port to a 640x480 non-HiDPI original-look config,
+enables the fail-closed fidelity-capture aspect contract, and captures a
 1,800-frame native title trace, audits title-state progression with
 `tools/audit_startup_trace.py`, and saves local screenshot checkpoints for the
 legal screen, Nintendo/Rare logo phases, gunbarrel, blood overlay, and fades.
@@ -3230,7 +3253,8 @@ It runs, in order, `camera_basis_regression.sh`,
 
 `tools/bunker_brightness_regression.sh` guards the reported Bunker-darkness
 class without pretending Bunker should be bright. It pins Bunker 1 to an
-isolated savedir and faithful video settings, then verifies the default capture
+isolated savedir and faithful 640x480 non-HiDPI video settings, enables the
+fail-closed fidelity-capture aspect contract, then verifies the default capture
 is not blank/pathologically black while render-health counters, room count, and
 triangle count stay sane. It also captures a bright remaster A/B so the metric
 proves sensitivity to saved visual-profile changes:

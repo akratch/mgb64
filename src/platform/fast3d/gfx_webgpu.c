@@ -4132,6 +4132,15 @@ bool gfx_webgpu_unclipped_depth_supported(void) {
     return s_unclipped_depth_supported;
 }
 
+bool gfx_webgpu_get_framebuffer_size(int *width, int *height) {
+    if (width == NULL || height == NULL || s_scene_w == 0 || s_scene_h == 0) {
+        return false;
+    }
+    *width = (int)s_scene_w;
+    *height = (int)s_scene_h;
+    return true;
+}
+
 /* ------------------------------------------------------------------------
  * The vtable — same field order as gfx_opengl_api / gfx_metal_api.
  * ---------------------------------------------------------------------- */

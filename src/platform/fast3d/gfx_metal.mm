@@ -3728,6 +3728,15 @@ static bool mtl_read_framebuffer_rgb(int x, int y, int width, int height, uint8_
   }
 }
 
+extern "C" bool gfx_metal_get_framebuffer_size(int *width, int *height) {
+    if (width == NULL || height == NULL || s_fb_w <= 0 || s_fb_h <= 0) {
+        return false;
+    }
+    *width = s_fb_w;
+    *height = s_fb_h;
+    return true;
+}
+
 /* Positional init MUST match the field order in gfx_rendering_api.h. C linkage
  * so gfx_pc.c's `extern struct GfxRenderingAPI gfx_metal_api;` resolves. */
 /* ------------------------------------------------------------------------

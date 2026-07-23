@@ -12,13 +12,15 @@
 # remaster/texpack agent's churn (regenerated HD packs, edited assets/decor/**).
 # Concretely each capture passes:
 #     --savedir <fresh temp dir>            # ignore the user's ge007.ini entirely
+#     --config-override Video.Window*=4:3   # no capture-added bars / rescale
+#     --config-override Video.HiDPI=0        # stable device-independent window base
 #     --config-override Video.SceneDecor=0  # no 3D decor  (── the one --faithful
 #                                           #   leaves ACTIVE: it never pins
 #                                           #   Video.SceneDecor/SceneDecorDir)
 #     --config-override Video.RenderScale=1 # native res (no SSAA supersampling)
 #     --config-override Video.RemasterFX=0  # no post-FX (grade/tonemap/bloom/…)
 #     --config-override Video.TexturePack=  # stock N64 textures (no HD pack)
-# These four --config-override values are applied AFTER env+ini, so they also win
+# These capture/render overrides are applied AFTER env+ini, so they also win
 # over any GE007_REMASTER_FX / GE007_RENDER_SCALE / GE007_SCENE_DECOR /
 # GE007_TEXTURE_PACK env the remaster lane might export → capture is reproducible
 # on any machine regardless of local remaster settings.
@@ -127,14 +129,19 @@ FAILED=0
 PASSED=0
 TOTAL=0
 
-# Stock pixel-baseline config (see the "STOCK PIXEL BASELINE" header). The four
-# --config-override values force the opt-in remaster layer OFF; they are applied
-# after env+ini so they also override any GE007_* remaster env. These are
-# render-only settings — the sim (state/audio goldens) is byte-identical with or
-# without them (verified: compare_state.py MATCH vs the pre-change config).
+# Stock pixel-baseline config (see the "STOCK PIXEL BASELINE" header). The
+# presentation overrides enforce an exact 640x480 non-HiDPI source for the fixed
+# screenshot canvas; the remaining values force the opt-in remaster layer OFF.
+# They are applied after env+ini so they also override any GE007_* mirror. The
+# visual-layer settings are render-only; the 4:3 aspect is intentionally part of
+# this stock-reference contract and gets its own state/audio baselines.
 # Deliberately NOT --faithful: that also pins Video.FovY=60 + flips the sim
 # wideners, which are SIM STATE and would shift the state goldens.
 STOCK_RENDER_OVERRIDES=(
+    --config-override Video.WindowWidth=640
+    --config-override Video.WindowHeight=480
+    --config-override Video.WindowMode=windowed
+    --config-override Video.HiDPI=0
     --config-override Video.SceneDecor=0
     --config-override Video.RenderScale=1
     --config-override Video.RemasterFX=0
@@ -172,7 +179,7 @@ for lvl in $LEVELS; do
     mkdir -p "$CFG_DIR"
 
     GAME_EXIT=0
-    run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_AUDIO_DUMP="$AUDIO" "$BINARY" \
+    run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_FIDELITY_CAPTURE=1 GE007_AUDIO_DUMP="$AUDIO" "$BINARY" \
         --rom "$ROM" \
         --savedir "$CFG_DIR" \
         --level "$lvl" --deterministic \
@@ -337,7 +344,7 @@ for lvl in $LEVELS; do
         rm -f "screenshot_spawn_${lvl}.bmp"
         # Same isolated + stock config as the main capture, so the spawn-health
         # lane is likewise immune to the user's ge007.ini / remaster layer.
-        run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 "$BINARY" \
+        run_with_timeout env -u GE007_DEBUG GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_FIDELITY_CAPTURE=1 GE007_DEBUG=1 GE007_ASSERT_ON_FAIL=0 "$BINARY" \
             --rom "$ROM" \
             --savedir "$CFG_DIR/spawn" \
             --level "$lvl" --deterministic \

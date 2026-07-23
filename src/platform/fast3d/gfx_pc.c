@@ -25369,6 +25369,30 @@ bool gfx_backend_read_framebuffer_rgb(int x, int y, int width, int height, uint8
     return gfx_rapi->read_framebuffer_rgb(x, y, width, height, rgb_out);
 }
 
+bool gfx_backend_get_framebuffer_size(int *width, int *height) {
+    if (width == NULL || height == NULL) {
+        return false;
+    }
+#ifdef MGB64_WEBGPU_BACKEND
+    if (gfx_backend_use_webgpu()) {
+        extern bool gfx_webgpu_get_framebuffer_size(int *, int *);
+        return gfx_webgpu_get_framebuffer_size(width, height);
+    }
+#endif
+#ifdef __APPLE__
+    if (gfx_backend_use_metal()) {
+        extern bool gfx_metal_get_framebuffer_size(int *, int *);
+        return gfx_metal_get_framebuffer_size(width, height);
+    }
+#endif
+    if (gfx_current_dimensions.width == 0 || gfx_current_dimensions.height == 0) {
+        return false;
+    }
+    *width = (int)gfx_current_dimensions.width;
+    *height = (int)gfx_current_dimensions.height;
+    return true;
+}
+
 /* Readback adapter handed to the extracted screenshot_series TU: routes the
  * backend-neutral read (GL->glReadPixels, Metal->blit, WebGPU->scene-tex copy)
  * [AUDIT-0003]. The ctx is unused — the backend is process-global state. */
