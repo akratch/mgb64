@@ -28,15 +28,26 @@ static inline uint64_t fnv1a(uint64_t h, const void *p, size_t n) {
 #define SIM_PTR_HI 0x0000800000000000ULL
 
 /*
- * Canonicalize `w`:
+ * Canonicalize `w` for a typed source region:
  *  - inside a hashed region -> (index+1, offset) token: ASLR-invariant and keeps
  *    which in-region object it targets (full sensitivity for pool-internal links);
  *  - else in the pointer value window -> a single constant token: a pointer into
  *    some unregistered allocation (a dylib, the ROM buffer, the heap) whose
  *    absolute value is meaningless across runs;
  *  - else -> `w` literally (genuine non-pointer data: small ints, flags, floats).
+ * Opaque source regions take the stable value-window branch first; see
+ * SIM_HASH_REGION_OPAQUE_POINTERS and FID-0046.
  */
-static uint64_t canon_word(uintptr_t w, const SimHashRegion *hr, int nh) {
+static uint64_t canon_word(uintptr_t w, const SimHashRegion *hr, int nh,
+                           int source_region) {
+    /* Untyped arenas cannot distinguish a real in-region pointer from an
+     * identical stale/literal word that merely collides with this process's
+     * ASLR-moved region range. Test the stable value window first and retain
+     * pointer liveness (zero remains zero) without inventing target identity. */
+    if ((hr[source_region].flags & SIM_HASH_REGION_OPAQUE_POINTERS) != 0 &&
+        (uint64_t)w >= SIM_PTR_LO && (uint64_t)w < SIM_PTR_HI) {
+        return SIM_NORM_TOKEN;
+    }
     for (int k = 0; k < nh; k++) {
         if (!hr[k].base) continue;
         uintptr_t lo = (uintptr_t)hr[k].base, hi = lo + hr[k].size;
@@ -60,7 +71,7 @@ uint64_t sim_state_hash_compute(const SimHashRegion *hr, int nh) {
         for (; i + sizeof(uintptr_t) <= sz; i += sizeof(uintptr_t)) {
             uintptr_t w;
             memcpy(&w, b + i, sizeof w);                 /* alignment-safe */
-            uint64_t c = canon_word(w, hr, nh);
+            uint64_t c = canon_word(w, hr, nh, k);
             h = fnv1a(h, &c, sizeof c);
         }
         if (i < sz) h = fnv1a(h, b + i, sz - i);
@@ -71,7 +82,7 @@ uint64_t sim_state_hash_compute(const SimHashRegion *hr, int nh) {
 /* Write region k's CANONICALIZED word stream (exactly what the hash consumes:
  * pointers tokenized, non-pointer words literal) into out, which must hold
  * hr[k].size bytes. Returns bytes written. Companion to the byte-attribution
- * region dump (GE007_SIM_REGION_DUMP): raw dumps are ASLR-noise across runs,
+ * region dump (GE007_SIM_HASH_DUMP): raw dumps contain ASLR noise across runs,
  * canonical dumps diff cleanly to the exact semantically-diverging word. */
 size_t sim_state_hash_canon_region(const SimHashRegion *hr, int nh, int k,
                                    unsigned char *out) {
@@ -82,7 +93,7 @@ size_t sim_state_hash_canon_region(const SimHashRegion *hr, int nh, int k,
         uintptr_t w;
         uint64_t c;
         memcpy(&w, b + i, sizeof w);
-        c = canon_word(w, hr, nh);
+        c = canon_word(w, hr, nh, k);
         memcpy(out + i, &c, sizeof c);
     }
     if (i < sz) memcpy(out + i, b + i, sz - i);
@@ -99,7 +110,7 @@ uint64_t sim_state_hash_compute_region(const SimHashRegion *hr, int nh, int k) {
     for (; i + sizeof(uintptr_t) <= sz; i += sizeof(uintptr_t)) {
         uintptr_t w;
         memcpy(&w, b + i, sizeof w);
-        uint64_t c = canon_word(w, hr, nh);   /* full set for canonicalization */
+        uint64_t c = canon_word(w, hr, nh, k); /* full set for canonicalization */
         h = fnv1a(h, &c, sizeof c);
     }
     if (i < sz) h = fnv1a(h, b + i, sz - i);

@@ -83,7 +83,37 @@ The public validation surface is organized into these lanes:
 | Screenshot | Missing, wrong-size, blank, or nearly monochrome frame captures | `audit_screenshot_health.py` |
 | Pixel | Renderer regressions (fog, texture, geometry) | `compare_screenshots.py` |
 | State | Spawn pos, facing, floor height, collision, NaN | `compare_state.py` |
+| Sim hash | Cross-process deterministic state, per-region/byte attribution, opaque-pool pointer liveness | `streets_determinism_regression.sh`, `sim_invariance_gate.sh` |
 | Audio | Static/noise, silence, synth-chain breakage | `compare_audio.py` |
+
+## Sim-hash divergence attribution
+
+`--sim-state-hash-out=path` covers the 8 MiB stage pool plus curated typed
+globals. `GE007_SIM_HASH_PER_REGION=1` prints an isolated hash for each region.
+If region `pool` is the only mover, capture both byte views:
+
+```sh
+GE007_SIM_HASH_DUMP=/tmp/pool.raw.bin \
+GE007_SIM_HASH_CANON_DUMP=/tmp/pool.canon.bin \
+GE007_SIM_HASH_PER_REGION=1 \
+build/ge007 ... --sim-state-hash-out=/tmp/hash.json
+```
+
+The raw dump preserves source bytes; the canonical dump is exactly what the
+hash consumes after pointer normalization. For the permanent Streets fixture,
+`tools/streets_determinism_regression.sh --diagnostic-dumps` assigns unique dump
+paths to both fix-on and both fix-off processes automatically.
+
+Pointer policy is region-specific. Typed regions preserve relative pointer
+targets. The untyped `pool` cannot safely infer a pointer merely because a word
+falls inside an ASLR-moved range, so it preserves `NULL` versus non-`NULL` but
+neutralizes every non-`NULL` word in the host pointer-value window. That is an
+explicit ambiguity tradeoff: such a word could also be a scalar, and raw bytes
+alone cannot distinguish the two. Bytes outside that window retain full
+sensitivity; pointer liveness remains covered; exact pointer targets remain
+covered in the typed regions. This prevents the FID-0046 false-positive class
+without pretending the opaque arena has field-type information. See
+`docs/fidelity/derivations/FID-0046-opaque-pool-canonicalization.md`.
 
 ## Dev-only stock RDP command stream
 

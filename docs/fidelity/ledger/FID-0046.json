@@ -34,6 +34,26 @@
     {
       "kind": "gate-log",
       "path": "tools/uncap_purity_gate.sh"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_streets_determinism_regression"
+    },
+    {
+      "kind": "trace-diff",
+      "path": "/tmp/mgb64_streets_prerelink_sample/run_20/pool.raw.bin"
+    },
+    {
+      "kind": "doc-anchor",
+      "path": "src/platform/sim_state_hash.c"
+    },
+    {
+      "kind": "gate-log",
+      "path": "ctest:port_streets_determinism_regression"
+    },
+    {
+      "kind": "gate-log",
+      "path": "docs/fidelity/reports/verify_9295b9831fce-dirty.json"
     }
   ],
   "history": [
@@ -78,6 +98,42 @@
       "to": "verified",
       "evidence": "tools/uncap_purity_gate.sh",
       "note": "uncap_purity_gate on Streets (lvl29) reported UNSTABLE before the fix; now reports 'level 29: OK (both seeds, 0 sim-hash divergence)' and 'UNCAP PURITY: PASS' (Dam control also OK). 40/40 separate fix-ON Streets processes at game-timer 900 produce the identical hash (c8ae60f450a61b7e) across differing ASLR bases; before the fix every process diverged. Screenshots byte-identical fix-ON vs fix-OFF (gameplay unchanged). ROM-free ctests (sim_state_hash, fidelity_hash_coverage) green."
+    },
+    {
+      "ts": "2026-07-22T22:29:11Z",
+      "from": "verified",
+      "to": "triaged",
+      "evidence": "ctest:port_streets_determinism_regression",
+      "note": "2026-07-22 regression audit: the fix-on gate failed twice, including an isolated rerun, then passed intermittently. A six-process sample and two complete gate attempts passed before attempt 3 failed. Per-region attribution proves only the canonicalized 8 MiB stage pool differs; timers, prop_pool, RNG, stan/nav state, and g_BgRoomInfo are identical, and all screenshots remain byte-identical. The original effect-buffer repair still passes its negative control, so reopen to isolate a separate intermittent pool resident.",
+      "reopen": true
+    },
+    {
+      "ts": "2026-07-22T23:08:47Z",
+      "from": "triaged",
+      "to": "root-caused",
+      "evidence": "/tmp/mgb64_streets_prerelink_sample/run_20/pool.raw.bin",
+      "note": "Stable run 1 versus divergent run 20 differ in only the canonical pool hash. Offline application of the production canonicalizer found exactly two canonical word differences, pool offsets 0x9848 and 0x51c48, while BOTH raw dumps contain the identical value 0x00000004a14b0000. Run 20 pool base 0x4a1400000 made that literal collide with pool+0xb0000; the other process correctly treated it as an unregistered pointer. The old moving-range membership test invented a state delta from byte-identical input."
+    },
+    {
+      "ts": "2026-07-22T23:08:47Z",
+      "from": "root-caused",
+      "to": "fix-in-progress",
+      "evidence": "src/platform/sim_state_hash.c",
+      "note": "Make pointer policy explicit per SimHashRegion: typed regions retain relative target sensitivity; the untyped 8 MiB pool neutralizes non-NULL words in the userspace pointer-value window before moving-range membership, retaining NULL/non-NULL liveness and full sensitivity outside that ambiguous window. A scalar inside the same window is necessarily neutralized too because an untyped snapshot cannot distinguish it from a pointer; pointer topology requiring exact coverage belongs in a typed region. Add the exact collision as a ROM-free unit test and canonical-dump diagnostics for future attribution."
+    },
+    {
+      "ts": "2026-07-22T23:24:44Z",
+      "from": "fix-in-progress",
+      "to": "landed",
+      "evidence": "ctest:port_streets_determinism_regression",
+      "note": "Opaque-pool pointer canonicalization is implemented with an exact ROM-free collision fixture, canonical dump diagnostics, migrated tape hash manifests without replay changes, and the real Streets gate passing both its fix-on repeatability contract and fix-off negative control."
+    },
+    {
+      "ts": "2026-07-23T01:56:11Z",
+      "from": "landed",
+      "to": "verified",
+      "evidence": "docs/fidelity/reports/verify_9295b9831fce-dirty.json",
+      "note": "Opaque-pool canonicalization passed all 58 port tests, the 20-level/two-seed full uncap matrix with zero divergent or unstable levels, seven tapes plus variants, combat/AK47/repeatability/patrol/aspect/trace/RDP gates, and a 20/20 current-build local regression comparison after preserving the stale July 17 goldens. The report's recorded regression red is the preserved pre-refresh local set; its one skip is the explicit pre-existing vacuous S2 pixel-coverage gap, neither attributable to FID-0046."
     }
   ]
 }

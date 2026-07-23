@@ -7,9 +7,9 @@
  * state so a RAMROM replay can be proven bit-identical with remaster rendering
  * flags on vs off. State lives in native host memory (the 8 MB s_pcPool arena +
  * curated game globals), so raw pointer values differ run-to-run under ASLR.
- * The hash therefore CANONICALIZES any word pointing into a registered region to
- * a base-independent (region, offset) token, making it ASLR-invariant without
- * needing -no-pie (unavailable on macOS arm64).
+ * Typed regions canonicalize in-region pointers to base-independent targets.
+ * Untyped arenas preserve NULL/non-NULL liveness but neutralize target addresses,
+ * because a pointer-shaped data word cannot be classified safely from bytes alone.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -22,14 +22,19 @@ typedef struct {
     const char *name;   /* stable identity; hashed so region-set changes are caught */
     const void *base;   /* runtime base address of the region                       */
     size_t      size;   /* region length in bytes                                   */
+    uint32_t    flags;  /* SIM_HASH_REGION_* pointer-canonicalization policy         */
 } SimHashRegion;
 
+/* An opaque byte arena has no field types, so membership in one process's
+ * ASLR-moved address range is not sufficient proof that a pointer-shaped word
+ * is a live pointer. Preserve NULL/non-NULL sensitivity but neutralize the
+ * target address. Typed regions retain relative-target sensitivity. */
+#define SIM_HASH_REGION_OPAQUE_POINTERS (1u << 0)
+
 /*
- * FNV-1a over the regions with intra-state pointer normalization. A word inside a
- * region is canonicalized to a base-independent (index,offset) token; a word in
- * the userspace-pointer value window is neutralized to a constant; anything else
- * (genuine data) is hashed literally. Deterministic for identical logical state
- * regardless of ASLR.
+ * FNV-1a over the regions with policy-aware pointer normalization. Typed regions
+ * retain base-independent (index,offset) targets. Opaque regions neutralize every
+ * non-NULL userspace pointer value. Anything else is hashed literally.
  */
 uint64_t sim_state_hash_compute(const SimHashRegion *regions, int n);
 

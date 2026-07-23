@@ -46,6 +46,30 @@ Registry grew from 4 → 27 regions:
   read-back rule (a render-written field consumed by sim is NOT waivable) it is
   hashed, not waived.
 
+## Pointer canonicalization contract
+
+Typed/curated regions retain relative pointer-target sensitivity: an in-region
+pointer hashes as `(region, offset)`, so changing a prop link to another target
+still reddens the invariant. The 8 MiB `pool` is explicitly marked opaque. Its
+bytes contain typed sim objects, raw/converted asset payloads, allocator scratch,
+and dead storage without a field map; therefore a word falling inside the
+current process's ASLR-moved pool range is not proof that the word is a live
+pointer. Opaque-pool pointer-shaped words preserve liveness (`NULL` differs from
+non-`NULL`) but neutralize target identity. This necessarily also neutralizes a
+non-pointer scalar whose complete 64-bit representation happens to fall inside
+the host pointer-value window: the untyped byte stream provides no sound way to
+tell those cases apart. Values outside that window retain byte sensitivity, and
+pointer-rich simulation structures should be promoted to typed registry regions
+when target topology is a required invariant (as `prop_pool` already is).
+
+FID-0046 proved why this is necessary: two Streets processes had byte-identical
+raw words at pool offsets `0x9848` and `0x51c48`, both `0x00000004a14b0000`.
+Only one process happened to allocate its live pool at `0x4a1400000`, so the old
+range-membership heuristic reclassified the identical literal as
+`pool + 0xb0000` in that process and emitted a different hash. No logical
+simulation payload differed. `test_sim_state_hash` pins this exact ASLR
+range-collision class.
+
 ## Waiver categories (docs/fidelity/hash_waivers.txt)
 Object-scoped (`@file.c.o`) or name-pattern waivers, each with a one-line reason:
 mechanical retail-address-named artifacts (`D_8*`, `dword_*`, jump tables, …),

@@ -9,7 +9,7 @@ Flags read through the registering `port_env_*`/`port_env_set` accessors
 type, default, and description here; flags still read through a raw `getenv`
 show none of those — migrating them to `port_env_*` fills them in.
 
-**1088 flags** found across the source.
+**1089 flags** found across the source.
 
 | Flag | Type | Default | Refs | Description |
 | --- | --- | --- | --- | --- |
@@ -731,6 +731,7 @@ show none of those — migrating them to `port_env_*` fills them in.
 | `GE007_SHARPEN` | float | 0.15f | 1 | Contrast-adaptive output sharpening. 0.0 = off; ~0.3 mild; higher risks ringing. |
 | `GE007_SHOOT_OUT_LIGHTS` | ? |  | 1 |  |
 | `GE007_SHOW_AUTOMATION_WINDOW` | ? |  | 1 |  |
+| `GE007_SIM_HASH_CANON_DUMP` | ? |  | 1 |  |
 | `GE007_SIM_HASH_DUMP` | ? |  | 1 |  |
 | `GE007_SIM_HASH_EVERY_FRAME` | ? |  | 2 |  |
 | `GE007_SIM_HASH_PER_REGION` | ? |  | 1 |  |

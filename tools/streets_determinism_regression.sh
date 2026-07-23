@@ -49,6 +49,7 @@ TIMEOUT_SECONDS=200
 OUT_DIR="/tmp/mgb64_streets_determinism_$$"
 LEVEL=29            # Streets (LEVELID 29) -- the FID-0046 repro level
 END_TIMER=900      # 15 sim-seconds; matches the uncap_purity_gate default
+DIAGNOSTIC_DUMPS=0
 
 usage() {
     cat <<'USAGE'
@@ -64,6 +65,8 @@ Options:
   --build-dir DIR      CMake build dir (default: build)
   --no-build           reuse an existing native binary
   --timeout SECONDS    per-process timeout (default: 200)
+  --diagnostic-dumps   emit per-region hashes plus raw and canonical pool dumps
+                       for exact byte attribution (64 MiB total across 4 runs)
 
 Runs the level twice fix-ON and twice fix-OFF; artifacts are ROM-derived local
 validation data -- do not commit them.
@@ -80,6 +83,7 @@ while [[ $# -gt 0 ]]; do
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
         --no-build) DO_BUILD=0; shift ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --diagnostic-dumps) DIAGNOSTIC_DUMPS=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -117,12 +121,22 @@ run_state() {
     local log="$dir/log"
     local hj="$dir/hash.json"
     local rc=0
+    local diag_env=()
+
+    if [[ "$DIAGNOSTIC_DUMPS" -eq 1 ]]; then
+        diag_env+=(
+            GE007_SIM_HASH_PER_REGION=1
+            GE007_SIM_HASH_DUMP="$dir/pool.raw.bin"
+            GE007_SIM_HASH_CANON_DUMP="$dir/pool.canon.bin"
+        )
+    fi
 
     ( cd "$dir" && validation_run_with_timeout "$TIMEOUT_SECONDS" \
         env -u GE007_DEBUG \
             SDL_AUDIODRIVER="${GE007_VALIDATION_SDL_AUDIODRIVER:-dummy}" \
             GE007_MUTE=1 GE007_DETERMINISTIC_STABLE_COUNT=1 GE007_NO_VSYNC=1 \
             GE007_BACKGROUND=1 GE007_NO_INPUT_GRAB=1 GE007_DISABLE_LEVEL_INTRO=1 \
+            ${diag_env[@]+"${diag_env[@]}"} \
             ${extra_env[@]+"${extra_env[@]}"} \
             "$BINARY" --rom "$ROM" --level "$LEVEL" --deterministic \
             --screenshot-game-timer "$END_TIMER" --screenshot-exit \

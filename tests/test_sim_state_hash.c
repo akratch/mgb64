@@ -40,6 +40,27 @@ int main(void) {
     SimHashRegion rn[1] = {{"renamed", a, sizeof a}};
     assert(sim_state_hash_compute(rn, 1) != sim_state_hash_compute(ra, 1));
 
+    /* 6. Opaque-arena range collision (FID-0046 regression): identical raw
+     *    words must stay identical even when the literal happens to fall in
+     *    one process's ASLR-moved region and not the other's. The old generic
+     *    region-membership heuristic misclassified the second copy as a live
+     *    in-region pointer and produced different hashes for identical bytes. */
+    unsigned char pool_a[64] = {0}, pool_b[64] = {0};
+    uintptr_t collision = (uintptr_t)(pool_b + 40);
+    memcpy(pool_a + 8, &collision, sizeof collision);
+    memcpy(pool_b + 8, &collision, sizeof collision);
+    SimHashRegion opaque_a[1] = {{"pool", pool_a, sizeof pool_a,
+                                 SIM_HASH_REGION_OPAQUE_POINTERS}};
+    SimHashRegion opaque_b[1] = {{"pool", pool_b, sizeof pool_b,
+                                 SIM_HASH_REGION_OPAQUE_POINTERS}};
+    assert(sim_state_hash_compute(opaque_a, 1) ==
+           sim_state_hash_compute(opaque_b, 1));
+
+    /* Opaque mode still detects pointer liveness: NULL and non-NULL differ. */
+    memset(pool_a + 8, 0, sizeof collision);
+    assert(sim_state_hash_compute(opaque_a, 1) !=
+           sim_state_hash_compute(opaque_b, 1));
+
     printf("test_sim_state_hash: OK\n");
     return 0;
 }

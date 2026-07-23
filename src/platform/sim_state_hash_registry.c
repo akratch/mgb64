@@ -25,9 +25,11 @@ extern const char *g_simStateHashOut;
  */
 void simHashRegistryBuild(SimHashRegion *out, int *n) {
     int i = 0;
+    memset(out, 0, sizeof(*out) * SIM_HASH_MAX_REGIONS);
     out[i].name = "pool";
     out[i].base = bossGetPcPoolBase();
     out[i].size = bossGetPcPoolSize();
+    out[i].flags = SIM_HASH_REGION_OPAQUE_POINTERS;
     i++;
     out[i].name = "g_ClockTimer";
     out[i].base = &g_ClockTimer;
@@ -221,6 +223,25 @@ void simStateHashEmitIfRequested(int frame, const char *replay) {
             if (df) {
                 fwrite(bossGetPcPoolBase(), 1, bossGetPcPoolSize(), df);
                 fclose(df);
+            }
+        }
+    }
+
+    /* Canonical companion to GE007_SIM_HASH_DUMP.  Raw pool bytes retain ASLR
+     * pointer noise; this stream is exactly what the hash consumes, so a binary
+     * diff identifies only the words responsible for a hash divergence. */
+    {
+        const char *dump = getenv("GE007_SIM_HASH_CANON_DUMP");
+        if (dump && regs[0].base && regs[0].size > 0) {
+            unsigned char *canon = (unsigned char *)malloc(regs[0].size);
+            if (canon != NULL) {
+                size_t size = sim_state_hash_canon_region(regs, n, 0, canon);
+                FILE *df = fopen(dump, "wb");
+                if (df != NULL) {
+                    fwrite(canon, 1, size, df);
+                    fclose(df);
+                }
+                free(canon);
             }
         }
     }
